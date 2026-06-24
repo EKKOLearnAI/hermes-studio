@@ -114,7 +114,7 @@ export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
   agentSessionId?: string
   agentNativeSessionId?: string
   isolateSettings?: boolean
-  sessionSource?: 'global_agent'
+  sessionSource?: 'global_agent' | 'workflow'
 }
 
 export interface CodingAgentLaunchResult {
@@ -1732,7 +1732,11 @@ export async function startCodingAgentRun(
     throw err
   }
   const existingSession = getSession(sessionId)
-  const sessionSource = input.sessionSource === 'global_agent' ? 'global_agent' : 'coding_agent'
+  const sessionSource = input.sessionSource === 'global_agent'
+    ? 'global_agent'
+    : input.sessionSource === 'workflow'
+      ? 'workflow'
+      : 'coding_agent'
   const existingAgentSessionId = existingSession?.agent_session_id || ''
   const resolvedInput = await resolveStoredProviderLaunchInput(input, existingSession)
   const requestedMode = resolvedInput.mode === 'global' ? 'global' : 'scoped'
@@ -1788,7 +1792,7 @@ export async function startCodingAgentRun(
     workspaceDir: launch.workspaceDir,
     env: runtimeEnv,
     state,
-    sessionSource: sessionSource === 'global_agent' ? 'global_agent' : undefined,
+    sessionSource: sessionSource === 'global_agent' || sessionSource === 'workflow' ? sessionSource : undefined,
   })
   updateSession(sessionId, {
     source: sessionSource,

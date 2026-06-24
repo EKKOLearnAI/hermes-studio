@@ -69,7 +69,7 @@ export interface CodingAgentRunLaunch {
   workspaceDir: string
   env?: NodeJS.ProcessEnv
   state?: SessionState
-  sessionSource?: 'global_agent'
+  sessionSource?: 'global_agent' | 'workflow'
 }
 
 interface ManagedCodingAgentRun {
@@ -116,6 +116,25 @@ function nowSeconds(): number {
 
 function makeId(): string {
   return `car_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+export function codingAgentGatewayErrorMessage(text: string): string | null {
+  const value = String(text || '').trim()
+  if (!value) return null
+  if (/^API Error:\s*\d+\b/i.test(value)) return value
+  if (/^Provider returned HTTP\s+\d+\b/i.test(value)) return value
+  return null
+}
+
+function responseErrorMessage(error: unknown): string {
+  if (!error) return ''
+  if (typeof error === 'string') return error
+  if (typeof error === 'object') {
+    const record = error as Record<string, unknown>
+    const message = record.message || record.error || record.detail
+    if (typeof message === 'string') return message
+  }
+  return String(error)
 }
 
 function isProxyToolEvent(event: CanonicalResponsesEvent): boolean {
@@ -421,7 +440,7 @@ export class CodingAgentRunManager {
     const state = launch.state || { messages: [], isWorking: false, events: [], queue: [] }
     state.isWorking = true
     state.profile = launch.profile
-    state.source = 'coding_agent'
+    state.source = launch.sessionSource === 'workflow' ? 'workflow' : 'coding_agent'
     state.runId = runId
 
     if (isPrintAgent(launch.agentId)) {
@@ -579,7 +598,7 @@ export class CodingAgentRunManager {
     if (!run.runMarker) run.runMarker = `coding_agent_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
     run.state.isWorking = true
     run.state.profile = run.launch.profile
-    run.state.source = 'coding_agent'
+    run.state.source = run.launch.sessionSource === 'workflow' ? 'workflow' : 'coding_agent'
     run.state.runId = run.id
     for (const mappedEvent of mapCodingAgentResponseEvent(storageSafeResponseEvent)) {
       this.emitToChat(run.launch.sessionId, mappedEvent.event, mappedEvent.payload)
@@ -592,13 +611,16 @@ export class CodingAgentRunManager {
       updateSessionStats(run.launch.sessionId)
       const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
       const finalText = extractResponseText(final)
-      const chatCompletionEvent = storageSafeResponseEvent.type === 'response.completed' ? 'run.completed' : 'run.failed'
+      const terminalError = storageSafeResponseEvent.type === 'response.failed'
+        ? responseErrorMessage(final?.error || (responseEvent.data as any).error) || 'Coding agent run failed'
+        : codingAgentGatewayErrorMessage(finalText)
+      const chatCompletionEvent = terminalError ? 'run.failed' : 'run.completed'
       const chatCompletionPayload: Record<string, unknown> = {
         event: chatCompletionEvent,
         run_id: final?.id,
         response_id: final?.id,
         output: finalText,
-        error: final?.error || (responseEvent.data as any).error,
+        error: terminalError || undefined,
       }
       if (childIsRunning(run.currentChild)) {
         run.pendingChatCompletionEvent = chatCompletionEvent
@@ -644,7 +666,11 @@ export class CodingAgentRunManager {
 
   private ensureDbSession(run: ManagedCodingAgentRun) {
     if (getSession(run.launch.sessionId)) return
-    const source = run.launch.sessionSource === 'global_agent' ? 'global_agent' : 'coding_agent'
+    const source = run.launch.sessionSource === 'global_agent'
+      ? 'global_agent'
+      : run.launch.sessionSource === 'workflow'
+        ? 'workflow'
+        : 'coding_agent'
     createSession({
       id: run.launch.sessionId,
       profile: run.launch.profile,

@@ -117,8 +117,8 @@ describe('Database Schema Synchronization', () => {
         WORKFLOWS_SCHEMA,
         WORKFLOW_RUNS_TABLE,
         WORKFLOW_RUNS_SCHEMA,
-        WORKFLOW_RUN_MESSAGES_TABLE,
-        WORKFLOW_RUN_MESSAGES_SCHEMA,
+        WORKFLOW_RUN_NODE_SESSIONS_TABLE,
+        WORKFLOW_RUN_NODE_SESSIONS_SCHEMA,
       } =
         await import('../../packages/server/src/db/hermes/schemas')
 
@@ -168,14 +168,15 @@ describe('Database Schema Synchronization', () => {
       expect(workflowRunCols.has('snapshot_nodes_json')).toBe(true)
       expect(workflowRunCols.has('snapshot_edges_json')).toBe(true)
 
-      expect(tableExists(db, WORKFLOW_RUN_MESSAGES_TABLE)).toBe(true)
-      const workflowRunMessageCols = getTableColumns(db, WORKFLOW_RUN_MESSAGES_TABLE)
-      expect(workflowRunMessageCols.size).toBe(Object.keys(WORKFLOW_RUN_MESSAGES_SCHEMA).length)
-      expect(workflowRunMessageCols.has('run_id')).toBe(true)
-      expect(workflowRunMessageCols.has('workflow_id')).toBe(true)
-      expect(workflowRunMessageCols.has('node_id')).toBe(true)
-      expect(workflowRunMessageCols.has('tool_calls')).toBe(true)
-      expect(workflowRunMessageCols.has('reasoning_content')).toBe(true)
+      expect(tableExists(db, WORKFLOW_RUN_NODE_SESSIONS_TABLE)).toBe(true)
+      const workflowRunNodeSessionCols = getTableColumns(db, WORKFLOW_RUN_NODE_SESSIONS_TABLE)
+      expect(workflowRunNodeSessionCols.size).toBe(Object.keys(WORKFLOW_RUN_NODE_SESSIONS_SCHEMA).length)
+      expect(workflowRunNodeSessionCols.has('run_id')).toBe(true)
+      expect(workflowRunNodeSessionCols.has('workflow_id')).toBe(true)
+      expect(workflowRunNodeSessionCols.has('node_id')).toBe(true)
+      expect(workflowRunNodeSessionCols.has('session_id')).toBe(true)
+      expect(workflowRunNodeSessionCols.has('status')).toBe(true)
+      expect(workflowRunNodeSessionCols.has('agent')).toBe(true)
     })
   })
 

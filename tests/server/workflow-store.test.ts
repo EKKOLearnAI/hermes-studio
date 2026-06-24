@@ -88,4 +88,51 @@ describe('workflow store', () => {
     expect(deleteWorkflow(workflow.id)).toBe(true)
     expect(getWorkflow(workflow.id)).toBeNull()
   })
+
+  it('lists workflow runs by workflow ordered newest first', async () => {
+    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
+    const { createWorkflowRun, listWorkflowRuns, updateWorkflowRun } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    const workflow = createWorkflow({ name: 'Runs', profile: 'default' })
+    const other = createWorkflow({ name: 'Other', profile: 'default' })
+
+    const first = createWorkflowRun({ workflow_id: workflow.id, status: 'running', started_at: 100 })
+    await new Promise(resolve => setTimeout(resolve, 2))
+    const second = createWorkflowRun({ workflow_id: workflow.id, status: 'queued', started_at: 200 })
+    createWorkflowRun({ workflow_id: other.id, status: 'running' })
+    updateWorkflowRun(first.id, { status: 'completed', finished_at: 300 })
+
+    expect(listWorkflowRuns(workflow.id).map(run => run.id)).toEqual([second.id, first.id])
+    expect(listWorkflowRuns(workflow.id, 1)).toHaveLength(1)
+    expect(listWorkflowRuns(workflow.id)[1]).toMatchObject({
+      id: first.id,
+      status: 'completed',
+      finished_at: 300,
+    })
+  })
+
+  it('deletes workflow runs and their node session records', async () => {
+    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
+    const {
+      createWorkflowRun,
+      createWorkflowRunNodeSession,
+      deleteWorkflowRun,
+      getWorkflowRun,
+      listWorkflowRunNodeSessions,
+    } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    const workflow = createWorkflow({ name: 'Runs', profile: 'default' })
+    const run = createWorkflowRun({ workflow_id: workflow.id, status: 'completed' })
+    createWorkflowRunNodeSession({
+      run_id: run.id,
+      workflow_id: workflow.id,
+      node_id: 'node-1',
+      session_id: 'session-1',
+      status: 'completed',
+    })
+
+    expect(listWorkflowRunNodeSessions(run.id)).toHaveLength(1)
+    expect(deleteWorkflowRun(run.id)).toBe(true)
+
+    expect(getWorkflowRun(run.id)).toBeNull()
+    expect(listWorkflowRunNodeSessions(run.id)).toEqual([])
+  })
 })

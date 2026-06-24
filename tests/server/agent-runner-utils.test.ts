@@ -11,7 +11,7 @@ import {
 import { parseSseFrame, readSseFrames, readSseFrameTexts, sseEvent } from '../../packages/server/src/services/agent-runner/sse'
 import { AgentTargetRegistry, type AgentTargetInput } from '../../packages/server/src/services/agent-runner/target-registry'
 import { teeAsyncIterable } from '../../packages/server/src/services/agent-runner/stream-tee'
-import { CodingAgentRunManager, sanitizeCodingAgentTerminalOutput } from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
+import { CodingAgentRunManager, codingAgentGatewayErrorMessage, sanitizeCodingAgentTerminalOutput } from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
 import { mapCodingAgentResponseEvent } from '../../packages/server/src/services/agent-runner/coding-agent-event-mapper'
 import { applyResponseStreamEvent } from '../../packages/server/src/services/hermes/run-chat/response-stream'
 import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
@@ -45,6 +45,17 @@ describe('agent runner endpoint resolver', () => {
     expect(anthropicMessagesUrl('https://api.apikey.fun')).toBe('https://api.apikey.fun/v1/messages')
     expect(anthropicMessagesUrl('https://api.z.ai/api/anthropic')).toBe('https://api.z.ai/api/anthropic/v1/messages')
     expect(providerEndpointUrl('anthropic_messages', 'https://api.example.com/v1')).toBe('https://api.example.com/v1/messages')
+  })
+})
+
+describe('coding agent completion errors', () => {
+  it('treats gateway API error text as a failed coding-agent run', () => {
+    const error = 'API Error: 529 [1305][The service may be temporarily overloaded, please try again later]'
+
+    expect(codingAgentGatewayErrorMessage(error)).toBe(error)
+    expect(codingAgentGatewayErrorMessage(`  ${error}\n`)).toBe(error)
+    expect(codingAgentGatewayErrorMessage('Provider returned HTTP 502')).toBe('Provider returned HTTP 502')
+    expect(codingAgentGatewayErrorMessage('Here is a normal answer mentioning API Error: 529 as an example')).toBeNull()
   })
 })
 

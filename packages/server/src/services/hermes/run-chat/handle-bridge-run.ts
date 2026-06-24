@@ -298,7 +298,7 @@ async function ensureBridgeFixedContext(args: {
 export async function handleBridgeRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; display_role?: 'user' | 'command'; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; workspace?: string | null; source?: string; session_source?: 'global_agent'; queue_id?: string; peerExcludeSocketId?: string; reasoning_effort?: string },
+  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; display_role?: 'user' | 'command'; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; workspace?: string | null; source?: string; session_source?: 'global_agent' | 'workflow'; queue_id?: string; peerExcludeSocketId?: string; reasoning_effort?: string; onEvent?: (event: string, payload: any) => void },
   profile: string,
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
@@ -307,15 +307,19 @@ export async function handleBridgeRun(
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
 ) {
   const { input, session_id, instructions } = data
-  const runSource = data.session_source === 'global_agent' || data.source === 'global_agent' ? 'global_agent' : 'cli'
+  const runSource = data.session_source === 'global_agent' || data.source === 'global_agent'
+    ? 'global_agent'
+    : data.session_source === 'workflow' || data.source === 'workflow'
+      ? 'workflow'
+      : 'cli'
   if (!session_id) {
     socket.emit('run.failed', { event: 'run.failed', error: 'session_id is required for cli source' })
     return
   }
 
   let fullInstructions = instructions
-    ? `${getSystemPrompt()}\n${instructions}`
-    : getSystemPrompt()
+    ? `${getSystemPrompt(undefined, { source: data.session_source || data.source })}\n${instructions}`
+    : getSystemPrompt(undefined, { source: data.session_source || data.source })
   const sessionRow = getSession(session_id)
   const workspace = await ensureHermesRunWorkspace(profile, sessionRow?.workspace || data.workspace)
   if (sessionRow && !sessionRow.workspace) updateSession(session_id, { workspace })
@@ -432,8 +436,9 @@ export async function handleBridgeRun(
   }
   const emit = (event: string, payload: any) => {
     const tagged = { ...payload, session_id }
+    data.onEvent?.(event, tagged)
     nsp.to(`session:${session_id}`).emit(event, tagged)
-    if (!nsp.adapter.rooms.get(`session:${session_id}`)?.size && socket.connected) {
+    if (!data.onEvent && !nsp.adapter.rooms.get(`session:${session_id}`)?.size && socket.connected) {
       socket.emit(event, tagged)
     }
   }

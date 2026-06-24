@@ -11,10 +11,10 @@ import { estimateUsageTokensFromMessages } from './usage'
 import type { ChatRunSource, SessionState } from './types'
 
 export function resolveRunSource(source?: string, sessionId?: string): ChatRunSource {
-  if (source === 'coding_agent' || source === 'global_agent' || source === 'cli') return source
+  if (source === 'coding_agent' || source === 'global_agent' || source === 'workflow' || source === 'cli') return source
   if (sessionId) {
     const stored = getSession(sessionId)?.source
-    if (stored === 'coding_agent' || stored === 'global_agent' || stored === 'cli') return stored
+    if (stored === 'coding_agent' || stored === 'global_agent' || stored === 'workflow' || stored === 'cli') return stored
   }
   return 'cli'
 }

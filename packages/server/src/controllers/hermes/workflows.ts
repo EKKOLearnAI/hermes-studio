@@ -1,6 +1,8 @@
 import type { Context } from 'koa'
-import { getWorkflowManager, type WorkflowUpdateInput } from '../../services/workflow-manager'
+import { getWorkflowManager, type WorkflowRunNowInput, type WorkflowUpdateInput } from '../../services/workflow-manager'
 import { listUserProfiles } from '../../db/hermes/users-store'
+import { listWorkflowRunNodeSessions, listWorkflowRuns } from '../../db/hermes/workflow-run-store'
+import { logger } from '../../services/logger'
 
 const MAX_BATCH_DELETE = 200
 
@@ -82,11 +84,25 @@ function optionalJsonObject(value: unknown, name: string): { value?: Record<stri
   return { value: value as Record<string, unknown> }
 }
 
+function optionalStringArray(value: unknown, name: string): { value?: string[]; error?: string } {
+  if (value === undefined || value === null) return {}
+  if (!Array.isArray(value)) return { error: `${name} must be an array` }
+  const strings = value.filter(item => typeof item === 'string' && item.trim()).map(item => item.trim())
+  return { value: strings }
+}
+
 function rejectBadRequest(ctx: Context, error?: string): boolean {
   if (!error) return false
   ctx.status = 400
   ctx.body = { error }
   return true
+}
+
+function optionalPositiveNumber(value: unknown, name: string): { value?: number; error?: string } {
+  if (value === undefined || value === null) return {}
+  const numberValue = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(numberValue) || numberValue <= 0) return { error: `${name} must be a positive number` }
+  return { value: numberValue }
 }
 
 export async function list(ctx: Context) {
@@ -108,6 +124,83 @@ export async function get(ctx: Context) {
   }
   if (denyProfileAccess(ctx, workflow.profile)) return
   ctx.body = { workflow }
+}
+
+export async function listRuns(ctx: Context) {
+  const id = requiredId(ctx)
+  if (!id) return
+
+  const workflow = getWorkflowManager().get(id)
+  if (!workflow) {
+    ctx.status = 404
+    ctx.body = { error: 'workflow not found' }
+    return
+  }
+  if (denyProfileAccess(ctx, workflow.profile)) return
+
+  const limitValue = firstQueryValue(ctx.query.limit as string | string[] | undefined)
+  const limit = limitValue ? Number(limitValue) : 100
+  const runs = listWorkflowRuns(id, Number.isFinite(limit) ? limit : 100)
+  ctx.body = {
+    runs: runs.map(run => ({
+      ...run,
+      node_sessions: listWorkflowRunNodeSessions(run.id),
+    })),
+  }
+}
+
+export async function stopRun(ctx: Context) {
+  const id = requiredId(ctx)
+  if (!id) return
+  const runId = typeof ctx.params?.runId === 'string' ? ctx.params.runId.trim() : ''
+  if (!runId) {
+    ctx.status = 400
+    ctx.body = { error: 'runId is required' }
+    return
+  }
+
+  const workflow = getWorkflowManager().get(id)
+  if (!workflow) {
+    ctx.status = 404
+    ctx.body = { error: 'workflow not found' }
+    return
+  }
+  if (denyProfileAccess(ctx, workflow.profile)) return
+
+  const run = await getWorkflowManager().stopRun(id, runId, 'Workflow run canceled by user')
+  if (!run) {
+    ctx.status = 404
+    ctx.body = { error: 'workflow run not found' }
+    return
+  }
+  ctx.body = { ok: true, run }
+}
+
+export async function deleteRun(ctx: Context) {
+  const id = requiredId(ctx)
+  if (!id) return
+  const runId = typeof ctx.params?.runId === 'string' ? ctx.params.runId.trim() : ''
+  if (!runId) {
+    ctx.status = 400
+    ctx.body = { error: 'runId is required' }
+    return
+  }
+
+  const workflow = getWorkflowManager().get(id)
+  if (!workflow) {
+    ctx.status = 404
+    ctx.body = { error: 'workflow not found' }
+    return
+  }
+  if (denyProfileAccess(ctx, workflow.profile)) return
+
+  const deleted = await getWorkflowManager().deleteRun(id, runId)
+  if (!deleted) {
+    ctx.status = 404
+    ctx.body = { error: 'workflow run not found' }
+    return
+  }
+  ctx.body = { ok: true }
 }
 
 export async function create(ctx: Context) {
@@ -193,7 +286,7 @@ export async function remove(ctx: Context) {
   }
   if (denyProfileAccess(ctx, workflow.profile)) return
 
-  getWorkflowManager().delete(id)
+  await getWorkflowManager().delete(id)
   ctx.body = { ok: true }
 }
 
@@ -226,7 +319,7 @@ export async function batchRemove(ctx: Context) {
       errors.push({ id, error: `Profile "${profileName(workflow.profile)}" is not available for this user` })
       continue
     }
-    if (getWorkflowManager().delete(id)) deleted += 1
+    if (await getWorkflowManager().delete(id)) deleted += 1
     else errors.push({ id, error: 'workflow not found' })
   }
 
@@ -235,4 +328,45 @@ export async function batchRemove(ctx: Context) {
     failed: errors.length,
     errors,
   }
+}
+
+export async function runNow(ctx: Context) {
+  const id = requiredId(ctx)
+  if (!id) return
+
+  const workflow = getWorkflowManager().get(id)
+  if (!workflow) {
+    ctx.status = 404
+    ctx.body = { error: 'workflow not found' }
+    return
+  }
+  if (denyProfileAccess(ctx, workflow.profile)) return
+
+  const body = bodyRecord(ctx)
+  const startNodeIds = optionalStringArray(body.start_node_ids ?? body.startNodeIds, 'start_node_ids')
+  const input = optionalNullableString(body.input, 'input')
+  const timeoutMs = optionalPositiveNumber(body.timeout_ms ?? body.timeoutMs, 'timeout_ms')
+  if (rejectBadRequest(ctx, startNodeIds.error || input.error || timeoutMs.error)) return
+
+  const runInput: WorkflowRunNowInput = {
+    profile: workflow.profile,
+    user: ctx.state?.user,
+  }
+  if (startNodeIds.value !== undefined) runInput.startNodeIds = startNodeIds.value
+  if (input.value !== undefined) runInput.input = input.value
+  if (timeoutMs.value !== undefined) runInput.timeoutMs = timeoutMs.value
+
+  const manager = getWorkflowManager()
+  void manager.runNow(id, runInput).catch((err: any) => {
+    const message = err?.message || 'failed to run workflow'
+    logger.error(err, '[workflow] async run failed for workflow %s', id)
+    manager.setRuntimeStatus(id, {
+      status: 'failed',
+      completedAt: Date.now(),
+      error: message,
+    })
+  })
+
+  ctx.status = 202
+  ctx.body = { ok: true, status: 'accepted' }
 }

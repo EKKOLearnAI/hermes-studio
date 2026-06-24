@@ -12,6 +12,7 @@ export interface WorkflowRuntimeStatus {
   updatedAt: number
   completedAt: number | null
   error: string | null
+  nodeStatuses?: Record<string, WorkflowRuntimeState>
 }
 
 interface WorkflowSocketAck<T> {
@@ -29,7 +30,7 @@ function activeProfile(profile?: string | null): string {
 
 export function connectWorkflowSocket(profile?: string | null): Socket {
   const nextProfile = activeProfile(profile)
-  if (socket?.connected && socketProfile === nextProfile) return socket
+  if (socket && socketProfile === nextProfile) return socket
   if (socket) {
     socket.disconnect()
     socket = null

@@ -106,11 +106,12 @@ function isVisibleWebUiSessionSource(source?: string | null): boolean {
 
 function isRequestedSessionSource(source: string | undefined, sessionSource?: string | null): boolean {
   if (source === 'global_agent') return sessionSource === 'global_agent'
+  if (source === 'workflow') return sessionSource === 'workflow'
   return isVisibleWebUiSessionSource(sessionSource)
 }
 
 function isHermesHistorySessionSource(source?: string | null): boolean {
-  return source !== 'api_server' && source !== 'global_agent'
+  return source !== 'api_server' && source !== 'global_agent' && source !== 'workflow'
 }
 
 function isCodingAgentSession(session?: { source?: string | null; agent?: string | null; agent_session_id?: string | null } | null): boolean {

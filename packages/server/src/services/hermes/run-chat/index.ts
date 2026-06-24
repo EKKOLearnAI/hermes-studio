@@ -51,13 +51,17 @@ function isHermesWorkerBackedSession(session?: { source?: string | null; agent?:
   // "api_server" is a legacy/default source value; Hermes sessions still use worker-backed runtime.
   // coding_agent runs have a separate lifecycle.
   if (!source || source === 'cli' || source === 'api_server') return true
+  if (source === 'workflow') {
+    const agent = String(session?.agent || '').trim()
+    return agent !== 'claude' && agent !== 'codex' && !session?.agent_session_id
+  }
   if (source !== 'global_agent') return false
   const agent = String(session?.agent || '').trim()
   return agent !== 'claude' && agent !== 'codex' && !session?.agent_session_id
 }
 
 function isBridgeRunSource(source?: string): boolean {
-  return source === 'cli' || source === 'global_agent'
+  return source === 'cli' || source === 'global_agent' || source === 'workflow'
 }
 
 export async function ensureBridgeReadyForChatRun(): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -78,12 +82,29 @@ export async function ensureBridgeReadyForChatRun(): Promise<{ ok: true } | { ok
   }
 }
 
+function isCodingAgentExecution(source: string | undefined, data?: { coding_agent_id?: string; agent_id?: string }): boolean {
+  return source === 'coding_agent' || (source === 'workflow' && Boolean(data?.coding_agent_id || data?.agent_id))
+}
+
+export interface ChatRunAndWaitResult {
+  ok: boolean
+  event: 'run.completed' | 'run.failed'
+  session_id: string
+  run_id?: string
+  output?: string | null
+  reasoning?: string | null
+  error?: string
+}
+
+type ChatRunAutoApprovalChoice = 'once' | 'session' | 'always'
+
 export class ChatRunSocket {
   private nsp: ReturnType<Server['of']>
   private bridge = new AgentBridgeClient()
   /** sessionId → session state (messages, working status, events, run tracking) */
   private sessionMap = new Map<string, SessionState>()
   private bridgeResumePolls = new Set<string>()
+  private readonly runWaiters = new Map<string, Set<(event: string, payload: any) => void>>()
 
   constructor(io: Server) {
     this.nsp = io.of('/chat-run')
@@ -163,7 +184,7 @@ export class ChatRunSocket {
       queue_id?: string
       workspace?: string | null
       source?: string
-      session_source?: 'global_agent'
+      session_source?: 'global_agent' | 'workflow'
       coding_agent_id?: 'claude-code' | 'codex'
       agent_id?: 'claude-code' | 'codex'
       mode?: 'scoped' | 'global'
@@ -252,7 +273,7 @@ export class ChatRunSocket {
           return
         }
         state.events = []
-        state.isWorking = source !== 'coding_agent'
+        state.isWorking = !isCodingAgentExecution(source, data)
         state.profile = runProfile
         state.source = source
       }
@@ -362,7 +383,7 @@ export class ChatRunSocket {
       instructions?: string
       workspace?: string | null
       source?: string
-      session_source?: 'global_agent'
+      session_source?: 'global_agent' | 'workflow'
       queue_id?: string
       peerExcludeSocketId?: string
       coding_agent_id?: 'claude-code' | 'codex'
@@ -374,6 +395,7 @@ export class ChatRunSocket {
       api_key?: string
       apiMode?: string
       api_mode?: string
+      onEvent?: (event: string, payload: any) => void
     },
     profile: string,
     skipUserMessage = false,
@@ -381,7 +403,7 @@ export class ChatRunSocket {
     const source = resolveRunSource(data.source, data.session_id)
     if (data.session_id && isBridgeRunSource(source) && isSessionCommand(data.input)) return
 
-    if (source !== 'coding_agent') {
+    if (!isCodingAgentExecution(source, data)) {
       const bridgeReady = await ensureBridgeReadyForChatRun()
       if (!bridgeReady.ok) {
         let shouldDequeueNext = false
@@ -422,8 +444,8 @@ export class ChatRunSocket {
       }
 
       let fullInstructions = data.instructions
-        ? `${getSystemPrompt()}\n${data.instructions}`
-        : getSystemPrompt()
+        ? `${getSystemPrompt(undefined, { source })}\n${data.instructions}`
+        : getSystemPrompt(undefined, { source })
       if (data.session_id) {
         const sessionRow = getSession(data.session_id)
         const workspace = await ensureHermesRunWorkspace(profile, sessionRow?.workspace || data.workspace)
@@ -560,8 +582,8 @@ export class ChatRunSocket {
   }
 
   private resumeInstructionsForSession(sessionId: string): string {
-    let fullInstructions = getSystemPrompt()
     const sessionRow = getSession(sessionId)
+    let fullInstructions = getSystemPrompt(undefined, { source: sessionRow?.source })
     if (sessionRow?.workspace) {
       fullInstructions = `\n[Current working directory: ${sessionRow.workspace}]\n${fullInstructions}`
     }
@@ -621,6 +643,181 @@ export class ChatRunSocket {
 
   // --- Helpers ---
 
+  async runAndWait(
+    data: {
+      input: string | ContentBlock[]
+      display_input?: string | ContentBlock[] | null
+      display_role?: 'user' | 'command'
+      storage_message?: string
+      session_id: string
+      model?: string
+      provider?: string
+      model_groups?: Array<{ provider: string; models: string[] }>
+      instructions?: string
+      workspace?: string | null
+      source?: string
+      session_source?: 'global_agent' | 'workflow'
+      queue_id?: string
+      coding_agent_id?: 'claude-code' | 'codex'
+      agent_id?: 'claude-code' | 'codex'
+      mode?: 'scoped' | 'global'
+      baseUrl?: string
+      base_url?: string
+      apiKey?: string
+      api_key?: string
+      apiMode?: string
+      api_mode?: string
+      profile?: string
+      reasoning_effort?: string
+    },
+    options: { profile?: string; user?: AuthenticatedUser; timeoutMs?: number; approvalChoice?: ChatRunAutoApprovalChoice } = {},
+  ): Promise<ChatRunAndWaitResult> {
+    const sessionId = String(data.session_id || '').trim()
+    if (!sessionId) throw new Error('session_id is required')
+    const profile = options.profile || data.profile || getSession(sessionId)?.profile || getActiveProfileName() || 'default'
+    const source = resolveRunSource(data.source, sessionId)
+    const state = getOrCreateSession(this.sessionMap, sessionId)
+    state.events = []
+    state.isWorking = !isCodingAgentExecution(source, data)
+    state.profile = profile
+    state.source = source
+
+    return new Promise<ChatRunAndWaitResult>((resolve) => {
+      let settled = false
+      let output = ''
+      let reasoning = ''
+      let runId = ''
+      const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : null
+      const waiters = this.runWaiters.get(sessionId) || new Set<(event: string, payload: any) => void>()
+      const finish = (result: Omit<ChatRunAndWaitResult, 'session_id'>) => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        waiters.delete(onEvent)
+        if (waiters.size === 0) this.runWaiters.delete(sessionId)
+        resolve({
+          session_id: sessionId,
+          run_id: runId || result.run_id,
+          output: output || result.output,
+          reasoning: reasoning || result.reasoning,
+          ...result,
+        })
+      }
+      const respondToApproval = async (payload: any = {}) => {
+        const choice = options.approvalChoice
+        if (!choice || settled) return
+        const approvalId = typeof payload.approval_id === 'string' ? payload.approval_id : ''
+        const rawChoices = Array.isArray(payload.choices) ? payload.choices.map((item: unknown) => String(item)) : []
+        const choices = rawChoices.length > 0 ? rawChoices : ['once', 'session', 'deny']
+        if (!approvalId) {
+          finish({ ok: false, event: 'run.failed', output, reasoning, error: 'approval required' })
+          return
+        }
+        if (!choices.includes(choice)) {
+          finish({ ok: false, event: 'run.failed', output, reasoning, error: `approval choice "${choice}" is not available` })
+          return
+        }
+        try {
+          const result = await this.bridge.approvalRespond(approvalId, choice)
+          const resolvedPayload = {
+            event: 'approval.resolved',
+            session_id: sessionId,
+            approval_id: approvalId,
+            choice,
+            resolved: Boolean((result as any)?.resolved),
+          }
+          this.nsp.to(`session:${sessionId}`).emit('approval.resolved', resolvedPayload)
+          onEvent('approval.resolved', resolvedPayload)
+        } catch (err) {
+          const error = err instanceof Error ? err.message : String(err)
+          this.nsp.to(`session:${sessionId}`).emit('approval.resolved', {
+            event: 'approval.resolved',
+            session_id: sessionId,
+            approval_id: approvalId,
+            choice,
+            resolved: false,
+            error,
+          })
+          finish({ ok: false, event: 'run.failed', output, reasoning, error })
+        }
+      }
+      const onEvent = (event: string, payload: any = {}) => {
+        if (typeof payload.run_id === 'string' && payload.run_id) runId = payload.run_id
+        if (event === 'message.delta' && typeof payload.delta === 'string') output += payload.delta
+        if ((event === 'reasoning.delta' || event === 'thinking.delta') && typeof payload.delta === 'string') reasoning += payload.delta
+        if (event === 'approval.requested') {
+          void respondToApproval(payload)
+        } else if (event === 'run.completed') {
+          finish({
+            ok: true,
+            event: 'run.completed',
+            run_id: payload.run_id,
+            output: typeof payload.output === 'string' && payload.output ? payload.output : output,
+            reasoning: typeof payload.reasoning === 'string' && payload.reasoning ? payload.reasoning : reasoning,
+          })
+        } else if (event === 'run.failed') {
+          finish({
+            ok: false,
+            event: 'run.failed',
+            run_id: payload.run_id,
+            output,
+            reasoning,
+            error: payload.error ? String(payload.error) : 'chat-run failed',
+          })
+        }
+      }
+      const timer = timeoutMs
+        ? setTimeout(() => {
+            finish({ ok: false, event: 'run.failed', error: `chat-run timed out after ${timeoutMs}ms` })
+          }, timeoutMs)
+        : null
+      waiters.add(onEvent)
+      this.runWaiters.set(sessionId, waiters)
+
+      const fakeSocket = {
+        id: `workflow-run-${sessionId}`,
+        connected: true,
+        data: { user: options.user },
+        join: () => {},
+        to: (room: string) => ({
+          emit: (event: string, payload: any) => {
+            this.nsp.to(room).emit(event, payload)
+            onEvent(event, payload)
+          },
+        }),
+        emit: (event: string, payload: any) => onEvent(event, payload),
+      } as unknown as Socket
+
+      this.handleRun(fakeSocket, { ...data, onEvent }, profile)
+        .catch(err => finish({ ok: false, event: 'run.failed', error: err instanceof Error ? err.message : String(err) }))
+    })
+  }
+
+  async abortSession(sessionId: string, reason = 'Run canceled'): Promise<void> {
+    const sid = String(sessionId || '').trim()
+    if (!sid) return
+    const fakeSocket = {
+      id: `workflow-abort-${sid}`,
+      connected: false,
+      data: {},
+      emit: () => {},
+      join: () => {},
+      to: (room: string) => ({ emit: (event: string, payload: any) => this.nsp.to(room).emit(event, payload) }),
+    } as unknown as Socket
+    await handleAbort(
+      this.nsp,
+      fakeSocket,
+      sid,
+      this.sessionMap,
+      this.bridge,
+      this.runQueuedItem.bind(this),
+    )
+    this.emitExternalEvent(sid, 'run.failed', {
+      event: 'run.failed',
+      error: reason,
+    })
+  }
+
   emitExternalEvent(sessionId: string, event: string, payload: any) {
     const tagged = { ...payload, session_id: sessionId }
     const state = this.sessionMap.get(sessionId)
@@ -629,6 +826,10 @@ export class ChatRunSocket {
       if (state.events.length > 200) state.events.splice(0, state.events.length - 200)
     }
     this.nsp.to(`session:${sessionId}`).emit(event, tagged)
+    const waiters = this.runWaiters.get(sessionId)
+    if (waiters) {
+      for (const waiter of waiters) waiter(event, tagged)
+    }
   }
 
   markExternalRunCompleted(sessionId: string, event: string) {

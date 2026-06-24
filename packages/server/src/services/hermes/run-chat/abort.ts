@@ -15,7 +15,7 @@ import type { QueuedRun, SessionState } from './types'
 const ABORT_BRIDGE_SYNC_TIMEOUT_MESSAGE = 'Hermes Agent did not confirm stop before timeout. Local run state was released so you can continue.'
 
 function isBridgeRunSource(source?: string): boolean {
-  return source === 'cli' || source === 'global_agent'
+  return source === 'cli' || source === 'global_agent' || source === 'workflow'
 }
 
 export async function handleAbort(

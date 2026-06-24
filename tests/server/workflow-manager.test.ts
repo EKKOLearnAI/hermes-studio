@@ -39,4 +39,31 @@ describe('workflow manager', () => {
     manager.setRuntimeStatus('workflow-1', { status: 'completed', completedAt: 456 })
     expect(updates).toEqual([status])
   })
+
+  it('maps workflow node agents to the existing run backends', async () => {
+    const { resolveWorkflowNodeRunTarget } = await import('../../packages/server/src/services/workflow-manager')
+
+    expect(resolveWorkflowNodeRunTarget('hermes')).toEqual({
+      type: 'workflow',
+      source: 'workflow',
+      agent: 'hermes',
+    })
+    expect(resolveWorkflowNodeRunTarget('claude-code')).toEqual({
+      type: 'workflow',
+      source: 'workflow',
+      agent: 'claude',
+      codingAgentId: 'claude-code',
+    })
+    expect(resolveWorkflowNodeRunTarget('codex')).toEqual({
+      type: 'workflow',
+      source: 'workflow',
+      agent: 'codex',
+      codingAgentId: 'codex',
+    })
+    expect(resolveWorkflowNodeRunTarget('unknown')).toEqual({
+      type: 'workflow',
+      source: 'workflow',
+      agent: 'hermes',
+    })
+  })
 })

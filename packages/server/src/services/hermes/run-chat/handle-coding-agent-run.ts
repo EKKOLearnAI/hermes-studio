@@ -23,13 +23,14 @@ export interface CodingAgentRunSocketData {
   agent_id?: CodingAgentId
   mode?: 'scoped' | 'global'
   workspace?: string | null
+  source?: string
   baseUrl?: string
   base_url?: string
   apiKey?: string
   api_key?: string
   apiMode?: any
   api_mode?: any
-  session_source?: 'global_agent'
+  session_source?: 'global_agent' | 'workflow'
 }
 
 function codingAgentId(data: CodingAgentRunSocketData): CodingAgentId {
@@ -54,7 +55,7 @@ export async function handleCodingAgentRun(
   const agentId = codingAgentId(data)
   const state = getOrCreateSession(sessionMap, sessionId)
   state.profile = profile
-  state.source = 'coding_agent'
+  state.source = data.session_source === 'workflow' || data.source === 'workflow' ? 'workflow' : 'coding_agent'
 
   let runId = codingAgentRunManager.runIdForSession(sessionId)
   const mode = data.mode === 'global' ? 'global' : 'scoped'
@@ -95,7 +96,7 @@ export async function handleCodingAgentRun(
     await writeModelRunProfileToken(socketUser, profile)
     const includeBaseSystemPrompt = agentId === 'claude-code' || agentId === 'codex'
     const runPrompt = [
-      includeBaseSystemPrompt ? getSystemPrompt() : '',
+      includeBaseSystemPrompt ? getSystemPrompt(undefined, { source: data.session_source || data.source }) : '',
     ].filter(Boolean).join('\n')
     await sendCodingAgentRunInput(sessionId, inputText, runPrompt)
   } catch (err) {

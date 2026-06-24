@@ -1017,7 +1017,7 @@ function buildBranchTitle(requestedTitle: string, parentTitle: string): string {
 }
 
 function normalizeBranchSource(source: string | null | undefined): ChatRunSource {
-  if (source === 'api_server' || source === 'cli' || source === 'global_agent') return source
+  if (source === 'api_server' || source === 'cli' || source === 'global_agent' || source === 'workflow') return source
   return 'cli'
 }
 

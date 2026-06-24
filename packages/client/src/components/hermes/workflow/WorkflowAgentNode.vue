@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { Handle, Position, type NodeProps } from '@vue-flow/core'
 import { NodeResizer } from '@vue-flow/node-resizer'
-import { NInput, NSelect, useMessage } from 'naive-ui'
+import { NInput, NSelect, NTooltip, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import WorkflowModelSelector from './WorkflowModelSelector.vue'
 import type { WorkflowAgentNodeData, WorkflowAgentNodeEditableData } from './types'
@@ -21,6 +21,12 @@ const previewPath = ref('')
 const previewVisible = ref(false)
 
 const statusClass = computed(() => `status-${props.data.status}`)
+const statusLabel = computed(() => t(`workflow.status.${props.data.status}`))
+const statusTip = computed(() => (
+  props.data.status === 'failed' && props.data.statusError?.trim()
+    ? props.data.statusError.trim()
+    : ''
+))
 const isCodingAgent = computed(() => props.data.agent !== 'hermes')
 const apiModeOptions = computed(() => [
   { label: t('codingAgents.protocolOpenAiChat'), value: 'chat_completions' },
@@ -47,6 +53,10 @@ function handleModelSelect(selection: { provider: string; model: string; apiMode
     patch.apiMode = selection.apiMode
   }
   props.data.onUpdate(props.id, patch)
+}
+
+function handleControlEvent(event: Event) {
+  if (!props.data.readonly) event.stopPropagation()
 }
 
 function openImagePicker() {
@@ -100,7 +110,7 @@ async function uploadImages(files: File[]) {
 <template>
   <div class="workflow-agent-node" :class="[statusClass, { selected }]">
     <NodeResizer
-      :is-visible="selected"
+      :is-visible="selected && !data.readonly"
       :min-width="260"
       :min-height="360"
       color="var(--accent-info)"
@@ -110,23 +120,35 @@ async function uploadImages(files: File[]) {
     <Handle id="input" type="target" :position="Position.Left" class="workflow-handle input-handle" />
 
     <div class="node-header">
-      <span class="node-status-dot" />
-      <span class="node-title">{{ data.title }}</span>
+      <NTooltip v-if="statusTip" trigger="hover" placement="top">
+        <template #trigger>
+          <span class="node-status-with-tip">
+            <span class="node-status-dot" />
+            <span class="node-status-label">{{ statusLabel }}</span>
+          </span>
+        </template>
+        <span class="node-status-tip">{{ statusTip }}</span>
+      </NTooltip>
+      <span v-else class="node-status-with-tip">
+        <span class="node-status-dot" />
+        <span class="node-status-label">{{ statusLabel }}</span>
+      </span>
     </div>
 
     <div
       class="node-controls nodrag nopan"
-      @click.stop
-      @pointerdown.stop
-      @pointerup.stop
-      @mousedown.stop
-      @mouseup.stop
-      @touchstart.stop
-      @touchend.stop
+      @click="handleControlEvent"
+      @pointerdown="handleControlEvent"
+      @pointerup="handleControlEvent"
+      @mousedown="handleControlEvent"
+      @mouseup="handleControlEvent"
+      @touchstart="handleControlEvent"
+      @touchend="handleControlEvent"
     >
       <NInput
         :value="data.title"
         size="small"
+        :disabled="data.readonly"
         :placeholder="t('workflow.node.title')"
         @update:value="value => updateField('title', value)"
       />
@@ -134,6 +156,7 @@ async function uploadImages(files: File[]) {
         :value="data.agent"
         :options="data.agentOptions"
         size="small"
+        :disabled="data.readonly"
         :placeholder="t('workflow.node.agent')"
         @update:value="value => updateField('agent', value as string)"
       />
@@ -141,6 +164,7 @@ async function uploadImages(files: File[]) {
         :provider="data.provider"
         :model="data.model"
         :groups="data.modelGroups"
+        :disabled="data.readonly"
         @select="handleModelSelect"
       />
       <NSelect
@@ -148,6 +172,7 @@ async function uploadImages(files: File[]) {
         :value="data.apiMode"
         :options="apiModeOptions"
         size="small"
+        :disabled="data.readonly"
         :placeholder="t('workflow.node.apiMode')"
         @update:value="value => updateField('apiMode', value as CodingAgentApiMode)"
       />
@@ -159,6 +184,7 @@ async function uploadImages(files: File[]) {
         tag
         filterable
         size="small"
+        :disabled="data.readonly"
         :placeholder="t('workflow.node.skillsPlaceholder')"
         @update:value="value => updateField('skills', value as string[])"
       />
@@ -168,6 +194,7 @@ async function uploadImages(files: File[]) {
         type="textarea"
         size="small"
         :resizable="false"
+        :disabled="data.readonly"
         :input-props="{ style: { height: '100%', resize: 'none' } }"
         :placeholder="t('workflow.node.promptPlaceholder')"
         @update:value="value => updateField('input', value)"
@@ -194,6 +221,7 @@ async function uploadImages(files: File[]) {
           >
             <img :src="imageUrl(image)" :alt="imageName(image)">
             <button
+              v-if="!data.readonly"
               class="image-remove"
               type="button"
               :aria-label="t('common.delete')"
@@ -227,6 +255,7 @@ async function uploadImages(files: File[]) {
             </svg>
             <span class="file-name">{{ imageName(file) }}</span>
             <button
+              v-if="!data.readonly"
               class="file-remove"
               type="button"
               :aria-label="t('common.delete')"
@@ -240,6 +269,7 @@ async function uploadImages(files: File[]) {
           </a>
         </div>
         <button
+          v-if="!data.readonly"
           class="image-upload-trigger"
           type="button"
           :disabled="uploadingAttachments"
@@ -327,11 +357,23 @@ async function uploadImages(files: File[]) {
   }
 }
 
-.node-title {
+.node-status-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.node-status-with-tip {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.node-status-tip {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .node-status-dot {
@@ -339,16 +381,32 @@ async function uploadImages(files: File[]) {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: $text-muted;
+  background: #9ca3af;
 }
 
-.status-ready .node-status-dot {
-  background: var(--success);
+.status-idle .node-status-dot {
+  background: #9ca3af;
+}
+
+.status-queued .node-status-dot {
+  background: #64748b;
 }
 
 .status-running .node-status-dot {
-  background: var(--accent-info);
-  box-shadow: 0 0 8px rgba(var(--accent-info-rgb), 0.65);
+  background: #2563eb;
+  box-shadow: 0 0 8px rgba(37, 99, 235, 0.65);
+}
+
+.status-completed .node-status-dot {
+  background: #16a34a;
+}
+
+.status-failed .node-status-dot {
+  background: #dc2626;
+}
+
+.status-canceled .node-status-dot {
+  background: #f97316;
 }
 
 .node-controls {

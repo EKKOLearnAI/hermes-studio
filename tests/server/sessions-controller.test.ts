@@ -390,6 +390,32 @@ describe('session conversations controller', () => {
     expect(ctx.body.sessions).toEqual([expect.objectContaining({ id: 'global-1', source: 'global_agent' })])
   })
 
+  it('hides workflow sessions from the default list but allows explicit workflow filtering', async () => {
+    localListSessionsMock.mockReturnValue([
+      { id: 'workflow-1', profile: 'default', source: 'workflow' },
+      { id: 'chat-1', profile: 'default', source: 'cli' },
+    ])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const defaultCtx: any = {
+      query: {},
+      state: {},
+      body: null,
+    }
+    await mod.list(defaultCtx)
+    expect(defaultCtx.body.sessions).toEqual([expect.objectContaining({ id: 'chat-1', source: 'cli' })])
+
+    const workflowCtx: any = {
+      query: { source: 'workflow' },
+      state: {},
+      body: null,
+    }
+    await mod.list(workflowCtx)
+
+    expect(localListSessionsMock).toHaveBeenLastCalledWith(undefined, 'workflow', 2000)
+    expect(workflowCtx.body.sessions).toEqual([expect.objectContaining({ id: 'workflow-1', source: 'workflow' })])
+  })
+
   it('counts visible single-chat sessions with the same filters as the list endpoint', async () => {
     listUserProfilesMock.mockReturnValue([{ profile_name: 'default' }, { profile_name: 'travel' }])
     localListSessionsMock.mockReturnValue([
@@ -398,6 +424,7 @@ describe('session conversations controller', () => {
       { id: 'secret-session', profile: 'secret', source: 'cli' },
       { id: 'unknown-profile-session', profile: 'missing', source: 'cli' },
       { id: 'api-session', profile: 'default', source: 'api_server' },
+      { id: 'workflow-session', profile: 'default', source: 'workflow' },
     ])
 
     const mod = await import('../../packages/server/src/controllers/hermes/sessions')

@@ -7,7 +7,7 @@ export interface WorkflowSelectOption extends SelectOption {
   value: string
 }
 
-export type WorkflowNodeStatus = 'idle' | 'ready' | 'running'
+export type WorkflowNodeStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed' | 'canceled'
 
 export interface WorkflowAgentNodeData {
   title: string
@@ -19,6 +19,8 @@ export interface WorkflowAgentNodeData {
   skills: string[]
   images: string[]
   status: WorkflowNodeStatus
+  statusError?: string | null
+  readonly?: boolean
   agentOptions: WorkflowSelectOption[]
   skillOptions: WorkflowSelectOption[]
   skillsLoading: boolean

@@ -129,34 +129,34 @@ export const WORKFLOW_RUNS_INDEXES = {
   idx_workflow_runs_created_at: 'CREATE INDEX IF NOT EXISTS idx_workflow_runs_created_at ON workflow_runs(created_at)',
 }
 
-export const WORKFLOW_RUN_MESSAGES_TABLE = 'workflow_run_messages'
+export const WORKFLOW_RUN_NODE_SESSIONS_TABLE = 'workflow_run_node_sessions'
 
-export const WORKFLOW_RUN_MESSAGES_SCHEMA: Record<string, string> = {
-  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+export const WORKFLOW_RUN_NODE_SESSIONS_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
   run_id: 'TEXT NOT NULL',
   workflow_id: 'TEXT NOT NULL',
-  node_id: 'TEXT',
-  role: 'TEXT NOT NULL',
-  content: "TEXT NOT NULL DEFAULT ''",
-  display_role: 'TEXT',
-  display_content: 'TEXT',
-  tool_call_id: 'TEXT',
-  tool_calls: 'TEXT',
-  tool_name: 'TEXT',
-  timestamp: 'INTEGER NOT NULL',
-  token_count: 'INTEGER',
-  finish_reason: 'TEXT',
-  reasoning: 'TEXT',
-  reasoning_details: 'TEXT',
-  reasoning_content: 'TEXT',
+  node_id: 'TEXT NOT NULL',
+  session_id: 'TEXT NOT NULL',
+  profile: "TEXT NOT NULL DEFAULT 'default'",
+  agent: "TEXT NOT NULL DEFAULT ''",
+  agent_mode: "TEXT NOT NULL DEFAULT ''",
+  status: "TEXT NOT NULL DEFAULT 'queued'",
   sequence: 'INTEGER NOT NULL DEFAULT 0',
+  started_at: 'INTEGER',
+  finished_at: 'INTEGER',
+  created_at: 'INTEGER NOT NULL',
+  updated_at: 'INTEGER NOT NULL',
+  error: 'TEXT',
 }
 
-export const WORKFLOW_RUN_MESSAGES_INDEXES = {
-  idx_workflow_run_messages_run: 'CREATE INDEX IF NOT EXISTS idx_workflow_run_messages_run ON workflow_run_messages(run_id)',
-  idx_workflow_run_messages_workflow: 'CREATE INDEX IF NOT EXISTS idx_workflow_run_messages_workflow ON workflow_run_messages(workflow_id)',
-  idx_workflow_run_messages_node: 'CREATE INDEX IF NOT EXISTS idx_workflow_run_messages_node ON workflow_run_messages(node_id)',
-  idx_workflow_run_messages_sequence: 'CREATE INDEX IF NOT EXISTS idx_workflow_run_messages_sequence ON workflow_run_messages(run_id, sequence)',
+export const WORKFLOW_RUN_NODE_SESSIONS_INDEXES = {
+  idx_workflow_run_node_sessions_run: 'CREATE INDEX IF NOT EXISTS idx_workflow_run_node_sessions_run ON workflow_run_node_sessions(run_id)',
+  idx_workflow_run_node_sessions_workflow: 'CREATE INDEX IF NOT EXISTS idx_workflow_run_node_sessions_workflow ON workflow_run_node_sessions(workflow_id)',
+  idx_workflow_run_node_sessions_node: 'CREATE INDEX IF NOT EXISTS idx_workflow_run_node_sessions_node ON workflow_run_node_sessions(node_id)',
+  idx_workflow_run_node_sessions_session: 'CREATE INDEX IF NOT EXISTS idx_workflow_run_node_sessions_session ON workflow_run_node_sessions(session_id)',
+  idx_workflow_run_node_sessions_status: 'CREATE INDEX IF NOT EXISTS idx_workflow_run_node_sessions_status ON workflow_run_node_sessions(status)',
+  idx_workflow_run_node_sessions_sequence: 'CREATE INDEX IF NOT EXISTS idx_workflow_run_node_sessions_sequence ON workflow_run_node_sessions(run_id, sequence)',
+  uniq_workflow_run_node_sessions_run_node: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_workflow_run_node_sessions_run_node ON workflow_run_node_sessions(run_id, node_id)',
 }
 
 // ============================================================================
@@ -729,8 +729,8 @@ export function initAllHermesTables(): void {
     syncTable(WORKFLOW_RUNS_TABLE, WORKFLOW_RUNS_SCHEMA, {
       indexes: WORKFLOW_RUNS_INDEXES,
     })
-    syncTable(WORKFLOW_RUN_MESSAGES_TABLE, WORKFLOW_RUN_MESSAGES_SCHEMA, {
-      indexes: WORKFLOW_RUN_MESSAGES_INDEXES,
+    syncTable(WORKFLOW_RUN_NODE_SESSIONS_TABLE, WORKFLOW_RUN_NODE_SESSIONS_SCHEMA, {
+      indexes: WORKFLOW_RUN_NODE_SESSIONS_INDEXES,
     })
 
     // Compression snapshot

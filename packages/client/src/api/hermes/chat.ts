@@ -21,8 +21,8 @@ export interface StartRunRequest {
   provider?: string
   model_groups?: Array<{ provider: string; models: string[] }>
   queue_id?: string
-  source?: 'api_server' | 'cli' | 'coding_agent' | 'global_agent'
-  session_source?: 'global_agent'
+  source?: 'api_server' | 'cli' | 'coding_agent' | 'global_agent' | 'workflow'
+  session_source?: 'global_agent' | 'workflow'
   coding_agent_id?: 'claude-code' | 'codex'
   agent_id?: 'claude-code' | 'codex'
   mode?: 'scoped' | 'global'

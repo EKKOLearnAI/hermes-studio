@@ -9,6 +9,7 @@ const props = defineProps<{
   provider: string
   model: string
   groups: AvailableModelGroup[]
+  disabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -57,6 +58,7 @@ const filteredGroups = computed(() => {
 })
 
 function openModal() {
+  if (props.disabled) return
   collapsedGroups.value = {}
   searchQuery.value = ''
   showModal.value = true
@@ -87,7 +89,7 @@ function handleSelect(group: AvailableModelGroup, model: string) {
 
 <template>
   <div class="workflow-model-selector">
-    <button class="model-trigger" type="button" @click="openModal">
+    <button class="model-trigger" type="button" :disabled="props.disabled" @click="openModal">
       <span class="model-name" :title="props.model">{{ selectedDisplayName || t('models.selectModel') }}</span>
       <svg class="model-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="6 9 12 15 18 9" />
@@ -182,6 +184,11 @@ function handleSelect(group: AvailableModelGroup, model: string) {
 
   &:hover {
     border-color: $accent-muted;
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
   }
 }
 

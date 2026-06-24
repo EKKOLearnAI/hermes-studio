@@ -225,26 +225,141 @@ The controller enforces profile access for non-super-admin users. The store
 persists data in SQLite when available and falls back to the JSON store helpers
 when no SQLite database is active.
 
-## Execution Tables
+## Execution Design
 
-The schema already includes run-oriented tables for future execution work:
+Workflow execution is implemented through the shared chat-run and coding-agent
+runtime paths.
 
-- `workflow_runs`
-- `workflow_run_messages`
+### Implemented
 
-These tables are not wired to the UI execution button yet. They exist so the
-next implementation step can snapshot the workflow definition at run start and
-store per-node run messages.
+- The schema includes run-oriented tables:
+  - `workflow_runs`
+  - `workflow_run_node_sessions`
+- Workflow node messages are not duplicated in workflow-specific message tables.
+  They are read from the shared `messages` table through the node's
+  `sessions.id`.
+- Chat sessions created for workflow nodes use `sessions.source = "workflow"`
+  so normal chat and Hermes history lists stay clean.
+- The `workflow_run_messages` table is no longer used.
+- Workflow runtime status can be pushed over the `/workflow` socket through
+  `workflow.status.updated`.
+- Workflow node agent mapping is defined in the server workflow manager:
+  - Hermes nodes are workflow sessions but execute through the existing
+    bridge/API-server path because the upstream Hermes bridge does not
+    understand `workflow` as an execution source.
+  - Claude Code and Codex nodes are workflow sessions but execute through the
+    existing coding-agent path with the matching `coding_agent_id`.
+- `POST /api/hermes/workflows/:id/run` starts a run asynchronously.
+- `packages/server/src/services/workflow-manager.ts` owns immediate execution,
+  run status, stop/delete behavior, run snapshots, and node session cleanup.
+- Each run persists a `workflow_runs` row and a
+  `workflow_run_node_sessions` row per executed node.
+- The executor schedules nodes from the workflow graph and applies the fan-in
+  failure rule documented below.
+- Each node receives one assembled user message containing upstream outputs,
+  selected skill content, the current node task, and current node images.
+- `packages/server/src/lib/llm-prompt.ts` injects workflow-specific context
+  when the run source is `workflow`.
+- Workflow node sessions are hidden from normal chat/history lists by default.
+- Workflow runs can be listed, selected, stopped, deleted, and inspected from
+  the workflow page.
+- Selecting a run shows the workflow snapshot. Nodes in snapshot mode are
+  read-only and can open their associated session transcript.
+- Hermes workflow nodes auto-respond to tool approval requests with the
+  one-time `once` choice. Normal single-chat approvals still require the user
+  to respond from the chat UI.
+
+### Execution Source Model
+
+`workflow` is a Web UI session source and scheduler marker. It is not a new
+upstream agent backend.
+
+- Persisted node sessions use `sessions.source = "workflow"`.
+- Hermes nodes still execute through the existing bridge/API-server path.
+- Claude Code and Codex nodes still execute through the existing coding-agent
+  path.
+- The executor decides the concrete run path from the node's selected agent.
+
+### Node User Message Assembly
+
+Each workflow node receives exactly one user message per node execution.
+That user message is assembled from upstream outputs and the current node's
+configured input, plus selected skill content when configured.
+
+For a node with upstream dependencies, the format should be stable and
+debuggable:
+
+```text
+[Workflow upstream results]
+
+[Upstream: <node title or node id>]
+<last assistant output from that upstream node session>
+
+[Current task]
+<current node input>
+```
+
+Rules:
+
+- Use the last assistant message from each completed upstream node session as
+  that upstream node's output.
+- Include selected skill content in the assembled user message before the
+  current node task.
+- Do not copy upstream messages into the downstream node session as separate
+  messages.
+- Do not forge assistant messages in the downstream node session.
+- Preserve a stable upstream order, preferably by incoming edge order in the
+  workflow snapshot.
+- Node attachments belong to the current node. Upstream attachments are not
+  inherited automatically in the first implementation.
+
+### Workflow System Context
+
+Workflow runs inject a small system context when `source` is `workflow`.
+The injection point is `packages/server/src/lib/llm-prompt.ts`.
+
+The system context tells the model that it is executing one workflow node,
+that upstream results are context, and that it should focus only on the current
+node task.
+
+```text
+You are executing one node in a workflow.
+
+Focus only on the current node task. Use upstream node results as context, but
+do not rerun upstream work. If upstream results conflict, call out the conflict
+and proceed with the best supported answer.
+
+Return the result for this node clearly and concisely. Do not describe the
+workflow mechanics unless the task asks for it.
+```
+
+### Fan-in Execution Rule
+
+When multiple upstream nodes connect into the same downstream node, the
+downstream node must wait until every upstream node has completed successfully
+before it starts.
+
+For example:
+
+```text
+A ─┐
+   ├─> C
+B ─┘
+```
+
+Node `C` starts only after both `A` and `B` are completed. If either `A` or `B`
+fails, the entire workflow run is marked as failed and `C` must not run.
 
 ## Current Limitations
 
-- Workflow execution is not implemented.
 - Server-side save validation currently validates request shapes and profile
   access. Graph semantic validation is implemented in the client save path.
 - Attachments are stored as uploaded file paths on node data. There is no
   separate workflow attachment table.
-- Skills are currently stored as names on the node and are not resolved until
-  future execution work.
+- Skills are stored as names on the node and resolved at run time.
+- Workflow node sessions are persisted through the shared chat/message tables.
+  Coding-agent sessions may only show assistant messages after the underlying
+  run flushes its database writes.
 
 ## Validation
 
@@ -252,6 +367,9 @@ Relevant checks used while building this feature:
 
 ```bash
 npm run test -- tests/server/workflow-store.test.ts tests/server/schema-sync.test.ts
+npm run test -- tests/server/workflow-controller.test.ts tests/server/workflow-manager.test.ts tests/server/run-chat-queued-item.test.ts
+npx tsc --noEmit -p packages/server/tsconfig.json
+npx vue-tsc -b
 npm run build
 git diff --check
 ```
