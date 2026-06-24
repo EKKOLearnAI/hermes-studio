@@ -204,8 +204,8 @@ if (existsSync(browserToolPath)) {
     browserSrc,
     'browser-stdout-decode-fallback',
     '# patch:browser-stdout-decode-fallback',
-    `from hermes_cli.config import cfg_get\n`,
-    `from hermes_cli.config import cfg_get
+    `from pathlib import Path\n`,
+    `from pathlib import Path
 
 # patch:browser-stdout-decode-fallback
 def _hermes_read_browser_output(path: str) -> str:
@@ -245,6 +245,15 @@ def _hermes_read_browser_output(path: str) -> str:
       find,
       replace,
     )
+  }
+
+  const readsBrowserOutput = browserSrc.includes('_hermes_read_browser_output(')
+  const definesBrowserOutputReader = browserSrc.includes('def _hermes_read_browser_output')
+  if (readsBrowserOutput && !definesBrowserOutputReader) {
+    console.error(
+      '  ✗ browser stdout decode fallback is incomplete: browser_tool.py calls _hermes_read_browser_output but does not define it',
+    )
+    process.exit(1)
   }
 
   if (browserSrc !== browserBefore) {
