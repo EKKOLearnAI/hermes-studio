@@ -405,6 +405,9 @@ for (const phrase of [
   'from pathlib import Path',
   'browser stdout decode fallback is incomplete',
   'def _hermes_read_browser_output',
+  'dingtalk AI Card webhook patches are incomplete',
+  'sitecustomize hidden subprocess patch marker exists',
+  'python compile check',
 ]) {
   if (!desktopHermesPatches.includes(phrase)) {
     fail(`apply-hermes-patches.mjs must keep browser stdout fallback complete: ${phrase}`)
