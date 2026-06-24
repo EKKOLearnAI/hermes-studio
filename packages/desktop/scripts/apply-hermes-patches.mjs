@@ -9,6 +9,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs'
 import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { platform as osPlatform, arch as osArch } from 'node:os'
+import { execFileSync } from 'node:child_process'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
@@ -17,6 +18,7 @@ const TARGET_OS = process.env.TARGET_OS || osPlatform()
 const TARGET_ARCH = process.env.TARGET_ARCH || osArch()
 const OS_LABEL = TARGET_OS === 'win32' ? 'win' : TARGET_OS === 'darwin' ? 'mac' : TARGET_OS
 const PY_DIR = resolve(ROOT, 'resources', 'python', `${OS_LABEL}-${TARGET_ARCH}`)
+const pyBin = TARGET_OS === 'win32' ? join(PY_DIR, 'python.exe') : join(PY_DIR, 'bin', 'python3')
 
 // Allow the CI sanity-check path to point at a temp install dir without
 // the full bundled-Python layout (e.g. `pip install --target /tmp/foo`).
@@ -73,6 +75,48 @@ function patchText(text, id, marker, find, replace) {
   applied++
   console.log(`  ✓ ${id}`)
   return text.replace(find, replace)
+}
+
+function failPatchValidation(message) {
+  console.error(`  ✗ ${message}`)
+  process.exit(1)
+}
+
+function validateDingtalkPatches(text) {
+  const beforeWebhook = text.includes('# patch:dt-card-before-webhook')
+  const webhookGate = text.includes('# patch:dt-card-before-webhook-gate')
+  if (beforeWebhook !== webhookGate) {
+    failPatchValidation(
+      'dingtalk AI Card webhook patches are incomplete: dt-card-before-webhook and dt-card-before-webhook-gate must be applied together',
+    )
+  }
+}
+
+function validateSitecustomizePatches(text) {
+  if (text.includes('# patch:brotlicffi-error-compat') && !text.includes('_hermes_brotlicffi.error')) {
+    failPatchValidation('sitecustomize brotlicffi compatibility patch marker exists but error alias assignment is missing')
+  }
+  if (
+    text.includes('# patch:desktop-hidden-subprocess-defaults')
+    && !text.includes('_hermes_apply_hidden_process_options')
+  ) {
+    failPatchValidation('sitecustomize hidden subprocess patch marker exists but hook implementation is missing')
+  }
+}
+
+function compilePatchedPython(files) {
+  const existingFiles = files.filter(file => existsSync(file))
+  if (!existingFiles.length) return
+  if (!existsSync(pyBin)) {
+    console.log(`  · python compile check skipped (python not found at ${pyBin})`)
+    return
+  }
+  try {
+    execFileSync(pyBin, ['-m', 'py_compile', ...existingFiles], { stdio: 'inherit' })
+    console.log('  ✓ python compile check')
+  } catch (err) {
+    failPatchValidation(`python compile check failed: ${err?.message || err}`)
+  }
 }
 
 console.log(`Patching ${dtPath}`)
@@ -194,6 +238,7 @@ patch(
 if (src !== before) {
   writeFileSync(dtPath, src)
 }
+validateDingtalkPatches(src)
 
 if (existsSync(browserToolPath)) {
   console.log(`Patching ${browserToolPath}`)
@@ -204,8 +249,8 @@ if (existsSync(browserToolPath)) {
     browserSrc,
     'browser-stdout-decode-fallback',
     '# patch:browser-stdout-decode-fallback',
-    `from hermes_cli.config import cfg_get\n`,
-    `from hermes_cli.config import cfg_get
+    `from pathlib import Path\n`,
+    `from pathlib import Path
 
 # patch:browser-stdout-decode-fallback
 def _hermes_read_browser_output(path: str) -> str:
@@ -245,6 +290,15 @@ def _hermes_read_browser_output(path: str) -> str:
       find,
       replace,
     )
+  }
+
+  const readsBrowserOutput = browserSrc.includes('_hermes_read_browser_output(')
+  const definesBrowserOutputReader = browserSrc.includes('def _hermes_read_browser_output')
+  if (readsBrowserOutput && !definesBrowserOutputReader) {
+    console.error(
+      '  ✗ browser stdout decode fallback is incomplete: browser_tool.py calls _hermes_read_browser_output but does not define it',
+    )
+    process.exit(1)
   }
 
   if (browserSrc !== browserBefore) {
@@ -338,5 +392,10 @@ function appendSitecustomizePatch(id, marker, body) {
 
 appendSitecustomizePatch('brotlicffi-error-compat', brotlicffiCompatMarker, brotlicffiCompat)
 appendSitecustomizePatch('desktop-hidden-subprocess-defaults', desktopHiddenSubprocessMarker, desktopHiddenSubprocessDefaults)
+
+if (existsSync(sitecustomizePath)) {
+  validateSitecustomizePatches(readFileSync(sitecustomizePath, 'utf-8'))
+}
+compilePatchedPython([dtPath, browserToolPath, sitecustomizePath])
 
 console.log(`Done. Applied ${applied}, skipped ${skipped}.`)
