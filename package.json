@@ -51,6 +51,7 @@
     "dev:website": "vite --config vite.config.website.ts",
     "build:website": "vite build --config vite.config.website.ts",
     "preview:website": "vite preview --config vite.config.website.ts",
+    "mcu:flash:clean": "pio run -d packages/esp32-c3 && pio run -d packages/esp32-c3 -t erase && pio run -d packages/esp32-c3 -t upload",
     "desktop:install": "npm ci --prefix packages/desktop --no-audit --no-fund",
     "desktop:prepare-runtime": "npm --prefix packages/desktop run prepare:runtime",
     "desktop:prepare-python": "npm --prefix packages/desktop run prepare:python",

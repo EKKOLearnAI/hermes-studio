@@ -627,6 +627,26 @@ String deviceId() {
   return String(F("hstudio_esp32c3_")) + mac;
 }
 
+String mcuDeviceCode() {
+  prefs.begin("mcu", true);
+  String code = prefs.getString("device_code", "");
+  prefs.end();
+  code.trim();
+  if (code.length() > 0) return code;
+
+  code = F("hstudio_mcu_");
+  for (uint8_t i = 0; i < 16; ++i) {
+    uint8_t value = static_cast<uint8_t>(esp_random() & 0xFF);
+    if (value < 16) code += F("0");
+    code += String(value, HEX);
+  }
+
+  prefs.begin("mcu", false);
+  prefs.putString("device_code", code);
+  prefs.end();
+  return code;
+}
+
 String mcuSocketStateLabel() {
   if (mcuSocketNamespaceReady) return F("已连接");
   if (mcuSocketConnected) return F("握手中");
@@ -1816,6 +1836,7 @@ void sendStatusPage() {
   appendInfoRow(html, F("Wi-Fi"), WiFi.SSID());
   appendInfoRow(html, F("IP"), WiFi.localIP().toString());
   appendInfoRow(html, F("MAC"), WiFi.macAddress());
+  appendInfoRow(html, F("设备码"), mcuDeviceCode());
   appendInfoRow(html, F("信号"), String(WiFi.RSSI()) + F(" dBm"));
   appendInfoRow(html, F("运行时间"), uptimeText());
   appendInfoRow(html, F("可用内存"), String(ESP.getFreeHeap()) + F(" bytes"));
@@ -2018,11 +2039,13 @@ bool lanDeviceIndex(int index, LanDevice **device) {
 
 String mcuLoginPayload(const String &account, const String &password) {
   String payload;
-  payload.reserve(420);
+  payload.reserve(560);
   payload += F("{\"token\":\"");
   payload += escapeJson(deviceId());
   payload += F("\",\"id\":\"");
   payload += escapeJson(deviceId());
+  payload += F("\",\"device_code\":\"");
+  payload += escapeJson(mcuDeviceCode());
   payload += F("\",\"device_type\":\"global_agent\",\"source\":\"global_agent");
   payload += F("\",\"account\":\"");
   payload += escapeJson(account);
