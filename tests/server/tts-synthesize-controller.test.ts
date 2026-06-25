@@ -158,6 +158,80 @@ describe('tts synthesize controller', () => {
     }
   })
 
+  it('deletes a stored TTS provider row and falls back to Edge when it was active', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(':memory:')
+    vi.doMock('../../packages/server/src/db/index', () => ({
+      getDb: () => db,
+      getStoragePath: () => ':memory:',
+    }))
+
+    try {
+      const schemas = await import('../../packages/server/src/db/hermes/schemas')
+      schemas.initAllHermesTables()
+      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const { ctx: saveCtx } = createMockCtx({
+        settings: { model: 'tts-1', voice: 'alloy' },
+        secrets: { apiKey: 'server-secret' },
+      })
+      saveCtx.state = { user: { id: 7 } }
+      saveCtx.params = { provider: 'openai' }
+      saveCtx.query = {}
+      saveCtx.get = vi.fn(() => '')
+      await ctrl.saveSettings(saveCtx)
+
+      const { ctx: deleteCtx } = createMockCtx()
+      deleteCtx.state = { user: { id: 7 } }
+      deleteCtx.params = { provider: 'openai' }
+      deleteCtx.query = {}
+      deleteCtx.get = vi.fn(() => '')
+      await ctrl.deleteProvider(deleteCtx)
+
+      expect(deleteCtx.status).toBe(200)
+      expect(deleteCtx.body).toEqual({
+        success: true,
+        deleted: true,
+        activeProvider: 'edge',
+      })
+      expect(db.prepare(
+        'SELECT COUNT(*) AS count FROM tts_profile_provider_settings WHERE profile = ? AND provider = ?'
+      ).get('default', 'openai').count).toBe(0)
+      const activeRow = db.prepare('SELECT active_provider FROM tts_profile_settings WHERE profile = ?').get('default') as { active_provider: string }
+      expect(activeRow.active_provider).toBe('edge')
+    } finally {
+      db.close()
+      vi.doUnmock('../../packages/server/src/db/index')
+    }
+  })
+
+  it('rejects deleting the built-in Edge TTS provider', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(':memory:')
+    vi.doMock('../../packages/server/src/db/index', () => ({
+      getDb: () => db,
+      getStoragePath: () => ':memory:',
+    }))
+
+    try {
+      const schemas = await import('../../packages/server/src/db/hermes/schemas')
+      schemas.initAllHermesTables()
+      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const { ctx } = createMockCtx()
+      ctx.state = { user: { id: 7 } }
+      ctx.params = { provider: 'edge' }
+      ctx.query = {}
+      ctx.get = vi.fn(() => '')
+
+      await ctrl.deleteProvider(ctx)
+
+      expect(ctx.status).toBe(400)
+      expect(ctx.body).toEqual({ error: 'built-in TTS provider cannot be deleted' })
+    } finally {
+      db.close()
+      vi.doUnmock('../../packages/server/src/db/index')
+    }
+  })
+
   it('preserves numeric Edge TTS rate and pitch settings on save', async () => {
     const { DatabaseSync } = await import('node:sqlite')
     const db = new DatabaseSync(':memory:')
@@ -804,6 +878,7 @@ describe('tts routes', () => {
     const listSettings = vi.fn(async (ctx: any) => { ctx.body = { route: 'listSettings' } })
     const saveSettings = vi.fn(async (ctx: any) => { ctx.body = { route: 'saveSettings' } })
     const saveActiveProvider = vi.fn(async (ctx: any) => { ctx.body = { route: 'saveActiveProvider' } })
+    const deleteProvider = vi.fn(async (ctx: any) => { ctx.body = { route: 'deleteProvider' } })
     const deleteBaseUrlPreset = vi.fn(async (ctx: any) => { ctx.body = { route: 'deleteBaseUrlPreset' } })
     const deleteSecret = vi.fn(async (ctx: any) => { ctx.body = { route: 'deleteSecret' } })
     const probeProvider = vi.fn(async (ctx: any) => { ctx.body = { route: 'probeProvider' } })
@@ -817,6 +892,7 @@ describe('tts routes', () => {
       listSettings,
       saveSettings,
       saveActiveProvider,
+      deleteProvider,
       deleteBaseUrlPreset,
       deleteSecret,
       probeProvider,
@@ -835,6 +911,7 @@ describe('tts routes', () => {
     expect(protectedPaths).toEqual(expect.arrayContaining([
       '/api/hermes/tts/settings',
       '/api/hermes/tts/settings/active',
+      '/api/hermes/tts/settings/:provider',
       '/api/hermes/tts/settings/:provider',
       '/api/hermes/tts/settings/:provider/base-url-preset',
       '/api/hermes/tts/settings/:provider/secret/:secretName',

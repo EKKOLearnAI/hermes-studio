@@ -10,6 +10,7 @@ import {
   assertActiveTtsProvider,
   assertStoredTtsProvider,
   clearStoredTtsSecret,
+  deleteTtsProviderSetting,
   getActiveTtsProvider,
   getTtsProviderSetting,
   isStoredTtsProvider,
@@ -188,6 +189,32 @@ export async function deleteSecret(ctx: Context) {
     const storedProvider = assertStoredTtsProvider(provider)
     const setting = clearStoredTtsSecret(profile, storedProvider, secretName)
     ctx.body = { success: true, setting }
+  } catch (error) {
+    if (handleSettingsError(ctx, error)) return
+    throw error
+  }
+}
+
+export async function deleteProvider(ctx: Context) {
+  const userId = authUserId(ctx)
+  if (!userId) return
+
+  const provider = ctx.params.provider || ''
+
+  try {
+    const profile = requestedProfile(ctx)
+    const storedProvider = assertStoredTtsProvider(provider)
+    if (storedProvider === 'edge') {
+      ctx.status = 400
+      ctx.body = { error: 'built-in TTS provider cannot be deleted' }
+      return
+    }
+    const deleted = deleteTtsProviderSetting(profile, storedProvider)
+    const currentActiveProvider = getActiveTtsProvider(profile)
+    const activeProvider = currentActiveProvider === storedProvider
+      ? saveActiveTtsProvider(profile, 'edge')
+      : currentActiveProvider
+    ctx.body = { success: true, deleted, activeProvider }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
     throw error

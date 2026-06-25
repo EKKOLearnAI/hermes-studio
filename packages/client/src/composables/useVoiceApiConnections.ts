@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  clearTtsSecret,
+  deleteTtsProvider,
   fetchTtsSettings,
   saveActiveTtsProvider,
   saveTtsSettings,
@@ -10,7 +10,7 @@ import {
   type TtsStoredSettings,
 } from '@/api/hermes/tts-settings'
 import {
-  clearSttSecret,
+  deleteSttProvider,
   fetchSttSettings,
   saveActiveSttProvider,
   saveSttSettings,
@@ -276,11 +276,11 @@ export function useVoiceApiConnections() {
 
   async function deleteSecret(kind: VoiceApiKind, provider: VoiceApiProvider) {
     if (kind === 'tts') {
-      if (!isStoredTtsProvider(provider)) return
-      await clearTtsSecret(provider, 'apiKey')
+      if (!isStoredTtsProvider(provider) || provider === 'edge') return
+      await deleteTtsProvider(provider)
     } else {
       if (!isStoredSttProvider(provider)) return
-      await clearSttSecret(provider, 'apiKey')
+      await deleteSttProvider(provider)
     }
     await refresh()
   }

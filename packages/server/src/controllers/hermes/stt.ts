@@ -5,6 +5,7 @@ import {
   assertActiveSttProvider,
   assertStoredSttProvider,
   clearStoredSttSecret,
+  deleteSttProviderSetting,
   getActiveSttProvider,
   getSttProviderSetting,
   isStoredSttProvider,
@@ -392,6 +393,27 @@ export async function deleteSecret(ctx: Context) {
     const storedProvider = assertStoredSttProvider(provider)
     const setting = clearStoredSttSecret(profile, storedProvider, secretName)
     ctx.body = { success: true, setting }
+  } catch (error) {
+    if (handleSettingsError(ctx, error)) return
+    throw error
+  }
+}
+
+export async function deleteProvider(ctx: Context) {
+  const userId = authUserId(ctx)
+  if (!userId) return
+
+  const provider = ctx.params.provider || ''
+
+  try {
+    const profile = requestedProfile(ctx)
+    const storedProvider = assertStoredSttProvider(provider)
+    const deleted = deleteSttProviderSetting(profile, storedProvider)
+    const currentActiveProvider = getActiveSttProvider(profile)
+    const activeProvider = currentActiveProvider === storedProvider
+      ? saveActiveSttProvider(profile, 'browser')
+      : currentActiveProvider
+    ctx.body = { success: true, deleted, activeProvider }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
     throw error

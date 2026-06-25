@@ -112,6 +112,15 @@ export async function clearSttSecret(
   return body as SttProviderSettingsResponse
 }
 
+export async function deleteSttProvider(
+  provider: StoredSttProvider,
+): Promise<{ success?: boolean; deleted?: boolean; activeProvider?: SttProvider | null }> {
+  return request<{ success?: boolean; deleted?: boolean; activeProvider?: SttProvider | null }>(
+    `/api/hermes/stt/settings/${provider}`,
+    { method: 'DELETE' },
+  )
+}
+
 export async function deleteSttBaseUrlPreset(
   provider: StoredSttProvider,
   url: string,

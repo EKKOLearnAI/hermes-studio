@@ -136,7 +136,7 @@ const moreOptions = computed(() => [
   {
     label: t('settings.voice.remove'),
     key: 'remove',
-    disabled: !props.connection.hasSecret,
+    disabled: props.connection.isBuiltin,
   },
 ])
 
@@ -149,7 +149,7 @@ function handleEditAction() {
 }
 
 function handleMoreSelect(key: string | number) {
-  if (key === 'remove' && props.connection.hasSecret) {
+  if (key === 'remove' && !props.connection.isBuiltin) {
     emit('remove', props.connection)
   }
 }

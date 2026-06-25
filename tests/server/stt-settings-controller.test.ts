@@ -132,6 +132,32 @@ describe('stt settings controller', () => {
     })
   })
 
+  it('deletes a stored STT provider row and falls back to browser when it was active', async () => {
+    const ctrl = await initController()
+    const user = { id: 7, username: 'bob', role: 'admin' }
+
+    await ctrl.saveSettings(makeCtx(user, {
+      settings: { model: 'gpt-4o-transcribe' },
+      secrets: { apiKey: 'server-secret' },
+    }, { provider: 'openai' }))
+
+    const deleteCtx = makeCtx(user, {}, { provider: 'openai' })
+    await ctrl.deleteProvider(deleteCtx)
+
+    expect(deleteCtx.status).toBe(200)
+    expect(deleteCtx.body).toEqual({
+      success: true,
+      deleted: true,
+      activeProvider: 'browser',
+    })
+    expect(db.prepare(
+      'SELECT COUNT(*) AS count FROM stt_profile_provider_settings WHERE profile = ? AND provider = ?'
+    ).get('default', 'openai').count).toBe(0)
+
+    const activeRow = db.prepare('SELECT active_provider FROM stt_profile_settings WHERE profile = ?').get('default') as { active_provider: string }
+    expect(activeRow.active_provider).toBe('browser')
+  })
+
   it('deletes saved custom base URL presets without deleting the current setting or secret', async () => {
     const ctrl = await initController()
     const user = { id: 13, username: 'dana', role: 'admin' }
@@ -263,6 +289,7 @@ describe('stt routes', () => {
     const listSettings = vi.fn(async (ctx: any) => { ctx.body = { route: 'listSettings' } })
     const saveActiveProvider = vi.fn(async (ctx: any) => { ctx.body = { route: 'saveActiveProvider' } })
     const saveSettings = vi.fn(async (ctx: any) => { ctx.body = { route: 'saveSettings' } })
+    const deleteProvider = vi.fn(async (ctx: any) => { ctx.body = { route: 'deleteProvider' } })
     const deleteSecret = vi.fn(async (ctx: any) => { ctx.body = { route: 'deleteSecret' } })
     const deleteBaseUrlPreset = vi.fn(async (ctx: any) => { ctx.body = { route: 'deleteBaseUrlPreset' } })
     const profileStatus = vi.fn(async (ctx: any) => { ctx.body = { route: 'profileStatus' } })
@@ -274,6 +301,7 @@ describe('stt routes', () => {
       listSettings,
       saveActiveProvider,
       saveSettings,
+      deleteProvider,
       deleteSecret,
       deleteBaseUrlPreset,
       profileStatus,
@@ -291,6 +319,7 @@ describe('stt routes', () => {
       '/api/hermes/stt/profile-status/missing-audio',
       '/api/hermes/mcu/voice-turn',
       '/api/hermes/stt/settings/active',
+      '/api/hermes/stt/settings/:provider',
       '/api/hermes/stt/settings/:provider',
       '/api/hermes/stt/settings/:provider/base-url-preset',
       '/api/hermes/stt/settings/:provider/secret/:secretName',

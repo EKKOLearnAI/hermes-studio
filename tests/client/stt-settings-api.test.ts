@@ -11,7 +11,7 @@ vi.mock('@/router', () => ({
 
 import router from '@/router'
 import { hasApiKey } from '../../packages/client/src/api/client'
-import { clearSttSecret, deleteSttBaseUrlPreset, fetchSttSettings, saveActiveSttProvider, saveSttSettings } from '../../packages/client/src/api/hermes/stt-settings'
+import { clearSttSecret, deleteSttBaseUrlPreset, deleteSttProvider, fetchSttSettings, saveActiveSttProvider, saveSttSettings } from '../../packages/client/src/api/hermes/stt-settings'
 import { transcribeSpeech } from '../../packages/client/src/api/hermes/stt'
 
 const mockFetch = vi.fn()
@@ -196,6 +196,34 @@ describe('stt api wrappers', () => {
       settings: { model: 'gpt-4o-transcribe' },
       secrets: {},
       updatedAt: 3,
+    })
+  })
+
+  it('deletes stored provider settings via the provider endpoint', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        success: true,
+        deleted: true,
+        activeProvider: 'browser',
+      }),
+    })
+
+    const result = await deleteSttProvider('openai')
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://hermes.example/api/hermes/stt/settings/openai',
+      expect.objectContaining({
+        method: 'DELETE',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer jwt-token',
+        }),
+      }),
+    )
+    expect(result).toEqual({
+      success: true,
+      deleted: true,
+      activeProvider: 'browser',
     })
   })
 

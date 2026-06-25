@@ -403,3 +403,13 @@ export function clearStoredSttSecret(
 
   return getSttProviderSetting(profileName, storedProvider)
 }
+
+export function deleteSttProviderSetting(profile: string, provider: StoredSttProvider): boolean {
+  const profileName = normalizeProfile(profile)
+  const storedProvider = assertStoredSttProvider(provider)
+  const db = requireDb()
+  const result = db.prepare(
+    `DELETE FROM ${STT_PROFILE_PROVIDER_SETTINGS_TABLE} WHERE profile = ? AND provider = ?`
+  ).run(profileName, storedProvider)
+  return result.changes > 0
+}

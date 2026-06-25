@@ -398,3 +398,13 @@ export function clearStoredTtsSecret(
 
   return getTtsProviderSetting(profileName, storedProvider)
 }
+
+export function deleteTtsProviderSetting(profile: string, provider: StoredTtsProvider): boolean {
+  const profileName = normalizeProfile(profile)
+  const storedProvider = assertStoredTtsProvider(provider)
+  const db = requireDb()
+  const result = db.prepare(
+    `DELETE FROM ${TTS_PROFILE_PROVIDER_SETTINGS_TABLE} WHERE profile = ? AND provider = ?`
+  ).run(profileName, storedProvider)
+  return result.changes > 0
+}
