@@ -369,3 +369,32 @@ export function listWorkflowRunNodeSessions(runId: string): WorkflowRunNodeSessi
   `).all(runId) as Record<string, any>[]
   return rows.map(rowToNodeSessionRecord)
 }
+
+export function deleteWorkflowRunNodeSessions(runId: string, nodeIds: string[]): WorkflowRunNodeSessionRecord[] {
+  const normalizedRunId = runId.trim()
+  const nodeIdSet = new Set(nodeIds.map(id => id.trim()).filter(Boolean))
+  if (!normalizedRunId || nodeIdSet.size === 0) return []
+
+  const db = getDb()
+  if (!db) {
+    const deleted: WorkflowRunNodeSessionRecord[] = []
+    for (const record of Object.values(jsonGetAll(WORKFLOW_RUN_NODE_SESSIONS_TABLE)).map(rowToNodeSessionRecord)) {
+      if (record.run_id !== normalizedRunId || !nodeIdSet.has(record.node_id)) continue
+      deleted.push(record)
+      jsonDelete(WORKFLOW_RUN_NODE_SESSIONS_TABLE, record.id)
+    }
+    return deleted.sort((a, b) => a.sequence - b.sequence)
+  }
+
+  const placeholders = [...nodeIdSet].map(() => '?').join(', ')
+  const rows = db.prepare(`
+    SELECT * FROM ${WORKFLOW_RUN_NODE_SESSIONS_TABLE}
+    WHERE run_id = ? AND node_id IN (${placeholders})
+    ORDER BY sequence ASC
+  `).all(normalizedRunId, ...nodeIdSet) as Record<string, any>[]
+  db.prepare(`
+    DELETE FROM ${WORKFLOW_RUN_NODE_SESSIONS_TABLE}
+    WHERE run_id = ? AND node_id IN (${placeholders})
+  `).run(normalizedRunId, ...nodeIdSet)
+  return rows.map(rowToNodeSessionRecord)
+}

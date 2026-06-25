@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const managerMock = vi.hoisted(() => ({
   get: vi.fn(),
   deleteRun: vi.fn(),
+  rerunFromNode: vi.fn(),
   runNow: vi.fn(),
   stopRun: vi.fn(),
 }))
@@ -39,6 +40,7 @@ describe('workflow controller', () => {
   beforeEach(() => {
     managerMock.get.mockReset()
     managerMock.deleteRun.mockReset()
+    managerMock.rerunFromNode.mockReset()
     managerMock.runNow.mockReset()
     managerMock.stopRun.mockReset()
     listWorkflowRunNodeSessionsMock.mockReset()
@@ -108,6 +110,30 @@ describe('workflow controller', () => {
       ok: true,
       run: { id: 'run-1', workflow_id: 'workflow-1', status: 'canceled' },
     })
+  })
+
+  it('reruns a workflow run from a node through the workflow manager', async () => {
+    const user = { id: 'user-1', role: 'super_admin' }
+    managerMock.get.mockReturnValue({ id: 'workflow-1', profile: 'default' })
+    managerMock.rerunFromNode.mockResolvedValue({ run: { id: 'run-1', status: 'completed' }, nodeSessions: [] })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/workflows')
+    const c = ctx({
+      params: { id: 'workflow-1', runId: 'run-1' },
+      request: { body: { node_id: 'node-2', preserve_start_node: true, timeout_ms: '1000' } },
+      state: { user },
+    })
+
+    await mod.rerunFromNode(c)
+
+    expect(managerMock.rerunFromNode).toHaveBeenCalledWith('workflow-1', 'run-1', 'node-2', {
+      profile: 'default',
+      user,
+      preserveStartNode: true,
+      timeoutMs: 1000,
+    })
+    expect(c.status).toBe(202)
+    expect(c.body).toEqual({ ok: true, status: 'accepted' })
   })
 
   it('deletes a workflow run through the workflow manager', async () => {

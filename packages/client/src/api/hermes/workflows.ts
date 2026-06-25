@@ -85,6 +85,11 @@ export interface WorkflowRunNowRequest {
   timeout_ms?: number
 }
 
+export interface WorkflowRerunFromNodeRequest {
+  preserve_start_node?: boolean
+  timeout_ms?: number
+}
+
 export interface WorkflowRunNowResult {
   run: WorkflowRunRecord
   nodeSessions: WorkflowRunNodeSessionRecord[]
@@ -167,4 +172,22 @@ export async function runWorkflowNow(id: string, input: WorkflowRunNowRequest = 
     method: 'POST',
     body: JSON.stringify(input),
   })
+}
+
+export async function rerunWorkflowRunFromNode(
+  id: string,
+  runId: string,
+  nodeId: string,
+  input: WorkflowRerunFromNodeRequest = {},
+): Promise<WorkflowRunStartResult> {
+  return request<WorkflowRunStartResult>(
+    `/api/hermes/workflows/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/rerun-from-node`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        ...input,
+        node_id: nodeId,
+      }),
+    },
+  )
 }

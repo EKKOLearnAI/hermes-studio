@@ -1,5 +1,5 @@
 import type { Context } from 'koa'
-import { getWorkflowManager, type WorkflowRunNowInput, type WorkflowUpdateInput } from '../../services/workflow-manager'
+import { getWorkflowManager, type WorkflowRerunFromNodeInput, type WorkflowRunNowInput, type WorkflowUpdateInput } from '../../services/workflow-manager'
 import { listUserProfiles } from '../../db/hermes/users-store'
 import { listWorkflowRunNodeSessions, listWorkflowRuns } from '../../db/hermes/workflow-run-store'
 import { logger } from '../../services/logger'
@@ -105,6 +105,17 @@ function optionalPositiveNumber(value: unknown, name: string): { value?: number;
   return { value: numberValue }
 }
 
+function optionalBoolean(value: unknown, name: string): { value?: boolean; error?: string } {
+  if (value === undefined || value === null) return {}
+  if (typeof value === 'boolean') return { value }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true') return { value: true }
+    if (normalized === 'false') return { value: false }
+  }
+  return { error: `${name} must be a boolean` }
+}
+
 export async function list(ctx: Context) {
   const profile = explicitListProfile(ctx)
   if (profile && denyProfileAccess(ctx, profile)) return
@@ -201,6 +212,58 @@ export async function deleteRun(ctx: Context) {
     return
   }
   ctx.body = { ok: true }
+}
+
+export async function rerunFromNode(ctx: Context) {
+  const id = requiredId(ctx)
+  if (!id) return
+  const runId = typeof ctx.params?.runId === 'string' ? ctx.params.runId.trim() : ''
+  if (!runId) {
+    ctx.status = 400
+    ctx.body = { error: 'runId is required' }
+    return
+  }
+
+  const workflow = getWorkflowManager().get(id)
+  if (!workflow) {
+    ctx.status = 404
+    ctx.body = { error: 'workflow not found' }
+    return
+  }
+  if (denyProfileAccess(ctx, workflow.profile)) return
+
+  const body = bodyRecord(ctx)
+  const nodeId = typeof (body.node_id ?? body.nodeId) === 'string' ? String(body.node_id ?? body.nodeId).trim() : ''
+  if (!nodeId) {
+    ctx.status = 400
+    ctx.body = { error: 'node_id is required' }
+    return
+  }
+  const preserveStartNode = optionalBoolean(body.preserve_start_node ?? body.preserveStartNode, 'preserve_start_node')
+  const timeoutMs = optionalPositiveNumber(body.timeout_ms ?? body.timeoutMs, 'timeout_ms')
+  if (rejectBadRequest(ctx, preserveStartNode.error || timeoutMs.error)) return
+
+  const runInput: WorkflowRerunFromNodeInput = {
+    profile: workflow.profile,
+    user: ctx.state?.user,
+  }
+  if (preserveStartNode.value !== undefined) runInput.preserveStartNode = preserveStartNode.value
+  if (timeoutMs.value !== undefined) runInput.timeoutMs = timeoutMs.value
+
+  const manager = getWorkflowManager()
+  void manager.rerunFromNode(id, runId, nodeId, runInput).catch((err: any) => {
+    const message = err?.message || 'failed to rerun workflow'
+    logger.error(err, '[workflow] async rerun failed for workflow %s run %s node %s', id, runId, nodeId)
+    manager.setRuntimeStatus(id, {
+      status: 'failed',
+      runId,
+      completedAt: Date.now(),
+      error: message,
+    })
+  })
+
+  ctx.status = 202
+  ctx.body = { ok: true, status: 'accepted' }
 }
 
 export async function create(ctx: Context) {

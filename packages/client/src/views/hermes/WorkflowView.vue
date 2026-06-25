@@ -14,11 +14,13 @@ import { MiniMap } from '@vue-flow/minimap'
 import { useI18n } from 'vue-i18n'
 import WorkflowAgentNode from '@/components/hermes/workflow/WorkflowAgentNode.vue'
 import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
-import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
+import ChatInput from '@/components/hermes/chat/ChatInput.vue'
+import MessageList from '@/components/hermes/chat/MessageList.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import PageSidebarFooter from '@/components/layout/PageSidebarFooter.vue'
 import { useAppStore } from '@/stores/hermes/app'
+import { useChatStore } from '@/stores/hermes/chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { uploadRuntimeFiles } from '@/api/hermes/files'
 import {
@@ -28,6 +30,7 @@ import {
   deleteWorkflow as deleteWorkflowApi,
   listWorkflowRuns,
   listWorkflows as listWorkflowsApi,
+  rerunWorkflowRunFromNode,
   runWorkflowNow,
   stopWorkflowRun,
   updateWorkflow as updateWorkflowApi,
@@ -44,7 +47,7 @@ import {
   type WorkflowRuntimeStatus,
 } from '@/api/hermes/workflow-socket'
 import { fetchSkills } from '@/api/hermes/skills'
-import { fetchSessionMessagesPage, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { fetchSession } from '@/api/hermes/sessions'
 import { inferCodingAgentApiMode, normalizeCodingAgentApiMode } from '@/api/coding-agents'
 import { buildWorkflowSkillOptions, workflowAgentToSkillTarget } from '@/utils/hermes/workflow-skills'
 import type {
@@ -53,7 +56,6 @@ import type {
   WorkflowNodeStatus,
   WorkflowSelectOption,
 } from '@/components/hermes/workflow/types'
-import type { Session } from '@/stores/hermes/chat'
 import type { AvailableModelGroup } from '@/api/hermes/system'
 
 import '@vue-flow/core/dist/style.css'
@@ -63,12 +65,18 @@ import '@vue-flow/minimap/dist/style.css'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const chatStore = useChatStore()
 const profilesStore = useProfilesStore()
 const message = useMessage()
 const { screenToFlowCoordinate, getViewport, setViewport } = useVueFlow('hermes-workflow')
 const defaultViewport: WorkflowViewport = { x: 80, y: 80, zoom: 0.75 }
-const WORKFLOW_SESSION_PAGE_SIZE = 150
+const workflowBodyRef = ref<HTMLElement | null>(null)
 const workflowCanvasRef = ref<HTMLElement | null>(null)
+const WORKFLOW_CHAT_PANEL_MIN_WIDTH = 360
+const WORKFLOW_CHAT_PANEL_DEFAULT_WIDTH = 560
+const WORKFLOW_CANVAS_MIN_WIDTH = 360
+const WORKFLOW_RUNS_PANEL_WIDTH = 280
+const WORKFLOW_CHAT_PANEL_STORAGE_KEY = 'hermes.workflow.chatPanelWidth'
 
 interface WorkflowNode {
   id: string
@@ -137,14 +145,17 @@ const savingWorkflow = ref(false)
 const executingWorkflow = ref(false)
 const workflowRuns = ref<WorkflowRunRecord[]>([])
 const workflowRunsLoading = ref(false)
+const rerunningWorkflowNodeId = ref<string | null>(null)
 const showWorkflowRunsPanel = ref(true)
 const selectedWorkflowRunId = ref<string | null>(null)
 const manuallyDeselectedWorkflowRunIds = ref<Set<string>>(new Set())
 const autoSelectRunningWorkflowIds = ref<Set<string>>(new Set())
-const workflowNodeSessionModalVisible = ref(false)
-const workflowNodeSessionLoading = ref(false)
-const workflowNodeSession = ref<Session | null>(null)
-const workflowNodeSessionTitle = ref('')
+const workflowChatPanelVisible = ref(false)
+const workflowChatPanelLoading = ref(false)
+const workflowChatPanelTitle = ref('')
+const workflowChatPanelSessionId = ref<string | null>(null)
+const workflowChatPanelWidth = ref(loadWorkflowChatPanelWidth())
+const workflowChatResizeStart = ref<{ x: number; width: number } | null>(null)
 const skillOptionsByKey = ref<Record<string, WorkflowSelectOption[]>>({})
 const skillOptionsLoadingByKey = ref<Record<string, boolean>>({})
 const skillOptionRequests = new Map<string, Promise<void>>()
@@ -193,6 +204,10 @@ const workspacePickerValue = computed({
   },
 })
 
+const workflowChatPanelStyle = computed(() => ({
+  width: isMobile.value ? '100%' : `${workflowChatPanelWidth.value}px`,
+}))
+
 const defaultModelSelection = computed(() => {
   const selectedGroup = appStore.selectedProvider
     ? modelGroups.value.find(group => group.provider === appStore.selectedProvider)
@@ -208,7 +223,29 @@ const defaultModelSelection = computed(() => {
 })
 
 const contextMenuOptions = computed<DropdownOption[]>(() => {
-  if (contextMenuTarget.value?.type === 'edge') {
+  const target = contextMenuTarget.value
+  if (selectedWorkflowRunId.value) {
+    if (target?.type !== 'node') return []
+    const run = selectedWorkflowRun.value
+    const isBusy = Boolean(rerunningWorkflowNodeId.value) || isWorkflowLive(activeWorkflowId.value)
+    const hasNodeSession = Boolean(run?.node_sessions?.some(session => session.node_id === target.id && session.session_id))
+    const hasDownstream = edges.value.some(edge => edge.source === target.id)
+    const options: DropdownOption[] = []
+    if (hasNodeSession) {
+      options.push({
+        key: 'rerun-downstream-keep-node',
+        label: t('workflow.actions.rerunDownstreamKeepNode'),
+        disabled: isBusy || !hasDownstream,
+      })
+    }
+    options.push({
+      key: 'rerun-from-node-clear',
+      label: t('workflow.actions.rerunDownstreamClearNode'),
+      disabled: isBusy,
+    })
+    return options
+  }
+  if (target?.type === 'edge') {
     return [{ key: 'delete-edge', label: t('workflow.actions.deleteEdge') }]
   }
   return [{ key: 'delete-node', label: t('workflow.actions.deleteNode') }]
@@ -370,12 +407,16 @@ onMounted(() => {
   handleMobileChange(mobileQuery)
   mobileQuery.addEventListener('change', handleMobileChange)
   window.addEventListener('hermes:open-page-sidebar', openPageSidebar)
+  window.addEventListener('resize', handleWorkflowChatPanelViewportResize)
+  handleWorkflowChatPanelViewportResize()
   void initializeWorkflowPage()
 })
 
 onUnmounted(() => {
   mobileQuery?.removeEventListener('change', handleMobileChange)
   window.removeEventListener('hermes:open-page-sidebar', openPageSidebar)
+  window.removeEventListener('resize', handleWorkflowChatPanelViewportResize)
+  stopWorkflowChatResize()
   removeWorkflowStatusListener?.()
   removeWorkflowStatusListener = null
   disconnectWorkflowSocket()
@@ -384,10 +425,75 @@ onUnmounted(() => {
 function handleMobileChange(event: MediaQueryList | MediaQueryListEvent) {
   isMobile.value = event.matches
   showWorkflowSidebar.value = !event.matches
+  if (event.matches) showWorkflowRunsPanel.value = false
 }
 
 function openPageSidebar() {
   showWorkflowSidebar.value = true
+}
+
+function loadWorkflowChatPanelWidth() {
+  if (typeof window === 'undefined') return WORKFLOW_CHAT_PANEL_DEFAULT_WIDTH
+  const saved = Number.parseInt(window.localStorage.getItem(WORKFLOW_CHAT_PANEL_STORAGE_KEY) || '', 10)
+  return Number.isFinite(saved) ? Math.round(saved) : WORKFLOW_CHAT_PANEL_DEFAULT_WIDTH
+}
+
+function workflowChatPanelMaxWidth() {
+  if (typeof window === 'undefined') return 1180
+  if (isMobile.value) return window.innerWidth
+  const bodyWidth = workflowBodyRef.value?.clientWidth || window.innerWidth
+  const reservedRunsWidth = showWorkflowRunsPanel.value ? WORKFLOW_RUNS_PANEL_WIDTH : 0
+  const maxWidth = bodyWidth - reservedRunsWidth - WORKFLOW_CANVAS_MIN_WIDTH
+  return Math.max(WORKFLOW_CHAT_PANEL_MIN_WIDTH, Math.min(Math.floor(bodyWidth * 0.72), maxWidth))
+}
+
+function clampWorkflowChatPanelWidth(width: number) {
+  const maxWidth = workflowChatPanelMaxWidth()
+  const minWidth = Math.min(WORKFLOW_CHAT_PANEL_MIN_WIDTH, maxWidth)
+  return Math.min(maxWidth, Math.max(minWidth, Math.round(width)))
+}
+
+function handleWorkflowChatPanelViewportResize() {
+  if (isMobile.value) return
+  workflowChatPanelWidth.value = clampWorkflowChatPanelWidth(workflowChatPanelWidth.value)
+}
+
+function handleWorkflowChatResizeMove(event: PointerEvent) {
+  const start = workflowChatResizeStart.value
+  if (!start) return
+  const delta = event.clientX - start.x
+  workflowChatPanelWidth.value = clampWorkflowChatPanelWidth(start.width + delta)
+}
+
+function stopWorkflowChatResize() {
+  if (!workflowChatResizeStart.value) return
+  workflowChatResizeStart.value = null
+  window.removeEventListener('pointermove', handleWorkflowChatResizeMove)
+  window.removeEventListener('pointerup', stopWorkflowChatResize)
+  if (!isMobile.value) {
+    window.localStorage.setItem(WORKFLOW_CHAT_PANEL_STORAGE_KEY, String(workflowChatPanelWidth.value))
+  }
+  document.body.style.userSelect = ''
+  document.body.style.cursor = ''
+}
+
+function startWorkflowChatResize(event: PointerEvent) {
+  if (isMobile.value) return
+  event.preventDefault()
+  workflowChatResizeStart.value = {
+    x: event.clientX,
+    width: workflowChatPanelWidth.value,
+  }
+  window.addEventListener('pointermove', handleWorkflowChatResizeMove)
+  window.addEventListener('pointerup', stopWorkflowChatResize)
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'col-resize'
+}
+
+function closeWorkflowChatPanel() {
+  workflowChatPanelVisible.value = false
+  workflowChatPanelSessionId.value = null
+  workflowChatPanelTitle.value = ''
 }
 
 function defaultApiMode(provider: string) {
@@ -692,83 +798,6 @@ function workflowNodeErrorFromRun(run: WorkflowRunRecord, nodeId: string): strin
   return null
 }
 
-function mapWorkflowSessionMessages(messages: HermesMessage[]): Session['messages'] {
-  return messages.map(m => {
-    const msg: Session['messages'][number] = {
-      id: String(m.id),
-      role: m.role,
-      content: m.display_content ?? m.content ?? '',
-      timestamp: m.timestamp * 1000,
-      reasoning: m.reasoning || undefined,
-      systemType: m.role === 'command' ? 'command' : undefined,
-    }
-
-    if (m.role === 'tool') {
-      msg.toolName = m.tool_name || undefined
-      msg.toolCallId = m.tool_call_id || undefined
-      msg.toolArgs = m.tool_calls?.[0]?.function?.arguments
-        ? JSON.stringify(m.tool_calls[0].function.arguments)
-        : undefined
-      msg.toolStatus = 'done'
-      msg.toolResult = m.content || undefined
-      msg.content = ''
-    }
-
-    return msg
-  })
-}
-
-function workflowSessionFromSummary(summary: SessionSummary, messages: Session['messages'] = []): Session {
-  return {
-    id: summary.id,
-    profile: summary.profile || undefined,
-    title: summary.title || '',
-    source: summary.source,
-    agent: summary.agent,
-    createdAt: summary.started_at * 1000,
-    updatedAt: (summary.last_active || summary.ended_at || summary.started_at) * 1000,
-    model: summary.model,
-    provider: summary.provider,
-    messageCount: summary.message_count,
-    messageTotal: summary.message_count,
-    loadedMessageCount: messages.length,
-    hasMoreBefore: false,
-    inputTokens: summary.input_tokens,
-    outputTokens: summary.output_tokens,
-    endedAt: summary.ended_at ? summary.ended_at * 1000 : undefined,
-    lastActiveAt: summary.last_active ? summary.last_active * 1000 : undefined,
-    workspace: summary.workspace || undefined,
-    messages,
-  }
-}
-
-async function loadOlderWorkflowNodeSessionMessages(sessionId: string): Promise<boolean> {
-  const target = workflowNodeSession.value
-  if (!target || target.id !== sessionId || target.isLoadingOlderMessages || !target.hasMoreBefore) return false
-  const offset = target.loadedMessageCount || 0
-  target.isLoadingOlderMessages = true
-  try {
-    const page = await fetchSessionMessagesPage(sessionId, offset, WORKFLOW_SESSION_PAGE_SIZE, target.profile)
-    if (!page || page.messages.length === 0) {
-      target.hasMoreBefore = false
-      return false
-    }
-    const existingIds = new Set(target.messages.map(item => item.id))
-    const olderMessages = mapWorkflowSessionMessages(page.messages).filter(item => !existingIds.has(item.id))
-    target.messages = [...olderMessages, ...target.messages]
-    target.loadedMessageCount = offset + page.messages.length
-    target.messageTotal = page.total
-    target.messageCount = page.total
-    target.hasMoreBefore = page.hasMore
-    return olderMessages.length > 0
-  } catch (err) {
-    console.error('Failed to load older workflow node session messages:', err)
-    return false
-  } finally {
-    target.isLoadingOlderMessages = false
-  }
-}
-
 async function openWorkflowNodeSession(nodeId: string) {
   const run = selectedWorkflowRun.value
   if (!run) return
@@ -779,33 +808,23 @@ async function openWorkflowNodeSession(nodeId: string) {
     return
   }
 
-  workflowNodeSessionTitle.value = t('workflow.runs.nodeSessionTitle', { node: node?.data.title || nodeId })
-  workflowNodeSessionModalVisible.value = true
-  workflowNodeSessionLoading.value = true
-  workflowNodeSession.value = null
+  workflowChatPanelTitle.value = t('workflow.runs.nodeSessionTitle', { node: node?.data.title || nodeId })
+  workflowChatPanelSessionId.value = nodeSession.session_id
+  workflowChatPanelVisible.value = true
+  workflowChatPanelLoading.value = true
   try {
-    const page = await fetchSessionMessagesPage(
-      nodeSession.session_id,
-      0,
-      WORKFLOW_SESSION_PAGE_SIZE,
-      nodeSession.profile || run.profile,
-    )
-    if (!page) {
+    const session = await fetchSession(nodeSession.session_id, nodeSession.profile || run.profile)
+    if (!session) {
       message.error(t('workflow.runs.loadNodeSessionFailed'))
       return
     }
-    const session = workflowSessionFromSummary(page.session, mapWorkflowSessionMessages(page.messages))
-    session.profile = page.session.profile || nodeSession.profile || run.profile || undefined
-    session.messageCount = page.total
-    session.messageTotal = page.total
-    session.loadedMessageCount = page.messages.length
-    session.hasMoreBefore = page.hasMore
-    workflowNodeSession.value = session
+    chatStore.ensureSessionLoaded(session)
+    await chatStore.switchSession(nodeSession.session_id)
   } catch (err) {
     console.error('Failed to load workflow node session:', err)
     message.error(t('workflow.runs.loadNodeSessionFailed'))
   } finally {
-    workflowNodeSessionLoading.value = false
+    workflowChatPanelLoading.value = false
   }
 }
 
@@ -878,8 +897,7 @@ async function clearActiveWorkflowPage() {
   selectedWorkflowRunId.value = null
   manuallyDeselectedWorkflowRunIds.value = new Set()
   autoSelectRunningWorkflowIds.value = new Set()
-  workflowNodeSessionModalVisible.value = false
-  workflowNodeSession.value = null
+  closeWorkflowChatPanel()
   closeContextMenu()
   closeWorkflowRunContextMenu()
   await nextTick()
@@ -1347,6 +1365,60 @@ async function startWorkflowExecution() {
   }
 }
 
+async function rerunWorkflowFromNode(nodeId: string, preserveStartNode: boolean) {
+  const workflowId = activeWorkflowId.value
+  const run = selectedWorkflowRun.value
+  if (!workflowId || !run || rerunningWorkflowNodeId.value) return
+  rerunningWorkflowNodeId.value = nodeId
+  showWorkflowRunsPanel.value = true
+  autoSelectRunningWorkflowIds.value = new Set([...autoSelectRunningWorkflowIds.value, workflowId])
+  closeWorkflowChatPanel()
+  try {
+    await rerunWorkflowRunFromNode(workflowId, run.id, nodeId, {
+      preserve_start_node: preserveStartNode,
+    })
+    void loadWorkflowRuns(workflowId, run.id)
+    const now = Date.now()
+    const nextStatuses: Record<string, WorkflowRuntimeState> = Object.fromEntries(
+      nodes.value.map(node => [node.id, workflowNodeStatusFromRun(run, node.id)]),
+    )
+    const queuedNodeIds = downstreamWorkflowNodeIds(nodeId)
+    if (!preserveStartNode) queuedNodeIds.add(nodeId)
+    for (const queuedNodeId of queuedNodeIds) nextStatuses[queuedNodeId] = 'queued'
+    handleWorkflowRuntimeStatus({
+      workflowId,
+      status: 'running',
+      runId: run.id,
+      startedAt: now,
+      updatedAt: now,
+      completedAt: null,
+      error: null,
+      nodeStatuses: nextStatuses,
+    })
+    message.info(
+      preserveStartNode
+        ? t('workflow.actions.rerunDownstreamStarted')
+        : t('workflow.actions.rerunFromNodeStarted'),
+    )
+  } catch (err: any) {
+    message.error(err?.message || t('workflow.actions.rerunFailed'))
+  } finally {
+    rerunningWorkflowNodeId.value = null
+  }
+}
+
+function downstreamWorkflowNodeIds(nodeId: string): Set<string> {
+  const visited = new Set<string>()
+  const stack = edges.value.filter(edge => edge.source === nodeId).map(edge => edge.target)
+  while (stack.length > 0) {
+    const next = stack.pop()
+    if (!next || visited.has(next)) continue
+    visited.add(next)
+    for (const edge of edges.value.filter(edge => edge.source === next)) stack.push(edge.target)
+  }
+  return visited
+}
+
 function initialRunNodeStatuses(sourceNodes: WorkflowNode[], sourceEdges: WorkflowEdge[]): Record<string, WorkflowRuntimeState> {
   const nodeIds = new Set(sourceNodes.map(node => node.id))
   const targetIds = new Set(sourceEdges.filter(edge => nodeIds.has(edge.source) && nodeIds.has(edge.target)).map(edge => edge.target))
@@ -1410,7 +1482,7 @@ function deleteEdge(edgeId: string) {
 }
 
 function openContextMenu(event: MouseEvent | TouchEvent, target: { type: 'node' | 'edge'; id: string }) {
-  if (selectedWorkflowRunId.value) return
+  if (selectedWorkflowRunId.value && target.type !== 'node') return
   event.preventDefault()
   event.stopPropagation()
   const touch = 'changedTouches' in event ? event.changedTouches[0] : null
@@ -1449,6 +1521,20 @@ function handleContextMenuClickOutside() {
 
 function handleContextMenuSelect(key: string | number) {
   const target = contextMenuTarget.value
+  if (key === 'rerun-downstream-keep-node' && target?.type === 'node') {
+    void rerunWorkflowFromNode(target.id, true)
+    closeContextMenu()
+    return
+  }
+  if (key === 'rerun-from-node-clear' && target?.type === 'node') {
+    void rerunWorkflowFromNode(target.id, false)
+    closeContextMenu()
+    return
+  }
+  if (selectedWorkflowRunId.value) {
+    closeContextMenu()
+    return
+  }
   if (key === 'delete-node' && target?.type === 'node') {
     deleteNode(target.id)
   }
@@ -1794,7 +1880,50 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
       </template>
     </NModal>
 
-    <div class="workflow-body">
+    <div ref="workflowBodyRef" class="workflow-body">
+      <aside
+        v-if="workflowChatPanelVisible"
+        class="workflow-chat-panel"
+        :style="workflowChatPanelStyle"
+      >
+        <div
+          class="workflow-chat-resize-handle"
+          @pointerdown="startWorkflowChatResize"
+        />
+        <div class="workflow-chat-panel-inner">
+          <header class="workflow-chat-header">
+            <div class="workflow-chat-title" :title="workflowChatPanelTitle">
+              {{ workflowChatPanelTitle }}
+            </div>
+            <NButton
+              quaternary
+              size="tiny"
+              circle
+              :aria-label="t('common.cancel')"
+              @click="closeWorkflowChatPanel"
+            >
+              <template #icon>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </template>
+            </NButton>
+          </header>
+          <div class="workflow-chat-content">
+            <div v-if="workflowChatPanelLoading" class="workflow-chat-loading">
+              {{ t('common.loading') }}
+            </div>
+            <template v-else-if="workflowChatPanelSessionId">
+              <MessageList />
+              <ChatInput />
+            </template>
+            <div v-else class="workflow-chat-loading">
+              {{ t('chat.noVisibleMessages') }}
+            </div>
+          </div>
+        </div>
+      </aside>
       <section ref="workflowCanvasRef" class="workflow-canvas" aria-label="Workflow canvas">
         <VueFlow
           :key="workflowFlowKey"
@@ -1840,14 +1969,22 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
       <aside v-if="showWorkflowRunsPanel" class="workflow-runs-panel">
         <div class="workflow-runs-header">
           <div class="workflow-runs-title">{{ t('workflow.runs.title') }}</div>
-          <button class="workflow-runs-refresh" type="button" :title="t('workflow.runs.refresh')" @click="loadWorkflowRuns()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M21 12a9 9 0 0 1-15.5 6.2" />
-              <path d="M3 12a9 9 0 0 1 15.5-6.2" />
-              <path d="M18 3v5h-5" />
-              <path d="M6 21v-5h5" />
-            </svg>
-          </button>
+          <div class="workflow-runs-header-actions">
+            <button class="workflow-runs-refresh" type="button" :title="t('workflow.runs.refresh')" @click="loadWorkflowRuns()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 0 1-15.5 6.2" />
+                <path d="M3 12a9 9 0 0 1 15.5-6.2" />
+                <path d="M18 3v5h-5" />
+                <path d="M6 21v-5h5" />
+              </svg>
+            </button>
+            <button class="workflow-runs-refresh workflow-runs-close" type="button" :title="t('common.cancel')" @click="toggleWorkflowRunsPanel">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
         </div>
         <div v-if="workflowRunsLoading" class="workflow-runs-empty">{{ t('common.loading') }}</div>
         <div v-else-if="workflowRuns.length === 0" class="workflow-runs-empty">{{ t('workflow.runs.empty') }}</div>
@@ -1889,28 +2026,6 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
       </aside>
     </div>
     </main>
-
-    <NModal
-      v-model:show="workflowNodeSessionModalVisible"
-      preset="card"
-      :title="workflowNodeSessionTitle"
-      :style="{ width: 'min(920px, calc(100vw - 48px))' }"
-      @after-leave="workflowNodeSession = null"
-    >
-      <div class="workflow-node-session-modal">
-        <div v-if="workflowNodeSessionLoading" class="workflow-node-session-loading">
-          {{ t('common.loading') }}
-        </div>
-        <HistoryMessageList
-          v-else-if="workflowNodeSession"
-          :session="workflowNodeSession"
-          :load-older="loadOlderWorkflowNodeSessionMessages"
-        />
-        <div v-else class="workflow-node-session-empty">
-          {{ t('chat.noVisibleMessages') }}
-        </div>
-      </div>
-    </NModal>
 
     <NDrawer v-model:show="createWorkflowDrawerVisible" placement="right" :width="420">
       <NDrawerContent :title="t('workflow.actions.newWorkflow')" closable>
@@ -2225,8 +2340,9 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
 }
 
 .header-workflow-title {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: min(520px, 52vw);
   margin-left: 10px;
   display: inline-flex;
   align-items: center;
@@ -2281,6 +2397,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
 }
 
 .workflow-body {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -2303,6 +2420,127 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
   flex-direction: column;
 }
 
+.workflow-chat-panel {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 320px;
+  max-width: 100%;
+  min-height: 0;
+  border-right: 1px solid $border-color;
+  background: $bg-card;
+  display: flex;
+  overflow: visible;
+}
+
+.workflow-chat-resize-handle {
+  position: absolute;
+  right: -7px;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  cursor: col-resize;
+  z-index: 20;
+
+  &::after {
+    content: "";
+    position: absolute;
+    right: 6px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background:
+      linear-gradient($border-color, $border-color) top / 1px calc(50% - 26px) no-repeat,
+      linear-gradient($border-color, $border-color) bottom / 1px calc(50% - 26px) no-repeat;
+    transition: background $transition-fast;
+    z-index: 1;
+  }
+
+  &::before {
+    content: "";
+    position: absolute;
+    right: 1px;
+    top: 50%;
+    width: 12px;
+    height: 38px;
+    transform: translateY(-50%);
+    border-radius: 6px;
+    background:
+      linear-gradient($text-muted, $text-muted) center 12px / 6px 1px no-repeat,
+      linear-gradient($text-muted, $text-muted) center 19px / 6px 1px no-repeat,
+      linear-gradient($text-muted, $text-muted) center 26px / 6px 1px no-repeat,
+      $bg-card;
+    border: 1px solid $border-color;
+    opacity: 0.9;
+    transition: all $transition-fast;
+    z-index: 2;
+  }
+
+  &:hover::after {
+    background:
+      linear-gradient(var(--accent-primary), var(--accent-primary)) top / 1px calc(50% - 26px) no-repeat,
+      linear-gradient(var(--accent-primary), var(--accent-primary)) bottom / 1px calc(50% - 26px) no-repeat;
+  }
+
+  &:hover::before {
+    background:
+      linear-gradient(var(--accent-primary), var(--accent-primary)) center 12px / 6px 1px no-repeat,
+      linear-gradient(var(--accent-primary), var(--accent-primary)) center 19px / 6px 1px no-repeat,
+      linear-gradient(var(--accent-primary), var(--accent-primary)) center 26px / 6px 1px no-repeat,
+      $bg-card;
+    border-color: var(--accent-primary);
+    opacity: 1;
+  }
+}
+
+.workflow-chat-panel-inner {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workflow-chat-header {
+  flex: 0 0 auto;
+  min-height: 47px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid $border-color;
+}
+
+.workflow-chat-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $text-primary;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.workflow-chat-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: $bg-primary;
+}
+
+.workflow-chat-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: $text-muted;
+  font-size: 13px;
+}
+
 .workflow-runs-header {
   flex: 0 0 auto;
   display: flex;
@@ -2315,10 +2553,18 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
 
 .workflow-runs-title {
   min-width: 0;
+  flex: 1;
   color: $text-primary;
   font-size: 13px;
   font-weight: 600;
   line-height: 18px;
+}
+
+.workflow-runs-header-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .workflow-runs-refresh {
@@ -2497,23 +2743,6 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
   }
 }
 
-.workflow-node-session-modal {
-  height: min(680px, calc(100vh - 180px));
-  min-height: 360px;
-  display: flex;
-  min-width: 0;
-}
-
-.workflow-node-session-loading,
-.workflow-node-session-empty {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: $text-muted;
-  font-size: 13px;
-}
-
 @media (max-width: $breakpoint-mobile) {
   .workflow-sidebar {
     position: absolute;
@@ -2592,6 +2821,33 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
   }
 
   .workflow-runs-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 70;
+    width: min(340px, 88vw);
+    flex: none;
+    min-height: 0;
+    border-left: 1px solid $border-color;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.16);
+    display: flex;
+  }
+
+  .workflow-chat-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 80;
+    width: 100% !important;
+    min-width: 0;
+    border-right: none;
+    box-shadow: none;
+  }
+
+  .workflow-chat-resize-handle {
     display: none;
   }
 }
