@@ -1844,6 +1844,13 @@ jobTriggered: 'Job acionado',
 
   // Registro de alteracoes
   changelog: {
+    new_0_6_21_1: 'Esta versao foca em reruns de workflow, ferramentas MCP de workflow, remocao de ajustes voice, ajustes Matrix, limpeza de updates e documentacao',
+    new_0_6_21_2: 'Mensagens de nodes workflow agora abrem em um drawer de chat completo a esquerda e redimensionavel; o historico mobile de runs volta a abrir e reruns podem manter ou limpar o node selecionado',
+    new_0_6_21_3: 'O toolset MCP use agora lista, cria, atualiza, exclui, executa, para, exclui runs e rerun workflows a partir de um node selecionado',
+    new_0_6_21_4: 'Remover um voice provider agora exclui os ajustes do profile em vez de apenas limpar a API key; Browser STT e Edge TTS continuam protegidos como defaults integrados',
+    new_0_6_21_5: 'Ajustes Matrix agora aceitam user ID mais password e detectam corretamente o estado configurado ao usar login por password',
+    new_0_6_21_6: 'Web UI restart, update e upgrade dentro do app agora param o Agent Bridge broker por padrao para evitar reutilizar processos Python bridge antigos',
+    new_0_6_21_7: 'Headers de chat, group chat e workflow estao mais alinhados; Xiao Fang He mostra sold out; o escopo BSL ficou mais claro; o plano /learn foi documentado; o proxy Hermes legado foi removido',
     new_0_6_20_1: 'Workflow agora esta disponivel: crie nodes Agent, conecte-os em um grafo e execute o flow completo pela pagina Workflow',
     new_0_6_20_2: 'Workflow runs salvam registros, snapshots do grafo, sessoes por node, live node status, motivos de falha e acoes para parar ou excluir runs',
     new_0_6_20_3: 'A visualizacao e edicao de workflows ficaram mais completas com historico de runs, snapshots read-only, revisao de chat por node, handles maiores e aviso para criar workflow primeiro',

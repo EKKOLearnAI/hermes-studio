@@ -1844,6 +1844,13 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   changelog: {
+    new_0_6_21_1: 'Diese Version fokussiert Workflow-Reruns, MCP-Workflow-Tools, Voice-Settings-Loeschung, Matrix-Login-Settings, Update-Cleanup und Dokumentation',
+    new_0_6_21_2: 'Workflow-Node-Messages oeffnen jetzt links in einem resizable Full-Chat-Drawer; mobile Run-History oeffnet wieder korrekt und Reruns koennen den ausgewaehlten Node behalten oder loeschen',
+    new_0_6_21_3: 'Das MCP use Toolset kann jetzt Workflows listen, erstellen, aktualisieren, loeschen, starten, stoppen, Run-Records loeschen und ab einem ausgewaehlten Node rerunnen',
+    new_0_6_21_4: 'Voice Provider Removal loescht jetzt die Profile-Provider-Settings statt nur API Keys zu leeren; Browser STT und Edge TTS bleiben geschuetzte eingebaute Defaults',
+    new_0_6_21_5: 'Matrix Platform Settings unterstuetzen user ID plus password und erkennen den configured Status korrekt bei Password Login',
+    new_0_6_21_6: 'Web UI restart, update und In-App-Upgrade stoppen den Agent Bridge Broker jetzt standardmaessig, damit neue Builds keine alten Python-Bridge-Prozesse wiederverwenden',
+    new_0_6_21_7: 'Chat-, Group-Chat- und Workflow-Header sind besser ausgerichtet; Xiao Fang He zeigt sold out; der BSL-Scope ist klarer; /learn Planung ist dokumentiert; alter Hermes Proxy Code wurde entfernt',
     new_0_6_20_1: 'Workflow ist jetzt verfuegbar: Agent Nodes erstellen, zu einem Graph verbinden und den gesamten Flow direkt auf der Workflow-Seite ausfuehren',
     new_0_6_20_2: 'Workflow Runs speichern Run Records, Graph Snapshots, Node Sessions, Live Node Status, Fehlergruende sowie Stop- und Delete-Aktionen',
     new_0_6_20_3: 'Workflow Ansicht und Editing sind kompletter mit Run History, read-only Snapshots, Node Chat Session Review, groesseren Connection Handles und Create-Workflow-First Guard',

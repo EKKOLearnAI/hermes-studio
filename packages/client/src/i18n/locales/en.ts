@@ -2229,6 +2229,13 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_21_1: 'This release focuses on workflow reruns, MCP workflow tools, voice settings deletion, Matrix login settings, update cleanup, and documentation polish',
+    new_0_6_21_2: 'Workflow node messages now open in a left-side resizable full chat drawer, with mobile run history restored and rerun actions for keeping the selected node output or clearing it before rerunning downstream nodes',
+    new_0_6_21_3: 'The Hermes Studio MCP use toolset can now list, create, update, delete, run, stop, delete runs, and rerun workflows from a selected node',
+    new_0_6_21_4: 'Voice provider removal now deletes the profile provider settings instead of only clearing API keys, while Browser STT and Edge TTS remain protected built-in defaults',
+    new_0_6_21_5: 'Matrix platform settings now support user ID plus password configuration and report configured status correctly when password login is used',
+    new_0_6_21_6: 'Web UI restart, update, and in-app upgrade now stop the Agent Bridge broker by default so new builds do not attach to stale Python bridge processes',
+    new_0_6_21_7: 'Chat, group chat, and workflow headers are better aligned, the Xiao Fang He page now shows sold-out status, BSL license scope is clearer, the /learn integration plan is documented, and unused Hermes proxy code was removed',
     new_0_6_20_1: 'Workflow is now online: create agent nodes, connect them into a graph, and run the full flow directly from the Workflow page',
     new_0_6_20_2: 'Workflow runs now persist records, graph snapshots, per-node sessions, live node status, failure reasons, and run stop/delete actions',
     new_0_6_20_3: 'Workflow viewing and editing are more complete with run history, read-only snapshots, per-node chat session review, larger connection handles, and a create-workflow-first guard',
