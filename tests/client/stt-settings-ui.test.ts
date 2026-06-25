@@ -9,11 +9,13 @@ const mockFetchSttSettings = vi.fn()
 const mockSaveSttSettings = vi.fn()
 const mockSaveActiveSttProvider = vi.fn()
 const mockClearSttSecret = vi.fn()
+const mockDeleteSttProvider = vi.fn()
 const mockDeleteSttBaseUrlPreset = vi.fn()
 const mockTranscribeSpeech = vi.fn()
 const mockFetchTtsSettings = vi.fn()
 const mockSaveTtsSettings = vi.fn()
 const mockClearTtsSecret = vi.fn()
+const mockDeleteTtsProvider = vi.fn()
 const mockDeleteTtsBaseUrlPreset = vi.fn()
 const mockFetchProviderModels = vi.fn()
 const mockProbeVoiceProvider = vi.fn()
@@ -371,6 +373,7 @@ vi.mock('@/api/hermes/stt-settings', () => ({
   saveSttSettings: mockSaveSttSettings,
   saveActiveSttProvider: mockSaveActiveSttProvider,
   clearSttSecret: mockClearSttSecret,
+  deleteSttProvider: mockDeleteSttProvider,
   deleteSttBaseUrlPreset: mockDeleteSttBaseUrlPreset,
 }))
 
@@ -392,6 +395,7 @@ vi.mock('@/api/hermes/tts-settings', () => ({
   fetchTtsSettings: mockFetchTtsSettings,
   saveTtsSettings: mockSaveTtsSettings,
   clearTtsSecret: mockClearTtsSecret,
+  deleteTtsProvider: mockDeleteTtsProvider,
   deleteTtsBaseUrlPreset: mockDeleteTtsBaseUrlPreset,
 }))
 
@@ -512,6 +516,7 @@ describe('useSttSettings', () => {
     mockSaveSttSettings.mockReset()
     mockSaveActiveSttProvider.mockReset()
     mockClearSttSecret.mockReset()
+    mockDeleteSttProvider.mockReset()
     mockDeleteSttBaseUrlPreset.mockReset()
     mockTranscribeSpeech.mockReset()
     mockMicStart.mockReset()
@@ -520,6 +525,7 @@ describe('useSttSettings', () => {
     mockFetchTtsSettings.mockReset()
     mockSaveTtsSettings.mockReset()
     mockClearTtsSecret.mockReset()
+    mockDeleteTtsProvider.mockReset()
     mockDeleteTtsBaseUrlPreset.mockReset()
     mockFetchProviderModels.mockReset()
     mockProbeVoiceProvider.mockReset()
@@ -719,6 +725,7 @@ describe('VoiceSettings STT UI', () => {
     mockSaveSttSettings.mockReset()
     mockSaveActiveSttProvider.mockReset()
     mockClearSttSecret.mockReset()
+    mockDeleteSttProvider.mockReset()
     mockDeleteSttBaseUrlPreset.mockReset()
     mockTranscribeSpeech.mockReset()
     mockMicStart.mockReset()
@@ -727,6 +734,7 @@ describe('VoiceSettings STT UI', () => {
     mockFetchTtsSettings.mockReset()
     mockSaveTtsSettings.mockReset()
     mockClearTtsSecret.mockReset()
+    mockDeleteTtsProvider.mockReset()
     mockDeleteTtsBaseUrlPreset.mockReset()
     mockFetchProviderModels.mockReset()
     mockSpeechStop.mockReset()
@@ -966,12 +974,7 @@ describe('VoiceSettings STT UI', () => {
         }],
       })
       .mockResolvedValue({ providers: [] })
-    mockClearTtsSecret.mockResolvedValue({
-      provider: 'mimo',
-      settings: {},
-      secrets: {},
-      updatedAt: 6,
-    })
+    mockDeleteTtsProvider.mockResolvedValue({ success: true, deleted: true, activeProvider: null })
 
     const wrapper = await mountComponent()
     await flushPromises()
@@ -980,7 +983,7 @@ describe('VoiceSettings STT UI', () => {
     await wrapper.get('[data-testid="dropdown-option-remove"]').trigger('click')
     await flushPromises()
 
-    expect(mockClearTtsSecret).toHaveBeenCalledWith('mimo', 'apiKey')
+    expect(mockDeleteTtsProvider).toHaveBeenCalledWith('mimo')
     expect(wrapper.text()).not.toContain('raw-secret')
   })
 
