@@ -236,6 +236,149 @@ describe('plan session command', () => {
     }))
   })
 
+  it('starts an idle /learn command with generated prompt input and command storage', async () => {
+    const state = { messages: [], isWorking: false, events: [], queue: [] }
+    const { bridge, namespaceEmit, nsp, runQueuedItem, sessionMap, socket } = makeContext(state, {
+      handled: true,
+      type: 'learn',
+      message: '[IMPORTANT: expanded learn prompt]',
+    })
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+    const command = parseSessionCommand('/learn from docs/workflow.md')!
+
+    await handleSessionCommand('session-1', command, {
+      nsp: nsp as any,
+      socket: socket as any,
+      sessionMap,
+      bridge: bridge as any,
+      profile: 'work',
+      queueId: 'learn-queue-id',
+      runQueuedItem,
+    })
+
+    expect(bridge.command).toHaveBeenCalledWith('session-1', '/learn from docs/workflow.md', 'work')
+    expect(addMessageMock).not.toHaveBeenCalledWith(expect.objectContaining({
+      role: 'command',
+      content: '/learn from docs/workflow.md',
+    }))
+    expect(addMessageMock).not.toHaveBeenCalledWith(expect.objectContaining({
+      content: '[IMPORTANT: expanded learn prompt]',
+    }))
+    expect(namespaceEmit).toHaveBeenCalledWith('session.command', expect.objectContaining({
+      action: 'learn',
+      started: true,
+    }))
+    expect(runQueuedItem).toHaveBeenCalledWith(socket, 'session-1', expect.objectContaining({
+      queue_id: 'learn-queue-id',
+      input: '[IMPORTANT: expanded learn prompt]',
+      displayInput: '/learn from docs/workflow.md',
+      displayRole: 'command',
+      storageMessage: '/learn from docs/workflow.md',
+      profile: 'work',
+    }), 'work')
+  })
+
+  it('queues /learn commands while the bridge session is running', async () => {
+    const state = { messages: [], isWorking: true, events: [], queue: [] }
+    const { bridge, namespaceEmit, nsp, runQueuedItem, sessionMap, socket } = makeContext(state, {
+      handled: true,
+      type: 'learn',
+      message: '[IMPORTANT: expanded learn prompt]',
+    })
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+    const command = parseSessionCommand('/learn the workflow we just performed')!
+
+    await handleSessionCommand('session-1', command, {
+      nsp: nsp as any,
+      socket: socket as any,
+      sessionMap,
+      bridge: bridge as any,
+      profile: 'default',
+      queueId: 'queued-learn',
+      runQueuedItem,
+    })
+
+    expect(runQueuedItem).not.toHaveBeenCalled()
+    expect(bridge.command).toHaveBeenCalledWith('session-1', '/learn the workflow we just performed', 'default')
+    expect(addMessageMock).not.toHaveBeenCalledWith(expect.objectContaining({
+      role: 'command',
+      content: '/learn the workflow we just performed',
+    }))
+    expect(state.queue).toEqual([expect.objectContaining({
+      queue_id: 'queued-learn',
+      input: '[IMPORTANT: expanded learn prompt]',
+      displayInput: '/learn the workflow we just performed',
+      displayRole: 'command',
+      storageMessage: '/learn the workflow we just performed',
+    })])
+    expect(namespaceEmit).toHaveBeenCalledWith('run.queued', expect.objectContaining({
+      queued_messages: [expect.objectContaining({
+        id: 'queued-learn',
+        role: 'command',
+        content: '/learn the workflow we just performed',
+      })],
+    }))
+  })
+
+  it('accepts bare /learn and sends an empty argument to the bridge', async () => {
+    const state = { messages: [], isWorking: false, events: [], queue: [] }
+    const { bridge, nsp, runQueuedItem, sessionMap, socket } = makeContext(state, {
+      handled: true,
+      type: 'learn',
+      message: '[IMPORTANT: expanded bare learn prompt]',
+    })
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+    const command = parseSessionCommand('/learn')!
+
+    await handleSessionCommand('session-1', command, {
+      nsp: nsp as any,
+      socket: socket as any,
+      sessionMap,
+      bridge: bridge as any,
+      profile: 'default',
+      queueId: 'bare-learn',
+      runQueuedItem,
+    })
+
+    expect(command).toEqual(expect.objectContaining({ name: 'learn', rawName: 'learn', args: '' }))
+    expect(bridge.command).toHaveBeenCalledWith('session-1', '/learn', 'default')
+    expect(runQueuedItem).toHaveBeenCalledWith(socket, 'session-1', expect.objectContaining({
+      queue_id: 'bare-learn',
+      input: '[IMPORTANT: expanded bare learn prompt]',
+      displayInput: '/learn',
+      storageMessage: '/learn',
+    }), 'default')
+  })
+
+  it('reports unsupported /learn without starting a run', async () => {
+    const state = { messages: [], isWorking: false, events: [], queue: [] }
+    const { bridge, namespaceEmit, nsp, runQueuedItem, sessionMap, socket } = makeContext(state, {
+      handled: false,
+      type: 'learn',
+      message: '/learn requires a newer Hermes Agent runtime with agent.learn_prompt.',
+    })
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+    const command = parseSessionCommand('/learn from docs')!
+
+    await handleSessionCommand('session-1', command, {
+      nsp: nsp as any,
+      socket: socket as any,
+      sessionMap,
+      bridge: bridge as any,
+      profile: 'default',
+      runQueuedItem,
+    })
+
+    expect(bridge.command).toHaveBeenCalledWith('session-1', '/learn from docs', 'default')
+    expect(runQueuedItem).not.toHaveBeenCalled()
+    expect(namespaceEmit).toHaveBeenCalledWith('session.command', expect.objectContaining({
+      command: 'learn',
+      ok: false,
+      action: 'learn',
+      message: '/learn requires a newer Hermes Agent runtime with agent.learn_prompt.',
+    }))
+  })
+
   it('keeps the client known-command registry accepted by the server parser', async () => {
     const { BRIDGE_SESSION_COMMAND_NAMES, isKnownBridgeSessionCommand } = await import('../../packages/client/src/utils/hermes/bridge-session-commands')
     const { parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
@@ -252,6 +395,12 @@ describe('plan session command', () => {
     }
 
     expect(isKnownBridgeSessionCommand('/reload_skills')).toBe(true)
+    expect(isKnownBridgeSessionCommand('/learn something')).toBe(true)
+    expect(parseSessionCommand('/learn from docs')).toEqual(expect.objectContaining({
+      name: 'learn',
+      rawName: 'learn',
+      args: 'from docs',
+    }))
     expect(parseSessionCommand('/reload_skills')).toEqual(expect.objectContaining({
       name: 'reload-skills',
       rawName: 'reload_skills',

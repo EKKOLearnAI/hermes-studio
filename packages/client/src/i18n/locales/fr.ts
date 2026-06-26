@@ -431,6 +431,7 @@ export default {
       status: 'Afficher l’état de la session et la file',
       abort: 'Arrêter l’exécution Bridge active',
       queue: 'Mettre un message en file après l’exécution active',
+      learn: 'Apprendre une compétence réutilisable depuis les sources décrites',
       plan: 'Rédiger un plan d’implémentation Markdown',
       goal: 'Set a standing goal that continues across turns',
       goalStatus: 'Show the active goal status',

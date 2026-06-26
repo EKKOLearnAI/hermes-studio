@@ -15,6 +15,7 @@ type CommandName =
   | 'abort'
   | 'queue'
   | 'skill'
+  | 'learn'
   | 'plan'
   | 'goal'
   | 'subgoal'
@@ -71,6 +72,7 @@ const COMMAND_ALIASES: Record<string, CommandName> = {
   abort: 'abort',
   queue: 'queue',
   skill: 'skill',
+  learn: 'learn',
   plan: 'plan',
   goal: 'goal',
   subgoal: 'subgoal',
@@ -110,7 +112,7 @@ export async function handleSessionCommand(
   ctx.socket.join(`session:${sessionId}`)
   ensureCommandSession(sessionId, command, ctx)
   const isKnownCommand = Boolean(COMMAND_ALIASES[command.rawName])
-  if (command.name !== 'plan' && command.name !== 'skill' && command.name !== 'branch' && isKnownCommand) {
+  if (command.name !== 'plan' && command.name !== 'skill' && command.name !== 'learn' && command.name !== 'branch' && isKnownCommand) {
     persistCommandMessage(sessionId, state, `/${command.rawName}${command.args ? ` ${command.args}` : ''}`)
   }
 
@@ -216,6 +218,78 @@ export async function handleSessionCommand(
       action: 'error',
       terminal: !state.isWorking,
       message: result?.message || `Unknown bridge command: /${command.rawName}`,
+    })
+    return
+  }
+
+  if (command.name === 'learn') {
+    const displayCommand = `/${command.rawName}${command.args ? ` ${command.args}` : ''}`
+    const bridgeCommand = `/learn${command.args ? ` ${command.args}` : ''}`
+    let result
+    try {
+      result = await ctx.bridge.command(sessionId, bridgeCommand, ctx.profile)
+    } catch (err) {
+      if (state.isWorking) emitQueuedState(ctx, sessionId, state)
+      emitCommand({
+        ok: false,
+        action: 'learn',
+        terminal: !state.isWorking,
+        message: `Learn command failed: ${err instanceof Error ? err.message : String(err)}`,
+      })
+      return
+    }
+
+    const expandedPrompt = typeof result.message === 'string' ? result.message.trim() : ''
+    if (result.handled && expandedPrompt && result.type === 'learn') {
+      logger.info(
+        '[chat-run-socket] /learn resolved session=%s profile=%s chars=%d',
+        sessionId,
+        ctx.profile,
+        expandedPrompt.length,
+      )
+      const next: QueuedRun = {
+        queue_id: ctx.queueId || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        input: expandedPrompt,
+        displayInput: displayCommand,
+        displayRole: 'command',
+        storageMessage: displayCommand,
+        model: ctx.model,
+        provider: ctx.provider,
+        model_groups: ctx.model_groups,
+        instructions: ctx.instructions,
+        profile: ctx.profile,
+        source: 'cli',
+        originSocketId: ctx.socket.id,
+      }
+
+      if (state.isWorking) {
+        state.queue.push(next)
+        emitQueuedState(ctx, sessionId, state)
+        return
+      }
+
+      emitCommand({
+        action: 'learn',
+        terminal: false,
+        started: true,
+      })
+      ctx.runQueuedItem(ctx.socket, sessionId, next, ctx.profile)
+      return
+    }
+
+    logger.warn(
+      '[chat-run-socket] /learn unresolved session=%s profile=%s bridge_type=%s message=%s',
+      sessionId,
+      ctx.profile,
+      typeof result.type === 'string' ? result.type : '',
+      typeof result.message === 'string' ? result.message : '',
+    )
+    if (state.isWorking) emitQueuedState(ctx, sessionId, state)
+    emitCommand({
+      ok: false,
+      action: 'learn',
+      terminal: !state.isWorking,
+      message: result?.message || 'Learn command is not available.',
     })
     return
   }

@@ -434,6 +434,7 @@ export default {
       status: 'Show session status and queue',
       abort: 'Stop the active bridge run',
       queue: 'Queue a message behind the active run',
+      learn: 'Learn a reusable skill from described sources',
       plan: 'Write a markdown implementation plan',
       goal: 'Set a standing goal that continues across turns',
       goalStatus: 'Show the active goal status',

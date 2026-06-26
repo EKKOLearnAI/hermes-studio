@@ -433,6 +433,7 @@ export default {
       status: '查看會話狀態和佇列',
       abort: '停止目前 Bridge 執行',
       queue: '將訊息加入目前執行後的佇列',
+      learn: '從描述的來源學習可重用技能',
       plan: '產生一份 Markdown 實作計畫',
       goal: '設定一個跨輪次持續推進的目標',
       goalStatus: '查看目前目標狀態',

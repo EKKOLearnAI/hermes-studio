@@ -431,6 +431,7 @@ export default {
       status: 'Mostrar estado de sesión y cola',
       abort: 'Detener la ejecución activa de Bridge',
       queue: 'Poner un mensaje en cola tras la ejecución activa',
+      learn: 'Aprender un skill reutilizable desde fuentes descritas',
       plan: 'Escribir un plan de implementación en Markdown',
       goal: 'Set a standing goal that continues across turns',
       goalStatus: 'Show the active goal status',

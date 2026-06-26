@@ -431,6 +431,7 @@ export default {
       status: 'Sitzungsstatus und Warteschlange anzeigen',
       abort: 'Aktiven Bridge-Lauf stoppen',
       queue: 'Nachricht hinter dem aktiven Lauf einreihen',
+      learn: 'Wiederverwendbaren Skill aus beschriebenen Quellen lernen',
       plan: 'Markdown-Implementierungsplan schreiben',
       goal: 'Set a standing goal that continues across turns',
       goalStatus: 'Show the active goal status',

@@ -431,6 +431,7 @@ export default {
       status: 'セッション状態とキューを表示',
       abort: '実行中の Bridge を停止',
       queue: '実行中の処理の後ろにメッセージをキュー追加',
+      learn: '説明されたソースから再利用可能なスキルを学習',
       plan: 'Markdown の実装計画を作成',
       goal: 'Set a standing goal that continues across turns',
       goalStatus: 'Show the active goal status',

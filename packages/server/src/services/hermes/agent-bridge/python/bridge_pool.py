@@ -1394,6 +1394,25 @@ class AgentPool:
                 return self._dispatch_goal_command(session_id, arg)
             if name == "subgoal":
                 return self._dispatch_subgoal_command(session_id, arg)
+            if name == "learn":
+                try:
+                    from agent.learn_prompt import build_learn_prompt
+                except ImportError:
+                    return {
+                        "session_id": session_id,
+                        "command": name,
+                        "handled": False,
+                        "type": "learn",
+                        "message": "/learn requires a newer Hermes Agent runtime with agent.learn_prompt.",
+                    }
+
+                return {
+                    "session_id": session_id,
+                    "command": name,
+                    "handled": True,
+                    "type": "learn",
+                    "message": build_learn_prompt(arg),
+                }
             if name in {"reload-skills", "reload_skills"}:
                 from agent.skill_commands import reload_skills
 

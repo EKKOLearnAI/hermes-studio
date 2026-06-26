@@ -434,6 +434,7 @@ export default {
       status: '查看会话状态和队列',
       abort: '停止当前 Bridge 运行',
       queue: '把消息加入当前运行后的队列',
+      learn: '从描述的来源学习可复用技能',
       plan: '生成一份 Markdown 实施计划',
       goal: '设置一个跨轮次持续推进的目标',
       goalStatus: '查看当前目标状态',
