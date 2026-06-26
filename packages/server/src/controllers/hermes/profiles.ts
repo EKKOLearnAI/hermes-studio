@@ -8,10 +8,11 @@ import { SessionDeleter } from '../../services/hermes/session-deleter'
 import { AgentBridgeClient } from '../../services/hermes/agent-bridge'
 import {
   getGatewayRuntimeStatusForProfile,
+  prepareGatewayForProfileDelete,
   restartGatewayForProfile as restartGatewayRuntimeForProfile,
 } from '../../services/hermes/gateway-autostart'
 import { logger } from '../../services/logger'
-import { smartCloneCleanup } from '../../services/hermes/profile-credentials'
+import { smartCloneCleanup, copyModelProviderAuthForClone } from '../../services/hermes/profile-credentials'
 import { detectHermesRootHome } from '../../services/hermes/hermes-path'
 import { getActiveProfileName } from '../../services/hermes/hermes-profile'
 import { HermesSkillInjector } from '../../services/hermes/skill-injector'
@@ -76,7 +77,7 @@ function listProfilesFromDisk(activeProfileName: string): HermesProfile[] {
   const profiles: HermesProfile[] = [{
     name: 'default',
     active: activeProfileName === 'default',
-    model: '—',
+    model: '',
     alias: '',
   }]
   const profilesDir = join(base, 'profiles')
@@ -89,7 +90,7 @@ function listProfilesFromDisk(activeProfileName: string): HermesProfile[] {
     profiles.push({
       name,
       active: name === activeProfileName,
-      model: '—',
+      model: '',
       alias: '',
     })
   }
@@ -133,6 +134,12 @@ function deleteForbiddenProfileFromDisk(name: string): boolean {
   } catch {}
   logger.warn('[deleteProfile] removed reserved profile "%s" from disk after Hermes CLI rejected deletion', name)
   return true
+}
+
+function profileDirectoryExists(name: string): boolean {
+  if (!name || name === 'default') return true
+  const base = detectHermesRootHome()
+  return existsSync(join(base, 'profiles', name))
 }
 
 function filterVisibleProfiles(profiles: HermesProfile[]): HermesProfile[] {
@@ -269,7 +276,7 @@ async function readBridgeWorkers(): Promise<{ reachable: boolean; workers: Recor
 
 function gatewayStatusLooksRunning(status?: string): boolean {
   const normalized = String(status || '').trim().toLowerCase()
-  if (!normalized || normalized === '—') return false
+  if (!normalized || normalized === '-') return false
   if (normalized.includes('not running') || normalized === 'stopped' || normalized === 'stop') return false
   return normalized.includes('running') || normalized === 'active'
 }
@@ -406,14 +413,16 @@ export async function create(ctx: any) {
     const output = await hermesCli.createProfile(name, clone)
 
     // clone=true 时执行智能清理：
-    //   - 删除 .env 中的独占平台凭据（Weixin / Telegram / Slack / ...）
+    //   - 删除 .env 中的独占平台凭据（Weixin / Telegram / Slack / ...�?
     //   - 禁用 config.yaml 中对应的平台节点
-    // 避免新 profile 与源 profile 共享同一个 bot token 导致互斥冲突。
+    // 避免�?profile 与源 profile 共享同一�?bot token 导致互斥冲突�?
     let strippedCredentials: string[] = []
     let disabledPlatforms: string[] = []
     let strippedConfigCredentials: string[] = []
+    let copiedAuthProviders: string[] = []
     if (clone) {
       try {
+        copiedAuthProviders = copyModelProviderAuthForClone(name)
         const cleanup = smartCloneCleanup(name)
         strippedCredentials = cleanup.strippedCredentials
         disabledPlatforms = cleanup.disabledPlatforms
@@ -421,18 +430,20 @@ export async function create(ctx: any) {
         if (
           strippedCredentials.length > 0 ||
           disabledPlatforms.length > 0 ||
-          strippedConfigCredentials.length > 0
+          strippedConfigCredentials.length > 0 ||
+          copiedAuthProviders.length > 0
         ) {
           logger.info(
-            'Smart clone cleanup for "%s": stripped %d env credentials (%s), disabled %d platforms (%s), stripped %d config credentials (%s)',
+            'Smart clone cleanup for "%s": copied auth for %d model providers (%s), stripped %d env credentials (%s), disabled %d platforms (%s), stripped %d config credentials (%s)',
             name,
+            copiedAuthProviders.length, copiedAuthProviders.join(','),
             strippedCredentials.length, strippedCredentials.join(','),
             disabledPlatforms.length, disabledPlatforms.join(','),
             strippedConfigCredentials.length, strippedConfigCredentials.join(','),
           )
         }
       } catch (err: any) {
-        // 清理失败不应阻断 profile 创建，仅记日志
+        // 清理失败不应阻断 profile 创建，仅记日�?
         logger.error(err, 'Smart clone cleanup failed for "%s"', name)
       }
     }
@@ -445,6 +456,7 @@ export async function create(ctx: any) {
       strippedCredentials,
       disabledPlatforms,
       strippedConfigCredentials,
+      copiedAuthProviders,
     }
   } catch (err: any) {
     ctx.status = 500
@@ -453,7 +465,7 @@ export async function create(ctx: any) {
 }
 
 export async function get(ctx: any) {
-  const name = String(ctx.params.name || '').trim() || 'default'
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim() || 'default'
   if (denyProfile(ctx, name)) return
   try {
     const profile = await hermesCli.getProfile(name)
@@ -465,7 +477,7 @@ export async function get(ctx: any) {
 }
 
 export async function updateAvatar(ctx: any) {
-  const name = String(ctx.params.name || '').trim() || 'default'
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim() || 'default'
   if (denyProfile(ctx, name)) return
   if (isForbiddenProfileName(name)) {
     ctx.status = 400
@@ -505,7 +517,7 @@ export async function updateAvatar(ctx: any) {
 }
 
 export async function deleteAvatar(ctx: any) {
-  const name = String(ctx.params.name || '').trim() || 'default'
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim() || 'default'
   if (denyProfile(ctx, name)) return
   try {
     removeProfileMetadata(name)
@@ -517,7 +529,7 @@ export async function deleteAvatar(ctx: any) {
 }
 
 export async function runtimeStatus(ctx: any) {
-  const name = String(ctx.params.name || '').trim() || 'default'
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim() || 'default'
   if (denyProfile(ctx, name)) return
   if (isForbiddenProfileName(name)) {
     ctx.status = 400
@@ -573,7 +585,7 @@ async function listProfilesForStatus(): Promise<HermesProfile[]> {
 }
 
 export async function restartGatewayForProfile(ctx: any) {
-  const name = String(ctx.params.name || '').trim() || 'default'
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim() || 'default'
   if (denyProfile(ctx, name)) return
   if (isForbiddenProfileName(name)) {
     ctx.status = 400
@@ -607,7 +619,7 @@ export async function restartGatewayForProfile(ctx: any) {
 }
 
 export async function restartProfileRuntime(ctx: any) {
-  const name = String(ctx.params.name || '').trim() || 'default'
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim() || 'default'
   if (denyProfile(ctx, name)) return
   if (isForbiddenProfileName(name)) {
     ctx.status = 400
@@ -633,7 +645,7 @@ export async function restartProfileRuntime(ctx: any) {
 }
 
 export async function remove(ctx: any) {
-  const { name } = ctx.params
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim()
   if (denyProfile(ctx, name)) return
   if (name === 'default') {
     ctx.status = 400
@@ -647,10 +659,16 @@ export async function remove(ctx: any) {
     } catch (err) {
       logger.warn(err, '[profiles] failed to destroy bridge sessions for deleted profile "%s"', name)
     }
+
+    await prepareGatewayForProfileDelete(name)
+
     const ok = await hermesCli.deleteProfile(name)
-    if (ok) {
+    if (ok && !profileDirectoryExists(name)) {
       removeProfileMetadata(name)
       ctx.body = { success: true }
+    } else if (ok) {
+      ctx.status = 500
+      ctx.body = { error: 'Failed to delete profile: profile directory still exists' }
     } else if (deleteForbiddenProfileFromDisk(name)) {
       removeProfileMetadata(name)
       ctx.body = { success: true, fallback: 'removed_reserved_profile_from_disk' }
@@ -665,17 +683,23 @@ export async function remove(ctx: any) {
 }
 
 export async function rename(ctx: any) {
-  if (denyProfile(ctx, ctx.params.name)) return
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim()
+  if (denyProfile(ctx, name)) return
   const { new_name } = ctx.request.body as { new_name?: string }
   if (!new_name) {
     ctx.status = 400
     ctx.body = { error: 'Missing new_name' }
     return
   }
+  if (isForbiddenProfileName(new_name)) {
+    ctx.status = 400
+    ctx.body = { error: `Profile name '${new_name}' is reserved and cannot be used` }
+    return
+  }
   try {
-    const ok = await hermesCli.renameProfile(ctx.params.name, new_name)
+    const ok = await hermesCli.renameProfile(name, new_name)
     if (ok) {
-      renameProfileMetadata(ctx.params.name, new_name)
+      renameProfileMetadata(name, new_name)
       ctx.body = { success: true }
     } else {
       ctx.status = 500
@@ -823,3 +847,4 @@ export async function importProfile(ctx: any) {
     ctx.body = { error: err.message }
   }
 }
+
