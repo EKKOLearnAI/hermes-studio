@@ -7,6 +7,7 @@ const chatApi = vi.hoisted(() => ({
   socketEmit: vi.fn(),
 }))
 const sessionsApi = vi.hoisted(() => ({
+  archiveSession: vi.fn(),
   deleteSession: vi.fn(),
   fetchSessionMessagesPage: vi.fn(),
   fetchSessions: vi.fn(),

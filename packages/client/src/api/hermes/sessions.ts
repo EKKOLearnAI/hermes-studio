@@ -21,6 +21,7 @@ export interface SessionSummary {
   started_at: number
   ended_at: number | null
   last_active?: number
+  is_archived?: number | boolean
   message_count: number
   tool_call_count: number
   input_tokens: number
@@ -237,6 +238,24 @@ export async function renameSession(id: string, title: string): Promise<boolean>
       method: 'POST',
       body: JSON.stringify({ title }),
     })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function archiveSession(id: string): Promise<boolean> {
+  try {
+    await request(`/api/hermes/sessions/${id}/archive`, { method: 'POST' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function unarchiveSession(id: string): Promise<boolean> {
+  try {
+    await request(`/api/hermes/sessions/${id}/unarchive`, { method: 'POST' })
     return true
   } catch {
     return false

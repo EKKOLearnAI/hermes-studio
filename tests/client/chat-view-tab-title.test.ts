@@ -38,6 +38,7 @@ vi.mock('@/api/hermes/chat', () => ({
 }))
 
 vi.mock('@/api/hermes/sessions', () => ({
+  archiveSession: vi.fn(),
   fetchSessions: vi.fn(),
   fetchSessionMessagesPage: vi.fn(),
   deleteSession: vi.fn(),

@@ -16,6 +16,7 @@ const localGetSessionDetailMock = vi.fn()
 const localSearchSessionsMock = vi.fn()
 const localDeleteSessionMock = vi.fn()
 const localRenameSessionMock = vi.fn()
+const localSetSessionArchivedMock = vi.fn()
 const localCreateSessionMock = vi.fn()
 const localUpdateSessionMock = vi.fn()
 const localAddMessagesMock = vi.fn()
@@ -73,6 +74,7 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   getSessionDetail: localGetSessionDetailMock,
   deleteSession: localDeleteSessionMock,
   renameSession: localRenameSessionMock,
+  setSessionArchived: localSetSessionArchivedMock,
   createSession: localCreateSessionMock,
   addMessages: localAddMessagesMock,
   getSession: getSessionMock,
@@ -156,6 +158,7 @@ describe('session conversations controller', () => {
     localSearchSessionsMock.mockReset()
     localDeleteSessionMock.mockReset()
     localRenameSessionMock.mockReset()
+    localSetSessionArchivedMock.mockReset()
     localCreateSessionMock.mockReset()
     localUpdateSessionMock.mockReset()
     localAddMessagesMock.mockReset()
@@ -390,6 +393,19 @@ describe('session conversations controller', () => {
     expect(ctx.body.sessions).toEqual([expect.objectContaining({ id: 'global-1', source: 'global_agent' })])
   })
 
+  it('filters archived sessions from the single-chat session list', async () => {
+    localListSessionsMock.mockReturnValue([
+      { id: 'visible-session', profile: 'default', source: 'cli', is_archived: 0 },
+      { id: 'archived-session', profile: 'default', source: 'cli', is_archived: 1 },
+    ])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { query: {}, state: {}, body: null }
+    await mod.list(ctx)
+
+    expect(ctx.body.sessions.map((session: any) => session.id)).toEqual(['visible-session'])
+  })
+
   it('hides workflow sessions from the default list but allows explicit workflow filtering', async () => {
     localListSessionsMock.mockReturnValue([
       { id: 'workflow-1', profile: 'default', source: 'workflow' },
@@ -421,6 +437,7 @@ describe('session conversations controller', () => {
     localListSessionsMock.mockReturnValue([
       { id: 'default-session', profile: 'default', source: 'cli' },
       { id: 'travel-session', profile: 'travel', source: 'coding_agent' },
+      { id: 'archived-session', profile: 'default', source: 'cli', is_archived: 1 },
       { id: 'secret-session', profile: 'secret', source: 'cli' },
       { id: 'unknown-profile-session', profile: 'missing', source: 'cli' },
       { id: 'api-session', profile: 'default', source: 'api_server' },
@@ -516,6 +533,144 @@ describe('session conversations controller', () => {
       expect.objectContaining({ id: 'cli-1', profile: 'travel', webui_imported: true }),
       expect.objectContaining({ id: 'cli-2', profile: 'travel', webui_imported: false }),
     ])
+  })
+
+  it('keeps archived sessions visible in Hermes history', async () => {
+    localListSessionsMock.mockReturnValue([{ id: 'cli-archived', profile: 'travel', is_archived: 1 }])
+    listSessionSummariesMock.mockResolvedValue([
+      {
+        id: 'cli-archived',
+        source: 'cli',
+        model: 'gpt-5',
+        title: 'Archived imported history',
+        started_at: 1,
+        ended_at: null,
+        last_active: 2,
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: null,
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: '',
+      },
+    ])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { query: { profile: 'travel' }, state: {}, body: null }
+
+    await mod.listHermesSessions(ctx)
+
+    expect(ctx.body.sessions).toEqual([
+      expect.objectContaining({ id: 'cli-archived', profile: 'travel', webui_imported: true }),
+    ])
+  })
+
+  it('keeps archived coding-agent sessions visible in Hermes history', async () => {
+    localListSessionsMock.mockReturnValue([{
+      id: 'codex-archived',
+      profile: 'travel',
+      source: 'coding_agent',
+      agent: 'codex',
+      model: 'gpt-5',
+      title: 'Archived Codex',
+      started_at: 1,
+      ended_at: null,
+      last_active: 2,
+      message_count: 1,
+      tool_call_count: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      billing_provider: null,
+      estimated_cost_usd: 0,
+      actual_cost_usd: null,
+      cost_status: '',
+      preview: '',
+      is_archived: 1,
+    }])
+    listSessionSummariesMock.mockResolvedValue([])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { query: { profile: 'travel' }, state: {}, body: null }
+
+    await mod.listHermesSessions(ctx)
+
+    expect(ctx.body.sessions).toEqual([
+      expect.objectContaining({ id: 'codex-archived', source: 'coding_agent', agent: 'codex', webui_imported: true }),
+    ])
+  })
+
+  it('archives an existing accessible session', async () => {
+    getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', source: 'cli' })
+    localSetSessionArchivedMock.mockReturnValue(true)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'session-1' }, state: {}, body: null }
+
+    await mod.archive(ctx)
+
+    expect(localSetSessionArchivedMock).toHaveBeenCalledWith('session-1', true)
+    expect(ctx.body).toEqual({ ok: true })
+  })
+
+  it('rejects archiving global-agent sessions', async () => {
+    getSessionMock.mockReturnValue({ id: 'global-1', profile: 'default', source: 'global_agent' })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'global-1' }, state: {}, body: null }
+
+    await mod.archive(ctx)
+
+    expect(localSetSessionArchivedMock).not.toHaveBeenCalled()
+    expect(ctx.status).toBe(400)
+    expect(ctx.body).toEqual({ error: 'Global agent sessions cannot be archived' })
+  })
+
+  it('returns 404 when archiving a missing session', async () => {
+    getSessionMock.mockReturnValue(null)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'missing' }, state: {}, body: null }
+
+    await mod.archive(ctx)
+
+    expect(localSetSessionArchivedMock).not.toHaveBeenCalled()
+    expect(ctx.status).toBe(404)
+    expect(ctx.body).toEqual({ error: 'Session not found' })
+  })
+
+  it('unarchives an existing accessible session', async () => {
+    getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', source: 'coding_agent', is_archived: 1 })
+    localSetSessionArchivedMock.mockReturnValue(true)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'session-1' }, state: {}, body: null }
+
+    await mod.unarchive(ctx)
+
+    expect(localSetSessionArchivedMock).toHaveBeenCalledWith('session-1', false)
+    expect(ctx.body).toEqual({ ok: true })
+  })
+
+  it('returns 404 when unarchiving a missing session', async () => {
+    getSessionMock.mockReturnValue(null)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'missing' }, state: {}, body: null }
+
+    await mod.unarchive(ctx)
+
+    expect(localSetSessionArchivedMock).not.toHaveBeenCalled()
+    expect(ctx.status).toBe(404)
+    expect(ctx.body).toEqual({ error: 'Session not found' })
   })
 
   it('searches all account-accessible single-chat sessions unless profile is explicit', async () => {

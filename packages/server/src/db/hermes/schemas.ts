@@ -58,6 +58,7 @@ export const SESSIONS_SCHEMA: Record<string, string> = {
   cost_status: 'TEXT NOT NULL DEFAULT \'\'',
   preview: 'TEXT NOT NULL DEFAULT \'\'',
   last_active: 'INTEGER NOT NULL',
+  is_archived: 'INTEGER NOT NULL DEFAULT 0',
   workspace: 'TEXT',
 }
 

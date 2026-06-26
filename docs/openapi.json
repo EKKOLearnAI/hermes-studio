@@ -8704,7 +8704,10 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "global_agent"
+              ]
             }
           }
         ]
@@ -8940,6 +8943,42 @@
         ]
       }
     },
+    "/api/hermes/sessions/{id}/archive": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create archive",
+        "description": "POST /api/hermes/sessions/:id/archive",
+        "operationId": "archive",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/sessions/{id}/context": {
       "get": {
         "tags": [
@@ -9144,6 +9183,42 @@
             }
           }
         }
+      }
+    },
+    "/api/hermes/sessions/{id}/unarchive": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create unarchive",
+        "description": "POST /api/hermes/sessions/:id/unarchive",
+        "operationId": "unarchive",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/hermes/sessions/{id}/usage": {

@@ -16,7 +16,7 @@ import { getApiKey, setApiKey, clearApiKey, hasApiKey, getStoredUserRole, isStor
 import { getDownloadUrl } from '../../packages/client/src/api/hermes/download'
 import { uploadFiles } from '../../packages/client/src/api/hermes/files'
 import { importSkill } from '../../packages/client/src/api/hermes/skills'
-import { batchDeleteSessions, importHermesSession } from '../../packages/client/src/api/hermes/sessions'
+import { archiveSession, batchDeleteSessions, importHermesSession, unarchiveSession } from '../../packages/client/src/api/hermes/sessions'
 import router from '@/router'
 
 function fakeJwt(payload: Record<string, unknown>) {
@@ -294,6 +294,36 @@ describe('API Client', () => {
 
       const [url, options] = mockFetch.mock.calls[0]
       expect(url).toBe('/api/hermes/sessions/hermes/cli-1/import?profile=travel')
+      expect(options.method).toBe('POST')
+    })
+
+    it('archives a session through the local session endpoint', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ ok: true }),
+      })
+
+      const ok = await archiveSession('session-1')
+
+      const [url, options] = mockFetch.mock.calls[0]
+      expect(ok).toBe(true)
+      expect(url).toBe('/api/hermes/sessions/session-1/archive')
+      expect(options.method).toBe('POST')
+    })
+
+    it('unarchives a session through the local session endpoint', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ ok: true }),
+      })
+
+      const ok = await unarchiveSession('session-1')
+
+      const [url, options] = mockFetch.mock.calls[0]
+      expect(ok).toBe(true)
+      expect(url).toBe('/api/hermes/sessions/session-1/unarchive')
       expect(options.method).toBe('POST')
     })
   })

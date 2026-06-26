@@ -7,6 +7,7 @@ import {
   getSessionDetail as localGetSessionDetail,
   deleteSession as localDeleteSession,
   renameSession as localRenameSession,
+  setSessionArchived as localSetSessionArchived,
   createSession as localCreateSession,
   addMessages as localAddMessages,
   updateSession as localUpdateSession,
@@ -39,6 +40,16 @@ function filterPendingDeletedSessions<T extends { id: string }>(items: T[]): T[]
 
 function filterPendingDeletedConversationSummaries(items: ConversationSummary[]): ConversationSummary[] {
   return filterPendingDeletedSessions(items)
+}
+
+function isArchivedSession(session?: { is_archived?: number | boolean | null } | null): boolean {
+  if (!session) return false
+  if (typeof session.is_archived === 'boolean') return session.is_archived
+  return Number(session.is_archived || 0) !== 0
+}
+
+function filterArchivedSessions<T extends { is_archived?: number | boolean | null }>(items: T[]): T[] {
+  return items.filter(item => !isArchivedSession(item))
 }
 
 function requestedProfile(ctx: any): string | undefined {
@@ -325,6 +336,7 @@ export async function listConversations(ctx: any) {
     cost_status: s.cost_status,
     preview: s.preview,
     workspace: s.workspace || null,
+    is_archived: s.is_archived || 0,
     is_active: s.ended_at == null && (Date.now() / 1000 - s.last_active) <= 300,
     thread_session_count: 1,
   }))
@@ -371,10 +383,10 @@ export async function list(ctx: any) {
   const allSessions = localListSessions(profile, source, effectiveLimit)
   const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
   ctx.body = {
-    sessions: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
+    sessions: filterPendingDeletedSessions(filterArchivedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
       isRequestedSessionSource(source, s.source) &&
       (!knownProfiles || knownProfiles.has(s.profile || 'default')),
-    )),
+    ))),
   }
 }
 
@@ -383,10 +395,10 @@ export async function count(ctx: any) {
   const profile = explicitProfileFilter(ctx)
   const allSessions = localListSessions(profile, source, 2147483647)
   const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
-  const sessions = filterPendingDeletedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
+  const sessions = filterPendingDeletedSessions(filterArchivedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
     isRequestedSessionSource(source, s.source) &&
     (!knownProfiles || knownProfiles.has(s.profile || 'default')),
-  ))
+  )))
   ctx.body = { count: sessions.length }
 }
 
@@ -400,13 +412,24 @@ export async function listHermesSessions(ctx: any) {
   const profile = requestedProfile(ctx)
   const effectiveLimit = limit && limit > 0 ? limit : 2000
 
-  const importedIds = new Set(localListSessions(profile, undefined, effectiveLimit).map(session => session.id))
+  const localSessions = localListSessions(profile, undefined, effectiveLimit)
+  const importedIds = new Set(localSessions.map(session => session.id))
   const allSessions = (await listSessionSummaries(source, effectiveLimit, profile))
     .map(session => ({
       ...(profile ? { ...session, profile } : session),
       webui_imported: importedIds.has(session.id),
     }))
-  ctx.body = { sessions: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s => isHermesHistorySessionSource(s.source))) }
+  const historySessionsById = new Map<string, any>()
+  for (const session of allSessions) historySessionsById.set(session.id, session)
+  for (const session of localSessions) {
+    if (!isArchivedSession(session) || historySessionsById.has(session.id)) continue
+    historySessionsById.set(session.id, { ...session, webui_imported: true })
+  }
+  ctx.body = {
+    sessions: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, [...historySessionsById.values()]).filter(s =>
+      isHermesHistorySessionSource(s.source) || (isArchivedSession(s) && s.source !== 'global_agent'),
+    )),
+  }
 }
 
 export async function search(ctx: any) {
@@ -417,10 +440,10 @@ export async function search(ctx: any) {
   const results = localSearchSessions(profile, q, limit && limit > 0 ? limit : 20)
   const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
   ctx.body = {
-    results: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, results).filter(s =>
+    results: filterPendingDeletedSessions(filterArchivedSessions(filterByAllowedProfiles(ctx, results).filter(s =>
       isRequestedSessionSource(source, s.source) &&
       (!knownProfiles || knownProfiles.has(s.profile || 'default')),
-    )),
+    ))),
   }
 }
 
@@ -764,6 +787,45 @@ export async function rename(ctx: any) {
   if (!ok) {
     ctx.status = 500
     ctx.body = { error: 'Failed to rename session' }
+    return
+  }
+  ctx.body = { ok: true }
+}
+
+export async function archive(ctx: any) {
+  const existing = localGetSession(ctx.params.id)
+  if (!existing) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, existing)) return
+  if (existing.source === 'global_agent') {
+    ctx.status = 400
+    ctx.body = { error: 'Global agent sessions cannot be archived' }
+    return
+  }
+  const ok = localSetSessionArchived(ctx.params.id, true)
+  if (!ok) {
+    ctx.status = 500
+    ctx.body = { error: 'Failed to archive session' }
+    return
+  }
+  ctx.body = { ok: true }
+}
+
+export async function unarchive(ctx: any) {
+  const existing = localGetSession(ctx.params.id)
+  if (!existing) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, existing)) return
+  const ok = localSetSessionArchived(ctx.params.id, false)
+  if (!ok) {
+    ctx.status = 500
+    ctx.body = { error: 'Failed to unarchive session' }
     return
   }
   ctx.body = { ok: true }
@@ -1173,6 +1235,7 @@ export async function getConversationMessagesPaginated(ctx: any) {
       started_at: session.started_at,
       ended_at: session.ended_at,
       last_active: session.last_active,
+      is_archived: (session as any).is_archived || 0,
       message_count: session.message_count,
       input_tokens: session.input_tokens,
       output_tokens: session.output_tokens,

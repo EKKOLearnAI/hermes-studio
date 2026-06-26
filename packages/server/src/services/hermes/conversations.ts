@@ -58,6 +58,7 @@ export interface ConversationSummary {
   actual_cost_usd: number | null
   cost_status: string
   preview: string
+  is_archived?: number | boolean
   is_active: boolean
   thread_session_count: number
 }

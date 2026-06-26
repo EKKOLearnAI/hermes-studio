@@ -2,9 +2,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore } from '@/stores/hermes/chat'
-import { fetchSessions } from '@/api/hermes/sessions'
+import { archiveSession, fetchSessions } from '@/api/hermes/sessions'
 
 vi.mock('@/api/hermes/sessions', () => ({
+  archiveSession: vi.fn(),
   fetchSessions: vi.fn(),
   fetchSessionMessagesPage: vi.fn(),
   deleteSession: vi.fn(),
@@ -90,5 +91,27 @@ describe('chat session ordering', () => {
       'older-active-session',
     ])
     expect(store.sessions[0].updatedAt).toBe(1000_000)
+  })
+
+  it('removes an archived session from the runtime session list', async () => {
+    vi.mocked(fetchSessions)
+      .mockResolvedValueOnce([
+        makeSession('active-session', { started_at: 1000, last_active: 1000 }),
+        makeSession('archive-me', { started_at: 900, last_active: 900 }),
+      ] as any)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        makeSession('active-session', { started_at: 1000, last_active: 1000 }),
+      ] as any)
+      .mockResolvedValueOnce([])
+    vi.mocked(archiveSession).mockResolvedValueOnce(true)
+
+    const store = useChatStore()
+    await store.loadSessions()
+    const ok = await store.archiveSession('archive-me')
+
+    expect(ok).toBe(true)
+    expect(archiveSession).toHaveBeenCalledWith('archive-me')
+    expect(store.sessions.map(session => session.id)).toEqual(['active-session'])
   })
 })

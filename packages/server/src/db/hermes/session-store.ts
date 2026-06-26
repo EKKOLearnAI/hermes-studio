@@ -38,6 +38,7 @@ export interface HermesSessionRow {
   cost_status: string
   preview: string
   last_active: number
+  is_archived: number
   workspace: string | null
   parent_title?: string | null
   parent_last_message?: string | null
@@ -123,6 +124,7 @@ function mapSessionRow(row: Record<string, unknown>): HermesSessionRow {
     cost_status: String(row.cost_status || ''),
     preview: String(row.preview || ''),
     last_active: Number(row.last_active || 0),
+    is_archived: Number(row.is_archived || 0),
     workspace: row.workspace != null ? String(row.workspace) : null,
     parent_title: row.parent_title != null ? String(row.parent_title) : null,
     parent_last_message: row.parent_last_message != null ? String(row.parent_last_message) : null,
@@ -182,7 +184,7 @@ export function createSession(data: {
       message_count: 0, tool_call_count: 0,
       input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0,
       billing_provider: null, estimated_cost_usd: 0, actual_cost_usd: null,
-      cost_status: '', preview: '', last_active: now, workspace: data.workspace || null,
+      cost_status: '', preview: '', last_active: now, is_archived: 0, workspace: data.workspace || null,
     }
   }
   const db = getDb()!
@@ -373,6 +375,13 @@ export function renameSession(id: string, title: string): boolean {
   if (!isSqliteAvailable()) return false
   const db = getDb()!
   const result = db.prepare(`UPDATE ${SESSIONS_TABLE} SET title = ? WHERE id = ?`).run(title, id)
+  return result.changes > 0
+}
+
+export function setSessionArchived(id: string, archived: boolean): boolean {
+  if (!isSqliteAvailable()) return false
+  const db = getDb()!
+  const result = db.prepare(`UPDATE ${SESSIONS_TABLE} SET is_archived = ? WHERE id = ?`).run(archived ? 1 : 0, id)
   return result.changes > 0
 }
 

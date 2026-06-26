@@ -727,8 +727,13 @@ const contextMenuOptions = computed(() => {
     label: t(contextSessionPinned.value ? "chat.unpin" : "chat.pin"),
     key: "pin",
   },
-  { label: t("chat.rename"), key: "rename" },
-  { label: t("chat.setWorkspace"), key: "workspace" }]
+  { label: t("chat.rename"), key: "rename" }]
+
+  if (contextSession.value?.source !== "global_agent") {
+    options.push({ label: t("chat.archiveSession"), key: "archive" })
+  }
+
+  options.push({ label: t("chat.setWorkspace"), key: "workspace" })
 
   if (contextSession.value?.source === "cli" || contextSession.value?.source === "coding_agent") {
     options.push({ label: t("chat.setModel"), key: "model" })
@@ -799,6 +804,19 @@ async function handleContextMenuSelect(key: string) {
     copySessionId(contextSessionId.value);
   } else if (key === "open-link") {
     openSessionInNewTab(contextSessionId.value);
+  } else if (key === "archive") {
+    const archivedSession = contextSession.value;
+    const ok = await chatStore.archiveSession(contextSessionId.value);
+    if (ok) {
+      sessionBrowserPrefsStore.removePinned(contextSessionId.value);
+      if (archivedSession) {
+        selectedSessionKeys.value.delete(sessionSelectionKey(archivedSession));
+        selectedSessionKeys.value = new Set(selectedSessionKeys.value);
+      }
+      message.success(t("chat.sessionArchived"));
+    } else {
+      message.error(t("chat.archiveSessionFailed"));
+    }
   } else if (parseExportKey(key)) {
     const { mode, ext } = parseExportKey(key)!;
     const loadingMsg = mode === "compressed" ? message.loading(t("chat.exportCompressing"), { duration: 0 }) : null;
