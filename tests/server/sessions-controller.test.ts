@@ -22,6 +22,7 @@ const localAddMessagesMock = vi.fn()
 const localUpdateSessionStatsMock = vi.fn()
 const getGroupChatServerMock = vi.fn()
 const getLocalUsageStatsMock = vi.fn()
+const getWebUiUsageStatsBySourceMock = vi.fn()
 const getActiveProfileNameMock = vi.fn()
 const loggerWarnMock = vi.fn()
 const getCompressionSnapshotMock = vi.fn()
@@ -89,6 +90,7 @@ vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
   getUsage: vi.fn(),
   getUsageBatch: vi.fn(),
   getLocalUsageStats: getLocalUsageStatsMock,
+  getWebUiUsageStatsBySource: getWebUiUsageStatsBySourceMock,
 }))
 
 vi.mock('../../packages/server/src/routes/hermes/group-chat', () => ({
@@ -163,6 +165,11 @@ describe('session conversations controller', () => {
     getGroupChatServerMock.mockReset()
     getGroupChatServerMock.mockReturnValue(null)
     getLocalUsageStatsMock.mockReset()
+    getWebUiUsageStatsBySourceMock.mockReset()
+    getWebUiUsageStatsBySourceMock.mockReturnValue({
+      input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0,
+      reasoning_tokens: 0, sessions: 0, by_model: [], by_day: [],
+    })
     getActiveProfileNameMock.mockReset()
     getActiveProfileNameMock.mockReturnValue('default')
     loggerWarnMock.mockReset()
@@ -414,6 +421,19 @@ describe('session conversations controller', () => {
 
     expect(localListSessionsMock).toHaveBeenLastCalledWith(undefined, 'workflow', 2000)
     expect(workflowCtx.body.sessions).toEqual([expect.objectContaining({ id: 'workflow-1', source: 'workflow' })])
+  })
+
+  it('includes omp sessions in the default single-chat list', async () => {
+    localListSessionsMock.mockReturnValue([
+      { id: 'omp-1', profile: 'default', source: 'omp' },
+      { id: 'chat-1', profile: 'default', source: 'cli' },
+    ])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx = { query: {}, state: {}, body: null as { sessions: Array<{ id: string }> } | null }
+    await mod.list(ctx)
+
+    expect(ctx.body?.sessions.map(session => session.id)).toEqual(['omp-1', 'chat-1'])
   })
 
   it('counts visible single-chat sessions with the same filters as the list endpoint', async () => {
@@ -781,6 +801,50 @@ describe('session conversations controller', () => {
       cache_write_tokens: 2,
       sessions: 2,
       cost: 0.02,
+    })
+  })
+
+  it('merges web-ui usage (omp, coding agents) into the dashboard totals', async () => {
+    const today = new Date().toISOString().slice(0, 10)
+    getUsageStatsFromDbMock.mockResolvedValue({
+      input_tokens: 100, output_tokens: 50, cache_read_tokens: 0, cache_write_tokens: 0,
+      reasoning_tokens: 0, sessions: 2, cost: 0.05, total_api_calls: 3,
+      by_model: [
+        { model: 'qwen', input_tokens: 100, output_tokens: 50, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, sessions: 2 },
+      ],
+      by_day: [
+        { date: today, input_tokens: 100, output_tokens: 50, cache_read_tokens: 0, cache_write_tokens: 0, sessions: 2, errors: 0, cost: 0.05 },
+      ],
+    })
+    getWebUiUsageStatsBySourceMock.mockReturnValue({
+      input_tokens: 30, output_tokens: 20, cache_read_tokens: 5, cache_write_tokens: 0,
+      reasoning_tokens: 0, sessions: 1,
+      by_model: [
+        { model: 'qwen', input_tokens: 25, output_tokens: 15, cache_read_tokens: 5, cache_write_tokens: 0, reasoning_tokens: 0, sessions: 1 },
+        { model: 'claude', input_tokens: 5, output_tokens: 5, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, sessions: 1 },
+      ],
+      by_day: [
+        { date: today, input_tokens: 30, output_tokens: 20, cache_read_tokens: 5, cache_write_tokens: 0, sessions: 1, errors: 0, cost: 0 },
+      ],
+    })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { query: { days: '2' }, body: null }
+    await mod.usageStats(ctx)
+
+    expect(getWebUiUsageStatsBySourceMock).toHaveBeenCalledWith(['omp', 'coding_agent'], undefined, 2)
+    expect(ctx.body).toMatchObject({
+      total_input_tokens: 130,
+      total_output_tokens: 70,
+      total_cache_read_tokens: 5,
+      total_sessions: 3,
+      total_cost: 0.05,
+    })
+    const models = ctx.body.model_usage as Array<{ model: string; input_tokens: number; output_tokens: number }>
+    expect(models.find(m => m.model === 'qwen')).toMatchObject({ input_tokens: 125, output_tokens: 65 })
+    expect(models.find(m => m.model === 'claude')).toMatchObject({ input_tokens: 5, output_tokens: 5 })
+    expect(ctx.body.daily_usage.find((row: any) => row.date === today)).toMatchObject({
+      input_tokens: 130, output_tokens: 70, sessions: 3,
     })
   })
 

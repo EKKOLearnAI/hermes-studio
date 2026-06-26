@@ -163,7 +163,38 @@ describe('handleOmpRun frame mapping', () => {
     expect(roles).toContain('assistant')
     expect(roles).toContain('tool')
     expect(mocks.updateSessionStats).toHaveBeenCalledWith('sid')
-    expect(mocks.updateUsage).toHaveBeenCalledWith('sid', expect.objectContaining({ inputTokens: 5, outputTokens: 7 }))
+    expect(mocks.updateUsage).toHaveBeenCalledWith('sid', expect.objectContaining({ inputTokens: 10, outputTokens: 5 }))
+  })
+
+  it('records omp-reported usage summed across calls with the run model', async () => {
+    mocks.getSession.mockReturnValue({ id: 'sid', profile: 'default', workspace: '/ws', model: 'qwen/q', provider: 'openrouter' })
+    const { nsp, socket } = makeHarness()
+    const sessionMap = new Map<string, SessionState>([['sid', freshState()]])
+
+    const run = handleOmpRun(
+      nsp, socket,
+      { input: 'go', session_id: 'sid' },
+      'default', sessionMap,
+      async () => freshState(),
+      vi.fn(),
+    )
+    await vi.waitFor(() => expect(captured).toBeDefined())
+    const emit = captured!
+
+    emit({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'a' }], usage: { input: 100, output: 40, cacheRead: 10, cacheWrite: 2, totalTokens: 150 } } })
+    emit({ type: 'tool_execution_start', toolCallId: 't1', toolName: 'bash', args: {} })
+    emit({ type: 'tool_execution_end', toolCallId: 't1', toolName: 'bash', result: { content: [{ type: 'text', text: 'ok' }] } })
+    emit({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'b' }], usage: { input: 30, output: 12, cacheRead: 5, cacheWrite: 0, totalTokens: 60 } } })
+    emit({ type: 'agent_end', messages: [] })
+    await run
+
+    expect(mocks.updateUsage).toHaveBeenCalledWith('sid', expect.objectContaining({
+      inputTokens: 130,
+      outputTokens: 52,
+      cacheReadTokens: 15,
+      cacheWriteTokens: 2,
+      model: 'qwen/q',
+    }))
   })
 
   it('emits run.failed when omp rejects the prompt', async () => {
@@ -204,5 +235,46 @@ describe('handleOmpRun frame mapping', () => {
     expect(failed).toHaveLength(1)
     expect(String(failed[0].payload.error)).toContain('omp not found on PATH')
     expect(sessionMap.get('sid')!.isWorking).toBe(false)
+  })
+
+  it('renders generate_image output as a markdown image in the assistant stream', async () => {
+    const { emitted, nsp, socket } = makeHarness()
+    const sessionMap = new Map<string, SessionState>([['sid', freshState()]])
+
+    const run = handleOmpRun(
+      nsp, socket,
+      { input: 'draw a smiley', session_id: 'sid' },
+      'default', sessionMap,
+      async () => freshState(),
+      vi.fn(),
+    )
+    await vi.waitFor(() => expect(captured).toBeDefined())
+    const emit = captured!
+
+    emit({ type: 'tool_execution_start', toolCallId: 'img_1', toolName: 'generate_image', args: { subject: 'smiley' } })
+    emit({
+      type: 'tool_execution_end',
+      toolCallId: 'img_1',
+      toolName: 'generate_image',
+      result: {
+        content: [{ type: 'text', text: 'Generated 1 image(s):\n  /tmp/omp-image-xyz.png' }],
+        details: { imagePaths: ['/tmp/omp-image-xyz.png'] },
+      },
+      isError: false,
+    })
+    emit({ type: 'agent_end', messages: [] })
+    await run
+
+    // the generated image is streamed as a markdown image delta
+    const deltas = eventsNamed(emitted, 'message.delta')
+    expect(deltas).toHaveLength(1)
+    expect(String(deltas[0].payload.delta)).toContain('![generated image](/tmp/omp-image-xyz.png)')
+
+    // and persisted as assistant content so it survives reload
+    const assistantContents = mocks.addMessage.mock.calls
+      .map(call => call[0] as { role: string; content: string })
+      .filter(message => message.role === 'assistant')
+      .map(message => message.content)
+    expect(assistantContents.some(content => content.includes('![generated image](/tmp/omp-image-xyz.png)'))).toBe(true)
   })
 })

@@ -1,5 +1,5 @@
 import { isSqliteAvailable, getDb, jsonSet, jsonGet, jsonGetAll, jsonDelete } from '../index'
-import { USAGE_TABLE as TABLE } from './schemas'
+import { USAGE_TABLE as TABLE, SESSIONS_TABLE } from './schemas'
 
 export interface UsageRecord {
   input_tokens: number
@@ -247,6 +247,87 @@ export function getLocalUsageStats(profile?: string, days = 30): LocalUsageStats
       COALESCE(SUM(cache_write_tokens),0) as cache_write_tokens,
       COUNT(DISTINCT session_id) as sessions
     FROM ${TABLE}
+    ${whereClause}
+    GROUP BY date
+    ORDER BY date
+  `).all(...params) as Array<{ date: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; sessions: number }>
+
+  return {
+    input_tokens: totals.input_tokens,
+    output_tokens: totals.output_tokens,
+    cache_read_tokens: totals.cache_read_tokens,
+    cache_write_tokens: totals.cache_write_tokens,
+    reasoning_tokens: totals.reasoning_tokens,
+    sessions: totals.sessions,
+    by_model: byModel,
+    by_day: byDay.map(d => ({ ...d, errors: 0, cost: 0 })),
+  }
+}
+
+/**
+ * Aggregate web-ui-tracked usage (session_usage) for run backends that Hermes
+ * native state.db does not record — `omp` and the `coding_agent` runners. Joined
+ * to the sessions table for source + model so `usageStats` can merge these into
+ * the dashboard without double-counting Hermes-native sessions (cli, global_agent,
+ * workflow, …) that already come from state.db.
+ */
+export function getWebUiUsageStatsBySource(sources: string[], profile?: string, days = 30): LocalUsageStats {
+  const empty: LocalUsageStats = {
+    input_tokens: 0, output_tokens: 0, cache_read_tokens: 0,
+    cache_write_tokens: 0, reasoning_tokens: 0, sessions: 0,
+    by_model: [], by_day: [],
+  }
+  if (!isSqliteAvailable() || sources.length === 0) return empty
+
+  const db = getDb()!
+  const safeDays = Math.max(1, Math.floor(Number.isFinite(days) ? days : 30))
+  const cutoffMs = Date.now() - safeDays * 24 * 60 * 60 * 1000
+  const placeholders = sources.map(() => '?').join(', ')
+  const filters: string[] = ['u.created_at > ?', `s.source IN (${placeholders})`]
+  const params: (string | number)[] = [cutoffMs, ...sources]
+  if (profile) {
+    filters.push('u.profile = ?')
+    params.push(profile)
+  }
+  const whereClause = `WHERE ${filters.join(' AND ')}`
+  const from = `FROM ${TABLE} u JOIN ${SESSIONS_TABLE} s ON s.id = u.session_id`
+
+  const totals = db.prepare(`
+    SELECT COALESCE(SUM(u.input_tokens),0) as input_tokens,
+      COALESCE(SUM(u.output_tokens),0) as output_tokens,
+      COALESCE(SUM(u.cache_read_tokens),0) as cache_read_tokens,
+      COALESCE(SUM(u.cache_write_tokens),0) as cache_write_tokens,
+      COALESCE(SUM(u.reasoning_tokens),0) as reasoning_tokens,
+      COUNT(DISTINCT u.session_id) as sessions
+    ${from}
+    ${whereClause}
+  `).get(...params) as {
+    input_tokens: number; output_tokens: number; cache_read_tokens: number
+    cache_write_tokens: number; reasoning_tokens: number; sessions: number
+  }
+
+  const byModel = db.prepare(`
+    SELECT COALESCE(NULLIF(u.model, ''), s.model, '') as model,
+      COALESCE(SUM(u.input_tokens),0) as input_tokens,
+      COALESCE(SUM(u.output_tokens),0) as output_tokens,
+      COALESCE(SUM(u.cache_read_tokens),0) as cache_read_tokens,
+      COALESCE(SUM(u.cache_write_tokens),0) as cache_write_tokens,
+      COALESCE(SUM(u.reasoning_tokens),0) as reasoning_tokens,
+      COUNT(DISTINCT u.session_id) as sessions
+    ${from}
+    ${whereClause}
+    GROUP BY COALESCE(NULLIF(u.model, ''), s.model, '')
+    ORDER BY COALESCE(SUM(u.input_tokens),0) + COALESCE(SUM(u.output_tokens),0) DESC
+  `).all(...params) as unknown as UsageStatsModelRow[]
+
+  const byDay = db.prepare(`
+    SELECT DATE(u.created_at / 1000, 'unixepoch') as date,
+      COALESCE(SUM(u.input_tokens),0) as input_tokens,
+      COALESCE(SUM(u.output_tokens),0) as output_tokens,
+      COALESCE(SUM(u.cache_read_tokens),0) as cache_read_tokens,
+      COALESCE(SUM(u.cache_write_tokens),0) as cache_write_tokens,
+      COUNT(DISTINCT u.session_id) as sessions
+    ${from}
     ${whereClause}
     GROUP BY date
     ORDER BY date

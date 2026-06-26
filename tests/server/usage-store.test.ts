@@ -233,3 +233,49 @@ describe('Usage Store (SQLite path)', () => {
     expect(deleteMock).toHaveBeenCalledWith('s1')
   })
 })
+
+// Real SQLite to verify the source filter + sessions JOIN + model COALESCE
+// actually work, not just the return shape.
+describe('getWebUiUsageStatsBySource (real SQLite)', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  it('aggregates only the requested sources, joining sessions for source and model', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(':memory:')
+    db.exec('CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT, model TEXT)')
+    db.exec('CREATE TABLE session_usage (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER, model TEXT, profile TEXT, created_at INTEGER)')
+    const now = Date.now()
+    const insSession = db.prepare('INSERT INTO sessions (id, source, model) VALUES (?, ?, ?)')
+    insSession.run('omp-1', 'omp', 'qwen')
+    insSession.run('cli-1', 'cli', 'qwen')
+    insSession.run('ca-1', 'coding_agent', 'claude')
+    const insUsage = db.prepare('INSERT INTO session_usage (session_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, model, profile, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    insUsage.run('omp-1', 100, 40, 5, 0, 0, '', 'default', now) // empty usage.model -> falls back to sessions.model
+    insUsage.run('omp-1', 30, 10, 0, 0, 0, '', 'default', now)
+    insUsage.run('cli-1', 999, 999, 0, 0, 0, '', 'default', now) // excluded: cli is Hermes-native
+    insUsage.run('ca-1', 7, 3, 0, 0, 0, '', 'default', now)
+
+    vi.doMock('../../packages/server/src/db/index', () => ({
+      isSqliteAvailable: () => true,
+      ensureTable: vi.fn(),
+      getDb: () => db,
+      jsonSet: vi.fn(),
+      jsonGet: vi.fn(),
+      jsonGetAll: vi.fn(),
+      jsonDelete: vi.fn(),
+    }))
+    const { getWebUiUsageStatsBySource } = await import('../../packages/server/src/db/hermes/usage-store')
+
+    const stats = getWebUiUsageStatsBySource(['omp', 'coding_agent'], 'default', 30)
+
+    expect(stats.input_tokens).toBe(137)
+    expect(stats.output_tokens).toBe(53)
+    expect(stats.cache_read_tokens).toBe(5)
+    expect(stats.sessions).toBe(2)
+    expect(stats.by_model.find(m => m.model === 'qwen')).toMatchObject({ input_tokens: 130, output_tokens: 50, sessions: 1 })
+    expect(stats.by_model.find(m => m.model === 'claude')).toMatchObject({ input_tokens: 7, output_tokens: 3, sessions: 1 })
+    db.close()
+  })
+})

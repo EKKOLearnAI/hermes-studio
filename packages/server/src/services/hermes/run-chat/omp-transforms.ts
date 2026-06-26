@@ -42,6 +42,19 @@ export function ompToolResultText(result: unknown): string {
   return text
 }
 
+/**
+ * Absolute image file paths an omp tool result exposes for display. Image tools
+ * such as `generate_image` write the bytes to disk and list the files in
+ * `details.imagePaths`; hermes renders each as a markdown image served through
+ * the download endpoint (omp runs in the same container, so the paths resolve).
+ */
+export function ompToolResultImagePaths(result: unknown): string[] {
+  if (!isRecord(result) || !isRecord(result.details)) return []
+  const paths = result.details.imagePaths
+  if (!Array.isArray(paths)) return []
+  return paths.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+}
+
 export interface OmpRunTokens {
   inputTokens: number
   outputTokens: number

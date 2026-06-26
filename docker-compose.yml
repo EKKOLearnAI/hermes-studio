@@ -12,6 +12,10 @@ services:
     volumes:
       - ${HERMES_DATA_DIR:-./hermes_data}:/home/agent/.hermes
       - ${HERMES_DATA_DIR:-./hermes_data}/hermes-web-ui:/home/agent/.hermes-web-ui
+      # omp (oh-my-pi) keeps its own provider config/auth here, separate from
+      # Hermes. Persisting it lets `omp login` and ~/.omp/agent/models.yml survive
+      # container recreation.
+      - ${HERMES_DATA_DIR:-./hermes_data}/omp:/home/agent/.omp
     environment:
       - PORT=${PORT:-6060}
       - HERMES_HOME=/home/agent/.hermes
@@ -20,6 +24,11 @@ services:
       - HERMES_WEB_UI_XAI_CALLBACK_BIND_HOST=0.0.0.0
       - PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       - HERMES_ALLOW_ROOT_GATEWAY=1
+      # omp uses its own provider credentials (NOT Hermes profiles). Set the key
+      # for the provider you use via host env or .env; others can be added the
+      # same way (OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, ...). Empty
+      # is ignored. Alternatively run `docker exec -it hermes-webui omp` -> /login.
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
     restart: unless-stopped
     stdin_open: true
     tty: true

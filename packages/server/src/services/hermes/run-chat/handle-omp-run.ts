@@ -25,7 +25,7 @@ import { flushBridgePendingToDb, recordBridgeToolCompleted, recordBridgeToolStar
 import { summarizeToolArguments } from './response-utils'
 import { ensureHermesRunWorkspace } from './workspace'
 import { ompSessionManager, OMP_EXIT_FRAME_TYPE, type OmpFrame } from './omp-session-manager'
-import { isRecord, ompAssistantReasoning, ompAssistantText, ompToolResultText, ompUsageTokens } from './omp-transforms'
+import { isRecord, ompAssistantReasoning, ompAssistantText, ompToolResultImagePaths, ompToolResultText, ompUsageTokens } from './omp-transforms'
 import type { ContentBlock, SessionState } from './types'
 
 export interface OmpRunData {
@@ -207,6 +207,12 @@ export async function handleOmpRun(
   let finished = false
   let reasoningAnnounced = false
   let lastContextTokens = 0
+  // Accumulate omp's reported per-call usage so the session_usage row (and the
+  // usage dashboard) reflect real model tokens, not message-text estimates.
+  let runUsageInput = 0
+  let runUsageOutput = 0
+  let runUsageCacheRead = 0
+  let runUsageCacheWrite = 0
 
   const abortController = new AbortController()
   runState.abortController = abortController
@@ -224,7 +230,16 @@ export async function handleOmpRun(
     const usage = await calcAndUpdateUsage(session_id, runState, emit)
     const contextTokens = lastContextTokens || usage.inputTokens + usage.outputTokens
     runState.contextTokens = contextTokens
-    updateUsage(session_id, { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, profile: runState.profile })
+    const recordedInput = runUsageInput || usage.inputTokens
+    const recordedOutput = runUsageOutput || usage.outputTokens
+    updateUsage(session_id, {
+      inputTokens: recordedInput,
+      outputTokens: recordedOutput,
+      cacheReadTokens: runUsageCacheRead,
+      cacheWriteTokens: runUsageCacheWrite,
+      model,
+      profile: runState.profile,
+    })
     emit('usage.updated', { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, contextTokens })
 
     const hadQueued = runState.queue.length > 0
@@ -294,6 +309,12 @@ export async function handleOmpRun(
         }
         const tokens = ompUsageTokens(msg.usage)
         if (tokens.totalTokens) lastContextTokens = tokens.totalTokens
+        runUsageInput += tokens.inputTokens
+        runUsageOutput += tokens.outputTokens
+        if (isRecord(msg.usage)) {
+          if (typeof msg.usage.cacheRead === 'number') runUsageCacheRead += msg.usage.cacheRead
+          if (typeof msg.usage.cacheWrite === 'number') runUsageCacheWrite += msg.usage.cacheWrite
+        }
         flushAssistant()
         reasoningAnnounced = false
         if (msg.stopReason === 'error') {
@@ -332,6 +353,16 @@ export async function handleOmpRun(
           duration: completed.duration,
           error: frame.isError === true ? output : undefined,
         })
+        // Surface tool-produced image files (e.g. generate_image) as markdown
+        // images in the assistant stream. MarkdownRenderer rewrites the local
+        // path to the download endpoint, so the picture renders inline live and
+        // on reload without bloating the DB with base64.
+        for (const imagePath of ompToolResultImagePaths(frame.result)) {
+          const markdown = `\n\n![generated image](${imagePath})\n`
+          runState.bridgePendingAssistantContent = (runState.bridgePendingAssistantContent || '') + markdown
+          runState.bridgeOutput = (runState.bridgeOutput || '') + markdown
+          emit('message.delta', { run_id: runId, delta: markdown, output: runState.bridgeOutput })
+        }
         return
       }
       case 'notice': {

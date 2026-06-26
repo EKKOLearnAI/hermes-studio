@@ -24,6 +24,19 @@ before the bridge readiness check, so omp runs never touch the Python bridge.
 - Abort reuses the `AbortController` path: `handleAbort` flushes omp pending
   content (omp uses the bridge pending fields) and `markAbortCompleted` finalizes,
   while the controller signal tells the omp process to abort the current turn.
+- Tool-produced images (e.g. `generate_image`) render in the chat: `handle-omp-run`
+  reads `result.details.imagePaths` on `tool_execution_end` and injects a
+  `![generated image](<path>)` markdown delta into the assistant stream (emitted
+  live and flushed to the assistant message for reload). `MarkdownRenderer`
+  rewrites the local path to `/api/hermes/download`, and since omp runs in the
+  same container the `/tmp/omp-image-*.png` file resolves — no base64 is stored.
+- Usage analytics include omp: `handle-omp-run` now records omp's *reported*
+  per-call usage (summed input/output/cache + the run model) to `session_usage`,
+  not message-text estimates. The usage dashboard (`usageStats`) reads Hermes
+  native `state.db`, which never sees omp/coding-agent runs, so it now also merges
+  `getWebUiUsageStatsBySource(['omp','coding_agent'], …)` from the web-ui DB —
+  scoped to those web-ui-only sources to avoid double-counting Hermes-native
+  sessions. Cost stays state.db-only (omp/coding-agent cost is not computed).
 - `omp` must be on `PATH` (override with `HERMES_OMP_COMMAND`). Known first-cut
   limits: model/provider are passed through to omp only when set (otherwise omp
   uses its own config), multimodal input is sent as text, and context-token

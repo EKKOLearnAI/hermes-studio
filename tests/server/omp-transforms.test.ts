@@ -4,6 +4,7 @@ import {
   ompAssistantReasoning,
   ompAssistantText,
   ompToolResultText,
+  ompToolResultImagePaths,
   ompUsageTokens,
 } from '../../packages/server/src/services/hermes/run-chat/omp-transforms'
 
@@ -65,6 +66,23 @@ describe('omp transforms', () => {
       expect(ompToolResultText(undefined)).toBe('')
       expect(ompToolResultText({ content: 'nope' })).toBe('')
       expect(ompToolResultText(42)).toBe('')
+    })
+  })
+
+  describe('ompToolResultImagePaths', () => {
+    it('extracts absolute image paths from result details', () => {
+      const result = {
+        content: [{ type: 'text', text: 'Generated 1 image(s):\n  /tmp/omp-image-abc.png' }],
+        details: { imagePaths: ['/tmp/omp-image-abc.png'], images: [{ data: 'AAA', mimeType: 'image/png' }] },
+      }
+      expect(ompToolResultImagePaths(result)).toEqual(['/tmp/omp-image-abc.png'])
+    })
+
+    it('drops blank or non-string entries and unusable shapes', () => {
+      expect(ompToolResultImagePaths({ details: { imagePaths: ['/a.png', '', 3, null] } })).toEqual(['/a.png'])
+      expect(ompToolResultImagePaths({ details: { imagePaths: 'nope' } })).toEqual([])
+      expect(ompToolResultImagePaths({ content: [] })).toEqual([])
+      expect(ompToolResultImagePaths('x')).toEqual([])
     })
   })
 

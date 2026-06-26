@@ -25,6 +25,18 @@ RUN ARCH=$(dpkg --print-architecture) \
     && node --version \
     && npm --version
 
+# Install the omp (oh-my-pi) coding agent so the "omp" chat agent source can
+# spawn `omp --mode rpc` inside the container. Prebuilt binary -> /usr/local/bin
+# (on PATH at runtime). Override OMP_VERSION to pin a release tag.
+ARG OMP_VERSION=latest
+RUN set -eux; \
+    if [ "$OMP_VERSION" = "latest" ]; then \
+      curl -fsSL https://omp.sh/install | PI_INSTALL_DIR=/usr/local/bin sh -s -- --binary; \
+    else \
+      curl -fsSL https://omp.sh/install | PI_INSTALL_DIR=/usr/local/bin sh -s -- --binary --ref "$OMP_VERSION"; \
+    fi; \
+    omp --version
+
 WORKDIR /app
 
 COPY package*.json ./

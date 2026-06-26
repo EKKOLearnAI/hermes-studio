@@ -13,8 +13,8 @@ import {
   updateSessionStats as localUpdateSessionStats,
 } from '../../db/hermes/session-store'
 import { ExportCompressor } from '../../lib/context-compressor/export-compressor'
-import { deleteUsage, getUsage, getUsageBatch } from '../../db/hermes/usage-store'
-import type { UsageStatsModelRow, UsageStatsDailyRow } from '../../db/hermes/usage-store'
+import { deleteUsage, getUsage, getUsageBatch, getWebUiUsageStatsBySource } from '../../db/hermes/usage-store'
+import type { UsageStatsModelRow, UsageStatsDailyRow, LocalUsageStats } from '../../db/hermes/usage-store'
 import { getModelContextLength } from '../../services/hermes/model-context'
 import { getActiveProfileName, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
 import { isPathWithin } from '../../services/hermes/hermes-path'
@@ -101,7 +101,7 @@ function denySessionAccess(ctx: any, session: any | null | undefined): boolean {
 }
 
 function isVisibleWebUiSessionSource(source?: string | null): boolean {
-  return source === 'api_server' || source === 'cli' || source === 'coding_agent' || source === 'global_agent'
+  return source === 'api_server' || source === 'cli' || source === 'coding_agent' || source === 'global_agent' || source === 'omp'
 }
 
 function isRequestedSessionSource(source: string | undefined, sessionSource?: string | null): boolean {
@@ -860,6 +860,20 @@ export async function usageStats(ctx: any) {
     logger.warn(err, 'usageStats: failed to load Hermes usage analytics from state.db')
   }
 
+  // omp and the coding-agent runners are standalone processes whose usage lives
+  // only in the web-ui DB (not Hermes state.db), so the state.db query above omits
+  // them. Pull their usage explicitly and merge it below.
+  const WEBUI_USAGE_SOURCES = ['omp', 'coding_agent']
+  let webui: LocalUsageStats = {
+    input_tokens: 0, output_tokens: 0, cache_read_tokens: 0,
+    cache_write_tokens: 0, reasoning_tokens: 0, sessions: 0, by_model: [], by_day: [],
+  }
+  try {
+    webui = getWebUiUsageStatsBySource(WEBUI_USAGE_SOURCES, profile || undefined, days)
+  } catch (err) {
+    logger.warn(err, 'usageStats: failed to load web-ui usage analytics')
+  }
+
   const dayMap = new Map<string, UsageStatsDailyRow>()
   const now = new Date()
   for (let i = days - 1; i >= 0; i--) {
@@ -876,18 +890,39 @@ export async function usageStats(ctx: any) {
       existing.sessions += d.sessions; existing.errors += d.errors; existing.cost += d.cost
     }
   }
+  for (const d of webui.by_day) {
+    const existing = dayMap.get(d.date)
+    if (existing) {
+      existing.input_tokens += d.input_tokens; existing.output_tokens += d.output_tokens
+      existing.cache_read_tokens += d.cache_read_tokens; existing.cache_write_tokens += d.cache_write_tokens
+      existing.sessions += d.sessions; existing.cost += d.cost
+    }
+  }
+
+  const modelMap = new Map<string, UsageStatsModelRow>()
+  for (const m of [...hermes.by_model, ...webui.by_model]) {
+    const existing = modelMap.get(m.model)
+    if (existing) {
+      existing.input_tokens += m.input_tokens; existing.output_tokens += m.output_tokens
+      existing.cache_read_tokens += m.cache_read_tokens; existing.cache_write_tokens += m.cache_write_tokens
+      existing.reasoning_tokens += m.reasoning_tokens; existing.sessions += m.sessions
+    } else {
+      modelMap.set(m.model, { ...m })
+    }
+  }
+  const mergedModels = [...modelMap.values()]
 
   ctx.body = {
-    total_input_tokens: hermes.input_tokens,
-    total_output_tokens: hermes.output_tokens,
-    total_cache_read_tokens: hermes.cache_read_tokens,
-    total_cache_write_tokens: hermes.cache_write_tokens,
-    total_reasoning_tokens: hermes.reasoning_tokens,
-    total_sessions: hermes.sessions,
+    total_input_tokens: hermes.input_tokens + webui.input_tokens,
+    total_output_tokens: hermes.output_tokens + webui.output_tokens,
+    total_cache_read_tokens: hermes.cache_read_tokens + webui.cache_read_tokens,
+    total_cache_write_tokens: hermes.cache_write_tokens + webui.cache_write_tokens,
+    total_reasoning_tokens: hermes.reasoning_tokens + webui.reasoning_tokens,
+    total_sessions: hermes.sessions + webui.sessions,
     total_cost: hermes.cost,
     total_api_calls: hermes.total_api_calls,
     period_days: days,
-    model_usage: hermes.by_model.sort((a, b) => (b.input_tokens + b.output_tokens) - (a.input_tokens + a.output_tokens)),
+    model_usage: mergedModels.sort((a, b) => (b.input_tokens + b.output_tokens) - (a.input_tokens + a.output_tokens)),
     daily_usage: [...dayMap.values()],
   }
 }
