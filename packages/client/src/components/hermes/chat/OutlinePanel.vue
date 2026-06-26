@@ -45,32 +45,32 @@ function extractAllHeadings(text: string, messageId: string): OutlineItem[] {
     if (h1Match) {
       headingIndex++
       items.push({
-        id: outline-\-h\,
+        id: `outline-${messageId}-h${headingIndex}`,
         type: 'outline',
         content: h1Match[1].trim(),
         messageId,
         level: 1,
-        anchorId: msg-\-heading-\
+        anchorId: `msg-${messageId}-heading-${headingIndex}`
       })
     } else if (h2Match) {
       headingIndex++
       items.push({
-        id: outline-\-h\,
+        id: `outline-${messageId}-h${headingIndex}`,
         type: 'outline',
         content: h2Match[1].trim(),
         messageId,
         level: 2,
-        anchorId: msg-\-heading-\
+        anchorId: `msg-${messageId}-heading-${headingIndex}`
       })
     } else if (h3Match) {
       headingIndex++
       items.push({
-        id: outline-\-h\,
+        id: `outline-${messageId}-h${headingIndex}`,
         type: 'outline',
         content: h3Match[1].trim(),
         messageId,
         level: 3,
-        anchorId: msg-\-heading-\
+        anchorId: `msg-${messageId}-heading-${headingIndex}`
       })
     }
   }
@@ -96,10 +96,10 @@ const outlineGroups = computed<OutlineGroup[]>(() => {
     const msg = filteredMessages[i]
     if (msg.role === 'user') {
       const group: OutlineGroup = {
-        id: user-\,
+        id: `user-${msg.id}`,
         messageId: msg.id,
         content: extractUserQuestion(msg.content || ''),
-        anchorId: message-\,
+        anchorId: `message-${msg.id}`,
         headings: []
       }
       
@@ -352,3 +352,5 @@ function scrollToTarget(messageId: string, anchorId: string) {
   padding: 20px 0;
 }
 </style>
+
+
