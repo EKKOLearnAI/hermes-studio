@@ -1,4 +1,4 @@
-﻿import { createReadStream, existsSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'fs'
+import { createReadStream, existsSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'fs'
 import { mkdir, writeFile } from 'fs/promises'
 import { basename, join } from 'path'
 import { tmpdir } from 'os'
@@ -276,7 +276,7 @@ async function readBridgeWorkers(): Promise<{ reachable: boolean; workers: Recor
 
 function gatewayStatusLooksRunning(status?: string): boolean {
   const normalized = String(status || '').trim().toLowerCase()
-  if (!normalized || normalized === '�?) return false
+  if (!normalized || normalized === '-') return false
   if (normalized.includes('not running') || normalized === 'stopped' || normalized === 'stop') return false
   return normalized.includes('running') || normalized === 'active'
 }
