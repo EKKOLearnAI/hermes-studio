@@ -17,6 +17,16 @@ const OPENROUTER_WEB_UI_ATTRIBUTION_ENV = {
   HERMES_OPENROUTER_APP_CATEGORIES: 'cli-agent,personal-agent',
 } as const
 
+function killTree(child: ChildProcess, signal: NodeJS.Signals) {
+  if (process.platform === 'win32' && child.pid) {
+    try {
+      execFileSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { encoding: 'utf-8', windowsHide: true })
+    } catch {}
+  } else {
+    child.kill(signal)
+  }
+}
+
 export interface AgentBridgeManagerOptions {
   endpoint?: string
   python?: string
@@ -434,7 +444,7 @@ async function killStaleIpcBridgeProcesses(endpoint: string): Promise<void> {
   )
   const socketsToCheck = [sockPath]
   if (!isWorkerSock) {
-    // broker socket â€” also check worker sockets under the same namespace
+    // broker socket â€?also check worker sockets under the same namespace
     const workerDir = require('path').join(require('path').dirname(sockPath), 'hermes-agent-bridge-workers')
     try {
       const fs = await import('fs')
@@ -460,7 +470,7 @@ async function killStaleIpcBridgeProcesses(endpoint: string): Promise<void> {
         }
       }
     } catch {
-      // lsof exits non-zero when nothing found â€” that's fine
+      // lsof exits non-zero when nothing found â€?that's fine
     }
   }
 
@@ -836,7 +846,7 @@ export class AgentBridgeManager {
           // after the process has actually exited. Recovery must still be able to
           // escalate SIGTERM -> SIGKILL while waiting for an observed exit.
           if (signal === 'SIGKILL' || !child.killed) {
-            child.kill(signal)
+            killTree(child, signal)
           }
         } catch (err) {
           logger.warn(err, '[agent-bridge] failed to signal managed child pid=%s signal=%s', child.pid, signal)
@@ -1082,7 +1092,7 @@ export class AgentBridgeManager {
         // `child.killed` only means a signal was sent. Escalate on shutdown
         // timeout even if SIGTERM was already sent by recovery.
         try {
-          child.kill('SIGKILL')
+          killTree(child, 'SIGKILL')
         } catch {}
         resolveStop()
       }, 10_000)
@@ -1091,7 +1101,7 @@ export class AgentBridgeManager {
         resolveStop()
       })
       if (!child.killed) {
-        child.kill('SIGTERM')
+        killTree(child, 'SIGTERM')
       }
     })
     this.stopping = false
