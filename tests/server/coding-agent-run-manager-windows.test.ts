@@ -15,6 +15,10 @@ const testState = vi.hoisted(() => {
       for (const handler of this.handlers.get(event) || []) handler(...args)
       return true
     }
+
+    setEncoding(encoding: string) {
+      return this
+    }
   }
 
   return {
