@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Message } from '@/stores/hermes/chat'
@@ -102,7 +102,6 @@ const outlineGroups = computed<OutlineGroup[]>(() => {
         anchorId: `message-${msg.id}`,
         headings: []
       }
-      
       i++
       while (i < filteredMessages.length && filteredMessages[i].role !== 'assistant') {
         i++
@@ -352,5 +351,3 @@ function scrollToTarget(messageId: string, anchorId: string) {
   padding: 20px 0;
 }
 </style>
-
-

@@ -1,4 +1,4 @@
-﻿import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, respondClarify, type ChatRunTransport, type RunEvent, type ResumeSessionPayload, type StartRunRequest, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, respondClarify, type ChatRunTransport, type RunEvent, type ResumeSessionPayload, type StartRunRequest, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
 import { archiveSession as archiveSessionApi, deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { inferCodingAgentApiMode, normalizeCodingAgentApiMode } from '@/api/coding-agents'
@@ -41,13 +41,13 @@ export interface Message {
   toolArgs?: unknown
   toolResult?: unknown
   toolStatus?: 'running' | 'done' | 'error'
-  toolDuration?: number  // 工具执行时长（秒�?
+  toolDuration?: number  // 工具执行时长（秒）
   isStreaming?: boolean
   attachments?: Attachment[]
-  // 思�?推理文本。两条来源：
-  //   1) 历史消息：来�?HermesMessage.reasoning 字段
+  // 思考/推理文本。两条来源：
+  //   1) 历史消息：来自 HermesMessage.reasoning 字段
   //   2) 流式：由 reasoning.delta / thinking.delta / reasoning.available 事件累加
-  // 不含 <think> 包裹标签；内容自身可以为多段纯文本�?
+  // 不含 <think> 包裹标签；内容自身可以为多段纯文本。
   reasoning?: string
   queued?: boolean
   systemType?: 'command' | 'error' | 'fork-divider'
@@ -518,9 +518,9 @@ type ChatRuntimeMode = 'default' | 'global_agent'
 let activeRuntimeMode: ChatRuntimeMode = 'default'
 const LEGACY_STORAGE_KEY = 'hermes_active_session'
 
-// 获取当前 profile 名称，用于隔离缓存�?
-// �?profiles store �?activeProfileName（同�?localStorage）读取，
-// 避免异步加载导致 chat store 初始化时拿到 null�?
+// 获取当前 profile 名称，用于隔离缓存。
+// 从 profiles store 的 activeProfileName（同步 localStorage）读取，
+// 避免异步加载导致 chat store 初始化时拿到 null。
 function getProfileName(): string {
   try {
     return useProfilesStore().activeProfileName || 'default'
@@ -596,7 +596,7 @@ function setItemBestEffort(key: string, value: string) {
   try {
     localStorage.setItem(key, value)
   } catch {
-    // quota exceeded or private mode �?ignore, cache is best-effort
+    // quota exceeded or private mode — ignore, cache is best-effort
   }
 }
 
@@ -616,7 +616,7 @@ function removeItem(key: string) {
   }
 }
 
-// Strip the circular `file: File` reference from attachments before caching �?
+// Strip the circular `file: File` reference from attachments before caching —
 // File objects don't serialize and we only need name/type/size/url for display.
 
 export const useChatStore = defineStore('chat', () => {
@@ -626,18 +626,18 @@ export const useChatStore = defineStore('chat', () => {
   const activeSessionId = ref<string | null>(null)
   const focusMessageId = ref<string | null>(null)
   const streamStates = ref<Map<string, { abort: () => void }>>(new Map())
-  /** sessionId �?server-reported isWorking status */
+  /** sessionId → server-reported isWorking status */
   const serverWorking = ref<Set<string>>(new Set())
   /** sessionIds with a terminal /fork command submitted but not settled yet */
   const pendingForkCommands = ref<Set<string>>(new Set())
   /** Sessions that completed while the user was viewing another session. */
   const completedUnreadSessions = ref<Set<string>>(new Set())
   const sessionProfileFilter = ref<string | null>(null)
-  /** sessionId �?queued message count */
+  /** sessionId → queued message count */
   const queueLengths = ref<Map<string, number>>(new Map())
-  /** sessionId �?queued user messages not yet visible in the transcript */
+  /** sessionId → queued user messages not yet visible in the transcript */
   const queuedUserMessages = ref<Map<string, Message[]>>(new Map())
-  /** sessionId �?queue ids that server reported as dequeued before the peer message arrived */
+  /** sessionId → queue ids that server reported as dequeued before the peer message arrived */
   const dequeuedQueueIds = ref<Map<string, Set<string>>>(new Map())
   const pendingApprovals = ref<Map<string, PendingApproval>>(new Map())
   const activePendingApproval = computed(() => {
@@ -651,7 +651,7 @@ export const useChatStore = defineStore('chat', () => {
     return sid ? pendingClarifies.value.get(sid) || null : null
   })
 
-  // 自动播放语音开�?
+  // 自动播放语音开关
   const autoPlaySpeechEnabled = ref(false)
 
   function setAutoPlaySpeech(enabled: boolean) {
@@ -932,10 +932,10 @@ export const useChatStore = defineStore('chat', () => {
       const detail = await fetchSessionMessagesPage(sid, 0, limit, activeSession.value?.profile)
       if (!detail) return false
       const mapped = mapHermesMessages(detail.messages || [])
-        if (!serverWorking.value.has(sid)) {
-          target.messages = mapped
-        }
-        target.loadedMessageCount = detail.messages.length
+      if (!serverWorking.value.has(sid)) {
+        target.messages = mapped
+      }
+      target.loadedMessageCount = detail.messages.length
       target.messageTotal = detail.total
       target.messageCount = detail.total
       target.hasMoreBefore = detail.hasMore
@@ -1440,7 +1440,7 @@ export const useChatStore = defineStore('chat', () => {
     const last = msgs[msgs.length - 1]
     if (last?.isStreaming) {
       // If the streaming message already has substantial content (the assistant
-      // produced a meaningful reply before the error), don't overwrite it �?
+      // produced a meaningful reply before the error), don't overwrite it —
       // just close the stream and append a separate error message. Only
       // overwrite when the message is still empty or trivially short, meaning
       // the run failed before producing useful output.
@@ -1969,7 +1969,7 @@ export const useChatStore = defineStore('chat', () => {
       switchSession(session.id)
     }
 
-    // Capture session ID at send time �?all callbacks use this, not activeSessionId
+    // Capture session ID at send time — all callbacks use this, not activeSessionId
     const sid = activeSessionId.value!
     const shouldSendInitialSessionConfig = activeSession.value
       ? activeSession.value.messageCount == null || activeSession.value.messageCount === 0
@@ -2285,7 +2285,7 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
 
-      // Send run via Socket.IO and listen to streamed events �?all closures capture `sid`
+      // Send run via Socket.IO and listen to streamed events — all closures capture `sid`
       const ctrl = startRunViaSocket(
         runPayload,
         // onEvent
@@ -2433,15 +2433,15 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'reasoning.available': {
               // Upstream run_agent.py fires reasoning.available with
-              // `assistant_message.content[:500]` as the preview �?i.e.,
+              // `assistant_message.content[:500]` as the preview — i.e.,
               // the main answer, not real reasoning. Ignore the payload
               // and only use this event as a "thinking ended" signal so
               // the duration counter stops.
               const msgs = getSessionMsgs(sid)
               const last = msgs[msgs.length - 1]
               if (last?.role === 'assistant' && last.isStreaming) {
-                // 只有�?reasoning.delta 事件曾经启动过计时，才标记结束；
-                // 否则（上游未转发 delta，只发这一�?available）不显示时长�?
+                // 只有当 reasoning.delta 事件曾经启动过计时，才标记结束；
+                // 否则（上游未转发 delta，只发这一次 available）不显示时长。
                 noteReasoningEnd(last.id)
               }
 
@@ -2461,7 +2461,7 @@ export const useChatStore = defineStore('chat', () => {
                 const prev = last.content
                 const next = prev + (evt.delta || '')
                 noteThinkingDelta(last.id, prev, next)
-                // 若之前有 reasoning 累积，则 content 到达即视为推理结束�?
+                // 若之前有 reasoning 累积，则 content 到达即视为推理结束。
                 if (last.reasoning) noteReasoningEnd(last.id)
                 last.content = next
               } else {
@@ -2695,7 +2695,7 @@ export const useChatStore = defineStore('chat', () => {
                 const msgs = getSessionMsgs(sid)
                 const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant')
                 if (lastAssistant?.content) {
-                  // 延迟一小会儿再播放，确�?UI 更新完成
+                  // 延迟一小会儿再播放，确保 UI 更新完成
                   setTimeout(() => {
                     playMessageSpeech(lastAssistant.id, lastAssistant.content)
                   }, 300)
@@ -2868,7 +2868,7 @@ export const useChatStore = defineStore('chat', () => {
 
     initializeResumedAssistantState()
 
-    // Shared event handler �?filters by session_id tag
+    // Shared event handler — filters by session_id tag
     function handleEvent(evt: RunEvent) {
       if (closed) return
       // Filter events for this session (server tags all events with session_id)
@@ -3268,7 +3268,7 @@ export const useChatStore = defineStore('chat', () => {
             activeRunMarker = null
           } else {
             markSessionCompletedUnread(sid, true)
-            // More runs pending �?reset for next run but don't cleanup
+            // More runs pending — reset for next run but don't cleanup
             activeAssistantMessageId = null
             reasoningAssistantMessageId = null
             activeRunMarker = null
@@ -3341,7 +3341,7 @@ export const useChatStore = defineStore('chat', () => {
       onClarifyResolved: (evt) => handleEvent(evt),
     })
 
-    // No need to emit resume here �?switchSession already did it.
+    // No need to emit resume here — switchSession already did it.
     // Server already joined room and replayed events.
     // Just set up handlers for ongoing streaming events.
 
@@ -3513,7 +3513,7 @@ export const useChatStore = defineStore('chat', () => {
     thinkingObservation.set(messageId, existing)
   }
 
-  /** 第一次见到某条消息的 reasoning 文本时，标记 startedAt�?*/
+  /** 第一次见到某条消息的 reasoning 文本时，标记 startedAt。 */
   function noteReasoningStart(messageId: string) {
     const existing = thinkingObservation.get(messageId) || {}
     if (existing.startedAt === undefined) {
@@ -3522,7 +3522,7 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  /** 内容首次到达（视为推理结束）或显式收�?reasoning.available 时，标记 endedAt�?*/
+  /** 内容首次到达（视为推理结束）或显式收到 reasoning.available 时，标记 endedAt。 */
   function noteReasoningEnd(messageId: string) {
     const existing = thinkingObservation.get(messageId)
     if (!existing || existing.startedAt === undefined) return
@@ -3545,7 +3545,7 @@ export const useChatStore = defineStore('chat', () => {
 
   // Persisted in localStorage keyed by sessionId so the choice survives
   // page reloads. Cleared on session deletion is NOT implemented (best-effort
-  // �?orphan keys are tiny and never read again).
+  // — orphan keys are tiny and never read again).
   const REASONING_LS_PREFIX = 'hermes:reasoning_effort:'
   function setSessionReasoningEffort(sessionId: string, effort: string) {
     const session = sessions.value.find(s => s.id === sessionId)
@@ -3569,7 +3569,7 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
   // Hydrate reasoningEffort onto sessions whenever they come in fresh from
-  // the server (mapHermesSession doesn't carry this �?it's client-only state).
+  // the server (mapHermesSession doesn't carry this — it's client-only state).
   watch(sessions, (list) => {
     for (const s of list) {
       if (s.reasoningEffort === undefined) {
@@ -3580,14 +3580,14 @@ export const useChatStore = defineStore('chat', () => {
   }, { deep: false })
 
   function clearThinkingObservationFor(_sessionId: string) {
-    // messageId �?sessionId 的关联未单独持有；方案是切会话时一律清空�?
-    // 这符�?spec 定义：observation �?当前会话范围�?�?transient 状态�?
+    // messageId 与 sessionId 的关联未单独持有；方案是切会话时一律清空。
+    // 这符合 spec 定义：observation 是"当前会话范围内"的 transient 状态。
     thinkingObservation.clear()
   }
 
   // 播放消息语音
   function playMessageSpeech(messageId: string, content: string) {
-    // 触发自定义事件，�?MessageItem 组件处理播放
+    // 触发自定义事件，让 MessageItem 组件处理播放
     const event = new CustomEvent('auto-play-speech', {
       detail: { messageId, content }
     })
@@ -3649,4 +3649,3 @@ export const useChatStore = defineStore('chat', () => {
     setRuntimeMode,
   }
 })
-
