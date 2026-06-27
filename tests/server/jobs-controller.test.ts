@@ -1,78 +1,85 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import type { Context } from 'koa'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { JobRecord } from '../../packages/server/src/services/hermes/cron/job-store'
 
 const testState = vi.hoisted(() => ({
   profileDir: '',
-  execFile: vi.fn(),
+  runJobNow: vi.fn(),
 }))
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getActiveProfileName: () => 'default',
   getProfileDir: () => testState.profileDir || '/fake/home/.hermes',
+  listProfileNamesFromDisk: () => ['default'],
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-path', () => ({
-  getHermesBin: () => '/fake/bin/hermes',
+vi.mock('../../packages/server/src/services/hermes/cron/run-job', () => ({
+  runJobNow: testState.runJobNow,
 }))
 
-vi.mock('child_process', () => ({
-  execFile: testState.execFile,
-}))
+import { create, get, pause, remove, resume, run as runJob, update } from '../../packages/server/src/controllers/hermes/jobs'
 
-const mockFetch = vi.fn()
-vi.stubGlobal('fetch', mockFetch)
+interface MockCtx {
+  request: { body: unknown }
+  params: Record<string, string>
+  query: Record<string, unknown>
+  state: { profile?: { name?: string } }
+  status: number
+  body: unknown
+}
 
-import { create, pause, remove, resume, run as runJob, update } from '../../packages/server/src/controllers/hermes/jobs'
-
-function createMockCtx(overrides: Record<string, any> = {}) {
-  const ctx: any = {
-    req: { method: 'PATCH' },
-    request: { body: { name: 'renamed' } },
-    params: { id: 'abc123abc123' },
+function createMockCtx(overrides: Partial<MockCtx> = {}): MockCtx {
+  return {
+    request: { body: {} },
+    params: {},
     query: {},
-    search: '',
-    headers: {},
+    state: {},
     status: 200,
-    set: vi.fn(),
     body: null,
     ...overrides,
   }
-  ctx.get = (name: string) => {
-    const match = Object.entries(ctx.headers).find(([key]) => key.toLowerCase() === name.toLowerCase())
-    const value = match?.[1]
-    return Array.isArray(value) ? value[0] : value || ''
+}
+
+// The handlers only touch the Context surface the mock provides; the cast keeps
+// the test ergonomic without pulling in the full Koa Context shape.
+function asContext(ctx: MockCtx): Context {
+  return ctx as unknown as Context
+}
+
+function getJob(body: unknown): JobRecord {
+  if (body && typeof body === 'object' && 'job' in body) {
+    const job = body.job
+    if (job && typeof job === 'object') return job as JobRecord
   }
-  return ctx
+  throw new Error(`expected { job } in body, got ${JSON.stringify(body)}`)
 }
 
-function writeExistingJob(tempDir: string) {
-  const cronDir = join(tempDir, 'cron')
-  mkdirSync(cronDir, { recursive: true })
-  writeFileSync(join(cronDir, 'jobs.json'), JSON.stringify({
-    jobs: [{
-      job_id: 'abc123abc123',
-      id: 'abc123abc123',
-      name: 'daily',
-      schedule: { kind: 'cron', expr: '0 9 * * *', display: '0 9 * * *' },
-      schedule_display: '0 9 * * *',
-      prompt: 'run daily',
-      repeat: { times: 3, completed: 1 },
-    }],
-  }))
+function jobsOnDisk(dir: string): Array<Record<string, unknown>> {
+  const parsed: unknown = JSON.parse(readFileSync(join(dir, 'cron', 'jobs.json'), 'utf-8'))
+  if (parsed && typeof parsed === 'object' && 'jobs' in parsed) {
+    const jobs = parsed.jobs
+    if (Array.isArray(jobs)) return jobs
+  }
+  return []
 }
 
-describe('Hermes jobs controller', () => {
+async function createJob(body: Record<string, unknown>): Promise<JobRecord> {
+  const ctx = createMockCtx({ request: { body } })
+  await create(asContext(ctx))
+  expect(ctx.status).toBe(200)
+  return getJob(ctx.body)
+}
+
+describe('Hermes jobs controller (web-ui owned store)', () => {
   let tempDir = ''
 
   beforeEach(() => {
     vi.clearAllMocks()
     tempDir = mkdtempSync(join(tmpdir(), 'hermes-web-ui-jobs-test-'))
     testState.profileDir = tempDir
-    testState.execFile.mockImplementation((_bin, _args, _opts, cb) => {
-      cb(null, { stdout: '', stderr: '' })
-    })
   })
 
   afterEach(() => {
@@ -81,112 +88,88 @@ describe('Hermes jobs controller', () => {
     testState.profileDir = ''
   })
 
-  it('returns 404 before editing when the local cron job does not exist', async () => {
-    mockFetch.mockResolvedValue({
-      ok: false,
-      status: 400,
-      statusText: 'Bad Request',
-      headers: new Headers({ 'content-type': 'application/json' }),
-      json: () => Promise.resolve({ error: 'Prompt must be ≤ 5000 characters' }),
-    })
+  it('persists a created job to jobs.json without invoking any CLI', async () => {
+    const job = await createJob({ name: 'daily', schedule: '0 9 * * *', prompt: 'do it', deliver: 'local', skills: ['x'], repeat: 3 })
 
-    const ctx = createMockCtx()
-    await update(ctx)
+    expect(job.job_id).toBeTruthy()
+    expect(job.name).toBe('daily')
+    expect(job.schedule_display).toBe('0 9 * * *')
+    expect(job.deliver).toBe('local')
+    expect(job.skills).toEqual(['x'])
+    expect(job.repeat).toEqual({ times: 3, completed: 0 })
+    expect(job.next_run_at).toBeTruthy()
 
+    const onDisk = jobsOnDisk(tempDir)
+    expect(onDisk).toHaveLength(1)
+    expect(onDisk[0].prompt).toBe('do it')
+    expect(onDisk[0].job_id).toBe(job.job_id)
+  })
+
+  it('rejects an empty schedule with 400', async () => {
+    const ctx = createMockCtx({ request: { body: { prompt: 'no schedule' } } })
+    await create(asContext(ctx))
+    expect(ctx.status).toBe(400)
+    expect(ctx.body).toEqual({ error: { message: 'Schedule is required' } })
+  })
+
+  it('rejects an invalid cron expression with 400', async () => {
+    const ctx = createMockCtx({ request: { body: { schedule: '0 9 * *', prompt: 'bad' } } })
+    await create(asContext(ctx))
+    expect(ctx.status).toBe(400)
+  })
+
+  it('returns 404 when editing a job that does not exist', async () => {
+    const ctx = createMockCtx({ params: { id: 'missing' }, request: { body: { name: 'renamed' } } })
+    await update(asContext(ctx))
     expect(ctx.status).toBe(404)
     expect(ctx.body).toEqual({ error: { message: 'Job not found' } })
-    expect(mockFetch).not.toHaveBeenCalled()
   })
 
-  it('does not call the removed gateway proxy path for missing jobs', async () => {
-    mockFetch.mockRejectedValue(new Error('ECONNREFUSED'))
+  it('updates fields and clears repeat when repeat is null', async () => {
+    const created = await createJob({ name: 'daily', schedule: '0 9 * * *', prompt: 'p', repeat: 5 })
 
-    const ctx = createMockCtx()
-    await update(ctx)
+    const ctx = createMockCtx({ params: { id: created.job_id }, request: { body: { name: 'renamed', repeat: null } } })
+    await update(asContext(ctx))
+    const job = getJob(ctx.body)
 
-    expect(ctx.status).toBe(404)
-    expect(ctx.body).toEqual({ error: { message: 'Job not found' } })
-    expect(mockFetch).not.toHaveBeenCalled()
+    expect(job.name).toBe('renamed')
+    expect(job.repeat.times).toBeNull()
+    expect(jobsOnDisk(tempDir)[0].name).toBe('renamed')
   })
 
-  it('clears repeat by passing repeat 0 to Hermes CLI', async () => {
-    writeExistingJob(tempDir)
+  it('pauses and resumes a job, toggling state', async () => {
+    const created = await createJob({ schedule: '0 9 * * *', prompt: 'p' })
 
-    const ctx = createMockCtx({
-      request: { body: { repeat: null } },
-    })
-    await update(ctx)
+    const pauseCtx = createMockCtx({ params: { id: created.job_id } })
+    await pause(asContext(pauseCtx))
+    expect(getJob(pauseCtx.body).state).toBe('paused')
 
-    expect(ctx.status).toBe(200)
-    expect(testState.execFile).toHaveBeenCalledWith(
-      '/fake/bin/hermes',
-      ['cron', 'edit', '--profile', 'default', 'abc123abc123', '--repeat', '0'],
-      expect.objectContaining({
-        env: expect.objectContaining({ HERMES_HOME: tempDir }),
-        windowsHide: true,
-      }),
-      expect.any(Function),
-    )
+    const resumeCtx = createMockCtx({ params: { id: created.job_id } })
+    await resume(asContext(resumeCtx))
+    expect(getJob(resumeCtx.body).state).toBe('scheduled')
   })
 
-  it('passes the selected profile to every Hermes cron command', async () => {
-    const profileState = { profile: { name: 'research' } }
+  it('removes a job', async () => {
+    const created = await createJob({ schedule: '0 9 * * *', prompt: 'p' })
 
-    const createCtx = createMockCtx({
-      state: profileState,
-      request: { body: { schedule: '0 9 * * *', prompt: 'daily summary' } },
-    })
-    await create(createCtx)
-    expect(testState.execFile).toHaveBeenLastCalledWith(
-      '/fake/bin/hermes',
-      ['cron', 'create', '--profile', 'research', '0 9 * * *', 'daily summary'],
-      expect.any(Object),
-      expect.any(Function),
-    )
+    const ctx = createMockCtx({ params: { id: created.job_id } })
+    await remove(asContext(ctx))
+    expect(ctx.body).toEqual({ ok: true })
+    expect(jobsOnDisk(tempDir)).toHaveLength(0)
 
-    const commands = [
-      {
-        handler: update,
-        body: { name: 'renamed' },
-        args: ['cron', 'edit', '--profile', 'research', 'abc123abc123', '--name', 'renamed'],
-      },
-      {
-        handler: remove,
-        body: {},
-        args: ['cron', 'remove', '--profile', 'research', 'abc123abc123'],
-      },
-      {
-        handler: pause,
-        body: {},
-        args: ['cron', 'pause', '--profile', 'research', 'abc123abc123'],
-      },
-      {
-        handler: resume,
-        body: {},
-        args: ['cron', 'resume', '--profile', 'research', 'abc123abc123'],
-      },
-      {
-        handler: runJob,
-        body: {},
-        args: ['cron', 'run', '--profile', 'research', 'abc123abc123'],
-      },
-    ]
+    const getCtx = createMockCtx({ params: { id: created.job_id } })
+    await get(asContext(getCtx))
+    expect(getCtx.status).toBe(404)
+  })
 
-    for (const command of commands) {
-      writeExistingJob(tempDir)
-      const ctx = createMockCtx({
-        state: profileState,
-        request: { body: command.body },
-      })
+  it('delegates manual run to the runner and returns the updated job', async () => {
+    const created = await createJob({ schedule: '0 9 * * *', prompt: 'p' })
+    testState.runJobNow.mockResolvedValue({ ...created, last_status: 'success' })
 
-      await command.handler(ctx)
+    const ctx = createMockCtx({ params: { id: created.job_id } })
+    await runJob(asContext(ctx))
 
-      expect(testState.execFile).toHaveBeenLastCalledWith(
-        '/fake/bin/hermes',
-        command.args,
-        expect.any(Object),
-        expect.any(Function),
-      )
-    }
+    expect(testState.runJobNow).toHaveBeenCalledTimes(1)
+    expect(getJob(ctx.body).last_status).toBe('success')
   })
 })

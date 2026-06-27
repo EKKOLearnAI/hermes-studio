@@ -55,6 +55,31 @@ export function ompToolResultImagePaths(result: unknown): string[] {
   return paths.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
 }
 
+/** Inline image bytes an omp tool result exposes (`details.images: [{ data, mimeType }]`). */
+export interface OmpToolImage {
+  data: string
+  mimeType: string
+}
+
+/**
+ * Base64 image payloads an omp tool result carries alongside `imagePaths`. omp
+ * writes the bytes to an ephemeral temp file *and* echoes them here, so hermes
+ * can persist a durable copy even when the temp file has already been reaped.
+ * Entry order matches `ompToolResultImagePaths`.
+ */
+export function ompToolResultImages(result: unknown): OmpToolImage[] {
+  if (!isRecord(result) || !isRecord(result.details)) return []
+  const images = result.details.images
+  if (!Array.isArray(images)) return []
+  const out: OmpToolImage[] = []
+  for (const entry of images) {
+    if (isRecord(entry) && typeof entry.data === 'string' && entry.data.length > 0) {
+      out.push({ data: entry.data, mimeType: typeof entry.mimeType === 'string' ? entry.mimeType : 'image/png' })
+    }
+  }
+  return out
+}
+
 export interface OmpRunTokens {
   inputTokens: number
   outputTokens: number

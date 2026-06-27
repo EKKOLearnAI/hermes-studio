@@ -25,7 +25,8 @@ import { flushBridgePendingToDb, recordBridgeToolCompleted, recordBridgeToolStar
 import { summarizeToolArguments } from './response-utils'
 import { ensureHermesRunWorkspace } from './workspace'
 import { ompSessionManager, OMP_EXIT_FRAME_TYPE, type OmpFrame } from './omp-session-manager'
-import { isRecord, ompAssistantReasoning, ompAssistantText, ompToolResultImagePaths, ompToolResultText, ompUsageTokens } from './omp-transforms'
+import { isRecord, ompAssistantReasoning, ompAssistantText, ompToolResultText, ompUsageTokens } from './omp-transforms'
+import { persistOmpToolImages } from './omp-image-store'
 import type { ContentBlock, SessionState } from './types'
 
 export interface OmpRunData {
@@ -218,7 +219,29 @@ export async function handleOmpRun(
   runState.abortController = abortController
 
   const flushAssistant = () => {
+    // Capture before the flush resets the pending buffers. flushBridgePendingToDb
+    // writes the assistant content to SQLite but — unlike the bridge runner, which
+    // builds its assistant message in state.messages from deltas — omp never
+    // mirrors this content into the in-memory state.messages. The resume handler
+    // returns state.messages verbatim when the session is still cached, so without
+    // this mirror a reconnect/refresh overwrites the freshly-fetched DB messages
+    // with a list missing the assistant text and generated-image markdown.
+    const content = runState.bridgePendingAssistantContent || ''
+    const reasoning = runState.bridgePendingReasoningContent || ''
     flushBridgePendingToDb(runState, session_id, runMarker)
+    if (content.trim()) {
+      runState.messages.push({
+        id: runState.messages.length + 1,
+        session_id,
+        runMarker,
+        role: 'assistant',
+        content,
+        reasoning: reasoning || null,
+        reasoning_content: reasoning || null,
+        finish_reason: 'stop',
+        timestamp: Math.floor(Date.now() / 1000),
+      })
+    }
   }
 
   const finalize = async (error?: string) => {
@@ -354,14 +377,23 @@ export async function handleOmpRun(
           error: frame.isError === true ? output : undefined,
         })
         // Surface tool-produced image files (e.g. generate_image) as markdown
-        // images in the assistant stream. MarkdownRenderer rewrites the local
-        // path to the download endpoint, so the picture renders inline live and
-        // on reload without bloating the DB with base64.
-        for (const imagePath of ompToolResultImagePaths(frame.result)) {
-          const markdown = `\n\n![generated image](${imagePath})\n`
-          runState.bridgePendingAssistantContent = (runState.bridgePendingAssistantContent || '') + markdown
-          runState.bridgeOutput = (runState.bridgeOutput || '') + markdown
-          emit('message.delta', { run_id: runId, delta: markdown, output: runState.bridgeOutput })
+        // images in the assistant stream. The bytes are copied into the durable
+        // profile upload dir first — omp's `/tmp/omp-image-*` path is reaped
+        // before a reload — and MarkdownRenderer rewrites the path to the
+        // download endpoint so the picture renders both live and on reload.
+        const imagePaths = persistOmpToolImages(frame.result, profile)
+        if (imagePaths.length > 0) {
+          for (const imagePath of imagePaths) {
+            const markdown = `\n\n![generated image](${imagePath})\n`
+            runState.bridgePendingAssistantContent = (runState.bridgePendingAssistantContent || '') + markdown
+            runState.bridgeOutput = (runState.bridgeOutput || '') + markdown
+            emit('message.delta', { run_id: runId, delta: markdown, output: runState.bridgeOutput })
+          }
+          // Persist the image markdown immediately as its own assistant message.
+          // A later `message_end` overwrites bridgePendingAssistantContent with
+          // omp's authoritative text (which never includes the injected markdown),
+          // so flushing now is what makes the image survive a page reload.
+          flushAssistant()
         }
         return
       }

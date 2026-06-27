@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { renameSession, setSessionWorkspace, batchDeleteSessions, exportSession } from "@/api/hermes/sessions";
 import type { AvailableModelGroup } from "@/api/hermes/system";
-import { fetchCodingAgentsStatus, inferCodingAgentApiMode, normalizeCodingAgentApiMode, type CodingAgentApiMode, type CodingAgentId } from "@/api/coding-agents";
+import { inferCodingAgentApiMode, normalizeCodingAgentApiMode, type CodingAgentApiMode } from "@/api/coding-agents";
 import { useChatStore, type Session } from "@/stores/hermes/chat";
 import { useAppStore } from "@/stores/hermes/app";
 import { useProfilesStore } from "@/stores/hermes/profiles";
@@ -16,8 +16,6 @@ import {
   NSelect,
   NTooltip,
   NPopconfirm,
-  NRadioButton,
-  NRadioGroup,
   useMessage,
   type DropdownOption,
 } from "naive-ui";
@@ -318,22 +316,16 @@ const headerTitle = computed(() =>
 );
 
 const showNewChatModal = ref(false);
-const newChatAgent = ref<"hermes" | "claude-code" | "codex" | "omp">("hermes");
-const newChatAgentMode = ref<"global" | "scoped">("scoped");
+const newChatAgent = ref<"hermes" | "omp">("hermes");
 const newChatProfile = ref<string>("default");
 const newChatProvider = ref<string>("");
 const newChatModel = ref<string>("");
-const newChatBaseUrl = ref<string>("");
-const newChatApiKey = ref<string>("");
-const newChatApiMode = ref<CodingAgentApiMode>("codex_responses");
 const newChatWorkspace = ref("");
 const newChatLoading = ref(false);
 const CODING_AGENT_AUTH_PROVIDER_KEYS = new Set(["openai-codex", "copilot", "xai-oauth", "nous", "google-gemini-cli", "claude-oauth"]);
 
 const newChatAgentOptions = computed(() => [
   { label: "Hermes", value: "hermes" },
-  { label: "Claude Code", value: "claude-code" },
-  { label: "Codex", value: "codex" },
   { label: "omp", value: "omp" },
 ]);
 
@@ -341,11 +333,6 @@ const newChatApiModeOptions = computed(() => [
   { label: t("codingAgents.protocolOpenAiChat"), value: "chat_completions" },
   { label: t("codingAgents.protocolOpenAiResponses"), value: "codex_responses" },
   { label: t("codingAgents.protocolAnthropicMessages"), value: "anthropic_messages" },
-]);
-
-const newChatAgentModeOptions = computed(() => [
-  { label: t("codingAgents.launchModeGlobal"), value: "global" },
-  { label: t("codingAgents.launchModeScoped"), value: "scoped" },
 ]);
 
 function getModelGroupsForProfile(profile: string) {
@@ -360,7 +347,7 @@ function isCodingAgentAuthProvider(provider?: string) {
 }
 
 function isNewChatProviderAllowed(group: AvailableModelGroup) {
-  if (!(newChatAgent.value !== "hermes" && newChatAgentMode.value === "scoped")) return true;
+  if (newChatAgent.value === "hermes") return true;
   return !isCodingAgentAuthProvider(group.provider);
 }
 
@@ -434,62 +421,28 @@ const selectedNewChatProviderGroup = computed(() =>
   newChatModelGroups.value.find((item) => item.provider === newChatProvider.value),
 );
 
-const isNewChatCodingAgent = computed(() => newChatAgent.value !== "hermes" && newChatAgent.value !== "omp");
-const isNewChatGlobalCodingAgent = computed(() =>
-  isNewChatCodingAgent.value && newChatAgentMode.value === "global",
-);
-const newChatUsesProviderModel = computed(() => !isNewChatGlobalCodingAgent.value);
-const newChatNeedsBaseUrl = computed(() =>
-  isNewChatCodingAgent.value && newChatAgentMode.value === "scoped" && !selectedNewChatProviderGroup.value?.base_url,
-);
-const newChatNeedsApiKey = computed(() =>
-  isNewChatCodingAgent.value && newChatAgentMode.value === "scoped" && !selectedNewChatProviderGroup.value?.api_key,
-);
 const canConfirmNewChat = computed(() => {
   if (!newChatProfile.value) return false;
-  if (!newChatUsesProviderModel.value) return true;
   if (!newChatProvider.value || !newChatModel.value) return false;
-  if (!isNewChatCodingAgent.value) return true;
-  if (!newChatApiMode.value) return false;
-  if (newChatNeedsBaseUrl.value && !newChatBaseUrl.value.trim()) return false;
-  if (newChatNeedsApiKey.value && !newChatApiKey.value.trim()) return false;
   return true;
 });
-
-function defaultNewChatApiMode(group?: AvailableModelGroup): CodingAgentApiMode {
-  const providerKey = String(group?.provider || newChatProvider.value || "").toLowerCase();
-  const baseUrl = String(group?.base_url || newChatBaseUrl.value || "").toLowerCase();
-  return normalizeCodingAgentApiMode(
-    group?.api_mode,
-    inferCodingAgentApiMode(providerKey, baseUrl),
-  );
-}
-
-function syncNewChatApiMode() {
-  newChatApiMode.value = defaultNewChatApiMode(selectedNewChatProviderGroup.value);
-}
 
 function syncNewChatModelSelection() {
   const defaults = getDefaultModelForProfile(newChatProfile.value);
   newChatProvider.value = defaults.provider;
   newChatModel.value = defaults.model;
-  newChatBaseUrl.value = "";
-  newChatApiKey.value = "";
-  syncNewChatApiMode();
 }
 
 function ensureNewChatProviderSelection() {
-  if (!newChatUsesProviderModel.value) return;
   const currentGroup = selectedNewChatProviderGroup.value;
   if (currentGroup && currentGroup.models.includes(newChatModel.value)) {
-    syncNewChatApiMode();
     return;
   }
   syncNewChatModelSelection();
 }
 
 watch(
-  () => [newChatAgent.value, newChatAgentMode.value, newChatProfile.value],
+  () => [newChatAgent.value, newChatProfile.value],
   () => ensureNewChatProviderSelection(),
 );
 
@@ -524,55 +477,18 @@ function handleNewChatProfileChange(value: string) {
 function handleNewChatProviderChange(value: string) {
   newChatProvider.value = value;
   newChatModel.value = newChatModelOptions.value[0]?.value || "";
-  newChatBaseUrl.value = "";
-  newChatApiKey.value = "";
-  syncNewChatApiMode();
 }
 
 async function confirmNewChat() {
-  if (newChatAgent.value !== "hermes" && newChatAgent.value !== "omp") {
-    newChatLoading.value = true;
-    try {
-      const agentId = newChatAgent.value as CodingAgentId;
-      const status = await fetchCodingAgentsStatus();
-      const tool = status.tools.find((item) => item.id === agentId);
-      if (!tool?.installed) {
-        const fallbackName = agentId === "codex" ? "Codex" : "Claude Code";
-        message.warning(t("codingAgents.installRequired", { agent: tool?.name || fallbackName }));
-        showNewChatModal.value = false;
-        await router.push({ name: "hermes.codingAgents" });
-        return;
-      }
-    } catch {
-      message.error(t("codingAgents.loadFailed"));
-      return;
-    } finally {
-      newChatLoading.value = false;
-    }
-  }
-
-  const group = selectedNewChatProviderGroup.value;
-  const source = newChatAgent.value === "hermes" ? "cli" : newChatAgent.value === "omp" ? "omp" : "coding_agent";
-  const isGlobalCodingAgent = source === "coding_agent" && newChatAgentMode.value === "global";
-  const agent = newChatAgent.value === "codex"
-    ? "codex"
-    : newChatAgent.value === "claude-code"
-      ? "claude"
-      : newChatAgent.value === "omp"
-        ? "omp"
-        : "hermes";
+  const source = newChatAgent.value === "hermes" ? "cli" : "omp";
+  const agent = newChatAgent.value === "hermes" ? "hermes" : "omp";
   const session = chatStore.newChat({
     profile: newChatProfile.value,
-    provider: isGlobalCodingAgent ? undefined : newChatProvider.value,
-    model: isGlobalCodingAgent ? undefined : newChatModel.value,
+    provider: newChatProvider.value,
+    model: newChatModel.value,
     source,
     agent,
-    codingAgentId: newChatAgent.value === "hermes" || newChatAgent.value === "omp" ? undefined : newChatAgent.value,
-    codingAgentMode: source === "coding_agent" ? newChatAgentMode.value : undefined,
     workspace: newChatWorkspace.value || null,
-    baseUrl: source === "coding_agent" && !isGlobalCodingAgent ? group?.base_url || newChatBaseUrl.value.trim() || undefined : undefined,
-    apiKey: source === "coding_agent" && !isGlobalCodingAgent ? group?.api_key || newChatApiKey.value.trim() || undefined : undefined,
-    apiMode: source === "coding_agent" && !isGlobalCodingAgent ? newChatApiMode.value : undefined,
   });
   await router.push({
     name: chatStore.runtimeMode === "global_agent" ? "hermes.globalAgentSession" : "hermes.session",
@@ -1464,18 +1380,6 @@ async function handleSessionModelCustomSubmit() {
               :disabled="newChatLoading"
             />
           </label>
-          <label v-if="isNewChatCodingAgent" class="new-chat-field">
-            <span class="new-chat-label">{{ t("codingAgents.launchModeScope") }}</span>
-            <NRadioGroup v-model:value="newChatAgentMode" name="new-chat-coding-agent-mode">
-              <NRadioButton
-                v-for="option in newChatAgentModeOptions"
-                :key="option.value"
-                :value="option.value"
-              >
-                {{ option.label }}
-              </NRadioButton>
-            </NRadioGroup>
-          </label>
           <label class="new-chat-field">
             <span class="new-chat-label">{{ t("sidebar.profiles") }}</span>
             <NSelect
@@ -1485,7 +1389,7 @@ async function handleSessionModelCustomSubmit() {
               @update:value="handleNewChatProfileChange"
             />
           </label>
-          <label v-if="newChatUsesProviderModel" class="new-chat-field">
+          <label class="new-chat-field">
             <span class="new-chat-label">{{ t("models.provider") }}</span>
             <NSelect
               :value="newChatProvider"
@@ -1494,37 +1398,13 @@ async function handleSessionModelCustomSubmit() {
               @update:value="handleNewChatProviderChange"
             />
           </label>
-          <label v-if="newChatUsesProviderModel" class="new-chat-field">
+          <label class="new-chat-field">
             <span class="new-chat-label">{{ t("models.models") }}</span>
             <NSelect
               v-model:value="newChatModel"
               :options="newChatModelOptions"
               :disabled="newChatLoading || !newChatProvider"
               filterable
-            />
-          </label>
-          <label v-if="isNewChatCodingAgent && newChatAgentMode === 'scoped'" class="new-chat-field">
-            <span class="new-chat-label">{{ t("codingAgents.protocolScope") }}</span>
-            <NSelect
-              v-model:value="newChatApiMode"
-              :options="newChatApiModeOptions"
-              :disabled="newChatLoading"
-            />
-          </label>
-          <label v-if="newChatNeedsBaseUrl" class="new-chat-field">
-            <span class="new-chat-label">{{ t("models.baseUrl") }}</span>
-            <NInput
-              v-model:value="newChatBaseUrl"
-              :placeholder="t('models.baseUrlPlaceholder')"
-            />
-          </label>
-          <label v-if="newChatNeedsApiKey" class="new-chat-field">
-            <span class="new-chat-label">{{ t("models.apiKey") }}</span>
-            <NInput
-              v-model:value="newChatApiKey"
-              type="password"
-              show-password-on="click"
-              :placeholder="t('models.apiKeyPlaceholder')"
             />
           </label>
           <div class="new-chat-field">

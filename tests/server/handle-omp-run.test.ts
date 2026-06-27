@@ -277,4 +277,65 @@ describe('handleOmpRun frame mapping', () => {
       .map(message => message.content)
     expect(assistantContents.some(content => content.includes('![generated image](/tmp/omp-image-xyz.png)'))).toBe(true)
   })
+
+  it('persists generate_image output when a later assistant message follows the tool', async () => {
+    // Mirrors the real flow: generate_image, then the agent emits another
+    // assistant message (deciding to read the image) whose authoritative text is
+    // longer than the injected image markdown, then a `read` tool. The image
+    // markdown must survive in persisted assistant content so it renders on reload.
+    const { emitted, nsp, socket } = makeHarness()
+    const sessionMap = new Map<string, SessionState>([['sid', freshState()]])
+
+    const run = handleOmpRun(
+      nsp, socket,
+      { input: 'draw a smiley', session_id: 'sid' },
+      'default', sessionMap,
+      async () => freshState(),
+      vi.fn(),
+    )
+    await vi.waitFor(() => expect(captured).toBeDefined())
+    const emit = captured!
+
+    emit({ type: 'tool_execution_start', toolCallId: 'img_1', toolName: 'generate_image', args: { subject: 'smiley' } })
+    emit({
+      type: 'tool_execution_end',
+      toolCallId: 'img_1',
+      toolName: 'generate_image',
+      result: {
+        content: [{ type: 'text', text: 'Generated 1 image(s):\n  /tmp/omp-image-xyz.png' }],
+        details: { imagePaths: ['/tmp/omp-image-xyz.png'] },
+      },
+      isError: false,
+    })
+    // Authoritative full text only at message_end (no message_update deltas),
+    // longer than the injected image markdown — would clobber it via the REPLACE.
+    emit({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Now let me read the generated image file to verify the smiley rendered correctly.' }],
+        stopReason: 'toolUse',
+      },
+    })
+    emit({ type: 'tool_execution_start', toolCallId: 'read_1', toolName: 'read', args: { path: '/tmp/omp-image-xyz.png' } })
+    emit({ type: 'tool_execution_end', toolCallId: 'read_1', toolName: 'read', result: { content: [{ type: 'text', text: 'Read image file [image/webp]' }] }, isError: false })
+    emit({ type: 'agent_end', messages: [] })
+    await run
+
+    const assistantContents = mocks.addMessage.mock.calls
+      .map(call => call[0] as { role: string; content: string })
+      .filter(message => message.role === 'assistant')
+      .map(message => message.content)
+    expect(assistantContents.some(content => content.includes('![generated image](/tmp/omp-image-xyz.png)'))).toBe(true)
+
+    // The in-memory state.messages must also carry the assistant content, because
+    // the resume handler returns state.messages verbatim on reconnect/refresh.
+    // Without this, a reload overwrites the freshly-fetched DB messages with a
+    // list missing the generated image + final text (the bug: message vanishes).
+    const inMemory = sessionMap.get('sid')!.messages
+      .filter(m => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim())
+      .map(m => m.content)
+    expect(inMemory.some(content => content.includes('![generated image](/tmp/omp-image-xyz.png)'))).toBe(true)
+    expect(inMemory.some(content => content.includes('Now let me read the generated image file'))).toBe(true)
+  })
 })

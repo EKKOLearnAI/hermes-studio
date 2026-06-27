@@ -5,6 +5,7 @@ import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
 import { ompSessionManager } from './hermes/run-chat/omp-session-manager'
 import { shutdownManagedGateways } from './hermes/gateway-runner'
 import { stopOutboundRelayClient } from './global-agent/outbound-relay-client'
+import { getCronScheduler } from './hermes/cron/scheduler'
 
 const DEFAULT_SHUTDOWN_FORCE_EXIT_MS = 15_000
 const DEFAULT_DESKTOP_SHUTDOWN_FORCE_EXIT_MS = 15_000
@@ -100,6 +101,9 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
 
       ompSessionManager.stopAll()
       logger.info('omp sessions closed')
+
+      getCronScheduler().stop()
+      logger.info('Cron scheduler stopped')
 
       // Disconnect Socket.IO before HTTP server to prevent hanging
       if (groupChatServer) {

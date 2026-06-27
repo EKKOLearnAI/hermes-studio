@@ -24,12 +24,20 @@ before the bridge readiness check, so omp runs never touch the Python bridge.
 - Abort reuses the `AbortController` path: `handleAbort` flushes omp pending
   content (omp uses the bridge pending fields) and `markAbortCompleted` finalizes,
   while the controller signal tells the omp process to abort the current turn.
-- Tool-produced images (e.g. `generate_image`) render in the chat: `handle-omp-run`
-  reads `result.details.imagePaths` on `tool_execution_end` and injects a
-  `![generated image](<path>)` markdown delta into the assistant stream (emitted
-  live and flushed to the assistant message for reload). `MarkdownRenderer`
-  rewrites the local path to `/api/hermes/download`, and since omp runs in the
-  same container the `/tmp/omp-image-*.png` file resolves — no base64 is stored.
+- Tool-produced images (e.g. `generate_image`) render in the chat: on
+  `tool_execution_end`, `handle-omp-run` copies each image listed in
+  `result.details.imagePaths` into the durable profile upload dir
+  (`<uploadDir>/<profile>/omp-images/`, via `persistOmpToolImages`) — falling
+  back to the base64 bytes omp echoes in `result.details.images` when the temp
+  file is already gone — then injects a `![generated image](<durable-path>)`
+  markdown delta into the assistant stream. It is **flushed to the DB
+  immediately** as its own assistant message so a later `message_end` (whose
+  authoritative text never contains the injected markdown) can't clobber it
+  before persistence. `MarkdownRenderer` rewrites the path to
+  `/api/hermes/download`, which serves upload-dir files through the local
+  provider for any backend. omp's `/tmp/omp-image-*` path is ephemeral and is
+  reaped before a page reload, so referencing it directly (the original
+  approach) left a broken image after refresh — the durable copy fixes reload.
 - Usage analytics include omp: `handle-omp-run` now records omp's *reported*
   per-call usage (summed input/output/cache + the run model) to `session_usage`,
   not message-text estimates. The usage dashboard (`usageStats`) reads Hermes

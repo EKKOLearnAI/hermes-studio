@@ -179,7 +179,7 @@ describe('API Client', () => {
         })),
       })
 
-      await expect(request('/api/coding-agents/runs/session-1/input')).rejects.toThrow('API Error 500: spawn claude ENOENT')
+      await expect(request('/api/hermes/sessions/run/session-1')).rejects.toThrow('API Error 500: spawn claude ENOENT')
     })
 
     it('returns parsed JSON on success', async () => {

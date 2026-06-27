@@ -5,6 +5,7 @@ import {
   ompAssistantText,
   ompToolResultText,
   ompToolResultImagePaths,
+  ompToolResultImages,
   ompUsageTokens,
 } from '../../packages/server/src/services/hermes/run-chat/omp-transforms'
 
@@ -83,6 +84,26 @@ describe('omp transforms', () => {
       expect(ompToolResultImagePaths({ details: { imagePaths: 'nope' } })).toEqual([])
       expect(ompToolResultImagePaths({ content: [] })).toEqual([])
       expect(ompToolResultImagePaths('x')).toEqual([])
+    })
+  })
+
+  describe('ompToolResultImages', () => {
+    it('extracts base64 image payloads with mime types', () => {
+      const result = {
+        details: { imagePaths: ['/tmp/omp-image-abc.png'], images: [{ data: 'AAA', mimeType: 'image/webp' }] },
+      }
+      expect(ompToolResultImages(result)).toEqual([{ data: 'AAA', mimeType: 'image/webp' }])
+    })
+
+    it('defaults mime type and drops unusable entries', () => {
+      const result = { details: { images: [{ data: 'AAA' }, { data: '' }, { mimeType: 'image/png' }, 5] } }
+      expect(ompToolResultImages(result)).toEqual([{ data: 'AAA', mimeType: 'image/png' }])
+    })
+
+    it('returns empty for non-array or missing images', () => {
+      expect(ompToolResultImages({ details: { images: 'nope' } })).toEqual([])
+      expect(ompToolResultImages({ details: {} })).toEqual([])
+      expect(ompToolResultImages('x')).toEqual([])
     })
   })
 

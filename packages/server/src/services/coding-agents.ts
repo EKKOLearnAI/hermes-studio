@@ -1,7 +1,7 @@
 import { execFile } from 'child_process'
 import { randomUUID } from 'crypto'
-import { existsSync, readdirSync, realpathSync } from 'fs'
-import { chmod, mkdir, readFile, stat, writeFile } from 'fs/promises'
+import { existsSync, readdirSync } from 'fs'
+import { chmod, mkdir, readFile, writeFile } from 'fs/promises'
 import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
@@ -71,17 +71,6 @@ export interface CodingAgentToolStatus extends CodingAgentDefinition {
   error?: string
 }
 
-export interface CodingAgentsStatus {
-  tools: CodingAgentToolStatus[]
-}
-
-export interface CodingAgentMutationResult extends CodingAgentsStatus {
-  success: boolean
-  tool: CodingAgentToolStatus
-  message?: string
-  code?: string
-}
-
 export interface CodingAgentConfigFileDefinition {
   key: string
   path: string
@@ -92,15 +81,6 @@ export interface CodingAgentConfigFileDefinition {
 export interface CodingAgentConfigScope {
   profile?: string
   provider?: string
-}
-
-export interface CodingAgentConfigFileContent extends CodingAgentConfigFileDefinition {
-  content: string
-  exists: boolean
-  size: number
-  profile: string
-  provider: string
-  rootDir: string
 }
 
 export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
@@ -130,11 +110,6 @@ export interface CodingAgentLaunchResult {
   env: Record<string, string>
   shellCommand: string
   files: Array<{ key: string; path: string; absolutePath: string }>
-}
-
-export interface CodingAgentNativeLaunchResult extends CodingAgentLaunchResult {
-  nativeTerminal: true
-  terminal: string
 }
 
 export interface CodingAgentRunStartResult extends CodingAgentLaunchResult {
@@ -987,103 +962,6 @@ function buildLauncherShellCommand(workspaceDir: string, launcherPath: string): 
       })
 }
 
-function appleScriptString(value: string): string {
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
-}
-
-async function commandExists(command: string): Promise<boolean> {
-  try {
-    await execFileAsync(process.platform === 'win32' ? 'where' : 'which', [command], {
-      encoding: 'utf-8',
-      timeout: 3000,
-      windowsHide: true,
-    })
-    return true
-  } catch {
-    return false
-  }
-}
-
-function isDockerRuntime(): boolean {
-  return existsSync('/.dockerenv') || process.env.container === 'docker'
-}
-
-async function openNativeTerminal(shellCommand: string): Promise<string> {
-  if (process.platform === 'win32') {
-    const escapedCommand = shellCommand.replace(/"/g, '""').replace(/\$/g, '`$')
-    await execFileAsync('powershell.exe', [
-      '-NoProfile',
-      '-Command',
-      `Start-Process -FilePath powershell.exe -ArgumentList @('-NoExit', '-Command', "${escapedCommand}")`,
-    ], {
-      encoding: 'utf-8',
-      timeout: 8000,
-      windowsHide: true,
-    })
-    return 'PowerShell'
-  }
-
-  if (process.platform === 'darwin') {
-    await execFileAsync('osascript', [
-      '-e',
-      `tell application "Terminal" to do script ${appleScriptString(shellCommand)}`,
-      '-e',
-      'tell application "Terminal" to activate',
-    ], {
-      encoding: 'utf-8',
-      timeout: 8000,
-      windowsHide: true,
-    })
-    return 'Terminal.app'
-  }
-
-  if (process.platform === 'linux') {
-    if (isDockerRuntime()) {
-      const err = new Error('Native terminal is not available inside Docker')
-      ;(err as any).status = 400
-      throw err
-    }
-    if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
-      const err = new Error('Native terminal requires a Linux desktop session')
-      ;(err as any).status = 400
-      throw err
-    }
-
-    const candidates: Array<{ command: string; args: string[] }> = [
-      { command: 'xdg-terminal-exec', args: ['bash', '-lc', shellCommand] },
-      { command: 'gnome-terminal', args: ['--', 'bash', '-lc', shellCommand] },
-      { command: 'konsole', args: ['-e', 'bash', '-lc', shellCommand] },
-      { command: 'xfce4-terminal', args: ['--command', `bash -lc ${shellQuote(shellCommand)}`] },
-      { command: 'kitty', args: ['bash', '-lc', shellCommand] },
-      { command: 'alacritty', args: ['-e', 'bash', '-lc', shellCommand] },
-      { command: 'xterm', args: ['-e', 'bash', '-lc', shellCommand] },
-    ]
-
-    const errors: string[] = []
-    for (const candidate of candidates) {
-      if (!(await commandExists(candidate.command))) continue
-      try {
-        await execFileAsync(candidate.command, candidate.args, {
-          encoding: 'utf-8',
-          timeout: 8000,
-          windowsHide: true,
-        })
-        return candidate.command
-      } catch (err: any) {
-        errors.push(`${candidate.command}: ${normalizeError(err)}`)
-      }
-    }
-
-    const err = new Error(errors[0] || 'No supported Linux terminal command was found')
-    ;(err as any).status = 400
-    throw err
-  }
-
-  const err = new Error('Native terminal launch is not supported on this platform')
-  ;(err as any).status = 400
-  throw err
-}
-
 function getLiveConfigFileDefinition(id: string, key: string): CodingAgentConfigFileDefinition | null {
   const tool = getCodingAgentDefinition(id)
   if (!tool) return null
@@ -1176,10 +1054,6 @@ function normalizeError(err: any): string {
   return message.split(/\r?\n/).filter(Boolean).slice(0, 4).join('\n')
 }
 
-function normalizeErrorCode(err: any): string | undefined {
-  return isNodeEnvironmentMissingError(err) ? NODE_ENVIRONMENT_MISSING_CODE : undefined
-}
-
 async function findCommandPaths(command: string, env: NodeJS.ProcessEnv): Promise<string[]> {
   try {
     const lookupCommand = process.platform === 'win32' ? 'where' : 'which'
@@ -1213,48 +1087,6 @@ function commandExecution(command: string, args: string[]): CommandExecution {
   return { command: normalizedCommand, args }
 }
 
-function packageParts(packageName: string): string[] {
-  return packageName.split('/').filter(Boolean)
-}
-
-function getPrefixFromPackagePath(path: string, packageName: string): string | null {
-  const normalized = path.replace(/\\/g, '/')
-  const parts = normalized.split('/').filter(Boolean)
-  const nodeModulesIndex = parts.lastIndexOf('node_modules')
-  const packageNameParts = packageParts(packageName)
-
-  if (nodeModulesIndex <= 0) return null
-  for (let i = 0; i < packageNameParts.length; i += 1) {
-    if (parts[nodeModulesIndex + 1 + i] !== packageNameParts[i]) return null
-  }
-
-  const libIndex = nodeModulesIndex - 1
-  if (parts[libIndex] !== 'lib') return null
-  const prefixParts = parts.slice(0, libIndex)
-  if (prefixParts.length === 0) return process.platform === 'win32' ? null : '/'
-  return `${normalized.startsWith('/') ? '/' : ''}${prefixParts.join('/')}`
-}
-
-async function getCommandPackagePrefixes(definition: CodingAgentDefinition, env: NodeJS.ProcessEnv): Promise<string[]> {
-  const commandPaths = await findCommandPaths(definition.command, env)
-  const prefixes = new Set<string>()
-
-  for (const commandPath of commandPaths) {
-    const candidates = [commandPath]
-    try {
-      candidates.push(realpathSync(commandPath))
-    } catch {
-      // Keep the unresolved command path as the fallback candidate.
-    }
-
-    for (const candidate of candidates) {
-      const prefix = getPrefixFromPackagePath(candidate, definition.packageName)
-      if (prefix) prefixes.add(prefix)
-    }
-  }
-  return [...prefixes]
-}
-
 function extractVersion(raw: string): string {
   const trimmed = raw.trim()
   return trimmed.match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?/)?.[0] || trimmed.split(/\s+/)[0] || ''
@@ -1284,23 +1116,8 @@ async function commandEnv(): Promise<NodeJS.ProcessEnv> {
   return env
 }
 
-export function getCodingAgentDefinitions(): CodingAgentDefinition[] {
-  return TOOL_DEFINITIONS.map(tool => ({ ...tool }))
-}
-
 export function getCodingAgentDefinition(id: string): CodingAgentDefinition | null {
   return TOOL_DEFINITIONS.find(tool => tool.id === id) || null
-}
-
-export function getCodingAgentConfigFileDefinitions(id: string): CodingAgentConfigFileDefinition[] {
-  const tool = getCodingAgentDefinition(id)
-  if (!tool) return []
-  return CONFIG_FILE_DEFINITIONS[tool.id].map(file => ({
-    key: file.key,
-    path: file.path,
-    language: file.language,
-    absolutePath: expandHomePath(file.path),
-  }))
 }
 
 export async function getCodingAgentStatus(definition: CodingAgentDefinition): Promise<CodingAgentToolStatus> {
@@ -1330,176 +1147,6 @@ export async function getCodingAgentStatus(definition: CodingAgentDefinition): P
       rawVersion: '',
       error: normalizeError(err),
     }
-  }
-}
-
-export async function getCodingAgentsStatus(): Promise<CodingAgentsStatus> {
-  return {
-    tools: await Promise.all(TOOL_DEFINITIONS.map(tool => getCodingAgentStatus(tool))),
-  }
-}
-
-export async function installCodingAgent(id: string): Promise<CodingAgentMutationResult> {
-  const tool = getCodingAgentDefinition(id)
-  if (!tool) {
-    const err = new Error('Unknown coding agent')
-    ;(err as any).status = 400
-    throw err
-  }
-  if (installingTools.has(tool.id)) {
-    const err = new Error('Install is already running')
-    ;(err as any).status = 409
-    throw err
-  }
-
-  installingTools.add(tool.id)
-  try {
-    const env = await commandEnv()
-    await runNpm(['install', '-g', tool.packageName], {
-      timeout: 10 * 60 * 1000,
-      env,
-    })
-    cachedGlobalNpmBin = undefined
-    const status = await getCodingAgentStatus(tool)
-    const allStatus = await getCodingAgentsStatus()
-    return {
-      success: status.installed,
-      tool: status,
-      tools: allStatus.tools,
-      message: status.installed ? 'Installed' : status.error || 'Install completed but the command was not found',
-    }
-  } catch (err: any) {
-    const status = await getCodingAgentStatus(tool)
-    const allStatus = await getCodingAgentsStatus()
-    return {
-      success: false,
-      tool: status,
-      tools: allStatus.tools,
-      message: normalizeError(err),
-      code: normalizeErrorCode(err),
-    }
-  } finally {
-    installingTools.delete(tool.id)
-  }
-}
-
-export async function deleteCodingAgent(id: string): Promise<CodingAgentMutationResult> {
-  const tool = getCodingAgentDefinition(id)
-  if (!tool) {
-    const err = new Error('Unknown coding agent')
-    ;(err as any).status = 400
-    throw err
-  }
-  if (deletingTools.has(tool.id)) {
-    const err = new Error('Delete is already running')
-    ;(err as any).status = 409
-    throw err
-  }
-
-  deletingTools.add(tool.id)
-  try {
-    const env = await commandEnv()
-    const packagePrefixes = await getCommandPackagePrefixes(tool, env)
-    const uninstallArgsList = packagePrefixes.length > 0
-      ? packagePrefixes.map(prefix => ['uninstall', '-g', '--prefix', prefix, tool.packageName])
-      : [['uninstall', '-g', tool.packageName]]
-    for (const uninstallArgs of uninstallArgsList) {
-      await runNpm(uninstallArgs, {
-        timeout: 10 * 60 * 1000,
-        env,
-      })
-    }
-    cachedGlobalNpmBin = undefined
-    const status = await getCodingAgentStatus(tool)
-    const allStatus = await getCodingAgentsStatus()
-    return {
-      success: !status.installed,
-      tool: status,
-      tools: allStatus.tools,
-      message: !status.installed ? 'Deleted' : 'Delete completed but the command is still available',
-    }
-  } catch (err: any) {
-    const status = await getCodingAgentStatus(tool)
-    const allStatus = await getCodingAgentsStatus()
-    return {
-      success: false,
-      tool: status,
-      tools: allStatus.tools,
-      message: normalizeError(err),
-      code: normalizeErrorCode(err),
-    }
-  } finally {
-    deletingTools.delete(tool.id)
-  }
-}
-
-export async function readCodingAgentConfigFile(id: string, key: string, scope: CodingAgentConfigScope = {}): Promise<CodingAgentConfigFileContent> {
-  const definition = getLiveConfigFileDefinition(id, key)
-  if (!definition) {
-    const err = new Error('Unknown coding agent config file')
-    ;(err as any).status = 404
-    throw err
-  }
-  const normalizedScope = normalizeConfigScope(scope)
-
-  try {
-    const info = await stat(definition.absolutePath)
-    if (!info.isFile()) {
-      const err = new Error('Config path is not a file')
-      ;(err as any).status = 400
-      throw err
-    }
-    if (info.size > MAX_CONFIG_FILE_SIZE) {
-      const err = new Error('Config file is too large to edit')
-      ;(err as any).status = 413
-      throw err
-    }
-    return {
-      ...definition,
-      ...normalizedScope,
-      rootDir: dirname(definition.absolutePath),
-      content: await readFile(definition.absolutePath, 'utf-8'),
-      exists: true,
-      size: info.size,
-    }
-  } catch (err: any) {
-    if (err?.code !== 'ENOENT') throw err
-    return {
-      ...definition,
-      ...normalizedScope,
-      rootDir: dirname(definition.absolutePath),
-      content: '',
-      exists: false,
-      size: 0,
-    }
-  }
-}
-
-export async function writeCodingAgentConfigFile(id: string, key: string, content: string, scope: CodingAgentConfigScope = {}): Promise<CodingAgentConfigFileContent> {
-  const definition = getLiveConfigFileDefinition(id, key)
-  if (!definition) {
-    const err = new Error('Unknown coding agent config file')
-    ;(err as any).status = 404
-    throw err
-  }
-  const normalizedScope = normalizeConfigScope(scope)
-
-  const buffer = Buffer.from(content || '', 'utf-8')
-  if (buffer.length > MAX_CONFIG_FILE_SIZE) {
-    const err = new Error('Config file content is too large')
-    ;(err as any).status = 413
-    throw err
-  }
-
-  await mkdir(dirname(definition.absolutePath), { recursive: true })
-  await writeFile(definition.absolutePath, buffer)
-  return {
-    ...definition,
-    ...normalizedScope,
-    rootDir: dirname(definition.absolutePath),
-    content,
-    exists: true,
-    size: buffer.length,
   }
 }
 
@@ -1819,14 +1466,4 @@ export function sendCodingAgentRunInput(sessionId: string, input: string, system
 
 export function stopCodingAgentRun(sessionId: string): { stopped: boolean } {
   return { stopped: codingAgentRunManager.stop(sessionId) }
-}
-
-export async function openCodingAgentNativeTerminal(id: string, input: CodingAgentLaunchInput): Promise<CodingAgentNativeLaunchResult> {
-  const launch = await prepareCodingAgentLaunch(id, input)
-  const terminal = await openNativeTerminal(launch.shellCommand)
-  return {
-    ...launch,
-    nativeTerminal: true,
-    terminal,
-  }
 }

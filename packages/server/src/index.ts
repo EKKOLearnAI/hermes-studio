@@ -28,6 +28,7 @@ import { scanLanDevices, startLanDiscoveryResponder } from './services/lan-disco
 import { getLanPeerSocketManager, getLanPeerSocketPath } from './services/lan-peer-socket'
 import { startGlobalAgentServer } from './services/global-agent/server'
 import { WorkflowSocketServer } from './services/workflow-socket'
+import { getCronScheduler, isCronSchedulerEnabled } from './services/hermes/cron/scheduler'
 import { logger } from './services/logger'
 import { createStaticCompressionMiddleware } from './middleware/static-compression'
 import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
@@ -352,6 +353,13 @@ export async function bootstrap() {
   const activeProfile = process.env.PROFILE || 'default'
   sessionDeleter.start(activeProfile)
   console.log('[bootstrap] session deleter started, profile=%s', activeProfile)
+
+  // Cron scheduler — fire web-ui-owned scheduled jobs in-process (replaces the
+  // Hermes CLI cron path). Gated by HERMES_WEBUI_CRON_SCHEDULER.
+  if (isCronSchedulerEnabled()) {
+    getCronScheduler().start()
+    console.log('[bootstrap] cron scheduler started')
+  }
 
   // Catch-all: destroy upgrade requests not handled by terminal or Socket.IO
   servers.forEach((httpServer) => {
