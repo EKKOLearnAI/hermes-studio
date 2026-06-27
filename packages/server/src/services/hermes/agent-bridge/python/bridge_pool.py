@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import copy
 import json
@@ -246,7 +246,6 @@ class AgentPool:
                     tool_complete_callback=self._tool_complete_callback(session_id),
                     clarify_callback=self._clarify_callback(session_id),
                 )
-                agent.compression_enabled = False
                 self._install_compression_hook(agent, session_id)
                 mcp_tool_names = self._mcp_tool_names(self._agent_tool_names(getattr(agent, "tools", None) or []))
 
@@ -664,7 +663,7 @@ class AgentPool:
         """Create a thinking callback that never forwards spinner text as content.
 
         The hermes-agent CLI uses thinking_callback for its KawaiiSpinner TUI
-        widget — sending decorative text like "(◕‿◕✿) pondering..." during
+        widget �?sending decorative text like "(◕‿◕�? pondering..." during
         API calls.  This is pure CLI UX decoration; it has no place in Web UI
         conversation history.
 
@@ -674,7 +673,7 @@ class AgentPool:
         kaomoji patterns, creating a self-reinforcing degradation loop.
 
         This callback sends empty text unconditionally.  The model's real
-        reasoning content arrives through reasoning_callback → reasoning.delta,
+        reasoning content arrives through reasoning_callback �?reasoning.delta,
         which is unaffected.
         """
         def callback(text=None):
@@ -1098,9 +1097,9 @@ class AgentPool:
                     # `events` list used by tool.started/tool.completed. Text and
                     # tool events were previously tracked in two parallel lists
                     # with no relative ordering, so when the model interleaved
-                    # narration and tool calls ("text → tool → more text") the
-                    # consumer reordered them — processing all events before the
-                    # aggregated delta — which visibly split a word across the
+                    # narration and tool calls ("text �?tool �?more text") the
+                    # consumer reordered them �?processing all events before the
+                    # aggregated delta �?which visibly split a word across the
                     # tool boundary. Recording text as ordered events preserves
                     # the true interleaving.
                     record.deltas.append(text)
@@ -1158,7 +1157,7 @@ class AgentPool:
                 if conversation_history is not None:
                     kwargs["conversation_history"] = conversation_history
                 # Local patch (reasoning-effort): per-run reasoning effort override (Web UI brain button).
-                # Mutates session.agent.reasoning_config in place — restored after run.
+                # Mutates session.agent.reasoning_config in place �?restored after run.
                 _saved_reasoning_config = None
                 _did_override_reasoning = False
                 if reasoning_effort:
@@ -1528,7 +1527,7 @@ class AgentPool:
                 "handled": True,
                 "type": "goal",
                 "action": "pause",
-                "message": f"⏸ Goal paused: {state.goal}" if state else "No goal set.",
+                "message": f"�?Goal paused: {state.goal}" if state else "No goal set.",
                 "clear_goal_continuations": True,
             }
 
@@ -1541,7 +1540,7 @@ class AgentPool:
                 "handled": True,
                 "type": "goal",
                 "action": "resume",
-                "message": f"▶ Goal resumed: {state.goal}" if state else "No goal to resume.",
+                "message": f"�?Goal resumed: {state.goal}" if state else "No goal to resume.",
                 "kickoff_prompt": prompt,
                 "max_turns": state.max_turns if state else None,
             }
@@ -1555,7 +1554,7 @@ class AgentPool:
                 "handled": True,
                 "type": "goal",
                 "action": "clear",
-                "message": "✓ Goal cleared." if had else "No active goal.",
+                "message": "�?Goal cleared." if had else "No active goal.",
                 "clear_goal_continuations": True,
             }
 
@@ -1578,7 +1577,7 @@ class AgentPool:
             "type": "goal",
             "action": "set",
             "message": (
-                f"⊙ Goal set ({state.max_turns}-turn budget): {state.goal}\n"
+                f"�?Goal set ({state.max_turns}-turn budget): {state.goal}\n"
                 "After each turn, a judge model will check if the goal is done. "
                 "Hermes keeps working until it is, you pause/clear it, or the budget is exhausted."
             ),
@@ -1620,7 +1619,7 @@ class AgentPool:
                 try:
                     idx = int(rest.split()[0])
                     removed = mgr.remove_subgoal(idx)
-                    message = f"✓ Removed subgoal {idx}: {removed}"
+                    message = f"�?Removed subgoal {idx}: {removed}"
                 except ValueError:
                     message = "/subgoal remove: <n> must be an integer (1-based index)."
                 except (IndexError, RuntimeError) as exc:
@@ -1637,7 +1636,7 @@ class AgentPool:
         if verb == "clear":
             try:
                 prev = mgr.clear_subgoals()
-                message = f"✓ Cleared {prev} subgoal{'s' if prev != 1 else ''}." if prev else "No subgoals to clear."
+                message = f"�?Cleared {prev} subgoal{'s' if prev != 1 else ''}." if prev else "No subgoals to clear."
             except RuntimeError as exc:
                 message = f"/subgoal clear: {exc}"
             return {
@@ -1652,7 +1651,7 @@ class AgentPool:
         try:
             text = mgr.add_subgoal(clean_arg)
             idx = len(mgr.state.subgoals) if mgr.state else 0
-            message = f"✓ Added subgoal {idx}: {text}"
+            message = f"�?Added subgoal {idx}: {text}"
         except (ValueError, RuntimeError) as exc:
             message = f"/subgoal: {exc}"
 
@@ -1700,7 +1699,7 @@ class AgentPool:
                 "active": mgr.is_active(),
                 "status": state.status if state else None,
                 "reason": clean_reason,
-                "message": f"⏸ Goal paused: {state.goal}" if state else "No goal set.",
+                "message": f"�?Goal paused: {state.goal}" if state else "No goal set.",
                 "clear_goal_continuations": True,
             }
 

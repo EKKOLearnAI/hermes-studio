@@ -294,6 +294,9 @@ function isManagedShim(content: string, marker: string): boolean {
 }
 
 function writeShim(shimPath: string, content: string, platform: NodeJS.Platform, marker = SHIM_MARKER): ShimInstallStatus {
+  if (platform === 'win32' && !content.startsWith('\uFEFF')) {
+    content = '\uFEFF' + content
+  }
   if (existsSync(shimPath)) {
     const existing = readFileSync(shimPath, 'utf-8')
     if (existing === content) return 'unchanged'

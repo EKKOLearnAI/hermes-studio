@@ -932,7 +932,9 @@ export const useChatStore = defineStore('chat', () => {
       const detail = await fetchSessionMessagesPage(sid, 0, limit, activeSession.value?.profile)
       if (!detail) return false
       const mapped = mapHermesMessages(detail.messages || [])
-      target.messages = mapped
+      if (!serverWorking.value.has(sid)) {
+        target.messages = mapped
+      }
       target.loadedMessageCount = detail.messages.length
       target.messageTotal = detail.total
       target.messageCount = detail.total

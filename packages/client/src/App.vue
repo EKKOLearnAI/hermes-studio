@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onUnmounted, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { darkTheme, NConfigProvider, NMessageProvider, NDialogProvider, NNotificationProvider } from 'naive-ui'
+import { darkTheme, NConfigProvider, NMessageProvider, NDialogProvider, NNotificationProvider, zhCN, dateZhCN, zhTW, dateZhTW, ruRU, dateRuRU, jaJP, dateJaJP, deDE, dateDeDE, frFR, dateFrFR, ptBR, datePtBR, esAR, dateEsAR } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { getThemeOverrides } from '@/styles/theme'
 import { useTheme } from '@/composables/useTheme'
@@ -14,9 +14,37 @@ import AuthEventListener from '@/components/auth/AuthEventListener.vue'
 import DefaultCredentialPrompt from '@/components/auth/DefaultCredentialPrompt.vue'
 
 const { isDark, isComic } = useTheme()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const appStore = useAppStore()
 const route = useRoute()
+
+const naiveLocale = computed(() => {
+  switch (locale.value) {
+    case 'zh': return zhCN
+    case 'zh-TW': return zhTW
+    case 'ru': return ruRU
+    case 'ja': return jaJP
+    case 'de': return deDE
+    case 'fr': return frFR
+    case 'pt': return ptBR
+    case 'es': return esAR
+    default: return null
+  }
+})
+
+const naiveDateLocale = computed(() => {
+  switch (locale.value) {
+    case 'zh': return dateZhCN
+    case 'zh-TW': return dateZhTW
+    case 'ru': return dateRuRU
+    case 'ja': return dateJaJP
+    case 'de': return dateDeDE
+    case 'fr': return dateFrFR
+    case 'pt': return datePtBR
+    case 'es': return dateEsAR
+    default: return null
+  }
+})
 
 const themeOverrides = computed(() => getThemeOverrides(isDark.value, isComic.value))
 const naiveTheme = computed(() => isDark.value ? darkTheme : null)
@@ -69,7 +97,7 @@ useKeyboard()
 </script>
 
 <template>
-  <NConfigProvider :theme="naiveTheme" :theme-overrides="themeOverrides">
+  <NConfigProvider :theme="naiveTheme" :theme-overrides="themeOverrides" :locale="naiveLocale" :date-locale="naiveDateLocale">
     <NMessageProvider>
       <AuthEventListener />
       <NDialogProvider>

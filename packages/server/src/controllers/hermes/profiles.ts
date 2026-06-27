@@ -465,7 +465,7 @@ export async function create(ctx: any) {
 }
 
 export async function get(ctx: any) {
-  const name = String(ctx.params.name || '').trim() || 'default'
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim() || 'default'
   if (denyProfile(ctx, name)) return
   try {
     const profile = await hermesCli.getProfile(name)
@@ -477,7 +477,7 @@ export async function get(ctx: any) {
 }
 
 export async function updateAvatar(ctx: any) {
-  const name = String(ctx.params.name || '').trim() || 'default'
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim() || 'default'
   if (denyProfile(ctx, name)) return
   if (isForbiddenProfileName(name)) {
     ctx.status = 400
@@ -517,7 +517,7 @@ export async function updateAvatar(ctx: any) {
 }
 
 export async function deleteAvatar(ctx: any) {
-  const name = String(ctx.params.name || '').trim() || 'default'
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim() || 'default'
   if (denyProfile(ctx, name)) return
   try {
     removeProfileMetadata(name)
@@ -529,7 +529,7 @@ export async function deleteAvatar(ctx: any) {
 }
 
 export async function runtimeStatus(ctx: any) {
-  const name = String(ctx.params.name || '').trim() || 'default'
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim() || 'default'
   if (denyProfile(ctx, name)) return
   if (isForbiddenProfileName(name)) {
     ctx.status = 400
@@ -585,7 +585,7 @@ async function listProfilesForStatus(): Promise<HermesProfile[]> {
 }
 
 export async function restartGatewayForProfile(ctx: any) {
-  const name = String(ctx.params.name || '').trim() || 'default'
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim() || 'default'
   if (denyProfile(ctx, name)) return
   if (isForbiddenProfileName(name)) {
     ctx.status = 400
@@ -619,7 +619,7 @@ export async function restartGatewayForProfile(ctx: any) {
 }
 
 export async function restartProfileRuntime(ctx: any) {
-  const name = String(ctx.params.name || '').trim() || 'default'
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim() || 'default'
   if (denyProfile(ctx, name)) return
   if (isForbiddenProfileName(name)) {
     ctx.status = 400
@@ -645,7 +645,7 @@ export async function restartProfileRuntime(ctx: any) {
 }
 
 export async function remove(ctx: any) {
-  const { name } = ctx.params
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim()
   if (denyProfile(ctx, name)) return
   if (name === 'default') {
     ctx.status = 400
@@ -683,7 +683,8 @@ export async function remove(ctx: any) {
 }
 
 export async function rename(ctx: any) {
-  if (denyProfile(ctx, ctx.params.name)) return
+  const name = decodeURIComponent(String(ctx.params.name || '')).trim()
+  if (denyProfile(ctx, name)) return
   const { new_name } = ctx.request.body as { new_name?: string }
   if (!new_name) {
     ctx.status = 400
@@ -696,9 +697,9 @@ export async function rename(ctx: any) {
     return
   }
   try {
-    const ok = await hermesCli.renameProfile(ctx.params.name, new_name)
+    const ok = await hermesCli.renameProfile(name, new_name)
     if (ok) {
-      renameProfileMetadata(ctx.params.name, new_name)
+      renameProfileMetadata(name, new_name)
       ctx.body = { success: true }
     } else {
       ctx.status = 500

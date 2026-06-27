@@ -630,7 +630,7 @@ export async function getProfile(name: string): Promise<HermesProfileDetail> {
 
     const result: Record<string, string> = {}
     for (const line of stdout.trim().split('\n')) {
-      const match = line.match(/^([^\s:]+):\s+(.+)$/)
+      const match = line.match(/^([^:]+):\s+(.+)$/)
       if (match) {
         result[match[1].trim().toLowerCase().replace(/\s+/g, '_')] = match[2].trim()
       }
@@ -645,7 +645,7 @@ export async function getProfile(name: string): Promise<HermesProfileDetail> {
       path: result.path || '',
       model,
       provider: providerMatch ? providerMatch[1] : '',
-      skills: parseInt(result.skills || '0', 10),
+      skills: parseInt(result.skills || result.skill_count || '0', 10),
       hasEnv: result['.env'] === 'exists',
       hasSoulMd: result['soul.md'] === 'exists',
     }
