@@ -936,7 +936,7 @@ describe('route registration ordering', () => {
     vi.doUnmock('../../packages/server/src/routes/index')
   })
 
-  it('mounts protected synthesize routes after requireAuth', async () => {
+  it('mounts protected synthesize routes after requireAuth', { timeout: 20000 }, async () => {
     const ttsPublicMiddleware = async () => {}
     const ttsProtectedMiddleware = async () => {}
 

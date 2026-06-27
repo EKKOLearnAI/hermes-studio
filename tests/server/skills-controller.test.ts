@@ -290,10 +290,10 @@ describe('skills controller', () => {
     await writeFile(join(toolsDir, 'DESCRIPTION.md'), '# Tools\n', 'utf-8')
     await writeFile(join(linkedSkillDir, 'SKILL.md'), '# Linked Skill\nlinked skill copy\n', 'utf-8')
     await writeFile(join(linkedCategoryDir, 'SKILL.md'), '# Linked Category Skill\nlinked category copy\n', 'utf-8')
-    await symlink(linkedSkillDir, join(toolsDir, 'linked-skill'))
-    await symlink(linkedCategoryDir, join(toolsDir, 'linked-group'))
-    await symlink(toolsDir, join(toolsDir, 'loop'))
-    await symlink(linkedSkillDir, join(toolsDir, '.hidden-skill'))
+    await symlink(linkedSkillDir, join(toolsDir, 'linked-skill'), 'junction')
+    await symlink(linkedCategoryDir, join(toolsDir, 'linked-group'), 'junction')
+    await symlink(toolsDir, join(toolsDir, 'loop'), 'junction')
+    await symlink(linkedSkillDir, join(toolsDir, '.hidden-skill'), 'junction')
 
     mockGetProfileDir.mockReturnValue(profileDir)
 
