@@ -444,7 +444,7 @@ async function killStaleIpcBridgeProcesses(endpoint: string): Promise<void> {
   )
   const socketsToCheck = [sockPath]
   if (!isWorkerSock) {
-    // broker socket â€?also check worker sockets under the same namespace
+    // broker socket â€” also check worker sockets under the same namespace
     const workerDir = require('path').join(require('path').dirname(sockPath), 'hermes-agent-bridge-workers')
     try {
       const fs = await import('fs')
@@ -470,7 +470,7 @@ async function killStaleIpcBridgeProcesses(endpoint: string): Promise<void> {
         }
       }
     } catch {
-      // lsof exits non-zero when nothing found â€?that's fine
+      // lsof exits non-zero when nothing found â€” that's fine
     }
   }
 
