@@ -679,6 +679,7 @@ describe('GlobalAgentServer', () => {
     expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toMatchObject({
       text: '结果如下： | 名称 | 值 | | --- | --- | | foo | 1 | 请确认。',
     })
+    await waitForMockCalls(agentSocket.emit, 7)
     expect(agentSocket.emit).toHaveBeenCalledWith('audio.enqueue', expect.objectContaining({
       interactionId: 'voice-1',
       segmentId: 'voice-1-tts-2',
