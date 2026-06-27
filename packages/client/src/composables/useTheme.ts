@@ -30,6 +30,11 @@ function applyClasses() {
   isComic.value = style.value === 'comic'
   document.documentElement.classList.toggle('dark', dark)
   document.documentElement.classList.toggle('comic', isComic.value)
+  // Sync PWA title-bar colour with the active theme (#1743)
+  const themeColorMeta = document.getElementById('pwa-theme-color') as HTMLMetaElement | null
+  if (themeColorMeta) {
+    themeColorMeta.content = dark ? '#101014' : '#f7f7f4'
+  }
 }
 
 // Initial
