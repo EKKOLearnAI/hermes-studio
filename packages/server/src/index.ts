@@ -51,6 +51,16 @@ process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
   process.exit(1)
 })
 
+// Prevent Uncaught EPIPE from stdout/stderr when pipe is broken (#1749)
+process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') return
+  throw err
+})
+process.stderr.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') return
+  throw err
+})
+
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled rejection')
   console.error(reason)
