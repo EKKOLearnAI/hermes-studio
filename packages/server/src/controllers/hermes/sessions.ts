@@ -422,7 +422,12 @@ export async function listHermesSessions(ctx: any) {
   const historySessionsById = new Map<string, any>()
   for (const session of allSessions) historySessionsById.set(session.id, session)
   for (const session of localSessions) {
-    if (!isArchivedSession(session) || historySessionsById.has(session.id)) continue
+    if (historySessionsById.has(session.id)) continue
+    // Surface local-only sessions that are absent from the Hermes state.db
+    // (e.g. coding_agent runs started via the Web UI such as Claude Code /
+    // Codex). Without this, the History view cannot list or open them, and the
+    // chat panel's "view in history" link dead-ends to an empty list.
+    if (!isArchivedSession(session) && !isHermesHistorySessionSource(session.source)) continue
     historySessionsById.set(session.id, { ...session, webui_imported: true })
   }
   ctx.body = {
