@@ -21,6 +21,7 @@ const isCustom = computed(() => !props.provider.builtin && props.provider.provid
 const isCopilot = computed(() => props.provider.provider === 'copilot')
 const displayName = computed(() => props.provider.label)
 const deleting = ref(false)
+const settingDefault = ref(false)
 
 const showAliasListModal = ref(false)
 const showAliasModal = ref(false)
@@ -105,6 +106,24 @@ function resetVisibility() {
 
 function clearVisibility() {
   selectedVisibleModels.value = []
+}
+
+async function setAsDefaultModel(model: string) {
+  if (settingDefault.value) return
+  settingDefault.value = true
+  try {
+    await modelsStore.setDefaultModel(model, props.provider.provider)
+    message.success(t('models.defaultModelSet'))
+  } catch (e: any) {
+    message.error(e.message || t('models.defaultModelSetFailed'))
+  } finally {
+    settingDefault.value = false
+  }
+}
+
+async function setAsDefaultProvider() {
+  if (settingDefault.value || props.provider.models.length === 0) return
+  await setAsDefaultModel(props.provider.models[0])
 }
 
 async function handleDelete() {
@@ -201,6 +220,15 @@ async function handleDelete() {
           <span class="model-tag-name">{{ modelDisplayName(model) }}</span>
           <span v-if="isDefaultModel(model)" class="model-tag-default">{{ t('models.defaultShort') }}</span>
           <span v-if="modelAlias(model)" class="model-tag-id">{{ model }}</span>
+          <button
+            v-if="!isDefaultModel(model)"
+            class="model-tag-set-default"
+            type="button"
+            :title="t('models.setThisModelDefault', { model })"
+            @click.stop="setAsDefaultModel(model)"
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </button>
         </button>
         <span v-if="provider.models.length > 20" class="model-tag model-tag-more">
           +{{ provider.models.length - 20 }} {{ t('models.more') }}
@@ -209,6 +237,14 @@ async function handleDelete() {
     </div>
 
     <div class="card-actions">
+      <NButton
+        v-if="!isDefaultProvider"
+        size="tiny"
+        quaternary
+        :loading="settingDefault"
+        :disabled="provider.models.length === 0"
+        @click="setAsDefaultProvider"
+      >{{ t('models.setDefaultProvider') }}</NButton>
       <NButton size="tiny" quaternary @click="showAliasListModal = true">{{ t('models.aliasManage') }}</NButton>
       <NButton size="tiny" quaternary @click="openVisibilityModal">{{ t('models.manageVisibleModels') }}</NButton>
       <NButton size="tiny" quaternary type="error" :loading="deleting" @click="handleDelete">{{ t('common.delete') }}</NButton>
@@ -453,8 +489,32 @@ async function handleDelete() {
   &:hover {
     background: rgba(var(--accent-primary-rgb), 0.16);
     color: $text-primary;
+
+    .model-tag-set-default {
+      opacity: 1;
+    }
   }
 }
+
+.model-tag-set-default {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  color: $text-muted;
+  flex-shrink: 0;
+
+  &:hover {
+    color: $warning;
+    opacity: 1 !important;
+  }
+}
+
 
 .model-tag-name,
 .model-tag-id {

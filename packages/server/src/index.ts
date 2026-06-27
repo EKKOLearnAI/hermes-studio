@@ -41,11 +41,24 @@ const APP_VERSION = typeof __APP_VERSION__ !== 'undefined'
   : (() => { try { return JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8')).version } catch { return 'dev' } })()
 
 // Global error handlers
-process.on('uncaughtException', (err) => {
+process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
+  // Ignore EPIPE errors — they occur when stdout/stderr pipe is broken (e.g. terminal closed).
+  // A broken pipe should not crash the server; simply ignore the write failure.
+  if (err.code === 'EPIPE') return
   console.error('FATAL: Uncaught exception')
   console.error(err)
   logger.fatal(err, 'Uncaught exception')
   process.exit(1)
+})
+
+// Prevent Uncaught EPIPE from stdout/stderr when pipe is broken (#1749)
+process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') return
+  throw err
+})
+process.stderr.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') return
+  throw err
 })
 
 process.on('unhandledRejection', (reason) => {
@@ -53,6 +66,7 @@ process.on('unhandledRejection', (reason) => {
   console.error(reason)
   logger.error(reason, 'Unhandled rejection')
 })
+
 
 let server: any = null
 let servers: any[] = []

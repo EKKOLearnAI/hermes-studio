@@ -75,7 +75,7 @@ describe('write gate service', () => {
     await expect(getPendingWriteDiff('default', 'memory', '../abc')).rejects.toThrow('Invalid pending write id')
   })
 
-  it('detects write approval support from a uv-backed Hermes venv shebang', async () => {
+  it.skipIf(process.platform === 'win32')('detects write approval support from a uv-backed Hermes venv shebang', async () => {
     const agentRoot = join(hermesHome, 'agent')
     const venvBin = join(agentRoot, 'venv', 'bin')
     const externalPythonDir = join(hermesHome, 'uv-python', 'bin')
@@ -117,7 +117,7 @@ describe('write gate service', () => {
     expect(isWriteGateSupported()).toBe(true)
   })
 
-  it('detects write approval support from a pip-installed runtime Python', async () => {
+  it.skipIf(process.platform === 'win32')('detects write approval support from a pip-installed runtime Python', async () => {
     const fakePython = join(hermesHome, 'python')
     await writeFile(fakePython, [
       '#!/bin/sh',

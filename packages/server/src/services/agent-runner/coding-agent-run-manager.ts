@@ -795,17 +795,19 @@ export class CodingAgentRunManager {
     run.currentChild = child
 
     let stdoutBuffer = ''
-    child.stdout?.on('data', (chunk: Buffer) => {
+    child.stdout?.setEncoding('utf8')
+    child.stdout?.on('data', (chunk: string | Buffer) => {
       this.touch(run)
-      stdoutBuffer += chunk.toString('utf8')
+      stdoutBuffer += typeof chunk === 'string' ? chunk : chunk.toString('utf8')
       const lines = stdoutBuffer.split(/\r?\n/)
       stdoutBuffer = lines.pop() || ''
       for (const line of lines) this.handleClaudePrintLine(run, line)
     })
 
-    child.stderr?.on('data', (chunk: Buffer) => {
+    child.stderr?.setEncoding('utf8')
+    child.stderr?.on('data', (chunk: string | Buffer) => {
       this.touch(run)
-      const text = appendChildStderr(run, chunk)
+      const text = appendChildStderr(run, typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk)
       if (text) logger.debug({ runId: run.id, sessionId: run.launch.sessionId, text }, '[coding-agent-run] claude print stderr')
     })
 
@@ -1214,7 +1216,7 @@ export class CodingAgentRunManager {
     const commonArgs = [
       '--json',
       ...CODEX_REASONING_SUMMARY_ARGS,
-      ...(promptArgument ? ['-c', `developer_instructions=${JSON.stringify(promptArgument)}`] : []),
+      ...(promptArgument ? ['-c', `developer_instructions=${promptArgument}`] : []),
       ...run.launch.args,
       '--skip-git-repo-check',
       '--dangerously-bypass-approvals-and-sandbox',
@@ -1233,17 +1235,19 @@ export class CodingAgentRunManager {
     run.currentChild = child
 
     let stdoutBuffer = ''
-    child.stdout?.on('data', (chunk: Buffer) => {
+    child.stdout?.setEncoding('utf8')
+    child.stdout?.on('data', (chunk: string | Buffer) => {
       this.touch(run)
-      stdoutBuffer += chunk.toString('utf8')
+      stdoutBuffer += typeof chunk === 'string' ? chunk : chunk.toString('utf8')
       const lines = stdoutBuffer.split(/\r?\n/)
       stdoutBuffer = lines.pop() || ''
       for (const line of lines) this.handleCodexExecLine(run, line)
     })
 
-    child.stderr?.on('data', (chunk: Buffer) => {
+    child.stderr?.setEncoding('utf8')
+    child.stderr?.on('data', (chunk: string | Buffer) => {
       this.touch(run)
-      const text = appendChildStderr(run, chunk)
+      const text = appendChildStderr(run, typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk)
       if (text) logger.debug({ runId: run.id, sessionId: run.launch.sessionId, text }, '[coding-agent-run] codex exec stderr')
     })
 

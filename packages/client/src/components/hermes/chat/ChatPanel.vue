@@ -8,8 +8,6 @@ import { useProfilesStore } from "@/stores/hermes/profiles";
 import { useSessionBrowserPrefsStore } from "@/stores/hermes/session-browser-prefs";
 import {
   NButton,
-  NDrawer,
-  NDrawerContent,
   NDropdown,
   NInput,
   NModal,
@@ -1462,105 +1460,105 @@ async function handleSessionModelCustomSubmit() {
       </template>
     </NModal>
 
-    <NDrawer
+    <NModal
       v-model:show="showNewChatModal"
-      class="new-chat-drawer"
-      placement="right"
-      width="min(440px, 100vw)"
+      class="new-chat-modal"
+      preset="card"
+      :title="t('chat.newChat')"
+      :style="{ width: isMobile ? 'calc(100vw - 32px)' : '440px' }"
       :mask-closable="true"
     >
-      <NDrawerContent :title="t('chat.newChat')" closable>
-        <div class="new-chat-form">
-          <label class="new-chat-field">
-            <span class="new-chat-label">{{ t("chat.agent") }}</span>
-            <NSelect
-              v-model:value="newChatAgent"
-              :options="newChatAgentOptions"
-              :disabled="newChatLoading"
-            />
-          </label>
-          <label v-if="isNewChatCodingAgent" class="new-chat-field">
-            <span class="new-chat-label">{{ t("codingAgents.launchModeScope") }}</span>
-            <NRadioGroup v-model:value="newChatAgentMode" name="new-chat-coding-agent-mode">
-              <NRadioButton
-                v-for="option in newChatAgentModeOptions"
-                :key="option.value"
-                :value="option.value"
-              >
-                {{ option.label }}
-              </NRadioButton>
-            </NRadioGroup>
-          </label>
-          <label class="new-chat-field">
-            <span class="new-chat-label">{{ t("sidebar.profiles") }}</span>
-            <NSelect
-              :value="newChatProfile"
-              :options="newChatProfileOptions"
-              :loading="newChatLoading || profilesStore.loading"
-              @update:value="handleNewChatProfileChange"
-            />
-          </label>
-          <label v-if="newChatUsesProviderModel" class="new-chat-field">
-            <span class="new-chat-label">{{ t("models.provider") }}</span>
-            <NSelect
-              :value="newChatProvider"
-              :options="newChatProviderOptions"
-              :disabled="newChatLoading"
-              @update:value="handleNewChatProviderChange"
-            />
-          </label>
-          <label v-if="newChatUsesProviderModel" class="new-chat-field">
-            <span class="new-chat-label">{{ t("models.models") }}</span>
-            <NSelect
-              v-model:value="newChatModel"
-              :options="newChatModelOptions"
-              :disabled="newChatLoading || !newChatProvider"
-              filterable
-            />
-          </label>
-          <label v-if="isNewChatCodingAgent && newChatAgentMode === 'scoped'" class="new-chat-field">
-            <span class="new-chat-label">{{ t("codingAgents.protocolScope") }}</span>
-            <NSelect
-              v-model:value="newChatApiMode"
-              :options="newChatApiModeOptions"
-              :disabled="newChatLoading"
-            />
-          </label>
-          <label v-if="newChatNeedsBaseUrl" class="new-chat-field">
-            <span class="new-chat-label">{{ t("models.baseUrl") }}</span>
-            <NInput
-              v-model:value="newChatBaseUrl"
-              :placeholder="t('models.baseUrlPlaceholder')"
-            />
-          </label>
-          <label v-if="newChatNeedsApiKey" class="new-chat-field">
-            <span class="new-chat-label">{{ t("models.apiKey") }}</span>
-            <NInput
-              v-model:value="newChatApiKey"
-              type="password"
-              show-password-on="click"
-              :placeholder="t('models.apiKeyPlaceholder')"
-            />
-          </label>
-          <div class="new-chat-field">
-            <span class="new-chat-label">{{ t("chat.workspace") }}</span>
-            <FolderPicker v-model="newChatWorkspace" />
-          </div>
-        </div>
-        <template #footer>
-          <div class="new-chat-actions">
-            <NButton @click="showNewChatModal = false">{{ t("common.cancel") }}</NButton>
-            <NButton
-              type="primary"
-              :disabled="!canConfirmNewChat"
-              @click="confirmNewChat"
+      <div class="new-chat-form" style="max-height: 60vh; overflow-y: auto; margin-right: -8px; padding-right: 8px;">
+        <label class="new-chat-field">
+          <span class="new-chat-label">{{ t("chat.agent") }}</span>
+          <NSelect
+            v-model:value="newChatAgent"
+            :options="newChatAgentOptions"
+            :disabled="newChatLoading"
+          />
+        </label>
+        <label v-if="isNewChatCodingAgent" class="new-chat-field">
+          <span class="new-chat-label">{{ t("codingAgents.launchModeScope") }}</span>
+          <NRadioGroup v-model:value="newChatAgentMode" name="new-chat-coding-agent-mode">
+            <NRadioButton
+              v-for="option in newChatAgentModeOptions"
+              :key="option.value"
+              :value="option.value"
             >
-              {{ t("chat.newChat") }}
-            </NButton>
-          </div>
-        </template>
-      </NDrawerContent>
-    </NDrawer>
+              {{ option.label }}
+            </NRadioButton>
+          </NRadioGroup>
+        </label>
+        <label class="new-chat-field">
+          <span class="new-chat-label">{{ t("sidebar.profiles") }}</span>
+          <NSelect
+            :value="newChatProfile"
+            :options="newChatProfileOptions"
+            :loading="newChatLoading || profilesStore.loading"
+            @update:value="handleNewChatProfileChange"
+          />
+        </label>
+        <label v-if="newChatUsesProviderModel" class="new-chat-field">
+          <span class="new-chat-label">{{ t("models.provider") }}</span>
+          <NSelect
+            :value="newChatProvider"
+            :options="newChatProviderOptions"
+            :disabled="newChatLoading"
+            @update:value="handleNewChatProviderChange"
+          />
+        </label>
+        <label v-if="newChatUsesProviderModel" class="new-chat-field">
+          <span class="new-chat-label">{{ t("models.models") }}</span>
+          <NSelect
+            v-model:value="newChatModel"
+            :options="newChatModelOptions"
+            :disabled="newChatLoading || !newChatProvider"
+            filterable
+          />
+        </label>
+        <label v-if="isNewChatCodingAgent && newChatAgentMode === 'scoped'" class="new-chat-field">
+          <span class="new-chat-label">{{ t("codingAgents.protocolScope") }}</span>
+          <NSelect
+            v-model:value="newChatApiMode"
+            :options="newChatApiModeOptions"
+            :disabled="newChatLoading"
+          />
+        </label>
+        <label v-if="newChatNeedsBaseUrl" class="new-chat-field">
+          <span class="new-chat-label">{{ t("models.baseUrl") }}</span>
+          <NInput
+            v-model:value="newChatBaseUrl"
+            :placeholder="t('models.baseUrlPlaceholder')"
+          />
+        </label>
+        <label v-if="newChatNeedsApiKey" class="new-chat-field">
+          <span class="new-chat-label">{{ t("models.apiKey") }}</span>
+          <NInput
+            v-model:value="newChatApiKey"
+            type="password"
+            show-password-on="click"
+            :placeholder="t('models.apiKeyPlaceholder')"
+          />
+        </label>
+        <div class="new-chat-field">
+          <span class="new-chat-label">{{ t("chat.workspace") }}</span>
+          <FolderPicker v-model="newChatWorkspace" />
+        </div>
+      </div>
+      <template #footer>
+        <div class="new-chat-actions">
+          <NButton @click="showNewChatModal = false">{{ t("common.cancel") }}</NButton>
+          <NButton
+            type="primary"
+            :loading="newChatLoading"
+            :disabled="!canConfirmNewChat"
+            @click="confirmNewChat"
+          >
+            {{ t("common.create") }}
+          </NButton>
+        </div>
+      </template>
+    </NModal>
 
     <div class="chat-main">
       <header class="chat-header">
