@@ -791,12 +791,12 @@ const tools = [
         },
         source: {
           type: 'string',
-          enum: ['cli', 'coding_agent', 'global_agent'],
+          enum: ['cli', 'coding_agent', 'global_agent', 'cron'],
           description: 'Optional run backend source.',
         },
         session_source: {
           type: 'string',
-          enum: ['global_agent'],
+          enum: ['global_agent', 'workflow', 'cron'],
           description: 'Optional session source marker.',
         },
         instructions: {
@@ -1413,10 +1413,19 @@ async function callTool(name, args = {}) {
       })
       return jsonText(await requestEnvelope(path, options))
     }
-    case 'hermes_studio_use_chat_run':
-      return jsonText(await request('/api/chat-run/runs', withAuthArgs(args, {
+    case 'hermes_studio_use_chat_run': {
+      // If HERMES_SESSION_SOURCE is set in this process environment, use
+      // it as a last-resort fallback when the caller did not provide source.
+      // In practice the Python MCP client (tools/mcp_tool.py) already
+      // injects source="cron" into the args before the tool call reaches
+      // here, so this branch is primarily defense-in-depth.
+      const resolvedArgs = { ...args }
+      if (!resolvedArgs.source && process.env.HERMES_SESSION_SOURCE) {
+        resolvedArgs.source = process.env.HERMES_SESSION_SOURCE
+      }
+      return jsonText(await request('/api/chat-run/runs', withAuthArgs(resolvedArgs, {
         method: 'POST',
-        body: pickDefined(args, [
+        body: pickDefined(resolvedArgs, [
           'input',
           'session_id',
           'provider',
@@ -1437,6 +1446,7 @@ async function callTool(name, args = {}) {
           'include_events',
         ]),
       })))
+    }
     case 'hermes_studio_use_sessions_list':
       return jsonText(await request('/api/hermes/sessions', withAuthArgs(args, {
         query: pickDefined(args, ['limit', 'source']),

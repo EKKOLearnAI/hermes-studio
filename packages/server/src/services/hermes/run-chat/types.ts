@@ -110,7 +110,7 @@ export interface BridgeContextState {
   workspace?: string
 }
 
-export type ChatRunSource = 'api_server' | 'cli' | 'coding_agent' | 'global_agent' | 'workflow'
+export type ChatRunSource = 'api_server' | 'cli' | 'coding_agent' | 'cron' | 'global_agent' | 'workflow'
 
 export interface BridgeCompressionResult {
   messages: ChatMessage[]
