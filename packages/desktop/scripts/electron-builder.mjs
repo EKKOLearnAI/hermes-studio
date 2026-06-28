@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 
 const args = process.argv.slice(2)
+const require = createRequire(import.meta.url)
+const electronBuilderCli = require.resolve('electron-builder/cli')
 
 function targetsLinux(value) {
   return value === '--linux' || value === 'linux' || value.startsWith('--linux=')
@@ -55,10 +58,8 @@ function withLinuxTargets(sourceArgs, targets) {
   return nextArgs
 }
 
-const binary = process.platform === 'win32' ? 'electron-builder.cmd' : 'electron-builder'
-
 function runBuilder(sourceArgs) {
-  const result = spawnSync(binary, sourceArgs, { stdio: 'inherit' })
+  const result = spawnSync(process.execPath, [electronBuilderCli, ...sourceArgs], { stdio: 'inherit' })
   if (result.error) {
     console.error(result.error.message)
     process.exit(1)
