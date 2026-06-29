@@ -51,6 +51,7 @@ const EXTRA_PYTHON_PACKAGES = splitPackageList(
     'aiosqlite==0.22.1',
     'asyncpg==0.31.0',
     'aiohttp-socks==0.11.0',
+    'anthropic',
   ].join(' '),
 )
 const BROWSER_PACKAGES = splitPackageList(

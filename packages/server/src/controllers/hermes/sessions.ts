@@ -966,7 +966,7 @@ export async function usageStats(ctx: any) {
  */
 export async function listWorkspaceFolders(ctx: any) {
   const { resolve, join } = await import('path')
-  const { readdir } = await import('fs/promises')
+  const { readdir, stat } = await import('fs/promises')
   const { existsSync } = await import('fs')
   const { homedir } = await import('os')
 
@@ -989,14 +989,29 @@ export async function listWorkspaceFolders(ctx: any) {
 
   try {
     const entries = await readdir(fullPath, { withFileTypes: true })
-    const folders = entries
-      .filter(e => e.isDirectory() && !e.name.startsWith('.'))
-      .map(e => ({
-        name: e.name,
-        path: subPath ? `${subPath}/${e.name}` : e.name,
-        fullPath: join(fullPath, e.name),
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name))
+    const validFolders = []
+    
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue
+      
+      let isDir = e.isDirectory()
+      if (!isDir && e.isSymbolicLink()) {
+        try {
+          const s = await stat(join(fullPath, e.name))
+          isDir = s.isDirectory()
+        } catch { /* broken symlink or access denied */ }
+      }
+      
+      if (isDir) {
+        validFolders.push({
+          name: e.name,
+          path: subPath ? `${subPath}/${e.name}` : e.name,
+          fullPath: join(fullPath, e.name),
+        })
+      }
+    }
+    
+    const folders = validFolders.sort((a, b) => a.name.localeCompare(b.name))
 
     ctx.body = { base: WORKSPACE_BASE, current: subPath, folders }
   } catch (err: any) {

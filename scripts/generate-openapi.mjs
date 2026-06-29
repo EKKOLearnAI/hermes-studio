@@ -95,7 +95,7 @@ function scanRoutes() {
   const hermesRouteFiles = readdirSync(hermesRoutesDir).filter(f => f.endsWith('.ts'))
 
   for (const file of hermesRouteFiles) {
-    const routePath = join('hermes', file)
+    const routePath = `hermes/${file}`
     const tagInfo = tagMappings[`routes/${routePath}`]
     if (tagInfo) {
       scanRouteFile(join(hermesRoutesDir, file), tagInfo, paths)
