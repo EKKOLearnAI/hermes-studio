@@ -244,25 +244,27 @@ export async function remove(ctx: any) {
     const profile = requestedProfile(ctx)
     const isCustom = poolKey.startsWith('custom:')
     const removed = await updateConfigYamlForProfile(profile, async (config) => {
+      const removeLegacy = requestedSource !== 'providers'
+      const removeDict = requestedSource !== 'custom_providers'
+      let didRemoveFromConfig = false
+
+      if (removeLegacy) {
+        const idx = findLegacyCustomProviderIndex(config, isCustom ? poolKey : `custom:${poolKey}`)
+        if (idx !== -1) {
+          ;(config.custom_providers as any[]).splice(idx, 1)
+          didRemoveFromConfig = true
+        }
+      }
+      if (!didRemoveFromConfig && removeDict) {
+        const dictKey = findProviderDictKey(config, isCustom ? poolKey : `custom:${poolKey}`, requestedProviderKey)
+        if (dictKey) {
+          delete config.providers[dictKey]
+          didRemoveFromConfig = true
+        }
+      }
+
       if (isCustom) {
-        const removeLegacy = requestedSource !== 'providers'
-        const removeDict = requestedSource !== 'custom_providers'
-        let didRemove = false
-        if (removeLegacy) {
-          const idx = findLegacyCustomProviderIndex(config, poolKey)
-          if (idx !== -1) {
-            ;(config.custom_providers as any[]).splice(idx, 1)
-            didRemove = true
-          }
-        }
-        if (!didRemove && removeDict) {
-          const dictKey = findProviderDictKey(config, poolKey, requestedProviderKey)
-          if (dictKey) {
-            delete config.providers[dictKey]
-            didRemove = true
-          }
-        }
-        if (!didRemove) return { data: config, result: false, write: false }
+        if (!didRemoveFromConfig) return { data: config, result: false, write: false }
       } else {
         const envMapping = PROVIDER_ENV_MAP[poolKey]
         if (envMapping?.api_key_env) {
@@ -272,7 +274,7 @@ export async function remove(ctx: any) {
           await saveEnvValueForProfile(profile, envMapping.base_url_env, '')
         }
       }
-      if (config.model?.provider === poolKey) {
+      if (config.model?.provider === poolKey || config.model?.provider === `custom:${poolKey}`) {
         const remaining = getCompatibleCustomProviders(config)
         if (remaining.length > 0) {
           const fallbackCp = remaining[0]

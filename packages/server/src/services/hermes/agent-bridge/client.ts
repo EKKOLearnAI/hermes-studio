@@ -266,6 +266,9 @@ export class AgentBridgeClient {
         return
       }
 
+      // Add dummy error listener to prevent uncaught exceptions (e.g. EPIPE on end/close)
+      socket.on('error', () => {})
+
       const cleanup = () => {
         socket.off('connect', onConnect)
         socket.off('error', onError)

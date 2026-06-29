@@ -1,15 +1,23 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Message } from '@/stores/hermes/chat'
 
 interface OutlineItem {
   id: string
-  type: 'user' | 'outline'
+  type: 'outline'
   content: string
   messageId: string
   level: number
   anchorId: string
+}
+
+interface OutlineGroup {
+  id: string
+  messageId: string
+  content: string
+  anchorId: string
+  headings: OutlineItem[]
 }
 
 const props = defineProps<{
@@ -79,42 +87,52 @@ function extractUserQuestion(text: string): string {
   return firstLine || t('chat.outlineUserQuestion')
 }
 
-const outlineItems = computed<OutlineItem[]>(() => {
-  const items: OutlineItem[] = []
+const outlineGroups = computed<OutlineGroup[]>(() => {
+  const groups: OutlineGroup[] = []
   let i = 0
   const filteredMessages = props.messages.filter(m => m.role === 'user' || m.role === 'assistant')
   
   while (i < filteredMessages.length) {
     const msg = filteredMessages[i]
     if (msg.role === 'user') {
-      items.push({
+      const group: OutlineGroup = {
         id: `user-${msg.id}`,
-        type: 'user',
-        content: extractUserQuestion(msg.content || ''),
         messageId: msg.id,
-        level: 0,
-        anchorId: `message-${msg.id}`
-      })
+        content: extractUserQuestion(msg.content || ''),
+        anchorId: `message-${msg.id}`,
+        headings: []
+      }
       i++
       while (i < filteredMessages.length && filteredMessages[i].role !== 'assistant') {
         i++
       }
       if (i < filteredMessages.length) {
         const assistantMsg = filteredMessages[i]
-        const headings = extractAllHeadings(assistantMsg.content || '', assistantMsg.id)
-        items.push(...headings)
+        group.headings = extractAllHeadings(assistantMsg.content || '', assistantMsg.id)
       }
+      groups.push(group)
+    } else {
+      i++
     }
-    i++
   }
-  return items
+  return groups
 })
 
-function scrollToTarget(item: OutlineItem) {
-  emit('navigate', {
-    messageId: item.messageId,
-    anchorId: item.anchorId,
-  })
+const collapsedGroups = ref<Set<string>>(new Set())
+
+function toggleGroup(messageId: string, event: Event) {
+  event.stopPropagation()
+  const newSet = new Set(collapsedGroups.value)
+  if (newSet.has(messageId)) {
+    newSet.delete(messageId)
+  } else {
+    newSet.add(messageId)
+  }
+  collapsedGroups.value = newSet
+}
+
+function scrollToTarget(messageId: string, anchorId: string) {
+  emit('navigate', { messageId, anchorId })
 }
 </script>
 
@@ -124,29 +142,37 @@ function scrollToTarget(item: OutlineItem) {
       <span class="outline-title">{{ t('chat.outlineTitle') }}</span>
     </div>
     <div class="outline-content">
-      <template v-if="outlineItems.length > 0">
-        <template v-for="item in outlineItems" :key="item.id">
+      <template v-if="outlineGroups.length > 0">
+        <div v-for="group in outlineGroups" :key="group.id" class="outline-group">
           <div
-            v-if="item.type === 'user'"
             class="outline-item user-item"
-            @click="scrollToTarget(item)"
+            @click="scrollToTarget(group.messageId, group.anchorId)"
           >
             <div class="user-question">
+              <span class="chevron" 
+                    :class="{ 'is-collapsed': collapsedGroups.has(group.messageId) }" 
+                    @click="toggleGroup(group.messageId, $event)"
+                    v-if="group.headings.length > 0">
+                <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6l-6-6l1.41-1.41z"/></svg>
+              </span>
               <span class="q-label">Q:</span>
-              <span class="q-text">{{ item.content }}</span>
+              <span class="q-text">{{ group.content }}</span>
             </div>
           </div>
-          <div
-            v-else
-            class="outline-item outline-heading-item"
-            :class="`level-${item.level}`"
-            @click="scrollToTarget(item)"
-          >
-            <div class="heading-item">
-              <span class="heading-text">{{ item.content }}</span>
+          <div v-show="!collapsedGroups.has(group.messageId)" class="outline-group-headings">
+            <div
+              v-for="item in group.headings"
+              :key="item.id"
+              class="outline-item outline-heading-item"
+              :class="'level-' + item.level"
+              @click="scrollToTarget(item.messageId, item.anchorId)"
+            >
+              <div class="heading-item">
+                <span class="heading-text">{{ item.content }}</span>
+              </div>
             </div>
           </div>
-        </template>
+        </div>
       </template>
       <div v-else class="outline-empty">{{ t('chat.outlineEmpty') }}</div>
     </div>
@@ -194,6 +220,10 @@ function scrollToTarget(item: OutlineItem) {
   padding: 12px;
 }
 
+.outline-group {
+  margin-bottom: 8px;
+}
+
 .outline-item {
   margin-bottom: 4px;
   cursor: pointer;
@@ -219,6 +249,28 @@ function scrollToTarget(item: OutlineItem) {
 
   .dark & {
     background-color: $bg-input;
+  }
+
+  .chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+    margin-top: 1px;
+    padding: 2px;
+    border-radius: 4px;
+    
+    &:hover {
+      background-color: rgba(0, 0, 0, 0.1);
+      .dark & {
+        background-color: rgba(255, 255, 255, 0.1);
+      }
+    }
+
+    &.is-collapsed {
+      transform: rotate(-90deg);
+    }
   }
 
   .q-label {
@@ -266,10 +318,6 @@ function scrollToTarget(item: OutlineItem) {
   }
 
   .level-1 & {
-    .heading-marker {
-      color: $text-primary;
-      font-weight: 600;
-    }
     .heading-text {
       color: $text-primary;
       font-weight: 500;
@@ -277,18 +325,12 @@ function scrollToTarget(item: OutlineItem) {
   }
 
   .level-2 & {
-    .heading-marker {
-      color: $text-secondary;
-    }
     .heading-text {
       color: $text-secondary;
     }
   }
 
   .level-3 & {
-    .heading-marker {
-      color: $text-muted;
-    }
     .heading-text {
       color: $text-muted;
       font-size: 12px;
