@@ -421,6 +421,19 @@ export async function listHermesSessions(ctx: any) {
     }))
   const historySessionsById = new Map<string, any>()
   for (const session of allSessions) historySessionsById.set(session.id, session)
+
+  // Hermes state.db does not carry Web UI local archive state. When a CLI or
+  // api_server session exists in both databases, the state.db row is inserted
+  // first and would otherwise hide the local `is_archived` flag from History,
+  // preventing archived sessions from rendering the unarchive action.
+  const localSessionsById = new Map(localSessions.map(session => [session.id, session]))
+  for (const [id, session] of historySessionsById) {
+    const localSession = localSessionsById.get(id)
+    if (localSession?.is_archived != null) {
+      session.is_archived = localSession.is_archived
+    }
+  }
+
   for (const session of localSessions) {
     if (historySessionsById.has(session.id)) continue
     // Surface local-only sessions that are absent from the Hermes state.db

@@ -567,7 +567,12 @@ describe('session conversations controller', () => {
     await mod.listHermesSessions(ctx)
 
     expect(ctx.body.sessions).toEqual([
-      expect.objectContaining({ id: 'cli-archived', profile: 'travel', webui_imported: true }),
+      expect.objectContaining({
+        id: 'cli-archived',
+        profile: 'travel',
+        webui_imported: true,
+        is_archived: 1,
+      }),
     ])
   })
 
