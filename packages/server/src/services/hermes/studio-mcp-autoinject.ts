@@ -89,13 +89,18 @@ function bundledMcpScriptPath(): string | null {
 }
 
 function managedCommandConfig(toolset: string): Record<string, unknown> {
-  if (isDesktopRuntime()) {
-    return { command: 'hermes-studio-mcp', args: [toolset] }
-  }
-
+  // Prefer the bundled script with an absolute path over a bare command name.
+  // On Windows (especially desktop builds), `hermes-studio-mcp` may not be in
+  // PATH even though the bundled .mjs script exists on disk.  Using
+  // process.execPath + the absolute script path avoids "file not found" errors
+  // when the MCP client tries to spawn the server process.
   const bundledScript = bundledMcpScriptPath()
   if (bundledScript) {
     return { command: process.execPath, args: [bundledScript, toolset] }
+  }
+
+  if (isDesktopRuntime()) {
+    return { command: 'hermes-studio-mcp', args: [toolset] }
   }
 
   logger.warn({ candidates: candidateBundledMcpScripts() }, '[mcp-autoinject] bundled MCP script not found; falling back to PATH command')
