@@ -535,12 +535,12 @@ describe('session conversations controller', () => {
     ])
   })
 
-  it('keeps archived sessions visible in Hermes history', async () => {
-    localListSessionsMock.mockReturnValue([{ id: 'cli-archived', profile: 'travel', is_archived: 1 }])
+  it.each(['cli', 'api_server'])('keeps archived %s sessions visible in Hermes history', async (source) => {
+    localListSessionsMock.mockReturnValue([{ id: `${source}-archived`, profile: 'travel', source, is_archived: 1 }])
     listSessionSummariesMock.mockResolvedValue([
       {
-        id: 'cli-archived',
-        source: 'cli',
+        id: `${source}-archived`,
+        source,
         model: 'gpt-5',
         title: 'Archived imported history',
         started_at: 1,
@@ -568,7 +568,8 @@ describe('session conversations controller', () => {
 
     expect(ctx.body.sessions).toEqual([
       expect.objectContaining({
-        id: 'cli-archived',
+        id: `${source}-archived`,
+        source,
         profile: 'travel',
         webui_imported: true,
         is_archived: 1,
