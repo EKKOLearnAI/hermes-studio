@@ -1,6 +1,6 @@
 ---
 date: 2026-06-29
-pr: pending
+pr: 1839
 feature: Chat context usage cache-read accounting
 impact: Chat context usage now includes cache-read tokens from session summaries when no explicit context token total is available.
 ---
