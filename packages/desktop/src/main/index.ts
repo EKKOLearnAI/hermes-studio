@@ -25,6 +25,7 @@ let mainWindow: BrowserWindow | null = null
 let serverUrl: string | null = null
 let tray: Tray | null = null
 let isQuitting = false
+let isInstallingUpdate = false
 let isBootstrapping = false
 let windowFadeTimer: NodeJS.Timeout | null = null
 const activeNotifications = new Set<Notification>()
@@ -607,6 +608,7 @@ function runDesktopApp() {
     initAutoUpdater({
       beforeQuitAndInstall: async () => {
         isQuitting = true
+        isInstallingUpdate = true
         if (process.platform === 'win32') {
           await stopWebUiServer(updateInstallStopTimeouts())
         }
@@ -626,6 +628,7 @@ function runDesktopApp() {
   })
 
   app.on('before-quit', async (e) => {
+    if (isInstallingUpdate) return
     if (!isQuitting && process.platform !== 'darwin') {
       e.preventDefault()
       mainWindow?.hide()
