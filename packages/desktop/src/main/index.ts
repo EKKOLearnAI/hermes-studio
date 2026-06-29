@@ -628,7 +628,7 @@ function runDesktopApp() {
   })
 
   app.on('before-quit', async (e) => {
-    if (isInstallingUpdate) return
+    if (isInstallingUpdate && process.platform === 'win32') return
     if (!isQuitting && process.platform !== 'darwin') {
       e.preventDefault()
       mainWindow?.hide()
