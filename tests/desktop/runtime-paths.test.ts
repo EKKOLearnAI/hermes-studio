@@ -130,7 +130,7 @@ describe('desktop runtime paths', () => {
 
     expect(desktopRuntimeDir()).toBe(runtimeDir)
     expect(webuiDir()).toBe(webUiDir)
-    expect(targetDesktopRuntimeDir()).toBe(join(homeDir, 'desktop-runtime', 'hermes', '0.15.2', runtimePlatformKey()))
+    expect(targetDesktopRuntimeDir()).toBe(join(homeDir, 'desktop-runtime', 'hermes', '0.17.0', runtimePlatformKey()))
   })
 
   it('removes downloaded Web UI caches below 0.6.14 so startup falls back to the bundled Web UI', async () => {
@@ -220,11 +220,12 @@ describe('desktop runtime paths', () => {
 
     const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
     const runtimeDir = join(homeDir, 'desktop-runtime', 'hermes', '0.15.2', runtimePlatformKey())
+    const targetRuntimeDir = join(homeDir, 'desktop-runtime', 'hermes', '0.17.0', runtimePlatformKey())
     createRuntimeWithoutManifest(runtimeDir)
 
     const { desktopRuntimeDir, targetDesktopRuntimeDir } = await import('../../packages/desktop/src/main/paths')
 
     expect(desktopRuntimeDir()).toBe(runtimeDir)
-    expect(targetDesktopRuntimeDir()).toBe(runtimeDir)
+    expect(targetDesktopRuntimeDir()).toBe(targetRuntimeDir)
   })
 })

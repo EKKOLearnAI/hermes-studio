@@ -1,3 +1,4 @@
 {
-  "tag": "hermes-0.15.2-runtime"
+  "tag": "hermes-0.17.0-runtime",
+  "hermesAgentVersion": "0.17.0"
 }

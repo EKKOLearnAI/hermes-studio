@@ -45,7 +45,7 @@ function createRuntimeFiles(root: string) {
   writeFileSync(join(root, 'runtime-manifest.json'), JSON.stringify({
     schema: 1,
     platform: process.platform,
-    hermesAgentVersion: '0.15.2',
+    hermesAgentVersion: '0.17.0',
     asset: { name: 'hermes-runtime-test.tar.gz' },
   }))
 }
@@ -80,7 +80,7 @@ describe('desktop runtime manager', () => {
     vi.resetModules()
     process.env = { ...originalEnv }
     process.env.HERMES_WEB_UI_HOME = tempDir('hermes-runtime-home-')
-    process.env.HERMES_DESKTOP_RUNTIME_RELEASE_TAG = 'hermes-0.15.2-runtime'
+    process.env.HERMES_DESKTOP_RUNTIME_RELEASE_TAG = 'hermes-0.17.0-runtime'
     mockElectronApp.isPackaged = false
     mockElectronApp.getAppPath = () => process.cwd()
   })
@@ -103,7 +103,7 @@ describe('desktop runtime manager', () => {
       process.env.HERMES_WEB_UI_HOME!,
       'desktop-runtime',
       'hermes',
-      '0.15.2',
+      '0.17.0',
       'hermes-runtime-test.tar.gz.download',
     )
     mkdirSync(staleDownloadPath, { recursive: true })
@@ -115,7 +115,7 @@ describe('desktop runtime manager', () => {
       process.env.HERMES_WEB_UI_HOME!,
       'desktop-runtime',
       'hermes',
-      '0.15.2',
+      '0.17.0',
       runtimePlatformKey(),
     )
     expect(existsSync(staleDownloadPath)).toBe(true)
