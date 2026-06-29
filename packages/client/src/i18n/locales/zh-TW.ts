@@ -2285,6 +2285,11 @@ export default {
 
   // 更新日誌
   changelog: {
+    new_0_6_22_1: '本次版本整理 0.6.21 之後合併的 PR，重點更新組合模型、會話歷史、代理設定、斜線命令和行動端布局細節',
+    new_0_6_22_2: '模型頁面新增組合模型面板，聊天中可以顯示真實的 MoA reference 與 aggregator 進度，不再依賴舊的前端占位工具',
+    new_0_6_22_3: '聊天會話支援從會話列表封存，並可在歷史記錄中還原；本機-only 的 Claude Code 和 Codex 會話也會正確出現在歷史記錄中',
+    new_0_6_22_4: '設定頁新增代理標籤頁，可設定 gateway 全域 HTTP(S)、ALL_PROXY 和 NO_PROXY，並支援 Telegram、Discord、Matrix 的平台代理',
+    new_0_6_22_5: 'Hermes 聊天新增 /learn 命令，Agent Bridge 執行會使用所選 workspace 作為 cwd；由於 Hermes Agent 最新版本尚未發布，只有桌面端的 /learn 和 MoA 指令能力需要等新版 Hermes Agent 發布後可用',
     new_0_6_21_1: '本次版本重點涵蓋工作流重跑、MCP 工作流工具、語音設定刪除、Matrix 登入設定、更新清理與文件維護',
     new_0_6_21_2: '工作流節點訊息改為左側可拖曳寬度的完整單聊抽屜，行動端執行記錄可正常開啟，並支援保留目前節點輸出或清除目前節點後向下重跑',
     new_0_6_21_3: 'Hermes Studio MCP 的 use 工具集新增工作流操作：列表、詳情、建立、更新、刪除、執行、停止、刪除執行記錄，以及從指定節點重跑',

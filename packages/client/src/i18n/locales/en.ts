@@ -2281,6 +2281,11 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_22_1: 'This release covers the PRs merged after 0.6.21, with front-end updates for combination models, session history, proxy settings, slash commands, and mobile layout polish',
+    new_0_6_22_2: 'The Models page now includes a Combination Models panel, and chat can show real MoA reference and aggregator progress without the old synthetic placeholder tool',
+    new_0_6_22_3: 'Chat sessions can be archived from the session list and restored from History, while local-only Claude Code and Codex sessions now appear correctly in History',
+    new_0_6_22_4: 'Settings now include a Proxy tab for gateway-wide HTTP(S), ALL_PROXY, and NO_PROXY values, with platform proxy support for Telegram, Discord, and Matrix',
+    new_0_6_22_5: 'Hermes chat gained the /learn command, Agent Bridge runs now use the selected workspace as cwd, and only the desktop /learn and MoA command features are waiting on the next Hermes Agent release',
     new_0_6_21_1: 'This release focuses on workflow reruns, MCP workflow tools, voice settings deletion, Matrix login settings, update cleanup, and documentation polish',
     new_0_6_21_2: 'Workflow node messages now open in a left-side resizable full chat drawer, with mobile run history restored and rerun actions for keeping the selected node output or clearing it before rerunning downstream nodes',
     new_0_6_21_3: 'The Hermes Studio MCP use toolset can now list, create, update, delete, run, stop, delete runs, and rerun workflows from a selected node',

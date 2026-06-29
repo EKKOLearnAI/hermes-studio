@@ -1895,6 +1895,11 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   changelog: {
+    new_0_6_22_1: 'Diese Version fasst die seit 0.6.21 gemergten PRs zusammen, mit Frontend-Updates fuer Kombinationsmodelle, Sitzungsverlauf, Proxy-Einstellungen, Slash-Befehle und mobile Layout-Details',
+    new_0_6_22_2: 'Die Modellseite enthaelt jetzt ein Panel fuer Kombinationsmodelle, und der Chat zeigt echte MoA-Referenz- und Aggregator-Fortschritte ohne das alte kuenstliche Platzhalter-Tool',
+    new_0_6_22_3: 'Chatsitzungen koennen aus der Sitzungsliste archiviert und im Verlauf wiederhergestellt werden; lokale Claude-Code- und Codex-Sitzungen erscheinen jetzt korrekt im Verlauf',
+    new_0_6_22_4: 'Die Einstellungen enthalten jetzt einen Proxy-Tab fuer gateway-weite HTTP(S)-, ALL_PROXY- und NO_PROXY-Werte sowie Plattform-Proxys fuer Telegram, Discord und Matrix',
+    new_0_6_22_5: 'Hermes Chat unterstuetzt jetzt den /learn-Befehl, Agent-Bridge-Laeufe nutzen den ausgewaehlten Workspace als cwd, und nur die Desktop-Funktionen fuer /learn- und MoA-Befehle warten auf das naechste Hermes-Agent-Release',
     new_0_6_21_1: 'Diese Version fokussiert Workflow-Reruns, MCP-Workflow-Tools, Voice-Settings-Loeschung, Matrix-Login-Settings, Update-Cleanup und Dokumentation',
     new_0_6_21_2: 'Workflow-Node-Messages oeffnen jetzt links in einem resizable Full-Chat-Drawer; mobile Run-History oeffnet wieder korrekt und Reruns koennen den ausgewaehlten Node behalten oder loeschen',
     new_0_6_21_3: 'Das MCP use Toolset kann jetzt Workflows listen, erstellen, aktualisieren, loeschen, starten, stoppen, Run-Records loeschen und ab einem ausgewaehlten Node rerunnen',
