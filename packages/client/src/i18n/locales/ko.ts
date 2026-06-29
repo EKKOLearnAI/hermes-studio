@@ -1894,6 +1894,11 @@ export default {
 
   // 변경 이력
   changelog: {
+    new_0_6_22_1: '이번 릴리스는 0.6.21 이후 병합된 PR을 반영하며, 조합 모델, 세션 기록, 프록시 설정, 슬래시 명령, 모바일 레이아웃을 개선했습니다',
+    new_0_6_22_2: '모델 페이지에 조합 모델 패널이 추가되었고, 채팅에서는 이전의 합성 플레이스홀더 도구 없이 실제 MoA reference와 aggregator 진행 상황을 표시할 수 있습니다',
+    new_0_6_22_3: '채팅 세션을 세션 목록에서 보관하고 기록에서 복원할 수 있으며, 로컬 전용 Claude Code 및 Codex 세션도 기록에 올바르게 표시됩니다',
+    new_0_6_22_4: '설정에 Proxy 탭이 추가되어 gateway 전체 HTTP(S), ALL_PROXY, NO_PROXY 값을 설정하고 Telegram, Discord, Matrix 플랫폼 프록시를 사용할 수 있습니다',
+    new_0_6_22_5: 'Hermes 채팅에 /learn 명령이 추가되었고, Agent Bridge 실행은 선택한 workspace를 cwd로 사용하며, 다음 Hermes Agent 릴리스를 기다리는 것은 데스크톱의 /learn 및 MoA 명령 기능뿐입니다',
     new_0_6_21_1: 'This release focuses on workflow reruns, MCP workflow tools, voice settings deletion, Matrix login settings, update cleanup, and docs polish',
     new_0_6_21_2: 'Workflow node messages now open in a left-side resizable full chat drawer, mobile run history opens correctly, and rerun actions can keep the selected node output or clear it before rerunning downstream nodes',
     new_0_6_21_3: 'Hermes Studio MCP use toolset can now list, create, update, delete, run, stop, delete runs, and rerun workflows from a selected node',

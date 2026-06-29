@@ -1895,6 +1895,11 @@ jobTriggered: 'Job ejecutado',
 
   // Registro de cambios
   changelog: {
+    new_0_6_22_1: 'Esta version resume los PR fusionados desde 0.6.21, con mejoras de frontend para modelos combinados, historial de sesiones, ajustes de proxy, comandos slash y detalles del diseno movil',
+    new_0_6_22_2: 'La pagina Modelos ahora incluye un panel de modelos combinados, y el chat puede mostrar el progreso real de referencias y agregadores MoA sin la antigua herramienta sintetica de marcador',
+    new_0_6_22_3: 'Las sesiones de chat se pueden archivar desde la lista y restaurar desde Historial; las sesiones locales de Claude Code y Codex ahora aparecen correctamente en Historial',
+    new_0_6_22_4: 'Ajustes ahora incluye una pestana Proxy para valores HTTP(S), ALL_PROXY y NO_PROXY de todo el gateway, con proxy por plataforma para Telegram, Discord y Matrix',
+    new_0_6_22_5: 'El chat de Hermes anade el comando /learn, Agent Bridge usa el workspace seleccionado como cwd, y solo las funciones de escritorio para /learn y MoA esperan la proxima version de Hermes Agent',
     new_0_6_21_1: 'Esta version se centra en reruns de workflow, herramientas MCP de workflow, borrado de ajustes voice, ajustes Matrix, limpieza de updates y documentacion',
     new_0_6_21_2: 'Los mensajes de nodos workflow ahora se abren en un drawer de chat completo a la izquierda y redimensionable; el historial movil de runs vuelve a abrirse y los reruns pueden conservar o limpiar el nodo seleccionado',
     new_0_6_21_3: 'El toolset MCP use ahora puede listar, crear, actualizar, borrar, ejecutar, detener, borrar runs y rerun workflows desde un nodo seleccionado',

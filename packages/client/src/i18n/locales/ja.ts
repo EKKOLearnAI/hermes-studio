@@ -1894,6 +1894,11 @@ export default {
 
   // 更新履歴
   changelog: {
+    new_0_6_22_1: 'このリリースでは 0.6.21 以降にマージされた PR を反映し、組み合わせモデル、セッション履歴、プロキシ設定、スラッシュコマンド、モバイルレイアウトを改善しました',
+    new_0_6_22_2: 'モデルページに組み合わせモデルパネルを追加し、チャットでは古い合成プレースホルダーツールなしで実際の MoA reference と aggregator の進行状況を表示できます',
+    new_0_6_22_3: 'チャットセッションを一覧からアーカイブし、履歴から復元できるようになりました。ローカルのみの Claude Code と Codex セッションも履歴に正しく表示されます',
+    new_0_6_22_4: '設定に Proxy タブを追加し、gateway 全体の HTTP(S)、ALL_PROXY、NO_PROXY と、Telegram、Discord、Matrix のプラットフォーム別プロキシを設定できます',
+    new_0_6_22_5: 'Hermes チャットに /learn コマンドを追加し、Agent Bridge 実行は選択した workspace を cwd として使います。次の Hermes Agent リリース待ちなのは、デスクトップ版の /learn と MoA コマンド機能だけです',
     new_0_6_21_1: 'This release focuses on workflow reruns, MCP workflow tools, voice settings deletion, Matrix login settings, update cleanup, and docs polish',
     new_0_6_21_2: 'Workflow node messages now open in a left-side resizable full chat drawer, mobile run history opens correctly, and rerun actions can keep the selected node output or clear it before rerunning downstream nodes',
     new_0_6_21_3: 'Hermes Studio MCP use toolset can now list, create, update, delete, run, stop, delete runs, and rerun workflows from a selected node',
