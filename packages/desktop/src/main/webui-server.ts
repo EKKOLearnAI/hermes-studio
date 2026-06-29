@@ -26,21 +26,13 @@ const DEFAULT_READY_TIMEOUT_MS = 120_000
 const DEFAULT_FULL_STARTUP_WAIT_MS = 0
 const DEFAULT_STOP_TIMEOUT_MS = 20_000
 const DEFAULT_GRACEFUL_STOP_TIMEOUT_MS = 18_000
-const DEFAULT_UPDATE_STOP_TIMEOUT_MS = 8_000
-const DEFAULT_UPDATE_GRACEFUL_STOP_TIMEOUT_MS = 5_000
 const AGENT_BRIDGE_STARTED_MARKER = '[bootstrap] agent bridge started'
 const AGENT_BRIDGE_FAILED_MARKER = '[bootstrap] agent bridge failed to start'
 const execFileAsync = promisify(execFile)
 
 let serverProc: ChildProcess | null = null
-let stoppingServerPromise: Promise<void> | null = null
 let cachedToken: string | null = null
 let currentServerPort = DEFAULT_PORT
-
-export interface StopWebUiServerOptions {
-  gracefulTimeoutMs?: number
-  forceTimeoutMs?: number
-}
 
 function killProcessTree(proc: ChildProcess): void {
   if (!proc.pid || proc.killed) return
@@ -83,13 +75,6 @@ function fullStartupWaitMs(): number {
 
 function gracefulStopTimeoutMs(): number {
   return envPositiveInt('HERMES_DESKTOP_GRACEFUL_STOP_TIMEOUT_MS') || DEFAULT_GRACEFUL_STOP_TIMEOUT_MS
-}
-
-export function updateInstallStopTimeouts(): Required<StopWebUiServerOptions> {
-  return {
-    gracefulTimeoutMs: envPositiveInt('HERMES_DESKTOP_UPDATE_GRACEFUL_STOP_TIMEOUT_MS') || DEFAULT_UPDATE_GRACEFUL_STOP_TIMEOUT_MS,
-    forceTimeoutMs: envPositiveInt('HERMES_DESKTOP_UPDATE_STOP_TIMEOUT_MS') || DEFAULT_UPDATE_STOP_TIMEOUT_MS,
-  }
 }
 
 function timeoutAfter(ms: number, message: string): Promise<void> {
@@ -478,7 +463,8 @@ async function waitForReady(port: number, timeoutMs: number): Promise<void> {
   throw new Error(`Web UI shell did not become ready within ${timeoutMs}ms`)
 }
 
-async function requestGracefulShutdown(port: number, token: string, timeoutMs = gracefulStopTimeoutMs()): Promise<void> {
+async function requestGracefulShutdown(port: number, token: string): Promise<void> {
+  const timeoutMs = gracefulStopTimeoutMs()
   const response = await fetch(`http://127.0.0.1:${port}/api/desktop/shutdown`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
@@ -489,40 +475,30 @@ async function requestGracefulShutdown(port: number, token: string, timeoutMs = 
   }
 }
 
-export async function stopWebUiServer(options: StopWebUiServerOptions = {}): Promise<void> {
-  if (stoppingServerPromise) return stoppingServerPromise
+export async function stopWebUiServer(): Promise<void> {
   if (!serverProc || serverProc.killed) return
 
   const proc = serverProc
-  const gracefulTimeout = options.gracefulTimeoutMs || gracefulStopTimeoutMs()
-  const forceTimeout = options.forceTimeoutMs || envPositiveInt('HERMES_DESKTOP_STOP_TIMEOUT_MS') || DEFAULT_STOP_TIMEOUT_MS
-
-  stoppingServerPromise = (async () => {
-    const exited = new Promise<void>(resolve => {
-      proc.once('exit', () => resolve())
-    })
-    const forceAfter = new Promise<void>(resolve => {
-      const timer = setTimeout(() => {
-        killProcessTree(proc)
-        resolve()
-      }, forceTimeout)
-      proc.once('exit', () => {
-        clearTimeout(timer)
-        resolve()
-      })
-    })
-
-    try {
-      await requestGracefulShutdown(currentServerPort, ensureToken(), gracefulTimeout)
-    } catch (err) {
-      console.warn(`[webui] graceful shutdown request failed: ${err instanceof Error ? err.message : String(err)}`)
+  const exited = new Promise<void>(resolve => {
+    proc.once('exit', () => resolve())
+  })
+  const forceAfter = new Promise<void>(resolve => {
+    const timer = setTimeout(() => {
       killProcessTree(proc)
-    }
-
-    await Promise.race([exited, forceAfter])
-  })().finally(() => {
-    stoppingServerPromise = null
+      resolve()
+    }, envPositiveInt('HERMES_DESKTOP_STOP_TIMEOUT_MS') || DEFAULT_STOP_TIMEOUT_MS)
+    proc.once('exit', () => {
+      clearTimeout(timer)
+      resolve()
+    })
   })
 
-  return stoppingServerPromise
+  try {
+    await requestGracefulShutdown(currentServerPort, ensureToken())
+  } catch (err) {
+    console.warn(`[webui] graceful shutdown request failed: ${err instanceof Error ? err.message : String(err)}`)
+    killProcessTree(proc)
+  }
+
+  await Promise.race([exited, forceAfter])
 }

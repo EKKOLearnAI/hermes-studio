@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, Tray, shell, ipcMain, nativeImage, Notification } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { startWebUiServer, stopWebUiServer, getToken, updateInstallStopTimeouts } from './webui-server'
+import { startWebUiServer, stopWebUiServer, getToken } from './webui-server'
 import { bundledNode, desktopIcon, desktopRuntimeVersion, desktopTrayTemplateIcon, desktopWindowsTrayIcon, hermesBinExists, hermesBin, webuiDir } from './paths'
 import { checkForDesktopUpdates, initAutoUpdater } from './updater'
 import { t } from './desktop-i18n'
@@ -25,7 +25,6 @@ let mainWindow: BrowserWindow | null = null
 let serverUrl: string | null = null
 let tray: Tray | null = null
 let isQuitting = false
-let isInstallingUpdate = false
 let isBootstrapping = false
 let windowFadeTimer: NodeJS.Timeout | null = null
 const activeNotifications = new Set<Notification>()
@@ -606,12 +605,8 @@ function runDesktopApp() {
     createWindow()
     bootstrap()
     initAutoUpdater({
-      beforeQuitAndInstall: async () => {
+      beforeQuitAndInstall: () => {
         isQuitting = true
-        isInstallingUpdate = true
-        if (process.platform === 'win32') {
-          await stopWebUiServer(updateInstallStopTimeouts())
-        }
       },
     })
     app.on('activate', () => {
@@ -628,7 +623,6 @@ function runDesktopApp() {
   })
 
   app.on('before-quit', async (e) => {
-    if (isInstallingUpdate && process.platform === 'win32') return
     if (!isQuitting && process.platform !== 'darwin') {
       e.preventDefault()
       mainWindow?.hide()
