@@ -27,7 +27,7 @@ import {
   recordBridgeMoaDisplayTool,
 } from './bridge-message'
 import { summarizeToolArguments } from './response-utils'
-import type { ContentBlock, QueuedRun, SessionState } from './types'
+import type { ChatRunSource, ContentBlock, QueuedRun, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
@@ -313,11 +313,13 @@ export async function handleBridgeRun(
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
 ) {
   const { input, session_id, instructions } = data
-  const runSource = data.session_source === 'global_agent' || data.source === 'global_agent'
+  const runSource: ChatRunSource = data.session_source === 'global_agent' || data.source === 'global_agent'
     ? 'global_agent'
     : data.session_source === 'workflow' || data.source === 'workflow'
       ? 'workflow'
-      : 'cli'
+    : data.session_source === 'cron' || data.source === 'cron'
+      ? 'cron'
+      : (data.source || 'cli') as ChatRunSource
   if (!session_id) {
     socket.emit('run.failed', { event: 'run.failed', error: 'session_id is required for cli source' })
     return
