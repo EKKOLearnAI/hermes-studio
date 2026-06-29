@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, Tray, shell, ipcMain, nativeImage, Notification } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { startWebUiServer, stopWebUiServer, getToken } from './webui-server'
+import { startWebUiServer, stopWebUiServer, getToken, updateInstallStopTimeouts } from './webui-server'
 import { bundledNode, desktopIcon, desktopRuntimeVersion, desktopTrayTemplateIcon, desktopWindowsTrayIcon, hermesBinExists, hermesBin, webuiDir } from './paths'
 import { checkForDesktopUpdates, initAutoUpdater } from './updater'
 import { t } from './desktop-i18n'
@@ -605,8 +605,11 @@ function runDesktopApp() {
     createWindow()
     bootstrap()
     initAutoUpdater({
-      beforeQuitAndInstall: () => {
+      beforeQuitAndInstall: async () => {
         isQuitting = true
+        if (process.platform === 'win32') {
+          await stopWebUiServer(updateInstallStopTimeouts())
+        }
       },
     })
     app.on('activate', () => {
