@@ -218,6 +218,30 @@ describe('plan session command', () => {
     }))
   })
 
+  it('passes /moa through when MoA is not configured for the profile', async () => {
+    readConfigYamlForProfileMock.mockResolvedValueOnce({})
+    const state = { messages: [], isWorking: false, events: [], queue: [] }
+    const { namespaceEmit, nsp, runQueuedItem, sessionMap, socket } = makeContext(state)
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+    const command = parseSessionCommand('/moa 讨论下黄金走势')!
+
+    const handled = await handleSessionCommand('session-1', command, {
+      nsp: nsp as any,
+      socket: socket as any,
+      sessionMap,
+      bridge: {} as any,
+      profile: 'default',
+      queueId: 'client-queue-id',
+      runQueuedItem,
+    })
+
+    expect(handled).toBe(false)
+    expect(runQueuedItem).not.toHaveBeenCalled()
+    expect(state.queue).toEqual([])
+    expect(addMessageMock).not.toHaveBeenCalled()
+    expect(namespaceEmit).not.toHaveBeenCalled()
+  })
+
   it('creates a new slash-command session with a command-derived title', async () => {
     getSessionMock.mockReturnValueOnce(null)
     const state = { messages: [], isWorking: false, events: [], queue: [] }

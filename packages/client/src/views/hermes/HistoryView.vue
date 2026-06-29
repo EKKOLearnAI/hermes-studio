@@ -117,25 +117,57 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
   return options
 })
 
+function isHistoryMoaToolDisplay(message: HermesMessage): boolean {
+  return (message.role === 'moa' || message.display_role === 'tool')
+    && (message.tool_name === 'moa_reference' || message.tool_name === 'moa_aggregating')
+}
+
+function parseHistoryMoaToolPayload(toolName: string | null, value: unknown): { preview?: string; result?: unknown } | null {
+  if (toolName !== 'moa_reference' && toolName !== 'moa_aggregating') return null
+  const payload = typeof value === 'string'
+    ? (() => {
+        try {
+          return JSON.parse(value)
+        } catch {
+          return null
+        }
+      })()
+    : value
+  if (!payload || typeof payload !== 'object') return null
+  const data = payload as Record<string, unknown>
+  const preview = typeof data.preview === 'string'
+    ? data.preview
+    : typeof data.label === 'string'
+      ? data.label
+      : typeof data.aggregator === 'string'
+        ? data.aggregator
+        : undefined
+  const result = data.text ?? data.result
+  return { preview, result }
+}
+
 function mapHistoryMessages(messages: HermesMessage[]): Session['messages'] {
   return messages.map(m => {
+    const displayRole = isHistoryMoaToolDisplay(m) ? 'tool' : (m.display_role || m.role)
     const msg: Session['messages'][number] = {
       id: String(m.id),
-      role: m.role,
+      role: displayRole === 'moa' ? 'system' : displayRole,
       content: m.content || '',
       timestamp: m.timestamp * 1000,
       reasoning: m.reasoning || undefined,
-      systemType: m.role === 'command' ? 'command' : undefined,
+      systemType: displayRole === 'command' ? 'command' : undefined,
     }
 
-    if (m.role === 'tool') {
+    if (m.role === 'tool' || isHistoryMoaToolDisplay(m)) {
+      const moaPayload = parseHistoryMoaToolPayload(m.tool_name, m.content)
       msg.toolName = m.tool_name || undefined
       msg.toolCallId = m.tool_call_id || undefined
       msg.toolArgs = m.tool_calls?.[0]?.function?.arguments
         ? JSON.stringify(m.tool_calls[0].function.arguments)
         : undefined
+      msg.toolPreview = moaPayload?.preview
       msg.toolStatus = 'done'
-      msg.toolResult = m.content || undefined
+      msg.toolResult = moaPayload ? moaPayload.result : (m.content || undefined)
       msg.content = ''
     }
 

@@ -3411,6 +3411,72 @@
         }
       }
     },
+    "/api/hermes/config/moa": {
+      "get": {
+        "tags": [
+          "Config"
+        ],
+        "summary": "Get moa",
+        "description": "GET /api/hermes/config/moa",
+        "operationId": "getMoaConfig",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Config"
+        ],
+        "summary": "Update moa",
+        "description": "PUT /api/hermes/config/moa",
+        "operationId": "updateMoaConfig",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "moa": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/config/model": {
       "put": {
         "tags": [
@@ -8689,28 +8755,7 @@
           "404": {
             "description": "Not found"
           }
-        },
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "source",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "global_agent"
-              ]
-            }
-          }
-        ]
+        }
       }
     },
     "/api/hermes/sessions/hermes/{id}": {

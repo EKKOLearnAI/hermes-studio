@@ -77,7 +77,7 @@ export interface SessionSearchResult extends SessionSummary {
 export interface HermesMessage {
   id: number
   session_id: string
-  role: 'user' | 'assistant' | 'system' | 'tool' | 'command'
+  role: 'user' | 'assistant' | 'system' | 'tool' | 'command' | 'moa'
   content: string
   display_role?: 'user' | 'assistant' | 'system' | 'tool' | 'command' | null
   display_content?: string | null

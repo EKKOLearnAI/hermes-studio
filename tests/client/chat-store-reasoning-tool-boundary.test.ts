@@ -236,7 +236,8 @@ describe('chat store reasoning/tool boundaries', () => {
         },
         {
           id: 2,
-          role: 'tool',
+          role: 'moa',
+          display_role: 'tool',
           content: JSON.stringify({
             label: 'xai-oauth:grok-4.3',
             preview: '1/2 xai-oauth:grok-4.3',
@@ -250,7 +251,8 @@ describe('chat store reasoning/tool boundaries', () => {
         },
         {
           id: 3,
-          role: 'tool',
+          role: 'moa',
+          display_role: 'tool',
           content: JSON.stringify({
             aggregator: 'glm:glm-5.2',
             preview: 'glm:glm-5.2',

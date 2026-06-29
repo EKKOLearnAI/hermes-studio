@@ -72,6 +72,7 @@ interface MoaPresetInfo {
   name: string
   referenceModels: string[]
   aggregator: string
+  configured: boolean
 }
 
 const COMMAND_ALIASES: Record<string, CommandName> = {
@@ -116,7 +117,7 @@ export async function handleSessionCommand(
   sessionId: string,
   command: ParsedSessionCommand,
   ctx: SessionCommandContext,
-): Promise<void> {
+): Promise<boolean | void> {
   const state = getOrCreateSession(ctx.sessionMap, sessionId)
   ctx.socket.join(`session:${sessionId}`)
   ensureCommandSession(sessionId, command, ctx)
@@ -305,6 +306,9 @@ export async function handleSessionCommand(
 
   if (command.name === 'moa') {
     const displayCommand = `/${command.rawName}${command.args ? ` ${command.args}` : ''}`
+    const presetInfo = await resolveDefaultMoaPresetInfo(ctx.profile)
+    if (!presetInfo.configured) return false
+
     if (!command.args) {
       emitCommand({
         ok: false,
@@ -315,7 +319,6 @@ export async function handleSessionCommand(
       return
     }
 
-    const presetInfo = await resolveDefaultMoaPresetInfo(ctx.profile)
     const preset = presetInfo.name
     const next: QueuedRun = {
       queue_id: ctx.queueId || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
@@ -902,22 +905,22 @@ async function resolveDefaultMoaPresetInfo(profile: string): Promise<MoaPresetIn
   try {
     const config = await readConfigYamlForProfile(profile)
     const moa = config?.moa
+    if (!moa || typeof moa !== 'object' || !moa.presets || typeof moa.presets !== 'object') {
+      return { name: 'default', referenceModels: [], aggregator: '', configured: false }
+    }
     const defaultPreset = typeof moa?.default_preset === 'string' ? moa.default_preset.trim() : ''
-    const presets = moa && typeof moa === 'object' && moa.presets && typeof moa.presets === 'object'
-      ? Object.keys(moa.presets)
-      : []
+    const presets = Object.keys(moa.presets)
     const name = defaultPreset || presets[0] || 'default'
-    const preset = moa && typeof moa === 'object' && moa.presets && typeof moa.presets === 'object'
-      ? (moa.presets as Record<string, unknown>)[name]
-      : undefined
+    const preset = (moa.presets as Record<string, unknown>)[name]
     const presetData = preset && typeof preset === 'object' ? preset as Record<string, unknown> : {}
     const referenceModels = Array.isArray(presetData.reference_models)
       ? presetData.reference_models.map(moaSlotLabel).filter(Boolean)
       : []
     const aggregator = moaSlotLabel(presetData.aggregator)
-    return { name, referenceModels, aggregator }
+    const enabled = presetData.enabled === undefined || presetData.enabled === true
+    return { name, referenceModels, aggregator, configured: enabled && referenceModels.length > 0 && Boolean(aggregator) }
   } catch {
-    return { name: 'default', referenceModels: [], aggregator: '' }
+    return { name: 'default', referenceModels: [], aggregator: '', configured: false }
   }
 }
 

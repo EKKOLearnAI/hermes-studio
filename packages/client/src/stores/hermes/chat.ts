@@ -285,6 +285,11 @@ function parsePersistedMoaToolPayload(toolName: string | undefined, value: unkno
   return { preview, result }
 }
 
+function isPersistedMoaToolDisplay(msg: HermesMessage): boolean {
+  return (msg.role === 'moa' || msg.display_role === 'tool')
+    && (msg.tool_name === 'moa_reference' || msg.tool_name === 'moa_aggregating')
+}
+
 function runtimeToolOutputHasError(value: unknown): boolean {
   return typeof value === 'string' && isToolOutputError(value)
 }
@@ -417,8 +422,9 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
       continue
     }
 
-    // Tool result messages
-    if (msg.role === 'tool') {
+    // Tool result messages. MoA display rows are persisted with role "moa"
+    // so they can render as tool lines without becoming model-context tool results.
+    if (msg.role === 'tool' || isPersistedMoaToolDisplay(msg)) {
       const tcId = msg.tool_call_id || ''
       const toolName = msg.tool_name || toolNameMap.get(tcId) || undefined
       const toolArgs = toolArgsMap.has(tcId) ? toolArgsMap.get(tcId) : undefined
@@ -465,7 +471,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
     const displayContent = msg.display_content ?? msg.content
     result.push({
       id: String(msg.id),
-      role: displayRole,
+      role: displayRole === 'moa' ? 'system' : displayRole,
       content: displayContent || '',
       timestamp: Math.round(msg.timestamp * 1000),
       reasoning: msg.reasoning ? msg.reasoning : undefined,

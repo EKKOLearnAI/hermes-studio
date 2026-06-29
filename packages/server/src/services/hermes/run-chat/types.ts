@@ -51,6 +51,7 @@ export interface QueuedRun {
   apiMode?: string
   api_mode?: string
   oneShotModel?: boolean
+  commandPassthrough?: boolean
   originSocketId?: string
   goalContinuation?: boolean
 }
