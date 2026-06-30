@@ -44,6 +44,50 @@ describe('user auth tables and middleware', () => {
     } as any
   }
 
+  function jwtPayload(token: string): any {
+    return JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf-8'))
+  }
+
+  it('uses the default user JWT lifetime when no override is configured', async () => {
+    const { auth } = await initUsers()
+    vi.setSystemTime(new Date('2026-06-30T00:00:00Z'))
+
+    const token = await auth.issueUserJwt({ id: 1, username: 'admin', role: 'super_admin' })
+    const payload = jwtPayload(token)
+
+    expect(payload.exp - payload.iat).toBe(60 * 60 * 24 * 30)
+  })
+
+  it('allows configuring the user JWT lifetime with HERMES_WEB_UI_AUTH_JWT_EXPIRES_IN', async () => {
+    vi.stubEnv('HERMES_WEB_UI_AUTH_JWT_EXPIRES_IN', '12h')
+    const { auth } = await initUsers()
+    vi.setSystemTime(new Date('2026-06-30T00:00:00Z'))
+
+    const token = await auth.issueUserJwt({ id: 1, username: 'admin', role: 'super_admin' })
+    const payload = jwtPayload(token)
+
+    expect(payload.exp - payload.iat).toBe(12 * 60 * 60)
+  })
+
+  it('falls back to the default user JWT lifetime for invalid overrides', async () => {
+    vi.stubEnv('HERMES_WEB_UI_AUTH_JWT_EXPIRES_IN', 'forever')
+    const { auth } = await initUsers()
+
+    expect(auth.getUserJwtExpiresSeconds()).toBe(60 * 60 * 24 * 30)
+  })
+
+  it.each([
+    ['30s', 30],
+    ['90', 90],
+    ['15m', 15 * 60],
+    ['2 hours', 2 * 60 * 60],
+    ['7d', 7 * 24 * 60 * 60],
+  ])('parses user JWT lifetime override %s', async (value, seconds) => {
+    const { auth } = await initUsers()
+
+    expect(auth.parseJwtExpirySeconds(value)).toBe(seconds)
+  })
+
   it('creates the default super admin without profile bindings', async () => {
     const { schemas, users } = await initUsers()
 
