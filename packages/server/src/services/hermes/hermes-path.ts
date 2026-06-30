@@ -107,7 +107,8 @@ export function isPathWithin(targetPath: string, basePath: string): boolean {
   const base = resolveComparablePath(basePath, useWindows)
   const target = resolveComparablePath(targetPath, useWindows)
   const rel = relativeComparablePath(comparablePath(base), comparablePath(target), useWindows)
-  return rel === '' || (!!rel && !rel.startsWith('..') && !isComparableAbsolute(rel, useWindows))
+  const sep = useWindows ? '\\' : '/'
+  return rel === '' || (!!rel && rel !== '..' && !rel.startsWith('..' + sep) && !isComparableAbsolute(rel, useWindows))
 }
 
 export function relativePathFromBase(targetPath: string, basePath: string): string | null {

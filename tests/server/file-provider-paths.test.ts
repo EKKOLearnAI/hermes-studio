@@ -1,9 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { join, resolve } from 'path'
 import { tmpdir } from 'os'
 import { mkdir, mkdtemp, rm, symlink } from 'fs/promises'
-import { normalizePlatformPath, validatePath } from '../../packages/server/src/services/hermes/file-provider'
+import { normalizePlatformPath, validatePath, resolveHermesPath } from '../../packages/server/src/services/hermes/file-provider'
 import { isNearestExistingRealPathWithin, isPathWithin, isRealPathWithin, relativePathFromBase } from '../../packages/server/src/services/hermes/hermes-path'
+
+vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+  getActiveProfileDir: () => '/tmp/hermes-test-home',
+  getActiveEnvPath: () => '/tmp/hermes-test-home/.env',
+  getProfileDir: (name: string) => `/tmp/hermes-test-home-${name}`,
+}))
 
 describe('file provider platform path normalization', () => {
   it('converts MSYS drive paths to Windows absolute paths on Windows', () => {
@@ -38,10 +44,52 @@ describe('file provider platform path normalization', () => {
   })
 })
 
+describe('resolveHermesPath path validation', () => {
+  it('resolves absolute path within homeDir correctly', () => {
+    const result = resolveHermesPath('/tmp/hermes-test-home/subdir/file.txt')
+    expect(result).toBe('/tmp/hermes-test-home/subdir/file.txt')
+  })
+
+  it('rejects absolute path outside homeDir', () => {
+    expect(() => resolveHermesPath('/etc/passwd')).toThrow('Path traversal detected')
+  })
+
+  it('rejects exact ".." (traversal)', () => {
+    expect(() => resolveHermesPath('..')).toThrow('Invalid file path')
+  })
+
+  it('rejects "../foo" (traversal)', () => {
+    expect(() => resolveHermesPath('../foo')).toThrow('Invalid file path')
+  })
+
+  it('allows "..hidden" filename (not traversal)', () => {
+    const result = resolveHermesPath('..hidden')
+    expect(result).toBe(resolve('/tmp/hermes-test-home', '..hidden'))
+  })
+
+  it('rejects mid-path traversal via /../', () => {
+    expect(() => resolveHermesPath('subdir/../../../etc/passwd')).toThrow('Invalid file path')
+  })
+
+  it('resolves relative path normally', () => {
+    const result = resolveHermesPath('docs/readme.md')
+    expect(result).toBe(resolve('/tmp/hermes-test-home', 'docs/readme.md'))
+  })
+})
+
 describe('Hermes path containment helpers', () => {
   it('does not treat sibling paths with the same prefix as inside the base', () => {
     expect(isPathWithin('/tmp/hermes-profile2/state.db', '/tmp/hermes-profile')).toBe(false)
     expect(isPathWithin('/tmp/hermes-profile/state.db', '/tmp/hermes-profile')).toBe(true)
+  })
+
+  it('allows filenames starting with double dots (not traversal)', () => {
+    expect(isPathWithin('/tmp/hermes-profile/..hidden', '/tmp/hermes-profile')).toBe(true)
+    expect(isPathWithin('/tmp/hermes-profile/...config', '/tmp/hermes-profile')).toBe(true)
+  })
+
+  it('rejects actual traversal via relative path', () => {
+    expect(isPathWithin('/tmp/other/file.txt', '/tmp/hermes-profile')).toBe(false)
   })
 
   it('returns normalized relative paths only for children', () => {
