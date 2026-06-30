@@ -52,6 +52,8 @@ const aliasInput = ref('')
 const showVisibilityModal = ref(false)
 const visibilitySaving = ref(false)
 const selectedVisibleModels = ref<string[]>([])
+const defaultingProvider = ref(false)
+const defaultingModel = ref<string | null>(null)
 
 const sourceProvider = computed(() => modelsStore.allProviders.find(g => g.provider === props.provider.provider))
 const allModels = computed(() => props.provider.available_models?.length ? props.provider.available_models : (sourceProvider.value?.models?.length ? sourceProvider.value.models : props.provider.models))
@@ -77,6 +79,34 @@ function openAliasEditor(model: string) {
   aliasModel.value = model
   aliasInput.value = appStore.getModelAlias(model, props.provider.provider)
   showAliasModal.value = true
+}
+
+async function handleSetDefaultProvider() {
+  if (isDefaultProvider.value) return
+
+  defaultingProvider.value = true
+  try {
+    await modelsStore.setDefaultProvider(props.provider.provider)
+    message.success(t('models.defaultProviderUpdated'))
+  } catch (e: any) {
+    message.error(e?.message || t('models.defaultProviderUpdateFailed'))
+  } finally {
+    defaultingProvider.value = false
+  }
+}
+
+async function handleSetDefaultModel(model: string) {
+  if (isDefaultModel(model)) return
+
+  defaultingModel.value = model
+  try {
+    await modelsStore.setDefaultModel(model, props.provider.provider)
+    message.success(t('models.defaultModelUpdated'))
+  } catch (e: any) {
+    message.error(e?.message || t('models.defaultModelUpdateFailed'))
+  } finally {
+    if (defaultingModel.value === model) defaultingModel.value = null
+  }
 }
 
 async function saveAlias() {
@@ -212,19 +242,33 @@ async function handleDelete() {
         </span>
       </div>
       <div class="models-list">
-        <button
+        <div
           v-for="model in provider.models.slice(0, 20)"
           :key="model"
-          class="model-tag model-tag-button"
-          :class="{ default: isDefaultModel(model) }"
-          type="button"
-          :title="t('models.aliasTitleFor', { model })"
-          @click="openAliasEditor(model)"
+          class="model-row"
         >
-          <span class="model-tag-name">{{ modelDisplayName(model) }}</span>
-          <span v-if="isDefaultModel(model)" class="model-tag-default">{{ t('models.defaultShort') }}</span>
-          <span v-if="modelAlias(model)" class="model-tag-id">{{ model }}</span>
-        </button>
+          <button
+            class="model-tag model-tag-button model-row-main"
+            :class="{ default: isDefaultModel(model) }"
+            type="button"
+            :title="t('models.aliasTitleFor', { model })"
+            @click="openAliasEditor(model)"
+          >
+            <span class="model-tag-name">{{ modelDisplayName(model) }}</span>
+            <span v-if="isDefaultModel(model)" class="model-tag-default">{{ t('models.defaultShort') }}</span>
+            <span v-if="modelAlias(model)" class="model-tag-id">{{ model }}</span>
+          </button>
+          <NButton
+            size="tiny"
+            quaternary
+            class="model-row-action"
+            :disabled="isDefaultModel(model)"
+            :loading="defaultingModel === model"
+            @click="handleSetDefaultModel(model)"
+          >
+            {{ isDefaultModel(model) ? t('models.defaultShort') : t('models.setDefault') }}
+          </NButton>
+        </div>
         <span v-if="provider.models.length > 20" class="model-tag model-tag-more">
           +{{ provider.models.length - 20 }} {{ t('models.more') }}
         </span>
@@ -232,6 +276,15 @@ async function handleDelete() {
     </div>
 
     <div class="card-actions">
+      <NButton
+        size="tiny"
+        quaternary
+        :disabled="isDefaultProvider"
+        :loading="defaultingProvider"
+        @click="handleSetDefaultProvider"
+      >
+        {{ isDefaultProvider ? t('models.currentDefault') : t('models.setDefaultProvider') }}
+      </NButton>
       <NButton size="tiny" quaternary @click="showAliasListModal = true">{{ t('models.aliasManage') }}</NButton>
       <NButton size="tiny" quaternary @click="openVisibilityModal">{{ t('models.manageVisibleModels') }}</NButton>
       <NButton size="tiny" quaternary type="error" :loading="deleting" @click="handleDelete">{{ destructiveActionLabel }}</NButton>
@@ -432,12 +485,18 @@ async function handleDelete() {
 
 .models-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 6px;
+  flex-direction: column;
+  gap: 6px;
   margin-top: 6px;
-  height: 100px;
+  max-height: 144px;
   overflow-y: auto;
-  align-content: flex-start;
+}
+
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .model-tag {
@@ -472,11 +531,21 @@ async function handleDelete() {
   border: 0;
   cursor: pointer;
   text-align: left;
+  min-width: 0;
 
   &:hover {
     background: rgba(var(--accent-primary-rgb), 0.16);
     color: $text-primary;
   }
+}
+
+.model-row-main {
+  flex: 1;
+  max-width: none;
+}
+
+.model-row-action {
+  flex-shrink: 0;
 }
 
 .model-tag-name,
@@ -500,6 +569,7 @@ async function handleDelete() {
 
 .card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   border-top: 1px solid $border-light;
   padding-top: 10px;

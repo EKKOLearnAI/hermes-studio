@@ -19,6 +19,8 @@ const modelsStoreMock = vi.hoisted(() => ({
   defaultProvider: '',
   defaultModel: '',
   fetchProviders: vi.fn(),
+  setDefaultModel: vi.fn(),
+  setDefaultProvider: vi.fn(),
   removeProvider: vi.fn(),
 }))
 
@@ -55,9 +57,15 @@ const messages: Record<string, string> = {
   'models.disableProvider': 'Disable provider',
   'models.disableProviderConfirm': 'Disable built-in provider "{name}"? The provider will stay built in and can be enabled again later.',
   'models.providerDisabled': 'Provider disabled',
+  'models.defaultProviderUpdated': 'Default provider updated',
+  'models.defaultProviderUpdateFailed': 'Failed to update default provider',
+  'models.defaultModelUpdated': 'Default model updated',
+  'models.defaultModelUpdateFailed': 'Failed to update default model',
   'models.customType': 'Custom',
   'models.builtIn': 'Built-in',
   'models.currentDefault': 'Current default',
+  'models.setDefaultProvider': 'Set default provider',
+  'models.setDefault': 'Set default',
   'models.provider': 'Provider',
   'models.baseUrl': 'Base URL',
   'models.models': 'Models',
@@ -143,6 +151,8 @@ describe('ProviderCard built-in destructive action labels', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     modelsStoreMock.fetchProviders.mockResolvedValue(undefined)
+    modelsStoreMock.setDefaultModel.mockResolvedValue(undefined)
+    modelsStoreMock.setDefaultProvider.mockResolvedValue(undefined)
     modelsStoreMock.removeProvider.mockResolvedValue(undefined)
     appStoreMock.switchModel.mockResolvedValue(undefined)
     copilotAuthMock.checkCopilotToken.mockResolvedValue({ source: 'none' })
@@ -258,5 +268,35 @@ describe('ProviderCard built-in destructive action labels', () => {
 
     expect(copilotAuthMock.disableCopilot).toHaveBeenCalled()
     expect(messageMock.success).toHaveBeenCalledWith('Provider disabled')
+  })
+
+  it('exposes an explicit set-default-provider action on non-default providers', async () => {
+    modelsStoreMock.defaultProvider = 'deepseek'
+    modelsStoreMock.defaultModel = 'deepseek-chat'
+    const wrapper = mountCard(provider({
+      provider: 'openai',
+      label: 'OpenAI',
+      models: ['gpt-4.1'],
+    }))
+
+    await wrapper.findAll('button').find(button => button.text() === 'Set default provider')!.trigger('click')
+
+    expect(modelsStoreMock.setDefaultProvider).toHaveBeenCalledWith('openai')
+    expect(messageMock.success).toHaveBeenCalledWith('Default provider updated')
+  })
+
+  it('exposes an explicit set-default-model action for non-default models', async () => {
+    modelsStoreMock.defaultProvider = 'deepseek'
+    modelsStoreMock.defaultModel = 'deepseek-chat'
+    const wrapper = mountCard(provider({
+      provider: 'deepseek',
+      label: 'DeepSeek',
+      models: ['deepseek-chat', 'deepseek-reasoner'],
+    }))
+
+    await wrapper.findAll('button').find(button => button.text() === 'Set default')!.trigger('click')
+
+    expect(modelsStoreMock.setDefaultModel).toHaveBeenCalledWith('deepseek-reasoner', 'deepseek')
+    expect(messageMock.success).toHaveBeenCalledWith('Default model updated')
   })
 })
