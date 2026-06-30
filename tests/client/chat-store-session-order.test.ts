@@ -114,4 +114,26 @@ describe('chat session ordering', () => {
     expect(archiveSession).toHaveBeenCalledWith('archive-me')
     expect(store.sessions.map(session => session.id)).toEqual(['active-session'])
   })
+
+  it('clears the active session when archiving the only runtime session', async () => {
+    vi.mocked(fetchSessions)
+      .mockResolvedValueOnce([
+        makeSession('archive-me', { started_at: 1000, last_active: 1000 }),
+      ] as any)
+      .mockResolvedValueOnce([])
+    vi.mocked(archiveSession).mockResolvedValueOnce(true)
+
+    const store = useChatStore()
+    await store.loadSessions()
+
+    expect(store.activeSessionId).toBe('archive-me')
+
+    const ok = await store.archiveSession('archive-me')
+
+    expect(ok).toBe(true)
+    expect(archiveSession).toHaveBeenCalledWith('archive-me')
+    expect(store.sessions).toEqual([])
+    expect(store.activeSessionId).toBeNull()
+    expect(store.activeSession).toBeNull()
+  })
 })

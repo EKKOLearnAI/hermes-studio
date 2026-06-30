@@ -1356,8 +1356,7 @@ export const useChatStore = defineStore('chat', () => {
       if (sessions.value.length > 0) {
         await switchSession(sessions.value[0].id)
       } else {
-        const session = createSession()
-        switchSession(session.id)
+        clearActiveSession()
       }
     } else if (target) {
       await refreshSessionListOnly(sessionProfileFilter.value)
