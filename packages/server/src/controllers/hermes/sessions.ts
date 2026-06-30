@@ -27,6 +27,7 @@ import { readConfigYamlForProfile } from '../../services/config-helpers'
 import { codingAgentRunManager } from '../../services/agent-runner/coding-agent-run-manager'
 import { AgentBridgeClient, getAgentBridgeManager } from '../../services/hermes/agent-bridge'
 import { ensureHermesRunWorkspace } from '../../services/hermes/run-chat/workspace'
+import { win32 as pathWin32 } from 'path'
 
 function getPendingDeletedSessionIds(): Set<string> {
   return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
@@ -972,19 +973,105 @@ export async function usageStats(ctx: any) {
   }
 }
 
+function workspaceBaseOverride(): string {
+  return process.env.WORKSPACE_BASE?.trim() || ''
+}
+
+function useWindowsDriveWorkspaceMode(): boolean {
+  return process.platform === 'win32' && !workspaceBaseOverride()
+}
+
+function windowsDriveRoot(pathValue: string): string | null {
+  const match = /^([a-zA-Z]:)[\\/]?$/.exec(pathValue.trim())
+  return match ? `${match[1].toUpperCase()}\\` : null
+}
+
+function normalizeWindowsWorkspacePath(inputPath: string): { base: string; fullPath: string } | null {
+  const raw = String(inputPath || '').trim()
+  if (!/^[a-zA-Z]:[\\/]/.test(raw)) return null
+  const fullPath = pathWin32.resolve(raw)
+  const root = windowsDriveRoot(pathWin32.parse(fullPath).root)
+  if (!root) return null
+  const rel = pathWin32.relative(root, fullPath)
+  if (rel.startsWith('..') || pathWin32.isAbsolute(rel)) return null
+  return { base: root, fullPath }
+}
+
+async function listWindowsWorkspaceDrives() {
+  const { existsSync } = await import('fs')
+  const drives = []
+  for (let code = 65; code <= 90; code += 1) {
+    const root = `${String.fromCharCode(code)}:\\`
+    if (!existsSync(root)) continue
+    drives.push({
+      name: root,
+      path: root,
+      fullPath: root,
+      readonly: true,
+    })
+  }
+  return drives
+}
+
 /**
- * List folders under workspace base path for folder picker.
- * GET /api/hermes/workspace/folders?path=<relative_path>
- * Base: current user's home directory (overridable via WORKSPACE_BASE env)
+ * List folders for the workspace folder picker.
+ * GET /api/hermes/workspace/folders?path=<path>
+ *
+ * By default this is rooted at the current user's home directory, or at
+ * WORKSPACE_BASE when configured. On native Windows without WORKSPACE_BASE, the
+ * picker can browse any available drive letter, while each request remains
+ * constrained to the selected drive root.
  */
 export async function listWorkspaceFolders(ctx: any) {
-  const { resolve, join } = await import('path')
+  const { resolve, join, win32 } = await import('path')
   const { readdir } = await import('fs/promises')
   const { existsSync } = await import('fs')
   const { homedir } = await import('os')
 
-  const WORKSPACE_BASE = process.env.WORKSPACE_BASE?.trim() || homedir()
   const subPath = (ctx.query.path as string) || ''
+  if (useWindowsDriveWorkspaceMode()) {
+    if (!subPath) {
+      const drives = await listWindowsWorkspaceDrives()
+      ctx.body = { base: '', current: '', roots: drives, folders: drives }
+      return
+    }
+
+    const resolved = normalizeWindowsWorkspacePath(subPath)
+    if (!resolved) {
+      ctx.status = 403
+      ctx.body = { error: 'Access denied' }
+      return
+    }
+
+    if (!existsSync(resolved.fullPath)) {
+      ctx.status = 404
+      ctx.body = { error: 'Path not found', folders: [] }
+      return
+    }
+
+    try {
+      const entries = await readdir(resolved.fullPath, { withFileTypes: true })
+      const folders = entries
+        .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+        .map(e => {
+          const fullPath = win32.join(resolved.fullPath, e.name)
+          return {
+            name: e.name,
+            path: fullPath,
+            fullPath,
+          }
+        })
+        .sort((a, b) => a.name.localeCompare(b.name))
+
+      ctx.body = { base: resolved.base, current: resolved.fullPath, folders }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { error: err.message }
+    }
+    return
+  }
+
+  const WORKSPACE_BASE = workspaceBaseOverride() || homedir()
 
   // Security: prevent path traversal
   const fullPath = resolve(join(WORKSPACE_BASE, subPath))
@@ -1030,7 +1117,17 @@ function invalidWorkspaceFolderName(name: string): boolean {
 async function resolveWorkspaceFolderPath(ctx: any, inputPath: string) {
   const { resolve, join } = await import('path')
   const { homedir } = await import('os')
-  const WORKSPACE_BASE = process.env.WORKSPACE_BASE?.trim() || homedir()
+  if (useWindowsDriveWorkspaceMode()) {
+    const resolved = normalizeWindowsWorkspacePath(inputPath)
+    if (!resolved) {
+      ctx.status = 403
+      ctx.body = { error: 'Access denied' }
+      return null
+    }
+    return resolved
+  }
+
+  const WORKSPACE_BASE = workspaceBaseOverride() || homedir()
   const fullPath = resolve(join(WORKSPACE_BASE, inputPath || ''))
   if (!isPathWithin(fullPath, WORKSPACE_BASE)) {
     ctx.status = 403

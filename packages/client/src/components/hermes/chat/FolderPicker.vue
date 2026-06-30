@@ -9,6 +9,7 @@ interface FolderEntry {
   name: string
   path: string
   fullPath: string
+  readonly?: boolean
 }
 
 interface FolderListResponse {
@@ -72,6 +73,15 @@ async function loadFolders(subPath = ''): Promise<FolderListResponse | null> {
 }
 
 function relativeParentPath(path: string) {
+  const windowsPath = path.replace(/\//g, '\\')
+  const driveRoot = windowsPath.match(/^([a-zA-Z]:)\\?$/)
+  if (driveRoot) return `${driveRoot[1].toUpperCase()}\\`
+  const driveChild = windowsPath.match(/^([a-zA-Z]:)\\(.+)$/)
+  if (driveChild) {
+    const trimmed = windowsPath.replace(/\\+$/, '')
+    const idx = trimmed.lastIndexOf('\\')
+    return idx <= 2 ? `${driveChild[1].toUpperCase()}\\` : trimmed.slice(0, idx)
+  }
   const parts = path.split('/').filter(Boolean)
   parts.pop()
   return parts.join('/')
@@ -159,9 +169,11 @@ const contextOptions = computed(() => {
     { label: t('files.newFolder'), key: 'newFolder' },
   ]
   if (contextTarget.value) {
-    options.push({ label: t('files.rename'), key: 'rename' })
-    options.push({ type: 'divider', key: 'd2' })
-    options.push({ label: t('files.delete'), key: 'delete' })
+    if (!contextTarget.value.readonly) {
+      options.push({ label: t('files.rename'), key: 'rename' })
+      options.push({ type: 'divider', key: 'd2' })
+      options.push({ label: t('files.delete'), key: 'delete' })
+    }
   }
   return options
 })

@@ -213,6 +213,57 @@ describe('session conversations controller', () => {
     expect(ctx.body.sessions[0]).toMatchObject({ id: 'local-conversation', source: 'cli', title: 'Local' })
   })
 
+  it('lists Windows drive roots for the workspace folder picker', async () => {
+    const originalPlatform = process.platform
+    const originalWorkspaceBase = process.env.WORKSPACE_BASE
+    const readdirMock = vi.fn(async (path: string) => {
+      if (path === 'D:\\') {
+        return [
+          { name: 'Projects', isDirectory: () => true },
+          { name: 'notes.txt', isDirectory: () => false },
+        ]
+      }
+      return []
+    })
+
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    delete process.env.WORKSPACE_BASE
+    vi.doMock('fs', () => ({
+      existsSync: (path: string) => path === 'C:\\' || path === 'D:\\',
+    }))
+    vi.doMock('fs/promises', () => ({
+      readdir: readdirMock,
+    }))
+
+    try {
+      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const rootCtx: any = { query: {}, body: null }
+
+      await mod.listWorkspaceFolders(rootCtx)
+
+      expect(rootCtx.body.folders).toEqual([
+        { name: 'C:\\', path: 'C:\\', fullPath: 'C:\\', readonly: true },
+        { name: 'D:\\', path: 'D:\\', fullPath: 'D:\\', readonly: true },
+      ])
+
+      const driveCtx: any = { query: { path: 'D:\\' }, body: null }
+      await mod.listWorkspaceFolders(driveCtx)
+
+      expect(readdirMock).toHaveBeenCalledWith('D:\\', { withFileTypes: true })
+      expect(driveCtx.body).toMatchObject({
+        base: 'D:\\',
+        current: 'D:\\',
+        folders: [{ name: 'Projects', path: 'D:\\Projects', fullPath: 'D:\\Projects' }],
+      })
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform })
+      if (originalWorkspaceBase === undefined) delete process.env.WORKSPACE_BASE
+      else process.env.WORKSPACE_BASE = originalWorkspaceBase
+      vi.doUnmock('fs')
+      vi.doUnmock('fs/promises')
+    }
+  })
+
   it('returns clean session context without tool calls or tool results', async () => {
     localGetSessionDetailMock.mockReturnValue({
       id: 'session-context-1',
