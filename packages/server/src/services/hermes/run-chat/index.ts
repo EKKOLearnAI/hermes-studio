@@ -25,6 +25,7 @@ import { contentBlocksToString } from './content-blocks'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
+import { observeRunChatPetEvent } from '../pet-state-socket'
 
 export type { ContentBlock } from './types'
 
@@ -816,6 +817,8 @@ export class ChatRunSocket {
 
   emitExternalEvent(sessionId: string, event: string, payload: any) {
     const tagged = { ...payload, session_id: sessionId }
+    const profile = this.resolvePetEventProfile(sessionId, tagged)
+    this.observePetEvent(profile, event, tagged)
     const state = this.sessionMap.get(sessionId)
     if (state?.isWorking) {
       state.events.push({ event, data: tagged })
@@ -948,6 +951,8 @@ export class ChatRunSocket {
 
   private emitToSession(socket: Socket, sessionId: string, event: string, payload: any) {
     const tagged = { ...payload, session_id: sessionId }
+    const profile = this.resolvePetEventProfile(sessionId, tagged)
+    this.observePetEvent(profile, event, tagged)
     this.nsp.to(`session:${sessionId}`).emit(event, tagged)
     if (!this.nsp.adapter.rooms.get(`session:${sessionId}`)?.size && socket.connected) {
       socket.emit(event, tagged)
@@ -981,5 +986,22 @@ export class ChatRunSocket {
     }
     this.sessionMap.clear()
     logger.info('[chat-run-socket] closed all connections and cleared state')
+  }
+
+  private resolvePetEventProfile(sessionId: string, payload: Record<string, unknown>): string {
+    const payloadProfile = typeof payload.profile === 'string' ? payload.profile.trim() : ''
+    if (payloadProfile) return payloadProfile
+    const stateProfile = this.sessionMap.get(sessionId)?.profile
+    if (stateProfile) return stateProfile
+    const storedProfile = getSession(sessionId)?.profile
+    return storedProfile || 'default'
+  }
+
+  private observePetEvent(profile: string, event: string, payload: Record<string, unknown>): void {
+    try {
+      observeRunChatPetEvent(profile, event, payload)
+    } catch (err) {
+      logger.debug(err, '[chat-run-socket] failed to update pet state')
+    }
   }
 }

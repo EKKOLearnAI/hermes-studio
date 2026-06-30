@@ -189,6 +189,7 @@ export default {
     profiles: '프로필',
     plugins: '플러그인',
     mcp: 'MCP',
+    petdex: 'Pets',
     skills: '스킬',
     memory: '메모리',
     logs: '로그',
@@ -859,6 +860,29 @@ export default {
   },
 
   // 메모리
+  petdex: {
+    title: 'Petdex Pets',
+    subtitle: 'Browse the public petdex catalog used by Hermes desktop pets.',
+    refresh: 'Refresh',
+    adopt: 'Adopt',
+    active: 'Active',
+    adopted: 'Adopted {name}',
+    adoptFailed: 'Failed to adopt pet',
+    loadFailed: 'Failed to load petdex catalog',
+    searchPlaceholder: 'Search by name, slug, author, or kind',
+    kindFilter: 'Kind',
+    spritesheet: 'Spritesheet',
+    submittedBy: 'By {name}',
+    empty: 'No pets match the current filters.',
+    showMore: 'Show {count} more',
+    summary: {
+      total: 'Catalog total',
+      visible: 'Matching',
+      kinds: 'Kinds',
+      generatedAt: 'Generated at',
+    },
+  },
+
   memory: {
     title: '메모리',
     refresh: '새로고침',
