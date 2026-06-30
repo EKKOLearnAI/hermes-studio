@@ -6,6 +6,7 @@ export interface PetdexPet {
   kind: string
   submittedBy: string
   spritesheetUrl: string
+  previewUrl?: string
   petJsonUrl: string
   zipUrl: string
 }

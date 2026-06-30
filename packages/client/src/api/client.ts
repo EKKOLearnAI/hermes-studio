@@ -8,6 +8,16 @@ function isDesktopShell(): boolean {
     (window as typeof window & { hermesDesktop?: { isDesktop?: boolean } }).hermesDesktop?.isDesktop === true
 }
 
+async function ensureDesktopAuthReady(): Promise<void> {
+  if (typeof window === 'undefined' || getApiKey()) return
+  const bridge = (window as typeof window & {
+    hermesDesktop?: { isDesktop?: boolean; ensureAuth?: () => Promise<boolean> }
+  }).hermesDesktop
+  if (bridge?.isDesktop === true && bridge.ensureAuth) {
+    await bridge.ensureAuth().catch(() => false)
+  }
+}
+
 function getBaseUrl(): string {
   if (import.meta.env.VITE_HERMES_PREVIEW === '1') return DEFAULT_BASE_URL
   if (isDesktopShell()) return DEFAULT_BASE_URL
@@ -147,6 +157,7 @@ function responseErrorMessage(text: string, statusText: string): string {
 }
 
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  await ensureDesktopAuthReady()
   const base = getBaseUrl()
   const url = `${base}${path}`
   const isFormDataBody = typeof FormData !== 'undefined' && options.body instanceof FormData

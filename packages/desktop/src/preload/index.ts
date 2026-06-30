@@ -11,6 +11,14 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   getToken: (): Promise<string> => ipcRenderer.invoke('hermes-desktop:get-token'),
   retryBootstrap: (source?: 'cf' | 'github'): Promise<void> => ipcRenderer.invoke('hermes-desktop:retry-bootstrap', source),
   notifyCompletion: (payload: { title: string; body?: string; icon?: string; tag?: string }): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:notify-completion', payload),
+  ensureAuth: async (): Promise<boolean> => {
+    const token = await ipcRenderer.invoke('hermes-desktop:get-token')
+    if (token) {
+      try { localStorage.setItem('AUTH_TOKEN', token) } catch { /* */ }
+      await autoLogin(token)
+    }
+    return !!localStorage.getItem(API_KEY_LS)
+  },
   getWindowState: (): Promise<{ isMaximized: boolean }> => ipcRenderer.invoke('hermes-desktop:get-window-state'),
   windowControl: (action: 'minimize' | 'toggle-maximize' | 'close'): Promise<{ isMaximized: boolean }> => ipcRenderer.invoke('hermes-desktop:window-control', action),
   getPetWindowState: () => ipcRenderer.invoke('hermes-desktop:get-pet-window-state'),

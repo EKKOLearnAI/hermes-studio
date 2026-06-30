@@ -12,6 +12,7 @@ export interface DesktopPetWindowState {
 
 export interface HermesDesktopBridge {
   getToken: () => Promise<string>
+  ensureAuth?: () => Promise<boolean>
   retryBootstrap: (source?: 'cf' | 'github') => Promise<void>
   notifyCompletion: (payload: { title: string; body?: string; icon?: string; tag?: string }) => Promise<boolean>
   getWindowState: () => Promise<{ isMaximized: boolean }>

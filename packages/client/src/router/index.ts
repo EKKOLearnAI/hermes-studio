@@ -169,7 +169,19 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to, _from, next) => {
+async function ensureDesktopAuth(): Promise<void> {
+  if (hasApiKey()) return
+  const bridge = (window as typeof window & {
+    hermesDesktop?: { isDesktop?: boolean; ensureAuth?: () => Promise<boolean> }
+  }).hermesDesktop
+  if (bridge?.isDesktop === true && bridge.ensureAuth) {
+    await bridge.ensureAuth().catch(() => false)
+  }
+}
+
+router.beforeEach(async (to, _from, next) => {
+  await ensureDesktopAuth()
+
   // Public pages don't need auth
   if (to.meta.public) {
     // Already has key, skip login

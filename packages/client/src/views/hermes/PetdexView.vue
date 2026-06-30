@@ -140,7 +140,7 @@ onMounted(() => {
         <div v-if="visiblePets.length" class="pet-grid">
           <article v-for="pet in visiblePets" :key="pet.slug" class="pet-card">
             <div class="pet-preview">
-              <div class="pet-frame" :style="{ backgroundImage: `url(${pet.spritesheetUrl})` }" />
+              <div class="pet-frame" :style="{ backgroundImage: `url(${pet.previewUrl || pet.spritesheetUrl})` }" />
             </div>
             <div class="pet-body">
               <div class="pet-title-row">
