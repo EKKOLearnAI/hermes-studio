@@ -563,6 +563,7 @@ export default {
     sessionLinkCopied: 'Session link copied',
     copySessionId: '複製工作階段 ID',
     export: '匯出',
+    editConfig: '編輯設定檔',
     exportFull: '完整匯出 (JSON)',
     exportCompressed: '壓縮匯出 (TXT)',
     exportCompressing: '正在壓縮上下文，請稍候...',

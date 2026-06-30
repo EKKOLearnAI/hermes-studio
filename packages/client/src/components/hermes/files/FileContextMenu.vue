@@ -74,7 +74,7 @@ async function handleSelect(key: string) {
       try { await filesStore.openPreview(entry) } catch { message.error(t('files.backendError')) }
       break
     case 'download':
-      try { await downloadFile(entry.path, entry.name) } catch (err: any) { message.error(err.message) }
+      try { await downloadFile(entry.path, entry.name, filesStore.currentProfile) } catch (err: any) { message.error(err.message) }
       break
     case 'copyPath': {
       const ok = await copyToClipboard(getClipboardPathForEntry(entry))

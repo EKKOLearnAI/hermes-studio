@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, h } from 'vue'
+import { computed, ref, watch, h } from 'vue'
 import { NTree } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useFilesStore } from '@/stores/hermes/files'
@@ -8,13 +8,18 @@ import type { TreeOption } from 'naive-ui'
 
 const { t } = useI18n()
 const filesStore = useFilesStore()
+const props = defineProps<{
+  profile?: string | null
+}>()
+
+const effectiveProfile = computed(() => props.profile === undefined ? filesStore.currentProfile : props.profile)
 
 const treeData = ref<TreeOption[]>([])
 const selectedKeys = ref<string[]>([])
 
 async function loadChildren(path: string): Promise<TreeOption[]> {
   try {
-    const result = await filesApi.listFiles(path)
+    const result = await filesApi.listFiles(path, effectiveProfile.value)
     return result.entries
       .filter(e => e.isDir)
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -35,13 +40,13 @@ async function handleLoad(node: TreeOption): Promise<void> {
 function handleSelect(keys: string[]) {
   if (keys.length > 0) {
     selectedKeys.value = keys
-    filesStore.navigateTo(keys[0])
+    filesStore.navigateTo(keys[0], { profile: effectiveProfile.value })
   }
 }
 
 function handleRootClick() {
   selectedKeys.value = []
-  filesStore.navigateTo('')
+  filesStore.navigateTo('', { profile: effectiveProfile.value })
 }
 
 function renderLabel({ option }: { option: TreeOption }) {
@@ -49,9 +54,10 @@ function renderLabel({ option }: { option: TreeOption }) {
   return h('span', { class: 'tree-node-label', title: label }, label)
 }
 
-onMounted(async () => {
+watch(effectiveProfile, async () => {
+  selectedKeys.value = []
   treeData.value = await loadChildren('')
-})
+}, { immediate: true })
 </script>
 
 <template>

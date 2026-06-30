@@ -525,6 +525,7 @@ export default {
     sessionLinkCopied: 'Session link copied',
     copySessionId: 'Copiar ID de sesión',
     export: 'Exportar',
+    editConfig: 'Editar configuración',
     exportFull: 'Exportación completa (JSON)',
     exportCompressed: 'Exportación comprimida (TXT)',
     exportCompressing: 'Comprimiendo contexto, espere...',

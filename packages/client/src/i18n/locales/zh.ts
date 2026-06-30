@@ -1359,6 +1359,7 @@ export default {
     export: '导出',
     rename: '重命名',
     delete: '删除',
+    editConfig: '编辑配置文件',
     switchTo: '切换 Hermes Profile',
     switchConfirm: '将执行 `hermes profile use {name}` 并切换 Hermes CLI 的 active profile，是否继续？',
     switchSuccess: 'Hermes active profile 已切换为 "{name}"',

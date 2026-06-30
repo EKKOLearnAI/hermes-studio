@@ -469,6 +469,7 @@ export default {
     copySessionLink: 'Копировать ссылку на сеанс',
     copySessionId: 'Копировать ID сеанса',
     export: 'Экспорт',
+    editConfig: 'Редактировать конфигурацию',
     exportFull: 'Полный экспорт (JSON)',
     exportCompressed: 'Сжатый экспорт (TXT)',
     exportCompressing: 'Сжатие контекста, подождите...',

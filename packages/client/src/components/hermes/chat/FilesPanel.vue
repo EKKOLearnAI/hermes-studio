@@ -58,7 +58,7 @@ function handleRename(entry: FileEntry) {
 }
 
 onMounted(() => {
-  filesStore.fetchEntries('')
+  filesStore.fetchEntries('', { profile: null })
 })
 </script>
 

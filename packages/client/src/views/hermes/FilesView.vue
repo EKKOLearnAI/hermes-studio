@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import FileTree from '@/components/hermes/files/FileTree.vue'
@@ -15,6 +16,7 @@ import type { FileEntry } from '@/api/hermes/files'
 
 const filesStore = useFilesStore()
 const profilesStore = useProfilesStore()
+const route = useRoute()
 
 const contextMenuRef = ref<InstanceType<typeof FileContextMenu> | null>(null)
 const showUpload = ref(false)
@@ -22,6 +24,7 @@ const showRenameModal = ref(false)
 const renameMode = ref<'newFile' | 'newFolder' | 'rename'>('newFile')
 const renameEntry = ref<FileEntry | null>(null)
 const renameTargetPath = ref<string | null>(null)
+const scopedProfile = computed(() => firstQueryString(route.query.profile))
 
 function handleContextMenu(e: MouseEvent, entry: FileEntry) {
   contextMenuRef.value?.show(e, entry)
@@ -55,22 +58,51 @@ function handleRename(entry: FileEntry) {
   showRenameModal.value = true
 }
 
-async function loadRoot() {
+function firstQueryString(value: unknown): string | null {
+  const raw = Array.isArray(value) ? value[0] : value
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : null
+}
+
+function parentDir(filePath: string): string {
+  const lastSlash = filePath.lastIndexOf('/')
+  return lastSlash > 0 ? filePath.slice(0, lastSlash) : ''
+}
+
+async function ensureProfilesLoaded() {
   if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
     await profilesStore.fetchProfiles()
   }
-  await filesStore.fetchEntries('')
 }
 
-onMounted(() => {
-  void loadRoot()
-})
+async function loadFromRoute() {
+  await ensureProfilesLoaded()
+
+  const profile = scopedProfile.value
+  const filePath = firstQueryString(route.query.file)
+  const directoryPath = filePath
+    ? parentDir(filePath)
+    : (firstQueryString(route.query.path) || '')
+
+  await filesStore.fetchEntries(directoryPath, { profile })
+
+  if (filePath) {
+    await filesStore.openEditor(filePath, { profile })
+  }
+}
+
+watch(
+  [() => route.query.profile, () => route.query.path, () => route.query.file],
+  () => {
+    void loadFromRoute()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
   <div class="files-view">
     <div class="files-tree-panel">
-      <FileTree />
+      <FileTree :profile="scopedProfile" />
     </div>
     <div class="files-main-panel">
       <FileToolbar

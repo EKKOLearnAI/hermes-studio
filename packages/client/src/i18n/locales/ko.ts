@@ -525,6 +525,7 @@ export default {
     sessionLinkCopied: 'Session link copied',
     copySessionId: '세션 ID 복사',
     export: '내보내기',
+    editConfig: '구성 편집',
     exportFull: '전체 내보내기 (JSON)',
     exportCompressed: '압축 내보내기 (TXT)',
     exportCompressing: '컨텍스트 압축 중, 잠시 기다려주세요...',

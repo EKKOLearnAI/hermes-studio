@@ -70,7 +70,7 @@ function handleContextMenu(e: MouseEvent, entry: FileEntry) {
 
 async function handleDownload(entry: FileEntry) {
   try {
-    await downloadFile(entry.path, entry.name)
+    await downloadFile(entry.path, entry.name, filesStore.currentProfile)
   } catch (err: any) {
     message.error(err.message || t('files.backendError'))
   }

@@ -525,6 +525,7 @@ export default {
     sessionLinkCopied: 'Session link copied',
     copySessionId: 'セッション ID をコピー',
     export: 'エクスポート',
+    editConfig: '設定を編集',
     exportFull: 'フルエクスポート (JSON)',
     exportCompressed: '圧縮エクスポート (TXT)',
     exportCompressing: 'コンテキストを圧縮中、お待ちください...',

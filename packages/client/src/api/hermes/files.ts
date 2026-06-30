@@ -19,57 +19,72 @@ export interface FileStat {
   permissions?: string
 }
 
-export async function listFiles(path: string = ''): Promise<{ entries: FileEntry[]; path: string; absolutePath?: string }> {
+function normalizeProfile(profile?: string | null): string | null {
+  const value = typeof profile === 'string' ? profile.trim() : ''
+  return value || null
+}
+
+function appendProfile(params: URLSearchParams, profile?: string | null): void {
+  const value = normalizeProfile(profile)
+  if (value) params.set('profile', value)
+}
+
+export async function listFiles(path: string = '', profile?: string | null): Promise<{ entries: FileEntry[]; path: string; absolutePath?: string }> {
   const params = new URLSearchParams()
   if (path) params.set('path', path)
+  appendProfile(params, profile)
   const query = params.toString()
   return request<{ entries: FileEntry[]; path: string }>(`/api/hermes/files/list${query ? `?${query}` : ''}`)
 }
 
-export async function statFile(path: string): Promise<FileStat> {
-  return request<FileStat>(`/api/hermes/files/stat?path=${encodeURIComponent(path)}`)
+export async function statFile(path: string, profile?: string | null): Promise<FileStat> {
+  const params = new URLSearchParams({ path })
+  appendProfile(params, profile)
+  return request<FileStat>(`/api/hermes/files/stat?${params.toString()}`)
 }
 
-export async function readFile(path: string): Promise<{ content: string; path: string; size: number }> {
-  return request<{ content: string; path: string; size: number }>(`/api/hermes/files/read?path=${encodeURIComponent(path)}`)
+export async function readFile(path: string, profile?: string | null): Promise<{ content: string; path: string; size: number }> {
+  const params = new URLSearchParams({ path })
+  appendProfile(params, profile)
+  return request<{ content: string; path: string; size: number }>(`/api/hermes/files/read?${params.toString()}`)
 }
 
-export async function writeFile(path: string, content: string): Promise<void> {
+export async function writeFile(path: string, content: string, profile?: string | null): Promise<void> {
   await request<{ ok: boolean }>('/api/hermes/files/write', {
     method: 'PUT',
-    body: JSON.stringify({ path, content }),
+    body: JSON.stringify({ path, content, profile: normalizeProfile(profile) || undefined }),
   })
 }
 
-export async function deleteFile(path: string, recursive: boolean = false): Promise<void> {
+export async function deleteFile(path: string, recursive: boolean = false, profile?: string | null): Promise<void> {
   await request<{ ok: boolean }>('/api/hermes/files/delete', {
     method: 'DELETE',
-    body: JSON.stringify({ path, recursive }),
+    body: JSON.stringify({ path, recursive, profile: normalizeProfile(profile) || undefined }),
   })
 }
 
-export async function renameFile(oldPath: string, newPath: string): Promise<void> {
+export async function renameFile(oldPath: string, newPath: string, profile?: string | null): Promise<void> {
   await request<{ ok: boolean }>('/api/hermes/files/rename', {
     method: 'POST',
-    body: JSON.stringify({ oldPath, newPath }),
+    body: JSON.stringify({ oldPath, newPath, profile: normalizeProfile(profile) || undefined }),
   })
 }
 
-export async function mkDir(path: string): Promise<void> {
+export async function mkDir(path: string, profile?: string | null): Promise<void> {
   await request<{ ok: boolean }>('/api/hermes/files/mkdir', {
     method: 'POST',
-    body: JSON.stringify({ path }),
+    body: JSON.stringify({ path, profile: normalizeProfile(profile) || undefined }),
   })
 }
 
-export async function copyFile(srcPath: string, destPath: string): Promise<void> {
+export async function copyFile(srcPath: string, destPath: string, profile?: string | null): Promise<void> {
   await request<{ ok: boolean }>('/api/hermes/files/copy', {
     method: 'POST',
-    body: JSON.stringify({ srcPath, destPath }),
+    body: JSON.stringify({ srcPath, destPath, profile: normalizeProfile(profile) || undefined }),
   })
 }
 
-export async function uploadFiles(targetDir: string, files: File[]): Promise<{ name: string; path: string }[]> {
+export async function uploadFiles(targetDir: string, files: File[], profile?: string | null): Promise<{ name: string; path: string }[]> {
   const base = getBaseUrlValue()
   const formData = new FormData()
   for (const file of files) {
@@ -77,14 +92,16 @@ export async function uploadFiles(targetDir: string, files: File[]): Promise<{ n
   }
   const params = new URLSearchParams()
   if (targetDir) params.set('path', targetDir)
+  appendProfile(params, profile)
   const query = params.toString()
   const url = `${base}/api/hermes/files/upload${query ? `?${query}` : ''}`
 
   const headers: Record<string, string> = {}
   const token = getApiKey()
   if (token) headers['Authorization'] = `Bearer ${token}`
-  const profileName = getActiveProfileName()
-  if (profileName) headers['X-Hermes-Profile'] = profileName
+  const explicitProfile = normalizeProfile(profile)
+  const profileName = explicitProfile || getActiveProfileName()
+  if (profileName && !explicitProfile) headers['X-Hermes-Profile'] = profileName
 
   const res = await fetch(url, { method: 'POST', headers, body: formData })
   if (!res.ok) {
@@ -117,11 +134,12 @@ export async function uploadRuntimeFiles(files: File[]): Promise<{ name: string;
   return data.files
 }
 
-export function getFileDownloadUrl(relativePath: string, fileName?: string): string {
+export function getFileDownloadUrl(relativePath: string, fileName?: string, profile?: string | null): string {
   const base = getBaseUrlValue()
   const params = new URLSearchParams({ path: relativePath })
   if (fileName) params.set('name', fileName)
-  const profileName = getActiveProfileName()
+  const explicitProfile = normalizeProfile(profile)
+  const profileName = profile === undefined ? getActiveProfileName() : explicitProfile
   if (profileName) params.set('profile', profileName)
   const token = getApiKey()
   if (token) params.set('token', token)

@@ -61,13 +61,47 @@ describe('files store', () => {
 
     await store.openPreview(entry)
 
-    expect(mockFilesApi.readFile).toHaveBeenCalledWith('Dockerfile')
+    expect(mockFilesApi.readFile).toHaveBeenCalledWith('Dockerfile', null)
     expect(store.previewFile).toEqual({
       path: 'Dockerfile',
+      profile: null,
       type: 'text',
       content: 'FROM node:20\nRUN npm test\n',
       language: 'dockerfile',
     })
+  })
+
+  it('resets profile scope for unscoped file panels', async () => {
+    mockFilesApi.listFiles.mockResolvedValue({ entries: [], path: '' })
+
+    const store = useFilesStore()
+
+    await store.fetchEntries('', { profile: 'reviewer' })
+    await store.fetchEntries('', { profile: null })
+
+    expect(store.currentProfile).toBeNull()
+    expect(mockFilesApi.listFiles).toHaveBeenLastCalledWith('', null)
+  })
+
+  it('keeps an explicit profile scope for config editor actions', async () => {
+    mockFilesApi.listFiles.mockResolvedValue({ entries: [], path: '' })
+    mockFilesApi.readFile.mockResolvedValue({
+      content: 'model:\n  default: gpt-5.4\n',
+      path: 'config.yaml',
+      size: 28,
+    })
+
+    const store = useFilesStore()
+
+    await store.fetchEntries('', { profile: 'reviewer' })
+    await store.openEditor('config.yaml')
+    store.editingFile!.content = 'model:\n  default: gpt-5.4-mini\n'
+    await store.saveEditor()
+
+    expect(store.currentProfile).toBe('reviewer')
+    expect(mockFilesApi.listFiles).toHaveBeenCalledWith('', 'reviewer')
+    expect(mockFilesApi.readFile).toHaveBeenCalledWith('config.yaml', 'reviewer')
+    expect(mockFilesApi.writeFile).toHaveBeenCalledWith('config.yaml', 'model:\n  default: gpt-5.4-mini\n', 'reviewer')
   })
 
   it('opens image previews without reading file contents', async () => {
@@ -85,6 +119,7 @@ describe('files store', () => {
     expect(mockFilesApi.readFile).not.toHaveBeenCalled()
     expect(store.previewFile).toEqual({
       path: 'diagram.png',
+      profile: null,
       type: 'image',
     })
   })
