@@ -42,6 +42,7 @@ let stateSwitchTimer: number | null = null
 let stateOverrideTimer: number | null = null
 let lastStateChangedAt = 0
 let activeSpriteKey = ''
+let connectedPetProfile: string | null = null
 
 const isLoginPage = computed(() => route.name === 'login')
 const pet = computed(() => petsStore.activePet)
@@ -317,13 +318,22 @@ function handleResize(): void {
 
 function shutdownPetConnection(): void {
   petStateStore.disconnect()
+  connectedPetProfile = null
+}
+
+async function connectPetStateForProfile(profile?: string | null): Promise<void> {
+  const nextProfile = profile || profilesStore.activeProfileName || localStorage.getItem('hermes_active_profile_name') || 'default'
+  if (connectedPetProfile === nextProfile) return
+  shutdownPetConnection()
+  connectedPetProfile = nextProfile
+  await petStateStore.connect(nextProfile)
 }
 
 async function loadForProfile(profile?: string | null): Promise<void> {
   if (isLoginPage.value) return
-  petStateStore.disconnect()
-  await petsStore.loadActivePet()
-  if (profile) await petStateStore.connect(profile)
+  shutdownPetConnection()
+  const active = await petsStore.loadActivePet()
+  if (active?.enabled) await connectPetStateForProfile(profile)
 }
 
 watch(
@@ -348,11 +358,15 @@ watch(pet, active => {
     stopAnimation()
     image.value = null
     activeSpriteKey = ''
+    shutdownPetConnection()
     return
   }
 
   const spriteKey = `${active.slug}:${active.spritesheetRevision}`
   applyPetPreferences(active)
+  if (active.enabled && !isLoginPage.value) {
+    void connectPetStateForProfile()
+  }
   if (spriteKey === activeSpriteKey && image.value) {
     draw()
     return
