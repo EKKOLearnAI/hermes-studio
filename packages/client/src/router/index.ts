@@ -5,6 +5,12 @@ const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     {
+      path: '/desktop-pet',
+      name: 'desktop.pet',
+      component: () => import('@/views/hermes/DesktopPetView.vue'),
+      meta: { public: true },
+    },
+    {
       path: '/',
       name: 'login',
       component: () => import('@/views/LoginView.vue'),

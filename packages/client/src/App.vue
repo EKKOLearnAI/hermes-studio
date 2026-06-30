@@ -12,7 +12,7 @@ import { useAppStore } from '@/stores/hermes/app'
 import SessionSearchModal from '@/components/hermes/chat/SessionSearchModal.vue'
 import AuthEventListener from '@/components/auth/AuthEventListener.vue'
 import DefaultCredentialPrompt from '@/components/auth/DefaultCredentialPrompt.vue'
-import WebPet from '@/components/hermes/pets/WebPet.vue'
+import { desktopBridge } from '@/utils/desktop-bridge'
 
 const { isDark, isComic } = useTheme()
 const { t } = useI18n()
@@ -35,11 +35,10 @@ const nodeVersionLow = computed(() => {
   return !isNaN(major) && major < 23
 })
 
-const isDesktopShell = computed(() =>
-  (window as typeof window & { hermesDesktop?: { isDesktop?: boolean } }).hermesDesktop?.isDesktop === true,
-)
+const isDesktopShell = computed(() => desktopBridge()?.isDesktop === true)
+const isDesktopPetRoute = computed(() => route.name === 'desktop.pet')
 const hasDesktopTitleBar = computed(() => {
-  const platform = (window as typeof window & { hermesDesktop?: { platform?: string } }).hermesDesktop?.platform
+  const platform = desktopBridge()?.platform
   return isDesktopShell.value && (platform === 'darwin' || platform === 'win32')
 })
 
@@ -75,7 +74,8 @@ useKeyboard()
       <AuthEventListener />
       <NDialogProvider>
         <NNotificationProvider>
-          <div class="app-shell" :class="{ desktop: isDesktopShell, 'desktop-titlebar-host': hasDesktopTitleBar }">
+          <router-view v-if="isDesktopPetRoute" />
+          <div v-else class="app-shell" :class="{ desktop: isDesktopShell, 'desktop-titlebar-host': hasDesktopTitleBar }">
             <DesktopTitleBar v-if="isDesktopShell" />
             <div v-if="nodeVersionLow" class="node-warning-bar">
               {{ t('sidebar.nodeVersionWarning', { version: appStore.nodeVersion }) }}
@@ -91,9 +91,8 @@ useKeyboard()
               </main>
             </div>
           </div>
-          <SessionSearchModal />
-          <DefaultCredentialPrompt />
-          <WebPet />
+          <SessionSearchModal v-if="!isDesktopPetRoute" />
+          <DefaultCredentialPrompt v-if="!isDesktopPetRoute" />
         </NNotificationProvider>
       </NDialogProvider>
     </NMessageProvider>

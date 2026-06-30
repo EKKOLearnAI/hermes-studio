@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { usePetsStore } from '@/stores/hermes/pets'
 import { usePetStateStore } from '@/stores/hermes/pet-state'
 import { useProfilesStore } from '@/stores/hermes/profiles'
+import { desktopBridge, type DesktopWindowBounds } from '@/utils/desktop-bridge'
 import type { ActivePet, WebPetPosition } from '@/api/hermes/pets'
 import type { PetState } from '@/api/hermes/pet-state'
 
@@ -13,11 +14,17 @@ const SCALE_STEP = 0.06
 const SAVE_DELAY_MS = 350
 const STATE_SETTLE_MS = 180
 const MIN_STATE_VISIBLE_MS = 520
+const DESKTOP_WINDOW_PADDING = 80
+
+const props = defineProps<{
+  desktopWindow?: boolean
+}>()
 
 const route = useRoute()
 const petsStore = usePetsStore()
 const petStateStore = usePetStateStore()
 const profilesStore = useProfilesStore()
+const bridge = desktopBridge()
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const image = ref<HTMLImageElement | null>(null)
@@ -44,7 +51,8 @@ let lastStateChangedAt = 0
 let activeSpriteKey = ''
 let connectedPetProfile: string | null = null
 
-const isLoginPage = computed(() => route.name === 'login')
+const isDesktopWindow = computed(() => props.desktopWindow === true)
+const isLoginPage = computed(() => !isDesktopWindow.value && route.name === 'login')
 const pet = computed(() => petsStore.activePet)
 const visible = computed(() => !isLoginPage.value && !!pet.value?.enabled && !!image.value)
 const frameWidth = computed(() => pet.value?.frameW || 192)
@@ -71,18 +79,34 @@ const stateRow = computed(() => {
   return index >= 0 ? index : 0
 })
 
-const shellStyle = computed(() => ({
-  left: `${position.value.x}px`,
-  top: `${position.value.y}px`,
-  width: `${renderedWidth.value}px`,
-  height: `${renderedHeight.value}px`,
-}))
+const shellStyle = computed(() => {
+  if (isDesktopWindow.value) {
+    return {
+      left: `${DESKTOP_WINDOW_PADDING / 2}px`,
+      top: `${DESKTOP_WINDOW_PADDING / 2}px`,
+      width: `${renderedWidth.value}px`,
+      height: `${renderedHeight.value}px`,
+    }
+  }
+  return {
+    left: `${position.value.x}px`,
+    top: `${position.value.y}px`,
+    width: `${renderedWidth.value}px`,
+    height: `${renderedHeight.value}px`,
+  }
+})
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
 function clampPosition(next: WebPetPosition): WebPetPosition {
+  if (isDesktopWindow.value) {
+    return {
+      x: Math.round(next.x),
+      y: Math.round(next.y),
+    }
+  }
   const maxX = Math.max(0, window.innerWidth - renderedWidth.value)
   const maxY = Math.max(0, window.innerHeight - renderedHeight.value)
   return {
@@ -92,6 +116,12 @@ function clampPosition(next: WebPetPosition): WebPetPosition {
 }
 
 function defaultPosition(): WebPetPosition {
+  if (isDesktopWindow.value) {
+    return {
+      x: Math.round(window.screenX || 0),
+      y: Math.round(window.screenY || 0),
+    }
+  }
   return clampPosition({
     x: window.innerWidth - renderedWidth.value - 28,
     y: window.innerHeight - renderedHeight.value - 28,
@@ -101,6 +131,70 @@ function defaultPosition(): WebPetPosition {
 function applyPetPreferences(active: ActivePet): void {
   scale.value = clamp(active.scale || 0.33, MIN_SCALE, MAX_SCALE)
   position.value = active.position ? clampPosition(active.position) : defaultPosition()
+  if (isDesktopWindow.value) void syncDesktopWindowBounds(false)
+}
+
+function desktopWindowBounds(): DesktopWindowBounds {
+  return {
+    x: position.value.x,
+    y: position.value.y,
+    width: renderedWidth.value + DESKTOP_WINDOW_PADDING,
+    height: renderedHeight.value + DESKTOP_WINDOW_PADDING,
+  }
+}
+
+function desktopPointerInset(): number {
+  return isDesktopWindow.value ? DESKTOP_WINDOW_PADDING / 2 : 0
+}
+
+async function syncDesktopWindowBounds(show = visible.value): Promise<void> {
+  if (!isDesktopWindow.value || !bridge?.setPetWindowBounds) return
+  const state = await bridge.setPetWindowBounds(desktopWindowBounds())
+  position.value = {
+    x: state.bounds.x,
+    y: state.bounds.y,
+  }
+  if (show && bridge.setPetWindowVisible) await bridge.setPetWindowVisible(true)
+}
+
+async function setDesktopWindowVisible(nextVisible: boolean): Promise<void> {
+  if (!isDesktopWindow.value || !bridge?.setPetWindowVisible) return
+  await bridge.setPetWindowVisible(nextVisible)
+}
+
+async function hydrateDesktopWindowPosition(): Promise<void> {
+  if (!isDesktopWindow.value || !bridge?.getPetWindowState || pet.value?.position) return
+  const state = await bridge.getPetWindowState()
+  position.value = {
+    x: state.bounds.x,
+    y: state.bounds.y,
+  }
+}
+
+async function ensureDesktopAuthReady(): Promise<void> {
+  if (!isDesktopWindow.value || localStorage.getItem('hermes_api_key')) return
+  const token = await bridge?.getToken?.().catch(() => '')
+  if (token) {
+    try {
+      localStorage.setItem('AUTH_TOKEN', token)
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ username: 'admin', password: '123456' }),
+      })
+      const body = await res.json().catch(() => null) as { token?: string; jwt?: string } | null
+      const jwt = body?.token || body?.jwt
+      if (jwt) localStorage.setItem('hermes_api_key', jwt)
+    } catch {
+      /* preload performs the same desktop auto-login; this is a fallback. */
+    }
+  }
+  for (let i = 0; i < 20 && !localStorage.getItem('hermes_api_key'); i += 1) {
+    await new Promise(resolve => window.setTimeout(resolve, 100))
+  }
 }
 
 function draw(): void {
@@ -234,8 +328,8 @@ function handlePointerDown(event: PointerEvent): void {
   overrideDisplayedState('run')
   movementRowOverride.value = ''
   dragOffset.value = {
-    x: event.clientX - position.value.x,
-    y: event.clientY - position.value.y,
+    x: (isDesktopWindow.value ? event.screenX : event.clientX) - position.value.x - desktopPointerInset(),
+    y: (isDesktopWindow.value ? event.screenY : event.clientY) - position.value.y - desktopPointerInset(),
   }
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
 }
@@ -244,14 +338,15 @@ function handlePointerMove(event: PointerEvent): void {
   if (!dragging.value || resizing.value) return
   const previousX = position.value.x
   position.value = clampPosition({
-    x: event.clientX - dragOffset.value.x,
-    y: event.clientY - dragOffset.value.y,
+    x: (isDesktopWindow.value ? event.screenX : event.clientX) - dragOffset.value.x - desktopPointerInset(),
+    y: (isDesktopWindow.value ? event.screenY : event.clientY) - dragOffset.value.y - desktopPointerInset(),
   })
   const deltaX = position.value.x - previousX
   if (Math.abs(deltaX) >= 1) {
     movementRowOverride.value = deltaX < 0 ? 'running-left' : 'running-right'
     draw()
   }
+  if (isDesktopWindow.value) void syncDesktopWindowBounds(false)
   scheduleSave()
 }
 
@@ -274,6 +369,7 @@ function setScale(next: number): void {
   scale.value = clamp(next, MIN_SCALE, MAX_SCALE)
   position.value = clampPosition(before)
   draw()
+  if (isDesktopWindow.value) void syncDesktopWindowBounds()
   scheduleSave()
 }
 
@@ -282,7 +378,7 @@ function handleResizePointerDown(event: PointerEvent): void {
   resizing.value = true
   dragging.value = false
   resizeStart.value = {
-    pointerX: event.clientX,
+    pointerX: isDesktopWindow.value ? event.screenX : event.clientX,
     width: renderedWidth.value,
   }
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
@@ -290,11 +386,13 @@ function handleResizePointerDown(event: PointerEvent): void {
 
 function handleResizePointerMove(event: PointerEvent): void {
   if (!resizing.value) return
-  const width = resizeStart.value.width + event.clientX - resizeStart.value.pointerX
+  const pointerX = isDesktopWindow.value ? event.screenX : event.clientX
+  const width = resizeStart.value.width + pointerX - resizeStart.value.pointerX
   const nextScale = width / frameWidth.value
   scale.value = clamp(nextScale, MIN_SCALE, MAX_SCALE)
   position.value = clampPosition(position.value)
   draw()
+  if (isDesktopWindow.value) void syncDesktopWindowBounds()
   scheduleSave()
 }
 
@@ -311,6 +409,10 @@ function handleWheel(event: WheelEvent): void {
 }
 
 function handleResize(): void {
+  if (isDesktopWindow.value) {
+    draw()
+    return
+  }
   position.value = pet.value?.position ? clampPosition(position.value) : defaultPosition()
   draw()
   scheduleSave()
@@ -332,6 +434,8 @@ async function connectPetStateForProfile(profile?: string | null): Promise<void>
 async function loadForProfile(profile?: string | null): Promise<void> {
   if (isLoginPage.value) return
   shutdownPetConnection()
+  await ensureDesktopAuthReady()
+  await hydrateDesktopWindowPosition()
   const active = await petsStore.loadActivePet()
   if (active?.enabled) await connectPetStateForProfile(profile)
 }
@@ -396,6 +500,12 @@ watch(
   { immediate: true },
 )
 
+watch(visible, shown => {
+  if (!isDesktopWindow.value) return
+  if (shown) void syncDesktopWindowBounds(true)
+  else void setDesktopWindowVisible(false)
+}, { immediate: true })
+
 onMounted(() => {
   lastStateChangedAt = Date.now()
   window.addEventListener('resize', handleResize)
@@ -409,6 +519,7 @@ onUnmounted(() => {
   clearStateSwitchTimer()
   clearStateOverrideTimer()
   petStateStore.disconnect()
+  void setDesktopWindowVisible(false)
   window.removeEventListener('resize', handleResize)
   window.removeEventListener('pagehide', shutdownPetConnection)
   window.removeEventListener('beforeunload', shutdownPetConnection)
@@ -419,7 +530,7 @@ onUnmounted(() => {
   <div
     v-show="visible"
     class="web-pet"
-    :class="{ dragging, resizing }"
+    :class="{ dragging, resizing, 'desktop-window': isDesktopWindow }"
     :style="shellStyle"
     @pointerdown="handlePointerDown"
     @pointermove="handlePointerMove"
@@ -459,12 +570,23 @@ onUnmounted(() => {
   &.resizing {
     cursor: nwse-resize;
   }
+
+  &.desktop-window {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    filter: none;
+    outline: 0;
+  }
 }
 
 .web-pet-canvas {
   display: block;
   width: 100%;
   height: 100%;
+  background: transparent;
+  border: 0;
+  outline: 0;
 }
 
 .web-pet-resize {
@@ -512,5 +634,16 @@ onUnmounted(() => {
   box-shadow:
     0 4px 14px rgba(0, 0, 0, 0.3),
     inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.web-pet.desktop-window .web-pet-resize {
+  background: rgba(255, 255, 255, 0.76);
+  border: 0;
+  box-shadow: none;
+  outline: 0;
+}
+
+:global(.dark) .web-pet.desktop-window .web-pet-resize {
+  background: rgba(25, 28, 35, 0.78);
 }
 </style>

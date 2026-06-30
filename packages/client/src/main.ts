@@ -5,6 +5,7 @@ import { i18n } from './i18n'
 import App from './App.vue'
 import './styles/global.scss'
 import 'katex/dist/katex.min.css'
+import { desktopBridge } from '@/utils/desktop-bridge'
 
 // Apply theme classes before mount to prevent FOUC (Flash of Unstyled Content)
 const savedBrightness = localStorage.getItem('hermes_brightness') || 'system'
@@ -16,8 +17,9 @@ const isDark = savedBrightness === 'dark' || (savedBrightness === 'system' && pr
 
 // Resolve style
 const isComic = savedStyle === 'comic'
-const isDesktopShell =
-  (window as typeof window & { hermesDesktop?: { isDesktop?: boolean } }).hermesDesktop?.isDesktop === true
+const bridge = desktopBridge()
+const isDesktopShell = bridge?.isDesktop === true
+const isDesktopPetWindow = bridge?.windowKind === 'pet' || window.location.hash.startsWith('#/desktop-pet')
 
 // Apply classes to prevent FOUC
 if (isDark) {
@@ -28,6 +30,9 @@ if (isComic) {
 }
 if (isDesktopShell) {
   document.documentElement.classList.add('hermes-desktop-shell')
+}
+if (isDesktopPetWindow) {
+  document.documentElement.classList.add('hermes-desktop-pet-window')
 }
 
 // Read token from URL BEFORE router initializes (hash router strips params)

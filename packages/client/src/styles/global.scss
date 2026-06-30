@@ -109,6 +109,13 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+.hermes-desktop-pet-window,
+.hermes-desktop-pet-window body,
+.hermes-desktop-pet-window #app {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
 // Teleported overlays must remain clickable above Electron drag regions.
 .hermes-desktop-shell {
   .n-drawer,
