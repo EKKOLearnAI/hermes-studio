@@ -315,8 +315,13 @@ function handleResize(): void {
   scheduleSave()
 }
 
+function shutdownPetConnection(): void {
+  petStateStore.disconnect()
+}
+
 async function loadForProfile(profile?: string | null): Promise<void> {
   if (isLoginPage.value) return
+  petStateStore.disconnect()
   await petsStore.loadActivePet()
   if (profile) await petStateStore.connect(profile)
 }
@@ -380,6 +385,8 @@ watch(
 onMounted(() => {
   lastStateChangedAt = Date.now()
   window.addEventListener('resize', handleResize)
+  window.addEventListener('pagehide', shutdownPetConnection)
+  window.addEventListener('beforeunload', shutdownPetConnection)
 })
 
 onUnmounted(() => {
@@ -389,6 +396,8 @@ onUnmounted(() => {
   clearStateOverrideTimer()
   petStateStore.disconnect()
   window.removeEventListener('resize', handleResize)
+  window.removeEventListener('pagehide', shutdownPetConnection)
+  window.removeEventListener('beforeunload', shutdownPetConnection)
 })
 </script>
 
