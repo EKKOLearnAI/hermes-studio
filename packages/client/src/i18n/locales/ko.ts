@@ -709,6 +709,11 @@ export default {
     pin: '스킬 고정',
     unpin: '고정 해제',
     pinFailed: '고정 상태 변경 실패',
+    edit: '편집',
+    saving: '저장 중...',
+    editorLabel: '스킬 편집기',
+    saveSuccess: '스킬 저장됨',
+    saveFailed: '스킬 저장 실패',
     toggleFailed: '스킬 상태를 전환하지 못했습니다',
     source: {
       builtin: '내장',

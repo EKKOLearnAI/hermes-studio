@@ -788,6 +788,7 @@ export async function pin_(ctx: any) {
 }
 
 const MAX_SKILL_UPLOAD_SIZE = 50 * 1024 * 1024 // 50MB
+const MAX_SKILL_CONTENT_SIZE = 1024 * 1024 // 1MB
 
 function isValidSkillName(name: string): boolean {
   // Reject empty / path traversal / absolute paths
@@ -795,6 +796,62 @@ function isValidSkillName(name: string): boolean {
   if (name === '.' || name === '..') return false
   if (name.includes('/') || name.includes('\\') || name.includes('\0')) return false
   return true
+}
+
+export async function updateSkill(ctx: any) {
+  const category = String((ctx.params as any)?.category || '')
+  const name = String((ctx.params as any)?.skill || '')
+  const content = (ctx.request.body as { content?: unknown } | undefined)?.content
+
+  if (!isValidSkillName(category) || !isValidSkillName(name)) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid category or skill name' }
+    return
+  }
+  if (typeof content !== 'string') {
+    ctx.status = 400
+    ctx.body = { error: 'content must be a string' }
+    return
+  }
+  if (Buffer.byteLength(content, 'utf-8') > MAX_SKILL_CONTENT_SIZE) {
+    ctx.status = 413
+    ctx.body = { error: `Skill content too large (max ${MAX_SKILL_CONTENT_SIZE / 1024 / 1024}MB)` }
+    return
+  }
+
+  const target = requestSkillTarget(ctx)
+  const skillsDir = requestTargetSkillsDir(ctx)
+  try {
+    if (target === 'hermes') {
+      const bundledManifest = readBundledManifest(await safeReadFile(join(skillsDir, '.bundled_manifest')))
+      const hubNames = readHubInstalledNames(await safeReadFile(join(skillsDir, '.hub', 'lock.json')))
+      const source = getSkillSource(name, bundledManifest, hubNames)
+      if (source !== 'local') {
+        ctx.status = 403
+        ctx.body = { error: `Only local skills can be edited (this skill is ${source})` }
+        return
+      }
+    }
+
+    const localSkillDir = await findSkillDirInRoot(skillsDir, category, name)
+    if (!localSkillDir) {
+      ctx.status = 404
+      ctx.body = { error: 'Skill not found' }
+      return
+    }
+    if (!isPathWithin(localSkillDir, skillsDir)) {
+      ctx.status = 403
+      ctx.body = { error: 'Access denied' }
+      return
+    }
+
+    await writeFile(join(localSkillDir, 'SKILL.md'), content, 'utf-8')
+    hashCache.delete(localSkillDir)
+    ctx.body = { success: true }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
 }
 
 function splitMultipart(raw: Buffer, boundary: Buffer): Buffer[] {

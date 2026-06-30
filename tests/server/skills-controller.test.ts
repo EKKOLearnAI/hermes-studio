@@ -441,4 +441,84 @@ describe('skills controller', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it('updates local skill content in the request-scoped profile directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-update-skill-'))
+    const defaultProfileDir = join(root, 'default')
+    const researchProfileDir = join(root, 'research')
+    const defaultSkillDir = join(defaultProfileDir, 'skills', 'tools', 'dupe-skill')
+    const researchSkillDir = join(researchProfileDir, 'skills', 'tools', 'dupe-skill')
+    await mkdir(defaultSkillDir, { recursive: true })
+    await mkdir(researchSkillDir, { recursive: true })
+    await writeFile(join(defaultSkillDir, 'SKILL.md'), '# Default Copy\n', 'utf-8')
+    await writeFile(join(researchSkillDir, 'SKILL.md'), '# Research Copy\n', 'utf-8')
+    mockGetProfileDir.mockImplementation((profile: string) => profile === 'research' ? researchProfileDir : defaultProfileDir)
+
+    const ctx: any = {
+      query: {},
+      params: { category: 'tools', skill: 'dupe-skill' },
+      request: { body: { content: '# Updated Research Copy\n' } },
+      state: { profile: { name: 'research' } },
+      body: null,
+    }
+
+    try {
+      const { updateSkill } = await loadController()
+
+      await updateSkill(ctx)
+
+      await expect(readFile(join(defaultSkillDir, 'SKILL.md'), 'utf-8')).resolves.toBe('# Default Copy\n')
+      await expect(readFile(join(researchSkillDir, 'SKILL.md'), 'utf-8')).resolves.toBe('# Updated Research Copy\n')
+      expect(ctx.body).toEqual({ success: true })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('updates Codex user skills but not Codex system skills', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-update-codex-skill-'))
+    const previousHome = process.env.HOME
+    const userSkillDir = join(root, '.agents', 'skills', 'user-skill')
+    const systemSkillDir = join(root, '.codex', 'skills', '.system', 'system-skill')
+
+    await mkdir(userSkillDir, { recursive: true })
+    await mkdir(systemSkillDir, { recursive: true })
+    await writeFile(join(userSkillDir, 'SKILL.md'), '# User Skill\n', 'utf-8')
+    await writeFile(join(systemSkillDir, 'SKILL.md'), '# System Skill\n', 'utf-8')
+    process.env.HOME = root
+
+    try {
+      const { updateSkill } = await loadController()
+      const userCtx: any = {
+        query: { target: 'codex' },
+        params: { category: 'misc', skill: 'user-skill' },
+        request: { body: { content: '# Updated User Skill\n' } },
+        state: { profile: { name: 'research' } },
+        body: null,
+      }
+
+      await updateSkill(userCtx)
+
+      await expect(readFile(join(userSkillDir, 'SKILL.md'), 'utf-8')).resolves.toBe('# Updated User Skill\n')
+      expect(userCtx.body).toEqual({ success: true })
+
+      const systemCtx: any = {
+        query: { target: 'codex' },
+        params: { category: 'misc', skill: 'system-skill' },
+        request: { body: { content: '# Updated System Skill\n' } },
+        state: { profile: { name: 'research' } },
+        body: null,
+      }
+
+      await updateSkill(systemCtx)
+
+      await expect(readFile(join(systemSkillDir, 'SKILL.md'), 'utf-8')).resolves.toBe('# System Skill\n')
+      expect(systemCtx.status).toBe(404)
+      expect(systemCtx.body).toEqual({ error: 'Skill not found' })
+    } finally {
+      if (previousHome == null) delete process.env.HOME
+      else process.env.HOME = previousHome
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })

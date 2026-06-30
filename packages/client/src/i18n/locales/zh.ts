@@ -966,6 +966,11 @@ export default {
     pin: '置顶技能',
     unpin: '取消置顶',
     pinFailed: '更改置顶状态失败',
+    edit: '编辑',
+    saving: '保存中...',
+    editorLabel: '技能编辑器',
+    saveSuccess: '技能已保存',
+    saveFailed: '保存技能失败',
     toggleFailed: '切换技能状态失败',
     source: {
       builtin: '内置',

@@ -709,6 +709,11 @@ export default {
     pin: 'スキルをピン留め',
     unpin: 'ピン留めを解除',
     pinFailed: 'ピン留め状態の変更に失敗しました',
+    edit: '編集',
+    saving: '保存中...',
+    editorLabel: 'スキルエディター',
+    saveSuccess: 'スキルを保存しました',
+    saveFailed: 'スキルの保存に失敗しました',
     toggleFailed: 'スキルの切り替えに失敗しました',
     source: {
       builtin: '組み込み',

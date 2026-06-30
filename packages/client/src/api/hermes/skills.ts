@@ -127,6 +127,20 @@ export async function fetchSkillContent(skillPath: string, target: SkillTarget =
   return res.content
 }
 
+export async function saveSkillContent(
+  category: string,
+  skill: string,
+  content: string,
+  target: SkillTarget = 'hermes',
+): Promise<void> {
+  const c = encodeURIComponent(category)
+  const s = encodeURIComponent(skill)
+  await request(`/api/hermes/skills/${c}/${s}${targetQuery(target)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
+  })
+}
+
 export async function fetchSkillFiles(category: string, skill: string, target: SkillTarget = 'hermes'): Promise<SkillFileEntry[]> {
   const res = await request<{ files: SkillFileEntry[] }>(`/api/hermes/skills/${category}/${skill}/files${targetQuery(target)}`)
   return res.files

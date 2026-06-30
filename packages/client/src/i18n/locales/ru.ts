@@ -870,6 +870,11 @@ export default {
     pin: 'Закрепить навык',
     unpin: 'Открепить',
     pinFailed: 'Ошибка изменения статуса закрепления',
+    edit: 'Редактировать',
+    saving: 'Сохранение...',
+    editorLabel: 'Редактор skill',
+    saveSuccess: 'Skill сохранён',
+    saveFailed: 'Ошибка сохранения skill',
     toggleFailed: 'Ошибка переключения статуса навыка',
     source: {
       builtin: 'Встроенный',

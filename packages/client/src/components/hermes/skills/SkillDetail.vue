@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
-import { fetchSkillContent, fetchSkillFiles, pinSkillApi, type SkillFileEntry, type SkillTarget } from '@/api/hermes/skills'
+import { fetchSkillContent, fetchSkillFiles, pinSkillApi, saveSkillContent, type SkillFileEntry, type SkillTarget } from '@/api/hermes/skills'
 import { useI18n } from 'vue-i18n'
 import { useMessage } from 'naive-ui'
 
@@ -18,18 +18,24 @@ const props = defineProps<{
   pinned?: boolean
   target?: SkillTarget
   readonly?: boolean
+  canPin?: boolean
 }>()
 
 const emit = defineEmits<{
   pinToggled: [name: string, pinned: boolean]
+  saved: []
 }>()
 
 const content = ref('')
+const draftContent = ref('')
 const files = ref<SkillFileEntry[]>([])
 const loading = ref(false)
 const fileContent = ref('')
 const viewingFile = ref<string | null>(null)
 const fileLoading = ref(false)
+const editing = ref(false)
+const saving = ref(false)
+const isDirty = computed(() => draftContent.value !== content.value)
 
 async function loadSkill() {
   loading.value = true
@@ -37,6 +43,8 @@ async function loadSkill() {
   fileContent.value = ''
   files.value = []
   content.value = ''
+  draftContent.value = ''
+  editing.value = false
   try {
     const skillPath = `${props.category}/${props.skill}/SKILL.md`
     const [skillContent, skillFiles] = await Promise.all([
@@ -44,9 +52,11 @@ async function loadSkill() {
       fetchSkillFiles(props.category, props.skill, props.target || 'hermes'),
     ])
     content.value = skillContent
+    draftContent.value = skillContent
     files.value = skillFiles.filter(f => !f.isDir && f.path !== 'SKILL.md')
   } catch (err: any) {
     content.value = t('skills.loadFailed') + `: ${err.message}`
+    draftContent.value = content.value
   } finally {
     loading.value = false
   }
@@ -81,6 +91,33 @@ function backToSkill() {
   fileContent.value = ''
 }
 
+function startEditing() {
+  draftContent.value = content.value
+  editing.value = true
+}
+
+function cancelEditing() {
+  draftContent.value = content.value
+  editing.value = false
+}
+
+async function saveSkill() {
+  if (saving.value || props.readonly) return
+  saving.value = true
+  try {
+    await saveSkillContent(props.category, props.skill, draftContent.value, props.target || 'hermes')
+    content.value = draftContent.value
+    editing.value = false
+    message.success(t('skills.saveSuccess'))
+    message.info(t('skills.reloadHint'), { duration: 6000 })
+    emit('saved')
+  } catch (err: any) {
+    message.error(t('skills.saveFailed') + `: ${err.message}`)
+  } finally {
+    saving.value = false
+  }
+}
+
 const pinLoading = ref(false)
 
 async function handlePinToggle() {
@@ -104,11 +141,25 @@ watch(() => `${props.target || 'hermes'}/${props.category}/${props.skill}`, load
   <div class="skill-detail">
     <!-- Skill title -->
     <div class="detail-title">
-      <span class="detail-category">{{ category }}</span>
-      <span class="detail-separator">/</span>
-      <span class="detail-name">{{ skill }}</span>
+      <div class="detail-heading">
+        <span class="detail-category">{{ category }}</span>
+        <span class="detail-separator">/</span>
+        <span class="detail-name">{{ skill }}</span>
+      </div>
       <div class="usage-stats">
-        <button v-if="!readonly" class="pin-toggle" :class="{ active: pinned }" :disabled="pinLoading" :title="pinned ? t('skills.unpin') : t('skills.pin')" @click="handlePinToggle">
+        <button v-if="!readonly && !viewingFile && !editing" class="detail-action" :title="t('skills.edit')" @click="startEditing">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          <span>{{ t('skills.edit') }}</span>
+        </button>
+        <button v-if="!readonly && !viewingFile && editing" class="detail-action" :disabled="saving || !isDirty" :title="t('common.save')" @click="saveSkill">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>
+          <span>{{ saving ? t('skills.saving') : t('common.save') }}</span>
+        </button>
+        <button v-if="!readonly && !viewingFile && editing" class="detail-action" :disabled="saving" :title="t('common.cancel')" @click="cancelEditing">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          <span>{{ t('common.cancel') }}</span>
+        </button>
+        <button v-if="canPin && !readonly" class="pin-toggle" :class="{ active: pinned }" :disabled="pinLoading" :title="pinned ? t('skills.unpin') : t('skills.pin')" @click="handlePinToggle">
           <svg width="16" height="16" viewBox="0 0 24 24" :fill="pinned ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
         </button>
         <span v-if="viewCount != null" class="usage-stat" title="Views">
@@ -143,6 +194,13 @@ watch(() => `${props.target || 'hermes'}/${props.category}/${props.skill}`, load
       <!-- Skill content -->
       <div class="detail-content">
         <MarkdownRenderer v-if="viewingFile" :content="fileContent" />
+        <textarea
+          v-else-if="editing"
+          v-model="draftContent"
+          class="skill-editor"
+          :aria-label="t('skills.editorLabel')"
+          spellcheck="false"
+        />
         <MarkdownRenderer v-else :content="content" />
       </div>
 
@@ -185,11 +243,22 @@ watch(() => `${props.target || 'hermes'}/${props.category}/${props.skill}`, load
   font-size: 15px;
   display: flex;
   align-items: center;
+  gap: 12px;
+}
+
+.detail-heading {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .detail-category {
   color: $text-muted;
   font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .detail-separator {
@@ -200,6 +269,9 @@ watch(() => `${props.target || 'hermes'}/${props.category}/${props.skill}`, load
 .detail-name {
   color: $text-primary;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .usage-stats {
@@ -207,7 +279,7 @@ watch(() => `${props.target || 'hermes'}/${props.category}/${props.skill}`, load
   align-items: center;
   gap: 12px;
   margin-left: auto;
-  padding-left: 12px;
+  flex-shrink: 0;
 }
 
 .usage-stat {
@@ -252,6 +324,30 @@ watch(() => `${props.target || 'hermes'}/${props.category}/${props.skill}`, load
   &:disabled {
     cursor: wait;
     opacity: 0.3;
+  }
+}
+
+.detail-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid $border-color;
+  background: $bg-secondary;
+  color: $text-secondary;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  transition: all $transition-fast;
+
+  &:hover:not(:disabled) {
+    border-color: $accent-primary;
+    color: $accent-primary;
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
   }
 }
 
@@ -348,6 +444,51 @@ watch(() => `${props.target || 'hermes'}/${props.category}/${props.skill}`, load
   &:hover {
     border-color: $accent-primary;
     color: $accent-primary;
+  }
+}
+
+.skill-editor {
+  display: block;
+  width: 100%;
+  min-height: 100%;
+  height: 100%;
+  resize: none;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
+  background: $bg-primary;
+  color: $text-primary;
+  padding: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  outline: none;
+
+  &:focus {
+    border-color: $accent-primary;
+    box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.12);
+  }
+}
+
+@media (max-width: $breakpoint-mobile) {
+  .detail-title {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .detail-heading {
+    flex: 1 1 100%;
+    max-width: 100%;
+  }
+
+  .usage-stats {
+    flex: 1 1 100%;
+    margin-left: 0;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .detail-action {
+    padding: 4px 7px;
   }
 }
 

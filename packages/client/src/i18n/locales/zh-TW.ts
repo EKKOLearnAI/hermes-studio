@@ -965,6 +965,11 @@ export default {
     pin: '釘選技能',
     unpin: '取消釘選',
     pinFailed: '變更釘選狀態失敗',
+    edit: '編輯',
+    saving: '儲存中...',
+    editorLabel: '技能編輯器',
+    saveSuccess: '技能已儲存',
+    saveFailed: '儲存技能失敗',
     toggleFailed: '切換技能狀態失敗',
     source: {
       builtin: '內建',

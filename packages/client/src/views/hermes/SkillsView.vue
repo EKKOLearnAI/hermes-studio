@@ -47,6 +47,11 @@ const skillTargetOptions = computed(() => [
 ])
 
 const isHermesTarget = computed(() => skillTarget.value === 'hermes')
+const selectedSkillReadonly = computed(() => {
+  if (!selectedSkillData.value) return true
+  if (selectedCategory.value === '.archive') return true
+  return (selectedSkillData.value.source || 'local') !== 'local'
+})
 
 function handleMobileChange(e: MediaQueryListEvent | MediaQueryList) {
   showSidebar.value = !e.matches
@@ -152,6 +157,10 @@ function handlePinToggled(name: string, pinned: boolean) {
     const skill = cat?.skills.find(s => s.name === name)
     if (skill) skill.pinned = pinned
   }
+}
+
+function handleSkillSaved() {
+  loadSkills()
 }
 </script>
 
@@ -297,8 +306,10 @@ function handlePinToggled(name: string, pinned: boolean) {
               :view-count="selectedSkillData?.viewCount"
               :pinned="selectedSkillData?.pinned"
               :target="skillTarget"
-              :readonly="!isHermesTarget"
+              :readonly="selectedSkillReadonly"
+              :can-pin="isHermesTarget"
               @pin-toggled="handlePinToggled"
+              @saved="handleSkillSaved"
             />
             <div v-else class="empty-detail">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.2">

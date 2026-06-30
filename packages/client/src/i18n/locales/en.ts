@@ -966,6 +966,11 @@ export default {
     pin: 'Pin skill',
     unpin: 'Unpin skill',
     pinFailed: 'Failed to change pin status',
+    edit: 'Edit',
+    saving: 'Saving...',
+    editorLabel: 'Skill editor',
+    saveSuccess: 'Skill saved',
+    saveFailed: 'Failed to save skill',
     toggleFailed: 'Failed to toggle skill',
     source: {
       builtin: 'Builtin',
