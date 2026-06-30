@@ -522,7 +522,7 @@ describe('GlobalAgentServer', () => {
       text: 'hello',
       options: {
         mcuPlayback: true,
-        sampleRate: 16000,
+        sampleRate: 24000,
       },
     })
   })
@@ -565,7 +565,7 @@ describe('GlobalAgentServer', () => {
       text: 'hello',
       options: {
         mcuPlayback: true,
-        sampleRate: 16000,
+        sampleRate: 24000,
       },
     })
   })
@@ -608,7 +608,7 @@ describe('GlobalAgentServer', () => {
       text: 'hello',
       options: {
         mcuPlayback: true,
-        sampleRate: 16000,
+        sampleRate: 24000,
       },
     })
   })

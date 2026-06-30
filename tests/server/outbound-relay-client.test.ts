@@ -221,7 +221,7 @@ describe('outbound relay client', () => {
     localSocket.__handlers.get('run.completed')?.({})
 
     await vi.waitFor(() => {
-      expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('tts-synthesize-failed-xiaohe.s16le.pcm'))
+      expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('tts-failed-24k.s16le.pcm'))
     })
     const ttsCalls = fetchImpl.mock.calls.filter(([url]: [string]) => url.includes('/api/hermes/tts/synthesize'))
     expect(ttsCalls).toHaveLength(2)
@@ -234,18 +234,18 @@ describe('outbound relay client', () => {
     const enqueuePayload = JSON.parse(
       ws.send.mock.calls
         .map(([payload]: [string]) => payload)
-        .find((payload: string) => payload.includes('tts-synthesize-failed-xiaohe.s16le.pcm')),
+        .find((payload: string) => payload.includes('tts-failed-24k.s16le.pcm')),
     )
     expect(enqueuePayload).toMatchObject({
       type: 'audio.enqueue',
       interactionId: 'voice-tts-fail',
       segmentId: 'voice-tts-fail-tts-1-failed-prompt',
       text: '当前文字转语音失败了，请配置下文字转语音再使用哦',
-      url: 'https://ekko-hermes-studio.oss-cn-beijing.aliyuncs.com/tts-synthesize-failed-xiaohe.s16le.pcm',
+      url: '/api/hermes/mcu/audio/tts-failed-24k.s16le.pcm',
       mimeType: 'audio/x-pcm',
       format: 's16le',
       channels: 1,
-      sampleRate: 16000,
+      sampleRate: 24000,
     })
     expect(enqueuePayload).not.toHaveProperty('completionManagedByServer')
   })

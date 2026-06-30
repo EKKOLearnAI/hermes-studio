@@ -25,20 +25,21 @@ const IPAddress kApIp(192, 168, 4, 1);
 const IPAddress kApGateway(192, 168, 4, 1);
 const IPAddress kApSubnet(255, 255, 255, 0);
 constexpr char kMissingSttPromptPcmUrl[] =
-    "https://ekko-hermes-studio.oss-cn-beijing.aliyuncs.com/current-profile-stt-not-configured-xiaohe.s16le.pcm";
+    "/api/hermes/mcu/audio/missing-stt-24k.s16le.pcm";
 constexpr char kNoDevicePromptPcmUrl[] =
-    "https://ekko-hermes-studio.oss-cn-beijing.aliyuncs.com/no-device-connected-xiaohe-16k.pcm";
-constexpr int kPinI2cSda = 3;
-constexpr int kPinI2cScl = 4;
-constexpr int kPinI2sDout = 5;
-constexpr int kPinI2sWs = 6;
-constexpr int kPinI2sDin = 7;
-constexpr int kPinI2sBck = 8;
+    "/api/hermes/mcu/audio/no-device-24k.s16le.pcm";
+constexpr int kPinI2cSda = 0;
+constexpr int kPinI2cScl = 1;
+constexpr int kPinI2sDout = 4;
+constexpr int kPinI2sWs = 5;
+constexpr int kPinI2sDin = 6;
+constexpr int kPinI2sBck = 7;
 constexpr int kPinBoot = 9;
-constexpr int kPinI2sMck = 10;
-constexpr int kPinPaEn = 11;
+constexpr int kPinI2sMck = 8;
+constexpr int kPinPaEn = 10;
 constexpr uint8_t kEs8311Addr = 0x18;
-constexpr uint8_t kOledAddr = 0x3C;
+constexpr uint8_t kDefaultOledAddr = 0x3C;
+constexpr uint8_t kAltOledAddr = 0x3D;
 constexpr int kOledWidth = 128;
 constexpr int kOledHeight = 64;
 constexpr uint32_t kOledRefreshIntervalMs = 160;
@@ -65,6 +66,7 @@ constexpr uint32_t kBootInputArmDelayMs = 2500;
 constexpr uint32_t kBootLongPressMs = 360;
 constexpr uint32_t kBootDoubleClickMs = 320;
 constexpr uint32_t kWifiDisconnectGraceMs = 8000;
+constexpr bool kAutoOtaEnabled = false;
 constexpr uint32_t kVoiceRecordMs = 4000;
 constexpr uint32_t kVoiceStreamRecordMs = 10000;
 constexpr uint32_t kVoiceRecordMinMs = 300;
@@ -74,12 +76,13 @@ constexpr uint32_t kVoiceVadPeakStart = 480;
 constexpr uint32_t kVoiceVadActiveThreshold = 260;
 constexpr uint32_t kVoiceVadMinActiveSamples = 16;
 constexpr int kVoiceInputGainPermille = 2800;
-constexpr int kAudioSampleRate = 16000;
+constexpr int kAudioSampleRate = 24000;
+constexpr int kMcuAudioDefaultSampleRate = 24000;
 constexpr size_t kVoiceRecordMaxFrames = (kAudioSampleRate * kVoiceRecordMs) / 1000UL;
 constexpr size_t kVoiceRecordBufferBytes = 44 + kVoiceRecordMaxFrames * sizeof(int16_t);
-constexpr int kVoiceOutputGainPermille = 820;
-constexpr int16_t kVoiceOutputLimit = 25500;
-constexpr uint8_t kEs8311DacVolume = 0xC8;
+constexpr uint8_t kDefaultOutputVolumePercent = 70;
+constexpr int16_t kVoiceOutputLimit = 24000;
+constexpr uint8_t kEs8311DacVolume = 0xC0;
 constexpr i2s_port_t kI2sPort = I2S_NUM_0;
 
 Preferences prefs;
@@ -118,6 +121,7 @@ uint32_t bootReleaseStartedAtMs = 0;
 uint32_t audioInterruptPressStartedAtMs = 0;
 uint32_t wifiDisconnectedSinceMs = 0;
 uint8_t oledProgress = 0;
+uint8_t oledAddress = kDefaultOledAddr;
 String oledTitle = "BOOT";
 String oledHint = "starting";
 int lastMcuLoginCode = 0;
@@ -156,6 +160,7 @@ uint32_t nextMcuOtaCheckAtMs = kMcuOtaFirstCheckMs;
 uint32_t voiceRecordRms = 0;
 uint32_t voiceRecordPeak = 0;
 uint32_t voiceRecordActiveSamples = 0;
+uint8_t outputVolumePercent = kDefaultOutputVolumePercent;
 
 struct McuAudioSegment {
   String interactionId;
@@ -164,6 +169,7 @@ struct McuAudioSegment {
   String url;
   String mimeType;
   uint8_t channels = 2;
+  uint32_t sampleRate = kMcuAudioDefaultSampleRate;
   uint32_t durationMs = 0;
   bool completionManagedByServer = false;
 };
@@ -255,7 +261,7 @@ void setPowerAmp(bool enable) {
 }
 
 bool oledCommand(uint8_t command) {
-  Wire.beginTransmission(kOledAddr);
+  Wire.beginTransmission(oledAddress);
   Wire.write(0x00);
   Wire.write(command);
   return Wire.endTransmission() == 0;
@@ -265,7 +271,7 @@ bool oledData(const uint8_t *data, size_t len) {
   size_t offset = 0;
   while (offset < len) {
     size_t chunk = min(static_cast<size_t>(16), len - offset);
-    Wire.beginTransmission(kOledAddr);
+    Wire.beginTransmission(oledAddress);
     Wire.write(0x40);
     for (size_t i = 0; i < chunk; ++i) {
       Wire.write(data[offset + i]);
@@ -429,6 +435,21 @@ void drawWifiGlyph(uint8_t x, uint8_t y) {
   }
 }
 
+void drawBatteryGlyph(uint8_t x, uint8_t y) {
+  oledDrawFrame(x, y + 2, 15, 7);
+  oledDrawBox(x + 15, y + 4, 2, 3);
+  oledDrawBox(x + 2, y + 4, 3, 3);
+  oledDrawBox(x + 6, y + 4, 3, 3);
+  oledDrawBox(x + 10, y + 4, 3, 3);
+}
+
+void drawTopStatusBar() {
+  drawWifiGlyph(2, 1);
+  oledDrawCenteredText(1, F("HSTUDIO"), 1);
+  drawBatteryGlyph(108, 1);
+  oledDrawHLine(0, 10, 128);
+}
+
 void drawEye(int x, int y, bool blink, bool thinking, bool error) {
   if (error) {
     oledDrawHLine(x + 8, y + 9, 22);
@@ -458,9 +479,7 @@ String interactionStatusLabel() {
 }
 
 void drawInteractionFrame() {
-  oledDrawText(2, 1, F("HSTUDIO"), 1);
-  drawWifiGlyph(105, 1);
-  oledDrawHLine(0, 10, 128);
+  drawTopStatusBar();
 
   String title = interactionStatusLabel();
   oledDrawCenteredText(17, fitOledText(title, 12), 2);
@@ -508,9 +527,7 @@ void drawOledFrame() {
   bool thinking = oledMode == OledMode::Think;
   bool error = oledMode == OledMode::Error;
   bool blink = !thinking && !error && (millis() % 4300UL) > 4100UL;
-  oledDrawText(2, 1, F("HSTUDIO"), 1);
-  drawWifiGlyph(105, 1);
-  oledDrawHLine(0, 10, 128);
+  drawTopStatusBar();
   drawEye(19, 22, blink, thinking, error);
   drawEye(69, 22, blink, thinking, error);
   if (thinking) {
@@ -558,8 +575,19 @@ void initOledDisplay() {
   Wire.begin(kPinI2cSda, kPinI2cScl);
   Wire.setClock(100000);
   delay(40);
-  oledFound = i2cProbe(kOledAddr);
-  if (!oledFound) return;
+  if (i2cProbe(kDefaultOledAddr)) {
+    oledAddress = kDefaultOledAddr;
+    oledFound = true;
+  } else if (i2cProbe(kAltOledAddr)) {
+    oledAddress = kAltOledAddr;
+    oledFound = true;
+  } else {
+    oledReady = false;
+    Serial.printf("OLED not found sda=%d scl=%d addr=%s/%s\n", kPinI2cSda, kPinI2cScl,
+                  hexByte(kDefaultOledAddr).c_str(), hexByte(kAltOledAddr).c_str());
+    return;
+  }
+  Serial.printf("OLED found sda=%d scl=%d addr=%s\n", kPinI2cSda, kPinI2cScl, hexByte(oledAddress).c_str());
   static const uint8_t initCommands[] = {
       0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00, 0x40, 0x8D, 0x14,
       0x20, 0x00, 0xA1, 0xC8, 0xDA, 0x12, 0x81, 0xCF, 0xD9, 0xF1,
@@ -610,6 +638,19 @@ String prefString(const char *key) {
   String value = prefs.getString(key, "");
   prefs.end();
   return value;
+}
+
+void loadAudioPreferences() {
+  prefs.begin("mcu", true);
+  outputVolumePercent = clampUiValue(static_cast<uint32_t>(prefs.getUChar("volume", kDefaultOutputVolumePercent)), 100);
+  prefs.end();
+}
+
+void saveOutputVolume(uint8_t volume) {
+  outputVolumePercent = clampUiValue(volume, 100);
+  prefs.begin("mcu", false);
+  prefs.putUChar("volume", outputVolumePercent);
+  prefs.end();
 }
 
 String currentIp() {
@@ -1089,8 +1130,20 @@ bool configureI2sBus() {
   return true;
 }
 
+bool setI2sSampleRate(uint32_t sampleRate) {
+  if (!i2sReady || sampleRate == 0) return false;
+  esp_err_t err = i2s_set_sample_rates(kI2sPort, sampleRate);
+  if (err != ESP_OK) {
+    lastAudioDetail = String(F("I2S sample rate failed rate=")) + String(sampleRate) +
+                      F(" err=") + String(static_cast<int>(err));
+    return false;
+  }
+  i2s_zero_dma_buffer(kI2sPort);
+  return true;
+}
+
 int16_t shapeOutputSample(int16_t sample) {
-  int32_t value = (static_cast<int32_t>(sample) * kVoiceOutputGainPermille) / 1000;
+  int32_t value = (static_cast<int32_t>(sample) * static_cast<int32_t>(outputVolumePercent) * 10) / 1000;
   if (value > kVoiceOutputLimit) value = kVoiceOutputLimit;
   if (value < -kVoiceOutputLimit) value = -kVoiceOutputLimit;
   return static_cast<int16_t>(value);
@@ -1105,6 +1158,15 @@ int16_t shapeVoiceInputSample(int16_t sample) {
 
 uint16_t sampleMagnitude(int16_t sample) {
   return sample == INT16_MIN ? 32768 : static_cast<uint16_t>(sample < 0 ? -sample : sample);
+}
+
+int16_t voiceInputMonoSample(int16_t left, int16_t right) {
+  uint16_t leftMag = sampleMagnitude(left);
+  uint16_t rightMag = sampleMagnitude(right);
+  if (leftMag > rightMag * 2U) return shapeVoiceInputSample(left);
+  if (rightMag > leftMag * 2U) return shapeVoiceInputSample(right);
+  int32_t mixed = (static_cast<int32_t>(left) + static_cast<int32_t>(right)) / 2;
+  return shapeVoiceInputSample(static_cast<int16_t>(mixed));
 }
 
 void shapePcmBuffer(uint8_t *buffer, size_t length) {
@@ -1211,6 +1273,7 @@ bool recordVoiceWav(uint8_t **outWav, size_t *outLen) {
   audioBusy = true;
   setPowerAmp(false);
   es8311UpdateBits(0x31, 0x60, 0x60);
+  setI2sSampleRate(kAudioSampleRate);
   i2s_zero_dma_buffer(kI2sPort);
   setOledStatus(OledMode::Think, F("LISTEN"), F("SAY NOW"), 0);
 
@@ -1276,7 +1339,7 @@ bool recordVoiceWav(uint8_t **outWav, size_t *outLen) {
       if (leftMag > leftPeak) leftPeak = leftMag;
       if (rightMag > rightPeak) rightPeak = rightMag;
 
-      int16_t mono = shapeVoiceInputSample(right);
+      int16_t mono = voiceInputMonoSample(left, right);
       uint16_t monoMag = sampleMagnitude(mono);
       if (monoMag > monoPeak) monoPeak = monoMag;
       monoSquares += static_cast<uint64_t>(monoMag) * static_cast<uint64_t>(monoMag);
@@ -1842,6 +1905,8 @@ void sendStatusPage() {
   appendInfoRow(html, F("可用内存"), String(ESP.getFreeHeap()) + F(" bytes"));
   appendInfoRow(html, F("服务连接"), mcuSocketStateLabel());
   appendInfoRow(html, F("音频硬件"), String(es8311Ready && i2sReady ? F("就绪") : F("未就绪")) + F(" · ") + lastAudioDetail);
+  appendInfoRow(html, F("音量"), String(outputVolumePercent) + F("%"));
+  appendInfoRow(html, F("电量"), F("未启用"));
   if (selectedProfile.length() > 0) {
     appendInfoRow(html, F("最近 Profile"), selectedProfile);
   }
@@ -1855,6 +1920,15 @@ void sendStatusPage() {
 
   html += F("<div class='btn-row' style='margin-top:16px'><a class='btn primary' href='/device/scan'>刷新探测</a><a class='btn' href='/wifi'>重新配置 Wi-Fi</a></div>");
   html += F("</section>");
+
+  html += F("<section class='card'><h2>音频</h2>");
+  html += F("<form method='post' action='/device/audio'><div class='field'><span class='label'>播放音量 <output id='volume-output'>");
+  html += outputVolumePercent;
+  html += F("%</output></span><input name='volume' type='range' min='0' max='100' step='5' value='");
+  html += outputVolumePercent;
+  html += F("' oninput=\"document.getElementById('volume-output').textContent=this.value+'%'\"></div>");
+  html += F("<div class='btn-row'><button class='btn primary' type='submit'>保存音量</button></div>");
+  html += F("<p class='hint'>只影响 MCU 播放输出，不影响麦克风录音。</p></form></section>");
 
   html += F("<section class='card'><h2>手动添加机器</h2>");
   html += F("<form method='post' action='/device/manual'><div class='field'><span class='label'>地址</span>");
@@ -2013,6 +2087,22 @@ void handleOtaCheck() {
 void scanAndSendStatusPage() {
   scanLanDevices();
   sendStatusPage();
+}
+
+void handleDeviceAudio() {
+  String rawVolume = server.arg(F("volume"));
+  rawVolume.trim();
+  if (rawVolume.length() == 0) {
+    server.send(400, F("text/plain; charset=utf-8"), F("缺少音量"));
+    return;
+  }
+  int volume = rawVolume.toInt();
+  if (volume < 0) volume = 0;
+  if (volume > 100) volume = 100;
+  saveOutputVolume(static_cast<uint8_t>(volume));
+  lastAudioDetail = String(F("output volume ")) + String(outputVolumePercent) + F("%");
+  server.sendHeader(F("Location"), F("/device"), true);
+  server.send(302, F("text/plain"), F(""));
 }
 
 void addManualDevice() {
@@ -2465,7 +2555,7 @@ uint32_t mcuAudioDurationFor(const McuAudioSegment &segment) {
   return min(max(estimated, kMcuAudioDefaultDurationMs), kMcuAudioMaxDurationMs);
 }
 
-bool playPcmStereoStream(WiFiClient *stream, int contentLength) {
+bool playPcmStereoStream(WiFiClient *stream, int contentLength, uint32_t sampleRate) {
   if (!stream || audioBusy || !i2sReady || !es8311Ready) {
     lastAudioDetail = F("audio stream is not ready");
     markMcuInteraction(mcuInteractionId, F("failed"), lastAudioDetail);
@@ -2475,6 +2565,7 @@ bool playPcmStereoStream(WiFiClient *stream, int contentLength) {
   audioBusy = true;
   setPowerAmp(true);
   es8311UpdateBits(0x31, 0x60, 0x00);
+  setI2sSampleRate(sampleRate);
 
   constexpr size_t kChunkBytes = 1024;
   constexpr size_t kAudioFrameBytes = 4;
@@ -2556,12 +2647,13 @@ bool playPcmStereoStream(WiFiClient *stream, int contentLength) {
   lastAudioAtMs = millis();
   lastAudioDetail = String(F("pcm played bytes=")) + String(playedBytes) +
                     F(", stream bytes=") + String(streamBytes) +
+                    F(", rate=") + String(sampleRate) +
                     F(", padded=") + String(paddedBytes);
   audioBusy = false;
   return playedBytes > 0;
 }
 
-bool playPcmMonoStream(WiFiClient *stream, int contentLength) {
+bool playPcmMonoStream(WiFiClient *stream, int contentLength, uint32_t sampleRate) {
   if (!stream || audioBusy || !i2sReady || !es8311Ready) {
     lastAudioDetail = F("audio stream is not ready");
     markMcuInteraction(mcuInteractionId, F("failed"), lastAudioDetail);
@@ -2571,6 +2663,7 @@ bool playPcmMonoStream(WiFiClient *stream, int contentLength) {
   audioBusy = true;
   setPowerAmp(true);
   es8311UpdateBits(0x31, 0x60, 0x00);
+  setI2sSampleRate(kAudioSampleRate);
 
   constexpr size_t kInputChunkBytes = 512;
   constexpr size_t kMonoFrameBytes = 2;
@@ -2619,15 +2712,17 @@ bool playPcmMonoStream(WiFiClient *stream, int contentLength) {
     }
 
     size_t frames = alignedBytes / kMonoFrameBytes;
+    size_t outputFrames = 0;
     for (size_t i = 0; i < frames; ++i) {
       int16_t mono = static_cast<int16_t>(static_cast<uint16_t>(input[i * 2]) |
                                           (static_cast<uint16_t>(input[i * 2 + 1]) << 8));
       mono = shapeOutputSample(mono);
-      stereo[i * 2] = mono;
-      stereo[i * 2 + 1] = mono;
+      stereo[outputFrames * 2] = mono;
+      stereo[outputFrames * 2 + 1] = mono;
+      ++outputFrames;
     }
 
-    size_t bytesToWrite = frames * 2 * sizeof(int16_t);
+    size_t bytesToWrite = outputFrames * 2 * sizeof(int16_t);
     size_t written = 0;
     esp_err_t err = i2s_write(kI2sPort, stereo, bytesToWrite, &written, pdMS_TO_TICKS(1000));
     if (err != ESP_OK || written != bytesToWrite) {
@@ -2666,6 +2761,7 @@ bool playPcmMonoStream(WiFiClient *stream, int contentLength) {
   lastAudioAtMs = millis();
   lastAudioDetail = String(F("mono pcm played bytes=")) + String(playedBytes) +
                     F(", stream bytes=") + String(streamBytes) +
+                    F(", rate=") + String(sampleRate) +
                     F(", padded=") + String(paddedBytes);
   audioBusy = false;
   return playedBytes > 0;
@@ -2680,6 +2776,7 @@ bool playRecordedWav(uint8_t *wav, size_t wavLen) {
   audioBusy = true;
   setPowerAmp(true);
   es8311UpdateBits(0x31, 0x60, 0x00);
+  setI2sSampleRate(kAudioSampleRate);
   setOledStatus(OledMode::Think, F("PLAY"), F("REC"), 0);
 
   uint32_t playedBytes = 0;
@@ -2721,7 +2818,7 @@ bool playRecordedWav(uint8_t *wav, size_t wavLen) {
   return playedBytes > 0;
 }
 
-bool playPcmUrl(const String &url, uint8_t channels) {
+bool playPcmUrl(const String &url, uint8_t channels, uint32_t sampleRate) {
   String scheme;
   String host;
   String path;
@@ -2766,13 +2863,15 @@ bool playPcmUrl(const String &url, uint8_t channels) {
     return false;
   }
   if (contentType.indexOf(F("mpeg")) >= 0 || contentType.indexOf(F("mp3")) >= 0) {
-    lastAudioDetail = F("mp3 is not supported on MCU; send 16k PCM");
+    lastAudioDetail = F("mp3 is not supported on MCU; send 24k PCM");
     markMcuInteraction(mcuInteractionId, F("failed"), lastAudioDetail);
     client->stop();
     return false;
   }
 
-  bool ok = channels == 1 ? playPcmMonoStream(client, contentLength) : playPcmStereoStream(client, contentLength);
+  uint32_t playbackRate = sampleRate > 0 ? sampleRate : kMcuAudioDefaultSampleRate;
+  bool ok = channels == 1 ? playPcmMonoStream(client, contentLength, playbackRate)
+                          : playPcmStereoStream(client, contentLength, playbackRate);
   client->stop();
   return ok;
 }
@@ -2893,7 +2992,7 @@ void startNextMcuAudio() {
   sendMcuSocketJson(json);
 
   if (mcuCurrentAudio.url.length() > 0) {
-    bool played = playPcmUrl(mcuCurrentAudio.url, mcuCurrentAudio.channels);
+    bool played = playPcmUrl(mcuCurrentAudio.url, mcuCurrentAudio.channels, mcuCurrentAudio.sampleRate);
     String interruptedInteractionId = mcuCurrentAudio.interactionId;
     bool completionManagedByServer = mcuCurrentAudio.completionManagedByServer;
     finishMcuAudio(!played);
@@ -3064,6 +3163,8 @@ void handleMcuAudioEnqueue(uint8_t clientId, const String &message) {
   segment.mimeType = jsonStringValue(message, F("mimeType"));
   int channels = jsonIntValue(message, F("channels"));
   segment.channels = channels == 1 ? 1 : 2;
+  int sampleRate = jsonIntValue(message, F("sampleRate"));
+  segment.sampleRate = sampleRate > 0 ? static_cast<uint32_t>(sampleRate) : kMcuAudioDefaultSampleRate;
   segment.durationMs = static_cast<uint32_t>(jsonIntValue(message, F("durationMs")));
   segment.completionManagedByServer = jsonBoolValue(message, F("completionManagedByServer"));
 
@@ -3130,6 +3231,7 @@ void enqueueMissingSttPrompt(const String &interactionId) {
   segment.url = kMissingSttPromptPcmUrl;
   segment.mimeType = F("audio/x-pcm");
   segment.channels = 1;
+  segment.sampleRate = kMcuAudioDefaultSampleRate;
   enqueueMcuAudio(segment);
 }
 
@@ -3145,6 +3247,7 @@ void enqueueNoDevicePrompt(const String &interactionId) {
   segment.url = kNoDevicePromptPcmUrl;
   segment.mimeType = F("audio/x-pcm");
   segment.channels = 1;
+  segment.sampleRate = kMcuAudioDefaultSampleRate;
   enqueueMcuAudio(segment);
 }
 
@@ -3444,6 +3547,7 @@ bool recordAndBroadcastMcuVoiceStream(const String &interactionId) {
   audioBusy = true;
   setPowerAmp(false);
   es8311UpdateBits(0x31, 0x60, 0x60);
+  setI2sSampleRate(kAudioSampleRate);
   i2s_zero_dma_buffer(kI2sPort);
   setOledStatus(OledMode::Think, F("LISTEN"), F("SAY NOW"), 0);
 
@@ -3527,7 +3631,7 @@ bool recordAndBroadcastMcuVoiceStream(const String &interactionId) {
       if (leftMag > leftPeak) leftPeak = leftMag;
       if (rightMag > rightPeak) rightPeak = rightMag;
 
-      int16_t mono = shapeVoiceInputSample(right);
+      int16_t mono = voiceInputMonoSample(left, right);
       uint16_t monoMag = sampleMagnitude(mono);
       if (monoMag > monoPeak) monoPeak = monoMag;
       monoSquares += static_cast<uint64_t>(monoMag) * static_cast<uint64_t>(monoMag);
@@ -3634,6 +3738,9 @@ void handleVoiceTurnResponse(const String &interactionId, const String &response
     int channels = jsonIntValue(response, F("channels"));
     if (channels == 0 && audioPayload.length() > 0) channels = jsonIntValue(audioPayload, F("channels"));
     segment.channels = channels == 1 ? 1 : 2;
+    int sampleRate = jsonIntValue(response, F("sampleRate"));
+    if (sampleRate == 0 && audioPayload.length() > 0) sampleRate = jsonIntValue(audioPayload, F("sampleRate"));
+    segment.sampleRate = sampleRate > 0 ? static_cast<uint32_t>(sampleRate) : kMcuAudioDefaultSampleRate;
     enqueueMcuAudio(segment);
     return;
   }
@@ -4243,6 +4350,9 @@ void handleHealth() {
   json += i2sReady ? F("true") : F("false");
   json += F(",\"es8311_ready\":");
   json += es8311Ready ? F("true") : F("false");
+  json += F(",\"volume\":");
+  json += outputVolumePercent;
+  json += F(",\"battery_known\":false,\"battery_level\":0,\"battery_charging\":false");
   json += F(",\"busy\":");
   json += audioBusy ? F("true") : F("false");
   json += F(",\"last_detail\":\"");
@@ -4314,6 +4424,7 @@ void setupRoutes() {
   server.on(F("/favicon.ico"), HTTP_GET, handleNoContent);
   server.on(F("/device"), HTTP_GET, sendStatusPage);
   server.on(F("/device/scan"), HTTP_GET, scanAndSendStatusPage);
+  server.on(F("/device/audio"), HTTP_POST, handleDeviceAudio);
   server.on(F("/device/manual"), HTTP_POST, addManualDevice);
   server.on(F("/device/login"), HTTP_GET, sendMcuLoginPage);
   server.on(F("/device/login"), HTTP_POST, handleMcuLogin);
@@ -4345,6 +4456,7 @@ void setup() {
                 static_cast<unsigned long>(ESP.getMinFreeHeap()));
   esp_rom_printf("HStudio WiFi setup firmware boot\n");
   initOledDisplay();
+  loadAudioPreferences();
   initAudioHardware();
   prefs.begin("mcu", true);
   pendingProfileDeviceKey = prefs.getString("last_key", "");
@@ -4373,7 +4485,7 @@ void loop() {
   tickMcuInteraction();
   refreshOled();
   handleBootButton();
-  if (static_cast<int32_t>(millis() - nextMcuOtaCheckAtMs) >= 0) {
+  if (kAutoOtaEnabled && static_cast<int32_t>(millis() - nextMcuOtaCheckAtMs) >= 0) {
     McuOtaResult otaResult = checkMcuFirmwareUpdate(false);
     nextMcuOtaCheckAtMs = millis() + (otaResult == McuOtaResult::Failed ? kMcuOtaRetryMs : kMcuOtaIntervalMs);
   }

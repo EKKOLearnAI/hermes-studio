@@ -21,15 +21,10 @@ import { SttProviderConfigError, transcribeWithProvider } from '../../services/h
 import { SttNoSpeechDetectedError } from '../../services/hermes/stt-providers/types'
 import { logger } from '../../services/logger'
 import { getActiveGlobalAgentServer } from '../../services/global-agent/server'
+import { MCU_TTS_SAMPLE_RATE, mcuPromptText, mcuPromptUrl } from '../../services/hermes/mcu-prompts'
 
 const MAX_STT_UPLOAD_SIZE = 50 * 1024 * 1024
 const MCU_STT_TIMEOUT_MS = 120_000
-const MISSING_STT_PROMPT_TEXT = '当前profile没有配置语音转文字，请配置后再使用哦'
-const MISSING_STT_PROMPT_PCM_URL =
-  'https://ekko-hermes-studio.oss-cn-beijing.aliyuncs.com/current-profile-stt-not-configured-xiaohe.s16le.pcm'
-const STT_TRANSCRIBE_FAILED_PROMPT_TEXT = '当前语音转文字失败了，请配置下语音转文字再使用哦'
-const STT_TRANSCRIBE_FAILED_PROMPT_PCM_URL =
-  'https://ekko-hermes-studio.oss-cn-beijing.aliyuncs.com/stt-transcribe-failed-xiaohe.s16le.pcm'
 
 interface ParsedPart {
   fieldName: string
@@ -322,11 +317,11 @@ export async function missingProfileAudio(ctx: Context) {
   }
 
   ctx.status = 302
-  ctx.set('Location', MISSING_STT_PROMPT_PCM_URL)
+  ctx.set('Location', mcuPromptUrl('missing-stt'))
   ctx.set('Cache-Control', 'public, max-age=31536000, immutable')
   ctx.set('X-Hermes-STT-Configured', 'false')
   ctx.set('X-Hermes-STT-Reason', status.reason || 'stt_not_configured')
-  ctx.body = { url: MISSING_STT_PROMPT_PCM_URL }
+  ctx.body = { url: mcuPromptUrl('missing-stt') }
 }
 
 export async function saveSettings(ctx: Context) {
@@ -530,11 +525,11 @@ export async function mcuVoiceTurn(ctx: Context) {
       profile,
       reason: status.reason || 'stt_not_configured',
       audio: {
-        text: MISSING_STT_PROMPT_TEXT,
-        url: MISSING_STT_PROMPT_PCM_URL,
+        text: mcuPromptText('missing-stt'),
+        url: mcuPromptUrl('missing-stt'),
         mimeType: 'audio/x-pcm',
         format: 's16le',
-        sampleRate: 16000,
+        sampleRate: MCU_TTS_SAMPLE_RATE,
         channels: 1,
       },
     }
@@ -555,11 +550,11 @@ export async function mcuVoiceTurn(ctx: Context) {
       profile,
       reason: 'active_stt_provider_secret_missing',
       audio: {
-        text: MISSING_STT_PROMPT_TEXT,
-        url: MISSING_STT_PROMPT_PCM_URL,
+        text: mcuPromptText('missing-stt'),
+        url: mcuPromptUrl('missing-stt'),
         mimeType: 'audio/x-pcm',
         format: 's16le',
-        sampleRate: 16000,
+        sampleRate: MCU_TTS_SAMPLE_RATE,
         channels: 1,
       },
     }
@@ -695,11 +690,11 @@ export async function mcuVoiceTurn(ctx: Context) {
         type: 'audio.enqueue',
         interactionId,
         segmentId: `${interactionId}-stt-failed`,
-        text: STT_TRANSCRIBE_FAILED_PROMPT_TEXT,
-        url: STT_TRANSCRIBE_FAILED_PROMPT_PCM_URL,
+        text: mcuPromptText('stt-failed'),
+        url: mcuPromptUrl('stt-failed'),
         mimeType: 'audio/x-pcm',
         format: 's16le',
-        sampleRate: 16000,
+        sampleRate: MCU_TTS_SAMPLE_RATE,
         channels: 1,
       }, { clientId })
     } finally {

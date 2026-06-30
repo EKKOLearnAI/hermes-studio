@@ -261,17 +261,17 @@ describe('stt transcribe controller', () => {
     })
   })
 
-  it('redirects to the hosted missing-STT prompt audio when profile STT is unconfigured', async () => {
+  it('redirects to the bundled missing-STT prompt audio when profile STT is unconfigured', async () => {
     const { ctrl } = await initControllerAndStore()
     const ctx = makeJsonCtx({ id: 7, username: 'han', role: 'admin' }, '', undefined)
 
     await ctrl.missingProfileAudio(ctx)
 
     expect(ctx.status).toBe(302)
-    expect(ctx.headers.Location).toBe('https://ekko-hermes-studio.oss-cn-beijing.aliyuncs.com/current-profile-stt-not-configured-xiaohe.s16le.pcm')
+    expect(ctx.headers.Location).toBe('/api/hermes/mcu/audio/missing-stt-24k.s16le.pcm')
     expect(ctx.headers['X-Hermes-STT-Configured']).toBe('false')
     expect(ctx.body).toEqual({
-      url: 'https://ekko-hermes-studio.oss-cn-beijing.aliyuncs.com/current-profile-stt-not-configured-xiaohe.s16le.pcm',
+      url: '/api/hermes/mcu/audio/missing-stt-24k.s16le.pcm',
     })
   })
 
@@ -574,10 +574,10 @@ describe('stt transcribe controller', () => {
       interactionId: 'voice-1',
       segmentId: 'voice-1-stt-failed',
       text: '当前语音转文字失败了，请配置下语音转文字再使用哦',
-      url: 'https://ekko-hermes-studio.oss-cn-beijing.aliyuncs.com/stt-transcribe-failed-xiaohe.s16le.pcm',
+      url: '/api/hermes/mcu/audio/stt-failed-24k.s16le.pcm',
       mimeType: 'audio/x-pcm',
       format: 's16le',
-      sampleRate: 16000,
+      sampleRate: 24000,
       channels: 1,
     }, { clientId: 'device-1' })
   })

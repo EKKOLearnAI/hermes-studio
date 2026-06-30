@@ -38,6 +38,11 @@ for (const fileName of readdirSync(bridgeSrcDir)) {
 }
 chmodSync(resolve(bridgeOutDir, 'hermes_bridge.py'), 0o755)
 
+const serverAssetsSrcDir = resolve(rootDir, 'packages/server/src/assets')
+if (existsSync(serverAssetsSrcDir)) {
+  cpSync(serverAssetsSrcDir, resolve(serverOutDir, 'assets'), { recursive: true })
+}
+
 cpSync(
   resolve(rootDir, 'docs/openapi.json'),
   resolve(serverOutDir, 'openapi.json'),

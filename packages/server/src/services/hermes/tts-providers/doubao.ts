@@ -54,7 +54,7 @@ function resolveAudioFormat(opts: DoubaoTtsProviderOptions): string {
 
 function resolveSampleRate(opts: DoubaoTtsProviderOptions): number {
   const raw = opts.sampleRate ?? opts.sample_rate
-  if ((raw === undefined || raw === null) && opts.mcuPlayback) return 16000
+  if ((raw === undefined || raw === null) && opts.mcuPlayback) return DEFAULT_SAMPLE_RATE
   if (raw === undefined || raw === null) return DEFAULT_SAMPLE_RATE
   const sampleRate = Number(raw)
   if (!Number.isInteger(sampleRate) || sampleRate <= 0) {

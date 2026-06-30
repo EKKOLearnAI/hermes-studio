@@ -88,7 +88,7 @@ describe('doubaoTtsProvider', () => {
     })
   })
 
-  it('defaults to PCM at 16kHz when requested for MCU playback', async () => {
+  it('defaults to PCM at 24kHz when requested for MCU playback', async () => {
     const pcm = Buffer.from('pcm-audio')
     mockFetch.mockResolvedValueOnce(textResponse(JSON.stringify({
       data: pcm.toString('base64'),
@@ -110,7 +110,7 @@ describe('doubaoTtsProvider', () => {
     })
     expect(getJsonBody().req_params.audio_params).toEqual({
       format: 'pcm',
-      sample_rate: 16000,
+      sample_rate: 24000,
     })
   })
 

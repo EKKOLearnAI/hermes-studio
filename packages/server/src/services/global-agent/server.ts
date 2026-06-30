@@ -10,6 +10,7 @@ import { config } from '../../config'
 import { getChatRunServer } from '../../routes/hermes/chat-run'
 import { cleanTtsText } from '../hermes/tts-providers/text'
 import { transcodeToPcmS16le } from '../hermes/stt-providers/audio-convert'
+import { MCU_TTS_SAMPLE_RATE, mcuPromptText, mcuPromptUrl } from '../hermes/mcu-prompts'
 import type {
   RelayHttpRequest,
   RelayHttpResponse,
@@ -21,15 +22,11 @@ import type {
 
 const GLOBAL_AGENT_NAMESPACE = '/global-agent'
 const DEFAULT_GLOBAL_AGENT_TIMEOUT_MS = 30_000
-const MCU_TTS_SAMPLE_RATE = 16_000
 const MCU_TTS_OPTIONS = {
   mcuPlayback: true,
   sampleRate: MCU_TTS_SAMPLE_RATE,
 } as const
 const MCU_INTERRUPT_DEBOUNCE_MS = 280
-const MCU_TTS_FAILED_PROMPT_TEXT = '当前文字转语音失败了，请配置下文字转语音再使用哦'
-const MCU_TTS_FAILED_PROMPT_PCM_URL =
-  'https://ekko-hermes-studio.oss-cn-beijing.aliyuncs.com/tts-synthesize-failed-xiaohe.s16le.pcm'
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const MAX_REQUEST_TIMEOUT_MS = 120_000
 const MAX_REQUEST_BODY_BYTES = 5 * 1024 * 1024
@@ -559,8 +556,8 @@ export class GlobalAgentServer {
             type: 'audio.enqueue',
             interactionId: options.interactionId,
             segmentId: `${segmentId}-failed-prompt`,
-            text: MCU_TTS_FAILED_PROMPT_TEXT,
-            url: MCU_TTS_FAILED_PROMPT_PCM_URL,
+            text: mcuPromptText('tts-failed'),
+            url: mcuPromptUrl('tts-failed'),
             mimeType: 'audio/x-pcm',
             format: 's16le',
             channels: 1,
