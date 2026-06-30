@@ -12,6 +12,7 @@ import { useAppStore } from '@/stores/hermes/app'
 import SessionSearchModal from '@/components/hermes/chat/SessionSearchModal.vue'
 import AuthEventListener from '@/components/auth/AuthEventListener.vue'
 import DefaultCredentialPrompt from '@/components/auth/DefaultCredentialPrompt.vue'
+import WebPet from '@/components/hermes/pets/WebPet.vue'
 import { desktopBridge } from '@/utils/desktop-bridge'
 
 const { isDark, isComic } = useTheme()
@@ -37,6 +38,7 @@ const nodeVersionLow = computed(() => {
 
 const isDesktopShell = computed(() => desktopBridge()?.isDesktop === true)
 const isDesktopPetRoute = computed(() => route.name === 'desktop.pet')
+const showWebPet = computed(() => !isLoginPage.value && !isDesktopShell.value && !isDesktopPetRoute.value)
 const hasDesktopTitleBar = computed(() => {
   const platform = desktopBridge()?.platform
   return isDesktopShell.value && (platform === 'darwin' || platform === 'win32')
@@ -91,6 +93,7 @@ useKeyboard()
               </main>
             </div>
           </div>
+          <WebPet v-if="showWebPet" />
           <SessionSearchModal v-if="!isDesktopPetRoute" />
           <DefaultCredentialPrompt v-if="!isDesktopPetRoute" />
         </NNotificationProvider>
