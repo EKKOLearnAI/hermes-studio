@@ -73,9 +73,10 @@ const recentEventTypes = computed(() => props.events.slice(-5).map(event => even
   min-width: 12rem;
   padding: 0.5rem 0.75rem;
   color: var(--text-primary);
-  border: 1px solid var(--border-color);
+  border: 1px solid rgba(var(--text-primary-rgb), 0.12);
   border-radius: 0.75rem;
-  background: var(--bg-input);
+  background: var(--bg-card, var(--bg-input, #ffffff));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.14);
 }
 
 .voice-transcript-overlay--floating {
@@ -87,6 +88,12 @@ const recentEventTypes = computed(() => props.events.slice(-5).map(event => even
   max-width: 20rem;
   pointer-events: none;
   box-sizing: border-box;
+}
+
+.dark .voice-transcript-overlay {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: var(--bg-card, #333333);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.42);
 }
 
 .voice-transcript-overlay__status,
