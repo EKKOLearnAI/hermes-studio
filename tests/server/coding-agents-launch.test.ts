@@ -28,6 +28,7 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.HERMES_WEB_UI_HOME
   delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
+  delete process.env.HERMES_AGENT_NODE
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
@@ -248,6 +249,32 @@ describe('coding agent launch preparation', () => {
     const prompt = readFileSync(join(result.rootDir, 'hermes-rules.md'), 'utf-8')
     expect(prompt).toContain('# 输出格式规范')
     expect(prompt).toContain('当你的回复中包含图片、视频或文件引用时')
+  })
+
+  it('uses the desktop runtime node for scoped Hermes Studio MCP configs when available', async () => {
+    const home = makeHome()
+    process.env.HERMES_AGENT_NODE = '/runtime/node'
+
+    const result = await prepareCodingAgentLaunch('claude-code', {
+      profile: 'default',
+      provider: 'openrouter',
+      model: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-test',
+    })
+
+    const mcp = JSON.parse(readFileSync(join(result.rootDir, 'mcp.json'), 'utf-8'))
+    expect(mcp.mcpServers['hermes-studio-api']).toMatchObject({
+      command: '/runtime/node',
+      args: [join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'api'],
+      env: {
+        HERMES_WEB_UI_HOME: home,
+        HERMES_MCP_SERVER_NAME: 'hermes-studio-api',
+        HERMES_MCP_TOOLSET: 'api',
+      },
+    })
+    expect(mcp.mcpServers['hermes-studio-devices'].command).toBe('/runtime/node')
+    expect(mcp.mcpServers['hermes-studio-use'].command).toBe('/runtime/node')
   })
 
   it('cleans legacy Hermes MCP entries from scoped Claude and Codex configs', async () => {

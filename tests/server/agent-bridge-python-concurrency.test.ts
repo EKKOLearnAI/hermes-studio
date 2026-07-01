@@ -1234,6 +1234,64 @@ assert events == [
 `)
   })
 
+  it('shuts down MCP servers before worker shutdown exits', () => {
+    runPython(String.raw`
+${harness}
+
+events = []
+
+class FakeBridgeServer(bridge.BridgeServer):
+    def _shutdown_all_mcp_servers(self):
+        events.append("mcp-shutdown")
+        return 2
+
+server = FakeBridgeServer("tcp://127.0.0.1:1")
+response = server.handle({"action": "shutdown"})
+
+assert response == {"status": "shutting_down"}, response
+assert events == ["mcp-shutdown"], events
+assert server._stop.is_set(), "shutdown should stop worker after MCP shutdown"
+`)
+  })
+
+  it('requests worker shutdown before terminating the worker process', () => {
+    runPython(String.raw`
+${harness}
+
+events = []
+
+class FakeProcess:
+    def __init__(self):
+        self.terminated = False
+
+    def poll(self):
+        return None
+
+    def terminate(self):
+        events.append("terminate")
+        self.terminated = True
+
+    def wait(self, timeout=None):
+        events.append(("wait", timeout))
+
+worker = bridge.WorkerProcess("default", "default", "tcp://127.0.0.1:1", None, None)
+worker.process = FakeProcess()
+
+def fake_request(req, timeout=None):
+    events.append(("request", req, timeout))
+    return {"status": "shutting_down"}
+
+worker.request = fake_request
+worker.stop()
+
+assert events == [
+    ("request", {"action": "shutdown"}, worker.SHUTDOWN_REQUEST_TIMEOUT_SECONDS),
+    "terminate",
+    ("wait", 3),
+], events
+`)
+  })
+
   it('binds workspace cwd per running session without process-wide cwd state', () => {
     runPython(String.raw`
 ${harness}

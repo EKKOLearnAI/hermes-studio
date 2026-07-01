@@ -32,6 +32,7 @@ describe('studio MCP autoinject', () => {
     vi.resetModules()
     vi.clearAllMocks()
     delete process.env.HERMES_DESKTOP
+    delete process.env.HERMES_AGENT_NODE
     delete process.env.AUTH_TOKEN
     delete process.env.HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT
     delete process.env.HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT
@@ -205,16 +206,15 @@ describe('studio MCP autoinject', () => {
     expect(updated.data.mcp_servers['hermes-studio-use'].args).toEqual([join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'use'])
   })
 
-  it('prefers bundled script over bare desktop command in desktop runtime', async () => {
+  it('uses the desktop runtime node for bundled MCP servers when available', async () => {
     process.env.HERMES_DESKTOP = 'true'
+    process.env.HERMES_AGENT_NODE = '/runtime/node'
     const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
 
     await injectBundledMcpServer()
 
     const injected = await updateConfigYamlForProfileMock.mock.calls[0][1]({})
-    // Even in desktop runtime, the bundled script should take priority
-    // so the MCP client receives an absolute path that works regardless of PATH.
-    expect(injected.data.mcp_servers['hermes-studio-api'].command).toBe(process.execPath)
+    expect(injected.data.mcp_servers['hermes-studio-api'].command).toBe('/runtime/node')
     expect(injected.data.mcp_servers['hermes-studio-api'].args).toEqual([
       join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'api',
     ])

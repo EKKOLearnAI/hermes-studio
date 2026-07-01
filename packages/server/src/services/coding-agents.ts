@@ -814,10 +814,15 @@ function bundledMcpScriptPath(): string | null {
   return candidateBundledMcpScripts().find(candidate => existsSync(candidate)) || null
 }
 
+function runtimeNodePath(): string | null {
+  const node = process.env.HERMES_AGENT_NODE?.trim()
+  return node || null
+}
+
 function hermesMcpCommandConfig(toolset: string): { command: string; args?: string[] } {
-  if (isDesktopRuntime()) return { command: 'hermes-studio-mcp', args: [toolset] }
   const script = bundledMcpScriptPath()
-  if (script) return { command: process.execPath, args: [script, toolset] }
+  if (script) return { command: runtimeNodePath() || process.execPath, args: [script, toolset] }
+  if (isDesktopRuntime()) return { command: 'hermes-studio-mcp', args: [toolset] }
   return { command: 'hermes-studio-mcp', args: [toolset] }
 }
 
