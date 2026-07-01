@@ -100,47 +100,48 @@ describe('update controller', () => {
     const npmCli = getNpmCliPath()
     const globalPrefix = getNodePrefix()
     const cliScript = getGlobalCliScript(globalPrefix)
-    const execFile = vi.fn((_command: string, args: string[], _options: any, callback: any) => {
+    const execFileSync = vi.fn((_command: string, args: string[]) => {
       if (args[1] === 'root') {
-        callback(null, process.platform === 'win32'
+        return process.platform === 'win32'
           ? join(globalPrefix, 'node_modules')
-          : join(globalPrefix, 'lib', 'node_modules'), '')
-        return
+          : join(globalPrefix, 'lib', 'node_modules')
       }
-      callback(null, 'updated', '')
+      return 'updated'
     })
-    const { handleUpdate, mocks } = await loadUpdateController({ execFile })
+    const { handleUpdate, mocks } = await loadUpdateController({ execFileSync })
     const ctx = createMockCtx()
 
     await handleUpdate(ctx)
 
-    expect(mocks.execFile).toHaveBeenCalledWith(
+    expect(mocks.execFileSync).toHaveBeenCalledWith(
       process.execPath,
       [npmCli, 'install', '-g', 'hermes-web-ui@latest'],
       expect.objectContaining({
         encoding: 'utf-8',
         timeout: 10 * 60 * 1000,
+        stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        cwd: expect.any(String),
         env: expect.objectContaining({
           npm_node_execpath: process.execPath,
           PATH: expect.stringContaining(`${nodeBinDir}${delimiter}`),
         }),
       }),
-      expect.any(Function),
     )
     expect(ctx.body).toEqual({ success: true, message: 'updated' })
 
     await vi.runAllTimersAsync()
 
-    expect(mocks.execFile).toHaveBeenCalledWith(
+    expect(mocks.execFileSync).toHaveBeenCalledWith(
       process.execPath,
       [npmCli, 'root', '-g'],
       expect.objectContaining({
         encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        cwd: expect.any(String),
         env: expect.objectContaining({ npm_node_execpath: process.execPath }),
       }),
-      expect.any(Function),
     )
     expect(mocks.spawn).toHaveBeenCalledWith(
       process.execPath,
@@ -153,54 +154,6 @@ describe('update controller', () => {
       }),
     )
     expect(mocks.unref).toHaveBeenCalledOnce()
-  })
-
-  it('keeps update requests responsive while npm install is pending', async () => {
-    const npmCli = getNpmCliPath()
-    let installCallback: ((error: Error | null, stdout: string, stderr: string) => void) | undefined
-    const execFile = vi.fn((_command: string, args: string[], _options: any, callback: any) => {
-      if (args.includes('install') && args.includes('hermes-web-ui@latest')) {
-        installCallback = callback
-        return
-      }
-      callback(null, '', '')
-    })
-    const execFileSync = vi.fn((_command: string, args: string[]) => {
-      if (args.includes('install') && args.includes('hermes-web-ui@latest')) {
-        throw new Error('global update install must not use execFileSync')
-      }
-      return ''
-    })
-    const { handleUpdate, mocks } = await loadUpdateController({ execFile, execFileSync })
-    const first = createMockCtx()
-    const second = createMockCtx()
-
-    const firstUpdate = handleUpdate(first)
-    await Promise.resolve()
-    await handleUpdate(second)
-
-    expect(installCallback).toBeTypeOf('function')
-    expect(second.status).toBe(409)
-    expect(second.body).toEqual({
-      success: false,
-      message: 'hermes-web-ui update is already in progress',
-    })
-    expect(mocks.execFile).toHaveBeenCalledWith(
-      process.execPath,
-      [npmCli, 'install', '-g', 'hermes-web-ui@latest'],
-      expect.objectContaining({ timeout: 10 * 60 * 1000 }),
-      expect.any(Function),
-    )
-    expect(mocks.execFileSync).not.toHaveBeenCalledWith(
-      process.execPath,
-      [npmCli, 'install', '-g', 'hermes-web-ui@latest'],
-      expect.any(Object),
-    )
-
-    installCallback?.(null, 'updated', '')
-    await firstUpdate
-
-    expect(first.body).toEqual({ success: true, message: 'updated' })
   })
 
   it('falls back to the default port when PORT is not set', async () => {
@@ -242,27 +195,21 @@ describe('update controller', () => {
   })
 
   it('returns a 500 with stderr when installation fails', async () => {
-    const execFile = vi.fn((_command: string, args: string[], _options: any, callback: any) => {
+    const execFileSync = vi.fn((_command: string, args: string[]) => {
       if (args.includes('install') && args.includes('hermes-web-ui@latest')) {
         const error = new Error('install failed') as Error & { stderr?: string }
         error.stderr = 'engine mismatch'
-        callback(error, '', 'engine mismatch')
-        return
+        throw error
       }
-      callback(null, '', '')
+      return ''
     })
-    const { handleUpdate, mocks } = await loadUpdateController({ execFile })
+    const { handleUpdate, mocks } = await loadUpdateController({ execFileSync })
     const ctx = createMockCtx()
 
     await handleUpdate(ctx)
 
     expect(ctx.status).toBe(500)
     expect(ctx.body).toEqual({ success: false, message: 'engine mismatch' })
-    expect(mocks.execFileSync).not.toHaveBeenCalledWith(
-      process.execPath,
-      [expect.any(String), 'install', '-g', 'hermes-web-ui@latest'],
-      expect.any(Object),
-    )
     expect(mocks.spawn).not.toHaveBeenCalled()
     expect(exitSpy).not.toHaveBeenCalled()
   })

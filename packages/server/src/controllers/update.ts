@@ -333,6 +333,28 @@ function getCurrentNodeEnv() {
   }
 }
 
+function getUpdateCommandCwd() {
+  const cwd = getWebUiHome()
+  mkdirSync(cwd, { recursive: true })
+  return cwd
+}
+
+function runNpmSync(args: string[], options: { timeout?: number; env?: NodeJS.ProcessEnv } = {}) {
+  const env = {
+    ...getCurrentNodeEnv(),
+    ...options.env,
+  }
+  const execution = npmExecution(args, env)
+  return execFileSync(execution.command, execution.args, {
+    cwd: getUpdateCommandCwd(),
+    encoding: 'utf-8',
+    timeout: options.timeout,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env,
+    windowsHide: true,
+  }).trim()
+}
+
 async function runNpmAsync(args: string[], options: { timeout?: number; cwd?: string; logLabel?: string; env?: NodeJS.ProcessEnv } = {}) {
   const env = {
     ...getCurrentNodeEnv(),
@@ -962,30 +984,30 @@ async function checkoutPreview(ref: string) {
   appendPreviewActionLog(`preview tag ready: ${ref}`)
 }
 
-async function getGlobalRootAsync() {
-  return runNpmAsync(['root', '-g'])
+function getGlobalRoot() {
+  return runNpmSync(['root', '-g'])
 }
 
-async function getGlobalCliScriptAsync() {
-  const cli = getGlobalPackageBin(await getGlobalRootAsync())
+function getGlobalCliScript() {
+  const cli = getGlobalPackageBin(getGlobalRoot())
   if (!existsSync(cli)) {
     throw new Error(`Updated hermes-web-ui CLI not found: ${cli}`)
   }
   return cli
 }
 
-async function runUpdateInstall() {
+function runUpdateInstall() {
   try {
-    await runNpmAsync(['cache', 'clean', '--force'], { timeout: 2 * 60 * 1000 })
+    runNpmSync(['cache', 'clean', '--force'], { timeout: 2 * 60 * 1000 })
   } catch (err) {
     console.warn('[update] failed to clean npm cache, continuing update:', err)
   }
 
-  return runNpmAsync(['install', '-g', 'hermes-web-ui@latest'], { timeout: 10 * 60 * 1000 })
+  return runNpmSync(['install', '-g', 'hermes-web-ui@latest'], { timeout: 10 * 60 * 1000 })
 }
 
-async function spawnRestart(port: string) {
-  const cli = await getGlobalCliScriptAsync()
+function spawnRestart(port: string) {
+  const cli = getGlobalCliScript()
 
   return spawn(process.execPath, [cli, 'restart', '--port', port], {
     detached: true,
@@ -1009,7 +1031,7 @@ export async function handleUpdate(ctx: any) {
   let keepUpdateLockForRestart = false
 
   try {
-    const output = await runUpdateInstall()
+    const output = runUpdateInstall()
 
     ctx.body = {
       success: true,
@@ -1018,29 +1040,27 @@ export async function handleUpdate(ctx: any) {
 
     keepUpdateLockForRestart = true
     setTimeout(() => {
-      void (async () => {
-        let restart
-        try {
-          restart = await spawnRestart(process.env.PORT || '8648')
-        } catch (err) {
-          updateInProgress = false
-          console.error('[update] failed to spawn restart:', err)
-          return
-        }
+      let restart
+      try {
+        restart = spawnRestart(process.env.PORT || '8648')
+      } catch (err) {
+        updateInProgress = false
+        console.error('[update] failed to spawn restart:', err)
+        return
+      }
 
-        restart.on('error', (err) => {
-          updateInProgress = false
-          console.error('[update] restart process failed:', err)
-        })
-        restart.on('exit', (code, signal) => {
-          updateInProgress = false
-          const failed = (typeof code === 'number' && code !== 0) || Boolean(signal)
-          if (failed) {
-            console.error(`[update] restart process exited before replacing server: code=${code} signal=${signal}`)
-          }
-        })
-        restart.unref()
-      })()
+      restart.on('error', (err) => {
+        updateInProgress = false
+        console.error('[update] restart process failed:', err)
+      })
+      restart.on('exit', (code, signal) => {
+        updateInProgress = false
+        const failed = (typeof code === 'number' && code !== 0) || Boolean(signal)
+        if (failed) {
+          console.error(`[update] restart process exited before replacing server: code=${code} signal=${signal}`)
+        }
+      })
+      restart.unref()
     }, 3000)
   } catch (err: any) {
     ctx.status = 500
