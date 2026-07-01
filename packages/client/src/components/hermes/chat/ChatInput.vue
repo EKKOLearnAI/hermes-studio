@@ -1559,6 +1559,7 @@ function isImage(type: string): boolean {
 
 @media (max-width: 768px) {
   .chat-input-area {
+    --voice-overlay-mobile-bottom-offset: 146px;
     padding: 8px 12px 12px;
   }
 

@@ -126,7 +126,7 @@ const recentEventTypes = computed(() => props.events.slice(-5).map(event => even
     position: fixed;
     left: 1rem;
     right: 1rem;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 5.5rem);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--voice-overlay-mobile-bottom-offset, 9rem));
     width: auto;
     max-width: none;
   }
