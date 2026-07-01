@@ -4,6 +4,7 @@ import { NAlert, NButton, NEmpty, NInput, NSelect, NSpin, NTag, useMessage } fro
 import { useI18n } from 'vue-i18n'
 import { fetchPetdexManifest, type PetdexManifest, type PetdexPet } from '@/api/hermes/petdex'
 import { usePetsStore } from '@/stores/hermes/pets'
+import { desktopBridge } from '@/utils/desktop-bridge'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -16,6 +17,7 @@ const error = ref('')
 const searchQuery = ref('')
 const kindFilter = ref<string | null>(null)
 const visibleLimit = ref(96)
+const DESKTOP_ADOPT_SCALE = 0.58
 
 const pets = computed(() => manifest.value?.pets ?? [])
 const generatedAt = computed(() => {
@@ -80,6 +82,11 @@ async function adopt(pet: PetdexPet) {
   adoptingSlug.value = pet.slug
   try {
     await petsStore.adopt(pet.slug)
+    const bridge = desktopBridge()
+    if (bridge?.isDesktop) {
+      await petsStore.savePreferences({ scale: DESKTOP_ADOPT_SCALE })
+      await bridge.setPetWindowVisible?.(true).catch(() => undefined)
+    }
     message.success(t('petdex.adopted', { name: pet.displayName }))
   } catch (err: any) {
     message.error(err?.message || t('petdex.adoptFailed'))

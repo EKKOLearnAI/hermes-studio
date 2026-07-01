@@ -24,6 +24,11 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   getPetWindowState: () => ipcRenderer.invoke('hermes-desktop:get-pet-window-state'),
   setPetWindowBounds: (bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke('hermes-desktop:set-pet-window-bounds', bounds),
   setPetWindowVisible: (visible: boolean) => ipcRenderer.invoke('hermes-desktop:set-pet-window-visible', visible),
+  onPetWindowRefresh: (callback: () => void): (() => void) => {
+    const listener = () => callback()
+    ipcRenderer.on('hermes-desktop:pet-window-refresh', listener)
+    return () => ipcRenderer.removeListener('hermes-desktop:pet-window-refresh', listener)
+  },
   platform: process.platform,
   isDesktop: true,
   windowKind: desktopWindowKind(),

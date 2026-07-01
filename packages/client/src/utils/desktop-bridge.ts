@@ -20,6 +20,7 @@ export interface HermesDesktopBridge {
   getPetWindowState?: () => Promise<DesktopPetWindowState>
   setPetWindowBounds?: (bounds: DesktopWindowBounds) => Promise<DesktopPetWindowState>
   setPetWindowVisible?: (visible: boolean) => Promise<DesktopPetWindowState>
+  onPetWindowRefresh?: (callback: () => void) => () => void
   platform: string
   isDesktop: boolean
   windowKind?: 'main' | 'pet'

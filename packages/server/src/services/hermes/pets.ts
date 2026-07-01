@@ -239,14 +239,18 @@ export async function getActivePet(profile: string): Promise<ActivePetResponse |
 
 export async function updateActivePetPreferences(
   profile: string,
-  input: { scale?: number; position?: { x?: number; y?: number } },
+  input: { scale?: number; position?: { x?: number; y?: number }; enabled?: boolean },
 ): Promise<ActivePetResponse | null> {
   const active = await readJsonFile<ActivePetConfig>(activePetPath(profile))
-  if (!active?.enabled || !active.slug) return null
+  if (!active?.slug) return null
 
   const next: ActivePetConfig = {
     ...active,
     updatedAt: Date.now(),
+  }
+
+  if (typeof input.enabled === 'boolean') {
+    next.enabled = input.enabled
   }
 
   if (typeof input.scale === 'number' && Number.isFinite(input.scale)) {
@@ -261,6 +265,7 @@ export async function updateActivePetPreferences(
   }
 
   await writeJsonFile(activePetPath(profile), next)
+  if (!next.enabled) return null
   return getActivePet(profile)
 }
 

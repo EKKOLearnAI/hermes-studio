@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { usePetsStore } from '@/stores/hermes/pets'
 import { usePetStateStore } from '@/stores/hermes/pet-state'
 import { useProfilesStore } from '@/stores/hermes/profiles'
@@ -21,6 +22,7 @@ const props = defineProps<{
 }>()
 
 const route = useRoute()
+const { t } = useI18n()
 const petsStore = usePetsStore()
 const petStateStore = usePetStateStore()
 const profilesStore = useProfilesStore()
@@ -50,6 +52,7 @@ let stateOverrideTimer: number | null = null
 let lastStateChangedAt = 0
 let activeSpriteKey = ''
 let connectedPetProfile: string | null = null
+let stopPetWindowRefresh: (() => void) | null = null
 
 const isDesktopWindow = computed(() => props.desktopWindow === true)
 const isLoginPage = computed(() => !isDesktopWindow.value && route.name === 'login')
@@ -408,6 +411,13 @@ function handleWheel(event: WheelEvent): void {
   setScale(scale.value + (event.deltaY < 0 ? SCALE_STEP : -SCALE_STEP))
 }
 
+async function handleClosePet(): Promise<void> {
+  dragging.value = false
+  resizing.value = false
+  await petsStore.hideActivePet()
+  await setDesktopWindowVisible(false)
+}
+
 function handleResize(): void {
   if (isDesktopWindow.value) {
     draw()
@@ -438,6 +448,11 @@ async function loadForProfile(profile?: string | null): Promise<void> {
   await hydrateDesktopWindowPosition()
   const active = await petsStore.loadActivePet()
   if (active?.enabled) await connectPetStateForProfile(profile)
+}
+
+function refreshDesktopPetWindow(): void {
+  if (!isDesktopWindow.value) return
+  void loadForProfile(profilesStore.activeProfileName || localStorage.getItem('hermes_active_profile_name') || 'default')
 }
 
 watch(
@@ -508,12 +523,15 @@ watch(visible, shown => {
 
 onMounted(() => {
   lastStateChangedAt = Date.now()
+  stopPetWindowRefresh = bridge?.onPetWindowRefresh?.(refreshDesktopPetWindow) || null
   window.addEventListener('resize', handleResize)
   window.addEventListener('pagehide', shutdownPetConnection)
   window.addEventListener('beforeunload', shutdownPetConnection)
 })
 
 onUnmounted(() => {
+  stopPetWindowRefresh?.()
+  stopPetWindowRefresh = null
   stopAnimation()
   if (saveTimer != null) window.clearTimeout(saveTimer)
   clearStateSwitchTimer()
@@ -540,6 +558,19 @@ onUnmounted(() => {
     @dblclick="handleDoubleClick"
   >
     <canvas ref="canvasRef" class="web-pet-canvas" :aria-label="pet?.displayName || 'Pet'" />
+    <button
+      type="button"
+      class="web-pet-close"
+      :aria-label="t('common.delete')"
+      :title="t('common.delete')"
+      @click.stop="handleClosePet"
+      @pointerdown.stop
+      @pointermove.stop
+      @pointerup.stop
+      @pointercancel.stop
+    >
+      ×
+    </button>
     <button
       type="button"
       class="web-pet-resize"
@@ -589,10 +620,9 @@ onUnmounted(() => {
   outline: 0;
 }
 
+.web-pet-close,
 .web-pet-resize {
   position: absolute;
-  right: -2px;
-  bottom: -2px;
   width: 22px;
   height: 22px;
   padding: 0;
@@ -613,6 +643,26 @@ onUnmounted(() => {
     opacity: 1;
     transform: translate(-1px, -1px);
   }
+}
+
+.web-pet-close {
+  top: -2px;
+  right: -2px;
+  color: rgba(32, 36, 45, 0.8);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover {
+    transform: translate(-1px, 1px);
+  }
+}
+
+.web-pet-resize {
+  right: -2px;
+  bottom: -2px;
+  cursor: nwse-resize;
 
   img {
     width: 14px;
@@ -624,11 +674,14 @@ onUnmounted(() => {
   }
 }
 
+.web-pet:hover .web-pet-close,
 .web-pet:hover .web-pet-resize,
+.web-pet.dragging .web-pet-close,
 .web-pet.resizing .web-pet-resize {
   opacity: 0.92;
 }
 
+:global(.dark) .web-pet-close,
 :global(.dark) .web-pet-resize {
   background: rgba(25, 28, 35, 0.78);
   box-shadow:
@@ -636,6 +689,11 @@ onUnmounted(() => {
     inset 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 
+:global(.dark) .web-pet-close {
+  color: rgba(244, 247, 251, 0.82);
+}
+
+.web-pet.desktop-window .web-pet-close,
 .web-pet.desktop-window .web-pet-resize {
   background: rgba(255, 255, 255, 0.76);
   border: 0;
@@ -643,6 +701,7 @@ onUnmounted(() => {
   outline: 0;
 }
 
+:global(.dark) .web-pet.desktop-window .web-pet-close,
 :global(.dark) .web-pet.desktop-window .web-pet-resize {
   background: rgba(25, 28, 35, 0.78);
 }

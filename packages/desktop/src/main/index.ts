@@ -23,6 +23,7 @@ const PET_WINDOW_DEFAULT_WIDTH = 300
 const PET_WINDOW_DEFAULT_HEIGHT = 320
 const PET_WINDOW_MIN_SIZE = 72
 const PET_WINDOW_MAX_SIZE = 1200
+const PET_WINDOW_REFRESH_CHANNEL = 'hermes-desktop:pet-window-refresh'
 type WindowControlAction = 'minimize' | 'toggle-maximize' | 'close'
 type DesktopWindowBounds = { x: number; y: number; width: number; height: number }
 
@@ -620,8 +621,10 @@ ipcMain.handle('hermes-desktop:set-pet-window-visible', async (_event, visible?:
     petWindow.hide()
     return petWindowState()
   }
+  const fromPetWindow = !!petWindow && !petWindow.isDestroyed() && _event.sender === petWindow.webContents
   await loadPetWindowRoute()
   const target = ensurePetWindow()
+  if (!fromPetWindow) target.webContents.send(PET_WINDOW_REFRESH_CHANNEL)
   target.showInactive()
   return petWindowState()
 })

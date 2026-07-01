@@ -36,10 +36,12 @@ export async function updateActive(ctx: Context) {
   const body = ctx.request.body as {
     scale?: unknown
     position?: { x?: unknown; y?: unknown }
+    enabled?: unknown
   } | undefined
 
   const pet = await updateActivePetPreferences(requestedProfile(ctx), {
     scale: typeof body?.scale === 'number' ? body.scale : undefined,
+    enabled: typeof body?.enabled === 'boolean' ? body.enabled : undefined,
     position: body?.position && typeof body.position.x === 'number' && typeof body.position.y === 'number'
       ? { x: body.position.x, y: body.position.y }
       : undefined,

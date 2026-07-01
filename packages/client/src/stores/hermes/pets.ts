@@ -40,20 +40,26 @@ export const usePetsStore = defineStore('pets', () => {
     }
   }
 
-  async function savePreferences(input: { scale?: number; position?: WebPetPosition }): Promise<void> {
+  async function savePreferences(input: { scale?: number; position?: WebPetPosition; enabled?: boolean }): Promise<void> {
     if (!activePet.value) return
     activePet.value = {
       ...activePet.value,
       ...(typeof input.scale === 'number' ? { scale: input.scale } : {}),
       ...(input.position ? { position: input.position } : {}),
+      ...(typeof input.enabled === 'boolean' ? { enabled: input.enabled } : {}),
     }
     saving.value = true
     try {
       const saved = await petsApi.updateActivePetPreferences(input)
       if (saved) activePet.value = saved
+      else if (input.enabled === false) activePet.value = null
     } finally {
       saving.value = false
     }
+  }
+
+  async function hideActivePet(): Promise<void> {
+    await savePreferences({ enabled: false })
   }
 
   function clear(): void {
@@ -70,6 +76,7 @@ export const usePetsStore = defineStore('pets', () => {
     loadActivePet,
     adopt,
     savePreferences,
+    hideActivePet,
     clear,
   }
 })

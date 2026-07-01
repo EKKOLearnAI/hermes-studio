@@ -42,6 +42,7 @@ export async function adoptPet(slug: string): Promise<ActivePet> {
 export async function updateActivePetPreferences(input: {
   scale?: number
   position?: WebPetPosition
+  enabled?: boolean
 }): Promise<ActivePet | null> {
   const res = await request<{ pet: ActivePet | null }>('/api/hermes/pets/active', {
     method: 'PATCH',
