@@ -1575,6 +1575,20 @@ function isImage(type: string): boolean {
     max-width: 118px;
   }
 
+  .input-settings-button {
+    width: 28px;
+    min-width: 28px;
+    padding: 0;
+
+    :deep(.n-button__content) {
+      display: none;
+    }
+
+    :deep(.n-button__icon) {
+      margin: 0;
+    }
+  }
+
   .context-info {
     overflow: hidden;
     text-overflow: ellipsis;
