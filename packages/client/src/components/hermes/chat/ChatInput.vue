@@ -1961,6 +1961,15 @@ function isImage(type: string): boolean {
   .skill-picker-item {
     height: 76px;
   }
+
+  .input-wrapper {
+    min-height: 118px;
+  }
+
+  .input-textarea::placeholder {
+    font-size: 13px;
+    line-height: 1.35;
+  }
 }
 
 .dropdown-fade-enter-active,

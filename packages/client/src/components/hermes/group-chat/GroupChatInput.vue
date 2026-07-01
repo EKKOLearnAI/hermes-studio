@@ -960,4 +960,15 @@ function isImage(type: string): boolean {
 .placement-top.dropdown-fade-leave-active {
     transform-origin: bottom;
 }
+
+@media (max-width: 768px) {
+    .input-wrapper {
+        min-height: 118px;
+    }
+
+    .input-textarea::placeholder {
+        font-size: 13px;
+        line-height: 1.35;
+    }
+}
 </style>
