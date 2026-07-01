@@ -7,9 +7,9 @@ import { config } from '../../config'
 import { clearSessionMessages } from '../../db/hermes/session-store'
 import { getChatRunServer } from '../../routes/hermes/chat-run'
 import { logger } from '../logger'
-import { cleanTtsText } from '../hermes/tts-providers/text'
 import { transcodeToPcmS16le } from '../hermes/stt-providers/audio-convert'
 import { MCU_TTS_SAMPLE_RATE, mcuPromptText, mcuPromptUrl } from '../hermes/mcu-prompts'
+import { createMcuSpeechSegmenter, normalizeMcuSpeechText } from './mcu-speech-segmenter'
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const MAX_REQUEST_TIMEOUT_MS = 120_000
@@ -82,14 +82,6 @@ const MCU_TTS_OPTIONS = {
   sampleRate: MCU_TTS_SAMPLE_RATE,
 } as const
 const MCU_INTERRUPT_DEBOUNCE_MS = 280
-
-function normalizeMcuSpeechText(text: string): string {
-  return cleanTtsText(text)
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/[*_#>]+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
 
 function chooseMcuApprovalChoice(event: Record<string, unknown>): 'once' | 'session' | 'always' | null {
   const rawChoices = Array.isArray(event.choices) ? event.choices.map(choice => String(choice)) : []
@@ -203,6 +195,7 @@ class PlainWebSocketRelayClient {
   private readonly activeRuns = new Map<string, { socket: Socket; sessionId: string }>()
   private readonly sessionRuns = new Map<string, { interactionId: string; socket: Socket }>()
   private readonly interruptedInteractions = new Set<string>()
+  private readonly ttsAbortControllers = new Map<string, Set<AbortController>>()
   private readonly recentlyInterruptedSessions = new Map<string, number>()
   private readonly pendingInterrupts = new Map<string, { profile: string; interactionId: string; timer: NodeJS.Timeout }>()
 
@@ -503,10 +496,10 @@ class PlainWebSocketRelayClient {
         timeout: 30_000,
       })
       let output = ''
-      let spokenOutputLength = 0
       let segmentIndex = 0
       let ttsQueue = Promise.resolve()
       let settled = false
+      const speechSegmenter = createMcuSpeechSegmenter()
       const enqueueSpeech = (text: string) => {
         if (this.interruptedInteractions.has(voice.interactionId)) return
         const segmentText = normalizeMcuSpeechText(text)
@@ -547,9 +540,8 @@ class PlainWebSocketRelayClient {
           })
       }
       const flushCompletedAssistantMessage = () => {
-        const text = output.slice(spokenOutputLength)
-        spokenOutputLength = output.length
-        enqueueSpeech(text)
+        const text = speechSegmenter.flush()
+        if (text) enqueueSpeech(text)
       }
       const finish = () => {
         if (settled) return
@@ -624,11 +616,26 @@ class PlainWebSocketRelayClient {
       socket.on('message.delta', (event: Record<string, unknown> = {}) => {
         if (typeof event.delta === 'string') {
           output += event.delta
+          for (const segment of speechSegmenter.pushDelta(event.delta)) {
+            enqueueSpeech(segment)
+          }
         }
       })
       socket.on('run.completed', (event: Record<string, unknown> = {}) => {
-        if (typeof event.output === 'string' && event.output.trim()) output = event.output
-        if (spokenOutputLength > output.length) spokenOutputLength = 0
+        if (typeof event.output === 'string' && event.output.trim()) {
+          if (!output) {
+            output = event.output
+            for (const segment of speechSegmenter.pushDelta(event.output)) {
+              enqueueSpeech(segment)
+            }
+          } else if (event.output.startsWith(output) && event.output.length > output.length) {
+            const tail = event.output.slice(output.length)
+            output = event.output
+            for (const segment of speechSegmenter.pushDelta(tail)) {
+              enqueueSpeech(segment)
+            }
+          }
+        }
         flushCompletedAssistantMessage()
         ttsQueue.finally(() => {
           if (this.interruptedInteractions.has(voice.interactionId)) {
@@ -729,6 +736,7 @@ class PlainWebSocketRelayClient {
 
   private abortActiveRun(interactionId: string): void {
     this.interruptedInteractions.add(interactionId)
+    this.abortTts(interactionId)
     const active = this.activeRuns.get(interactionId)
     if (!active) return
     logger.info({ interactionId, sessionId: active.sessionId }, '[outbound-relay:ws] aborting chat-run after MCU audio interrupt')
@@ -765,11 +773,13 @@ class PlainWebSocketRelayClient {
     const sessionRun = this.sessionRuns.get(sessionId)
     if (sessionRun) {
       this.interruptedInteractions.add(sessionRun.interactionId)
+      this.abortTts(sessionRun.interactionId)
       this.activeRuns.delete(sessionRun.interactionId)
       this.sessionRuns.delete(sessionId)
     }
     if (interactionId) {
       this.interruptedInteractions.add(interactionId)
+      this.abortTts(interactionId)
       const active = this.activeRuns.get(interactionId)
       if (active?.sessionId === sessionId) {
         this.activeRuns.delete(interactionId)
@@ -781,10 +791,14 @@ class PlainWebSocketRelayClient {
   private interruptMcuSession(profile: string, interactionId?: string): void {
     const sessionId = this.mcuSessionId(profile)
     this.recentlyInterruptedSessions.set(sessionId, Date.now())
-    if (interactionId) this.interruptedInteractions.add(interactionId)
+    if (interactionId) {
+      this.interruptedInteractions.add(interactionId)
+      this.abortTts(interactionId)
+    }
     const sessionRun = this.sessionRuns.get(sessionId)
     if (sessionRun) {
       this.interruptedInteractions.add(sessionRun.interactionId)
+      this.abortTts(sessionRun.interactionId)
       logger.info({
         interactionId: sessionRun.interactionId,
         sessionId,
@@ -795,6 +809,34 @@ class PlainWebSocketRelayClient {
       return
     }
     if (interactionId) this.abortActiveRun(interactionId)
+  }
+
+  private registerTtsAbortController(interactionId: string): AbortController {
+    const controller = new AbortController()
+    if (this.interruptedInteractions.has(interactionId)) {
+      controller.abort()
+      return controller
+    }
+    const controllers = this.ttsAbortControllers.get(interactionId) || new Set<AbortController>()
+    controllers.add(controller)
+    this.ttsAbortControllers.set(interactionId, controllers)
+    return controller
+  }
+
+  private releaseTtsAbortController(interactionId: string, controller: AbortController): void {
+    const controllers = this.ttsAbortControllers.get(interactionId)
+    if (!controllers) return
+    controllers.delete(controller)
+    if (controllers.size === 0) this.ttsAbortControllers.delete(interactionId)
+  }
+
+  private abortTts(interactionId: string): void {
+    const controllers = this.ttsAbortControllers.get(interactionId)
+    if (!controllers) return
+    for (const controller of controllers) {
+      if (!controller.signal.aborted) controller.abort()
+    }
+    this.ttsAbortControllers.delete(interactionId)
   }
 
   private clearMcuSession(profile: string, interactionId?: string): void {
@@ -832,22 +874,30 @@ class PlainWebSocketRelayClient {
   private async enqueueMcuSpeechSegment(profile: string, interactionId: string, segmentId: string, text: string): Promise<void> {
     if (this.interruptedInteractions.has(interactionId)) return
     this.sendJson({ type: 'interaction.status', interactionId, status: 'speaking' })
-    const audio = await this.synthesizeMcuSpeech(text, profile)
-    if (this.interruptedInteractions.has(interactionId)) return
-    const waitForDone = this.waitForMcuAudioDone(segmentId, Math.max(90_000, Math.min(text.length * 1200, 300_000)))
-    this.sendJson({
-      type: 'audio.enqueue',
-      interactionId,
-      segmentId,
-      text: '',
-      url: audio.url,
-      mimeType: 'audio/x-pcm',
-      channels: 1,
-      sampleRate: MCU_TTS_SAMPLE_RATE,
-      durationMs: Math.max(1200, Math.min(text.length * 180, 12_000)),
-      completionManagedByServer: true,
-    })
-    await waitForDone
+    const controller = this.registerTtsAbortController(interactionId)
+    try {
+      const audio = await this.synthesizeMcuSpeech(text, profile, controller.signal)
+      if (this.interruptedInteractions.has(interactionId) || controller.signal.aborted) return
+      const waitForDone = this.waitForMcuAudioDone(segmentId, Math.max(90_000, Math.min(text.length * 1200, 300_000)))
+      this.sendJson({
+        type: 'audio.enqueue',
+        interactionId,
+        segmentId,
+        text: '',
+        url: audio.url,
+        mimeType: 'audio/x-pcm',
+        channels: 1,
+        sampleRate: MCU_TTS_SAMPLE_RATE,
+        durationMs: Math.max(1200, Math.min(text.length * 180, 12_000)),
+        completionManagedByServer: true,
+      })
+      await waitForDone
+    } catch (err) {
+      if (controller.signal.aborted) throw new Error('audio.interrupted')
+      throw err
+    } finally {
+      this.releaseTtsAbortController(interactionId, controller)
+    }
   }
 
   private waitForMcuAudioDone(segmentId: string, timeoutMs: number): Promise<void> {
@@ -860,7 +910,7 @@ class PlainWebSocketRelayClient {
     })
   }
 
-  private async synthesizeMcuSpeech(text: string, profile: string): Promise<{ url: string }> {
+  private async synthesizeMcuSpeech(text: string, profile: string, signal?: AbortSignal): Promise<{ url: string }> {
     if (!this.options.userToken) {
       throw new Error('missing Web UI auth token')
     }
@@ -874,6 +924,7 @@ class PlainWebSocketRelayClient {
     const requestTts = (provider?: 'edge') => this.options.fetchImpl(`${baseUrl}/api/hermes/tts/synthesize`, {
       method: 'POST',
       headers,
+      signal,
       body: JSON.stringify({
         ...(provider ? { provider } : {}),
         text,
@@ -925,6 +976,7 @@ class PlainWebSocketRelayClient {
         const fallback = await this.options.fetchImpl(`${baseUrl}/api/hermes/tts/synthesize`, {
           method: 'POST',
           headers,
+          signal,
           body: JSON.stringify({
             provider: 'edge',
             text,

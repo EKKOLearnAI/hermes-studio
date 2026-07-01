@@ -677,7 +677,7 @@ describe('GlobalAgentServer', () => {
 
     await waitForMockCalls(fetchImpl, 2)
     expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toMatchObject({
-      text: '结果如下： | 名称 | 值 | | --- | --- | | foo | 1 | 请确认。',
+      text: '结果如下： 请确认。',
     })
     expect(agentSocket.emit).toHaveBeenCalledWith('audio.enqueue', expect.objectContaining({
       interactionId: 'voice-1',
@@ -685,6 +685,63 @@ describe('GlobalAgentServer', () => {
       url: expect.stringMatching(/^\/api\/hermes\/mcu\/audio\/[a-f0-9-]+\.pcm$/),
       completionManagedByServer: true,
     }))
+  })
+
+  it('aborts in-flight MCU TTS synthesis when the device interrupts playback', async () => {
+    authMocks.authenticateUserToken.mockResolvedValue({ id: 7, username: 'ada', role: 'user' })
+    authMocks.userCanAccessProfile.mockReturnValue(true)
+    let ttsSignal: AbortSignal | undefined
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      ttsSignal = init?.signal || undefined
+      return await new Promise<Response>((_resolve, reject) => {
+        ttsSignal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+      })
+    })
+    const nsp = createMockNamespace()
+    const io = { of: vi.fn(() => nsp) }
+    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+
+    const server = new GlobalAgentServer(io as any, {
+      fetchImpl: fetchImpl as any,
+      localBaseUrl: 'http://127.0.0.1:8647',
+    })
+    server.init()
+
+    const agentSocket = createMockSocket('jwt-agent-socket', {
+      token: 'user-jwt',
+      role: 'hermes-studio',
+      instanceId: 'device-1',
+      profile: 'research',
+    })
+    await new Promise<void>((resolve, reject) => {
+      nsp.__middleware[0](agentSocket, (err?: Error) => err ? reject(err) : resolve())
+    })
+    nsp.__handlers.get('connection')?.(agentSocket)
+
+    server.startMcuVoiceChatTurn({
+      userToken: 'user-jwt',
+      profile: 'research',
+      interactionId: 'voice-abort',
+      transcript: 'hi',
+      clientId: 'device-1',
+    })
+    const localSocket = clientSocketMocks.localSockets.at(-1)
+    localSocket.__handlers.get('connect')?.()
+    localSocket.__handlers.get('message.delta')?.({ delta: '这段正在合成。' })
+
+    await waitForMockCalls(fetchImpl, 1)
+    expect(ttsSignal?.aborted).toBe(false)
+
+    agentSocket.__handlers.get('audio.interrupted')?.({
+      interactionId: 'voice-abort',
+      segmentId: 'voice-abort-tts-1',
+    })
+
+    await vi.waitFor(() => {
+      expect(ttsSignal?.aborted).toBe(true)
+    })
+    expect(localSocket.emit).toHaveBeenCalledWith('abort', { session_id: 'mcu-device-1-research' })
+    expect(agentSocket.emit).not.toHaveBeenCalledWith('audio.enqueue', expect.anything())
   })
 
   it('auto-approves MCU chat-run approval requests using the same choice order as the client relay', async () => {
