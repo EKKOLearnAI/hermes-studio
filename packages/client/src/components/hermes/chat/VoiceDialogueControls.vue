@@ -127,7 +127,7 @@ function cancel() {
 }
 
 .voice-dialogue-controls--floating-overlay {
-  isolation: isolate;
+  z-index: 1300;
 }
 
 .voice-dialogue-controls__actions {

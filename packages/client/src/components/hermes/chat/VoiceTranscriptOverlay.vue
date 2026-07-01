@@ -83,7 +83,7 @@ const recentEventTypes = computed(() => props.events.slice(-5).map(event => even
   position: absolute;
   right: 0;
   bottom: calc(100% + 0.5rem);
-  z-index: 10;
+  z-index: 1200;
   width: min(20rem, calc(100vw - 2rem));
   max-width: 20rem;
   pointer-events: none;
