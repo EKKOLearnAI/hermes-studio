@@ -37,6 +37,8 @@ constexpr int kPinI2sBck = 7;
 constexpr int kPinBoot = 9;
 constexpr int kPinI2sMck = 8;
 constexpr int kPinPaEn = 10;
+constexpr int kPinBatteryAdc = 3;
+constexpr float kBatteryDividerRatio = 2.0f;
 constexpr uint8_t kEs8311Addr = 0x18;
 constexpr uint8_t kDefaultOledAddr = 0x3C;
 constexpr uint8_t kAltOledAddr = 0x3D;
@@ -66,6 +68,7 @@ constexpr uint32_t kBootInputArmDelayMs = 2500;
 constexpr uint32_t kBootLongPressMs = 360;
 constexpr uint32_t kBootDoubleClickMs = 320;
 constexpr uint32_t kWifiDisconnectGraceMs = 8000;
+constexpr uint32_t kBatteryReadIntervalMs = 5000;
 constexpr bool kAutoOtaEnabled = false;
 constexpr uint32_t kVoiceRecordMs = 4000;
 constexpr uint32_t kVoiceStreamRecordMs = 10000;
@@ -120,7 +123,10 @@ uint32_t bootClickPendingAtMs = 0;
 uint32_t bootReleaseStartedAtMs = 0;
 uint32_t audioInterruptPressStartedAtMs = 0;
 uint32_t wifiDisconnectedSinceMs = 0;
+uint32_t lastBatteryReadAtMs = 0;
+uint32_t batteryVoltageMv = 0;
 uint8_t oledProgress = 0;
+uint8_t batteryLevelPercent = 0;
 uint8_t oledAddress = kDefaultOledAddr;
 String oledTitle = "BOOT";
 String oledHint = "starting";
@@ -240,6 +246,45 @@ String fitOledText(String value, size_t maxLen) {
 
 uint8_t clampUiValue(uint32_t value, uint8_t ceiling) {
   return value > ceiling ? ceiling : static_cast<uint8_t>(value);
+}
+
+uint8_t batteryPercentFromVoltageMv(uint32_t mv) {
+  static const struct {
+    uint16_t mv;
+    uint8_t percent;
+  } curve[] = {
+      {4200, 100},
+      {4100, 90},
+      {4000, 80},
+      {3920, 70},
+      {3850, 60},
+      {3790, 50},
+      {3730, 40},
+      {3670, 30},
+      {3610, 20},
+      {3500, 10},
+      {3300, 0},
+  };
+  if (mv >= curve[0].mv) return 100;
+  for (size_t i = 1; i < sizeof(curve) / sizeof(curve[0]); ++i) {
+    if (mv >= curve[i].mv) {
+      const uint32_t highMv = curve[i - 1].mv;
+      const uint32_t lowMv = curve[i].mv;
+      const uint32_t highPercent = curve[i - 1].percent;
+      const uint32_t lowPercent = curve[i].percent;
+      return static_cast<uint8_t>(lowPercent + ((mv - lowMv) * (highPercent - lowPercent)) / (highMv - lowMv));
+    }
+  }
+  return 0;
+}
+
+void updateBatteryReading(bool force = false) {
+  uint32_t now = millis();
+  if (!force && batteryVoltageMv > 0 && now - lastBatteryReadAtMs < kBatteryReadIntervalMs) return;
+  lastBatteryReadAtMs = now;
+  uint32_t rawMv = analogReadMilliVolts(kPinBatteryAdc);
+  batteryVoltageMv = static_cast<uint32_t>(rawMv * kBatteryDividerRatio);
+  batteryLevelPercent = batteryPercentFromVoltageMv(batteryVoltageMv);
 }
 
 bool i2cProbe(uint8_t address) {
@@ -436,11 +481,13 @@ void drawWifiGlyph(uint8_t x, uint8_t y) {
 }
 
 void drawBatteryGlyph(uint8_t x, uint8_t y) {
+  updateBatteryReading();
   oledDrawFrame(x, y + 2, 15, 7);
   oledDrawBox(x + 15, y + 4, 2, 3);
-  oledDrawBox(x + 2, y + 4, 3, 3);
-  oledDrawBox(x + 6, y + 4, 3, 3);
-  oledDrawBox(x + 10, y + 4, 3, 3);
+  uint8_t fill = static_cast<uint8_t>((batteryLevelPercent * 11UL) / 100UL);
+  if (fill > 0) {
+    oledDrawBox(x + 2, y + 4, fill, 3);
+  }
 }
 
 void drawTopStatusBar() {
@@ -2439,8 +2486,9 @@ void logoutDevice() {
 }
 
 String mcuStatusJson() {
+  updateBatteryReading();
   String json;
-  json.reserve(260);
+  json.reserve(340);
   json += F("{\"type\":\"mcu.status\",\"interactionId\":\"");
   json += escapeJson(mcuInteractionId);
   json += F("\",\"status\":\"");
@@ -2463,7 +2511,11 @@ String mcuStatusJson() {
   json += escapeJson(mcuToolName);
   json += F("\",\"toolStatus\":\"");
   json += escapeJson(mcuToolStatus);
-  json += F("\"}");
+  json += F("\",\"batteryKnown\":true,\"batteryLevel\":");
+  json += batteryLevelPercent;
+  json += F(",\"batteryVoltageMv\":");
+  json += batteryVoltageMv;
+  json += F("}");
   return json;
 }
 
@@ -4332,6 +4384,7 @@ void handleRoot() {
 }
 
 void handleHealth() {
+  updateBatteryReading();
   String json = F("{\"status\":\"ok\",\"wifi_connected\":");
   json += (wifiReady && WiFi.status() == WL_CONNECTED) ? F("true") : F("false");
   json += F(",\"ip\":\"");
@@ -4352,7 +4405,11 @@ void handleHealth() {
   json += es8311Ready ? F("true") : F("false");
   json += F(",\"volume\":");
   json += outputVolumePercent;
-  json += F(",\"battery_known\":false,\"battery_level\":0,\"battery_charging\":false");
+  json += F(",\"battery_known\":true,\"battery_level\":");
+  json += batteryLevelPercent;
+  json += F(",\"battery_voltage_mv\":");
+  json += batteryVoltageMv;
+  json += F(",\"battery_charging\":false");
   json += F(",\"busy\":");
   json += audioBusy ? F("true") : F("false");
   json += F(",\"last_detail\":\"");
@@ -4455,6 +4512,9 @@ void setup() {
                 static_cast<unsigned long>(ESP.getFreeHeap()),
                 static_cast<unsigned long>(ESP.getMinFreeHeap()));
   esp_rom_printf("HStudio WiFi setup firmware boot\n");
+  pinMode(kPinBatteryAdc, INPUT);
+  analogSetPinAttenuation(kPinBatteryAdc, ADC_11db);
+  updateBatteryReading(true);
   initOledDisplay();
   loadAudioPreferences();
   initAudioHardware();
