@@ -650,6 +650,8 @@ describe('hermes-web-ui MCP server', () => {
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_workflow_run_rerun_from_node')).toBe(true)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_api_request')).toBe(false)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_lan_devices_list')).toBe(false)
+    expect(list.result.tools.find((tool: any) => tool.name === 'hermes_studio_use_chat_run')?.description).toContain('internal delegation')
+    expect(list.result.tools.find((tool: any) => tool.name === 'hermes_studio_use_session_context')?.description).toContain('internal delegation')
 
     const chatRun = JSON.parse((await waitForRpc(responses, 3)).result.content[0].text)
     expect(chatRun.body).toMatchObject({ input: 'hello', session_id: 'session-1', include_events: true })

@@ -83,6 +83,7 @@ export const HERMES_MCP_USAGE_GUIDELINES = [
   'Use the module purpose and keywords from hermes_studio_api_openapi_get to choose the right module, then call it again with a tag, path, or method filter before calling unfamiliar Web UI endpoints.',
   'Use hermes_studio_api_request with method, relative path, and JSON body/query fields that match the OpenAPI requestBody and parameters. Do not call full URLs.',
   'Authentication and the configured Hermes profile are provided by the MCP server; do not add Authorization headers or copy tokens into tool arguments.',
+  'Do not use hermes_studio_use_chat_run, Hermes Studio session tools, /api/chat-run/*, or /api/hermes/sessions/* as an internal delegation mechanism. In delegate_task, subtask, or workflow-node contexts, do not create, rename, delete, or continue Hermes Studio sessions unless the user explicitly asked to operate Hermes Studio sessions; return the delegated result in the current task instead.',
 ];
 
 export const WORKFLOW_NODE_SYSTEM_CONTEXT = `
