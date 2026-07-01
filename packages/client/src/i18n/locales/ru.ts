@@ -2069,6 +2069,12 @@ export default {
   },
 
   changelog: {
+    new_0_6_23_1: 'В этом выпуске собраны PR, merged после 0.6.22: desktop self-update, MCP cleanup, Petdex pets, MCU voice и несколько настроек workflow',
+    new_0_6_23_2: 'Desktop self-update снова работает в blocking-режиме, Windows надежнее останавливает сервисы перед обновлением, а выход из desktop полнее очищает gateway, profile MCP и связанные дочерние процессы',
+    new_0_6_23_3: 'Desktop MCP injection и запуск MCP для Coding Agent стали стабильнее, Windows workspaces получили выбор диска, исправлены отображение symlink-папок и desktop Petdex previews',
+    new_0_6_23_4: 'Petdex pets теперь поддерживают web pets, отдельное desktop pet window, мгновенное отображение после adoption, кнопку закрытия справа сверху и более заметный начальный desktop-размер',
+    new_0_6_23_5: 'MCU и global voice получили audio prompts, OTA safeguards, segmented streaming TTS, очистку ссылок, code blocks и tables перед озвучкой, а также abort handling для незавершенной TTS generation',
+    new_0_6_23_6: 'Settings и workflow улучшены: profile config editing, настройка высоты chat input, login JWT expiry, Skill editing, сохранение local archive state в History, более понятный new chat drawer и безопаснее danger-тексты для built-in Providers',
     new_0_6_22_1: 'В этом выпуске собраны PR, merged после 0.6.21: обновления фронтенда для комбинированных моделей, истории сессий, proxy-настроек, slash-команд и мобильной раскладки',
     new_0_6_22_2: 'На странице моделей появилась панель комбинированных моделей, а чат теперь показывает реальный прогресс MoA reference и aggregator без старого синтетического placeholder-инструмента',
     new_0_6_22_3: 'Чат-сессии можно архивировать из списка и восстанавливать из History; локальные сессии Claude Code и Codex теперь корректно появляются в History',

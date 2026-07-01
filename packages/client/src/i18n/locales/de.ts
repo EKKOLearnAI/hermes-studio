@@ -1935,6 +1935,12 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   changelog: {
+    new_0_6_23_1: 'Diese Version fasst die seit 0.6.22 gemergten PRs zusammen, mit Updates fuer Desktop-Self-Update, MCP-Cleanup, Petdex-Pets, MCU-Voice und mehrere Einstellungsablaeufe',
+    new_0_6_23_2: 'Das Desktop-Self-Update nutzt wieder einen blockierenden Ablauf, Windows beendet Dienste vor Updates zuverlaessiger, und beim Desktop-Exit werden gateway, profile MCP und zugehoerige Kindprozesse vollstaendiger beendet',
+    new_0_6_23_3: 'Desktop-MCP-Injection und Coding-Agent-MCP-Startpfade sind stabiler, Windows-Workspaces haben einen Laufwerkswaehler, und Symlink-Ordneranzeige sowie Desktop-Petdex-Previews wurden korrigiert',
+    new_0_6_23_4: 'Petdex-Pets unterstuetzen jetzt Web-Pets, ein eigenstaendiges Desktop-Pet-Fenster, sofortige Anzeige nach Adoption, einen Schliessen-Button oben rechts und eine sichtbarere Desktop-Startgroesse',
+    new_0_6_23_5: 'MCU- und globale Voice-Ablaeufe enthalten jetzt Audio-Prompts, OTA-Schutz, segmentiertes Streaming-TTS, Bereinigung von Links, Codebloecken und Tabellen vor dem Vorlesen sowie Abort-Handling fuer nicht abgeschlossene TTS-Erzeugung',
+    new_0_6_23_6: 'Settings und Workflow-Details wurden erweitert: profile config editing, Chat-Eingabehoehe, Login-JWT-Ablaufzeit, Skill-Editing, erhaltene lokale Archivzustande in History, klarere New-Chat-Drawer-Texte und sicherere Gefahrentexte fuer eingebaute Provider',
     new_0_6_22_1: 'Diese Version fasst die seit 0.6.21 gemergten PRs zusammen, mit Frontend-Updates fuer Kombinationsmodelle, Sitzungsverlauf, Proxy-Einstellungen, Slash-Befehle und mobile Layout-Details',
     new_0_6_22_2: 'Die Modellseite enthaelt jetzt ein Panel fuer Kombinationsmodelle, und der Chat zeigt echte MoA-Referenz- und Aggregator-Fortschritte ohne das alte kuenstliche Platzhalter-Tool',
     new_0_6_22_3: 'Chatsitzungen koennen aus der Sitzungsliste archiviert und im Verlauf wiederhergestellt werden; lokale Claude-Code- und Codex-Sitzungen erscheinen jetzt korrekt im Verlauf',

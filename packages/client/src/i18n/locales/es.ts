@@ -1935,6 +1935,12 @@ jobTriggered: 'Job ejecutado',
 
   // Registro de cambios
   changelog: {
+    new_0_6_23_1: 'Esta version resume los PR fusionados desde 0.6.22, con mejoras para la autoactualizacion de escritorio, limpieza de MCP, mascotas Petdex, voz MCU y varios flujos de ajustes',
+    new_0_6_23_2: 'La autoactualizacion de escritorio vuelve a un flujo bloqueante, Windows detiene servicios con mas fiabilidad antes de actualizar, y al salir del escritorio se limpian mejor gateway, profile MCP y procesos hijo relacionados',
+    new_0_6_23_3: 'La inyeccion MCP de escritorio y las rutas de arranque MCP del Coding Agent son mas estables, los workspaces de Windows tienen selector de unidad, y se corrigieron las carpetas symlink y las vistas previas Petdex de escritorio',
+    new_0_6_23_4: 'Las mascotas Petdex ahora admiten mascotas web, una ventana de escritorio independiente, aparicion inmediata tras adoptar, boton de cierre arriba a la derecha y un tamano inicial de escritorio mas visible',
+    new_0_6_23_5: 'La voz MCU y global incorpora avisos de audio, protecciones OTA, TTS segmentado en streaming, limpieza de enlaces, bloques de codigo y tablas antes de leer, y cancelacion de generaciones TTS pendientes',
+    new_0_6_23_6: 'Ajustes y flujos suman edicion de configuracion de profile, altura del input de chat, expiracion JWT de login, edicion de Skills, conservacion del estado archivado local en History, texto mas claro del cajon de nuevo chat y textos de peligro mas seguros para Providers integrados',
     new_0_6_22_1: 'Esta version resume los PR fusionados desde 0.6.21, con mejoras de frontend para modelos combinados, historial de sesiones, ajustes de proxy, comandos slash y detalles del diseno movil',
     new_0_6_22_2: 'La pagina Modelos ahora incluye un panel de modelos combinados, y el chat puede mostrar el progreso real de referencias y agregadores MoA sin la antigua herramienta sintetica de marcador',
     new_0_6_22_3: 'Las sesiones de chat se pueden archivar desde la lista y restaurar desde Historial; las sesiones locales de Claude Code y Codex ahora aparecen correctamente en Historial',
