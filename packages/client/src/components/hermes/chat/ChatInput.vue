@@ -1572,7 +1572,13 @@ function isImage(type: string): boolean {
   }
 
   .input-model-button {
-    max-width: 118px;
+    min-width: 35px;
+    max-width: 35px;
+    padding: 0 4px 0 6px;
+  }
+
+  .input-model-label {
+    display: none;
   }
 
   .input-settings-button {
