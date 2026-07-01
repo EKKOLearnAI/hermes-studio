@@ -92,4 +92,84 @@ describe('Models Store', () => {
     expect(appStore.selectedModel).toBe('deepseek-v4-flash')
     expect(appStore.selectedProvider).toBe('deepseek')
   })
+
+  it('sets the default provider to the first visible model when the current default is not available there', async () => {
+    const deepseekGroup = {
+      provider: 'deepseek',
+      label: 'DeepSeek',
+      base_url: 'https://api.deepseek.com/v1',
+      api_key: 'sk-test',
+      models: ['deepseek-chat'],
+    }
+    const openaiGroup = {
+      provider: 'openai',
+      label: 'OpenAI',
+      base_url: 'https://api.openai.com/v1',
+      api_key: 'sk-openai',
+      models: ['gpt-4.1', 'gpt-4.1-mini'],
+    }
+    const availableModelsResponse = {
+      default: 'gpt-4.1',
+      default_provider: 'openai',
+      groups: [deepseekGroup, openaiGroup],
+      allProviders: [deepseekGroup, openaiGroup],
+    }
+
+    mockSystemApi.fetchAvailableModels.mockResolvedValue(availableModelsResponse)
+    mockSystemApi.updateDefaultModel.mockResolvedValue(undefined)
+
+    const modelsStore = useModelsStore()
+    modelsStore.providers = [deepseekGroup, openaiGroup]
+    modelsStore.defaultModel = 'deepseek-chat'
+    modelsStore.defaultProvider = 'deepseek'
+
+    await modelsStore.setDefaultProvider('openai')
+
+    expect(mockSystemApi.updateDefaultModel).toHaveBeenCalledWith({
+      default: 'gpt-4.1',
+      provider: 'openai',
+    })
+    expect(modelsStore.defaultModel).toBe('gpt-4.1')
+    expect(modelsStore.defaultProvider).toBe('openai')
+  })
+
+  it('keeps the current default model when another provider exposes the same model id', async () => {
+    const providerA = {
+      provider: 'provider-a',
+      label: 'Provider A',
+      base_url: 'https://provider-a.example/v1',
+      api_key: 'sk-a',
+      models: ['shared-model'],
+    }
+    const providerB = {
+      provider: 'provider-b',
+      label: 'Provider B',
+      base_url: 'https://provider-b.example/v1',
+      api_key: 'sk-b',
+      models: ['shared-model', 'provider-b-only'],
+    }
+    const availableModelsResponse = {
+      default: 'shared-model',
+      default_provider: 'provider-b',
+      groups: [providerA, providerB],
+      allProviders: [providerA, providerB],
+    }
+
+    mockSystemApi.fetchAvailableModels.mockResolvedValue(availableModelsResponse)
+    mockSystemApi.updateDefaultModel.mockResolvedValue(undefined)
+
+    const modelsStore = useModelsStore()
+    modelsStore.providers = [providerA, providerB]
+    modelsStore.defaultModel = 'shared-model'
+    modelsStore.defaultProvider = 'provider-a'
+
+    await modelsStore.setDefaultProvider('provider-b')
+
+    expect(mockSystemApi.updateDefaultModel).toHaveBeenCalledWith({
+      default: 'shared-model',
+      provider: 'provider-b',
+    })
+    expect(modelsStore.defaultModel).toBe('shared-model')
+    expect(modelsStore.defaultProvider).toBe('provider-b')
+  })
 })

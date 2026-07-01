@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { NButton, NCheckbox, NCheckboxGroup, NModal, NInput, useMessage, useDialog } from 'naive-ui'
+import { NButton, NCheckbox, NCheckboxGroup, NModal, NInput, NSelect, useMessage, useDialog } from 'naive-ui'
 import type { AvailableModelGroup } from '@/api/hermes/system'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useAppStore } from '@/stores/hermes/app'
@@ -52,6 +52,8 @@ const aliasInput = ref('')
 const showVisibilityModal = ref(false)
 const visibilitySaving = ref(false)
 const selectedVisibleModels = ref<string[]>([])
+const defaultingProvider = ref(false)
+const defaultingModel = ref<string | null>(null)
 
 const sourceProvider = computed(() => modelsStore.allProviders.find(g => g.provider === props.provider.provider))
 const allModels = computed(() => props.provider.available_models?.length ? props.provider.available_models : (sourceProvider.value?.models?.length ? sourceProvider.value.models : props.provider.models))
@@ -59,6 +61,20 @@ const visibilityRule = computed(() => appStore.getProviderVisibility(props.provi
 const isFiltered = computed(() => visibilityRule.value.mode === 'include')
 const visibleCountLabel = computed(() => `${props.provider.models.length}/${allModels.value.length}`)
 const isDefaultProvider = computed(() => modelsStore.defaultProvider === props.provider.provider)
+const defaultModelOptions = computed(() => props.provider.models.map(model => ({
+  label: modelDisplayName(model),
+  value: model,
+})))
+const defaultModelSelectValue = computed(() => isDefaultProvider.value ? modelsStore.defaultModel || null : null)
+const previewModels = computed(() => {
+  const firstModels = props.provider.models.slice(0, 20)
+  const currentDefault = modelsStore.defaultModel
+  if (isDefaultProvider.value && currentDefault && props.provider.models.includes(currentDefault) && !firstModels.includes(currentDefault)) {
+    return [currentDefault, ...firstModels.slice(0, 19)]
+  }
+  return firstModels
+})
+const hiddenModelCount = computed(() => Math.max(props.provider.models.length - previewModels.value.length, 0))
 
 function isDefaultModel(model: string) {
   return isDefaultProvider.value && modelsStore.defaultModel === model
@@ -77,6 +93,35 @@ function openAliasEditor(model: string) {
   aliasModel.value = model
   aliasInput.value = appStore.getModelAlias(model, props.provider.provider)
   showAliasModal.value = true
+}
+
+async function handleSetDefaultProvider() {
+  if (isDefaultProvider.value) return
+
+  defaultingProvider.value = true
+  try {
+    await modelsStore.setDefaultProvider(props.provider.provider)
+    message.success(t('models.defaultProviderUpdated'))
+  } catch (e: any) {
+    message.error(e?.message || t('models.defaultProviderUpdateFailed'))
+  } finally {
+    defaultingProvider.value = false
+  }
+}
+
+async function handleSetDefaultModel(model: string | null) {
+  if (!model) return
+  if (isDefaultModel(model)) return
+
+  defaultingModel.value = model
+  try {
+    await modelsStore.setDefaultModel(model, props.provider.provider)
+    message.success(t('models.defaultModelUpdated'))
+  } catch (e: any) {
+    message.error(e?.message || t('models.defaultModelUpdateFailed'))
+  } finally {
+    if (defaultingModel.value === model) defaultingModel.value = null
+  }
 }
 
 async function saveAlias() {
@@ -211,9 +256,23 @@ async function handleDelete() {
           {{ isFiltered ? visibleCountLabel : provider.models.length }} {{ t('models.count') }}
         </span>
       </div>
+      <div class="default-model-row">
+        <span class="info-label">{{ t('models.defaultModel') }}</span>
+        <NSelect
+          class="default-model-select"
+          size="tiny"
+          filterable
+          :value="defaultModelSelectValue"
+          :options="defaultModelOptions"
+          :placeholder="t('models.selectModel')"
+          :disabled="provider.models.length === 0"
+          :loading="defaultingModel !== null"
+          @update:value="handleSetDefaultModel"
+        />
+      </div>
       <div class="models-list">
         <button
-          v-for="model in provider.models.slice(0, 20)"
+          v-for="model in previewModels"
           :key="model"
           class="model-tag model-tag-button"
           :class="{ default: isDefaultModel(model) }"
@@ -225,13 +284,22 @@ async function handleDelete() {
           <span v-if="isDefaultModel(model)" class="model-tag-default">{{ t('models.defaultShort') }}</span>
           <span v-if="modelAlias(model)" class="model-tag-id">{{ model }}</span>
         </button>
-        <span v-if="provider.models.length > 20" class="model-tag model-tag-more">
-          +{{ provider.models.length - 20 }} {{ t('models.more') }}
+        <span v-if="hiddenModelCount > 0" class="model-tag model-tag-more">
+          +{{ hiddenModelCount }} {{ t('models.more') }}
         </span>
       </div>
     </div>
 
     <div class="card-actions">
+      <NButton
+        size="tiny"
+        quaternary
+        :disabled="isDefaultProvider"
+        :loading="defaultingProvider"
+        @click="handleSetDefaultProvider"
+      >
+        {{ isDefaultProvider ? t('models.currentDefault') : t('models.setDefaultProvider') }}
+      </NButton>
       <NButton size="tiny" quaternary @click="showAliasListModal = true">{{ t('models.aliasManage') }}</NButton>
       <NButton size="tiny" quaternary @click="openVisibilityModal">{{ t('models.manageVisibleModels') }}</NButton>
       <NButton size="tiny" quaternary type="error" :loading="deleting" @click="handleDelete">{{ destructiveActionLabel }}</NButton>
@@ -440,6 +508,19 @@ async function handleDelete() {
   align-content: flex-start;
 }
 
+.default-model-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+  min-width: 0;
+}
+
+.default-model-select {
+  flex: 1;
+  min-width: 0;
+}
+
 .model-tag {
   display: inline-flex;
   align-items: center;
@@ -500,6 +581,7 @@ async function handleDelete() {
 
 .card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   border-top: 1px solid $border-light;
   padding-top: 10px;
