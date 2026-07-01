@@ -522,7 +522,6 @@ defineExpose({
   max-width: 100%;
   display: flex;
   position: relative;
-  animation: message-list-fade-in 1.5s ease both;
 }
 
 .virtual-message-list {
@@ -563,16 +562,6 @@ defineExpose({
   width: 100%;
   height: 100%;
   min-height: 0;
-}
-
-@keyframes message-list-fade-in {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
 }
 
 </style>

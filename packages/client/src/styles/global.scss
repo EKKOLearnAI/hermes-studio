@@ -109,6 +109,29 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+// Chat input route CSS is code-split; keep the footer color stable before the
+// component-scoped chunk arrives so entering chat does not flash the page bg.
+.chat-input-area,
+.chat-input-area .input-wrapper {
+  background-color: $bg-card;
+}
+
+.settings-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  color: transparent;
+  font-size: 13px;
+  line-height: 16px;
+}
+
+.settings-check.active {
+  color: $accent-primary;
+}
+
 .hermes-desktop-pet-window,
 .hermes-desktop-pet-window body,
 .hermes-desktop-pet-window #app {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch, h } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { NButton, NSwitch, NTooltip } from 'naive-ui'
+import { NButton, NDropdown, NTooltip, type DropdownOption } from 'naive-ui'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
@@ -24,6 +24,24 @@ const isDragging = ref(false)
 const dragCounter = ref(0)
 const isComposing = ref(false)
 const autoPlaySpeech = ref(false)
+const inputSettingsOptions = computed<DropdownOption[]>(() => [
+    {
+        label: t('chat.autoPlaySpeech'),
+        key: 'autoPlaySpeech',
+        icon: () => h('span', {
+            class: ['settings-check', { active: autoPlaySpeech.value }],
+            'aria-hidden': 'true',
+        }, autoPlaySpeech.value ? '✓' : ''),
+    },
+    {
+        label: t('chat.showToolCalls'),
+        key: 'toolTrace',
+        icon: () => h('span', {
+            class: ['settings-check', { active: toolTraceVisible.value }],
+            'aria-hidden': 'true',
+        }, toolTraceVisible.value ? '✓' : ''),
+    },
+])
 const isMobileViewport = ref(typeof window !== 'undefined' ? isMobileChatInputViewport(window.innerWidth) : false)
 const manualTextareaResize = ref(false)
 const configuredTextareaHeight = computed(() =>
@@ -47,6 +65,17 @@ watch(autoPlaySpeech, (value) => {
     localStorage.setItem('autoPlaySpeech', String(value))
     store.setAutoPlaySpeech(value)
 })
+
+function handleInputSettingsSelect(key: string | number) {
+    if (key === 'autoPlaySpeech') {
+        autoPlaySpeech.value = !autoPlaySpeech.value
+        return
+    }
+
+    if (key === 'toolTrace') {
+        toggleToolTraceVisible()
+    }
+}
 
 watch(configuredTextareaHeight, () => {
     applyConfiguredTextareaHeight()
@@ -416,39 +445,6 @@ function isImage(type: string): boolean {
 
 <template>
     <div class="chat-input-area">
-        <div class="input-top-bar">
-            <NTooltip trigger="hover">
-                <template #trigger>
-                    <NButton quaternary size="tiny" circle @click="handleAttachClick">
-                        <template #icon>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-                        </template>
-                    </NButton>
-                </template>
-                {{ t('chat.attachFiles') }}
-            </NTooltip>
-            <div class="auto-play-speech-switch">
-                <NTooltip trigger="hover">
-                    <template #trigger>
-                        <div class="switch-label">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                        </div>
-                    </template>
-                    {{ t('chat.autoPlaySpeech') }}
-                </NTooltip>
-                <NSwitch v-model:value="autoPlaySpeech" size="small" :round="false" />
-            </div>
-            <NTooltip trigger="hover">
-                <template #trigger>
-                    <NButton quaternary size="tiny" class="tool-trace-toggle" :class="{ active: toolTraceVisible }" @click="toggleToolTraceVisible">
-                        <svg class="tool-trace-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M14.7 6.3a4.5 4.5 0 0 0-5.8 5.8L3.5 17.5a2.1 2.1 0 0 0 3 3l5.4-5.4a4.5 4.5 0 0 0 5.8-5.8l-3 3-3-3 3-3z"/>
-                        </svg>
-                    </NButton>
-                </template>
-                {{ toolTraceVisible ? t('chat.hideToolCalls') : t('chat.showToolCalls') }}
-            </NTooltip>
-        </div>
         <div v-if="attachments.length > 0" class="attachment-previews">
             <div v-for="att in attachments" :key="att.id" class="attachment-preview" :class="{ image: isImage(att.type) }">
                 <img v-if="isImage(att.type)" :src="att.url" :alt="att.name" class="attachment-thumb" />
@@ -484,18 +480,57 @@ function isImage(type: string): boolean {
                 @input="handleInput"
                 @paste="handlePaste"
             />
-            <div class="input-actions">
-                <NButton
-                    size="small"
-                    type="primary"
-                    :disabled="!canSend"
-                    @click="handleSend"
-                >
-                    <template #icon>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-                    </template>
-                    {{ t('chat.send') }}
-                </NButton>
+            <div class="input-toolbar">
+                <div class="input-top-bar">
+                    <NTooltip trigger="hover">
+                        <template #trigger>
+                            <NButton quaternary size="tiny" circle class="toolbar-icon-button" @click="handleAttachClick">
+                                <template #icon>
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                                </template>
+                            </NButton>
+                        </template>
+                        {{ t('chat.attachFiles') }}
+                    </NTooltip>
+                    <NDropdown
+                        trigger="click"
+                        :options="inputSettingsOptions"
+                        :show-arrow="true"
+                        @select="handleInputSettingsSelect"
+                    >
+                        <NTooltip trigger="hover">
+                            <template #trigger>
+                                <NButton quaternary size="tiny" class="input-settings-button" :aria-label="t('sidebar.settings')">
+                                    <template #icon>
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                                            <circle cx="12" cy="12" r="3"/>
+                                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06A2 2 0 1 1 7.04 4.3l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.08a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.2.6.77 1 1.4 1H21a2 2 0 1 1 0 4h-.09c-.63 0-1.2.4-1.51 1Z"/>
+                                        </svg>
+                                    </template>
+                                    <span>{{ t('sidebar.settings') }}</span>
+                                    <svg class="toolbar-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+                                </NButton>
+                            </template>
+                            {{ t('sidebar.settings') }}
+                        </NTooltip>
+                    </NDropdown>
+                </div>
+                <div class="input-actions">
+                    <NButton
+                        size="medium"
+                        type="primary"
+                        circle
+                        class="send-button"
+                        :disabled="!canSend"
+                        :aria-label="t('chat.send')"
+                        @click="handleSend"
+                    >
+                        <template #icon>
+                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+                        </template>
+                        <span class="visually-hidden">{{ t('chat.send') }}</span>
+                    </NButton>
+                </div>
             </div>
         </div>
         <Transition name="dropdown-fade">
@@ -530,25 +565,27 @@ function isImage(type: string): boolean {
 @use "@/styles/variables" as *;
 
 .chat-input-area {
-    padding: 12px 20px 16px;
-    border-top: 1px solid $border-color;
+    padding: 8px 20px 14px;
+    border-top: 0;
+    background-color: $bg-card;
     flex-shrink: 0;
 }
 
 .input-top-bar {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 0 0 6px;
+    gap: 7px;
+    min-width: 0;
+    flex: 1;
+    padding: 0;
 }
 
 .auto-play-speech-switch {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding-left: 8px;
-    border-left: 1px solid $border-light;
-    margin-left: 4px;
+    gap: 5px;
+    padding-left: 2px;
+    margin-left: 0;
 
     .switch-label {
         display: flex;
@@ -568,7 +605,7 @@ function isImage(type: string): boolean {
     width: 24px;
     min-width: 24px;
     height: 22px;
-    margin-left: -4px;
+    margin-left: 0;
     padding: 0;
     background: transparent !important;
 
@@ -585,7 +622,29 @@ function isImage(type: string): boolean {
     }
 }
 
+.input-settings-button {
+    color: $text-secondary;
+    border-radius: 999px;
+    padding: 0 7px 0 6px;
+
+    :deep(.n-button__content) {
+        gap: 4px;
+    }
+
+    :deep(.n-button__state-border),
+    :deep(.n-button__border),
+    :deep(.n-button__ripple) {
+        display: none;
+    }
+}
+
+.toolbar-chevron {
+    flex: 0 0 12px;
+    color: $text-muted;
+}
+
 .attachment-previews {
+    width: 100%;
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
@@ -687,26 +746,32 @@ function isImage(type: string): boolean {
 
 .input-wrapper {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    background-color: $bg-input;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    width: 100%;
+    min-height: 150px;
+    background-color: $bg-card;
     border: 1px solid $border-color;
-    border-radius: $radius-md;
-    padding: 10px 12px;
+    border-radius: 18px;
+    padding: 14px 12px 9px;
     position: relative;
-    transition: border-color $transition-fast, background-color $transition-fast;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.08);
+    transition: border-color $transition-fast, box-shadow $transition-fast;
 
     &:focus-within {
-        border-color: $accent-primary;
+        border-color: rgba(var(--text-primary-rgb), 0.22);
+        box-shadow: 0 10px 32px rgba(0, 0, 0, 0.11);
     }
 
     &.drag-over {
         border-color: $accent-primary;
-        background-color: rgba($accent-primary, 0.08);
+        background-color: rgba(var(--accent-primary-rgb), 0.04);
     }
 
     .dark & {
-        background-color: #333333;
+        background-color: $bg-card;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.32);
     }
 }
 
@@ -726,7 +791,9 @@ function isImage(type: string): boolean {
 }
 
 .input-textarea {
+    display: block;
     flex: 1;
+    width: 100%;
     background: none;
     border: none;
     outline: none;
@@ -736,7 +803,8 @@ function isImage(type: string): boolean {
     line-height: 1.5;
     resize: none;
     max-height: 400px;
-    min-height: 20px;
+    min-height: 24px;
+    padding: 0;
     overflow-y: auto;
 
     @media (max-width: 768px) {
@@ -753,9 +821,77 @@ function isImage(type: string): boolean {
 
 .input-actions {
     display: flex;
-    gap: 6px;
+    gap: 7px;
     flex-shrink: 0;
     align-items: center;
+}
+
+.input-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 32px;
+}
+
+.toolbar-icon-button {
+    color: $text-muted;
+}
+
+.send-button {
+    width: 30px !important;
+    min-width: 30px !important;
+    height: 30px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+
+    :deep(.n-button__icon) {
+        margin: 0 !important;
+    }
+
+    :deep(.n-button__content) {
+        display: none;
+    }
+
+    :deep(.n-button__border),
+    :deep(.n-button__state-border),
+    :deep(.n-button__ripple),
+    :deep(.n-base-wave) {
+        display: none;
+    }
+
+    &:disabled {
+        color: var(--text-on-overlay);
+        background-color: #9f9f9f;
+        opacity: 1;
+    }
+}
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+@media (max-width: 768px) {
+    .chat-input-area {
+        padding: 8px 12px 12px;
+    }
+
+    .input-top-bar {
+        gap: 5px;
+    }
+
+    .auto-play-speech-switch {
+        display: none;
+    }
 }
 
 /* ── Custom mention dropdown (replaces NDropdown) ── */
