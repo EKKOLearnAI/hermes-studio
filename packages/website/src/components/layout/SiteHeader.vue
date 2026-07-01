@@ -49,6 +49,19 @@ function goHome() {
             <line x1="10" y1="14" x2="21" y2="3" />
           </svg>
         </a>
+        <a
+          class="nav-link"
+          href="https://x.com/hermesstudioai"
+          target="_blank"
+          rel="noopener"
+        >
+          {{ t('nav.x') }}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="external-icon">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            <polyline points="15 3 21 3 21 9" />
+            <line x1="10" y1="14" x2="21" y2="3" />
+          </svg>
+        </a>
         <button class="icon-btn" @click="switchLocale" :title="locale === 'en' ? t('ui.switchToChinese') : t('ui.switchToEnglish')">
           {{ locale === 'en' ? '中' : 'EN' }}
         </button>
@@ -69,6 +82,7 @@ function goHome() {
         <a class="mobile-link" @click.prevent="navigateTo('docs.getting-started')">{{ t('nav.docs') }}</a>
         <a class="mobile-link" @click.prevent="navigateTo('docs.esp32')">{{ t('nav.miniBox') }}</a>
         <a class="mobile-link" href="https://github.com/EKKOLearnAI/hermes-studio" target="_blank" rel="noopener">{{ t('nav.github') }}</a>
+        <a class="mobile-link" href="https://x.com/hermesstudioai" target="_blank" rel="noopener">{{ t('nav.x') }}</a>
         <div class="mobile-actions">
           <button class="mobile-action-btn" @click="switchLocale">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="action-icon">

@@ -19,6 +19,7 @@ export default {
     docs: 'Documentation',
     miniBox: 'Mini Box',
     github: 'GitHub',
+    x: 'X',
   },
   hero: {
     navLabel: 'Hero navigation',
@@ -193,6 +194,7 @@ export default {
     license: 'BSL-1.1 License',
     madeWith: 'Built with Vue 3, Naive UI, and TypeScript.',
     github: 'Open GitHub',
+    x: 'Open X',
     douyin: 'Open Douyin',
     xiaohongshu: 'Open Xiaohongshu',
   },
