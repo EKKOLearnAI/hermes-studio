@@ -484,7 +484,8 @@ watch(
   },
 )
 
-const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
+const canSend = computed(() => inputText.value.trim().length > 0 || attachments.value.length > 0)
+const sendButtonIsStop = computed(() => chatStore.isStreaming && !canSend.value)
 
 function scrollCommandIntoView() {
   nextTick(() => {
@@ -1178,14 +1179,14 @@ function isImage(type: string): boolean {
             type="primary"
             circle
             class="send-button"
-            :class="{ 'send-button--stop': chatStore.isStreaming }"
-            :disabled="chatStore.isStreaming ? chatStore.isAborting : !canSend"
-            :aria-label="chatStore.isStreaming ? t('chat.stop') : t('chat.send')"
-            @click="chatStore.isStreaming ? chatStore.stopStreaming() : handleSend()"
+            :class="{ 'send-button--stop': sendButtonIsStop }"
+            :disabled="sendButtonIsStop ? chatStore.isAborting : !canSend"
+            :aria-label="sendButtonIsStop ? 'Stop' : 'Send'"
+            @click="sendButtonIsStop ? chatStore.stopStreaming() : handleSend()"
           >
             <template #icon>
               <svg
-                v-if="chatStore.isStreaming"
+                v-if="sendButtonIsStop"
                 width="18"
                 height="18"
                 viewBox="0 0 24 24"
@@ -1195,7 +1196,7 @@ function isImage(type: string): boolean {
               </svg>
               <svg v-else width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
             </template>
-            <span class="visually-hidden">{{ chatStore.isStreaming ? t('chat.stop') : t('chat.send') }}</span>
+            <span class="visually-hidden">{{ sendButtonIsStop ? t('chat.stop') : t('chat.send') }}</span>
           </NButton>
         </div>
       </div>
