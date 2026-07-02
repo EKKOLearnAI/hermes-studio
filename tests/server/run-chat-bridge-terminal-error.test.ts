@@ -68,4 +68,38 @@ describe('bridge terminal error detection', () => {
       },
     } as any)).toBeNull()
   })
+
+  it('does not flag implementation notes that mention HTTP status handling', () => {
+    expect(bridgeTerminalError({
+      status: 'complete',
+      result: {
+        completed: true,
+        final_response: [
+          '全部完成，构建通过。',
+          'src/api/request.js: Axios 实例 + 请求拦截器 + 响应拦截器(401 互斥跳转)。',
+          '登录按钮状态: normal / hover / active / loading / success / error / locked / disabled。',
+        ].join('\n\n'),
+      },
+    } as any)).toBeNull()
+  })
+
+  it('does not treat a successful result message as an error', () => {
+    expect(bridgeTerminalError({
+      status: 'complete',
+      result: {
+        completed: true,
+        message: '全部完成，构建通过。',
+        final_response: '全部完成，构建通过。',
+      },
+    } as any)).toBeNull()
+  })
+
+  it('still surfaces compact auth errors in result messages when no final response exists', () => {
+    expect(bridgeTerminalError({
+      status: 'complete',
+      result: {
+        message: 'HTTP 401: unauthorized',
+      },
+    } as any)).toBe('HTTP 401: unauthorized')
+  })
 })
