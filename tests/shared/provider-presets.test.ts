@@ -22,6 +22,7 @@ const XAI_OAUTH_PROVIDER = 'xai-oauth'
 const GEMINI_OAUTH_PROVIDER = 'google-gemini-cli'
 const CLAUDE_OAUTH_PROVIDER = 'claude-oauth'
 const ANTHROPIC_PROVIDER = 'anthropic'
+const ATLASCLOUD_PROVIDER = 'atlascloud'
 const GPT_5_5_MODEL = 'gpt-5.5'
 
 function modelsForProvider(providerPresets: Array<{ value: string; models: string[] }>, provider: string): string[] {
@@ -76,6 +77,25 @@ describe('provider presets', () => {
   it('includes Claude Fable 5 for direct Anthropic and Claude OAuth', () => {
     expect(modelsForProvider(SERVER_PROVIDER_PRESETS, ANTHROPIC_PROVIDER)).toContain('claude-fable-5')
     expect(modelsForProvider(SERVER_PROVIDER_PRESETS, CLAUDE_OAUTH_PROVIDER)).toContain('claude-fable-5')
+  })
+
+  it('registers Atlas Cloud as an OpenAI-compatible provider preset', () => {
+    const preset = SERVER_PROVIDER_PRESETS.find(candidate => candidate.value === ATLASCLOUD_PROVIDER)
+
+    expect(preset?.label).toBe('Atlas Cloud')
+    expect(preset?.base_url).toBe('https://api.atlascloud.ai/v1')
+    expect(preset?.api_mode).toBeUndefined()
+    expect(PROVIDER_ENV_MAP[ATLASCLOUD_PROVIDER]).toEqual({
+      api_key_env: 'ATLASCLOUD_API_KEY',
+      base_url_env: 'ATLASCLOUD_BASE_URL',
+    })
+    expect(modelsForProvider(SERVER_PROVIDER_PRESETS, ATLASCLOUD_PROVIDER)).toEqual(expect.arrayContaining([
+      'deepseek-ai/deepseek-v4-pro',
+      'deepseek-ai/deepseek-v4-flash',
+      'moonshotai/kimi-k2.7-code',
+      'zai-org/glm-5.2',
+    ]))
+    expect(buildServerProviderModelMap()[ATLASCLOUD_PROVIDER]).toContain('deepseek-ai/deepseek-v4-pro')
   })
 
   it('keeps Kimi Coding Plan and China credentials distinct without duplicate Moonshot presets', () => {

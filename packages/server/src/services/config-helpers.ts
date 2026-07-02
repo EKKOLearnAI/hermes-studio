@@ -39,6 +39,7 @@ export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_en
   nvidia: { api_key_env: 'NVIDIA_API_KEY', base_url_env: 'NVIDIA_BASE_URL' },
   novita: { api_key_env: 'NOVITA_API_KEY', base_url_env: 'NOVITA_BASE_URL' },
   gmi: { api_key_env: 'GMI_API_KEY', base_url_env: 'GMI_BASE_URL' },
+  atlascloud: { api_key_env: 'ATLASCLOUD_API_KEY', base_url_env: 'ATLASCLOUD_BASE_URL' },
   arcee: { api_key_env: 'ARCEE_API_KEY', base_url_env: 'ARCEE_BASE_URL' },
   stepfun: { api_key_env: 'STEPFUN_API_KEY', base_url_env: 'STEPFUN_BASE_URL' },
   'ollama-cloud': { api_key_env: 'OLLAMA_API_KEY', base_url_env: 'OLLAMA_BASE_URL' },
