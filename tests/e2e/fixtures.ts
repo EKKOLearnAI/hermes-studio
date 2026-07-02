@@ -175,6 +175,11 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (/^\/api\/hermes\/sessions\/[^/]+\/workspace-run-changes$/.test(pathname)) {
+      await route.fulfill(jsonResponse({ changes: [] }))
+      return
+    }
+
     if (pathname === '/api/hermes/files/list') {
       await route.fulfill(jsonResponse({ entries: [], path: '' }))
       return

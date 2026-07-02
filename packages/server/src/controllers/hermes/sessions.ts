@@ -16,6 +16,7 @@ import {
 import { ExportCompressor } from '../../lib/context-compressor/export-compressor'
 import { deleteUsage, getUsage, getUsageBatch } from '../../db/hermes/usage-store'
 import type { UsageStatsModelRow, UsageStatsDailyRow } from '../../db/hermes/usage-store'
+import { deleteWorkspaceRunChangesForSession, getWorkspaceRunChangeFile as getWorkspaceRunChangeFileFromDb, listWorkspaceRunChangesForSession } from '../../db/hermes/workspace-run-changes-store'
 import { getModelContextLength } from '../../services/hermes/model-context'
 import { getActiveProfileName, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
 import { isNearestExistingRealPathWithin, isPathWithin, isRealPathWithin } from '../../services/hermes/hermes-path'
@@ -27,7 +28,9 @@ import { readConfigYamlForProfile } from '../../services/config-helpers'
 import { codingAgentRunManager } from '../../services/agent-runner/coding-agent-run-manager'
 import { AgentBridgeClient, getAgentBridgeManager } from '../../services/hermes/agent-bridge'
 import { ensureHermesRunWorkspace } from '../../services/hermes/run-chat/workspace'
-import { win32 as pathWin32 } from 'path'
+import { isSensitivePath, MAX_EDIT_SIZE } from '../../services/hermes/file-provider'
+import { readFile, stat as fsStat, writeFile } from 'fs/promises'
+import { normalize as pathNormalize, resolve as pathResolve, win32 as pathWin32 } from 'path'
 
 function getPendingDeletedSessionIds(): Set<string> {
   return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
@@ -477,6 +480,118 @@ export async function get(ctx: any) {
   ctx.body = { session }
 }
 
+export async function listWorkspaceRunChanges(ctx: any) {
+  const session = localGetSession(ctx.params.id)
+  if (!session) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, session)) return
+  ctx.body = { changes: listWorkspaceRunChangesForSession(ctx.params.id) }
+}
+
+export async function getWorkspaceRunChangeFile(ctx: any) {
+  const session = localGetSession(ctx.params.id)
+  if (!session) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, session)) return
+  const fileId = Number.parseInt(String(ctx.params.fileId || ''), 10)
+  if (!Number.isFinite(fileId) || fileId <= 0) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid file id' }
+    return
+  }
+  const file = getWorkspaceRunChangeFileFromDb(ctx.params.id, ctx.params.changeId, fileId)
+  if (!file) {
+    ctx.status = 404
+    ctx.body = { error: 'Workspace change file not found' }
+    return
+  }
+  ctx.body = { file }
+}
+
+function normalizeWorkspaceRelativePath(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (!raw) throw Object.assign(new Error('Missing path parameter'), { code: 'missing_path', status: 400 })
+  if (raw.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(raw)) {
+    throw Object.assign(new Error('Invalid file path'), { code: 'invalid_path', status: 400 })
+  }
+  const normalized = pathNormalize(raw).replace(/\\/g, '/')
+  if (normalized === '..' || normalized.startsWith('../') || normalized.includes('/../')) {
+    throw Object.assign(new Error('Invalid file path'), { code: 'invalid_path', status: 400 })
+  }
+  return normalized
+}
+
+function resolveSessionWorkspaceFile(ctx: any, relativePathValue: unknown): { session: ReturnType<typeof localGetSession>; relativePath: string; fullPath: string; workspace: string } {
+  const session = localGetSession(ctx.params.id)
+  if (!session) throw Object.assign(new Error('Session not found'), { code: 'not_found', status: 404 })
+  if (denySessionAccess(ctx, session)) throw Object.assign(new Error('Forbidden'), { code: 'forbidden', status: 403, handled: true })
+  const workspace = String(session.workspace || '').trim()
+  if (!workspace) throw Object.assign(new Error('Session workspace not found'), { code: 'workspace_not_found', status: 404 })
+  const relativePath = normalizeWorkspaceRelativePath(relativePathValue)
+  const fullPath = pathResolve(workspace, relativePath)
+  if (!isPathWithin(fullPath, workspace)) {
+    throw Object.assign(new Error('Invalid file path'), { code: 'invalid_path', status: 400 })
+  }
+  return { session, relativePath, fullPath, workspace }
+}
+
+function handleWorkspaceFileError(ctx: any, err: any): void {
+  if (err?.handled) return
+  const status = Number(err?.status || 0)
+  ctx.status = status >= 400 ? status : err?.code === 'ENOENT' ? 404 : 500
+  ctx.body = { error: err?.message || 'Failed to access workspace file', code: err?.code || 'workspace_file_error' }
+}
+
+export async function readWorkspaceFile(ctx: any) {
+  try {
+    const { relativePath, fullPath } = resolveSessionWorkspaceFile(ctx, ctx.query.path)
+    const info = await fsStat(fullPath)
+    if (!info.isFile()) {
+      ctx.status = 400
+      ctx.body = { error: 'Not a file', code: 'not_a_file' }
+      return
+    }
+    if (info.size > MAX_EDIT_SIZE) {
+      ctx.status = 413
+      ctx.body = { error: 'File too large to edit', code: 'file_too_large' }
+      return
+    }
+    const data = await readFile(fullPath)
+    ctx.body = { content: data.toString('utf-8'), path: relativePath, size: data.length }
+  } catch (err: any) {
+    handleWorkspaceFileError(ctx, err)
+  }
+}
+
+export async function writeWorkspaceFile(ctx: any) {
+  const body = ctx.request.body as { path?: unknown; content?: unknown }
+  try {
+    const { relativePath, fullPath } = resolveSessionWorkspaceFile(ctx, body?.path)
+    if (isSensitivePath(relativePath)) {
+      ctx.status = 403
+      ctx.body = { error: 'Cannot modify sensitive file', code: 'permission_denied' }
+      return
+    }
+    const content = typeof body?.content === 'string' ? body.content : ''
+    const data = Buffer.from(content, 'utf-8')
+    if (data.length > MAX_EDIT_SIZE) {
+      ctx.status = 413
+      ctx.body = { error: 'Content too large', code: 'file_too_large' }
+      return
+    }
+    await writeFile(fullPath, data)
+    ctx.body = { ok: true, path: relativePath }
+  } catch (err: any) {
+    handleWorkspaceFileError(ctx, err)
+  }
+}
+
 function cleanSessionContextMessages(messages: any[]): Array<{
   id: number
   role: 'user' | 'assistant'
@@ -681,6 +796,7 @@ export async function remove(ctx: any) {
     return
   }
   deleteUsage(sessionId)
+  deleteWorkspaceRunChangesForSession(sessionId)
   ctx.body = { ok: true, deleted: Boolean(existing), hermes }
 }
 
@@ -756,6 +872,7 @@ export async function batchRemove(ctx: any) {
       const ok = localDeleteSession(id)
       if (ok) {
         deleteUsage(id)
+        deleteWorkspaceRunChangesForSession(id)
         results.deleted++
       } else {
         results.failed++

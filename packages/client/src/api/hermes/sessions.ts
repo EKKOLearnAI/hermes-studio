@@ -90,6 +90,45 @@ export interface HermesMessage {
   reasoning: string | null
 }
 
+export interface WorkspaceRunChangeFileSummary {
+  id: number
+  change_id: string
+  session_id: string
+  path: string
+  old_path: string | null
+  change_type: 'added' | 'modified' | 'deleted' | 'renamed'
+  additions: number
+  deletions: number
+  size_before: number | null
+  size_after: number | null
+  patch_bytes: number
+  truncated: boolean
+  binary: boolean
+  created_at: number
+}
+
+export interface WorkspaceRunChangeFileDetail extends WorkspaceRunChangeFileSummary {
+  patch: string | null
+}
+
+export interface WorkspaceRunChangeSummary {
+  change_id: string
+  session_id: string
+  run_id: string
+  source: 'run'
+  workspace: string
+  workspace_kind: 'git' | 'filesystem'
+  started_at: number
+  finished_at: number
+  files_changed: number
+  additions: number
+  deletions: number
+  truncated: boolean
+  total_patch_bytes: number
+  created_at: number
+  files: WorkspaceRunChangeFileSummary[]
+}
+
 export async function fetchSessions(source?: string, limit?: number, profile?: string): Promise<SessionSummary[]> {
   const params = new URLSearchParams()
   if (source) params.set('source', source)
@@ -98,6 +137,56 @@ export async function fetchSessions(source?: string, limit?: number, profile?: s
   const query = params.toString()
   const res = await request<{ sessions: SessionSummary[] }>(`/api/hermes/sessions${query ? `?${query}` : ''}`)
   return res.sessions
+}
+
+export async function fetchWorkspaceRunChangesForSession(id: string): Promise<WorkspaceRunChangeSummary[]> {
+  try {
+    const res = await request<{ changes: WorkspaceRunChangeSummary[] }>(
+      `/api/hermes/sessions/${encodeURIComponent(id)}/workspace-run-changes`,
+    )
+    return Array.isArray(res.changes) ? res.changes : []
+  } catch {
+    return []
+  }
+}
+
+export async function fetchWorkspaceRunChangeFile(
+  sessionId: string,
+  changeId: string,
+  fileId: number,
+): Promise<WorkspaceRunChangeFileDetail | null> {
+  try {
+    const res = await request<{ file: WorkspaceRunChangeFileDetail }>(
+      `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-run-changes/${encodeURIComponent(changeId)}/files/${encodeURIComponent(String(fileId))}`,
+    )
+    return res.file
+  } catch {
+    return null
+  }
+}
+
+export async function readSessionWorkspaceFile(
+  sessionId: string,
+  path: string,
+): Promise<{ content: string; path: string; size: number }> {
+  const params = new URLSearchParams({ path })
+  return request<{ content: string; path: string; size: number }>(
+    `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-file/read?${params}`,
+  )
+}
+
+export async function writeSessionWorkspaceFile(
+  sessionId: string,
+  path: string,
+  content: string,
+): Promise<void> {
+  await request<{ ok: boolean }>(
+    `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-file/write`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ path, content }),
+    },
+  )
 }
 
 /**

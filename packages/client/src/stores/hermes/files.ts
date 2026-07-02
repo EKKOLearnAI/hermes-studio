@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import * as filesApi from '@/api/hermes/files'
+import { readSessionWorkspaceFile, writeSessionWorkspaceFile } from '@/api/hermes/sessions'
 import type { FileEntry } from '@/api/hermes/files'
 
 const EXT_LANG_MAP: Record<string, string> = {
@@ -131,6 +132,8 @@ export const useFilesStore = defineStore('files', () => {
     content: string
     originalContent: string
     language: string
+    workspaceSessionId?: string
+    workspaceRelativePath?: string
   } | null>(null)
 
   const previewFile = ref<{
@@ -206,9 +209,29 @@ export const useFilesStore = defineStore('files', () => {
     }
   }
 
+  async function openSessionWorkspaceEditor(sessionId: string, filePath: string) {
+    const result = await readSessionWorkspaceFile(sessionId, filePath)
+    editingFile.value = {
+      path: result.path,
+      content: result.content,
+      originalContent: result.content,
+      language: getLanguageFromPath(result.path),
+      workspaceSessionId: sessionId,
+      workspaceRelativePath: result.path,
+    }
+  }
+
   async function saveEditor() {
     if (!editingFile.value) return
-    await filesApi.writeFile(editingFile.value.path, editingFile.value.content, currentProfile.value)
+    if (editingFile.value.workspaceSessionId && editingFile.value.workspaceRelativePath) {
+      await writeSessionWorkspaceFile(
+        editingFile.value.workspaceSessionId,
+        editingFile.value.workspaceRelativePath,
+        editingFile.value.content,
+      )
+    } else {
+      await filesApi.writeFile(editingFile.value.path, editingFile.value.content, currentProfile.value)
+    }
     editingFile.value.originalContent = editingFile.value.content
   }
 
@@ -301,7 +324,7 @@ export const useFilesStore = defineStore('files', () => {
     editingFile, previewFile,
     pathSegments, sortedEntries, hasUnsavedChanges,
     fetchEntries, navigateTo, navigateUp,
-    openEditor, saveEditor, closeEditor,
+    openEditor, openSessionWorkspaceEditor, saveEditor, closeEditor,
     openPreview, closePreview,
     createDir, createFile, deleteEntry, renameEntry, copyEntry,
     uploadFiles, setSort,

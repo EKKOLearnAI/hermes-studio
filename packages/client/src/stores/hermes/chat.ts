@@ -1,5 +1,5 @@
 import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, respondClarify, type ChatRunTransport, type RunEvent, type ResumeSessionPayload, type StartRunRequest, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
-import { archiveSession as archiveSessionApi, deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { archiveSession as archiveSessionApi, deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, fetchWorkspaceRunChangeFile, fetchWorkspaceRunChangesForSession, setSessionModel, type HermesMessage, type SessionSummary, type WorkspaceRunChangeFileDetail, type WorkspaceRunChangeSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { inferCodingAgentApiMode, normalizeCodingAgentApiMode } from '@/api/coding-agents'
 import { getDownloadUrl } from '@/api/hermes/download'
@@ -20,6 +20,7 @@ export type ContentBlock = ContentBlockImport
 
 export const LIVE_CHAT_MESSAGE_PAGE_SIZE = 150
 export const LIVE_CHAT_MAX_LOADED_MESSAGES = 300
+const WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX = 'workspace-run-change:'
 
 function moaReferenceLabel(evt: RunEvent): string {
   const label = typeof evt.label === 'string' && evt.label.trim()
@@ -53,6 +54,7 @@ export interface Message {
   toolResult?: unknown
   toolStatus?: 'running' | 'done' | 'error'
   toolDuration?: number  // 工具执行时长（秒）
+  toolChange?: WorkspaceRunChangeSummary
   isStreaming?: boolean
   attachments?: Attachment[]
   // 思考/推理文本。两条来源：
@@ -745,6 +747,7 @@ export const useChatStore = defineStore('chat', () => {
     streamStates.value = new Map()
     serverWorking.value = new Set()
     pendingForkCommands.value = new Set()
+    workspaceRunChangesBySession.value = new Map()
     sessionsLoaded.value = false
     clearActiveSession()
   }
@@ -780,6 +783,8 @@ export const useChatStore = defineStore('chat', () => {
 
   const activeSession = ref<Session | null>(null)
   const messages = computed<Message[]>(() => activeSession.value?.messages || [])
+  const workspaceRunChangesBySession = ref<Map<string, Map<string, WorkspaceRunChangeSummary>>>(new Map())
+  const workspaceRunChangeLoadRequests = new Set<string>()
 
   function isSessionLive(sessionId: string): boolean {
     return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId)
@@ -822,6 +827,130 @@ export const useChatStore = defineStore('chat', () => {
     setAbortState(null)
     setCompressionState(sid, null)
     removeItem(storageKey())
+  }
+
+  function attachToolChangesToMessages(sessionId: string) {
+    const target = sessions.value.find(session => session.id === sessionId)
+    if (!target) return
+    const changes = workspaceRunChangesBySession.value.get(sessionId)
+    const runChanges: WorkspaceRunChangeSummary[] = []
+    for (const message of target.messages) {
+      if (message.role === 'tool' && message.toolCallId) {
+        message.toolChange = changes?.get(message.toolCallId)
+      }
+      if (message.id.startsWith(WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX)) {
+        const changeId = message.id.slice(WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX.length)
+        message.toolChange = changes?.get(changeId)
+      }
+    }
+    if (!changes) return
+    for (const change of changes.values()) {
+      if (change?.source === 'run') runChanges.push(change)
+    }
+    insertWorkspaceRunChangeMessages(target, runChanges)
+  }
+
+  function workspaceRunChangeMessageId(changeId: string): string {
+    return `${WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX}${changeId}`
+  }
+
+  function workspaceRunChangeTimestamp(change: WorkspaceRunChangeSummary): number {
+    const seconds = Number(change.finished_at || change.created_at || change.started_at || 0)
+    return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : Date.now()
+  }
+
+  function insertWorkspaceRunChangeMessages(target: Session, changes: WorkspaceRunChangeSummary[]) {
+    const sortedChanges = changes
+      .filter(change => change?.change_id && (change.files?.length > 0))
+      .sort((a, b) => {
+        const timeDelta = workspaceRunChangeTimestamp(b) - workspaceRunChangeTimestamp(a)
+        return timeDelta !== 0 ? timeDelta : b.change_id.localeCompare(a.change_id)
+      })
+    if (!sortedChanges.length) return
+    const existingById = new Map(
+      target.messages
+        .filter(message => message.id.startsWith(WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX))
+        .map(message => [message.id, message]),
+    )
+    target.messages = target.messages.filter(message => !message.id.startsWith(WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX))
+    for (const change of sortedChanges) {
+      const messageId = workspaceRunChangeMessageId(change.change_id)
+      const existing = existingById.get(messageId) || null
+      const timestamp = workspaceRunChangeTimestamp(change)
+      const insertAfter = findWorkspaceRunChangeAnchorIndex(target.messages, timestamp)
+      const message: Message = existing || {
+        id: messageId,
+        role: 'tool',
+        content: '',
+        timestamp,
+        toolName: 'workspace',
+        toolStatus: 'done',
+      }
+      message.timestamp = timestamp
+      message.toolChange = change
+      target.messages.splice(insertAfter + 1, 0, message)
+    }
+  }
+
+  function findWorkspaceRunChangeAnchorIndex(messages: Message[], timestamp: number): number {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i]
+      if (message.id.startsWith(WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX)) continue
+      if (message.role === 'assistant' && message.timestamp <= timestamp + 1000) return i
+    }
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (!messages[i].id.startsWith(WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX)) return i
+    }
+    return messages.length - 1
+  }
+
+  function setWorkspaceRunChanges(sessionId: string, changes: WorkspaceRunChangeSummary[]) {
+    const next = new Map(workspaceRunChangesBySession.value)
+    const byToolCallId = new Map<string, WorkspaceRunChangeSummary>()
+    for (const change of changes) {
+      if (change?.change_id) byToolCallId.set(change.change_id, change)
+    }
+    next.set(sessionId, byToolCallId)
+    workspaceRunChangesBySession.value = next
+    attachToolChangesToMessages(sessionId)
+  }
+
+  function upsertWorkspaceRunChange(sessionId: string, change: WorkspaceRunChangeSummary | null | undefined) {
+    if (!change?.change_id) return
+    const next = new Map(workspaceRunChangesBySession.value)
+    const current = new Map(next.get(sessionId) || [])
+    current.set(change.change_id, change)
+    next.set(sessionId, current)
+    workspaceRunChangesBySession.value = next
+    attachToolChangesToMessages(sessionId)
+  }
+
+  function handleWorkspaceRunChangeEvent(sessionId: string, evt: any) {
+    upsertWorkspaceRunChange(sessionId, evt?.change as WorkspaceRunChangeSummary | undefined)
+  }
+
+  function handleTerminalWorkspaceRunChange(sessionId: string, evt: any) {
+    upsertWorkspaceRunChange(sessionId, evt?.workspace_run_change as WorkspaceRunChangeSummary | undefined)
+  }
+
+  function restoreWorkspaceRunChangeMessages(sessionId: string) {
+    attachToolChangesToMessages(sessionId)
+    if (workspaceRunChangesBySession.value.has(sessionId) || workspaceRunChangeLoadRequests.has(sessionId)) return
+    workspaceRunChangeLoadRequests.add(sessionId)
+    void loadWorkspaceRunChangesForSession(sessionId)
+      .catch(err => console.warn('Failed to load workspace run changes:', err))
+      .finally(() => {
+        workspaceRunChangeLoadRequests.delete(sessionId)
+      })
+  }
+
+  async function loadWorkspaceRunChangesForSession(sessionId: string) {
+    const changes = await fetchWorkspaceRunChangesForSession(sessionId)
+    setWorkspaceRunChanges(sessionId, changes)
+  }
+
+  async function loadWorkspaceRunChangeFile(sessionId: string, toolCallId: string, fileId: number): Promise<WorkspaceRunChangeFileDetail | null> {
+    return fetchWorkspaceRunChangeFile(sessionId, toolCallId, fileId)
   }
 
   function ensureSessionLoaded(summary: SessionSummary): Session {
@@ -985,6 +1114,7 @@ export const useChatStore = defineStore('chat', () => {
       target.parentTitle = detail.session.parent_title || target.parentTitle || null
       target.parentLastMessage = detail.session.parent_last_message || target.parentLastMessage || null
       target.parentLastMessageRole = detail.session.parent_last_message_role || target.parentLastMessageRole || null
+      restoreWorkspaceRunChangeMessages(sid)
       return true
     } catch (err) {
       console.error('Failed to refresh active session:', err)
@@ -1116,6 +1246,7 @@ export const useChatStore = defineStore('chat', () => {
           target.parentLastMessageRole = (data as any).parentLastMessageRole || target.parentLastMessageRole || null
           if (data.messages?.length) {
             target.messages = mapHermesMessages(data.messages as any[])
+            restoreWorkspaceRunChangeMessages(sessionId)
             target.loadedMessageCount = data.messageLoadedCount ?? data.messages.length
             target.messageTotal = data.messageTotal ?? target.messageCount ?? target.loadedMessageCount
             target.messageCount = target.messageTotal
@@ -1167,11 +1298,14 @@ export const useChatStore = defineStore('chat', () => {
               } else if (e.event === 'clarify.resolved') {
                 clearPendingClarify({ ...e, session_id: sessionId } as RunEvent)
               } else if (e.event === 'run.failed') {
+                handleTerminalWorkspaceRunChange(sessionId, e)
                 addAgentErrorMessage(sessionId, e.error)
                 serverWorking.value.delete(sessionId)
                 queueLengths.value.delete(sessionId)
               } else if (e.event === 'agent.event' || e.event === 'run.reattach_failed') {
                 handleAgentEvent(e)
+              } else if (e.event === 'workspace.diff.completed') {
+                handleWorkspaceRunChangeEvent(sessionId, e)
               } else if (e.event === 'tool.started') {
                 const msgs = getSessionMsgs(sessionId)
                 const toolCallId = e.tool_call_id as string | undefined
@@ -1222,6 +1356,9 @@ export const useChatStore = defineStore('chat', () => {
           resolve()
         }, activeSession.value?.profile, runtimeTransport())
       })
+      if (activeSessionId.value === sessionId) {
+        await loadWorkspaceRunChangesForSession(sessionId)
+      }
     } catch (err) {
       console.error('Failed to load session messages via resume:', err)
     } finally {
@@ -1252,6 +1389,7 @@ export const useChatStore = defineStore('chat', () => {
       const existingIds = new Set(target.messages.map(message => message.id))
       const olderMessages = mapHermesMessages(page.messages).filter(message => !existingIds.has(message.id))
       target.messages = [...olderMessages, ...target.messages]
+      attachToolChangesToMessages(sessionId)
       target.loadedMessageCount = offset + page.messages.length
       target.messageTotal = page.total
       target.messageCount = page.total
@@ -2313,6 +2451,7 @@ export const useChatStore = defineStore('chat', () => {
           target.messageTotal = data.messageTotal ?? target.messageCount ?? target.loadedMessageCount
           target.messageCount = target.messageTotal
           target.hasMoreBefore = data.hasMoreBefore ?? target.loadedMessageCount < target.messageTotal
+          restoreWorkspaceRunChangeMessages(sid)
 
           const resumedAssistantState = data.isWorking
             ? resolveResumedAssistantState(target.messages, {
@@ -2395,6 +2534,7 @@ export const useChatStore = defineStore('chat', () => {
                 clearPendingClarify({ ...e, session_id: sid })
                 break
               case 'run.failed':
+                handleTerminalWorkspaceRunChange(sid, e)
                 addAgentErrorMessage(sid, e.error)
                 break
               case 'agent.event':
@@ -2686,6 +2826,11 @@ export const useChatStore = defineStore('chat', () => {
               break
             }
 
+            case 'workspace.diff.completed': {
+              handleWorkspaceRunChangeEvent(sid, evt)
+              break
+            }
+
             case 'subagent.start':
             case 'subagent.tool':
             case 'subagent.progress':
@@ -2716,6 +2861,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'run.completed': {
+              handleTerminalWorkspaceRunChange(sid, evt)
               clearAgentEventMessages(sid)
               const msgs = getSessionMsgs(sid)
               const lastMsg = activeAssistantMessageId
@@ -2829,6 +2975,7 @@ export const useChatStore = defineStore('chat', () => {
                 playCompletionBellIfEnabled()
                 showCompletionNotificationIfEnabled(sid, completedAssistantMessageId)
               }
+              attachToolChangesToMessages(sid)
 
               // 自动播放语音
               if (autoPlaySpeechEnabled.value && runProducedAssistantContent) {
@@ -2857,6 +3004,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'run.failed': {
+              handleTerminalWorkspaceRunChange(sid, evt)
               clearAgentEventMessages(sid)
               if ((evt as any).inputTokens != null) {
                 const target = sessions.value.find(s => s.id === sid)
@@ -3270,6 +3418,11 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'workspace.diff.completed': {
+          handleWorkspaceRunChangeEvent(sid, evt)
+          break
+        }
+
         case 'subagent.start':
         case 'subagent.tool':
         case 'subagent.progress':
@@ -3300,6 +3453,7 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'run.completed': {
+          handleTerminalWorkspaceRunChange(sid, evt)
           clearAgentEventMessages(sid)
           const hasQueue = (evt as any).queue_remaining > 0
           if (hasQueue) {
@@ -3400,6 +3554,7 @@ export const useChatStore = defineStore('chat', () => {
             playCompletionBellIfEnabled()
             showCompletionNotificationIfEnabled(sid, completedAssistantMessageId)
           }
+          attachToolChangesToMessages(sid)
 
           // Auto-play speech for every completed assistant message
           if (autoPlaySpeechEnabled.value && runProducedAssistantContent) {
@@ -3430,6 +3585,7 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'run.failed': {
+          handleTerminalWorkspaceRunChange(sid, evt)
           clearAgentEventMessages(sid)
           if ((evt as any).inputTokens != null) {
             const target = sessions.value.find(s => s.id === sid)
@@ -3476,6 +3632,7 @@ export const useChatStore = defineStore('chat', () => {
       onReasoningAvailable: (evt) => handleEvent(evt),
       onToolStarted: (evt) => handleEvent(evt),
       onToolCompleted: (evt) => handleEvent(evt),
+      onWorkspaceDiffCompleted: (evt) => handleEvent(evt),
       onSubagentEvent: (evt) => handleEvent(evt),
       onRunStarted: (evt) => handleEvent(evt),
       onRunCompleted: (evt) => handleEvent(evt),
@@ -3628,6 +3785,7 @@ export const useChatStore = defineStore('chat', () => {
               activeSession.value.messageTotal = data.messageTotal ?? activeSession.value.messageCount ?? activeSession.value.loadedMessageCount
               activeSession.value.messageCount = activeSession.value.messageTotal
               activeSession.value.hasMoreBefore = data.hasMoreBefore ?? activeSession.value.loadedMessageCount < activeSession.value.messageTotal
+              restoreWorkspaceRunChangeMessages(sid)
             }
             resumeServerWorkingRun(sid)
           }, activeSession.value?.profile, runtimeTransport())
@@ -3802,6 +3960,7 @@ export const useChatStore = defineStore('chat', () => {
     clearThinkingObservationFor,
     setAutoPlaySpeech,
     playMessageSpeech,
+    loadWorkspaceRunChangeFile,
     setSessionReasoningEffort,
     setRuntimeMode,
   }

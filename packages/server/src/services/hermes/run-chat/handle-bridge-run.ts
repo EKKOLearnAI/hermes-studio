@@ -36,6 +36,7 @@ import { writeModelRunProfileToken } from './model-run-prompt'
 import type { AuthenticatedUser } from '../../../middleware/user-auth'
 import { ensureHermesRunWorkspace } from './workspace'
 import { observeRunChatPetEvent } from '../pet-state-socket'
+import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from './workspace-diff-tracker'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 const BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS = 500
@@ -532,6 +533,15 @@ export async function handleBridgeRun(
       },
     )
     state.runId = started.run_id
+    try {
+      startWorkspaceRunCheckpoint({
+        sessionId: session_id,
+        runId: started.run_id,
+        workspace,
+      })
+    } catch (err) {
+      bridgeLogger.warn({ err, sessionId: session_id, runId: started.run_id }, '[workspace-diff] failed to start run checkpoint')
+    }
     bridgeLogger.info({
       sessionId: session_id,
       runId: started.run_id,
@@ -1353,6 +1363,28 @@ async function applyBridgeChunkAsync(
     profile: state.profile,
   })
   const hadQueuedRunBeforeGoalEvaluation = state.queue.length > 0
+  const eventName = terminalError ? 'run.failed' : 'run.completed'
+  let workspaceRunChange: ReturnType<typeof completeWorkspaceRunCheckpoint> = null
+  try {
+    const change = completeWorkspaceRunCheckpoint({
+      sessionId,
+      runId: chunk.run_id,
+      workspace,
+    })
+    workspaceRunChange = change
+    if (change) {
+      const changePayload = {
+        event: 'workspace.diff.completed',
+        run_id: chunk.run_id,
+        change_id: change.change_id,
+        change,
+      }
+      pushState(sessionMap, sessionId, 'workspace.diff.completed', changePayload)
+      emit('workspace.diff.completed', changePayload)
+    }
+  } catch (err) {
+    bridgeLogger.warn({ err, sessionId, runId: chunk.run_id }, '[workspace-diff] failed to complete run checkpoint')
+  }
   state.isWorking = hadQueuedRunBeforeGoalEvaluation
   state.isAborting = false
   state.profile = hadQueuedRunBeforeGoalEvaluation ? (state.queue[0]?.profile || profile) : undefined
@@ -1360,7 +1392,6 @@ async function applyBridgeChunkAsync(
   state.runId = undefined
   state.activeRunMarker = undefined
   state.events = []
-  const eventName = terminalError ? 'run.failed' : 'run.completed'
   const payload = {
     event: eventName,
     run_id: chunk.run_id,
@@ -1371,6 +1402,7 @@ async function applyBridgeChunkAsync(
     outputTokens: usage.outputTokens,
     contextTokens,
     queue_remaining: state.queue.length,
+    workspace_run_change: workspaceRunChange,
   }
   emit(eventName, payload)
 

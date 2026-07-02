@@ -8,6 +8,8 @@ vi.mock('@/api/hermes/sessions', () => ({
   archiveSession: vi.fn(),
   fetchSessions: vi.fn(),
   fetchSessionMessagesPage: vi.fn(),
+  fetchWorkspaceRunChangesForSession: vi.fn(async () => []),
+  fetchWorkspaceRunChangeFile: vi.fn(async () => null),
   deleteSession: vi.fn(),
   setSessionModel: vi.fn(),
 }))

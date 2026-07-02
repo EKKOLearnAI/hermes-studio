@@ -85,6 +85,59 @@ export const MESSAGES_SCHEMA: Record<string, string> = {
 export const MESSAGES_INDEX = 'CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)'
 
 // ============================================================================
+// Workspace Run Changes
+// ============================================================================
+
+export const WORKSPACE_RUN_CHANGES_TABLE = 'workspace_run_changes'
+
+export const WORKSPACE_RUN_CHANGES_SCHEMA: Record<string, string> = {
+  change_id: 'TEXT PRIMARY KEY',
+  session_id: 'TEXT NOT NULL',
+  run_id: 'TEXT NOT NULL DEFAULT \'\'',
+  source: 'TEXT NOT NULL DEFAULT \'run\'',
+  workspace: 'TEXT NOT NULL DEFAULT \'\'',
+  workspace_kind: 'TEXT NOT NULL DEFAULT \'git\'',
+  started_at: 'INTEGER NOT NULL DEFAULT 0',
+  finished_at: 'INTEGER NOT NULL DEFAULT 0',
+  files_changed: 'INTEGER NOT NULL DEFAULT 0',
+  additions: 'INTEGER NOT NULL DEFAULT 0',
+  deletions: 'INTEGER NOT NULL DEFAULT 0',
+  truncated: 'INTEGER NOT NULL DEFAULT 0',
+  total_patch_bytes: 'INTEGER NOT NULL DEFAULT 0',
+  created_at: 'INTEGER NOT NULL',
+}
+
+export const WORKSPACE_RUN_CHANGE_FILES_TABLE = 'workspace_run_change_files'
+
+export const WORKSPACE_RUN_CHANGE_FILES_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  change_id: 'TEXT NOT NULL',
+  session_id: 'TEXT NOT NULL',
+  path: 'TEXT NOT NULL',
+  old_path: 'TEXT',
+  change_type: 'TEXT NOT NULL DEFAULT \'modified\'',
+  additions: 'INTEGER NOT NULL DEFAULT 0',
+  deletions: 'INTEGER NOT NULL DEFAULT 0',
+  size_before: 'INTEGER',
+  size_after: 'INTEGER',
+  patch: 'TEXT',
+  patch_bytes: 'INTEGER NOT NULL DEFAULT 0',
+  truncated: 'INTEGER NOT NULL DEFAULT 0',
+  binary: 'INTEGER NOT NULL DEFAULT 0',
+  created_at: 'INTEGER NOT NULL',
+}
+
+export const WORKSPACE_RUN_CHANGES_INDEXES = {
+  idx_workspace_run_changes_session: 'CREATE INDEX IF NOT EXISTS idx_workspace_run_changes_session ON workspace_run_changes(session_id, created_at)',
+  idx_workspace_run_changes_run: 'CREATE INDEX IF NOT EXISTS idx_workspace_run_changes_run ON workspace_run_changes(run_id)',
+}
+
+export const WORKSPACE_RUN_CHANGE_FILES_INDEXES = {
+  idx_workspace_run_change_files_change: 'CREATE INDEX IF NOT EXISTS idx_workspace_run_change_files_change ON workspace_run_change_files(change_id)',
+  idx_workspace_run_change_files_session: 'CREATE INDEX IF NOT EXISTS idx_workspace_run_change_files_session ON workspace_run_change_files(session_id, created_at)',
+}
+
+// ============================================================================
 // Workflow Store
 // ============================================================================
 
@@ -722,6 +775,12 @@ export function initAllHermesTables(): void {
     syncTable(SESSIONS_TABLE, SESSIONS_SCHEMA)
     syncTable(MESSAGES_TABLE, MESSAGES_SCHEMA)
     db.exec(MESSAGES_INDEX)
+    syncTable(WORKSPACE_RUN_CHANGES_TABLE, WORKSPACE_RUN_CHANGES_SCHEMA, {
+      indexes: WORKSPACE_RUN_CHANGES_INDEXES,
+    })
+    syncTable(WORKSPACE_RUN_CHANGE_FILES_TABLE, WORKSPACE_RUN_CHANGE_FILES_SCHEMA, {
+      indexes: WORKSPACE_RUN_CHANGE_FILES_INDEXES,
+    })
 
     // Workflow store
     syncTable(WORKFLOWS_TABLE, WORKFLOWS_SCHEMA, {

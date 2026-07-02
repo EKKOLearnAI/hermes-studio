@@ -20,6 +20,10 @@ vi.mock('vue-i18n', () => ({
 }))
 
 vi.mock('naive-ui', () => ({
+  NButton: { template: '<button><slot /></button>' },
+  NDrawer: { template: '<div><slot /></div>' },
+  NDrawerContent: { template: '<div><slot /></div>' },
+  NSpin: { template: '<div />' },
   useMessage: () => ({
     error: vi.fn(),
     success: vi.fn(),

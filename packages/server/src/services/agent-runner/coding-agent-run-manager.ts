@@ -10,6 +10,7 @@ import type { SessionState } from '../hermes/run-chat/types'
 import type { CanonicalResponsesEvent } from './adapters/responses-stream'
 import { mapCodingAgentResponseEvent } from './coding-agent-event-mapper'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell } from '../windows-command'
+import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from '../hermes/run-chat/workspace-diff-tracker'
 
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
 const TERMINAL_OUTPUT_FLUSH_MS = 120
@@ -539,6 +540,7 @@ export class CodingAgentRunManager {
     this.addUserMessage(run, text)
     this.touch(run)
     this.emitTerminalStatus(run, 'Input sent to coding agent.')
+    this.startWorkspaceRunDiff(run)
     if (run.launch.agentId === 'claude-code') {
       this.startClaudePrintTurn(run, text, systemPrompt)
       return { runId: run.id }
@@ -604,7 +606,9 @@ export class CodingAgentRunManager {
       this.emitToChat(run.launch.sessionId, mappedEvent.event, mappedEvent.payload)
     }
     const mapped = applyResponseStreamEvent(run.state, run.launch.sessionId, run.runMarker, storageSafeResponseEvent.type, storageSafeResponseEvent.data)
-    if (mapped) this.emitToChat(run.launch.sessionId, mapped.event, mapped.payload)
+    if (mapped) {
+      this.emitToChat(run.launch.sessionId, mapped.event, mapped.payload)
+    }
     if (isTerminalEvent) {
       flushResponseRunToDb(run.state, run.launch.sessionId)
       run.state.responseRun = undefined
@@ -733,9 +737,11 @@ export class CodingAgentRunManager {
     run.exited = true
     run.state.isWorking = false
     if (shouldReportClosed) {
+      const workspaceRunChange = this.completeWorkspaceRunDiff(run)
       this.emitToChat(run.launch.sessionId, 'run.failed', {
         event: 'run.failed',
         error: 'Coding agent session closed',
+        workspace_run_change: workspaceRunChange,
       })
       this.markChatRunCompleted(run.launch.sessionId, 'run.failed')
     }
@@ -1652,9 +1658,11 @@ export class CodingAgentRunManager {
     run.pendingChatCompletionEvent = undefined
     run.pendingChatCompletionPayload = undefined
     const queueRemaining = run.state.queue.length
+    const workspaceRunChange = this.completeWorkspaceRunDiff(run)
     this.emitToChat(run.launch.sessionId, event, {
       ...(payload || { event }),
       ...(queueRemaining > 0 ? { queue_remaining: queueRemaining } : {}),
+      workspace_run_change: workspaceRunChange,
     })
     run.state.isWorking = false
     run.state.runId = undefined
@@ -1684,6 +1692,39 @@ export class CodingAgentRunManager {
       logger.info({ runId: run.id, sessionId: run.launch.sessionId, nativeSessionId }, '[coding-agent-run] recorded Codex native session id')
     } catch (err) {
       logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] failed to persist Codex native session id')
+    }
+  }
+
+  private startWorkspaceRunDiff(run: ManagedCodingAgentRun) {
+    try {
+      startWorkspaceRunCheckpoint({
+        sessionId: run.launch.sessionId,
+        runId: run.id,
+        workspace: run.launch.workspaceDir,
+      })
+    } catch (err) {
+      logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[workspace-diff] failed to start coding agent run checkpoint')
+    }
+  }
+
+  private completeWorkspaceRunDiff(run: ManagedCodingAgentRun) {
+    try {
+      const change = completeWorkspaceRunCheckpoint({
+        sessionId: run.launch.sessionId,
+        runId: run.id,
+        workspace: run.launch.workspaceDir,
+      })
+      if (!change) return null
+      this.emitToChat(run.launch.sessionId, 'workspace.diff.completed', {
+        event: 'workspace.diff.completed',
+        run_id: run.id,
+        change_id: change.change_id,
+        change,
+      })
+      return change
+    } catch (err) {
+      logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[workspace-diff] failed to complete coding agent run checkpoint')
+      return null
     }
   }
 

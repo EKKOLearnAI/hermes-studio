@@ -106,6 +106,7 @@ vi.mock('../../packages/server/src/services/hermes/model-context', () => ({
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getActiveProfileName: getActiveProfileNameMock,
+  getActiveProfileDir: () => '/tmp/hermes-test/default',
   getProfileDir: (name: string) => `/tmp/hermes-test/${name || 'default'}`,
   listProfileNamesFromDisk: () => ['default', 'travel'],
 }))
