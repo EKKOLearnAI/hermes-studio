@@ -127,7 +127,7 @@ export function resolveHermesPath(relativePath: string, profile?: string): strin
     return homeDir
   }
   const normalized = normalize(relativePath).replace(/\\/g, '/')
-  if (normalized.startsWith('..') || normalized.includes('/../') || normalized.startsWith('/')) {
+  if ((normalized === '..' || normalized.startsWith('../')) || normalized.includes('/../')) {
     throw Object.assign(new Error('Invalid file path'), { code: 'invalid_path' })
   }
   const resolved = resolve(homeDir, normalized)
