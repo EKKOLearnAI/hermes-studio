@@ -69,7 +69,7 @@ describe('Hermes Studio CLI shim', () => {
       'C:\\resources\\webui\\bin\\hermes-web-ui.mjs',
     )
 
-    expect(content).toContain('desktop-runtime\\hermes\\0.17.0\\win-x64')
+    expect(content).toContain('desktop-runtime\\hermes\\0.18.0\\win-x64')
     expect(content).toContain('desktop-runtime\\active-version.json')
     expect(content).toContain("$j.platform -eq 'win-x64'")
     expect(content).toContain('[Console]::Out.Write($j.runtimeDirectory)')

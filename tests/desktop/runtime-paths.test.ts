@@ -130,27 +130,27 @@ describe('desktop runtime paths', () => {
 
     expect(desktopRuntimeDir()).toBe(runtimeDir)
     expect(webuiDir()).toBe(webUiDir)
-    expect(targetDesktopRuntimeDir()).toBe(join(homeDir, 'desktop-runtime', 'hermes', '0.17.0', runtimePlatformKey()))
+    expect(targetDesktopRuntimeDir()).toBe(join(homeDir, 'desktop-runtime', 'hermes', '0.18.0', runtimePlatformKey()))
   })
 
-  it('removes downloaded Web UI caches below 0.6.14 so startup falls back to the bundled Web UI', async () => {
+  it('removes downloaded Web UI caches below 0.6.23 so startup falls back to the bundled Web UI', async () => {
     const homeDir = tempDir()
     const appPath = tempDir()
-    const legacyWebUiDir = join(homeDir, 'webui', '0.6.13')
-    const currentWebUiDir = join(homeDir, 'webui', '0.6.14')
+    const legacyWebUiDir = join(homeDir, 'webui', '0.6.22')
+    const currentWebUiDir = join(homeDir, 'webui', '0.6.23')
     process.env.HERMES_WEB_UI_HOME = homeDir
     mockElectronApp.getAppPath = () => appPath
 
     const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
     mkdirSync(join(legacyWebUiDir, 'dist', 'server'), { recursive: true })
-    writeFileSync(join(legacyWebUiDir, 'package.json'), JSON.stringify({ version: '0.6.13' }))
+    writeFileSync(join(legacyWebUiDir, 'package.json'), JSON.stringify({ version: '0.6.22' }))
     writeFileSync(join(legacyWebUiDir, 'dist', 'server', 'index.js'), '')
     mkdirSync(currentWebUiDir, { recursive: true })
-    writeFileSync(join(currentWebUiDir, 'package.json'), JSON.stringify({ version: '0.6.14' }))
+    writeFileSync(join(currentWebUiDir, 'package.json'), JSON.stringify({ version: '0.6.23' }))
     mkdirSync(join(homeDir, 'desktop-runtime'), { recursive: true })
     writeFileSync(join(homeDir, 'desktop-runtime', 'active-version.json'), JSON.stringify({
       schema: 1,
-      webUiVersion: '0.6.13',
+      webUiVersion: '0.6.22',
       webUiDirectory: legacyWebUiDir,
       platform: runtimePlatformKey(),
     }))
@@ -220,7 +220,7 @@ describe('desktop runtime paths', () => {
 
     const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
     const runtimeDir = join(homeDir, 'desktop-runtime', 'hermes', '0.15.2', runtimePlatformKey())
-    const targetRuntimeDir = join(homeDir, 'desktop-runtime', 'hermes', '0.17.0', runtimePlatformKey())
+    const targetRuntimeDir = join(homeDir, 'desktop-runtime', 'hermes', '0.18.0', runtimePlatformKey())
     createRuntimeWithoutManifest(runtimeDir)
 
     const { desktopRuntimeDir, targetDesktopRuntimeDir } = await import('../../packages/desktop/src/main/paths')

@@ -90,7 +90,7 @@ export function createShimContent(
   executablePath: string,
   platform: NodeJS.Platform = process.platform,
   archName: string = process.arch,
-  runtimeVersion = '0.17.0',
+  runtimeVersion = '0.18.0',
   nodePath = process.execPath,
   webUiScriptPath = resolve(process.cwd(), 'bin', 'hermes-web-ui.mjs'),
 ): string {

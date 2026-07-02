@@ -34,11 +34,19 @@ const sitePkgs = process.env.HERMES_AGENT_SITE_PACKAGES ?? (
       })()
 )
 
-const dtPath = join(sitePkgs, 'gateway', 'platforms', 'dingtalk.py')
+const dingtalkPatchCandidates = [
+  // hermes-agent 0.18.0+ bundles optional messaging adapters as platform plugins.
+  join(sitePkgs, 'plugins', 'platforms', 'dingtalk', 'adapter.py'),
+  // hermes-agent 0.17.x kept DingTalk under gateway/platforms.
+  join(sitePkgs, 'gateway', 'platforms', 'dingtalk.py'),
+]
+const dtPath = dingtalkPatchCandidates.find(path => existsSync(path))
 const browserToolPath = join(sitePkgs, 'tools', 'browser_tool.py')
 const sitecustomizePath = join(sitePkgs, 'sitecustomize.py')
-if (!existsSync(dtPath)) {
-  console.error(`dingtalk.py not found at ${dtPath} — is hermes-agent installed?`)
+if (!dtPath) {
+  console.error(
+    `DingTalk adapter not found. Checked:\n${dingtalkPatchCandidates.map(path => `  - ${path}`).join('\n')}`,
+  )
   process.exit(1)
 }
 

@@ -410,6 +410,8 @@ for (const phrase of [
   'browser stdout decode fallback is incomplete',
   'def _hermes_read_browser_output',
   'dingtalk AI Card webhook patches are incomplete',
+  "plugins', 'platforms', 'dingtalk', 'adapter.py",
+  "gateway', 'platforms', 'dingtalk.py",
   'sitecustomize hidden subprocess patch marker exists',
   'python compile check',
 ]) {
