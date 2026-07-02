@@ -111,6 +111,7 @@ interface ManagedCodingAgentRun {
   stoppedByUser?: boolean
   pendingChatCompletionEvent?: 'run.completed' | 'run.failed'
   pendingChatCompletionPayload?: Record<string, unknown>
+  memoryExportStarted?: boolean
 }
 
 interface CodingAgentRunSendOptions {
@@ -805,6 +806,7 @@ export class CodingAgentRunManager {
     run.printToolBlocks = new Map()
     run.currentChildStderr = ''
     run.runMarker = undefined
+    run.memoryExportStarted = false
 
     this.handleClaudePrintResponseEvent(run, {
       type: 'response.created',
@@ -1249,6 +1251,7 @@ export class CodingAgentRunManager {
     run.codexPendingUsage = undefined
     run.currentChildStderr = ''
     run.runMarker = undefined
+    run.memoryExportStarted = false
 
     this.handleClaudePrintResponseEvent(run, {
       type: 'response.created',
@@ -1739,7 +1742,72 @@ export class CodingAgentRunManager {
     run.state.activeRunMarker = undefined
     run.state.events = []
     this.markChatRunCompleted(run.launch.sessionId, event)
+    if (event === 'run.completed') this.startCodingAgentMemoryExport(run)
     run.runMarker = undefined
+  }
+
+  private startCodingAgentMemoryExport(run: ManagedCodingAgentRun) {
+    if (run.memoryExportStarted) return
+    const agentId = run.launch.agentId
+    const source = agentId === 'codex' ? 'codex' : agentId === 'claude-code' ? 'claude-code' : ''
+    if (!source) return
+    const nativeSessionId = String(run.launch.agentNativeSessionId || '').trim()
+    if (!nativeSessionId) {
+      logger.debug({ runId: run.id, sessionId: run.launch.sessionId, agentId }, '[coding-agent-run] memory export skipped: missing native session id')
+      return
+    }
+    run.memoryExportStarted = true
+
+    const args = ['threads', 'save', '--from', source, '--truncate', '--session-id', nativeSessionId]
+    const env: NodeJS.ProcessEnv = { ...process.env }
+    if (source === 'codex') {
+      const codexHome = run.launch.env?.CODEX_HOME || process.env.CODEX_HOME
+      if (codexHome) env.CODEX_HOME = codexHome
+    }
+
+    let child: ChildProcess
+    try {
+      child = spawnCodingAgentChild('nmem', args, {
+        cwd: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
+        env,
+      })
+    } catch (err) {
+      logger.debug({ err, runId: run.id, sessionId: run.launch.sessionId, agentId, nativeSessionId }, '[coding-agent-run] memory export failed to start')
+      return
+    }
+
+    let stdout = ''
+    let stderr = ''
+    const timeout = setTimeout(() => {
+      try { child.kill() } catch {}
+    }, 60_000)
+    timeout.unref?.()
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout = `${stdout}${chunk.toString('utf8')}`.slice(-4000)
+    })
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr = `${stderr}${chunk.toString('utf8')}`.slice(-4000)
+    })
+    child.on('error', (err) => {
+      clearTimeout(timeout)
+      logger.debug({ err, runId: run.id, sessionId: run.launch.sessionId, agentId, nativeSessionId }, '[coding-agent-run] memory export process error')
+    })
+    child.on('exit', (code) => {
+      clearTimeout(timeout)
+      if (code === 0) {
+        logger.info({ runId: run.id, sessionId: run.launch.sessionId, agentId, nativeSessionId }, '[coding-agent-run] memory export completed')
+      } else {
+        logger.debug({
+          runId: run.id,
+          sessionId: run.launch.sessionId,
+          agentId,
+          nativeSessionId,
+          code,
+          stdout: stdout.slice(0, 1000),
+          stderr: stderr.slice(0, 1000),
+        }, '[coding-agent-run] memory export failed')
+      }
+    })
   }
 
   private codexNativeSessionIdFrom(value: any): string {
