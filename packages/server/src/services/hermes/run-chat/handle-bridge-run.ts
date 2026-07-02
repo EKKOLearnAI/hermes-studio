@@ -117,9 +117,18 @@ function shouldPollBridgeGeneratedTitle(sessionId: string): boolean {
 }
 
 function looksLikeAgentFailure(value: string): boolean {
-  return /\bAPI call failed after\b/i.test(value)
-    || /\bHTTP\s+(?:4\d\d|5\d\d)\b/i.test(value)
-    || /\b(?:401|403|429|500|502|503|504)\b/.test(value) && /\b(?:unauthorized|forbidden|rate limit|unavailable|failed|error)\b/i.test(value)
+  const text = value.replace(/\s+/g, ' ').trim()
+  if (!text) return false
+
+  return /\bAPI call failed after\b/i.test(text)
+    || /\bHTTP\s+(?:4\d\d|5\d\d)\b/i.test(text)
+    || /\b(?:401|403)\b.{0,100}\b(?:unauthorized|forbidden|authentication|auth|invalid api key|permission denied)\b/i.test(text)
+    || /\b(?:unauthorized|forbidden|authentication|auth|invalid api key|permission denied)\b.{0,100}\b(?:401|403)\b/i.test(text)
+    || /\b429\b.{0,100}\b(?:rate limit|too many requests|quota)\b/i.test(text)
+    || /\b(?:rate limit|too many requests|quota)\b.{0,100}\b429\b/i.test(text)
+    || /\b(?:500|502|503|504)\b.{0,100}\b(?:server error|bad gateway|service unavailable|gateway timeout|upstream|provider|request failed|api)\b/i.test(text)
+    || /\b(?:server error|bad gateway|service unavailable|gateway timeout|upstream|provider|request failed|api)\b.{0,100}\b(?:500|502|503|504)\b/i.test(text)
+    || /(?:无可用渠道|渠道不可用|认证失败|鉴权失败|额度不足|余额不足|请求失败|接口调用失败|限流)/i.test(text)
 }
 
 export function bridgeTerminalError(chunk: Pick<AgentBridgeOutput, 'status' | 'error' | 'result'>): string | null {
@@ -129,19 +138,20 @@ export function bridgeTerminalError(chunk: Pick<AgentBridgeOutput, 'status' | 'e
   const resultError = result
     ? stringValue(result.error)
       || stringValue(result.exception)
-      || stringValue(result.message)
     : ''
+  const resultMessage = result ? stringValue(result.message) : ''
   const finalResponse = result ? stringValue(result.final_response) : ''
 
   if (chunk.status === 'error') {
-    return stringValue(chunk.error) || resultError || finalResponse || 'Agent run failed'
+    return stringValue(chunk.error) || resultError || resultMessage || finalResponse || 'Agent run failed'
   }
 
   if (result?.failed === true || result?.completed === false) {
-    return resultError || finalResponse || 'Agent reported failure'
+    return resultError || resultMessage || finalResponse || 'Agent reported failure'
   }
 
-  if (resultError) return resultError
+  if (resultError && looksLikeAgentFailure(resultError)) return resultError
+  if (!finalResponse && resultMessage && looksLikeAgentFailure(resultMessage)) return resultMessage
   if (finalResponse && looksLikeAgentFailure(finalResponse)) return finalResponse
 
   return null
