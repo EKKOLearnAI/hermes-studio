@@ -73,10 +73,17 @@ npm run build
 
 - Branch from `main` for new work.
 - Use short, descriptive branch names such as `codex/fix-login-token` or `feat/group-chat-copy`.
+- Before editing, run `npm run agent:git:start`. Resolve any reported dirty or
+  unpushed starting state instead of building on top of it.
 - Commit only files that belong to the change.
 - Use concise commit messages that describe the change, for example `fix login token storage` or `add group chat clone naming`.
 - Keep commits focused. Do not bundle unrelated cleanup with feature work unless the cleanup is required.
 - Push the branch and open a PR against `main` unless the issue explicitly targets another base.
+- Agent work is not complete until `npm run agent:git:finish` confirms that the
+  working tree is clean and the branch is fully pushed to its upstream.
+- Never push directly to `main` or `master`, and never force-push. The repository
+  hook blocks these operations when `core.hooksPath` is configured as described
+  below.
 - Prefer draft PRs while validation is still running or when the change needs review before merge.
 - Mark a PR ready only after the relevant tests and build pass.
 - Keep PR titles concrete and scoped, for example `[codex] make Web UI state directory configurable`.
@@ -88,6 +95,12 @@ npm run build
   - validation commands run
   - known limitations or follow-up work, if any
 - Do not overwrite or revert unrelated user changes.
+
+Enable the repository-managed Git hooks once per checkout:
+
+```bash
+git config core.hooksPath .githooks
+```
 
 Use this PR body shape by default:
 
