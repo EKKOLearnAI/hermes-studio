@@ -798,8 +798,11 @@ export default {
   plugins: {
     title: '플러그인',
     refresh: '새로고침',
-    notice: '탐색 가능한 Hermes 플러그인 manifest의 읽기 전용 인벤토리입니다. 탐색 메타데이터는 플러그인 코드를 로드하지 않고 읽습니다. v1의 관리 작업은 CLI에 유지되며, 변경 사항은 새 Hermes 세션에서 적용됩니다.',
+    notice: '탐색 가능한 Hermes 플러그인 manifest 인벤토리입니다. 탐색 메타데이터는 플러그인 코드를 로드하지 않고 읽습니다. standalone 사용자 플러그인은 여기에서 활성화하거나 비활성화할 수 있으며, 변경 사항은 새 Hermes 세션에서 적용됩니다.',
     loadFailed: '플러그인을 불러오지 못했습니다',
+    updateFailed: '플러그인을 업데이트하지 못했습니다',
+    enableSuccess: '{name} 활성화됨',
+    disableSuccess: '{name} 비활성화됨',
     commandCopied: '명령을 복사했습니다',
     searchPlaceholder: 'key, 이름, 설명, 경로 검색...',
     source: '소스',
@@ -847,7 +850,7 @@ export default {
       kind: '종류',
       capabilities: '기능',
       path: '경로 / entrypoint',
-      cli: 'CLI',
+      manage: '관리',
     },
     capabilities: {
       tools: '{count} tools',

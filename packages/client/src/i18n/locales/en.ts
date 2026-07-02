@@ -1054,8 +1054,11 @@ export default {
   plugins: {
     title: 'Plugins',
     refresh: 'Refresh',
-    notice: 'Read-only inventory of discoverable Hermes plugin manifests. Discovery metadata is read without loading plugin code. Management actions stay in CLI for v1; changes take effect in new Hermes sessions.',
+    notice: 'Inventory of discoverable Hermes plugin manifests. Discovery metadata is read without loading plugin code. Standalone user plugins can be enabled or disabled here; changes take effect in new Hermes sessions.',
     loadFailed: 'Failed to load plugins',
+    updateFailed: 'Failed to update plugin',
+    enableSuccess: 'Enabled {name}',
+    disableSuccess: 'Disabled {name}',
     commandCopied: 'Command copied',
     searchPlaceholder: 'Search key, name, description, path...',
     source: 'Source',
@@ -1103,7 +1106,7 @@ export default {
       kind: 'Kind',
       capabilities: 'Capabilities',
       path: 'Path / entrypoint',
-      cli: 'CLI',
+      manage: 'Manage',
     },
     capabilities: {
       tools: '{count} tools',

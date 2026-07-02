@@ -1,7 +1,9 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { getActiveProfileDir, getProfileDir } from './hermes-profile'
+import { join } from 'path'
+import { getActiveProfileDir, getHermesBaseDir, getProfileDir } from './hermes-profile'
 import { resolveAgentBridgeCommand } from './agent-bridge/manager'
+import { safeFileStore } from '../safe-file-store'
 
 const execFileAsync = promisify(execFile)
 
@@ -37,6 +39,11 @@ export interface HermesPluginsResponse {
   plugins: HermesPluginInfo[]
   warnings: string[]
   metadata: HermesPluginsMetadata
+}
+
+export interface HermesPluginMutationResult {
+  key: string
+  enabled: boolean
 }
 
 const PYTHON_BRIDGE = String.raw`
@@ -116,6 +123,55 @@ def manifest_list(manifest, attr, *manifest_keys):
         return value
     return read_manifest_list(getattr(manifest, "path", ""), *manifest_keys)
 
+
+def read_config_file(home):
+    if not home:
+        return {}
+    try:
+        import yaml
+        path = Path(home) / "config.yaml"
+        if not path.exists():
+            return {}
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        warnings.append(f"plugin config at {home}: {exc}")
+        return {}
+
+
+def config_plugins_list(config, key):
+    plugins = config.get("plugins")
+    if not isinstance(plugins, dict):
+        return None
+    value = plugins.get(key)
+    return set(value) if isinstance(value, list) else None
+
+
+def merged_plugin_config():
+    homes = []
+    for home in (
+        os.environ.get("HERMES_AGENT_BASE_HOME", ""),
+        os.environ.get("HERMES_HOME", ""),
+        str(get_hermes_home()),
+    ):
+        if home and home not in homes:
+            homes.append(home)
+
+    disabled = set()
+    enabled = set()
+    saw_enabled_key = False
+    for home in homes:
+        config = read_config_file(home)
+        enabled_value = config_plugins_list(config, "enabled")
+        if enabled_value is not None:
+            saw_enabled_key = True
+            enabled.update(enabled_value)
+            disabled.difference_update(enabled_value)
+        disabled_value = config_plugins_list(config, "disabled")
+        if disabled_value is not None:
+            disabled.update(disabled_value)
+            enabled.difference_update(disabled_value)
+    return disabled, (enabled if saw_enabled_key else None)
+
 manager = PluginManager()
 manifests = []
 
@@ -157,8 +213,7 @@ for manifest in manifests:
     key = manifest.key or manifest.name
     winners[key] = manifest
 
-disabled = _get_disabled_plugins()
-enabled = _get_enabled_plugins()
+disabled, enabled = merged_plugin_config()
 enabled_set = enabled if enabled is not None else set()
 
 plugins = []
@@ -223,9 +278,11 @@ export async function listHermesPlugins(profile?: string): Promise<HermesPlugins
   const command = resolveAgentBridgeCommand()
   const agentRoot = command.agentRoot || ''
   const hermesHome = profile ? getProfileDir(profile) : getActiveProfileDir()
+  const hermesBaseHome = getHermesBaseDir()
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HERMES_AGENT_ROOT_RESOLVED: agentRoot,
+    HERMES_AGENT_BASE_HOME: hermesBaseHome,
     HERMES_HOME: hermesHome,
   }
   if (!agentRoot) {
@@ -267,4 +324,60 @@ export async function listHermesPlugins(profile?: string): Promise<HermesPlugins
   }
 
   throw new Error(`Failed to discover Hermes plugins.\n${errors.join('\n')}`)
+}
+
+function configPathForProfile(profile?: string): string {
+  return join(profile ? getProfileDir(profile) : getActiveProfileDir(), 'config.yaml')
+}
+
+function uniqueSorted(values: Iterable<string>): string[] {
+  return Array.from(new Set(Array.from(values).map(value => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b))
+}
+
+function isManageablePlugin(plugin: HermesPluginInfo): boolean {
+  return plugin.kind === 'standalone' && plugin.source !== 'bundled'
+}
+
+function pluginAliases(plugin: HermesPluginInfo, requestedKey: string): string[] {
+  return uniqueSorted([requestedKey, plugin.key, plugin.name])
+}
+
+export async function setHermesPluginEnabled(profile: string | undefined, key: string, enabled: boolean): Promise<HermesPluginMutationResult> {
+  const pluginKey = String(key || '').trim()
+  if (!pluginKey) throw new Error('Plugin key is required')
+
+  const inventory = await listHermesPlugins(profile)
+  const plugin = inventory.plugins.find(item => item.key === pluginKey || item.name === pluginKey)
+  if (!plugin) throw new Error(`Plugin not found: ${pluginKey}`)
+  if (!isManageablePlugin(plugin)) {
+    throw new Error(`Plugin cannot be managed from Studio: ${plugin.key}`)
+  }
+
+  const aliases = pluginAliases(plugin, pluginKey)
+  await safeFileStore.updateYaml(configPathForProfile(profile), (config) => {
+    const plugins = config.plugins && typeof config.plugins === 'object' && !Array.isArray(config.plugins)
+      ? config.plugins
+      : {}
+    const currentEnabled: string[] = Array.isArray(plugins.enabled) ? plugins.enabled.map(String) : []
+    const currentDisabled: string[] = Array.isArray(plugins.disabled) ? plugins.disabled.map(String) : []
+    const aliasSet = new Set(aliases)
+
+    if (enabled) {
+      plugins.enabled = uniqueSorted([...currentEnabled.filter(value => !aliasSet.has(value)), plugin.key])
+      plugins.disabled = uniqueSorted(currentDisabled.filter(value => !aliasSet.has(value)))
+    } else {
+      plugins.enabled = uniqueSorted(currentEnabled.filter(value => !aliasSet.has(value)))
+      plugins.disabled = uniqueSorted([...currentDisabled.filter(value => !aliasSet.has(value)), plugin.key])
+    }
+
+    config.plugins = plugins
+    return config
+  }, {
+    backup: true,
+    dumpOptions: {
+      forceQuotes: true,
+    },
+  })
+
+  return { key: plugin.key, enabled }
 }

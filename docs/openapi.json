@@ -7412,6 +7412,78 @@
         }
       }
     },
+    "/api/hermes/plugins/{key}/disable": {
+      "post": {
+        "tags": [
+          "Plugins"
+        ],
+        "summary": "Create disable",
+        "description": "POST /api/hermes/plugins/:key/disable",
+        "operationId": "disable",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/plugins/{key}/enable": {
+      "post": {
+        "tags": [
+          "Plugins"
+        ],
+        "summary": "Create enable",
+        "description": "POST /api/hermes/plugins/:key/enable",
+        "operationId": "enable",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/profiles": {
       "get": {
         "tags": [

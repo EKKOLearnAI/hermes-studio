@@ -2,9 +2,8 @@
 import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NEmpty, NInput, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import { fetchPlugins, type HermesPluginInfo, type HermesPluginsMetadata } from '@/api/hermes/plugins'
+import { fetchPlugins, setPluginEnabled, type HermesPluginInfo, type HermesPluginsMetadata } from '@/api/hermes/plugins'
 import { useProfilesStore } from '@/stores/hermes/profiles'
-import { copyToClipboard } from '@/utils/clipboard'
 
 const { t, te } = useI18n()
 const message = useMessage()
@@ -15,6 +14,7 @@ const warnings = ref<string[]>([])
 const metadata = ref<HermesPluginsMetadata | null>(null)
 const loading = ref(false)
 const error = ref('')
+const actionLoading = ref<Record<string, boolean>>({})
 
 const searchQuery = ref('')
 const sourceFilter = ref<string | null>(null)
@@ -99,25 +99,26 @@ function statusTagType(plugin: HermesPluginInfo): 'success' | 'warning' | 'error
   }
 }
 
-function pluginCommand(plugin: HermesPluginInfo) {
-  const escapedKey = plugin.key.replace(/'/g, `'\\''`)
-  if (plugin.effectiveStatus === 'disabled' || plugin.effectiveStatus === 'inactive') {
-    return `hermes plugins enable '${escapedKey}'`
-  }
-  if (plugin.effectiveStatus === 'enabled') {
-    return `hermes plugins disable '${escapedKey}'`
-  }
-  return ''
+function canManagePlugin(plugin: HermesPluginInfo) {
+  return plugin.kind === 'standalone' && plugin.source !== 'bundled'
 }
 
-async function copyCommand(plugin: HermesPluginInfo) {
-  const command = pluginCommand(plugin)
-  if (!command) return
-  const copied = await copyToClipboard(command)
-  if (copied) {
-    message.success(t('plugins.commandCopied'))
-  } else {
-    message.error(t('chat.copyFailed'))
+function pluginIsEnabled(plugin: HermesPluginInfo) {
+  return plugin.effectiveStatus === 'enabled'
+}
+
+async function updatePlugin(plugin: HermesPluginInfo, enabled: boolean) {
+  actionLoading.value = { ...actionLoading.value, [plugin.key]: true }
+  try {
+    await setPluginEnabled(plugin.key, enabled)
+    message.success(t(enabled ? 'plugins.enableSuccess' : 'plugins.disableSuccess', { name: plugin.key }))
+    await loadPlugins()
+  } catch (err: any) {
+    message.error(err?.message || t('plugins.updateFailed'))
+  } finally {
+    const next = { ...actionLoading.value }
+    delete next[plugin.key]
+    actionLoading.value = next
   }
 }
 
@@ -195,7 +196,7 @@ watch(() => profilesStore.activeProfileName || 'default', () => {
                 <th>{{ t('plugins.table.kind') }}</th>
                 <th>{{ t('plugins.table.capabilities') }}</th>
                 <th>{{ t('plugins.table.path') }}</th>
-                <th>{{ t('plugins.table.cli') }}</th>
+                <th>{{ t('plugins.table.manage') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -226,8 +227,15 @@ watch(() => profilesStore.activeProfileName || 'default', () => {
                 </td>
                 <td><code class="path-cell">{{ plugin.path || t('plugins.notAvailable') }}</code></td>
                 <td>
-                  <NButton v-if="pluginCommand(plugin)" size="tiny" secondary @click="copyCommand(plugin)">
-                    {{ t('plugins.copyCommand') }}
+                  <NButton
+                    v-if="canManagePlugin(plugin)"
+                    size="tiny"
+                    secondary
+                    :type="pluginIsEnabled(plugin) ? 'warning' : 'primary'"
+                    :loading="!!actionLoading[plugin.key]"
+                    @click="updatePlugin(plugin, !pluginIsEnabled(plugin))"
+                  >
+                    {{ pluginIsEnabled(plugin) ? t('common.disable') : t('common.enable') }}
                   </NButton>
                   <span v-else class="muted">{{ t('plugins.managedElsewhere') }}</span>
                 </td>

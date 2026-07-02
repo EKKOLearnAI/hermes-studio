@@ -1054,8 +1054,11 @@ export default {
   plugins: {
     title: '插件',
     refresh: '重新整理',
-    notice: '唯讀顯示可發現的 Hermes 插件 manifest。發現元資料讀取不會載入插件程式碼。v1 管理動作仍保留在 CLI，新 Hermes 工作階段生效。',
+    notice: '顯示可發現的 Hermes 插件 manifest。發現元資料讀取不會載入插件程式碼。可在此啟用或停用 standalone 使用者插件，新 Hermes 工作階段生效。',
     loadFailed: '載入插件失敗',
+    updateFailed: '更新插件失敗',
+    enableSuccess: '已啟用 {name}',
+    disableSuccess: '已停用 {name}',
     commandCopied: '指令已複製',
     searchPlaceholder: '搜尋 key、名稱、描述、路徑...',
     source: '來源',
@@ -1103,7 +1106,7 @@ export default {
       kind: '類型',
       capabilities: '能力',
       path: '路徑 / 入口',
-      cli: 'CLI',
+      manage: '管理',
     },
     capabilities: {
       tools: '{count} 個工具',

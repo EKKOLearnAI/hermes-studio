@@ -798,8 +798,11 @@ export default {
   plugins: {
     title: 'プラグイン',
     refresh: '更新',
-    notice: '検出可能な Hermes プラグイン manifest の読み取り専用インベントリです。検出メタデータはプラグインコードを読み込まずに取得します。v1 の管理操作は CLI のままで、変更は新しい Hermes セッションで有効になります。',
+    notice: '検出可能な Hermes プラグイン manifest のインベントリです。検出メタデータはプラグインコードを読み込まずに取得します。standalone ユーザープラグインはここで有効化または無効化でき、変更は新しい Hermes セッションで有効になります。',
     loadFailed: 'プラグインの読み込みに失敗しました',
+    updateFailed: 'プラグインの更新に失敗しました',
+    enableSuccess: '{name} を有効化しました',
+    disableSuccess: '{name} を無効化しました',
     commandCopied: 'コマンドをコピーしました',
     searchPlaceholder: 'key、名前、説明、パスを検索...',
     source: 'ソース',
@@ -847,7 +850,7 @@ export default {
       kind: '種類',
       capabilities: '機能',
       path: 'パス / entrypoint',
-      cli: 'CLI',
+      manage: '管理',
     },
     capabilities: {
       tools: '{count} tools',
