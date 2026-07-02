@@ -2426,6 +2426,10 @@ async function handleSessionModelCustomSubmit() {
     display: none;
   }
 
+  .header-session-title {
+    display: none;
+  }
+
 }
 
 .workspace-badge {

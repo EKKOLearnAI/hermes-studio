@@ -1584,5 +1584,9 @@ export default defineComponent({ components: { CreateRoomForm } })
         display: none;
     }
 
+    .room-title-text {
+        display: none;
+    }
+
 }
 </style>

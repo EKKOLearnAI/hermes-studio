@@ -66,6 +66,15 @@ describe('highlight helper', () => {
     expect(html).not.toContain('onclick=')
   })
 
+  it('can render code blocks without a copy button', () => {
+    const html = renderHighlightedCodeBlock('x', 'json', 'Copy', {
+      showCopyButton: false,
+    })
+
+    expect(html).not.toContain('data-copy-code="true"')
+    expect(html).not.toContain('copy-btn')
+  })
+
 
   it('infers patch-style raw payloads as diff', () => {
     expect(inferStructuredLanguage([

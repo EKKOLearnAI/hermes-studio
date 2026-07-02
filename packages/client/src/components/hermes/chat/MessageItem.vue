@@ -510,10 +510,11 @@ function formatToolPayload(raw?: unknown, extractDiff = false): ToolPayload {
   };
 }
 
-function renderToolPayload(content: string, language?: string): string {
+function renderToolPayload(content: string, language?: string, options: { showCopyButton?: boolean } = {}): string {
   return renderHighlightedCodeBlock(content, language, t("common.copy"), {
     maxHighlightLength: TOOL_PAYLOAD_DISPLAY_LIMIT,
     formatDiffFoldLabel: (hiddenCount) => t("chat.unchangedLines", { count: hiddenCount }),
+    showCopyButton: options.showCopyButton,
   });
 }
 
@@ -581,7 +582,9 @@ const renderedToolResult = computed(() => {
 
 const renderedToolChangePatch = computed(() => {
   if (!selectedToolChangePatch.value) return "";
-  return renderToolPayload(selectedToolChangePatch.value, "diff");
+  return renderToolPayload(selectedToolChangePatch.value, "diff", {
+    showCopyButton: false,
+  });
 });
 
 function fileNameFromPath(path: string): string {
@@ -1221,6 +1224,8 @@ onBeforeUnmount(() => {
     @update:show="value => { if (!value) closeToolChangeDrawer(); else toolChangeDrawerVisible = value }"
   >
     <NDrawerContent
+      header-class="tool-change-drawer-header"
+      body-content-class="tool-change-drawer-body-content"
       :title="selectedToolChangeFileName || t('chat.workspaceChanges')"
       closable
     >
@@ -2031,6 +2036,7 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   font-family: $font-code;
   font-size: 11px;
+  margin-top: 10px;
   overflow: hidden;
   padding: 0 0 10px;
   text-overflow: ellipsis;
@@ -2161,6 +2167,16 @@ onBeforeUnmount(() => {
   .tool-change-standalone {
     min-width: 0;
     width: calc(100vw - 24px);
+  }
+
+  :global(.tool-change-drawer-header) {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+
+  :global(.tool-change-drawer-body-content) {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
   }
 }
 </style>

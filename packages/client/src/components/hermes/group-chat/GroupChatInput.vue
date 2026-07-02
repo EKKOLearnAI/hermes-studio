@@ -482,7 +482,7 @@ function isImage(type: string): boolean {
             />
             <div class="input-toolbar">
                 <div class="input-top-bar">
-                    <NTooltip trigger="hover">
+                    <NTooltip trigger="hover" :disabled="isMobileViewport">
                         <template #trigger>
                             <NButton quaternary size="tiny" circle class="toolbar-icon-button" @click="handleAttachClick">
                                 <template #icon>
@@ -498,7 +498,7 @@ function isImage(type: string): boolean {
                         :show-arrow="true"
                         @select="handleInputSettingsSelect"
                     >
-                        <NTooltip trigger="hover">
+                        <NTooltip trigger="hover" :disabled="isMobileViewport">
                             <template #trigger>
                                 <NButton quaternary size="tiny" class="input-settings-button" :aria-label="t('sidebar.settings')">
                                     <template #icon>
