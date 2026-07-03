@@ -370,6 +370,54 @@ describe('session conversations controller', () => {
     }
   })
 
+  it('lists dot-prefixed workspace folders under WORKSPACE_BASE', async () => {
+    const originalWorkspaceBase = process.env.WORKSPACE_BASE
+    const workspaceBase = await mkdtemp(join(tmpdir(), 'hermes-workspace-dot-picker-'))
+
+    try {
+      const hermesDir = join(workspaceBase, '.hermes')
+      const codexDir = join(workspaceBase, '.codex')
+      const hiddenChildDir = join(hermesDir, '.plugins')
+      const visibleChildDir = join(hermesDir, 'workspace')
+
+      await mkdir(hiddenChildDir, { recursive: true })
+      await mkdir(visibleChildDir, { recursive: true })
+      await mkdir(codexDir, { recursive: true })
+      process.env.WORKSPACE_BASE = workspaceBase
+
+      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const rootCtx: any = { query: {}, body: null }
+      await mod.listWorkspaceFolders(rootCtx)
+
+      expect(rootCtx.status).toBeUndefined()
+      expect(rootCtx.body).toEqual({
+        base: workspaceBase,
+        current: '',
+        folders: [
+          { name: '.codex', path: '.codex', fullPath: codexDir },
+          { name: '.hermes', path: '.hermes', fullPath: hermesDir },
+        ],
+      })
+
+      const nestedCtx: any = { query: { path: '.hermes' }, body: null }
+      await mod.listWorkspaceFolders(nestedCtx)
+
+      expect(nestedCtx.status).toBeUndefined()
+      expect(nestedCtx.body).toEqual({
+        base: workspaceBase,
+        current: '.hermes',
+        folders: [
+          { name: '.plugins', path: '.hermes/.plugins', fullPath: hiddenChildDir },
+          { name: 'workspace', path: '.hermes/workspace', fullPath: visibleChildDir },
+        ],
+      })
+    } finally {
+      if (originalWorkspaceBase === undefined) delete process.env.WORKSPACE_BASE
+      else process.env.WORKSPACE_BASE = originalWorkspaceBase
+      await rm(workspaceBase, { recursive: true, force: true })
+    }
+  })
+
   it('blocks workspace folder mutations through symlinked ancestors that escape WORKSPACE_BASE', async () => {
     const originalWorkspaceBase = process.env.WORKSPACE_BASE
     const workspaceBase = await mkdtemp(join(tmpdir(), 'hermes-workspace-mutation-'))
