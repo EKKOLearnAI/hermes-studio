@@ -117,4 +117,89 @@ describe('workspace diff tracker', () => {
       secondChange!.change_id,
     ]))
   })
+
+  it('records added, modified, and deleted files in non-git workspaces', async () => {
+    const {
+      completeWorkspaceRunCheckpoint,
+      startWorkspaceRunCheckpoint,
+    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+
+    const workspace = join(root, 'plain-workspace')
+    mkdirSync(workspace)
+    writeFileSync(join(workspace, 'deleted.txt'), 'remove me\n')
+    writeFileSync(join(workspace, 'old.txt'), 'old\n')
+    writeFileSync(join(workspace, 'unchanged.txt'), 'same\n')
+
+    startWorkspaceRunCheckpoint({
+      sessionId: 'session-plain',
+      runId: 'run-plain',
+      workspace,
+    })
+
+    rmSync(join(workspace, 'deleted.txt'))
+    writeFileSync(join(workspace, 'added.txt'), 'added\n')
+    writeFileSync(join(workspace, 'old.txt'), 'new\n')
+    const change = completeWorkspaceRunCheckpoint({
+      sessionId: 'session-plain',
+      runId: 'run-plain',
+      workspace,
+    })
+
+    expect(change).not.toBeNull()
+    expect(change?.workspace_kind).toBe('filesystem')
+    expect(change?.files.map(file => file.path)).toEqual(['added.txt', 'deleted.txt', 'old.txt'])
+    expect(change?.files.map(file => [file.path, file.change_type])).toEqual([
+      ['added.txt', 'added'],
+      ['deleted.txt', 'deleted'],
+      ['old.txt', 'modified'],
+    ])
+
+    const { getWorkspaceRunChangeFile } = await import('../../packages/server/src/db/hermes/workspace-run-changes-store')
+    const modified = change!.files.find(file => file.path === 'old.txt')!
+    const detail = getWorkspaceRunChangeFile('session-plain', change!.change_id, modified.id)
+    expect(detail?.patch).toContain('-old')
+    expect(detail?.patch).toContain('+new')
+  })
+
+  it('skips common language dependency and build directories in non-git workspaces', async () => {
+    const {
+      completeWorkspaceRunCheckpoint,
+      startWorkspaceRunCheckpoint,
+    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+
+    const workspace = join(root, 'plain-with-language-artifacts')
+    mkdirSync(join(workspace, 'src'), { recursive: true })
+    mkdirSync(join(workspace, 'node_modules'), { recursive: true })
+    mkdirSync(join(workspace, '__pycache__'), { recursive: true })
+    mkdirSync(join(workspace, 'target'), { recursive: true })
+    mkdirSync(join(workspace, 'vendor'), { recursive: true })
+    mkdirSync(join(workspace, '.terraform'), { recursive: true })
+    writeFileSync(join(workspace, 'src', 'app.py'), 'old\n')
+    writeFileSync(join(workspace, 'node_modules', 'ignored.js'), 'before\n')
+    writeFileSync(join(workspace, '__pycache__', 'ignored.pyc'), 'before\n')
+    writeFileSync(join(workspace, 'target', 'ignored.class'), 'before\n')
+    writeFileSync(join(workspace, 'vendor', 'ignored.php'), 'before\n')
+    writeFileSync(join(workspace, '.terraform', 'ignored.tfstate'), 'before\n')
+
+    startWorkspaceRunCheckpoint({
+      sessionId: 'session-ignore',
+      runId: 'run-ignore',
+      workspace,
+    })
+
+    writeFileSync(join(workspace, 'src', 'app.py'), 'new\n')
+    writeFileSync(join(workspace, 'node_modules', 'ignored.js'), 'after\n')
+    writeFileSync(join(workspace, '__pycache__', 'ignored.pyc'), 'after\n')
+    writeFileSync(join(workspace, 'target', 'ignored.class'), 'after\n')
+    writeFileSync(join(workspace, 'vendor', 'ignored.php'), 'after\n')
+    writeFileSync(join(workspace, '.terraform', 'ignored.tfstate'), 'after\n')
+    const change = completeWorkspaceRunCheckpoint({
+      sessionId: 'session-ignore',
+      runId: 'run-ignore',
+      workspace,
+    })
+
+    expect(change).not.toBeNull()
+    expect(change?.files.map(file => file.path)).toEqual(['src/app.py'])
+  })
 })

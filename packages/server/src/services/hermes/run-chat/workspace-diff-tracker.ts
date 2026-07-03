@@ -1,16 +1,156 @@
 import { execFileSync } from 'child_process'
 import { randomUUID } from 'crypto'
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { basename, join, relative, resolve, sep } from 'path'
+import { basename, extname, join, relative, resolve, sep } from 'path'
 import { logger } from '../../logger'
 import { saveWorkspaceRunChange, type WorkspaceRunChangeSummary } from '../../../db/hermes/workspace-run-changes-store'
 
 const MAX_TRACKED_STATUS_PATHS = 20_000
 const MAX_CHANGED_FILES = 80
 const MAX_SNAPSHOT_BYTES = 512 * 1024
+const MAX_TOTAL_SNAPSHOT_BYTES = 64 * 1024 * 1024
 const MAX_PATCH_BYTES_PER_FILE = 256 * 1024
 const MAX_TOTAL_PATCH_BYTES = 1024 * 1024
+const MAX_SCAN_DIRS = 5_000
+const MAX_SCAN_DEPTH = 16
+const MAX_SCAN_MS = 1_000
+
+const DEFAULT_IGNORED_DIRS = new Set([
+  '.git',
+  '.hg',
+  '.svn',
+  'node_modules',
+  'bower_components',
+  '.pnpm-store',
+  '.yarn',
+  'dist',
+  'build',
+  'out',
+  'target',
+  '.gradle',
+  '.mvn',
+  '.venv',
+  'venv',
+  '__pycache__',
+  '.pytest_cache',
+  '.mypy_cache',
+  '.ruff_cache',
+  '.tox',
+  '.nox',
+  'htmlcov',
+  'site-packages',
+  '.cache',
+  'coverage',
+  '.nyc_output',
+  '.next',
+  '.nuxt',
+  '.turbo',
+  '.parcel-cache',
+  '.svelte-kit',
+  '.angular',
+  'vendor',
+  '.bundle',
+  'bin',
+  'obj',
+  'TestResults',
+  '.build',
+  'DerivedData',
+  'CMakeFiles',
+  '.terraform',
+  '.dart_tool',
+  '_build',
+  'deps',
+  'tmp',
+  'log',
+])
+
+const DEFAULT_IGNORED_DIR_PATHS = new Set([
+  '.yarn/cache',
+  'vendor/bundle',
+])
+
+const DEFAULT_IGNORED_DIR_PREFIXES = [
+  'cmake-build-',
+]
+
+const DEFAULT_IGNORED_DIR_SUFFIXES = [
+  '.egg-info',
+  '.dist-info',
+  '.dSYM',
+]
+
+const DEFAULT_SKIPPED_FILE_NAMES = new Set([
+  '.DS_Store',
+  'Thumbs.db',
+  'npm-debug.log',
+  'yarn-error.log',
+  'pnpm-debug.log',
+  '.eslintcache',
+  '.stylelintcache',
+  '.coverage',
+  'coverage.xml',
+])
+
+const DEFAULT_SKIPPED_FILE_EXTENSIONS = new Set([
+  '.pyc',
+  '.pyo',
+  '.class',
+  '.o',
+  '.obj',
+  '.a',
+  '.lib',
+  '.lo',
+  '.la',
+  '.so',
+  '.dylib',
+  '.dll',
+  '.exe',
+  '.wasm',
+  '.rlib',
+  '.beam',
+  '.jar',
+  '.war',
+  '.ear',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.ico',
+  '.bmp',
+  '.tiff',
+  '.woff',
+  '.woff2',
+  '.ttf',
+  '.otf',
+  '.mp3',
+  '.wav',
+  '.flac',
+  '.mp4',
+  '.mov',
+  '.avi',
+  '.mkv',
+  '.zip',
+  '.tar',
+  '.gz',
+  '.tgz',
+  '.bz2',
+  '.xz',
+  '.7z',
+  '.rar',
+  '.sqlite',
+  '.db',
+  '.pdf',
+  '.docx',
+  '.xlsx',
+  '.pptx',
+  '.tsbuildinfo',
+  '.map',
+  '.log',
+  '.tmp',
+  '.swp',
+])
 
 interface SnapshotFile {
   exists: boolean
@@ -25,9 +165,15 @@ interface WorkspaceRunCheckpoint {
   runId: string
   changeId: string
   workspace: string
-  gitRoot: string
+  root: string
+  kind: 'git' | 'filesystem'
   startedAt: number
   files: Map<string, SnapshotFile>
+  truncated: boolean
+}
+
+interface WorkspacePathScan {
+  paths: string[]
   truncated: boolean
 }
 
@@ -84,6 +230,15 @@ function resolveGitRoot(workspace: string): string | null {
   }
 }
 
+function resolveFilesystemRoot(workspace: string): string | null {
+  try {
+    const root = realpathSync(resolve(workspace))
+    return statSync(root).isDirectory() ? root : null
+  } catch {
+    return null
+  }
+}
+
 function parseGitStatusPaths(output: string): string[] {
   const parts = output.split('\0').filter(Boolean)
   const paths = new Set<string>()
@@ -129,9 +284,89 @@ function isBinaryBuffer(buffer: Buffer): boolean {
   return false
 }
 
-function snapshotPath(gitRoot: string, relPath: string): SnapshotFile {
-  const absPath = resolve(gitRoot, relPath)
-  if (!isPathInside(gitRoot, absPath) || !existsSync(absPath)) {
+function shouldSkipFilesystemDir(name: string, relPath: string): boolean {
+  return DEFAULT_IGNORED_DIRS.has(name) ||
+    DEFAULT_IGNORED_DIR_PATHS.has(relPath) ||
+    DEFAULT_IGNORED_DIR_PREFIXES.some(prefix => name.startsWith(prefix)) ||
+    DEFAULT_IGNORED_DIR_SUFFIXES.some(suffix => name.endsWith(suffix))
+}
+
+function shouldSkipFilesystemFile(relPath: string): boolean {
+  return DEFAULT_SKIPPED_FILE_NAMES.has(basename(relPath)) ||
+    DEFAULT_SKIPPED_FILE_EXTENSIONS.has(extname(relPath).toLowerCase())
+}
+
+function scanFilesystemPaths(root: string): WorkspacePathScan {
+  const startedAt = Date.now()
+  const paths: string[] = []
+  const queue: Array<{ absPath: string; relPath: string; depth: number }> = [{ absPath: root, relPath: '', depth: 0 }]
+  let dirsScanned = 0
+  let truncated = false
+
+  while (queue.length > 0) {
+    if (Date.now() - startedAt > MAX_SCAN_MS) {
+      truncated = true
+      break
+    }
+    if (dirsScanned >= MAX_SCAN_DIRS) {
+      truncated = true
+      break
+    }
+
+    const current = queue.shift()!
+    if (current.depth > MAX_SCAN_DEPTH) {
+      truncated = true
+      continue
+    }
+    dirsScanned += 1
+
+    let entries
+    try {
+      entries = readdirSync(current.absPath, { withFileTypes: true })
+    } catch {
+      truncated = true
+      continue
+    }
+
+    entries.sort((left, right) => left.name.localeCompare(right.name))
+    for (const entry of entries) {
+      if (Date.now() - startedAt > MAX_SCAN_MS) {
+        truncated = true
+        break
+      }
+      if (entry.isSymbolicLink()) continue
+
+      const childRelPath = current.relPath ? `${current.relPath}/${entry.name}` : entry.name
+      const childAbsPath = join(current.absPath, entry.name)
+      if (entry.isDirectory()) {
+        if (shouldSkipFilesystemDir(entry.name, childRelPath)) continue
+        if (current.depth + 1 > MAX_SCAN_DEPTH) {
+          truncated = true
+          continue
+        }
+        queue.push({ absPath: childAbsPath, relPath: childRelPath, depth: current.depth + 1 })
+        continue
+      }
+
+      if (!entry.isFile() || shouldSkipFilesystemFile(childRelPath)) continue
+      paths.push(childRelPath)
+      if (paths.length >= MAX_TRACKED_STATUS_PATHS) {
+        truncated = true
+        break
+      }
+    }
+
+    if (truncated && (Date.now() - startedAt > MAX_SCAN_MS || paths.length >= MAX_TRACKED_STATUS_PATHS)) {
+      break
+    }
+  }
+
+  return { paths, truncated }
+}
+
+function snapshotPath(root: string, relPath: string, maxContentBytes = MAX_SNAPSHOT_BYTES): SnapshotFile {
+  const absPath = resolve(root, relPath)
+  if (!isPathInside(root, absPath) || !existsSync(absPath)) {
     return { exists: false, size: null, mtimeMs: null, binary: false, content: null }
   }
   try {
@@ -139,7 +374,8 @@ function snapshotPath(gitRoot: string, relPath: string): SnapshotFile {
     if (!stat.isFile()) {
       return { exists: true, size: stat.size, mtimeMs: stat.mtimeMs, binary: false, content: null }
     }
-    if (stat.size > MAX_SNAPSHOT_BYTES) {
+    const contentLimit = Math.min(MAX_SNAPSHOT_BYTES, Math.max(0, maxContentBytes))
+    if (contentLimit <= 0 || stat.size > contentLimit) {
       return { exists: true, size: stat.size, mtimeMs: stat.mtimeMs, binary: false, content: null }
     }
     const content = readFileSync(absPath)
@@ -153,6 +389,25 @@ function snapshotPath(gitRoot: string, relPath: string): SnapshotFile {
   } catch {
     return { exists: false, size: null, mtimeMs: null, binary: false, content: null }
   }
+}
+
+function snapshotPaths(root: string, paths: string[], totalContentBytes = Number.POSITIVE_INFINITY): {
+  files: Map<string, SnapshotFile>
+  truncated: boolean
+} {
+  const files = new Map<string, SnapshotFile>()
+  let remainingContentBytes = totalContentBytes
+  let truncated = false
+  for (const relPath of paths) {
+    const snapshot = snapshotPath(root, relPath, remainingContentBytes)
+    if (snapshot.content) {
+      remainingContentBytes -= snapshot.content.length
+    } else if (remainingContentBytes <= 0 && snapshot.exists) {
+      truncated = true
+    }
+    files.set(relPath, snapshot)
+  }
+  return { files, truncated }
 }
 
 function snapshotGitHeadPath(gitRoot: string, relPath: string): SnapshotFile {
@@ -315,22 +570,40 @@ export function startWorkspaceRunCheckpoint(args: {
   if (checkpoints.has(key)) return
   const changeId = createRunChangeId(runId)
   const gitRoot = resolveGitRoot(workspace)
-  if (!gitRoot) return
-
-  const status = getGitStatusPaths(gitRoot)
-  const files = new Map<string, SnapshotFile>()
-  for (const relPath of status.paths) {
-    files.set(relPath, snapshotPath(gitRoot, relPath))
+  if (gitRoot) {
+    const status = getGitStatusPaths(gitRoot)
+    const files = new Map<string, SnapshotFile>()
+    for (const relPath of status.paths) {
+      files.set(relPath, snapshotPath(gitRoot, relPath))
+    }
+    checkpoints.set(key, {
+      sessionId: args.sessionId,
+      runId,
+      changeId,
+      workspace,
+      root: gitRoot,
+      kind: 'git',
+      startedAt: nowSeconds(),
+      files,
+      truncated: status.truncated,
+    })
+    return
   }
+
+  const filesystemRoot = resolveFilesystemRoot(workspace)
+  if (!filesystemRoot) return
+  const scan = scanFilesystemPaths(filesystemRoot)
+  const snapshot = snapshotPaths(filesystemRoot, scan.paths, MAX_TOTAL_SNAPSHOT_BYTES)
   checkpoints.set(key, {
     sessionId: args.sessionId,
     runId,
     changeId,
     workspace,
-    gitRoot,
+    root: filesystemRoot,
+    kind: 'filesystem',
     startedAt: nowSeconds(),
-    files,
-    truncated: status.truncated,
+    files: snapshot.files,
+    truncated: scan.truncated || snapshot.truncated,
   })
 }
 
@@ -346,17 +619,29 @@ export function completeWorkspaceRunCheckpoint(args: {
   checkpoints.delete(key)
   if (!checkpoint) return null
 
-  const status = getGitStatusPaths(checkpoint.gitRoot)
+  const status = checkpoint.kind === 'git'
+    ? getGitStatusPaths(checkpoint.root)
+    : scanFilesystemPaths(checkpoint.root)
   const relPaths = new Set<string>([...checkpoint.files.keys(), ...status.paths])
   const files = []
   let totalPatchBytes = 0
   let totalAdditions = 0
   let totalDeletions = 0
   let truncated = checkpoint.truncated || status.truncated || relPaths.size > MAX_CHANGED_FILES
+  let remainingSnapshotBytes = checkpoint.kind === 'filesystem' ? MAX_TOTAL_SNAPSHOT_BYTES : Number.POSITIVE_INFINITY
 
   for (const relPath of [...relPaths].slice(0, MAX_CHANGED_FILES)) {
-    const after = snapshotPath(checkpoint.gitRoot, relPath)
-    const before = checkpoint.files.get(relPath) ?? snapshotGitHeadPath(checkpoint.gitRoot, relPath)
+    const after = snapshotPath(checkpoint.root, relPath, remainingSnapshotBytes)
+    if (after.content) {
+      remainingSnapshotBytes -= after.content.length
+    } else if (remainingSnapshotBytes <= 0 && after.exists) {
+      truncated = true
+    }
+    const before = checkpoint.files.get(relPath) ?? (
+      checkpoint.kind === 'git'
+        ? snapshotGitHeadPath(checkpoint.root, relPath)
+        : undefined
+    )
     const comparison = compareSnapshots(
       before,
       after,
@@ -389,7 +674,7 @@ export function completeWorkspaceRunCheckpoint(args: {
     run_id: runId || checkpoint.runId,
     source: 'run',
     workspace: args.workspace || checkpoint.workspace,
-    workspace_kind: 'git',
+    workspace_kind: checkpoint.kind,
     started_at: checkpoint.startedAt,
     finished_at: nowSeconds(),
     files_changed: files.length,
