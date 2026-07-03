@@ -21,6 +21,23 @@ interface ProjectedNode extends SceneNode {
   visible: boolean
 }
 
+const CATEGORY_PALETTE = [
+  '#4f8cff',
+  '#ff4fa3',
+  '#38c976',
+  '#f6c542',
+  '#9b6cff',
+  '#ff7a45',
+  '#22c7d8',
+  '#e84d5b',
+  '#7cb342',
+  '#d66efd',
+  '#00a884',
+  '#ff9f1a',
+]
+const MIN_ZOOM = 0.25
+const MAX_ZOOM = 2.4
+
 const { t } = useI18n()
 const message = useMessage()
 const { isDark } = useTheme()
@@ -31,9 +48,11 @@ const canvasRef = ref<HTMLCanvasElement | null>(null)
 const canvasWrapRef = ref<HTMLElement | null>(null)
 const selectedId = ref('')
 const hoverId = ref('')
+const hoverCategory = ref('')
 const playing = ref(false)
 const playbackIndex = ref(-1)
 const detailDrawerOpen = ref(false)
+const drawerWidth = ref(380)
 
 let ctx: CanvasRenderingContext2D | null = null
 let resizeObserver: ResizeObserver | null = null
@@ -47,12 +66,14 @@ let zoom = 1
 let dragging = false
 let lastX = 0
 let lastY = 0
+let pinchDistance = 0
+let pinchZoom = 1
 let playbackTimer: number | null = null
 let clearSelectionTimer: number | null = null
+const activePointers = new Map<number, { x: number; y: number }>()
 
 const nodes = computed(() => data.value?.graph.nodes || [])
 const edges = computed(() => data.value?.graph.edges || [])
-const clusters = computed(() => data.value?.graph.clusters || [])
 const selectedNode = computed(() => nodes.value.find(node => node.id === selectedId.value) || null)
 const playbackNodes = computed(() =>
   nodes.value
@@ -78,7 +99,8 @@ const visibleEdges = computed(() => {
 })
 
 const sceneNodes = computed<SceneNode[]>(() => {
-  const categoryIndex = new Map(clusters.value.map((cluster, index) => [cluster.category || 'general', index]))
+  const categories = [...new Set(nodes.value.map(node => node.category || 'general'))].sort()
+  const categoryIndex = new Map(categories.map((category, index) => [category, index]))
   const categoryCount = Math.max(1, categoryIndex.size)
   const clusterCenters = new Map<string, { x: number; y: number; z: number }>()
   const densityScale = Math.min(2.3, Math.max(1, Math.sqrt(Math.max(nodes.value.length, 1) / 42)))
@@ -118,6 +140,24 @@ const visibleSceneNodes = computed(() => {
   if (!revealed) return sceneNodes.value
   return sceneNodes.value.filter(node => revealed.has(node.id))
 })
+const categoryStats = computed(() => {
+  const stats = new Map<string, { category: string; color: string; count: number }>()
+  for (const node of visibleSceneNodes.value) {
+    const category = node.category || t('journey.noCategory')
+    const current = stats.get(category)
+    if (current) {
+      current.count += 1
+    } else {
+      stats.set(category, {
+        category,
+        color: node.color,
+        count: 1,
+      })
+    }
+  }
+  return [...stats.values()].sort((a, b) => b.count - a.count || a.category.localeCompare(b.category))
+})
+const visibleNodeCount = computed(() => Math.max(1, visibleSceneNodes.value.length))
 
 function hash(value: string): number {
   let h = 2166136261
@@ -129,8 +169,10 @@ function hash(value: string): number {
 }
 
 function categoryColor(category: string): string {
-  const h = hash(category) % 360
-  return `hsl(${h} 72% 62%)`
+  const categories = [...new Set(nodes.value.map(node => node.category || 'general'))].sort()
+  const index = categories.indexOf(category)
+  if (index >= 0) return CATEGORY_PALETTE[index % CATEGORY_PALETTE.length]
+  return CATEGORY_PALETTE[hash(category) % CATEGORY_PALETTE.length]
 }
 
 function formatTime(value?: number | null): string {
@@ -240,8 +282,9 @@ function drawEdges(projectedById: Map<string, ProjectedNode>, activeId: string, 
     const target = projectedById.get(edge.target)
     if (!source || !target) continue
     const active = !!activeId && (edge.source === activeId || edge.target === activeId)
+    const categoryActive = !!hoverCategory.value && (source.category === hoverCategory.value || target.category === hoverCategory.value)
     const nearby = activeNeighbors.has(edge.source) || activeNeighbors.has(edge.target)
-    const alpha = active ? 0.62 + pulse * 0.28 : nearby ? 0.4 : isDark.value ? 0.1 : 0.22
+    const alpha = active ? 0.62 + pulse * 0.28 : categoryActive ? 0.46 : nearby ? 0.4 : isDark.value ? 0.1 : 0.22
     ctx.lineWidth = isDark.value ? 1 : 1.15
     ctx.shadowColor = 'transparent'
     ctx.shadowBlur = 0
@@ -335,7 +378,9 @@ function drawNode(node: ProjectedNode, activeId: string, activeNeighbors: Set<st
   if (!ctx) return
   const active = node.id === activeId
   const nearby = activeNeighbors.has(node.id)
-  const alpha = active || nearby || !activeId ? 1 : 0.62
+  const categoryActive = !!hoverCategory.value && node.category === hoverCategory.value
+  const hasFocus = !!activeId || !!hoverCategory.value
+  const alpha = active || nearby || categoryActive || !hasFocus ? 1 : 0.32
   const pulse = active ? 0.5 + Math.sin(now * 0.005) * 0.5 : 0
   const glow = active ? 20 + pulse * 24 : node.createdBy === 'agent' ? 12 : node.pinned ? 10 : 0
   const nodeBackdrop = isDark.value ? '#1a1a1a' : '#fafafa'
@@ -394,6 +439,10 @@ function resizeCanvas() {
   ctx?.setTransform(dpr, 0, 0, dpr, 0, 0)
 }
 
+function updateDrawerWidth() {
+  drawerWidth.value = window.innerWidth <= 640 ? window.innerWidth : 380
+}
+
 function hitTest(x: number, y: number): ProjectedNode | null {
   const projected = visibleSceneNodes.value.map(projectNode).filter(node => node.visible)
   let best: ProjectedNode | null = null
@@ -412,16 +461,36 @@ function pointerPosition(event: MouseEvent | PointerEvent | WheelEvent): { x: nu
 }
 
 function handlePointerDown(event: PointerEvent) {
-  dragging = true
+  activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+  if (activePointers.size === 2) {
+    const pointers = [...activePointers.values()]
+    pinchDistance = pointerDistance(pointers[0], pointers[1])
+    pinchZoom = zoom
+    dragging = false
+  } else {
+    dragging = true
+  }
   lastX = event.clientX
   lastY = event.clientY
   canvasRef.value?.setPointerCapture(event.pointerId)
 }
 
 function handlePointerMove(event: PointerEvent) {
+  if (activePointers.has(event.pointerId)) {
+    activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+  }
   const pos = pointerPosition(event)
   const hit = hitTest(pos.x, pos.y)
   hoverId.value = hit?.id || ''
+
+  if (activePointers.size >= 2) {
+    const pointers = [...activePointers.values()]
+    const distance = pointerDistance(pointers[0], pointers[1])
+    if (pinchDistance > 0) {
+      zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, pinchZoom * (distance / pinchDistance)))
+    }
+    return
+  }
 
   if (!dragging) return
   const dx = event.clientX - lastX
@@ -433,8 +502,23 @@ function handlePointerMove(event: PointerEvent) {
 }
 
 function handlePointerUp(event: PointerEvent) {
-  dragging = false
+  activePointers.delete(event.pointerId)
+  if (activePointers.size === 1) {
+    const pointer = [...activePointers.values()][0]
+    lastX = pointer.x
+    lastY = pointer.y
+    dragging = true
+  } else {
+    dragging = false
+    pinchDistance = 0
+  }
   canvasRef.value?.releasePointerCapture(event.pointerId)
+}
+
+function pointerDistance(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const dx = a.x - b.x
+  const dy = a.y - b.y
+  return Math.sqrt(dx * dx + dy * dy)
 }
 
 function handleClick(event: MouseEvent) {
@@ -446,7 +530,7 @@ function handleClick(event: MouseEvent) {
 
 function handleWheel(event: WheelEvent) {
   event.preventDefault()
-  zoom = Math.max(0.45, Math.min(2.4, zoom + (event.deltaY > 0 ? -0.08 : 0.08)))
+  zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom + (event.deltaY > 0 ? -0.08 : 0.08)))
 }
 
 function clearPlaybackTimer() {
@@ -516,6 +600,7 @@ async function loadJourney() {
     data.value = await fetchJourneyGraph()
     selectedId.value = ''
     hoverId.value = ''
+    hoverCategory.value = ''
     playbackIndex.value = -1
   } catch (err: any) {
     message.error(err?.message || t('journey.loadFailed'))
@@ -533,6 +618,8 @@ function startRenderer() {
 onMounted(async () => {
   await loadJourney()
   await nextTick()
+  updateDrawerWidth()
+  window.addEventListener('resize', updateDrawerWidth)
   resizeObserver = new ResizeObserver(resizeCanvas)
   if (canvasWrapRef.value) resizeObserver.observe(canvasWrapRef.value)
   startRenderer()
@@ -542,6 +629,7 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(raf)
   clearPlaybackTimer()
   clearSelectionDelay()
+  window.removeEventListener('resize', updateDrawerWidth)
   resizeObserver?.disconnect()
 })
 
@@ -588,12 +676,36 @@ watch(sceneNodes, () => {
             <span>{{ visibleSceneNodes.length }} {{ t('journey.nodes') }}</span>
             <span>{{ visibleEdges.length }} {{ t('journey.edges') }}</span>
           </div>
+          <div v-if="categoryStats.length" class="category-meter">
+            <div class="category-bar" aria-hidden="true">
+              <span
+                v-for="stat in categoryStats"
+                :key="stat.category"
+                :class="{ active: hoverCategory === stat.category }"
+                :style="{ backgroundColor: stat.color, flexGrow: stat.count }"
+                @mouseenter="hoverCategory = stat.category"
+                @mouseleave="hoverCategory = ''"
+              />
+            </div>
+            <div class="category-legend">
+              <span
+                v-for="stat in categoryStats"
+                :key="stat.category"
+                :class="{ active: hoverCategory === stat.category }"
+                @mouseenter="hoverCategory = stat.category"
+                @mouseleave="hoverCategory = ''"
+              >
+                <i :style="{ backgroundColor: stat.color }" />
+                {{ stat.category }} {{ stat.count }} / {{ Math.round((stat.count / visibleNodeCount) * 100) }}%
+              </span>
+            </div>
+          </div>
         </section>
       </main>
     </NSpin>
 
-    <NDrawer v-model:show="detailDrawerOpen" :width="380" placement="right">
-      <NDrawerContent v-if="selectedNode" class="journey-detail-drawer" :native-scrollbar="false">
+    <NDrawer v-model:show="detailDrawerOpen" :width="drawerWidth" placement="right">
+      <NDrawerContent v-if="selectedNode" class="journey-detail-drawer" :native-scrollbar="false" closable>
         <template #header>
           <div class="drawer-title-row">
             <span>{{ detailTitle(selectedNode) }}</span>
@@ -747,6 +859,72 @@ watch(sceneNodes, () => {
     padding: 5px 9px;
     background: color-mix(in srgb, $bg-primary 72%, transparent);
     backdrop-filter: blur(10px);
+  }
+}
+
+.category-meter {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  right: 16px;
+  display: grid;
+  gap: 7px;
+  pointer-events: auto;
+}
+
+.category-bar {
+  display: flex;
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, $border-color 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, $bg-primary 76%, transparent);
+  box-shadow: 0 0 18px rgba(var(--accent-info-rgb), 0.12);
+
+  span {
+    display: block;
+    height: 100%;
+    align-self: stretch;
+    min-width: 3px;
+    transition: flex-grow 0.2s ease, filter 0.2s ease;
+
+    &.active {
+      min-width: 10px;
+      filter: brightness(1.25);
+    }
+  }
+}
+
+.category-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  color: $text-secondary;
+  font-size: 11px;
+
+  span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 7px;
+    border: 1px solid color-mix(in srgb, $border-color 68%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, $bg-primary 74%, transparent);
+    backdrop-filter: blur(10px);
+    cursor: default;
+
+    &.active {
+      color: $text-primary;
+      border-color: rgba(var(--accent-info-rgb), 0.42);
+      background: rgba(var(--accent-info-rgb), 0.1);
+    }
+  }
+
+  i {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 auto;
+    border-radius: 999px;
   }
 }
 
