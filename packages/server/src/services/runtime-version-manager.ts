@@ -23,6 +23,8 @@ export interface ActiveVersionManifest {
   updatedAt?: string
   /** Warning about pip packages missing in the newly activated runtime. */
   _pipMissingWarning?: string
+  /** Pip packages from a deleted runtime that may need reinstallation. */
+  _orphanedPipPackages?: string[]
 }
 
 export interface InstalledRuntimeVersion {
@@ -529,6 +531,18 @@ export function activateInstalledRuntimeVersion(version: string): ActiveVersionM
     }
   }
 
+  // Also surface orphaned packages from previously deleted runtimes.
+  if (!missingPackagesWarning && active?._orphanedPipPackages?.length) {
+    missingPackagesWarning = [
+      `The following pip package(s) were installed in a deleted runtime and are missing in the current one:`,
+      ...active._orphanedPipPackages.map(p => `  - ${p}`),
+      '',
+      'To install them, run:',
+      `  "${join(target.directory, 'python', process.platform === 'win32' ? 'python.exe' : 'bin', 'python3')}" -m pip install ${active._orphanedPipPackages.join(' ')}`,
+    ].join('\n')
+    console.warn(`[runtime] ${missingPackagesWarning}`)
+  }
+
   const next: ActiveVersionManifest = {
     schema: 1,
     hermesRuntimeVersion: target.manifestHermesRuntimeVersion || target.version,
@@ -549,11 +563,34 @@ export function deleteInstalledRuntimeVersion(version: string): InstalledRuntime
   const cleanVersion = version.trim()
   if (!cleanVersion) throw new Error('Runtime version is required')
 
-  const active = readActiveVersionManifest()
-  const installed = listInstalledRuntimeVersions(active)
+  const activeManifest = readActiveVersionManifest()
+  const installed = listInstalledRuntimeVersions(activeManifest)
   const target = installed.find(item => item.version === cleanVersion && item.platform === runtimePlatformKey())
   if (!target) throw new Error(`Installed runtime version not found for this platform: ${cleanVersion}`)
   if (target.active) throw new Error('Active runtime version cannot be deleted')
+
+  // Before deleting, collect user-installed pip packages so they can be
+  // surfaced when the next runtime is activated.
+  const pythonBin = process.platform === 'win32' ? 'python.exe' : join('bin', 'python3')
+  const pythonPath = join(target.directory, 'python', pythonBin)
+  if (existsSync(pythonPath)) {
+    try {
+      const result = execFileSync(pythonPath, [
+        '-m', 'pip', 'list', '--format=json', '--disable-pip-version-check'
+      ], { encoding: 'utf-8', timeout: 15000, killSignal: 'SIGTERM', stdio: ['ignore', 'pipe', 'pipe'] })
+      const pkgs: Array<{ name: string; version: string }> = JSON.parse(result.trim())
+      const userPkgs = pkgs
+        .map(p => normalizePkgName(p.name))
+        .filter(name => !BASE_PACKAGES.has(name) && !name.startsWith('opentelemetry'))
+      if (userPkgs.length > 0 && activeManifest) {
+        activeManifest._orphanedPipPackages = userPkgs
+        writeFileSync(activeVersionPath(), JSON.stringify(activeManifest, null, 2) + '\n', 'utf-8')
+      }
+    } catch (err) {
+      console.error('[runtime] Failed to collect pip packages before deletion:',
+        err instanceof Error ? err.message : String(err))
+    }
+  }
 
   rmSync(target.directory, { recursive: true, force: true })
   try {
