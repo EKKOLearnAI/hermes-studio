@@ -189,30 +189,4 @@ describe('Hermes jobs controller', () => {
       )
     }
   })
-
-  it('passes model and provider to Hermes CLI when creating and editing jobs', async () => {
-    const createCtx = createMockCtx({
-      request: { body: { schedule: '0 9 * * *', prompt: 'daily summary', provider: 'openai', model: 'gpt-4.1-mini' } },
-    })
-    await create(createCtx)
-    expect(testState.execFile).toHaveBeenLastCalledWith(
-      '/fake/bin/hermes',
-      ['cron', 'create', '--profile', 'default', '--provider', 'openai', '--model', 'gpt-4.1-mini', '0 9 * * *', 'daily summary'],
-      expect.any(Object),
-      expect.any(Function),
-    )
-
-    writeExistingJob(tempDir)
-    const updateCtx = createMockCtx({
-      request: { body: { provider: 'anthropic', model: 'claude-sonnet-4' } },
-    })
-    await update(updateCtx)
-    expect(testState.execFile).toHaveBeenLastCalledWith(
-      '/fake/bin/hermes',
-      ['cron', 'edit', '--profile', 'default', 'abc123abc123', '--provider', 'anthropic', '--model', 'claude-sonnet-4'],
-      expect.any(Object),
-      expect.any(Function),
-    )
-  })
-
 })

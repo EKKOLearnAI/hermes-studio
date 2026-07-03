@@ -187,8 +187,6 @@ export async function create(ctx: Context) {
   const name = String(body.name || '').trim()
   if (name) args.push('--name', name)
   if (body.deliver != null && String(body.deliver).trim()) args.push('--deliver', String(body.deliver).trim())
-  if (body.provider != null && String(body.provider).trim()) args.push('--provider', String(body.provider).trim())
-  if (body.model != null && String(body.model).trim()) args.push('--model', String(body.model).trim())
 
   const repeat = getRepeatValue(body.repeat)
   if (repeat != null) {
@@ -229,8 +227,6 @@ export async function update(ctx: Context) {
   if (body.prompt != null) args.push('--prompt', String(body.prompt))
   if (body.name != null) args.push('--name', String(body.name))
   if (body.deliver != null) args.push('--deliver', String(body.deliver))
-  if (body.provider != null) args.push('--provider', String(body.provider))
-  if (body.model != null) args.push('--model', String(body.model))
 
   const repeat = getRepeatValue(body.repeat)
   if (repeat != null) {
