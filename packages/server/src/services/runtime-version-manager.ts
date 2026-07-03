@@ -457,6 +457,21 @@ function normalizePkgName(name: string): string {
   return name.toLowerCase().replace(/[-_.]+/g, '-')
 }
 
+/**
+ * Set of "base" pip packages that ship with every Hermes runtime (known by name).
+ * All entries use the PEP 503 normalized form (lowercase, hyphens).
+ * Kept at module level so both diffUserInstalledPipPackages() and
+ * deleteInstalledRuntimeVersion() can reference it.
+ */
+const BASE_PACKAGES = new Set([
+  'hermes-agent', 'aiohttp', 'httpx', 'fastapi', 'uvicorn', 'pydantic',
+  'pyyaml', 'requests', 'certifi', 'urllib3', 'idna', 'charset-normalizer',
+  'click', 'colorama', 'jinja2', 'rich', 'typer', 'setuptools', 'pip',
+  'websockets', 'cryptography', 'pywin32', 'psutil', 'prompt-toolkit',
+  'python-telegram-bot', 'discord-py', 'slack-sdk', 'slack-bolt',
+  'lark-oapi', 'dingtalk-stream', 'edge-tts', 'pillow',
+])
+
 function diffUserInstalledPipPackages(
   oldRuntimeDir: string,
   newRuntimeDir: string,
@@ -467,17 +482,6 @@ function diffUserInstalledPipPackages(
   if (!existsSync(oldPython) || !existsSync(newPython)) {
     return { missing: [] }
   }
-
-  // Get set of "base" packages that ship with every runtime (known by name)
-  // All entries must use the PEP 503 normalized form (hyphens, lowercase).
-  const BASE_PACKAGES = new Set([
-    'hermes-agent', 'aiohttp', 'httpx', 'fastapi', 'uvicorn', 'pydantic',
-    'pyyaml', 'requests', 'certifi', 'urllib3', 'idna', 'charset-normalizer',
-    'click', 'colorama', 'jinja2', 'rich', 'typer', 'setuptools', 'pip',
-    'websockets', 'cryptography', 'pywin32', 'psutil', 'prompt-toolkit',
-    'python-telegram-bot', 'discord-py', 'slack-sdk', 'slack-bolt',
-    'lark-oapi', 'dingtalk-stream', 'edge-tts', 'pillow',
-  ])
 
   try {
     const result = execFileSync(oldPython, [
@@ -532,15 +536,36 @@ export function activateInstalledRuntimeVersion(version: string): ActiveVersionM
   }
 
   // Also surface orphaned packages from previously deleted runtimes.
-  if (!missingPackagesWarning && active?._orphanedPipPackages?.length) {
-    missingPackagesWarning = [
-      `The following pip package(s) were installed in a deleted runtime and are missing in the current one:`,
-      ...active._orphanedPipPackages.map(p => `  - ${p}`),
-      '',
-      'To install them, run:',
-      `  "${join(target.directory, 'python', process.platform === 'win32' ? 'python.exe' : 'bin', 'python3')}" -m pip install ${active._orphanedPipPackages.join(' ')}`,
-    ].join('\n')
-    console.warn(`[runtime] ${missingPackagesWarning}`)
+  // Validate against the new runtime's pip list to avoid false positives
+  // (e.g. the user already reinstalled them manually).
+  if (active?._orphanedPipPackages?.length) {
+    const pythonBin = process.platform === 'win32' ? 'python.exe' : join('bin', 'python3')
+    const newPythonPath = join(target.directory, 'python', pythonBin)
+    let stillMissing = active._orphanedPipPackages
+    if (existsSync(newPythonPath)) {
+      try {
+        const newResult = execFileSync(newPythonPath, [
+          '-m', 'pip', 'list', '--format=json', '--disable-pip-version-check'
+        ], { encoding: 'utf-8', timeout: 15000, killSignal: 'SIGTERM', stdio: ['ignore', 'pipe', 'pipe'] })
+        const newPkgs = new Set(
+          (JSON.parse(newResult.trim()) as Array<{ name: string }>).map(p => normalizePkgName(p.name))
+        )
+        stillMissing = active._orphanedPipPackages.filter(name => !newPkgs.has(name))
+      } catch (err) {
+        console.error('[runtime] Failed to validate orphaned packages:',
+          err instanceof Error ? err.message : String(err))
+      }
+    }
+    if (stillMissing.length > 0 && !missingPackagesWarning) {
+      missingPackagesWarning = [
+        `The following pip package(s) were installed in a deleted runtime and are missing in the current one:`,
+        ...stillMissing.map(p => `  - ${p}`),
+        '',
+        'To install them, run:',
+        `  "${join(target.directory, 'python', process.platform === 'win32' ? 'python.exe' : 'bin', 'python3')}" -m pip install ${stillMissing.join(' ')}`,
+      ].join('\n')
+      console.warn(`[runtime] ${missingPackagesWarning}`)
+    }
   }
 
   const next: ActiveVersionManifest = {
