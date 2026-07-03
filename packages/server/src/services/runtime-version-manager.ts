@@ -20,6 +20,8 @@ export interface ActiveVersionManifest {
   webUiDirectory?: string
   platform?: string
   updatedAt?: string
+  /** Warning about pip packages missing in the newly activated runtime. */
+  _pipMissingWarning?: string
 }
 
 export interface InstalledRuntimeVersion {
@@ -439,6 +441,57 @@ export async function downloadWebUiVersion(version: string, source: VersionDownl
   return { version: cleanVersion, directory: targetRoot, active: false }
 }
 
+interface PipPackageDiff {
+  missing: string[]
+  previousPythonPath: string
+}
+
+function diffUserInstalledPipPackages(
+  oldPythonDir: string,
+  newPythonDir: string,
+): PipPackageDiff {
+  const oldPython = join(oldPythonDir, process.platform === 'win32' ? 'python.exe' : 'bin', 'python3')
+  const newPython = join(newPythonDir, process.platform === 'win32' ? 'python.exe' : 'bin', 'python3')
+  if (!existsSync(oldPython) || !existsSync(newPython)) {
+    return { missing: [], previousPythonPath: oldPython }
+  }
+
+  // Get set of "base" packages that ship with every runtime (known by name)
+  const BASE_PACKAGES = new Set([
+    'hermes-agent', 'aiohttp', 'httpx', 'fastapi', 'uvicorn', 'pydantic',
+    'pyyaml', 'requests', 'certifi', 'urllib3', 'idna', 'charset-normalizer',
+    'click', 'colorama', 'jinja2', 'rich', 'typer', 'setuptools', 'pip',
+    'websockets', 'cryptography', 'pywin32', 'psutil', 'prompt_toolkit',
+    'python-telegram-bot', 'discord.py', 'slack-sdk', 'slack-bolt',
+    'lark-oapi', 'dingtalk-stream', 'edge-tts', 'pillow',
+  ])
+
+  try {
+    const result = require('child_process').execFileSync(oldPython, [
+      '-m', 'pip', 'list', '--format=json', '--disable-pip-version-check'
+    ], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] })
+    const oldPkgs: Array<{ name: string; version: string }> = JSON.parse(result.trim())
+
+    const userPkgs = oldPkgs
+      .map(p => p.name.toLowerCase())
+      .filter(name => !BASE_PACKAGES.has(name) && !name.startsWith('hindsight') && !name.startsWith('opentelemetry'))
+
+    if (userPkgs.length === 0) return { missing: [], previousPythonPath: oldPython }
+
+    const newResult = require('child_process').execFileSync(newPython, [
+      '-m', 'pip', 'list', '--format=json', '--disable-pip-version-check'
+    ], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] })
+    const newPkgs = new Set(
+      (JSON.parse(newResult.trim()) as Array<{ name: string }>).map(p => p.name.toLowerCase())
+    )
+
+    const missing = userPkgs.filter(name => !newPkgs.has(name))
+    return { missing, previousPythonPath: oldPython }
+  } catch {
+    return { missing: [], previousPythonPath: oldPython }
+  }
+}
+
 export function activateInstalledRuntimeVersion(version: string): ActiveVersionManifest {
   const cleanVersion = version.trim()
   if (!cleanVersion) throw new Error('Runtime version is required')
@@ -448,14 +501,33 @@ export function activateInstalledRuntimeVersion(version: string): ActiveVersionM
   const target = installed.find(item => item.version === cleanVersion && item.platform === runtimePlatformKey())
   if (!target) throw new Error(`Installed runtime version not found for this platform: ${cleanVersion}`)
 
+  // Detect pip packages that existed in the previous runtime but are missing in the new one
+  let missingPackagesWarning: string | undefined
+  if (active?.runtimeDirectory) {
+    const oldPythonDir = dirname(active.runtimeDirectory)
+    const newPythonDir = dirname(target.directory)
+    const diff = diffUserInstalledPipPackages(oldPythonDir, newPythonDir)
+    if (diff.missing.length > 0) {
+      missingPackagesWarning = [
+        `The new Hermes runtime is missing ${diff.missing.length} pip package(s) that were installed in the previous runtime:`,
+        ...diff.missing.map(p => `  - ${p}`),
+        '',
+        'To install them, run:',
+        `  "${join(target.directory, 'python', process.platform === 'win32' ? 'python.exe' : 'bin', 'python3')}" -m pip install ${diff.missing.join(' ')}`,
+      ].join('\n')
+      console.warn(`[runtime] ${missingPackagesWarning}`)
+    }
+  }
+
   const next: ActiveVersionManifest = {
-    schema: 1,
+    schema: 2,
     hermesRuntimeVersion: target.manifestHermesRuntimeVersion || target.version,
     webUiVersion: active?.webUiVersion || getHermesWebUiVersion(),
     runtimeDirectory: target.directory,
     webUiDirectory: active?.webUiDirectory || '',
     platform: target.platform,
     updatedAt: new Date().toISOString(),
+    _pipMissingWarning: missingPackagesWarning,
   }
 
   mkdirSync(dirname(activeVersionPath()), { recursive: true })
