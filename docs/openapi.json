@@ -53,6 +53,10 @@
       "description": "Group chat management"
     },
     {
+      "name": "Journey",
+      "description": "Hermes Agent learning journey graph"
+    },
+    {
       "name": "Kanban",
       "description": "Kanban board and task management"
     },
@@ -5047,6 +5051,32 @@
             }
           }
         ]
+      }
+    },
+    "/api/hermes/journey": {
+      "get": {
+        "tags": [
+          "Journey"
+        ],
+        "summary": "Get journey",
+        "description": "GET /api/hermes/journey",
+        "operationId": "graph",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
       }
     },
     "/api/hermes/kanban": {

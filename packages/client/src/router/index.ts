@@ -89,6 +89,11 @@ const router = createRouter({
       meta: { requiresSuperAdmin: true },
     },
     {
+      path: '/hermes/journey',
+      name: 'hermes.journey',
+      component: () => import('@/views/hermes/JourneyView.vue'),
+    },
+    {
       path: '/hermes/skills-usage',
       name: 'hermes.skillsUsage',
       component: () => import('@/views/hermes/SkillsUsageView.vue'),
