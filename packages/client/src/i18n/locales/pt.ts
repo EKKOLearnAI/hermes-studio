@@ -1948,6 +1948,12 @@ jobTriggered: 'Job acionado',
 
   // Registro de alteracoes
   changelog: {
+    new_0_6_24_1: 'Esta versao cobre os PRs mesclados depois da 0.6.23 e melhora entrada de chat, visibilidade de workspaces, gestao de plugins, modelos padrao e revisao de diffs',
+    new_0_6_24_2: 'As entradas de chat individual e em grupo usam uma barra integrada, controles compactos de modelo, configuracoes agrupadas, uso de contexto mais claro, melhor mobile chrome e redimensionamento manual restaurado no chat individual',
+    new_0_6_24_3: 'Mudancas de workspace run aparecem como cards de diff persistentes com drawer lateral para ver diffs e editar arquivos, restaurados apos retomar a sessao e ajustados para mobile',
+    new_0_6_24_4: 'O seletor de pastas workspace navega melhor por drives e junctions no Windows e mostra pastas com ponto como .hermes, .config e .codex mantendo as verificacoes de WORKSPACE_BASE',
+    new_0_6_24_5: 'A pagina Plugins permite ativar ou desativar plugins de usuario gerenciaveis e reflete melhor o estado combinado da configuracao base do Hermes e do profile atual',
+    new_0_6_24_6: 'A pagina Models adiciona acoes de provider e modelo padrao; a deteccao de erros terminal bridge reduz falsos positivos, o runtime Hermes Agent vai para 0.18.0 e o manifest de versoes do site foi atualizado',
     new_0_6_23_1: 'Esta versao resume os PRs mesclados desde 0.6.22, com melhorias para autoatualizacao desktop, limpeza de MCP, pets Petdex, voz MCU e varios fluxos de configuracao',
     new_0_6_23_2: 'A autoatualizacao desktop voltou ao fluxo bloqueante, o Windows encerra servicos com mais confiabilidade antes de atualizar, e a saida do desktop limpa melhor gateway, profile MCP e processos filhos relacionados',
     new_0_6_23_3: 'A injecao MCP desktop e os caminhos de inicializacao MCP do Coding Agent ficaram mais estaveis, workspaces no Windows ganharam seletor de unidade, e foram corrigidos diretorios symlink e previews Petdex no desktop',

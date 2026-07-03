@@ -3,7 +3,7 @@
   "info": {
     "title": "Hermes Studio API",
     "description": "Hermes Studio API — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.",
-    "version": "0.6.23"
+    "version": "0.6.24"
   },
   "servers": [
     {
@@ -9423,6 +9423,194 @@
             }
           }
         }
+      }
+    },
+    "/api/hermes/sessions/{id}/workspace-file/read": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get read",
+        "description": "GET /api/hermes/sessions/:id/workspace-file/read",
+        "operationId": "readWorkspaceFile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/sessions/{id}/workspace-file/write": {
+      "put": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Update write",
+        "description": "PUT /api/hermes/sessions/:id/workspace-file/write",
+        "operationId": "writeWorkspaceFile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "path": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/sessions/{id}/workspace-run-changes": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get workspace-run-changes",
+        "description": "GET /api/hermes/sessions/:id/workspace-run-changes",
+        "operationId": "listWorkspaceRunChanges",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/sessions/{id}/workspace-run-changes/{changeId}/files/{fileId}": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get :fileId",
+        "description": "GET /api/hermes/sessions/:id/workspace-run-changes/:changeId/files/:fileId",
+        "operationId": "getWorkspaceRunChangeFile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "changeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
       }
     },
     "/api/hermes/skills": {

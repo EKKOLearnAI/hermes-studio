@@ -1947,6 +1947,12 @@ export default {
 
   // 변경 이력
   changelog: {
+    new_0_6_24_1: '이번 릴리스는 0.6.23 이후 병합된 PR을 반영하며 채팅 입력, workspace 표시, 플러그인 관리, 기본 모델, workspace diff 확인을 개선합니다',
+    new_0_6_24_2: '단일 채팅과 그룹 채팅 입력 영역은 통합 툴바, 간결한 모델 컨트롤, 모아진 입력 설정, 더 명확한 context 사용량, 모바일 chrome, 단일 채팅 수동 높이 조절 복구를 포함합니다',
+    new_0_6_24_3: 'Workspace run 변경 사항은 지속되는 chat diff 카드로 표시되며 오른쪽 drawer에서 diff 보기와 파일 편집을 지원하고 session resume 후에도 복원되며 모바일 보기도 조정되었습니다',
+    new_0_6_24_4: 'Workspace folder picker는 Windows drive와 junction workflow를 더 안정적으로 탐색하고 .hermes, .config, .codex 같은 dot-prefixed folder를 WORKSPACE_BASE 안전 경계 안에서 표시합니다',
+    new_0_6_24_5: 'Plugins 페이지에서 관리 가능한 user plugin을 enable / disable할 수 있으며 Hermes base config와 현재 profile config의 plugin state를 더 정확히 표시합니다',
+    new_0_6_24_6: 'Models 페이지에 default provider와 default model 작업을 추가했고 bridge terminal error 오탐을 줄였으며 Hermes Agent runtime packaging을 0.18.0으로 올리고 website version manifest도 갱신했습니다',
     new_0_6_23_1: '이번 릴리스는 0.6.22 이후 병합된 PR을 반영하며, 데스크톱 업데이트, MCP 정리, Petdex 펫, MCU 음성, 여러 설정 흐름을 개선했습니다',
     new_0_6_23_2: '데스크톱 자체 업데이트는 다시 블로킹 방식으로 동작하고, Windows 업데이트 전 서비스 종료가 더 안정적이며, 종료 시 gateway, profile MCP 및 관련 하위 프로세스를 더 완전하게 정리합니다',
     new_0_6_23_3: '데스크톱 MCP 주입과 Coding Agent MCP 실행 경로가 더 안정적이며, Windows workspace에 드라이브 선택기가 추가되었고 심볼릭 링크 폴더 표시와 데스크톱 Petdex 미리보기가 수정되었습니다',

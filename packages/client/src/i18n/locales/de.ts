@@ -1948,6 +1948,12 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   changelog: {
+    new_0_6_24_1: 'Diese Version umfasst die nach 0.6.23 gemergten PRs und verbessert Chat-Eingabe, Workspace-Sichtbarkeit, Plugin-Verwaltung, Standardmodelle und Workspace-Diff-Ansicht',
+    new_0_6_24_2: 'Einzel- und Gruppenchat-Eingaben nutzen eine integrierte Toolbar, kompakte Modellsteuerung, gebuendelte Eingabeeinstellungen, klarere Context-Nutzung, stabileres Mobile Chrome und wiederhergestelltes manuelles Resize im Einzelchat',
+    new_0_6_24_3: 'Workspace-Run-Aenderungen erscheinen als dauerhafte Chat-Diff-Karten mit rechter Diff-/Editor-Schublade, werden nach Session Resume wiederhergestellt und sind fuer mobile Ansicht angepasst',
+    new_0_6_24_4: 'Der Workspace-Ordnerauswahler durchsucht Windows-Laufwerke und Junctions zuverlaessiger und zeigt Dot-Ordner wie .hermes, .config und .codex an, waehrend WORKSPACE_BASE-Pruefungen erhalten bleiben',
+    new_0_6_24_5: 'Die Plugins-Seite kann verwaltbare Benutzer-Plugins aktivieren oder deaktivieren und zeigt den kombinierten Status aus Hermes-Basiskonfiguration und aktuellem Profile genauer an',
+    new_0_6_24_6: 'Die Models-Seite erhaelt Aktionen fuer Standard-Provider und Standardmodell; Bridge-Terminalfehler erzeugen weniger Fehlalarme, das Hermes-Agent-Runtime-Paket wechselt auf 0.18.0 und das Website-Versionsmanifest wurde aktualisiert',
     new_0_6_23_1: 'Diese Version fasst die seit 0.6.22 gemergten PRs zusammen, mit Updates fuer Desktop-Self-Update, MCP-Cleanup, Petdex-Pets, MCU-Voice und mehrere Einstellungsablaeufe',
     new_0_6_23_2: 'Das Desktop-Self-Update nutzt wieder einen blockierenden Ablauf, Windows beendet Dienste vor Updates zuverlaessiger, und beim Desktop-Exit werden gateway, profile MCP und zugehoerige Kindprozesse vollstaendiger beendet',
     new_0_6_23_3: 'Desktop-MCP-Injection und Coding-Agent-MCP-Startpfade sind stabiler, Windows-Workspaces haben einen Laufwerkswaehler, und Symlink-Ordneranzeige sowie Desktop-Petdex-Previews wurden korrigiert',

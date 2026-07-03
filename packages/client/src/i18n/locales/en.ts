@@ -2334,6 +2334,12 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_24_1: 'This release covers the PRs merged after 0.6.23, focusing on chat input polish, workspace visibility, plugin management, model defaults, and workspace diff review',
+    new_0_6_24_2: 'Chat and group chat inputs now use a refreshed toolbar with compact model controls, grouped input settings, clearer context usage, mobile-friendly chrome, and restored manual single-chat input resizing',
+    new_0_6_24_3: 'Workspace run changes now appear as durable chat diff cards with a right-side diff/editor drawer, restored after session resume and tuned for mobile viewing',
+    new_0_6_24_4: 'The workspace folder picker can browse Windows drive and junction workflows more reliably and now shows dot-prefixed folders such as .hermes, .config, and .codex while keeping WORKSPACE_BASE safety checks',
+    new_0_6_24_5: 'Plugins can be enabled or disabled from Studio when they are manageable user plugins, and the Plugins page now reflects base and profile plugin state more accurately',
+    new_0_6_24_6: 'Models now support default provider and default model actions; bridge terminal error detection is less noisy, Hermes Agent runtime packaging moves to 0.18.0, and the website version manifest was refreshed',
     new_0_6_23_1: 'This release covers the PRs merged after 0.6.22, with updates to desktop self-update, MCP cleanup, Petdex pets, MCU voice, and several settings workflows',
     new_0_6_23_2: 'Desktop self-update is back to a blocking flow, Windows shuts services down more reliably before updating, and desktop exit now cleans up gateway, profile MCP, and related child processes more completely',
     new_0_6_23_3: 'Desktop MCP injection and Coding Agent MCP launch paths are more stable, Windows workspaces gained a drive picker, and symlink folder display plus desktop Petdex previews were fixed',

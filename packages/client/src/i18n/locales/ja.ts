@@ -1947,6 +1947,12 @@ export default {
 
   // 更新履歴
   changelog: {
+    new_0_6_24_1: 'このリリースは 0.6.23 以降にマージされた PR を反映し、チャット入力、workspace 表示、plugin 管理、default model、workspace diff 確認を改善しました',
+    new_0_6_24_2: '単独チャットとグループチャットの入力欄は統合ツールバー、コンパクトな model 操作、まとまった入力設定、見やすい context 使用量、mobile chrome、単独チャットの手動リサイズ復旧に対応しました',
+    new_0_6_24_3: 'Workspace run の変更は永続的な chat diff card として表示され、右側 drawer で diff 表示と file 編集ができ、session resume 後も復元され、mobile 表示も調整されました',
+    new_0_6_24_4: 'Workspace folder picker は Windows drive と junction workflow をより安定して扱い、.hermes、.config、.codex などの dot-prefixed folder を WORKSPACE_BASE の安全境界内で表示します',
+    new_0_6_24_5: 'Plugins ページから管理可能な user plugin を enable / disable でき、Hermes base config と現在の profile config の plugin state をより正確に表示します',
+    new_0_6_24_6: 'Models ページに default provider と default model の操作を追加し、bridge terminal error の誤検知を減らし、Hermes Agent runtime packaging を 0.18.0 に更新し、website version manifest も更新しました',
     new_0_6_23_1: 'このリリースでは 0.6.22 以降にマージされた PR を反映し、デスクトップ更新、MCP クリーンアップ、Petdex ペット、MCU 音声、設定ワークフローを改善しました',
     new_0_6_23_2: 'デスクトップの自動更新はブロッキング方式に戻り、Windows 更新前のサービス停止がより確実になり、終了時には gateway、profile MCP、関連子プロセスをより完全に停止します',
     new_0_6_23_3: 'デスクトップ MCP 注入と Coding Agent MCP の起動パスが安定し、Windows workspace にドライブ選択を追加し、シンボリックリンクフォルダ表示とデスクトップ Petdex プレビューを修正しました',

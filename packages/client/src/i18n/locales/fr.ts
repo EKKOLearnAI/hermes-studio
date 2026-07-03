@@ -1948,6 +1948,12 @@ jobTriggered: 'Job declenche',
 
   // Journal des modifications
   changelog: {
+    new_0_6_24_1: 'Cette version couvre les PR fusionnees apres 0.6.23 avec des ameliorations pour la saisie chat, la visibilite des workspaces, les plugins, les modeles par defaut et la revue des diffs',
+    new_0_6_24_2: 'Les champs de saisie chat et groupe utilisent une barre integree, des controles de modele compacts, des reglages regroupes, un usage du contexte plus lisible, un mobile chrome plus stable et le redimensionnement manuel du chat simple est retabli',
+    new_0_6_24_3: 'Les changements de workspace run apparaissent comme cartes diff persistantes avec un tiroir lateral pour consulter les diffs et editer les fichiers, restaurees apres reprise de session et ajustees pour mobile',
+    new_0_6_24_4: 'Le selecteur de dossiers workspace gere mieux les disques et junctions Windows et affiche les dossiers commencant par un point comme .hermes, .config et .codex tout en conservant les controles WORKSPACE_BASE',
+    new_0_6_24_5: 'La page Plugins permet d activer ou desactiver les plugins utilisateur gerables et reflete plus precisement l etat combine de la configuration Hermes de base et du profile courant',
+    new_0_6_24_6: 'La page Models ajoute les actions de provider et modele par defaut; la detection d erreurs terminal bridge genere moins de faux positifs, le runtime Hermes Agent passe a 0.18.0 et le manifest de versions du site est actualise',
     new_0_6_23_1: 'Cette version couvre les PR fusionnees depuis 0.6.22, avec des mises a jour pour l auto-update desktop, le nettoyage MCP, les pets Petdex, la voix MCU et plusieurs parcours de reglages',
     new_0_6_23_2: 'L auto-update desktop revient a un flux bloquant, Windows arrete les services plus proprement avant la mise a jour, et la sortie desktop nettoie mieux gateway, profile MCP et les processus enfants associes',
     new_0_6_23_3: 'L injection MCP desktop et les chemins de lancement MCP du Coding Agent sont plus stables, les workspaces Windows gagnent un selecteur de disque, et l affichage des dossiers symlink ainsi que les apercus Petdex desktop sont corriges',

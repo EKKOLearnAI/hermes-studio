@@ -1948,6 +1948,12 @@ jobTriggered: 'Job ejecutado',
 
   // Registro de cambios
   changelog: {
+    new_0_6_24_1: 'Esta version cubre los PR fusionados despues de 0.6.23 y mejora la entrada de chat, la visibilidad de workspaces, la gestion de plugins, los modelos predeterminados y la revision de diffs',
+    new_0_6_24_2: 'Las entradas de chat individual y grupal usan una barra integrada, controles de modelo compactos, ajustes agrupados, uso de contexto mas claro, mejor vista movil y restaura el redimensionado manual del chat individual',
+    new_0_6_24_3: 'Los cambios de workspace run aparecen como tarjetas diff persistentes con un panel derecho para ver diffs y editar archivos, se restauran tras reanudar la sesion y se ajustan mejor en movil',
+    new_0_6_24_4: 'El selector de carpetas workspace navega mejor discos y junctions de Windows y muestra carpetas con punto como .hermes, .config y .codex manteniendo las comprobaciones de WORKSPACE_BASE',
+    new_0_6_24_5: 'La pagina Plugins permite activar o desactivar plugins de usuario gestionables y refleja mejor el estado combinado de la configuracion base de Hermes y del profile actual',
+    new_0_6_24_6: 'La pagina Models anade acciones de provider y modelo predeterminado; la deteccion de errores terminal bridge reduce falsos positivos, el runtime Hermes Agent sube a 0.18.0 y se actualiza el manifest de versiones del sitio',
     new_0_6_23_1: 'Esta version resume los PR fusionados desde 0.6.22, con mejoras para la autoactualizacion de escritorio, limpieza de MCP, mascotas Petdex, voz MCU y varios flujos de ajustes',
     new_0_6_23_2: 'La autoactualizacion de escritorio vuelve a un flujo bloqueante, Windows detiene servicios con mas fiabilidad antes de actualizar, y al salir del escritorio se limpian mejor gateway, profile MCP y procesos hijo relacionados',
     new_0_6_23_3: 'La inyeccion MCP de escritorio y las rutas de arranque MCP del Coding Agent son mas estables, los workspaces de Windows tienen selector de unidad, y se corrigieron las carpetas symlink y las vistas previas Petdex de escritorio',

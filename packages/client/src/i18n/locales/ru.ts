@@ -2082,6 +2082,12 @@ export default {
   },
 
   changelog: {
+    new_0_6_24_1: 'Этот релиз включает PR после 0.6.23 и улучшает ввод чата, видимость workspace, управление plugins, модели по умолчанию и просмотр workspace diff',
+    new_0_6_24_2: 'Поля ввода одиночного и группового чата получили встроенную панель, компактные элементы модели, сгруппированные настройки ввода, более понятное использование context, мобильную полировку и восстановленный ручной resize одиночного чата',
+    new_0_6_24_3: 'Изменения workspace run теперь показываются как устойчивые chat diff cards с правым drawer для просмотра diff и редактирования файлов, восстанавливаются после resume session и лучше работают на mobile',
+    new_0_6_24_4: 'Workspace folder picker надежнее обходит Windows drives и junctions и показывает dot-prefixed folders вроде .hermes, .config и .codex, сохраняя проверки WORKSPACE_BASE',
+    new_0_6_24_5: 'Страница Plugins позволяет включать и отключать управляемые user plugins и точнее показывает состояние из базовой конфигурации Hermes и текущего profile',
+    new_0_6_24_6: 'Страница Models получила действия default provider и default model; bridge terminal error detection дает меньше ложных ошибок, Hermes Agent runtime packaging обновлен до 0.18.0, а website version manifest освежен',
     new_0_6_23_1: 'В этом выпуске собраны PR, merged после 0.6.22: desktop self-update, MCP cleanup, Petdex pets, MCU voice и несколько настроек workflow',
     new_0_6_23_2: 'Desktop self-update снова работает в blocking-режиме, Windows надежнее останавливает сервисы перед обновлением, а выход из desktop полнее очищает gateway, profile MCP и связанные дочерние процессы',
     new_0_6_23_3: 'Desktop MCP injection и запуск MCP для Coding Agent стали стабильнее, Windows workspaces получили выбор диска, исправлены отображение symlink-папок и desktop Petdex previews',
