@@ -756,6 +756,7 @@ export default {
     },
     info: {
       model: '모델',
+      provider: 'Provider',
       schedule: '일정',
       lastRun: '마지막 실행',
       nextRun: '다음 실행',

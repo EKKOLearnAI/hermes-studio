@@ -920,6 +920,7 @@ export default {
     },
     info: {
       model: 'Модель',
+      provider: 'Provider',
       schedule: 'Расписание',
       lastRun: 'Последний запуск',
       nextRun: 'Следующий запуск',

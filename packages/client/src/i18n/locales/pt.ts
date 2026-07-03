@@ -756,6 +756,7 @@ jobTriggered: 'Job acionado',
     },
     info: {
       model: 'Modelo',
+      provider: 'Provider',
       schedule: 'Agendamento',
       lastRun: 'Ultima execucao',
       nextRun: 'Proxima execucao',

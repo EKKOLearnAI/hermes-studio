@@ -1015,6 +1015,7 @@ export default {
     },
     info: {
       model: 'Model',
+      provider: 'Provider',
       schedule: 'Schedule',
       lastRun: 'Last Run',
       nextRun: 'Next Run',

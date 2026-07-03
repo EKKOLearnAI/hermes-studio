@@ -756,6 +756,7 @@ jobTriggered: 'Job ausgelost',
     },
     info: {
       model: 'Modell',
+      provider: 'Provider',
       schedule: 'Zeitplan',
       lastRun: 'Letzte Ausfuhrung',
       nextRun: 'Nachste Ausfuhrung',
