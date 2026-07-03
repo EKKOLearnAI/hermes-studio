@@ -471,7 +471,7 @@ function diffUserInstalledPipPackages(
   try {
     const result = execFileSync(oldPython, [
       '-m', 'pip', 'list', '--format=json', '--disable-pip-version-check'
-    ], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] })
+    ], { encoding: 'utf-8', timeout: 15000, killSignal: 'SIGTERM', stdio: ['ignore', 'pipe', 'pipe'] })
     const oldPkgs: Array<{ name: string; version: string }> = JSON.parse(result.trim())
 
     const userPkgs = oldPkgs
@@ -482,7 +482,7 @@ function diffUserInstalledPipPackages(
 
     const newResult = execFileSync(newPython, [
       '-m', 'pip', 'list', '--format=json', '--disable-pip-version-check'
-    ], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] })
+    ], { encoding: 'utf-8', timeout: 15000, killSignal: 'SIGTERM', stdio: ['ignore', 'pipe', 'pipe'] })
     const newPkgs = new Set(
       (JSON.parse(newResult.trim()) as Array<{ name: string }>).map(p => p.name.toLowerCase())
     )
@@ -520,7 +520,7 @@ export function activateInstalledRuntimeVersion(version: string): ActiveVersionM
   }
 
   const next: ActiveVersionManifest = {
-    schema: 2,
+    schema: 1,
     hermesRuntimeVersion: target.manifestHermesRuntimeVersion || target.version,
     webUiVersion: active?.webUiVersion || getHermesWebUiVersion(),
     runtimeDirectory: target.directory,
