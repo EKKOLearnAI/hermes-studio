@@ -444,7 +444,15 @@ export async function downloadWebUiVersion(version: string, source: VersionDownl
 
 interface PipPackageDiff {
   missing: string[]
-  previousPythonPath: string
+}
+
+/**
+ * Normalize a pip package name per PEP 503: lowercase, replace runs of [-_.] with '-'.
+ * This ensures robust comparison between names returned by `pip list --format=json`
+ * (which preserves the metadata name, e.g. slack_sdk) and our BASE_PACKAGES entries.
+ */
+function normalizePkgName(name: string): string {
+  return name.toLowerCase().replace(/[-_.]+/g, '-')
 }
 
 function diffUserInstalledPipPackages(
@@ -455,16 +463,17 @@ function diffUserInstalledPipPackages(
   const oldPython = join(oldRuntimeDir, 'python', pythonBin)
   const newPython = join(newRuntimeDir, 'python', pythonBin)
   if (!existsSync(oldPython) || !existsSync(newPython)) {
-    return { missing: [], previousPythonPath: oldPython }
+    return { missing: [] }
   }
 
   // Get set of "base" packages that ship with every runtime (known by name)
+  // All entries must use the PEP 503 normalized form (hyphens, lowercase).
   const BASE_PACKAGES = new Set([
     'hermes-agent', 'aiohttp', 'httpx', 'fastapi', 'uvicorn', 'pydantic',
     'pyyaml', 'requests', 'certifi', 'urllib3', 'idna', 'charset-normalizer',
     'click', 'colorama', 'jinja2', 'rich', 'typer', 'setuptools', 'pip',
-    'websockets', 'cryptography', 'pywin32', 'psutil', 'prompt_toolkit',
-    'python-telegram-bot', 'discord.py', 'slack-sdk', 'slack-bolt',
+    'websockets', 'cryptography', 'pywin32', 'psutil', 'prompt-toolkit',
+    'python-telegram-bot', 'discord-py', 'slack-sdk', 'slack-bolt',
     'lark-oapi', 'dingtalk-stream', 'edge-tts', 'pillow',
   ])
 
@@ -475,22 +484,23 @@ function diffUserInstalledPipPackages(
     const oldPkgs: Array<{ name: string; version: string }> = JSON.parse(result.trim())
 
     const userPkgs = oldPkgs
-      .map(p => p.name.toLowerCase())
+      .map(p => normalizePkgName(p.name))
       .filter(name => !BASE_PACKAGES.has(name) && !name.startsWith('opentelemetry'))
 
-    if (userPkgs.length === 0) return { missing: [], previousPythonPath: oldPython }
+    if (userPkgs.length === 0) return { missing: [] }
 
     const newResult = execFileSync(newPython, [
       '-m', 'pip', 'list', '--format=json', '--disable-pip-version-check'
     ], { encoding: 'utf-8', timeout: 15000, killSignal: 'SIGTERM', stdio: ['ignore', 'pipe', 'pipe'] })
     const newPkgs = new Set(
-      (JSON.parse(newResult.trim()) as Array<{ name: string }>).map(p => p.name.toLowerCase())
+      (JSON.parse(newResult.trim()) as Array<{ name: string }>).map(p => normalizePkgName(p.name))
     )
 
     const missing = userPkgs.filter(name => !newPkgs.has(name))
-    return { missing, previousPythonPath: oldPython }
-  } catch {
-    return { missing: [], previousPythonPath: oldPython }
+    return { missing }
+  } catch (err) {
+    console.error('[runtime] Failed to diff pip packages:', err instanceof Error ? err.message : String(err))
+    return { missing: [] }
   }
 }
 
