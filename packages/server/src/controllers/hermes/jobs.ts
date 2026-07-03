@@ -58,15 +58,26 @@ function normalizeJob(job: JobRecord): JobRecord {
 
 function resolveJobDefaults(jobs: JobRecord[], config: Record<string, any>): JobRecord[] {
   const modelSection = config.model
-  let defaultProvider = ''
   let defaultModel = ''
+  let defaultProvider = ''
   if (typeof modelSection === 'object' && modelSection !== null) {
-    defaultProvider = String(modelSection.provider || '').trim()
     defaultModel = String(modelSection.default || '').trim()
+    defaultProvider = String(modelSection.provider || '').trim()
+    // Resolve 'custom' provider from custom_providers matching base_url+model
+    if (defaultProvider === 'custom' && defaultModel) {
+      const cps = Array.isArray(config.custom_providers) ? config.custom_providers : []
+      const match = cps.find((cp: any) =>
+        String(cp.base_url || '').replace(/\/$/, '') === String(modelSection.base_url || '').replace(/\/$/, '')
+        && String(cp.model || '') === defaultModel
+      ) || cps.find((cp: any) =>
+        String(cp.base_url || '').replace(/\/$/, '') === String(modelSection.base_url || '').replace(/\/$/, '')
+      )
+      if (match) defaultProvider = 'custom:' + String(match.name || '').trim()
+    }
   } else if (typeof modelSection === 'string') {
     defaultModel = modelSection.trim()
   }
-  if (!defaultProvider && !defaultModel) return jobs
+  if (!defaultModel && !defaultProvider) return jobs
   return jobs.map(job => ({
     ...job,
     provider: job.provider || defaultProvider || null,
