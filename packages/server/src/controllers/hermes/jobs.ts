@@ -4,6 +4,7 @@ import { join } from 'path'
 import { getHermesBin } from '../../services/hermes/hermes-path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { execHermesWithBin } from '../../services/hermes/hermes-process'
+import { readConfigYamlForProfile } from '../../services/config-helpers'
 
 const TIMEOUT_MS = 60_000
 
@@ -53,6 +54,24 @@ function normalizeJob(job: JobRecord): JobRecord {
     origin: job.origin ?? null,
     last_delivery_error: job.last_delivery_error ?? null,
   }
+}
+
+function resolveJobDefaults(jobs: JobRecord[], config: Record<string, any>): JobRecord[] {
+  const modelSection = config.model
+  let defaultProvider = ''
+  let defaultModel = ''
+  if (typeof modelSection === 'object' && modelSection !== null) {
+    defaultProvider = String(modelSection.provider || '').trim()
+    defaultModel = String(modelSection.default || '').trim()
+  } else if (typeof modelSection === 'string') {
+    defaultModel = modelSection.trim()
+  }
+  if (!defaultProvider && !defaultModel) return jobs
+  return jobs.map(job => ({
+    ...job,
+    provider: job.provider || defaultProvider || null,
+    model: job.model || defaultModel || null,
+  }))
 }
 
 function writeJobs(profile: string, jobs: JobRecord[], asArray = false): void {
@@ -205,7 +224,9 @@ function findCreatedJob(beforeJobs: JobRecord[], afterJobs: JobRecord[]): JobRec
 export async function list(ctx: Context) {
   const profile = resolveProfile(ctx)
   const includeDisabled = boolQuery(ctx.query.include_disabled, false)
-  ctx.body = { jobs: readJobs(profile, includeDisabled) }
+  const jobs = readJobs(profile, includeDisabled)
+  const config = await readConfigYamlForProfile(profile)
+  ctx.body = { jobs: resolveJobDefaults(jobs, config) }
 }
 
 export async function get(ctx: Context) {
