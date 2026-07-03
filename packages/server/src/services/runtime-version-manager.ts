@@ -1,3 +1,4 @@
+import { execFileSync } from 'child_process'
 import { createHash } from 'crypto'
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { get as httpGet } from 'http'
@@ -447,11 +448,12 @@ interface PipPackageDiff {
 }
 
 function diffUserInstalledPipPackages(
-  oldPythonDir: string,
-  newPythonDir: string,
+  oldRuntimeDir: string,
+  newRuntimeDir: string,
 ): PipPackageDiff {
-  const oldPython = join(oldPythonDir, process.platform === 'win32' ? 'python.exe' : 'bin', 'python3')
-  const newPython = join(newPythonDir, process.platform === 'win32' ? 'python.exe' : 'bin', 'python3')
+  const pythonBin = process.platform === 'win32' ? 'python.exe' : join('bin', 'python3')
+  const oldPython = join(oldRuntimeDir, 'python', pythonBin)
+  const newPython = join(newRuntimeDir, 'python', pythonBin)
   if (!existsSync(oldPython) || !existsSync(newPython)) {
     return { missing: [], previousPythonPath: oldPython }
   }
@@ -467,18 +469,18 @@ function diffUserInstalledPipPackages(
   ])
 
   try {
-    const result = require('child_process').execFileSync(oldPython, [
+    const result = execFileSync(oldPython, [
       '-m', 'pip', 'list', '--format=json', '--disable-pip-version-check'
     ], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] })
     const oldPkgs: Array<{ name: string; version: string }> = JSON.parse(result.trim())
 
     const userPkgs = oldPkgs
       .map(p => p.name.toLowerCase())
-      .filter(name => !BASE_PACKAGES.has(name) && !name.startsWith('hindsight') && !name.startsWith('opentelemetry'))
+      .filter(name => !BASE_PACKAGES.has(name) && !name.startsWith('opentelemetry'))
 
     if (userPkgs.length === 0) return { missing: [], previousPythonPath: oldPython }
 
-    const newResult = require('child_process').execFileSync(newPython, [
+    const newResult = execFileSync(newPython, [
       '-m', 'pip', 'list', '--format=json', '--disable-pip-version-check'
     ], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] })
     const newPkgs = new Set(
@@ -504,9 +506,7 @@ export function activateInstalledRuntimeVersion(version: string): ActiveVersionM
   // Detect pip packages that existed in the previous runtime but are missing in the new one
   let missingPackagesWarning: string | undefined
   if (active?.runtimeDirectory) {
-    const oldPythonDir = dirname(active.runtimeDirectory)
-    const newPythonDir = dirname(target.directory)
-    const diff = diffUserInstalledPipPackages(oldPythonDir, newPythonDir)
+    const diff = diffUserInstalledPipPackages(active.runtimeDirectory, target.directory)
     if (diff.missing.length > 0) {
       missingPackagesWarning = [
         `The new Hermes runtime is missing ${diff.missing.length} pip package(s) that were installed in the previous runtime:`,
