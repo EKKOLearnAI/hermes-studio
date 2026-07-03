@@ -707,6 +707,7 @@ jobTriggered: 'Job declenche',
     },
     info: {
       model: 'Modele',
+      provider: 'Provider',
       schedule: 'Planification',
       lastRun: 'Derniere execution',
       nextRun: 'Prochaine execution',

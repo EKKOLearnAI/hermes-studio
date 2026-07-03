@@ -1,5 +1,5 @@
 import type { Context } from 'koa'
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { getHermesBin } from '../../services/hermes/hermes-path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
@@ -55,6 +55,12 @@ function normalizeJob(job: JobRecord): JobRecord {
   }
 }
 
+function writeJobs(profile: string, jobs: JobRecord[], asArray = false): void {
+  const jobsPath = getJobsPath(profile)
+  const payload = asArray ? jobs : { jobs }
+  writeFileSync(jobsPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8')
+}
+
 function readJobs(profile: string, includeDisabled = true): JobRecord[] {
   const jobsPath = getJobsPath(profile)
   if (!existsSync(jobsPath)) return []
@@ -101,6 +107,45 @@ function getRepeatValue(repeat: unknown): number | null {
 
 function hasRepeatField(body: Record<string, any>): boolean {
   return Object.prototype.hasOwnProperty.call(body, 'repeat')
+}
+
+function normalizeOptionalText(value: unknown): string | null {
+  if (value == null) return null
+  const text = String(value).trim()
+  return text ? text : null
+}
+
+function hasOwn(body: Record<string, any>, field: string): boolean {
+  return Object.prototype.hasOwnProperty.call(body, field)
+}
+
+function buildInferenceUpdates(body: Record<string, any>): Record<string, string | null> {
+  const updates: Record<string, string | null> = {}
+  if (hasOwn(body, 'provider')) updates.provider = normalizeOptionalText(body.provider)
+  if (hasOwn(body, 'model')) updates.model = normalizeOptionalText(body.model)
+  if (hasOwn(body, 'base_url')) updates.base_url = normalizeOptionalText(body.base_url)
+  return updates
+}
+
+function patchJobFields(profile: string, jobId: string, fields: Record<string, any>): JobRecord | null {
+  const updates = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined))
+  if (Object.keys(updates).length === 0) return findJob(profile, jobId)
+
+  const jobsPath = getJobsPath(profile)
+  if (!existsSync(jobsPath)) return null
+  const parsed = JSON.parse(readFileSync(jobsPath, 'utf-8'))
+  const parsedAsArray = Array.isArray(parsed)
+  const rawJobs = parsedAsArray ? parsed : parsed?.jobs
+  if (!Array.isArray(rawJobs)) return null
+
+  const index = rawJobs.findIndex((job: JobRecord) => (job.job_id || job.id) === jobId || job.id === jobId)
+  if (index === -1) return null
+  rawJobs[index] = {
+    ...rawJobs[index],
+    ...updates,
+  }
+  writeJobs(profile, rawJobs, parsedAsArray)
+  return normalizeJob(rawJobs[index])
 }
 
 function getSkills(body: Record<string, any>): string[] | null {
@@ -209,7 +254,9 @@ export async function create(ctx: Context) {
   try {
     await runHermesCron(profile, args)
     const job = findCreatedJob(beforeJobs, readJobs(profile, true))
-    ctx.body = { job }
+    const inferenceUpdates = buildInferenceUpdates(body)
+    const patchedJob = job ? patchJobFields(profile, job.job_id || job.id, inferenceUpdates) : null
+    ctx.body = { job: patchedJob || job }
   } catch (error: any) {
     sendCommandError(ctx, error)
   }
@@ -251,8 +298,13 @@ export async function update(ctx: Context) {
   if (body.no_agent === false) args.push('--agent')
 
   try {
-    await runHermesCron(profile, args)
-    const job = findJob(profile, ctx.params.id)
+    const inferenceUpdates = buildInferenceUpdates(body)
+    const hasCliUpdates = args.length > 5
+    if (hasCliUpdates) {
+      await runHermesCron(profile, args)
+    }
+    const patchedJob = patchJobFields(profile, ctx.params.id, inferenceUpdates)
+    const job = patchedJob || findJob(profile, ctx.params.id)
     if (!job) return sendJobNotFound(ctx)
     ctx.body = { job }
   } catch (error: any) {

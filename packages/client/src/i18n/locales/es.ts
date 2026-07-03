@@ -707,6 +707,7 @@ jobTriggered: 'Job ejecutado',
     },
     info: {
       model: 'Modelo',
+      provider: 'Provider',
       schedule: 'Programacion',
       lastRun: 'Ultima ejecucion',
       nextRun: 'Proxima ejecucion',

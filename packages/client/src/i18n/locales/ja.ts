@@ -707,6 +707,7 @@ export default {
     },
     info: {
       model: 'モデル',
+      provider: 'Provider',
       schedule: 'スケジュール',
       lastRun: '前回実行',
       nextRun: '次回実行',
