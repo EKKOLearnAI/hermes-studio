@@ -67,18 +67,26 @@ async function handleRefreshModelCache() {
           size="small"
           :loading="modelsStore.refreshingModelCache"
           :disabled="modelsStore.loading"
+          :aria-label="t('models.refreshModelCache')"
+          :title="t('models.refreshModelCache')"
           @click="handleRefreshModelCache"
         >
           <template #icon>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 1-9 9 9.7 9.7 0 0 1-6.7-2.7"/><path d="M3 12a9 9 0 0 1 9-9 9.7 9.7 0 0 1 6.7 2.7"/><path d="M21 3v6h-6"/><path d="M3 21v-6h6"/></svg>
           </template>
-          {{ t('models.refreshModelCache') }}
+          <span class="header-action-label">{{ t('models.refreshModelCache') }}</span>
         </NButton>
-        <NButton type="primary" size="small" @click="openCreateModal">
+        <NButton
+          type="primary"
+          size="small"
+          :aria-label="t('models.addProvider')"
+          :title="t('models.addProvider')"
+          @click="openCreateModal"
+        >
           <template #icon>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           </template>
-          {{ t('models.addProvider') }}
+          <span class="header-action-label">{{ t('models.addProvider') }}</span>
         </NButton>
       </div>
     </header>
@@ -139,5 +147,33 @@ async function handleRefreshModelCache() {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+@media (max-width: 640px) {
+  .header-actions {
+    flex-wrap: nowrap;
+  }
+
+  .header-action-label {
+    display: none;
+  }
+
+  .header-actions :deep(.n-button) {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+  }
+
+  .header-actions :deep(.n-button__content),
+  .header-actions :deep(.n-button__icon),
+  .header-actions :deep(.n-icon-slot) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .header-actions :deep(.n-button__icon) {
+    margin: 0;
+  }
 }
 </style>
