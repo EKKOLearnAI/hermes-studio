@@ -1,5 +1,9 @@
 import { Readable } from 'stream'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync } from 'fs'
+import { join } from 'path'
+import { tmpdir } from 'os'
+import { DatabaseSync } from 'node:sqlite'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 const provider = {
   listDir: vi.fn(),
@@ -9,11 +13,24 @@ const provider = {
   deleteDir: vi.fn(),
   writeFile: vi.fn(),
 }
+const state = vi.hoisted(() => ({
+  db: null as DatabaseSync | null,
+}))
+
 const createFileProviderMock = vi.fn(async () => provider)
 const resolveHermesPathMock = vi.fn((relativePath: string) => {
   const normalized = relativePath.replace(/^\/+/, '')
   return normalized ? `/home/agent/.hermes/${normalized}` : '/home/agent/.hermes'
 })
+
+vi.mock('../../packages/server/src/db/index', () => ({
+  getDb: () => state.db,
+  isSqliteAvailable: () => Boolean(state.db),
+  jsonDelete: vi.fn(),
+  jsonGet: vi.fn(),
+  jsonGetAll: vi.fn(() => ({})),
+  jsonSet: vi.fn(),
+}))
 
 vi.mock('../../packages/server/src/services/hermes/file-provider', () => ({
   createFileProvider: createFileProviderMock,
@@ -47,8 +64,14 @@ function superAdminState(profile = 'research') {
 }
 
 describe('file routes path metadata', () => {
-  beforeEach(() => {
+  let root: string
+
+  beforeEach(async () => {
     vi.resetModules()
+    root = mkdtempSync(join(tmpdir(), 'hermes-files-routes-'))
+    state.db = new DatabaseSync(join(root, 'files.db'))
+    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    initAllHermesTables()
     createFileProviderMock.mockClear()
     resolveHermesPathMock.mockClear()
     provider.listDir.mockReset()
@@ -57,6 +80,12 @@ describe('file routes path metadata', () => {
     provider.deleteFile.mockReset()
     provider.deleteDir.mockReset()
     provider.writeFile.mockReset()
+  })
+
+  afterEach(() => {
+    state.db?.close()
+    state.db = null
+    if (root) rmSync(root, { recursive: true, force: true })
   })
 
   it('returns absolute paths for listed entries while preserving relative operation paths', async () => {
@@ -79,6 +108,48 @@ describe('file routes path metadata', () => {
           name: 'app.log',
           path: 'logs/app.log',
           absolutePath: '/home/agent/.hermes/logs/app.log',
+          isDir: false,
+          size: 12,
+          modTime: '2026-05-20T00:00:00.000Z',
+        },
+      ],
+    })
+  })
+
+
+
+  it('lists the active session workspace when session_id is provided', async () => {
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    const { createSession } = await import('../../packages/server/src/db/hermes/session-store')
+    createSession({
+      id: 'session-with-workspace',
+      profile: 'research',
+      source: 'api_server',
+      workspace,
+    })
+    provider.listDir.mockResolvedValue([
+      { name: 'project.md', path: 'project.md', isDir: false, size: 12, modTime: '2026-05-20T00:00:00.000Z' },
+    ])
+
+    const ctx: any = {
+      query: { session_id: 'session-with-workspace' },
+      state: { profile: { name: 'research' } },
+      body: null,
+    }
+
+    await runFileRoute('/api/hermes/files/list', ctx)
+
+    expect(provider.listDir).toHaveBeenCalledWith(workspace)
+    expect(resolveHermesPathMock).not.toHaveBeenCalled()
+    expect(ctx.body).toEqual({
+      path: '',
+      absolutePath: workspace,
+      entries: [
+        {
+          name: 'project.md',
+          path: 'project.md',
+          absolutePath: join(workspace, 'project.md'),
           isDir: false,
           size: 12,
           modTime: '2026-05-20T00:00:00.000Z',

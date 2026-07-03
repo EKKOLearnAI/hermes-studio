@@ -7,21 +7,66 @@ import {
 } from '../../services/hermes/file-provider'
 import { requireSuperAdmin } from '../../middleware/user-auth'
 import { MultipartParseError, parseMultipartBoundary, parseMultipartFilename, splitMultipart } from '../../lib/multipart'
+import { getSession } from '../../db/hermes/session-store'
+import { isPathWithin, relativePathFromBase } from '../../services/hermes/hermes-path'
+import { resolve as pathResolve } from 'path'
 
 function requestedProfile(ctx: any): string | undefined {
   return ctx.state?.profile?.name
 }
 
+function requestedSessionId(ctx: any): string {
+  const querySessionId = typeof ctx.query?.session_id === 'string' ? ctx.query.session_id.trim() : ''
+  const bodySessionId = typeof ctx.request?.body?.session_id === 'string' ? ctx.request.body.session_id.trim() : ''
+  return querySessionId || bodySessionId
+}
+
+function getSessionWorkspace(ctx: any): string | null {
+  const sessionId = requestedSessionId(ctx)
+  if (!sessionId) return null
+  const session = getSession(sessionId)
+  if (!session) throw Object.assign(new Error('Session not found'), { code: 'not_found' })
+  if (session.profile && session.profile !== (requestedProfile(ctx) || 'default')) {
+    throw Object.assign(new Error('Session profile mismatch'), { code: 'permission_denied' })
+  }
+  const workspace = String(session.workspace || '').trim()
+  if (!workspace) throw Object.assign(new Error('Session workspace not found'), { code: 'not_found' })
+  return workspace
+}
+
+function normalizeRelativePath(relativePath: string): string {
+  if (!relativePath || relativePath === '.' || relativePath === '/') return ''
+  const normalized = relativePath.replace(/\\/g, '/')
+  if (normalized.startsWith('/') || normalized === '..' || normalized.startsWith('../') || normalized.includes('/../')) {
+    throw Object.assign(new Error('Invalid file path'), { code: 'invalid_path' })
+  }
+  return normalized
+}
+
 function resolveRequestPath(ctx: any, relativePath: string): string {
-  return resolveHermesPath(relativePath, requestedProfile(ctx))
+  const workspace = getSessionWorkspace(ctx)
+  if (!workspace) return resolveHermesPath(relativePath, requestedProfile(ctx))
+  const normalized = normalizeRelativePath(relativePath)
+  const resolved = normalized ? pathResolve(workspace, normalized) : workspace
+  if (!isPathWithin(resolved, workspace)) throw Object.assign(new Error('Path traversal detected'), { code: 'invalid_path' })
+  return resolved
 }
 
 async function createRequestFileProvider(ctx: any) {
   return createFileProvider(requestedProfile(ctx))
 }
 
-function withAbsolutePath<T extends { path: string }>(ctx: any, entry: T): T & { absolutePath: string } {
-  return { ...entry, absolutePath: resolveRequestPath(ctx, entry.path) }
+function joinRelativePath(parentPath: string, name: string): string {
+  const parent = normalizeRelativePath(parentPath)
+  return parent ? `${parent}/${name}` : name
+}
+
+function withAbsolutePath<T extends { path: string; name?: string }>(ctx: any, entry: T, parentPath = ''): T & { absolutePath: string } {
+  const workspace = getSessionWorkspace(ctx)
+  if (!workspace) return { ...entry, absolutePath: resolveRequestPath(ctx, entry.path) }
+  const relativePath = entry.name ? joinRelativePath(parentPath, entry.name) : normalizeRelativePath(entry.path)
+  const absolutePath = resolveRequestPath(ctx, relativePath)
+  return { ...entry, path: relativePathFromBase(absolutePath, workspace) ?? relativePath, absolutePath }
 }
 
 export const fileRoutes = new Router()
@@ -57,7 +102,7 @@ fileRoutes.get('/api/hermes/files/list', async (ctx) => {
       if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
       return a.name.localeCompare(b.name)
     })
-    ctx.body = { entries: entries.map(entry => withAbsolutePath(ctx, entry)), path: relativePath, absolutePath: absPath }
+    ctx.body = { entries: entries.map(entry => withAbsolutePath(ctx, entry, relativePath)), path: relativePath, absolutePath: absPath }
   } catch (err: any) {
     handleError(ctx, err)
   }
@@ -75,7 +120,7 @@ fileRoutes.get('/api/hermes/files/stat', async (ctx) => {
     const absPath = resolveRequestPath(ctx, relativePath)
     const provider = await createRequestFileProvider(ctx)
     const info = await provider.stat(absPath)
-    ctx.body = withAbsolutePath(ctx, info)
+    ctx.body = withAbsolutePath(ctx, { ...info, path: relativePath })
   } catch (err: any) {
     handleError(ctx, err)
   }

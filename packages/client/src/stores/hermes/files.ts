@@ -122,6 +122,7 @@ function normalizeProfile(profile?: string | null): string | null {
 export const useFilesStore = defineStore('files', () => {
   const currentPath = ref('')
   const currentProfile = ref<string | null>(null)
+  const currentSessionId = ref<string | null>(null)
   const entries = ref<FileEntry[]>([])
   const loading = ref(false)
   const sortBy = ref<'name' | 'size' | 'modTime'>('name')
@@ -139,6 +140,7 @@ export const useFilesStore = defineStore('files', () => {
   const previewFile = ref<{
     path: string
     profile?: string | null
+    sessionId?: string | null
     type: 'image' | 'markdown' | 'text'
     content?: string
     language?: string
@@ -168,7 +170,12 @@ export const useFilesStore = defineStore('files', () => {
     return profile === undefined ? currentProfile.value : normalizeProfile(profile)
   }
 
-  async function fetchEntries(path?: string, options: { profile?: string | null } = {}) {
+  function resolveSessionId(sessionId?: string | null): string | null {
+    if (sessionId !== undefined) return typeof sessionId === 'string' && sessionId.trim() ? sessionId.trim() : null
+    return currentSessionId.value
+  }
+
+  async function fetchEntries(path?: string, options: { profile?: string | null; sessionId?: string | null } = {}) {
     if (path !== undefined && path !== currentPath.value) {
       // Switching directory invalidates the current preview; close it so the
       // file list becomes visible again. The editor has its own dirty-check
@@ -176,11 +183,13 @@ export const useFilesStore = defineStore('files', () => {
       previewFile.value = null
     }
     const nextProfile = resolveProfile(options.profile)
+    const nextSessionId = resolveSessionId(options.sessionId)
     currentProfile.value = nextProfile
+    currentSessionId.value = nextSessionId
     if (path !== undefined) currentPath.value = path
     loading.value = true
     try {
-      const result = await filesApi.listFiles(currentPath.value, nextProfile)
+      const result = await filesApi.listFiles(currentPath.value, nextProfile, nextSessionId)
       entries.value = result.entries
     } catch (err) {
       console.error('Failed to fetch files:', err)
@@ -190,22 +199,25 @@ export const useFilesStore = defineStore('files', () => {
     }
   }
 
-  function navigateTo(path: string, options: { profile?: string | null } = {}) { return fetchEntries(path, options) }
-  function navigateUp(options: { profile?: string | null } = {}) {
+  function navigateTo(path: string, options: { profile?: string | null; sessionId?: string | null } = {}) { return fetchEntries(path, options) }
+  function navigateUp(options: { profile?: string | null; sessionId?: string | null } = {}) {
     const parts = currentPath.value.split('/').filter(Boolean)
     parts.pop()
     return fetchEntries(parts.join('/'), options)
   }
 
-  async function openEditor(filePath: string, options: { profile?: string | null } = {}) {
+  async function openEditor(filePath: string, options: { profile?: string | null; sessionId?: string | null } = {}) {
     const profile = resolveProfile(options.profile)
+    const sessionId = resolveSessionId(options.sessionId)
     currentProfile.value = profile
-    const result = await filesApi.readFile(filePath, profile)
+    currentSessionId.value = sessionId
+    const result = await filesApi.readFile(filePath, profile, sessionId)
     editingFile.value = {
       path: filePath,
       content: result.content,
       originalContent: result.content,
       language: getLanguageFromPath(filePath),
+      ...(sessionId ? { workspaceSessionId: sessionId, workspaceRelativePath: filePath } : {}),
     }
   }
 
@@ -230,26 +242,29 @@ export const useFilesStore = defineStore('files', () => {
         editingFile.value.content,
       )
     } else {
-      await filesApi.writeFile(editingFile.value.path, editingFile.value.content, currentProfile.value)
+      await filesApi.writeFile(editingFile.value.path, editingFile.value.content, currentProfile.value, currentSessionId.value)
     }
     editingFile.value.originalContent = editingFile.value.content
   }
 
   function closeEditor() { editingFile.value = null }
 
-  async function openPreview(entry: FileEntry, options: { profile?: string | null } = {}) {
+  async function openPreview(entry: FileEntry, options: { profile?: string | null; sessionId?: string | null } = {}) {
     const profile = resolveProfile(options.profile)
+    const sessionId = resolveSessionId(options.sessionId)
     currentProfile.value = profile
+    currentSessionId.value = sessionId
     if (isImageFile(entry.name)) {
-      previewFile.value = { path: entry.path, profile, type: 'image' }
+      previewFile.value = { path: entry.path, profile, sessionId, type: 'image' }
     } else if (isMarkdownFile(entry.name)) {
-      const result = await filesApi.readFile(entry.path, profile)
-      previewFile.value = { path: entry.path, profile, type: 'markdown', content: result.content }
+      const result = await filesApi.readFile(entry.path, profile, sessionId)
+      previewFile.value = { path: entry.path, profile, sessionId, type: 'markdown', content: result.content }
     } else if (isTextFile(entry.name)) {
-      const result = await filesApi.readFile(entry.path, profile)
+      const result = await filesApi.readFile(entry.path, profile, sessionId)
       previewFile.value = {
         path: entry.path,
         profile,
+        sessionId,
         type: 'text',
         content: result.content,
         language: getLanguageFromPath(entry.path),
@@ -261,18 +276,18 @@ export const useFilesStore = defineStore('files', () => {
 
   async function createDir(name: string, targetPath = currentPath.value) {
     const path = targetPath ? `${targetPath}/${name}` : name
-    await filesApi.mkDir(path, currentProfile.value)
+    await filesApi.mkDir(path, currentProfile.value, currentSessionId.value)
     await fetchEntries(undefined)
   }
 
   async function createFile(name: string) {
     const path = currentPath.value ? `${currentPath.value}/${name}` : name
-    await filesApi.writeFile(path, '', currentProfile.value)
+    await filesApi.writeFile(path, '', currentProfile.value, currentSessionId.value)
     await fetchEntries(undefined)
   }
 
   async function deleteEntry(entry: FileEntry) {
-    await filesApi.deleteFile(entry.path, entry.isDir, currentProfile.value)
+    await filesApi.deleteFile(entry.path, entry.isDir, currentProfile.value, currentSessionId.value)
     if (previewFile.value && isAffected(previewFile.value.path, entry.path, entry.isDir)) {
       previewFile.value = null
     }
@@ -285,7 +300,7 @@ export const useFilesStore = defineStore('files', () => {
   async function renameEntry(entry: FileEntry, newName: string) {
     const parentPath = entry.path.includes('/') ? entry.path.slice(0, entry.path.lastIndexOf('/')) : ''
     const newPath = parentPath ? `${parentPath}/${newName}` : newName
-    await filesApi.renameFile(entry.path, newPath, currentProfile.value)
+    await filesApi.renameFile(entry.path, newPath, currentProfile.value, currentSessionId.value)
     if (previewFile.value && isAffected(previewFile.value.path, entry.path, entry.isDir)) {
       previewFile.value = null
     }
@@ -296,12 +311,12 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   async function copyEntry(entry: FileEntry, destPath: string) {
-    await filesApi.copyFile(entry.path, destPath, currentProfile.value)
+    await filesApi.copyFile(entry.path, destPath, currentProfile.value, currentSessionId.value)
     await fetchEntries(undefined)
   }
 
   async function uploadFiles(files: File[]) {
-    await filesApi.uploadFiles(currentPath.value, files, currentProfile.value)
+    await filesApi.uploadFiles(currentPath.value, files, currentProfile.value, currentSessionId.value)
     await fetchEntries(undefined)
   }
 
@@ -320,7 +335,7 @@ export const useFilesStore = defineStore('files', () => {
   })
 
   return {
-    currentPath, currentProfile, entries, loading, sortBy, sortOrder,
+    currentPath, currentProfile, currentSessionId, entries, loading, sortBy, sortOrder,
     editingFile, previewFile,
     pathSegments, sortedEntries, hasUnsavedChanges,
     fetchEntries, navigateTo, navigateUp,

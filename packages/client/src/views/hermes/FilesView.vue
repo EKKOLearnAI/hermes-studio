@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDialog } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useFilesStore } from '@/stores/hermes/files'
+import { useChatStore } from '@/stores/hermes/chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import FileTree from '@/components/hermes/files/FileTree.vue'
 import FileBreadcrumb from '@/components/hermes/files/FileBreadcrumb.vue'
@@ -17,6 +18,7 @@ import FileRenameModal from '@/components/hermes/files/FileRenameModal.vue'
 import type { FileEntry } from '@/api/hermes/files'
 
 const filesStore = useFilesStore()
+const chatStore = useChatStore()
 const profilesStore = useProfilesStore()
 const route = useRoute()
 const router = useRouter()
@@ -30,6 +32,7 @@ const renameMode = ref<'newFile' | 'newFolder' | 'rename'>('newFile')
 const renameEntry = ref<FileEntry | null>(null)
 const renameTargetPath = ref<string | null>(null)
 const scopedProfile = computed(() => firstQueryString(route.query.profile))
+const scopedSessionId = computed(() => firstQueryString(route.query.session_id) || chatStore.activeSessionId)
 const routeFilePath = computed(() => firstQueryString(route.query.file))
 const isProfileConfigEditor = computed(() => !!scopedProfile.value && routeFilePath.value === 'config.yaml')
 const profileConfigTitle = computed(() =>
@@ -93,12 +96,14 @@ async function loadFromRoute() {
     ? parentDir(filePath)
     : (firstQueryString(route.query.path) || '')
 
+  const sessionId = scopedSessionId.value
+
   if (!isProfileConfigEditor.value) {
-    await filesStore.fetchEntries(directoryPath, { profile })
+    await filesStore.fetchEntries(directoryPath, { profile, sessionId })
   }
 
   if (filePath) {
-    await filesStore.openEditor(filePath, { profile })
+    await filesStore.openEditor(filePath, { profile, sessionId })
   }
 }
 
@@ -122,7 +127,7 @@ function closeProfileConfigEditor() {
 }
 
 watch(
-  [() => route.query.profile, () => route.query.path, () => route.query.file],
+  [() => route.query.profile, () => route.query.session_id, () => route.query.path, () => route.query.file, () => chatStore.activeSessionId],
   () => {
     void loadFromRoute()
   },
@@ -144,7 +149,7 @@ watch(
       </div>
     </template>
     <div v-else class="files-tree-panel">
-      <FileTree :profile="scopedProfile" />
+      <FileTree :profile="scopedProfile" :session-id="scopedSessionId" />
     </div>
     <div v-if="!isProfileConfigEditor" class="files-main-panel">
       <FileToolbar

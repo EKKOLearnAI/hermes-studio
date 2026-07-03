@@ -10,16 +10,18 @@ const { t } = useI18n()
 const filesStore = useFilesStore()
 const props = defineProps<{
   profile?: string | null
+  sessionId?: string | null
 }>()
 
 const effectiveProfile = computed(() => props.profile === undefined ? filesStore.currentProfile : props.profile)
+const effectiveSessionId = computed(() => props.sessionId === undefined ? filesStore.currentSessionId : props.sessionId)
 
 const treeData = ref<TreeOption[]>([])
 const selectedKeys = ref<string[]>([])
 
 async function loadChildren(path: string): Promise<TreeOption[]> {
   try {
-    const result = await filesApi.listFiles(path, effectiveProfile.value)
+    const result = await filesApi.listFiles(path, effectiveProfile.value, effectiveSessionId.value)
     return result.entries
       .filter(e => e.isDir)
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -40,13 +42,13 @@ async function handleLoad(node: TreeOption): Promise<void> {
 function handleSelect(keys: string[]) {
   if (keys.length > 0) {
     selectedKeys.value = keys
-    filesStore.navigateTo(keys[0], { profile: effectiveProfile.value })
+    filesStore.navigateTo(keys[0], { profile: effectiveProfile.value, sessionId: effectiveSessionId.value })
   }
 }
 
 function handleRootClick() {
   selectedKeys.value = []
-  filesStore.navigateTo('', { profile: effectiveProfile.value })
+  filesStore.navigateTo('', { profile: effectiveProfile.value, sessionId: effectiveSessionId.value })
 }
 
 function renderLabel({ option }: { option: TreeOption }) {
@@ -54,7 +56,7 @@ function renderLabel({ option }: { option: TreeOption }) {
   return h('span', { class: 'tree-node-label', title: label }, label)
 }
 
-watch(effectiveProfile, async () => {
+watch([effectiveProfile, effectiveSessionId], async () => {
   selectedKeys.value = []
   treeData.value = await loadChildren('')
 }, { immediate: true })
