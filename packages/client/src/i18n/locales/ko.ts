@@ -1947,6 +1947,7 @@ export default {
 
   // 변경 이력
   changelog: {
+    new_0_6_25_1: 'Hermes Agent 0.18.0에서 Agent Bridge 승인 메모리 wrapper가 새 has_host_access 매개변수를 전달하지 않아 execute_code가 실패하던 문제를 수정했습니다',
     new_0_6_24_1: '이번 릴리스는 0.6.23 이후 병합된 PR을 반영하며 채팅 입력, workspace 표시, 플러그인 관리, 기본 모델, workspace diff 확인을 개선합니다',
     new_0_6_24_2: '단일 채팅과 그룹 채팅 입력 영역은 통합 툴바, 간결한 모델 컨트롤, 모아진 입력 설정, 더 명확한 context 사용량, 모바일 chrome, 단일 채팅 수동 높이 조절 복구를 포함합니다',
     new_0_6_24_3: 'Workspace run 변경 사항은 지속되는 chat diff 카드로 표시되며 오른쪽 drawer에서 diff 보기와 파일 편집을 지원하고 session resume 후에도 복원되며 모바일 보기도 조정되었습니다',

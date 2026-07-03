@@ -1948,6 +1948,7 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   changelog: {
+    new_0_6_25_1: 'Behebt execute_code-Fehler mit Hermes Agent 0.18.0, indem der neue Parameter has_host_access durch den Agent-Bridge-Approval-Memory-Wrapper weitergereicht wird',
     new_0_6_24_1: 'Diese Version umfasst die nach 0.6.23 gemergten PRs und verbessert Chat-Eingabe, Workspace-Sichtbarkeit, Plugin-Verwaltung, Standardmodelle und Workspace-Diff-Ansicht',
     new_0_6_24_2: 'Einzel- und Gruppenchat-Eingaben nutzen eine integrierte Toolbar, kompakte Modellsteuerung, gebuendelte Eingabeeinstellungen, klarere Context-Nutzung, stabileres Mobile Chrome und wiederhergestelltes manuelles Resize im Einzelchat',
     new_0_6_24_3: 'Workspace-Run-Aenderungen erscheinen als dauerhafte Chat-Diff-Karten mit rechter Diff-/Editor-Schublade, werden nach Session Resume wiederhergestellt und sind fuer mobile Ansicht angepasst',

@@ -123,8 +123,8 @@ def save_permanent_allowlist(patterns):
 def load_permanent_allowlist():
     return set(approval._permanent_approved)
 
-def check_execute_code_guard(code, env_type):
-    approval._check_execute_code_calls.append((code, env_type))
+def check_execute_code_guard(code, env_type, has_host_access=False):
+    approval._check_execute_code_calls.append((code, env_type, has_host_access))
     return {"approved": False, "message": "upstream prompt"}
 
 approval.set_current_session_key = set_current_session_key
@@ -419,11 +419,15 @@ bridge._install_execute_code_approval_memory_patch()
 token = approval.set_current_session_key("session-c")
 try:
     approval.approve_session("session-c", "execute_code")
-    check_result = approval.check_execute_code_guard("print(3)", "local")
+    check_result = approval.check_execute_code_guard("print(3)", "local", has_host_access=True)
     assert check_result["approved"] is True
     assert approval._check_execute_code_calls == []
 finally:
     approval.reset_current_session_key(token)
+
+check_result = approval.check_execute_code_guard("print(4)", "local", has_host_access=True)
+assert check_result["approved"] is False
+assert approval._check_execute_code_calls == [("print(4)", "local", True)]
 `)
   })
 

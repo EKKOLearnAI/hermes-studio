@@ -1948,6 +1948,7 @@ jobTriggered: 'Job acionado',
 
   // Registro de alteracoes
   changelog: {
+    new_0_6_25_1: 'Corrige falhas de execute_code com Hermes Agent 0.18.0 ao encaminhar o novo parametro has_host_access pelo wrapper de memoria de aprovacoes do Agent Bridge',
     new_0_6_24_1: 'Esta versao cobre os PRs mesclados depois da 0.6.23 e melhora entrada de chat, visibilidade de workspaces, gestao de plugins, modelos padrao e revisao de diffs',
     new_0_6_24_2: 'As entradas de chat individual e em grupo usam uma barra integrada, controles compactos de modelo, configuracoes agrupadas, uso de contexto mais claro, melhor mobile chrome e redimensionamento manual restaurado no chat individual',
     new_0_6_24_3: 'Mudancas de workspace run aparecem como cards de diff persistentes com drawer lateral para ver diffs e editar arquivos, restaurados apos retomar a sessao e ajustados para mobile',

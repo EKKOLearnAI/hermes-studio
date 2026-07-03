@@ -723,14 +723,14 @@ def _install_execute_code_approval_memory_patch() -> None:
         if not callable(original) or getattr(original, "_hermes_web_ui_memory_patch", False):
             return
 
-        def patched_check_execute_code_guard(code: str, env_type: str) -> dict[str, Any]:
+        def patched_check_execute_code_guard(code: str, env_type: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
             try:
                 session_key = approval.get_current_session_key(default="")
                 if session_key and approval.is_approved(session_key, "execute_code"):
                     return {"approved": True, "message": None}
             except Exception:
                 pass
-            return original(code, env_type)
+            return original(code, env_type, *args, **kwargs)
 
         setattr(patched_check_execute_code_guard, "_hermes_web_ui_memory_patch", True)
         setattr(patched_check_execute_code_guard, "_hermes_web_ui_original", original)
