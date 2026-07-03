@@ -556,15 +556,20 @@ export function activateInstalledRuntimeVersion(version: string): ActiveVersionM
           err instanceof Error ? err.message : String(err))
       }
     }
-    if (stillMissing.length > 0 && !missingPackagesWarning) {
-      missingPackagesWarning = [
+    if (stillMissing.length > 0) {
+      const orphanWarning = [
         `The following pip package(s) were installed in a deleted runtime and are missing in the current one:`,
         ...stillMissing.map(p => `  - ${p}`),
         '',
         'To install them, run:',
         `  "${join(target.directory, 'python', process.platform === 'win32' ? 'python.exe' : 'bin', 'python3')}" -m pip install ${stillMissing.join(' ')}`,
       ].join('\n')
-      console.warn(`[runtime] ${missingPackagesWarning}`)
+      if (missingPackagesWarning) {
+        missingPackagesWarning += '\n\n' + orphanWarning
+      } else {
+        missingPackagesWarning = orphanWarning
+      }
+      console.warn(`[runtime] ${orphanWarning}`)
     }
   }
 
@@ -608,7 +613,10 @@ export function deleteInstalledRuntimeVersion(version: string): InstalledRuntime
         .map(p => normalizePkgName(p.name))
         .filter(name => !BASE_PACKAGES.has(name) && !name.startsWith('opentelemetry'))
       if (userPkgs.length > 0 && activeManifest) {
-        activeManifest._orphanedPipPackages = userPkgs
+        // Merge with any existing orphans from previously deleted runtimes
+        // to avoid silent data loss when deleting multiple runtimes in sequence.
+        const existingOrphans = activeManifest._orphanedPipPackages || []
+        activeManifest._orphanedPipPackages = [...new Set([...existingOrphans, ...userPkgs])]
         writeFileSync(activeVersionPath(), JSON.stringify(activeManifest, null, 2) + '\n', 'utf-8')
       }
     } catch (err) {
