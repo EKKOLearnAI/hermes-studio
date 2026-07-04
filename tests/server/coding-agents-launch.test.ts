@@ -9,8 +9,10 @@ import { prepareCodingAgentLaunch } from '../../packages/server/src/services/cod
 const homes: string[] = []
 
 function mockProcessUid(uid: number) {
-  vi.spyOn(process, 'getuid').mockReturnValue(uid)
-  vi.spyOn(process, 'geteuid').mockReturnValue(uid)
+  vi.stubGlobal('process', Object.assign(process, {
+    getuid: vi.fn(() => uid),
+    geteuid: vi.fn(() => uid),
+  }))
 }
 
 function makeHome() {
@@ -467,6 +469,28 @@ describe('coding agent launch preparation', () => {
     expect(deepseekModel.context_window).toBeGreaterThan(0)
     expect(deepseekModel.max_context_window).toBe(deepseekModel.context_window)
     expect(deepseekModel.model_messages.instructions_template).toContain('{{ base_instructions }}')
+  })
+
+  it('normalizes Codex app-server provider mode to Responses for scoped Codex runs', async () => {
+    const home = makeHome()
+
+    const result = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'ai-pixel.online',
+      model: 'gpt-5.5',
+      baseUrl: 'https://ai-pixel.online/v1',
+      apiKey: 'sk-upstream',
+      apiMode: 'codex_app_server' as any,
+    })
+
+    const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
+    expect(config).toContain(`base_url = "http://127.0.0.1:`)
+    expect(config).toContain('/api/codex-proxy/')
+    expect(config).toContain('wire_api = "responses"')
+    expect(config).toContain('requires_openai_auth = false')
+    expect(config).toMatch(/experimental_bearer_token = "hwui_[^"]+"/)
+    expect(config).not.toContain('base_url = "https://ai-pixel.online/v1"')
+    expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'ai-pixel.online', 'codex'))
   })
 
   it('defaults Codex providers without an api mode to Chat Completions', async () => {

@@ -578,12 +578,12 @@ async function resolveStoredProviderLaunchInput(
 function normalizeLaunchApiMode(value: unknown, fallback: ApiMode): ApiMode {
   if (!value) return fallback
   const mode = String(value).trim() as ApiMode
-  if (!LAUNCH_API_MODES.has(mode)) {
-    const err = new Error('Invalid API protocol')
-    ;(err as any).status = 400
-    throw err
-  }
-  return mode
+  if (LAUNCH_API_MODES.has(mode)) return mode
+  if (mode === 'codex_app_server') return 'codex_responses'
+
+  const err = new Error('Invalid API protocol')
+  ;(err as any).status = 400
+  throw err
 }
 
 function storedCodingAgentMode(session: HermesSessionRow | null): 'scoped' | 'global' {
