@@ -4,13 +4,19 @@ import { NButton, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { fetchPersonalStateOverview, type PersonalStateOverview } from '@/api/hermes/personal-state'
-import { fetchPersonalAutopilotOverview, type PersonalAutopilotOverview } from '@/api/hermes/personal-autopilot'
+import {
+  createPersonalAutopilotQuickLog,
+  fetchPersonalAutopilotOverview,
+  type PersonalAutopilotOverview,
+} from '@/api/hermes/personal-autopilot'
 
 const { t } = useI18n()
 const message = useMessage()
 const profilesStore = useProfilesStore()
 
 const loading = ref(false)
+const quickLogSaving = ref(false)
+const quickLogText = ref('')
 const overview = ref<PersonalStateOverview | null>(null)
 const autopilot = ref<PersonalAutopilotOverview | null>(null)
 
@@ -42,6 +48,23 @@ async function loadOverview() {
     message.error(`${t('personalOS.loadFailed')}: ${err.message}`)
   } finally {
     loading.value = false
+  }
+}
+
+async function submitQuickLog() {
+  const text = quickLogText.value.trim()
+  if (!text || quickLogSaving.value) return
+
+  quickLogSaving.value = true
+  try {
+    await createPersonalAutopilotQuickLog({ text }, activeProfile.value)
+    quickLogText.value = ''
+    message.success(t('personalOS.quickLogSaved'))
+    await loadOverview()
+  } catch (err: any) {
+    message.error(`${t('personalOS.quickLogFailed')}: ${err.message}`)
+  } finally {
+    quickLogSaving.value = false
   }
 }
 </script>
@@ -84,6 +107,27 @@ async function loadOverview() {
             <strong>{{ nextAction?.fallbackTitle || t('personalOS.recordCurrentState') }}</strong>
           </div>
         </article>
+
+        <form class="quick-log-form" @submit.prevent="submitQuickLog">
+          <label class="quick-log-input" data-test="autopilot-quick-log-input">
+            <span>{{ t('personalOS.quickLog') }}</span>
+            <input
+              v-model="quickLogText"
+              type="text"
+              :placeholder="t('personalOS.quickLogPlaceholder')"
+              :disabled="quickLogSaving"
+            >
+          </label>
+          <NButton
+            type="primary"
+            :loading="quickLogSaving"
+            :disabled="!quickLogText.trim()"
+            data-test="autopilot-quick-log-submit"
+            @click="submitQuickLog"
+          >
+            {{ t('personalOS.quickLogSubmit') }}
+          </NButton>
+        </form>
 
         <div class="signal-strip">
           <div v-for="signal in signals" :key="signal.key" class="signal-item">
@@ -207,6 +251,41 @@ async function loadOverview() {
   }
 }
 
+.quick-log-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.quick-log-input {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+
+  span {
+    color: var(--text-color-3);
+    font-size: 12px;
+  }
+
+  input {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--input-color, var(--card-color));
+    color: var(--text-color);
+    font: inherit;
+    min-height: 34px;
+    padding: 6px 10px;
+    outline: none;
+  }
+
+  input:focus {
+    border-color: var(--primary-color);
+  }
+}
+
 .signal-strip,
 .support-grid {
   display: grid;
@@ -264,6 +343,10 @@ async function loadOverview() {
   .fallback-row,
   .secondary-actions {
     flex-direction: column;
+  }
+
+  .quick-log-form {
+    grid-template-columns: 1fr;
   }
 
   .signal-strip,

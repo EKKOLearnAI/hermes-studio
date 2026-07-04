@@ -45,6 +45,7 @@ const overview = vi.hoisted(() => ({
 
 const fetchOverview = vi.hoisted(() => vi.fn())
 const fetchAutopilotOverview = vi.hoisted(() => vi.fn())
+const createQuickLog = vi.hoisted(() => vi.fn())
 
 vi.mock('@/api/hermes/personal-state', () => ({
   fetchPersonalStateOverview: fetchOverview,
@@ -52,6 +53,7 @@ vi.mock('@/api/hermes/personal-state', () => ({
 
 vi.mock('@/api/hermes/personal-autopilot', () => ({
   fetchPersonalAutopilotOverview: fetchAutopilotOverview,
+  createPersonalAutopilotQuickLog: createQuickLog,
 }))
 
 vi.mock('@/stores/hermes/profiles', () => ({
@@ -112,6 +114,7 @@ describe('PersonalOSView', () => {
         { key: 'tasks', label: '今日动作', status: 'active', value: '1' },
       ],
     })
+    createQuickLog.mockResolvedValue({ kind: 'diet' })
   })
 
   it('renders the command center next action from Personal Autopilot', async () => {
@@ -134,5 +137,17 @@ describe('PersonalOSView', () => {
     expect(wrapper.find('[data-test="module-grid"]').exists()).toBe(false)
     expect(wrapper.html()).toContain('/hermes/personal-os/planning')
     expect(wrapper.html()).toContain('/hermes/personal-os/health')
+  })
+
+  it('submits one-sentence quick logs from the command center', async () => {
+    const wrapper = mount(PersonalOSView)
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="autopilot-quick-log-input"]').exists()).toBe(true)
+    await wrapper.find('[data-test="autopilot-quick-log-input"] input').setValue('午饭吃了鸡腿饭')
+    await wrapper.find('[data-test="autopilot-quick-log-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(createQuickLog).toHaveBeenCalledWith({ text: '午饭吃了鸡腿饭' }, 'default')
   })
 })
