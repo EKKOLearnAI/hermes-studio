@@ -393,6 +393,88 @@ print(json.dumps({
     })
   })
 
+  it('patches bridge OpenAI client creation with profile model.default_headers', async () => {
+    const agentRoot = join(tempDir, 'hermes-agent')
+    const agentPackage = join(agentRoot, 'agent')
+    const hermesHome = join(tempDir, 'home')
+    await mkdir(agentPackage, { recursive: true })
+    await mkdir(hermesHome, { recursive: true })
+    await writeFile(join(agentRoot, 'run_agent.py'), '', 'utf-8')
+    await writeFile(join(agentPackage, '__init__.py'), '', 'utf-8')
+    await writeFile(join(agentPackage, 'agent_runtime_helpers.py'), `
+patched = False
+
+def create_openai_client(agent, client_kwargs, *, reason, shared):
+    return {
+        "headers": client_kwargs.get("default_headers"),
+        "reason": reason,
+        "shared": shared,
+    }
+`, 'utf-8')
+    await writeFile(join(hermesHome, 'config.yaml'), `
+model:
+  default: gpt-5.5
+  default_headers:
+    User-Agent: curl/8.7.1
+    X-Custom: studio
+`, 'utf-8')
+
+    const result = await runBridgeProbe(`
+import importlib.util
+import json
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("hermes_bridge", os.environ["BRIDGE_PATH"])
+bridge = importlib.util.module_from_spec(spec)
+sys.modules["hermes_bridge"] = bridge
+spec.loader.exec_module(bridge)
+
+root = os.environ["TEST_HERMES_HOME"]
+agent_root = os.path.join(root, "hermes-agent")
+hermes_home = os.path.join(root, "home")
+bridge._set_path_env(agent_root, hermes_home)
+bridge._ensure_agent_imports()
+
+from agent import agent_runtime_helpers
+
+first = agent_runtime_helpers.create_openai_client(
+    object(),
+    {"default_headers": {"Accept": "application/json", "User-Agent": "OpenAI/Python"}},
+    reason="chat_completion_stream_request",
+    shared=False,
+)
+second = agent_runtime_helpers.create_openai_client(
+    object(),
+    {},
+    reason="agent_init",
+    shared=True,
+)
+
+print(json.dumps({"first": first, "second": second}))
+`)
+
+    expect(result).toEqual({
+      first: {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'curl/8.7.1',
+          'X-Custom': 'studio',
+        },
+        reason: 'chat_completion_stream_request',
+        shared: false,
+      },
+      second: {
+        headers: {
+          'User-Agent': 'curl/8.7.1',
+          'X-Custom': 'studio',
+        },
+        reason: 'agent_init',
+        shared: true,
+      },
+    })
+  })
+
   it('keeps inherited profile env keys for default profile compatibility', async () => {
     await mkdir(join(tempDir, 'profiles', 'work'), { recursive: true })
     await writeFile(join(tempDir, '.env'), 'OPENAI_API_KEY=default-openai\n', 'utf-8')
