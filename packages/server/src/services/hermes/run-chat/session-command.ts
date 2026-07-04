@@ -574,7 +574,7 @@ export async function handleSessionCommand(
         model_groups: ctx.model_groups,
         instructions: ctx.instructions,
         profile: ctx.profile,
-        source: 'cli',
+        source: 'goal_kickoff',
         originSocketId: ctx.socket.id,
       }
 

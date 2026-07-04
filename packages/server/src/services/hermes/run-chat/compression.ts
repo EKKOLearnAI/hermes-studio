@@ -246,9 +246,10 @@ export async function buildCompressedHistory(
   modelContext: CompressionModelContext = {},
   contextTokenEstimator?: (messages: ChatMessage[], messageTokens: number) => Promise<number | null | undefined>,
   currentInputTokens = 0,
+  options: { excludeLastUser?: boolean } = {},
 ): Promise<ChatMessage[]> {
   try {
-    let history = await buildDbHistory(sessionId, { excludeLastUser: true })
+    let history = await buildDbHistory(sessionId, { excludeLastUser: options.excludeLastUser ?? true })
 
     const contextLength = getModelContextLength({
       profile,

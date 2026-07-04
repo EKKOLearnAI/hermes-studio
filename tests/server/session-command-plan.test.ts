@@ -569,7 +569,7 @@ describe('plan session command', () => {
       input: 'fix the tests',
       displayInput: null,
       storageMessage: 'fix the tests',
-      source: 'cli',
+      source: 'goal_kickoff',
     }), 'default')
   })
 
@@ -685,7 +685,7 @@ describe('plan session command', () => {
       input: '[Continuing toward your standing goal]\nGoal: fix the tests',
       displayInput: null,
       storageMessage: '[Continuing toward your standing goal]\nGoal: fix the tests',
-      source: 'cli',
+      source: 'goal_kickoff',
     }), 'default')
   })
 
