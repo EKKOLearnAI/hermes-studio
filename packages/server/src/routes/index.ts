@@ -46,6 +46,7 @@ import { runtimeVersionRoutes } from './hermes/runtime-versions'
 import { writeGateRoutes } from './hermes/write-gate'
 import { personalStateRoutes } from './hermes/personal-state'
 import { healthStateRoutes } from './hermes/health-state'
+import { personalAutopilotRoutes } from './hermes/personal-autopilot'
 
 /**
  * Register all routes on the Koa app.
@@ -105,4 +106,5 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(writeGateRoutes.routes())              // Hermes Agent write approval review
   app.use(personalStateRoutes.routes())          // Personal State review and context
   app.use(healthStateRoutes.routes())            // Personal OS health state
+  app.use(personalAutopilotRoutes.routes())      // Personal OS autopilot state
 }
