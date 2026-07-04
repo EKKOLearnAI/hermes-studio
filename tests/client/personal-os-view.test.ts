@@ -44,15 +44,14 @@ const overview = vi.hoisted(() => ({
 }))
 
 const fetchOverview = vi.hoisted(() => vi.fn())
-const approveProposal = vi.hoisted(() => vi.fn())
-const rejectProposal = vi.hoisted(() => vi.fn())
-const checkInTask = vi.hoisted(() => vi.fn())
+const fetchAutopilotOverview = vi.hoisted(() => vi.fn())
 
 vi.mock('@/api/hermes/personal-state', () => ({
   fetchPersonalStateOverview: fetchOverview,
-  approvePersonalStateProposal: approveProposal,
-  rejectPersonalStateProposal: rejectProposal,
-  checkInPersonalStateTask: checkInTask,
+}))
+
+vi.mock('@/api/hermes/personal-autopilot', () => ({
+  fetchPersonalAutopilotOverview: fetchAutopilotOverview,
 }))
 
 vi.mock('@/stores/hermes/profiles', () => ({
@@ -90,29 +89,50 @@ describe('PersonalOSView', () => {
     vi.clearAllMocks()
     overview.pendingProposals = [overview.proposals[0]]
     fetchOverview.mockResolvedValue(overview)
-    approveProposal.mockResolvedValue({ ...overview.proposals[0], status: 'approved' })
-    rejectProposal.mockResolvedValue({ ...overview.proposals[0], status: 'rejected' })
-    checkInTask.mockResolvedValue({ ...overview.tasks[0], status: 'done' })
+    fetchAutopilotOverview.mockResolvedValue({
+      generatedAt: '2026-07-04T09:00:00Z',
+      mode: 'nudge',
+      state: {
+        body: 'needs_attention',
+        diet: 'below_target',
+        skin: 'observing',
+        recovery: 'observing',
+        order: 'observing',
+      },
+      nextAction: {
+        id: 'autopilot-action-task-breakfast',
+        domain: 'diet',
+        title: '吃高蛋白早餐',
+        reason: '当前窗口适合处理这个动作。',
+        sourceId: 'task-breakfast',
+        fallbackTitle: '补一份高蛋白食物',
+      },
+      signals: [
+        { key: 'weight', label: '体重', status: 'tracked', value: '80 kg' },
+        { key: 'tasks', label: '今日动作', status: 'active', value: '1' },
+      ],
+    })
   })
 
-  it('renders memory context, pending proposals, and Personal State tasks', async () => {
+  it('renders the command center next action from Personal Autopilot', async () => {
     const wrapper = mount(PersonalOSView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Create the first dashboard-backed Personal State task.')
-    expect(wrapper.text()).toContain('Add dashboard task')
-    expect(wrapper.text()).toContain('Verify Studio Personal State')
+    expect(fetchAutopilotOverview).toHaveBeenCalledWith({ profile: 'default' })
+    expect(wrapper.text()).toContain('personalOS.nextAction')
+    expect(wrapper.text()).toContain('吃高蛋白早餐')
+    expect(wrapper.text()).toContain('当前窗口适合处理这个动作。')
+    expect(wrapper.text()).toContain('补一份高蛋白食物')
+    expect(wrapper.text()).toContain('personalOS.openFullPlan')
   })
 
-  it('approves a proposal and refreshes the overview', async () => {
+  it('keeps Smart Planning and Health as secondary routes instead of rendering task boards first', async () => {
     const wrapper = mount(PersonalOSView)
     await flushPromises()
 
-    const approve = wrapper.find('[data-test="approve-proposal"]')
-    await approve.trigger('click')
-    await flushPromises()
-
-    expect(approveProposal).toHaveBeenCalledWith('proposal-1', 'default')
-    expect(fetchOverview).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[data-test="autopilot-command-center"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="module-grid"]').exists()).toBe(false)
+    expect(wrapper.html()).toContain('/hermes/personal-os/planning')
+    expect(wrapper.html()).toContain('/hermes/personal-os/health')
   })
 })

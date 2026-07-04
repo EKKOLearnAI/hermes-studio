@@ -3,29 +3,22 @@ import { computed, onMounted, ref } from 'vue'
 import { NButton, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useProfilesStore } from '@/stores/hermes/profiles'
-import {
-  approvePersonalStateProposal,
-  checkInPersonalStateTask,
-  fetchPersonalStateOverview,
-  rejectPersonalStateProposal,
-  type PersonalProposal,
-  type PersonalStateOverview,
-  type PersonalTask,
-} from '@/api/hermes/personal-state'
+import { fetchPersonalStateOverview, type PersonalStateOverview } from '@/api/hermes/personal-state'
+import { fetchPersonalAutopilotOverview, type PersonalAutopilotOverview } from '@/api/hermes/personal-autopilot'
 
 const { t } = useI18n()
 const message = useMessage()
 const profilesStore = useProfilesStore()
 
 const loading = ref(false)
-const actionId = ref<string | null>(null)
 const overview = ref<PersonalStateOverview | null>(null)
+const autopilot = ref<PersonalAutopilotOverview | null>(null)
 
 const activeProfile = computed(() => profilesStore.activeProfileName || 'default')
 const pendingProposals = computed(() => overview.value?.pendingProposals || [])
 const tasks = computed(() => overview.value?.tasks || [])
-const recentProposals = computed(() => overview.value?.proposals || [])
-const memorySummary = computed(() => overview.value?.memoryContext.summary || t('personalOS.emptyMemory'))
+const nextAction = computed(() => autopilot.value?.nextAction)
+const signals = computed(() => autopilot.value?.signals || [])
 
 onMounted(loadOverview)
 
@@ -39,51 +32,17 @@ async function loadOverview() {
   loading.value = true
   try {
     await ensureProfiles()
-    overview.value = await fetchPersonalStateOverview({ profile: activeProfile.value })
+    const [stateOverview, autopilotOverview] = await Promise.all([
+      fetchPersonalStateOverview({ profile: activeProfile.value }),
+      fetchPersonalAutopilotOverview({ profile: activeProfile.value }),
+    ])
+    overview.value = stateOverview
+    autopilot.value = autopilotOverview
   } catch (err: any) {
     message.error(`${t('personalOS.loadFailed')}: ${err.message}`)
   } finally {
     loading.value = false
   }
-}
-
-async function reviewProposal(proposal: PersonalProposal, approved: boolean) {
-  actionId.value = proposal.id
-  try {
-    if (approved) {
-      await approvePersonalStateProposal(proposal.id, activeProfile.value)
-      message.success(t('personalOS.approved'))
-    } else {
-      await rejectPersonalStateProposal(proposal.id, activeProfile.value)
-      message.success(t('personalOS.rejected'))
-    }
-    await loadOverview()
-  } catch (err: any) {
-    message.error(`${t('personalOS.reviewFailed')}: ${err.message}`)
-  } finally {
-    actionId.value = null
-  }
-}
-
-async function checkIn(task: PersonalTask) {
-  actionId.value = task.id
-  try {
-    await checkInPersonalStateTask(task.id, activeProfile.value)
-    message.success(t('personalOS.taskCheckedIn'))
-    await loadOverview()
-  } catch (err: any) {
-    message.error(`${t('personalOS.taskCheckInFailed')}: ${err.message}`)
-  } finally {
-    actionId.value = null
-  }
-}
-
-function statusClass(status: string) {
-  return `status-${status.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
-}
-
-function confidenceLabel(proposal: PersonalProposal) {
-  return `${Math.round(proposal.provenance.confidence * 100)}%`
 }
 </script>
 
@@ -106,96 +65,60 @@ function confidenceLabel(proposal: PersonalProposal) {
     </header>
 
     <NSpin :show="loading && !overview">
-      <div class="personal-grid">
-        <section class="panel memory-panel">
-          <div class="panel-header">
+      <section class="command-center" data-test="autopilot-command-center">
+        <div class="command-main">
+          <div>
             <span class="panel-kicker">{{ activeProfile }}</span>
-            <h3>{{ t('personalOS.memoryContext') }}</h3>
+            <h3>{{ t('personalOS.commandCenter') }}</h3>
+            <p>{{ t('personalOS.commandCenterSummary') }}</p>
           </div>
-          <p class="memory-summary">{{ memorySummary }}</p>
-          <div class="metric-row">
-            <div>
-              <span class="metric-value">{{ pendingProposals.length }}</span>
-              <span class="metric-label">{{ t('personalOS.pending') }}</span>
-            </div>
-            <div>
-              <span class="metric-value">{{ tasks.length }}</span>
-              <span class="metric-label">{{ t('personalOS.tasks') }}</span>
-            </div>
-            <div>
-              <span class="metric-value">{{ recentProposals.length }}</span>
-              <span class="metric-label">{{ t('personalOS.proposals') }}</span>
-            </div>
-          </div>
-        </section>
+          <span class="mode-pill">{{ autopilot?.mode || 'silent' }}</span>
+        </div>
 
-        <section class="panel">
-          <div class="panel-header">
-            <span class="panel-kicker">{{ t('personalOS.reviewQueue') }}</span>
-            <h3>{{ t('personalOS.pendingProposals') }}</h3>
+        <article class="next-action-card">
+          <span class="panel-kicker">{{ t('personalOS.nextAction') }}</span>
+          <h3>{{ nextAction?.title || t('personalOS.noNextAction') }}</h3>
+          <p>{{ nextAction?.reason || t('personalOS.noNextActionReason') }}</p>
+          <div class="fallback-row">
+            <span>{{ t('personalOS.fallbackAction') }}</span>
+            <strong>{{ nextAction?.fallbackTitle || t('personalOS.recordCurrentState') }}</strong>
           </div>
-          <div v-if="pendingProposals.length === 0" class="empty-state">{{ t('personalOS.noPending') }}</div>
-          <article v-for="proposal in pendingProposals" :key="proposal.id" class="proposal-row">
-            <div class="row-main">
-              <div class="row-title">{{ proposal.title }}</div>
-              <div class="row-summary">{{ proposal.summary }}</div>
-              <div class="row-meta">
-                <span :class="['pill', statusClass(proposal.riskLevel)]">{{ proposal.riskLevel }}</span>
-                <span>{{ proposal.provenance.source }}</span>
-                <span>{{ confidenceLabel(proposal) }}</span>
-              </div>
-            </div>
-            <div class="row-actions">
-              <NButton
-                size="small"
-                type="primary"
-                :loading="actionId === proposal.id"
-                data-test="approve-proposal"
-                @click="reviewProposal(proposal, true)"
-              >
-                {{ t('personalOS.approve') }}
-              </NButton>
-              <NButton size="small" quaternary :disabled="actionId === proposal.id" @click="reviewProposal(proposal, false)">
-                {{ t('personalOS.reject') }}
-              </NButton>
-            </div>
-          </article>
-        </section>
+        </article>
 
-        <section class="panel">
-          <div class="panel-header">
-            <span class="panel-kicker">{{ t('personalOS.execution') }}</span>
-            <h3>{{ t('personalOS.tasks') }}</h3>
+        <div class="signal-strip">
+          <div v-for="signal in signals" :key="signal.key" class="signal-item">
+            <span class="metric-label">{{ signal.label }}</span>
+            <strong>{{ signal.value }}</strong>
+            <small>{{ signal.status }}</small>
           </div>
-          <div v-if="tasks.length === 0" class="empty-state">{{ t('personalOS.noTasks') }}</div>
-          <article v-for="task in tasks" :key="task.id" class="task-row">
-            <div>
-              <div class="row-title">{{ task.title }}</div>
-              <div class="row-summary">{{ task.notes }}</div>
-              <div class="row-meta">
-                <span :class="['pill', statusClass(task.status)]">{{ task.status }}</span>
-                <span>{{ task.provenance.source }}</span>
-              </div>
-            </div>
-            <NButton v-if="task.status !== 'done'" size="small" quaternary :loading="actionId === task.id" @click="checkIn(task)">
-              {{ t('personalOS.checkIn') }}
-            </NButton>
-          </article>
-        </section>
+          <div class="signal-item">
+            <span class="metric-label">{{ t('personalOS.pending') }}</span>
+            <strong>{{ pendingProposals.length }}</strong>
+            <small>{{ t('personalOS.reviewQueue') }}</small>
+          </div>
+          <div class="signal-item">
+            <span class="metric-label">{{ t('personalOS.tasks') }}</span>
+            <strong>{{ tasks.length }}</strong>
+            <small>{{ t('personalOS.execution') }}</small>
+          </div>
+        </div>
 
+        <div class="secondary-actions">
+          <a href="#/hermes/personal-os/planning" class="secondary-link">{{ t('personalOS.openFullPlan') }}</a>
+          <a href="#/hermes/personal-os/health" class="secondary-link">{{ t('personalOS.openHealth') }}</a>
+        </div>
+      </section>
+
+      <div class="support-grid">
         <section class="panel">
-          <div class="panel-header">
-            <span class="panel-kicker">{{ t('personalOS.history') }}</span>
-            <h3>{{ t('personalOS.proposals') }}</h3>
-          </div>
-          <div v-if="recentProposals.length === 0" class="empty-state">{{ t('personalOS.noProposals') }}</div>
-          <article v-for="proposal in recentProposals" :key="proposal.id" class="history-row">
-            <div class="row-title">{{ proposal.title }}</div>
-            <div class="row-meta">
-              <span :class="['pill', statusClass(proposal.status)]">{{ proposal.status }}</span>
-              <span>{{ proposal.proposedAction.type }}</span>
-            </div>
-          </article>
+          <span class="panel-kicker">{{ t('personalOS.reviewQueue') }}</span>
+          <h3>{{ t('personalOS.pendingProposals') }}</h3>
+          <p>{{ pendingProposals.length }} {{ t('personalOS.pending') }}</p>
+        </section>
+        <section class="panel">
+          <span class="panel-kicker">{{ t('personalOS.execution') }}</span>
+          <h3>{{ t('personalOS.tasks') }}</h3>
+          <p>{{ tasks.length }} {{ t('personalOS.tasks') }}</p>
         </section>
       </div>
     </NSpin>
@@ -230,10 +153,86 @@ function confidenceLabel(proposal: PersonalProposal) {
   color: var(--text-color-2);
 }
 
-.personal-grid {
+.command-center {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
   gap: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--card-color);
+  padding: 18px;
+}
+
+.command-main,
+.fallback-row,
+.secondary-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.command-main p,
+.next-action-card p {
+  margin: 6px 0 0;
+  color: var(--text-color-2);
+  line-height: 1.55;
+}
+
+.mode-pill,
+.secondary-link {
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  padding: 4px 10px;
+  color: var(--text-color-2);
+  text-decoration: none;
+}
+
+.next-action-card {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 16px;
+
+  h3 {
+    margin: 4px 0 0;
+    font-size: 24px;
+  }
+}
+
+.fallback-row {
+  margin-top: 14px;
+  color: var(--text-color-3);
+
+  strong {
+    color: var(--text-color);
+  }
+}
+
+.signal-strip,
+.support-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.signal-item {
+  min-width: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+
+  strong {
+    display: block;
+    margin-top: 4px;
+  }
+
+  small {
+    color: var(--text-color-3);
+  }
+}
+
+.support-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 16px;
 }
 
 .panel {
@@ -244,45 +243,10 @@ function confidenceLabel(proposal: PersonalProposal) {
   padding: 16px;
 }
 
-.memory-panel {
-  grid-column: 1 / -1;
-}
-
-.panel-header {
-  margin-bottom: 14px;
-
-  h3 {
-    margin: 2px 0 0;
-    font-size: 16px;
-  }
-}
-
 .panel-kicker {
   color: var(--text-color-3);
   font-size: 12px;
   text-transform: uppercase;
-}
-
-.memory-summary {
-  margin: 0;
-  color: var(--text-color-2);
-  line-height: 1.6;
-}
-
-.metric-row {
-  display: flex;
-  gap: 24px;
-  margin-top: 16px;
-
-  > div {
-    min-width: 72px;
-  }
-}
-
-.metric-value {
-  display: block;
-  font-size: 22px;
-  font-weight: 700;
 }
 
 .metric-label {
@@ -290,94 +254,21 @@ function confidenceLabel(proposal: PersonalProposal) {
   font-size: 12px;
 }
 
-.proposal-row,
-.task-row,
-.history-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  border-top: 1px solid var(--border-color);
-  padding: 14px 0;
-
-  &:first-of-type {
-    border-top: 0;
-    padding-top: 0;
-  }
-}
-
-.row-main {
-  min-width: 0;
-}
-
-.row-title {
-  font-weight: 650;
-}
-
-.row-summary {
-  margin-top: 4px;
-  color: var(--text-color-2);
-  line-height: 1.45;
-}
-
-.row-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-  color: var(--text-color-3);
-  font-size: 12px;
-}
-
-.row-actions {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.pill {
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
-  padding: 1px 8px;
-  color: var(--text-color-2);
-}
-
-.status-approved,
-.status-done,
-.status-low {
-  border-color: rgba(39, 174, 96, 0.45);
-  color: #1e8e4d;
-}
-
-.status-pending,
-.status-open,
-.status-medium {
-  border-color: rgba(242, 153, 74, 0.45);
-  color: #b76b18;
-}
-
-.status-rejected,
-.status-high {
-  border-color: rgba(235, 87, 87, 0.45);
-  color: #b33a3a;
-}
-
-.empty-state {
-  color: var(--text-color-3);
-  padding: 18px 0;
-}
 
 @media (max-width: 900px) {
   .personal-os-view {
     padding: 16px;
   }
 
-  .personal-grid {
-    grid-template-columns: 1fr;
+  .command-main,
+  .fallback-row,
+  .secondary-actions {
+    flex-direction: column;
   }
 
-  .proposal-row,
-  .task-row {
-    flex-direction: column;
+  .signal-strip,
+  .support-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -238,7 +238,16 @@ export default {
 
   personalOS: {
     title: '个人系统',
-    subtitle: '审核 Hermes 提出的个人状态变更，并让任务与 Personal State 保持同步。',
+    subtitle: '自动感知状态，并把你带回当前最该做的身体与生活动作。',
+    commandCenter: '今日指挥台',
+    commandCenterSummary: '系统会在后台理解计划、身体和生活状态；你只需要看当前最该做什么。',
+    nextAction: '下一步',
+    noNextAction: '保持观察',
+    noNextActionReason: '当前没有需要主动介入的行动。',
+    fallbackAction: '保底动作',
+    recordCurrentState: '记录一句当前状态',
+    openFullPlan: '查看完整计划',
+    openHealth: '查看身体状态',
     memoryContext: '记忆上下文',
     reviewQueue: '审核队列',
     pendingProposals: '待审核提案',

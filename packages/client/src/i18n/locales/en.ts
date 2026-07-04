@@ -238,7 +238,16 @@ export default {
 
   personalOS: {
     title: 'Personal OS',
-    subtitle: 'Review proposed Personal State changes and keep tasks in sync with Hermes.',
+    subtitle: 'Sense your state automatically and bring you back to the next body and life action.',
+    commandCenter: 'Today Command Center',
+    commandCenterSummary: 'Hermes understands the plan, body, and daily order in the background. You only need the next action.',
+    nextAction: 'Next Action',
+    noNextAction: 'Keep Observing',
+    noNextActionReason: 'No intervention is needed right now.',
+    fallbackAction: 'Fallback',
+    recordCurrentState: 'Record one sentence about your current state',
+    openFullPlan: 'Open Full Plan',
+    openHealth: 'Open Health',
     memoryContext: 'Memory Context',
     reviewQueue: 'Review Queue',
     pendingProposals: 'Pending Proposals',
