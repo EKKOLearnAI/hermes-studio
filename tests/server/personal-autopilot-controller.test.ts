@@ -8,6 +8,7 @@ vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
 
 vi.mock('../../packages/server/src/services/hermes/personal-autopilot', () => ({
   getPersonalAutopilotOverview: vi.fn(() => ({ profile: 'default', mode: 'nudge' })),
+  createPersonalAutopilotQuickLog: vi.fn(() => ({ id: 'quick-log-1', kind: 'skin' })),
 }))
 
 describe('personal autopilot controller', () => {
@@ -44,5 +45,25 @@ describe('personal autopilot controller', () => {
 
     expect(service.getPersonalAutopilotOverview).toHaveBeenCalledWith({ profile: 'default' })
     expect(ctx.body).toEqual({ overview: { profile: 'default', mode: 'nudge' } })
+  })
+
+  it('creates a quick log through the service', async () => {
+    const service = await import('../../packages/server/src/services/hermes/personal-autopilot')
+    const { quickLog } = await import('../../packages/server/src/controllers/hermes/personal-autopilot')
+    const ctx: any = {
+      query: { profile: 'default' },
+      request: { body: { text: '脸出油', kind: 'skin' } },
+      state: { user: { id: 'admin', role: 'super_admin', username: 'admin' } },
+      body: null,
+    }
+
+    await quickLog(ctx)
+
+    expect(service.createPersonalAutopilotQuickLog).toHaveBeenCalledWith(
+      { text: '脸出油', kind: 'skin' },
+      'admin',
+      'default',
+    )
+    expect(ctx.body).toEqual({ log: { id: 'quick-log-1', kind: 'skin' } })
   })
 })

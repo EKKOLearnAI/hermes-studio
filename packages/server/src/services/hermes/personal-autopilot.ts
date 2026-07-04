@@ -1,8 +1,19 @@
-import { getHealthOverview, type HealthOverview } from './health-state'
+import {
+  createHealthFoodLog,
+  createHealthRecord,
+  createHealthWorkout,
+  getHealthOverview,
+  type HealthOverview,
+} from './health-state'
 import { getPersonalStateOverview, type PersonalStateOverview } from './personal-state'
 
 export type AutopilotMode = 'silent' | 'nudge' | 'correct' | 'takeover' | 'upgrade'
 export type AutopilotDomain = 'body' | 'diet' | 'skin' | 'recovery' | 'order' | 'planning'
+
+export interface PersonalAutopilotQuickLogInput {
+  text: string
+  kind?: AutopilotDomain | string | null
+}
 
 export interface PersonalAutopilotSnapshot {
   generatedAt: string
@@ -51,12 +62,14 @@ interface PersonalAutopilotInput {
 }
 
 const DOMAIN_KEYWORDS: Array<{ domain: AutopilotDomain; keywords: string[] }> = [
-  { domain: 'diet', keywords: ['diet', 'meal', 'food', '早餐', '午餐', '晚餐', '饮食'] },
-  { domain: 'body', keywords: ['workout', 'training', '运动', '训练', '体重', '身材'] },
-  { domain: 'skin', keywords: ['skin', 'skincare', '护肤', '皮肤'] },
-  { domain: 'recovery', keywords: ['sleep', '睡眠', '休息', '恢复'] },
+  { domain: 'diet', keywords: ['diet', 'meal', 'food', '早餐', '午餐', '午饭', '晚餐', '晚饭', '饮食', '吃', '奶茶', '蛋白'] },
+  { domain: 'body', keywords: ['workout', 'training', '运动', '训练', '体重', '身材', '练', '胸', '肩', '背', '腿', '跑步'] },
+  { domain: 'skin', keywords: ['skin', 'skincare', '护肤', '皮肤', '脸', '痘', '油', '鼻翼', '泛红'] },
+  { domain: 'recovery', keywords: ['sleep', '睡眠', '睡', '休息', '恢复', '累', '疲劳', '崩', '状态'] },
   { domain: 'order', keywords: ['整理', '收纳', '家务', '秩序'] },
 ]
+
+const QUICK_LOG_DOMAINS: AutopilotDomain[] = ['body', 'diet', 'skin', 'recovery', 'order', 'planning']
 
 export function getPersonalAutopilotOverview(options: { profile?: string } = {}): PersonalAutopilotSnapshot {
   return buildPersonalAutopilotSnapshot({
@@ -90,6 +103,41 @@ export function buildPersonalAutopilotSnapshot(input: PersonalAutopilotInput): P
     },
     nextAction,
     signals: signalsFor(input.health, tasks),
+  }
+}
+
+export function classifyQuickLog(text: string, explicitKind?: AutopilotDomain | string | null): AutopilotDomain {
+  const normalizedKind = String(explicitKind || '').trim().toLowerCase()
+  if (QUICK_LOG_DOMAINS.includes(normalizedKind as AutopilotDomain)) return normalizedKind as AutopilotDomain
+
+  const normalizedText = text.toLowerCase()
+  return DOMAIN_KEYWORDS.find(entry => entry.keywords.some(keyword => normalizedText.includes(keyword.toLowerCase())))?.domain || 'planning'
+}
+
+export function createPersonalAutopilotQuickLog(
+  input: PersonalAutopilotQuickLogInput,
+  actor = 'user',
+  profile?: string,
+): Record<string, unknown> {
+  const text = String(input.text || '').trim()
+  if (!text) throw new Error('Quick log text is required')
+
+  const kind = classifyQuickLog(text, input.kind)
+  if (kind === 'diet') {
+    return {
+      kind,
+      record: createHealthFoodLog({ meal: mealForQuickLog(text), notes: text, nutrition: {} }, actor, profile),
+    }
+  }
+  if (kind === 'body') {
+    return {
+      kind,
+      record: createHealthWorkout({ title: text, notes: text }, actor, profile),
+    }
+  }
+  return {
+    kind,
+    record: createHealthRecord({ kind, title: text, value: text, notes: text }, actor, profile),
   }
 }
 
@@ -132,6 +180,13 @@ function actionFor(task: AutopilotTaskView | null, mode: AutopilotMode): Persona
 function domainForTask(task: AutopilotTaskView): AutopilotDomain {
   const text = `${task.title} ${task.summary || ''} ${task.notes || ''} ${(task.tags || []).join(' ')}`.toLowerCase()
   return DOMAIN_KEYWORDS.find(entry => entry.keywords.some(keyword => text.includes(keyword.toLowerCase())))?.domain || 'planning'
+}
+
+function mealForQuickLog(text: string): string {
+  if (text.includes('早餐') || text.includes('早饭')) return 'breakfast'
+  if (text.includes('午餐') || text.includes('午饭')) return 'lunch'
+  if (text.includes('晚餐') || text.includes('晚饭')) return 'dinner'
+  return 'quick_log'
 }
 
 function taskSortValue(task: AutopilotTaskView, now: Date): number {

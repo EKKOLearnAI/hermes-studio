@@ -24,6 +24,11 @@ export interface PersonalAutopilotOverview {
   signals: Array<{ key: string; label: string; status: string; value: string }>
 }
 
+export interface PersonalAutopilotQuickLogInput {
+  text: string
+  kind?: PersonalAutopilotDomain | string | null
+}
+
 function withProfile(path: string, profile?: string | null): string {
   if (!profile) return path
   const separator = path.includes('?') ? '&' : '?'
@@ -35,4 +40,18 @@ export async function fetchPersonalAutopilotOverview(options: { profile?: string
     withProfile('/api/hermes/personal-autopilot/overview', options.profile),
   )
   return res.overview
+}
+
+export async function createPersonalAutopilotQuickLog(
+  payload: PersonalAutopilotQuickLogInput,
+  profile?: string | null,
+): Promise<Record<string, unknown>> {
+  const res = await request<{ log: Record<string, unknown> }>(
+    withProfile('/api/hermes/personal-autopilot/quick-log', profile),
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  )
+  return res.log
 }

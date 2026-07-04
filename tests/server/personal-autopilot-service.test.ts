@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPersonalAutopilotSnapshot } from '../../packages/server/src/services/hermes/personal-autopilot'
+import { buildPersonalAutopilotSnapshot, classifyQuickLog } from '../../packages/server/src/services/hermes/personal-autopilot'
 
 describe('personal autopilot service', () => {
   it('selects the next scheduled task as the next best action', () => {
@@ -149,5 +149,12 @@ describe('personal autopilot service', () => {
       sourceId: 'legacy-task',
       title: '下午训练',
     })
+  })
+
+  it('classifies quick logs into body transformation domains', () => {
+    expect(classifyQuickLog('午饭吃了鸡腿饭，加奶茶')).toBe('diet')
+    expect(classifyQuickLog('脸出油，鼻翼有点红')).toBe('skin')
+    expect(classifyQuickLog('胸肩练了40分钟')).toBe('body')
+    expect(classifyQuickLog('今天状态崩了，想早点睡')).toBe('recovery')
   })
 })

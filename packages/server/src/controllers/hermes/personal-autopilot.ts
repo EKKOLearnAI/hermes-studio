@@ -1,6 +1,9 @@
 import type { Context } from 'koa'
 import { listUserProfiles } from '../../db/hermes/users-store'
-import { getPersonalAutopilotOverview } from '../../services/hermes/personal-autopilot'
+import {
+  createPersonalAutopilotQuickLog,
+  getPersonalAutopilotOverview,
+} from '../../services/hermes/personal-autopilot'
 
 function profileFrom(ctx: Context): string | undefined {
   const queryProfile = typeof ctx.query.profile === 'string' ? ctx.query.profile : undefined
@@ -27,8 +30,25 @@ function denyProfileAccess(ctx: Context, profile: string | undefined): boolean {
   return true
 }
 
+function actorFrom(ctx: Context): string {
+  return String(ctx.state?.user?.username || ctx.state?.user?.id || 'user')
+}
+
+function bodyFrom(ctx: Context): Record<string, unknown> {
+  const body = ctx.request.body
+  return body && typeof body === 'object' ? body as Record<string, unknown> : {}
+}
+
 export async function overview(ctx: Context): Promise<void> {
   const profile = profileFrom(ctx)
   if (denyProfileAccess(ctx, profile)) return
   ctx.body = { overview: getPersonalAutopilotOverview({ profile }) }
+}
+
+export async function quickLog(ctx: Context): Promise<void> {
+  const profile = profileFrom(ctx)
+  if (denyProfileAccess(ctx, profile)) return
+  ctx.body = {
+    log: createPersonalAutopilotQuickLog(bodyFrom(ctx) as { text: string; kind?: string }, actorFrom(ctx), profile),
+  }
 }

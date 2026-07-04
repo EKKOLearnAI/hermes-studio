@@ -4,3 +4,4 @@ import * as ctrl from '../../controllers/hermes/personal-autopilot'
 export const personalAutopilotRoutes = new Router()
 
 personalAutopilotRoutes.get('/api/hermes/personal-autopilot/overview', ctrl.overview)
+personalAutopilotRoutes.post('/api/hermes/personal-autopilot/quick-log', ctrl.quickLog)
