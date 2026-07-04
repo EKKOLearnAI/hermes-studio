@@ -1,7 +1,7 @@
 ---
 date: 2026-07-04
 pr: 1931
-commit: b22c37e3
+commit: 3bcbdd64
 feature: Studio agent bridge default headers
-impact: Hermes Studio bridge workers now merge `model.default_headers` into OpenAI client creation so custom OpenAI-compatible providers can override SDK headers such as `User-Agent` during chat runs.
+impact: Investigation showed stale desktop runtime caches can keep Studio on an older Hermes Agent runtime; Studio now relies on runtime 0.18.0+ for `model.default_headers` instead of bridge monkey patches.
 ---

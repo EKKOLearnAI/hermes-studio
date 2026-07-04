@@ -27,7 +27,7 @@ function tempDir(prefix: string): string {
   return dir
 }
 
-function createRuntimeFiles(root: string) {
+function createRuntimeFiles(root: string, hermesAgentVersion = '0.17.0') {
   if (process.platform === 'win32') {
     mkdirSync(join(root, 'python', 'Scripts'), { recursive: true })
     mkdirSync(join(root, 'node'), { recursive: true })
@@ -46,8 +46,8 @@ function createRuntimeFiles(root: string) {
   writeFileSync(join(root, 'runtime-manifest.json'), JSON.stringify({
     schema: 1,
     platform: process.platform,
-    hermesAgentVersion: '0.17.0',
-    asset: { name: 'hermes-runtime-test.tar.gz' },
+    hermesAgentVersion,
+    asset: { name: `hermes-runtime-hermes-agent-${hermesAgentVersion}-test.tar.gz` },
   }))
 }
 
@@ -147,5 +147,37 @@ describe('desktop runtime manager', () => {
     )
     expect(existsSync(join(runtimeRoot, 'python', 'Scripts', 'hermes.cmd'))).toBe(true)
     expect(existsSync(join(runtimeRoot, 'python', 'Scripts', 'hermes.exe'))).toBe(false)
+  })
+
+  it('detects when the cached desktop runtime is older than the packaged Hermes Agent version', async () => {
+    const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
+    const runtimeRoot = join(
+      process.env.HERMES_WEB_UI_HOME!,
+      'desktop-runtime',
+      'hermes',
+      '0.16.0',
+      runtimePlatformKey(),
+    )
+    createRuntimeFiles(runtimeRoot, '0.16.0')
+
+    const { cachedRuntimeNeedsPackagedReleaseUpdate } = await import('../../packages/desktop/src/main/runtime-manager')
+
+    expect(cachedRuntimeNeedsPackagedReleaseUpdate()).toBe(true)
+  })
+
+  it('does not mark a matching cached desktop runtime as stale', async () => {
+    const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
+    const runtimeRoot = join(
+      process.env.HERMES_WEB_UI_HOME!,
+      'desktop-runtime',
+      'hermes',
+      '0.17.0',
+      runtimePlatformKey(),
+    )
+    createRuntimeFiles(runtimeRoot, '0.17.0')
+
+    const { cachedRuntimeNeedsPackagedReleaseUpdate } = await import('../../packages/desktop/src/main/runtime-manager')
+
+    expect(cachedRuntimeNeedsPackagedReleaseUpdate()).toBe(false)
   })
 })

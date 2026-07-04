@@ -40,7 +40,6 @@ _FACADE_SEND_BRIDGE_REQUEST = None
 _RUNTIME_PATCH_NAMES = (
     "_agent_root",
     "_apply_openrouter_attribution_override",
-    "_install_default_headers_patch",
     "_apply_profile_dotenv",
     "_apply_profile_env",
     "_base_hermes_home",
