@@ -11,6 +11,7 @@ export interface SessionSummary {
   agent_native_session_id?: string
   model: string
   provider?: string
+  api_mode?: ProviderApiMode
   title: string | null
   parent_session_id?: string | null
   fork_point_message_id?: string | null

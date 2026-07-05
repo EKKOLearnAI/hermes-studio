@@ -124,6 +124,7 @@ export interface CodingAgentLaunchResult {
   profile: string
   provider: string
   model: string
+  apiMode?: ApiMode
   rootDir: string
   workspaceDir: string
   command: string
@@ -500,12 +501,17 @@ async function resolveStoredProviderLaunchInput(
   if (input.mode === 'global') return input
 
   const profile = String(input.profile || existingSession?.profile || 'default').trim() || 'default'
-  const provider = String(input.provider || existingSession?.provider || '').trim()
+  const inputProvider = String(input.provider || '').trim()
+  const storedProvider = String(existingSession?.provider || '').trim()
+  const provider = String(inputProvider || storedProvider).trim()
   const model = String(input.model || existingSession?.model || '').trim()
   const workspace = input.workspace || existingSession?.workspace || undefined
   let baseUrl = String(input.baseUrl || '').trim()
   let apiKey = String(input.apiKey || '').trim()
-  let apiMode = input.apiMode
+  const storedApiMode = !inputProvider || inputProvider === storedProvider
+    ? normalizeStoredLaunchApiMode(existingSession?.api_mode)
+    : undefined
+  let apiMode = input.apiMode || storedApiMode
   let canonicalProvider = provider
   const ignoredStaleProviderRuntime = belongsToDifferentBuiltinProvider(provider, baseUrl)
   if (ignoredStaleProviderRuntime) {
@@ -574,6 +580,15 @@ async function resolveStoredProviderLaunchInput(
     baseUrl: baseUrl || (ignoredStaleProviderRuntime ? '' : input.baseUrl),
     apiKey: apiKey || (ignoredStaleProviderRuntime ? '' : input.apiKey),
     apiMode,
+  }
+}
+
+function normalizeStoredLaunchApiMode(value: unknown): ApiMode | undefined {
+  if (!value) return undefined
+  try {
+    return normalizeLaunchApiMode(value, 'chat_completions')
+  } catch {
+    return undefined
   }
 }
 
@@ -1726,6 +1741,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     profile: scope.profile,
     provider: scope.provider,
     model,
+    apiMode,
     rootDir,
     workspaceDir,
     command: tool.command,
@@ -1773,7 +1789,8 @@ export async function startCodingAgentRun(
     ? storedCodingAgentMode(existingSession) === requestedMode &&
       (existingSession.agent === (id === 'codex' ? 'codex' : 'claude') || !existingSession.agent) &&
       String(existingSession.provider || '').trim() === String(resolvedInput.provider || '').trim() &&
-      String(existingSession.model || '').trim() === String(resolvedInput.model || '').trim()
+      String(existingSession.model || '').trim() === String(resolvedInput.model || '').trim() &&
+      (!String(existingSession.api_mode || '').trim() || String(existingSession.api_mode || '').trim() === String(resolvedInput.apiMode || '').trim())
     : false
   const existingNativeSessionId = canResumeNativeSession ? existingSession?.agent_native_session_id || '' : ''
   const agentNativeSessionId = resolvedInput.agentNativeSessionId || existingNativeSessionId || (id === 'claude-code' ? randomUUID() : '')
@@ -1800,6 +1817,7 @@ export async function startCodingAgentRun(
     profile: launch.profile,
     provider: persistedProvider,
     model: launch.model,
+    apiMode: launch.apiMode,
     sessionId,
     agentNativeSessionId,
     nativeResume: Boolean(existingNativeSessionId),
@@ -1820,6 +1838,7 @@ export async function startCodingAgentRun(
     agent_native_session_id: agentNativeSessionId,
     model: launch.model,
     provider: persistedProvider,
+    api_mode: launch.apiMode || '',
     workspace: launch.workspaceDir,
   })
   return {

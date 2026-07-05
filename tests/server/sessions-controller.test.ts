@@ -1317,7 +1317,7 @@ describe('session conversations controller', () => {
     expect(ctx.body).toEqual({ ok: true })
   })
 
-  it('stores a coding agent session model without stopping the runner or notifying the Hermes bridge', async () => {
+  it('stores a coding agent session model and API mode without stopping the runner or notifying the Hermes bridge', async () => {
     bridgeGetRuntimeStateMock.mockReturnValue({ ready: true, running: true, endpoint: 'ipc:///tmp/hermes-agent-bridge.sock' })
     getSessionMock.mockReturnValue({
       id: 'codex-session',
@@ -1326,6 +1326,7 @@ describe('session conversations controller', () => {
       agent: 'codex',
       model: 'old-model',
       provider: 'openrouter',
+      api_mode: 'codex_responses',
       agent_native_session_id: 'old-native-thread',
       workspace: '/tmp/original-workspace',
     })
@@ -1333,7 +1334,7 @@ describe('session conversations controller', () => {
     const mod = await import('../../packages/server/src/controllers/hermes/sessions')
     const ctx: any = {
       params: { id: 'codex-session' },
-      request: { body: { model: 'gpt-5.5', provider: 'openai-codex' } },
+      request: { body: { model: 'gpt-5.5', provider: 'openai-codex', apiMode: 'chat_completions' } },
       body: null,
     }
     await mod.setModel(ctx)
@@ -1341,6 +1342,7 @@ describe('session conversations controller', () => {
     expect(localUpdateSessionMock).toHaveBeenCalledWith('codex-session', {
       model: 'gpt-5.5',
       provider: 'openai-codex',
+      api_mode: 'chat_completions',
       agent_native_session_id: '',
     })
     expect(codingAgentRunManagerMock.stop).not.toHaveBeenCalled()

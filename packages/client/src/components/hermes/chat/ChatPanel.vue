@@ -1078,7 +1078,9 @@ async function selectSessionModel(model: string, provider: string) {
   if (meta?.disabled || !sessionModelSessionId.value) return;
   if (isSessionModelExternalCodingAgent.value) {
     pendingSessionModelSwitch.value = { model, provider };
-    sessionModelApiMode.value = defaultSessionModelApiMode(provider);
+    sessionModelApiMode.value = sessionModelSession.value?.provider === provider && sessionModelSession.value.apiMode
+      ? normalizeCodingAgentApiMode(sessionModelSession.value.apiMode, defaultSessionModelApiMode(provider))
+      : defaultSessionModelApiMode(provider);
     showSessionModelModeModal.value = true;
     return;
   }

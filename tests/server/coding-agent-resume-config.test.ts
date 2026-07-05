@@ -278,6 +278,39 @@ describe('coding agent resumed session config', () => {
     }))
   })
 
+
+  it('prefers a stored coding-agent API mode when resuming without an explicit mode', async () => {
+    const home = makeHome()
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'coding_agent',
+      agent: 'codex',
+      agent_session_id: 'agent-session-1',
+      provider: 'fun-codex',
+      model: 'gpt-5.5',
+      api_mode: 'chat_completions',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({})
+    safeReadFileMock.mockResolvedValue('')
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await startCodingAgentRun('codex', {
+      sessionId: 'session-1',
+      baseUrl: 'https://api.apikey.fun/v1',
+      apiKey: 'sk-test',
+    })
+
+    const launch = startRunMock.mock.calls[0][0]
+    expect(launch.apiMode).toBe('chat_completions')
+    const config = readFileSync(join(home, 'coding-agent', 'model', 'default', 'fun-codex', 'codex', 'config.toml'), 'utf-8')
+    const routeKey = config.match(/\/api\/codex-proxy\/([^/]+)\/v1/)?.[1] || ''
+    expect(Buffer.from(routeKey, 'base64url').toString('utf8')).toContain('chat_completions')
+    expect(updateSessionMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
+      api_mode: 'chat_completions',
+    }))
+  })
+
   it('rejects OAuth/subscription providers for scoped coding-agent launches', async () => {
     makeHome()
     getSessionMock.mockReturnValue(null)
