@@ -277,6 +277,7 @@ export function recordReminderDelivery(
 export async function dispatchAutopilotReminder(options: {
   profile?: string
   now?: Date
+  force?: boolean
 } = {}): Promise<ReminderDispatchResult> {
   const profile = profileName(options.profile)
   const now = options.now || new Date()
@@ -285,7 +286,9 @@ export async function dispatchAutopilotReminder(options: {
   const action = autopilot.nextAction
   const deliveriesToday = listRecentReminderDeliveries(profile, 100)
     .filter(delivery => sameLocalDate(new Date(delivery.sentAt), now))
-  const decision = evaluateReminderPolicy({ now, settings, autopilot, deliveriesToday })
+  const decision = options.force
+    ? { shouldSend: true, reason: 'send' as ReminderSkipReason }
+    : evaluateReminderPolicy({ now, settings, autopilot, deliveriesToday })
   const message = formatAutopilotReminderMessage(action)
 
   if (!decision.shouldSend) {
