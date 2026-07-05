@@ -1296,6 +1296,66 @@ assert events == [
 `)
   })
 
+  it('installs caller-supplied run ids before starting the worker thread', () => {
+    runPython(String.raw`
+${harness}
+
+pool, _fake_db = make_pool()
+requested = "0123456789abcdef0123456789abcdef"
+started = []
+
+class NoopAgent:
+    pass
+
+session = bridge.AgentSession(session_id="requested-session", agent=NoopAgent())
+pool.get_or_create = lambda *args, **kwargs: session
+
+original_thread = bridge.threading.Thread
+class FakeThread:
+    def __init__(self, target, args, daemon=True, name=None):
+        self.target = target
+        self.args = args
+        self.daemon = daemon
+        self.name = name
+
+    def start(self):
+        run_session, record = self.args[0], self.args[1]
+        assert record.run_id == requested
+        assert pool._runs[requested] is record
+        assert run_session.current_run_id == requested
+        assert run_session.running is True
+        started.append(self.name)
+
+bridge.threading.Thread = FakeThread
+try:
+    record = pool.start_chat("requested-session", "hello", profile="default", requested_run_id=requested)
+finally:
+    bridge.threading.Thread = original_thread
+
+assert record.run_id == requested
+assert started == ["hermes-bridge-run-01234567"], started
+
+bad_session = bridge.AgentSession(session_id="bad-session", agent=NoopAgent())
+pool.get_or_create = lambda *args, **kwargs: bad_session
+try:
+    pool.start_chat("bad-session", "hello", requested_run_id="NOT-LOWER-HEX")
+    raise AssertionError("invalid requested run_id was accepted")
+except ValueError as exc:
+    assert "32 lowercase hex" in str(exc)
+
+duplicate = "fedcba9876543210fedcba9876543210"
+dup_session = bridge.AgentSession(session_id="dup-session", agent=NoopAgent())
+pool.get_or_create = lambda *args, **kwargs: dup_session
+with pool._lock:
+    pool._runs[duplicate] = bridge.RunRecord(run_id=duplicate, session_id="other-session")
+try:
+    pool.start_chat("dup-session", "hello", requested_run_id=duplicate)
+    raise AssertionError("duplicate requested run_id was accepted")
+except ValueError as exc:
+    assert "duplicate run_id" in str(exc)
+`)
+  })
+
   it('binds workspace cwd per running session without process-wide cwd state', () => {
     runPython(String.raw`
 ${harness}

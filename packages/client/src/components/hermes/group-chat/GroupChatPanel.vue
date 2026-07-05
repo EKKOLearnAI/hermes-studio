@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber, NDropdown, type DropdownOption } from 'naive-ui'
+import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber, NDropdown, NTooltip, type DropdownOption } from 'naive-ui'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { updateRoomConfig, forceCompress } from '@/api/hermes/group-chat'
+import { isStoredSuperAdmin } from '@/api/client'
 import GroupMessageList from './GroupMessageList.vue'
 import GroupChatInput from './GroupChatInput.vue'
+import FilesPanel from '@/components/hermes/chat/FilesPanel.vue'
+import TerminalPanel from '@/components/hermes/chat/TerminalPanel.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import SettingsCircuitBadge from '@/components/layout/SettingsCircuitBadge.vue'
@@ -39,8 +42,16 @@ const showRoomContextMenu = ref(false)
 const roomContextMenuX = ref(0)
 const roomContextMenuY = ref(0)
 const groupChatInputRef = ref<(InstanceType<typeof GroupChatInput> & { addFiles?: (files: File[]) => void }) | null>(null)
+const groupChatContentWrapperRef = ref<HTMLElement | null>(null)
 const chatDropCounter = ref(0)
 const isChatDropActive = ref(false)
+const showToolPanel = ref(false)
+const activeToolPanel = ref<'files' | 'terminal'>('files')
+const TOOL_PANEL_MIN_WIDTH = 360
+const TOOL_PANEL_DEFAULT_WIDTH = 560
+const TOOL_PANEL_STORAGE_KEY = 'hermes.groupChat.toolPanelWidth'
+const toolPanelWidth = ref(loadToolPanelWidth())
+const toolResizeStart = ref<{ x: number; width: number } | null>(null)
 
 const profileOptions = computed(() =>
     profilesStore.profiles.map(p => ({ label: p.name, value: p.name }))
@@ -56,6 +67,8 @@ function agentAvatarName(agent: RoomAgent): string {
 }
 
 const hasRoom = computed(() => !!store.currentRoomId)
+const isSuperAdmin = computed(() => isStoredSuperAdmin())
+const toolPanelStyle = computed(() => ({ width: `${toolPanelWidth.value}px` }))
 
 /** Resolve the current user's custom avatar — first from the member list, then from the cached current-user value. */
 const userMemberAvatar = computed(() => {
@@ -74,6 +87,67 @@ const visibleApproval = computed(() => store.activePendingApproval)
 function formatTokens(tokens: number): string {
     if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k tokens`
     return `${tokens} tokens`
+}
+
+function loadToolPanelWidth() {
+    if (typeof window === 'undefined') return TOOL_PANEL_DEFAULT_WIDTH
+    const saved = Number.parseInt(window.localStorage.getItem(TOOL_PANEL_STORAGE_KEY) || '', 10)
+    return Number.isFinite(saved) ? Math.round(saved) : TOOL_PANEL_DEFAULT_WIDTH
+}
+
+function toolPanelMaxWidth() {
+    if (typeof window === 'undefined') return 1180
+    const available = groupChatContentWrapperRef.value?.clientWidth || window.innerWidth
+    return Math.max(320, Math.min(Math.floor(available * 0.88), available - 120))
+}
+
+function clampToolPanelWidth(width: number) {
+    const maxWidth = toolPanelMaxWidth()
+    const minWidth = Math.min(TOOL_PANEL_MIN_WIDTH, maxWidth)
+    return Math.min(maxWidth, Math.max(minWidth, Math.round(width)))
+}
+
+function handleToolPanelViewportResize() {
+    toolPanelWidth.value = clampToolPanelWidth(toolPanelWidth.value)
+}
+
+function handleToolResizeMove(event: PointerEvent) {
+    const start = toolResizeStart.value
+    if (!start) return
+    const delta = start.x - event.clientX
+    toolPanelWidth.value = clampToolPanelWidth(start.width + delta)
+}
+
+function stopToolResize() {
+    if (!toolResizeStart.value) return
+    toolResizeStart.value = null
+    window.removeEventListener('pointermove', handleToolResizeMove)
+    window.removeEventListener('pointerup', stopToolResize)
+    window.localStorage.setItem(TOOL_PANEL_STORAGE_KEY, String(toolPanelWidth.value))
+    document.body.style.userSelect = ''
+    document.body.style.cursor = ''
+}
+
+function startToolResize(event: PointerEvent) {
+    event.preventDefault()
+    toolResizeStart.value = { x: event.clientX, width: toolPanelWidth.value }
+    window.addEventListener('pointermove', handleToolResizeMove)
+    window.addEventListener('pointerup', stopToolResize)
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+}
+
+function toggleToolPanel(panel: 'files' | 'terminal' = 'files') {
+    if (!isSuperAdmin.value) {
+        showToolPanel.value = false
+        return
+    }
+    if (showToolPanel.value && activeToolPanel.value === panel) {
+        showToolPanel.value = false
+        return
+    }
+    activeToolPanel.value = panel
+    showToolPanel.value = true
 }
 
 function toggleSidebar() {
@@ -288,6 +362,7 @@ async function handleAddAgent() {
 
 onMounted(() => {
     window.addEventListener('hermes:open-page-sidebar', openPageSidebar)
+    window.addEventListener('resize', handleToolPanelViewportResize)
     if (profilesStore.profiles.length === 0) {
         void profilesStore.fetchProfiles()
     }
@@ -295,6 +370,14 @@ onMounted(() => {
 
 onUnmounted(() => {
     window.removeEventListener('hermes:open-page-sidebar', openPageSidebar)
+    window.removeEventListener('resize', handleToolPanelViewportResize)
+    stopToolResize()
+})
+
+watch(showToolPanel, async (visible) => {
+    if (!visible) return
+    await nextTick()
+    handleToolPanelViewportResize()
 })
 
 async function confirmAddAgent() {
@@ -461,7 +544,6 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
         <!-- Main chat area -->
         <div
             class="chat-main"
-            :class="{ 'chat-main--drop-active': isChatDropActive }"
             @dragover="handleChatDragOver"
             @dragenter="handleChatDragEnter"
             @dragleave="handleChatDragLeave"
@@ -527,6 +609,27 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     <button class="icon-btn" :title="t('groupChat.compressionConfig')" @click="handleOpenCompressionConfig">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 4.6a1.65 1.65 0 0 0 1.51 1V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1.51 1z"/></svg>
                     </button>
+                    <NTooltip v-if="isSuperAdmin" trigger="hover">
+                        <template #trigger>
+                            <NButton
+                                class="header-tool-toggle"
+                                :class="{ active: showToolPanel }"
+                                quaternary
+                                size="small"
+                                circle
+                                @click="toggleToolPanel('files')"
+                            >
+                                <template #icon>
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                                        <line x1="9" y1="3" x2="9" y2="21" />
+                                        <line x1="15" y1="3" x2="15" y2="21" />
+                                    </svg>
+                                </template>
+                            </NButton>
+                        </template>
+                        {{ t('drawer.files') }} / {{ t('drawer.terminal') }}
+                    </NTooltip>
                     <NPopconfirm @positive-click="handleClearRoomContext">
                         <template #trigger>
                             <button class="icon-btn" :title="t('groupChat.clearContext')">
@@ -544,73 +647,121 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                 </div>
             </div>
 
-            <div v-if="hasRoom" class="group-chat-surface">
-                <div class="group-message-shell">
-                    <GroupMessageList />
-                    <Transition name="approval-float">
-                        <div v-if="visibleApproval" class="approval-float-panel">
-                            <div class="approval-float-header">
-                                <span class="approval-float-icon" aria-hidden="true">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
-                                        <path d="m9 12 2 2 4-4" />
-                                    </svg>
+            <div
+                v-if="hasRoom"
+                ref="groupChatContentWrapperRef"
+                class="group-chat-content-wrapper"
+                :class="{ 'chat-main--drop-active': isChatDropActive }"
+            >
+                <div class="group-chat-surface">
+                    <div class="group-message-shell">
+                        <GroupMessageList />
+                        <Transition name="approval-float">
+                            <div v-if="visibleApproval" class="approval-float-panel">
+                                <div class="approval-float-header">
+                                    <span class="approval-float-icon" aria-hidden="true">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+                                            <path d="m9 12 2 2 4-4" />
+                                        </svg>
+                                    </span>
+                                    <span>{{ t('chat.approvalKicker') }}</span>
+                                </div>
+                                <div class="approval-float-title">
+                                    <span v-if="visibleApproval.agentName">@{{ visibleApproval.agentName }} · </span>{{ t('chat.approvalTitle') }}
+                                </div>
+                                <div class="approval-float-desc">{{ visibleApproval.description }}</div>
+                                <code class="approval-float-command">{{ visibleApproval.command }}</code>
+                                <div class="approval-float-actions">
+                                    <NButton v-if="visibleApproval.isMemoryWrite" size="small" type="primary" @click="handleApproval('once')">
+                                        {{ t('chat.approvalAgree') }}
+                                    </NButton>
+                                    <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('once')" size="small" type="primary" @click="handleApproval('once')">
+                                        {{ t('chat.approvalAllowOnce') }}
+                                    </NButton>
+                                    <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('session')" size="small" secondary @click="handleApproval('session')">
+                                        {{ t('chat.approvalAllowSession') }}
+                                    </NButton>
+                                    <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('always')" size="small" secondary @click="handleApproval('always')">
+                                        {{ t('chat.approvalAlways') }}
+                                    </NButton>
+                                    <NButton v-if="visibleApproval.isMemoryWrite || visibleApproval.choices.includes('deny')" size="small" type="error" secondary @click="handleApproval('deny')">
+                                        {{ t('chat.approvalDeny') }}
+                                    </NButton>
+                                </div>
+                            </div>
+                        </Transition>
+                    </div>
+                    <div v-if="store.contextStatuses.size > 0 || (store.typingText && store.contextStatuses.size === 0)" class="status-bar">
+                        <div v-if="store.contextStatuses.size > 0" class="context-status-list">
+                            <div v-for="[name, status] in store.contextStatuses" :key="name" class="context-status">
+                                <span class="typing-dots">
+                                    <span /><span /><span />
                                 </span>
-                                <span>{{ t('chat.approvalKicker') }}</span>
-                            </div>
-                            <div class="approval-float-title">
-                                <span v-if="visibleApproval.agentName">@{{ visibleApproval.agentName }} · </span>{{ t('chat.approvalTitle') }}
-                            </div>
-                            <div class="approval-float-desc">{{ visibleApproval.description }}</div>
-                            <code class="approval-float-command">{{ visibleApproval.command }}</code>
-                            <div class="approval-float-actions">
-                                <NButton v-if="visibleApproval.isMemoryWrite" size="small" type="primary" @click="handleApproval('once')">
-                                    {{ t('chat.approvalAgree') }}
-                                </NButton>
-                                <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('once')" size="small" type="primary" @click="handleApproval('once')">
-                                    {{ t('chat.approvalAllowOnce') }}
-                                </NButton>
-                                <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('session')" size="small" secondary @click="handleApproval('session')">
-                                    {{ t('chat.approvalAllowSession') }}
-                                </NButton>
-                                <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('always')" size="small" secondary @click="handleApproval('always')">
-                                    {{ t('chat.approvalAlways') }}
-                                </NButton>
-                                <NButton v-if="visibleApproval.isMemoryWrite || visibleApproval.choices.includes('deny')" size="small" type="error" secondary @click="handleApproval('deny')">
-                                    {{ t('chat.approvalDeny') }}
-                                </NButton>
+                                <span v-if="status.status === 'compressing'">
+                                    @{{ status.agentName }} {{ t('groupChat.agentCompressing') }}
+                                </span>
+                                <span v-else>
+                                    @{{ status.agentName }} {{ t('groupChat.agentReplying') }}
+                                </span>
+                                <button class="context-stop-btn" :title="t('common.cancel')" @click="handleInterruptAgent(status.agentName)">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                        <line x1="18" y1="6" x2="6" y2="18" />
+                                        <line x1="6" y1="6" x2="18" y2="18" />
+                                    </svg>
+                                </button>
                             </div>
                         </div>
-                    </Transition>
-                </div>
-                <div v-if="store.contextStatuses.size > 0 || (store.typingText && store.contextStatuses.size === 0)" class="status-bar">
-                    <div v-if="store.contextStatuses.size > 0" class="context-status-list">
-                        <div v-for="[name, status] in store.contextStatuses" :key="name" class="context-status">
+                        <div v-else-if="store.typingText" class="typing-indicator">
                             <span class="typing-dots">
                                 <span /><span /><span />
                             </span>
-                            <span v-if="status.status === 'compressing'">
-                                @{{ status.agentName }} {{ t('groupChat.agentCompressing') }}
-                            </span>
-                            <span v-else>
-                                @{{ status.agentName }} {{ t('groupChat.agentReplying') }}
-                            </span>
-                            <button class="context-stop-btn" :title="t('common.cancel')" @click="handleInterruptAgent(status.agentName)">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                                    <line x1="18" y1="6" x2="6" y2="18" />
-                                    <line x1="6" y1="6" x2="18" y2="18" />
-                                </svg>
-                            </button>
+                            {{ store.typingText }}
                         </div>
                     </div>
-                    <div v-else-if="store.typingText" class="typing-indicator">
-                        <span class="typing-dots">
-                            <span /><span /><span />
-                        </span>
-                        {{ store.typingText }}
-                    </div>
+                    <GroupChatInput ref="groupChatInputRef" @send="handleSendMessage" />
                 </div>
-                <GroupChatInput ref="groupChatInputRef" @send="handleSendMessage" />
+                <aside
+                    v-if="isSuperAdmin && showToolPanel"
+                    class="chat-tool-panel"
+                    :style="toolPanelStyle"
+                >
+                    <div
+                        class="chat-tool-resize-handle"
+                        @pointerdown="startToolResize"
+                    />
+                    <div class="chat-tool-panel-inner">
+                        <div class="chat-tool-tabs" role="tablist">
+                            <button
+                                class="chat-tool-tab"
+                                :class="{ active: activeToolPanel === 'files' }"
+                                type="button"
+                                role="tab"
+                                :aria-selected="activeToolPanel === 'files'"
+                                @click="activeToolPanel = 'files'"
+                            >
+                                {{ t('drawer.files') }}
+                            </button>
+                            <button
+                                class="chat-tool-tab"
+                                :class="{ active: activeToolPanel === 'terminal' }"
+                                type="button"
+                                role="tab"
+                                :aria-selected="activeToolPanel === 'terminal'"
+                                @click="activeToolPanel = 'terminal'"
+                            >
+                                {{ t('drawer.terminal') }}
+                            </button>
+                        </div>
+                        <div class="chat-tool-content">
+                            <FilesPanel v-show="activeToolPanel === 'files'" />
+                            <TerminalPanel
+                                v-show="activeToolPanel === 'terminal'"
+                                :visible="showToolPanel && activeToolPanel === 'terminal'"
+                            />
+                        </div>
+                    </div>
+                </aside>
             </div>
 
             <div v-else class="no-room">
@@ -740,6 +891,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                 </div>
             </div>
         </Teleport>
+
     </div>
 </template>
 
@@ -1231,6 +1383,16 @@ export default defineComponent({ components: { CreateRoomForm } })
     position: relative;
 }
 
+.group-chat-content-wrapper {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+}
+
 .group-chat-surface {
     flex: 1;
     min-height: 0;
@@ -1305,6 +1467,11 @@ export default defineComponent({ components: { CreateRoomForm } })
         align-items: center;
         gap: 8px;
         flex-shrink: 0;
+    }
+
+    .header-tool-toggle.active {
+        color: var(--accent-primary);
+        background: rgba(var(--accent-primary-rgb), 0.1);
     }
 
     .member-count {
@@ -1467,6 +1634,131 @@ export default defineComponent({ components: { CreateRoomForm } })
     }
 }
 
+.chat-tool-panel {
+    position: relative;
+    flex: 0 0 auto;
+    min-width: 320px;
+    max-width: 100%;
+    background: $bg-card;
+    border-left: 1px solid $border-color;
+    display: flex;
+    min-height: 0;
+    overflow: visible;
+}
+
+.chat-tool-resize-handle {
+    position: absolute;
+    left: -7px;
+    top: 0;
+    bottom: 0;
+    width: 14px;
+    cursor: col-resize;
+    z-index: 20;
+
+    &::after {
+        content: "";
+        position: absolute;
+        left: 6px;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background:
+            linear-gradient($border-color, $border-color) top / 1px calc(50% - 26px) no-repeat,
+            linear-gradient($border-color, $border-color) bottom / 1px calc(50% - 26px) no-repeat;
+        transition: background $transition-fast;
+        z-index: 1;
+    }
+
+    &::before {
+        content: "";
+        position: absolute;
+        left: 1px;
+        top: 50%;
+        width: 12px;
+        height: 38px;
+        transform: translateY(-50%);
+        border-radius: 6px;
+        background:
+            linear-gradient($text-muted, $text-muted) center 12px / 6px 1px no-repeat,
+            linear-gradient($text-muted, $text-muted) center 19px / 6px 1px no-repeat,
+            linear-gradient($text-muted, $text-muted) center 26px / 6px 1px no-repeat,
+            $bg-card;
+        border: 1px solid $border-color;
+        opacity: 0.9;
+        transition: all $transition-fast;
+        z-index: 2;
+    }
+
+    &:hover::after {
+        background:
+            linear-gradient(var(--accent-primary), var(--accent-primary)) top / 1px calc(50% - 26px) no-repeat,
+            linear-gradient(var(--accent-primary), var(--accent-primary)) bottom / 1px calc(50% - 26px) no-repeat;
+    }
+
+    &:hover::before {
+        background:
+            linear-gradient(var(--accent-primary), var(--accent-primary)) center 12px / 6px 1px no-repeat,
+            linear-gradient(var(--accent-primary), var(--accent-primary)) center 19px / 6px 1px no-repeat,
+            linear-gradient(var(--accent-primary), var(--accent-primary)) center 26px / 6px 1px no-repeat,
+            $bg-card;
+        border-color: var(--accent-primary);
+        opacity: 1;
+    }
+}
+
+.chat-tool-panel-inner {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.chat-tool-tabs {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 6px;
+    padding: 8px 10px;
+    border-bottom: 1px solid $border-color;
+}
+
+.chat-tool-tab {
+    height: 30px;
+    padding: 0 12px;
+    border: none;
+    border-radius: $radius-sm;
+    background: transparent;
+    color: $text-secondary;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all $transition-fast;
+
+    &:hover {
+        color: $text-primary;
+        background: rgba(var(--accent-primary-rgb), 0.06);
+    }
+
+    &.active {
+        color: var(--accent-primary);
+        background: rgba(var(--accent-primary-rgb), 0.12);
+    }
+}
+
+.chat-tool-content {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.chat-tool-content > * {
+    height: 100%;
+    min-height: 0;
+}
+
 // ─── Shared ──────────────────────────────────────────────
 
 .icon-btn {
@@ -1585,6 +1877,23 @@ export default defineComponent({ components: { CreateRoomForm } })
     }
 
     .room-title-text {
+        display: none;
+    }
+
+    .chat-tool-panel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 70;
+        left: 0;
+        width: 100% !important;
+        min-width: 0;
+        border-left: none;
+        box-shadow: none;
+    }
+
+    .chat-tool-resize-handle {
         display: none;
     }
 

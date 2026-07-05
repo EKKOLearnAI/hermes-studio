@@ -11,6 +11,7 @@ export interface RoomInfo {
     maxHistoryTokens?: number
     tailMessageCount?: number
     totalTokens?: number
+    workspace: string
 }
 
 export interface RoomAgent {
@@ -228,6 +229,14 @@ export async function updateRoomConfig(roomId: string, config: { triggerTokens?:
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
+    })
+}
+
+export async function updateRoomWorkspace(roomId: string, workspace: string): Promise<{ room: RoomInfo }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/workspace`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace }),
     })
 }
 

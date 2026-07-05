@@ -4784,6 +4784,66 @@
         }
       }
     },
+    "/api/hermes/group-chat/rooms/{roomId}/workspace": {
+      "put": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Update workspace",
+        "description": "PUT /api/hermes/group-chat/rooms/:roomId/workspace",
+        "operationId": "updateWorkspace",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden - Workspace folder is not allowed"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "workspace": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "workspace"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/jobs": {
       "get": {
         "tags": [

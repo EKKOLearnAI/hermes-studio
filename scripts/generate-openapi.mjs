@@ -717,6 +717,11 @@ function generateResponses(path, method) {
     responses['400'] = { $ref: '#/components/responses/BadRequest' }
   }
 
+  if (path === '/api/hermes/group-chat/rooms/:roomId/workspace') {
+    responses['403'] = { description: 'Forbidden - Workspace folder is not allowed' }
+    responses['404'] = { $ref: '#/components/responses/NotFound' }
+  }
+
   return responses
 }
 

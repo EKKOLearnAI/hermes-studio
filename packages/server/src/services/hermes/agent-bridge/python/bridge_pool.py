@@ -4,6 +4,7 @@ import copy
 import json
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -1117,14 +1118,20 @@ class AgentPool:
         workspace: str | None = None,
         source: str | None = None,
         reasoning_effort: str | None = None,
+        requested_run_id: str | None = None,
     ) -> RunRecord:
         session = self.get_or_create(session_id, profile=profile, model=model, provider=provider)
         with session.lock:
             if session.running:
                 raise RuntimeError(f"session {session_id} is already running")
-            run_id = uuid.uuid4().hex
+            requested = str(requested_run_id or "").strip()
+            if requested and not re.fullmatch(r"[0-9a-f]{32}", requested):
+                raise ValueError("requested run_id must be 32 lowercase hex characters")
+            run_id = requested or uuid.uuid4().hex
             record = RunRecord(run_id=run_id, session_id=session_id)
             with self._lock:
+                if run_id in self._runs:
+                    raise ValueError(f"duplicate run_id: {run_id}")
                 self._runs[run_id] = record
             session.running = True
             session.current_run_id = run_id

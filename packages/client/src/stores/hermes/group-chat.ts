@@ -25,6 +25,7 @@ import {
     cloneRoom as cloneRoomApi,
     deleteRoom as deleteRoomApi,
     clearRoomContext,
+    updateRoomWorkspace as updateRoomWorkspaceApi,
 } from '@/api/hermes/group-chat'
 
 async function uploadGroupFiles(attachments: Attachment[]): Promise<{ name: string; path: string }[]> {
@@ -733,6 +734,21 @@ const currentUserAvatar = ref('')
         }
     }
 
+    async function setRoomWorkspace(roomId: string, workspace: string) {
+        try {
+            const res = await updateRoomWorkspaceApi(roomId, workspace)
+            if (res.room) {
+                const idx = rooms.value.findIndex(r => r.id === roomId)
+                if (idx >= 0) rooms.value[idx] = res.room
+                if (currentRoomId.value === roomId) roomName.value = res.room.name
+            }
+            return res.room
+        } catch (err: any) {
+            error.value = err.message
+            throw err
+        }
+    }
+
     // ─── Agent Actions ─────────────────────────────────────
     async function loadAgents(roomId: string) {
         try {
@@ -857,6 +873,7 @@ const currentUserAvatar = ref('')
         deleteRoom,
         cloneRoom,
         clearCurrentRoomContext,
+        setRoomWorkspace,
         loadAgents,
         addAgentToRoom,
         removeAgentFromRoom,
@@ -881,6 +898,17 @@ function runtimePayloadText(value: unknown): string {
         // Fall through to String(value) for non-serializable runtime payloads.
     }
     return String(value)
+}
+
+function parseWorkspaceDiffPayload(value: unknown): unknown {
+    const text = runtimePayloadText(value)
+    if (!text) return undefined
+    try {
+        const parsed = JSON.parse(text)
+        return parsed?.kind === 'workspace_diff' ? parsed : value
+    } catch {
+        return value
+    }
 }
 
 function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
@@ -929,6 +957,9 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
             const toolName = msg.tool_name || toolNameMap.get(tcId) || undefined
             const toolArgs = toolArgsMap.has(tcId) ? toolArgsMap.get(tcId) : undefined
             let preview = ''
+            const toolResult = toolName === 'workspace_diff'
+                ? parseWorkspaceDiffPayload((msg as any).content)
+                : runtimeToolPayloadOrUndefined((msg as any).content)
             const contentText = runtimePayloadText((msg as any).content)
             if (contentText) {
                 try {
@@ -955,7 +986,7 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
                 toolCallId: tcId || undefined,
                 toolArgs: toolArgs !== undefined ? toolArgs : (placeholderIdx !== -1 ? result[placeholderIdx].toolArgs : undefined),
                 toolPreview: typeof preview === 'string' ? preview.slice(0, 100) || undefined : undefined,
-                toolResult: runtimeToolPayloadOrUndefined((msg as any).content),
+                toolResult,
                 toolStatus: 'done',
             }
             if (placeholderIdx !== -1) result[placeholderIdx] = merged

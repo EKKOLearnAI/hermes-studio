@@ -1,5 +1,6 @@
 import { Server, Socket, Namespace } from 'socket.io'
 import type { Server as HttpServer } from 'http'
+import { basename } from 'path'
 import { logger } from '../../../services/logger'
 import { getDb } from '../../../db'
 import { normalizeMessageContentForStorage, normalizeMessageContentForStorageRole } from '../../../db/hermes/message-content'
@@ -8,6 +9,7 @@ import { ContextEngine } from '../context-engine/compressor'
 import { SessionDeleter } from '../session-deleter'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { AgentBridgeClient } from '../agent-bridge'
+import { insertWorkspaceRunChange, deleteWorkspaceRunChangesByChangeIds, type SaveWorkspaceRunChangeInput, type WorkspaceRunChangeSummary } from '../../../db/hermes/workspace-run-changes-store'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { findUserByUsername, getUserAvatar } from '../../../db/hermes/users-store'
 import { config } from '../../../config'
@@ -85,6 +87,19 @@ interface RoomInfo {
     tailMessageCount: number
     totalTokens: number
     sessionSeed: string
+    workspace: string
+}
+
+interface SaveWorkspaceDiffMessageArgs {
+    roomId: string
+    senderId: string
+    senderName: string
+    sessionId: string
+    runId: string
+    status: 'completed' | 'failed' | 'aborted'
+    workspace: string
+    draft: SaveWorkspaceRunChangeInput
+    parentMessageId?: string | null
 }
 
 interface Member {
@@ -277,15 +292,15 @@ class ChatStorage {
     // ─── Rooms ────────────────────────────────────────────────
 
     getRoom(roomId: string): RoomInfo | undefined {
-        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed FROM gc_rooms WHERE id = ?').get(roomId) as any
+        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, workspace FROM gc_rooms WHERE id = ?').get(roomId) as any
     }
 
     getRoomByInviteCode(code: string): RoomInfo | undefined {
-        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed FROM gc_rooms WHERE inviteCode = ?').get(code) as any
+        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, workspace FROM gc_rooms WHERE inviteCode = ?').get(code) as any
     }
 
     getAllRooms(): RoomInfo[] {
-        return (this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed FROM gc_rooms ORDER BY id').all() || []) as any[]
+        return (this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, workspace FROM gc_rooms ORDER BY id').all() || []) as any[]
     }
 
     getRoomsForProfiles(profiles: string[]): RoomInfo[] {
@@ -293,7 +308,7 @@ class ChatStorage {
         if (!uniqueProfiles.length) return []
         const placeholders = uniqueProfiles.map(() => '?').join(', ')
         return (this.db()?.prepare(
-            `SELECT DISTINCT r.id, r.name, r.inviteCode, r.triggerTokens, r.maxHistoryTokens, r.tailMessageCount, r.totalTokens, r.sessionSeed
+            `SELECT DISTINCT r.id, r.name, r.inviteCode, r.triggerTokens, r.maxHistoryTokens, r.tailMessageCount, r.totalTokens, r.sessionSeed, r.workspace
              FROM gc_rooms r
              INNER JOIN gc_room_agents a ON a.roomId = r.id
              WHERE a.profile IN (${placeholders})
@@ -301,10 +316,10 @@ class ChatStorage {
         ).all(...uniqueProfiles) || []) as any[]
     }
 
-    saveRoom(id: string, name: string, inviteCode?: string, config?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): void {
+    saveRoom(id: string, name: string, inviteCode?: string, config?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number; workspace?: string }): void {
         this.db()?.prepare(
-            'INSERT OR IGNORE INTO gc_rooms (id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount) VALUES (?, ?, ?, ?, ?, ?)'
-        ).run(id, name, inviteCode || null, config?.triggerTokens ?? 100000, config?.maxHistoryTokens ?? 32000, config?.tailMessageCount ?? 10)
+            'INSERT OR IGNORE INTO gc_rooms (id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, workspace) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ).run(id, name, inviteCode || null, config?.triggerTokens ?? 100000, config?.maxHistoryTokens ?? 32000, config?.tailMessageCount ?? 10, config?.workspace || '')
     }
 
     updateRoomConfig(roomId: string, config: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): void {
@@ -324,6 +339,15 @@ class ChatStorage {
 
     updateRoomTotalTokens(roomId: string, tokens: number): void {
         this.db()?.prepare('UPDATE gc_rooms SET totalTokens = ? WHERE id = ?').run(tokens, roomId)
+    }
+
+    getRoomWorkspace(roomId: string): string {
+        return String(this.getRoom(roomId)?.workspace || '')
+    }
+
+    updateRoomWorkspace(roomId: string, workspace: string): RoomInfo | null {
+        this.db()?.prepare('UPDATE gc_rooms SET workspace = ? WHERE id = ?').run(workspace, roomId)
+        return this.getRoom(roomId) || null
     }
 
     rotateRoomSessionSeed(roomId: string): string {
@@ -389,7 +413,9 @@ class ChatStorage {
 
     getMessagesForContext(roomId: string, cutoff?: GroupMessageCursorCutoff): ChatMessage[] {
         const rows = (this.db()?.prepare(
-            'SELECT id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE roomId = ?'
+            `SELECT id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content
+             FROM gc_messages
+             WHERE roomId = ? AND COALESCE(tool_name, '') <> 'workspace_diff'`
         ).all(roomId) || []) as any[]
         return sliceGroupMessagesCanonical(rows.map(row => this.mapStoredMessageRow(row)), cutoff).messages
     }
@@ -445,6 +471,76 @@ class ChatStorage {
         )
     }
 
+    saveWorkspaceDiffMessageForRun(args: SaveWorkspaceDiffMessageArgs): { message: ChatMessage; totalTokens: number; change: WorkspaceRunChangeSummary } | null {
+        const db = this.db()
+        if (!db) return null
+        const idPrefix = 'gcmsg_workspace_diff_'
+        const runIdPart = args.runId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(-64) || 'run'
+        const roomIdBudget = Math.max(24, 180 - idPrefix.length - runIdPart.length - 1)
+        const roomIdPart = args.roomId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, roomIdBudget) || 'room'
+        const messageId = `${idPrefix}${roomIdPart}_${runIdPart}`
+        db.exec('BEGIN IMMEDIATE')
+        try {
+            const change = insertWorkspaceRunChange(db, args.draft)
+            if (!change) {
+                db.exec('ROLLBACK')
+                return null
+            }
+            const files = change.files.map((file) => {
+                const draftFile = args.draft.files.find(candidate => candidate.path === file.path && candidate.change_type === file.change_type)
+                return {
+                    id: file.id,
+                    path: file.path,
+                    change_type: file.change_type,
+                    additions: file.additions,
+                    deletions: file.deletions,
+                    patch: draftFile?.patch || null,
+                    binary: file.binary,
+                    truncated: file.truncated,
+                }
+            })
+            const payload = {
+                kind: 'workspace_diff',
+                version: 1,
+                room_id: args.roomId,
+                session_id: args.sessionId,
+                run_id: args.runId,
+                status: args.status,
+                change_id: change.change_id,
+                workspace_basename: basename(args.workspace),
+                workspace: args.workspace,
+                files_changed: change.files_changed,
+                additions: change.additions,
+                deletions: change.deletions,
+                truncated: change.truncated,
+                files,
+                ...(args.parentMessageId ? { parent_message_id: args.parentMessageId } : {}),
+            }
+            const message: ChatMessage = {
+                id: messageId,
+                roomId: args.roomId,
+                senderId: args.senderId,
+                senderName: args.senderName,
+                content: JSON.stringify(payload),
+                timestamp: Date.now(),
+                role: 'tool',
+                tool_call_id: `workspace_diff:${args.runId}`,
+                tool_calls: null,
+                tool_name: 'workspace_diff',
+            }
+            this.upsertMessage(message)
+            this.pruneMessages(args.roomId)
+            const messages = this.getMessagesForContext(args.roomId)
+            const totalTokens = this.estimateRoomTotalTokens(args.roomId, messages)
+            this.updateRoomTotalTokens(args.roomId, totalTokens)
+            db.exec('COMMIT')
+            return { message, totalTokens, change }
+        } catch (err) {
+            try { db.exec('ROLLBACK') } catch { /* ignore */ }
+            throw err
+        }
+    }
+
     saveMessageAndRefreshRoom(msg: ChatMessage, options: { preserveExistingTimestamp?: boolean } = {}): { message: ChatMessage; totalTokens: number } {
         const db = this.db()
         if (!db) return { message: msg, totalTokens: 0 }
@@ -465,12 +561,55 @@ class ChatStorage {
         }
     }
 
+    private collectWorkspaceDiffChangeIds(roomId: string, beforeTimestamp?: number): string[] {
+        const db = this.db()
+        if (!db) return []
+        const sql = beforeTimestamp == null
+            ? `SELECT content FROM gc_messages WHERE roomId = ? AND tool_name = 'workspace_diff'`
+            : `SELECT content FROM gc_messages WHERE roomId = ? AND tool_name = 'workspace_diff' AND timestamp < ?`
+        const rows = (beforeTimestamp == null ? db.prepare(sql).all(roomId) : db.prepare(sql).all(roomId, beforeTimestamp)) as Array<{ content?: string }>
+        const ids: string[] = []
+        for (const row of rows) {
+            try {
+                const payload = JSON.parse(String(row.content || ''))
+                if (typeof payload?.change_id === 'string' && payload.change_id.trim()) ids.push(payload.change_id)
+            } catch {
+                // Ignore malformed historical tool payloads; message deletion should still proceed.
+            }
+        }
+        return ids
+    }
+
+    private deleteWorkspaceDiffChanges(roomId: string, beforeTimestamp?: number): void {
+        const db = this.db()
+        if (!db) return
+        deleteWorkspaceRunChangesByChangeIds(db, this.collectWorkspaceDiffChangeIds(roomId, beforeTimestamp))
+    }
+
+    private withImmediateTransaction(db: any, fn: () => void): void {
+        if (db.inTransaction || db.isTransaction) {
+            fn()
+            return
+        }
+        db.exec('BEGIN IMMEDIATE')
+        try {
+            fn()
+            db.exec('COMMIT')
+        } catch (err) {
+            try { db.exec('ROLLBACK') } catch { /* ignore */ }
+            throw err
+        }
+    }
+
     clearRoomContext(roomId: string): void {
         const db = this.db()
         if (!db) return
-        db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
-        db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
-        db.prepare('UPDATE gc_rooms SET totalTokens = 0, sessionSeed = ? WHERE id = ?').run(`${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, roomId)
+        this.withImmediateTransaction(db, () => {
+            this.deleteWorkspaceDiffChanges(roomId)
+            db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
+            db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
+            db.prepare('UPDATE gc_rooms SET totalTokens = 0, sessionSeed = ? WHERE id = ?').run(`${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, roomId)
+        })
     }
 
     pruneMessages(roomId: string, keep = 500): void {
@@ -482,8 +621,11 @@ class ChatStorage {
                 'SELECT timestamp FROM gc_messages WHERE roomId = ? ORDER BY timestamp DESC LIMIT 1 OFFSET ?'
             ).get(roomId, keep - 1) as any
             if (cutoff) {
-                const result = db.prepare('DELETE FROM gc_messages WHERE roomId = ? AND timestamp < ?').run(roomId, cutoff.timestamp)
-                logger.info(`[GroupChat] pruned ${result.changes} messages from room ${roomId} (had ${count}, keeping ${keep})`)
+                this.withImmediateTransaction(db, () => {
+                    this.deleteWorkspaceDiffChanges(roomId, cutoff.timestamp)
+                    const result = db.prepare('DELETE FROM gc_messages WHERE roomId = ? AND timestamp < ?').run(roomId, cutoff.timestamp)
+                    logger.info(`[GroupChat] pruned ${result.changes} messages from room ${roomId} (had ${count}, keeping ${keep})`)
+                })
             }
         }
     }
@@ -541,11 +683,14 @@ class ChatStorage {
     deleteRoom(roomId: string): void {
         const db = this.db()
         if (!db) return
-        db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
-        db.prepare('DELETE FROM gc_room_agents WHERE roomId = ?').run(roomId)
-        db.prepare('DELETE FROM gc_room_members WHERE roomId = ?').run(roomId)
-        db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
-        db.prepare('DELETE FROM gc_rooms WHERE id = ?').run(roomId)
+        this.withImmediateTransaction(db, () => {
+            this.deleteWorkspaceDiffChanges(roomId)
+            db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
+            db.prepare('DELETE FROM gc_room_agents WHERE roomId = ?').run(roomId)
+            db.prepare('DELETE FROM gc_room_members WHERE roomId = ?').run(roomId)
+            db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
+            db.prepare('DELETE FROM gc_rooms WHERE id = ?').run(roomId)
+        })
     }
 
     // ─── Room Members ──────────────────────────────────────
@@ -785,6 +930,10 @@ export class GroupChatServer {
         })
         this.agentClients.setContextEngine(contextEngine)
         this.agentClients.setStorage(this.storage)
+        this.agentClients.setWorkspaceDiffBroadcaster((roomId, msg, totalTokens) => {
+            this.nsp.to(roomId).emit('message', msg)
+            this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens })
+        })
         this._contextEngine = contextEngine
 
         // Restore agent connections — call restoreAgents() after server is listening

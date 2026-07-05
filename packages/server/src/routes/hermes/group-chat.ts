@@ -1,6 +1,7 @@
 import Router from '@koa/router'
 import type { GroupChatServer } from '../../services/hermes/group-chat'
 import { isReservedMentionName } from '../../services/hermes/group-chat/mention-routing'
+import { assertAllowedWorkspaceFolder } from '../../services/hermes/workspace-path'
 
 export const groupChatRoutes = new Router()
 
@@ -143,6 +144,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
         triggerTokens: sourceRoom.triggerTokens,
         maxHistoryTokens: sourceRoom.maxHistoryTokens,
         tailMessageCount: sourceRoom.tailMessageCount,
+        workspace: sourceRoom.workspace || '',
     })
 
     const addedAgents = []
@@ -381,6 +383,39 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
     chatServer.getStorage().updateRoomConfig(roomId, { triggerTokens, maxHistoryTokens, tailMessageCount })
     const room = chatServer.getStorage().getRoom(roomId)
     ctx.body = { room }
+})
+
+// Update room workspace
+groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/workspace', async (ctx) => {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return
+    }
+
+    const roomId = ctx.params.roomId
+    const room = chatServer.getStorage().getRoom(roomId)
+    if (!room) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return
+    }
+
+    const { workspace } = ctx.request.body as { workspace: string }
+    if (typeof workspace !== 'string') {
+        ctx.status = 400
+        ctx.body = { error: 'workspace must be a string' }
+        return
+    }
+
+    try {
+        const rawWorkspace = workspace.trim()
+        const normalized = rawWorkspace ? (await assertAllowedWorkspaceFolder(rawWorkspace)).fullPath : ''
+        ctx.body = { room: chatServer.getStorage().updateRoomWorkspace(roomId, normalized) }
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 403)
+        ctx.body = { error: err?.message || 'Workspace folder is not allowed' }
+    }
 })
 
 // Force compress a room's context

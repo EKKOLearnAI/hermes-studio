@@ -48,6 +48,7 @@ export interface AgentBridgeChatOptions {
   provider?: string
   workspace?: string
   source?: string
+  run_id?: string
   wait?: boolean
   timeout?: number
   /** Local patch (reasoning-effort): per-session reasoning effort override.
@@ -441,6 +442,7 @@ export class AgentBridgeClient {
       ...(options.provider ? { provider: options.provider } : {}),
       ...(options.workspace ? { workspace: options.workspace } : {}),
       ...(options.source ? { source: options.source } : {}),
+      ...(options.run_id ? { run_id: options.run_id } : {}),
       ...(options.wait ? { wait: true } : {}),
       ...(options.timeout ? { timeout: options.timeout } : {}),
       ...(options.force_compress ? { force_compress: true } : {}),

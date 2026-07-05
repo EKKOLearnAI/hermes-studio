@@ -13,6 +13,10 @@ export type GroupChatProjectionAgent = {
     name: string
 }
 
+export function isWorkspaceDiffToolMessage(message: Pick<ProjectableGroupChatMessage, 'role' | 'tool_name'>): boolean {
+    return String(message.role || '') === 'tool' && String(message.tool_name || '') === 'workspace_diff'
+}
+
 export function projectGroupChatMessage(
     message: ProjectableGroupChatMessage,
     ownAgent: GroupChatProjectionAgent,
@@ -69,7 +73,9 @@ export function buildProjectedGroupChatHistory(
         )
     }
 
-    history.push(...messages.map((message) => projectGroupChatMessage(message, ownAgent)))
+    history.push(...messages
+        .filter((message) => !isWorkspaceDiffToolMessage(message))
+        .map((message) => projectGroupChatMessage(message, ownAgent)))
     return history
 }
 
