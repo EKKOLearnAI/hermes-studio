@@ -19,6 +19,7 @@ function makeHome() {
   const home = mkdtempSync(join(tmpdir(), 'hermes-coding-agent-launch-'))
   homes.push(home)
   process.env.HERMES_WEB_UI_HOME = home
+  process.env.HERMES_HOME = home
   process.env.HERMES_CODING_AGENT_GLOBAL_HOME = join(home, 'global-home')
   return home
 }
@@ -31,6 +32,7 @@ afterEach(() => {
   delete process.env.HERMES_WEB_UI_HOME
   delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
   delete process.env.HERMES_AGENT_NODE
+  delete process.env.HERMES_HOME
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
@@ -341,6 +343,59 @@ describe('coding agent launch preparation', () => {
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-use]')
   })
 
+  it('inherits enabled profile MCP servers such as headroom for scoped Claude and Codex launches', async () => {
+    const home = makeHome()
+    writeFileSync(join(home, 'config.yaml'), [
+      'mcp_servers:',
+      '  headroom:',
+      '    command: C:\\Tools\\headroom.exe',
+      '    args:',
+      '      - mcp',
+      '      - serve',
+      '    env:',
+      '      HEADROOM_REQUIRE_RUST_CORE: "false"',
+      '      HEADROOM_TELEMETRY: "off"',
+      '  disabled-tool:',
+      '    command: disabled.exe',
+      '    enabled: false',
+      '',
+    ].join('\n'), 'utf-8')
+
+    const claude = await prepareCodingAgentLaunch('claude-code', {
+      profile: 'default',
+      provider: 'openrouter',
+      model: 'anthropic/claude-sonnet-4.6',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-test',
+    })
+    const claudeMcp = JSON.parse(readFileSync(join(claude.rootDir, 'mcp.json'), 'utf-8'))
+    expect(claudeMcp.mcpServers.headroom).toMatchObject({
+      command: 'C:\\Tools\\headroom.exe',
+      args: ['mcp', 'serve'],
+      env: {
+        HEADROOM_REQUIRE_RUST_CORE: 'false',
+        HEADROOM_TELEMETRY: 'off',
+      },
+    })
+    expect(claudeMcp.mcpServers['disabled-tool']).toBeUndefined()
+    expect(claudeMcp.mcpServers['hermes-studio-api']).toBeDefined()
+
+    const codex = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'openrouter',
+      model: 'openai/gpt-oss-20b:free',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-test',
+    })
+    const codexConfig = readFileSync(join(codex.rootDir, 'config.toml'), 'utf-8')
+    expect(codexConfig).toContain('[mcp_servers.headroom]')
+    expect(codexConfig).toContain('command = "C:\\\\Tools\\\\headroom.exe"')
+    expect(codexConfig).toContain('args = ["mcp", "serve"]')
+    expect(codexConfig).toContain('HEADROOM_REQUIRE_RUST_CORE = "false"')
+    expect(codexConfig).not.toContain('[mcp_servers.disabled-tool]')
+    expect(codexConfig).toContain('[mcp_servers.hermes-studio-api]')
+  })
+
   it('isolates Claude Code settings for hidden chat runs only', async () => {
     const home = makeHome()
 
@@ -467,6 +522,7 @@ describe('coding agent launch preparation', () => {
     expect(catalog.models[0]).toHaveProperty('base_instructions')
     expect(catalog.models[0]).toHaveProperty('model_messages')
     expect(catalog.models[0]).toHaveProperty('default_reasoning_summary', 'auto')
+    expect(catalog.models[0]).toHaveProperty('shell_type', 'shell_command')
   })
 
   it('points Codex Chat Completions providers at the local Responses proxy', async () => {

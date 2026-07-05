@@ -45,14 +45,15 @@ const CLAUDE_PROXY_VISIBLE_MODELS = [
   'claude-opus-4-7',
 ]
 
-function localProxyBaseUrl(routeKey: string): string {
-  return `http://127.0.0.1:${config.port}/api/claude-code-proxy/${routeKey}`
+function localProxyBaseUrl(routeKey: string, frontProxyBaseUrl = ''): string {
+  const origin = frontProxyBaseUrl.trim().replace(/\/+$/, '') || `http://127.0.0.1:${config.port}`
+  return `${origin}/api/claude-code-proxy/${routeKey}`
 }
 
-export function registerClaudeCodeProxyTarget(input: ClaudeCodeProxyTargetInput): { baseUrl: string; token: string; routeKey: string } {
+export function registerClaudeCodeProxyTarget(input: ClaudeCodeProxyTargetInput & { frontProxyBaseUrl?: string }): { baseUrl: string; token: string; routeKey: string } {
   const target = targetRegistry.register(input)
 
-  return { baseUrl: localProxyBaseUrl(target.routeKey), token: target.token, routeKey: target.routeKey }
+  return { baseUrl: localProxyBaseUrl(target.routeKey, input.frontProxyBaseUrl), token: target.token, routeKey: target.routeKey }
 }
 
 function findTarget(routeKey: string): ClaudeCodeProxyTarget | null {

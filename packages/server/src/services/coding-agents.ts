@@ -798,6 +798,110 @@ function tomlInlineStringTable(values: Record<string, string>): string {
   return `{ ${Object.entries(values).map(([key, value]) => `${key} = ${tomlString(value)}`).join(', ')} }`
 }
 
+function tomlKeySegment(value: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(value) ? value : tomlString(value)
+}
+
+function isPlainRecord(value: unknown): value is Record<string, any> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function sanitizeMcpEnv(value: unknown): Record<string, string> | undefined {
+  if (!isPlainRecord(value)) return undefined
+  const entries = Object.entries(value)
+    .filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(String(key || '')))
+    .map(([key, rawValue]) => [key, String(rawValue ?? '')] as const)
+  return entries.length ? Object.fromEntries(entries) : undefined
+}
+
+function sanitizeMcpArgs(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value.map(item => String(item)).filter(item => item.length > 0)
+}
+
+function normalizeProfileMcpServer(value: unknown): Record<string, any> | null {
+  if (!isPlainRecord(value)) return null
+  if (value.enabled === false) return null
+  const server: Record<string, any> = { ...value }
+  delete server.enabled
+
+  const command = typeof server.command === 'string' ? server.command.trim() : ''
+  const url = typeof server.url === 'string' ? server.url.trim() : ''
+  if (!command && !url) return null
+  if (command) server.command = command
+  else delete server.command
+  if (url) server.url = url
+  else delete server.url
+
+  const args = sanitizeMcpArgs(server.args)
+  if (args?.length) server.args = args
+  else delete server.args
+
+  const env = sanitizeMcpEnv(server.env)
+  if (env) server.env = env
+  else delete server.env
+
+  if (typeof server.cwd === 'string') {
+    const cwd = server.cwd.trim()
+    if (cwd) server.cwd = cwd
+    else delete server.cwd
+  }
+
+  return server
+}
+
+
+function codingAgentFrontProxyBaseUrl(profileMcpServers: Record<string, Record<string, any>>): string {
+  const explicit = String(process.env.HERMES_CODING_AGENT_FRONT_PROXY_URL || process.env.HEADROOM_BASE_URL || '').trim().replace(/\/+$/, '')
+  if (explicit) return explicit
+  // If the profile enables Headroom as an MCP/tooling companion, route scoped
+  // coding-agent traffic through the local Headroom proxy while preserving the
+  // Hermes scoped proxy path (/api/codex-proxy/... or /api/claude-code-proxy/...).
+  // Headroom then forwards that path back to Hermes Studio on its upstream port.
+  if (profileMcpServers.headroom) return 'http://127.0.0.1:8787'
+  return ''
+}
+
+async function readProfileMcpServers(profile: string): Promise<Record<string, Record<string, any>>> {
+  let config: unknown = {}
+  try {
+    config = await readConfigYamlForProfile(profile)
+  } catch {
+    return {}
+  }
+  if (!isPlainRecord(config) || !isPlainRecord(config.mcp_servers)) return {}
+
+  const result: Record<string, Record<string, any>> = {}
+  for (const [rawName, rawServer] of Object.entries(config.mcp_servers)) {
+    const name = String(rawName || '').trim()
+    if (!name) continue
+    if (HERMES_MCP_SERVER_NAMES.has(name)) continue
+    if (LEGACY_HERMES_MCP_SERVER_NAMES.has(name)) continue
+    if (isManagedHermesMcpServer(rawServer)) continue
+    const server = normalizeProfileMcpServer(rawServer)
+    if (server) result[name] = server
+  }
+  return result
+}
+
+function codexMcpServerToml(name: string, server: Record<string, any>, defaults: { startupTimeoutSec?: number } = {}): string {
+  const lines = [`[mcp_servers.${tomlKeySegment(name)}]`]
+  if (typeof server.command === 'string' && server.command.trim()) lines.push(`command = ${tomlString(server.command.trim())}`)
+  if (typeof server.url === 'string' && server.url.trim()) lines.push(`url = ${tomlString(server.url.trim())}`)
+  if (Array.isArray(server.args) && server.args.length) lines.push(`args = ${tomlStringArray(server.args.map(String))}`)
+  if (typeof server.cwd === 'string' && server.cwd.trim()) lines.push(`cwd = ${tomlString(server.cwd.trim())}`)
+
+  const startupTimeout = typeof server.startup_timeout_sec === 'number' && Number.isFinite(server.startup_timeout_sec)
+    ? Math.floor(server.startup_timeout_sec)
+    : defaults.startupTimeoutSec
+  if (startupTimeout && startupTimeout > 0) lines.push(`startup_timeout_sec = ${startupTimeout}`)
+
+  const env = sanitizeMcpEnv(server.env)
+  if (env) lines.push(`env = ${tomlInlineStringTable(env)}`)
+  lines.push('')
+  return lines.join('\n')
+}
+
 function isDesktopRuntime(): boolean {
   return String(process.env.HERMES_DESKTOP || '').trim().toLowerCase() === 'true'
 }
@@ -868,27 +972,29 @@ function parseClaudeMcpServers(existingContent: string | null | undefined = ''):
   }
 }
 
-function claudeMcpConfigJson(profile: string, existingContent: string | null | undefined = ''): string {
+function claudeMcpConfigJson(
+  profile: string,
+  existingContent: string | null | undefined = '',
+  profileMcpServers: Record<string, Record<string, any>> = {},
+): string {
   const mcpServers = parseClaudeMcpServers(existingContent)
+  for (const [name, server] of Object.entries(profileMcpServers)) {
+    mcpServers[name] = server
+  }
   for (const server of HERMES_MCP_SERVERS) {
     mcpServers[server.name] = hermesMcpServerConfig(profile, server.name, server.toolset)
   }
-  return `${JSON.stringify({ mcpServers }, null, 2)}\n`
+  return `${JSON.stringify({ mcpServers }, null, 2)}
+`
 }
 
-function codexMcpConfigToml(profile: string): string {
+function codexMcpConfigToml(profile: string, profileMcpServers: Record<string, Record<string, any>> = {}): string {
   const blocks: string[] = []
+  for (const [name, server] of Object.entries(profileMcpServers)) {
+    blocks.push(codexMcpServerToml(name, server, { startupTimeoutSec: 120 }))
+  }
   for (const item of HERMES_MCP_SERVERS) {
-    const server = hermesMcpServerConfig(profile, item.name, item.toolset)
-    const lines = [
-      `[mcp_servers.${item.name}]`,
-      `command = ${tomlString(server.command)}`,
-    ]
-    if (server.args?.length) lines.push(`args = ${tomlStringArray(server.args)}`)
-    lines.push('startup_timeout_sec = 120')
-    lines.push(`env = ${tomlInlineStringTable(server.env)}`)
-    lines.push('')
-    blocks.push(lines.join('\n'))
+    blocks.push(codexMcpServerToml(item.name, hermesMcpServerConfig(profile, item.name, item.toolset), { startupTimeoutSec: 120 }))
   }
   return blocks.join('\n')
 }
@@ -1574,6 +1680,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   const workspaceDir = resolveLaunchWorkspaceRoot(scope, input.workspace)
   await mkdir(rootDir, { recursive: true })
   await mkdir(workspaceDir, { recursive: true })
+  const profileMcpServers = await readProfileMcpServers(scope.profile)
+  const frontProxyBaseUrl = codingAgentFrontProxyBaseUrl(profileMcpServers)
 
   const files: Array<{ key: string; path: string; absolutePath: string }> = []
   const writeScopedFile = async (key: string, content: string) => {
@@ -1599,6 +1707,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           agentId: tool.id,
           agentSessionId: input.agentSessionId,
           chatSessionId: input.sessionId,
+          frontProxyBaseUrl,
         })
       : null
     const claudeBaseUrl = proxyTarget?.baseUrl || baseUrl
@@ -1624,7 +1733,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     await writeScopedFile('settings', `${JSON.stringify(settings, null, 2)}\n`)
     const existingMcpPath = getScopedConfigFileDefinition(tool.id, 'mcp', scope)?.absolutePath
     const existingMcpConfig = existingMcpPath ? await safeReadFile(existingMcpPath) : ''
-    await writeScopedFile('mcp', claudeMcpConfigJson(scope.profile, existingMcpConfig))
+    await writeScopedFile('mcp', claudeMcpConfigJson(scope.profile, existingMcpConfig, profileMcpServers))
     await writeScopedFile('prompt', hermesPromptDocument())
 
     const settingsPath = join(rootDir, 'settings.json')
@@ -1658,6 +1767,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           agentId: tool.id,
           agentSessionId: input.agentSessionId,
           chatSessionId: input.sessionId,
+          frontProxyBaseUrl,
         })
       : null
     const codexBaseUrl = proxyTarget?.baseUrl || baseUrl
@@ -1680,7 +1790,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       'requires_openai_auth = false',
       ...(codexApiKey ? [`experimental_bearer_token = ${JSON.stringify(codexApiKey)}`] : []),
       '',
-      codexMcpConfigToml(scope.profile),
+      codexMcpConfigToml(scope.profile, profileMcpServers),
     ].join('\n')
     const catalog = buildCodexModelCatalog({
       profile: scope.profile,
