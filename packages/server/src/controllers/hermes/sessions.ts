@@ -1112,12 +1112,12 @@ async function listWindowsWorkspaceDrives() {
   return drives
 }
 
-async function isSafeWorkspaceFolderEntry(entry: any, fullPath: string, basePath: string, statFn: any): Promise<boolean> {
+async function isSafeWorkspaceFolderEntry(entry: any, fullPath: string, basePath: string, statFn: any, options?: { trustWindowsJunctions?: boolean }): Promise<boolean> {
   if (!entry.isDirectory() && !(typeof entry.isSymbolicLink === 'function' && entry.isSymbolicLink())) {
     return false
   }
 
-  return isWorkspaceListPathAllowed(fullPath, basePath, statFn)
+  return isWorkspaceListPathAllowed(fullPath, basePath, statFn, options)
 }
 
 /**
@@ -1185,6 +1185,9 @@ export async function listWorkspaceFolders(ctx: any) {
   }
 
   const WORKSPACE_BASE = workspaceBaseOverride() || homedir()
+  const listOptions = process.platform === 'win32' && Boolean(workspaceBaseOverride())
+    ? { trustWindowsJunctions: true }
+    : undefined
 
   // Security: prevent path traversal
   const fullPath = resolve(join(WORKSPACE_BASE, subPath))
@@ -1200,7 +1203,7 @@ export async function listWorkspaceFolders(ctx: any) {
     return
   }
 
-  if (!await isWorkspaceListPathAllowed(fullPath, WORKSPACE_BASE, stat)) {
+  if (!await isWorkspaceListPathAllowed(fullPath, WORKSPACE_BASE, stat, listOptions)) {
     ctx.status = 403
     ctx.body = { error: 'Access denied' }
     return
@@ -1210,7 +1213,7 @@ export async function listWorkspaceFolders(ctx: any) {
     const entries = await readdir(fullPath, { withFileTypes: true })
     const folders = (await Promise.all(entries.map(async (entry) => {
       const entryFullPath = join(fullPath, entry.name)
-      if (!await isSafeWorkspaceFolderEntry(entry, entryFullPath, WORKSPACE_BASE, stat)) return null
+      if (!await isSafeWorkspaceFolderEntry(entry, entryFullPath, WORKSPACE_BASE, stat, listOptions)) return null
       return {
         name: entry.name,
         path: subPath ? `${subPath}/${entry.name}` : entry.name,

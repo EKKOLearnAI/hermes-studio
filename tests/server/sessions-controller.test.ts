@@ -270,7 +270,7 @@ describe('session conversations controller', () => {
     }
   })
 
-  it('lists Windows junction-like workspace folders even when their target realpath leaves WORKSPACE_BASE', async () => {
+  it('lists and enters Windows junction-like workspace folders under WORKSPACE_BASE', async () => {
     const originalPlatform = process.platform
     const originalWorkspaceBase = process.env.WORKSPACE_BASE
     const workspaceBase = await mkdtemp(join(tmpdir(), 'hermes-workspace-win-picker-'))
@@ -301,9 +301,15 @@ describe('session conversations controller', () => {
       await mod.listWorkspaceFolders(nestedCtx)
 
       expect(nestedCtx.status).toBeUndefined()
-      expect(nestedCtx.body.folders).toEqual([
-        { name: 'project', path: 'DrivesD/project', fullPath: join(outsideLink, 'project') },
-      ])
+      expect(nestedCtx.body).toEqual({
+        base: workspaceBase,
+        current: 'DrivesD',
+        folders: [{
+          name: 'project',
+          path: 'DrivesD/project',
+          fullPath: join(outsideLink, 'project'),
+        }],
+      })
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform })
       if (originalWorkspaceBase === undefined) delete process.env.WORKSPACE_BASE

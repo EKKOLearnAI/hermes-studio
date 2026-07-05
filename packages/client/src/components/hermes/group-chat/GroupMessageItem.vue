@@ -190,6 +190,7 @@ const workspaceDiffPayload = computed(() => {
     return null
 })
 const workspaceDiffFiles = computed(() => Array.isArray(workspaceDiffPayload.value?.files) ? workspaceDiffPayload.value.files : [])
+const workspaceDiffLabel = computed(() => workspaceDiffPayload.value?.workspace_basename || t('chat.workspace'))
 const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs))
 const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult, true))
 const hasToolDetails = computed(() => !!(toolArgsPayload.value.full || toolResultPayload.value.full))
@@ -511,8 +512,8 @@ onBeforeUnmount(() => {
                     <span class="workspace-diff-title">{{ t('chat.workspaceChanges') }}</span>
                     <span class="workspace-diff-status">{{ workspaceDiffPayload.status }}</span>
                 </div>
-                <div class="workspace-diff-meta" :title="workspaceDiffPayload.workspace">
-                    <span>{{ workspaceDiffPayload.workspace_basename || workspaceDiffPayload.workspace }}</span>
+                <div class="workspace-diff-meta" :title="workspaceDiffLabel">
+                    <span>{{ workspaceDiffLabel }}</span>
                     <span>{{ t('chat.changedFiles', { files: workspaceDiffPayload.files_changed ?? workspaceDiffFiles.length }) }}</span>
                     <span class="diff-add">+{{ workspaceDiffPayload.additions || 0 }}</span>
                     <span class="diff-del">-{{ workspaceDiffPayload.deletions || 0 }}</span>

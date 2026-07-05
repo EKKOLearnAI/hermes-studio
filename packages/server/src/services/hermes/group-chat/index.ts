@@ -9,7 +9,7 @@ import { ContextEngine } from '../context-engine/compressor'
 import { SessionDeleter } from '../session-deleter'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { AgentBridgeClient } from '../agent-bridge'
-import { insertWorkspaceRunChange, deleteWorkspaceRunChangesByChangeIds, type SaveWorkspaceRunChangeInput, type WorkspaceRunChangeSummary } from '../../../db/hermes/workspace-run-changes-store'
+import { insertWorkspaceRunChange, deleteWorkspaceRunChangesForRoom, type SaveWorkspaceRunChangeInput, type WorkspaceRunChangeSummary } from '../../../db/hermes/workspace-run-changes-store'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { findUserByUsername, getUserAvatar } from '../../../db/hermes/users-store'
 import { config } from '../../../config'
@@ -88,6 +88,7 @@ interface RoomInfo {
     totalTokens: number
     sessionSeed: string
     workspace: string
+    ownerAuthUserId: number | null
 }
 
 interface SaveWorkspaceDiffMessageArgs {
@@ -117,6 +118,10 @@ interface Member {
 
 function authenticatedGroupUserId(authUserId: number): string {
     return `auth:${authUserId}`
+}
+
+function authenticatedUserProfiles(user: AuthenticatedUser | undefined): string[] {
+    return Array.isArray(user?.profiles) ? user.profiles.map(String).filter(Boolean) : []
 }
 
 let _tablesEnsured = false
@@ -292,15 +297,15 @@ class ChatStorage {
     // ─── Rooms ────────────────────────────────────────────────
 
     getRoom(roomId: string): RoomInfo | undefined {
-        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, workspace FROM gc_rooms WHERE id = ?').get(roomId) as any
+        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, workspace, ownerAuthUserId FROM gc_rooms WHERE id = ?').get(roomId) as any
     }
 
     getRoomByInviteCode(code: string): RoomInfo | undefined {
-        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, workspace FROM gc_rooms WHERE inviteCode = ?').get(code) as any
+        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, workspace, ownerAuthUserId FROM gc_rooms WHERE inviteCode = ?').get(code) as any
     }
 
     getAllRooms(): RoomInfo[] {
-        return (this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, workspace FROM gc_rooms ORDER BY id').all() || []) as any[]
+        return (this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, workspace, ownerAuthUserId FROM gc_rooms ORDER BY id').all() || []) as any[]
     }
 
     getRoomsForProfiles(profiles: string[]): RoomInfo[] {
@@ -308,7 +313,7 @@ class ChatStorage {
         if (!uniqueProfiles.length) return []
         const placeholders = uniqueProfiles.map(() => '?').join(', ')
         return (this.db()?.prepare(
-            `SELECT DISTINCT r.id, r.name, r.inviteCode, r.triggerTokens, r.maxHistoryTokens, r.tailMessageCount, r.totalTokens, r.sessionSeed, r.workspace
+            `SELECT DISTINCT r.id, r.name, r.inviteCode, r.triggerTokens, r.maxHistoryTokens, r.tailMessageCount, r.totalTokens, r.sessionSeed, r.workspace, r.ownerAuthUserId
              FROM gc_rooms r
              INNER JOIN gc_room_agents a ON a.roomId = r.id
              WHERE a.profile IN (${placeholders})
@@ -316,10 +321,38 @@ class ChatStorage {
         ).all(...uniqueProfiles) || []) as any[]
     }
 
-    saveRoom(id: string, name: string, inviteCode?: string, config?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number; workspace?: string }): void {
+    getRoomsForAuthUser(authUserId: number): RoomInfo[] {
+        if (!Number.isFinite(authUserId) || authUserId <= 0) return []
+        return (this.db()?.prepare(
+            `SELECT DISTINCT r.id, r.name, r.inviteCode, r.triggerTokens, r.maxHistoryTokens, r.tailMessageCount, r.totalTokens, r.sessionSeed, r.workspace, r.ownerAuthUserId
+             FROM gc_rooms r
+             INNER JOIN gc_room_members m ON m.roomId = r.id
+             WHERE m.authUserId = ?
+             ORDER BY r.id`
+        ).all(authUserId) || []) as any[]
+    }
+
+    getOwnedRoomsForAuthUser(authUserId: number): RoomInfo[] {
+        if (!Number.isFinite(authUserId) || authUserId <= 0) return []
+        return (this.db()?.prepare(
+            `SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, workspace, ownerAuthUserId
+             FROM gc_rooms
+             WHERE ownerAuthUserId = ?
+             ORDER BY id`
+        ).all(authUserId) || []) as any[]
+    }
+
+    saveRoom(id: string, name: string, inviteCode?: string, config?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number; workspace?: string; ownerAuthUserId?: number | null }): void {
+        const rawOwnerAuthUserId = Number(config?.ownerAuthUserId ?? 0)
+        const ownerAuthUserId = Number.isFinite(rawOwnerAuthUserId) && rawOwnerAuthUserId > 0 ? Math.floor(rawOwnerAuthUserId) : null
         this.db()?.prepare(
-            'INSERT OR IGNORE INTO gc_rooms (id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, workspace) VALUES (?, ?, ?, ?, ?, ?, ?)'
-        ).run(id, name, inviteCode || null, config?.triggerTokens ?? 100000, config?.maxHistoryTokens ?? 32000, config?.tailMessageCount ?? 10, config?.workspace || '')
+            'INSERT OR IGNORE INTO gc_rooms (id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, workspace, ownerAuthUserId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).run(id, name, inviteCode || null, config?.triggerTokens ?? 100000, config?.maxHistoryTokens ?? 32000, config?.tailMessageCount ?? 10, config?.workspace || '', ownerAuthUserId)
+    }
+
+    setRoomOwnerAuthUserId(roomId: string, authUserId: number): void {
+        if (!Number.isFinite(authUserId) || authUserId <= 0) return
+        this.db()?.prepare('UPDATE gc_rooms SET ownerAuthUserId = ? WHERE id = ?').run(authUserId, roomId)
     }
 
     updateRoomConfig(roomId: string, config: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): void {
@@ -346,12 +379,21 @@ class ChatStorage {
     }
 
     updateRoomWorkspace(roomId: string, workspace: string): RoomInfo | null {
-        this.db()?.prepare('UPDATE gc_rooms SET workspace = ? WHERE id = ?').run(workspace, roomId)
+        const room = this.getRoom(roomId)
+        if (!room) return null
+        const nextWorkspace = String(workspace || '')
+        if (String(room.workspace || '') === nextWorkspace) return room
+        const seed = this.newRoomSessionSeed()
+        this.db()?.prepare('UPDATE gc_rooms SET workspace = ?, sessionSeed = ? WHERE id = ?').run(nextWorkspace, seed, roomId)
         return this.getRoom(roomId) || null
     }
 
+    private newRoomSessionSeed(): string {
+        return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+    }
+
     rotateRoomSessionSeed(roomId: string): string {
-        const seed = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+        const seed = this.newRoomSessionSeed()
         this.db()?.prepare('UPDATE gc_rooms SET sessionSeed = ? WHERE id = ?').run(seed, roomId)
         return seed
     }
@@ -481,13 +523,25 @@ class ChatStorage {
         const messageId = `${idPrefix}${roomIdPart}_${runIdPart}`
         db.exec('BEGIN IMMEDIATE')
         try {
-            const change = insertWorkspaceRunChange(db, args.draft)
+            const roomExists = db.prepare('SELECT 1 FROM gc_rooms WHERE id = ?').get(args.roomId)
+            if (!roomExists) {
+                db.exec('ROLLBACK')
+                return null
+            }
+            const workspaceLabel = basename(args.workspace) || 'workspace'
+            const redactedDraft: SaveWorkspaceRunChangeInput = {
+                ...args.draft,
+                room_id: args.roomId,
+                message_id: messageId,
+                workspace: workspaceLabel,
+            }
+            const change = insertWorkspaceRunChange(db, redactedDraft)
             if (!change) {
                 db.exec('ROLLBACK')
                 return null
             }
             const files = change.files.map((file) => {
-                const draftFile = args.draft.files.find(candidate => candidate.path === file.path && candidate.change_type === file.change_type)
+                const draftFile = redactedDraft.files.find(candidate => candidate.path === file.path && candidate.change_type === file.change_type)
                 return {
                     id: file.id,
                     path: file.path,
@@ -507,8 +561,7 @@ class ChatStorage {
                 run_id: args.runId,
                 status: args.status,
                 change_id: change.change_id,
-                workspace_basename: basename(args.workspace),
-                workspace: args.workspace,
+                workspace_basename: workspaceLabel,
                 files_changed: change.files_changed,
                 additions: change.additions,
                 deletions: change.deletions,
@@ -547,7 +600,16 @@ class ChatStorage {
         db.exec('BEGIN IMMEDIATE')
         try {
             const existing = this.getMessage(msg.id)
-            const message = existing && options.preserveExistingTimestamp ? { ...msg, timestamp: existing.timestamp } : msg
+            if (existing?.tool_name === 'workspace_diff') {
+                const messages = this.getMessagesForContext(existing.roomId)
+                const totalTokens = this.estimateRoomTotalTokens(existing.roomId, messages)
+                db.exec('COMMIT')
+                return { message: existing, totalTokens }
+            }
+            const safeMsg = msg.tool_name === 'workspace_diff'
+                ? { ...msg, role: 'user', tool_call_id: null, tool_calls: null, tool_name: null }
+                : msg
+            const message = existing && options.preserveExistingTimestamp ? { ...safeMsg, timestamp: existing.timestamp } : safeMsg
             this.upsertMessage(message)
             this.pruneMessages(msg.roomId)
             const messages = this.getMessagesForContext(msg.roomId)
@@ -561,29 +623,10 @@ class ChatStorage {
         }
     }
 
-    private collectWorkspaceDiffChangeIds(roomId: string, beforeTimestamp?: number): string[] {
-        const db = this.db()
-        if (!db) return []
-        const sql = beforeTimestamp == null
-            ? `SELECT content FROM gc_messages WHERE roomId = ? AND tool_name = 'workspace_diff'`
-            : `SELECT content FROM gc_messages WHERE roomId = ? AND tool_name = 'workspace_diff' AND timestamp < ?`
-        const rows = (beforeTimestamp == null ? db.prepare(sql).all(roomId) : db.prepare(sql).all(roomId, beforeTimestamp)) as Array<{ content?: string }>
-        const ids: string[] = []
-        for (const row of rows) {
-            try {
-                const payload = JSON.parse(String(row.content || ''))
-                if (typeof payload?.change_id === 'string' && payload.change_id.trim()) ids.push(payload.change_id)
-            } catch {
-                // Ignore malformed historical tool payloads; message deletion should still proceed.
-            }
-        }
-        return ids
-    }
-
     private deleteWorkspaceDiffChanges(roomId: string, beforeTimestamp?: number): void {
         const db = this.db()
         if (!db) return
-        deleteWorkspaceRunChangesByChangeIds(db, this.collectWorkspaceDiffChangeIds(roomId, beforeTimestamp))
+        deleteWorkspaceRunChangesForRoom(db, roomId, beforeTimestamp)
     }
 
     private withImmediateTransaction(db: any, fn: () => void): void {
@@ -956,16 +999,30 @@ export class GroupChatServer {
         return Array.from(this.rooms.keys())
     }
 
-    clearRoomRuntimeState(roomId: string): void {
+    async clearRoomRuntimeState(roomId: string): Promise<void> {
         const roomTyping = this.typingState.get(roomId)
         if (roomTyping) {
             for (const entry of roomTyping.values()) clearTimeout(entry.timer)
             this.typingState.delete(roomId)
         }
         this.contextStatusState.delete(roomId)
+        await this.agentClients.interruptRoom(roomId)
         this.agentClients.resetRoomContext(roomId)
         this.nsp.to(roomId).emit('room_cleared', { roomId, totalTokens: 0 })
         this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens: 0 })
+    }
+
+    async deleteRoomRuntimeState(roomId: string): Promise<void> {
+        const roomTyping = this.typingState.get(roomId)
+        if (roomTyping) {
+            for (const entry of roomTyping.values()) clearTimeout(entry.timer)
+            this.typingState.delete(roomId)
+        }
+        this.contextStatusState.delete(roomId)
+        await this.agentClients.interruptRoom(roomId)
+        this.agentClients.disconnectRoom(roomId)
+        this.rooms.delete(roomId)
+        this.nsp.in(roomId).socketsLeave(roomId)
     }
 
     // ─── Restore Agents ─────────────────────────────────────────
@@ -1067,12 +1124,41 @@ export class GroupChatServer {
 
     // ─── Handlers ───────────────────────────────────────────────
 
-    private handleJoin(socket: Socket, data: { roomId?: string; name?: string; description?: string }, ack?: (res: any) => void): void {
+    private canSocketJoinRoom(socket: Socket, roomId: string, room: RoomInfo | undefined, existingMember: Member | null, inviteCode?: string): boolean {
+        if (!room) return typeof this.storage.getRoom !== 'function'
+        const requested = typeof inviteCode === 'string' ? inviteCode.trim() : ''
+        if (requested && room.inviteCode && requested === room.inviteCode) return true
+        const authUser = socket.data?.authUser as AuthenticatedUser | undefined
+        if (!authUser) return Boolean(existingMember || !room.inviteCode)
+        if (authUser.role === 'super_admin') return true
+        if (typeof authUser.id === 'number' && Number(room.ownerAuthUserId || 0) === authUser.id) return true
+        if (existingMember) return true
+        const profiles = authenticatedUserProfiles(authUser)
+        return profiles.length > 0 && typeof this.storage.getRoomsForProfiles === 'function' && this.storage.getRoomsForProfiles(profiles).some(candidate => candidate.id === roomId)
+    }
+
+    private canSocketManageRoom(socket: Socket, roomId: string): boolean {
+        const room = typeof this.storage.getRoom === 'function' ? this.storage.getRoom(roomId) : undefined
+        if (!room) return false
+        const authUser = socket.data?.authUser as AuthenticatedUser | undefined
+        if (!authUser) return true
+        if (authUser.role === 'super_admin') return true
+        if (typeof authUser.id === 'number' && Number(room.ownerAuthUserId || 0) === authUser.id) return true
+        const profiles = authenticatedUserProfiles(authUser)
+        return profiles.length > 0 && typeof this.storage.getRoomsForProfiles === 'function' && this.storage.getRoomsForProfiles(profiles).some(candidate => candidate.id === roomId)
+    }
+
+    private handleJoin(socket: Socket, data: { roomId?: string; name?: string; description?: string; inviteCode?: string }, ack?: (res: any) => void): void {
         const socketId = socket.id
         const userId = this.socketUserMap.get(socketId) || socketId
         const requestedSource = this.socketRequestedSourceMap.get(socketId) || 'human'
         const roomId = data.roomId || 'general'
+        const storedRoom = typeof this.storage.getRoom === 'function' ? this.storage.getRoom(roomId) : undefined
         const roomAgent = this.storage.getRoomAgentByAgentId(roomId, userId)
+        if (requestedSource === 'agent' && !roomAgent) {
+            ack?.({ error: 'Access denied' })
+            return
+        }
         const source = requestedSource === 'agent' && roomAgent ? 'agent' : 'human'
         if (source === 'human' && roomAgent) {
             ack?.({ error: 'Reserved member identity' })
@@ -1081,6 +1167,10 @@ export class GroupChatServer {
         const socketAuthUserId = this.socketAuthUserIdMap.get(socket.id)
         const existingMember = this.storage.getMemberByUserId(roomId, userId) ||
             (typeof socketAuthUserId === 'number' ? this.storage.getMemberByAuthUserId(roomId, socketAuthUserId) : null)
+        if (source !== 'agent' && !this.canSocketJoinRoom(socket, roomId, storedRoom, existingMember, data.inviteCode)) {
+            ack?.({ error: 'Access denied' })
+            return
+        }
         const userInfo = this.userInfoMap.get(userId) || {
             name: existingMember?.name || `User-${userId.slice(0, 6)}`,
             description: existingMember?.description || '',
@@ -1095,9 +1185,13 @@ export class GroupChatServer {
 
         let room = this.rooms.get(roomId)
         if (!room) {
+            if (!storedRoom && typeof this.storage.getRoom === 'function') {
+                ack?.({ error: 'Room not found' })
+                return
+            }
             room = new ChatRoom(roomId)
             this.rooms.set(roomId, room)
-            this.storage.saveRoom(roomId, roomId)
+            if (!storedRoom) this.storage.saveRoom(roomId, roomId)
         }
 
         // Look up the user's avatar via their numeric users.id from the web UI session.
@@ -1370,6 +1464,10 @@ export class GroupChatServer {
             ack?.({ error: 'Not in room' })
             return
         }
+        if (!this.canSocketManageRoom(socket, roomId)) {
+            ack?.({ error: 'Access denied' })
+            return
+        }
         try {
             await this.agentClients.interruptAgent(roomId, agentName)
             this.nsp.to(roomId).emit('context_status', { roomId, agentName, status: 'ready' })
@@ -1416,6 +1514,10 @@ export class GroupChatServer {
         const room = this.rooms.get(roomId)
         if (!room?.hasOnlineMember(socket.id)) {
             ack?.({ error: 'Not in room' })
+            return
+        }
+        if (!this.canSocketManageRoom(socket, roomId)) {
+            ack?.({ error: 'Access denied' })
             return
         }
         try {

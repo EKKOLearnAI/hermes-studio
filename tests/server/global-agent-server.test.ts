@@ -108,6 +108,18 @@ async function waitForMockCalls(mock: { mock: { calls: unknown[] } }, count: num
   }
 }
 
+async function waitForMockEvent(
+  mock: any,
+  eventName: string,
+  predicate: (payload: any) => boolean = () => true,
+): Promise<void> {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < 1000) {
+    if (mock.mock.calls.some(([event, payload]) => event === eventName && predicate(payload))) return
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+}
+
 describe('GlobalAgentServer', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -658,7 +670,7 @@ describe('GlobalAgentServer', () => {
     expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))).toMatchObject({
       text: '好嘞，这就去查。',
     })
-    await waitForMockCalls(agentSocket.emit, 3)
+    await waitForMockEvent(agentSocket.emit, 'audio.enqueue', payload => payload?.segmentId === 'voice-1-tts-1')
     expect(agentSocket.emit).toHaveBeenCalledWith('audio.enqueue', expect.objectContaining({
       interactionId: 'voice-1',
       segmentId: 'voice-1-tts-1',
@@ -679,6 +691,7 @@ describe('GlobalAgentServer', () => {
     expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toMatchObject({
       text: '结果如下： 请确认。',
     })
+    await waitForMockEvent(agentSocket.emit, 'audio.enqueue', payload => payload?.segmentId === 'voice-1-tts-2')
     expect(agentSocket.emit).toHaveBeenCalledWith('audio.enqueue', expect.objectContaining({
       interactionId: 'voice-1',
       segmentId: 'voice-1-tts-2',

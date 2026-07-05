@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import GroupMessageItem from '@/components/hermes/group-chat/GroupMessageItem.vue'
+import GroupMessageList from '@/components/hermes/group-chat/GroupMessageList.vue'
 import type { ChatMessage } from '@/api/hermes/group-chat'
+
+const toolTraceVisibleState = vi.hoisted(() => ({ value: true }))
 
 const groupChatApiMock = vi.hoisted(() => ({
   connectGroupChat: vi.fn(),
@@ -32,6 +35,9 @@ vi.mock('@/api/client', () => ({
 }))
 vi.mock('@/api/auth', () => ({ fetchCurrentUser: vi.fn(async () => { throw new Error('no user') }) }))
 vi.mock('@/api/hermes/download', () => ({ getDownloadUrl: vi.fn((path: string) => `/download?path=${path}`) }))
+vi.mock('@/composables/useToolTraceVisibility', () => ({
+  useToolTraceVisibility: () => ({ toolTraceVisible: toolTraceVisibleState, toggleToolTraceVisible: vi.fn() }),
+}))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('naive-ui', () => ({
   useMessage: () => ({ error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn() }),
@@ -75,6 +81,7 @@ function workspaceDiffMessage(overrides: Partial<ChatMessage> = {}): ChatMessage
 describe('group chat workspace diff client rendering', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    toolTraceVisibleState.value = true
     vi.clearAllMocks()
     Object.defineProperty(window, 'speechSynthesis', {
       configurable: true,
@@ -122,5 +129,54 @@ describe('group chat workspace diff client rendering', () => {
     expect(wrapper.text()).toContain('src/a.ts')
     expect(wrapper.find('.tool-line').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('"kind"')
+  })
+
+  it('keeps workspace diff audit cards visible when generic tool traces are hidden', async () => {
+    toolTraceVisibleState.value = false
+    const { useGroupChatStore } = await import('@/stores/hermes/group-chat')
+    const store = useGroupChatStore()
+    store.currentRoomId = 'room-1'
+    store.messages = [
+      {
+        ...workspaceDiffMessage(),
+        toolName: 'workspace_diff',
+        toolResult: payload,
+        toolStatus: 'done',
+      },
+      {
+        id: 'tool-1',
+        roomId: 'room-1',
+        senderId: 'agent-1',
+        senderName: 'Worker',
+        content: '{}',
+        timestamp: 2,
+        role: 'tool',
+        tool_name: 'shell',
+        toolName: 'shell',
+        toolStatus: 'done',
+      } as ChatMessage,
+    ]
+
+    const wrapper = mount(GroupMessageList, {
+      global: {
+        stubs: {
+          GroupMessageItem: true,
+          VirtualMessageList: {
+            name: 'VirtualMessageList',
+            props: ['messages'],
+            methods: {
+              scrollToBottom() {},
+              isNearBottom() { return true },
+              captureScrollPosition() { return null },
+              restoreScrollPosition() {},
+            },
+            template: '<div><slot v-for="message in messages" name="item" :message="message" /></div>',
+          },
+        },
+      },
+    })
+
+    const messages = wrapper.getComponent({ name: 'VirtualMessageList' }).props('messages') as ChatMessage[]
+    expect(messages.map(message => message.id)).toEqual(['diff-1'])
   })
 })

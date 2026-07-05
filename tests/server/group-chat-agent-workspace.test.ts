@@ -61,6 +61,8 @@ describe('group chat agent workspace bridge runs', () => {
   beforeEach(() => {
     order.length = 0
     vi.clearAllMocks()
+    trackerMock.completeWorkspaceRunCheckpointDraft.mockReset()
+    trackerMock.completeWorkspaceRunCheckpointDraft.mockReturnValue(null)
     bridgeMock.chat.mockImplementation(async (_sessionId: string, _input: unknown, _history: unknown, _instructions: unknown, _profile: unknown, options: any) => {
       order.push('chat')
       return { ok: true, run_id: options?.run_id || 'bridge-run-id', session_id: _sessionId, status: 'running' }
@@ -133,6 +135,42 @@ describe('group chat agent workspace bridge runs', () => {
     )
   })
 
+  it('does not start a bridge workspace run after the room generation changes before launch', async () => {
+    const client = await createClient('/tmp/workspace')
+    const storage = (client as any).__testStorage
+    storage.getRoom
+      .mockReturnValueOnce({ sessionSeed: 'seed-1', workspace: '/tmp/workspace' })
+      .mockReturnValue({ sessionSeed: 'seed-2', workspace: '/tmp/workspace' })
+
+    await client.replyToMention('room-1', {
+      content: '@Worker hi',
+      senderName: 'Alice',
+      senderId: 'user-1',
+      timestamp: 1,
+    })
+
+    expect(trackerMock.startWorkspaceRunCheckpoint).not.toHaveBeenCalled()
+    expect(bridgeMock.chat).not.toHaveBeenCalled()
+  })
+
+  it('does not start a bridge workspace run after the room is deleted before launch', async () => {
+    const client = await createClient('/tmp/workspace')
+    const storage = (client as any).__testStorage
+    storage.getRoom
+      .mockReturnValueOnce({ sessionSeed: '0', workspace: '/tmp/workspace' })
+      .mockReturnValue(undefined)
+
+    await client.replyToMention('room-1', {
+      content: '@Worker hi',
+      senderName: 'Alice',
+      senderId: 'user-1',
+      timestamp: 1,
+    })
+
+    expect(trackerMock.startWorkspaceRunCheckpoint).not.toHaveBeenCalled()
+    expect(bridgeMock.chat).not.toHaveBeenCalled()
+  })
+
   it('starts a checkpoint with a pre-generated run_id before bridge.chat', async () => {
     const client = await createClient('/tmp/workspace')
 
@@ -199,6 +237,22 @@ describe('group chat agent workspace bridge runs', () => {
     expect(trackerMock.completeWorkspaceRunCheckpointDraft).toHaveBeenCalledTimes(1)
   })
 
+  it('does not mark workspace diff runs aborted when bridge interrupt fails', async () => {
+    bridgeMock.interrupt.mockRejectedValueOnce(new Error('stale session'))
+    const client = await createClient('/tmp/workspace')
+    const sessionId = 'gc_room-1_default_Worker_seed-1'
+    const runId = 'dddddddddddddddddddddddddddddddd'
+    const state = client.beginWorkspaceDiffIfNeeded({ roomId: 'room-1', sessionId, runId, workspace: '/tmp/workspace' })
+    const saveWorkspaceDiffMessageForRun = client.__testStorage.saveWorkspaceDiffMessageForRun
+
+    await expect(client.interrupt('room-1')).rejects.toThrow('stale session')
+
+    expect(state.abortRequested).toBe(false)
+    expect(client.workspaceDiffRuns.size).toBe(1)
+    expect(saveWorkspaceDiffMessageForRun).not.toHaveBeenCalled()
+    expect(mockSocket.emit).not.toHaveBeenCalledWith('context_status', expect.objectContaining({ roomId: 'room-1', status: 'ready' }))
+  })
+
   it('defers aborted workspace diff finalization when bridge interrupt is not synced yet', async () => {
     bridgeMock.interrupt.mockResolvedValueOnce({ ok: true, synced: false })
     const client = await createClient('/tmp/workspace')
@@ -221,18 +275,53 @@ describe('group chat agent workspace bridge runs', () => {
     expect(saveWorkspaceDiffMessageForRun.mock.calls[0][0]).toMatchObject({ runId, status: 'aborted' })
   })
 
+  it('discards workspace diff finalization when the room session generation changed', async () => {
+    const client = await createClient('/tmp/workspace')
+    const staleSessionId = 'gc_room-1_default_Worker_old-seed'
+    const runId = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+    const state = client.beginWorkspaceDiffIfNeeded({ roomId: 'room-1', sessionId: staleSessionId, runId, workspace: '/tmp/workspace' })
+    const saveWorkspaceDiffMessageForRun = client.__testStorage.saveWorkspaceDiffMessageForRun
+
+    await client.finalizeWorkspaceDiffOnce(state, 'completed', 'late-message-id')
+
+    expect(saveWorkspaceDiffMessageForRun).not.toHaveBeenCalled()
+    expect(trackerMock.completeWorkspaceRunCheckpointDraft).not.toHaveBeenCalled()
+    expect(trackerMock.discardWorkspaceRunCheckpoint).toHaveBeenCalledWith(expect.objectContaining({ runId }))
+    expect(client.workspaceDiffRuns.size).toBe(0)
+  })
+
+  it('drops late assistant output after clear-context rotates the room session generation', async () => {
+    const client = await createClient('/tmp/workspace')
+    client.__testStorage.getRoom
+      .mockReturnValueOnce({ sessionSeed: 'seed-1', workspace: '/tmp/workspace' })
+      .mockReturnValueOnce({ sessionSeed: 'seed-1', workspace: '/tmp/workspace' })
+      .mockReturnValue({ sessionSeed: 'seed-2', workspace: '/tmp/workspace' })
+
+    await client.replyToMention('room-1', {
+      content: '@Worker hi',
+      senderName: 'Alice',
+      senderId: 'user-1',
+      timestamp: 1,
+    })
+
+    expect(client.__testStorage.saveWorkspaceDiffMessageForRun).not.toHaveBeenCalled()
+    expect(mockSocket.emit).not.toHaveBeenCalledWith('message', expect.objectContaining({ role: 'assistant' }), expect.any(Function))
+    expect(trackerMock.discardWorkspaceRunCheckpoint).toHaveBeenCalled()
+  })
+
   it('cleans up no-change workspace runs and keeps overlapping runs isolated', async () => {
     const client = await createClient('/tmp/workspace')
     const saveWorkspaceDiffMessageForRun = client.__testStorage.saveWorkspaceDiffMessageForRun
     saveWorkspaceDiffMessageForRun.mockReturnValue({ message: { id: 'diff-1', roomId: 'room-1' }, totalTokens: 0 })
     const runA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
     const runB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-    const stateA = client.beginWorkspaceDiffIfNeeded({ roomId: 'room-1', sessionId: 'session-a', runId: runA, workspace: '/tmp/workspace' })
-    const stateB = client.beginWorkspaceDiffIfNeeded({ roomId: 'room-1', sessionId: 'session-b', runId: runB, workspace: '/tmp/workspace' })
+    const sessionId = 'gc_room-1_default_Worker_seed-1'
+    const stateA = client.beginWorkspaceDiffIfNeeded({ roomId: 'room-1', sessionId, runId: runA, workspace: '/tmp/workspace' })
+    const stateB = client.beginWorkspaceDiffIfNeeded({ roomId: 'room-1', sessionId, runId: runB, workspace: '/tmp/workspace' })
 
     ;(trackerMock.completeWorkspaceRunCheckpointDraft as any)
       .mockReturnValueOnce(null)
-      .mockReturnValueOnce(workspaceDraft(runB, 'session-b'))
+      .mockReturnValueOnce(workspaceDraft(runB, sessionId))
 
     await client.finalizeWorkspaceDiffOnce(stateA, 'completed', null)
     expect(saveWorkspaceDiffMessageForRun).not.toHaveBeenCalled()

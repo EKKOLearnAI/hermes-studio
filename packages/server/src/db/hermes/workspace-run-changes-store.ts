@@ -27,6 +27,8 @@ export interface WorkspaceRunChangeFileDetail extends WorkspaceRunChangeFileSumm
 
 export interface WorkspaceRunChangeSummary {
   change_id: string
+  room_id: string
+  message_id: string
   session_id: string
   run_id: string
   source: 'run'
@@ -45,6 +47,8 @@ export interface WorkspaceRunChangeSummary {
 
 export interface SaveWorkspaceRunChangeInput {
   change_id: string
+  room_id?: string
+  message_id?: string
   session_id: string
   run_id?: string
   source?: 'run'
@@ -101,6 +105,8 @@ function mapFileDetail(row: Record<string, unknown>): WorkspaceRunChangeFileDeta
 function mapSummary(row: Record<string, unknown>, files: WorkspaceRunChangeFileSummary[]): WorkspaceRunChangeSummary {
   return {
     change_id: String(row.change_id || ''),
+    room_id: String(row.room_id || ''),
+    message_id: String(row.message_id || ''),
     session_id: String(row.session_id || ''),
     run_id: String(row.run_id || ''),
     source: 'run',
@@ -141,11 +147,13 @@ export function insertWorkspaceRunChange(db: HermesDb, change: SaveWorkspaceRunC
   db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGES_TABLE} WHERE change_id = ?`).run(change.change_id)
   db.prepare(
     `INSERT INTO ${WORKSPACE_RUN_CHANGES_TABLE} (
-      change_id, session_id, run_id, source, workspace, workspace_kind, started_at, finished_at,
+      change_id, room_id, message_id, session_id, run_id, source, workspace, workspace_kind, started_at, finished_at,
       files_changed, additions, deletions, truncated, total_patch_bytes, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     change.change_id,
+    change.room_id || '',
+    change.message_id || '',
     change.session_id,
     change.run_id || '',
     change.source || 'run',
@@ -272,6 +280,24 @@ export function deleteWorkspaceRunChangesForSession(sessionId: string): void {
     if (isOptionalCleanupSqliteError(err)) return
     throw err
   }
+}
+
+export function deleteWorkspaceRunChangesForRoom(db: any, roomId: string, beforeTimestamp?: number): void {
+  const room = String(roomId || '').trim()
+  if (!room) return
+  const rows = beforeTimestamp == null
+    ? db.prepare(`SELECT change_id FROM ${WORKSPACE_RUN_CHANGES_TABLE} WHERE room_id = ?`).all(room)
+    : db.prepare(
+      `SELECT c.change_id
+       FROM ${WORKSPACE_RUN_CHANGES_TABLE} c
+       INNER JOIN gc_messages m ON m.id = c.message_id AND m.roomId = c.room_id
+       WHERE c.room_id = ? AND m.timestamp < ?`,
+    ).all(room, beforeTimestamp)
+  const ids = rows.map((row: any) => String(row.change_id || '').trim()).filter(Boolean)
+  if (!ids.length) return
+  const placeholders = ids.map(() => '?').join(',')
+  db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGE_FILES_TABLE} WHERE change_id IN (${placeholders})`).run(...ids)
+  db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGES_TABLE} WHERE change_id IN (${placeholders})`).run(...ids)
 }
 
 export function deleteWorkspaceRunChangesByChangeIds(db: any, changeIds: string[]): void {

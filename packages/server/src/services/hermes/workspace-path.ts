@@ -32,12 +32,12 @@ export async function isWorkspaceListPathAllowed(
   fullPath: string,
   basePath: string,
   statFn: typeof stat,
-  options: { trustWindowsDriveRoot?: boolean; realPathWithinFn?: typeof isRealPathWithin } = {},
+  options: { trustWindowsDriveRoot?: boolean; trustWindowsJunctions?: boolean; realPathWithinFn?: typeof isRealPathWithin } = {},
 ): Promise<boolean> {
   try {
     const info = await statFn(fullPath)
     if (!info.isDirectory()) return false
-    if (process.platform === 'win32' && options.trustWindowsDriveRoot) return true
+    if (process.platform === 'win32' && (options.trustWindowsDriveRoot || options.trustWindowsJunctions)) return true
     return await (options.realPathWithinFn || isRealPathWithin)(fullPath, basePath)
   } catch {
     return false

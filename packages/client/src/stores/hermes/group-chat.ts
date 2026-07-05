@@ -218,6 +218,13 @@ const currentUserAvatar = ref('')
     const userId = ref(getStoredUserId())
     const userName = ref(getStoredGroupUserName() || getStoredUsername() || '')
 
+    function upsertRoom(room: RoomInfo | undefined | null) {
+        if (!room) return
+        const idx = rooms.value.findIndex(existing => existing.id === room.id)
+        if (idx >= 0) rooms.value[idx] = room
+        else rooms.value.push(room)
+    }
+
     function applyRealtimeJoinState(res: any, options: { syncMessages?: boolean } = {}) {
         members.value = res.members || []
         if (res.agents) agents.value = res.agents
@@ -261,7 +268,7 @@ const currentUserAvatar = ref('')
         }
     }
 
-    async function joinRealtimeRoom(roomId: string, options: { syncMessages?: boolean } = {}) {
+    async function joinRealtimeRoom(roomId: string, options: { syncMessages?: boolean; inviteCode?: string } = {}) {
         const socket = getSocket()
         if (!socket) return
         const storedName = getStoredGroupUserName()
@@ -269,6 +276,7 @@ const currentUserAvatar = ref('')
         await new Promise<void>((resolve) => {
             socket.emit('join', {
                 roomId,
+                inviteCode: options.inviteCode,
                 name: storedName || undefined,
                 description: localStorage.getItem('gc_user_description') || undefined,
             }, (res: any) => {
@@ -572,6 +580,7 @@ const currentUserAvatar = ref('')
 
         try {
             const res = await getRoomDetail(roomId)
+            upsertRoom(res.room)
             currentRoomId.value = res.room.id
             roomName.value = res.room.name
             messages.value = res.messages
@@ -669,7 +678,7 @@ const currentUserAvatar = ref('')
                 agents: agentList,
                 compression: compression || { triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10 },
             })
-            rooms.value.push(res.room)
+            upsertRoom(res.room)
             return res
         } catch (err: any) {
             error.value = err.message
@@ -680,6 +689,10 @@ const currentUserAvatar = ref('')
     async function joinByCode(code: string) {
         try {
             const res = await joinRoomByCode(code)
+            upsertRoom(res.room)
+            currentRoomId.value = res.room.id
+            roomName.value = res.room.name
+            await joinRealtimeRoom(res.room.id, { syncMessages: true, inviteCode: code })
             await joinRoom(res.room.id)
             return res.room
         } catch (err: any) {
@@ -709,7 +722,7 @@ const currentUserAvatar = ref('')
     async function cloneRoom(roomId: string, data?: { name?: string; inviteCode?: string }) {
         try {
             const res = await cloneRoomApi(roomId, data)
-            rooms.value.push(res.room)
+            upsertRoom(res.room)
             return res
         } catch (err: any) {
             error.value = err.message
@@ -738,8 +751,7 @@ const currentUserAvatar = ref('')
         try {
             const res = await updateRoomWorkspaceApi(roomId, workspace)
             if (res.room) {
-                const idx = rooms.value.findIndex(r => r.id === roomId)
-                if (idx >= 0) rooms.value[idx] = res.room
+                upsertRoom(res.room)
                 if (currentRoomId.value === roomId) roomName.value = res.room.name
             }
             return res.room

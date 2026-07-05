@@ -2,13 +2,14 @@
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber, NDropdown, NTooltip, type DropdownOption } from 'naive-ui'
+import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber, NDropdown, NTooltip, NModal, type DropdownOption } from 'naive-ui'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { updateRoomConfig, forceCompress } from '@/api/hermes/group-chat'
 import { isStoredSuperAdmin } from '@/api/client'
 import GroupMessageList from './GroupMessageList.vue'
 import GroupChatInput from './GroupChatInput.vue'
+import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
 import FilesPanel from '@/components/hermes/chat/FilesPanel.vue'
 import TerminalPanel from '@/components/hermes/chat/TerminalPanel.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
@@ -68,6 +69,10 @@ function agentAvatarName(agent: RoomAgent): string {
 
 const hasRoom = computed(() => !!store.currentRoomId)
 const isSuperAdmin = computed(() => isStoredSuperAdmin())
+const currentRoom = computed(() => store.rooms.find(room => room.id === store.currentRoomId) || null)
+const currentWorkspaceLabel = computed(() => workspaceBasename(currentRoom.value?.workspace || ''))
+const showWorkspaceModal = ref(false)
+const workspaceValue = ref('')
 const toolPanelStyle = computed(() => ({ width: `${toolPanelWidth.value}px` }))
 
 /** Resolve the current user's custom avatar — first from the member list, then from the cached current-user value. */
@@ -87,6 +92,12 @@ const visibleApproval = computed(() => store.activePendingApproval)
 function formatTokens(tokens: number): string {
     if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k tokens`
     return `${tokens} tokens`
+}
+
+function workspaceBasename(path: string): string {
+    const trimmed = String(path || '').trim().replace(/[\\/]+$/, '')
+    if (!trimmed) return ''
+    return trimmed.split(/[\\/]/).pop() || trimmed
 }
 
 function loadToolPanelWidth() {
@@ -406,6 +417,27 @@ async function confirmAddAgent() {
     }
 }
 
+function handleOpenWorkspacePicker() {
+    workspaceValue.value = currentRoom.value?.workspace || ''
+    showWorkspaceModal.value = true
+}
+
+async function handleSaveWorkspace() {
+    if (!store.currentRoomId) return
+    try {
+        await store.setRoomWorkspace(store.currentRoomId, workspaceValue.value.trim())
+        showWorkspaceModal.value = false
+        message.success(t('chat.workspaceSet'))
+    } catch (err: any) {
+        message.error(err?.message || t('chat.workspaceSetFailed'))
+    }
+}
+
+async function handleClearWorkspace() {
+    workspaceValue.value = ''
+    await handleSaveWorkspace()
+}
+
 function handleOpenCompressionConfig() {
     const room = store.rooms.find(r => r.id === store.currentRoomId)
     if (room) {
@@ -605,6 +637,12 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     </div>
                     <button class="icon-btn" :title="t('groupChat.addAgent')" @click="handleAddAgent">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    </button>
+                    <button class="workspace-chip" :title="currentRoom?.workspace || t('chat.setWorkspace')" @click="handleOpenWorkspacePicker">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                        </svg>
+                        <span>{{ currentWorkspaceLabel || t('chat.setWorkspace') }}</span>
                     </button>
                     <button class="icon-btn" :title="t('groupChat.compressionConfig')" @click="handleOpenCompressionConfig">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 4.6a1.65 1.65 0 0 0 1.51 1V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1.51 1z"/></svg>
@@ -854,6 +892,16 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     </div>
                 </div>
             </div>
+            <NModal v-model:show="showWorkspaceModal" preset="card" :title="t('chat.setWorkspaceTitle')" class="workspace-modal">
+                <FolderPicker v-model="workspaceValue" />
+                <template #footer>
+                    <NSpace justify="end">
+                        <NButton @click="showWorkspaceModal = false">{{ t('common.cancel') }}</NButton>
+                        <NButton @click="handleClearWorkspace">{{ t('workflow.workspace.clear') }}</NButton>
+                        <NButton type="primary" @click="handleSaveWorkspace">{{ t('common.save') }}</NButton>
+                    </NSpace>
+                </template>
+            </NModal>
             <div v-if="showCompressionModal" class="modal-backdrop" @click.self="showCompressionModal = false">
                 <div class="modal">
                     <h3>{{ t('groupChat.compressionConfig') }}</h3>
@@ -1472,6 +1520,34 @@ export default defineComponent({ components: { CreateRoomForm } })
     .header-tool-toggle.active {
         color: var(--accent-primary);
         background: rgba(var(--accent-primary-rgb), 0.1);
+    }
+
+    .workspace-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        max-width: 180px;
+        height: 28px;
+        padding: 0 9px;
+        border: 1px solid $border-color;
+        border-radius: 999px;
+        background: $bg-secondary;
+        color: $text-secondary;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all $transition-fast;
+
+        span {
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+
+        &:hover {
+            border-color: rgba(var(--accent-primary-rgb), 0.35);
+            color: $text-primary;
+            background: rgba(var(--accent-primary-rgb), 0.08);
+        }
     }
 
     .member-count {
