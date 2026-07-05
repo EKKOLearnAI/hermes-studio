@@ -28,8 +28,8 @@ describe('group chat streaming baseline', () => {
     const alice = await connectGroupChatClient(port, 'user-a', 'Alice')
     const bob = await connectGroupChatClient(port, 'user-b', 'Bob')
     harness.sockets.push(alice, bob)
-    await emitAck(alice, 'join', { roomId: 'room-1' })
-    await emitAck(bob, 'join', { roomId: 'room-1' })
+    await emitAck(alice, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    await emitAck(bob, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
     return { alice, bob }
   }
 

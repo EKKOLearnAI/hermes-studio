@@ -28,8 +28,8 @@ describe('group chat approval and context baseline', () => {
     const agent = await connectGroupChatClient(port, 'agent-1', 'Agent')
     const human = await connectGroupChatClient(port, 'human-1', 'Human')
     harness.sockets.push(agent, human)
-    await emitAck(agent, 'join', { roomId: 'room-1' })
-    await emitAck(human, 'join', { roomId: 'room-1' })
+    await emitAck(agent, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    await emitAck(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
     return { agent, human }
   }
 
@@ -52,7 +52,7 @@ describe('group chat approval and context baseline', () => {
 
     const lateJoiner = await connectGroupChatClient(port, 'human-2', 'Late')
     harness.sockets.push(lateJoiner)
-    const joined = await emitAck<any>(lateJoiner, 'join', { roomId: 'room-1' })
+    const joined = await emitAck<any>(lateJoiner, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
 
     expect(joined.contextStatuses).toEqual([])
   })

@@ -32,8 +32,8 @@ describe('group chat agent routing baseline', () => {
       agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
     })
     harness.sockets.push(human, agent)
-    await emitAck(human, 'join', { roomId: 'room-1' })
-    await emitAck(agent, 'join', { roomId: 'room-1' })
+    await emitAck(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    await emitAck(agent, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
     return { human, agent }
   }
 
