@@ -233,6 +233,33 @@ describe('Hermes skill usage analytics DB aggregation', () => {
     })
   })
 
+  it('does not fall back to default usage when a named Hermes profile is missing', async () => {
+    const now = 1_700_000_000
+    const db = createStateDb()
+    insertSession(db, { id: 'default-chat', started_at: now - 60 })
+    insertToolResult(db, {
+      sessionId: 'default-chat',
+      timestamp: now - 50,
+      content: '[skill_view] name=default-skill (1 chars)',
+    })
+    db.close()
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const result = await mod.getSkillUsageStatsFromDb(7, now, 'deleted-profile')
+
+    expect(result).toEqual({
+      period_days: 7,
+      summary: {
+        total_skill_loads: 0,
+        total_skill_edits: 0,
+        total_skill_actions: 0,
+        distinct_skills_used: 0,
+      },
+      by_day: [],
+      top_skills: [],
+    })
+  })
+
   it('falls back when a readable Hermes state.db lacks optional performance indexes', async () => {
     const now = 1_700_000_000
     const db = createStateDb(hermesHome, false)

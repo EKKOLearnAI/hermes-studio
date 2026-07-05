@@ -1,4 +1,4 @@
-import { getActiveProfileDir, getProfileDir } from '../../services/hermes/hermes-profile'
+import { getActiveProfileDir, getHermesBaseDir } from '../../services/hermes/hermes-profile'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import type { LocalUsageStats } from './usage-store'
@@ -80,6 +80,13 @@ interface HermesSessionInternalRow extends HermesSessionRow {
 
 function sessionDbPath(): string {
   return join(getActiveProfileDir(), 'state.db')
+}
+
+function sessionDbPathForProfile(profile?: string): string {
+  const name = String(profile || '').trim()
+  if (!name) return sessionDbPath()
+  if (name === 'default') return join(getHermesBaseDir(), 'state.db')
+  return join(getHermesBaseDir(), 'profiles', name, 'state.db')
 }
 
 function normalizeNumber(value: unknown, fallback = 0): number {
@@ -591,7 +598,7 @@ async function openSessionDb(profile?: string) {
     throw new Error(`node:sqlite requires Node >= 22.5, current: ${process.versions.node}`)
   }
   const { DatabaseSync } = await import('node:sqlite')
-  const dbPath = profile ? join(getProfileDir(profile), 'state.db') : sessionDbPath()
+  const dbPath = profile ? sessionDbPathForProfile(profile) : sessionDbPath()
   try {
     return new DatabaseSync(dbPath, { open: true, readOnly: true })
   } catch (err: any) {
@@ -658,7 +665,7 @@ export async function getSessionDetailFromDb(sessionId: string): Promise<HermesS
 
 export async function getSessionDetailFromDbWithProfile(sessionId: string, profile: string): Promise<HermesSessionDetailRow | null> {
   const { DatabaseSync } = await import('node:sqlite')
-  const dbPath = join(getProfileDir(profile), 'state.db')
+  const dbPath = sessionDbPathForProfile(profile)
   const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
   try {
     const idx = loadAllSessions(db)
@@ -731,7 +738,7 @@ export async function getSessionDetailPaginatedFromDbWithProfile(
 
 export async function getExactSessionDetailFromDbWithProfile(sessionId: string, profile: string): Promise<HermesSessionDetailRow | null> {
   const { DatabaseSync } = await import('node:sqlite')
-  const dbPath = join(getProfileDir(profile), 'state.db')
+  const dbPath = sessionDbPathForProfile(profile)
   const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
   try {
     const idx = loadAllSessions(db)
@@ -763,7 +770,7 @@ export async function findLatestExactSessionIdWithProfile(
   if (!trimmed) return null
 
   const { DatabaseSync } = await import('node:sqlite')
-  const dbPath = join(getProfileDir(profile), 'state.db')
+  const dbPath = sessionDbPathForProfile(profile)
   const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
   const loweredQuery = trimmed.toLowerCase()
   const likePattern = buildLikePattern(loweredQuery)
@@ -1132,7 +1139,7 @@ export async function getSkillUsageStatsFromDb(
   const normalizedDays = Number.isFinite(days) ? days : 7
   const safeDays = Math.max(1, Math.floor(normalizedDays))
   const since = nowSeconds - safeDays * 24 * 60 * 60
-  const dbPath = profile ? join(getProfileDir(profile), 'state.db') : sessionDbPath()
+  const dbPath = profile ? sessionDbPathForProfile(profile) : sessionDbPath()
   if (!existsSync(dbPath)) return emptySkillUsageStats(safeDays)
 
   const db = await openSessionDb(profile)
@@ -1399,7 +1406,7 @@ export async function listSessionSummaries(source?: string, limit = 2000, profil
   }
 
   const { DatabaseSync } = await import('node:sqlite')
-  const dbPath = profile ? join(getProfileDir(profile), 'state.db') : sessionDbPath()
+  const dbPath = profile ? sessionDbPathForProfile(profile) : sessionDbPath()
   const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
 
   try {
@@ -1446,7 +1453,7 @@ export async function searchSessionSummariesWithProfile(
   if (!trimmed) return []
 
   const { DatabaseSync } = await import('node:sqlite')
-  const dbPath = join(getProfileDir(profile), 'state.db')
+  const dbPath = sessionDbPathForProfile(profile)
   const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
   const normalized = sanitizeFtsQuery(trimmed)
   const prefixQuery = toPrefixQuery(normalized)
