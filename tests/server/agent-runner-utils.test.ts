@@ -432,7 +432,7 @@ describe('coding agent run state', () => {
     manager.shutdown()
   })
 
-  it('maps Codex exec JSONL assistant deltas into chat messages', () => {
+  it('maps Codex exec JSONL assistant deltas into chat messages', async () => {
     initAllHermesTables()
     const manager = new CodingAgentRunManager()
     const state: any = { messages: [], isWorking: false, events: [], queue: [] }
@@ -488,8 +488,13 @@ describe('coding agent run state', () => {
       finish_reason: 'stop',
     }))
     expect(state.isWorking).toBe(false)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
     expect(emitted.map(event => event.event)).toContain('message.delta')
-    expect(emitted.map(event => event.event)).not.toContain('usage.updated')
+    expect(emitted.map(event => event.event)).toContain('usage.updated')
+    expect(emitted.find(event => event.event === 'usage.updated' && event.payload.contextTokens != null)?.payload).toEqual(expect.objectContaining({
+      contextTokens: expect.any(Number),
+    }))
     expect(emitted.find(event => event.event === 'run.completed')?.payload).not.toHaveProperty('usage')
     manager.shutdown()
   })
