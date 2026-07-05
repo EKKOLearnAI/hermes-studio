@@ -10,5 +10,8 @@
   },
   "scripts": {
     "check": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "agent-browser": "^0.26.0"
   }
 }

@@ -16,6 +16,8 @@
 
 namespace {
 constexpr char kApName[] = "HStudio-WIFI";
+constexpr char kMcuFirmwareVersion[] = "v1";
+constexpr char kMcuFirmwareManifestPath[] = "/api/hermes/mcu/firmware/v1/manifest";
 constexpr uint32_t kConnectTimeoutMs = 18000;
 constexpr uint32_t kMcuOtaFirstCheckMs = 30000;
 constexpr uint32_t kMcuOtaIntervalMs = 6UL * 60UL * 60UL * 1000UL;
@@ -198,6 +200,7 @@ void mcuSocketLoop();
 bool waitForMcuSocketReady(uint32_t timeoutMs);
 void enqueueNoDevicePrompt(const String &interactionId);
 String activeDeviceEndpoint(const __FlashStringHelper *path);
+String activeDeviceEndpoint(const char *path);
 bool downloadAndApplyMcuFirmware(const String &url, const String &md5, int expectedSize);
 
 enum class McuOtaResult : uint8_t {
@@ -1947,6 +1950,7 @@ void sendStatusPage() {
   appendInfoRow(html, F("IP"), WiFi.localIP().toString());
   appendInfoRow(html, F("MAC"), WiFi.macAddress());
   appendInfoRow(html, F("设备码"), mcuDeviceCode());
+  appendInfoRow(html, F("固件版本"), String(kMcuFirmwareVersion));
   appendInfoRow(html, F("信号"), String(WiFi.RSSI()) + F(" dBm"));
   appendInfoRow(html, F("运行时间"), uptimeText());
   appendInfoRow(html, F("可用内存"), String(ESP.getFreeHeap()) + F(" bytes"));
@@ -2068,9 +2072,10 @@ void sendOtaPage(const String &notice = "") {
     html += F("</p>");
   }
   html += F("<h2>固件状态</h2><div class='info-grid'>");
+  appendInfoRow(html, F("固件版本"), String(kMcuFirmwareVersion));
   appendInfoRow(html, F("当前 MD5"), ESP.getSketchMD5());
   appendInfoRow(html, F("服务端"), activeDeviceUrl.length() > 0 ? activeDeviceUrl : String(F("未连接")));
-  appendInfoRow(html, F("Manifest"), activeDeviceEndpoint(F("/api/hermes/mcu/firmware/manifest")));
+  appendInfoRow(html, F("Manifest"), activeDeviceEndpoint(kMcuFirmwareManifestPath));
   appendInfoRow(html, F("下次自动检查"), otaNextCheckText());
   appendInfoRow(html, F("OTA 条件"), String(wifiReady && WiFi.status() == WL_CONNECTED ? F("Wi-Fi OK") : F("Wi-Fi OFF")) +
                 F(" · ") + String(mcuAuthToken.length() > 0 ? F("Token OK") : F("No Token")));
@@ -2088,6 +2093,7 @@ void sendOtaUpdatingPage() {
   html += F("<section class='panel'><p class='meta'>HStudio ESP32-C3</p><h1>OTA</h1><p class='lead'>固件正在更新</p>");
   html += F("<p class='hint'>固件正在下载并写入，请勿关闭单片机或断开电源。设备会自动重启，页面检测到恢复后会弹窗提示完成。</p>");
   html += F("<div class='info-grid'>");
+  appendInfoRow(html, F("固件版本"), String(kMcuFirmwareVersion));
   appendInfoRow(html, F("当前状态"), F("正在更新，请勿关闭单片机"));
   appendInfoRow(html, F("服务端"), activeDeviceUrl.length() > 0 ? activeDeviceUrl : String(F("未连接")));
   html += F("</div><p id='ota-status' class='hint'>等待设备重启...</p>");
@@ -3443,7 +3449,7 @@ McuOtaResult checkMcuFirmwareUpdate(bool force, bool applyUpdate, String *outFir
     return McuOtaResult::Failed;
   }
 
-  String endpoint = activeDeviceEndpoint(F("/api/hermes/mcu/firmware/manifest"));
+  String endpoint = activeDeviceEndpoint(kMcuFirmwareManifestPath);
   if (endpoint.length() == 0) return McuOtaResult::Failed;
 
   HTTPClient http;
@@ -3464,7 +3470,13 @@ McuOtaResult checkMcuFirmwareUpdate(bool force, bool applyUpdate, String *outFir
 
   String md5 = jsonStringValue(body, F("md5"));
   String firmwarePath = jsonStringValue(body, F("url"));
+  String firmwareVersion = jsonStringValue(body, F("firmwareVersion"));
   int size = jsonIntValue(body, F("size"));
+  if (firmwareVersion != String(kMcuFirmwareVersion)) {
+    Serial.printf("MCU OTA firmware version mismatch current=%s manifest=%s\n",
+                  kMcuFirmwareVersion, firmwareVersion.c_str());
+    return McuOtaResult::Failed;
+  }
   if (md5.length() != 32 || firmwarePath.length() == 0 || size <= 0) {
     Serial.println(F("MCU OTA manifest missing md5/url/size"));
     return McuOtaResult::Failed;

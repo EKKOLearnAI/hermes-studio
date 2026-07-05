@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { join } from 'node:path'
 import {
   AgentRuntime,
   AgentToolRegistry,
@@ -50,6 +51,24 @@ function streamingModelClient(events: ModelEvent[]): ModelClient {
   }
 }
 
+function emptyStreamingWithCreateFallback(response: ModelResponse): ModelClient {
+  return {
+    provider: 'test',
+    requestStyle: 'custom-runtime',
+    capabilities: {
+      streaming: true,
+      tools: true,
+      vision: false,
+      jsonMode: false,
+      systemPrompt: true,
+    },
+    create: vi.fn(async () => response),
+    stream: vi.fn(async function *stream() {
+      yield { type: 'done', response: { finishReason: 'stop' } }
+    }),
+  }
+}
+
 describe('ekko-agent runtime', () => {
   it('runs a model request without tools', async () => {
     const client = modelClient(() => ({
@@ -70,7 +89,7 @@ describe('ekko-agent runtime', () => {
       model: 'test-model',
     })
     expect(result.messages.map(message => message.role)).toEqual(['system', 'user', 'assistant'])
-    expect(events).toEqual(['run.started', 'model.started', 'model.message', 'run.completed'])
+    expect(events).toEqual(['run.started', 'model.started', 'context.estimated', 'model.message', 'run.completed'])
   })
 
   it('emits model reasoning before the assistant message', async () => {
@@ -92,7 +111,7 @@ describe('ekko-agent runtime', () => {
 
     expect(result.output.reasoning).toBe('thinking path')
     expect(reasoning).toEqual(['thinking path'])
-    expect(events).toEqual(['run.started', 'model.started', 'model.reasoning', 'model.message', 'run.completed'])
+    expect(events).toEqual(['run.started', 'model.started', 'context.estimated', 'model.reasoning', 'model.message', 'run.completed'])
   })
 
   it('streams model text deltas before the final assistant message', async () => {
@@ -117,7 +136,19 @@ describe('ekko-agent runtime', () => {
     expect(client.stream).toHaveBeenCalledTimes(1)
     expect(result.output.content).toBe('Hello')
     expect(deltas).toEqual(['Hel', 'lo'])
-    expect(events).toEqual(['run.started', 'model.started', 'model.delta', 'model.delta', 'model.message', 'run.completed'])
+    expect(events).toEqual(['run.started', 'model.started', 'context.estimated', 'model.delta', 'model.delta', 'model.message', 'run.completed'])
+  })
+
+  it('falls back to non-streaming create when a provider stream returns no output', async () => {
+    const client = emptyStreamingWithCreateFallback({ content: 'fallback answer', finishReason: 'stop' })
+    const runtime = new AgentRuntime({ modelClient: client, tools: new AgentToolRegistry() })
+
+    const result = await runtime.run({ messages: ['hi'] })
+
+    expect(result.output.content).toBe('fallback answer')
+    expect(client.stream).toHaveBeenCalledTimes(1)
+    expect(client.create).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(client.create).mock.calls[0]?.[0]).toMatchObject({ stream: false })
   })
 
   it('executes tool calls and continues the model loop', async () => {
@@ -153,6 +184,41 @@ describe('ekko-agent runtime', () => {
       { role: 'assistant', content: 'tool said from-tool' },
     ])
     expect(result.steps.map(step => step.type)).toEqual(['model', 'tool', 'model'])
+  })
+
+  it('discovers and executes MCP tools from the run tool context', async () => {
+    const client = modelClient((request, call) => {
+      if (call === 1) {
+        expect(request.tools?.some(tool => tool.name === 'fake_echo')).toBe(true)
+        return {
+          content: '',
+          toolCalls: [{ id: 'call_mcp', name: 'fake_echo', arguments: { text: 'hello' } }],
+          finishReason: 'tool_calls',
+        }
+      }
+      return { content: 'done', finishReason: 'stop' }
+    })
+    const runtime = new AgentRuntime({ modelClient: client, toolDelayMs: 0 })
+
+    const result = await runtime.run({
+      messages: ['use mcp'],
+      toolContext: {
+        mcpServers: {
+          fake: {
+            command: process.execPath,
+            args: [join(process.cwd(), 'tests/fixtures/fake-mcp-server.cjs')],
+          },
+        },
+      },
+    })
+
+    expect(result.messages).toMatchObject([
+      { role: 'system' },
+      { role: 'user', content: 'use mcp' },
+      { role: 'assistant', toolCalls: [{ id: 'call_mcp', name: 'fake_echo' }] },
+      { role: 'tool', toolCallId: 'call_mcp', name: 'fake_echo', content: 'mcp:hello' },
+      { role: 'assistant', content: 'done' },
+    ])
   })
 
   it('returns unknown tool failures as tool messages', async () => {
@@ -333,6 +399,37 @@ describe('ekko-agent runtime', () => {
     })
 
     await new AgentRuntime({ modelClient: client, tools }).run({ messages: ['hi'] })
+  })
+
+  it('stores model context by session and sends it on follow-up runs', async () => {
+    const requests: ModelRequest[] = []
+    const client = modelClient((request, call) => {
+      requests.push(request)
+      return {
+        content: `ok-${call}`,
+        context: { responseId: `resp-${call}` },
+      }
+    })
+    const runtime = new AgentRuntime({ modelClient: client })
+
+    const first = await runtime.run({
+      messages: ['first'],
+      metadata: { session_id: 'session-a' },
+    })
+    const second = await runtime.run({
+      messages: ['second'],
+      metadata: { session_id: 'session-a' },
+    })
+    await runtime.run({
+      messages: ['other'],
+      metadata: { session_id: 'session-b' },
+    })
+
+    expect(first.context).toEqual({ responseId: 'resp-1' })
+    expect(second.context).toEqual({ responseId: 'resp-2' })
+    expect(requests[0].context).toBeUndefined()
+    expect(requests[1].context).toEqual({ responseId: 'resp-1' })
+    expect(requests[2].context).toBeUndefined()
   })
 
   it('buildSystemPrompt omits structured tool descriptions', () => {

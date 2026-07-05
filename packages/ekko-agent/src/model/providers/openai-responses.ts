@@ -32,6 +32,7 @@ interface OpenAIResponsesPayload {
   tool_choice?: 'auto' | 'none' | 'required'
   stream?: boolean
   metadata?: Record<string, unknown>
+  previous_response_id?: string
 }
 
 interface OpenAIResponsesResponse {
@@ -143,6 +144,7 @@ export function toOpenAIResponsesPayload(config: ModelProviderConfig, request: M
     tool_choice: request.toolChoice,
     stream: request.stream,
     metadata: request.metadata,
+    previous_response_id: openAIResponsesContext(request.context)?.responseId,
   }
 }
 
@@ -159,8 +161,15 @@ export function normalizeOpenAIResponsesResponse(response: OpenAIResponsesRespon
     toolCalls,
     usage: response.usage ? normalizeUsage(response.usage) : undefined,
     finishReason: response.status,
+    context: response.id ? { responseId: response.id } : undefined,
     raw: response,
   }
+}
+
+function openAIResponsesContext(context: unknown): { responseId?: string } | undefined {
+  if (!context || typeof context !== 'object') return undefined
+  const responseId = (context as { responseId?: unknown }).responseId
+  return typeof responseId === 'string' && responseId ? { responseId } : undefined
 }
 
 function normalizeReasoning(response: OpenAIResponsesResponse): string | undefined {

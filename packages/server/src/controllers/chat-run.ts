@@ -19,7 +19,7 @@ type ChatRunEvent = Record<string, unknown> & {
   text?: string
   output?: string | null
   reasoning?: string | null
-  error?: string
+  error?: unknown
 }
 
 const CHAT_RUN_EVENTS = [
@@ -30,6 +30,7 @@ const CHAT_RUN_EVENTS = [
   'reasoning.available',
   'tool.started',
   'tool.completed',
+  'tool.failed',
   'workspace.diff.completed',
   'run.completed',
   'run.failed',

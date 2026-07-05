@@ -18,6 +18,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(workspaceRoot, { recursive: true, force: true })
+  delete process.env.AGENT_BROWSER_BIN
 })
 
 describe('ekko-agent tools', () => {
@@ -121,6 +122,16 @@ describe('ekko-agent tools', () => {
     const registry = createDefaultToolRegistry()
 
     expect(registry.definitions().map(definition => definition.name).sort()).toEqual([
+      'browser_back',
+      'browser_click',
+      'browser_console',
+      'browser_get_images',
+      'browser_navigate',
+      'browser_press',
+      'browser_scroll',
+      'browser_snapshot',
+      'browser_type',
+      'browser_vision',
       'read_file',
       'terminal_exec',
       'write_file',

@@ -12,6 +12,7 @@ import type {
   ModelResponse,
   ModelUsage,
 } from '../types'
+import { ModelProviderError } from '../errors'
 import { isPlainRecord, parseJson, postJson, postStream, providerUrl, readServerSentEvents, requestHeaders } from '../http'
 
 interface AnthropicPayload {
@@ -81,6 +82,7 @@ export class AnthropicMessagesModelClient implements ModelClient {
       anthropicHeaders(this.config),
       request.signal,
     )
+    assertAnthropicSuccess(this.config, response)
     return normalizeAnthropicResponse(response)
   }
 
@@ -222,12 +224,42 @@ function normalizeUsage(usage: NonNullable<AnthropicResponse['usage']>): ModelUs
 }
 
 function anthropicUrl(config: ModelProviderConfig): string {
-  return providerUrl(config, 'https://api.anthropic.com/v1', config.endpointPath ?? 'messages')
+  return providerUrl(config, 'https://api.anthropic.com/v1', config.endpointPath ?? defaultAnthropicEndpointPath(config))
 }
 
 function anthropicHeaders(config: ModelProviderConfig): HeadersInit {
   const headers = requestHeaders(config, { 'anthropic-version': '2023-06-01' }) as Record<string, string>
-  delete headers.authorization
+  if (isOfficialAnthropicBaseUrl(config.baseUrl)) delete headers.authorization
   if (config.apiKey) headers['x-api-key'] = config.apiKey
   return headers
+}
+
+function isOfficialAnthropicBaseUrl(baseUrl: string | undefined): boolean {
+  return !baseUrl || baseUrl.includes('api.anthropic.com')
+}
+
+function defaultAnthropicEndpointPath(config: ModelProviderConfig): string {
+  const baseUrl = (config.baseUrl || '').replace(/\/+$/, '')
+  return baseUrl.endsWith('/anthropic') ? 'v1/messages' : 'messages'
+}
+
+function assertAnthropicSuccess(config: ModelProviderConfig, response: AnthropicResponse): void {
+  const payload = response as unknown
+  if (!isPlainRecord(payload)) return
+  const hasAnthropicContent = Array.isArray(payload.content)
+  const failed = payload.success === false || (!hasAnthropicContent && ('code' in payload || 'error' in payload))
+  if (!failed) return
+
+  const error = isPlainRecord(payload.error) ? payload.error : undefined
+  const message = typeof error?.message === 'string'
+    ? error.message
+    : typeof payload.msg === 'string'
+      ? payload.msg
+      : typeof payload.message === 'string'
+        ? payload.message
+        : 'Model provider returned an error response.'
+  throw new ModelProviderError(message, {
+    provider: config.id,
+    details: payload,
+  })
 }

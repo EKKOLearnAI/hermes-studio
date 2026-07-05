@@ -1,10 +1,13 @@
 import type { AgentTool, AgentToolContext, AgentToolProvider, AgentToolResult } from './types'
+import { createBrowserTools } from './browser'
 import { createFileTools } from './files'
+import { createMcpToolProvider } from './mcp'
 import { createTerminalTools } from './terminal'
 
 export class AgentToolRegistry {
   private readonly tools = new Map<string, AgentTool>()
   private readonly providers = new Map<string, AgentToolProvider>()
+  private readonly providerTools = new Map<string, Set<string>>()
 
   register(tool: AgentTool): void {
     this.tools.set(tool.definition.name, tool)
@@ -28,9 +31,17 @@ export class AgentToolRegistry {
     return this.providers.delete(providerId)
   }
 
-  async refreshTools(): Promise<void> {
+  async refreshTools(context?: AgentToolContext): Promise<void> {
     for (const provider of this.providers.values()) {
-      this.registerMany(await provider.listTools())
+      const previous = this.providerTools.get(provider.id)
+      if (previous) {
+        for (const name of previous) {
+          this.tools.delete(name)
+        }
+      }
+      const tools = await provider.listTools(context)
+      this.registerMany(tools)
+      this.providerTools.set(provider.id, new Set(tools.map(tool => tool.definition.name)))
     }
   }
 
@@ -57,8 +68,9 @@ export class AgentToolRegistry {
 
 export function createDefaultToolRegistry(): AgentToolRegistry {
   const registry = new AgentToolRegistry()
-  for (const tool of [...createFileTools(), ...createTerminalTools()]) {
+  for (const tool of [...createFileTools(), ...createTerminalTools(), ...createBrowserTools()]) {
     registry.register(tool)
   }
+  registry.registerProvider(createMcpToolProvider())
   return registry
 }

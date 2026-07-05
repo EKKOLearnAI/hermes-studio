@@ -655,7 +655,7 @@ defineExpose({
                 :title="tc.toolPreview"
               >{{ toolPreviewText(tc.toolPreview) }}</span>
               <span
-                v-if="tc.toolDuration && tc.toolStatus !== 'running'"
+                v-if="tc.toolDuration !== undefined && tc.toolStatus !== 'running'"
                 class="tool-call-duration"
                 :title="$t('chat.executionDuration')"
               >{{ formatToolDuration(tc.toolDuration) }}</span

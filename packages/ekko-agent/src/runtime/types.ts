@@ -5,8 +5,19 @@ import type { AgentToolRegistry } from '../tools/registry'
 import type { AgentToolContext, AgentToolResult } from '../tools/types'
 import type { AgentRuntimeEvent } from './events'
 
+export interface AgentRuntimeContextEstimate {
+  contextTokens: number
+  systemPromptTokens: number
+  messageTokens: number
+  toolTokens: number
+  modelContextTokens: number
+  messageCount: number
+  toolCount: number
+  systemPromptChars: number
+}
+
 export interface AgentRuntimeOptions {
-  modelClient: ModelClient
+  modelClient?: ModelClient
   tools?: AgentToolRegistry
   skills?: AgentSkill[]
   systemPrompt?: string
@@ -17,6 +28,7 @@ export interface AgentRuntimeOptions {
   toolDelayMs?: number
   toolContext?: AgentToolContext
   modelDefaults?: Omit<ModelRequest, 'messages' | 'tools' | 'stream'>
+  contextKey?: string
 }
 
 export interface AgentRuntimeRunInput {
@@ -33,6 +45,10 @@ export interface AgentRuntimeRunInput {
   temperature?: number
   maxTokens?: number
   metadata?: Record<string, unknown>
+  modelClient?: ModelClient
+  modelDefaults?: Omit<ModelRequest, 'messages' | 'tools' | 'stream'>
+  contextKey?: string
+  context?: unknown
   onEvent?: (event: AgentRuntimeEvent) => void
 }
 
@@ -46,4 +62,6 @@ export interface AgentRuntimeRunResult {
   output: AgentOutputMessage
   steps: AgentRuntimeStep[]
   events: AgentRuntimeEvent[]
+  context?: unknown
+  contextEstimate?: AgentRuntimeContextEstimate
 }

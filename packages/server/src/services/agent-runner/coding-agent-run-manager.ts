@@ -5,6 +5,7 @@ import { spawn, type ChildProcess } from 'child_process'
 import { createSession, addMessage, getSession, updateSession, updateSessionStats } from '../../db/hermes/session-store'
 import { logger } from '../logger'
 import { applyResponseStreamEvent, flushResponseRunToDb } from '../hermes/run-chat/response-stream'
+import { calcAndUpdateUsage, updateMessageContextTokenUsage } from '../hermes/run-chat/usage'
 import { extractResponseText } from '../hermes/run-chat/response-utils'
 import type { SessionState } from '../hermes/run-chat/types'
 import type { CanonicalResponsesEvent } from './adapters/responses-stream'
@@ -71,6 +72,7 @@ export interface CodingAgentRunLaunch {
   env?: NodeJS.ProcessEnv
   state?: SessionState
   sessionSource?: 'global_agent' | 'workflow'
+  reasoningEffort?: string
 }
 
 interface ManagedCodingAgentRun {
@@ -414,6 +416,7 @@ export class CodingAgentRunManager {
     mode?: 'scoped' | 'global'
     provider?: string
     model?: string
+    reasoningEffort?: string
   }): boolean {
     const run = this.getBySession(sessionId)
     if (!run || run.exited) return false
@@ -426,6 +429,7 @@ export class CodingAgentRunManager {
       if (provider && run.launch.provider !== provider) return false
       if (model && run.launch.model !== model) return false
     }
+    if (String(run.launch.reasoningEffort || '').trim() !== String(launch.reasoningEffort || '').trim()) return false
     if (!hasManagedHermesMcpConfig(run)) return false
     return true
   }
@@ -613,6 +617,7 @@ export class CodingAgentRunManager {
       flushResponseRunToDb(run.state, run.launch.sessionId)
       run.state.responseRun = undefined
       updateSessionStats(run.launch.sessionId)
+      void this.refreshCodingAgentUsage(run)
       const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
       const finalText = extractResponseText(final)
       const terminalError = storageSafeResponseEvent.type === 'response.failed'
@@ -633,6 +638,20 @@ export class CodingAgentRunManager {
         this.emitAndMarkPrintChatRunCompleted(run, chatCompletionEvent, chatCompletionPayload)
       }
     }
+  }
+
+  private async refreshCodingAgentUsage(run: ManagedCodingAgentRun) {
+    const emitUsage = (event: string, payload: any) => {
+      this.emitToChat(run.launch.sessionId, event, payload)
+    }
+    const usage = await calcAndUpdateUsage(run.launch.sessionId, run.state, emitUsage)
+    updateMessageContextTokenUsage(
+      run.launch.sessionId,
+      run.state,
+      emitUsage,
+      usage.inputTokens + usage.outputTokens,
+      usage,
+    )
   }
 
   private normalizeCodexChatTextEvent(run: ManagedCodingAgentRun, event: CanonicalResponsesEvent): CanonicalResponsesEvent | null {

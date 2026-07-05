@@ -20,6 +20,14 @@ describe('desktop login reset', () => {
     expect(source).toContain('enabled: !isResettingLogin && (!isBootstrapping || !!serverUrl)')
   })
 
+  it('loads the authenticated desktop route instead of the login route on startup', () => {
+    const source = readFileSync(resolve('packages/desktop/src/main/index.ts'), 'utf-8')
+
+    expect(source).toContain("return webUiHashUrl('/hermes/chat')")
+    expect(source).toContain('mainWindow.loadURL(mainRouteUrl() || serverUrl)')
+    expect(source).toContain('if (mainWindow) await mainWindow.loadURL(mainRouteUrl() || url)')
+  })
+
   it('resets the default credentials and clears login locks through the Web UI CLI', () => {
     const source = readFileSync(resolve('packages/desktop/src/main/desktop-login-reset.ts'), 'utf-8')
 

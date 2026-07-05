@@ -34,6 +34,8 @@ export interface StartRunRequest {
   api_key?: string
   apiMode?: ProviderApiMode
   api_mode?: ProviderApiMode
+  mcpServers?: Record<string, unknown>
+  mcp_servers?: Record<string, unknown>
   /** Per-session reasoning effort override.
    * Empty/undefined = use config.yaml default. */
   reasoning_effort?: string
@@ -72,6 +74,8 @@ export interface RunEvent {
   output?: string | null
   /** Run-level workspace diff summary attached to terminal run events. */
   workspace_run_change?: unknown
+  /** Provider/runtime context returned by Ekko Agent for follow-up runs. */
+  context?: unknown
   usage?: {
     input_tokens: number
     output_tokens: number

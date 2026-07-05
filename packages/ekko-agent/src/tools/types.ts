@@ -3,6 +3,9 @@ import type { AgentToolDefinition } from '../model/types'
 export interface AgentToolContext {
   cwd?: string
   workspaceRoot?: string
+  sessionId?: string
+  browserSessionId?: string
+  mcpServers?: Record<string, unknown>
   timeoutMs?: number
   signal?: AbortSignal
 }
@@ -21,7 +24,7 @@ export interface AgentTool<TInput extends Record<string, unknown> = Record<strin
 
 export interface AgentToolProvider {
   id: string
-  listTools(): Promise<AgentTool[]>
+  listTools(context?: AgentToolContext): Promise<AgentTool[]>
 }
 
 export class AgentToolError extends Error {

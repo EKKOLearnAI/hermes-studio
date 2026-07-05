@@ -1,4 +1,4 @@
-# ESP32-C3 Wi-Fi Setup Firmware
+# ESP32-C3 Wi-Fi Setup Firmware v1
 
 PlatformIO source project for the ESP32-C3 Wi-Fi setup firmware.
 
@@ -15,16 +15,22 @@ audio codec flows are currently removed.
 ## Commands
 
 ```bash
-cd packages/esp32-c3
+cd packages/esp32-c3/v1
 pio run
 pio run -t upload
 pio device monitor
 ```
 
 After `pio run`, run `npm run build` from the repository root to sync the
-firmware into `packages/esp32-c3/release/firmware.bin` and package it into
-`dist/mcu/firmware.bin`. GitHub release builds reuse the checked-in release
+firmware into `packages/esp32-c3/release/v1/firmware.bin` and package it into
+`dist/mcu/v1/firmware.bin`. GitHub release builds reuse the checked-in release
 firmware and do not build ESP32 firmware in CI.
+
+From the repository root, use:
+
+```bash
+npm run mcu:v1:flash:clean
+```
 
 The current macOS serial port is configured as:
 

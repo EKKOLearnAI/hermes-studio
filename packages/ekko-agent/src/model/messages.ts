@@ -24,6 +24,7 @@ export interface AgentOutputMessage extends AgentMessage {
   model?: string
   usage?: ModelUsage
   finishReason?: string
+  context?: unknown
   reasoning?: string
   raw?: unknown
 }
@@ -89,6 +90,7 @@ export function modelResponseToAgentMessage(response: ModelResponse): AgentOutpu
     toolCalls: response.toolCalls,
     usage: response.usage,
     finishReason: response.finishReason,
+    context: response.context,
     raw: response.raw,
   }
 }
@@ -127,6 +129,7 @@ export async function collectModelEvents(events: AsyncIterable<ModelEvent>): Pro
       toolCalls: done?.toolCalls ?? (toolCalls.length ? toolCalls : undefined),
       usage: done?.usage ?? usage,
       finishReason: done?.finishReason,
+      context: done?.context,
       raw: done?.raw,
     },
   }

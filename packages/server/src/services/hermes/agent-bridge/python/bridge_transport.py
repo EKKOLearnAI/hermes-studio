@@ -176,7 +176,17 @@ def _worker_endpoint(key: str, namespace: str | None = None) -> str:
     use_tcp = transport == "tcp" or (transport not in {"ipc", "unix"} and os.name == "nt")
     if use_tcp:
         port_base = int(os.environ.get("HERMES_AGENT_BRIDGE_WORKER_PORT_BASE", "18780"))
-        return f"tcp://127.0.0.1:{port_base + int(safe[:4], 16) % 1000}"
+        port_offset = int(safe[:4], 16) % 1000
+        port = port_base + port_offset
+        # Windows can reserve/exclude ports in the dynamic range (49152-65535).
+        # Desktop/runtime environments may provide a high worker port base; adding
+        # the per-worker hash can then choose an excluded port and make the
+        # profile worker exit before it can report ready. Prefer the known-safe
+        # default range when the final worker port would fall in that dynamic
+        # range.
+        if os.name == "nt" and port >= 49152:
+            port = 18780 + port_offset
+        return f"tcp://127.0.0.1:{port}"
     root = Path(tempfile.gettempdir()) / "hermes-agent-bridge-workers"
     return f"ipc://{root / f'{safe}.sock'}"
 

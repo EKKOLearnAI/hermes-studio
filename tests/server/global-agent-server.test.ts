@@ -811,6 +811,14 @@ describe('GlobalAgentServer', () => {
       tool: 'approval',
       error: undefined,
     })
+    localSocket.__handlers.get('tool.failed')?.({ tool: 'weather', error: 'permission denied' })
+    expect(agentSocket.emit).toHaveBeenCalledWith('tool.completed', {
+      type: 'tool.completed',
+      interactionId: 'voice-1',
+      tool: 'weather',
+      preview: undefined,
+      error: 'permission denied',
+    })
     localSocket.__handlers.get('run.failed')?.({ error: 'done' })
   })
 

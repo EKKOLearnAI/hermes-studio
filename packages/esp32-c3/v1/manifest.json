@@ -1,6 +1,7 @@
 {
-  "name": "HStudio ESP32-C3 Wi-Fi Setup Firmware",
-  "version": "esp32-c3-wifi-setup-oled",
+  "name": "HStudio ESP32-C3 Wi-Fi Setup Firmware v1",
+  "firmwareVersion": "v1",
+  "version": "v1-esp32-c3-wifi-setup-oled",
   "buildDate": "2026-06-18",
   "chip": "esp32c3",
   "flashSize": "4MB",

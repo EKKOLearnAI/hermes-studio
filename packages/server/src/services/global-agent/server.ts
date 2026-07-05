@@ -66,6 +66,7 @@ const CHAT_RUN_SERVER_EVENTS = [
   'reasoning.available',
   'tool.started',
   'tool.completed',
+  'tool.failed',
   'workspace.diff.completed',
   'run.completed',
   'run.failed',
@@ -106,6 +107,7 @@ const MCU_FORWARD_EVENTS = [
   'interaction.status',
   'tool.started',
   'tool.completed',
+  'tool.failed',
   'audio.started',
   'audio.done',
   'audio.interrupted',
@@ -610,12 +612,18 @@ export class GlobalAgentServer {
       const preview = typeof event.preview === 'string' ? event.preview : undefined
       this.emitMcuEvent({ type: 'tool.started', interactionId: options.interactionId, tool, preview }, { clientId: options.clientId })
     })
-    socket.on('tool.completed', (event: Record<string, unknown> = {}) => {
+    const handleToolFinished = (event: Record<string, unknown> = {}, failed = false) => {
       const tool = typeof event.tool === 'string' ? event.tool : typeof event.name === 'string' ? event.name : 'tool'
       const preview = typeof event.preview === 'string' ? event.preview : undefined
-      const error = typeof event.error === 'string' ? event.error : undefined
+      const error = typeof event.error === 'string'
+        ? event.error
+        : failed
+          ? 'tool.failed'
+          : undefined
       this.emitMcuEvent({ type: 'tool.completed', interactionId: options.interactionId, tool, preview, error }, { clientId: options.clientId })
-    })
+    }
+    socket.on('tool.completed', (event: Record<string, unknown> = {}) => handleToolFinished(event))
+    socket.on('tool.failed', (event: Record<string, unknown> = {}) => handleToolFinished(event, true))
     socket.on('message.delta', (event: Record<string, unknown> = {}) => {
       if (typeof event.delta !== 'string') return
       output += event.delta

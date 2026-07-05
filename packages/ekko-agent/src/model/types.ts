@@ -54,6 +54,7 @@ export interface ModelRequest {
   toolChoice?: 'auto' | 'none' | 'required'
   stream?: boolean
   metadata?: Record<string, unknown>
+  context?: unknown
 }
 
 export interface ModelResponse {
@@ -64,6 +65,7 @@ export interface ModelResponse {
   toolCalls?: AgentToolCall[]
   usage?: ModelUsage
   finishReason?: string
+  context?: unknown
   raw?: unknown
 }
 

@@ -128,9 +128,18 @@ function sanitizePetWindowBounds(input: unknown): DesktopWindowBounds | null {
   }
 }
 
-function petRouteUrl(): string | null {
+function webUiHashUrl(hashPath: string): string | null {
   if (!serverUrl) return null
-  return `${serverUrl.replace(/#.*$/, '').replace(/\/$/, '')}/#/desktop-pet`
+  const normalizedHash = hashPath.startsWith('/') ? hashPath : `/${hashPath}`
+  return `${serverUrl.replace(/#.*$/, '').replace(/\/$/, '')}/#${normalizedHash}`
+}
+
+function mainRouteUrl(): string | null {
+  return webUiHashUrl('/hermes/chat')
+}
+
+function petRouteUrl(): string | null {
+  return webUiHashUrl('/desktop-pet')
 }
 
 function ensurePetWindow(): BrowserWindow {
@@ -446,7 +455,7 @@ function createWindow() {
   // macOS), go straight to it. Otherwise show a loading splash; bootstrap()
   // will swap in the real URL once the server is ready.
   if (serverUrl) {
-    mainWindow.loadURL(serverUrl)
+    mainWindow.loadURL(mainRouteUrl() || serverUrl)
   } else {
     mainWindow.loadURL(splashHtml(t('runtime.checking')))
   }
@@ -668,7 +677,7 @@ async function bootstrap(source?: RuntimeDownloadSource) {
     const url = await startWebUiServer(PORT)
     serverUrl = url
     updateTrayMenu()
-    if (mainWindow) await mainWindow.loadURL(url)
+    if (mainWindow) await mainWindow.loadURL(mainRouteUrl() || url)
     await loadPetWindowRoute()
   } catch (err) {
     console.error('Failed to start Web UI server:', err)
@@ -762,7 +771,7 @@ ipcMain.handle('hermes-desktop:notify-completion', (_event, payload?: { title?: 
 })
 ipcMain.handle('hermes-desktop:retry-bootstrap', async (_event, source?: RuntimeDownloadSource) => {
   if (serverUrl) {
-    await mainWindow?.loadURL(serverUrl)
+    await mainWindow?.loadURL(mainRouteUrl() || serverUrl)
     return
   }
   const selectedSource = source === 'cf' || source === 'github' ? source : undefined

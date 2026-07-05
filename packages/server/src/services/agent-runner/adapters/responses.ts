@@ -235,7 +235,12 @@ export function normalizeResponseFunctionCall(name: unknown, argumentsValue: unk
   }
 }
 
-export function stringifyContent(value: unknown): string {
+export function targetReasoningEffort(target: any): string {
+  const effort = String(target?.reasoningEffort || '').trim()
+  return ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(effort) ? effort : ''
+}
+
+function stringifyContent(value: unknown): string {
   if (typeof value === 'string') return value
   if (Array.isArray(value)) {
     return value.map((item) => {
@@ -367,12 +372,14 @@ function responsesToolsToChatTools(tools: unknown): any[] | undefined {
 
 export function responsesToOpenAiChat(body: any, target: ResponsesAdapterTarget, stream = false): any {
   const tools = responsesToolsToChatTools(body?.tools)
+  const reasoningEffort = targetReasoningEffort(target)
   return {
     model: target.model,
     messages: responsesInputToChatMessages(body),
     ...(typeof body?.max_output_tokens === 'number' ? { max_tokens: body.max_output_tokens } : {}),
     ...(typeof body?.temperature === 'number' ? { temperature: body.temperature } : {}),
     ...(typeof body?.top_p === 'number' ? { top_p: body.top_p } : {}),
+    ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
     ...(tools?.length ? { tools } : {}),
     stream,
   }
@@ -450,6 +457,7 @@ function responsesToolsToAnthropicTools(tools: unknown): any[] | undefined {
 
 export function responsesToAnthropicMessages(body: any, target: ResponsesAdapterTarget, stream = false): any {
   const tools = responsesToolsToAnthropicTools(body?.tools)
+  const reasoningEffort = targetReasoningEffort(target)
   return {
     model: target.model,
     messages: responsesInputToAnthropicMessages(body),
@@ -457,6 +465,7 @@ export function responsesToAnthropicMessages(body: any, target: ResponsesAdapter
     ...(typeof body?.max_output_tokens === 'number' ? { max_tokens: body.max_output_tokens } : { max_tokens: 4096 }),
     ...(typeof body?.temperature === 'number' ? { temperature: body.temperature } : {}),
     ...(typeof body?.top_p === 'number' ? { top_p: body.top_p } : {}),
+    ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
     ...(tools?.length ? { tools } : {}),
     stream,
   }

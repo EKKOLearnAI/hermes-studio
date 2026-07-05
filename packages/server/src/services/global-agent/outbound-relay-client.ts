@@ -51,6 +51,7 @@ const CHAT_RUN_SERVER_EVENTS = [
   'reasoning.available',
   'tool.started',
   'tool.completed',
+  'tool.failed',
   'workspace.diff.completed',
   'run.completed',
   'run.failed',
@@ -608,12 +609,18 @@ class PlainWebSocketRelayClient {
         const preview = typeof event.preview === 'string' ? event.preview : undefined
         this.sendJson({ type: 'tool.started', interactionId: voice.interactionId, tool, preview })
       })
-      socket.on('tool.completed', (event: Record<string, unknown> = {}) => {
+      const handleToolFinished = (event: Record<string, unknown> = {}, failed = false) => {
         const tool = typeof event.tool === 'string' ? event.tool : typeof event.name === 'string' ? event.name : 'tool'
         const preview = typeof event.preview === 'string' ? event.preview : undefined
-        const error = typeof event.error === 'string' ? event.error : undefined
+        const error = typeof event.error === 'string'
+          ? event.error
+          : failed
+            ? 'tool.failed'
+            : undefined
         this.sendJson({ type: 'tool.completed', interactionId: voice.interactionId, tool, preview, error })
-      })
+      }
+      socket.on('tool.completed', (event: Record<string, unknown> = {}) => handleToolFinished(event))
+      socket.on('tool.failed', (event: Record<string, unknown> = {}) => handleToolFinished(event, true))
       socket.on('message.delta', (event: Record<string, unknown> = {}) => {
         if (typeof event.delta === 'string') {
           output += event.delta

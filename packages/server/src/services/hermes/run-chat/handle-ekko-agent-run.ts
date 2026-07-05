@@ -1,7 +1,7 @@
 import type { Server, Socket } from 'socket.io'
+import { createHash } from 'crypto'
 import { inspect } from 'util'
 import {
-  AgentRuntime,
   createModelClient,
   resolveModelProviderConfigs,
   type AgentMessage,
@@ -13,6 +13,8 @@ import {
   type ModelRequest,
   type ModelResponse,
 } from '../../../../../ekko-agent/src'
+import { getGlobalEkkoAgent } from '../../ekko-agent/manager'
+import { resolveEkkoMcpServers } from '../../ekko-agent/mcp'
 import { createSession, addMessage, getSession, updateSessionStats } from '../../../db/hermes/session-store'
 import { logger } from '../../logger'
 import { getProfileDir } from '../hermes-profile'
@@ -44,6 +46,8 @@ export interface EkkoAgentRunSocketData {
   api_key?: string
   apiMode?: string
   api_mode?: string
+  mcpServers?: Record<string, unknown>
+  mcp_servers?: Record<string, unknown>
   peerExcludeSocketId?: string
   queue_id?: string
   onEvent?: (event: string, payload: any) => void
@@ -76,14 +80,27 @@ function appendStateEvent(state: SessionState, event: string, payload: any): voi
 function redactProviderConfig(config: ModelProviderConfig): ModelProviderConfig {
   return {
     ...config,
-    apiKey: config.apiKey ? '[redacted]' : undefined,
+    apiKey: config.apiKey ? apiKeyDebugInfo(config.apiKey) : undefined,
     headers: config.headers
       ? Object.fromEntries(Object.entries(config.headers).map(([key, value]) => [
           key,
-          /authorization|api[-_]?key|token/i.test(key) ? '[redacted]' : value,
+          /authorization|api[-_]?key|token/i.test(key) ? headerSecretDebugInfo(value) : value,
         ]))
       : undefined,
   }
+}
+
+function apiKeyDebugInfo(apiKey: string): string {
+  return `[present length=${apiKey.length} last4=${apiKey.slice(-4)} sha256=${createHash('sha256').update(apiKey).digest('hex').slice(0, 12)}]`
+}
+
+function headerSecretDebugInfo(value: unknown): string {
+  const raw = String(value ?? '')
+  if (!raw) return '[empty]'
+  const token = raw.replace(/^Bearer\s+/i, '')
+  return raw.startsWith('Bearer ')
+    ? `Bearer ${apiKeyDebugInfo(token)}`
+    : apiKeyDebugInfo(raw)
 }
 
 function consolePayload(value: unknown): string {
@@ -386,6 +403,7 @@ export async function handleEkkoAgentRun(
     apiMode,
     timeoutMs: 120_000,
   })
+  const mcpServers = resolveEkkoMcpServers(profile, data.mcpServers || data.mcp_servers)
   const modelClient = createConsoleModelClient(createModelClient(providerConfig), {
     sessionId,
     providerConfig,
@@ -396,17 +414,7 @@ export async function handleEkkoAgentRun(
         }
       : undefined,
   })
-  const runtime = new AgentRuntime({
-    modelClient,
-    toolContext: {
-      cwd: workspace,
-      workspaceRoot: workspace,
-      timeoutMs: 120_000,
-    },
-    modelDefaults: {
-      model: modelConfig.model,
-    },
-  })
+  const agent = getGlobalEkkoAgent()
 
   let assistantText = ''
   let assistantReasoning = ''
@@ -414,6 +422,7 @@ export async function handleEkkoAgentRun(
   let usageInput = 0
   let usageOutput = 0
   let sawStreamUsage = false
+  let contextEstimate: any
   const handleRuntimeEvent = (event: AgentRuntimeEvent) => {
     if ('runId' in event) runId = event.runId
     if (event.type === 'run.started') {
@@ -423,6 +432,22 @@ export async function handleEkkoAgentRun(
         run_id: event.runId,
         model: modelConfig.model,
         provider: modelConfig.provider,
+      })
+    } else if (event.type === 'context.estimated') {
+      contextEstimate = event.estimate
+      state.contextTokens = event.estimate.contextTokens
+      emit('usage.updated', {
+        event: 'usage.updated',
+        run_id: event.runId,
+        input_tokens: state.inputTokens || 0,
+        output_tokens: state.outputTokens || 0,
+        total_tokens: (state.inputTokens || 0) + (state.outputTokens || 0),
+        contextTokens: event.estimate.contextTokens,
+        context_tokens: event.estimate.contextTokens,
+        systemPromptTokens: event.estimate.systemPromptTokens,
+        toolTokens: event.estimate.toolTokens,
+        messageTokens: event.estimate.messageTokens,
+        toolCount: event.estimate.toolCount,
       })
     } else if (event.type === 'model.message') {
       const text = event.message.content || ''
@@ -452,6 +477,12 @@ export async function handleEkkoAgentRun(
       sawStreamUsage = true
       usageInput += event.usage.inputTokens || 0
       usageOutput += event.usage.outputTokens || 0
+    } else if (event.type === 'model.context') {
+      emit('context.updated', {
+        event: 'context.updated',
+        run_id: event.runId,
+        context: event.context,
+      })
     } else if (event.type === 'model.reasoning') {
       if (event.text) {
         assistantReasoning += event.text
@@ -488,14 +519,21 @@ export async function handleEkkoAgentRun(
 
   try {
     logger.info('[chat-run-socket] starting ekko-agent run for session %s', sessionId)
-    const result = await runtime.run({
+    const result = await agent.run({
+      modelClient,
       model: modelConfig.model,
+      modelDefaults: {
+        model: modelConfig.model,
+      },
       messages: toAgentMessages(state.messages),
       signal: abortController.signal,
       onEvent: handleRuntimeEvent,
       toolContext: {
         cwd: workspace,
         workspaceRoot: workspace,
+        sessionId,
+        browserSessionId: sessionId,
+        mcpServers,
         timeoutMs: 120_000,
         signal: abortController.signal,
       },
@@ -559,6 +597,22 @@ export async function handleEkkoAgentRun(
       }
     }
     assistantReasoning = result.output.reasoning || assistantReasoning
+    const hadToolActivity = result.steps.some(step => step.type === 'tool')
+    if (!assistantText.trim() && !assistantReasoning.trim() && !hadToolActivity) {
+      const error = 'Model provider returned an empty response after streaming and non-streaming attempts.'
+      logger.warn({
+        session_id: sessionId,
+        provider_config: redactProviderConfig(providerConfig),
+        response: result.output,
+      }, '[chat-run-socket] ekko-agent model returned empty output')
+      emit('run.failed', {
+        event: 'run.failed',
+        run_id: runId || result.runId,
+        error,
+        queue_remaining: state.queue.length,
+      })
+      return
+    }
     if (assistantText.trim() || assistantReasoning.trim()) {
       const assistantId = addMessage({
         session_id: sessionId,
@@ -597,11 +651,17 @@ export async function handleEkkoAgentRun(
       input_tokens: state.inputTokens || 0,
       output_tokens: state.outputTokens || 0,
       total_tokens: (state.inputTokens || 0) + (state.outputTokens || 0),
+      contextTokens: contextEstimate?.contextTokens ?? state.contextTokens,
+      context_tokens: contextEstimate?.contextTokens ?? state.contextTokens,
     })
     emit('run.completed', {
       event: 'run.completed',
       run_id: runId || result.runId,
       output: assistantText,
+      context: result.context,
+      contextTokens: contextEstimate?.contextTokens,
+      context_tokens: contextEstimate?.contextTokens,
+      contextEstimate,
       usage: {
         input_tokens: usageInput,
         output_tokens: usageOutput,

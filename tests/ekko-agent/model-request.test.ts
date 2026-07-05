@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  AnthropicMessagesModelClient,
   ModelProviderError,
   ModelProviderRegistry,
   createModelClient,
@@ -211,6 +212,7 @@ describe('ekko-agent model requests', () => {
       ],
       tools: [{ name: 'search', parameters: { type: 'object' } }],
       maxTokens: 500,
+      context: { responseId: 'resp_previous' },
     })
 
     expect(payload).toMatchObject({
@@ -218,6 +220,7 @@ describe('ekko-agent model requests', () => {
       instructions: 'Be direct.',
       input: [{ role: 'user', content: 'Search docs.' }],
       max_output_tokens: 500,
+      previous_response_id: 'resp_previous',
       tools: [{ type: 'function', name: 'search' }],
     })
   })
@@ -241,6 +244,55 @@ describe('ekko-agent model requests', () => {
       messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello.' }] }],
       max_tokens: 4096,
       tools: [{ name: 'read_file', input_schema: { type: 'object' } }],
+    })
+  })
+
+  it('calls Anthropic-compatible /anthropic bases through /v1/messages', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      content: [{ type: 'text', text: 'OK' }],
+      stop_reason: 'end_turn',
+    }), { status: 200 }))
+    const client = new AnthropicMessagesModelClient({
+      id: 'custom:glm-anthropic',
+      type: 'anthropic',
+      requestStyle: 'anthropic-messages',
+      baseUrl: 'https://api.z.ai/api/anthropic',
+      apiKey: 'test-key',
+      defaultModel: 'glm-5.2',
+    }, { fetch: fetchMock })
+
+    const response = await client.create({
+      messages: [{ role: 'user', content: 'hi' }],
+    })
+
+    expect(response.content).toBe('OK')
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.z.ai/api/anthropic/v1/messages')
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
+      authorization: 'Bearer test-key',
+      'x-api-key': 'test-key',
+    })
+  })
+
+  it('throws Anthropic-compatible JSON error bodies even when HTTP status is 200', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      code: 500,
+      msg: '404 NOT_FOUND',
+      success: false,
+    }), { status: 200 }))
+    const client = new AnthropicMessagesModelClient({
+      id: 'custom:glm-anthropic',
+      type: 'anthropic',
+      requestStyle: 'anthropic-messages',
+      baseUrl: 'https://api.z.ai/api/anthropic/messages',
+      apiKey: 'test-key',
+      defaultModel: 'glm-5.2',
+    }, { fetch: fetchMock })
+
+    await expect(client.create({
+      messages: [{ role: 'user', content: 'hi' }],
+    })).rejects.toMatchObject({
+      message: '404 NOT_FOUND',
+      provider: 'custom:glm-anthropic',
     })
   })
 

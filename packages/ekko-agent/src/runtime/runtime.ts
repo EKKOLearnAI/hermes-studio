@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { getEncoding } from 'js-tiktoken'
 import {
   createSystemMessage,
   createToolResultMessage,
@@ -13,7 +14,7 @@ import { AgentToolRegistry, createDefaultToolRegistry } from '../tools/registry'
 import type { AgentToolContext, AgentToolResult } from '../tools/types'
 import type { AgentRuntimeEvent } from './events'
 import { buildSystemPrompt } from './system-prompt'
-import type { AgentRuntimeOptions, AgentRuntimeRunInput, AgentRuntimeRunResult, AgentRuntimeStep } from './types'
+import type { AgentRuntimeContextEstimate, AgentRuntimeOptions, AgentRuntimeRunInput, AgentRuntimeRunResult, AgentRuntimeStep } from './types'
 
 export const DEFAULT_AGENT_MAX_STEPS = 90
 export const DEFAULT_AGENT_MODEL_MAX_RETRIES = 3
@@ -26,7 +27,7 @@ interface ModelResponseResult {
 }
 
 export class AgentRuntime {
-  private readonly modelClient: AgentRuntimeOptions['modelClient']
+  private readonly modelClient?: AgentRuntimeOptions['modelClient']
   private readonly tools: AgentToolRegistry
   private readonly skills: AgentSkill[]
   private readonly systemPrompt?: string
@@ -37,6 +38,8 @@ export class AgentRuntime {
   private readonly maxModelRetries: number
   private readonly maxConsecutiveToolFailures: number
   private readonly toolDelayMs: number
+  private readonly defaultContextKey?: string
+  private readonly modelContexts = new Map<string, unknown>()
 
   constructor(options: AgentRuntimeOptions) {
     this.modelClient = options.modelClient
@@ -50,6 +53,7 @@ export class AgentRuntime {
     this.maxModelRetries = options.maxModelRetries ?? DEFAULT_AGENT_MODEL_MAX_RETRIES
     this.maxConsecutiveToolFailures = options.maxConsecutiveToolFailures ?? DEFAULT_AGENT_MAX_CONSECUTIVE_TOOL_FAILURES
     this.toolDelayMs = options.toolDelayMs ?? DEFAULT_AGENT_TOOL_DELAY_MS
+    this.defaultContextKey = options.contextKey
     this.registerSkillTools(this.skills)
   }
 
@@ -64,12 +68,12 @@ export class AgentRuntime {
     }
   }
 
-  async refreshTools(): Promise<void> {
-    await this.tools.refreshTools()
+  async refreshTools(context?: AgentToolContext): Promise<void> {
+    await this.tools.refreshTools(context)
   }
 
   async run(input: AgentRuntimeRunInput): Promise<AgentRuntimeRunResult> {
-    await this.refreshTools()
+    await this.refreshTools(this.runToolContext(input))
 
     const runId = randomUUID()
     const events: AgentRuntimeEvent[] = []
@@ -92,14 +96,21 @@ export class AgentRuntime {
       role: 'assistant',
       content: '',
     }
+    const contextKey = this.contextKeyFor(input)
+    let contextEstimate: AgentRuntimeContextEstimate | undefined
     let consecutiveToolFailures = 0
 
     try {
       for (let step = 1; step <= maxSteps; step += 1) {
         throwIfAborted(input.signal)
+        const modelClient = this.modelClientFor(input)
         emit({ type: 'model.started', runId, step })
+        const request = this.modelRequest(input, messages, modelClient, contextKey)
+        contextEstimate = estimateModelRequestContext(request)
+        emit({ type: 'context.estimated', runId, step, estimate: contextEstimate })
         const modelResult = await this.createModelResponseWithRetries(
-          this.modelRequest(input, messages),
+          request,
+          modelClient,
           runId,
           step,
           maxModelRetries,
@@ -113,12 +124,17 @@ export class AgentRuntime {
         if (assistantMessage.reasoning && !modelResult.emittedReasoning) {
           emit({ type: 'model.reasoning', runId, step, text: assistantMessage.reasoning })
         }
+        if (assistantMessage.context !== undefined) {
+          if (contextKey) this.modelContexts.set(contextKey, assistantMessage.context)
+          emit({ type: 'model.context', runId, step, context: assistantMessage.context })
+        }
         emit({ type: 'model.message', runId, step, message: assistantMessage })
 
         const toolCalls = assistantMessage.toolCalls ?? []
         if (toolCalls.length === 0) {
-          emit({ type: 'run.completed', runId, output, steps: step })
-          return { runId, messages, output, steps, events }
+          const context = contextKey ? this.modelContexts.get(contextKey) : assistantMessage.context
+          emit({ type: 'run.completed', runId, output, steps: step, context, contextEstimate })
+          return { runId, messages, output, steps, events, context, contextEstimate }
         }
 
         for (const toolCall of toolCalls) {
@@ -142,8 +158,9 @@ export class AgentRuntime {
               content: `Stopped after ${consecutiveToolFailures} consecutive tool failures.`,
               finishReason: 'tool_failure_limit',
             }
-            emit({ type: 'run.completed', runId, output, steps: step })
-            return { runId, messages, output, steps, events }
+            const context = contextKey ? this.modelContexts.get(contextKey) : undefined
+            emit({ type: 'run.completed', runId, output, steps: step, context, contextEstimate })
+            return { runId, messages, output, steps, events, context, contextEstimate }
           }
           await delay(toolDelayMs, input.signal)
         }
@@ -155,8 +172,9 @@ export class AgentRuntime {
         content: `Stopped after reaching maxSteps (${maxSteps}).`,
         finishReason: 'max_steps',
       }
-      emit({ type: 'run.completed', runId, output, steps: maxSteps })
-      return { runId, messages, output, steps, events }
+      const context = contextKey ? this.modelContexts.get(contextKey) : undefined
+      emit({ type: 'run.completed', runId, output, steps: maxSteps, context, contextEstimate })
+      return { runId, messages, output, steps, events, context, contextEstimate }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       emit({ type: 'run.failed', runId, error: message, steps: steps.length })
@@ -166,6 +184,7 @@ export class AgentRuntime {
 
   private async createModelResponseWithRetries(
     request: ModelRequest,
+    modelClient: NonNullable<AgentRuntimeOptions['modelClient']>,
     runId: string,
     step: number,
     maxRetries: number,
@@ -174,11 +193,11 @@ export class AgentRuntime {
     for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
       try {
         throwIfAborted(request.signal)
-        if (request.stream && this.modelClient.capabilities.streaming) {
-          return await this.streamModelResponse(request, runId, step, emit)
+        if (request.stream && modelClient.capabilities.streaming) {
+          return await this.streamModelResponse(request, modelClient, runId, step, emit)
         }
         return {
-          response: await this.modelClient.create(request),
+          response: await modelClient.create(request),
           emittedReasoning: false,
         }
       } catch (error) {
@@ -199,12 +218,13 @@ export class AgentRuntime {
 
   private async streamModelResponse(
     request: ModelRequest,
+    modelClient: NonNullable<AgentRuntimeOptions['modelClient']>,
     runId: string,
     step: number,
     emit: (event: AgentRuntimeEvent) => void,
   ): Promise<ModelResponseResult> {
     let emittedReasoning = false
-    const events = this.modelClient.stream({ ...request, stream: true })
+    const events = modelClient.stream({ ...request, stream: true })
     const output = await collectModelEvents((async function *streamAndEmit() {
       for await (const event of events) {
         if (event.type === 'text-delta') {
@@ -222,6 +242,12 @@ export class AgentRuntime {
         yield event
       }
     })())
+    if (isEmptyModelResponse(output.message)) {
+      return {
+        response: await modelClient.create({ ...request, stream: false }),
+        emittedReasoning: false,
+      }
+    }
     return {
       response: output.message,
       emittedReasoning,
@@ -246,18 +272,40 @@ export class AgentRuntime {
     ]
   }
 
-  private modelRequest(input: AgentRuntimeRunInput, messages: AgentMessage[]): ModelRequest {
+  private modelRequest(
+    input: AgentRuntimeRunInput,
+    messages: AgentMessage[],
+    modelClient: NonNullable<AgentRuntimeOptions['modelClient']>,
+    contextKey: string | undefined,
+  ): ModelRequest {
+    const modelDefaults = input.modelDefaults ?? this.modelDefaults
     return {
-      ...this.modelDefaults,
-      model: input.model ?? this.modelDefaults?.model,
-      temperature: input.temperature ?? this.modelDefaults?.temperature,
-      maxTokens: input.maxTokens ?? this.modelDefaults?.maxTokens,
-      metadata: input.metadata ?? this.modelDefaults?.metadata,
+      ...modelDefaults,
+      model: input.model ?? modelDefaults?.model,
+      temperature: input.temperature ?? modelDefaults?.temperature,
+      maxTokens: input.maxTokens ?? modelDefaults?.maxTokens,
+      metadata: input.metadata ?? modelDefaults?.metadata,
       messages,
       signal: input.signal,
       tools: this.tools.definitions(),
-      stream: this.modelClient.capabilities.streaming,
+      stream: modelClient.capabilities.streaming,
+      context: input.context ?? (contextKey ? this.modelContexts.get(contextKey) : modelDefaults?.context),
     }
+  }
+
+  private contextKeyFor(input: AgentRuntimeRunInput): string | undefined {
+    return input.contextKey ||
+      (typeof input.metadata?.session_id === 'string' ? input.metadata.session_id : undefined) ||
+      input.toolContext?.sessionId ||
+      this.defaultContextKey
+  }
+
+  private modelClientFor(input: AgentRuntimeRunInput): NonNullable<AgentRuntimeOptions['modelClient']> {
+    const modelClient = input.modelClient ?? this.modelClient
+    if (!modelClient) {
+      throw new Error('AgentRuntime requires a modelClient in constructor options or run input.')
+    }
+    return modelClient
   }
 
   private runToolContext(input: AgentRuntimeRunInput): AgentToolContext | undefined {
@@ -354,4 +402,77 @@ function abortError(): Error {
   const error = new Error('Run aborted.')
   error.name = 'AbortError'
   return error
+}
+
+function isEmptyModelResponse(response: ModelResponse): boolean {
+  return (
+    !response.content?.trim() &&
+    !response.reasoning?.trim() &&
+    !(response.toolCalls?.length)
+  )
+}
+
+function estimateModelRequestContext(request: ModelRequest): AgentRuntimeContextEstimate {
+  const systemMessages = request.messages.filter(message => message.role === 'system')
+  const nonSystemMessages = request.messages.filter(message => message.role !== 'system')
+  const systemPrompt = systemMessages.map(message => message.content || '').join('\n\n')
+  const systemPromptTokens = countTokensLocal(systemPrompt)
+  const messageTokens = nonSystemMessages.reduce((sum, message) => {
+    return sum + countTokensLocal(message.content || '') + countTokensLocal(JSON.stringify(message.toolCalls || ''))
+  }, 0)
+  const toolTokens = countTokensLocal(JSON.stringify(request.tools || []))
+  const modelContextTokens = request.context == null ? 0 : countTokensLocal(JSON.stringify(request.context))
+
+  return {
+    contextTokens: systemPromptTokens + messageTokens + toolTokens + modelContextTokens,
+    systemPromptTokens,
+    messageTokens,
+    toolTokens,
+    modelContextTokens,
+    messageCount: request.messages.length,
+    toolCount: request.tools?.length || 0,
+    systemPromptChars: systemPrompt.length,
+  }
+}
+
+function countTokensLocal(text: string): number {
+  if (!text) return 0
+  if (hasPathologicalRun(text)) return heuristicTokens(text)
+  try {
+    return getEncoder().encode(text).length
+  } catch {
+    return heuristicTokens(text)
+  }
+}
+
+let cachedEncoder: ReturnType<typeof getEncoding> | null = null
+
+function getEncoder(): ReturnType<typeof getEncoding> {
+  if (!cachedEncoder) cachedEncoder = getEncoding('cl100k_base')
+  return cachedEncoder
+}
+
+function heuristicTokens(text: string): number {
+  const cjk = (text.match(/[\u2e80-\u9fff\uac00-\ud7af\u3000-\u303f\uff00-\uffef]/g) || []).length
+  const other = text.length - cjk
+  return Math.ceil(cjk * 1.5 + other / 4)
+}
+
+function hasPathologicalRun(text: string): boolean {
+  const maxRun = 20_000
+  let run = 0
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i)
+    const isLetterOrDigit =
+      (code >= 48 && code <= 57) ||
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122)
+    if (isLetterOrDigit) {
+      run += 1
+      if (run > maxRun) return true
+    } else {
+      run = 0
+    }
+  }
+  return false
 }
