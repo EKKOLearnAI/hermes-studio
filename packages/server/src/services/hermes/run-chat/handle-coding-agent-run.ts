@@ -31,6 +31,7 @@ export interface CodingAgentRunSocketData {
   api_key?: string
   apiMode?: any
   api_mode?: any
+  reasoning_effort?: string
   session_source?: 'global_agent' | 'workflow'
 }
 
@@ -68,6 +69,7 @@ export async function handleCodingAgentRun(
     mode,
     provider: launchProvider,
     model: launchModel,
+    reasoningEffort: data.reasoning_effort,
   })) {
     codingAgentRunManager.stop(sessionId, { reportClosed: false })
     runId = undefined
@@ -83,6 +85,7 @@ export async function handleCodingAgentRun(
       baseUrl: data.baseUrl || data.base_url,
       apiKey: data.apiKey || data.api_key,
       apiMode: data.apiMode || data.api_mode,
+      reasoningEffort: data.reasoning_effort,
       sessionSource: data.session_source,
     }, state)
     runId = started.agentSessionId

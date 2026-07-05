@@ -7,6 +7,7 @@ export interface AgentTargetInput {
   baseUrl: string
   apiKey: string
   apiMode?: AgentApiMode
+  reasoningEffort?: string
   agentId?: string
   agentSessionId?: string
   chatSessionId?: string

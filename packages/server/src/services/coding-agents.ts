@@ -110,6 +110,7 @@ export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
   baseUrl?: string
   apiKey?: string
   apiMode?: ApiMode
+  reasoningEffort?: string
   sessionId?: string
   agentSessionId?: string
   agentNativeSessionId?: string
@@ -130,6 +131,7 @@ export interface CodingAgentLaunchResult {
   env: Record<string, string>
   shellCommand: string
   files: Array<{ key: string; path: string; absolutePath: string }>
+  reasoningEffort?: string
 }
 
 export interface CodingAgentNativeLaunchResult extends CodingAgentLaunchResult {
@@ -637,6 +639,8 @@ function codexCatalogEntry(input: {
     description: input.displayName,
     default_reasoning_level: 'medium',
     supported_reasoning_levels: [
+      { effort: 'none', description: 'Disable provider-side reasoning when supported' },
+      { effort: 'minimal', description: 'Use the smallest provider-side reasoning budget when supported' },
       { effort: 'low', description: 'Fast responses with lighter reasoning' },
       { effort: 'medium', description: 'Balances speed and reasoning depth for everyday tasks' },
       { effort: 'high', description: 'Greater reasoning depth for complex problems' },
@@ -1565,6 +1569,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   const baseUrl = String(input.baseUrl || '').trim()
   const preset = PROVIDER_PRESETS.find(item => item.value === provider)
   const apiMode = normalizeLaunchApiMode(input.apiMode, preset?.api_mode || 'chat_completions')
+  const reasoningEffort = String(input.reasoningEffort || '').trim()
   const rootDir = getScopedConfigRoot(tool.id, scope)
   const workspaceDir = resolveLaunchWorkspaceRoot(scope, input.workspace)
   await mkdir(rootDir, { recursive: true })
@@ -1590,6 +1595,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           baseUrl,
           apiKey,
           apiMode,
+          reasoningEffort,
           agentId: tool.id,
           agentSessionId: input.agentSessionId,
           chatSessionId: input.sessionId,
@@ -1648,6 +1654,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           baseUrl,
           apiKey,
           apiMode,
+          reasoningEffort,
           agentId: tool.id,
           agentSessionId: input.agentSessionId,
           chatSessionId: input.sessionId,
@@ -1662,6 +1669,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       `model_provider = ${JSON.stringify(providerId)}`,
       `model = ${JSON.stringify(model)}`,
       'model_reasoning_summary = "auto"',
+      ...(reasoningEffort ? [`model_reasoning_effort = ${JSON.stringify(reasoningEffort)}`] : []),
       `developer_instructions = ${tomlMultilineString(getSystemPrompt().trim())}`,
       'disable_response_storage = true',
       '',
@@ -1686,7 +1694,10 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     await writeScopedFile('auth', `${JSON.stringify({}, null, 2)}\n`)
 
     env = { CODEX_HOME: rootDir }
-    args = ['--model', model]
+    args = [
+      '--model', model,
+      ...(reasoningEffort ? ['-c', `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`] : []),
+    ]
   }
 
   let shellCommand = buildLaunchShellCommand({
@@ -1722,6 +1733,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     env,
     shellCommand,
     files,
+    reasoningEffort,
   }
 }
 
@@ -1797,6 +1809,7 @@ export async function startCodingAgentRun(
     workspaceDir: launch.workspaceDir,
     env: runtimeEnv,
     state,
+    reasoningEffort: launch.reasoningEffort,
     sessionSource: sessionSource === 'global_agent' || sessionSource === 'workflow' ? sessionSource : undefined,
   })
   updateSession(sessionId, {

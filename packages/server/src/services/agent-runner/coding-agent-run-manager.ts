@@ -71,6 +71,7 @@ export interface CodingAgentRunLaunch {
   env?: NodeJS.ProcessEnv
   state?: SessionState
   sessionSource?: 'global_agent' | 'workflow'
+  reasoningEffort?: string
 }
 
 interface ManagedCodingAgentRun {
@@ -414,6 +415,7 @@ export class CodingAgentRunManager {
     mode?: 'scoped' | 'global'
     provider?: string
     model?: string
+    reasoningEffort?: string
   }): boolean {
     const run = this.getBySession(sessionId)
     if (!run || run.exited) return false
@@ -426,6 +428,7 @@ export class CodingAgentRunManager {
       if (provider && run.launch.provider !== provider) return false
       if (model && run.launch.model !== model) return false
     }
+    if (String(run.launch.reasoningEffort || '').trim() !== String(launch.reasoningEffort || '').trim()) return false
     if (!hasManagedHermesMcpConfig(run)) return false
     return true
   }
