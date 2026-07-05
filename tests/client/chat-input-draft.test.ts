@@ -136,7 +136,7 @@ describe('ChatInput draft persistence', () => {
     expect((wrapper.get('textarea').element as HTMLTextAreaElement).style.height).not.toBe('180px')
   })
 
-  it('hides context usage for coding-agent sessions', async () => {
+  it('shows context usage for coding-agent sessions', async () => {
     const wrapper = mountForSession('session-codex', {
       source: 'coding_agent',
       agent: 'codex',
@@ -147,11 +147,12 @@ describe('ChatInput draft persistence', () => {
     })
     await nextTick()
 
-    expect(wrapper.find('.context-info').exists()).toBe(false)
-    expect(wrapper.find('.context-bar').exists()).toBe(false)
+    expect(wrapper.find('.context-info').exists()).toBe(true)
+    expect(wrapper.find('.context-info').text()).toContain('2.0k')
+    expect(wrapper.find('.context-bar').exists()).toBe(true)
   })
 
-  it('hides reasoning effort selector for coding-agent sessions', async () => {
+  it('shows reasoning effort selector for coding-agent sessions', async () => {
     const wrapper = mountForSession('session-codex', {
       source: 'coding_agent',
       agent: 'codex',
@@ -159,8 +160,8 @@ describe('ChatInput draft persistence', () => {
     })
     await nextTick()
 
-    expect(wrapper.find('.n-popselect-stub').exists()).toBe(false)
-    expect(wrapper.find('[data-value="high"]').exists()).toBe(false)
+    expect(wrapper.find('.n-popselect-stub').exists()).toBe(true)
+    expect(wrapper.find('[data-value="high"]').exists()).toBe(true)
   })
 
   it('stores the selected reasoning effort for the active session', async () => {

@@ -2399,7 +2399,11 @@ export const useChatStore = defineStore('chat', () => {
           : {}),
         // Per-session reasoning effort override. Hermes bridge and scoped coding
         // agents both consume this when the selected provider/API supports it.
-        reasoning_effort: activeSession.value?.reasoningEffort || undefined,
+        // Global coding-agent mode uses the user's native CLI config, so avoid
+        // injecting a per-session override there.
+        reasoning_effort: isCodingAgentExecution && codingAgentMode === 'global'
+          ? undefined
+          : activeSession.value?.reasoningEffort || undefined,
       }
       if (shouldSendInitialSessionConfig && activeSession.value) {
         activeSession.value.messageCount = Math.max(activeSession.value.messageCount || 0, 1)
