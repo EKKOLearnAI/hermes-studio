@@ -3,7 +3,8 @@ import { mkdirSync } from 'fs'
 import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { getProfileDir } from './hermes-profile'
-import type { AutopilotMode } from './personal-autopilot'
+import { getPersonalAutopilotOverview, type AutopilotMode } from './personal-autopilot'
+import { sendWeixinTextReminder } from './weixin-sender'
 
 export type ReminderChannel = 'weixin'
 export type ReminderDeliveryStatus = 'sent' | 'skipped' | 'failed'
@@ -45,6 +46,12 @@ export interface ReminderDelivery {
 export interface ReminderPolicyDecision {
   shouldSend: boolean
   reason: ReminderSkipReason
+}
+
+export interface ReminderDispatchResult {
+  status: ReminderDeliveryStatus
+  reason: string
+  delivery: ReminderDelivery
 }
 
 interface ReminderSettingsRow {
@@ -267,6 +274,62 @@ export function recordReminderDelivery(
   return row
 }
 
+export async function dispatchAutopilotReminder(options: {
+  profile?: string
+  now?: Date
+} = {}): Promise<ReminderDispatchResult> {
+  const profile = profileName(options.profile)
+  const now = options.now || new Date()
+  const settings = getReminderSettings(profile)
+  const autopilot = getPersonalAutopilotOverview({ profile })
+  const action = autopilot.nextAction
+  const deliveriesToday = listRecentReminderDeliveries(profile, 100)
+    .filter(delivery => sameLocalDate(new Date(delivery.sentAt), now))
+  const decision = evaluateReminderPolicy({ now, settings, autopilot, deliveriesToday })
+  const message = formatAutopilotReminderMessage(action)
+
+  if (!decision.shouldSend) {
+    const delivery = recordReminderDelivery(profile, {
+      channel: settings.channel,
+      mode: autopilot.mode,
+      actionId: action.id,
+      actionTitle: action.title,
+      message,
+      status: 'skipped',
+      error: decision.reason,
+      sentAt: now.toISOString(),
+    })
+    return { status: 'skipped', reason: decision.reason, delivery }
+  }
+
+  const sendResult = await sendWeixinTextReminder(profile, message)
+  if (!sendResult.ok) {
+    const reason = sendResult.error || 'weixin_send_failed'
+    const delivery = recordReminderDelivery(profile, {
+      channel: settings.channel,
+      mode: autopilot.mode,
+      actionId: action.id,
+      actionTitle: action.title,
+      message,
+      status: 'failed',
+      error: reason,
+      sentAt: now.toISOString(),
+    })
+    return { status: 'failed', reason, delivery }
+  }
+
+  const delivery = recordReminderDelivery(profile, {
+    channel: settings.channel,
+    mode: autopilot.mode,
+    actionId: action.id,
+    actionTitle: action.title,
+    message,
+    status: 'sent',
+    sentAt: now.toISOString(),
+  })
+  return { status: 'sent', reason: decision.reason, delivery }
+}
+
 export function evaluateReminderPolicy(input: {
   now?: Date
   settings: ReminderSettings
@@ -343,4 +406,10 @@ function minuteOfDay(value: string): number {
   const [hour, minute] = value.split(':').map(part => Number.parseInt(part, 10))
   if (!Number.isFinite(hour) || !Number.isFinite(minute)) return 0
   return Math.max(0, Math.min(23, hour)) * 60 + Math.max(0, Math.min(59, minute))
+}
+
+function sameLocalDate(left: Date, right: Date): boolean {
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate()
 }
