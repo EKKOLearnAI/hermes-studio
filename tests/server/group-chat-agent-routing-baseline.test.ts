@@ -4,7 +4,7 @@ import {
   createTestGroupChatServer,
   emitAck,
 } from './group-chat-test-helpers'
-import { GROUP_CHAT_AGENT_SOCKET_SECRET } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupBridgeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 
 describe('group chat agent routing baseline', () => {
@@ -37,6 +37,11 @@ describe('group chat agent routing baseline', () => {
     return { human, agent }
   }
 
+  function currentAgentSessionId() {
+    const room = groupServer.getStorage().getRoom('room-1')
+    return groupBridgeSessionId('room-1', 'default', 'Worker', String(room?.sessionSeed || '0'))
+  }
+
   it('routes human messages through mention processing', async () => {
     const { human } = await joinHumanAndAgent()
     const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
@@ -60,6 +65,7 @@ describe('group chat agent routing baseline', () => {
       content: '@Worker chain handoff',
       role: 'assistant',
       mentionDepth: 3,
+      agentSessionId: currentAgentSessionId(),
     })
 
     expect(processMentions).toHaveBeenCalledWith('room-1', expect.objectContaining({
@@ -79,6 +85,7 @@ describe('group chat agent routing baseline', () => {
       content: '@Worker stop looping',
       role: 'assistant',
       mentionDepth: 4,
+      agentSessionId: currentAgentSessionId(),
     })
 
     expect(processMentions).not.toHaveBeenCalled()

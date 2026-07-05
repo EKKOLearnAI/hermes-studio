@@ -25,8 +25,10 @@ Room workspace updates reuse
 the room/profile visibility gate for non-super-admins, including detail/clone
 reads that now expose workspace in room config. Workspace diff finalizers drop
 results after room deletion, clear-context interrupts the old room-agent sessions
-before rotating the room seed and fences old session generations before late
-assistant/tool/diff output can be persisted; agents are not launched for stale
+before rotating the room seed, fences old session generations before late
+assistant/tool/diff output can be persisted, and tags agent-emitted assistant/tool
+messages with their Bridge session so stale writes are rejected at the server
+persistence boundary; agents are not launched for stale
 pre-clear generations that lose the race before `bridge.chat`,
 interrupt failures do not pre-mark in-flight workspace diffs as aborted, and
 persisted workspace-diff audit cards stay visible even when generic tool traces

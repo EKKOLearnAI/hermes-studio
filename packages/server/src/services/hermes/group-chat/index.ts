@@ -4,7 +4,7 @@ import { basename } from 'path'
 import { logger } from '../../../services/logger'
 import { getDb } from '../../../db'
 import { normalizeMessageContentForStorage, normalizeMessageContentForStorageRole } from '../../../db/hermes/message-content'
-import { AgentClients, GROUP_CHAT_AGENT_SOCKET_SECRET } from './agent-clients'
+import { AgentClients, GROUP_CHAT_AGENT_SOCKET_SECRET, groupBridgeSessionId } from './agent-clients'
 import { ContextEngine } from '../context-engine/compressor'
 import { SessionDeleter } from '../session-deleter'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
@@ -34,6 +34,7 @@ interface ChatMessage {
     reasoning_details?: string | null
     reasoning_content?: string | null
     mentionDepth?: number
+    agentSessionId?: string
 }
 
 function contentToStorageString(content: unknown): string {
@@ -1148,6 +1149,21 @@ export class GroupChatServer {
         return profiles.length > 0 && typeof this.storage.getRoomsForProfiles === 'function' && this.storage.getRoomsForProfiles(profiles).some(candidate => candidate.id === roomId)
     }
 
+    private canPersistAgentMessageForCurrentSession(roomId: string, member: Member | undefined, data: Partial<ChatMessage>): boolean {
+        if (member?.source !== 'agent') return true
+        const role = normalizeMessageRole(data.role)
+        const isRunTrace = role === 'assistant' || role === 'tool' || Array.isArray(data.tool_calls) || Boolean(data.tool_call_id)
+        if (!isRunTrace) return true
+        const agentSessionId = typeof data.agentSessionId === 'string' ? data.agentSessionId.trim() : ''
+        if (!agentSessionId) return false
+        const room = typeof this.storage.getRoom === 'function' ? this.storage.getRoom(roomId) : undefined
+        if (!room) return false
+        const roomAgent = this.storage.getRoomAgentByAgentId(roomId, member.userId)
+        if (!roomAgent) return false
+        const expected = groupBridgeSessionId(roomId, roomAgent.profile, roomAgent.name, String(room.sessionSeed || '0'))
+        return agentSessionId === expected
+    }
+
     private handleJoin(socket: Socket, data: { roomId?: string; name?: string; description?: string; inviteCode?: string }, ack?: (res: any) => void): void {
         const socketId = socket.id
         const userId = this.socketUserMap.get(socketId) || socketId
@@ -1265,8 +1281,13 @@ export class GroupChatServer {
         }
 
         const member = room.getOnlineMemberBySocketId(socketId)
+        if (!this.canPersistAgentMessageForCurrentSession(roomId, member, data)) {
+            ack?.({ error: 'Stale room session' })
+            return
+        }
         const userId = member?.userId || socketId
         const userName = member?.name || `User-${socketId.slice(0, 6)}`
+        const role = normalizeMessageRole(data.role)
 
         const msg: ChatMessage = {
             id: this.normalizeClientMessageId(data.id) || this.generateId(),
@@ -1275,7 +1296,7 @@ export class GroupChatServer {
             senderName: userName,
             content: contentToStorageString(data.content),
             timestamp: this.normalizeMessageTimestamp(data.timestamp, data.role),
-            role: normalizeMessageRole(data.role),
+            role,
             tool_call_id: data.tool_call_id ?? null,
             tool_calls: Array.isArray(data.tool_calls) ? data.tool_calls : null,
             tool_name: data.tool_name ?? null,

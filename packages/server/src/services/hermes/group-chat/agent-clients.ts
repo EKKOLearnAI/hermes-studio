@@ -260,10 +260,10 @@ class AgentClient {
         })
     }
 
-    sendMessage(roomId: string, content: string, messageId?: string, extra?: Record<string, unknown>): Promise<string> {
+    sendMessage(roomId: string, content: string, messageId?: string, extra?: Record<string, unknown>, agentSessionId?: string): Promise<string> {
         this.ensureConnected()
         return new Promise((resolve, reject) => {
-            this.socket!.emit('message', { roomId, content, id: messageId, ...extra }, (res: { id?: string; error?: string }) => {
+            this.socket!.emit('message', { roomId, content, id: messageId, ...extra, ...(agentSessionId ? { agentSessionId } : {}) }, (res: { id?: string; error?: string }) => {
                 if (res.error) {
                     reject(new Error(res.error))
                 } else {
@@ -715,7 +715,7 @@ class AgentClient {
                             mentionDepth: nextMentionDepth(msg),
                             reasoning: reasoningContent || null,
                             reasoning_content: reasoningContent || null,
-                        })
+                        }, sessionId)
                         flushedAssistantParts.add(streamMessageId)
                         currentContent = ''
                     }
@@ -747,7 +747,7 @@ class AgentClient {
                     onStatus?.('ready')
                     return
                 }
-                await this.sendAgentErrorMessage(roomId, streamMessageId, lastChunk.error || 'Run failed', msg, reasoningContent)
+                await this.sendAgentErrorMessage(roomId, streamMessageId, lastChunk.error || 'Run failed', msg, reasoningContent, sessionId)
                 await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'failed', streamStarted ? streamMessageId : null)
                 this.emitMessageStreamEnd(roomId, streamMessageId)
                 this.stopTyping(roomId)
@@ -774,7 +774,7 @@ class AgentClient {
                     mentionDepth: nextMentionDepth(msg),
                     reasoning: reasoningContent || null,
                     reasoning_content: reasoningContent || null,
-                })
+                }, sessionId)
                 this.emitMessageStreamEnd(roomId, streamMessageId)
                 await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'completed', streamMessageId)
                 await this.refreshRoomFullContextEstimate(roomId, sessionId, bridge, instructions, modelContext)
@@ -806,7 +806,7 @@ class AgentClient {
                 await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'failed', streamStarted ? streamMessageId : null)
             }
             try {
-                await this.sendAgentErrorMessage(roomId, streamMessageId, err, msg, reasoningContent)
+                await this.sendAgentErrorMessage(roomId, streamMessageId, err, msg, reasoningContent, activeSessionId || undefined)
                 if (streamStarted) this.emitMessageStreamEnd(roomId, streamMessageId)
             } catch (sendErr: any) {
                 logger.warn(`[AgentClients] ${this.name}: failed to send error message: ${sendErr.message}`)
@@ -866,6 +866,7 @@ class AgentClient {
         error: unknown,
         sourceMsg: MentionMessage,
         reasoningContent = '',
+        sessionId?: string,
     ): Promise<void> {
         const detail = error instanceof Error ? error.message : String(error || 'Run failed')
         const content = detail.startsWith('Error:') ? detail : `Error: ${detail}`
@@ -875,7 +876,7 @@ class AgentClient {
             finish_reason: 'error',
             reasoning: reasoningContent || null,
             reasoning_content: reasoningContent || null,
-        })
+        }, sessionId)
     }
 
     private async recordBridgeEvents(
@@ -895,9 +896,11 @@ class AgentClient {
                 this.cacheBridgeContext(sessionId, ev as Record<string, unknown>, instructions, modelContext)
             } else if (eventType === 'tool.started') {
                 const toolBaseId = await beforeToolStarted()
-                this.recordToolStarted(roomId, ev as Record<string, unknown>, toolBaseId)
+                if (!this.roomSessionIsCurrent(roomId, sessionId)) return reasoning
+                this.recordToolStarted(roomId, sessionId, ev as Record<string, unknown>, toolBaseId)
             } else if (eventType === 'tool.completed') {
-                this.recordToolCompleted(roomId, ev as Record<string, unknown>)
+                if (!this.roomSessionIsCurrent(roomId, sessionId)) return reasoning
+                this.recordToolCompleted(roomId, sessionId, ev as Record<string, unknown>)
             } else if (eventType === 'approval.requested') {
                 this.emitApprovalRequested(roomId, {
                     event: 'approval.requested',
@@ -924,7 +927,7 @@ class AgentClient {
         return reasoning
     }
 
-    private recordToolStarted(roomId: string, ev: Record<string, unknown>, runMessageId: string): void {
+    private recordToolStarted(roomId: string, sessionId: string, ev: Record<string, unknown>, runMessageId: string): void {
         const toolName = String(ev.tool_name || ev.tool || ev.name || '')
         const toolCallId = groupToolCallId(ev.tool_call_id, toolName, this.nextToolIndex(roomId, toolName))
         this.trackPendingToolCall(roomId, toolName, toolCallId)
@@ -956,10 +959,10 @@ class AgentClient {
             tool_calls: msg.tool_calls,
             finish_reason: 'tool_calls',
             timestamp,
-        }).catch((err: any) => logger.warn(`[AgentClients] failed to record tool call: ${err.message}`))
+        }, sessionId).catch((err: any) => logger.warn(`[AgentClients] failed to record tool call: ${err.message}`))
     }
 
-    private recordToolCompleted(roomId: string, ev: Record<string, unknown>): void {
+    private recordToolCompleted(roomId: string, sessionId: string, ev: Record<string, unknown>): void {
         const toolName = String(ev.tool_name || ev.tool || ev.name || '')
         const rawId = String(ev.tool_call_id || '').trim()
         const toolCallId = rawId || this.takePendingToolCall(roomId, toolName) || groupToolCallId(null, toolName, this.nextToolIndex(roomId, toolName))
@@ -983,7 +986,7 @@ class AgentClient {
             tool_call_id: toolCallId,
             tool_name: toolName || null,
             timestamp,
-        }).catch((err: any) => logger.warn(`[AgentClients] failed to record tool result: ${err.message}`))
+        }, sessionId).catch((err: any) => logger.warn(`[AgentClients] failed to record tool result: ${err.message}`))
     }
 
     private pendingToolKey(roomId: string, toolName: string): string {
@@ -1049,7 +1052,7 @@ class AgentClient {
     }
 }
 
-function groupBridgeSessionId(roomId: string, profile: string, name: string, sessionSeed: string): string {
+export function groupBridgeSessionId(roomId: string, profile: string, name: string, sessionSeed: string): string {
     const raw = `gc_${roomId}_${profile}_${name}_${sessionSeed || '0'}`
     return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120)
 }

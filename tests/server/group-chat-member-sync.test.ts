@@ -26,7 +26,7 @@ vi.mock('../../packages/server/src/services/auth', () => ({
   getToken: vi.fn(async () => 'test-token'),
 }))
 
-import { AgentClients } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { AgentClients, groupBridgeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
 
@@ -327,6 +327,45 @@ describe('Group Chat member/agent identity sync', () => {
     expect(ack).toHaveBeenCalledWith({ error: 'Not in room' })
   })
 
+  it('rejects stale agent assistant/tool messages at persistence time after session rotation', () => {
+    const emit = vi.fn()
+    const saveMessageAndRefreshRoom = vi.fn()
+    const agentMember = {
+      id: 'agent-socket-1',
+      userId: 'agent-stable-1',
+      name: 'Worker',
+      description: '',
+      joinedAt: Date.now(),
+      online: true,
+      socketId: 'agent-socket-1',
+      source: 'agent',
+      avatar: '',
+    }
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map([['room-1', {
+      hasOnlineMember: vi.fn(() => true),
+      getOnlineMemberBySocketId: vi.fn(() => agentMember),
+    }]])
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: 'seed-2' })),
+      getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-stable-1', profile: 'default', name: 'Worker' })),
+      saveMessageAndRefreshRoom,
+    }
+    server.nsp = { to: vi.fn(() => ({ emit })) }
+    const ack = vi.fn()
+
+    server.handleMessage({ id: 'agent-socket-1' }, {
+      roomId: 'room-1',
+      content: 'late',
+      role: 'assistant',
+      agentSessionId: 'gc_room-1_default_Worker_seed-1',
+    }, ack)
+
+    expect(ack).toHaveBeenCalledWith({ error: 'Stale room session' })
+    expect(saveMessageAndRefreshRoom).not.toHaveBeenCalled()
+    expect(emit).not.toHaveBeenCalled()
+  })
+
   it('clears runtime state before rotating persisted room context', async () => {
     const calls: string[] = []
     const room = { id: 'room-1', name: 'Room 1', inviteCode: 'invite', ownerAuthUserId: 7, workspace: '/tmp/workspace' }
@@ -601,7 +640,10 @@ describe('Group Chat member/agent identity sync', () => {
       ['agent-1', { name: '丫鬟', description: '' }],
     ])
     server.agentClients = { processMentions: vi.fn(async () => undefined) }
+    const agentSessionId = groupBridgeSessionId('room-1', 'default', '丫鬟', 'seed-1')
     server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: 'seed-1' })),
+      getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: '丫鬟' })),
       saveMessageAndRefreshRoom: vi.fn((msg: any) => ({ message: msg, totalTokens: 123 })),
     }
     server.nsp = { to: vi.fn(() => ({ emit })) }
@@ -615,7 +657,7 @@ describe('Group Chat member/agent identity sync', () => {
     }))
 
     server.agentClients.processMentions.mockClear()
-    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all agent says hi', role: 'assistant', mentionDepth: 1 }, vi.fn())
+    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all agent says hi', role: 'assistant', mentionDepth: 1, agentSessionId }, vi.fn())
     expect(server.agentClients.processMentions).toHaveBeenCalledTimes(1)
     expect(server.agentClients.processMentions).toHaveBeenLastCalledWith('room-1', expect.objectContaining({
       content: '@all agent says hi',
@@ -624,7 +666,7 @@ describe('Group Chat member/agent identity sync', () => {
     }))
 
     server.agentClients.processMentions.mockClear()
-    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all too deep', role: 'assistant', mentionDepth: 4 }, vi.fn())
+    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all too deep', role: 'assistant', mentionDepth: 4, agentSessionId }, vi.fn())
     expect(server.agentClients.processMentions).not.toHaveBeenCalled()
   })
 })
