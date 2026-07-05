@@ -1,4 +1,4 @@
-﻿---
+---
 date: 2026-07-05
 pr: 1938
 commit: a087a1e
@@ -12,7 +12,4 @@ impact: Codex / Claude Code 单聊会话复用 Hermes 输入栏的推理强度�
 
 代理适配层会按上游模式透传推理字段：OpenAI Chat Completions 使用 `reasoning_effort`，OpenAI Responses 使用 `reasoning: { effort }`，Anthropic-compatible 请求使用 `reasoning_effort`。Codex model catalog 同步声明 `none` / `minimal` 推理等级。
 
-补充：全局 coding-agent 模式继续依赖用户本机 CLI 配置，不从 Web UI payload 注入 \\
-easoning_effort\\；scoped 模式才会透传该会话级设置。
-
-???coding-agent ???? flush ? DB ???????? token usage?????? `contextTokens` ? `usage.updated`??????????? Codex / Claude Code ???????
+补充：全局 coding-agent 模式继续依赖用户本机 CLI 配置，不从 Web UI payload 注入 `reasoning_effort`；scoped 模式才会透传该会话级设置。
