@@ -348,6 +348,10 @@ export async function bootstrap() {
   sessionDeleter.start(activeProfile)
   console.log('[bootstrap] session deleter started, profile=%s', activeProfile)
 
+  const { startAutopilotReminderScheduler } = await import('./services/hermes/autopilot-reminder-scheduler')
+  startAutopilotReminderScheduler()
+  console.log('[bootstrap] autopilot reminder scheduler started')
+
   // Catch-all: destroy upgrade requests not handled by terminal or Socket.IO
   servers.forEach((httpServer) => {
     httpServer.on('upgrade', (req: any, socket: any) => {

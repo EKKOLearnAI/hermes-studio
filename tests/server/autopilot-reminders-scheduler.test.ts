@@ -1,0 +1,67 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const listProfileNamesFromDisk = vi.hoisted(() => vi.fn())
+const getReminderSettings = vi.hoisted(() => vi.fn())
+const dispatchAutopilotReminder = vi.hoisted(() => vi.fn())
+
+vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+  listProfileNamesFromDisk,
+  getProfileDir: (name: string) => name,
+}))
+
+vi.mock('../../packages/server/src/services/hermes/autopilot-reminders', async (importOriginal) => ({
+  ...await importOriginal<any>(),
+  getReminderSettings,
+  dispatchAutopilotReminder,
+}))
+
+describe('autopilot reminder scheduler', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.stubEnv('HERMES_AUTOPILOT_REMINDERS_DISABLED', '')
+    vi.stubEnv('HERMES_AUTOPILOT_REMINDER_INTERVAL_MS', '1000')
+    listProfileNamesFromDisk.mockReturnValue(['default', 'research'])
+    getReminderSettings.mockImplementation((profile: string) => ({ profile, enabled: profile === 'research' }))
+    dispatchAutopilotReminder.mockResolvedValue({ status: 'sent' })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllEnvs()
+    vi.clearAllMocks()
+  })
+
+  it('does not start when disabled by env flag', async () => {
+    vi.stubEnv('HERMES_AUTOPILOT_REMINDERS_DISABLED', '1')
+    const { startAutopilotReminderScheduler } = await import('../../packages/server/src/services/hermes/autopilot-reminder-scheduler')
+
+    const scheduler = startAutopilotReminderScheduler()
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(scheduler.stop).toEqual(expect.any(Function))
+    expect(dispatchAutopilotReminder).not.toHaveBeenCalled()
+  })
+
+  it('dispatches enabled profiles on interval', async () => {
+    const { startAutopilotReminderScheduler } = await import('../../packages/server/src/services/hermes/autopilot-reminder-scheduler')
+
+    const scheduler = startAutopilotReminderScheduler()
+    await vi.advanceTimersByTimeAsync(1000)
+    scheduler.stop()
+
+    expect(getReminderSettings).toHaveBeenCalledWith('default')
+    expect(getReminderSettings).toHaveBeenCalledWith('research')
+    expect(dispatchAutopilotReminder).toHaveBeenCalledWith({ profile: 'research' })
+    expect(dispatchAutopilotReminder).not.toHaveBeenCalledWith({ profile: 'default' })
+  })
+
+  it('can be stopped cleanly', async () => {
+    const { startAutopilotReminderScheduler } = await import('../../packages/server/src/services/hermes/autopilot-reminder-scheduler')
+    const scheduler = startAutopilotReminderScheduler()
+
+    scheduler.stop()
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(dispatchAutopilotReminder).not.toHaveBeenCalled()
+  })
+})
