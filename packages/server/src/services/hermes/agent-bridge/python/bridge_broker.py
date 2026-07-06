@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from bridge_runtime import _install_stop_signal_handlers, _jsonable
+from bridge_server import BridgeServer
 from bridge_transport import (
     WorkerProcess,
     _make_listen_socket,
@@ -28,6 +29,8 @@ class BridgeBroker:
         self.agent_root = agent_root
         self.hermes_home = hermes_home
         self._workers: dict[str, WorkerProcess] = {}
+        self._local_server = BridgeServer(endpoint)
+        self._local_server_ready = True
         self._run_profile: dict[str, str] = {}
         self._run_worker_key: dict[str, str] = {}
         self._running_run_profile: dict[str, str] = {}
@@ -139,6 +142,16 @@ class BridgeBroker:
     def _forward(self, profile: str, req: dict[str, Any], worker_key: str | None = None) -> dict[str, Any]:
         profile = self._normalize_profile(profile)
         key = self._normalize_worker_key(profile, worker_key)
+        if self._local_server_ready:
+            forwarded = dict(req)
+            forwarded["profile"] = profile
+            forwarded.pop("worker_key", None)
+            try:
+                resp = self._local_server.handle(forwarded)
+                self._record_response_routes(profile, key, resp)
+                return {"ok": True, **_jsonable(resp)}
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
         worker = self._worker_for_profile(profile, key)
         forwarded = dict(req)
         forwarded["profile"] = profile
@@ -148,7 +161,6 @@ class BridgeBroker:
             self._record_response_routes(profile, key, resp)
             return resp
         except RuntimeError as e:
-            # Worker returned ok=false or connection error — return error response
             return {"ok": False, "error": str(e)}
 
     def _worker_request_timeout(self, req: dict[str, Any]) -> float:
