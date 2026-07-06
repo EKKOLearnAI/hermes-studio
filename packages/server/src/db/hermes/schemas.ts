@@ -39,6 +39,7 @@ export const SESSIONS_SCHEMA: Record<string, string> = {
   user_id: 'TEXT',
   model: 'TEXT NOT NULL DEFAULT \'\'',
   provider: 'TEXT NOT NULL DEFAULT \'\'',
+  api_mode: 'TEXT NOT NULL DEFAULT \'\'',
   title: 'TEXT',
   parent_session_id: 'TEXT',
   fork_point_message_id: 'TEXT',

@@ -229,7 +229,7 @@ describe('coding agent Windows process launch', () => {
     ;(manager as any).sessionIndex.clear()
   })
 
-  it('emits a readable failed run when a hidden Claude Code process cannot start', () => {
+  it('emits a readable failed run when a hidden Claude Code process cannot start', async () => {
     const manager = new CodingAgentRunManager()
     const emitted: Array<{ event: string; payload: any }> = []
     ;(manager as any).ensureDbSession = () => {}
@@ -258,6 +258,7 @@ describe('coding agent Windows process launch', () => {
 
     manager.send('chat-session-error-1', 'test')
     testState.spawnCalls[0].child.emit('error', Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' }))
+    await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(emitted).toContainEqual(expect.objectContaining({
       event: 'run.failed',
@@ -272,7 +273,7 @@ describe('coding agent Windows process launch', () => {
     ;(manager as any).sessionIndex.clear()
   })
 
-  it('includes decoded stderr detail when a hidden Codex process exits non-zero', () => {
+  it('includes decoded stderr detail when a hidden Codex process exits non-zero', async () => {
     const manager = new CodingAgentRunManager()
     const emitted: Array<{ event: string; payload: any }> = []
     ;(manager as any).ensureDbSession = () => {}
@@ -302,6 +303,7 @@ describe('coding agent Windows process launch', () => {
     manager.send('chat-session-codex-error-1', 'test')
     testState.spawnCalls[0].child.stderr.emit('data', Buffer.from([0xb2, 0xbb, 0xca, 0xc7]))
     testState.spawnCalls[0].child.emit('exit', 1)
+    await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(emitted).toContainEqual(expect.objectContaining({
       event: 'run.failed',

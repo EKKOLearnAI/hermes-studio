@@ -115,9 +115,22 @@ async function waitForMockEvent(
 ): Promise<void> {
   const startedAt = Date.now()
   while (Date.now() - startedAt < 1000) {
-    if (mock.mock.calls.some(([event, payload]) => event === eventName && predicate(payload))) return
+    if ((mock.mock.calls as any[][]).some(([event, payload]) => event === eventName && predicate(payload))) return
     await new Promise(resolve => setTimeout(resolve, 5))
   }
+  throw new Error(`Timed out waiting for mock event ${eventName}`)
+}
+
+async function waitForMockCallWith(
+  mock: { mock: { calls: unknown[][] } },
+  predicate: (call: unknown[]) => boolean,
+): Promise<void> {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < 1000) {
+    if (mock.mock.calls.some(call => predicate(call))) return
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  throw new Error('Timed out waiting for matching mock call')
 }
 
 describe('GlobalAgentServer', () => {

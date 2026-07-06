@@ -2,6 +2,8 @@ import { getActiveProfileName, getProfileDir } from './hermes-profile'
 import { execHermes } from './hermes-process'
 
 const JOURNEY_TIMEOUT_MS = 10000
+const JOURNEY_MIN_HERMES_VERSION = '0.18.0'
+const JOURNEY_UNSUPPORTED_MESSAGE = `Please update Hermes to ${JOURNEY_MIN_HERMES_VERSION} or later to use Learning Journey.`
 
 export interface JourneyNode {
   id: string
@@ -92,19 +94,40 @@ function errorMessage(err: unknown): string {
   return String(err)
 }
 
+function isUnsupportedJourneyCommandError(message: string): boolean {
+  return /journey/i.test(message) && (
+    /invalid choice/i.test(message) ||
+    /unknown command/i.test(message) ||
+    /no such command/i.test(message) ||
+    /unrecognized command/i.test(message) ||
+    /unexpected argument/i.test(message) ||
+    /unrecognized arguments?/i.test(message)
+  )
+}
+
 export async function getJourneyGraph(profile?: string | null): Promise<JourneyGraphResponse> {
   const profileName = normalizeProfile(profile)
   const profileDir = getProfileDir(profileName)
 
+  let stdout: string
   try {
-    const { stdout } = await execHermes(['journey', '--json', '--no-color'], {
+    const result = await execHermes(['journey', '--json', '--no-color'], {
       timeout: JOURNEY_TIMEOUT_MS,
       env: {
         ...process.env,
         HERMES_HOME: profileDir,
       },
     })
+    stdout = result.stdout
+  } catch (err) {
+    const message = errorMessage(err)
+    if (isUnsupportedJourneyCommandError(message)) {
+      throw new Error(JOURNEY_UNSUPPORTED_MESSAGE)
+    }
+    throw new Error(`Failed to load Hermes journey graph: ${message}`)
+  }
 
+  try {
     return {
       profile: profileName,
       source: 'cli',

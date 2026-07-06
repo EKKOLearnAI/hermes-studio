@@ -106,6 +106,7 @@ export interface CodingAgentLaunchResult {
   profile: string
   provider: string
   model: string
+  apiMode?: CodingAgentApiMode
   rootDir: string
   workspaceDir: string
   command: string

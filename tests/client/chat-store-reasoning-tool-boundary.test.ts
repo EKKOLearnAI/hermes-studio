@@ -546,6 +546,33 @@ describe('chat store reasoning/tool boundaries', () => {
     expect(session.apiMode).toBe('chat_completions')
   })
 
+
+  it('preserves a scoped coding-agent API mode when reselecting the same provider', async () => {
+    const store = useChatStore()
+    const session = makeSession()
+    session.source = 'coding_agent'
+    session.agent = 'codex'
+    session.codingAgentId = 'codex'
+    session.codingAgentMode = 'scoped'
+    session.provider = 'fun-codex'
+    session.model = 'gpt-5.4'
+    session.apiMode = 'chat_completions'
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    const ok = await store.switchSessionModel('gpt-5.5', 'fun-codex', 'session-1')
+
+    expect(ok).toBe(true)
+    expect(sessionsApi.setSessionModel).toHaveBeenCalledWith(
+      'session-1',
+      'gpt-5.5',
+      'fun-codex',
+      'chat_completions',
+    )
+    expect(session.apiMode).toBe('chat_completions')
+  })
+
   it('sends the selected workspace when starting a coding-agent run', async () => {
     const store = useChatStore()
     const session = makeSession()

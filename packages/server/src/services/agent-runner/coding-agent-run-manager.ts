@@ -3,15 +3,17 @@ import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSy
 import { homedir } from 'os'
 import { spawn, type ChildProcess } from 'child_process'
 import { createSession, addMessage, getSession, updateSession, updateSessionStats } from '../../db/hermes/session-store'
+import type { ApiMode } from './types'
 import { logger } from '../logger'
 import { applyResponseStreamEvent, flushResponseRunToDb } from '../hermes/run-chat/response-stream'
-import { calcAndUpdateUsage, updateMessageContextTokenUsage } from '../hermes/run-chat/usage'
+import { calcAndUpdateUsage, estimateUsageTokensFromMessages, updateContextTokenUsage } from '../hermes/run-chat/usage'
 import { extractResponseText } from '../hermes/run-chat/response-utils'
 import type { SessionState } from '../hermes/run-chat/types'
 import type { CanonicalResponsesEvent } from './adapters/responses-stream'
 import { mapCodingAgentResponseEvent } from './coding-agent-event-mapper'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell } from '../windows-command'
 import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from '../hermes/run-chat/workspace-diff-tracker'
+import { buildDbHistory, buildSnapshotAwareHistory } from '../hermes/run-chat/compression'
 
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
 const TERMINAL_OUTPUT_FLUSH_MS = 120
@@ -62,6 +64,7 @@ export interface CodingAgentRunLaunch {
   profile: string
   provider: string
   model: string
+  apiMode?: ApiMode
   sessionId: string
   agentNativeSessionId?: string
   nativeResume?: boolean
@@ -104,6 +107,7 @@ interface ManagedCodingAgentRun {
   codexToolBlocks?: Map<string, { id: string; name: string; arguments: string; done: boolean }>
   codexChatText?: string
   codexPendingUsage?: any
+  terminalUsageRefresh?: Promise<void>
   stoppedByUser?: boolean
   pendingChatCompletionEvent?: 'run.completed' | 'run.failed'
   pendingChatCompletionPayload?: Record<string, unknown>
@@ -417,6 +421,7 @@ export class CodingAgentRunManager {
     provider?: string
     model?: string
     reasoningEffort?: string
+    apiMode?: ApiMode
   }): boolean {
     const run = this.getBySession(sessionId)
     if (!run || run.exited) return false
@@ -428,6 +433,8 @@ export class CodingAgentRunManager {
       const model = String(launch.model || '').trim()
       if (provider && run.launch.provider !== provider) return false
       if (model && run.launch.model !== model) return false
+      const apiMode = String(launch.apiMode || '').trim()
+      if (apiMode && String(run.launch.apiMode || '').trim() !== apiMode) return false
     }
     if (String(run.launch.reasoningEffort || '').trim() !== String(launch.reasoningEffort || '').trim()) return false
     if (!hasManagedHermesMcpConfig(run)) return false
@@ -617,7 +624,7 @@ export class CodingAgentRunManager {
       flushResponseRunToDb(run.state, run.launch.sessionId)
       run.state.responseRun = undefined
       updateSessionStats(run.launch.sessionId)
-      void this.refreshCodingAgentUsage(run)
+      run.terminalUsageRefresh = this.refreshCodingAgentUsage(run)
       const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
       const finalText = extractResponseText(final)
       const terminalError = storageSafeResponseEvent.type === 'response.failed'
@@ -635,7 +642,7 @@ export class CodingAgentRunManager {
         run.pendingChatCompletionEvent = chatCompletionEvent
         run.pendingChatCompletionPayload = chatCompletionPayload
       } else {
-        this.emitAndMarkPrintChatRunCompleted(run, chatCompletionEvent, chatCompletionPayload)
+        void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, chatCompletionEvent, chatCompletionPayload)
       }
     }
   }
@@ -645,13 +652,28 @@ export class CodingAgentRunManager {
       this.emitToChat(run.launch.sessionId, event, payload)
     }
     const usage = await calcAndUpdateUsage(run.launch.sessionId, run.state, emitUsage)
-    updateMessageContextTokenUsage(
-      run.launch.sessionId,
-      run.state,
-      emitUsage,
-      usage.inputTokens + usage.outputTokens,
-      usage,
-    )
+    const contextTokens = await this.estimateCodingAgentContextTokens(run)
+    if (contextTokens != null) {
+      updateContextTokenUsage(run.launch.sessionId, run.state, emitUsage, contextTokens, usage)
+    }
+  }
+
+  private async estimateCodingAgentContextTokens(run: ManagedCodingAgentRun): Promise<number | undefined> {
+    try {
+      const dbHistory = await buildDbHistory(run.launch.sessionId, { excludeLastUser: false })
+      const snapshotHistory = await buildSnapshotAwareHistory(
+        run.launch.sessionId,
+        run.launch.profile || 'default',
+        dbHistory,
+        { model: run.launch.model, provider: run.launch.provider },
+      )
+      const usage = estimateUsageTokensFromMessages(snapshotHistory)
+      const contextTokens = usage.inputTokens + usage.outputTokens
+      if (contextTokens > 0) return contextTokens
+    } catch (err) {
+      logger.warn(err, '[coding-agent-run] failed to calculate context tokens for session %s', run.launch.sessionId)
+    }
+    return undefined
   }
 
   private normalizeCodexChatTextEvent(run: ManagedCodingAgentRun, event: CanonicalResponsesEvent): CanonicalResponsesEvent | null {
@@ -697,12 +719,13 @@ export class CodingAgentRunManager {
     createSession({
       id: run.launch.sessionId,
       profile: run.launch.profile,
-        source,
-        agent: run.launch.agentId === 'codex' ? 'codex' : 'claude',
-        agent_session_id: run.id,
-        agent_native_session_id: run.launch.agentNativeSessionId,
-        model: run.launch.model,
+      source,
+      agent: run.launch.agentId === 'codex' ? 'codex' : 'claude',
+      agent_session_id: run.id,
+      agent_native_session_id: run.launch.agentNativeSessionId,
+      model: run.launch.model,
       provider: run.launch.provider,
+      api_mode: run.launch.apiMode || '',
       title: '',
       workspace: run.launch.workspaceDir,
     })
@@ -863,7 +886,7 @@ export class CodingAgentRunManager {
       logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] claude print exited')
       if (run.stoppedByUser) return
       if (run.pendingChatCompletionEvent) {
-        this.emitAndMarkPrintChatRunCompleted(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
+        void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
         return
       }
       if (code === 0) {
@@ -1301,7 +1324,7 @@ export class CodingAgentRunManager {
       logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] codex exec exited')
       if (run.stoppedByUser) return
       if (run.pendingChatCompletionEvent) {
-        this.emitAndMarkPrintChatRunCompleted(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
+        void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
         return
       }
       if (code === 0) {
@@ -1671,6 +1694,23 @@ export class CodingAgentRunManager {
 
   private completeCodexExecTurn(run: ManagedCodingAgentRun, usage?: any) {
     this.completeClaudePrintTurn(run, usage)
+  }
+
+  private async emitAndMarkPrintChatRunCompletedAfterUsage(
+    run: ManagedCodingAgentRun,
+    event: 'run.completed' | 'run.failed',
+    payload?: Record<string, unknown>,
+  ) {
+    const usageRefresh = run.terminalUsageRefresh
+    run.terminalUsageRefresh = undefined
+    if (usageRefresh) {
+      try {
+        await usageRefresh
+      } catch (err) {
+        logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] terminal usage refresh failed before completion')
+      }
+    }
+    this.emitAndMarkPrintChatRunCompleted(run, event, payload)
   }
 
   private emitAndMarkPrintChatRunCompleted(run: ManagedCodingAgentRun, event: 'run.completed' | 'run.failed', payload?: Record<string, unknown>) {

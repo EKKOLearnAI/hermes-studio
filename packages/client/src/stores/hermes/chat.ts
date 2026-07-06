@@ -562,6 +562,7 @@ function mapHermesSession(s: SessionSummary): Session {
     updatedAt: Math.round(activitySeconds * 1000),
     model: s.model,
     provider: s.provider || (s as any).billing_provider || '',
+    apiMode: s.api_mode,
     messageCount: s.message_count,
     messageTotal: s.message_count,
     loadedMessageCount: 0,
@@ -613,6 +614,10 @@ function clearCodingAgentRuntimeCredentials(session?: Session | null) {
   if (!session || !isCodingAgentLikeSession(session)) return
   session.baseUrl = undefined
   session.apiKey = undefined
+}
+
+function shouldPreserveRuntimeApiMode(session?: Session | null): boolean {
+  return isCodingAgentLikeSession(session) && session?.codingAgentMode !== 'global'
 }
 
 function isQuotaExceededError(error: unknown): boolean {
@@ -982,6 +987,7 @@ export const useChatStore = defineStore('chat', () => {
         ...mapped,
         messages: existing.messages,
         contextTokens: existing.contextTokens,
+        apiMode: mapped.apiMode || existing.apiMode,
         loadedMessageCount: existing.loadedMessageCount,
         hasMoreBefore: existing.hasMoreBefore,
       })
@@ -1001,11 +1007,13 @@ export const useChatStore = defineStore('chat', () => {
       const runtimeByIdBefore = new Map(sessions.value.map(s => [s.id, {
         messages: s.messages,
         contextTokens: s.contextTokens,
+        apiMode: s.apiMode,
       }]))
       for (const s of fresh) {
         const prev = runtimeByIdBefore.get(s.id)
         if (prev?.messages?.length) s.messages = prev.messages
         if (prev?.contextTokens != null) s.contextTokens = prev.contextTokens
+        if (!s.apiMode && prev?.apiMode) s.apiMode = prev.apiMode
       }
       sessions.value = fresh
       pruneCompletedUnreadSessions(new Set(sessions.value.map(s => s.id)))
@@ -1073,6 +1081,7 @@ export const useChatStore = defineStore('chat', () => {
           existing.endedAt = fresh.endedAt
           existing.model = fresh.model
           existing.provider = fresh.provider
+          existing.apiMode = fresh.apiMode || existing.apiMode
           existing.messageCount = fresh.messageCount
           existing.inputTokens = fresh.inputTokens
           existing.outputTokens = fresh.outputTokens
@@ -1468,18 +1477,22 @@ export const useChatStore = defineStore('chat', () => {
     const shouldClearRuntimeCredentials = previousProvider !== nextProvider && (
       isCodingAgentLikeSession(target) || isCodingAgentLikeSession(activeTarget)
     )
-    const ok = await setSessionModel(targetId, modelId, provider || '', apiMode)
+    const preservedApiMode = apiMode || (previousProvider === nextProvider
+      ? (shouldPreserveRuntimeApiMode(target) ? target?.apiMode : undefined) ||
+        (shouldPreserveRuntimeApiMode(activeTarget) ? activeTarget?.apiMode : undefined)
+      : undefined)
+    const ok = await setSessionModel(targetId, modelId, provider || '', preservedApiMode)
     if (!ok) return false
     if (target) {
       target.model = modelId
       target.provider = provider || ''
-      if (apiMode) target.apiMode = apiMode
+      target.apiMode = preservedApiMode
       if (shouldClearRuntimeCredentials) clearCodingAgentRuntimeCredentials(target)
     }
     if (activeTarget) {
       activeTarget.model = modelId
       activeTarget.provider = provider || ''
-      if (apiMode) activeTarget.apiMode = apiMode
+      activeTarget.apiMode = preservedApiMode
       if (shouldClearRuntimeCredentials) clearCodingAgentRuntimeCredentials(activeTarget)
     }
     return true

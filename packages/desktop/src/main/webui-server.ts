@@ -414,12 +414,22 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
 
   serverProc.stdout?.on('data', (chunk: Buffer) => {
     bridgeStartup.observe(chunk)
-    process.stdout.write(`[webui] ${chunk}`)
+    try {
+      process.stdout.write(`[webui] ${chunk}`)
+    } catch {
+      /* EPIPE: parent stdout closed, ignore */
+    }
   })
+  serverProc.stdout?.on('error', () => { /* EPIPE: ignore */ })
   serverProc.stderr?.on('data', (chunk: Buffer) => {
     bridgeStartup.observe(chunk)
-    process.stderr.write(`[webui] ${chunk}`)
+    try {
+      process.stderr.write(`[webui] ${chunk}`)
+    } catch {
+      /* EPIPE: parent stderr closed, ignore */
+    }
   })
+  serverProc.stderr?.on('error', () => { /* EPIPE: ignore */ })
   serverProc.on('exit', (code, signal) => {
     console.error(`[webui] server exited code=${code} signal=${signal}`)
     serverProc = null

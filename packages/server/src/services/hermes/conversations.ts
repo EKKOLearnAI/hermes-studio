@@ -42,6 +42,7 @@ export interface ConversationSummary {
   agent_native_session_id?: string
   model: string
   provider?: string
+  api_mode?: string
   title: string | null
   started_at: number
   ended_at: number | null

@@ -310,6 +310,11 @@ async function loadSkills() {
 
 // 自定义高度拖拽
 const textareaHeight = ref<number | null>(null) // null = auto
+const inputWrapperStyle = computed(() => {
+  const height = textareaHeight.value ?? configuredTextareaHeight.value
+  if (height === null) return {}
+  return { minHeight: `${height + 71}px` }
+})
 
 function syncViewport() {
   if (typeof window === 'undefined') return
@@ -494,6 +499,11 @@ watch(() => chatStore.activeSession?.id, () => {
 })
 
 watch(configuredTextareaHeight, () => {
+  applyConfiguredTextareaHeight()
+})
+
+watch(() => settingsStore.display.chat_input_height, () => {
+  manualTextareaResize.value = false
   applyConfiguredTextareaHeight()
 })
 
@@ -1014,6 +1024,7 @@ function isImage(type: string): boolean {
     <div
       class="input-wrapper"
       :class="{ 'drag-over': isDragging }"
+      :style="inputWrapperStyle"
       @dragover="handleDragOver"
       @dragenter="handleDragEnter"
       @dragleave="handleDragLeave"

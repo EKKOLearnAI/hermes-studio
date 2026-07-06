@@ -125,6 +125,24 @@ describe('ChatInput draft persistence', () => {
     await nextTick()
 
     expect((wrapper.get('textarea').element as HTMLTextAreaElement).style.height).toBe('180px')
+    expect((wrapper.get('.input-wrapper').element as HTMLElement).style.minHeight).toBe('251px')
+  })
+
+  it('applies display setting changes after a manual resize', async () => {
+    const wrapper = mountForSession('session-a')
+    const settingsStore = useSettingsStore()
+    const resizeHandle = wrapper.get('.resize-handle')
+
+    await resizeHandle.trigger('mousedown', { clientY: 100 })
+    document.dispatchEvent(new MouseEvent('mousemove', { clientY: 50 }))
+    document.dispatchEvent(new MouseEvent('mouseup'))
+    await nextTick()
+
+    settingsStore.display.chat_input_height = 220
+    await nextTick()
+
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).style.height).toBe('220px')
+    expect((wrapper.get('.input-wrapper').element as HTMLElement).style.minHeight).toBe('291px')
   })
 
   it('keeps mobile chat input behavior even when a desktop height is configured', async () => {

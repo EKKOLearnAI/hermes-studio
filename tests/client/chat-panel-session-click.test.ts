@@ -22,6 +22,16 @@ describe('ChatPanel session clicks', () => {
     expect(source).not.toContain('if (isActiveSessionCodingAgent.value) return')
   })
 
+  it('uses codingAgentId when deciding whether session model switches need an API mode', () => {
+    const source = readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8')
+
+    expect(source).toContain('const sessionModelCodingAgentId = computed<ChatCodingAgentId | undefined>')
+    expect(source).toContain('sessionModelSession.value?.codingAgentId ||')
+    expect(source).toContain('sessionModelSession.value?.agent === "claude"')
+    expect(source).toContain('sessionModelCodingAgentId.value === "claude-code"')
+    expect(source).not.toContain('sessionModelSession.value?.agent === "claude-code"')
+  })
+
   it('uses the active sidebar model as the new chat default for the active profile', () => {
     const source = readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8')
 

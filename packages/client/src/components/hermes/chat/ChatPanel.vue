@@ -947,9 +947,19 @@ const isSessionModelScopedCodingAgent = computed(() =>
   sessionModelSession.value?.source === "coding_agent" &&
   sessionModelSession.value?.codingAgentMode !== "global",
 );
+const sessionModelCodingAgentId = computed<ChatCodingAgentId | undefined>(() =>
+  sessionModelSession.value?.codingAgentId ||
+  (sessionModelSession.value?.agent === "claude"
+    ? "claude-code"
+    : sessionModelSession.value?.agent === "codex"
+      ? "codex"
+      : sessionModelSession.value?.agent === "ekko-agent"
+        ? "ekko-agent"
+        : undefined),
+);
 const isSessionModelExternalCodingAgent = computed(() =>
   isSessionModelScopedCodingAgent.value &&
-  (sessionModelSession.value?.agent === "claude-code" || sessionModelSession.value?.agent === "codex"),
+  (sessionModelCodingAgentId.value === "claude-code" || sessionModelCodingAgentId.value === "codex"),
 );
 
 const sessionModelBaseGroups = computed(() =>
@@ -1078,7 +1088,9 @@ async function selectSessionModel(model: string, provider: string) {
   if (meta?.disabled || !sessionModelSessionId.value) return;
   if (isSessionModelExternalCodingAgent.value) {
     pendingSessionModelSwitch.value = { model, provider };
-    sessionModelApiMode.value = defaultSessionModelApiMode(provider);
+    sessionModelApiMode.value = sessionModelSession.value?.provider === provider && sessionModelSession.value.apiMode
+      ? normalizeCodingAgentApiMode(sessionModelSession.value.apiMode, defaultSessionModelApiMode(provider))
+      : defaultSessionModelApiMode(provider);
     showSessionModelModeModal.value = true;
     return;
   }

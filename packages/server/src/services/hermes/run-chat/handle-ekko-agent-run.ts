@@ -57,18 +57,106 @@ function isEkkoAgentId(data: EkkoAgentRunSocketData): boolean {
   return data.coding_agent_id === 'ekko-agent' || data.agent_id === 'ekko-agent'
 }
 
+function parseJsonRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function parseToolArguments(raw: unknown): { arguments: Record<string, unknown>; rawArguments?: string } {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) return { arguments: raw as Record<string, unknown> }
+  const rawArguments = typeof raw === 'string' ? raw : JSON.stringify(raw ?? {})
+  try {
+    const parsed = JSON.parse(rawArguments)
+    return {
+      arguments: parseJsonRecord(parsed) || {},
+      rawArguments,
+    }
+  } catch {
+    return { arguments: {}, rawArguments }
+  }
+}
+
+function normalizeStoredToolCall(raw: unknown): AgentToolCall | null {
+  const record = parseJsonRecord(raw)
+  if (!record) return null
+  const functionRecord = parseJsonRecord(record.function)
+  const id = String(record.id || record.call_id || record.tool_call_id || '').trim()
+  const name = String(record.name || functionRecord?.name || '').trim()
+  if (!id || !name) return null
+  const parsed = parseToolArguments(record.arguments ?? functionRecord?.arguments)
+  return {
+    id,
+    name,
+    arguments: parsed.arguments,
+    rawArguments: parsed.rawArguments,
+  }
+}
+
+function normalizeStoredToolCalls(value: unknown): AgentToolCall[] | undefined {
+  const rawCalls = Array.isArray(value)
+    ? value
+    : typeof value === 'string' && value.trim()
+      ? JSON.parse(value)
+      : []
+  if (!Array.isArray(rawCalls)) return undefined
+  const calls = rawCalls
+    .map(normalizeStoredToolCall)
+    .filter((call): call is AgentToolCall => !!call)
+  return calls.length ? calls : undefined
+}
+
 function toAgentMessages(messages: SessionState['messages']): AgentMessage[] {
-  return messages
-    .filter(message => message.role === 'user' || message.role === 'assistant' || message.role === 'system' || message.role === 'command')
-    .map((message): AgentMessage => {
-      const role: AgentMessage['role'] = message.role === 'assistant' || message.role === 'system' ? message.role : 'user'
-      return {
-        role,
+  const toolCallIds = new Set<string>()
+  const result: AgentMessage[] = []
+
+  for (const message of messages) {
+    if (message.role === 'user' || message.role === 'command' || message.role === 'system') {
+      const content = contentBlocksToString(message.content as any)
+      if (content.trim()) {
+        result.push({
+          role: message.role === 'system' ? 'system' : 'user',
+          content,
+        })
+      }
+      continue
+    }
+
+    if (message.role === 'assistant') {
+      let toolCalls: AgentToolCall[] | undefined
+      try {
+        toolCalls = normalizeStoredToolCalls(message.tool_calls)
+      } catch {
+        toolCalls = undefined
+      }
+      for (const call of toolCalls || []) toolCallIds.add(call.id)
+      const agentMessage: AgentMessage = {
+        role: 'assistant',
         content: contentBlocksToString(message.content as any),
         reasoning: message.reasoning || message.reasoning_content || undefined,
+        toolCalls,
       }
-    })
-    .filter(message => message.content.trim().length > 0 || (message.reasoning?.trim().length ?? 0) > 0)
+      if (agentMessage.content.trim() || (agentMessage.reasoning?.trim().length ?? 0) > 0 || toolCalls?.length) {
+        result.push(agentMessage)
+      }
+      continue
+    }
+
+    if (message.role === 'tool') {
+      const toolCallId = String(message.tool_call_id || '').trim()
+      if (!toolCallId || !toolCallIds.has(toolCallId)) continue
+      const content = contentBlocksToString(message.content as any)
+      if (!content.trim()) continue
+      result.push({
+        role: 'tool',
+        content,
+        toolCallId,
+        name: message.tool_name || undefined,
+      })
+      toolCallIds.delete(toolCallId)
+    }
+  }
+
+  return result
 }
 
 function appendStateEvent(state: SessionState, event: string, payload: any): void {
@@ -435,13 +523,9 @@ export async function handleEkkoAgentRun(
       })
     } else if (event.type === 'context.estimated') {
       contextEstimate = event.estimate
-      state.contextTokens = event.estimate.contextTokens
-      emit('usage.updated', {
-        event: 'usage.updated',
+      emit('context.estimated', {
+        event: 'context.estimated',
         run_id: event.runId,
-        input_tokens: state.inputTokens || 0,
-        output_tokens: state.outputTokens || 0,
-        total_tokens: (state.inputTokens || 0) + (state.outputTokens || 0),
         contextTokens: event.estimate.contextTokens,
         context_tokens: event.estimate.contextTokens,
         systemPromptTokens: event.estimate.systemPromptTokens,
@@ -644,6 +728,7 @@ export async function handleEkkoAgentRun(
     }
     state.inputTokens = (state.inputTokens || 0) + usageInput
     state.outputTokens = (state.outputTokens || 0) + usageOutput
+    if (contextEstimate?.contextTokens != null) state.contextTokens = contextEstimate.contextTokens
     updateSessionStats(sessionId)
     emit('usage.updated', {
       event: 'usage.updated',
