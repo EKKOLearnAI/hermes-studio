@@ -78,6 +78,7 @@ const currentRoomCanManage = computed(() => canManageRoom(currentRoom.value))
 const visibleApproval = computed(() => currentRoomCanManage.value ? store.activePendingApproval : null)
 const currentWorkspaceLabel = computed(() => workspaceBasename(currentRoom.value?.workspace || ''))
 const showWorkspaceModal = ref(false)
+const workspaceRoomId = ref<string | null>(null)
 const workspaceValue = ref('')
 const toolPanelStyle = computed(() => ({ width: `${toolPanelWidth.value}px` }))
 
@@ -247,10 +248,10 @@ function extractApiErrorMessage(err: any): string {
     return raw || t('common.saveFailed')
 }
 
-async function handleCreateRoom(name: string, inviteCode: string, userName: string, description: string, compression: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number }) {
+async function handleCreateRoom(name: string, inviteCode: string, userName: string, description: string, compression: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number }, workspace: string) {
     try {
         store.setUserInfo(userName, description)
-        const res = await store.createNewRoom(name, inviteCode, undefined, compression)
+        const res = await store.createNewRoom(name, inviteCode, undefined, compression, workspace)
         showCreateModal.value = false
         const failureMessage = formatAgentFailures(res.agentResults)
         if (failureMessage) message.warning(failureMessage)
@@ -288,7 +289,10 @@ async function copyRoomLink(roomId: string) {
 
 const roomContextMenuOptions = computed<DropdownOption[]>(() => {
     const options: DropdownOption[] = [{ label: t('groupChat.copyRoomLink'), key: 'copy-link' }]
-    if (canManageRoom(contextRoom.value)) options.push({ label: t('groupChat.cloneRoom'), key: 'clone-room' })
+    if (canManageRoom(contextRoom.value)) {
+        options.push({ label: t('chat.setWorkspace'), key: 'set-workspace' })
+        options.push({ label: t('groupChat.cloneRoom'), key: 'clone-room' })
+    }
     return options
 })
 
@@ -310,6 +314,9 @@ function handleRoomContextSelect(key: string) {
     if (!roomId) return
     if (key === 'copy-link') {
         void copyRoomLink(roomId)
+    } else if (key === 'set-workspace') {
+        if (!canManageRoom(contextRoom.value)) return
+        handleOpenWorkspacePicker(roomId)
     } else if (key === 'clone-room') {
         if (!canManageRoom(contextRoom.value)) return
         handleOpenCloneRoom(roomId)
@@ -429,18 +436,24 @@ async function confirmAddAgent() {
     }
 }
 
-function handleOpenWorkspacePicker() {
-    if (!currentRoomCanManage.value) return
-    workspaceValue.value = currentRoom.value?.workspace || ''
+function handleOpenWorkspacePicker(roomId = store.currentRoomId || '') {
+    if (!roomId) return
+    const room = store.rooms.find(r => r.id === roomId)
+    if (!canManageRoom(room)) return
+    workspaceRoomId.value = roomId
+    workspaceValue.value = room?.workspace || ''
     showWorkspaceModal.value = true
 }
 
 async function handleSaveWorkspace() {
-    if (!store.currentRoomId) return
-    if (!currentRoomCanManage.value) return
+    const roomId = workspaceRoomId.value || store.currentRoomId
+    if (!roomId) return
+    const room = store.rooms.find(r => r.id === roomId)
+    if (!canManageRoom(room)) return
     try {
-        await store.setRoomWorkspace(store.currentRoomId, String(workspaceValue.value || '').trim())
+        await store.setRoomWorkspace(roomId, String(workspaceValue.value || '').trim())
         showWorkspaceModal.value = false
+        workspaceRoomId.value = null
         message.success(t('chat.workspaceSet'))
     } catch (err: any) {
         message.error(err?.message || t('chat.workspaceSetFailed'))
@@ -602,12 +615,26 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
             @drop="handleChatDrop"
         >
             <div class="chat-header">
-                <button class="icon-btn header-sidebar-toggle" @click="toggleSidebar">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="9" y1="3" x2="9" y2="21" />
-                    </svg>
-                </button>
-                <span class="room-title-text">{{ store.roomName || (store.currentRoomId || t('groupChat.title')) }}</span>
+                <div class="header-left">
+                    <button class="icon-btn header-sidebar-toggle" @click="toggleSidebar">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="9" y1="3" x2="9" y2="21" />
+                        </svg>
+                    </button>
+                    <span class="room-title-text">{{ store.roomName || (store.currentRoomId || t('groupChat.title')) }}</span>
+                    <button
+                        v-if="currentRoom?.workspace"
+                        class="workspace-badge"
+                        type="button"
+                        :title="currentRoom.workspace"
+                        @click="() => handleOpenWorkspacePicker()"
+                    >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                        </svg>
+                        <span>{{ currentWorkspaceLabel }}</span>
+                    </button>
+                </div>
                 <div class="header-info">
                     <!-- Stacked avatars (user + agents) -->
                     <NPopover v-if="store.agents.length" trigger="click" placement="bottom-end" :width="220">
@@ -657,12 +684,6 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     </div>
                     <button v-if="currentRoomCanManage" class="icon-btn" :title="t('groupChat.addAgent')" @click="handleAddAgent">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    </button>
-                    <button v-if="currentRoomCanManage" class="workspace-chip" :title="currentRoom?.workspace || t('chat.setWorkspace')" @click="handleOpenWorkspacePicker">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                        </svg>
-                        <span>{{ currentWorkspaceLabel || t('chat.setWorkspace') }}</span>
                     </button>
                     <button v-if="currentRoomCanManage" class="icon-btn" :title="t('groupChat.compressionConfig')" @click="handleOpenCompressionConfig">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 4.6a1.65 1.65 0 0 0 1.51 1V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1.51 1z"/></svg>
@@ -1520,14 +1541,23 @@ export default defineComponent({ components: { CreateRoomForm } })
         margin-left: -10px;
     }
 
+    .header-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        overflow: hidden;
+        flex: 1;
+        min-width: 0;
+    }
+
     .room-title-text {
         font-size: 16px;
         font-weight: 600;
         color: $text-primary;
-        flex: 1;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        min-width: 0;
     }
 
     .header-info {
@@ -1542,31 +1572,36 @@ export default defineComponent({ components: { CreateRoomForm } })
         background: rgba(var(--accent-primary-rgb), 0.1);
     }
 
-    .workspace-chip {
+    .workspace-badge {
+        border: 0;
+        font-size: 11px;
+        line-height: 16px;
+        color: $text-muted;
+        background: rgba(255, 255, 255, 0.05);
+        padding: 2px 8px;
+        border-radius: 4px;
+        max-width: 160px;
         display: inline-flex;
         align-items: center;
-        gap: 5px;
-        max-width: 180px;
-        height: 28px;
-        padding: 0 9px;
-        border: 1px solid $border-color;
-        border-radius: 999px;
-        background: $bg-secondary;
-        color: $text-secondary;
-        font-size: 12px;
+        gap: 4px;
+        overflow: hidden;
         cursor: pointer;
-        transition: all $transition-fast;
+        flex-shrink: 0;
+
+        svg {
+            flex: 0 0 auto;
+        }
 
         span {
+            min-width: 0;
             overflow: hidden;
-            white-space: nowrap;
             text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         &:hover {
-            border-color: rgba(var(--accent-primary-rgb), 0.35);
-            color: $text-primary;
-            background: rgba(var(--accent-primary-rgb), 0.08);
+            color: $text-secondary;
+            background: rgba(var(--accent-primary-rgb), 0.06);
         }
     }
 

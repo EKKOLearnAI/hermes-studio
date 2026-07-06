@@ -36,6 +36,24 @@ describe('group chat store workspace', () => {
     vi.clearAllMocks()
   })
 
+  it('passes selected workspace when creating a room', async () => {
+    const { useGroupChatStore } = await import('@/stores/hermes/group-chat')
+    const store = useGroupChatStore()
+    groupChatApiMock.createRoom.mockResolvedValue({
+      room: { id: 'room-1', name: 'Room 1', inviteCode: null, workspace: '/tmp/repo' },
+      agents: [],
+    })
+
+    await store.createNewRoom('Room 1', 'invite-1', [], { triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10 }, '/tmp/repo')
+
+    expect(groupChatApiMock.createRoom).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Room 1',
+      inviteCode: 'invite-1',
+      workspace: '/tmp/repo',
+    }))
+    expect(store.rooms[0].workspace).toBe('/tmp/repo')
+  })
+
   it('updates the rooms list after the workspace API succeeds', async () => {
     const { useGroupChatStore } = await import('@/stores/hermes/group-chat')
     const store = useGroupChatStore()

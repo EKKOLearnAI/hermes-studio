@@ -670,13 +670,14 @@ const currentUserAvatar = ref('')
         }
     }
 
-    async function createNewRoom(name: string, inviteCode: string, agentList?: { profile: string; name?: string; description?: string; invited?: boolean }[], compression?: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number }) {
+    async function createNewRoom(name: string, inviteCode: string, agentList?: { profile: string; name?: string; description?: string; invited?: boolean }[], compression?: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number }, workspace?: string) {
         try {
             const res = await createRoom({
                 name,
                 inviteCode,
                 agents: agentList,
                 compression: compression || { triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10 },
+                workspace: workspace || undefined,
             })
             upsertRoom(res.room)
             return res

@@ -148,11 +148,12 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         return
     }
 
-    const { name, inviteCode, agents, compression } = ctx.request.body as {
+    const { name, inviteCode, agents, compression, workspace } = ctx.request.body as {
         name?: string
         inviteCode?: string
         agents?: { profile: string; name?: string; description?: string; invited?: boolean }[]
         compression?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }
+        workspace?: string
     }
     if (!name || !inviteCode) {
         ctx.status = 400
@@ -168,11 +169,30 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
 
     const roomId = generateId()
     const storage = chatServer.getStorage()
+    let normalizedWorkspace = ''
+    if (workspace !== undefined) {
+        if (typeof workspace !== 'string') {
+            ctx.status = 400
+            ctx.body = { error: 'workspace must be a string' }
+            return
+        }
+        const rawWorkspace = workspace.trim()
+        if (rawWorkspace) {
+            try {
+                normalizedWorkspace = (await assertAllowedWorkspaceFolder(rawWorkspace)).fullPath
+            } catch (err: any) {
+                ctx.status = Number(err?.status || 403)
+                ctx.body = { error: err?.message || 'Workspace folder is not allowed' }
+                return
+            }
+        }
+    }
     const compressionConfig = compression ? {
         triggerTokens: compression.triggerTokens,
         maxHistoryTokens: compression.maxHistoryTokens,
         tailMessageCount: compression.tailMessageCount,
-    } : undefined
+        workspace: normalizedWorkspace,
+    } : { workspace: normalizedWorkspace }
     storage.saveRoom(roomId, name, inviteCode, compressionConfig)
     persistRoomCreator(storage, roomId, ctx.state?.user)
 

@@ -4254,6 +4254,9 @@
                   },
                   "name": {
                     "type": "string"
+                  },
+                  "workspace": {
+                    "type": "string"
                   }
                 },
                 "required": [

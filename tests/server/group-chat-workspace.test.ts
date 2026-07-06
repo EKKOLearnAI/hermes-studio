@@ -139,6 +139,49 @@ describe('group chat room workspace', () => {
     server.getIO().close()
   })
 
+  it('sets a validated top-level workspace when creating a room', async () => {
+    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const server = new GroupChatServer(httpServer)
+    setGroupChatServer(server)
+    const workspace = join(root, 'repo with spaces')
+    await mkdir(workspace)
+
+    const handler = await routeHandler('/api/hermes/group-chat/rooms', 'POST')
+    const ctx: any = {
+      request: { body: { name: 'Room 1', inviteCode: 'invite-1', workspace, agents: [] } },
+      status: 200,
+      body: undefined,
+    }
+
+    await handler(ctx, async () => {})
+
+    expect(ctx.body.room.workspace).toBe(workspace)
+    expect(server.getStorage().getRoom(ctx.body.room.id)?.workspace).toBe(workspace)
+    server.getIO().close()
+  })
+
+  it('rejects invalid top-level workspace values when creating a room', async () => {
+    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const server = new GroupChatServer(httpServer)
+    setGroupChatServer(server)
+
+    const handler = await routeHandler('/api/hermes/group-chat/rooms', 'POST')
+    const ctx: any = {
+      request: { body: { name: 'Room 1', inviteCode: 'invite-1', workspace: '/definitely/outside', agents: [] } },
+      status: 200,
+      body: undefined,
+    }
+
+    await handler(ctx, async () => {})
+
+    expect(ctx.status).toBe(403)
+    expect(ctx.body).toEqual({ error: 'Workspace folder is not allowed' })
+    expect(server.getStorage().getAllRooms()).toEqual([])
+    server.getIO().close()
+  })
+
   it('ignores unvalidated workspace values hidden in create-room compression config', async () => {
     const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
     const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')

@@ -2,8 +2,14 @@
 date: 2026-07-06
 pr: 1953
 feature: Group Chat workspace access and stale Bridge run fencing
-impact: Read-only Group Chat room access no longer exposes invite codes or workspace mutation controls, agent sockets cannot perform realtime management actions, and clear/delete/workspace changes fail fast when active Bridge interrupts are not synchronized.
+impact: Group Chat room creation can set a validated workspace up front, read-only room access no longer exposes invite codes or workspace mutation controls, agent sockets cannot perform realtime management actions, and clear/delete/workspace changes fail fast when active Bridge interrupts are not synchronized.
 ---
+
+Group Chat room creation now exposes the same shared `FolderPicker` workspace
+selection pattern as single-chat creation. The server accepts only a top-level
+`workspace` field, validates it through the workspace route validator before the
+room row is created, and still ignores any hidden workspace value inside the
+compression config payload.
 
 Group Chat room serialization now includes an explicit `canManage` flag and redacts
 `inviteCode` and `workspace` for invite/member read-only access. The client uses
