@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const authMocks = vi.hoisted(() => ({
   authenticateUserToken: vi.fn(),
@@ -134,7 +137,11 @@ async function waitForMockCallWith(
 }
 
 describe('GlobalAgentServer', () => {
+  let testHome = ''
+
   beforeEach(() => {
+    testHome = mkdtempSync(join(tmpdir(), 'global-agent-server-'))
+    vi.stubEnv('HERMES_WEB_UI_HOME', testHome)
     vi.resetModules()
     vi.clearAllMocks()
     clientSocketMocks.reset()
@@ -144,6 +151,12 @@ describe('GlobalAgentServer', () => {
     chatRunMocks.clearSessionHistory.mockReturnValue({ deleted: 2, hadMemoryState: true })
     authMocks.authenticateUserToken.mockResolvedValue(null)
     authMocks.userCanAccessProfile.mockReturnValue(false)
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    if (testHome) rmSync(testHome, { recursive: true, force: true })
+    testHome = ''
   })
 
   it('registers a local control namespace with token auth', async () => {
