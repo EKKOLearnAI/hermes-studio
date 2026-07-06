@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client'
-import { randomBytes } from 'crypto'
+import { createHash, randomBytes } from 'crypto'
 import { getToken } from '../../../services/auth'
 import { logger } from '../../../services/logger'
 import { updateUsage } from '../../../db/hermes/usage-store'
@@ -70,6 +70,11 @@ type GroupEstimateMessage = { role: 'user' | 'assistant'; content: string }
 export type GroupModelContext = { model: string; provider: string }
 type WorkspaceDiffTerminalStatus = 'completed' | 'failed' | 'aborted'
 type WorkspaceDiffBroadcaster = (roomId: string, message: MessageData & Record<string, unknown>, totalTokens: number) => void
+
+function isUnknownBridgeSessionError(err: unknown): boolean {
+    const message = String((err as any)?.message || err || '').toLowerCase()
+    return message.includes('unknown session') || message.includes('session not found')
+}
 
 interface WorkspaceDiffRunState {
     roomId: string
@@ -298,22 +303,36 @@ class AgentClient {
         this.socket!.emit('approval.resolved', { roomId, agentName: this.name, ...payload })
     }
 
-    async interrupt(roomId: string): Promise<void> {
+    async interrupt(roomId: string): Promise<boolean> {
         const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
         const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed)
-        const result = await new AgentBridgeClient().interrupt(sessionId, 'Interrupted by group chat user', this.profile)
+        let result: Awaited<ReturnType<AgentBridgeClient['interrupt']>> | null = null
+        try {
+            result = await new AgentBridgeClient().interrupt(sessionId, 'Interrupted by group chat user', this.profile)
+        } catch (err) {
+            if (!isUnknownBridgeSessionError(err)) throw err
+            logger.info(`[AgentClients] ${this.name}: bridge session ${sessionId} was already idle/missing during interrupt`)
+        }
         const synced = result?.synced !== false
+        if (!synced) return false
         const abortedStates = this.markWorkspaceDiffAborted(roomId)
         try {
-            if (synced) {
-                for (const state of abortedStates) {
-                    await this.finalizeWorkspaceDiffOnce(state, 'aborted', null)
-                }
+            for (const state of abortedStates) {
+                await this.finalizeWorkspaceDiffOnce(state, 'aborted', null)
             }
         } finally {
-            this.stopTyping(roomId)
-            this.emitContextStatus(roomId, 'ready')
+            try {
+                this.stopTyping(roomId)
+            } catch (err: any) {
+                logger.warn(`[AgentClients] ${this.name}: failed to emit stop_typing after interrupt: ${err.message || err}`)
+            }
+            try {
+                this.emitContextStatus(roomId, 'ready')
+            } catch (err: any) {
+                logger.warn(`[AgentClients] ${this.name}: failed to emit ready status after interrupt: ${err.message || err}`)
+            }
         }
+        return true
     }
 
     emitMessageStreamStart(roomId: string, messageId: string): void {
@@ -788,6 +807,10 @@ class AgentClient {
                 currentContent = extractBridgeFinalText(lastChunk)
                 totalContent = currentContent
             }
+            if (!this.roomSessionIsCurrent(roomId, sessionId)) {
+                await stopStaleStartedRun?.()
+                return
+            }
             recordBridgeUsage(roomId, this.profile, lastChunk?.result)
             logger.debug(`[AgentClients] ${this.name}: bridge response completed, content length=${totalContent.length}`)
             if (currentContent) {
@@ -824,7 +847,7 @@ class AgentClient {
                 return
             }
             if (workspaceRunState && !bridgeStarted) {
-                this.discardWorkspaceDiffRun(workspaceRunState)
+                await stopStaleStartedRun?.('Interrupted after group chat bridge launch failed')
             } else {
                 await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'failed', streamStarted ? streamMessageId : null)
             }
@@ -1076,8 +1099,11 @@ class AgentClient {
 }
 
 export function groupBridgeSessionId(roomId: string, profile: string, name: string, sessionSeed: string): string {
-    const raw = `gc_${roomId}_${profile}_${name}_${sessionSeed || '0'}`
-    return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120)
+    const raw = `gc_${roomId}_${profile}_${name}_${sessionSeed || '0'}`.replace(/[^a-zA-Z0-9_-]/g, '_')
+    if (raw.length <= 120) return raw
+    const seedHash = createHash('sha256').update(String(sessionSeed || '0')).digest('hex').slice(0, 12)
+    const suffix = `_s_${seedHash}`
+    return `${raw.slice(0, Math.max(0, 120 - suffix.length))}${suffix}`
 }
 
 function groupMessageId(roomId: string, profile: string, name: string): string {
@@ -1255,11 +1281,18 @@ export class AgentClients {
         return Promise.all(agents.map((agent) => agent.sendMessage(roomId, content)))
     }
 
+    private buildUnsyncedInterruptError(roomId: string): Error {
+        const err = new Error(`Room "${roomId}" still has running bridge sessions; try again after the interrupt completes`) as Error & { status?: number }
+        err.status = 409
+        return err
+    }
+
     async interruptAgent(roomId: string, agentName: string): Promise<void> {
         const agent = this.getAgents(roomId).find(a => a.name === agentName)
         if (!agent) throw new Error(`Agent "${agentName}" not found in room "${roomId}"`)
         this._mentionQueue.delete(`${roomId}:${agent.name}`)
-        await agent.interrupt(roomId)
+        const synced = await agent.interrupt(roomId)
+        if (!synced) throw this.buildUnsyncedInterruptError(roomId)
     }
 
     async interruptRoom(roomId: string): Promise<void> {
@@ -1269,9 +1302,17 @@ export class AgentClients {
         }
         const agents = this.getAgents(roomId)
         const results = await Promise.allSettled(agents.map(agent => agent.interrupt(roomId)))
+        let unsynced = false
         for (const result of results) {
-            if (result.status === 'rejected') logger.warn(`[AgentClients] failed to interrupt room ${roomId}: ${result.reason?.message || result.reason}`)
+            if (result.status === 'rejected') {
+                unsynced = true
+                logger.warn(`[AgentClients] failed to interrupt room ${roomId}: ${result.reason?.message || result.reason}`)
+            } else if (result.value === false) {
+                unsynced = true
+                logger.warn(`[AgentClients] bridge interrupt for room ${roomId} was not synchronized`)
+            }
         }
+        if (unsynced) throw this.buildUnsyncedInterruptError(roomId)
     }
 
     /**

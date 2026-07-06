@@ -1139,6 +1139,7 @@ export class GroupChatServer {
     }
 
     private canSocketManageRoom(socket: Socket, roomId: string): boolean {
+        if (this.socketRequestedSourceMap?.get(socket.id) === 'agent') return false
         const room = typeof this.storage.getRoom === 'function' ? this.storage.getRoom(roomId) : undefined
         if (!room) return false
         const authUser = socket.data?.authUser as AuthenticatedUser | undefined

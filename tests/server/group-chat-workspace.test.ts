@@ -112,6 +112,33 @@ describe('group chat room workspace', () => {
     server.getIO().close()
   })
 
+  it('does not switch workspace when active room agents do not finish interrupting', async () => {
+    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const server = new GroupChatServer(httpServer)
+    const storage = server.getStorage()
+    const workspace = join(root, 'repo')
+    await mkdir(workspace)
+    storage.saveRoom('room-1', 'Room 1')
+    setGroupChatServer(server)
+    vi.spyOn(server.agentClients, 'interruptRoom').mockRejectedValue(Object.assign(new Error('still running'), { status: 409 }))
+
+    const handler = await routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace', 'PUT')
+    const ctx: any = {
+      params: { roomId: 'room-1' },
+      request: { body: { workspace } },
+      status: 200,
+      body: undefined,
+    }
+
+    await handler(ctx, async () => {})
+
+    expect(ctx.status).toBe(409)
+    expect(ctx.body).toEqual({ error: 'still running' })
+    expect(storage.getRoom('room-1')?.workspace).toBe('')
+    server.getIO().close()
+  })
+
   it('ignores unvalidated workspace values hidden in create-room compression config', async () => {
     const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
     const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
@@ -184,6 +211,8 @@ describe('group chat room workspace', () => {
 
     expect(ctx.body.room.id).toBe('room-1')
     expect(ctx.body.room.workspace).toBe('')
+    expect(ctx.body.room.inviteCode).toBe(null)
+    expect(ctx.body.room.canManage).toBe(false)
     server.getIO().close()
   })
 
@@ -204,13 +233,15 @@ describe('group chat room workspace', () => {
     const list = await routeHandler('/api/hermes/group-chat/rooms', 'GET')
     const listCtx: any = { state: { user }, status: 200, body: undefined }
     await list(listCtx, async () => {})
-    expect(listCtx.body.rooms).toEqual([expect.objectContaining({ id: 'room-1', workspace: '' })])
+    expect(listCtx.body.rooms).toEqual([expect.objectContaining({ id: 'room-1', workspace: '', inviteCode: null, canManage: false })])
 
     const detail = await routeHandler('/api/hermes/group-chat/rooms/:roomId', 'GET')
     const detailCtx: any = { params: { roomId: 'room-1' }, query: {}, state: { user }, status: 200, body: undefined }
     await detail(detailCtx, async () => {})
     expect(detailCtx.status).toBe(200)
     expect(detailCtx.body.room.workspace).toBe('')
+    expect(detailCtx.body.room.inviteCode).toBe(null)
+    expect(detailCtx.body.room.canManage).toBe(false)
 
     const updateWorkspace = await routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace', 'PUT')
     const workspaceCtx: any = { params: { roomId: 'room-1' }, request: { body: { workspace } }, state: { user }, status: 200, body: undefined }

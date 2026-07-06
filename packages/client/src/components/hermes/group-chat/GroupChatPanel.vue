@@ -17,7 +17,7 @@ import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import SettingsCircuitBadge from '@/components/layout/SettingsCircuitBadge.vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
-import type { RoomAgent } from '@/api/hermes/group-chat'
+import type { RoomAgent, RoomInfo } from '@/api/hermes/group-chat'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -70,6 +70,12 @@ function agentAvatarName(agent: RoomAgent): string {
 const hasRoom = computed(() => !!store.currentRoomId)
 const isSuperAdmin = computed(() => isStoredSuperAdmin())
 const currentRoom = computed(() => store.rooms.find(room => room.id === store.currentRoomId) || null)
+const contextRoom = computed(() => store.rooms.find(room => room.id === contextRoomId.value) || null)
+function canManageRoom(room: Pick<RoomInfo, 'canManage'> | null | undefined): boolean {
+    return room?.canManage !== false
+}
+const currentRoomCanManage = computed(() => canManageRoom(currentRoom.value))
+const visibleApproval = computed(() => currentRoomCanManage.value ? store.activePendingApproval : null)
 const currentWorkspaceLabel = computed(() => workspaceBasename(currentRoom.value?.workspace || ''))
 const showWorkspaceModal = ref(false)
 const workspaceValue = ref('')
@@ -87,7 +93,6 @@ const userMemberAvatar = computed(() => {
     } catch { /* malformed JSON — fall through to multiavatar */ }
     return null
 })
-const visibleApproval = computed(() => store.activePendingApproval)
 
 function formatTokens(tokens: number): string {
     if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k tokens`
@@ -257,6 +262,8 @@ async function handleCreateRoom(name: string, inviteCode: string, userName: stri
 }
 
 async function handleDeleteRoom(roomId: string) {
+    const room = store.rooms.find(r => r.id === roomId)
+    if (!canManageRoom(room)) return
     try {
         await store.deleteRoom(roomId)
         if (store.currentRoomId === roomId) {
@@ -279,10 +286,11 @@ async function copyRoomLink(roomId: string) {
     else message.error(t('common.copied') + ' ✗')
 }
 
-const roomContextMenuOptions = computed<DropdownOption[]>(() => [
-    { label: t('groupChat.copyRoomLink'), key: 'copy-link' },
-    { label: t('groupChat.cloneRoom'), key: 'clone-room' },
-])
+const roomContextMenuOptions = computed<DropdownOption[]>(() => {
+    const options: DropdownOption[] = [{ label: t('groupChat.copyRoomLink'), key: 'copy-link' }]
+    if (canManageRoom(contextRoom.value)) options.push({ label: t('groupChat.cloneRoom'), key: 'clone-room' })
+    return options
+})
 
 function handleRoomContextMenu(event: MouseEvent, roomId: string) {
     event.preventDefault()
@@ -303,12 +311,14 @@ function handleRoomContextSelect(key: string) {
     if (key === 'copy-link') {
         void copyRoomLink(roomId)
     } else if (key === 'clone-room') {
+        if (!canManageRoom(contextRoom.value)) return
         handleOpenCloneRoom(roomId)
     }
 }
 
 function handleOpenCloneRoom(roomId: string) {
     const room = store.rooms.find(r => r.id === roomId)
+    if (!canManageRoom(room)) return
     cloneSourceRoomId.value = roomId
     cloneRoomName.value = room?.name ? `${room.name} Copy` : ''
     cloneInviteCode.value = generateCode()
@@ -337,6 +347,7 @@ async function confirmCloneRoom() {
 
 async function handleClearRoomContext() {
     if (!store.currentRoomId) return
+    if (!currentRoomCanManage.value) return
     if (store.contextStatuses.size > 0) {
         message.warning(t('groupChat.compressingInProgress'))
         return
@@ -367,6 +378,7 @@ async function handleSendMessage(content: string, attachments?: Attachment[]) {
 }
 
 async function handleAddAgent() {
+    if (!currentRoomCanManage.value) return
     await profilesStore.fetchProfiles()
     showAddAgentModal.value = true
 }
@@ -418,12 +430,14 @@ async function confirmAddAgent() {
 }
 
 function handleOpenWorkspacePicker() {
+    if (!currentRoomCanManage.value) return
     workspaceValue.value = currentRoom.value?.workspace || ''
     showWorkspaceModal.value = true
 }
 
 async function handleSaveWorkspace() {
     if (!store.currentRoomId) return
+    if (!currentRoomCanManage.value) return
     try {
         await store.setRoomWorkspace(store.currentRoomId, String(workspaceValue.value || '').trim())
         showWorkspaceModal.value = false
@@ -439,6 +453,7 @@ async function handleClearWorkspace() {
 }
 
 function handleOpenCompressionConfig() {
+    if (!currentRoomCanManage.value) return
     const room = store.rooms.find(r => r.id === store.currentRoomId)
     if (room) {
         compressionConfig.value = {
@@ -452,6 +467,7 @@ function handleOpenCompressionConfig() {
 
 async function handleSaveCompressionConfig() {
     if (!store.currentRoomId) return
+    if (!currentRoomCanManage.value) return
     try {
         const res = await updateRoomConfig(store.currentRoomId, { ...compressionConfig.value })
         const idx = store.rooms.findIndex(r => r.id === store.currentRoomId)
@@ -465,6 +481,7 @@ async function handleSaveCompressionConfig() {
 
 async function handleForceCompress() {
     if (!store.currentRoomId || isCompressing.value) return
+    if (!currentRoomCanManage.value) return
     if (store.contextStatuses.size > 0) {
         message.warning(t('groupChat.compressingInProgress'))
         return
@@ -482,6 +499,7 @@ async function handleForceCompress() {
 
 async function handleRemoveAgent(agentId: string) {
     if (!store.currentRoomId) return
+    if (!currentRoomCanManage.value) return
     try {
         await store.removeAgentFromRoom(store.currentRoomId, agentId)
     } catch {
@@ -490,6 +508,7 @@ async function handleRemoveAgent(agentId: string) {
 }
 
 async function handleInterruptAgent(agentName: string) {
+    if (!currentRoomCanManage.value) return
     try {
         await store.interruptAgent(agentName)
     } catch (err: any) {
@@ -498,6 +517,7 @@ async function handleInterruptAgent(agentName: string) {
 }
 
 async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
+    if (!currentRoomCanManage.value) return
     try {
         await store.respondApproval(choice)
     } catch (err: any) {
@@ -537,7 +557,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         <span v-if="room.inviteCode" class="room-code">{{ room.inviteCode }}</span>
                         <span class="room-tokens">{{ formatTokens(room.totalTokens || 0) }}</span>
                     </div>
-                    <NPopconfirm @positive-click="handleDeleteRoom(room.id)">
+                    <NPopconfirm v-if="canManageRoom(room)" @positive-click="handleDeleteRoom(room.id)">
                         <template #trigger>
                             <button class="room-action-btn danger" @click.stop>
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -623,7 +643,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                     <span class="agent-popover-name">{{ agent.name }}</span>
                                     <span class="agent-popover-profile">{{ agent.profile }}</span>
                                 </div>
-                                <button class="agent-popover-remove" @click="handleRemoveAgent(agent.id)">
+                                <button v-if="currentRoomCanManage" class="agent-popover-remove" @click="handleRemoveAgent(agent.id)">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                 </button>
                             </div>
@@ -635,16 +655,16 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :avatar="userMemberAvatar" :size="24" />
                         </span>
                     </div>
-                    <button class="icon-btn" :title="t('groupChat.addAgent')" @click="handleAddAgent">
+                    <button v-if="currentRoomCanManage" class="icon-btn" :title="t('groupChat.addAgent')" @click="handleAddAgent">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                     </button>
-                    <button class="workspace-chip" :title="currentRoom?.workspace || t('chat.setWorkspace')" @click="handleOpenWorkspacePicker">
+                    <button v-if="currentRoomCanManage" class="workspace-chip" :title="currentRoom?.workspace || t('chat.setWorkspace')" @click="handleOpenWorkspacePicker">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
                         </svg>
                         <span>{{ currentWorkspaceLabel || t('chat.setWorkspace') }}</span>
                     </button>
-                    <button class="icon-btn" :title="t('groupChat.compressionConfig')" @click="handleOpenCompressionConfig">
+                    <button v-if="currentRoomCanManage" class="icon-btn" :title="t('groupChat.compressionConfig')" @click="handleOpenCompressionConfig">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 4.6a1.65 1.65 0 0 0 1.51 1V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1.51 1z"/></svg>
                     </button>
                     <NTooltip v-if="isSuperAdmin" trigger="hover">
@@ -668,7 +688,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         </template>
                         {{ t('drawer.files') }} / {{ t('drawer.terminal') }}
                     </NTooltip>
-                    <NPopconfirm @positive-click="handleClearRoomContext">
+                    <NPopconfirm v-if="currentRoomCanManage" @positive-click="handleClearRoomContext">
                         <template #trigger>
                             <button class="icon-btn" :title="t('groupChat.clearContext')">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -742,7 +762,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                 <span v-else>
                                     @{{ status.agentName }} {{ t('groupChat.agentReplying') }}
                                 </span>
-                                <button class="context-stop-btn" :title="t('common.cancel')" @click="handleInterruptAgent(status.agentName)">
+                                <button v-if="currentRoomCanManage" class="context-stop-btn" :title="t('common.cancel')" @click="handleInterruptAgent(status.agentName)">
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                                         <line x1="18" y1="6" x2="6" y2="18" />
                                         <line x1="6" y1="6" x2="18" y2="18" />

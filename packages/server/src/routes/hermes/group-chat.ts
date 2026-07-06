@@ -73,13 +73,17 @@ function canReadRoom(storage: ReturnType<GroupChatServer['getStorage']>, roomId:
     return typeof user?.id === 'number' && typeof storage.getMemberByAuthUserId === 'function' && !!storage.getMemberByAuthUserId(roomId, user.id)
 }
 
-function serializeRoom(room: any, includeWorkspace: boolean) {
+function serializeRoom(room: any, includeManageFields: boolean) {
     if (!room) return room
     const { ownerAuthUserId: _ownerAuthUserId, ...rest } = room
-    if (Object.prototype.hasOwnProperty.call(room, 'workspace')) {
-        return { ...rest, workspace: includeWorkspace ? String(room.workspace || '') : '' }
+    const serialized = { ...rest, canManage: includeManageFields }
+    if (Object.prototype.hasOwnProperty.call(room, 'inviteCode')) {
+        serialized.inviteCode = includeManageFields ? room.inviteCode ?? null : null
     }
-    return rest
+    if (Object.prototype.hasOwnProperty.call(room, 'workspace')) {
+        serialized.workspace = includeManageFields ? String(room.workspace || '') : ''
+    }
+    return serialized
 }
 
 function persistRoomCreator(storage: ReturnType<GroupChatServer['getStorage']>, roomId: string, user: any): void {
@@ -480,7 +484,13 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         return
     }
     // Interrupt active bridge runs, then evict sockets and disconnect agents before deleting persisted data.
-    await chatServer.deleteRoomRuntimeState(roomId)
+    try {
+        await chatServer.deleteRoomRuntimeState(roomId)
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 409)
+        ctx.body = { error: err?.message || 'Room interrupt did not complete' }
+        return
+    }
     // Delete all data
     storage.deleteRoom(roomId)
     ctx.body = { success: true }
@@ -507,7 +517,13 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clear-context', async
         ctx.body = { error: 'Access denied' }
         return
     }
-    await chatServer.clearRoomRuntimeState(roomId)
+    try {
+        await chatServer.clearRoomRuntimeState(roomId)
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 409)
+        ctx.body = { error: err?.message || 'Room interrupt did not complete' }
+        return
+    }
     storage.clearRoomContext(roomId)
     ctx.body = { success: true, room: serializeRoom(storage.getRoom(roomId), true) }
 })

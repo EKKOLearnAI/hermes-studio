@@ -93,6 +93,39 @@ describe('group chat agent workspace bridge runs', () => {
     }
   }
 
+  it('keeps the session seed freshness suffix when long names force bridge session id truncation', async () => {
+    const { groupBridgeSessionId } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const longAgentName = 'Worker'.repeat(40)
+
+    const first = groupBridgeSessionId('room-1', 'default', longAgentName, 'seed-1')
+    const second = groupBridgeSessionId('room-1', 'default', longAgentName, 'seed-2')
+
+    expect(first).toHaveLength(120)
+    expect(second).toHaveLength(120)
+    expect(first).not.toBe(second)
+    expect(first).toMatch(/_s_[0-9a-f]{12}$/)
+    expect(second).toMatch(/_s_[0-9a-f]{12}$/)
+  })
+
+  it('does not block room-wide interrupts for idle agents with no bridge session', async () => {
+    bridgeMock.interrupt.mockRejectedValueOnce(new Error('unknown session'))
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const clients = new AgentClients()
+    const client = await clients.createAgent({
+      agentId: 'agent-1',
+      profile: 'default',
+      name: 'Worker',
+      description: '',
+      invited: 0,
+    } as any) as any
+    const storage = { getRoom: vi.fn(() => ({ sessionSeed: 'seed-1', workspace: '' })) }
+    client.setStorage(storage as any)
+    ;(clients as any).rooms.set('room-1', new Map([[client.agentId, client]]))
+
+    await expect(clients.interruptRoom('room-1')).resolves.toBeUndefined()
+    expect(bridgeMock.interrupt).toHaveBeenCalledWith('gc_room-1_default_Worker_seed-1', 'Interrupted by group chat user', 'default')
+  })
+
   async function createClient(workspace = '') {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
     const clients = new AgentClients()
@@ -238,6 +271,26 @@ describe('group chat agent workspace bridge runs', () => {
     expect(trackerMock.completeWorkspaceRunCheckpointDraft).toHaveBeenCalledTimes(1)
   })
 
+  it('does not fail a synced interrupt when best-effort UI status emits cannot use the socket', async () => {
+    const client = await createClient('/tmp/workspace')
+    mockSocket.connected = false
+    const sessionId = 'gc_room-1_default_Worker_seed-1'
+    const runId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    client.beginWorkspaceDiffIfNeeded({ roomId: 'room-1', sessionId, runId, workspace: '/tmp/workspace' })
+    const saveWorkspaceDiffMessageForRun = client.__testStorage.saveWorkspaceDiffMessageForRun
+    saveWorkspaceDiffMessageForRun.mockReturnValue({ message: { id: 'diff-1', roomId: 'room-1' }, totalTokens: 0 })
+    ;(trackerMock.completeWorkspaceRunCheckpointDraft as any).mockReturnValueOnce(workspaceDraft(runId, sessionId))
+
+    try {
+      await expect(client.interrupt('room-1')).resolves.toBe(true)
+    } finally {
+      mockSocket.connected = true
+    }
+
+    expect(saveWorkspaceDiffMessageForRun).toHaveBeenCalledTimes(1)
+    expect(saveWorkspaceDiffMessageForRun.mock.calls[0][0]).toMatchObject({ runId, status: 'aborted' })
+  })
+
   it('does not mark workspace diff runs aborted when bridge interrupt fails', async () => {
     bridgeMock.interrupt.mockRejectedValueOnce(new Error('stale session'))
     const client = await createClient('/tmp/workspace')
@@ -254,7 +307,7 @@ describe('group chat agent workspace bridge runs', () => {
     expect(mockSocket.emit).not.toHaveBeenCalledWith('context_status', expect.objectContaining({ roomId: 'room-1', status: 'ready' }))
   })
 
-  it('defers aborted workspace diff finalization when bridge interrupt is not synced yet', async () => {
+  it('keeps workspace diff finalization pending when bridge interrupt is not synced yet', async () => {
     bridgeMock.interrupt.mockResolvedValueOnce({ ok: true, synced: false })
     const client = await createClient('/tmp/workspace')
     const sessionId = 'gc_room-1_default_Worker_seed-1'
@@ -263,17 +316,18 @@ describe('group chat agent workspace bridge runs', () => {
     const saveWorkspaceDiffMessageForRun = client.__testStorage.saveWorkspaceDiffMessageForRun
     saveWorkspaceDiffMessageForRun.mockReturnValue({ message: { id: 'diff-1', roomId: 'room-1' }, totalTokens: 0 })
 
-    await client.interrupt('room-1')
+    await expect(client.interrupt('room-1')).resolves.toBe(false)
 
     expect(saveWorkspaceDiffMessageForRun).not.toHaveBeenCalled()
     expect(trackerMock.completeWorkspaceRunCheckpointDraft).not.toHaveBeenCalled()
     expect(client.workspaceDiffRuns.size).toBe(1)
+    expect(mockSocket.emit).not.toHaveBeenCalledWith('context_status', expect.objectContaining({ roomId: 'room-1', status: 'ready' }))
 
     ;(trackerMock.completeWorkspaceRunCheckpointDraft as any).mockReturnValueOnce(workspaceDraft(runId, sessionId))
     await client.finalizeWorkspaceDiffOnce(state, 'failed', 'terminal-message-id')
 
     expect(saveWorkspaceDiffMessageForRun).toHaveBeenCalledTimes(1)
-    expect(saveWorkspaceDiffMessageForRun.mock.calls[0][0]).toMatchObject({ runId, status: 'aborted' })
+    expect(saveWorkspaceDiffMessageForRun.mock.calls[0][0]).toMatchObject({ runId, status: 'failed' })
   })
 
   it('discards workspace diff finalization when the room session generation changed', async () => {

@@ -296,6 +296,31 @@ describe('Group Chat member/agent identity sync', () => {
     expect(ctx.body).toEqual({ success: true })
   })
 
+  it('does not delete persisted room data when runtime interrupt does not complete', async () => {
+    const storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room 1', ownerAuthUserId: 7 })),
+      deleteRoom: vi.fn(),
+    }
+    const chatServer = {
+      getStorage: () => storage,
+      deleteRoomRuntimeState: vi.fn(async () => { throw Object.assign(new Error('still running'), { status: 409 }) }),
+    }
+    setGroupChatServer(chatServer as any)
+
+    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId', 'DELETE')
+    const ctx: any = {
+      params: { roomId: 'room-1' },
+      state: { user: { id: 1, username: 'root', role: 'super_admin' } },
+      status: 200,
+      body: undefined,
+    }
+    await handler(ctx, async () => {})
+
+    expect(ctx.status).toBe(409)
+    expect(ctx.body).toEqual({ error: 'still running' })
+    expect(storage.deleteRoom).not.toHaveBeenCalled()
+  })
+
   it('interrupts agents before evicting in-memory room sockets so deleted rooms reject late realtime messages', async () => {
     const calls: string[] = []
     const socketsLeave = vi.fn(() => { calls.push('sockets-leave') })
@@ -393,6 +418,32 @@ describe('Group Chat member/agent identity sync', () => {
     expect(ctx.body).toEqual({ success: true, room: expect.objectContaining({ id: 'room-1', workspace: '/tmp/workspace' }) })
   })
 
+  it('does not clear persisted context when runtime interrupt does not complete', async () => {
+    const room = { id: 'room-1', name: 'Room 1', inviteCode: 'invite', ownerAuthUserId: 7, workspace: '/tmp/workspace' }
+    const storage = {
+      getRoom: vi.fn(() => room),
+      clearRoomContext: vi.fn(),
+    }
+    const chatServer = {
+      getStorage: () => storage,
+      clearRoomRuntimeState: vi.fn(async () => { throw Object.assign(new Error('still running'), { status: 409 }) }),
+    }
+    setGroupChatServer(chatServer as any)
+
+    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/clear-context', 'POST')
+    const ctx: any = {
+      params: { roomId: 'room-1' },
+      state: { user: { id: 1, username: 'root', role: 'super_admin' } },
+      status: 200,
+      body: undefined,
+    }
+    await handler(ctx, async () => {})
+
+    expect(ctx.status).toBe(409)
+    expect(ctx.body).toEqual({ error: 'still running' })
+    expect(storage.clearRoomContext).not.toHaveBeenCalled()
+  })
+
   it('rejects authenticated Socket.IO room joins without invite, membership, owner, or profile scope', () => {
     const emit = vi.fn()
     const server = Object.create(GroupChatServer.prototype) as any
@@ -443,6 +494,29 @@ describe('Group Chat member/agent identity sync', () => {
       id: 'socket-1',
       data: { authUser: { id: 42, username: 'member', role: 'admin', profiles: ['other'] } },
     }
+    const interruptAck = vi.fn()
+    const approvalAck = vi.fn()
+
+    await server.handleInterruptAgent(socket, { roomId: 'room-1', agentName: 'Worker' }, interruptAck)
+    await server.handleApprovalRespond(socket, { roomId: 'room-1', approval_id: 'approval-1', choice: 'once' }, approvalAck)
+
+    expect(interruptAck).toHaveBeenCalledWith({ error: 'Access denied' })
+    expect(approvalAck).toHaveBeenCalledWith({ error: 'Access denied' })
+    expect(server.agentClients.interruptAgent).not.toHaveBeenCalled()
+  })
+
+  it('denies runtime agent sockets realtime management actions even after they join the room', async () => {
+    const emit = vi.fn()
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map([['room-1', { hasOnlineMember: vi.fn(() => true) }]])
+    server.socketRequestedSourceMap = new Map([['agent-socket', 'agent']])
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', ownerAuthUserId: 7, inviteCode: 'secret' })),
+      getRoomsForProfiles: vi.fn(() => []),
+    }
+    server.agentClients = { interruptAgent: vi.fn() }
+    server.nsp = { to: vi.fn(() => ({ emit })) }
+    const socket = { id: 'agent-socket', data: {} }
     const interruptAck = vi.fn()
     const approvalAck = vi.fn()
 
@@ -596,7 +670,7 @@ describe('Group Chat member/agent identity sync', () => {
 
     expect(storage.getRoomsForProfiles).toHaveBeenCalledWith(['default', 'research'])
     expect(storage.getAllRooms).not.toHaveBeenCalled()
-    expect(ctx.body).toEqual({ rooms: visibleRooms })
+    expect(ctx.body).toEqual({ rooms: [expect.objectContaining({ id: 'room-default', inviteCode: null, canManage: true })] })
   })
 
   it('keeps room list unrestricted for super admins', async () => {
@@ -617,7 +691,7 @@ describe('Group Chat member/agent identity sync', () => {
 
     expect(storage.getAllRooms).toHaveBeenCalledOnce()
     expect(storage.getRoomsForProfiles).not.toHaveBeenCalled()
-    expect(ctx.body).toEqual({ rooms })
+    expect(ctx.body).toEqual({ rooms: [expect.objectContaining({ id: 'room-1', inviteCode: null, canManage: true })] })
   })
 
   it('routes @mentions from users and bounded agent replies', () => {

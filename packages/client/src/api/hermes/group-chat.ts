@@ -7,6 +7,7 @@ export interface RoomInfo {
     id: string
     name: string
     inviteCode: string | null
+    canManage?: boolean
     triggerTokens?: number
     maxHistoryTokens?: number
     tailMessageCount?: number
