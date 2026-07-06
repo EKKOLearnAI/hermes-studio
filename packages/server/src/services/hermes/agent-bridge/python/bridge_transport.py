@@ -117,14 +117,16 @@ class WorkerProcess:
         threading.Thread(target=read_stdout, daemon=True, name=f"hermes-bridge-worker-stdout-{self.key}").start()
         deadline = time.time() + self.STARTUP_TIMEOUT_SECONDS
         while time.time() < deadline:
-            if proc.poll() is not None:
-                raise RuntimeError(f"profile worker {self.key} exited before ready")
             try:
                 line = lines.get(timeout=0.1)
             except queue.Empty:
+                if proc.poll() is not None:
+                    raise RuntimeError(f"profile worker {self.key} exited before ready")
                 continue
             if line is None:
                 time.sleep(0.05)
+                if proc.poll() is not None:
+                    raise RuntimeError(f"profile worker {self.key} exited before ready")
                 continue
             text = line.strip()
             if text:
