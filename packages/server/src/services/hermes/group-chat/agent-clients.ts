@@ -559,6 +559,8 @@ class AgentClient {
         let bridgeStarted = false
         let workspaceRunState: WorkspaceDiffRunState | null = null
         let activeSessionId = ''
+        let staleStartedRunStopped = false
+        let stopStaleStartedRun: ((reason?: string) => Promise<void>) | null = null
         try {
             // Notify room that agent is typing
             this.startTyping(roomId)
@@ -570,6 +572,42 @@ class AgentClient {
             const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
             const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed)
             activeSessionId = sessionId
+            stopStaleStartedRun = async (reason = 'Interrupted because group chat room state changed') => {
+                if (staleStartedRunStopped) return
+                staleStartedRunStopped = true
+                if (bridgeStarted) {
+                    let destroySession = false
+                    try {
+                        const result = await bridge.interrupt(sessionId, reason, this.profile)
+                        destroySession = result?.synced === false
+                    } catch (err: any) {
+                        destroySession = true
+                        logger.warn(`[AgentClients] ${this.name}: failed to interrupt stale bridge run: ${err.message || err}`)
+                    }
+                    if (destroySession) {
+                        try {
+                            await bridge.destroy(sessionId, this.profile)
+                        } catch (err: any) {
+                            logger.warn(`[AgentClients] ${this.name}: failed to destroy stale bridge session: ${err.message || err}`)
+                        }
+                    }
+                    if (streamStarted) {
+                        try {
+                            this.emitMessageStreamEnd(roomId, streamMessageId)
+                        } catch (err: any) {
+                            logger.warn(`[AgentClients] ${this.name}: failed to end stale stream: ${err.message || err}`)
+                        }
+                    }
+                }
+                this.discardWorkspaceDiffRun(workspaceRunState)
+                workspaceRunState = null
+                try {
+                    this.stopTyping(roomId)
+                } catch (err: any) {
+                    logger.warn(`[AgentClients] ${this.name}: failed to stop typing after stale bridge run: ${err.message || err}`)
+                }
+                onStatus?.('ready')
+            }
             const modelContext = await resolveGroupAgentModelContext(this.profile)
 
             if (this.contextEngine && this.storage) {
@@ -655,9 +693,7 @@ class AgentClient {
                 ? await convertContentBlocksForAgent(input)
                 : input
             if (!this.roomSessionIsCurrent(roomId, sessionId)) {
-                this.discardWorkspaceDiffRun(workspaceRunState)
-                this.stopTyping(roomId)
-                onStatus?.('ready')
+                await stopStaleStartedRun?.()
                 return
             }
             const flushedAssistantParts = new Set<string>()
@@ -685,20 +721,17 @@ class AgentClient {
                     ...(roomWorkspace ? { workspace: roomWorkspace, run_id: requestedRunId } : {}),
                 },
             )
+            bridgeStarted = true
             if (roomWorkspace && started.run_id !== requestedRunId) {
-                this.discardWorkspaceDiffRun(workspaceRunState)
-                workspaceRunState = null
+                await stopStaleStartedRun?.('Interrupted because group chat bridge returned an unexpected run_id')
                 throw new Error(`Bridge returned unexpected run_id ${started.run_id}`)
             }
-            bridgeStarted = true
 
             this.emitMessageStreamStart(roomId, streamMessageId)
             streamStarted = true
             for await (const chunk of bridge.streamOutput(started.run_id, { timeoutMs: 120000 })) {
                 if (!this.roomSessionIsCurrent(roomId, sessionId)) {
-                    this.discardWorkspaceDiffRun(workspaceRunState)
-                    this.stopTyping(roomId)
-                    onStatus?.('ready')
+                    await stopStaleStartedRun?.()
                     return
                 }
                 lastChunk = chunk
@@ -706,7 +739,7 @@ class AgentClient {
                     const toolBaseId = streamMessageId
                     if (currentContent.trim()) {
                         if (!this.roomSessionIsCurrent(roomId, sessionId)) {
-                            this.discardWorkspaceDiffRun(workspaceRunState)
+                            await stopStaleStartedRun?.()
                             currentContent = ''
                             return toolBaseId
                         }
@@ -727,9 +760,7 @@ class AgentClient {
                     return toolBaseId
                 })
                 if (!this.roomSessionIsCurrent(roomId, sessionId)) {
-                    this.discardWorkspaceDiffRun(workspaceRunState)
-                    this.stopTyping(roomId)
-                    onStatus?.('ready')
+                    await stopStaleStartedRun?.()
                     return
                 }
                 if (chunk.delta) {
@@ -742,9 +773,7 @@ class AgentClient {
             if (lastChunk?.status === 'error') {
                 logger.error(`[AgentClients] ${this.name}: bridge response failed: ${lastChunk.error || 'unknown error'}`)
                 if (!this.roomSessionIsCurrent(roomId, sessionId)) {
-                    this.discardWorkspaceDiffRun(workspaceRunState)
-                    this.stopTyping(roomId)
-                    onStatus?.('ready')
+                    await stopStaleStartedRun?.()
                     return
                 }
                 await this.sendAgentErrorMessage(roomId, streamMessageId, lastChunk.error || 'Run failed', msg, reasoningContent, sessionId)
@@ -763,9 +792,7 @@ class AgentClient {
             logger.debug(`[AgentClients] ${this.name}: bridge response completed, content length=${totalContent.length}`)
             if (currentContent) {
                 if (!this.roomSessionIsCurrent(roomId, sessionId)) {
-                    this.discardWorkspaceDiffRun(workspaceRunState)
-                    this.stopTyping(roomId)
-                    onStatus?.('ready')
+                    await stopStaleStartedRun?.()
                     return
                 }
                 this.stopTyping(roomId)
@@ -783,9 +810,7 @@ class AgentClient {
             }
             logger.warn(`[AgentClients] ${this.name}: bridge response completed without content`)
             if (!this.roomSessionIsCurrent(roomId, sessionId)) {
-                this.discardWorkspaceDiffRun(workspaceRunState)
-                this.stopTyping(roomId)
-                onStatus?.('ready')
+                await stopStaleStartedRun?.()
                 return
             }
             this.emitMessageStreamEnd(roomId, streamMessageId)
@@ -795,9 +820,7 @@ class AgentClient {
         } catch (err: any) {
             logger.error(`[AgentClients] ${this.name}: error handling message: ${err.message}`)
             if (activeSessionId && !this.roomSessionIsCurrent(roomId, activeSessionId)) {
-                this.discardWorkspaceDiffRun(workspaceRunState)
-                this.stopTyping(roomId)
-                onStatus?.('ready')
+                await stopStaleStartedRun?.()
                 return
             }
             if (workspaceRunState && !bridgeStarted) {

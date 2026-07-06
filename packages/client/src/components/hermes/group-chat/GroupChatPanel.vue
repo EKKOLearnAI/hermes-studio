@@ -425,7 +425,7 @@ function handleOpenWorkspacePicker() {
 async function handleSaveWorkspace() {
     if (!store.currentRoomId) return
     try {
-        await store.setRoomWorkspace(store.currentRoomId, workspaceValue.value.trim())
+        await store.setRoomWorkspace(store.currentRoomId, String(workspaceValue.value || '').trim())
         showWorkspaceModal.value = false
         message.success(t('chat.workspaceSet'))
     } catch (err: any) {

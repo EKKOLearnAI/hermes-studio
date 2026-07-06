@@ -38,6 +38,7 @@ const bridgeMock = vi.hoisted(() => ({
   }),
   contextEstimate: vi.fn(),
   interrupt: vi.fn(),
+  destroy: vi.fn(),
 }))
 
 const trackerMock = vi.hoisted(() => ({
@@ -291,6 +292,7 @@ describe('group chat agent workspace bridge runs', () => {
   })
 
   it('drops late assistant output after clear-context rotates the room session generation', async () => {
+    bridgeMock.interrupt.mockResolvedValueOnce({ ok: true, synced: false })
     const client = await createClient('/tmp/workspace')
     client.__testStorage.getRoom
       .mockReturnValueOnce({ sessionSeed: 'seed-1', workspace: '/tmp/workspace' })
@@ -304,9 +306,17 @@ describe('group chat agent workspace bridge runs', () => {
       timestamp: 1,
     })
 
+    expect(bridgeMock.interrupt).toHaveBeenCalledWith(
+      'gc_room-1_default_Worker_seed-1',
+      'Interrupted because group chat room state changed',
+      'default',
+    )
+    expect(bridgeMock.destroy).toHaveBeenCalledWith('gc_room-1_default_Worker_seed-1', 'default')
     expect(client.__testStorage.saveWorkspaceDiffMessageForRun).not.toHaveBeenCalled()
+    expect(mockSocket.emit).toHaveBeenCalledWith('message_stream_end', expect.objectContaining({ roomId: 'room-1' }))
     expect(mockSocket.emit).not.toHaveBeenCalledWith('message', expect.objectContaining({ role: 'assistant' }), expect.any(Function))
     expect(trackerMock.discardWorkspaceRunCheckpoint).toHaveBeenCalled()
+    expect(client.workspaceDiffRuns.size).toBe(0)
   })
 
   it('cleans up no-change workspace runs and keeps overlapping runs isolated', async () => {
