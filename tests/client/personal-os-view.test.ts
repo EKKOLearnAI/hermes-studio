@@ -46,6 +46,10 @@ const overview = vi.hoisted(() => ({
 const fetchOverview = vi.hoisted(() => vi.fn())
 const fetchAutopilotOverview = vi.hoisted(() => vi.fn())
 const createQuickLog = vi.hoisted(() => vi.fn())
+const fetchReminderSettings = vi.hoisted(() => vi.fn())
+const updateReminderSettings = vi.hoisted(() => vi.fn())
+const fetchReminderDeliveries = vi.hoisted(() => vi.fn())
+const sendReminderTest = vi.hoisted(() => vi.fn())
 
 vi.mock('@/api/hermes/personal-state', () => ({
   fetchPersonalStateOverview: fetchOverview,
@@ -54,6 +58,13 @@ vi.mock('@/api/hermes/personal-state', () => ({
 vi.mock('@/api/hermes/personal-autopilot', () => ({
   fetchPersonalAutopilotOverview: fetchAutopilotOverview,
   createPersonalAutopilotQuickLog: createQuickLog,
+}))
+
+vi.mock('@/api/hermes/autopilot-reminders', () => ({
+  fetchAutopilotReminderSettings: fetchReminderSettings,
+  updateAutopilotReminderSettings: updateReminderSettings,
+  fetchAutopilotReminderDeliveries: fetchReminderDeliveries,
+  sendAutopilotReminderTest: sendReminderTest,
 }))
 
 vi.mock('@/stores/hermes/profiles', () => ({
@@ -77,6 +88,12 @@ vi.mock('naive-ui', () => ({
     props: { loading: Boolean, disabled: Boolean },
     emits: ['click'],
     template: '<button class="n-button-stub" :disabled="disabled" @click="$emit(\'click\')"><slot /><slot name="icon" /></button>',
+  }),
+  NSwitch: defineComponent({
+    name: 'NSwitch',
+    props: { value: Boolean, loading: Boolean },
+    emits: ['update:value'],
+    template: '<button class="n-switch-stub" data-test="weixin-reminder-switch" @click="$emit(\'update:value\', !value)">{{ value ? "on" : "off" }}</button>',
   }),
   NSpin: defineComponent({
     name: 'NSpin',
@@ -115,6 +132,20 @@ describe('PersonalOSView', () => {
       ],
     })
     createQuickLog.mockResolvedValue({ kind: 'diet' })
+    fetchReminderSettings.mockResolvedValue({
+      profile: 'default',
+      enabled: false,
+      channel: 'weixin',
+      dailyLimit: 5,
+      minimumIntervalMinutes: 60,
+      quietStart: '23:30',
+      quietEnd: '08:00',
+    })
+    fetchReminderDeliveries.mockResolvedValue([
+      { id: 'delivery-1', status: 'failed', error: 'missing_weixin_credentials', actionTitle: '吃高蛋白早餐' },
+    ])
+    updateReminderSettings.mockResolvedValue({ enabled: true, quietStart: '23:30', quietEnd: '08:00', dailyLimit: 5 })
+    sendReminderTest.mockResolvedValue({ status: 'failed', reason: 'missing_weixin_credentials' })
   })
 
   it('renders the command center next action from Personal Autopilot', async () => {
@@ -149,5 +180,31 @@ describe('PersonalOSView', () => {
     await flushPromises()
 
     expect(createQuickLog).toHaveBeenCalledWith({ text: '午饭吃了鸡腿饭' }, 'default')
+  })
+
+  it('shows and updates Weixin reminder controls', async () => {
+    const wrapper = mount(PersonalOSView)
+    await flushPromises()
+
+    expect(fetchReminderSettings).toHaveBeenCalledWith('default')
+    expect(fetchReminderDeliveries).toHaveBeenCalledWith('default')
+    expect(wrapper.find('[data-test="weixin-reminder-panel"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('personalOS.weixinReminders')
+    expect(wrapper.text()).toContain('missing_weixin_credentials')
+
+    await wrapper.find('[data-test="weixin-reminder-switch"]').trigger('click')
+    await flushPromises()
+
+    expect(updateReminderSettings).toHaveBeenCalledWith({ enabled: true }, 'default')
+  })
+
+  it('sends a Weixin reminder test from the command center', async () => {
+    const wrapper = mount(PersonalOSView)
+    await flushPromises()
+
+    await wrapper.find('[data-test="weixin-reminder-test"]').trigger('click')
+    await flushPromises()
+
+    expect(sendReminderTest).toHaveBeenCalledWith('default')
   })
 })

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NSpin, useMessage } from 'naive-ui'
+import { NButton, NSpin, NSwitch, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { fetchPersonalStateOverview, type PersonalStateOverview } from '@/api/hermes/personal-state'
@@ -9,6 +9,14 @@ import {
   fetchPersonalAutopilotOverview,
   type PersonalAutopilotOverview,
 } from '@/api/hermes/personal-autopilot'
+import {
+  fetchAutopilotReminderDeliveries,
+  fetchAutopilotReminderSettings,
+  sendAutopilotReminderTest,
+  updateAutopilotReminderSettings,
+  type AutopilotReminderDelivery,
+  type AutopilotReminderSettings,
+} from '@/api/hermes/autopilot-reminders'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -16,15 +24,24 @@ const profilesStore = useProfilesStore()
 
 const loading = ref(false)
 const quickLogSaving = ref(false)
+const reminderSaving = ref(false)
+const reminderTesting = ref(false)
 const quickLogText = ref('')
 const overview = ref<PersonalStateOverview | null>(null)
 const autopilot = ref<PersonalAutopilotOverview | null>(null)
+const reminderSettings = ref<AutopilotReminderSettings | null>(null)
+const reminderDeliveries = ref<AutopilotReminderDelivery[]>([])
 
 const activeProfile = computed(() => profilesStore.activeProfileName || 'default')
 const pendingProposals = computed(() => overview.value?.pendingProposals || [])
 const tasks = computed(() => overview.value?.tasks || [])
 const nextAction = computed(() => autopilot.value?.nextAction)
 const signals = computed(() => autopilot.value?.signals || [])
+const lastReminderDelivery = computed(() => reminderDeliveries.value[0] || null)
+const reminderQuietSummary = computed(() => {
+  if (!reminderSettings.value) return '--'
+  return `${reminderSettings.value.quietStart}-${reminderSettings.value.quietEnd}`
+})
 
 onMounted(loadOverview)
 
@@ -44,11 +61,21 @@ async function loadOverview() {
     ])
     overview.value = stateOverview
     autopilot.value = autopilotOverview
+    await loadReminderState()
   } catch (err: any) {
     message.error(`${t('personalOS.loadFailed')}: ${err.message}`)
   } finally {
     loading.value = false
   }
+}
+
+async function loadReminderState() {
+  const [settings, deliveries] = await Promise.all([
+    fetchAutopilotReminderSettings(activeProfile.value),
+    fetchAutopilotReminderDeliveries(activeProfile.value),
+  ])
+  reminderSettings.value = settings
+  reminderDeliveries.value = deliveries
 }
 
 async function submitQuickLog() {
@@ -65,6 +92,37 @@ async function submitQuickLog() {
     message.error(`${t('personalOS.quickLogFailed')}: ${err.message}`)
   } finally {
     quickLogSaving.value = false
+  }
+}
+
+async function toggleReminders(enabled: boolean) {
+  if (reminderSaving.value) return
+  reminderSaving.value = true
+  try {
+    reminderSettings.value = await updateAutopilotReminderSettings({ enabled }, activeProfile.value)
+    message.success(enabled ? t('personalOS.weixinReminderEnabled') : t('personalOS.weixinReminderDisabled'))
+  } catch (err: any) {
+    message.error(`${t('personalOS.weixinReminderUpdateFailed')}: ${err.message}`)
+  } finally {
+    reminderSaving.value = false
+  }
+}
+
+async function testWeixinReminder() {
+  if (reminderTesting.value) return
+  reminderTesting.value = true
+  try {
+    const result = await sendAutopilotReminderTest(activeProfile.value)
+    await loadReminderState()
+    if (result.status === 'sent') {
+      message.success(t('personalOS.weixinReminderTestSent'))
+    } else {
+      message.error(`${t('personalOS.weixinReminderTestFailed')}: ${result.reason}`)
+    }
+  } catch (err: any) {
+    message.error(`${t('personalOS.weixinReminderTestFailed')}: ${err.message}`)
+  } finally {
+    reminderTesting.value = false
   }
 }
 </script>
@@ -128,6 +186,35 @@ async function submitQuickLog() {
             {{ t('personalOS.quickLogSubmit') }}
           </NButton>
         </form>
+
+        <section class="reminder-panel" data-test="weixin-reminder-panel">
+          <div class="reminder-header">
+            <div>
+              <span class="panel-kicker">{{ t('personalOS.weixinReminders') }}</span>
+              <h3>{{ reminderSettings?.enabled ? t('personalOS.weixinReminderOn') : t('personalOS.weixinReminderOff') }}</h3>
+              <p>{{ t('personalOS.weixinReminderSummary') }}</p>
+            </div>
+            <NSwitch
+              :value="!!reminderSettings?.enabled"
+              :loading="reminderSaving"
+              @update:value="toggleReminders"
+            />
+          </div>
+          <div class="reminder-meta">
+            <span>{{ t('personalOS.quietHours') }}: <strong>{{ reminderQuietSummary }}</strong></span>
+            <span>{{ t('personalOS.dailyLimit') }}: <strong>{{ reminderSettings?.dailyLimit ?? '--' }}</strong></span>
+            <span>{{ t('personalOS.lastReminder') }}: <strong>{{ lastReminderDelivery?.error || lastReminderDelivery?.status || '--' }}</strong></span>
+          </div>
+          <NButton
+            size="small"
+            secondary
+            :loading="reminderTesting"
+            data-test="weixin-reminder-test"
+            @click="testWeixinReminder"
+          >
+            {{ t('personalOS.weixinReminderTest') }}
+          </NButton>
+        </section>
 
         <div class="signal-strip">
           <div v-for="signal in signals" :key="signal.key" class="signal-item">
@@ -286,6 +373,43 @@ async function submitQuickLog() {
   }
 }
 
+.reminder-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.reminder-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+
+  h3 {
+    margin: 4px 0 0;
+    font-size: 16px;
+  }
+
+  p {
+    margin: 4px 0 0;
+    color: var(--text-color-2);
+  }
+}
+
+.reminder-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  color: var(--text-color-3);
+  font-size: 12px;
+
+  strong {
+    color: var(--text-color);
+  }
+}
+
 .signal-strip,
 .support-grid {
   display: grid;
@@ -341,7 +465,8 @@ async function submitQuickLog() {
 
   .command-main,
   .fallback-row,
-  .secondary-actions {
+  .secondary-actions,
+  .reminder-header {
     flex-direction: column;
   }
 
