@@ -34,17 +34,18 @@ const targetRegistry = new AgentTargetRegistry<CodexProxyTargetInput>(
   input => [input.profile.trim(), input.provider, input.model, input.apiMode, input.baseUrl, input.agentSessionId || '', input.chatSessionId || ''],
 )
 
-function localProxyBaseUrl(routeKey: string): string {
-  return `http://127.0.0.1:${config.port}/api/codex-proxy/${routeKey}/v1`
+function localProxyBaseUrl(routeKey: string, frontProxyBaseUrl = ''): string {
+  const origin = frontProxyBaseUrl.trim().replace(/\/+$/, '') || `http://127.0.0.1:${config.port}`
+  return `${origin}/api/codex-proxy/${routeKey}/v1`
 }
 
-export function registerCodexProxyTarget(input: CodexProxyTargetInput): { baseUrl: string; token: string; routeKey: string } {
+export function registerCodexProxyTarget(input: CodexProxyTargetInput & { frontProxyBaseUrl?: string }): { baseUrl: string; token: string; routeKey: string } {
   const target = targetRegistry.register({
     ...input,
     profile: input.profile.trim(),
   })
 
-  return { baseUrl: localProxyBaseUrl(target.routeKey), token: target.token, routeKey: target.routeKey }
+  return { baseUrl: localProxyBaseUrl(target.routeKey, input.frontProxyBaseUrl), token: target.token, routeKey: target.routeKey }
 }
 
 function findTarget(routeKey: string): CodexProxyTarget | null {

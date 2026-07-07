@@ -151,6 +151,17 @@ function isProxyToolEvent(event: CanonicalResponsesEvent): boolean {
     ((event.type === 'response.output_item.added' || event.type === 'response.output_item.done') && item?.type === 'function_call')
 }
 
+const CODEX_EXEC_TOOL_NAMES = new Set([
+  'exec_command',
+  'functions.exec_command',
+  'shell_command',
+  'functions.shell_command',
+])
+
+function isCodexExecToolName(name: unknown): boolean {
+  return CODEX_EXEC_TOOL_NAMES.has(String(name || '').trim())
+}
+
 function isCodexProxyExecToolEvent(event: CanonicalResponsesEvent): boolean {
   const data: any = event.data || {}
   const item = data.item || data.output_item || data
@@ -160,8 +171,7 @@ function isCodexProxyExecToolEvent(event: CanonicalResponsesEvent): boolean {
   ) {
     return false
   }
-  const name = String(item.name || item.function?.name || '').trim()
-  return name === 'exec_command' || name === 'functions.exec_command'
+  return isCodexExecToolName(item.name || item.function?.name)
 }
 
 function truncateCodingAgentToolOutputForStorage(output: unknown): string {
@@ -1331,6 +1341,11 @@ export class CodingAgentRunManager {
         this.completeCodexExecTurn(run, run.codexPendingUsage)
         return
       }
+      const errorMessage = exitErrorMessage('Codex', code, run.currentChildStderr)
+      if (this.shouldRetryCodexWithoutNativeResume(run, errorMessage)) {
+        this.retryCodexExecWithoutNativeResume(run, input, systemPrompt, errorMessage)
+        return
+      }
       this.handleClaudePrintResponseEvent(run, {
         type: 'response.failed',
         data: {
@@ -1340,12 +1355,33 @@ export class CodingAgentRunManager {
             object: 'response',
             status: 'failed',
             model: run.launch.model,
-            error: { message: exitErrorMessage('Codex', code, run.currentChildStderr) },
+            error: { message: errorMessage },
             output: [],
           },
         },
       })
     })
+  }
+
+  private shouldRetryCodexWithoutNativeResume(run: ManagedCodingAgentRun, errorMessage: string): boolean {
+    if (!run.launch.agentNativeSessionId || !run.nativeResumeReady) return false
+    return /thread\/resume failed|no rollout found for thread id/i.test(errorMessage)
+  }
+
+  private retryCodexExecWithoutNativeResume(run: ManagedCodingAgentRun, input: string, systemPrompt: string, errorMessage: string) {
+    const staleNativeSessionId = run.launch.agentNativeSessionId
+    logger.warn(
+      { runId: run.id, sessionId: run.launch.sessionId, staleNativeSessionId, errorMessage },
+      '[coding-agent-run] Codex native resume failed; clearing stale thread id and retrying once',
+    )
+    run.launch.agentNativeSessionId = ''
+    run.nativeResumeReady = false
+    try {
+      updateSession(run.launch.sessionId, { agent_native_session_id: '' })
+    } catch (err) {
+      logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] failed to clear stale Codex native session id')
+    }
+    this.startCodexExecTurn(run, input, systemPrompt)
   }
 
   private handleCodexExecLine(run: ManagedCodingAgentRun, line: string) {
@@ -1592,8 +1628,7 @@ export class CodingAgentRunManager {
 
   private isRedundantCodexExecToolItem(item: any, itemType: string): boolean {
     if (itemType !== 'mcp_tool_call') return false
-    const name = String(item.tool || item.name || item.function?.name || '').trim()
-    return name === 'exec_command' || name === 'functions.exec_command'
+    return isCodexExecToolName(item.tool || item.name || item.function?.name)
   }
 
   private codexToolBlock(item: any, itemType: string): { id: string; name: string; arguments: string; done: boolean } {

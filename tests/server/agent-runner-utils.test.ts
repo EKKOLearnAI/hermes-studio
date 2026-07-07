@@ -1030,30 +1030,32 @@ describe('coding agent run state', () => {
       content: openingText,
     }))
 
-    manager.handleResponseEvent(agentSessionId, {
-      type: 'response.output_item.added',
-      data: {
-        item: {
-          type: 'function_call',
-          id: 'call-proxy',
-          call_id: 'call-proxy',
-          name: 'exec_command',
-          arguments: '{"cmd":"ls ~/Desktop"}',
+    for (const name of ['exec_command', 'shell_command']) {
+      manager.handleResponseEvent(agentSessionId, {
+        type: 'response.output_item.added',
+        data: {
+          item: {
+            type: 'function_call',
+            id: `call-proxy-${name}`,
+            call_id: `call-proxy-${name}`,
+            name,
+            arguments: '{"cmd":"ls ~/Desktop"}',
+          },
         },
-      },
-    })
-    manager.handleResponseEvent(agentSessionId, {
-      type: 'response.output_item.done',
-      data: {
-        item: {
-          type: 'function_call',
-          id: 'call-proxy',
-          call_id: 'call-proxy',
-          name: 'exec_command',
-          arguments: '{"cmd":"ls ~/Desktop"}',
+      })
+      manager.handleResponseEvent(agentSessionId, {
+        type: 'response.output_item.done',
+        data: {
+          item: {
+            type: 'function_call',
+            id: `call-proxy-${name}`,
+            call_id: `call-proxy-${name}`,
+            name,
+            arguments: '{"cmd":"ls ~/Desktop"}',
+          },
         },
-      },
-    })
+      })
+    }
     ;(manager as any).handleCodexExecLine(run, JSON.stringify({
       type: 'item.started',
       item: {
