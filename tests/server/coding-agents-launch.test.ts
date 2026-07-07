@@ -385,11 +385,19 @@ describe('coding agent launch preparation', () => {
     writeFileSync(codexScopedConfigPath, [
       '[mcp_servers.nowledge-mem]',
       'type = "streamableHttp"',
-      'url = "https://nowledge-mem.scoped.example/remote-api/mcp/"',
+      'url = "https://nowledge-mem.scoped-latest.example/remote-api/mcp/"',
       '',
       '[mcp_servers.nowledge-mem.http_headers]',
       'APP = "codex-scoped"',
       'Authorization = "Bearer scoped"',
+      '',
+      '[mcp_servers.nowledge-mem]',
+      'type = "streamableHttp"',
+      'url = "https://nowledge-mem.scoped-latest.example/remote-api/mcp/"',
+      '',
+      '[mcp_servers.nowledge-mem.http_headers]',
+      'APP = "codex-scoped-latest"',
+      'Authorization = "Bearer scoped-latest"',
       '',
     ].join('\n'))
 
@@ -420,9 +428,10 @@ describe('coding agent launch preparation', () => {
     const codexConfig = readFileSync(join(codex.rootDir, 'config.toml'), 'utf-8')
     expect(codexConfig.match(/^\[mcp_servers\.nowledge-mem\]$/gm)).toHaveLength(1)
     expect(codexConfig.match(/^\[mcp_servers\.nowledge-mem\.http_headers\]$/gm)).toHaveLength(1)
-    expect(codexConfig).toContain('url = "https://nowledge-mem.scoped.example/remote-api/mcp/"')
-    expect(codexConfig).toContain('APP = "codex-scoped"')
+    expect(codexConfig).toContain('url = "https://nowledge-mem.scoped-latest.example/remote-api/mcp/"')
+    expect(codexConfig).toContain('APP = "codex-scoped-latest"')
     expect(codexConfig).not.toContain('APP = "codex"')
+    expect(codexConfig).not.toContain('APP = "codex-scoped"')
     expect(codexConfig).not.toContain('command = "stale-managed"')
     expect(codexConfig).not.toContain('[model_providers.unrelated]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-api]')

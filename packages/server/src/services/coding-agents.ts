@@ -938,10 +938,11 @@ function parseCodexExternalMcpBlocks(...contents: Array<string | null | undefine
     }
 
     for (const line of content.split(/\r?\n/)) {
-      const mcpMatch = line.match(/^\s*\[mcp_servers\.([^\].]+)(?:\.[^\]]+)?\]\s*$/)
+      const mcpMatch = line.match(/^\s*\[mcp_servers\.([^\].]+)(\.[^\]]+)?\]\s*$/)
       if (mcpMatch) {
         const nextServer = mcpMatch[1]
-        if (currentServer && nextServer === currentServer) {
+        const isSubtable = Boolean(mcpMatch[2])
+        if (currentServer && nextServer === currentServer && isSubtable) {
           currentLines.push(line)
           continue
         }
