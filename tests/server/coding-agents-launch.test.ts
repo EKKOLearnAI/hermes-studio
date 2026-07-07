@@ -346,8 +346,10 @@ describe('coding agent launch preparation', () => {
     const claudeGlobalMcpPath = join(home, 'global-home', '.claude', 'mcp.json')
     const claudeGlobalSettingsPath = join(home, 'global-home', '.claude', 'settings.json')
     const codexGlobalConfigPath = join(home, 'global-home', '.codex', 'config.toml')
+    const codexScopedConfigPath = join(home, 'coding-agent', 'model', 'default', 'openrouter', 'codex', 'config.toml')
     mkdirSync(dirname(claudeGlobalMcpPath), { recursive: true })
     mkdirSync(dirname(codexGlobalConfigPath), { recursive: true })
+    mkdirSync(dirname(codexScopedConfigPath), { recursive: true })
     writeFileSync(claudeGlobalMcpPath, `${JSON.stringify({
       mcpServers: {
         'nowledge-mem': {
@@ -380,6 +382,16 @@ describe('coding agent launch preparation', () => {
       'name = "should-not-be-copied"',
       '',
     ].join('\n'))
+    writeFileSync(codexScopedConfigPath, [
+      '[mcp_servers.nowledge-mem]',
+      'type = "streamableHttp"',
+      'url = "https://nowledge-mem.scoped.example/remote-api/mcp/"',
+      '',
+      '[mcp_servers.nowledge-mem.http_headers]',
+      'APP = "codex-scoped"',
+      'Authorization = "Bearer scoped"',
+      '',
+    ].join('\n'))
 
     const claude = await prepareCodingAgentLaunch('claude-code', {
       profile: 'default',
@@ -393,7 +405,7 @@ describe('coding agent launch preparation', () => {
     expect(claudeSettings.enabledMcpjsonServers).toEqual(['nowledge-mem'])
     expect(claudeSettings.plugins).toMatchObject({ 'nowledge-mem@nowledge-community': true })
     expect(claudeMcp.mcpServers['nowledge-mem']).toMatchObject({
-      type: 'streamableHttp',
+      type: 'http',
       url: 'https://nowledge-mem.example/remote-api/mcp/',
     })
     expect(claudeMcp.mcpServers['hermes-studio-api'].command).toBe(process.execPath)
@@ -406,9 +418,11 @@ describe('coding agent launch preparation', () => {
       apiKey: 'test-api-key',
     })
     const codexConfig = readFileSync(join(codex.rootDir, 'config.toml'), 'utf-8')
-    expect(codexConfig).toContain('[mcp_servers.nowledge-mem]')
-    expect(codexConfig).toContain('[mcp_servers.nowledge-mem.http_headers]')
-    expect(codexConfig).toContain('APP = "codex"')
+    expect(codexConfig.match(/^\[mcp_servers\.nowledge-mem\]$/gm)).toHaveLength(1)
+    expect(codexConfig.match(/^\[mcp_servers\.nowledge-mem\.http_headers\]$/gm)).toHaveLength(1)
+    expect(codexConfig).toContain('url = "https://nowledge-mem.scoped.example/remote-api/mcp/"')
+    expect(codexConfig).toContain('APP = "codex-scoped"')
+    expect(codexConfig).not.toContain('APP = "codex"')
     expect(codexConfig).not.toContain('command = "stale-managed"')
     expect(codexConfig).not.toContain('[model_providers.unrelated]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-api]')

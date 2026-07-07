@@ -868,16 +868,25 @@ function isManagedHermesMcpServer(value: unknown): boolean {
   return typeof server.command === 'string' && LEGACY_HERMES_MCP_COMMANDS.has(server.command)
 }
 
+function normalizeClaudeMcpServer(server: unknown): unknown {
+  if (!server || typeof server !== 'object' || Array.isArray(server)) return server
+  const normalized = { ...(server as Record<string, unknown>) }
+  if (normalized.type === 'streamableHttp') normalized.type = 'http'
+  return normalized
+}
+
 function parseClaudeMcpServers(existingContent: string | null | undefined = ''): Record<string, unknown> {
   if (!existingContent?.trim()) return {}
   try {
     const parsed = JSON.parse(existingContent)
     if (!parsed?.mcpServers || typeof parsed.mcpServers !== 'object' || Array.isArray(parsed.mcpServers)) return {}
-    return Object.fromEntries(Object.entries(parsed.mcpServers).filter(([name, server]) => {
-      if (HERMES_MCP_SERVER_NAMES.has(name)) return false
-      if (LEGACY_HERMES_MCP_SERVER_NAMES.has(name)) return false
-      return !isManagedHermesMcpServer(server)
-    }))
+    return Object.fromEntries(Object.entries(parsed.mcpServers)
+      .filter(([name, server]) => {
+        if (HERMES_MCP_SERVER_NAMES.has(name)) return false
+        if (LEGACY_HERMES_MCP_SERVER_NAMES.has(name)) return false
+        return !isManagedHermesMcpServer(server)
+      })
+      .map(([name, server]) => [name, normalizeClaudeMcpServer(server)]))
   } catch {
     return {}
   }
@@ -893,6 +902,8 @@ function inheritClaudeSettings(existingContent: string | null | undefined = ''):
     if (Array.isArray(enabledServers)) inherited.enabledMcpjsonServers = enabledServers.map(String).filter(Boolean)
     const plugins = (parsed as any).plugins
     if (plugins && typeof plugins === 'object' && !Array.isArray(plugins)) inherited.plugins = plugins
+    const enabledPlugins = (parsed as any).enabledPlugins
+    if (enabledPlugins && typeof enabledPlugins === 'object' && !Array.isArray(enabledPlugins)) inherited.enabledPlugins = enabledPlugins
     return inherited
   } catch {
     return {}
@@ -911,7 +922,7 @@ function claudeMcpConfigJson(profile: string, ...existingContents: Array<string 
 }
 
 function parseCodexExternalMcpBlocks(...contents: Array<string | null | undefined>): string[] {
-  const blocksByServer = new Map<string, string[]>()
+  const blockByServer = new Map<string, string>()
 
   for (const content of contents) {
     if (!content?.trim()) continue
@@ -922,17 +933,20 @@ function parseCodexExternalMcpBlocks(...contents: Array<string | null | undefine
       const block = currentLines.join('\n').trim()
       const isManaged = block.includes(`${HERMES_MCP_MANAGED_ENV_KEY}`)
       if (!HERMES_MCP_SERVER_NAMES.has(currentServer) && !LEGACY_HERMES_MCP_SERVER_NAMES.has(currentServer) && !isManaged) {
-        const existing = blocksByServer.get(currentServer) || []
-        existing.push(block)
-        blocksByServer.set(currentServer, existing)
+        blockByServer.set(currentServer, block)
       }
     }
 
     for (const line of content.split(/\r?\n/)) {
       const mcpMatch = line.match(/^\s*\[mcp_servers\.([^\].]+)(?:\.[^\]]+)?\]\s*$/)
       if (mcpMatch) {
+        const nextServer = mcpMatch[1]
+        if (currentServer && nextServer === currentServer) {
+          currentLines.push(line)
+          continue
+        }
         flush()
-        currentServer = mcpMatch[1]
+        currentServer = nextServer
         currentLines = [line]
         continue
       }
@@ -947,7 +961,7 @@ function parseCodexExternalMcpBlocks(...contents: Array<string | null | undefine
     flush()
   }
 
-  return Array.from(blocksByServer.values()).flat().filter(Boolean)
+  return Array.from(blockByServer.values()).filter(Boolean)
 }
 
 function codexMcpConfigToml(profile: string, ...externalContents: Array<string | null | undefined>): string {
