@@ -166,7 +166,7 @@ const TOOL_DEFINITIONS: CodingAgentDefinition[] = [
 const CONFIG_FILE_DEFINITIONS: Record<CodingAgentId, Array<Omit<CodingAgentConfigFileDefinition, 'absolutePath'> & { scopedPath: string }>> = {
   'claude-code': [
     { key: 'settings', path: '~/.claude/settings.json', scopedPath: 'settings.json', language: 'json' },
-    { key: 'mcp', path: '~/.claude.json', scopedPath: 'mcp.json', language: 'json' },
+    { key: 'mcp', path: '~/.claude/mcp.json', scopedPath: 'mcp.json', language: 'json' },
     { key: 'prompt', path: '~/.claude/hermes-rules.md', scopedPath: 'hermes-rules.md', language: 'markdown' },
   ],
   codex: [
@@ -883,16 +883,75 @@ function parseClaudeMcpServers(existingContent: string | null | undefined = ''):
   }
 }
 
-function claudeMcpConfigJson(profile: string, existingContent: string | null | undefined = ''): string {
-  const mcpServers = parseClaudeMcpServers(existingContent)
+function inheritClaudeSettings(existingContent: string | null | undefined = ''): Record<string, unknown> {
+  if (!existingContent?.trim()) return {}
+  try {
+    const parsed = JSON.parse(existingContent)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const inherited: Record<string, unknown> = {}
+    const enabledServers = (parsed as any).enabledMcpjsonServers
+    if (Array.isArray(enabledServers)) inherited.enabledMcpjsonServers = enabledServers.map(String).filter(Boolean)
+    const plugins = (parsed as any).plugins
+    if (plugins && typeof plugins === 'object' && !Array.isArray(plugins)) inherited.plugins = plugins
+    return inherited
+  } catch {
+    return {}
+  }
+}
+
+function claudeMcpConfigJson(profile: string, ...existingContents: Array<string | null | undefined>): string {
+  const mcpServers: Record<string, unknown> = {}
+  for (const content of existingContents) {
+    Object.assign(mcpServers, parseClaudeMcpServers(content))
+  }
   for (const server of HERMES_MCP_SERVERS) {
     mcpServers[server.name] = hermesMcpServerConfig(profile, server.name, server.toolset)
   }
   return `${JSON.stringify({ mcpServers }, null, 2)}\n`
 }
 
-function codexMcpConfigToml(profile: string): string {
-  const blocks: string[] = []
+function parseCodexExternalMcpBlocks(...contents: Array<string | null | undefined>): string[] {
+  const blocksByServer = new Map<string, string[]>()
+
+  for (const content of contents) {
+    if (!content?.trim()) continue
+    let currentServer = ''
+    let currentLines: string[] = []
+    const flush = () => {
+      if (!currentServer || currentLines.length === 0) return
+      const block = currentLines.join('\n').trim()
+      const isManaged = block.includes(`${HERMES_MCP_MANAGED_ENV_KEY}`)
+      if (!HERMES_MCP_SERVER_NAMES.has(currentServer) && !LEGACY_HERMES_MCP_SERVER_NAMES.has(currentServer) && !isManaged) {
+        const existing = blocksByServer.get(currentServer) || []
+        existing.push(block)
+        blocksByServer.set(currentServer, existing)
+      }
+    }
+
+    for (const line of content.split(/\r?\n/)) {
+      const mcpMatch = line.match(/^\s*\[mcp_servers\.([^\].]+)(?:\.[^\]]+)?\]\s*$/)
+      if (mcpMatch) {
+        flush()
+        currentServer = mcpMatch[1]
+        currentLines = [line]
+        continue
+      }
+      if (/^\s*\[/.test(line)) {
+        flush()
+        currentServer = ''
+        currentLines = []
+        continue
+      }
+      if (currentServer) currentLines.push(line)
+    }
+    flush()
+  }
+
+  return Array.from(blocksByServer.values()).flat().filter(Boolean)
+}
+
+function codexMcpConfigToml(profile: string, ...externalContents: Array<string | null | undefined>): string {
+  const blocks: string[] = [...parseCodexExternalMcpBlocks(...externalContents)]
   for (const item of HERMES_MCP_SERVERS) {
     const server = hermesMcpServerConfig(profile, item.name, item.toolset)
     const lines = [
@@ -1619,7 +1678,10 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const claudeBaseUrl = proxyTarget?.baseUrl || baseUrl
     const claudeApiKey = proxyTarget?.token || apiKey
     const modelName = displayNameForModel(model)
+    const globalSettingsPath = getLiveConfigFileDefinition(tool.id, 'settings')?.absolutePath
+    const inheritedSettings = inheritClaudeSettings(globalSettingsPath ? await safeReadFile(globalSettingsPath) : '')
     const settings = {
+      ...inheritedSettings,
       model,
       env: {
         ...(claudeApiKey ? { ANTHROPIC_API_KEY: claudeApiKey } : {}),
@@ -1637,9 +1699,11 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     }
     env = settings.env
     await writeScopedFile('settings', `${JSON.stringify(settings, null, 2)}\n`)
+    const globalMcpPath = getLiveConfigFileDefinition(tool.id, 'mcp')?.absolutePath
     const existingMcpPath = getScopedConfigFileDefinition(tool.id, 'mcp', scope)?.absolutePath
+    const globalMcpConfig = globalMcpPath ? await safeReadFile(globalMcpPath) : ''
     const existingMcpConfig = existingMcpPath ? await safeReadFile(existingMcpPath) : ''
-    await writeScopedFile('mcp', claudeMcpConfigJson(scope.profile, existingMcpConfig))
+    await writeScopedFile('mcp', claudeMcpConfigJson(scope.profile, globalMcpConfig, existingMcpConfig))
     await writeScopedFile('prompt', hermesPromptDocument())
 
     const settingsPath = join(rootDir, 'settings.json')
@@ -1695,7 +1759,11 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       'requires_openai_auth = false',
       ...(codexApiKey ? [`experimental_bearer_token = ${JSON.stringify(codexApiKey)}`] : []),
       '',
-      codexMcpConfigToml(scope.profile),
+      codexMcpConfigToml(
+        scope.profile,
+        await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || ''),
+        await safeReadFile(getScopedConfigFileDefinition(tool.id, 'config', scope)?.absolutePath || ''),
+      ),
     ].join('\n')
     const catalog = buildCodexModelCatalog({
       profile: scope.profile,

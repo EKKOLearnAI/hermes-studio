@@ -341,6 +341,81 @@ describe('coding agent launch preparation', () => {
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-use]')
   })
 
+  it('inherits external MCP configs for scoped Claude and Codex launches', async () => {
+    const home = makeHome()
+    const claudeGlobalMcpPath = join(home, 'global-home', '.claude', 'mcp.json')
+    const claudeGlobalSettingsPath = join(home, 'global-home', '.claude', 'settings.json')
+    const codexGlobalConfigPath = join(home, 'global-home', '.codex', 'config.toml')
+    mkdirSync(dirname(claudeGlobalMcpPath), { recursive: true })
+    mkdirSync(dirname(codexGlobalConfigPath), { recursive: true })
+    writeFileSync(claudeGlobalMcpPath, `${JSON.stringify({
+      mcpServers: {
+        'nowledge-mem': {
+          type: 'streamableHttp',
+          url: 'https://nowledge-mem.example/remote-api/mcp/',
+          headers: { APP: 'claude code', Authorization: 'Bearer test' },
+        },
+        'hermes-studio-api': { command: 'stale-managed' },
+      },
+    }, null, 2)}
+`)
+    writeFileSync(claudeGlobalSettingsPath, `${JSON.stringify({
+      enabledMcpjsonServers: ['nowledge-mem'],
+      plugins: { 'nowledge-mem@nowledge-community': true },
+    }, null, 2)}
+`)
+    writeFileSync(codexGlobalConfigPath, [
+      '[mcp_servers.nowledge-mem]',
+      'type = "streamableHttp"',
+      'url = "https://nowledge-mem.example/remote-api/mcp/"',
+      '',
+      '[mcp_servers.nowledge-mem.http_headers]',
+      'APP = "codex"',
+      'Authorization = "Bearer test"',
+      '',
+      '[mcp_servers.hermes-studio-api]',
+      'command = "stale-managed"',
+      '',
+      '[model_providers.unrelated]',
+      'name = "should-not-be-copied"',
+      '',
+    ].join('\n'))
+
+    const claude = await prepareCodingAgentLaunch('claude-code', {
+      profile: 'default',
+      provider: 'openrouter',
+      model: 'anthropic/claude-sonnet-4.6',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'test-api-key',
+    })
+    const claudeSettings = JSON.parse(readFileSync(join(claude.rootDir, 'settings.json'), 'utf-8'))
+    const claudeMcp = JSON.parse(readFileSync(join(claude.rootDir, 'mcp.json'), 'utf-8'))
+    expect(claudeSettings.enabledMcpjsonServers).toEqual(['nowledge-mem'])
+    expect(claudeSettings.plugins).toMatchObject({ 'nowledge-mem@nowledge-community': true })
+    expect(claudeMcp.mcpServers['nowledge-mem']).toMatchObject({
+      type: 'streamableHttp',
+      url: 'https://nowledge-mem.example/remote-api/mcp/',
+    })
+    expect(claudeMcp.mcpServers['hermes-studio-api'].command).toBe(process.execPath)
+
+    const codex = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'openrouter',
+      model: 'openai/gpt-oss-20b:free',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'test-api-key',
+    })
+    const codexConfig = readFileSync(join(codex.rootDir, 'config.toml'), 'utf-8')
+    expect(codexConfig).toContain('[mcp_servers.nowledge-mem]')
+    expect(codexConfig).toContain('[mcp_servers.nowledge-mem.http_headers]')
+    expect(codexConfig).toContain('APP = "codex"')
+    expect(codexConfig).not.toContain('command = "stale-managed"')
+    expect(codexConfig).not.toContain('[model_providers.unrelated]')
+    expect(codexConfig).toContain('[mcp_servers.hermes-studio-api]')
+    expect(codexConfig).toContain('[mcp_servers.hermes-studio-devices]')
+    expect(codexConfig).toContain('[mcp_servers.hermes-studio-use]')
+  })
+
   it('isolates Claude Code settings for hidden chat runs only', async () => {
     const home = makeHome()
 
