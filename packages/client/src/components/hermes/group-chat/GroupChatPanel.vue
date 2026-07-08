@@ -787,9 +787,15 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     </div>
                 </div>
             </div>
-            <NModal v-model:show="showWorkspaceModal" preset="card" :title="t('chat.setWorkspaceTitle')" class="workspace-modal">
+            <NModal
+                v-model:show="showWorkspaceModal"
+                preset="dialog"
+                :title="t('chat.setWorkspaceTitle')"
+                class="workspace-modal"
+                style="width: 520px; max-width: 92vw"
+            >
                 <FolderPicker v-model="workspaceValue" />
-                <template #footer>
+                <template #action>
                     <NSpace justify="end">
                         <NButton @click="showWorkspaceModal = false">{{ t('common.cancel') }}</NButton>
                         <NButton @click="handleClearWorkspace">{{ t('workflow.workspace.clear') }}</NButton>
