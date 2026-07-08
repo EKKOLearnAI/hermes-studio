@@ -141,6 +141,47 @@ describe('run chat abort goal handling', () => {
     }))
   })
 
+
+  it('stops a workflow-scoped coding-agent run instead of misrouting abort through the bridge', async () => {
+    const { handleAbort } = await import('../../packages/server/src/services/hermes/run-chat/abort')
+    const { emit, nsp, socket } = makeHarness()
+    codingAgentRunManagerMock.hasSession.mockReturnValue(true)
+    codingAgentRunManagerMock.stop.mockReturnValue(true)
+    const state = {
+      messages: [],
+      isWorking: true,
+      isAborting: false,
+      events: [],
+      queue: [],
+      runId: 'coding-run-1',
+      profile: 'default',
+      source: 'workflow',
+    } as any
+    const sessionMap = new Map([['session-1', state]])
+    const bridge = {
+      interrupt: vi.fn().mockRejectedValue(new Error('unknown session: session-1')),
+      goalPause: vi.fn(),
+    }
+    const runQueuedItem = vi.fn()
+
+    await handleAbort(nsp as any, socket as any, 'session-1', sessionMap, bridge, runQueuedItem)
+
+    expect(bridge.interrupt).not.toHaveBeenCalled()
+    expect(bridge.goalPause).not.toHaveBeenCalled()
+    expect(flushResponseRunToDbMock).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'workflow',
+    }), 'session-1')
+    expect(flushBridgePendingToDbMock).not.toHaveBeenCalled()
+    expect(codingAgentRunManagerMock.stop).toHaveBeenCalledWith('session-1', { reportClosed: false })
+    expect(state.isWorking).toBe(false)
+    expect(state.isAborting).toBe(false)
+    expect(emit).toHaveBeenCalledWith('abort.completed', expect.objectContaining({
+      session_id: 'session-1',
+      run_id: 'coding-run-1',
+      synced: true,
+    }))
+  })
+
   it('stops a coding-agent run even when chat-run state was not marked working', async () => {
     const { handleAbort } = await import('../../packages/server/src/services/hermes/run-chat/abort')
     const { emit, nsp, socket } = makeHarness()
