@@ -93,6 +93,8 @@ export const WORKSPACE_RUN_CHANGES_TABLE = 'workspace_run_changes'
 
 export const WORKSPACE_RUN_CHANGES_SCHEMA: Record<string, string> = {
   change_id: 'TEXT PRIMARY KEY',
+  room_id: "TEXT NOT NULL DEFAULT ''",
+  message_id: "TEXT NOT NULL DEFAULT ''",
   session_id: 'TEXT NOT NULL',
   run_id: 'TEXT NOT NULL DEFAULT \'\'',
   source: 'TEXT NOT NULL DEFAULT \'run\'',
@@ -131,6 +133,7 @@ export const WORKSPACE_RUN_CHANGE_FILES_SCHEMA: Record<string, string> = {
 export const WORKSPACE_RUN_CHANGES_INDEXES = {
   idx_workspace_run_changes_session: 'CREATE INDEX IF NOT EXISTS idx_workspace_run_changes_session ON workspace_run_changes(session_id, created_at)',
   idx_workspace_run_changes_run: 'CREATE INDEX IF NOT EXISTS idx_workspace_run_changes_run ON workspace_run_changes(run_id)',
+  idx_workspace_run_changes_room: 'CREATE INDEX IF NOT EXISTS idx_workspace_run_changes_room ON workspace_run_changes(room_id, created_at)',
 }
 
 export const WORKSPACE_RUN_CHANGE_FILES_INDEXES = {

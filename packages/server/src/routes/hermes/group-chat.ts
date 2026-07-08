@@ -503,8 +503,14 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         ctx.body = { error: 'Access denied' }
         return
     }
-    // Disconnect all agents in room
-    chatServer.agentClients.disconnectRoom(roomId)
+    // Interrupt active bridge runs, then evict sockets and disconnect agents before deleting persisted data.
+    try {
+        await chatServer.deleteRoomRuntimeState(roomId)
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 409)
+        ctx.body = { error: err?.message || 'Room interrupt did not complete' }
+        return
+    }
     // Delete all data
     storage.deleteRoom(roomId)
     ctx.body = { success: true }
@@ -531,8 +537,14 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clear-context', async
         ctx.body = { error: 'Access denied' }
         return
     }
+    try {
+        await chatServer.clearRoomRuntimeState(roomId)
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 409)
+        ctx.body = { error: err?.message || 'Room interrupt did not complete' }
+        return
+    }
     storage.clearRoomContext(roomId)
-    chatServer.clearRoomRuntimeState(roomId)
     ctx.body = { success: true, room: serializeRoom(storage.getRoom(roomId), true) }
 })
 
@@ -599,6 +611,15 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/workspace', async (ctx
     try {
         const rawWorkspace = workspace.trim()
         const normalized = rawWorkspace ? (await assertAllowedWorkspaceFolder(rawWorkspace)).fullPath : ''
+        if (normalized !== String(room.workspace || '')) {
+            const releaseSessionFence = chatServer.fenceCurrentRoomAgentSessions(roomId)
+            try {
+                await chatServer.agentClients.interruptRoom(roomId)
+            } catch (err) {
+                releaseSessionFence()
+                throw err
+            }
+        }
         ctx.body = { room: serializeRoom(storage.updateRoomWorkspace(roomId, normalized), true) }
     } catch (err: any) {
         ctx.status = Number(err?.status || 403)

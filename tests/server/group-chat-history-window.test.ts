@@ -39,7 +39,7 @@ vi.mock('../../packages/server/src/services/auth', () => ({
 import { countTokens, SUMMARY_PREFIX } from '../../packages/server/src/lib/context-compressor'
 import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
 import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
-import { AgentClients, mentionMessageToStoredContextMessage } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { AgentClients, groupBridgeSessionId, mentionMessageToStoredContextMessage } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { sortGroupMessagesCanonical } from '../../packages/server/src/services/hermes/group-chat/group-message-ordering'
 
 function makeDb(): DatabaseSync {
@@ -199,9 +199,12 @@ describe('group chat history windows', () => {
       role: 'user',
       timestamp: index + 1,
     }))
+    const sessionId = groupBridgeSessionId('room-1', 'default', 'Worker', 'seed-1')
     const storage = {
       getMessagesForContext: vi.fn(() => messages),
       getRecentMessagesForUI: vi.fn(() => messages.slice(-150)),
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: 'seed-1' })),
+      getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: 'Worker' })),
       updateRoomTotalTokens: vi.fn(),
     }
     const bridge = {
@@ -222,7 +225,7 @@ describe('group chat history windows', () => {
     } as any)
     client.setStorage(storage as any)
 
-    await (client as any).refreshRoomFullContextEstimate('room-1', 'session-1', bridge, undefined, { model: '', provider: '' })
+    await (client as any).refreshRoomFullContextEstimate('room-1', sessionId, bridge, undefined, { model: '', provider: '' })
 
     expect(storage.getMessagesForContext).toHaveBeenCalledWith('room-1')
     expect(storage.getRecentMessagesForUI).not.toHaveBeenCalled()

@@ -129,6 +129,71 @@ describe('group chat room workspace', () => {
     server.getIO().close()
   })
 
+  it('interrupts active room agents before changing the configured workspace', async () => {
+    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const server = new GroupChatServer(httpServer)
+    const storage = server.getStorage()
+    const workspace = join(root, 'repo')
+    await mkdir(workspace)
+    storage.saveRoom('room-1', 'Room 1')
+    setGroupChatServer(server)
+    const events: string[] = []
+    const fenceCurrentRoomAgentSessions = vi.spyOn(server, 'fenceCurrentRoomAgentSessions').mockImplementation(() => {
+      events.push('fence')
+      return vi.fn()
+    })
+    const interruptRoom = vi.spyOn(server.agentClients, 'interruptRoom').mockImplementation(async () => {
+      events.push('interrupt')
+    })
+
+    const handler = await routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace', 'PUT')
+    const ctx: any = {
+      params: { roomId: 'room-1' },
+      request: { body: { workspace } },
+      status: 200,
+      body: undefined,
+    }
+
+    await handler(ctx, async () => {})
+
+    expect(fenceCurrentRoomAgentSessions).toHaveBeenCalledWith('room-1')
+    expect(interruptRoom).toHaveBeenCalledWith('room-1')
+    expect(events).toEqual(['fence', 'interrupt'])
+    expect(storage.getRoom('room-1')?.workspace).toBe(workspace)
+    server.getIO().close()
+  })
+
+  it('does not switch workspace when active room agents do not finish interrupting', async () => {
+    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const server = new GroupChatServer(httpServer)
+    const storage = server.getStorage()
+    const workspace = join(root, 'repo')
+    await mkdir(workspace)
+    storage.saveRoom('room-1', 'Room 1')
+    setGroupChatServer(server)
+    const releaseSessionFence = vi.fn()
+    vi.spyOn(server, 'fenceCurrentRoomAgentSessions').mockReturnValue(releaseSessionFence)
+    vi.spyOn(server.agentClients, 'interruptRoom').mockRejectedValue(Object.assign(new Error('still running'), { status: 409 }))
+
+    const handler = await routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace', 'PUT')
+    const ctx: any = {
+      params: { roomId: 'room-1' },
+      request: { body: { workspace } },
+      status: 200,
+      body: undefined,
+    }
+
+    await handler(ctx, async () => {})
+
+    expect(ctx.status).toBe(409)
+    expect(ctx.body).toEqual({ error: 'still running' })
+    expect(releaseSessionFence).toHaveBeenCalledTimes(1)
+    expect(storage.getRoom('room-1')?.workspace).toBe('')
+    server.getIO().close()
+  })
+
   it('ignores unvalidated workspace values hidden in create-room compression config', async () => {
     const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
     const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')

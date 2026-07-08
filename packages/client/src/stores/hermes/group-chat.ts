@@ -951,6 +951,16 @@ function runtimePayloadText(value: unknown): string {
     return String(value)
 }
 
+function parseWorkspaceDiffPayload(value: unknown): unknown {
+    const text = runtimePayloadText(value)
+    if (!text) return undefined
+    try {
+        const parsed = JSON.parse(text)
+        return parsed?.kind === 'workspace_diff' ? parsed : value
+    } catch {
+        return value
+    }
+}
 
 function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
     const toolNameMap = new Map<string, string>()
@@ -998,7 +1008,9 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
             const toolName = msg.tool_name || toolNameMap.get(tcId) || undefined
             const toolArgs = toolArgsMap.has(tcId) ? toolArgsMap.get(tcId) : undefined
             let preview = ''
-            const toolResult = runtimeToolPayloadOrUndefined((msg as any).content)
+            const toolResult = toolName === 'workspace_diff'
+                ? parseWorkspaceDiffPayload((msg as any).content)
+                : runtimeToolPayloadOrUndefined((msg as any).content)
             const contentText = runtimePayloadText((msg as any).content)
             if (contentText) {
                 try {

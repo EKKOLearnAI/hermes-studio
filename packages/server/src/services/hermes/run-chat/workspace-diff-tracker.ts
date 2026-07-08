@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSyn
 import { tmpdir } from 'os'
 import { basename, extname, join, relative, resolve, sep } from 'path'
 import { logger } from '../../logger'
-import { saveWorkspaceRunChange, type WorkspaceRunChangeSummary } from '../../../db/hermes/workspace-run-changes-store'
+import { saveWorkspaceRunChange, type SaveWorkspaceRunChangeInput, type WorkspaceRunChangeSummary } from '../../../db/hermes/workspace-run-changes-store'
 
 const MAX_TRACKED_STATUS_PATHS = 20_000
 const MAX_CHANGED_FILES = 80
@@ -616,11 +616,21 @@ export function startWorkspaceRunCheckpoint(args: {
   })
 }
 
-export function completeWorkspaceRunCheckpoint(args: {
+export function discardWorkspaceRunCheckpoint(args: {
+  sessionId: string
+  runId?: string | null
+}): void {
+  const runId = args.runId || ''
+  if (!runId) return
+  const key = checkpointKey(args.sessionId, runId)
+  checkpoints.delete(key)
+}
+
+export function completeWorkspaceRunCheckpointDraft(args: {
   sessionId: string
   runId?: string | null
   workspace?: string | null
-}): WorkspaceRunChangeSummary | null {
+}): SaveWorkspaceRunChangeInput | null {
   const runId = args.runId || ''
   if (!runId) return null
   const key = checkpointKey(args.sessionId, runId)
@@ -678,7 +688,7 @@ export function completeWorkspaceRunCheckpoint(args: {
   }
 
   if (files.length === 0) return null
-  return saveWorkspaceRunChange({
+  return {
     change_id: checkpoint.changeId,
     session_id: checkpoint.sessionId,
     run_id: runId || checkpoint.runId,
@@ -693,5 +703,14 @@ export function completeWorkspaceRunCheckpoint(args: {
     truncated,
     total_patch_bytes: totalPatchBytes,
     files,
-  })
+  }
+}
+
+export function completeWorkspaceRunCheckpoint(args: {
+  sessionId: string
+  runId?: string | null
+  workspace?: string | null
+}): WorkspaceRunChangeSummary | null {
+  const draft = completeWorkspaceRunCheckpointDraft(args)
+  return draft ? saveWorkspaceRunChange(draft) : null
 }

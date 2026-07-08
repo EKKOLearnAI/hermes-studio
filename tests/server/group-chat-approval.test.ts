@@ -5,7 +5,7 @@ import {
   emitAck,
   once,
 } from './group-chat-test-helpers'
-import { GROUP_CHAT_AGENT_SOCKET_SECRET } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupBridgeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 
 describe('group chat approval and context baseline', () => {
@@ -27,6 +27,12 @@ describe('group chat approval and context baseline', () => {
   })
 
   async function joinPair() {
+    const agentSessionId = groupBridgeSessionId(
+      'room-1',
+      'default',
+      'Agent',
+      String(groupServer.getStorage().getRoom('room-1')?.sessionSeed || '0'),
+    )
     const agent = await connectGroupChatClient(port, 'agent-1', 'Agent', {
       source: 'agent',
       agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
@@ -35,7 +41,7 @@ describe('group chat approval and context baseline', () => {
     harness.sockets.push(agent, human)
     await emitAck(agent, 'join', { roomId: 'room-1' })
     await emitAck(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
-    return { agent, human }
+    return { agent, human, agentSessionId }
   }
 
   function wait(ms = 30) {
@@ -43,11 +49,11 @@ describe('group chat approval and context baseline', () => {
   }
 
   it('relays context status and updates room token count', async () => {
-    const { agent, human } = await joinPair()
+    const { agent, human, agentSessionId } = await joinPair()
     const statusEvent = once<any>(human, 'context_status')
     const roomUpdated = once<any>(human, 'room_updated')
 
-    agent.emit('context_status', { roomId: 'room-1', agentName: 'Agent', status: 'replying', totalTokens: 123 })
+    agent.emit('context_status', { roomId: 'room-1', agentName: 'Agent', status: 'replying', totalTokens: 123, agentSessionId })
 
     expect(await statusEvent).toEqual({ roomId: 'room-1', agentName: 'Agent', status: 'replying' })
     expect(await roomUpdated).toEqual({ roomId: 'room-1', totalTokens: 123 })
@@ -68,9 +74,9 @@ describe('group chat approval and context baseline', () => {
   })
 
   it('clears ready context status from join recovery', async () => {
-    const { agent } = await joinPair()
-    agent.emit('context_status', { roomId: 'room-1', agentName: 'Agent', status: 'replying' })
-    agent.emit('context_status', { roomId: 'room-1', agentName: 'Agent', status: 'ready' })
+    const { agent, agentSessionId } = await joinPair()
+    agent.emit('context_status', { roomId: 'room-1', agentName: 'Agent', status: 'replying', agentSessionId })
+    agent.emit('context_status', { roomId: 'room-1', agentName: 'Agent', status: 'ready', agentSessionId })
 
     const lateJoiner = await connectGroupChatClient(port, 'human-2', 'Late')
     harness.sockets.push(lateJoiner)
@@ -80,12 +86,13 @@ describe('group chat approval and context baseline', () => {
   })
 
   it('relays approval requested with default choices', async () => {
-    const { agent, human } = await joinPair()
+    const { agent, human, agentSessionId } = await joinPair()
     const requested = once<any>(human, 'approval.requested')
 
     agent.emit('approval.requested', {
       roomId: 'room-1',
       agentName: 'Agent',
+      agentSessionId,
       approval_id: 'approval-1',
       command: 'touch file',
       description: 'needs approval',
@@ -101,7 +108,7 @@ describe('group chat approval and context baseline', () => {
   })
 
   it('does not relay approval payloads to read-only invite members', async () => {
-    const { agent, human } = await joinPair()
+    const { agent, human, agentSessionId } = await joinPair()
     const readonly = await connectGroupChatClient(port, 'human-readonly', 'ReadOnly')
     harness.sockets.push(readonly)
     groupServer.getIO().of('/group-chat').sockets.get(readonly.id!)!.data.authUser = { id: 7, role: 'user', profiles: [] }
@@ -114,6 +121,7 @@ describe('group chat approval and context baseline', () => {
     agent.emit('approval.requested', {
       roomId: 'room-1',
       agentName: 'Agent',
+      agentSessionId,
       approval_id: 'approval-private',
       command: 'cat /private/workspace/secret',
       description: 'needs approval',
@@ -140,10 +148,10 @@ describe('group chat approval and context baseline', () => {
   })
 
   it('relays approval resolved with normalized choice', async () => {
-    const { agent, human } = await joinPair()
+    const { agent, human, agentSessionId } = await joinPair()
     const resolved = once<any>(human, 'approval.resolved')
 
-    agent.emit('approval.resolved', { roomId: 'room-1', agentName: 'Agent', approval_id: 'approval-1', choice: 'deny' })
+    agent.emit('approval.resolved', { roomId: 'room-1', agentName: 'Agent', agentSessionId, approval_id: 'approval-1', choice: 'deny' })
 
     expect(await resolved).toEqual({
       event: 'approval.resolved',

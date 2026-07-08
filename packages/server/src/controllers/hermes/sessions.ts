@@ -19,7 +19,13 @@ import type { UsageStatsModelRow, UsageStatsDailyRow } from '../../db/hermes/usa
 import { deleteWorkspaceRunChangesForSession, getWorkspaceRunChangeFile as getWorkspaceRunChangeFileFromDb, listWorkspaceRunChangesForSession } from '../../db/hermes/workspace-run-changes-store'
 import { getModelContextLength } from '../../services/hermes/model-context'
 import { getActiveProfileName, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
-import { isNearestExistingRealPathWithin, isPathWithin, isRealPathWithin } from '../../services/hermes/hermes-path'
+import { isNearestExistingRealPathWithin, isPathWithin } from '../../services/hermes/hermes-path'
+import {
+  isWorkspaceListPathAllowed,
+  normalizeWindowsWorkspacePath,
+  useWindowsDriveWorkspaceMode,
+  workspaceBaseOverride,
+} from '../../services/hermes/workspace-path'
 import { getGroupChatServer } from '../../routes/hermes/group-chat'
 import { logger } from '../../services/logger'
 import type { ConversationSummary } from '../../services/hermes/conversations'
@@ -30,7 +36,7 @@ import { AgentBridgeClient, getAgentBridgeManager } from '../../services/hermes/
 import { ensureHermesRunWorkspace } from '../../services/hermes/run-chat/workspace'
 import { isSensitivePath, MAX_EDIT_SIZE } from '../../services/hermes/file-provider'
 import { readFile, stat as fsStat, writeFile } from 'fs/promises'
-import { normalize as pathNormalize, resolve as pathResolve, win32 as pathWin32 } from 'path'
+import { normalize as pathNormalize, resolve as pathResolve } from 'path'
 
 function getPendingDeletedSessionIds(): Set<string> {
   return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
@@ -1103,30 +1109,6 @@ export async function usageStats(ctx: any) {
   }
 }
 
-function workspaceBaseOverride(): string {
-  return process.env.WORKSPACE_BASE?.trim() || ''
-}
-
-function useWindowsDriveWorkspaceMode(): boolean {
-  return process.platform === 'win32' && !workspaceBaseOverride()
-}
-
-function windowsDriveRoot(pathValue: string): string | null {
-  const match = /^([a-zA-Z]:)[\\/]?$/.exec(pathValue.trim())
-  return match ? `${match[1].toUpperCase()}\\` : null
-}
-
-function normalizeWindowsWorkspacePath(inputPath: string): { base: string; fullPath: string } | null {
-  const raw = String(inputPath || '').trim()
-  if (!/^[a-zA-Z]:[\\/]/.test(raw)) return null
-  const fullPath = pathWin32.resolve(raw)
-  const root = windowsDriveRoot(pathWin32.parse(fullPath).root)
-  if (!root) return null
-  const rel = pathWin32.relative(root, fullPath)
-  if (rel.startsWith('..') || pathWin32.isAbsolute(rel)) return null
-  return { base: root, fullPath }
-}
-
 async function listWindowsWorkspaceDrives() {
   const { existsSync } = await import('fs')
   const drives = []
@@ -1143,23 +1125,12 @@ async function listWindowsWorkspaceDrives() {
   return drives
 }
 
-async function isWorkspaceListPathAllowed(fullPath: string, basePath: string, statFn: any): Promise<boolean> {
-  try {
-    const info = await statFn(fullPath)
-    if (!info.isDirectory()) return false
-    if (process.platform === 'win32') return true
-    return await isRealPathWithin(fullPath, basePath)
-  } catch {
-    return false
-  }
-}
-
-async function isSafeWorkspaceFolderEntry(entry: any, fullPath: string, basePath: string, statFn: any): Promise<boolean> {
+async function isSafeWorkspaceFolderEntry(entry: any, fullPath: string, basePath: string, statFn: any, options?: { trustWindowsJunctions?: boolean }): Promise<boolean> {
   if (!entry.isDirectory() && !(typeof entry.isSymbolicLink === 'function' && entry.isSymbolicLink())) {
     return false
   }
 
-  return isWorkspaceListPathAllowed(fullPath, basePath, statFn)
+  return isWorkspaceListPathAllowed(fullPath, basePath, statFn, options)
 }
 
 /**
