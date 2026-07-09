@@ -261,6 +261,47 @@ describe('workspace diff tracker', () => {
     expect(change?.files.map(file => file.path)).toEqual(['notes.md'])
   })
 
+  it('records newly created ordinary files even when many unchanged files already exist in non-git workspaces', async () => {
+    const {
+      completeWorkspaceRunCheckpoint,
+      startWorkspaceRunCheckpoint,
+    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+
+    const workspace = join(root, 'plain-many-existing-files')
+    mkdirSync(workspace)
+    for (let index = 0; index < 120; index += 1) {
+      writeFileSync(join(workspace, `existing-${index.toString().padStart(3, '0')}.txt`), 'unchanged\n')
+    }
+
+    startWorkspaceRunCheckpoint({
+      sessionId: 'session-many-existing-files',
+      runId: 'run-many-existing-files',
+      workspace,
+    })
+
+    writeFileSync(join(workspace, 'README-visible.md'), '# visible new file\n')
+    writeFileSync(join(workspace, 'notes-visible.txt'), 'plain text visible\n')
+    writeFileSync(join(workspace, 'config-visible.json'), '{"visible": true}\n')
+    writeFileSync(join(workspace, 'state.db-wal'), Buffer.alloc(32 * 1024, 0))
+    writeFileSync(join(workspace, 'state.db-shm'), Buffer.alloc(32 * 1024, 0))
+    writeFileSync(join(workspace, 'cache.sqlite-wal'), Buffer.alloc(32 * 1024, 0))
+    writeFileSync(join(workspace, 'cache.sqlite-shm'), Buffer.alloc(32 * 1024, 0))
+
+    const change = completeWorkspaceRunCheckpoint({
+      sessionId: 'session-many-existing-files',
+      runId: 'run-many-existing-files',
+      workspace,
+    })
+
+    expect(change).not.toBeNull()
+    expect(change?.files).toHaveLength(3)
+    expect(change?.files.map(file => file.path)).toEqual(expect.arrayContaining([
+      'README-visible.md',
+      'config-visible.json',
+      'notes-visible.txt',
+    ]))
+  })
+
   it('skips common language dependency and build directories in non-git workspaces', async () => {
     const {
       completeWorkspaceRunCheckpoint,

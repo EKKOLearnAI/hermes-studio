@@ -650,10 +650,10 @@ export function completeWorkspaceRunCheckpointDraft(args: {
   let totalPatchBytes = 0
   let totalAdditions = 0
   let totalDeletions = 0
-  let truncated = checkpoint.truncated || status.truncated || relPaths.size > MAX_CHANGED_FILES
+  let truncated = checkpoint.truncated || status.truncated
   let remainingSnapshotBytes = checkpoint.kind === 'filesystem' ? MAX_TOTAL_SNAPSHOT_BYTES : Number.POSITIVE_INFINITY
 
-  for (const relPath of [...relPaths].slice(0, MAX_CHANGED_FILES)) {
+  for (const relPath of relPaths) {
     const after = snapshotPath(checkpoint.root, relPath, remainingSnapshotBytes)
     if (after.content) {
       remainingSnapshotBytes -= after.content.length
@@ -673,6 +673,10 @@ export function completeWorkspaceRunCheckpointDraft(args: {
     )
     if (!comparison.changed) continue
     if (isEmptyContentOnlyChange(comparison)) continue
+    if (files.length >= MAX_CHANGED_FILES) {
+      truncated = true
+      break
+    }
     totalPatchBytes += comparison.patchBytes
     totalAdditions += comparison.additions
     totalDeletions += comparison.deletions
