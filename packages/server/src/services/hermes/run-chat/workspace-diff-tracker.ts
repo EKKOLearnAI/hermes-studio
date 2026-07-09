@@ -269,7 +269,7 @@ function parseGitStatusPaths(output: string): string[] {
 function getGitStatusPaths(gitRoot: string): { paths: string[]; truncated: boolean } {
   try {
     const output = runGit(gitRoot, ['status', '--porcelain=v1', '-z', '--untracked-files=normal'], 4 * 1024 * 1024)
-    const paths = parseGitStatusPaths(output)
+    const paths = parseGitStatusPaths(output).filter(path => !shouldSkipWorkspaceFile(path))
     return {
       paths: paths.slice(0, MAX_TRACKED_STATUS_PATHS),
       truncated: paths.length > MAX_TRACKED_STATUS_PATHS,
@@ -295,7 +295,7 @@ function shouldSkipFilesystemDir(name: string, relPath: string): boolean {
     DEFAULT_IGNORED_DIR_SUFFIXES.some(suffix => name.endsWith(suffix))
 }
 
-function shouldSkipFilesystemFile(relPath: string): boolean {
+function shouldSkipWorkspaceFile(relPath: string): boolean {
   return DEFAULT_SKIPPED_FILE_NAMES.has(basename(relPath)) ||
     DEFAULT_SKIPPED_FILE_EXTENSIONS.has(extname(relPath).toLowerCase())
 }
@@ -352,7 +352,7 @@ function scanFilesystemPaths(root: string): WorkspacePathScan {
         continue
       }
 
-      if (!entry.isFile() || shouldSkipFilesystemFile(childRelPath)) continue
+      if (!entry.isFile() || shouldSkipWorkspaceFile(childRelPath)) continue
       paths.push(childRelPath)
       if (paths.length >= MAX_TRACKED_STATUS_PATHS) {
         truncated = true
