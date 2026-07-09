@@ -673,7 +673,15 @@ export async function handleBridgeRun(
       contextTokens: errContextTokens,
       queue_remaining: queueLen,
     })
-    if (queueLen > 0) dequeueNextQueuedRun(socket, session_id)
+    if (queueLen > 0) {
+      dequeueNextQueuedRun(socket, session_id)
+    } else {
+      try {
+        updateSession(session_id, { ended_at: Math.floor(Date.now() / 1000), end_reason: 'error' })
+      } catch (endErr) {
+        bridgeLogger.warn(endErr, '[chat-run-socket] failed to write ended_at for session %s', session_id)
+      }
+    }
   }
 }
 
@@ -820,6 +828,13 @@ export async function resumeBridgeRun(
       error: err instanceof Error ? err.message : String(err),
       resumed: true,
     })
+    if ((state.queue?.length ?? 0) === 0) {
+      try {
+        updateSession(sessionId, { ended_at: Math.floor(Date.now() / 1000), end_reason: 'error' })
+      } catch (endErr) {
+        bridgeLogger.warn(endErr, '[chat-run-socket] failed to write ended_at for session %s', sessionId)
+      }
+    }
   }
 }
 
@@ -1437,6 +1452,11 @@ async function applyBridgeChunkAsync(
   } else if (!state.activeRunMarker) {
     state.isWorking = false
     state.profile = undefined
+    try {
+      updateSession(sessionId, { ended_at: Math.floor(Date.now() / 1000), end_reason: terminalError ? 'error' : 'complete' })
+    } catch (endErr) {
+      bridgeLogger.warn(endErr, '[chat-run-socket] failed to write ended_at for session %s', sessionId)
+    }
   }
 }
 
