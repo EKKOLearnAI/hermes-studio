@@ -375,6 +375,13 @@ export async function handleBridgeRun(
       : { messages: [], isWorking: false, events: [], queue: [] }
     sessionMap.set(session_id, state)
   }
+  if (sessionRow) {
+    try {
+      updateSession(session_id, { ended_at: null, end_reason: null, last_active: now })
+    } catch (err) {
+      bridgeLogger.warn(err, '[chat-run-socket] failed to reopen session %s for bridge run', session_id)
+    }
+  }
 
   state.isWorking = true
   state.isAborting = false

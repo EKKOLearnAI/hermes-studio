@@ -1374,6 +1374,40 @@ describe('coding agent run state', () => {
     expect(run.pendingChatCompletionEvent).toBeUndefined()
     expect(run.pendingChatCompletionPayload).toBeUndefined()
   })
+
+  it('writes print coding-agent session end markers only after the final queued run completes', () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const state: any = { messages: [], isWorking: true, events: [], queue: [{ queue_id: 'queued-1', input: 'next' }] }
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const agentSessionId = `agent-session-ended-marker-${suffix}`
+    const chatSessionId = `chat-session-ended-marker-${suffix}`
+    manager.start({
+      agentSessionId,
+      agentId: 'claude-code',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'claude-test',
+      sessionId: chatSessionId,
+      command: 'claude',
+      args: [],
+      shellCommand: 'claude',
+      workspaceDir: process.cwd(),
+      state,
+    })
+    const run = (manager as any).runs.get(agentSessionId)
+
+    ;(manager as any).emitAndMarkPrintChatRunCompleted(run, 'run.completed', { event: 'run.completed' })
+    expect(getSession(chatSessionId)?.ended_at).toBeNull()
+    expect(getSession(chatSessionId)?.end_reason).toBeNull()
+
+    state.queue = []
+    state.isWorking = true
+    ;(manager as any).emitAndMarkPrintChatRunCompleted(run, 'run.failed', { event: 'run.failed' })
+    const session = getSession(chatSessionId)
+    expect(session?.ended_at).toEqual(expect.any(Number))
+    expect(session?.end_reason).toBe('error')
+  })
 })
 
 describe('coding agent chat event mapper', () => {

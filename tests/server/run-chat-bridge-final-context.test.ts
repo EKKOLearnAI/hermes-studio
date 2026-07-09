@@ -189,6 +189,68 @@ describe('bridge run final context usage', () => {
     for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
   })
 
+  it('reopens an ended bridge session when starting a new run', async () => {
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      model: 'gpt-test',
+      provider: 'openai',
+      workspace: '/tmp/hermes-bridge-final-context/default/workspace',
+      ended_at: 1_770_000_000,
+      end_reason: 'complete',
+    })
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    const sessionMap = new Map([['session-1', state]])
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({
+        token_count: 12345,
+        fixed_context_tokens: 12327,
+        message_count: 2,
+        tool_count: 4,
+        system_prompt_chars: 13,
+      }),
+      streamOutput: vi.fn(async function* () {
+        yield { run_id: 'run-1', done: true, status: 'completed', output: 'done' }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      { input: 'hello again', session_id: 'session-1' },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    const reopenCallIndex = updateSessionMock.mock.calls.findIndex(([sessionId, data]) => (
+      sessionId === 'session-1' &&
+      data.ended_at === null &&
+      data.end_reason === null &&
+      typeof data.last_active === 'number'
+    ))
+    const endedCallIndex = updateSessionMock.mock.calls.findIndex(([sessionId, data]) => (
+      sessionId === 'session-1' &&
+      typeof data.ended_at === 'number' &&
+      data.end_reason === 'complete'
+    ))
+
+    expect(reopenCallIndex).toBeGreaterThanOrEqual(0)
+    expect(endedCallIndex).toBeGreaterThanOrEqual(0)
+    expect(reopenCallIndex).toBeLessThan(endedCallIndex)
+    expect(emit).toHaveBeenCalledWith('run.completed', expect.objectContaining({
+      output: 'done',
+    }))
+  })
+
   it('refreshes full context tokens when a bridge run completes', async () => {
     const emit = vi.fn()
     const nsp = makeNamespace(emit)

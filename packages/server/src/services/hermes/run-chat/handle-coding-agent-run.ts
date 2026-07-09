@@ -12,7 +12,8 @@ import type { ChatCodingAgentId } from './types'
 import { writeModelRunProfileToken } from './model-run-prompt'
 import type { AuthenticatedUser } from '../../../middleware/user-auth'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
-import { getSession } from '../../../db/hermes/session-store'
+import { getSession, updateSession } from '../../../db/hermes/session-store'
+import { logger } from '../../logger'
 
 export interface CodingAgentRunSocketData {
   input: string | ContentBlock[]
@@ -95,6 +96,15 @@ export async function handleCodingAgentRun(
 
   state.isWorking = true
   state.runId = runId
+  try {
+    updateSession(sessionId, {
+      ended_at: null,
+      end_reason: null,
+      last_active: Math.floor(Date.now() / 1000),
+    })
+  } catch (err) {
+    logger.warn(err, '[chat-run-socket] failed to reopen coding-agent session %s', sessionId)
+  }
 
   try {
     const inputText = contentBlocksToString(data.input)
@@ -114,6 +124,14 @@ export async function handleCodingAgentRun(
       state.activeRunMarker = undefined
       state.events = []
       state.responseRun = undefined
+      try {
+        updateSession(sessionId, {
+          ended_at: Math.floor(Date.now() / 1000),
+          end_reason: 'error',
+        })
+      } catch (updateErr) {
+        logger.warn(updateErr, '[chat-run-socket] failed to write coding-agent send error end marker for %s', sessionId)
+      }
     }
     throw err
   }

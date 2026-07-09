@@ -1723,6 +1723,16 @@ export class CodingAgentRunManager {
       ...(queueRemaining > 0 ? { queue_remaining: queueRemaining } : {}),
       workspace_run_change: workspaceRunChange,
     })
+    if (queueRemaining === 0) {
+      try {
+        updateSession(run.launch.sessionId, {
+          ended_at: nowSeconds(),
+          end_reason: event === 'run.failed' ? 'error' : 'complete',
+        })
+      } catch (err) {
+        logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] failed to write coding-agent session end marker')
+      }
+    }
     run.state.isWorking = false
     run.state.runId = undefined
     run.state.abortController = undefined

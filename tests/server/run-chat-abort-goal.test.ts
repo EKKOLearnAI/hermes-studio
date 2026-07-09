@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const updateSessionStatsMock = vi.fn()
+const updateSessionMock = vi.fn()
 const flushBridgePendingToDbMock = vi.fn()
 const flushResponseRunToDbMock = vi.fn()
 const replaceStateMock = vi.fn()
@@ -11,6 +12,7 @@ const codingAgentRunManagerMock = vi.hoisted(() => ({
 }))
 
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+  updateSession: updateSessionMock,
   updateSessionStats: updateSessionStatsMock,
 }))
 
@@ -94,6 +96,7 @@ describe('run chat abort goal handling', () => {
       session_id: 'session-1',
       synced: true,
     }))
+    expect(updateSessionMock).not.toHaveBeenCalled()
   })
 
   it('releases local working state when a CLI interrupt does not sync before timeout', async () => {
@@ -139,6 +142,10 @@ describe('run chat abort goal handling', () => {
       run_id: 'run-1',
       synced: false,
     }))
+    expect(updateSessionMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
+      ended_at: expect.any(Number),
+      end_reason: 'abort',
+    }))
   })
 
 
@@ -168,6 +175,11 @@ describe('run chat abort goal handling', () => {
 
     expect(bridge.interrupt).not.toHaveBeenCalled()
     expect(bridge.goalPause).not.toHaveBeenCalled()
+    expect(codingAgentRunManagerMock.stop).toHaveBeenCalledWith('session-1', { reportClosed: false })
+    expect(updateSessionMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
+      ended_at: expect.any(Number),
+      end_reason: 'abort',
+    }))
     expect(flushResponseRunToDbMock).toHaveBeenCalledWith(expect.objectContaining({
       source: 'workflow',
     }), 'session-1')

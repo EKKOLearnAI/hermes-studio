@@ -15,7 +15,7 @@ import {
 } from '../../../../../ekko-agent/src'
 import { getGlobalEkkoAgent } from '../../ekko-agent/manager'
 import { resolveEkkoMcpServers } from '../../ekko-agent/mcp'
-import { createSession, addMessage, getSession, updateSessionStats } from '../../../db/hermes/session-store'
+import { createSession, addMessage, getSession, updateSession, updateSessionStats } from '../../../db/hermes/session-store'
 import { logger } from '../../logger'
 import { getProfileDir } from '../hermes-profile'
 import { observeRunChatPetEvent } from '../pet-state-socket'
@@ -449,6 +449,11 @@ export async function handleEkkoAgentRun(
       workspace,
     })
   }
+  try {
+    updateSession(sessionId, { ended_at: null, end_reason: null, last_active: now })
+  } catch (err) {
+    logger.warn(err, '[chat-run-socket] failed to reopen ekko-agent session %s', sessionId)
+  }
 
   if (shouldPersistUserMessage) {
     const role = data.display_role === 'command' ? 'command' : 'user'
@@ -689,6 +694,16 @@ export async function handleEkkoAgentRun(
         provider_config: redactProviderConfig(providerConfig),
         response: result.output,
       }, '[chat-run-socket] ekko-agent model returned empty output')
+      if (state.queue.length === 0) {
+        try {
+          updateSession(sessionId, {
+            ended_at: Math.floor(Date.now() / 1000),
+            end_reason: 'error',
+          })
+        } catch (err) {
+          logger.warn(err, '[chat-run-socket] failed to write ekko-agent empty-response end marker for %s', sessionId)
+        }
+      }
       emit('run.failed', {
         event: 'run.failed',
         run_id: runId || result.runId,
@@ -730,6 +745,16 @@ export async function handleEkkoAgentRun(
     state.outputTokens = (state.outputTokens || 0) + usageOutput
     if (contextEstimate?.contextTokens != null) state.contextTokens = contextEstimate.contextTokens
     updateSessionStats(sessionId)
+    if (state.queue.length === 0) {
+      try {
+        updateSession(sessionId, {
+          ended_at: Math.floor(Date.now() / 1000),
+          end_reason: 'complete',
+        })
+      } catch (err) {
+        logger.warn(err, '[chat-run-socket] failed to write ekko-agent session end marker for %s', sessionId)
+      }
+    }
     emit('usage.updated', {
       event: 'usage.updated',
       run_id: runId || result.runId,
@@ -761,6 +786,16 @@ export async function handleEkkoAgentRun(
     }
     const error = err instanceof Error ? err.message : String(err)
     logger.warn(err, '[chat-run-socket] ekko-agent run failed for session %s', sessionId)
+    if (state.queue.length === 0) {
+      try {
+        updateSession(sessionId, {
+          ended_at: Math.floor(Date.now() / 1000),
+          end_reason: 'error',
+        })
+      } catch (updateErr) {
+        logger.warn(updateErr, '[chat-run-socket] failed to write ekko-agent error end marker for %s', sessionId)
+      }
+    }
     emit('run.failed', {
       event: 'run.failed',
       run_id: runId,

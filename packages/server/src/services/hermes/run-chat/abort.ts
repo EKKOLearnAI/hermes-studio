@@ -3,7 +3,7 @@
  */
 
 import type { Server, Socket } from 'socket.io'
-import { updateSessionStats } from '../../../db/hermes/session-store'
+import { updateSession, updateSessionStats } from '../../../db/hermes/session-store'
 import { logger } from '../../logger'
 import { codingAgentRunManager } from '../../agent-runner/coding-agent-run-manager'
 import { flushBridgePendingToDb } from './bridge-message'
@@ -180,6 +180,15 @@ export async function markAbortCompleted(
     state.events = []
     runQueuedItem(socket, sessionId, next, profile || 'default')
     return
+  }
+
+  try {
+    updateSession(sessionId, {
+      ended_at: Math.floor(Date.now() / 1000),
+      end_reason: 'abort',
+    })
+  } catch (err) {
+    logger.warn(err, '[chat-run-socket][abort] failed to write cancellation end marker for session %s', sessionId)
   }
 
   state.events = []

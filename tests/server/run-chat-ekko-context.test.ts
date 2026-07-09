@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const getSessionMock = vi.hoisted(() => vi.fn())
 const createSessionMock = vi.hoisted(() => vi.fn())
 const addMessageMock = vi.hoisted(() => vi.fn())
+const updateSessionMock = vi.hoisted(() => vi.fn())
 const updateSessionStatsMock = vi.hoisted(() => vi.fn())
 const resolveBridgeRunModelConfigMock = vi.hoisted(() => vi.fn())
 const agentRunMock = vi.hoisted(() => vi.fn())
@@ -11,6 +12,7 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   getSession: getSessionMock,
   createSession: createSessionMock,
   addMessage: addMessageMock,
+  updateSession: updateSessionMock,
   updateSessionStats: updateSessionStatsMock,
 }))
 
@@ -169,6 +171,15 @@ describe('ekko-agent context usage events', () => {
       contextTokens: 30_000,
     }))
     expect(state.contextTokens).toBe(30_000)
+    expect(updateSessionMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
+      ended_at: null,
+      end_reason: null,
+      last_active: expect.any(Number),
+    }))
+    expect(updateSessionMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
+      ended_at: expect.any(Number),
+      end_reason: 'complete',
+    }))
   })
 
   it('includes paired tool results in Ekko history for follow-up turns', async () => {
