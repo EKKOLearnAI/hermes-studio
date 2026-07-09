@@ -202,6 +202,37 @@ describe('workspace diff tracker', () => {
     expect(nonEmptyChange?.files.map(file => file.path)).toEqual(['non-empty.txt'])
   })
 
+  it('skips SQLite WAL and SHM sidecar files in non-git workspaces', async () => {
+    const {
+      completeWorkspaceRunCheckpoint,
+      startWorkspaceRunCheckpoint,
+    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+
+    const workspace = join(root, 'plain-sqlite-sidecars')
+    mkdirSync(workspace)
+
+    startWorkspaceRunCheckpoint({
+      sessionId: 'session-sqlite-sidecars',
+      runId: 'run-sqlite-sidecars',
+      workspace,
+    })
+
+    writeFileSync(join(workspace, 'state.db-wal'), Buffer.alloc(32 * 1024, 0))
+    writeFileSync(join(workspace, 'state.db-shm'), Buffer.alloc(32 * 1024, 0))
+    writeFileSync(join(workspace, 'cache.sqlite-wal'), Buffer.alloc(32 * 1024, 0))
+    writeFileSync(join(workspace, 'cache.sqlite-shm'), Buffer.alloc(32 * 1024, 0))
+    writeFileSync(join(workspace, 'notes.md'), 'visible change\n')
+
+    const change = completeWorkspaceRunCheckpoint({
+      sessionId: 'session-sqlite-sidecars',
+      runId: 'run-sqlite-sidecars',
+      workspace,
+    })
+
+    expect(change).not.toBeNull()
+    expect(change?.files.map(file => file.path)).toEqual(['notes.md'])
+  })
+
   it('skips common language dependency and build directories in non-git workspaces', async () => {
     const {
       completeWorkspaceRunCheckpoint,
