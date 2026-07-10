@@ -86,7 +86,8 @@ describe('assistant role context engine', () => {
 
     const bundle = twin.buildRoleContext('context-tester', { recipeId: 'context-test-recipe', query: 'needle%_literal' })
     expect(bundle.sections.goals).toEqual([expect.objectContaining({ title: 'needle%_literal' })])
-    expect(bundle.sections.constraints).toEqual([expect.objectContaining({ key: 'needle%_literal' })])
+    expect(bundle.sections.constraints).toEqual([expect.objectContaining({ value: true, domain: 'health' })])
+    expect(bundle.sourceRecordIds.constraints).toHaveLength(1)
     expect(bundle.sections.entities).toEqual([expect.objectContaining({ label: 'needle%_literal' })])
     expect(bundle.sections.relations).toEqual([expect.objectContaining({ predicate: 'health.needle%_literal' })])
   }, 30_000)
@@ -119,13 +120,13 @@ describe('assistant role context engine', () => {
     expect(bundle.renderedInstructions).not.toContain(bundle.sourceRecordIds.goals![0])
   })
 
-  it('recursively removes secret and filesystem aliases without redacting ordinary business keys', async () => {
+  it('recursively removes ambiguous credentials and filesystem aliases while retaining benign fields', async () => {
     const twin = await import('../../packages/server/src/services/hermes/personal-twin')
     twin.upsertTwinEntity({
       id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self',
       attributes: {
         keyboard: 'mechanical',
-        key: 'business-classification',
+        key: 'sk-live-secret',
         turnkey: 'benign-turnkey',
         monkey: 'benign-monkey',
         result: 'retained',
@@ -175,10 +176,10 @@ describe('assistant role context engine', () => {
     const bundle = twin.buildRoleContext('context-tester', { recipeId: 'nested-privacy' })
     const serialized = JSON.stringify(bundle.sections.subject)
     expect(serialized).toContain('mechanical')
-    expect(serialized).toContain('business-classification')
     expect(serialized).toContain('retained')
     expect(serialized).toContain('benign-turnkey')
     expect(serialized).toContain('benign-monkey')
+    expect(serialized).not.toContain('sk-live-secret')
     expect(serialized).not.toMatch(/configPath|homeDirectory|sqliteFile|clientSecret|privateKey|authorization|passwordHash|refresh_token|credential_file|secretAccessKey|awsSecretAccessKey|accessKeyId|authHeader|httpAuthorization|dsn|databaseUrl|sessionCookie|sshKey|encryptionKey|bearer|connectionUri|jdbcUrl|signingKey|masterKey|clientKey|mnemonic|recoveryPhrase|seedPhrase|recovery_seed/i)
     expect(serialized).not.toMatch(/C:\/private|Bearer private|hash-value|token-value|cloud-secret|cloud-key-id|Basic private|http-private|postgres:\/\/private|sqlite:\/\/\/private|session-private|ssh-private|encryption-private|bearer-private|connection-private|jdbc:private|signing-private|master-private|client-private|private words|recovery-seed-private/)
   })

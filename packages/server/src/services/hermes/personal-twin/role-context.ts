@@ -290,7 +290,7 @@ function isSensitiveKey(key: string): boolean {
   if (tokens.some(token => ['password', 'passphrase', 'credential', 'secret', 'token', 'authorization', 'authentication'].includes(token))) return true
   if (/password|passphrase|credential/.test(compact)) return true
   if (compact === 'token' || compact.endsWith('token') || compact === 'secret' || compact.endsWith('secret')) return true
-  if (has('key') && compact !== 'key' && compact !== 'keyboard') return true
+  if (has('key') && compact !== 'keyboard') return true
   if (has('mnemonic') || compact === 'mnemonic') return true
   if ((has('recovery') || has('seed')) && (has('phrase') || has('seed') || has('mnemonic'))) return true
   if (['recoveryphrase', 'seedphrase', 'recoveryseed', 'recoverymnemonic', 'seedmnemonic'].includes(compact)) return true
