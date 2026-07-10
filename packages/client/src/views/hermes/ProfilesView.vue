@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { NButton, NSpin } from 'naive-ui'
+import { NButton, NSpin, NTabPane, NTabs } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import ProfilesPanel from '@/components/hermes/profiles/ProfilesPanel.vue'
 import ProfileCreateModal from '@/components/hermes/profiles/ProfileCreateModal.vue'
 import ProfileRenameModal from '@/components/hermes/profiles/ProfileRenameModal.vue'
 import ProfileImportModal from '@/components/hermes/profiles/ProfileImportModal.vue'
+import AssistantRolesPanel from '@/components/hermes/profiles/AssistantRolesPanel.vue'
+import { useAssistantRoleMessages } from '@/components/hermes/profiles/assistant-role-messages'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const { messages: roleMessages } = useAssistantRoleMessages(locale)
 const profilesStore = useProfilesStore()
 
 const showCreateModal = ref(false)
@@ -36,7 +39,12 @@ function handleImported() {
   <div class="profiles-view">
     <header class="page-header">
       <h2 class="header-title">{{ t('profiles.title') }}</h2>
-      <div class="header-actions">
+    </header>
+
+    <div class="profiles-content">
+      <NTabs type="line" animated default-value="runtime">
+        <NTabPane name="runtime" :tab="roleMessages.runtimeProfiles">
+          <div class="runtime-toolbar header-actions">
         <NButton size="small" @click="showImportModal = true">
           <template #icon>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -56,13 +64,15 @@ function handleImported() {
           </template>
           {{ t('profiles.create') }}
         </NButton>
-      </div>
-    </header>
-
-    <div class="profiles-content">
-      <NSpin :show="profilesStore.loading && profilesStore.profiles.length === 0">
-        <ProfilesPanel @rename="renamingProfile = $event" />
-      </NSpin>
+          </div>
+          <NSpin :show="profilesStore.loading && profilesStore.profiles.length === 0">
+            <ProfilesPanel @rename="renamingProfile = $event" />
+          </NSpin>
+        </NTabPane>
+        <NTabPane name="assistant-roles" :tab="roleMessages.assistantRoles">
+          <AssistantRolesPanel />
+        </NTabPane>
+      </NTabs>
     </div>
 
     <ProfileCreateModal
@@ -103,5 +113,10 @@ function handleImported() {
   flex: 1;
   overflow-y: auto;
   padding: 20px;
+}
+
+.runtime-toolbar {
+  justify-content: flex-end;
+  margin-bottom: 14px;
 }
 </style>
