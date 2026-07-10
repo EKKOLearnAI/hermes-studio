@@ -80,4 +80,64 @@ describe('personal twin store', () => {
     expect(listTwinEntities({ type: 'device', limit: 0 })).toHaveLength(1)
     expect(listTwinEntities({ limit: 999 })).toHaveLength(200)
   })
+
+  it('records observations and events idempotently with transactional outbox entries', async () => {
+    const {
+      listTwinEvents,
+      listTwinObservations,
+      recordTwinEvent,
+      recordTwinObservation,
+      TwinImmutableRecordConflictError,
+      upsertTwinEntity,
+      withPersonalTwinDb,
+    } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+
+    const observation = {
+      entityId: 'person:self', metric: 'body.weight_kg', value: 85, unit: 'kg', observedAt: '2026-07-08T08:41:00+08:00',
+      source: 'health-state:default', sourceId: 'scale-reading-1', actor: 'scale-sync', confidence: 1,
+      confirmationState: 'observed' as const, evidence: [],
+    }
+    recordTwinObservation(observation)
+    recordTwinObservation(observation)
+    recordTwinObservation({ ...observation, metric: 'body.bmi', value: 26.8 })
+    recordTwinEvent({
+      eventType: 'health.scale.measured', subjectId: 'person:self', payload: { sourceDevice: 'S400' }, occurredAt: observation.observedAt,
+      source: observation.source, sourceId: observation.sourceId, actor: observation.actor, confidence: 1, confirmationState: 'observed', evidence: [],
+    })
+    recordTwinEvent({
+      eventType: 'health.scale.measured', subjectId: 'person:self', payload: { sourceDevice: 'S400' }, occurredAt: observation.observedAt,
+      source: observation.source, sourceId: observation.sourceId, actor: observation.actor, confidence: 1, confirmationState: 'observed', evidence: [],
+    })
+
+    expect(listTwinObservations({ entityId: 'person:self' })).toHaveLength(2)
+    expect(listTwinEvents({ subjectId: 'person:self' })).toHaveLength(1)
+    expect(withPersonalTwinDb(db => db.prepare('SELECT topic, aggregate_id, status FROM twin_outbox ORDER BY topic, aggregate_id').all())).toEqual([
+      { topic: 'twin.event.recorded', aggregate_id: expect.any(String), status: 'pending' },
+      { topic: 'twin.observation.recorded', aggregate_id: expect.any(String), status: 'pending' },
+      { topic: 'twin.observation.recorded', aggregate_id: expect.any(String), status: 'pending' },
+    ])
+    expect(() => recordTwinObservation({ ...observation, value: 86 })).toThrow(TwinImmutableRecordConflictError)
+    expect(() => recordTwinObservation({ ...observation, confidence: Number.NaN })).toThrow(/confidence/i)
+    expect(() => recordTwinEvent({
+      eventType: 'health.scale.measured', subjectId: 'person:self', payload: {}, occurredAt: observation.observedAt,
+      source: 'health-state:default', sourceId: 'other', actor: 'scale-sync', confidence: 1.1, confirmationState: 'observed',
+    })).toThrow(/confidence/i)
+  })
+
+  it('rolls back an observation when its outbox insert fails', async () => {
+    const { listTwinObservations, recordTwinObservation, upsertTwinEntity, withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    withPersonalTwinDb(db => db.exec(`
+      CREATE TRIGGER fail_twin_observation_outbox
+      BEFORE INSERT ON twin_outbox
+      WHEN NEW.topic = 'twin.observation.recorded'
+      BEGIN SELECT RAISE(ABORT, 'outbox failure'); END;
+    `))
+    expect(() => recordTwinObservation({
+      entityId: 'person:self', metric: 'body.weight_kg', value: 85, unit: 'kg', observedAt: '2026-07-08T08:41:00+08:00',
+      source: 'test', sourceId: 'rollback', actor: 'test', confidence: 1, confirmationState: 'observed', evidence: [],
+    })).toThrow(/outbox failure/i)
+    expect(listTwinObservations({ entityId: 'person:self' })).toHaveLength(0)
+  })
 })

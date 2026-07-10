@@ -7,6 +7,8 @@ import {
   TwinGoal, TwinGoalInput, TwinGoalListOptions,
   TwinIdentityConflictError, TwinRecordNotFoundError,
   TwinRelation, TwinRelationInput, TwinRelationListOptions,
+  TwinEvent, TwinEventInput, TwinObservation, TwinObservationInput,
+  TwinImmutableRecordConflictError, TwinProvenance,
 } from './types'
 
 type StablePart = string | number | boolean | null | undefined
@@ -15,6 +17,8 @@ interface EntityRow { id: string; type: string; label: string; attributes_json: 
 interface RelationRow { id: string; subject_id: string; predicate: string; object_id: string; attributes_json: string; valid_from: string | null; valid_to: string | null; source: string; source_id: string; created_at: string; updated_at: string }
 interface GoalRow { id: string; subject_id: string; domain: string; title: string; target_json: string; status: string; priority: number; starts_at: string | null; due_at: string | null; source: string; source_id: string; created_at: string; updated_at: string }
 interface ConstraintRow { id: string; subject_id: string; domain: string; key: string; value_json: string; enforcement: 'hard' | 'advisory'; source: string; source_id: string; created_at: string; updated_at: string }
+interface ObservationRow { id: string; entity_id: string; metric: string; value_json: string; unit: string | null; observed_at: string; ingested_at: string; source: string; source_id: string; actor: string; confidence: number; confirmation_state: TwinProvenance['confirmationState']; evidence_json: string; schema_version: number }
+interface EventRow { id: string; event_type: string; subject_id: string | null; payload_json: string; occurred_at: string; ingested_at: string; source: string; source_id: string; actor: string; confidence: number; confirmation_state: TwinProvenance['confirmationState']; evidence_json: string; schema_version: number }
 
 export function stableTwinId(prefix: string, parts: StablePart[]): string {
   const encoded = parts.map(part => {
@@ -39,6 +43,25 @@ function clampLimit(value: number | undefined): number {
 function ensureIdentityAvailable(db: DatabaseSync, id: string, source: string, sourceId: string): void {
   const row = db.prepare('SELECT source, source_id FROM twin_entities WHERE id = ?').get(id) as { source: string; source_id: string } | undefined
   if (row && (row.source !== source || row.source_id !== sourceId)) throw new TwinIdentityConflictError(`Entity id ${id} is owned by another provenance record`)
+}
+function validateFactInput(source: string, sourceId: string, actor: string, confidence: number, timestamp: string): void {
+  if (!source.trim() || !sourceId.trim() || !actor.trim()) throw new Error('Twin fact source, sourceId, and actor are required')
+  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) throw new Error('Twin fact confidence must be between 0 and 1')
+  if (Number.isNaN(Date.parse(timestamp))) throw new Error(`Invalid twin fact timestamp: ${timestamp}`)
+}
+function provenanceFromRow(row: { source: string; source_id: string; actor: string; confidence: number; confirmation_state: TwinProvenance['confirmationState']; evidence_json: string; schema_version: number }): TwinProvenance {
+  return { source: row.source, sourceId: row.source_id, actor: row.actor, confidence: row.confidence, confirmationState: row.confirmation_state, evidence: parseJson(row.evidence_json, []), schemaVersion: row.schema_version }
+}
+function observationFromRow(row: ObservationRow): TwinObservation {
+  return { id: row.id, entityId: row.entity_id, metric: row.metric, value: parseJson(row.value_json, null), unit: row.unit, observedAt: row.observed_at, ingestedAt: row.ingested_at, provenance: provenanceFromRow(row) }
+}
+function eventFromRow(row: EventRow): TwinEvent {
+  return { id: row.id, eventType: row.event_type, subjectId: row.subject_id, payload: parseJson(row.payload_json, {}), occurredAt: row.occurred_at, ingestedAt: row.ingested_at, provenance: provenanceFromRow(row) }
+}
+function outboxId(topic: string, recordId: string): string { return stableTwinId('outbox', [topic, recordId]) }
+function commitOrRollback<T>(db: DatabaseSync, operation: () => T): T {
+  db.exec('BEGIN IMMEDIATE')
+  try { const result = operation(); db.exec('COMMIT'); return result } catch (error) { db.exec('ROLLBACK'); throw error }
 }
 function entityFromRow(row: EntityRow): TwinEntity {
   return { id: row.id, type: row.type, label: row.label, attributes: parseJson(row.attributes_json, {}), source: row.source, sourceId: row.source_id, createdAt: row.created_at, updatedAt: row.updated_at }
@@ -174,5 +197,74 @@ export function listTwinConstraints(options: TwinConstraintListOptions = {}): Tw
     if (options.enforcement !== undefined) { clauses.push('enforcement = ?'); values.push(options.enforcement) }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
     return (db.prepare(`SELECT * FROM twin_constraints ${where} ORDER BY datetime(updated_at) DESC, id DESC LIMIT ?`).all(...values, clampLimit(options.limit)) as unknown as ConstraintRow[]).map(constraintFromRow)
+  })
+}
+
+export function recordTwinObservation(input: TwinObservationInput): TwinObservation {
+  validateFactInput(input.source, input.sourceId, input.actor, input.confidence, input.observedAt)
+  return withPersonalTwinDb(db => commitOrRollback(db, () => {
+    requireEntity(db, input.entityId)
+    const id = stableTwinId('observation', [input.source, input.sourceId, input.metric])
+    const ingestedAt = nowIso()
+    const evidence = input.evidence || []
+    const result = db.prepare(`
+      INSERT INTO twin_observations (id, entity_id, metric, value_json, unit, observed_at, ingested_at, source, source_id, actor, confidence, confirmation_state, evidence_json, schema_version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(source, source_id, metric) DO NOTHING
+    `).run(id, input.entityId, input.metric, jsonString(input.value), input.unit ?? null, input.observedAt, ingestedAt, input.source, input.sourceId, input.actor, input.confidence, input.confirmationState, jsonString(evidence), 1)
+    const existing = db.prepare('SELECT * FROM twin_observations WHERE source = ? AND source_id = ? AND metric = ?').get(input.source, input.sourceId, input.metric) as unknown as ObservationRow
+    if (Number(result.changes) === 0 && (
+      existing.entity_id !== input.entityId || existing.value_json !== jsonString(input.value) || existing.unit !== (input.unit ?? null) || existing.observed_at !== input.observedAt || existing.actor !== input.actor || existing.confidence !== input.confidence || existing.confirmation_state !== input.confirmationState || existing.evidence_json !== jsonString(evidence)
+    )) throw new TwinImmutableRecordConflictError(`Observation ${input.source}/${input.sourceId}/${input.metric} already contains different data`)
+    if (Number(result.changes) === 1) {
+      db.prepare(`INSERT INTO twin_outbox (id, topic, aggregate_id, payload_json, status, available_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)`)
+        .run(outboxId('twin.observation.recorded', id), 'twin.observation.recorded', id, jsonString({ recordId: id, metric: input.metric, source: input.source, sourceId: input.sourceId }), ingestedAt, ingestedAt)
+    }
+    return observationFromRow(existing)
+  }))
+}
+
+export function listTwinObservations(options: { entityId?: string; metric?: string; limit?: number } = {}): TwinObservation[] {
+  return withPersonalTwinDb(db => {
+    const clauses: string[] = []; const values: Array<string | number> = []
+    if (options.entityId !== undefined) { clauses.push('entity_id = ?'); values.push(options.entityId) }
+    if (options.metric !== undefined) { clauses.push('metric = ?'); values.push(options.metric) }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+    return (db.prepare(`SELECT * FROM twin_observations ${where} ORDER BY julianday(observed_at) DESC, julianday(ingested_at) DESC, id DESC LIMIT ?`).all(...values, clampLimit(options.limit)) as unknown as ObservationRow[]).map(observationFromRow)
+  })
+}
+
+export function recordTwinEvent(input: TwinEventInput): TwinEvent {
+  validateFactInput(input.source, input.sourceId, input.actor, input.confidence, input.occurredAt)
+  return withPersonalTwinDb(db => commitOrRollback(db, () => {
+    if (input.subjectId) requireEntity(db, input.subjectId)
+    const id = stableTwinId('event', [input.source, input.sourceId, input.eventType])
+    const ingestedAt = nowIso()
+    const evidence = input.evidence || []
+    const payload = input.payload || {}
+    const result = db.prepare(`
+      INSERT INTO twin_events (id, event_type, subject_id, payload_json, occurred_at, ingested_at, source, source_id, actor, confidence, confirmation_state, evidence_json, schema_version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(source, source_id, event_type) DO NOTHING
+    `).run(id, input.eventType, input.subjectId ?? null, jsonString(payload), input.occurredAt, ingestedAt, input.source, input.sourceId, input.actor, input.confidence, input.confirmationState, jsonString(evidence), 1)
+    const existing = db.prepare('SELECT * FROM twin_events WHERE source = ? AND source_id = ? AND event_type = ?').get(input.source, input.sourceId, input.eventType) as unknown as EventRow
+    if (Number(result.changes) === 0 && (
+      existing.subject_id !== (input.subjectId ?? null) || existing.payload_json !== jsonString(payload) || existing.occurred_at !== input.occurredAt || existing.actor !== input.actor || existing.confidence !== input.confidence || existing.confirmation_state !== input.confirmationState || existing.evidence_json !== jsonString(evidence)
+    )) throw new TwinImmutableRecordConflictError(`Event ${input.source}/${input.sourceId}/${input.eventType} already contains different data`)
+    if (Number(result.changes) === 1) {
+      db.prepare(`INSERT INTO twin_outbox (id, topic, aggregate_id, payload_json, status, available_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)`)
+        .run(outboxId('twin.event.recorded', id), 'twin.event.recorded', id, jsonString({ recordId: id, eventType: input.eventType, source: input.source, sourceId: input.sourceId }), ingestedAt, ingestedAt)
+    }
+    return eventFromRow(existing)
+  }))
+}
+
+export function listTwinEvents(options: { subjectId?: string; eventType?: string; limit?: number } = {}): TwinEvent[] {
+  return withPersonalTwinDb(db => {
+    const clauses: string[] = []; const values: Array<string | number> = []
+    if (options.subjectId !== undefined) { clauses.push('subject_id = ?'); values.push(options.subjectId) }
+    if (options.eventType !== undefined) { clauses.push('event_type = ?'); values.push(options.eventType) }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+    return (db.prepare(`SELECT * FROM twin_events ${where} ORDER BY julianday(occurred_at) DESC, julianday(ingested_at) DESC, id DESC LIMIT ?`).all(...values, clampLimit(options.limit)) as unknown as EventRow[]).map(eventFromRow)
   })
 }

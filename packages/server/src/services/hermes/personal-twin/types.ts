@@ -158,6 +158,35 @@ export interface TwinConstraintInput {
   sourceId: string
 }
 
+export interface TwinObservationInput {
+  entityId: string
+  metric: string
+  value: unknown
+  unit?: string | null
+  observedAt: string
+  source: string
+  sourceId: string
+  actor: string
+  confidence: number
+  confirmationState: TwinConfirmationState
+  evidence?: Array<Record<string, unknown>>
+  schemaVersion?: number
+}
+
+export interface TwinEventInput {
+  eventType: string
+  subjectId?: string | null
+  payload?: Record<string, unknown>
+  occurredAt: string
+  source: string
+  sourceId: string
+  actor: string
+  confidence: number
+  confirmationState: TwinConfirmationState
+  evidence?: Array<Record<string, unknown>>
+  schemaVersion?: number
+}
+
 export interface TwinEntityListOptions { type?: string; source?: string; limit?: number }
 export interface TwinRelationListOptions { subjectId?: string; predicate?: string; objectId?: string; limit?: number }
 export interface TwinGoalListOptions { subjectId?: string; domain?: string; status?: string; limit?: number }
