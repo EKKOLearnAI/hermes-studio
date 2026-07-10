@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const socketState = vi.hoisted(() => ({
   sockets: [] as any[],
+  calls: [] as Array<{ url: string; options: any }>,
+  activeProfileName: 'default',
 }))
 
 vi.mock('socket.io-client', () => {
@@ -66,13 +68,22 @@ vi.mock('socket.io-client', () => {
   }
 
   return {
-    io: vi.fn(() => {
+    io: vi.fn((url: string, options: any) => {
       const socket = createSocket()
       socketState.sockets.push(socket)
+      socketState.calls.push({ url, options })
       return socket
     }),
   }
 })
+
+vi.mock('@/stores/hermes/profiles', () => ({
+  useProfilesStore: () => ({
+    get activeProfileName() {
+      return socketState.activeProfileName
+    },
+  }),
+}))
 
 vi.mock('../../packages/client/src/api/client', () => ({
   getApiKey: () => 'test-token',
@@ -83,6 +94,14 @@ describe('chat-run socket reconnect handling', () => {
   beforeEach(() => {
     vi.resetModules()
     socketState.sockets = []
+    socketState.calls = []
+    socketState.activeProfileName = 'default'
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key: string) => (key === 'hermes_active_profile_name' ? socketState.activeProfileName : null)),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+    })
   })
 
   it('keeps transient mobile disconnects alive and resumes after reconnect', async () => {
@@ -179,6 +198,33 @@ describe('chat-run socket reconnect handling', () => {
     expect(socket.__listenerCount('connect')).toBe(1)
     expect(socket.__listenerCount('disconnect')).toBe(1)
     expect(socket.emit).toHaveBeenCalledWith('run', body)
+  })
+
+  it('reconnects to the current active profile when no profile is requested', async () => {
+    const { connectChatRun } = await import('../../packages/client/src/api/hermes/chat')
+
+    const defaultSocket = connectChatRun(null)
+    expect(socketState.calls[0].options.query).toEqual({ profile: 'default' })
+
+    socketState.activeProfileName = 'research'
+    const researchSocket = connectChatRun(null)
+
+    expect(researchSocket).not.toBe(defaultSocket)
+    expect(defaultSocket.removeAllListeners).toHaveBeenCalled()
+    expect(defaultSocket.disconnect).toHaveBeenCalled()
+    expect(socketState.calls).toHaveLength(2)
+    expect(socketState.calls[1].options.query).toEqual({ profile: 'research' })
+  })
+
+  it('reuses an existing socket for an explicit matching profile', async () => {
+    const { connectChatRun } = await import('../../packages/client/src/api/hermes/chat')
+
+    const socket = connectChatRun('default')
+    const reusedSocket = connectChatRun('default')
+
+    expect(reusedSocket).toBe(socket)
+    expect(socketState.calls).toHaveLength(1)
+    expect(socket.disconnect).not.toHaveBeenCalled()
   })
 
   it('fans session.command events to run-local and global handlers', async () => {

@@ -2,6 +2,7 @@ import { io, type Socket } from 'socket.io-client'
 import { getBaseUrlValue, getApiKey } from '../client'
 import type { ChatCodingAgentId } from '../coding-agents'
 import type { ProviderApiMode } from './system'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 
 export type ContentBlock =
   | { type: 'text'; text: string }
@@ -657,10 +658,22 @@ export function getChatRunSocket(transport?: ChatRunTransport): Socket | null {
 
 export function connectChatRun(requestedProfile?: string | null, transport: ChatRunTransport = 'chat-run'): Socket {
   const normalizedRequestedProfile = requestedProfile?.trim() || null
+  // Get active profile from store (authoritative source)
+  let profile = normalizedRequestedProfile || 'default'
+  try {
+    if (!normalizedRequestedProfile) {
+      const profilesStore = useProfilesStore()
+      profile = profilesStore.activeProfileName || 'default'
+    }
+  } catch {
+    // Fallback to localStorage during early initialization
+    profile = normalizedRequestedProfile || localStorage.getItem('hermes_active_profile_name') || 'default'
+  }
+
   if (
     chatRunSocket?.connected &&
     chatRunSocketTransport === transport &&
-    (!normalizedRequestedProfile || chatRunSocketProfile === normalizedRequestedProfile)
+    chatRunSocketProfile === profile
   ) {
     return chatRunSocket
   }
@@ -676,18 +689,6 @@ export function connectChatRun(requestedProfile?: string | null, transport: Chat
   const baseUrl = getBaseUrlValue()
   const token = getApiKey()
 
-  // Get active profile from store (authoritative source)
-  let profile = normalizedRequestedProfile || 'default'
-  try {
-    if (!normalizedRequestedProfile) {
-      const { useProfilesStore } = require('@/stores/hermes/profiles')
-      const profilesStore = useProfilesStore()
-      profile = profilesStore.activeProfileName || 'default'
-    }
-  } catch {
-    // Fallback to localStorage during early initialization
-    profile = normalizedRequestedProfile || localStorage.getItem('hermes_active_profile_name') || 'default'
-  }
   chatRunSocketProfile = profile
   chatRunSocketTransport = transport
 
