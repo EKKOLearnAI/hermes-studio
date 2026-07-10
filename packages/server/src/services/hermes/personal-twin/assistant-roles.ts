@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
-import { withPersonalTwinDb } from './database'
+import { getPersonalTwinDbPath, withPersonalTwinDb } from './database'
 import {
   AssistantRole,
   AssistantRoleCapabilityScope,
@@ -23,6 +23,7 @@ const NAMESPACE_PATTERN = /^[a-z][a-z0-9_.:-]{1,127}$/
 const CAPABILITY_ID_PATTERN = /^[a-z][a-z0-9]*(?:[._:-][a-z0-9][a-z0-9-]*)*$/
 const ROLE_NAME_MAX_LENGTH = 200
 const CAPABILITY_ID_MAX_LENGTH = 128
+const SEEDED_DATABASE_PATHS = new Set<string>()
 
 interface AssistantRoleRow {
   id: string
@@ -267,7 +268,7 @@ function validateRoleInput(input: AssistantRoleInput): void {
     throw new Error('Assistant role id must be a lowercase semantic slug')
   }
   assertString(input.name, 'name', { required: true, max: ROLE_NAME_MAX_LENGTH })
-  assertString(input.description ?? '', 'description', { max: ASSISTANT_ROLE_DESCRIPTION_MAX_LENGTH })
+  assertString(input.description === undefined ? '' : input.description, 'description', { max: ASSISTANT_ROLE_DESCRIPTION_MAX_LENGTH })
   assertString(input.persona, 'persona', { required: true, max: ASSISTANT_ROLE_PERSONA_MAX_LENGTH })
   if (input.enabled !== undefined && typeof input.enabled !== 'boolean') throw new Error('Assistant role enabled must be a boolean')
   if (!input.dataScope || typeof input.dataScope !== 'object' || Array.isArray(input.dataScope)) {
@@ -279,12 +280,12 @@ function validateRoleInput(input: AssistantRoleInput): void {
     throw new Error('Assistant role data scope includeProvenance must be a boolean')
   }
   validateCapabilityScope(input.capabilityScope)
-  assertJsonObject(input.decisionAuthority ?? {}, 'decision authority')
-  assertJsonObject(input.spendingLimits ?? {}, 'spending limits')
+  assertJsonObject(input.decisionAuthority === undefined ? {} : input.decisionAuthority, 'decision authority')
+  assertJsonObject(input.spendingLimits === undefined ? {} : input.spendingLimits, 'spending limits')
   if (typeof input.memoryNamespace !== 'string' || !NAMESPACE_PATTERN.test(input.memoryNamespace)) {
     throw new Error('Assistant role memory namespace must be a lowercase semantic namespace')
   }
-  const escalationRules = input.escalationRules ?? []
+  const escalationRules = input.escalationRules === undefined ? [] : input.escalationRules
   if (!Array.isArray(escalationRules)) throw new Error('Assistant role escalation rules must be an array')
   if (escalationRules.length > ASSISTANT_ROLE_MAX_ESCALATION_RULES) {
     throw new Error(`Assistant role escalation rules exceed ${ASSISTANT_ROLE_MAX_ESCALATION_RULES}`)
@@ -322,9 +323,9 @@ function ensureNamespaceAvailable(db: DatabaseSync, namespace: string, exceptId?
 }
 
 function insertRole(db: DatabaseSync, input: AssistantRoleInput, builtIn: boolean, timestamp: string): AssistantRole {
+  validateRoleInput(input)
   const id = input.id || toRoleId(input.name)
   const normalized = { ...input, id }
-  validateRoleInput(normalized)
   ensureNamespaceAvailable(db, normalized.memoryNamespace)
   db.prepare(`
     INSERT INTO twin_assistant_roles (
@@ -352,7 +353,7 @@ function insertRole(db: DatabaseSync, input: AssistantRoleInput, builtIn: boolea
 }
 
 function ensureRegistry(): void {
-  ensureBuiltInAssistantRoles()
+  if (!SEEDED_DATABASE_PATHS.has(getPersonalTwinDbPath())) ensureBuiltInAssistantRoles()
 }
 
 export function ensureBuiltInAssistantRoles(): void {
@@ -405,6 +406,7 @@ export function ensureBuiltInAssistantRoles(): void {
       )
     }
   }))
+  SEEDED_DATABASE_PATHS.add(getPersonalTwinDbPath())
 }
 
 export function listAssistantRoles(): AssistantRole[] {
@@ -435,16 +437,16 @@ export function updateAssistantRole(id: string, patch: AssistantRolePatch): Assi
     const current = roleFromRow(requireRoleRow(db, id))
     const input: AssistantRoleInput = {
       id: current.id,
-      name: patch.name ?? current.name,
-      description: patch.description ?? current.description,
-      persona: patch.persona ?? current.persona,
-      enabled: patch.enabled ?? current.enabled,
-      dataScope: patch.dataScope ?? current.dataScope,
-      capabilityScope: patch.capabilityScope ?? current.capabilityScope,
-      decisionAuthority: patch.decisionAuthority ?? current.decisionAuthority,
-      spendingLimits: patch.spendingLimits ?? current.spendingLimits,
-      memoryNamespace: patch.memoryNamespace ?? current.memoryNamespace,
-      escalationRules: patch.escalationRules ?? current.escalationRules,
+      name: patchValue(patch, 'name', current.name),
+      description: patchValue(patch, 'description', current.description),
+      persona: patchValue(patch, 'persona', current.persona),
+      enabled: patchValue(patch, 'enabled', current.enabled),
+      dataScope: patchValue(patch, 'dataScope', current.dataScope),
+      capabilityScope: patchValue(patch, 'capabilityScope', current.capabilityScope),
+      decisionAuthority: patchValue(patch, 'decisionAuthority', current.decisionAuthority),
+      spendingLimits: patchValue(patch, 'spendingLimits', current.spendingLimits),
+      memoryNamespace: patchValue(patch, 'memoryNamespace', current.memoryNamespace),
+      escalationRules: patchValue(patch, 'escalationRules', current.escalationRules),
     }
     validateRoleInput(input)
     ensureNamespaceAvailable(db, input.memoryNamespace, id)
@@ -471,6 +473,11 @@ export function updateAssistantRole(id: string, patch: AssistantRolePatch): Assi
     )
     return roleFromRow(requireRoleRow(db, id))
   }))
+}
+
+function patchValue<T>(patch: AssistantRolePatch, key: keyof AssistantRolePatch, current: T): T {
+  if (!Object.prototype.hasOwnProperty.call(patch, key)) return current
+  return (patch as Record<string, unknown>)[key] as T
 }
 
 export function deleteAssistantRole(id: string): void {

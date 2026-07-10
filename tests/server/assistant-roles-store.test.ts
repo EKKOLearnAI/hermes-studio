@@ -126,6 +126,63 @@ describe('assistant role registry', () => {
       .toThrow(/memory namespace/i)
     expect(() => roles.updateAssistantRole('first-coach', { id: 'renamed' } as never)).toThrow(/id/i)
   })
+
+  it('rejects null role input with a controlled validation error', async () => {
+    const roles = await import('../../packages/server/src/services/hermes/personal-twin')
+
+    expect(() => roles.createAssistantRole(null as never)).toThrow(/input must be an object/i)
+  })
+
+  it.each([
+    ['enabled', { enabled: null }, /enabled.*boolean/i],
+    ['data scope', { dataScope: null }, /data scope.*object/i],
+    ['persona', { persona: null }, /persona.*string/i],
+  ])('does not treat an explicit null %s patch as omitted', async (_label, patch, message) => {
+    const roles = await import('../../packages/server/src/services/hermes/personal-twin')
+    roles.createAssistantRole(validRole({ id: 'null-check-coach' }))
+
+    expect(() => roles.updateAssistantRole('null-check-coach', patch as never)).toThrow(message)
+  })
+
+  it('does not attempt to reseed built-ins during repeated list and get reads', async () => {
+    const roles = await import('../../packages/server/src/services/hermes/personal-twin')
+    roles.ensureBuiltInAssistantRoles()
+    roles.withPersonalTwinDb(db => db.exec(`
+      CREATE TRIGGER fail_assistant_role_reseed
+      BEFORE INSERT ON twin_assistant_roles
+      BEGIN
+        SELECT RAISE(ABORT, 'unexpected assistant role reseed');
+      END;
+    `))
+
+    expect(() => roles.listAssistantRoles()).not.toThrow()
+    expect(() => roles.getAssistantRole('health-manager')).not.toThrow()
+  })
+
+  it('rolls back a cloned role when cloning one of its recipes fails', async () => {
+    const roles = await import('../../packages/server/src/services/hermes/personal-twin')
+    roles.ensureBuiltInAssistantRoles()
+    const collisionHost = roles.createAssistantRole(validRole({
+      id: 'collision-host',
+      memoryNamespace: 'assistant.collision-host',
+    }))
+    roles.withPersonalTwinDb(db => db.prepare(`
+      INSERT INTO twin_context_recipes (
+        id, role_id, name, description, built_in, enabled, domains_json,
+        sections_json, query_template, limits_json, created_at, updated_at
+      ) VALUES (?, ?, ?, '', 0, 1, ?, ?, '', ?, ?, ?)
+    `).run(
+      'recovery-coach-recipe-1', collisionHost.id, 'Collision', '["health"]',
+      '["observations"]', '{"perSection":5,"totalCharacters":4000}',
+      collisionHost.createdAt, collisionHost.createdAt,
+    ))
+
+    expect(() => roles.cloneAssistantRole('health-manager', {
+      id: 'recovery-coach',
+      name: 'Recovery Coach',
+    })).toThrow(/unique|constraint/i)
+    expect(roles.getAssistantRole('recovery-coach')).toBeNull()
+  })
 })
 
 function validRole(overrides: Record<string, unknown> = {}) {
