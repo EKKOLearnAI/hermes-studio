@@ -187,6 +187,15 @@ export interface TwinEventInput {
   schemaVersion?: number
 }
 
+export interface TwinLegacyImportResult {
+  runId: string
+  profiles: string[]
+  status: 'completed' | 'failed'
+  counts: { entities: number; observations: number; events: number; goals: number; constraints: number }
+  startedAt: string
+  completedAt: string
+}
+
 export interface TwinEntityListOptions { type?: string; source?: string; limit?: number }
 export interface TwinRelationListOptions { subjectId?: string; predicate?: string; objectId?: string; limit?: number }
 export interface TwinGoalListOptions { subjectId?: string; domain?: string; status?: string; limit?: number }
