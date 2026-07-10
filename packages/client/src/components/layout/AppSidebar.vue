@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { NButton, NModal, useMessage } from "naive-ui";
+import { NButton, NModal, useMessage, NTag } from "naive-ui";
 import { useAppStore } from "@/stores/hermes/app";
 import { usePersistentRecord } from '@/composables/usePersistentRecord'
 import RouteLinkItem from '@/components/common/RouteLinkItem.vue'
@@ -30,6 +30,7 @@ const isDesktopShell = computed(() =>
 );
 const showChangelog = ref(false);
 const showVersionManagement = ref(false);
+const showDockerUpdateTip = ref(false);
 
 function hasRoute(name: string): boolean {
   return router.hasRoute(name);
@@ -87,6 +88,10 @@ function openChangelog() {
 
 function openVersionManagement() {
   showVersionManagement.value = true;
+}
+
+function handleDockerUpdateTip() {
+  showDockerUpdateTip.value = true;
 }
 </script>
 
@@ -372,7 +377,18 @@ function openVersionManagement() {
       <NButton v-if="appStore.clientOutdated" type="warning" size="tiny" block class="update-btn" @click="handleReloadClient">
         {{ t('sidebar.reloadClientVersion', { version: appStore.serverVersion }) }}
       </NButton>
-      <NButton v-if="appStore.updateAvailable" type="primary" size="tiny" block class="update-btn" :loading="appStore.updating" @click="handleUpdate">
+      <!-- Docker 环境下引导用户使用 docker pull 升级 -->
+      <NButton
+        v-else-if="appStore.isDocker && appStore.updateAvailable"
+        type="primary"
+        size="tiny"
+        block
+        class="update-btn docker-update-btn"
+        @click="handleDockerUpdateTip"
+      >
+        {{ t('sidebar.updateVersion', { version: appStore.latestVersion }) }}
+      </NButton>
+      <NButton v-else-if="appStore.updateAvailable" type="primary" size="tiny" block class="update-btn" :loading="appStore.updating" @click="handleUpdate">
         {{ appStore.updating ? t('sidebar.updating') : t('sidebar.updateVersion', { version: appStore.latestVersion }) }}
       </NButton>
     </div>
@@ -407,6 +423,19 @@ function openVersionManagement() {
       </div>
     </NModal>
     <VersionManagementModal v-if="isDesktopShell" v-model:show="showVersionManagement" />
+
+    <NModal v-model:show="showDockerUpdateTip" preset="dialog" :title="t('sidebar.dockerUpdateTitle')" style="width: 480px;">
+      <div class="docker-update-modal">
+        <p>{{ t('sidebar.dockerUpdateGuide') }}</p>
+        <div class="docker-update-commands">
+          <code class="docker-command">docker compose pull</code>
+          <code class="docker-command">docker compose up -d --force-recreate</code>
+        </div>
+        <p class="docker-update-note">
+          <NTag size="small" type="info" :bordered="false">{{ t('sidebar.dockerUpdateNote') }}</NTag>
+        </p>
+      </div>
+    </NModal>
   </aside>
 </template>
 
@@ -880,6 +909,47 @@ function openVersionManagement() {
     .input-sm {
       width: 90px;
     }
+  }
+}
+
+.docker-update-modal {
+  p {
+    margin: 12px 0;
+    font-size: 14px;
+    line-height: 1.6;
+    color: $text-secondary;
+  }
+
+  .docker-update-commands {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 16px 0;
+  }
+
+  .docker-command {
+    display: block;
+    padding: 10px 14px;
+    background: $bg-code;
+    border-radius: $radius-sm;
+    font-family: $font-code;
+    font-size: 13px;
+    color: $text-primary;
+    user-select: all;
+    cursor: text;
+    border: 1px solid $border-color;
+  }
+
+  .docker-update-note {
+    margin-top: 16px;
+  }
+}
+
+.docker-update-btn {
+  background: #2496ed !important;
+  border-color: #2496ed !important;
+  &:hover {
+    background: #1d7fd4 !important;
   }
 }
 </style>

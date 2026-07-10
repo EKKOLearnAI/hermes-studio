@@ -161,6 +161,9 @@ export default {
     noChangelog: 'Нет списка изменений',
     versionManagement: 'Управление версиями',
     updateAvailableLabel: '(Новая версия)',
+    dockerUpdateTitle: 'Обновление Docker',
+    dockerUpdateGuide: 'В среде Docker, пожалуйста, загрузите последний образ и пересоздайте контейнер:',
+    dockerUpdateNote: 'Ваши данные сохранятся после пересоздания контейнера.',
   },
 
   runtimeVersions: {

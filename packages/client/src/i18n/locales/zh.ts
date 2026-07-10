@@ -239,6 +239,9 @@ export default {
     noChangelog: '暂无更新日志',
     versionManagement: '版本管理',
     updateAvailableLabel: '(有新版)',
+    dockerUpdateTitle: 'Docker 升级',
+    dockerUpdateGuide: '当前运行在 Docker 环境中，请拉取最新镜像并重建容器来升级：',
+    dockerUpdateNote: '数据会持续保留，重建容器不会丢失数据。',
   },
 
   runtimeVersions: {
