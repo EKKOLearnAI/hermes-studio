@@ -145,6 +145,12 @@ describe('assistant role context engine', () => {
             httpAuthorization: 'Bearer http-private',
             dsn: 'postgres://private',
             databaseUrl: 'sqlite:///private.db',
+            sessionCookie: 'session-private',
+            sshKey: 'ssh-private',
+            encryptionKey: 'encryption-private',
+            bearer: 'bearer-private',
+            connectionUri: 'postgres://connection-private',
+            jdbcUrl: 'jdbc:private',
           },
         },
       },
@@ -162,8 +168,31 @@ describe('assistant role context engine', () => {
     expect(serialized).toContain('mechanical')
     expect(serialized).toContain('business-classification')
     expect(serialized).toContain('retained')
-    expect(serialized).not.toMatch(/configPath|homeDirectory|sqliteFile|clientSecret|privateKey|authorization|passwordHash|refresh_token|credential_file|secretAccessKey|awsSecretAccessKey|accessKeyId|authHeader|httpAuthorization|dsn|databaseUrl/i)
-    expect(serialized).not.toMatch(/C:\/private|Bearer private|hash-value|token-value|cloud-secret|cloud-key-id|Basic private|http-private|postgres:\/\/private|sqlite:\/\/\/private/)
+    expect(serialized).not.toMatch(/configPath|homeDirectory|sqliteFile|clientSecret|privateKey|authorization|passwordHash|refresh_token|credential_file|secretAccessKey|awsSecretAccessKey|accessKeyId|authHeader|httpAuthorization|dsn|databaseUrl|sessionCookie|sshKey|encryptionKey|bearer|connectionUri|jdbcUrl/i)
+    expect(serialized).not.toMatch(/C:\/private|Bearer private|hash-value|token-value|cloud-secret|cloud-key-id|Basic private|http-private|postgres:\/\/private|sqlite:\/\/\/private|session-private|ssh-private|encryption-private|bearer-private|connection-private|jdbc:private/)
+  })
+
+  it('caps zero-record rendered instructions by deterministically truncating long persona text', async () => {
+    const twin = await import('../../packages/server/src/services/hermes/personal-twin')
+    seedSubject(twin)
+    twin.createAssistantRole(roleInput({
+      persona: 'P'.repeat(12_000),
+      dataScope: { domains: ['health'], sections: ['goals'], includeProvenance: false },
+    }))
+    twin.createContextRecipe('context-tester', {
+      id: 'fixed-budget', name: 'Fixed budget', domains: ['health'], sections: ['goals'],
+      limits: { perSection: 5, totalCharacters: 1000 },
+    })
+    twin.setAssistantRoleProfileMapping('context-tester', 'default')
+
+    const bundle = twin.buildRoleContext('context-tester', { recipeId: 'fixed-budget' })
+    expect(bundle.sections.goals).toEqual([])
+    expect(bundle.renderedInstructions.length).toBeLessThanOrEqual(1000)
+    expect(bundle.renderedInstructions).toContain('[persona truncated]')
+    expect(bundle.truncated.total).toBe(true)
+    const runtime = twin.buildSafeRoleContextInstructionsForProfile('default', { recipeId: 'fixed-budget' })
+    expect(runtime.length).toBeLessThanOrEqual(1000)
+    expect(runtime).toBe(bundle.renderedInstructions)
   })
 
   it('renders deterministically in stable section order and truncates only at record boundaries', async () => {

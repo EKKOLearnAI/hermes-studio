@@ -97,7 +97,7 @@ function buildBundle(
   }
 
   const bundle: RoleContextBundle = {
-    role,
+    role: { ...role },
     profileMapping,
     recipe: recipe ? { id: recipe.id, name: recipe.name } : null,
     generatedAt: new Date().toISOString(),
@@ -111,6 +111,7 @@ function buildBundle(
     renderedInstructions: '',
   }
 
+  fitRolePersonaToBudget(bundle)
   applyCharacterBudget(bundle, publicSections, sourceRecordIds, provenance)
   bundle.renderedInstructions = renderRoleContext(bundle)
   return bundle
@@ -233,6 +234,21 @@ function applyCharacterBudget(
   }
 }
 
+function fitRolePersonaToBudget(bundle: RoleContextBundle): void {
+  if (renderRoleContext(bundle).length <= bundle.appliedLimits.totalCharacters) return
+  const marker = '[persona truncated]'
+  const originalPersona = bundle.role.persona
+  bundle.role = { ...bundle.role, persona: marker }
+  const fixedLength = renderRoleContext(bundle).length - marker.length
+  const personaBudget = bundle.appliedLimits.totalCharacters - fixedLength
+  if (personaBudget < marker.length) {
+    throw new Error('Role context fixed instructions exceed the configured character budget')
+  }
+  const prefixLength = Math.max(0, personaBudget - marker.length)
+  bundle.role.persona = `${originalPersona.slice(0, prefixLength)}${marker}`
+  bundle.truncated.total = true
+}
+
 export function renderRoleContext(bundle: RoleContextBundle): string {
   const lines = [
     '# Assistant Role Context',
@@ -275,11 +291,15 @@ function isSensitiveKey(key: string): boolean {
   if (/password|passphrase|credential/.test(compact)) return true
   if (compact === 'token' || compact.endsWith('token') || compact === 'secret' || compact.endsWith('secret')) return true
   if ((has('private') || has('api') || has('access')) && has('key')) return true
+  if ((has('ssh') || has('encryption')) && has('key')) return true
   if (has('auth') && (tokens.length === 1 || has('header') || has('token'))) return true
+  if (has('cookie') || has('bearer')) return true
   if (compact === 'apikey' || compact === 'privatekey' || compact === 'accesskeyid') return true
   if (compact === 'auth' || compact.endsWith('authorization') || compact === 'authentication') return true
   if (compact === 'dsn' || compact === 'connectionstring') return true
   if (has('database') && (has('url') || has('uri') || has('dsn'))) return true
+  if (has('connection') && (has('url') || has('uri') || has('string'))) return true
+  if (has('jdbc') && (has('url') || has('uri'))) return true
   if (compact === 'databaseurl' || compact === 'databaseuri') return true
   if (compact.endsWith('path') || compact.endsWith('directory')) return true
   if (/^(?:database|sqlite|config|home|root|workspace|storage|data|cache|credential|secret|key|cert|certificate)file$/.test(compact)) return true
