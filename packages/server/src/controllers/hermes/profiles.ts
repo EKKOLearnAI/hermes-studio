@@ -18,6 +18,10 @@ import { getActiveProfileName } from '../../services/hermes/hermes-profile'
 import { HermesSkillInjector } from '../../services/hermes/skill-injector'
 import type { HermesProfile } from '../../services/hermes/hermes-cli'
 import { listUserProfiles } from '../../db/hermes/users-store'
+import {
+  removeAssistantRoleProfileMappings,
+  renameAssistantRoleProfileMappings,
+} from '../../services/hermes/personal-twin/assistant-roles'
 
 const bridgeCleanupClient = () => new AgentBridgeClient({ connectRetryMs: 0, timeoutMs: 5000 })
 
@@ -140,6 +144,22 @@ function profileDirectoryExists(name: string): boolean {
   if (!name || name === 'default') return true
   const base = detectHermesRootHome()
   return existsSync(join(base, 'profiles', name))
+}
+
+function safelyRenameAssistantRoleMappings(oldName: string, newName: string): void {
+  try {
+    renameAssistantRoleProfileMappings(oldName, newName)
+  } catch {
+    logger.warn('[profiles] failed to rename assistant role mappings')
+  }
+}
+
+function safelyRemoveAssistantRoleMappings(profileName: string): void {
+  try {
+    removeAssistantRoleProfileMappings(profileName)
+  } catch {
+    logger.warn('[profiles] failed to remove assistant role mappings')
+  }
 }
 
 function filterVisibleProfiles(profiles: HermesProfile[]): HermesProfile[] {
@@ -665,12 +685,14 @@ export async function remove(ctx: any) {
     const ok = await hermesCli.deleteProfile(name)
     if (ok && !profileDirectoryExists(name)) {
       removeProfileMetadata(name)
+      safelyRemoveAssistantRoleMappings(name)
       ctx.body = { success: true }
     } else if (ok) {
       ctx.status = 500
       ctx.body = { error: 'Failed to delete profile: profile directory still exists' }
     } else if (deleteForbiddenProfileFromDisk(name)) {
       removeProfileMetadata(name)
+      safelyRemoveAssistantRoleMappings(name)
       ctx.body = { success: true, fallback: 'removed_reserved_profile_from_disk' }
     } else {
       ctx.status = 500
@@ -699,6 +721,7 @@ export async function rename(ctx: any) {
     const ok = await hermesCli.renameProfile(ctx.params.name, new_name)
     if (ok) {
       renameProfileMetadata(ctx.params.name, new_name)
+      safelyRenameAssistantRoleMappings(ctx.params.name, new_name)
       ctx.body = { success: true }
     } else {
       ctx.status = 500

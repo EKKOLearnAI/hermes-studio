@@ -1,4 +1,7 @@
 import { DatabaseSync } from 'node:sqlite'
+import { existsSync } from 'fs'
+import { join } from 'path'
+import { detectHermesRootHome } from '../hermes-path'
 import { getPersonalTwinDbPath, withPersonalTwinDb } from './database'
 import {
   AssistantRole,
@@ -6,7 +9,12 @@ import {
   AssistantRoleDataScope,
   AssistantRoleInput,
   AssistantRolePatch,
+  AssistantRoleProfileMapping,
+  AssistantRoleSummary,
+  ContextRecipe,
+  ContextRecipeInput,
   ContextRecipeLimits,
+  ContextRecipePatch,
   TWIN_CONTEXT_SECTIONS,
   TWIN_DOMAINS,
   TwinContextSection,
@@ -21,8 +29,10 @@ export const ASSISTANT_ROLE_MAX_ESCALATION_RULES = 32
 const ROLE_ID_PATTERN = /^[a-z][a-z0-9-]{1,63}$/
 const NAMESPACE_PATTERN = /^[a-z][a-z0-9_.:-]{1,127}$/
 const CAPABILITY_ID_PATTERN = /^[a-z][a-z0-9]*(?:[._:-][a-z0-9][a-z0-9-]*)*$/
+const RECIPE_ID_PATTERN = /^[a-z][a-z0-9-]{1,127}$/
 const ROLE_NAME_MAX_LENGTH = 200
 const CAPABILITY_ID_MAX_LENGTH = 128
+const CONTEXT_RECIPE_QUERY_MAX_LENGTH = 4_000
 const SEEDED_DATABASE_PATHS = new Set<string>()
 
 interface AssistantRoleRow {
@@ -53,6 +63,14 @@ interface ContextRecipeRow {
   sections_json: string
   query_template: string
   limits_json: string
+  created_at: string
+  updated_at: string
+}
+
+interface AssistantRoleProfileMappingRow {
+  role_id: string
+  profile_name: string
+  is_primary: number
   created_at: string
   updated_at: string
 }
@@ -190,6 +208,33 @@ function roleFromRow(row: AssistantRoleRow): AssistantRole {
   }
 }
 
+function mappingFromRow(row: AssistantRoleProfileMappingRow): AssistantRoleProfileMapping {
+  return {
+    roleId: row.role_id,
+    profileName: row.profile_name,
+    isPrimary: row.is_primary === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function recipeFromRow(row: ContextRecipeRow): ContextRecipe {
+  return {
+    id: row.id,
+    roleId: row.role_id,
+    name: row.name,
+    description: row.description,
+    builtIn: row.built_in === 1,
+    enabled: row.enabled === 1,
+    domains: parseJson<TwinDomain[]>(row.domains_json, 'recipe domains'),
+    sections: parseJson<TwinContextSection[]>(row.sections_json, 'recipe sections'),
+    queryTemplate: row.query_template,
+    limits: parseJson<ContextRecipeLimits>(row.limits_json, 'recipe limits'),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
 function assertString(value: unknown, field: string, options: { required?: boolean; max: number }): asserts value is string {
   if (typeof value !== 'string') throw new Error(`Assistant role ${field} must be a string`)
   if (options.required && !value.trim()) throw new Error(`Assistant role ${field} is required`)
@@ -291,6 +336,30 @@ function validateRoleInput(input: AssistantRoleInput): void {
     throw new Error(`Assistant role escalation rules exceed ${ASSISTANT_ROLE_MAX_ESCALATION_RULES}`)
   }
   escalationRules.forEach(rule => assertJsonObject(rule, 'escalation rules'))
+}
+
+function validateRecipeInput(input: ContextRecipeInput): void {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Context recipe input must be an object')
+  if (input.id !== undefined && (typeof input.id !== 'string' || !RECIPE_ID_PATTERN.test(input.id))) {
+    throw new Error('Context recipe id must be a lowercase semantic slug')
+  }
+  assertString(input.name, 'recipe name', { required: true, max: ROLE_NAME_MAX_LENGTH })
+  assertString(input.description === undefined ? '' : input.description, 'recipe description', { max: ASSISTANT_ROLE_DESCRIPTION_MAX_LENGTH })
+  if (input.enabled !== undefined && typeof input.enabled !== 'boolean') throw new Error('Context recipe enabled must be a boolean')
+  assertUniqueAllowedValues(input.domains, TWIN_DOMAINS, 'recipe domains')
+  assertUniqueAllowedValues(input.sections, TWIN_CONTEXT_SECTIONS, 'recipe sections')
+  assertString(input.queryTemplate === undefined ? '' : input.queryTemplate, 'recipe query template', { max: CONTEXT_RECIPE_QUERY_MAX_LENGTH })
+  if (!input.limits || typeof input.limits !== 'object' || Array.isArray(input.limits)) {
+    throw new Error('Context recipe limits must be an object')
+  }
+  if (!Number.isInteger(input.limits.perSection) || input.limits.perSection < 1 || input.limits.perSection > 50) {
+    throw new Error('Context recipe perSection must be an integer from 1 to 50')
+  }
+  if (!Number.isInteger(input.limits.totalCharacters)
+    || input.limits.totalCharacters < 1_000
+    || input.limits.totalCharacters > 40_000) {
+    throw new Error('Context recipe totalCharacters must be an integer from 1000 to 40000')
+  }
 }
 
 function toRoleId(name: string): string {
@@ -536,5 +605,213 @@ export function cloneAssistantRole(id: string, input: { name: string; id?: strin
       timestamp,
     ))
     return clone
+  }))
+}
+
+function normalizeProfileMappingName(profileName: string): string {
+  if (typeof profileName !== 'string') throw new Error('Profile name must be a string')
+  const normalized = profileName.trim()
+  if (!normalized || normalized.length > 200 || normalized === '.' || normalized === '..'
+    || normalized.includes('/') || normalized.includes('\\') || /[\u0000-\u001f\u007f]/.test(normalized)) {
+    throw new Error('Profile name is invalid for assistant role mapping')
+  }
+  return normalized
+}
+
+function profileExistsOnDisk(profileName: string): boolean {
+  if (profileName === 'default') return true
+  return existsSync(join(detectHermesRootHome(), 'profiles', profileName))
+}
+
+export function setAssistantRoleProfileMapping(
+  roleId: string,
+  profileName: string | null,
+): AssistantRoleProfileMapping | null {
+  ensureRegistry()
+  const normalized = profileName === null ? null : normalizeProfileMappingName(profileName)
+  return withPersonalTwinDb(db => transaction(db, () => {
+    requireRoleRow(db, roleId)
+    if (normalized === null) {
+      db.prepare('DELETE FROM twin_role_profile_mappings WHERE role_id = ?').run(roleId)
+      return null
+    }
+    db.prepare('DELETE FROM twin_role_profile_mappings WHERE role_id = ? OR profile_name = ?').run(roleId, normalized)
+    const timestamp = nowIso()
+    db.prepare(`
+      INSERT INTO twin_role_profile_mappings (
+        role_id, profile_name, is_primary, created_at, updated_at
+      ) VALUES (?, ?, 1, ?, ?)
+    `).run(roleId, normalized, timestamp, timestamp)
+    const row = db.prepare(`
+      SELECT * FROM twin_role_profile_mappings WHERE role_id = ? AND profile_name = ?
+    `).get(roleId, normalized) as unknown as AssistantRoleProfileMappingRow
+    return mappingFromRow(row)
+  }))
+}
+
+export function resolveAssistantRoleForProfile(profileName: string): AssistantRole | null {
+  ensureRegistry()
+  const normalized = normalizeProfileMappingName(profileName)
+  return withPersonalTwinDb(db => {
+    const mapped = db.prepare(`
+      SELECT role.* FROM twin_assistant_roles role
+      JOIN twin_role_profile_mappings mapping ON mapping.role_id = role.id
+      WHERE mapping.profile_name = ? AND mapping.is_primary = 1 AND role.enabled = 1
+    `).get(normalized) as unknown as AssistantRoleRow | undefined
+    if (mapped && profileExistsOnDisk(normalized)) return roleFromRow(mapped)
+    const fallback = db.prepare(
+      "SELECT * FROM twin_assistant_roles WHERE id = 'chief-of-staff' AND enabled = 1",
+    ).get() as unknown as AssistantRoleRow | undefined
+    return fallback ? roleFromRow(fallback) : null
+  })
+}
+
+export function renameAssistantRoleProfileMappings(oldName: string, newName: string): void {
+  ensureRegistry()
+  const oldProfileName = normalizeProfileMappingName(oldName)
+  const newProfileName = normalizeProfileMappingName(newName)
+  withPersonalTwinDb(db => transaction(db, () => {
+    if (oldProfileName === newProfileName) return
+    db.prepare('DELETE FROM twin_role_profile_mappings WHERE profile_name = ?').run(newProfileName)
+    db.prepare(`
+      UPDATE twin_role_profile_mappings
+      SET profile_name = ?, updated_at = ?
+      WHERE profile_name = ?
+    `).run(newProfileName, nowIso(), oldProfileName)
+  }))
+}
+
+export function removeAssistantRoleProfileMappings(profileName: string): void {
+  ensureRegistry()
+  const normalized = normalizeProfileMappingName(profileName)
+  withPersonalTwinDb(db => {
+    db.prepare('DELETE FROM twin_role_profile_mappings WHERE profile_name = ?').run(normalized)
+  })
+}
+
+export function listAssistantRolesWithMappings(): AssistantRoleSummary[] {
+  ensureRegistry()
+  return withPersonalTwinDb(db => {
+    const roles = (db.prepare('SELECT * FROM twin_assistant_roles ORDER BY id').all() as unknown as AssistantRoleRow[])
+      .map(roleFromRow)
+    const mappings = (db.prepare(`
+      SELECT * FROM twin_role_profile_mappings ORDER BY role_id, profile_name
+    `).all() as unknown as AssistantRoleProfileMappingRow[]).map(mappingFromRow)
+    const recipeCounts = db.prepare(`
+      SELECT role_id, COUNT(*) AS count FROM twin_context_recipes GROUP BY role_id
+    `).all() as unknown as Array<{ role_id: string; count: number }>
+    const countsByRole = new Map(recipeCounts.map(row => [row.role_id, row.count]))
+
+    return roles.map(role => {
+      const profileMappings = mappings.filter(mapping => mapping.roleId === role.id)
+      const primary = profileMappings.find(mapping => mapping.isPrimary) || null
+      return {
+        ...role,
+        profileMappings,
+        primaryProfileName: primary?.profileName ?? null,
+        mappingStale: primary ? !profileExistsOnDisk(primary.profileName) : false,
+        recipeCount: countsByRole.get(role.id) ?? 0,
+      }
+    })
+  })
+}
+
+function requireRecipeRow(db: DatabaseSync, roleId: string, recipeId: string): ContextRecipeRow {
+  const row = db.prepare(
+    'SELECT * FROM twin_context_recipes WHERE id = ? AND role_id = ?',
+  ).get(recipeId, roleId) as unknown as ContextRecipeRow | undefined
+  if (!row) throw new Error(`Context recipe not found: ${recipeId}`)
+  return row
+}
+
+export function listContextRecipes(roleId: string): ContextRecipe[] {
+  ensureRegistry()
+  return withPersonalTwinDb(db => {
+    requireRoleRow(db, roleId)
+    return (db.prepare(
+      'SELECT * FROM twin_context_recipes WHERE role_id = ? ORDER BY id',
+    ).all(roleId) as unknown as ContextRecipeRow[]).map(recipeFromRow)
+  })
+}
+
+export function createContextRecipe(roleId: string, input: ContextRecipeInput): ContextRecipe {
+  ensureRegistry()
+  validateRecipeInput(input)
+  return withPersonalTwinDb(db => transaction(db, () => {
+    requireRoleRow(db, roleId)
+    const id = input.id || `${roleId}-${toRoleId(input.name)}`
+    if (!RECIPE_ID_PATTERN.test(id)) throw new Error('Context recipe id must be a lowercase semantic slug')
+    const timestamp = nowIso()
+    db.prepare(`
+      INSERT INTO twin_context_recipes (
+        id, role_id, name, description, built_in, enabled, domains_json,
+        sections_json, query_template, limits_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      roleId,
+      input.name.trim(),
+      input.description ?? '',
+      input.enabled === false ? 0 : 1,
+      JSON.stringify(input.domains),
+      JSON.stringify(input.sections),
+      input.queryTemplate ?? '',
+      JSON.stringify(input.limits),
+      timestamp,
+      timestamp,
+    )
+    return recipeFromRow(requireRecipeRow(db, roleId, id))
+  }))
+}
+
+export function updateContextRecipe(roleId: string, recipeId: string, patch: ContextRecipePatch): ContextRecipe {
+  ensureRegistry()
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('Context recipe patch must be an object')
+  if (Object.prototype.hasOwnProperty.call(patch, 'id')) throw new Error('Context recipe id cannot be changed')
+  return withPersonalTwinDb(db => transaction(db, () => {
+    const current = recipeFromRow(requireRecipeRow(db, roleId, recipeId))
+    const input: ContextRecipeInput = {
+      id: current.id,
+      name: recipePatchValue(patch, 'name', current.name),
+      description: recipePatchValue(patch, 'description', current.description),
+      enabled: recipePatchValue(patch, 'enabled', current.enabled),
+      domains: recipePatchValue(patch, 'domains', current.domains),
+      sections: recipePatchValue(patch, 'sections', current.sections),
+      queryTemplate: recipePatchValue(patch, 'queryTemplate', current.queryTemplate),
+      limits: recipePatchValue(patch, 'limits', current.limits),
+    }
+    validateRecipeInput(input)
+    db.prepare(`
+      UPDATE twin_context_recipes SET
+        name = ?, description = ?, enabled = ?, domains_json = ?, sections_json = ?,
+        query_template = ?, limits_json = ?, updated_at = ?
+      WHERE id = ? AND role_id = ?
+    `).run(
+      input.name.trim(),
+      input.description ?? '',
+      input.enabled === false ? 0 : 1,
+      JSON.stringify(input.domains),
+      JSON.stringify(input.sections),
+      input.queryTemplate ?? '',
+      JSON.stringify(input.limits),
+      nowIso(),
+      recipeId,
+      roleId,
+    )
+    return recipeFromRow(requireRecipeRow(db, roleId, recipeId))
+  }))
+}
+
+function recipePatchValue<T>(patch: ContextRecipePatch, key: keyof ContextRecipePatch, current: T): T {
+  if (!Object.prototype.hasOwnProperty.call(patch, key)) return current
+  return (patch as Record<string, unknown>)[key] as T
+}
+
+export function deleteContextRecipe(roleId: string, recipeId: string): void {
+  ensureRegistry()
+  withPersonalTwinDb(db => transaction(db, () => {
+    const recipe = requireRecipeRow(db, roleId, recipeId)
+    if (recipe.built_in === 1) throw new Error(`Cannot delete built-in context recipe: ${recipeId}`)
+    db.prepare('DELETE FROM twin_context_recipes WHERE id = ? AND role_id = ?').run(recipeId, roleId)
   }))
 }
