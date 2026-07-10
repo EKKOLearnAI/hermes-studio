@@ -37,15 +37,61 @@ describe('legacy personal twin import', () => {
     personal.approvePersonalStateProposal(proposal.id, 'user', 'default')
 
     const first = twin.syncLegacyTwinSources()
-    const second = twin.syncLegacyTwinSources()
+    expect(twin.listTwinEvents({ eventType: 'personal.task.status_changed' })).toEqual([
+      expect.objectContaining({ payload: expect.objectContaining({ status: 'open' }) }),
+    ])
 
-    expect(second.counts).toEqual(first.counts)
+    personal.checkInPersonalStateTask('task-training', 'user', 'default')
+    health.updateHealthProfile({ birthDate: '1990-01-02' }, 'user', 'default')
+    health.createHealthScaleReading({ measuredAt: '2026-07-10T08:41:00+08:00', sourceDevice: 'S400', weightKg: 84 }, 'user', 'default')
+    const second = twin.syncLegacyTwinSources()
+    const third = twin.syncLegacyTwinSources()
+
+    expect(second.runId).not.toBe(first.runId)
+    expect(third).toEqual(second)
     expect(twin.listTwinEntities({ type: 'person' })).toHaveLength(1)
-    expect(twin.listTwinObservations({ entityId: 'person:self', metric: 'body.weight_kg' })).toHaveLength(2)
+    expect(twin.listTwinObservations({ entityId: 'person:self', metric: 'body.weight_kg' })).toHaveLength(3)
     expect(twin.listTwinObservations({ entityId: 'person:self', metric: 'body.weight_kg' })[0].provenance.source).toContain('health-state:')
     expect(twin.listTwinEvents({ eventType: 'fitness.workout.logged' })).toHaveLength(1)
     expect(twin.listTwinEvents({ eventType: 'personal.task.created' })).toHaveLength(1)
-    expect(twin.listTwinEvents({ eventType: 'health.scale.measured' })).toHaveLength(2)
+    expect(twin.listTwinEvents({ eventType: 'personal.task.status_changed' })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ payload: expect.objectContaining({ status: 'open' }) }),
+      expect.objectContaining({ payload: expect.objectContaining({ status: 'done' }) }),
+    ]))
+    expect(twin.listTwinEvents({ eventType: 'personal.task.status_changed' })).toHaveLength(2)
+    expect(twin.listTwinEvents({ eventType: 'health.scale.measured' })).toHaveLength(3)
     expect(twin.listTwinObservations({ entityId: 'person:self', metric: 'body.weight_kg' }).some(item => item.provenance.sourceId.includes(String(defaultScale.id)))).toBe(true)
+  })
+
+  it('merges stable health profile fields into the canonical person attributes', async () => {
+    const health = await import('../../packages/server/src/services/hermes/health-state')
+    const twin = await import('../../packages/server/src/services/hermes/personal-twin')
+
+    health.updateHealthProfile({
+      displayName: 'Li Hao',
+      birthDate: '1990-01-02',
+      sex: 'male',
+      heightCm: 178,
+      activityLevel: 'active',
+      weightKg: 85,
+      weightTargetKg: 75,
+    }, 'user', 'default')
+
+    twin.syncLegacyTwinSources()
+
+    expect(twin.getTwinEntity('person:self')).toMatchObject({
+      attributes: {
+        displayName: 'Li Hao',
+        birthDate: '1990-01-02',
+        sex: 'male',
+        heightCm: 178,
+        activityLevel: 'active',
+      },
+    })
+    expect(twin.getTwinEntity('person:self')?.attributes).not.toHaveProperty('weightKg')
+    expect(twin.getTwinEntity('person:self')?.attributes).not.toHaveProperty('weightTargetKg')
+
+    twin.getPersonalTwinOverview()
+    expect(twin.getTwinEntity('person:self')?.attributes).toMatchObject({ displayName: 'Li Hao', heightCm: 178 })
   })
 })

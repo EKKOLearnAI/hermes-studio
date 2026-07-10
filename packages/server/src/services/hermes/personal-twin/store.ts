@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { withPersonalTwinDb } from './database'
+import { projectObservation } from './projectors'
 import {
   TwinConstraint, TwinConstraintInput, TwinConstraintListOptions,
   TwinEntity, TwinEntityInput, TwinEntityListOptions,
@@ -40,6 +41,7 @@ function clampLimit(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value)) return 50
   return Math.max(1, Math.min(200, Math.floor(value)))
 }
+function escapeLike(value: string): string { return value.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_') }
 function ensureIdentityAvailable(db: DatabaseSync, id: string, source: string, sourceId: string): void {
   const row = db.prepare('SELECT source, source_id FROM twin_entities WHERE id = ?').get(id) as { source: string; source_id: string } | undefined
   if (row && (row.source !== source || row.source_id !== sourceId)) throw new TwinIdentityConflictError(`Entity id ${id} is owned by another provenance record`)
@@ -80,7 +82,7 @@ export function upsertTwinEntity(input: TwinEntityInput): TwinEntity {
   return withPersonalTwinDb(db => {
     if (!input.source.trim() || !input.sourceId.trim()) throw new Error('Twin entity source and sourceId are required')
     if (input.id === 'person:self' && (input.source !== 'system' || input.sourceId !== 'self')) throw new TwinIdentityConflictError('person:self is reserved for the canonical system identity')
-    const existing = db.prepare('SELECT id FROM twin_entities WHERE source = ? AND source_id = ?').get(input.source, input.sourceId) as { id: string } | undefined
+    const existing = db.prepare('SELECT id, attributes_json FROM twin_entities WHERE source = ? AND source_id = ?').get(input.source, input.sourceId) as { id: string; attributes_json: string } | undefined
     const id = existing?.id || input.id || stableTwinId('entity', [input.source, input.sourceId])
     if (existing && input.id && existing.id !== input.id) throw new TwinIdentityConflictError(`Provenance ${input.source}/${input.sourceId} already owns ${existing.id}`)
     ensureIdentityAvailable(db, id, input.source, input.sourceId)
@@ -90,7 +92,16 @@ export function upsertTwinEntity(input: TwinEntityInput): TwinEntity {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(source, source_id) DO UPDATE SET
         type = excluded.type, label = excluded.label, attributes_json = excluded.attributes_json, updated_at = excluded.updated_at
-    `).run(id, input.type, input.label, jsonString(input.attributes || {}), input.source, input.sourceId, timestamp, timestamp)
+    `).run(
+      id,
+      input.type,
+      input.label,
+      input.attributes === undefined && existing ? existing.attributes_json : jsonString(input.attributes || {}),
+      input.source,
+      input.sourceId,
+      timestamp,
+      timestamp,
+    )
     return entityFromRow(db.prepare('SELECT * FROM twin_entities WHERE source = ? AND source_id = ?').get(input.source, input.sourceId) as unknown as EntityRow)
   })
 }
@@ -220,17 +231,33 @@ export function recordTwinObservation(input: TwinObservationInput): TwinObservat
       db.prepare(`INSERT INTO twin_outbox (id, topic, aggregate_id, payload_json, status, available_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)`)
         .run(outboxId('twin.observation.recorded', id), 'twin.observation.recorded', id, jsonString({ recordId: id, metric: input.metric, source: input.source, sourceId: input.sourceId }), ingestedAt, ingestedAt)
     }
-    return observationFromRow(existing)
+    const observation = observationFromRow(existing)
+    if (Number(result.changes) === 1) projectObservation(db, observation)
+    return observation
   }))
 }
 
-export function listTwinObservations(options: { entityId?: string; metric?: string; limit?: number } = {}): TwinObservation[] {
+export function listTwinObservations(options: { entityId?: string; metric?: string; metricPrefixes?: string[]; query?: string; limit?: number } = {}): TwinObservation[] {
   return withPersonalTwinDb(db => {
     const clauses: string[] = []; const values: Array<string | number> = []
-    if (options.entityId !== undefined) { clauses.push('entity_id = ?'); values.push(options.entityId) }
-    if (options.metric !== undefined) { clauses.push('metric = ?'); values.push(options.metric) }
+    if (options.entityId !== undefined) { clauses.push('o.entity_id = ?'); values.push(options.entityId) }
+    if (options.metric !== undefined) { clauses.push('o.metric = ?'); values.push(options.metric) }
+    if (options.metricPrefixes?.length) {
+      clauses.push(`(${options.metricPrefixes.map(() => "o.metric LIKE ? ESCAPE '\\'").join(' OR ')})`)
+      values.push(...options.metricPrefixes.map(prefix => `${escapeLike(prefix)}%`))
+    }
+    const query = options.query?.trim()
+    if (query) {
+      clauses.push("LOWER(COALESCE(e.label, '') || ' ' || o.metric || ' ' || o.value_json) LIKE ? ESCAPE '\\'")
+      values.push(`%${escapeLike(query.toLowerCase())}%`)
+    }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
-    return (db.prepare(`SELECT * FROM twin_observations ${where} ORDER BY julianday(observed_at) DESC, julianday(ingested_at) DESC, id DESC LIMIT ?`).all(...values, clampLimit(options.limit)) as unknown as ObservationRow[]).map(observationFromRow)
+    return (db.prepare(`
+      SELECT o.* FROM twin_observations o
+      LEFT JOIN twin_entities e ON e.id = o.entity_id
+      ${where}
+      ORDER BY julianday(o.observed_at) DESC, julianday(o.ingested_at) DESC, o.id DESC LIMIT ?
+    `).all(...values, clampLimit(options.limit)) as unknown as ObservationRow[]).map(observationFromRow)
   })
 }
 
@@ -259,12 +286,26 @@ export function recordTwinEvent(input: TwinEventInput): TwinEvent {
   }))
 }
 
-export function listTwinEvents(options: { subjectId?: string; eventType?: string; limit?: number } = {}): TwinEvent[] {
+export function listTwinEvents(options: { subjectId?: string; eventType?: string; eventTypePrefixes?: string[]; query?: string; limit?: number } = {}): TwinEvent[] {
   return withPersonalTwinDb(db => {
     const clauses: string[] = []; const values: Array<string | number> = []
-    if (options.subjectId !== undefined) { clauses.push('subject_id = ?'); values.push(options.subjectId) }
-    if (options.eventType !== undefined) { clauses.push('event_type = ?'); values.push(options.eventType) }
+    if (options.subjectId !== undefined) { clauses.push('v.subject_id = ?'); values.push(options.subjectId) }
+    if (options.eventType !== undefined) { clauses.push('v.event_type = ?'); values.push(options.eventType) }
+    if (options.eventTypePrefixes?.length) {
+      clauses.push(`(${options.eventTypePrefixes.map(() => "v.event_type LIKE ? ESCAPE '\\'").join(' OR ')})`)
+      values.push(...options.eventTypePrefixes.map(prefix => `${escapeLike(prefix)}%`))
+    }
+    const query = options.query?.trim()
+    if (query) {
+      clauses.push("LOWER(COALESCE(e.label, '') || ' ' || v.event_type || ' ' || v.payload_json) LIKE ? ESCAPE '\\'")
+      values.push(`%${escapeLike(query.toLowerCase())}%`)
+    }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
-    return (db.prepare(`SELECT * FROM twin_events ${where} ORDER BY julianday(occurred_at) DESC, julianday(ingested_at) DESC, id DESC LIMIT ?`).all(...values, clampLimit(options.limit)) as unknown as EventRow[]).map(eventFromRow)
+    return (db.prepare(`
+      SELECT v.* FROM twin_events v
+      LEFT JOIN twin_entities e ON e.id = v.subject_id
+      ${where}
+      ORDER BY julianday(v.occurred_at) DESC, julianday(v.ingested_at) DESC, v.id DESC LIMIT ?
+    `).all(...values, clampLimit(options.limit)) as unknown as EventRow[]).map(eventFromRow)
   })
 }

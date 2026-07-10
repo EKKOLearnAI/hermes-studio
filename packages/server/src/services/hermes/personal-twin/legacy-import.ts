@@ -1,6 +1,6 @@
 import { createHash } from 'crypto'
 import { existsSync, statSync } from 'fs'
-import { getHealthOverview, getHealthStateDbPath } from '../health-state'
+import { getHealthOverview, getHealthStateDbPath, type HealthProfile } from '../health-state'
 import { getPersonalStateDbPath, getPersonalStateOverview } from '../personal-state'
 import { getHermesBaseDir, listProfileNamesFromDisk } from '../hermes-profile'
 import { withPersonalTwinDb } from './database'
@@ -18,6 +18,22 @@ function legacySource(profile: string, collection: string, id: unknown): string 
 function personalSource(profile: string, collection: string, id: unknown): string { return `personal-state:${profile}:${collection}:${String(id)}` }
 function numericEntries(value: Record<string, unknown>): Array<[string, number]> {
   return Object.entries(value).flatMap(([key, item]) => typeof item === 'number' && Number.isFinite(item) ? [[key, item]] : [])
+}
+function stableHealthProfileAttributes(profile: HealthProfile): Record<string, unknown> {
+  return Object.fromEntries(Object.entries({
+    displayName: profile.displayName,
+    birthDate: profile.birthDate,
+    sex: profile.sex,
+    heightCm: profile.heightCm,
+    activityLevel: profile.activityLevel,
+  }).filter(([, value]) => value !== null))
+}
+function legacyTimestamp(record: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value
+  }
+  throw new Error(`Legacy record ${String(record.id || 'unknown')} has no stable timestamp`)
 }
 function profileStats(path: string): Record<string, unknown> {
   if (!existsSync(path)) return { path, exists: false }
@@ -53,14 +69,25 @@ export function syncLegacyTwinSources(options: { profiles?: string[] } = {}): Tw
   const startedAt = nowIso()
   const counts = { entities: 0, observations: 0, events: 0, goals: 0, constraints: 0 }
   try {
-    const subject = ensurePrimarySubject(); counts.entities += 1
+    let subject = ensurePrimarySubject(); counts.entities += 1
     const body: TwinEntity = upsertTwinEntity({ id: 'body:self', type: 'body', label: 'Body', source: 'system', sourceId: 'body:self' }); counts.entities += body.id ? 1 : 0
-    for (const profile of profiles) {
-      const health = getHealthOverview({ profile, includeRecords: true })
-      const personal = getPersonalStateOverview({ profile, limit: 10000 })
+    const legacySources = profiles.map(profile => ({
+      profile,
+      health: getHealthOverview({ profile, includeRecords: true }),
+      personal: getPersonalStateOverview({ profile, limit: 10000 }),
+    }))
+    const profileAttributes = { ...subject.attributes }
+    for (const { health } of [...legacySources].reverse()) Object.assign(profileAttributes, stableHealthProfileAttributes(health.healthProfile))
+    subject = upsertTwinEntity({
+      id: subject.id,
+      type: subject.type,
+      label: subject.label,
+      attributes: profileAttributes,
+      source: subject.source,
+      sourceId: subject.sourceId,
+    })
+    for (const { profile, health, personal } of legacySources) {
       const profileSource = `health-state:${profile}`
-      if (typeof health.healthProfile.heightCm === 'number') { observation({ entityId: subject.id, metric: 'profile.height_cm', value: health.healthProfile.heightCm, unit: 'cm', observedAt: health.generatedAt, source: profileSource, sourceId: 'profile:height' }); counts.observations += 1 }
-      if (typeof health.healthProfile.weightKg === 'number') { observation({ entityId: subject.id, metric: 'profile.weight_kg', value: health.healthProfile.weightKg, unit: 'kg', observedAt: health.generatedAt, source: profileSource, sourceId: 'profile:weight' }); counts.observations += 1 }
       health.healthProfile.goals.forEach((goal, index) => { upsertTwinGoal({ subjectId: subject.id, domain: 'health', title: String(goal), target: {}, status: 'active', priority: 50, source: profileSource, sourceId: `goal:${index}:${String(goal)}` }); counts.goals += 1 })
       health.healthProfile.allergies.forEach((allergy, index) => { upsertTwinConstraint({ subjectId: subject.id, domain: 'health', key: 'allergy', value: allergy, enforcement: 'hard', source: profileSource, sourceId: `allergy:${index}:${String(allergy)}` }); counts.constraints += 1 })
       health.healthProfile.conditions.forEach((condition, index) => { upsertTwinConstraint({ subjectId: subject.id, domain: 'health', key: 'condition', value: condition, enforcement: 'advisory', source: profileSource, sourceId: `condition:${index}:${String(condition)}` }); counts.constraints += 1 })
@@ -70,7 +97,7 @@ export function syncLegacyTwinSources(options: { profiles?: string[] } = {}): Tw
       for (const record of records) {
         const id = String(record.id)
         const source = legacySource(profile, 'records', id)
-        const recordedAt = String(record.recordedAt || health.generatedAt)
+        const recordedAt = legacyTimestamp(record, 'recordedAt', 'createdAt', 'updatedAt')
         const value = record.value && typeof record.value === 'object' ? record.value as Record<string, unknown> : { value: record.value }
         if (record.kind === 'scale_reading') {
           event({ eventType: 'health.scale.measured', subjectId: subject.id, payload: { legacy: record }, occurredAt: recordedAt, source, sourceId: id })
@@ -87,14 +114,54 @@ export function syncLegacyTwinSources(options: { profiles?: string[] } = {}): Tw
           event({ eventType: `health.record.${String(record.kind || 'unknown').replace(/[^a-z0-9_]+/gi, '_')}`, subjectId: subject.id, payload: { legacy: record }, occurredAt: recordedAt, source, sourceId: id }); counts.events += 1
         }
       }
-      for (const workout of health.workouts || []) { const id = String(workout.id); event({ eventType: 'fitness.workout.logged', subjectId: subject.id, payload: { legacy: workout }, occurredAt: String(workout.startedAt || health.generatedAt), source: legacySource(profile, 'workouts', id), sourceId: id }); counts.events += 1 }
-      for (const food of health.foodLogs || []) { const id = String(food.id); event({ eventType: 'nutrition.meal.logged', subjectId: subject.id, payload: { legacy: food }, occurredAt: String(food.loggedAt || health.generatedAt), source: legacySource(profile, 'foodLogs', id), sourceId: id }); counts.events += 1 }
-      for (const checkin of health.dailyCheckins || []) { const id = String(checkin.id); event({ eventType: 'health.daily_checkin.recorded', subjectId: subject.id, payload: { legacy: checkin }, occurredAt: String(checkin.checkinDate || health.generatedAt), source: legacySource(profile, 'dailyCheckins', id), sourceId: id }); counts.events += 1 }
-      for (const plan of health.dailyPlans || []) { const id = String(plan.id); event({ eventType: 'health.plan.recorded', subjectId: subject.id, payload: { legacy: plan }, occurredAt: String(plan.planDate || health.generatedAt), source: legacySource(profile, 'dailyPlans', id), sourceId: id }); counts.events += 1 }
-      for (const bodyMap of health.bodyMap || []) { const id = String(bodyMap.id); event({ eventType: 'health.body_region.assessed', subjectId: subject.id, payload: { legacy: bodyMap }, occurredAt: String(bodyMap.recordedAt || health.generatedAt), source: legacySource(profile, 'bodyMap', id), sourceId: id }); counts.events += 1 }
-      for (const supplement of health.supplementLogs || []) { const id = String(supplement.id); event({ eventType: 'health.supplement.taken', subjectId: subject.id, payload: { legacy: supplement }, occurredAt: String(supplement.takenAt || health.generatedAt), source: legacySource(profile, 'supplementLogs', id), sourceId: id }); counts.events += 1 }
-      for (const proposal of personal.proposals || []) { const id = String(proposal.id); event({ eventType: proposal.status === 'pending' ? 'personal.proposal.created' : 'personal.proposal.reviewed', subjectId: subject.id, payload: { legacy: proposal }, occurredAt: String(proposal.provenance.createdAt || personal.generatedAt), source: personalSource(profile, 'proposals', id), sourceId: id }); counts.events += 1 }
-      for (const task of personal.tasks || []) { const id = String(task.id); event({ eventType: 'personal.task.created', subjectId: subject.id, payload: { legacy: task }, occurredAt: String(task.provenance.createdAt || personal.generatedAt), source: personalSource(profile, 'tasks', id), sourceId: id }); counts.events += 1 }
+      for (const workout of health.workouts || []) { const id = String(workout.id); event({ eventType: 'fitness.workout.logged', subjectId: subject.id, payload: { legacy: workout }, occurredAt: legacyTimestamp(workout, 'startedAt', 'createdAt', 'updatedAt'), source: legacySource(profile, 'workouts', id), sourceId: id }); counts.events += 1 }
+      for (const food of health.foodLogs || []) { const id = String(food.id); event({ eventType: 'nutrition.meal.logged', subjectId: subject.id, payload: { legacy: food }, occurredAt: legacyTimestamp(food, 'loggedAt', 'createdAt', 'updatedAt'), source: legacySource(profile, 'foodLogs', id), sourceId: id }); counts.events += 1 }
+      for (const checkin of health.dailyCheckins || []) { const id = String(checkin.id); event({ eventType: 'health.daily_checkin.recorded', subjectId: subject.id, payload: { legacy: checkin }, occurredAt: legacyTimestamp(checkin, 'checkinDate', 'checkin_date', 'createdAt', 'created_at'), source: legacySource(profile, 'dailyCheckins', id), sourceId: id }); counts.events += 1 }
+      for (const plan of health.dailyPlans || []) { const id = String(plan.id); event({ eventType: 'health.plan.recorded', subjectId: subject.id, payload: { legacy: plan }, occurredAt: legacyTimestamp(plan as unknown as Record<string, unknown>, 'planDate'), source: legacySource(profile, 'dailyPlans', id), sourceId: id }); counts.events += 1 }
+      for (const bodyMap of health.bodyMap || []) { const id = String(bodyMap.id); event({ eventType: 'health.body_region.assessed', subjectId: subject.id, payload: { legacy: bodyMap }, occurredAt: legacyTimestamp(bodyMap, 'recordedAt', 'createdAt', 'updatedAt'), source: legacySource(profile, 'bodyMap', id), sourceId: id }); counts.events += 1 }
+      for (const supplement of health.supplementLogs || []) { const id = String(supplement.id); event({ eventType: 'health.supplement.taken', subjectId: subject.id, payload: { legacy: supplement }, occurredAt: legacyTimestamp(supplement, 'takenAt', 'createdAt', 'updatedAt'), source: legacySource(profile, 'supplementLogs', id), sourceId: id }); counts.events += 1 }
+      for (const proposal of personal.proposals || []) { const id = String(proposal.id); event({ eventType: proposal.status === 'pending' ? 'personal.proposal.created' : 'personal.proposal.reviewed', subjectId: subject.id, payload: { legacy: proposal }, occurredAt: proposal.provenance.createdAt, source: personalSource(profile, 'proposals', id), sourceId: id }); counts.events += 1 }
+      for (const task of personal.tasks || []) {
+        const id = String(task.id)
+        const source = personalSource(profile, 'tasks', id)
+        const creationSnapshot = {
+          kind: task.kind,
+          id: task.id,
+          title: task.title,
+          summary: task.summary,
+          notes: task.notes,
+          sourceProposalId: task.sourceProposalId,
+          provenance: {
+            source: task.provenance.source,
+            confidence: task.provenance.confidence,
+            evidence: task.provenance.evidence,
+            confirmationState: task.provenance.confirmationState,
+            createdAt: task.provenance.createdAt,
+          },
+        }
+        event({
+          eventType: 'personal.task.created',
+          subjectId: subject.id,
+          payload: { legacy: creationSnapshot },
+          occurredAt: task.provenance.createdAt,
+          source,
+          sourceId: id,
+        })
+        counts.events += 1
+        event({
+          eventType: 'personal.task.status_changed',
+          subjectId: subject.id,
+          payload: {
+            status: task.status,
+            actor: task.provenance.actor,
+            legacy: { id: task.id, updatedAt: task.provenance.updatedAt },
+          },
+          occurredAt: task.provenance.updatedAt,
+          source,
+          sourceId: `${id}:${task.provenance.updatedAt}`,
+        })
+        counts.events += 1
+      }
     }
     const completedAt = nowIso()
     withPersonalTwinDb(db => db.prepare(`INSERT INTO twin_import_runs (id, source, source_fingerprint, status, counts_json, started_at, completed_at) VALUES (?, ?, ?, 'completed', ?, ?, ?)`)

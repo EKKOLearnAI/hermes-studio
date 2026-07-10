@@ -295,6 +295,7 @@ function extractQueryParamNames(source) {
 
   collectMatches(source, /ctx\.query\??\.(\w+)/g, names)
   collectMatches(source, /ctx\.query\[['"]([^'"]+)['"]\]/g, names)
+  collectMatches(source, /(?:stringQuery|integerQuery)\(\s*ctx\s*,\s*['"]([^'"]+)['"]\s*\)/g, names)
 
   for (const match of source.matchAll(/const\s+\{([^}]+)\}\s*=\s*ctx\.query/g)) {
     for (const name of parseDestructuredNames(match[1])) names.add(name)
@@ -341,6 +342,9 @@ function queryParamSchema(name, source) {
 
 function inferParamType(name, source) {
   const escaped = escapeRegExp(name)
+  if (new RegExp(`integerQuery\\(\\s*ctx\\s*,\\s*['"]${escaped}['"]\\s*\\)`).test(source)) {
+    return 'integer'
+  }
   if (new RegExp(`parseInt\\([^)]*\\b${escaped}\\b`).test(source) || new RegExp(`Number\\([^)]*\\b${escaped}\\b`).test(source)) {
     return 'integer'
   }
@@ -410,7 +414,7 @@ function extractBodyFields(source) {
     for (const field of parseTypeLiteralFields(typeLiteral)) {
       addBodyField(fields, {
         name: field.name,
-        schema: schemaFromType(field.type),
+        schema: schemaFromType(field.type, field.name, source),
         required: requiredNames.has(field.name) || !field.optional,
       })
     }
@@ -599,14 +603,26 @@ function schemaFromName(name, source) {
   if (new RegExp(`optionalBoolean\\([^,]+,\\s*['"]${escaped}['"]`).test(source)) return { type: 'boolean' }
   if (new RegExp(`optional(?:Positive)?Integer\\([^,]+,\\s*['"]${escaped}['"]`).test(source)) return { type: 'integer' }
   if (new RegExp(`(?:optional|required)\\w*StringArray\\([^,]+,\\s*['"]${escaped}['"]`).test(source)) return { type: 'array', items: { type: 'string' } }
+  const validatedSchema = schemaFromValidation(name, source)
+  if (validatedSchema) return validatedSchema
   if (new RegExp(`(?:StringArray|task_ids|ids)`, 'i').test(name)) return { type: 'array', items: { type: 'string' } }
   return { type: 'string' }
 }
 
-function schemaFromType(type) {
+function schemaFromValidation(name, source) {
+  const escaped = escapeRegExp(name)
+  if (new RegExp(`Array\\.isArray\\([^)]*\\.${escaped}\\)[\\s\\S]{0,250}\\.${escaped}\\.some\\([^)]*typeof\\s+\\w+\\s*!==?\\s*['"]string['"]`).test(source)) {
+    return { type: 'array', items: { type: 'string' } }
+  }
+  return null
+}
+
+function schemaFromType(type, name = '', source = '') {
   const normalized = type.replace(/\s+/g, ' ')
   const schema = {}
 
+  const validatedSchema = name ? schemaFromValidation(name, source) : null
+  if (validatedSchema) return validatedSchema
   if (/\bnull\b/.test(normalized)) schema.nullable = true
   if (/string\[\]|Array<string>/.test(normalized)) {
     return { ...schema, type: 'array', items: { type: 'string' } }

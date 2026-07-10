@@ -1,6 +1,5 @@
-import { rebuildTwinProjections } from './projectors'
 import { withPersonalTwinDb } from './database'
-import { listTwinEntities, listTwinEvents, listTwinObservations, upsertTwinEntity } from './store'
+import { getTwinEntity, listTwinEntities, listTwinEvents, listTwinObservations, upsertTwinEntity } from './store'
 import { TwinEntity, TwinOverview } from './types'
 
 const DOMAIN_PREFIXES: Record<string, string[]> = {
@@ -10,15 +9,12 @@ const DOMAIN_PREFIXES: Record<string, string[]> = {
 }
 
 function clampLimit(value: number | undefined): number { return value === undefined || !Number.isFinite(value) ? 50 : Math.max(1, Math.min(200, Math.floor(value))) }
-function matchesQuery(value: unknown, query: string | undefined): boolean { return !query || JSON.stringify(value).toLowerCase().includes(query.toLowerCase().replace(/[%_]/g, '')) }
-
 export function ensurePrimarySubject(): TwinEntity {
-  return upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+  return getTwinEntity('person:self') || upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
 }
 
 export function getPersonalTwinOverview(): TwinOverview {
   const subject = ensurePrimarySubject()
-  rebuildTwinProjections()
   const latestObservations = listTwinObservations({ entityId: subject.id, limit: 20 })
   const recentEvents = listTwinEvents({ subjectId: subject.id, limit: 20 })
   const counts = withPersonalTwinDb(db => ({
@@ -42,7 +38,7 @@ export function getPersonalTwinContext(options: { domains?: string[]; query?: st
   const subject = ensurePrimarySubject()
   const prefixes = (options.domains || []).flatMap(domain => DOMAIN_PREFIXES[domain] || [])
   const limit = clampLimit(options.limit)
-  const observations = listTwinObservations({ limit: 200 }).filter(observation => (prefixes.length === 0 || prefixes.some(prefix => observation.metric.startsWith(prefix))) && matchesQuery(observation, options.query)).slice(0, limit)
-  const events = listTwinEvents({ limit: 200 }).filter(event => (prefixes.length === 0 || prefixes.some(prefix => event.eventType.startsWith(prefix))) && matchesQuery(event, options.query)).slice(0, limit)
+  const observations = listTwinObservations({ metricPrefixes: prefixes, query: options.query, limit })
+  const events = listTwinEvents({ eventTypePrefixes: prefixes, query: options.query, limit })
   return { subject, observations, events }
 }

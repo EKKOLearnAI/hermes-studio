@@ -1,9 +1,9 @@
 import { DatabaseSync } from 'node:sqlite'
 import { withPersonalTwinDb } from './database'
-import { listTwinObservations } from './store'
-import { TwinObservation, TwinProjection } from './types'
+import { TwinObservation, TwinProjection, TwinProvenance } from './types'
 
 interface ProjectionRow { projection_key: string; subject_id: string; value_json: string; source_record_id: string; version: number; updated_at: string }
+interface ObservationRow { id: string; entity_id: string; metric: string; value_json: string; unit: string | null; observed_at: string; ingested_at: string; source: string; source_id: string; actor: string; confidence: number; confirmation_state: TwinProvenance['confirmationState']; evidence_json: string; schema_version: number }
 
 function parseJson<T>(value: string, fallback: T): T {
   try { return JSON.parse(value) as T } catch { return fallback }
@@ -11,6 +11,27 @@ function parseJson<T>(value: string, fallback: T): T {
 
 function projectionFromRow(row: ProjectionRow): TwinProjection {
   return { key: row.projection_key, subjectId: row.subject_id, value: parseJson(row.value_json, {}), sourceRecordId: row.source_record_id, version: row.version, updatedAt: row.updated_at }
+}
+
+function observationFromRow(row: ObservationRow): TwinObservation {
+  return {
+    id: row.id,
+    entityId: row.entity_id,
+    metric: row.metric,
+    value: parseJson(row.value_json, null),
+    unit: row.unit,
+    observedAt: row.observed_at,
+    ingestedAt: row.ingested_at,
+    provenance: {
+      source: row.source,
+      sourceId: row.source_id,
+      actor: row.actor,
+      confidence: row.confidence,
+      confirmationState: row.confirmation_state,
+      evidence: parseJson(row.evidence_json, []),
+      schemaVersion: row.schema_version,
+    },
+  }
 }
 
 function isNewer(candidate: TwinObservation, current: ProjectionRow | undefined): boolean {
@@ -52,10 +73,20 @@ export function projectObservation(db: DatabaseSync, observation: TwinObservatio
 
 export function rebuildTwinProjections(): void {
   withPersonalTwinDb(db => {
-    const observations = listTwinObservations({ limit: 200 })
-    const keys = [...new Set(observations.map(observation => `latest:${observation.metric}`))]
-    if (keys.length > 0) db.prepare(`DELETE FROM twin_projections WHERE projection_key IN (${keys.map(() => '?').join(',')})`).run(...keys)
-    for (const observation of observations.slice().sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt) || Date.parse(a.ingestedAt) - Date.parse(b.ingestedAt) || a.id.localeCompare(b.id))) projectObservation(db, observation)
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const observations = (db.prepare(`
+        SELECT * FROM twin_observations
+        ORDER BY julianday(observed_at) ASC, julianday(ingested_at) ASC, id ASC
+      `).all() as unknown as ObservationRow[]).map(observationFromRow)
+      const deleteProjection = db.prepare('DELETE FROM twin_projections WHERE projection_key = ?')
+      for (const key of new Set(observations.map(observation => `latest:${observation.metric}`))) deleteProjection.run(key)
+      for (const observation of observations) projectObservation(db, observation)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
   })
 }
 

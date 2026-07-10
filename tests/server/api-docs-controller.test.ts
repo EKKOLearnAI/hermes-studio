@@ -14,7 +14,10 @@ describe('api docs controller', () => {
     expect(ctx.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
     expect(ctx.body.openapi).toBe('3.0.3')
     expect(ctx.body.paths['/api/openapi.json']).toBeTruthy()
-    expect(ctx.body.paths['/api/auth/login'].post).toBeTruthy()
+    expect(ctx.body.paths['/api/auth/login'].post.requestBody.content['application/json'].schema.required).toEqual([
+      'password',
+      'username',
+    ])
     expect(ctx.body.paths['/api/auth/users/{id}'].put.parameters).toEqual([
       expect.objectContaining({ name: 'id', in: 'path', required: true }),
     ])
@@ -29,6 +32,28 @@ describe('api docs controller', () => {
       ctx.body.paths['/api/chat-run/runs'].post.requestBody.content['application/json'].schema.properties.source.enum,
     ).toEqual(['cli', 'coding_agent', 'global_agent'])
     expect(ctx.body.paths['/api/hermes/personal-twin/overview'].get.tags).toEqual(['Personal Twin'])
-    expect(ctx.body.paths['/api/hermes/personal-twin/imports/legacy'].post).toBeTruthy()
+    expect(
+      ctx.body.paths['/api/hermes/personal-twin/imports/legacy'].post.requestBody.content['application/json'].schema.properties.profiles,
+    ).toEqual({ type: 'array', items: { type: 'string' } })
+    expect(ctx.body.paths['/api/hermes/personal-twin/entities'].get.parameters).toEqual([
+      { name: 'limit', in: 'query', required: false, schema: { type: 'integer' } },
+      { name: 'source', in: 'query', required: false, schema: { type: 'string' } },
+      { name: 'type', in: 'query', required: false, schema: { type: 'string' } },
+    ])
+    expect(ctx.body.paths['/api/hermes/personal-twin/observations'].get.parameters).toEqual([
+      { name: 'entityId', in: 'query', required: false, schema: { type: 'string' } },
+      { name: 'limit', in: 'query', required: false, schema: { type: 'integer' } },
+      { name: 'metric', in: 'query', required: false, schema: { type: 'string' } },
+    ])
+    expect(ctx.body.paths['/api/hermes/personal-twin/events'].get.parameters).toEqual([
+      { name: 'eventType', in: 'query', required: false, schema: { type: 'string' } },
+      { name: 'limit', in: 'query', required: false, schema: { type: 'integer' } },
+      { name: 'subjectId', in: 'query', required: false, schema: { type: 'string' } },
+    ])
+    expect(ctx.body.paths['/api/hermes/personal-twin/context'].get.parameters).toEqual([
+      { name: 'domains', in: 'query', required: false, schema: { type: 'string' } },
+      { name: 'limit', in: 'query', required: false, schema: { type: 'integer' } },
+      { name: 'query', in: 'query', required: false, schema: { type: 'string' } },
+    ])
   })
 })
