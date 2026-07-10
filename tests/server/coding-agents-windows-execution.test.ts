@@ -34,6 +34,7 @@ function setPlatform(platform: NodeJS.Platform) {
 
 beforeEach(() => {
   execState.calls.length = 0
+  vi.stubEnv('comspec', 'cmd.exe')
   setPlatform('win32')
 })
 

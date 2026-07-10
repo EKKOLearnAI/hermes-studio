@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { resolveTestPython } from './python-test-runtime'
 
 const originalHermesHome = process.env.HERMES_HOME
 const originalHermesAgentRoot = process.env.HERMES_AGENT_ROOT
 const originalHermesBin = process.env.HERMES_BIN
 const originalHermesAgentCliPython = process.env.HERMES_AGENT_CLI_PYTHON
+const originalPythonPath = process.env.PYTHONPATH
 let hermesHome = ''
 
 async function loadService() {
@@ -29,6 +31,8 @@ afterEach(async () => {
   else process.env.HERMES_BIN = originalHermesBin
   if (originalHermesAgentCliPython === undefined) delete process.env.HERMES_AGENT_CLI_PYTHON
   else process.env.HERMES_AGENT_CLI_PYTHON = originalHermesAgentCliPython
+  if (originalPythonPath === undefined) delete process.env.PYTHONPATH
+  else process.env.PYTHONPATH = originalPythonPath
   await rm(hermesHome, { recursive: true, force: true })
   hermesHome = ''
 })
@@ -75,7 +79,7 @@ describe('write gate service', () => {
     await expect(getPendingWriteDiff('default', 'memory', '../abc')).rejects.toThrow('Invalid pending write id')
   })
 
-  it('detects write approval support from a uv-backed Hermes venv shebang', async () => {
+  it.skipIf(process.platform === 'win32')('detects write approval support from a uv-backed Hermes venv shebang', async () => {
     const agentRoot = join(hermesHome, 'agent')
     const venvBin = join(agentRoot, 'venv', 'bin')
     const externalPythonDir = join(hermesHome, 'uv-python', 'bin')
@@ -118,17 +122,13 @@ describe('write gate service', () => {
   })
 
   it('detects write approval support from a pip-installed runtime Python', async () => {
-    const fakePython = join(hermesHome, 'python')
-    await writeFile(fakePython, [
-      '#!/bin/sh',
-      'case "$2" in',
-      '  *"tools.write_approval"*"hermes_cli.write_approval_commands"*) exit 0 ;;',
-      '  *) exit 1 ;;',
-      'esac',
-      '',
-    ].join('\n'), 'utf-8')
-    await chmod(fakePython, 0o755)
-    process.env.HERMES_AGENT_CLI_PYTHON = fakePython
+    const packageRoot = join(hermesHome, 'site-packages')
+    await mkdir(join(packageRoot, 'tools'), { recursive: true })
+    await mkdir(join(packageRoot, 'hermes_cli'), { recursive: true })
+    await writeFile(join(packageRoot, 'tools', 'write_approval.py'), '', 'utf-8')
+    await writeFile(join(packageRoot, 'hermes_cli', 'write_approval_commands.py'), '', 'utf-8')
+    process.env.HERMES_AGENT_CLI_PYTHON = resolveTestPython()
+    process.env.PYTHONPATH = packageRoot
     process.env.HERMES_BIN = join(hermesHome, 'missing-hermes')
     delete process.env.HERMES_AGENT_ROOT
 

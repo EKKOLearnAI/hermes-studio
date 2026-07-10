@@ -147,8 +147,13 @@ describe('agent bridge manager command resolution', () => {
   it('uses an isolated default bridge endpoint while running under Vitest', async () => {
     const { DEFAULT_AGENT_BRIDGE_ENDPOINT } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
 
-    expect(DEFAULT_AGENT_BRIDGE_ENDPOINT).toContain(`hermes-agent-bridge-test-${process.pid}`)
-    expect(DEFAULT_AGENT_BRIDGE_ENDPOINT).not.toBe('ipc:///tmp/hermes-agent-bridge.sock')
+    if (process.platform === 'win32') {
+      expect(DEFAULT_AGENT_BRIDGE_ENDPOINT).toBe(`tcp://127.0.0.1:${28000 + (process.pid % 10000)}`)
+      expect(DEFAULT_AGENT_BRIDGE_ENDPOINT).not.toBe('tcp://127.0.0.1:18765')
+    } else {
+      expect(DEFAULT_AGENT_BRIDGE_ENDPOINT).toContain(`hermes-agent-bridge-test-${process.pid}`)
+      expect(DEFAULT_AGENT_BRIDGE_ENDPOINT).not.toBe('ipc:///tmp/hermes-agent-bridge.sock')
+    }
   })
 
   it('honors the bridge connect retry environment override', async () => {

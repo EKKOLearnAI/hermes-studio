@@ -50,10 +50,12 @@ function setPlatform(platform: NodeJS.Platform) {
 
 beforeEach(() => {
   testState.spawnCalls.length = 0
+  vi.stubEnv('comspec', 'cmd.exe')
   setPlatform('win32')
 })
 
 afterEach(() => {
+  vi.unstubAllEnvs()
   if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
 })
 

@@ -5,6 +5,7 @@ import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const originalEnv = { ...process.env }
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 
 class FakeChild extends EventEmitter {
   pid: number
@@ -39,6 +40,7 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.resetModules()
   process.env = { ...originalEnv }
+  if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
   fakeChildren = []
 })
 
@@ -46,6 +48,7 @@ describe('profile delete managed gateway lifecycle', () => {
   it('reproduces #1633 and proves delete prep suppresses managed respawn', async () => {
     vi.useFakeTimers()
     vi.resetModules()
+    Object.defineProperty(process, 'platform', { value: 'linux' })
     const home = await mkdtemp(join(tmpdir(), 'wui-1633-'))
     process.env.HERMES_HOME = home
     process.env.HERMES_BIN = '/usr/bin/hermes'

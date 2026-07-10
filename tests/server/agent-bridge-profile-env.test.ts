@@ -4,8 +4,10 @@ import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { promisify } from 'util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { resolveBridgeTestPython } from './python-test-runtime'
 
 const execFileAsync = promisify(execFile)
+const testPython = resolveBridgeTestPython()
 
 let tempDir = ''
 
@@ -20,7 +22,7 @@ afterEach(async () => {
 
 async function runBridgeProbe(script: string): Promise<any> {
   const bridgePath = resolve('packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py')
-  const { stdout } = await execFileAsync('python3', ['-c', script], {
+  const { stdout } = await execFileAsync(testPython, ['-c', script], {
     cwd: resolve('.'),
     env: {
       ...process.env,

@@ -173,7 +173,7 @@ describe('skills controller', () => {
     await mkdir(profileSkillsDir, { recursive: true })
     await mkdir(sharedSkillDir, { recursive: true })
     await writeFile(join(sharedSkillDir, 'SKILL.md'), '# Linked Flat Skill\nflat symlink copy\n', 'utf-8')
-    await symlink(sharedSkillDir, join(profileSkillsDir, 'linked-flat-skill'))
+    await symlink(sharedSkillDir, join(profileSkillsDir, 'linked-flat-skill'), process.platform === 'win32' ? 'junction' : 'dir')
 
     mockGetProfileDir.mockReturnValue(profileDir)
 
@@ -211,10 +211,11 @@ describe('skills controller', () => {
     await writeFile(join(toolsDir, 'DESCRIPTION.md'), '# Tools\n', 'utf-8')
     await writeFile(join(linkedSkillDir, 'SKILL.md'), '# Linked Skill\nlinked skill copy\n', 'utf-8')
     await writeFile(join(linkedCategoryDir, 'SKILL.md'), '# Linked Category Skill\nlinked category copy\n', 'utf-8')
-    await symlink(linkedSkillDir, join(toolsDir, 'linked-skill'))
-    await symlink(linkedCategoryDir, join(toolsDir, 'linked-group'))
-    await symlink(toolsDir, join(toolsDir, 'loop'))
-    await symlink(linkedSkillDir, join(toolsDir, '.hidden-skill'))
+    const directoryLinkType = process.platform === 'win32' ? 'junction' : 'dir'
+    await symlink(linkedSkillDir, join(toolsDir, 'linked-skill'), directoryLinkType)
+    await symlink(linkedCategoryDir, join(toolsDir, 'linked-group'), directoryLinkType)
+    await symlink(toolsDir, join(toolsDir, 'loop'), directoryLinkType)
+    await symlink(linkedSkillDir, join(toolsDir, '.hidden-skill'), directoryLinkType)
 
     mockGetProfileDir.mockReturnValue(profileDir)
 

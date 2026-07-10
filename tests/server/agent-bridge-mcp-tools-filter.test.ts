@@ -1,9 +1,12 @@
 import { execFileSync } from 'child_process'
 import { describe, expect, it } from 'vitest'
+import { resolveBridgeTestPython } from './python-test-runtime'
+
+const testPython = resolveBridgeTestPython()
 
 function runPython(script: string): any {
   try {
-    const output = execFileSync('python3', ['-c', script], {
+    const output = execFileSync(testPython, ['-c', script], {
       cwd: process.cwd(),
       encoding: 'utf-8',
       stdio: 'pipe',

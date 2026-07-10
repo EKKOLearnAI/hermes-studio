@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import { existsSync, readdirSync, realpathSync } from 'fs'
 import { chmod, mkdir, readFile, stat, writeFile } from 'fs/promises'
 import { homedir } from 'os'
-import { delimiter, dirname, join } from 'path'
+import { dirname, join } from 'path'
 import { promisify } from 'util'
 import { getWebUiHome } from '../config'
 import { PROVIDER_ENV_MAP, readConfigYamlForProfile, safeReadFile } from './config-helpers'
@@ -231,7 +231,7 @@ function getNvmNodeBinPaths(): string {
       .sort(compareNodeVersionDesc)
       .map(version => join(versionsDir, version, 'bin'))
       .filter(binDir => existsSync(binDir))
-      .join(delimiter)
+      .join(platformPathDelimiter())
   } catch {
     return ''
   }
@@ -246,6 +246,10 @@ function getLoginShellCandidates(): string[] {
     '/usr/bin/zsh',
     '/usr/bin/bash',
   ].filter(Boolean)
+}
+
+function platformPathDelimiter(): string {
+  return process.platform === 'win32' ? ';' : ':'
 }
 
 function getLoginShell(): string | null {
@@ -294,6 +298,7 @@ function getDesktopCommonBinPaths(): string[] {
 }
 
 function prependPathEntries(env: NodeJS.ProcessEnv, entries: Array<string | null | undefined>) {
+  const delimiter = platformPathDelimiter()
   const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') || 'PATH'
   const currentPath = env[pathKey] || ''
   const existing = new Set(currentPath.split(delimiter).filter(Boolean))
@@ -1036,7 +1041,7 @@ function getScopedConfigFileDefinition(id: string, key: string, scopeInput: Codi
 function getCurrentNodeEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    PATH: [getNodeBinDir(), getNvmNodeBinPaths(), process.env.PATH].filter(Boolean).join(delimiter),
+    PATH: [getNodeBinDir(), getNvmNodeBinPaths(), process.env.PATH].filter(Boolean).join(platformPathDelimiter()),
     npm_node_execpath: process.execPath,
   }
 }

@@ -33,6 +33,7 @@ vi.doMock('../../packages/server/src/services/agent-runner/coding-agent-run-mana
 }))
 
 const homes: string[] = []
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 
 function makeHome() {
   const home = mkdtempSync(join(tmpdir(), 'hermes-coding-agent-resume-'))
@@ -43,6 +44,7 @@ function makeHome() {
 
 describe('coding agent resumed session config', () => {
   beforeEach(() => {
+    Object.defineProperty(process, 'platform', { value: 'linux' })
     vi.resetModules()
     getSessionMock.mockReset()
     updateSessionMock.mockReset()
@@ -53,6 +55,7 @@ describe('coding agent resumed session config', () => {
   })
 
   afterEach(() => {
+    if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
     delete process.env.HERMES_WEB_UI_HOME
     for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
   })

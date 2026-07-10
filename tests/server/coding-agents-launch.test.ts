@@ -7,10 +7,18 @@ import { codexProxyModels, codexProxyResponses, registerCodexProxyTarget } from 
 import { prepareCodingAgentLaunch } from '../../packages/server/src/services/coding-agents'
 
 const homes: string[] = []
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+const originalGetuid = Object.getOwnPropertyDescriptor(process, 'getuid')
+const originalGeteuid = Object.getOwnPropertyDescriptor(process, 'geteuid')
 
 function mockProcessUid(uid: number) {
-  vi.spyOn(process, 'getuid').mockReturnValue(uid)
-  vi.spyOn(process, 'geteuid').mockReturnValue(uid)
+  Object.defineProperty(process, 'getuid', { configurable: true, value: vi.fn(() => uid) })
+  Object.defineProperty(process, 'geteuid', { configurable: true, value: vi.fn(() => uid) })
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:=@+-]+$/.test(value)) return value
+  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 function makeHome() {
@@ -22,6 +30,7 @@ function makeHome() {
 }
 
 beforeEach(() => {
+  Object.defineProperty(process, 'platform', { value: 'linux' })
   mockProcessUid(1000)
 })
 
@@ -30,6 +39,11 @@ afterEach(() => {
   delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
+  if (originalGetuid) Object.defineProperty(process, 'getuid', originalGetuid)
+  else delete (process as any).getuid
+  if (originalGeteuid) Object.defineProperty(process, 'geteuid', originalGeteuid)
+  else delete (process as any).geteuid
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
 })
 
@@ -72,7 +86,7 @@ describe('coding agent launch preparation', () => {
         '--dangerously-skip-permissions',
       ],
       env: {},
-      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && claude --append-system-prompt-file ${join(home, 'global-home', '.claude', 'hermes-rules.md')} --dangerously-skip-permissions`,
+      shellCommand: `cd ${shellQuote(join(home, 'coding-agent', 'workspace', 'default', 'global'))} && claude --append-system-prompt-file ${shellQuote(join(home, 'global-home', '.claude', 'hermes-rules.md'))} --dangerously-skip-permissions`,
       files: [{
         key: 'prompt',
         path: '~/.claude/hermes-rules.md',
@@ -104,7 +118,7 @@ describe('coding agent launch preparation', () => {
         '--permission-mode',
         'auto',
       ],
-      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && claude --append-system-prompt-file ${join(home, 'global-home', '.claude', 'hermes-rules.md')} --permission-mode auto`,
+      shellCommand: `cd ${shellQuote(join(home, 'coding-agent', 'workspace', 'default', 'global'))} && claude --append-system-prompt-file ${shellQuote(join(home, 'global-home', '.claude', 'hermes-rules.md'))} --permission-mode auto`,
     })
   })
 
@@ -127,7 +141,7 @@ describe('coding agent launch preparation', () => {
       command: 'codex',
       args: [],
       env: {},
-      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && codex`,
+      shellCommand: `cd ${shellQuote(join(home, 'coding-agent', 'workspace', 'default', 'global'))} && codex`,
       files: [],
     })
   })
@@ -186,7 +200,7 @@ describe('coding agent launch preparation', () => {
       join(result.rootDir, 'hermes-rules.md'),
       '--dangerously-skip-permissions',
     ])
-    expect(result.shellCommand).toContain(`cd ${join(home, 'coding-agent', 'workspace', 'default', 'openrouter')} &&`)
+    expect(result.shellCommand).toContain(`cd ${shellQuote(join(home, 'coding-agent', 'workspace', 'default', 'openrouter'))} &&`)
     expect(result.shellCommand).toContain(join(result.rootDir, 'launch.sh'))
     expect(result.shellCommand).not.toContain('ANTHROPIC_API_KEY')
     expect(result.shellCommand).not.toContain('hwui_')
@@ -329,15 +343,15 @@ describe('coding agent launch preparation', () => {
 
     const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
     expect(config).toContain('requires_openai_auth = false')
-    expect(config).toContain(`model_catalog_json = "${join(result.rootDir, 'codex-model-catalog.json')}"`)
+    expect(config).toContain(`model_catalog_json = ${JSON.stringify(join(result.rootDir, 'codex-model-catalog.json'))}`)
     expect(config).toContain('model_reasoning_summary = "auto"')
     expect(config).toContain('developer_instructions = """')
     expect(config).toContain('Hermes Studio MCP usage')
     expect(config).toContain('# 输出格式规范')
     expect(config).toContain('[mcp_servers.hermes-studio]')
-    expect(config).toContain(`command = "${process.execPath}"`)
-    expect(config).toContain(`args = ["${join(process.cwd(), 'bin/hermes-web-ui-mcp.mjs')}"]`)
-    expect(config).toContain(`env = { HERMES_WEB_UI_URL = "http://127.0.0.1:8648", HERMES_WEB_UI_HOME = "${home}"`)
+    expect(config).toContain(`command = ${JSON.stringify(process.execPath)}`)
+    expect(config).toContain(`args = [${JSON.stringify(join(process.cwd(), 'bin/hermes-web-ui-mcp.mjs'))}]`)
+    expect(config).toContain(`env = { HERMES_WEB_UI_URL = "http://127.0.0.1:8648", HERMES_WEB_UI_HOME = ${JSON.stringify(home)}`)
     expect(config).toContain('HERMES_WEBUI_STATE_DIR = "')
     expect(config).toContain('HERMES_WEB_UI_PROFILE = "default"')
     expect(config).toContain('HERMES_MCP_SERVER_NAME = "hermes-studio-mcp"')
