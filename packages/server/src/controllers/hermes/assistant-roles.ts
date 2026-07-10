@@ -160,16 +160,30 @@ function safeError(ctx: Context, error: unknown): void {
   if (error instanceof RequestValidationError) {
     ctx.status = 400
     ctx.body = { error: message }
-  } else if (/not found/i.test(message)) {
+  } else if (/unique constraint failed:\s*twin_assistant_roles\./i.test(message)) {
+    ctx.status = 409
+    ctx.body = { error: 'Assistant role already exists' }
+  } else if (/context recipe not found/i.test(message)) {
+    ctx.status = 404
+    ctx.body = { error: 'Context recipe not found' }
+  } else if (/context recipe is disabled/i.test(message)) {
+    ctx.status = 400
+    ctx.body = { error: 'Context recipe is disabled' }
+  } else if (/assistant role not found/i.test(message)) {
     ctx.status = 404
     ctx.body = { error: 'Assistant role not found' }
   } else if (/cannot delete built-in/i.test(message)) {
     ctx.status = 409
     ctx.body = { error: 'Built-in assistant roles cannot be deleted' }
-  } else if (/assistant role|context recipe|profile name|constraint|unique/i.test(message)
-    && !/sqlite|database|[A-Za-z]:\\|\/(?:Users|home|var|tmp)\//i.test(message)) {
+  } else if (/profile name/i.test(message)) {
     ctx.status = 400
-    ctx.body = { error: message }
+    ctx.body = { error: 'Invalid profile mapping' }
+  } else if (/context recipe/i.test(message)) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid context recipe configuration' }
+  } else if (/assistant role/i.test(message)) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid assistant role configuration' }
   } else {
     ctx.status = 500
     ctx.body = { error: 'Internal server error' }

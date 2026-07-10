@@ -180,4 +180,41 @@ describe('assistant roles controller', () => {
     expect(internal.body).toEqual({ error: 'Internal server error' })
     expect(JSON.stringify(internal.body)).not.toContain('twin.db')
   })
+
+  it('maps a duplicate role id to a stable conflict without leaking SQLite schema details', async () => {
+    const ctrl = await import('../../packages/server/src/controllers/hermes/assistant-roles')
+    service.createAssistantRole.mockImplementationOnce(() => {
+      throw new Error('UNIQUE constraint failed: twin_assistant_roles.id at C:\\Users\\alice\\personal\\twin.db')
+    })
+    const ctx = context({
+      id: 'health-manager', name: 'Duplicate', persona: 'Duplicate.', memoryNamespace: 'assistant.duplicate',
+      dataScope: { domains: [], sections: [], includeProvenance: false },
+      capabilityScope: { allow: [], deny: [], enforcement: 'declarative_phase_2' },
+    })
+    await ctrl.create(ctx)
+    expect(ctx.status).toBe(409)
+    expect(ctx.body).toEqual({ error: 'Assistant role already exists' })
+    expect(JSON.stringify(ctx.body)).not.toMatch(/twin_assistant_roles|twin\.db|alice/i)
+  })
+
+  it('distinguishes missing and disabled context recipes using stable public errors', async () => {
+    const ctrl = await import('../../packages/server/src/controllers/hermes/assistant-roles')
+    service.buildRoleContext.mockImplementationOnce(() => {
+      throw new Error('Context recipe not found: private-recipe at /home/alice/personal/twin.db')
+    })
+    const missing = context({ recipeId: 'private-recipe' })
+    await ctrl.previewContext(missing)
+    expect(missing.status).toBe(404)
+    expect(missing.body).toEqual({ error: 'Context recipe not found' })
+    expect(JSON.stringify(missing.body)).not.toMatch(/private-recipe|twin\.db|alice/i)
+
+    service.buildRoleContext.mockImplementationOnce(() => {
+      throw new Error('Context recipe is disabled: private-recipe')
+    })
+    const disabled = context({ recipeId: 'private-recipe' })
+    await ctrl.previewContext(disabled)
+    expect(disabled.status).toBe(400)
+    expect(disabled.body).toEqual({ error: 'Context recipe is disabled' })
+    expect(JSON.stringify(disabled.body)).not.toContain('private-recipe')
+  })
 })
