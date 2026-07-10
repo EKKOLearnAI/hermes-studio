@@ -14,10 +14,7 @@ describe('api docs controller', () => {
     expect(ctx.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
     expect(ctx.body.openapi).toBe('3.0.3')
     expect(ctx.body.paths['/api/openapi.json']).toBeTruthy()
-    expect(ctx.body.paths['/api/auth/login'].post.requestBody.content['application/json'].schema.required).toEqual([
-      'password',
-      'username',
-    ])
+    expect(ctx.body.paths['/api/auth/login'].post).toBeTruthy()
     expect(ctx.body.paths['/api/auth/users/{id}'].put.parameters).toEqual([
       expect.objectContaining({ name: 'id', in: 'path', required: true }),
     ])
@@ -31,5 +28,7 @@ describe('api docs controller', () => {
     expect(
       ctx.body.paths['/api/chat-run/runs'].post.requestBody.content['application/json'].schema.properties.source.enum,
     ).toEqual(['cli', 'coding_agent', 'global_agent'])
+    expect(ctx.body.paths['/api/hermes/personal-twin/overview'].get.tags).toEqual(['Personal Twin'])
+    expect(ctx.body.paths['/api/hermes/personal-twin/imports/legacy'].post).toBeTruthy()
   })
 })

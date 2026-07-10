@@ -85,6 +85,10 @@
       "description": "Runtime performance monitoring"
     },
     {
+      "name": "Personal Twin",
+      "description": "Global personal digital twin state and legacy synchronization"
+    },
+    {
       "name": "Plugins",
       "description": "Plugin browsing and management"
     },
@@ -408,28 +412,6 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "password": {
-                    "type": "string"
-                  },
-                  "username": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "password",
-                  "username"
-                ]
-              }
-            }
-          }
         }
       }
     },
@@ -481,9 +463,7 @@
                   }
                 },
                 "required": [
-                  "account",
                   "id",
-                  "password",
                   "token"
                 ]
               }
@@ -7320,6 +7300,178 @@
         }
       }
     },
+    "/api/hermes/personal-twin/context": {
+      "get": {
+        "tags": [
+          "Personal Twin"
+        ],
+        "summary": "Get context",
+        "description": "GET /api/hermes/personal-twin/context",
+        "operationId": "context",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/hermes/personal-twin/entities": {
+      "get": {
+        "tags": [
+          "Personal Twin"
+        ],
+        "summary": "Get entities",
+        "description": "GET /api/hermes/personal-twin/entities",
+        "operationId": "entities",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/hermes/personal-twin/events": {
+      "get": {
+        "tags": [
+          "Personal Twin"
+        ],
+        "summary": "Get events",
+        "description": "GET /api/hermes/personal-twin/events",
+        "operationId": "events",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/hermes/personal-twin/imports/legacy": {
+      "post": {
+        "tags": [
+          "Personal Twin"
+        ],
+        "summary": "Create legacy",
+        "description": "POST /api/hermes/personal-twin/imports/legacy",
+        "operationId": "importLegacy",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "profiles": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/personal-twin/observations": {
+      "get": {
+        "tags": [
+          "Personal Twin"
+        ],
+        "summary": "Get observations",
+        "description": "GET /api/hermes/personal-twin/observations",
+        "operationId": "observations",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/hermes/personal-twin/overview": {
+      "get": {
+        "tags": [
+          "Personal Twin"
+        ],
+        "summary": "Get overview",
+        "description": "GET /api/hermes/personal-twin/overview",
+        "operationId": "overview",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/hermes/plugins": {
       "get": {
         "tags": [
@@ -9926,6 +10078,48 @@
         }
       }
     },
+    "/api/hermes/tts/settings/active": {
+      "put": {
+        "tags": [
+          "TTS"
+        ],
+        "summary": "Update active",
+        "description": "PUT /api/hermes/tts/settings/active",
+        "operationId": "saveActiveProvider",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/tts/settings/{provider}": {
       "put": {
         "tags": [
@@ -9967,6 +10161,10 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "activeProvider": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
                   "secrets": {
                     "type": "object",
                     "additionalProperties": true

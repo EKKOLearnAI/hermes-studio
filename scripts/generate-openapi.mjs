@@ -74,6 +74,7 @@ const tagMappings = {
   'routes/hermes/mcp.ts': { name: 'MCP', description: 'MCP server and tool management' },
   'routes/hermes/runtime-versions.ts': { name: 'Runtime Versions', description: 'Runtime and Web UI version management' },
   'routes/hermes/write-gate.ts': { name: 'Write Gate', description: 'Hermes Agent write approval review' },
+  'routes/hermes/personal-twin.ts': { name: 'Personal Twin', description: 'Global personal digital twin state and legacy synchronization' },
   'routes/hermes/performance-monitor.ts': { name: 'Performance', description: 'Runtime performance monitoring' },
   'routes/hermes/terminal.ts': { name: 'Terminal', description: 'WebSocket terminal' },
   'routes/health.ts': { name: 'Health', description: 'Health check' },
@@ -95,8 +96,8 @@ function scanRoutes() {
   const hermesRouteFiles = readdirSync(hermesRoutesDir).filter(f => f.endsWith('.ts'))
 
   for (const file of hermesRouteFiles) {
-    const routePath = join('hermes', file)
-    const tagInfo = tagMappings[`routes/${routePath}`]
+    const routeKey = `routes/hermes/${file}`
+    const tagInfo = tagMappings[routeKey]
     if (tagInfo) {
       scanRouteFile(join(hermesRoutesDir, file), tagInfo, paths)
     }

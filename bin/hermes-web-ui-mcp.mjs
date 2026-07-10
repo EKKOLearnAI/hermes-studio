@@ -366,6 +366,10 @@ const moduleHints = {
     purpose: 'Discover the Web UI API catalog and generated OpenAPI metadata.',
     keywords: ['操作手册', '接口文档', 'API 文档', 'openapi', 'route catalog'],
   },
+  'Personal Twin': {
+    purpose: 'Read the global personal digital twin, context, events, observations, and import status.',
+    keywords: ['personal twin', 'digital twin', 'body state', 'life state', 'observations', 'events'],
+  },
   Auth: {
     purpose: 'Manage Web UI authentication state and tokens.',
     keywords: ['auth', 'login', 'token', 'session'],
