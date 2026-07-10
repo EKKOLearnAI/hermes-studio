@@ -1,8 +1,29 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DatabaseSync } from 'node:sqlite'
+import { mkdtempSync, rmSync } from 'fs'
+import { join } from 'path'
+import { tmpdir } from 'os'
 
 const chatRunMock = vi.hoisted(() => ({
   runAndWait: vi.fn(),
   abortSession: vi.fn(),
+}))
+
+const databaseState = vi.hoisted(() => ({
+  db: null as DatabaseSync | null,
+  appHome: '',
+}))
+
+vi.mock('../../packages/server/src/db/index', () => ({
+  getDb: () => databaseState.db,
+  jsonDelete: vi.fn(),
+  jsonGet: vi.fn(),
+  jsonGetAll: vi.fn(() => ({})),
+  jsonSet: vi.fn(),
+}))
+
+vi.mock('../../packages/server/src/config', () => ({
+  config: { appHome: databaseState.appHome },
 }))
 
 vi.mock('../../packages/server/src/routes/hermes/chat-run', () => ({
@@ -22,6 +43,23 @@ vi.mock('../../packages/server/src/db/hermes/session-store', async (importOrigin
 })
 
 describe('workflow manager', () => {
+  let root = ''
+
+  beforeEach(async () => {
+    vi.resetModules()
+    root = mkdtempSync(join(tmpdir(), 'hermes-workflow-manager-'))
+    databaseState.appHome = join(root, 'home')
+    databaseState.db = new DatabaseSync(join(root, 'workflow-manager.db'))
+    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    initAllHermesTables()
+  })
+
+  afterEach(() => {
+    databaseState.db?.close()
+    databaseState.db = null
+    if (root) rmSync(root, { recursive: true, force: true })
+  })
+
   it('returns a server-wide singleton instance', async () => {
     const { WorkflowManager, getWorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
 
@@ -94,6 +132,106 @@ describe('workflow manager', () => {
     expect(workflowNodeRequiresApproval({ data: { approvalRequired: true } })).toBe(true)
     expect(workflowNodeRequiresApproval({ data: { approvalRequired: false } })).toBe(false)
     expect(workflowNodeRequiresApproval({ data: {} })).toBe(false)
+  })
+
+  it('propagates a node execution policy into a fresh workflow run', async () => {
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    chatRunMock.runAndWait.mockReset()
+    chatRunMock.abortSession.mockReset()
+    chatRunMock.runAndWait.mockResolvedValue({ ok: true, output: 'plan complete' })
+
+    const workflow = manager.create({
+      name: `Restricted node ${Date.now()}`,
+      profile: 'default',
+      nodes: [{
+        id: 'plan',
+        type: 'agent',
+        data: {
+          title: 'Plan',
+          agent: 'hermes',
+          input: 'Read and plan only',
+          executionPolicy: { allowedToolsets: ['safe'] },
+        },
+      }],
+      edges: [],
+    })
+
+    try {
+      await expect(manager.runNow(workflow.id)).resolves.toMatchObject({
+        run: { status: 'completed' },
+      })
+      expect(chatRunMock.runAndWait).toHaveBeenCalledWith(expect.objectContaining({
+        source: 'workflow',
+        session_source: 'workflow',
+        workflow_id: workflow.id,
+        workflow_node_id: 'plan',
+        execution_policy: { allowedToolsets: ['safe'] },
+      }), expect.any(Object))
+    } finally {
+      await manager.delete(workflow.id)
+    }
+  })
+
+  it('preserves an explicit zero-tool policy instead of falling back to profile tools', async () => {
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    chatRunMock.runAndWait.mockReset()
+    chatRunMock.runAndWait.mockResolvedValue({ ok: true, output: 'review complete' })
+    const workflow = manager.create({
+      name: `Zero-tool node ${Date.now()}`,
+      profile: 'default',
+      nodes: [{
+        id: 'review',
+        type: 'agent',
+        data: {
+          title: 'Review',
+          agent: 'hermes',
+          input: 'Review without tools',
+          executionPolicy: { allowedToolsets: [] },
+        },
+      }],
+      edges: [],
+    })
+
+    try {
+      await manager.runNow(workflow.id)
+      expect(chatRunMock.runAndWait).toHaveBeenCalledWith(expect.objectContaining({
+        execution_policy: { allowedToolsets: [] },
+      }), expect.any(Object))
+    } finally {
+      await manager.delete(workflow.id)
+    }
+  })
+
+  it('rejects a scoped coding-agent node policy that this runtime cannot enforce', async () => {
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    chatRunMock.runAndWait.mockReset()
+    const workflow = manager.create({
+      name: `Unsupported scoped policy ${Date.now()}`,
+      profile: 'default',
+      nodes: [{
+        id: 'code',
+        type: 'agent',
+        data: {
+          title: 'Code',
+          agent: 'codex',
+          input: 'Implement',
+          executionPolicy: { allowedToolsets: ['safe'] },
+        },
+      }],
+      edges: [],
+    })
+
+    try {
+      await expect(manager.runNow(workflow.id)).resolves.toMatchObject({
+        run: { status: 'failed', error: expect.stringContaining('Hermes nodes only') },
+      })
+      expect(chatRunMock.runAndWait).not.toHaveBeenCalled()
+    } finally {
+      await manager.delete(workflow.id)
+    }
   })
 
   it('pauses downstream nodes until an approval-required node is approved', async () => {

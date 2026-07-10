@@ -56,6 +56,14 @@ export interface QueuedRun {
   commandPassthrough?: boolean
   originSocketId?: string
   goalContinuation?: boolean
+  workflowId?: string
+  workflowRunId?: string
+  workflowNodeId?: string
+  executionPolicy?: WorkflowExecutionPolicy
+}
+
+export interface WorkflowExecutionPolicy {
+  allowedToolsets: string[]
 }
 
 export interface SessionState {

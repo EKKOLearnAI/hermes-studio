@@ -27,7 +27,7 @@ import {
   recordBridgeMoaDisplayTool,
 } from './bridge-message'
 import { summarizeToolArguments } from './response-utils'
-import type { ContentBlock, QueuedRun, SessionState } from './types'
+import type { ContentBlock, QueuedRun, SessionState, WorkflowExecutionPolicy } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
@@ -270,6 +270,7 @@ async function ensureBridgeFixedContext(args: {
   model?: string | null
   provider?: string | null
   workspace?: string | null
+  executionPolicy?: WorkflowExecutionPolicy
   instructions: string
   state: SessionState
   bridge: AgentBridgeClient
@@ -286,7 +287,12 @@ async function ensureBridgeFixedContext(args: {
       [],
       args.instructions,
       args.profile,
-      { model: args.model ?? undefined, provider: args.provider ?? undefined, workspace: args.workspace ?? undefined },
+      {
+        model: args.model ?? undefined,
+        provider: args.provider ?? undefined,
+        workspace: args.workspace ?? undefined,
+        executionPolicy: args.executionPolicy,
+      },
     )
     cacheBridgeContext(args.state, estimate, args.workspace)
     const fixedContextTokens = getCachedBridgeContextOverhead(args.state)
@@ -316,7 +322,7 @@ async function ensureBridgeFixedContext(args: {
 export async function handleBridgeRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; display_role?: 'user' | 'command'; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; workspace?: string | null; source?: string; session_source?: 'global_agent' | 'workflow'; queue_id?: string; peerExcludeSocketId?: string; reasoning_effort?: string; one_shot_model?: boolean; onEvent?: (event: string, payload: any) => void },
+  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; display_role?: 'user' | 'command'; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; workspace?: string | null; source?: string; session_source?: 'global_agent' | 'workflow'; workflow_id?: string; workflow_run_id?: string; workflow_node_id?: string; execution_policy?: WorkflowExecutionPolicy; queue_id?: string; peerExcludeSocketId?: string; reasoning_effort?: string; one_shot_model?: boolean; onEvent?: (event: string, payload: any) => void },
   profile: string,
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
@@ -490,6 +496,7 @@ export async function handleBridgeRun(
         model: resolvedModel,
         provider: resolvedProvider,
         workspace,
+        executionPolicy: data.execution_policy,
         instructions: fullInstructions,
         state,
         bridge,
@@ -542,6 +549,7 @@ export async function handleBridgeRun(
         ...(resolvedModel ? { model: resolvedModel } : {}),
         ...(resolvedProvider ? { provider: resolvedProvider } : {}),
         ...(workspace ? { workspace } : {}),
+        ...(data.execution_policy ? { executionPolicy: data.execution_policy } : {}),
         // Local patch (reasoning-effort): per-session reasoning effort override.
         ...(data.reasoning_effort ? { reasoning_effort: data.reasoning_effort } : {}),
       },

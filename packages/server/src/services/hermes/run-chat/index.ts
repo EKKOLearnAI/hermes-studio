@@ -23,7 +23,7 @@ import { getOrCreateSession } from './compression'
 import { loadSessionStateFromDb, resolveRunSource } from './load-state'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
 import { contentBlocksToString } from './content-blocks'
-import type { ChatCodingAgentId, ContentBlock, QueuedRun, SessionState } from './types'
+import type { ChatCodingAgentId, ContentBlock, QueuedRun, SessionState, WorkflowExecutionPolicy } from './types'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
 import { observeRunChatPetEvent } from '../pet-state-socket'
@@ -397,6 +397,10 @@ export class ChatRunSocket {
       workspace?: string | null
       source?: string
       session_source?: 'global_agent' | 'workflow'
+      workflow_id?: string
+      workflow_run_id?: string
+      workflow_node_id?: string
+      execution_policy?: WorkflowExecutionPolicy
       queue_id?: string
       peerExcludeSocketId?: string
       coding_agent_id?: ChatCodingAgentId
@@ -647,6 +651,10 @@ export class ChatRunSocket {
       workspace: next.workspace,
       source: next.source,
       session_source: next.sessionSource,
+      workflow_id: next.workflowId,
+      workflow_run_id: next.workflowRunId,
+      workflow_node_id: next.workflowNodeId,
+      execution_policy: next.executionPolicy,
       queue_id: next.queue_id,
       peerExcludeSocketId: next.originSocketId,
       coding_agent_id: next.codingAgentId,
@@ -695,6 +703,10 @@ export class ChatRunSocket {
       mcp_servers?: Record<string, unknown>
       profile?: string
       reasoning_effort?: string
+      workflow_id?: string
+      workflow_run_id?: string
+      workflow_node_id?: string
+      execution_policy?: WorkflowExecutionPolicy
     },
     options: { profile?: string; user?: AuthenticatedUser; timeoutMs?: number; approvalChoice?: ChatRunAutoApprovalChoice } = {},
   ): Promise<ChatRunAndWaitResult> {

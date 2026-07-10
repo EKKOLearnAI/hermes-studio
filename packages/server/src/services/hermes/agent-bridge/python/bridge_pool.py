@@ -153,9 +153,12 @@ class AgentPool:
         profile: str | None = None,
         model: str | None = None,
         provider: str | None = None,
+        execution_policy: dict[str, Any] | None = None,
     ) -> AgentSession:
         requested_model = str(model or "").strip()
         requested_provider = str(provider or "").strip()
+        raw_allowed_toolsets = execution_policy.get("allowedToolsets") if isinstance(execution_policy, dict) else None
+        requested_toolsets = [str(value).strip() for value in raw_allowed_toolsets if str(value).strip()] if isinstance(raw_allowed_toolsets, list) else None
         with self._lock:
             existing = self._sessions.get(session_id)
             if existing is not None:
@@ -165,13 +168,18 @@ class AgentPool:
                     (requested_model and existing.config.get("model") != requested_model)
                     or (requested_provider and existing.config.get("provider") != requested_provider)
                 )
-                config_changed = profile_changed or runtime_changed
+                policy_changed = existing.config.get("allowed_toolsets") != requested_toolsets
+                config_changed = profile_changed or runtime_changed or policy_changed
                 if config_changed:
                     if profile_changed and not existing.running:
                         self._destroy_session(session_id)
                     elif profile_changed:
                         existing.last_used_at = time.time()
                         return existing
+                    elif policy_changed and not existing.running:
+                        self._destroy_session(session_id)
+                    elif policy_changed:
+                        raise RuntimeError(f"session {session_id} execution policy cannot change while running")
                     elif not existing.running:
                         try:
                             self._switch_loaded_session_model(
@@ -232,7 +240,7 @@ class AgentPool:
                     verbose_logging=False,
                     reasoning_config=_load_reasoning_config(),
                     service_tier=_load_service_tier(),
-                    enabled_toolsets=_load_enabled_toolsets(),
+                    enabled_toolsets=requested_toolsets if requested_toolsets is not None else _load_enabled_toolsets(),
                     platform=_bridge_platform(),
                     session_id=session_id,
                     session_db=self._db.get_for_profile(profile),
@@ -262,6 +270,7 @@ class AgentPool:
                         "base_url": runtime.get("base_url"),
                         "api_mode": runtime.get("api_mode"),
                         "platform": _bridge_platform(),
+                        "allowed_toolsets": requested_toolsets,
                         "resumed": False,
                         "resumed_message_count": 0,
                         "mcp_tool_count": len(discovered_mcp_tools),
@@ -615,6 +624,7 @@ class AgentPool:
             "profile": profile or session.config.get("profile") or "default",
             "model": session.config.get("model"),
             "provider": session.config.get("provider"),
+            "allowed_toolsets": session.config.get("allowed_toolsets"),
             **info,
         }
         session.config["context_info"] = event
@@ -629,8 +639,9 @@ class AgentPool:
         model: str | None = None,
         provider: str | None = None,
         workspace: str | None = None,
+        execution_policy: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        session = self.get_or_create(session_id, profile=profile, model=model, provider=provider)
+        session = self.get_or_create(session_id, profile=profile, model=model, provider=provider, execution_policy=execution_policy)
         session_cwd_bound = _bind_session_workspace_cwd(session.session_id, workspace)
         try:
             context_info = self._estimate_context_info(session.agent, messages or [], instructions)
@@ -652,6 +663,7 @@ class AgentPool:
             "profile": profile or session.config.get("profile") or "default",
             "model": session.config.get("model"),
             "provider": session.config.get("provider"),
+            "allowed_toolsets": session.config.get("allowed_toolsets"),
             **context_info,
         }
 
@@ -1117,8 +1129,9 @@ class AgentPool:
         workspace: str | None = None,
         source: str | None = None,
         reasoning_effort: str | None = None,
+        execution_policy: dict[str, Any] | None = None,
     ) -> RunRecord:
-        session = self.get_or_create(session_id, profile=profile, model=model, provider=provider)
+        session = self.get_or_create(session_id, profile=profile, model=model, provider=provider, execution_policy=execution_policy)
         with session.lock:
             if session.running:
                 raise RuntimeError(f"session {session_id} is already running")

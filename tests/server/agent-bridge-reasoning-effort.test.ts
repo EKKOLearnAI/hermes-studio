@@ -58,6 +58,39 @@ describe('AgentBridgeClient.chat reasoning_effort forwarding', () => {
     expect(call).not.toHaveProperty('reasoning_effort')
   })
 
+  it('forwards the same execution policy to context estimate and chat', async () => {
+    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const client = new AgentBridgeClient({ endpoint: 'tcp://127.0.0.1:1', connectRetryMs: 0, timeoutMs: 1 })
+    const request = vi.spyOn(client, 'request')
+      .mockResolvedValueOnce({
+        ok: true,
+        session_id: 's-policy',
+        token_count: 0,
+        message_count: 0,
+        tool_count: 0,
+        system_prompt_chars: 0,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        run_id: 'r-policy',
+        session_id: 's-policy',
+        status: 'running',
+      })
+    const executionPolicy = { allowedToolsets: ['safe'] }
+
+    await client.contextEstimate('s-policy', [], undefined, 'default', { executionPolicy })
+    await client.chat('s-policy', 'plan only', undefined, undefined, 'default', { executionPolicy })
+
+    expect(request.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      action: 'context_estimate',
+      execution_policy: executionPolicy,
+    }))
+    expect(request.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+      action: 'chat',
+      execution_policy: executionPolicy,
+    }))
+  })
+
   it('forwards workspace to chat and context estimate requests', async () => {
     const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
     const client = new AgentBridgeClient({ endpoint: 'tcp://127.0.0.1:1', connectRetryMs: 0, timeoutMs: 1 })

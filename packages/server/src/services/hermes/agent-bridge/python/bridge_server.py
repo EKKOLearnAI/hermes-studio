@@ -82,6 +82,7 @@ class BridgeServer:
                 workspace,
                 source,
                 reasoning_effort,
+                req.get("execution_policy"),
             )
             if req.get("wait"):
                 timeout = float(req.get("timeout", 0) or 0)
@@ -106,6 +107,7 @@ class BridgeServer:
                 model=req.get("model"),
                 provider=req.get("provider"),
                 workspace=req.get("workspace"),
+                execution_policy=req.get("execution_policy"),
             )
 
         if action == "get_result":

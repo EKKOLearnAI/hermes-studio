@@ -92,6 +92,7 @@ interface WorkflowNodeSnapshot {
     skills: string[]
     images: string[]
     approvalRequired: boolean
+    executionPolicy?: { allowedToolsets: string[] }
   }
 }
 
@@ -155,6 +156,12 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter(item => typeof item === 'string' && item.trim()).map(item => item.trim()) : []
 }
 
+function normalizeExecutionPolicy(value: unknown): { allowedToolsets: string[] } | undefined {
+  const record = value && typeof value === 'object' ? value as Record<string, unknown> : null
+  if (!record || !Array.isArray(record.allowedToolsets)) return undefined
+  return { allowedToolsets: stringArray(record.allowedToolsets) }
+}
+
 function normalizeNode(raw: unknown): WorkflowNodeSnapshot | null {
   const record = raw && typeof raw === 'object' ? raw as Record<string, any> : {}
   const id = typeof record.id === 'string' && record.id.trim() ? record.id.trim() : ''
@@ -173,12 +180,19 @@ function normalizeNode(raw: unknown): WorkflowNodeSnapshot | null {
       skills: stringArray(data.skills),
       images: stringArray(data.images),
       approvalRequired: data.approvalRequired === true,
+      executionPolicy: normalizeExecutionPolicy(data.executionPolicy),
     },
   }
 }
 
 export function workflowNodeRequiresApproval(node: { data?: { approvalRequired?: unknown } }): boolean {
   return node.data?.approvalRequired === true
+}
+
+function assertWorkflowNodeExecutionPolicyIsSupported(node: WorkflowNodeSnapshot): void {
+  if (node.data.executionPolicy && node.data.agent !== 'hermes') {
+    throw new Error(`Workflow node ${node.data.title || node.id} configures executionPolicy, but runtime enforcement currently supports Hermes nodes only`)
+  }
 }
 
 function isUnfinishedWorkflowNodeStatus(status: WorkflowRuntimeState | undefined): boolean {
@@ -570,6 +584,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
           const nodeSessionId = randomUUID()
           nodeSessionIds.set(node.id, nodeSessionId)
           runningOrDone.add(node.id)
+          assertWorkflowNodeExecutionPolicyIsSupported(node)
           const target = resolveWorkflowNodeRunTarget(node.data.agent)
           const nodeSession = createWorkflowRunNodeSession({
             run_id: run.id,
@@ -605,6 +620,10 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             coding_agent_id: target.codingAgentId,
             agent_id: target.codingAgentId,
             apiMode: node.data.apiMode || undefined,
+            workflow_id: workflow.id,
+            workflow_run_id: run.id,
+            workflow_node_id: node.id,
+            execution_policy: node.data.executionPolicy,
           }, {
             profile,
             user: input.user,
@@ -908,6 +927,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
         const results = await Promise.all(ready.map(async node => {
           const nodeSessionId = randomUUID()
           runningOrDone.add(node.id)
+          assertWorkflowNodeExecutionPolicyIsSupported(node)
           const target = resolveWorkflowNodeRunTarget(node.data.agent)
           const nodeSession = createWorkflowRunNodeSession({
             run_id: run.id,
@@ -942,6 +962,10 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             coding_agent_id: target.codingAgentId,
             agent_id: target.codingAgentId,
             apiMode: node.data.apiMode || undefined,
+            workflow_id: workflow.id,
+            workflow_run_id: run.id,
+            workflow_node_id: node.id,
+            execution_policy: node.data.executionPolicy,
           }, {
             profile,
             user: input.user,
