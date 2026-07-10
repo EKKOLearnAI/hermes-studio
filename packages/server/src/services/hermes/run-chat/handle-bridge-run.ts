@@ -602,6 +602,7 @@ export async function handleBridgeRun(
         currentInputTokens,
         shouldPersistUserMessage && displayRole === 'user',
         data.model_groups,
+        data.execution_policy,
       )
       if (chunk.done) {
         sawTerminalChunk = true
@@ -646,6 +647,7 @@ export async function handleBridgeRun(
         currentInputTokens,
         shouldPersistUserMessage && displayRole === 'user',
         data.model_groups,
+        data.execution_policy,
       )
     }
   } catch (err: any) {
@@ -669,6 +671,7 @@ export async function handleBridgeRun(
       model: resolvedModel,
       provider: resolvedProvider,
       workspace,
+      executionPolicy: data.execution_policy,
       instructions: fullInstructions,
       state,
       usage: errUsage,
@@ -867,6 +870,7 @@ async function refreshFinalContextUsage(args: {
   model?: string | null
   provider?: string | null
   workspace?: string | null
+  executionPolicy?: WorkflowExecutionPolicy
   instructions: string
   state: SessionState
   usage: { inputTokens: number; outputTokens: number }
@@ -889,6 +893,7 @@ async function refreshFinalContextUsage(args: {
       model: args.model,
       provider: args.provider,
       workspace: args.workspace,
+      executionPolicy: args.executionPolicy,
       instructions: args.instructions,
       state: args.state,
       bridge: args.bridge,
@@ -964,6 +969,7 @@ async function applyBridgeChunkAsync(
   currentInputTokens = 0,
   currentInputIncludedInDb = true,
   modelGroups?: RunModelGroup[],
+  executionPolicy?: WorkflowExecutionPolicy,
 ): Promise<void> {
   if (state.activeRunMarker !== runMarker) {
     bridgeLogger.info({
@@ -1388,6 +1394,7 @@ async function applyBridgeChunkAsync(
     model: modelContext.model,
     provider: modelContext.provider,
     workspace,
+    executionPolicy,
     instructions,
     state,
     usage,

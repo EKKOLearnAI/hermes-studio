@@ -19,3 +19,7 @@ sessions are not reused across different policies.
 The initial enforcement applies only to Hermes-backed nodes. Workflow nodes
 using scoped Codex or Claude runtimes fail closed when configured with this
 policy rather than silently running without enforcement.
+
+Final context accounting now carries the same policy through both successful
+and failed run finalization. A restricted session therefore cannot be recreated
+with profile-default tools merely because post-run context usage is refreshed.
