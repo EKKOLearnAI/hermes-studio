@@ -135,7 +135,17 @@ describe('assistant role context engine', () => {
           privateKey: 'private-key-value',
           authorization: 'Bearer private',
           passwordHash: 'hash-value',
-          deeper: { refresh_token: 'token-value', credential_file: 'C:/private/creds.json' },
+          deeper: {
+            refresh_token: 'token-value',
+            credential_file: 'C:/private/creds.json',
+            secretAccessKey: 'cloud-secret-1',
+            awsSecretAccessKey: 'cloud-secret-2',
+            accessKeyId: 'cloud-key-id',
+            authHeader: 'Basic private',
+            httpAuthorization: 'Bearer http-private',
+            dsn: 'postgres://private',
+            databaseUrl: 'sqlite:///private.db',
+          },
         },
       },
     })
@@ -152,8 +162,8 @@ describe('assistant role context engine', () => {
     expect(serialized).toContain('mechanical')
     expect(serialized).toContain('business-classification')
     expect(serialized).toContain('retained')
-    expect(serialized).not.toMatch(/configPath|homeDirectory|sqliteFile|clientSecret|privateKey|authorization|passwordHash|refresh_token|credential_file/i)
-    expect(serialized).not.toMatch(/C:\/private|Bearer private|hash-value|token-value/)
+    expect(serialized).not.toMatch(/configPath|homeDirectory|sqliteFile|clientSecret|privateKey|authorization|passwordHash|refresh_token|credential_file|secretAccessKey|awsSecretAccessKey|accessKeyId|authHeader|httpAuthorization|dsn|databaseUrl/i)
+    expect(serialized).not.toMatch(/C:\/private|Bearer private|hash-value|token-value|cloud-secret|cloud-key-id|Basic private|http-private|postgres:\/\/private|sqlite:\/\/\/private/)
   })
 
   it('renders deterministically in stable section order and truncates only at record boundaries', async () => {

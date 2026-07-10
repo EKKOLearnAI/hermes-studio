@@ -265,12 +265,22 @@ function sanitizeValue(value: unknown): unknown {
 
 function isSensitiveKey(key: string): boolean {
   const compact = key.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const tokens = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+  const has = (token: string) => tokens.includes(token)
+  if (tokens.some(token => ['password', 'passphrase', 'credential', 'secret', 'token', 'authorization', 'authentication'].includes(token))) return true
   if (/password|passphrase|credential/.test(compact)) return true
-  if (compact === 'token' || compact.endsWith('token')) return true
-  if (compact === 'secret' || compact.endsWith('secret')) return true
-  if (compact === 'apikey' || compact === 'privatekey') return true
-  if (compact === 'auth' || compact === 'authorization' || compact === 'authentication') return true
-  if (compact === 'connectionstring') return true
+  if (compact === 'token' || compact.endsWith('token') || compact === 'secret' || compact.endsWith('secret')) return true
+  if ((has('private') || has('api') || has('access')) && has('key')) return true
+  if (has('auth') && (tokens.length === 1 || has('header') || has('token'))) return true
+  if (compact === 'apikey' || compact === 'privatekey' || compact === 'accesskeyid') return true
+  if (compact === 'auth' || compact.endsWith('authorization') || compact === 'authentication') return true
+  if (compact === 'dsn' || compact === 'connectionstring') return true
+  if (has('database') && (has('url') || has('uri') || has('dsn'))) return true
+  if (compact === 'databaseurl' || compact === 'databaseuri') return true
   if (compact.endsWith('path') || compact.endsWith('directory')) return true
   if (/^(?:database|sqlite|config|home|root|workspace|storage|data|cache|credential|secret|key|cert|certificate)file$/.test(compact)) return true
   return false
