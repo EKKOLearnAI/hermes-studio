@@ -3,11 +3,12 @@ import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 const REQUIRED_TWIN_TABLES = [
-  'twin_artifacts', 'twin_constraints', 'twin_entities', 'twin_events',
-  'twin_goals', 'twin_import_runs', 'twin_meta', 'twin_observations',
-  'twin_outbox', 'twin_preferences', 'twin_projections', 'twin_relations',
+  'twin_artifacts', 'twin_assistant_roles', 'twin_constraints', 'twin_context_recipes',
+  'twin_entities', 'twin_events', 'twin_goals', 'twin_import_runs', 'twin_meta',
+  'twin_observations', 'twin_outbox', 'twin_preferences', 'twin_projections',
+  'twin_relations', 'twin_role_profile_mappings',
 ]
 
 export function getPersonalTwinDbPath(): string {
@@ -38,12 +39,13 @@ export function initPersonalTwinSchema(db: DatabaseSync): void {
     if (version > SCHEMA_VERSION) {
       throw new Error(`Personal Twin schema version ${version} is newer than supported version ${SCHEMA_VERSION}`)
     }
-    if (version < SCHEMA_VERSION) {
+    if (version < 1) {
       createSchemaV1(db)
-      db.prepare(`
-        INSERT INTO twin_meta(key, value) VALUES('schema_version', ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-      `).run(String(SCHEMA_VERSION))
+      setSchemaVersion(db, 1)
+    }
+    if (version < 2) {
+      createSchemaV2(db)
+      setSchemaVersion(db, 2)
     }
     assertSchemaComplete(db, SCHEMA_VERSION)
     db.exec('COMMIT')
@@ -51,6 +53,13 @@ export function initPersonalTwinSchema(db: DatabaseSync): void {
     db.exec('ROLLBACK')
     throw error
   }
+}
+
+function setSchemaVersion(db: DatabaseSync, version: number): void {
+  db.prepare(`
+    INSERT INTO twin_meta(key, value) VALUES('schema_version', ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(String(version))
 }
 
 function parseSchemaVersion(value: string | undefined): number {
@@ -139,6 +148,57 @@ function createSchemaV1(db: DatabaseSync): void {
       id TEXT PRIMARY KEY, source TEXT NOT NULL, source_fingerprint TEXT NOT NULL,
       status TEXT NOT NULL, counts_json TEXT NOT NULL, error TEXT, started_at TEXT NOT NULL,
       completed_at TEXT, UNIQUE(source, source_fingerprint)
+    );
+  `)
+}
+
+function createSchemaV2(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS twin_assistant_roles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      persona TEXT NOT NULL,
+      built_in INTEGER NOT NULL CHECK(built_in IN (0,1)),
+      enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+      data_scope_json TEXT NOT NULL,
+      capability_scope_json TEXT NOT NULL,
+      decision_authority_json TEXT NOT NULL DEFAULT '{}',
+      spending_limits_json TEXT NOT NULL DEFAULT '{}',
+      memory_namespace TEXT NOT NULL UNIQUE,
+      escalation_rules_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS twin_role_profile_mappings (
+      role_id TEXT NOT NULL,
+      profile_name TEXT NOT NULL,
+      is_primary INTEGER NOT NULL CHECK(is_primary IN (0,1)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(role_id, profile_name),
+      FOREIGN KEY(role_id) REFERENCES twin_assistant_roles(id) ON DELETE CASCADE
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_twin_role_primary_profile
+      ON twin_role_profile_mappings(profile_name) WHERE is_primary = 1;
+
+    CREATE TABLE IF NOT EXISTS twin_context_recipes (
+      id TEXT PRIMARY KEY,
+      role_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      built_in INTEGER NOT NULL CHECK(built_in IN (0,1)),
+      enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+      domains_json TEXT NOT NULL,
+      sections_json TEXT NOT NULL,
+      query_template TEXT NOT NULL DEFAULT '',
+      limits_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(role_id, name),
+      FOREIGN KEY(role_id) REFERENCES twin_assistant_roles(id) ON DELETE CASCADE
     );
   `)
 }

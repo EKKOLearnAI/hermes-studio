@@ -1,6 +1,161 @@
 export type TwinConfirmationState = 'observed' | 'reported' | 'confirmed' | 'inferred'
 export type TwinOutboxStatus = 'pending' | 'published' | 'failed'
 
+export const TWIN_DOMAINS = [
+  'body',
+  'health',
+  'fitness',
+  'nutrition',
+  'home',
+  'life',
+  'work',
+  'entertainment',
+  'commerce',
+  'digital',
+] as const
+export type TwinDomain = typeof TWIN_DOMAINS[number]
+
+export const TWIN_CONTEXT_SECTIONS = [
+  'subject',
+  'observations',
+  'events',
+  'goals',
+  'constraints',
+  'entities',
+  'relations',
+] as const
+export type TwinContextSection = typeof TWIN_CONTEXT_SECTIONS[number]
+
+export interface AssistantRoleDataScope {
+  domains: TwinDomain[]
+  sections: TwinContextSection[]
+  includeProvenance: boolean
+}
+
+export interface AssistantRoleCapabilityScope {
+  allow: string[]
+  deny: string[]
+  enforcement: 'declarative_phase_2'
+}
+
+export interface AssistantRole {
+  id: string
+  name: string
+  description: string
+  persona: string
+  builtIn: boolean
+  enabled: boolean
+  dataScope: AssistantRoleDataScope
+  capabilityScope: AssistantRoleCapabilityScope
+  decisionAuthority: Record<string, unknown>
+  spendingLimits: Record<string, unknown>
+  memoryNamespace: string
+  escalationRules: Array<Record<string, unknown>>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AssistantRoleInput {
+  id?: string
+  name: string
+  description?: string
+  persona: string
+  enabled?: boolean
+  dataScope: AssistantRoleDataScope
+  capabilityScope: AssistantRoleCapabilityScope
+  decisionAuthority?: Record<string, unknown>
+  spendingLimits?: Record<string, unknown>
+  memoryNamespace: string
+  escalationRules?: Array<Record<string, unknown>>
+}
+
+export type AssistantRolePatch = Partial<Omit<AssistantRoleInput, 'id'>>
+
+export interface AssistantRoleProfileMapping {
+  roleId: string
+  profileName: string
+  isPrimary: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ContextRecipeLimits {
+  perSection: number
+  totalCharacters: number
+}
+
+export interface ContextRecipe {
+  id: string
+  roleId: string
+  name: string
+  description: string
+  builtIn: boolean
+  enabled: boolean
+  domains: TwinDomain[]
+  sections: TwinContextSection[]
+  queryTemplate: string
+  limits: ContextRecipeLimits
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ContextRecipeInput {
+  id?: string
+  name: string
+  description?: string
+  enabled?: boolean
+  domains: TwinDomain[]
+  sections: TwinContextSection[]
+  queryTemplate?: string
+  limits: ContextRecipeLimits
+}
+
+export type ContextRecipePatch = Partial<Omit<ContextRecipeInput, 'id'>>
+
+export interface AssistantRoleSummary extends AssistantRole {
+  profileMappings: AssistantRoleProfileMapping[]
+  primaryProfileName: string | null
+  mappingStale: boolean
+  recipeCount: number
+}
+
+export interface RoleContextOptions {
+  query?: string
+  recipeId?: string
+}
+
+export interface RoleContextProvenance {
+  recordId: string
+  source: string
+  sourceId: string
+  actor?: string
+  confirmationState?: TwinConfirmationState
+  confidence?: number
+}
+
+export type RoleContextSections = Record<TwinContextSection, Array<Record<string, unknown>>>
+
+export interface RoleContextBundle {
+  role: AssistantRole
+  profileMapping: {
+    profileName: string | null
+    stale: boolean
+  }
+  recipe: Pick<ContextRecipe, 'id' | 'name'> | null
+  generatedAt: string
+  query: string
+  appliedScope: AssistantRoleDataScope
+  appliedLimits: ContextRecipeLimits
+  sections: RoleContextSections
+  sourceRecordIds: Partial<Record<TwinContextSection, string[]>>
+  provenance: Partial<Record<TwinContextSection, RoleContextProvenance[]>>
+  truncated: {
+    total: boolean
+    sections: Partial<Record<TwinContextSection, boolean>>
+  }
+  renderedInstructions: string
+}
+
 export interface TwinProvenance {
   source: string
   sourceId: string
