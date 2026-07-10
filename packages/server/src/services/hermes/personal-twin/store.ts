@@ -9,7 +9,7 @@ import {
   TwinIdentityConflictError, TwinRecordNotFoundError,
   TwinRelation, TwinRelationInput, TwinRelationListOptions,
   TwinEvent, TwinEventInput, TwinObservation, TwinObservationInput,
-  TwinImmutableRecordConflictError, TwinProvenance,
+  TwinImmutableRecordConflictError, TwinProvenance, TwinDomain, TWIN_DOMAINS,
 } from './types'
 
 type StablePart = string | number | boolean | null | undefined
@@ -42,6 +42,16 @@ function clampLimit(value: number | undefined): number {
   return Math.max(1, Math.min(200, Math.floor(value)))
 }
 function escapeLike(value: string): string { return value.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_') }
+function normalizedContextDomains(domains: TwinDomain[]): TwinDomain[] {
+  if (!Array.isArray(domains) || domains.some(domain => !TWIN_DOMAINS.includes(domain))) {
+    throw new Error('Twin context domains contain an unsupported value')
+  }
+  return [...new Set(domains)].sort()
+}
+function contextQuery(value: string | undefined): string | null {
+  const query = value?.trim().toLowerCase()
+  return query ? `%${escapeLike(query)}%` : null
+}
 function ensureIdentityAvailable(db: DatabaseSync, id: string, source: string, sourceId: string): void {
   const row = db.prepare('SELECT source, source_id FROM twin_entities WHERE id = ?').get(id) as { source: string; source_id: string } | undefined
   if (row && (row.source !== source || row.source_id !== sourceId)) throw new TwinIdentityConflictError(`Entity id ${id} is owned by another provenance record`)
@@ -123,6 +133,25 @@ export function listTwinEntities(options: TwinEntityListOptions = {}): TwinEntit
   })
 }
 
+export function listTwinEntitiesForContext(options: { domains: TwinDomain[]; query?: string; limit?: number }): TwinEntity[] {
+  return withPersonalTwinDb(db => {
+    const domains = normalizedContextDomains(options.domains)
+    if (domains.length === 0) return []
+    const placeholders = domains.map(() => '?').join(', ')
+    const query = contextQuery(options.query)
+    const clauses = [`LOWER(type) IN (${placeholders})`]
+    const values: Array<string | number> = [...domains]
+    if (query) {
+      clauses.push("LOWER(id || ' ' || label || ' ' || attributes_json) LIKE ? ESCAPE '\\'")
+      values.push(query)
+    }
+    return (db.prepare(`
+      SELECT * FROM twin_entities WHERE ${clauses.join(' AND ')}
+      ORDER BY datetime(updated_at) DESC, id DESC LIMIT ?
+    `).all(...values, clampLimit(options.limit)) as unknown as EntityRow[]).map(entityFromRow)
+  })
+}
+
 function requireEntity(db: DatabaseSync, id: string): void {
   if (!db.prepare('SELECT 1 FROM twin_entities WHERE id = ?').get(id)) throw new TwinRecordNotFoundError(`Twin entity not found: ${id}`)
 }
@@ -156,6 +185,33 @@ export function listTwinRelations(options: TwinRelationListOptions = {}): TwinRe
   })
 }
 
+export function listTwinRelationsForContext(options: { domains: TwinDomain[]; query?: string; limit?: number }): TwinRelation[] {
+  return withPersonalTwinDb(db => {
+    const domains = normalizedContextDomains(options.domains)
+    if (domains.length === 0) return []
+    const domainClauses = domains.map(() => "LOWER(r.predicate) LIKE ? ESCAPE '\\'")
+    const values: Array<string | number> = domains.map(domain => `${escapeLike(domain)}.%`)
+    const entityPlaceholders = domains.map(() => '?').join(', ')
+    domainClauses.push(`LOWER(COALESCE(subject.type, '')) IN (${entityPlaceholders})`)
+    values.push(...domains)
+    domainClauses.push(`LOWER(COALESCE(object.type, '')) IN (${entityPlaceholders})`)
+    values.push(...domains)
+    const clauses = [`(${domainClauses.join(' OR ')})`]
+    const query = contextQuery(options.query)
+    if (query) {
+      clauses.push("LOWER(r.id || ' ' || r.predicate || ' ' || r.attributes_json || ' ' || COALESCE(subject.label, '') || ' ' || COALESCE(object.label, '')) LIKE ? ESCAPE '\\'")
+      values.push(query)
+    }
+    return (db.prepare(`
+      SELECT r.* FROM twin_relations r
+      LEFT JOIN twin_entities subject ON subject.id = r.subject_id
+      LEFT JOIN twin_entities object ON object.id = r.object_id
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY datetime(r.updated_at) DESC, r.id DESC LIMIT ?
+    `).all(...values, clampLimit(options.limit)) as unknown as RelationRow[]).map(relationFromRow)
+  })
+}
+
 export function upsertTwinGoal(input: TwinGoalInput): TwinGoal {
   return withPersonalTwinDb(db => {
     requireEntity(db, input.subjectId)
@@ -180,6 +236,24 @@ export function listTwinGoals(options: TwinGoalListOptions = {}): TwinGoal[] {
     if (options.status !== undefined) { clauses.push('status = ?'); values.push(options.status) }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
     return (db.prepare(`SELECT * FROM twin_goals ${where} ORDER BY priority DESC, datetime(updated_at) DESC, id DESC LIMIT ?`).all(...values, clampLimit(options.limit)) as unknown as GoalRow[]).map(goalFromRow)
+  })
+}
+
+export function listTwinGoalsForContext(options: { domains: TwinDomain[]; query?: string; limit?: number }): TwinGoal[] {
+  return withPersonalTwinDb(db => {
+    const domains = normalizedContextDomains(options.domains)
+    if (domains.length === 0) return []
+    const clauses = [`LOWER(domain) IN (${domains.map(() => '?').join(', ')})`]
+    const values: Array<string | number> = [...domains]
+    const query = contextQuery(options.query)
+    if (query) {
+      clauses.push("LOWER(title || ' ' || target_json || ' ' || status) LIKE ? ESCAPE '\\'")
+      values.push(query)
+    }
+    return (db.prepare(`
+      SELECT * FROM twin_goals WHERE ${clauses.join(' AND ')}
+      ORDER BY priority DESC, datetime(updated_at) DESC, id DESC LIMIT ?
+    `).all(...values, clampLimit(options.limit)) as unknown as GoalRow[]).map(goalFromRow)
   })
 }
 
@@ -208,6 +282,24 @@ export function listTwinConstraints(options: TwinConstraintListOptions = {}): Tw
     if (options.enforcement !== undefined) { clauses.push('enforcement = ?'); values.push(options.enforcement) }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
     return (db.prepare(`SELECT * FROM twin_constraints ${where} ORDER BY datetime(updated_at) DESC, id DESC LIMIT ?`).all(...values, clampLimit(options.limit)) as unknown as ConstraintRow[]).map(constraintFromRow)
+  })
+}
+
+export function listTwinConstraintsForContext(options: { domains: TwinDomain[]; query?: string; limit?: number }): TwinConstraint[] {
+  return withPersonalTwinDb(db => {
+    const domains = normalizedContextDomains(options.domains)
+    if (domains.length === 0) return []
+    const clauses = [`LOWER(domain) IN (${domains.map(() => '?').join(', ')})`]
+    const values: Array<string | number> = [...domains]
+    const query = contextQuery(options.query)
+    if (query) {
+      clauses.push("LOWER(key || ' ' || value_json || ' ' || enforcement) LIKE ? ESCAPE '\\'")
+      values.push(query)
+    }
+    return (db.prepare(`
+      SELECT * FROM twin_constraints WHERE ${clauses.join(' AND ')}
+      ORDER BY datetime(updated_at) DESC, id DESC LIMIT ?
+    `).all(...values, clampLimit(options.limit)) as unknown as ConstraintRow[]).map(constraintFromRow)
   })
 }
 
