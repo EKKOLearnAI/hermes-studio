@@ -49,6 +49,7 @@ import { healthStateRoutes } from './hermes/health-state'
 import { personalAutopilotRoutes } from './hermes/personal-autopilot'
 import { autopilotReminderRoutes } from './hermes/autopilot-reminders'
 import { personalTwinRoutes } from './hermes/personal-twin'
+import { assistantRoleRoutes } from './hermes/assistant-roles'
 
 /**
  * Register all routes on the Koa app.
@@ -111,4 +112,5 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(personalAutopilotRoutes.routes())      // Personal OS autopilot state
   app.use(autopilotReminderRoutes.routes())      // Personal OS Weixin reminders
   app.use(personalTwinRoutes.routes())          // Global Personal Twin
+  app.use(assistantRoleRoutes.routes())         // Assistant role registry and context preview
 }
