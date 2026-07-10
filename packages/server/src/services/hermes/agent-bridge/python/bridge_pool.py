@@ -159,6 +159,10 @@ class AgentPool:
         requested_provider = str(provider or "").strip()
         raw_allowed_toolsets = execution_policy.get("allowedToolsets") if isinstance(execution_policy, dict) else None
         requested_toolsets = [str(value).strip() for value in raw_allowed_toolsets if str(value).strip()] if isinstance(raw_allowed_toolsets, list) else None
+        raw_allowed_tools = execution_policy.get("allowedTools") if isinstance(execution_policy, dict) else None
+        requested_tools = [str(value).strip() for value in raw_allowed_tools if str(value).strip()] if isinstance(raw_allowed_tools, list) else None
+        skip_memory = execution_policy.get("skipMemory") is True if isinstance(execution_policy, dict) else False
+        skip_context_files = execution_policy.get("skipContextFiles") is True if isinstance(execution_policy, dict) else False
         with self._lock:
             existing = self._sessions.get(session_id)
             if existing is not None:
@@ -168,7 +172,12 @@ class AgentPool:
                     (requested_model and existing.config.get("model") != requested_model)
                     or (requested_provider and existing.config.get("provider") != requested_provider)
                 )
-                policy_changed = existing.config.get("allowed_toolsets") != requested_toolsets
+                policy_changed = (
+                    existing.config.get("allowed_toolsets") != requested_toolsets
+                    or existing.config.get("allowed_tools") != requested_tools
+                    or existing.config.get("skip_memory") != skip_memory
+                    or existing.config.get("skip_context_files") != skip_context_files
+                )
                 config_changed = profile_changed or runtime_changed or policy_changed
                 if config_changed:
                     if profile_changed and not existing.running:
@@ -245,6 +254,8 @@ class AgentPool:
                     session_id=session_id,
                     session_db=self._db.get_for_profile(profile),
                     ephemeral_system_prompt=prompt,
+                    skip_memory=skip_memory,
+                    skip_context_files=skip_context_files,
                     status_callback=self._status_callback(session_id),
                     thinking_callback=self._make_thinking_callback(session_id),
                     reasoning_callback=self._text_event_callback(session_id, "reasoning.delta"),
@@ -256,6 +267,20 @@ class AgentPool:
                 )
                 agent.compression_enabled = False
                 self._install_compression_hook(agent, session_id)
+                if requested_tools is not None:
+                    allowed_names = set(requested_tools)
+                    agent.tools = [
+                        tool for tool in (getattr(agent, "tools", None) or [])
+                        if str(tool.get("function", {}).get("name") or "") in allowed_names
+                    ]
+                    agent.valid_tool_names = {
+                        name for name in getattr(agent, "valid_tool_names", set())
+                        if name in allowed_names
+                    }
+                    context_engine_names = getattr(agent, "_context_engine_tool_names", None)
+                    if isinstance(context_engine_names, set):
+                        context_engine_names.intersection_update(allowed_names)
+                    agent._skip_mcp_refresh = True
                 mcp_tool_names = self._mcp_tool_names(self._agent_tool_names(getattr(agent, "tools", None) or []))
 
                 session = AgentSession(
@@ -271,6 +296,9 @@ class AgentPool:
                         "api_mode": runtime.get("api_mode"),
                         "platform": _bridge_platform(),
                         "allowed_toolsets": requested_toolsets,
+                        "allowed_tools": requested_tools,
+                        "skip_memory": skip_memory,
+                        "skip_context_files": skip_context_files,
                         "resumed": False,
                         "resumed_message_count": 0,
                         "mcp_tool_count": len(discovered_mcp_tools),

@@ -92,7 +92,7 @@ interface WorkflowNodeSnapshot {
     skills: string[]
     images: string[]
     approvalRequired: boolean
-    executionPolicy?: { allowedToolsets: string[] }
+    executionPolicy?: { allowedToolsets: string[]; allowedTools?: string[]; skipMemory?: boolean; skipContextFiles?: boolean }
   }
 }
 
@@ -156,10 +156,15 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter(item => typeof item === 'string' && item.trim()).map(item => item.trim()) : []
 }
 
-function normalizeExecutionPolicy(value: unknown): { allowedToolsets: string[] } | undefined {
+function normalizeExecutionPolicy(value: unknown): { allowedToolsets: string[]; allowedTools?: string[]; skipMemory?: boolean; skipContextFiles?: boolean } | undefined {
   const record = value && typeof value === 'object' ? value as Record<string, unknown> : null
   if (!record || !Array.isArray(record.allowedToolsets)) return undefined
-  return { allowedToolsets: stringArray(record.allowedToolsets) }
+  return {
+    allowedToolsets: stringArray(record.allowedToolsets),
+    ...(Array.isArray(record.allowedTools) ? { allowedTools: stringArray(record.allowedTools) } : {}),
+    ...(typeof record.skipMemory === 'boolean' ? { skipMemory: record.skipMemory } : {}),
+    ...(typeof record.skipContextFiles === 'boolean' ? { skipContextFiles: record.skipContextFiles } : {}),
+  }
 }
 
 function normalizeNode(raw: unknown): WorkflowNodeSnapshot | null {

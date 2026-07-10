@@ -151,7 +151,12 @@ describe('workflow manager', () => {
           title: 'Plan',
           agent: 'hermes',
           input: 'Read and plan only',
-          executionPolicy: { allowedToolsets: ['safe'] },
+          executionPolicy: {
+            allowedToolsets: ['browser'],
+            allowedTools: ['browser_navigate', 'browser_snapshot'],
+            skipMemory: true,
+            skipContextFiles: true,
+          },
         },
       }],
       edges: [],
@@ -166,7 +171,12 @@ describe('workflow manager', () => {
         session_source: 'workflow',
         workflow_id: workflow.id,
         workflow_node_id: 'plan',
-        execution_policy: { allowedToolsets: ['safe'] },
+        execution_policy: {
+          allowedToolsets: ['browser'],
+          allowedTools: ['browser_navigate', 'browser_snapshot'],
+          skipMemory: true,
+          skipContextFiles: true,
+        },
       }), expect.any(Object))
     } finally {
       await manager.delete(workflow.id)

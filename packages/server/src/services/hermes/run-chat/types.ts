@@ -64,6 +64,9 @@ export interface QueuedRun {
 
 export interface WorkflowExecutionPolicy {
   allowedToolsets: string[]
+  allowedTools?: string[]
+  skipMemory?: boolean
+  skipContextFiles?: boolean
 }
 
 export interface SessionState {

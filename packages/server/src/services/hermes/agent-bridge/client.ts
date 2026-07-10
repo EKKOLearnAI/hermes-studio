@@ -43,6 +43,9 @@ export interface AgentBridgeRequestOptions {
 
 export interface AgentBridgeExecutionPolicy {
   allowedToolsets: string[]
+  allowedTools?: string[]
+  skipMemory?: boolean
+  skipContextFiles?: boolean
 }
 
 export interface AgentBridgeChatOptions {

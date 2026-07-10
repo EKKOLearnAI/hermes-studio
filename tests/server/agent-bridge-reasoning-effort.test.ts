@@ -76,7 +76,7 @@ describe('AgentBridgeClient.chat reasoning_effort forwarding', () => {
         session_id: 's-policy',
         status: 'running',
       })
-    const executionPolicy = { allowedToolsets: ['safe'] }
+    const executionPolicy = { allowedToolsets: ['browser'], allowedTools: ['browser_navigate', 'browser_snapshot'], skipMemory: true, skipContextFiles: true }
 
     await client.contextEstimate('s-policy', [], undefined, 'default', { executionPolicy })
     await client.chat('s-policy', 'plan only', undefined, undefined, 'default', { executionPolicy })
