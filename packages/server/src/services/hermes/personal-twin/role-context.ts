@@ -29,7 +29,6 @@ const SECTION_ORDER: TwinContextSection[] = [
   'subject', 'goals', 'constraints', 'observations', 'events', 'entities', 'relations',
 ]
 const DEFAULT_LIMITS: ContextRecipeLimits = { perSection: 10, totalCharacters: 12_000 }
-const SENSITIVE_KEY = /^(?:password|passphrase|credential|credentials|token|accessToken|refreshToken|apiKey|secret|databasePath|dbPath|connectionString)$/i
 
 type SectionRecord = Record<string, unknown>
 
@@ -258,10 +257,23 @@ function sanitizeValue(value: unknown): unknown {
   if (!value || typeof value !== 'object') return value
   const output: Record<string, unknown> = {}
   for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-    if (SENSITIVE_KEY.test(key)) continue
+    if (isSensitiveKey(key)) continue
     output[key] = sanitizeValue((value as Record<string, unknown>)[key])
   }
   return output
+}
+
+function isSensitiveKey(key: string): boolean {
+  const compact = key.toLowerCase().replace(/[^a-z0-9]/g, '')
+  if (/password|passphrase|credential/.test(compact)) return true
+  if (compact === 'token' || compact.endsWith('token')) return true
+  if (compact === 'secret' || compact.endsWith('secret')) return true
+  if (compact === 'apikey' || compact === 'privatekey') return true
+  if (compact === 'auth' || compact === 'authorization' || compact === 'authentication') return true
+  if (compact === 'connectionstring') return true
+  if (compact.endsWith('path') || compact.endsWith('directory')) return true
+  if (/^(?:database|sqlite|config|home|root|workspace|storage|data|cache|credential|secret|key|cert|certificate)file$/.test(compact)) return true
+  return false
 }
 
 function stableJson(value: unknown): string {

@@ -119,6 +119,43 @@ describe('assistant role context engine', () => {
     expect(bundle.renderedInstructions).not.toContain(bundle.sourceRecordIds.goals![0])
   })
 
+  it('recursively removes secret and filesystem aliases without redacting ordinary business keys', async () => {
+    const twin = await import('../../packages/server/src/services/hermes/personal-twin')
+    twin.upsertTwinEntity({
+      id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self',
+      attributes: {
+        keyboard: 'mechanical',
+        key: 'business-classification',
+        result: 'retained',
+        nested: {
+          configPath: 'C:/private/config.json',
+          homeDirectory: 'C:/Users/private',
+          sqliteFile: 'C:/private/twin.sqlite',
+          clientSecret: 'secret-value',
+          privateKey: 'private-key-value',
+          authorization: 'Bearer private',
+          passwordHash: 'hash-value',
+          deeper: { refresh_token: 'token-value', credential_file: 'C:/private/creds.json' },
+        },
+      },
+    })
+    twin.createAssistantRole(roleInput({
+      dataScope: { domains: ['health'], sections: ['subject'], includeProvenance: false },
+    }))
+    twin.createContextRecipe('context-tester', {
+      id: 'nested-privacy', name: 'Nested privacy', domains: ['health'], sections: ['subject'],
+      limits: { perSection: 5, totalCharacters: 12_000 },
+    })
+
+    const bundle = twin.buildRoleContext('context-tester', { recipeId: 'nested-privacy' })
+    const serialized = JSON.stringify(bundle.sections.subject)
+    expect(serialized).toContain('mechanical')
+    expect(serialized).toContain('business-classification')
+    expect(serialized).toContain('retained')
+    expect(serialized).not.toMatch(/configPath|homeDirectory|sqliteFile|clientSecret|privateKey|authorization|passwordHash|refresh_token|credential_file/i)
+    expect(serialized).not.toMatch(/C:\/private|Bearer private|hash-value|token-value/)
+  })
+
   it('renders deterministically in stable section order and truncates only at record boundaries', async () => {
     const twin = await import('../../packages/server/src/services/hermes/personal-twin')
     seedSubject(twin)
