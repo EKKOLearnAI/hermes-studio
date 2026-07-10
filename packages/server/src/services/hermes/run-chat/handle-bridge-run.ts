@@ -65,7 +65,28 @@ function stripUpstreamPromptComposition(
   if (basePrompt && callerInstructions.includes(basePrompt)) {
     callerInstructions = callerInstructions.replace(basePrompt, '').trim()
   }
-  return callerInstructions
+  return sanitizeCallerInstructions(callerInstructions)
+}
+
+function sanitizeCallerInstructions(instructions: string): string {
+  return instructions
+    .split(/\r?\n/)
+    .map((line) => {
+      const compact = line.toLowerCase().replace(/[^a-z]/g, '')
+      const boundary = compact
+        .replace(/^(?:begin|end|open|close)/, '')
+        .replace(/(?:begin|end|open|close)$/, '')
+      if (boundary === 'assistantrolecontext') {
+        return '[reserved assistant-role boundary removed]'
+      }
+      const persona = line.match(/^\s*(?:[#>*_`~+\-]+\s*)*persona\s*[:：]\s*(.*)$/i)
+      if (persona) {
+        return `[reserved caller label removed]${persona[1] ? ` ${persona[1]}` : ''}`
+      }
+      return line
+    })
+    .join('\n')
+    .trim()
 }
 
 function stringValue(value: unknown): string {
