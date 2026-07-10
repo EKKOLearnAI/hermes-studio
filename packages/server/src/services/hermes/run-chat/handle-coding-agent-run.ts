@@ -11,6 +11,19 @@ import type { ContentBlock, SessionState } from './types'
 import { writeModelRunProfileToken } from './model-run-prompt'
 import type { AuthenticatedUser } from '../../../middleware/user-auth'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
+import { buildSafeRoleContextInstructionsForProfile } from '../personal-twin/role-context'
+
+const ASSISTANT_ROLE_QUERY_MAX_CHARS = 2_000
+
+function assistantRoleQuery(input: string | ContentBlock[]): string {
+  const plainText = typeof input === 'string'
+    ? input
+    : input
+      .filter((block): block is Extract<ContentBlock, { type: 'text' }> => block.type === 'text')
+      .map(block => block.text)
+      .join(' ')
+  return plainText.replace(/\s+/g, ' ').trim().slice(0, ASSISTANT_ROLE_QUERY_MAX_CHARS)
+}
 
 export interface CodingAgentRunSocketData {
   input: string | ContentBlock[]
@@ -92,6 +105,9 @@ export async function handleCodingAgentRun(
     const includeBaseSystemPrompt = agentId === 'claude-code' || agentId === 'codex'
     const runPrompt = [
       includeBaseSystemPrompt ? getSystemPrompt() : '',
+      buildSafeRoleContextInstructionsForProfile(profile, {
+        query: assistantRoleQuery(data.input),
+      }),
     ].filter(Boolean).join('\n')
     await sendCodingAgentRunInput(sessionId, inputText, runPrompt)
   } catch (err) {

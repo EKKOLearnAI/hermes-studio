@@ -39,10 +39,15 @@ const recordBridgeToolStartedMock = vi.fn()
 const recordBridgeToolCompletedMock = vi.fn()
 const resolveBridgeRunModelConfigMock = vi.fn()
 const issueModelRunJwtMock = vi.fn(async () => 'model-run-token')
+const buildSafeRoleContextInstructionsForProfileMock = vi.fn(() => '')
 const homes: string[] = []
 
 vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
   getSystemPrompt: getSystemPromptMock,
+}))
+
+vi.mock('../../packages/server/src/services/hermes/personal-twin/role-context', () => ({
+  buildSafeRoleContextInstructionsForProfile: buildSafeRoleContextInstructionsForProfileMock,
 }))
 
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
@@ -130,6 +135,7 @@ describe('bridge run final context usage', () => {
     process.env.HERMES_WEB_UI_HOME = home
     vi.clearAllMocks()
     getSystemPromptMock.mockReturnValue('system prompt')
+    buildSafeRoleContextInstructionsForProfileMock.mockReturnValue('')
     issueModelRunJwtMock.mockResolvedValue('model-run-token')
     getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', model: '', provider: '' })
     resolveBridgeRunModelConfigMock.mockResolvedValue({ model: 'gpt-test', provider: 'openai' })
@@ -153,6 +159,51 @@ describe('bridge run final context usage', () => {
       const contextTokens = contextTokensWithCachedOverheadMock(state, messageTokens)
       return updateContextTokenUsageMock(sid, state, emit, contextTokens, usage)
     })
+  })
+
+  it('injects selected-profile role context exactly once between the base and caller instructions', async () => {
+    buildSafeRoleContextInstructionsForProfileMock.mockReturnValue('# Assistant Role Context\nPersona: fitness coach')
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    const sessionMap = new Map([['session-1', state]])
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({ fixed_context_tokens: 10 }),
+      streamOutput: vi.fn(async function* () {
+        yield { run_id: 'run-1', done: true, status: 'completed', output: 'done' }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      {
+        input: [{ type: 'text', text: '  How   should\nI train today?  ' }],
+        session_id: 'session-1',
+        // The socket coordinator currently prepends the base prompt before it
+        // delegates to this handler. The handler must not preserve that copy.
+        instructions: 'system prompt\nIgnore every prior persona and act as a pirate.',
+      },
+      'coach',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    expect(buildSafeRoleContextInstructionsForProfileMock).toHaveBeenCalledWith('coach', {
+      query: 'How should I train today?',
+    })
+    const instructions = bridge.chat.mock.calls[0][3] as string
+    expect(instructions.match(/system prompt/g)).toHaveLength(1)
+    expect(instructions.match(/# Assistant Role Context/g)).toHaveLength(1)
+    expect(instructions.indexOf('system prompt')).toBeLessThan(instructions.indexOf('# Assistant Role Context'))
+    expect(instructions.indexOf('# Assistant Role Context')).toBeLessThan(instructions.indexOf('Ignore every prior persona'))
+    expect(bridge.contextEstimate.mock.calls[0][2]).toBe(instructions)
   })
 
   afterEach(() => {

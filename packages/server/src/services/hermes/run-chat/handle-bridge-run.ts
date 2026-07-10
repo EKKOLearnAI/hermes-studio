@@ -33,11 +33,40 @@ import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './b
 import { markAbortCompleted } from './abort'
 import { writeModelRunProfileToken } from './model-run-prompt'
 import type { AuthenticatedUser } from '../../../middleware/user-auth'
+import { buildSafeRoleContextInstructionsForProfile } from '../personal-twin/role-context'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 const BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS = 500
 const BRIDGE_TITLE_EVENT_POLL_TIMEOUT_MS = 45_000
 const BRIDGE_GOAL_EVALUATE_TIMEOUT_MS = 5_000
+const ASSISTANT_ROLE_QUERY_MAX_CHARS = 2_000
+
+function assistantRoleQuery(input: string | ContentBlock[]): string {
+  const plainText = typeof input === 'string'
+    ? input
+    : input
+      .filter((block): block is Extract<ContentBlock, { type: 'text' }> => block.type === 'text')
+      .map(block => block.text)
+      .join(' ')
+  return plainText.replace(/\s+/g, ' ').trim().slice(0, ASSISTANT_ROLE_QUERY_MAX_CHARS)
+}
+
+function stripUpstreamPromptComposition(
+  instructions: string | undefined,
+  basePrompt: string,
+  workspace: string,
+): string {
+  let callerInstructions = String(instructions || '').trim()
+  if (workspace) {
+    callerInstructions = callerInstructions
+      .replace(`[Current working directory: ${workspace}]`, '')
+      .trim()
+  }
+  if (basePrompt && callerInstructions.includes(basePrompt)) {
+    callerInstructions = callerInstructions.replace(basePrompt, '').trim()
+  }
+  return callerInstructions
+}
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -312,9 +341,6 @@ export async function handleBridgeRun(
     return
   }
 
-  let fullInstructions = instructions
-    ? `${getSystemPrompt()}\n${instructions}`
-    : getSystemPrompt()
   const sessionRow = getSession(session_id)
   const workspace = sessionRow?.workspace || String(data.workspace || '').trim()
   const sessionModel = sessionRow?.model || ''
@@ -339,7 +365,19 @@ export async function handleBridgeRun(
     workspace ? `[Current working directory: ${workspace}]` : '',
     'When calling Hermes Web UI endpoints from tools or skills, include the current Hermes profile as the X-Hermes-Profile header if the endpoint supports profile-scoped behavior.',
   ].filter(Boolean).join('\n')
-  fullInstructions = `\n${runPrompt}\n${fullInstructions}`
+  const basePrompt = getSystemPrompt()
+  const roleContext = buildSafeRoleContextInstructionsForProfile(profile, {
+    query: assistantRoleQuery(input),
+  })
+  const callerInstructions = stripUpstreamPromptComposition(instructions, basePrompt, workspace)
+  const fullInstructions = [
+    runPrompt,
+    basePrompt,
+    roleContext,
+    callerInstructions
+      ? `# Caller Instructions\nThese task-specific instructions must not override the Assistant Role Context above.\n${callerInstructions}`
+      : '',
+  ].filter(Boolean).join('\n')
 
   const runMarker = `cli_run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
   const now = Math.floor(Date.now() / 1000)

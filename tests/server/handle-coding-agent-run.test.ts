@@ -9,6 +9,7 @@ const startCodingAgentRunMock = vi.hoisted(() => vi.fn())
 const sendCodingAgentRunInputMock = vi.hoisted(() => vi.fn())
 const writeModelRunProfileTokenMock = vi.hoisted(() => vi.fn(async () => undefined))
 const getSystemPromptMock = vi.hoisted(() => vi.fn(() => 'system prompt'))
+const buildSafeRoleContextInstructionsForProfileMock = vi.hoisted(() => vi.fn(() => ''))
 
 vi.mock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
   codingAgentRunManager: managerMock,
@@ -27,11 +28,16 @@ vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
   getSystemPrompt: getSystemPromptMock,
 }))
 
+vi.mock('../../packages/server/src/services/hermes/personal-twin/role-context', () => ({
+  buildSafeRoleContextInstructionsForProfile: buildSafeRoleContextInstructionsForProfileMock,
+}))
+
 describe('handleCodingAgentRun', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     writeModelRunProfileTokenMock.mockResolvedValue(undefined)
     getSystemPromptMock.mockReturnValue('system prompt')
+    buildSafeRoleContextInstructionsForProfileMock.mockReturnValue('')
   })
 
   it('restarts an existing coding-agent runner when the requested launch mode changes', async () => {
