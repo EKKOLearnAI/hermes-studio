@@ -16,7 +16,7 @@ import { getApiKey, setApiKey, clearApiKey, hasApiKey, getStoredUserRole, isStor
 import { getDownloadUrl } from '../../packages/client/src/api/hermes/download'
 import { uploadFiles } from '../../packages/client/src/api/hermes/files'
 import { importSkill } from '../../packages/client/src/api/hermes/skills'
-import { archiveSession, batchDeleteSessions, importHermesSession, unarchiveSession } from '../../packages/client/src/api/hermes/sessions'
+import { archiveSession, batchDeleteSessions, exportSession, importHermesSession, unarchiveSession } from '../../packages/client/src/api/hermes/sessions'
 import router from '@/router'
 
 function fakeJwt(payload: Record<string, unknown>) {
@@ -223,6 +223,42 @@ describe('API Client', () => {
       expect(url.pathname).toBe('/api/hermes/download')
       expect(url.searchParams.get('path')).toBe('/tmp/100% ready.txt')
       expect(url.searchParams.get('name')).toBe('100% ready.txt')
+    })
+
+    it('exports sessions when the response filename contains a raw percent sign', async () => {
+      const blob = new Blob(['session'])
+      mockFetch.mockResolvedValue({
+        ok: true,
+        blob: () => Promise.resolve(blob),
+        headers: new Headers({
+          'Content-Disposition': 'attachment; filename="100% ready.json"',
+        }),
+      })
+      const createObjectUrl = vi.fn(() => 'blob:session-export')
+      const revokeObjectUrl = vi.fn()
+      const OriginalUrl = URL
+      class ExportUrl extends OriginalUrl {}
+      Object.defineProperties(ExportUrl, {
+        createObjectURL: { value: createObjectUrl },
+        revokeObjectURL: { value: revokeObjectUrl },
+      })
+      vi.stubGlobal('URL', ExportUrl)
+      const originalCreateElement = document.createElement.bind(document)
+      const downloadAnchor = originalCreateElement('a') as HTMLAnchorElement
+      vi.spyOn(downloadAnchor, 'click').mockImplementation(() => undefined)
+      const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+        return tagName.toLowerCase() === 'a' ? downloadAnchor : originalCreateElement(tagName)
+      })
+
+      try {
+        await expect(exportSession('session-1')).resolves.toBeUndefined()
+        expect(downloadAnchor.download).toBe('100% ready.json')
+        expect(revokeObjectUrl).toHaveBeenCalledWith('blob:session-export')
+      } finally {
+        createElementSpy.mockRestore()
+        vi.unstubAllGlobals()
+        vi.stubGlobal('fetch', mockFetch)
+      }
     })
   })
 

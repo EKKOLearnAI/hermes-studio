@@ -424,7 +424,14 @@ export async function exportSession(id: string, mode: 'full' | 'compressed' = 'f
   const contentDisposition = res.headers.get('Content-Disposition') || ''
   let filename = `session_${id}.${ext}`
   const match = contentDisposition.match(/filename\*?=(?:UTF-8'')?([^;\n]+)/i)
-  if (match) filename = decodeURIComponent(match[1].replace(/"/g, ''))
+  if (match) {
+    const dispositionFilename = match[1].replace(/"/g, '')
+    try {
+      filename = decodeURIComponent(dispositionFilename)
+    } catch {
+      filename = dispositionFilename
+    }
+  }
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
   a.download = filename
