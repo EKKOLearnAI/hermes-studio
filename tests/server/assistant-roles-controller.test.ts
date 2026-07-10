@@ -6,6 +6,9 @@ const service = vi.hoisted(() => ({
   listAssistantRolesWithMappings: vi.fn(),
   getAssistantRole: vi.fn(),
   listContextRecipes: vi.fn(),
+  createContextRecipe: vi.fn(),
+  updateContextRecipe: vi.fn(),
+  deleteContextRecipe: vi.fn(),
   createAssistantRole: vi.fn(),
   updateAssistantRole: vi.fn(),
   deleteAssistantRole: vi.fn(),
@@ -33,8 +36,8 @@ const baseRole = {
   updatedAt: '2026-07-11T00:00:00.000Z',
 }
 
-function context(body: unknown = {}, id = 'health-manager'): any {
-  return { params: { id }, request: { body }, state: { user: { role: 'super_admin' } }, body: null }
+function context(body: unknown = {}, id = 'health-manager', recipeId?: string): any {
+  return { params: { id, recipeId }, request: { body }, state: { user: { role: 'super_admin' } }, body: null }
 }
 
 describe('assistant roles controller', () => {
@@ -44,6 +47,8 @@ describe('assistant roles controller', () => {
     service.listAssistantRolesWithMappings.mockReturnValue([{ ...baseRole, profileMappings: [], primaryProfileName: null, mappingStale: false, recipeCount: 1 }])
     service.getAssistantRole.mockReturnValue(baseRole)
     service.listContextRecipes.mockReturnValue([{ id: 'health-default', roleId: baseRole.id, name: 'Default' }])
+    service.createContextRecipe.mockImplementation((_roleId, input) => ({ id: 'daily', roleId: baseRole.id, ...input }))
+    service.updateContextRecipe.mockImplementation((_roleId, recipeId, patch) => ({ id: recipeId, roleId: baseRole.id, ...patch }))
     service.createAssistantRole.mockImplementation(input => ({ ...baseRole, ...input, builtIn: false }))
     service.updateAssistantRole.mockImplementation((_id, patch) => ({ ...baseRole, ...patch }))
     service.cloneAssistantRole.mockImplementation((_id, input) => ({ ...baseRole, ...input, builtIn: false }))
@@ -132,6 +137,40 @@ describe('assistant roles controller', () => {
     await ctrl.previewContext(ctx)
     expect(service.buildRoleContext).toHaveBeenCalledWith('health-manager', { query: 'recent sleep', recipeId: 'health-default' })
     expect(ctx.body).toEqual({ context: { role: baseRole, renderedInstructions: 'strict bundle', sections: {} } })
+  })
+
+  it('lists and mutates context recipes through strict parsed inputs', async () => {
+    const ctrl = await import('../../packages/server/src/controllers/hermes/assistant-roles')
+    const listCtx = context()
+    await ctrl.listRecipes(listCtx)
+    expect(listCtx.body).toEqual({ recipes: [expect.objectContaining({ id: 'health-default' })] })
+
+    const input = { id: 'daily', name: 'Daily', description: 'Daily facts', enabled: true, domains: ['health'], sections: ['observations'], queryTemplate: 'recent', limits: { perSection: 20, totalCharacters: 5000 } }
+    const createCtx = context(input)
+    await ctrl.createRecipe(createCtx)
+    expect(service.createContextRecipe).toHaveBeenCalledWith('health-manager', input)
+    expect(createCtx.status).toBe(201)
+
+    const updateCtx = context({ enabled: false, limits: { perSection: 5, totalCharacters: 2000 } }, 'health-manager', 'daily')
+    await ctrl.updateRecipe(updateCtx)
+    expect(service.updateContextRecipe).toHaveBeenCalledWith('health-manager', 'daily', { enabled: false, limits: { perSection: 5, totalCharacters: 2000 } })
+
+    const deleteCtx = context({}, 'health-manager', 'daily')
+    await ctrl.removeRecipe(deleteCtx)
+    expect(service.deleteContextRecipe).toHaveBeenCalledWith('health-manager', 'daily')
+    expect(deleteCtx.body).toEqual({ success: true })
+  })
+
+  it.each([
+    ['createRecipe', { name: '', domains: [], sections: [], limits: { perSection: 1, totalCharacters: 1000 } }, undefined],
+    ['createRecipe', { name: 'x', domains: ['secret'], sections: [], limits: { perSection: 1, totalCharacters: 1000 } }, undefined],
+    ['updateRecipe', { limits: { perSection: 0, totalCharacters: 50000 } }, 'daily'],
+    ['updateRecipe', { unknown: true }, 'daily'],
+  ])('returns 400 for malformed recipe input to %s', async (handler, body, recipeId) => {
+    const ctrl = await import('../../packages/server/src/controllers/hermes/assistant-roles')
+    const ctx = context(body, 'health-manager', recipeId)
+    await (ctrl as any)[handler](ctx)
+    expect(ctx.status).toBe(400)
   })
 
   it.each([

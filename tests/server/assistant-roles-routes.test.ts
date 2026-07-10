@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const handlers = vi.hoisted(() => ({
   list: vi.fn(), detail: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(),
   clone: vi.fn(), updateProfileMapping: vi.fn(), previewContext: vi.fn(),
+  listRecipes: vi.fn(), createRecipe: vi.fn(), updateRecipe: vi.fn(), removeRecipe: vi.fn(),
 }))
 const requireSuperAdmin = vi.hoisted(() => vi.fn(async function requireSuperAdmin(_ctx: any, next: () => Promise<void>) { await next() }))
 
@@ -28,6 +29,10 @@ describe('assistant role routes', () => {
       'POST:/api/hermes/assistant-roles/:id/clone',
       'PUT:/api/hermes/assistant-roles/:id/profile-mapping',
       'POST:/api/hermes/assistant-roles/:id/context/preview',
+      'HEAD,GET:/api/hermes/assistant-roles/:id/context-recipes',
+      'POST:/api/hermes/assistant-roles/:id/context-recipes',
+      'PUT:/api/hermes/assistant-roles/:id/context-recipes/:recipeId',
+      'DELETE:/api/hermes/assistant-roles/:id/context-recipes/:recipeId',
     ])
   })
 

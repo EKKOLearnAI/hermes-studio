@@ -7,6 +7,8 @@ import type {
   AssistantRolePatch,
   AssistantRoleSummary,
   CloneAssistantRoleInput,
+  ContextRecipeInput,
+  ContextRecipePatch,
   RoleContextBundle,
   RoleContextOptions,
 } from '@/api/hermes/assistant-roles'
@@ -119,6 +121,18 @@ export const useAssistantRolesStore = defineStore('assistant-roles', () => {
     })
   }
 
+  async function createRecipe(roleId: string, input: ContextRecipeInput) {
+    return runSave(async () => { await assistantRolesApi.createContextRecipe(roleId, input); return refreshRoleAndList(roleId) })
+  }
+
+  async function updateRecipe(roleId: string, recipeId: string, patch: ContextRecipePatch) {
+    return runSave(async () => { await assistantRolesApi.updateContextRecipe(roleId, recipeId, patch); return refreshRoleAndList(roleId) })
+  }
+
+  async function deleteRecipe(roleId: string, recipeId: string) {
+    return runSave(async () => { await assistantRolesApi.deleteContextRecipe(roleId, recipeId); return refreshRoleAndList(roleId) })
+  }
+
   async function previewContext(id: string, input: RoleContextOptions): Promise<RoleContextBundle> {
     const sequence = ++previewSequence
     return runSave(async () => {
@@ -147,6 +161,9 @@ export const useAssistantRolesStore = defineStore('assistant-roles', () => {
     deleteRole,
     cloneRole,
     updateProfileMapping,
+    createRecipe,
+    updateRecipe,
+    deleteRecipe,
     previewContext,
   }
 })

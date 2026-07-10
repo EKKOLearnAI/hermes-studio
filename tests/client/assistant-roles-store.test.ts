@@ -11,6 +11,10 @@ const api = vi.hoisted(() => ({
   cloneAssistantRole: vi.fn(),
   updateAssistantRoleProfileMapping: vi.fn(),
   previewAssistantRoleContext: vi.fn(),
+  fetchContextRecipes: vi.fn(),
+  createContextRecipe: vi.fn(),
+  updateContextRecipe: vi.fn(),
+  deleteContextRecipe: vi.fn(),
 }))
 vi.mock('@/api/hermes/assistant-roles', () => api)
 
@@ -71,6 +75,22 @@ describe('assistant roles store', () => {
     expect(api.fetchAssistantRole).toHaveBeenCalledTimes(2)
     expect(api.fetchAssistantRoles).toHaveBeenCalledTimes(2)
     expect(store.roles).toEqual([health])
+  })
+
+  it('persists recipe mutations and refreshes authoritative role detail and list', async () => {
+    const recipe = { id: 'daily', name: 'Daily' }
+    api.createContextRecipe.mockResolvedValue(recipe)
+    api.updateContextRecipe.mockResolvedValue(recipe)
+    api.deleteContextRecipe.mockResolvedValue(undefined)
+    const store = useAssistantRolesStore()
+    await store.createRecipe('health', recipe as never)
+    await store.updateRecipe('health', 'daily', { name: 'Updated' })
+    await store.deleteRecipe('health', 'daily')
+    expect(api.createContextRecipe).toHaveBeenCalledWith('health', recipe)
+    expect(api.updateContextRecipe).toHaveBeenCalledWith('health', 'daily', { name: 'Updated' })
+    expect(api.deleteContextRecipe).toHaveBeenCalledWith('health', 'daily')
+    expect(api.fetchAssistantRole).toHaveBeenCalledTimes(3)
+    expect(api.fetchAssistantRoles).toHaveBeenCalledTimes(3)
   })
 
   it('keeps loading true until concurrent loads settle', async () => {

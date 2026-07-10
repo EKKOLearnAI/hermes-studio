@@ -60,6 +60,20 @@ describe('AssistantRoleEditor', () => {
     expect(payload.recipes[0].limits).toEqual({ perSection: 1, totalCharacters: 40000 })
   })
 
+  it('edits all recipe fields and supports adding and deleting recipe drafts', async () => {
+    const wrapper = mount(AssistantRoleEditor, { props: { show: true, mode: 'edit', role, profileNames: ['default'] } })
+    await wrapper.find('[data-test="recipe-name"]').setValue('Morning health')
+    await wrapper.find('[data-test="recipe-query-template"]').setValue('last 24 hours')
+    await wrapper.find('[data-test="recipe-enabled"]').trigger('click')
+    await wrapper.find('[data-test="add-recipe"]').trigger('click')
+    expect(wrapper.findAll('[data-test="recipe-card"]')).toHaveLength(2)
+    await wrapper.findAll('[data-test="delete-recipe"]')[1].trigger('click')
+    await wrapper.find('[data-test="role-save"]').trigger('click')
+    const payload = wrapper.emitted('save')?.[0]?.[0] as any
+    expect(payload.recipes[0]).toMatchObject({ id: 'daily', name: 'Morning health', queryTemplate: 'last 24 hours', enabled: false })
+    expect(wrapper.text()).not.toContain('preview session only')
+  })
+
   it('renders server sections, provenance IDs, and truncation in the preview drawer', () => {
     const bundle = {
       role, profileMapping: { profileName: 'default', stale: false }, recipe: { id: 'daily', name: 'Daily' }, generatedAt: '', query: '',

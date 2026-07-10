@@ -73,6 +73,20 @@ describe('assistant roles API', () => {
     })
   })
 
+  it('lists, creates, updates, and deletes encoded context recipes', async () => {
+    const recipe = { id: 'daily / facts', name: 'Daily' }
+    request.mockResolvedValueOnce({ recipes: [recipe] }).mockResolvedValueOnce({ recipe }).mockResolvedValueOnce({ recipe }).mockResolvedValueOnce({ success: true })
+    await expect(api.fetchContextRecipes(role.id)).resolves.toEqual([recipe])
+    await expect(api.createContextRecipe(role.id, recipe as never)).resolves.toEqual(recipe)
+    await expect(api.updateContextRecipe(role.id, recipe.id, { name: 'Daily' })).resolves.toEqual(recipe)
+    await expect(api.deleteContextRecipe(role.id, recipe.id)).resolves.toBeUndefined()
+    const base = '/api/hermes/assistant-roles/health%20%2F%20lead/context-recipes'
+    expect(request).toHaveBeenNthCalledWith(1, base)
+    expect(request).toHaveBeenNthCalledWith(2, base, { method: 'POST', body: JSON.stringify(recipe) })
+    expect(request).toHaveBeenNthCalledWith(3, `${base}/daily%20%2F%20facts`, { method: 'PUT', body: JSON.stringify({ name: 'Daily' }) })
+    expect(request).toHaveBeenNthCalledWith(4, `${base}/daily%20%2F%20facts`, { method: 'DELETE' })
+  })
+
   it('does not expose arbitrary Personal Twin write methods', () => {
     expect(Object.keys(api).filter(name => /write|upsert|observation|event/i.test(name))).toEqual([])
   })

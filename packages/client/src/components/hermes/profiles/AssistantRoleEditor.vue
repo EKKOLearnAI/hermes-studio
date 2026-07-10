@@ -3,16 +3,17 @@ import { computed, reactive, ref, watch } from 'vue'
 import { NAlert, NButton, NInput, NModal, NSwitch, NTag } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { TWIN_CONTEXT_SECTIONS, TWIN_DOMAINS } from '@/api/hermes/assistant-roles'
-import type { AssistantRoleDetail, AssistantRoleInput, ContextRecipe } from '@/api/hermes/assistant-roles'
+import type { AssistantRoleDetail, AssistantRoleInput, ContextRecipeInput } from '@/api/hermes/assistant-roles'
 import { useAssistantRoleMessages } from './assistant-role-messages'
 
 const props = defineProps<{ show: boolean; mode: 'create' | 'edit'; role: AssistantRoleDetail | null; profileNames: string[]; saving?: boolean }>()
-const emit = defineEmits<{ close: []; save: [payload: { role: AssistantRoleInput; profileName: string | null; recipes: ContextRecipe[] }] }>()
+type ContextRecipeDraft = ContextRecipeInput & { id?: string }
+const emit = defineEmits<{ close: []; save: [payload: { role: AssistantRoleInput; profileName: string | null; recipes: ContextRecipeDraft[] }] }>()
 const { locale } = useI18n()
 const { messages: m } = useAssistantRoleMessages(locale)
 
 const form = reactive({ name: '', description: '', persona: '', enabled: true, memoryNamespace: '', domains: [] as string[], sections: [] as string[], includeProvenance: true, allow: '', deny: '', profileName: '', decisionAuthority: '{}', spendingLimits: '{}', escalationRules: '[]' })
-const recipes = ref<ContextRecipe[]>([])
+const recipes = ref<ContextRecipeDraft[]>([])
 const validationError = ref('')
 const title = computed(() => props.mode === 'create' ? m.value.createRole : `${m.value.edit}: ${props.role?.name ?? ''}`)
 
@@ -24,7 +25,7 @@ function reset(): void {
     includeProvenance: role?.dataScope.includeProvenance ?? true, allow: role?.capabilityScope.allow.join(', ') ?? '', deny: role?.capabilityScope.deny.join(', ') ?? '',
     profileName: role?.primaryProfileName ?? '', decisionAuthority: JSON.stringify(role?.decisionAuthority ?? {}, null, 2), spendingLimits: JSON.stringify(role?.spendingLimits ?? {}, null, 2), escalationRules: JSON.stringify(role?.escalationRules ?? [], null, 2),
   })
-  recipes.value = (role?.recipes ?? []).map(recipe => ({ ...recipe, limits: { ...recipe.limits } }))
+  recipes.value = (role?.recipes ?? []).map(({ id, name, description, enabled, domains, sections, queryTemplate, limits }) => ({ id, name, description, enabled, domains: [...domains], sections: [...sections], queryTemplate, limits: { ...limits } }))
   validationError.value = ''
 }
 watch(() => [props.show, props.role] as const, reset, { immediate: true })
@@ -36,12 +37,14 @@ function toggle(list: string[], value: string, checked: boolean): void {
 }
 function csv(value: string): string[] { return [...new Set(value.split(',').map(item => item.trim()).filter(Boolean))] }
 function clamp(value: unknown, min: number, max: number): number { const number = Number(value); return Math.min(max, Math.max(min, Number.isFinite(number) ? Math.round(number) : min)) }
-function updateLimit(recipe: ContextRecipe, field: 'perSection' | 'totalCharacters', value: unknown): void { recipe.limits[field] = clamp(value, field === 'perSection' ? 1 : 1000, field === 'perSection' ? 50 : 40000) }
+function updateLimit(recipe: ContextRecipeDraft, field: 'perSection' | 'totalCharacters', value: unknown): void { recipe.limits[field] = clamp(value, field === 'perSection' ? 1 : 1000, field === 'perSection' ? 50 : 40000) }
+function addRecipe(): void { recipes.value.push({ name: '', description: '', enabled: true, domains: [], sections: [], queryTemplate: '', limits: { perSection: 10, totalCharacters: 8000 } }) }
 
 function save(): void {
   if (!form.name.trim()) { validationError.value = m.value.nameRequired; return }
   if (!form.persona.trim()) { validationError.value = m.value.personaRequired; return }
   if (!form.memoryNamespace.trim()) { validationError.value = m.value.memoryRequired; return }
+  if (recipes.value.some(recipe => !recipe.name.trim())) { validationError.value = m.value.recipeNameRequired; return }
   try {
     const decisionAuthority = JSON.parse(form.decisionAuthority)
     const spendingLimits = JSON.parse(form.spendingLimits)
@@ -70,7 +73,7 @@ function save(): void {
       </section>
       <section><h3>{{ m.capability }}</h3><NAlert type="warning">{{ m.phase3Warning }}</NAlert><label>{{ m.allow }}<NInput v-model:value="form.allow" /></label><label>{{ m.deny }}<NInput v-model:value="form.deny" /></label></section>
       <section><h3>{{ m.metadata }}</h3><label>{{ m.decisionAuthority }}<textarea v-model="form.decisionAuthority" /></label><label>{{ m.spendingLimits }}<textarea v-model="form.spendingLimits" /></label><label>{{ m.escalationRules }}<textarea v-model="form.escalationRules" /></label></section>
-      <section class="wide"><h3>{{ m.recipes }} <NTag size="small">{{ recipes.length }}</NTag></h3><p class="muted">{{ m.recipeLimitsNotice }}</p><article v-for="recipe in recipes" :key="recipe.id" class="recipe"><strong>{{ recipe.name }}</strong><label>{{ m.perSection }}<input data-test="recipe-per-section" type="number" min="1" max="50" :value="recipe.limits.perSection" @change="updateLimit(recipe, 'perSection', ($event.target as HTMLInputElement).value)"></label><label>{{ m.totalCharacters }}<input data-test="recipe-total-characters" type="number" min="1000" max="40000" :value="recipe.limits.totalCharacters" @change="updateLimit(recipe, 'totalCharacters', ($event.target as HTMLInputElement).value)"></label></article></section>
+      <section class="wide"><div class="section-heading"><h3>{{ m.recipes }} <NTag size="small">{{ recipes.length }}</NTag></h3><NButton data-test="add-recipe" size="small" @click="addRecipe">{{ m.addRecipe }}</NButton></div><p class="muted">{{ m.recipeLimitsNotice }}</p><article v-for="(recipe, index) in recipes" :key="recipe.id || `new-${index}`" data-test="recipe-card" class="recipe"><label>{{ m.name }}<input data-test="recipe-name" v-model="recipe.name"></label><label>{{ m.description }}<input v-model="recipe.description"></label><label>{{ m.queryTemplate }}<input data-test="recipe-query-template" v-model="recipe.queryTemplate"></label><label class="inline"><NSwitch data-test="recipe-enabled" v-model:value="recipe.enabled" /> {{ recipe.enabled ? m.enabled : m.disabled }}</label><div class="recipe-scopes"><span>{{ m.domains }}</span><label v-for="domain in TWIN_DOMAINS" :key="domain" class="inline"><input type="checkbox" :checked="recipe.domains.includes(domain)" @change="toggle(recipe.domains, domain, ($event.target as HTMLInputElement).checked)"> {{ domain }}</label></div><div class="recipe-scopes"><span>{{ m.sections }}</span><label v-for="section in TWIN_CONTEXT_SECTIONS" :key="section" class="inline"><input type="checkbox" :checked="recipe.sections.includes(section)" @change="toggle(recipe.sections, section, ($event.target as HTMLInputElement).checked)"> {{ section }}</label></div><label>{{ m.perSection }}<input data-test="recipe-per-section" type="number" min="1" max="50" :value="recipe.limits.perSection" @change="updateLimit(recipe, 'perSection', ($event.target as HTMLInputElement).value)"></label><label>{{ m.totalCharacters }}<input data-test="recipe-total-characters" type="number" min="1000" max="40000" :value="recipe.limits.totalCharacters" @change="updateLimit(recipe, 'totalCharacters', ($event.target as HTMLInputElement).value)"></label><NButton data-test="delete-recipe" type="error" size="small" @click="recipes.splice(index, 1)">{{ m.deleteRecipe }}</NButton></article></section>
     </div>
     <NAlert v-if="validationError" data-test="role-validation-error" type="error">{{ validationError }}</NAlert>
     <template #footer><div class="footer"><NButton @click="emit('close')">{{ m.cancel }}</NButton><NButton data-test="role-save" type="primary" :loading="saving" @click="save">{{ m.save }}</NButton></div></template>
@@ -78,5 +81,5 @@ function save(): void {
 </template>
 
 <style scoped lang="scss">
-.editor-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; max-height:68vh; overflow:auto; } section { display:flex; flex-direction:column; gap:10px; } h3,h4,p { margin:0; } label { display:flex; flex-direction:column; gap:5px; font-size:13px; } .inline { flex-direction:row; align-items:center; } .check-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; } .check-grid label { flex-direction:row; } select,textarea,input[type='number'] { border:1px solid var(--border-color); border-radius:6px; padding:7px; background:var(--card-color); color:inherit; } textarea { min-height:72px; } .wide { grid-column:1/-1; } .recipe { display:flex; align-items:end; gap:12px; padding:10px; border:1px solid var(--border-color); border-radius:8px; } .muted { opacity:.7; font-size:12px; } .footer { display:flex; justify-content:flex-end; gap:8px; } @media(max-width:700px){.editor-grid{grid-template-columns:1fr}.wide{grid-column:auto}}
+.editor-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; max-height:68vh; overflow:auto; } section { display:flex; flex-direction:column; gap:10px; } h3,h4,p { margin:0; } label { display:flex; flex-direction:column; gap:5px; font-size:13px; } .inline { flex-direction:row; align-items:center; } .check-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; } .check-grid label { flex-direction:row; } select,textarea,input[type='number'],.recipe input[type='text'] { border:1px solid var(--border-color); border-radius:6px; padding:7px; background:var(--card-color); color:inherit; } textarea { min-height:72px; } .wide { grid-column:1/-1; } .section-heading { display:flex; justify-content:space-between; align-items:center; } .recipe { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:end; gap:12px; padding:10px; border:1px solid var(--border-color); border-radius:8px; } .recipe-scopes { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:8px; font-size:12px; } .muted { opacity:.7; font-size:12px; } .footer { display:flex; justify-content:flex-end; gap:8px; } @media(max-width:700px){.editor-grid{grid-template-columns:1fr}.wide{grid-column:auto}.recipe{grid-template-columns:1fr}}
 </style>

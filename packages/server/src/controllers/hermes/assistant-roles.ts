@@ -4,11 +4,14 @@ import {
   TWIN_DOMAINS,
   buildRoleContext,
   cloneAssistantRole,
+  createContextRecipe,
   createAssistantRole,
   deleteAssistantRole,
+  deleteContextRecipe,
   listAssistantRolesWithMappings,
   listContextRecipes,
   setAssistantRoleProfileMapping,
+  updateContextRecipe,
   updateAssistantRole,
 } from '../../services/hermes/personal-twin'
 import type {
@@ -16,6 +19,8 @@ import type {
   AssistantRoleDataScope,
   AssistantRoleInput,
   AssistantRolePatch,
+  ContextRecipeInput,
+  ContextRecipePatch,
   RoleContextOptions,
 } from '../../services/hermes/personal-twin'
 
@@ -26,6 +31,8 @@ const ROLE_FIELDS = new Set([
   'decisionAuthority', 'spendingLimits', 'memoryNamespace', 'escalationRules',
 ])
 const PATCH_FIELDS = new Set([...ROLE_FIELDS].filter(field => field !== 'id'))
+const RECIPE_FIELDS = new Set(['id', 'name', 'description', 'enabled', 'domains', 'sections', 'queryTemplate', 'limits'])
+const RECIPE_PATCH_FIELDS = new Set([...RECIPE_FIELDS].filter(field => field !== 'id'))
 
 function bodyObject(ctx: Context): Record<string, unknown> {
   const body = (ctx.request as { body?: unknown }).body
@@ -109,6 +116,46 @@ function objectArray(value: unknown, field: string): Array<Record<string, unknow
   return value
 }
 
+function recipeLimits(value: unknown): { perSection: number; totalCharacters: number } {
+  if (!isRecord(value)) throw new RequestValidationError('limits must be a JSON object')
+  onlyFields(value, new Set(['perSection', 'totalCharacters']))
+  if (!Number.isInteger(value.perSection) || (value.perSection as number) < 1 || (value.perSection as number) > 50) throw new RequestValidationError('limits.perSection must be an integer from 1 to 50')
+  if (!Number.isInteger(value.totalCharacters) || (value.totalCharacters as number) < 1000 || (value.totalCharacters as number) > 40000) throw new RequestValidationError('limits.totalCharacters must be an integer from 1000 to 40000')
+  return { perSection: value.perSection as number, totalCharacters: value.totalCharacters as number }
+}
+
+function parseRecipeCreate(ctx: Context): ContextRecipeInput {
+  const body = bodyObject(ctx)
+  onlyFields(body, RECIPE_FIELDS)
+  const input: ContextRecipeInput = {
+    name: requiredString(body, 'name'),
+    domains: stringArray(body.domains, 'domains', TWIN_DOMAINS) as ContextRecipeInput['domains'],
+    sections: stringArray(body.sections, 'sections', TWIN_CONTEXT_SECTIONS) as ContextRecipeInput['sections'],
+    limits: recipeLimits(body.limits),
+  }
+  const id = optionalString(body, 'id'); if (id !== undefined) input.id = id
+  const description = optionalString(body, 'description'); if (description !== undefined) input.description = description
+  const enabled = optionalBoolean(body, 'enabled'); if (enabled !== undefined) input.enabled = enabled
+  const queryTemplate = optionalString(body, 'queryTemplate'); if (queryTemplate !== undefined) input.queryTemplate = queryTemplate
+  return input
+}
+
+function parseRecipePatch(ctx: Context): ContextRecipePatch {
+  const body = bodyObject(ctx)
+  onlyFields(body, RECIPE_PATCH_FIELDS)
+  if (!Object.keys(body).length) throw new RequestValidationError('Recipe patch must not be empty')
+  const patch: ContextRecipePatch = {}
+  for (const field of ['name', 'description', 'queryTemplate'] as const) {
+    if (!Object.prototype.hasOwnProperty.call(body, field)) continue
+    patch[field] = field === 'name' ? requiredString(body, field) : optionalString(body, field)!
+  }
+  const enabled = optionalBoolean(body, 'enabled'); if (enabled !== undefined) patch.enabled = enabled
+  if (Object.prototype.hasOwnProperty.call(body, 'domains')) patch.domains = stringArray(body.domains, 'domains', TWIN_DOMAINS) as ContextRecipePatch['domains']
+  if (Object.prototype.hasOwnProperty.call(body, 'sections')) patch.sections = stringArray(body.sections, 'sections', TWIN_CONTEXT_SECTIONS) as ContextRecipePatch['sections']
+  if (Object.prototype.hasOwnProperty.call(body, 'limits')) patch.limits = recipeLimits(body.limits)
+  return patch
+}
+
 function parseCreate(ctx: Context): AssistantRoleInput {
   const body = bodyObject(ctx)
   onlyFields(body, ROLE_FIELDS)
@@ -155,6 +202,12 @@ function roleId(ctx: Context): string {
   return id
 }
 
+function contextRecipeId(ctx: Context): string {
+  const id = String(ctx.params.recipeId ?? '').trim()
+  if (!id) throw new RequestValidationError('Context recipe id is required')
+  return id
+}
+
 function safeError(ctx: Context, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error)
   if (error instanceof RequestValidationError) {
@@ -163,6 +216,9 @@ function safeError(ctx: Context, error: unknown): void {
   } else if (/unique constraint failed:\s*twin_assistant_roles\./i.test(message)) {
     ctx.status = 409
     ctx.body = { error: 'Assistant role already exists' }
+  } else if (/unique constraint failed:\s*twin_context_recipes\./i.test(message)) {
+    ctx.status = 409
+    ctx.body = { error: 'Context recipe already exists' }
   } else if (/context recipe not found/i.test(message)) {
     ctx.status = 404
     ctx.body = { error: 'Context recipe not found' }
@@ -264,4 +320,20 @@ export async function previewContext(ctx: Context): Promise<void> {
     if (recipeId !== undefined) options.recipeId = recipeId.trim()
     ctx.body = { context: buildRoleContext(roleId(ctx), options) }
   } catch (error) { safeError(ctx, error) }
+}
+
+export async function listRecipes(ctx: Context): Promise<void> {
+  try { ctx.body = { recipes: listContextRecipes(roleId(ctx)) } } catch (error) { safeError(ctx, error) }
+}
+
+export async function createRecipe(ctx: Context): Promise<void> {
+  try { ctx.body = { recipe: createContextRecipe(roleId(ctx), parseRecipeCreate(ctx)) }; ctx.status = 201 } catch (error) { safeError(ctx, error) }
+}
+
+export async function updateRecipe(ctx: Context): Promise<void> {
+  try { ctx.body = { recipe: updateContextRecipe(roleId(ctx), contextRecipeId(ctx), parseRecipePatch(ctx)) } } catch (error) { safeError(ctx, error) }
+}
+
+export async function removeRecipe(ctx: Context): Promise<void> {
+  try { deleteContextRecipe(roleId(ctx), contextRecipeId(ctx)); ctx.body = { success: true } } catch (error) { safeError(ctx, error) }
 }

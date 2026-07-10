@@ -84,6 +84,19 @@ export interface ContextRecipe {
   updatedAt: string
 }
 
+export interface ContextRecipeInput {
+  id?: string
+  name: string
+  description?: string
+  enabled?: boolean
+  domains: TwinDomain[]
+  sections: TwinContextSection[]
+  queryTemplate?: string
+  limits: ContextRecipeLimits
+}
+
+export type ContextRecipePatch = Partial<Omit<ContextRecipeInput, 'id'>>
+
 export interface AssistantRoleSummary extends AssistantRole {
   profileMappings: AssistantRoleProfileMapping[]
   primaryProfileName: string | null
@@ -185,4 +198,25 @@ export async function previewAssistantRoleContext(id: string, input: RoleContext
     method: 'POST', body: JSON.stringify(input),
   })
   return response.context
+}
+
+function recipesPath(roleId: string): string { return `${rolePath(roleId)}/context-recipes` }
+
+export async function fetchContextRecipes(roleId: string): Promise<ContextRecipe[]> {
+  const response = await request<{ recipes: ContextRecipe[] }>(recipesPath(roleId))
+  return response.recipes
+}
+
+export async function createContextRecipe(roleId: string, input: ContextRecipeInput): Promise<ContextRecipe> {
+  const response = await request<{ recipe: ContextRecipe }>(recipesPath(roleId), { method: 'POST', body: JSON.stringify(input) })
+  return response.recipe
+}
+
+export async function updateContextRecipe(roleId: string, recipeId: string, patch: ContextRecipePatch): Promise<ContextRecipe> {
+  const response = await request<{ recipe: ContextRecipe }>(`${recipesPath(roleId)}/${encodeURIComponent(recipeId)}`, { method: 'PUT', body: JSON.stringify(patch) })
+  return response.recipe
+}
+
+export async function deleteContextRecipe(roleId: string, recipeId: string): Promise<void> {
+  await request<{ success: true }>(`${recipesPath(roleId)}/${encodeURIComponent(recipeId)}`, { method: 'DELETE' })
 }
