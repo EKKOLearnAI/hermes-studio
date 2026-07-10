@@ -121,6 +121,36 @@ describe('assistant roles store', () => {
     expect(store.preview).toEqual({ renderedInstructions: 'newest' })
   })
 
+  it('discards an in-flight preview when the selected role changes', async () => {
+    let resolvePreview!: (value: { renderedInstructions: string }) => void
+    api.previewAssistantRoleContext.mockImplementationOnce(
+      () => new Promise(resolve => { resolvePreview = resolve }),
+    )
+    const store = useAssistantRolesStore()
+    store.selectedRoleId = 'health'
+
+    const pending = store.previewContext('health', { query: 'today' })
+    store.selectedRoleId = 'coach'
+    resolvePreview({ renderedInstructions: 'stale health context' })
+    await pending
+
+    expect(store.preview).toBeNull()
+  })
+
+  it('clears the current preview when deleting its selected role', async () => {
+    api.previewAssistantRoleContext.mockResolvedValueOnce({ renderedInstructions: 'health context' })
+    api.deleteAssistantRole.mockResolvedValueOnce(undefined)
+    api.fetchAssistantRoles.mockResolvedValueOnce([coach])
+    const store = useAssistantRolesStore()
+    store.selectedRoleId = 'health'
+    await store.previewContext('health', {})
+
+    await store.deleteRole('health')
+
+    expect(store.selectedRoleId).toBe('coach')
+    expect(store.preview).toBeNull()
+  })
+
   it('stores only server-generated previews and cleans up preview errors', async () => {
     const context = { renderedInstructions: 'Authoritative server context' }
     api.previewAssistantRoleContext.mockResolvedValueOnce(context)

@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import * as assistantRolesApi from '@/api/hermes/assistant-roles'
 import type {
@@ -29,6 +29,11 @@ export const useAssistantRolesStore = defineStore('assistant-roles', () => {
   let loadSequence = 0
   let saveSequence = 0
   let previewSequence = 0
+
+  watch(selectedRoleId, () => {
+    previewSequence += 1
+    preview.value = null
+  }, { flush: 'sync' })
 
   function keepSelection(nextRoles: AssistantRoleSummary[]): void {
     if (!selectedRoleId.value || !nextRoles.some(role => role.id === selectedRoleId.value)) {
