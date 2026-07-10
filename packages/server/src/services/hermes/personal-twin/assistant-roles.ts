@@ -352,13 +352,18 @@ function validateRecipeInput(input: ContextRecipeInput): void {
   if (!input.limits || typeof input.limits !== 'object' || Array.isArray(input.limits)) {
     throw new Error('Context recipe limits must be an object')
   }
-  if (!Number.isInteger(input.limits.perSection) || input.limits.perSection < 1 || input.limits.perSection > 50) {
-    throw new Error('Context recipe perSection must be an integer from 1 to 50')
+  if (!Number.isInteger(input.limits.perSection)) {
+    throw new Error('Context recipe perSection must be an integer')
   }
-  if (!Number.isInteger(input.limits.totalCharacters)
-    || input.limits.totalCharacters < 1_000
-    || input.limits.totalCharacters > 40_000) {
-    throw new Error('Context recipe totalCharacters must be an integer from 1000 to 40000')
+  if (!Number.isInteger(input.limits.totalCharacters)) {
+    throw new Error('Context recipe totalCharacters must be an integer')
+  }
+}
+
+function clampRecipeLimits(limits: ContextRecipeLimits): ContextRecipeLimits {
+  return {
+    perSection: Math.min(50, Math.max(1, limits.perSection)),
+    totalCharacters: Math.min(40_000, Math.max(1_000, limits.totalCharacters)),
   }
 }
 
@@ -737,6 +742,7 @@ export function listContextRecipes(roleId: string): ContextRecipe[] {
 export function createContextRecipe(roleId: string, input: ContextRecipeInput): ContextRecipe {
   ensureRegistry()
   validateRecipeInput(input)
+  const limits = clampRecipeLimits(input.limits)
   return withPersonalTwinDb(db => transaction(db, () => {
     requireRoleRow(db, roleId)
     const id = input.id || `${roleId}-${toRoleId(input.name)}`
@@ -756,7 +762,7 @@ export function createContextRecipe(roleId: string, input: ContextRecipeInput): 
       JSON.stringify(input.domains),
       JSON.stringify(input.sections),
       input.queryTemplate ?? '',
-      JSON.stringify(input.limits),
+      JSON.stringify(limits),
       timestamp,
       timestamp,
     )
@@ -781,6 +787,7 @@ export function updateContextRecipe(roleId: string, recipeId: string, patch: Con
       limits: recipePatchValue(patch, 'limits', current.limits),
     }
     validateRecipeInput(input)
+    const limits = clampRecipeLimits(input.limits)
     db.prepare(`
       UPDATE twin_context_recipes SET
         name = ?, description = ?, enabled = ?, domains_json = ?, sections_json = ?,
@@ -793,7 +800,7 @@ export function updateContextRecipe(roleId: string, recipeId: string, patch: Con
       JSON.stringify(input.domains),
       JSON.stringify(input.sections),
       input.queryTemplate ?? '',
-      JSON.stringify(input.limits),
+      JSON.stringify(limits),
       nowIso(),
       recipeId,
       roleId,

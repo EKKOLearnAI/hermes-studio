@@ -102,10 +102,6 @@ describe('assistant role profile mappings and context recipes', () => {
     ['duplicate domain', { domains: ['health', 'health'] }, /unique|duplicate/i],
     ['unsupported section', { sections: ['passwords' as never] }, /section/i],
     ['duplicate section', { sections: ['goals', 'goals'] }, /unique|duplicate/i],
-    ['per-section lower bound', { limits: { perSection: 0, totalCharacters: 8000 } }, /perSection|per.section/i],
-    ['per-section upper bound', { limits: { perSection: 51, totalCharacters: 8000 } }, /perSection|per.section/i],
-    ['character lower bound', { limits: { perSection: 5, totalCharacters: 999 } }, /totalCharacters|total characters/i],
-    ['character upper bound', { limits: { perSection: 5, totalCharacters: 40001 } }, /totalCharacters|total characters/i],
   ])('rejects invalid recipe %s', async (_label, patch, message) => {
     const roles = await import('../../packages/server/src/services/hermes/personal-twin')
     const role = roles.createAssistantRole(validRole())
@@ -117,6 +113,27 @@ describe('assistant role profile mappings and context recipes', () => {
       limits: { perSection: 5, totalCharacters: 8000 },
       ...patch,
     })).toThrow(message)
+  })
+
+  it('clamps recipe limits on create and patch update before persisting them', async () => {
+    const roles = await import('../../packages/server/src/services/hermes/personal-twin')
+    const role = roles.createAssistantRole(validRole())
+
+    const created = roles.createContextRecipe(role.id, {
+      id: 'bounded-recipe',
+      name: 'Bounded',
+      domains: ['health'],
+      sections: ['goals'],
+      limits: { perSection: 0, totalCharacters: 999 },
+    })
+    expect(created.limits).toEqual({ perSection: 1, totalCharacters: 1000 })
+    expect(roles.listContextRecipes(role.id)[0].limits).toEqual({ perSection: 1, totalCharacters: 1000 })
+
+    const updated = roles.updateContextRecipe(role.id, created.id, {
+      limits: { perSection: 51, totalCharacters: 40_001 },
+    })
+    expect(updated.limits).toEqual({ perSection: 50, totalCharacters: 40_000 })
+    expect(roles.listContextRecipes(role.id)[0].limits).toEqual({ perSection: 50, totalCharacters: 40_000 })
   })
 
   it('prevents cross-role recipe operations and protects built-in recipes from deletion', async () => {
