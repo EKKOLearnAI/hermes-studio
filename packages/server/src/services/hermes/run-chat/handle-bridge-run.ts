@@ -106,6 +106,9 @@ function isRoleOverrideDirective(line: string): boolean {
   const attemptsOverride = /\b(?:ignore|disregard|override|replace|change|rewrite|forget|bypass|remove|discard|supersede)\b/.test(normalized)
     || /\b(?:do not|don't|stop)\s+(?:follow|following|obey|obeying)\b/.test(normalized)
   if (targetsTrustedContext && attemptsOverride) return true
+  const attemptsIdentitySwitch = /\b(?:adopt|assume|embrace)\b.{0,80}\b(?:persona|role|identity|character)\b/.test(normalized)
+    || /\b(?:take on|switch to|step into)\b.{0,80}\b(?:persona|role|identity|character)\b/.test(normalized)
+  if (attemptsIdentitySwitch) return true
   return /^(?:(?:please|now|instead)\s+)*(?:act|behave|respond|pretend)\s+as\b/.test(normalized)
     || /^(?:you are now|become)\b/.test(normalized)
 }
