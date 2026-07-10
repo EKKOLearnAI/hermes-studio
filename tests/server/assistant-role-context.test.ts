@@ -126,6 +126,8 @@ describe('assistant role context engine', () => {
       attributes: {
         keyboard: 'mechanical',
         key: 'business-classification',
+        turnkey: 'benign-turnkey',
+        monkey: 'benign-monkey',
         result: 'retained',
         nested: {
           configPath: 'C:/private/config.json',
@@ -151,6 +153,13 @@ describe('assistant role context engine', () => {
             bearer: 'bearer-private',
             connectionUri: 'postgres://connection-private',
             jdbcUrl: 'jdbc:private',
+            signingKey: 'signing-private',
+            masterKey: 'master-private',
+            clientKey: 'client-private',
+            mnemonic: 'mnemonic private words',
+            recoveryPhrase: 'recovery private words',
+            seedPhrase: 'seed private words',
+            recovery_seed: 'recovery-seed-private',
           },
         },
       },
@@ -168,8 +177,10 @@ describe('assistant role context engine', () => {
     expect(serialized).toContain('mechanical')
     expect(serialized).toContain('business-classification')
     expect(serialized).toContain('retained')
-    expect(serialized).not.toMatch(/configPath|homeDirectory|sqliteFile|clientSecret|privateKey|authorization|passwordHash|refresh_token|credential_file|secretAccessKey|awsSecretAccessKey|accessKeyId|authHeader|httpAuthorization|dsn|databaseUrl|sessionCookie|sshKey|encryptionKey|bearer|connectionUri|jdbcUrl/i)
-    expect(serialized).not.toMatch(/C:\/private|Bearer private|hash-value|token-value|cloud-secret|cloud-key-id|Basic private|http-private|postgres:\/\/private|sqlite:\/\/\/private|session-private|ssh-private|encryption-private|bearer-private|connection-private|jdbc:private/)
+    expect(serialized).toContain('benign-turnkey')
+    expect(serialized).toContain('benign-monkey')
+    expect(serialized).not.toMatch(/configPath|homeDirectory|sqliteFile|clientSecret|privateKey|authorization|passwordHash|refresh_token|credential_file|secretAccessKey|awsSecretAccessKey|accessKeyId|authHeader|httpAuthorization|dsn|databaseUrl|sessionCookie|sshKey|encryptionKey|bearer|connectionUri|jdbcUrl|signingKey|masterKey|clientKey|mnemonic|recoveryPhrase|seedPhrase|recovery_seed/i)
+    expect(serialized).not.toMatch(/C:\/private|Bearer private|hash-value|token-value|cloud-secret|cloud-key-id|Basic private|http-private|postgres:\/\/private|sqlite:\/\/\/private|session-private|ssh-private|encryption-private|bearer-private|connection-private|jdbc:private|signing-private|master-private|client-private|private words|recovery-seed-private/)
   })
 
   it('caps zero-record rendered instructions by deterministically truncating long persona text', async () => {
