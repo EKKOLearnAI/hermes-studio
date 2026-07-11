@@ -79,6 +79,33 @@ describe('AssistantRolesPanel', () => {
     expect(store.fetchRoles).toHaveBeenCalledTimes(2)
   })
 
+  it('loads the authoritative cloned detail and matching recipe selection once', async () => {
+    store.cloneRole.mockImplementationOnce(async () => { store.selectedRoleId = 'custom-coach'; return custom })
+    const wrapper = mount(AssistantRolesPanel)
+    await flushPromises()
+    const before = fetchAssistantRole.mock.calls.length
+    await wrapper.find('[data-test="clone-health-manager"]').trigger('click')
+    await flushPromises()
+    expect(store.selectedRoleId).toBe('custom-coach')
+    expect(wrapper.find('[data-test="role-detail"]').attributes('data-role-id')).toBe('custom-coach')
+    expect(wrapper.find('[data-test="preview-recipe"]').element.value).toBe('custom-daily')
+    expect(fetchAssistantRole.mock.calls.length - before).toBe(1)
+  })
+
+  it('loads the newly selected detail once after delete and clears stale recipe options', async () => {
+    store.selectedRoleId = 'custom-coach'
+    store.deleteRole.mockImplementationOnce(async () => { store.roles = [role] as any; store.selectedRoleId = 'health-manager' })
+    const wrapper = mount(AssistantRolesPanel)
+    await flushPromises()
+    const before = fetchAssistantRole.mock.calls.length
+    await wrapper.find('[data-test="delete-custom-coach"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="role-detail"]').attributes('data-role-id')).toBe('health-manager')
+    expect(wrapper.find('[data-test="preview-recipe"]').element.value).toBe('daily')
+    expect(wrapper.find('[data-test="preview-recipe"]').text()).not.toContain('custom-daily')
+    expect(fetchAssistantRole.mock.calls.length - before).toBe(1)
+  })
+
   it('creates and deletes custom recipes to reconcile the persisted role detail', async () => {
     const wrapper = mount(AssistantRolesPanel)
     await flushPromises()
@@ -147,7 +174,7 @@ describe('AssistantRolesPanel', () => {
     expect(wrapper.find('[data-test="toggle-health-manager"]').attributes('aria-label')).toContain('Health Manager')
     await select.trigger('keydown', { key: 'Enter' })
     expect(store.selectedRoleId).toBe('health-manager')
-    await wrapper.find('[data-test="clone-custom-coach"]').trigger('click')
+    await wrapper.find('[data-test="toggle-custom-coach"]').trigger('click')
     expect(store.selectedRoleId).toBe('health-manager')
   })
 

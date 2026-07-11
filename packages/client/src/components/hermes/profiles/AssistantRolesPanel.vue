@@ -60,11 +60,11 @@ onMounted(async () => { if (!profilesStore.profiles.length) await profilesStore.
 function selectRole(role: AssistantRoleSummary): void { store.selectedRoleId = role.id; void loadDetail(role.id) }
 function openCreate(): void { detail.value = blankRole(); editorRoleId.value = null; editorMode.value = 'create'; editorOpen.value = true }
 async function openEdit(role: AssistantRoleSummary): Promise<void> { editorOpen.value = false; editorRoleId.value = null; store.selectedRoleId = role.id; const loaded = await loadDetail(role.id); if (!loaded) return; editorRoleId.value = loaded.id; editorMode.value = 'edit'; editorOpen.value = true }
-async function toggleRole(role: AssistantRoleSummary, enabled: boolean): Promise<void> { try { detail.value = await store.updateRole(role.id, { enabled }) } catch (cause) { message.error(cause instanceof Error ? cause.message : String(cause)) } }
-async function cloneRole(role: AssistantRoleSummary): Promise<void> { try { await store.cloneRole(role.id, { name: `${role.name} Copy` }); message.success(m.value.clone) } catch (cause) { message.error(cause instanceof Error ? cause.message : String(cause)) } }
+async function toggleRole(role: AssistantRoleSummary, enabled: boolean): Promise<void> { try { const updated = await store.updateRole(role.id, { enabled }); if (store.selectedRoleId === role.id) detail.value = updated } catch (cause) { message.error(cause instanceof Error ? cause.message : String(cause)) } }
+async function cloneRole(role: AssistantRoleSummary): Promise<void> { try { const cloned = await store.cloneRole(role.id, { name: `${role.name} Copy` }); store.selectedRoleId = cloned.id; await loadDetail(cloned.id); message.success(m.value.clone) } catch (cause) { message.error(cause instanceof Error ? cause.message : String(cause)) } }
 function deleteRole(role: AssistantRoleSummary): void {
   if (role.builtIn) return
-  dialog.warning({ title: m.value.delete, content: role.name, positiveText: m.value.delete, negativeText: m.value.cancel, async onPositiveClick() { try { await store.deleteRole(role.id); message.success(m.value.delete) } catch (cause) { message.error(cause instanceof Error ? cause.message : String(cause)) } } })
+  dialog.warning({ title: m.value.delete, content: role.name, positiveText: m.value.delete, negativeText: m.value.cancel, async onPositiveClick() { try { detail.value = null; previewRecipeId.value = ''; await store.deleteRole(role.id); await loadDetail(store.selectedRoleId); message.success(m.value.delete) } catch (cause) { message.error(cause instanceof Error ? cause.message : String(cause)) } } })
 }
 type RecipeDraft = ContextRecipeInput & { id?: string; builtIn?: boolean }
 function recipeInput(recipe: RecipeDraft): ContextRecipeInput {
@@ -122,7 +122,7 @@ async function preview(role: AssistantRoleSummary): Promise<void> { try { store.
           </div>
         </li>
       </ul>
-      <aside class="role-detail"><NSpin :show="detailLoading"><template v-if="detail"><h3>{{ detail.name }}</h3><p>{{ detail.persona }}</p><dl><dt>{{ m.domains }}</dt><dd>{{ detail.dataScope.domains.join(', ') || '—' }}</dd><dt>{{ m.sections }}</dt><dd>{{ detail.dataScope.sections.join(', ') || '—' }}</dd><dt>{{ m.profileMapping }}</dt><dd>{{ detail.primaryProfileName || m.noProfile }}</dd></dl><label>{{ m.recipes }}<select data-test="preview-recipe" v-model="previewRecipeId"><option value="">—</option><option v-for="recipe in detail.recipes.filter(item => item.enabled)" :key="recipe.id" :value="recipe.id">{{ recipe.name }}</option></select></label><label>{{ m.query }}<NInput v-model:value="previewQuery" /></label></template></NSpin></aside>
+      <aside class="role-detail" data-test="role-detail" :data-role-id="detail?.id || ''"><NSpin :show="detailLoading"><template v-if="detail"><h3>{{ detail.name }}</h3><p>{{ detail.persona }}</p><dl><dt>{{ m.domains }}</dt><dd>{{ detail.dataScope.domains.join(', ') || '—' }}</dd><dt>{{ m.sections }}</dt><dd>{{ detail.dataScope.sections.join(', ') || '—' }}</dd><dt>{{ m.profileMapping }}</dt><dd>{{ detail.primaryProfileName || m.noProfile }}</dd></dl><label>{{ m.recipes }}<select data-test="preview-recipe" v-model="previewRecipeId"><option value="">—</option><option v-for="recipe in detail.recipes.filter(item => item.enabled)" :key="recipe.id" :value="recipe.id">{{ recipe.name }}</option></select></label><label>{{ m.query }}<NInput v-model:value="previewQuery" /></label></template></NSpin></aside>
     </div>
     <AssistantRoleEditor :show="editorOpen" :mode="editorMode" :role="detail" :profile-names="profileNames" :saving="store.saving" @close="editorOpen = false" @save="save" />
     <AssistantRolePreviewDrawer :show="previewOpen" :bundle="previewBundle" @close="previewOpen = false" />
