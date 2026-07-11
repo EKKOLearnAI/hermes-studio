@@ -14,9 +14,13 @@ const MAX_ACTOR = 200
 const MAX_REASON = 2_000
 
 export function getFabricControlState(): FabricControlState {
-  return withActionFabricDb(db => parseControl(db.prepare(
+  return withActionFabricDb(getFabricControlStateInDb)
+}
+
+export function getFabricControlStateInDb(db: import('node:sqlite').DatabaseSync): FabricControlState {
+  return parseControl(db.prepare(
     'SELECT level, version, actor_user_id, reason, updated_at FROM fabric_control_state WHERE id = 1',
-  ).get() as ControlRow))
+  ).get() as ControlRow)
 }
 
 export function setFabricEmergencyStop(

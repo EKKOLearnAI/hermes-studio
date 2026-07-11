@@ -191,6 +191,11 @@ export interface FabricPolicyInput extends FabricActionIntentInput {
   expectedMaterialInputDigest?: string
 }
 
+export interface FabricPolicyEvaluationOptions {
+  /** Server dependency injection only; this object is never populated from an intent or HTTP body. */
+  clock?: () => Date
+}
+
 export interface FabricBudgetReservation {
   id: string
   decisionId: string

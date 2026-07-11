@@ -291,9 +291,17 @@ export function resolveFabricExecutor(
   options: { environments: FabricEnvironment[] },
 ): ResolvedFabricExecutor | null {
   const environments = normalizeEnvironments(options.environments)
-  return withActionFabricDb(db => {
-    const placeholders = environments.map(() => '?').join(',')
-    const row = db.prepare(`WITH registry_revision AS (
+  return withActionFabricDb(db => resolveFabricExecutorInDb(db, capabilityId, { environments }))
+}
+
+export function resolveFabricExecutorInDb(
+  db: DatabaseSync,
+  capabilityId: string,
+  options: { environments: FabricEnvironment[] },
+): ResolvedFabricExecutor | null {
+  const environments = normalizeEnvironments(options.environments)
+  const placeholders = environments.map(() => '?').join(',')
+  const row = db.prepare(`WITH registry_revision AS (
       SELECT value FROM fabric_meta WHERE key='registry_policy_revision'
     )
       SELECT
@@ -327,8 +335,8 @@ export function resolveFabricExecutor(
       WHERE c.id=? AND c.enabled=1
         AND e.enabled=1 AND e.health='healthy' AND e.environment IN (${placeholders})
       ORDER BY e.id LIMIT 1`).get(capabilityId, ...environments) as ResolutionRow | undefined
-    if (!row) return null
-    const capability = parseCapability({
+  if (!row) return null
+  const capability = parseCapability({
       id: row.capability_id, version: row.capability_version, domain: row.capability_domain,
       verb: row.capability_verb, description: row.capability_description,
       input_schema_json: row.capability_input_schema_json, output_schema_json: row.capability_output_schema_json,
@@ -342,7 +350,7 @@ export function resolveFabricExecutor(
       contract_digest: row.capability_contract_digest, enabled: row.capability_enabled,
       created_at: row.capability_created_at, updated_at: row.capability_updated_at,
     })
-    const executor = parseExecutor({
+  const executor = parseExecutor({
       id: row.executor_id, type: row.executor_type, name: row.executor_name,
       environment: row.executor_environment, health: row.executor_health,
       health_details_json: row.executor_health_details_json,
@@ -350,13 +358,13 @@ export function resolveFabricExecutor(
       policy_version: row.executor_policy_version, created_at: row.executor_created_at,
       updated_at: row.executor_updated_at,
     })
-    const binding: FabricExecutorCapability = {
+  const binding: FabricExecutorCapability = {
       executorId: row.binding_executor_id, capabilityId: row.binding_capability_id,
       capabilityVersion: row.binding_capability_version, contractDigest: row.binding_contract_digest,
       createdAt: row.binding_created_at,
     }
-    const policyRevision = parseRegistryPolicyRevision(row.policy_revision_value)
-    return {
+  const policyRevision = parseRegistryPolicyRevision(row.policy_revision_value)
+  return {
       executor, capability, binding, policyRevision,
       policyEvaluationToken: digest({
         policyRevision,
@@ -365,8 +373,7 @@ export function resolveFabricExecutor(
         executorId: executor.id, executorType: executor.type, environment: executor.environment,
         health: executor.health, enabled: executor.enabled, policyVersion: executor.policyVersion,
       }),
-    }
-  })
+  }
 }
 
 function hasCompleteBuiltInRegistry(db: DatabaseSync): boolean {

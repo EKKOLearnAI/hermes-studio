@@ -74,6 +74,26 @@ describe('assistant role registry', () => {
     })
   })
 
+  it('atomically normalizes legacy or malformed policy metadata to editable fail-closed v1 values', async () => {
+    const roles = await import('../../packages/server/src/services/hermes/personal-twin')
+    roles.ensureBuiltInAssistantRoles()
+    roles.withPersonalTwinDb(db => db.prepare(`UPDATE twin_assistant_roles SET capability_scope_json=?,
+      decision_authority_json=?, spending_limits_json=? WHERE id=?`).run(
+      JSON.stringify({ allow: ['simulator.echo'], deny: ['action.execute'], enforcement: 'declarative_phase_2' }),
+      JSON.stringify({ mode: 'recommend_only', requiresConfirmation: ['payment'] }),
+      JSON.stringify({ currency: 'USD', perAction: 50 }), 'health-manager',
+    ))
+
+    expect(roles.migrateAssistantRoleCapabilityEnforcement()).toBe(1)
+    expect(roles.getAssistantRole('health-manager')).toMatchObject({
+      capabilityScope: { allow: ['simulator.echo'], deny: ['action.execute'], enforcement: 'action_fabric_v1' },
+      decisionAuthority: { maxRisk: 'none', requireApprovalAbove: 'none', allowedTargets: [] },
+      spendingLimits: { currency: null, perAction: 0, daily: 0 },
+    })
+    expect(roles.migrateAssistantRoleCapabilityEnforcement()).toBe(0)
+    expect(() => roles.updateAssistantRole('health-manager', { description: 'editable after migration' })).not.toThrow()
+  })
+
   it('creates, updates, and deletes custom roles atomically with their recipes', async () => {
     const roles = await import('../../packages/server/src/services/hermes/personal-twin')
     const created = roles.createAssistantRole(validRole({ id: 'recovery-coach' }))

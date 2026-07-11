@@ -6,14 +6,15 @@ import {
 } from '../personal-twin'
 import type { AssistantRole, AssistantRoleRisk } from '../personal-twin'
 import { appendFabricAuditEvent, appendFabricOutbox, withFabricAuditedTransaction } from './audit'
-import { getFabricControlState } from './control'
-import { ensureBuiltInFabricRegistry, resolveFabricExecutor } from './registry'
+import { getFabricControlStateInDb } from './control'
+import { ensureBuiltInFabricRegistry, resolveFabricExecutorInDb } from './registry'
 import type {
   FabricBudgetReservation,
   FabricEnvironment,
   FabricMoney,
   FabricPolicyDecision,
   FabricPolicyInput,
+  FabricPolicyEvaluationOptions,
   ResolvedFabricExecutor,
 } from './types'
 
@@ -24,6 +25,7 @@ type ReasonCode =
   | 'executor_unavailable' | 'target_not_allowed' | 'risk_requires_approval'
   | 'per_action_limit_exceeded' | 'daily_limit_exceeded' | 'currency_mismatch'
   | 'emergency_stop' | 'material_input_changed'
+  | 'role_policy_invalid' | 'irreversible_requires_approval'
 
 interface DecisionRow {
   id: string; intent_id: string; executor_id: string | null; outcome: 'allow' | 'deny' | 'waiting_user'
@@ -38,79 +40,87 @@ interface LedgerRow {
   status: 'reserved' | 'committed' | 'released'; created_at: string; updated_at: string
 }
 
-export function evaluateFabricPolicy(input: FabricPolicyInput): FabricPolicyDecision {
+export function evaluateFabricPolicy(input: FabricPolicyInput, options: FabricPolicyEvaluationOptions = {}): FabricPolicyDecision {
   validateInput(input)
   ensureBuiltInFabricRegistry()
   migrateAssistantRoleCapabilityEnforcement()
-  const role = getAssistantRole(input.requestedByRoleId)
   const environments = input.environments ?? ['simulator', 'internal']
-  const resolution = resolveFabricExecutor(input.capabilityId, { environments })
   const materialInputDigest = digest({
     capabilityId: input.capabilityId, target: input.target, input: input.input,
     constraints: input.constraints, expectedCost: input.expectedCost ?? null,
   })
   const sanitizedSummary = summarize(input)
-  const control = readControlState()
-  const reasons: ReasonCode[] = []
-  let outcome: FabricPolicyDecision['outcome'] = 'allow'
-  let budget: FabricMoney | null = null
-
-  if (!role) reasons.push('role_missing')
-  else if (!role.enabled) reasons.push('role_disabled')
-  else if (role.capabilityScope.deny.includes(input.capabilityId)) reasons.push('capability_denied')
-  else if (!role.capabilityScope.allow.includes(input.capabilityId)) reasons.push('capability_not_allowed')
-  else if (!resolution) reasons.push('executor_unavailable')
-  else if (emergencyBlocks(control.level, input.phase ?? 'intent')) reasons.push('emergency_stop')
-  else if (input.expectedMaterialInputDigest !== undefined && input.expectedMaterialInputDigest !== materialInputDigest) {
-    reasons.push('material_input_changed')
-  } else if (!targetAllowed(role, resolution, input.target)) reasons.push('target_not_allowed')
-  else {
-    const risk = RISK_ORDER[resolution.capability.risk]
-    if (risk > RISK_ORDER[role.decisionAuthority.maxRisk]) {
-      reasons.push('risk_requires_approval')
-      outcome = 'deny'
-    } else if (role.decisionAuthority.requireApprovalAbove !== undefined
-      && risk > RISK_ORDER[role.decisionAuthority.requireApprovalAbove]) {
-      reasons.push('risk_requires_approval')
-      outcome = 'waiting_user'
-    }
-    const cost = input.expectedCost ?? (resolution.capability.cost.currency === null
-      ? null
-      : { currency: resolution.capability.cost.currency, amountMinor: resolution.capability.cost.estimatedMinor })
-    if (outcome === 'allow' && cost) {
-      if (role.spendingLimits.currency !== cost.currency) reasons.push('currency_mismatch')
-      else if (cost.amountMinor > role.spendingLimits.perAction) reasons.push('per_action_limit_exceeded')
-      if (reasons.length > 0) outcome = 'deny'
-      else if (cost.amountMinor > 0) budget = cost
-    }
-  }
-  if (reasons.length > 0 && outcome === 'allow') outcome = 'deny'
-
-  const roleSnapshot = role === null ? null : {
-    roleUpdatedAt: role.updatedAt,
-    roleDigest: digest(rolePolicyMaterial(role)),
-  }
-  const registrySnapshot = resolution === null ? null : {
-    registryPolicyRevision: resolution.policyRevision,
-    registryPolicyEvaluationToken: resolution.policyEvaluationToken,
-  }
-  const snapshot = {
-    ...roleSnapshot, ...registrySnapshot, controlVersion: control.version, controlLevel: control.level,
-    phase: input.phase ?? 'intent', environments: [...environments].sort(), ledgerDate: utcDate(new Date()),
-  }
 
   return withFabricAuditedTransaction(db => {
+    const instant = evaluationInstant(options)
+    const now = instant.toISOString()
+    const ledgerDate = utcDate(instant)
+    const role = getAssistantRole(input.requestedByRoleId)
+    const resolution = resolveFabricExecutorInDb(db, input.capabilityId, { environments })
+    const control = getFabricControlStateInDb(db)
+    const effective = effectiveCost(resolution, input.expectedCost)
+    const snapshot = {
+      ...(role === null ? {} : { roleUpdatedAt: role.updatedAt, roleDigest: digest(rolePolicyMaterial(role)) }),
+      ...(resolution === null ? {} : { registryPolicyRevision: resolution.policyRevision,
+        registryPolicyEvaluationToken: resolution.policyEvaluationToken }),
+      controlVersion: control.version, controlLevel: control.level, phase: input.phase ?? 'intent',
+      environments: [...environments].sort(), ledgerDate, effectiveCost: effective.money,
+    }
     const existing = db.prepare(`SELECT id, material_input_digest FROM fabric_action_intents
       WHERE requested_by_user_id=? AND requested_by_role_id=? AND idempotency_key=?`).get(
       input.requestedByUserId, input.requestedByRoleId, input.idempotencyKey,
     ) as { id: string; material_input_digest: string } | undefined
     const intentId = existing?.id ?? `intent-${randomUUID()}`
-    if (existing && existing.material_input_digest !== materialInputDigest && !reasons.includes('material_input_changed')) {
-      reasons.splice(0, reasons.length, 'material_input_changed')
-      outcome = 'deny'
-      budget = null
+    const previous = existing ? latestDecisionForIntent(db, intentId) : undefined
+    if (existing?.material_input_digest !== undefined && existing.material_input_digest !== materialInputDigest) {
+      return previous ? { ...parseDecision(previous), outcome: 'deny', reasonCodes: ['material_input_changed'],
+        materialInputDigest, budget: null } : conflictDecision(intentId, materialInputDigest, sanitizedSummary, now)
     }
-    const now = new Date().toISOString()
+    if (previous && sameSnapshot(previous, snapshot)) return parseDecision(previous)
+    if (previous) {
+      db.prepare(`UPDATE fabric_budget_ledger SET status='released', updated_at=? WHERE status='reserved'
+        AND decision_id IN (SELECT id FROM fabric_policy_decisions WHERE intent_id=?)`).run(now, intentId)
+    }
+
+    const reasons: ReasonCode[] = []
+    let outcome: FabricPolicyDecision['outcome'] = 'allow'
+    let budget: FabricMoney | null = null
+    if (!role) reasons.push('role_missing')
+    else if (!validRuntimeRolePolicy(role)) reasons.push('role_policy_invalid')
+    else if (!role.enabled) reasons.push('role_disabled')
+    else if (role.capabilityScope.deny.includes(input.capabilityId)) reasons.push('capability_denied')
+    else if (!role.capabilityScope.allow.includes(input.capabilityId)) reasons.push('capability_not_allowed')
+    else if (!resolution) reasons.push('executor_unavailable')
+    else if (emergencyBlocks(control.level, input.phase ?? 'intent')) reasons.push('emergency_stop')
+    else if (input.expectedMaterialInputDigest !== undefined && input.expectedMaterialInputDigest !== materialInputDigest) {
+      reasons.push('material_input_changed')
+    } else if (!targetAllowed(role, resolution, input.target)) reasons.push('target_not_allowed')
+    else if (effective.currencyMismatch) reasons.push('currency_mismatch')
+    else {
+      const risk = RISK_ORDER[resolution.capability.risk]
+      if (risk > RISK_ORDER[role.decisionAuthority.maxRisk]) {
+        reasons.push('risk_requires_approval')
+        outcome = 'deny'
+      } else {
+        if (role.decisionAuthority.requireApprovalAbove !== undefined
+          && risk > RISK_ORDER[role.decisionAuthority.requireApprovalAbove]) {
+          reasons.push('risk_requires_approval')
+          outcome = 'waiting_user'
+        }
+        if (resolution.capability.sideEffect && !resolution.capability.reversible) {
+          reasons.push('irreversible_requires_approval')
+          outcome = 'waiting_user'
+        }
+      }
+      if (outcome !== 'deny' && effective.money) {
+        if (role.spendingLimits.currency !== effective.money.currency) reasons.push('currency_mismatch')
+        else if (effective.money.amountMinor > role.spendingLimits.perAction) reasons.push('per_action_limit_exceeded')
+        if (reasons.includes('currency_mismatch') || reasons.includes('per_action_limit_exceeded')) outcome = 'deny'
+        else if (effective.money.amountMinor > 0) budget = effective.money
+      }
+    }
+    if (reasons.length > 0 && outcome === 'allow') outcome = 'deny'
+
     if (!existing) {
       db.prepare(`INSERT INTO fabric_action_intents(
         id,capability_id,capability_version,requested_by_role_id,requested_by_user_id,idempotency_key,
@@ -119,12 +129,12 @@ export function evaluateFabricPolicy(input: FabricPolicyInput): FabricPolicyDeci
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
         intentId, input.capabilityId, resolution?.capability.version ?? 1, input.requestedByRoleId,
         input.requestedByUserId, input.idempotencyKey, '[redacted]', redactedObject(input.target),
-        redactedObject(input.input), redactedObject(input.constraints), '[redacted]', input.expectedCost?.currency ?? null,
-        input.expectedCost?.amountMinor ?? null, materialInputDigest, JSON.stringify(sanitizedSummary), now, now,
+        redactedObject(input.input), redactedObject(input.constraints), '[redacted]', effective.money?.currency ?? null,
+        effective.money?.amountMinor ?? null, materialInputDigest, JSON.stringify(sanitizedSummary), now, now,
       )
     }
     const decisionId = `decision-${randomUUID()}`
-    if (outcome === 'allow' && budget && wouldExceedDaily(db, role!, input, budget, utcDate(new Date()))) {
+    if (outcome === 'allow' && budget && wouldExceedDaily(db, role!, input, budget, ledgerDate)) {
       reasons.splice(0, reasons.length, 'daily_limit_exceeded')
       outcome = 'deny'
       budget = null
@@ -137,7 +147,7 @@ export function evaluateFabricPolicy(input: FabricPolicyInput): FabricPolicyDeci
       materialInputDigest, JSON.stringify(snapshot), JSON.stringify(sanitizedSummary),
       budget?.currency ?? null, budget?.amountMinor ?? null, now,
     )
-    if (outcome === 'allow' && budget) insertReservation(db, decisionId, input, budget, utcDate(new Date()), now)
+    if (outcome === 'allow' && budget) insertReservation(db, decisionId, input, budget, ledgerDate, now)
     appendFabricAuditEvent(db, {
       eventType: 'policy.evaluated', actorUserId: input.requestedByUserId, aggregateType: 'intent',
       aggregateId: intentId, payload: { decisionId, outcome, reasonCodes: reasons, sanitizedSummary }, occurredAt: now,
@@ -153,14 +163,14 @@ export function evaluateFabricPolicy(input: FabricPolicyInput): FabricPolicyDeci
 
 export function reserveFabricBudget(decisionId: string): FabricBudgetReservation {
   return withFabricAuditedTransaction(db => {
-    const existing = selectLedgerByDecision(db, decisionId)
-    if (existing) return parseLedger(existing)
     const decision = requireDecision(db, decisionId)
     if (decision.outcome !== 'allow' || decision.budget_currency === null || decision.budget_amount_minor === null) {
       throw new Error('FABRIC_BUDGET_NOT_RESERVABLE')
     }
     const intent = requireIntentIdentity(db, decision.intent_id)
-    revalidateSnapshot(decision, intent.requested_by_role_id)
+    revalidateSnapshot(db, decision, intent.requested_by_role_id)
+    const existing = selectLedgerByDecision(db, decisionId)
+    if (existing) return parseLedger(existing)
     const now = new Date().toISOString()
     return parseLedger(insertReservation(db, decisionId, {
       requestedByUserId: intent.requested_by_user_id, requestedByRoleId: intent.requested_by_role_id,
@@ -179,7 +189,7 @@ export function commitFabricBudget(workflowId: string, actual?: FabricMoney): vo
     }
     if (context.ledger.status === 'released') throw new Error('FABRIC_BUDGET_ALREADY_RELEASED')
     if (context.ledger.workflow_id !== null && context.ledger.workflow_id !== workflowId) throw new Error('FABRIC_BUDGET_OWNERSHIP_CONFLICT')
-    revalidateSnapshot(context.decision, context.intent.requested_by_role_id)
+    revalidateSnapshot(db, context.decision, context.intent.requested_by_role_id)
     const money = actual ?? { currency: context.ledger.currency, amountMinor: context.ledger.amount_minor }
     validateMoney(money)
     if (money.currency !== context.ledger.currency) throw new Error('FABRIC_BUDGET_CURRENCY_MISMATCH')
@@ -211,12 +221,53 @@ export function releaseFabricBudget(workflowId: string): void {
   })
 }
 
-function readControlState(): { level: 0 | 1 | 2 | 3; version: number } {
-  return getFabricControlState()
-}
-
 function emergencyBlocks(level: number, phase: 'intent' | 'execution'): boolean {
   return phase === 'intent' ? level >= 1 : level >= 2
+}
+
+function evaluationInstant(options: FabricPolicyEvaluationOptions): Date {
+  const instant = options.clock?.() ?? new Date()
+  if (!(instant instanceof Date) || !Number.isFinite(instant.getTime())) throw new Error('FABRIC_POLICY_INVALID_CLOCK')
+  return new Date(instant.getTime())
+}
+
+function effectiveCost(resolution: ResolvedFabricExecutor | null, expected: FabricMoney | undefined): {
+  money: FabricMoney | null
+  currencyMismatch: boolean
+} {
+  if (!resolution) return { money: expected ?? null, currencyMismatch: false }
+  const contract = resolution.capability.cost
+  if (contract.currency !== null) {
+    if (expected && expected.currency !== contract.currency) {
+      return { money: { currency: contract.currency, amountMinor: contract.estimatedMinor }, currencyMismatch: true }
+    }
+    return { money: { currency: contract.currency,
+      amountMinor: Math.max(contract.estimatedMinor, expected?.amountMinor ?? 0) }, currencyMismatch: false }
+  }
+  return { money: expected ?? null, currencyMismatch: false }
+}
+
+function validRuntimeRolePolicy(role: AssistantRole): boolean {
+  const scope = role.capabilityScope
+  if (!scope || scope.enforcement !== 'action_fabric_v1' || !validSemanticList(scope.allow) || !validSemanticList(scope.deny)) return false
+  const authority = role.decisionAuthority
+  if (!authority || Object.keys(authority).some(key => !['maxRisk', 'requireApprovalAbove', 'allowedTargets'].includes(key))
+    || !Object.prototype.hasOwnProperty.call(RISK_ORDER, authority.maxRisk)) return false
+  if (authority.requireApprovalAbove !== undefined
+    && !Object.prototype.hasOwnProperty.call(RISK_ORDER, authority.requireApprovalAbove)) return false
+  if (authority.allowedTargets !== undefined && (!Array.isArray(authority.allowedTargets)
+    || authority.allowedTargets.length > 64 || new Set(authority.allowedTargets).size !== authority.allowedTargets.length
+    || authority.allowedTargets.some(item => typeof item !== 'string' || !item.trim() || item !== item.trim() || item === '*'))) return false
+  const spending = role.spendingLimits
+  return !!spending && !Object.keys(spending).some(key => !['currency', 'perAction', 'daily'].includes(key))
+    && (spending.currency === null || (typeof spending.currency === 'string' && /^[A-Z]{3}$/.test(spending.currency)))
+    && Number.isSafeInteger(spending.perAction) && spending.perAction >= 0
+    && Number.isSafeInteger(spending.daily) && spending.daily >= 0
+    && (spending.currency !== null || (spending.perAction === 0 && spending.daily === 0))
+}
+
+function validSemanticList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string' && /^[a-z][a-z0-9]*(?:[._:-][a-z0-9][a-z0-9-]*)*$/.test(item))
 }
 
 function targetAllowed(role: AssistantRole, resolution: ResolvedFabricExecutor, target: Record<string, unknown>): boolean {
@@ -232,11 +283,17 @@ function targetAllowed(role: AssistantRole, resolution: ResolvedFabricExecutor, 
 
 /** `id` and `target` are aliases; providing both is rejected instead of applying hidden precedence. */
 function normalizedLiteralTarget(target: Record<string, unknown>): string | null | false {
-  const hasId = Object.prototype.hasOwnProperty.call(target, 'id')
-  const hasTarget = Object.prototype.hasOwnProperty.call(target, 'target')
+  const prototype = Object.getPrototypeOf(target)
+  if (prototype !== Object.prototype && prototype !== null) return false
+  const keys = Reflect.ownKeys(target)
+  if (keys.some(key => typeof key !== 'string' || (key !== 'id' && key !== 'target'))) return false
+  const hasId = keys.includes('id')
+  const hasTarget = keys.includes('target')
   if (hasId && hasTarget) return false
   if (!hasId && !hasTarget) return null
-  const raw = hasId ? target.id : target.target
+  const descriptor = Object.getOwnPropertyDescriptor(target, hasId ? 'id' : 'target')
+  if (!descriptor?.enumerable || !('value' in descriptor)) return false
+  const raw = descriptor.value
   if (typeof raw !== 'string') return false
   const normalized = raw.trim()
   if (!normalized || normalized === '*') return false
@@ -268,6 +325,13 @@ function validateInput(input: FabricPolicyInput): void {
   }
   for (const value of [input.target, input.input, input.constraints]) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('FABRIC_POLICY_INVALID_JSON')
+  }
+  const targetPrototype = Object.getPrototypeOf(input.target)
+  if (targetPrototype !== Object.prototype && targetPrototype !== null) throw new Error('FABRIC_POLICY_INVALID_JSON')
+  for (const key of Reflect.ownKeys(input.target)) {
+    if (typeof key !== 'string') throw new Error('FABRIC_POLICY_INVALID_JSON')
+    const descriptor = Object.getOwnPropertyDescriptor(input.target, key)
+    if (!descriptor?.enumerable || !('value' in descriptor)) throw new Error('FABRIC_POLICY_INVALID_JSON')
   }
   if (Object.prototype.hasOwnProperty.call(input, 'expectedCost')) {
     if (!input.expectedCost || typeof input.expectedCost !== 'object') throw new Error('FABRIC_BUDGET_INVALID_MONEY')
@@ -320,6 +384,22 @@ function requireDecision(db: DatabaseSync, id: string): DecisionRow {
   return row
 }
 
+function latestDecisionForIntent(db: DatabaseSync, intentId: string): DecisionRow | undefined {
+  return db.prepare(`SELECT * FROM fabric_policy_decisions WHERE intent_id=?
+    ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(intentId) as unknown as DecisionRow | undefined
+}
+
+function sameSnapshot(decision: DecisionRow, snapshot: Record<string, unknown>): boolean {
+  try { return stableStringify(JSON.parse(decision.policy_snapshot_json)) === stableStringify(snapshot) } catch { return false }
+}
+
+function conflictDecision(intentId: string, materialInputDigest: string,
+  sanitizedSummary: Record<string, unknown>, now: string): FabricPolicyDecision {
+  return { id: `conflict-${digest(`${intentId}:${materialInputDigest}`)}`, intentId, executorId: null,
+    outcome: 'deny', reasonCodes: ['material_input_changed'], policyVersion: POLICY_VERSION,
+    materialInputDigest, policySnapshot: {}, sanitizedSummary, budget: null, createdAt: now }
+}
+
 function requireIntentIdentity(db: DatabaseSync, id: string): { requested_by_user_id: string; requested_by_role_id: string } {
   const row = db.prepare('SELECT requested_by_user_id,requested_by_role_id FROM fabric_action_intents WHERE id=?').get(id) as
     { requested_by_user_id: string; requested_by_role_id: string } | undefined
@@ -337,18 +417,18 @@ function requireWorkflowLedger(db: DatabaseSync, workflowId: string) {
   return { decision, ledger, intent: requireIntentIdentity(db, decision.intent_id) }
 }
 
-function revalidateSnapshot(decision: DecisionRow, roleId: string): void {
+function revalidateSnapshot(db: DatabaseSync, decision: DecisionRow, roleId: string): void {
   const snapshot = JSON.parse(decision.policy_snapshot_json) as Record<string, unknown>
   const role = getAssistantRole(roleId)
   if (!role || snapshot.roleUpdatedAt !== role.updatedAt || snapshot.roleDigest !== digest(rolePolicyMaterial(role))) {
     throw new Error('FABRIC_POLICY_STALE_ROLE')
   }
   const environments = snapshot.environments as FabricEnvironment[]
-  const resolution = resolveFabricExecutor((JSON.parse(decision.sanitized_summary_json) as { capabilityId: string }).capabilityId,
+  const resolution = resolveFabricExecutorInDb(db, (JSON.parse(decision.sanitized_summary_json) as { capabilityId: string }).capabilityId,
     { environments })
   if (!resolution || resolution.policyRevision !== snapshot.registryPolicyRevision
     || resolution.policyEvaluationToken !== snapshot.registryPolicyEvaluationToken) throw new Error('FABRIC_POLICY_STALE_REGISTRY')
-  const control = readControlState()
+  const control = getFabricControlStateInDb(db)
   if (control.version !== snapshot.controlVersion || emergencyBlocks(control.level, snapshot.phase as 'intent' | 'execution')) {
     throw new Error('FABRIC_POLICY_STALE_CONTROL')
   }

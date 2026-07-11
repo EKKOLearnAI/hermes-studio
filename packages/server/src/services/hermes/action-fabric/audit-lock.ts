@@ -1,5 +1,6 @@
-import { mkdirSync } from 'fs'
-import { basename, dirname, resolve } from 'path'
+import { existsSync, mkdirSync } from 'fs'
+import { basename, dirname, join, resolve } from 'path'
+import { homedir } from 'os'
 import { DatabaseSync } from 'node:sqlite'
 
 const DEFAULT_BUSY_TIMEOUT_MS = 5_000
@@ -60,6 +61,19 @@ export function withFabricAuditWriterLock<T>(
       database.close()
     }
   }
+}
+
+/** Shared cross-process serialization boundary for Action Fabric and policy-affecting Personal Twin writes. */
+export function withPersonalActionFabricWriterLock<T>(operation: () => T): T {
+  let home = process.env.HERMES_HOME ? resolve(process.env.HERMES_HOME) : resolve(homedir(), '.hermes')
+  if (!process.env.HERMES_HOME && process.platform === 'win32') {
+    const native = [process.env.LOCALAPPDATA, process.env.APPDATA]
+      .filter((value): value is string => !!value?.trim()).map(value => resolve(value, 'hermes'))
+      .find(existsSync)
+    if (native) home = native
+  }
+  if (basename(dirname(home)) === 'profiles') home = dirname(dirname(home))
+  return withFabricAuditWriterLock(join(home, 'personal'), operation)
 }
 
 function isSqliteBusy(error: unknown): boolean {

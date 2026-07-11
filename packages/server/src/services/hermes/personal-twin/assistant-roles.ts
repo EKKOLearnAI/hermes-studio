@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { detectHermesRootHome } from '../hermes-path'
+import { withPersonalActionFabricWriterLock } from '../action-fabric/audit-lock'
 import { getPersonalTwinDbPath, withPersonalTwinDb } from './database'
 import {
   AssistantRole,
@@ -467,7 +468,7 @@ function ensureRegistry(): void {
 }
 
 export function ensureBuiltInAssistantRoles(): void {
-  withPersonalTwinDb(db => transaction(db, () => {
+  withPersonalActionFabricWriterLock(() => withPersonalTwinDb(db => transaction(db, () => {
     const timestamp = nowIso()
     const insertRoleStatement = db.prepare(`
       INSERT INTO twin_assistant_roles (
@@ -515,34 +516,77 @@ export function ensureBuiltInAssistantRoles(): void {
         timestamp,
       )
     }
-  }))
+  })))
   SEEDED_DATABASE_PATHS.add(getPersonalTwinDbPath())
 }
 
 /** One-time Phase 3 activation. Reads intentionally never invoke this writer. */
 export function migrateAssistantRoleCapabilityEnforcement(): number {
   ensureRegistry()
-  const needsMigration = withPersonalTwinDb(db => db.prepare(
-    "SELECT 1 AS present FROM twin_assistant_roles WHERE capability_scope_json LIKE '%declarative_phase_2%' LIMIT 1",
-  ).get() !== undefined)
-  if (!needsMigration) return 0
-  return withPersonalTwinDb(db => transaction(db, () => {
-    const rows = db.prepare('SELECT id, capability_scope_json FROM twin_assistant_roles').all() as Array<{
+  return withPersonalActionFabricWriterLock(() => withPersonalTwinDb(db => {
+    const rows = db.prepare(`SELECT id, capability_scope_json, decision_authority_json, spending_limits_json
+      FROM twin_assistant_roles`).all() as Array<{
       id: string
       capability_scope_json: string
+      decision_authority_json: string
+      spending_limits_json: string
     }>
-    let migrated = 0
-    const update = db.prepare('UPDATE twin_assistant_roles SET capability_scope_json = ?, updated_at = ? WHERE id = ?')
+    const changes: Array<{ id: string; scope: AssistantRoleCapabilityScope; authority: AssistantRoleDecisionAuthority; spending: AssistantRoleSpendingLimits }> = []
     for (const row of rows) {
-      const scope = parseJson<AssistantRoleCapabilityScope>(row.capability_scope_json, 'capability scope')
-      if (scope.enforcement !== 'declarative_phase_2') continue
-      const next: AssistantRoleCapabilityScope = { allow: [...scope.allow], deny: [...scope.deny], enforcement: 'action_fabric_v1' }
-      validateCapabilityScope(next)
-      update.run(JSON.stringify(next), nowIso(), row.id)
-      migrated += 1
+      const scope = normalizeStoredCapabilityScope(row.capability_scope_json)
+      const authority = normalizeStoredDecisionAuthority(row.decision_authority_json)
+      const spending = normalizeStoredSpendingLimits(row.spending_limits_json)
+      if (row.capability_scope_json === JSON.stringify(scope)
+        && row.decision_authority_json === JSON.stringify(authority)
+        && row.spending_limits_json === JSON.stringify(spending)) continue
+      changes.push({ id: row.id, scope, authority, spending })
     }
-    return migrated
+    if (changes.length === 0) return 0
+    return transaction(db, () => {
+      const update = db.prepare(`UPDATE twin_assistant_roles SET capability_scope_json=?, decision_authority_json=?,
+        spending_limits_json=?, updated_at=? WHERE id=?`)
+      const timestamp = nowIso()
+      for (const change of changes) update.run(JSON.stringify(change.scope), JSON.stringify(change.authority),
+        JSON.stringify(change.spending), timestamp, change.id)
+      return changes.length
+    })
   }))
+}
+
+function parseStoredObject(value: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null
+  } catch { return null }
+}
+
+function normalizeStoredCapabilityScope(value: string): AssistantRoleCapabilityScope {
+  const parsed = parseStoredObject(value)
+  const allow = Array.isArray(parsed?.allow) ? parsed.allow.filter(item => typeof item === 'string'
+    && item.length <= CAPABILITY_ID_MAX_LENGTH && CAPABILITY_ID_PATTERN.test(item)) as string[] : []
+  const deny = Array.isArray(parsed?.deny) ? parsed.deny.filter(item => typeof item === 'string'
+    && item.length <= CAPABILITY_ID_MAX_LENGTH && CAPABILITY_ID_PATTERN.test(item)) as string[] : []
+  const scope: AssistantRoleCapabilityScope = {
+    allow: [...new Set(allow)].slice(0, ASSISTANT_ROLE_MAX_CAPABILITY_IDS),
+    deny: [...new Set(deny)].slice(0, ASSISTANT_ROLE_MAX_CAPABILITY_IDS),
+    enforcement: 'action_fabric_v1',
+  }
+  if (scope.allow.length + scope.deny.length > ASSISTANT_ROLE_MAX_CAPABILITY_IDS) scope.allow = []
+  return scope
+}
+
+function normalizeStoredDecisionAuthority(value: string): AssistantRoleDecisionAuthority {
+  const parsed = parseStoredObject(value)
+  try { validateDecisionAuthority(parsed); return parsed } catch {
+    return { maxRisk: 'none', requireApprovalAbove: 'none', allowedTargets: [] }
+  }
+}
+
+function normalizeStoredSpendingLimits(value: string): AssistantRoleSpendingLimits {
+  const parsed = parseStoredObject(value)
+  try { validateSpendingLimits(parsed); return parsed } catch {
+    return { currency: null, perAction: 0, daily: 0 }
+  }
 }
 
 export function listAssistantRoles(): AssistantRole[] {
@@ -562,14 +606,14 @@ export function getAssistantRole(id: string): AssistantRole | null {
 
 export function createAssistantRole(input: AssistantRoleInput): AssistantRole {
   ensureRegistry()
-  return withPersonalTwinDb(db => transaction(db, () => insertRole(db, input, false, nowIso())))
+  return withPersonalActionFabricWriterLock(() => withPersonalTwinDb(db => transaction(db, () => insertRole(db, input, false, nowIso()))))
 }
 
 export function updateAssistantRole(id: string, patch: AssistantRolePatch): AssistantRole {
   ensureRegistry()
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('Assistant role patch must be an object')
   if (Object.prototype.hasOwnProperty.call(patch, 'id')) throw new Error('Assistant role id cannot be changed')
-  return withPersonalTwinDb(db => transaction(db, () => {
+  return withPersonalActionFabricWriterLock(() => withPersonalTwinDb(db => transaction(db, () => {
     const current = roleFromRow(requireRoleRow(db, id))
     const input: AssistantRoleInput = {
       id: current.id,
@@ -608,7 +652,7 @@ export function updateAssistantRole(id: string, patch: AssistantRolePatch): Assi
       id,
     )
     return roleFromRow(requireRoleRow(db, id))
-  }))
+  })))
 }
 
 function patchValue<T>(patch: AssistantRolePatch, key: keyof AssistantRolePatch, current: T): T {
@@ -618,11 +662,11 @@ function patchValue<T>(patch: AssistantRolePatch, key: keyof AssistantRolePatch,
 
 export function deleteAssistantRole(id: string): void {
   ensureRegistry()
-  withPersonalTwinDb(db => transaction(db, () => {
+  withPersonalActionFabricWriterLock(() => withPersonalTwinDb(db => transaction(db, () => {
     const role = requireRoleRow(db, id)
     if (role.built_in === 1) throw new Error(`Cannot delete built-in assistant role: ${id}`)
     db.prepare('DELETE FROM twin_assistant_roles WHERE id = ?').run(id)
-  }))
+  })))
 }
 
 export function cloneAssistantRole(id: string, input: { name: string; id?: string }): AssistantRole {
@@ -631,7 +675,7 @@ export function cloneAssistantRole(id: string, input: { name: string; id?: strin
   if (input.id !== undefined && !ROLE_ID_PATTERN.test(input.id)) {
     throw new Error('Assistant role id must be a lowercase semantic slug')
   }
-  return withPersonalTwinDb(db => transaction(db, () => {
+  return withPersonalActionFabricWriterLock(() => withPersonalTwinDb(db => transaction(db, () => {
     const source = roleFromRow(requireRoleRow(db, id))
     const cloneId = input.id || toRoleId(input.name)
     const clone = insertRole(db, {
@@ -672,7 +716,7 @@ export function cloneAssistantRole(id: string, input: { name: string; id?: strin
       timestamp,
     ))
     return clone
-  }))
+  })))
 }
 
 function normalizeProfileMappingName(profileName: string): string {
