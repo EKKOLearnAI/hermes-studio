@@ -52,7 +52,7 @@ function save(): void {
     const escalationRules = JSON.parse(form.escalationRules)
     if (!decisionAuthority || Array.isArray(decisionAuthority) || !spendingLimits || Array.isArray(spendingLimits) || !Array.isArray(escalationRules)) throw new Error('shape')
     validationError.value = ''
-    emit('save', { role: { name: form.name.trim(), description: form.description.trim(), persona: form.persona.trim(), enabled: form.enabled, dataScope: { domains: form.domains as any, sections: form.sections as any, includeProvenance: form.includeProvenance }, capabilityScope: { allow: csv(form.allow), deny: csv(form.deny), enforcement: 'declarative_phase_2' }, decisionAuthority, spendingLimits, memoryNamespace: form.memoryNamespace.trim(), escalationRules }, profileName: form.profileName || null, recipes: recipes.value })
+    emit('save', { role: { name: form.name.trim(), description: form.description.trim(), persona: form.persona.trim(), enabled: form.enabled, dataScope: { domains: form.domains as any, sections: form.sections as any, includeProvenance: form.includeProvenance }, capabilityScope: { allow: csv(form.allow), deny: csv(form.deny), enforcement: 'action_fabric_v1' }, decisionAuthority, spendingLimits, memoryNamespace: form.memoryNamespace.trim(), escalationRules }, profileName: form.profileName || null, recipes: recipes.value })
   } catch { validationError.value = m.value.invalidJson }
 }
 </script>

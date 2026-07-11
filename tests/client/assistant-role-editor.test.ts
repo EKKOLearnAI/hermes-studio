@@ -23,8 +23,8 @@ const role = {
   id: 'health-manager', name: 'Health Manager', description: 'Health lead', persona: 'Be careful.',
   builtIn: true, enabled: true,
   dataScope: { domains: ['health'], sections: ['observations'], includeProvenance: true },
-  capabilityScope: { allow: ['health.read'], deny: [], enforcement: 'declarative_phase_2' },
-  decisionAuthority: {}, spendingLimits: {}, memoryNamespace: 'health', escalationRules: [],
+  capabilityScope: { allow: ['health.read'], deny: [], enforcement: 'action_fabric_v1' },
+  decisionAuthority: { maxRisk: 'none' }, spendingLimits: { currency: null, perAction: 0, daily: 0 }, memoryNamespace: 'health', escalationRules: [],
   createdAt: '2026-07-11T00:00:00Z', updatedAt: '2026-07-11T00:00:00Z',
   profileMappings: [], primaryProfileName: null, mappingStale: false, recipeCount: 1,
   recipes: [{
@@ -37,7 +37,7 @@ const role = {
 describe('AssistantRoleEditor', () => {
   it('validates identity and exposes domain, section, capability, and mapping controls', async () => {
     const wrapper = mount(AssistantRoleEditor, { props: { show: true, mode: 'edit', role: { ...role, builtIn: false }, profileNames: ['default'] } })
-    expect(wrapper.text()).toContain('Capability permissions are declarative until Action Fabric enforcement is enabled in Phase 3.')
+    expect(wrapper.text()).toContain('Capability permissions are enforced by Action Fabric. External executors are not available yet.')
     expect(wrapper.find('[data-test="role-domain-health"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="role-section-observations"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="role-profile-mapping"]').exists()).toBe(true)

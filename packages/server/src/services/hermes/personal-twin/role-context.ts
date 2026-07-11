@@ -108,8 +108,8 @@ function buildBundle(
 
   const safeRole: AssistantRole = {
     ...role,
-    decisionAuthority: sanitize(role.decisionAuthority),
-    spendingLimits: sanitize(role.spendingLimits),
+    decisionAuthority: sanitize(role.decisionAuthority) as typeof role.decisionAuthority,
+    spendingLimits: sanitize(role.spendingLimits) as typeof role.spendingLimits,
     escalationRules: role.escalationRules.map(rule => sanitize(rule)),
   }
   const bundle: RoleContextBundle = {

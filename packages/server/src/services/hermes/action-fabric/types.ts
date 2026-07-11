@@ -184,6 +184,13 @@ export interface FabricPolicyDecision {
   createdAt: string
 }
 
+export interface FabricPolicyInput extends FabricActionIntentInput {
+  environments?: FabricEnvironment[]
+  phase?: 'intent' | 'execution'
+  /** Server-computed digest captured by a prior policy step; callers must not supply user-controlled values. */
+  expectedMaterialInputDigest?: string
+}
+
 export interface FabricBudgetReservation {
   id: string
   decisionId: string

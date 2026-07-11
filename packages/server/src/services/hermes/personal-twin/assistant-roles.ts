@@ -8,6 +8,8 @@ import {
   AssistantRoleCapabilityScope,
   AssistantRoleDataScope,
   AssistantRoleInput,
+  AssistantRoleDecisionAuthority,
+  AssistantRoleSpendingLimits,
   AssistantRolePatch,
   AssistantRoleProfileMapping,
   AssistantRoleSummary,
@@ -153,12 +155,9 @@ function builtInTemplate(input: {
     capabilityScope: {
       allow: ['twin.read'],
       deny: ['action.execute'],
-      enforcement: 'declarative_phase_2',
+      enforcement: 'action_fabric_v1',
     },
-    decisionAuthority: {
-      mode: 'recommend_only',
-      requiresConfirmation: ['external_action', 'financial_commitment', 'sensitive_data_disclosure'],
-    },
+    decisionAuthority: { maxRisk: 'none', requireApprovalAbove: 'none', allowedTargets: [] },
     spendingLimits: { currency: null, perAction: 0, daily: 0 },
     memoryNamespace: input.memoryNamespace,
     escalationRules: [
@@ -199,8 +198,8 @@ function roleFromRow(row: AssistantRoleRow): AssistantRole {
     enabled: row.enabled === 1,
     dataScope: parseJson<AssistantRoleDataScope>(row.data_scope_json, 'data scope'),
     capabilityScope: parseJson<AssistantRoleCapabilityScope>(row.capability_scope_json, 'capability scope'),
-    decisionAuthority: parseJson<Record<string, unknown>>(row.decision_authority_json, 'decision authority'),
-    spendingLimits: parseJson<Record<string, unknown>>(row.spending_limits_json, 'spending limits'),
+    decisionAuthority: parseJson<AssistantRoleDecisionAuthority>(row.decision_authority_json, 'decision authority'),
+    spendingLimits: parseJson<AssistantRoleSpendingLimits>(row.spending_limits_json, 'spending limits'),
     memoryNamespace: row.memory_namespace,
     escalationRules: parseJson<Array<Record<string, unknown>>>(row.escalation_rules_json, 'escalation rules'),
     createdAt: row.created_at,
@@ -299,11 +298,48 @@ function validateCapabilityScope(value: unknown): asserts value is AssistantRole
   if (identifiers.some(id => typeof id !== 'string' || id.length > CAPABILITY_ID_MAX_LENGTH || !CAPABILITY_ID_PATTERN.test(id))) {
     throw new Error('Assistant role capability identifiers must be semantic IDs')
   }
-  if (new Set(identifiers).size !== identifiers.length) {
-    throw new Error('Assistant role capability identifiers must be unique across allow and deny lists')
+  if (new Set(scope.allow).size !== scope.allow.length || new Set(scope.deny).size !== scope.deny.length) {
+    throw new Error('Assistant role capability identifiers must be unique within each list')
   }
-  if (scope.enforcement !== 'declarative_phase_2') {
-    throw new Error('Assistant role capability enforcement must be declarative_phase_2')
+  if (scope.enforcement !== 'action_fabric_v1') {
+    throw new Error('Assistant role capability enforcement must be action_fabric_v1')
+  }
+}
+
+const ROLE_RISKS = new Set(['none', 'low', 'medium', 'high', 'critical'])
+function validateDecisionAuthority(value: unknown): asserts value is AssistantRoleDecisionAuthority {
+  assertJsonObject(value, 'decision authority')
+  const keys = Object.keys(value)
+  if (keys.some(key => !['maxRisk', 'requireApprovalAbove', 'allowedTargets'].includes(key))) {
+    throw new Error('Assistant role decision authority contains unsupported fields')
+  }
+  if (!ROLE_RISKS.has(value.maxRisk as string)) throw new Error('Assistant role decision authority maxRisk is invalid')
+  if (value.requireApprovalAbove !== undefined && !ROLE_RISKS.has(value.requireApprovalAbove as string)) {
+    throw new Error('Assistant role decision authority requireApprovalAbove is invalid')
+  }
+  if (value.allowedTargets !== undefined) {
+    if (!Array.isArray(value.allowedTargets) || value.allowedTargets.length > 64
+      || value.allowedTargets.some(item => typeof item !== 'string' || !item || item === '*' || item.length > 256)
+      || new Set(value.allowedTargets).size !== value.allowedTargets.length) {
+      throw new Error('Assistant role decision authority allowedTargets must be unique literal targets')
+    }
+  }
+}
+
+function validateSpendingLimits(value: unknown): asserts value is AssistantRoleSpendingLimits {
+  assertJsonObject(value, 'spending limits')
+  if (Object.keys(value).some(key => !['currency', 'perAction', 'daily'].includes(key))) {
+    throw new Error('Assistant role spending limits contain unsupported fields')
+  }
+  if (!(value.currency === null || (typeof value.currency === 'string' && /^[A-Z]{3}$/.test(value.currency)))) {
+    throw new Error('Assistant role spending limits currency is invalid')
+  }
+  if (!Number.isSafeInteger(value.perAction) || (value.perAction as number) < 0
+    || !Number.isSafeInteger(value.daily) || (value.daily as number) < 0) {
+    throw new Error('Assistant role spending limits must use non-negative integer minor units')
+  }
+  if (value.currency === null && (value.perAction !== 0 || value.daily !== 0)) {
+    throw new Error('Assistant role spending limits require a currency')
   }
 }
 
@@ -325,8 +361,8 @@ function validateRoleInput(input: AssistantRoleInput): void {
     throw new Error('Assistant role data scope includeProvenance must be a boolean')
   }
   validateCapabilityScope(input.capabilityScope)
-  assertJsonObject(input.decisionAuthority === undefined ? {} : input.decisionAuthority, 'decision authority')
-  assertJsonObject(input.spendingLimits === undefined ? {} : input.spendingLimits, 'spending limits')
+  validateDecisionAuthority(input.decisionAuthority === undefined ? { maxRisk: 'none' } : input.decisionAuthority)
+  validateSpendingLimits(input.spendingLimits === undefined ? { currency: null, perAction: 0, daily: 0 } : input.spendingLimits)
   if (typeof input.memoryNamespace !== 'string' || !NAMESPACE_PATTERN.test(input.memoryNamespace)) {
     throw new Error('Assistant role memory namespace must be a lowercase semantic namespace')
   }
@@ -416,8 +452,8 @@ function insertRole(db: DatabaseSync, input: AssistantRoleInput, builtIn: boolea
     normalized.enabled === false ? 0 : 1,
     JSON.stringify(normalized.dataScope),
     JSON.stringify(normalized.capabilityScope),
-    JSON.stringify(normalized.decisionAuthority ?? {}),
-    JSON.stringify(normalized.spendingLimits ?? {}),
+    JSON.stringify(normalized.decisionAuthority ?? { maxRisk: 'none' }),
+    JSON.stringify(normalized.spendingLimits ?? { currency: null, perAction: 0, daily: 0 }),
     normalized.memoryNamespace,
     JSON.stringify(normalized.escalationRules ?? []),
     timestamp,
@@ -481,6 +517,32 @@ export function ensureBuiltInAssistantRoles(): void {
     }
   }))
   SEEDED_DATABASE_PATHS.add(getPersonalTwinDbPath())
+}
+
+/** One-time Phase 3 activation. Reads intentionally never invoke this writer. */
+export function migrateAssistantRoleCapabilityEnforcement(): number {
+  ensureRegistry()
+  const needsMigration = withPersonalTwinDb(db => db.prepare(
+    "SELECT 1 AS present FROM twin_assistant_roles WHERE capability_scope_json LIKE '%declarative_phase_2%' LIMIT 1",
+  ).get() !== undefined)
+  if (!needsMigration) return 0
+  return withPersonalTwinDb(db => transaction(db, () => {
+    const rows = db.prepare('SELECT id, capability_scope_json FROM twin_assistant_roles').all() as Array<{
+      id: string
+      capability_scope_json: string
+    }>
+    let migrated = 0
+    const update = db.prepare('UPDATE twin_assistant_roles SET capability_scope_json = ?, updated_at = ? WHERE id = ?')
+    for (const row of rows) {
+      const scope = parseJson<AssistantRoleCapabilityScope>(row.capability_scope_json, 'capability scope')
+      if (scope.enforcement !== 'declarative_phase_2') continue
+      const next: AssistantRoleCapabilityScope = { allow: [...scope.allow], deny: [...scope.deny], enforcement: 'action_fabric_v1' }
+      validateCapabilityScope(next)
+      update.run(JSON.stringify(next), nowIso(), row.id)
+      migrated += 1
+    }
+    return migrated
+  }))
 }
 
 export function listAssistantRoles(): AssistantRole[] {

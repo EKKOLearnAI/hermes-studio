@@ -20,8 +20,16 @@ export interface AssistantRoleDataScope {
 export interface AssistantRoleCapabilityScope {
   allow: string[]
   deny: string[]
-  enforcement: 'declarative_phase_2'
+  enforcement: 'declarative_phase_2' | 'action_fabric_v1'
 }
+
+export type AssistantRoleRisk = 'none' | 'low' | 'medium' | 'high' | 'critical'
+export interface AssistantRoleDecisionAuthority {
+  maxRisk: AssistantRoleRisk
+  requireApprovalAbove?: AssistantRoleRisk
+  allowedTargets?: string[]
+}
+export interface AssistantRoleSpendingLimits { currency: string | null; perAction: number; daily: number }
 
 export interface AssistantRole {
   id: string
@@ -32,8 +40,8 @@ export interface AssistantRole {
   enabled: boolean
   dataScope: AssistantRoleDataScope
   capabilityScope: AssistantRoleCapabilityScope
-  decisionAuthority: Record<string, unknown>
-  spendingLimits: Record<string, unknown>
+  decisionAuthority: AssistantRoleDecisionAuthority
+  spendingLimits: AssistantRoleSpendingLimits
   memoryNamespace: string
   escalationRules: Array<Record<string, unknown>>
   createdAt: string
@@ -48,8 +56,8 @@ export interface AssistantRoleInput {
   enabled?: boolean
   dataScope: AssistantRoleDataScope
   capabilityScope: AssistantRoleCapabilityScope
-  decisionAuthority?: Record<string, unknown>
-  spendingLimits?: Record<string, unknown>
+  decisionAuthority?: AssistantRoleDecisionAuthority
+  spendingLimits?: AssistantRoleSpendingLimits
   memoryNamespace: string
   escalationRules?: Array<Record<string, unknown>>
 }

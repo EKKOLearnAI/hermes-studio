@@ -27,9 +27,9 @@ const baseRole = {
   builtIn: true,
   enabled: true,
   dataScope: { domains: ['health'], sections: ['observations'], includeProvenance: true },
-  capabilityScope: { allow: ['health.read'], deny: [], enforcement: 'declarative_phase_2' },
-  decisionAuthority: {},
-  spendingLimits: {},
+  capabilityScope: { allow: ['health.read'], deny: [], enforcement: 'action_fabric_v1' },
+  decisionAuthority: { maxRisk: 'none' },
+  spendingLimits: { currency: null, perAction: 0, daily: 0 },
   memoryNamespace: 'assistant.health-manager',
   escalationRules: [],
   createdAt: '2026-07-11T00:00:00.000Z',
@@ -79,9 +79,9 @@ describe('assistant roles controller', () => {
       persona: 'Support recovery.',
       enabled: false,
       dataScope: { domains: ['health', 'fitness'], sections: ['observations', 'goals'], includeProvenance: true },
-      capabilityScope: { allow: ['health.read'], deny: ['commerce.buy'], enforcement: 'declarative_phase_2' },
-      decisionAuthority: { medication: 'escalate' },
-      spendingLimits: { currency: 'CNY', daily: 100 },
+      capabilityScope: { allow: ['health.read'], deny: ['commerce.buy'], enforcement: 'action_fabric_v1' },
+      decisionAuthority: { maxRisk: 'low' },
+      spendingLimits: { currency: 'CNY', perAction: 50, daily: 100 },
       memoryNamespace: 'assistant.recovery-coach',
       escalationRules: [{ when: 'urgent', action: 'notify' }],
     }
@@ -176,7 +176,7 @@ describe('assistant roles controller', () => {
   it.each([
     ['create', null],
     ['create', { name: '', persona: 'x', dataScope: {}, capabilityScope: {}, memoryNamespace: 'x' }],
-    ['create', { name: 'x', persona: 'x', dataScope: { domains: ['secret'], sections: [], includeProvenance: true }, capabilityScope: { allow: [], deny: [], enforcement: 'declarative_phase_2' }, memoryNamespace: 'x' }],
+    ['create', { name: 'x', persona: 'x', dataScope: { domains: ['secret'], sections: [], includeProvenance: true }, capabilityScope: { allow: [], deny: [], enforcement: 'action_fabric_v1' }, memoryNamespace: 'x' }],
     ['update', {}],
     ['update', { enabled: 'yes' }],
     ['update', { escalationRules: [{} as object, 'bad'] }],
@@ -208,7 +208,7 @@ describe('assistant roles controller', () => {
     const invalid = context({
       name: 'x', persona: 'x', memoryNamespace: 'assistant.x',
       dataScope: { domains: [], sections: [], includeProvenance: false },
-      capabilityScope: { allow: [], deny: [], enforcement: 'declarative_phase_2' },
+      capabilityScope: { allow: [], deny: [], enforcement: 'action_fabric_v1' },
     })
     await ctrl.create(invalid)
     expect(invalid.status).toBe(400)
@@ -229,7 +229,7 @@ describe('assistant roles controller', () => {
     const ctx = context({
       id: 'health-manager', name: 'Duplicate', persona: 'Duplicate.', memoryNamespace: 'assistant.duplicate',
       dataScope: { domains: [], sections: [], includeProvenance: false },
-      capabilityScope: { allow: [], deny: [], enforcement: 'declarative_phase_2' },
+      capabilityScope: { allow: [], deny: [], enforcement: 'action_fabric_v1' },
     })
     await ctrl.create(ctx)
     expect(ctx.status).toBe(409)

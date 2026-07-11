@@ -162,8 +162,8 @@ describe('assistant role context engine', () => {
     const twin = await import('../../packages/server/src/services/hermes/personal-twin')
     seedSubject(twin)
     twin.createAssistantRole(roleInput({
-      decisionAuthority: { mode: 'recommend', apiKey: 'metadata-secret' },
-      spendingLimits: { currency: 'CNY', daily: 50, databaseUrl: 'sqlite:///private' },
+      decisionAuthority: { maxRisk: 'low', allowedTargets: ['personal-twin'] },
+      spendingLimits: { currency: 'CNY', perAction: 25, daily: 50 },
       escalationRules: [{ when: 'uncertain', action: 'ask', password: 'metadata-password' }],
       dataScope: { domains: ['health'], sections: ['observations'], includeProvenance: true },
     }))
@@ -175,7 +175,7 @@ describe('assistant role context engine', () => {
 
     const bundle = twin.buildRoleContext('context-tester', { recipeId: 'metadata-recipe' })
     expect(bundle.renderedInstructions).toContain('## Trusted Role Metadata')
-    expect(bundle.renderedInstructions).toContain('"mode":"recommend"')
+    expect(bundle.renderedInstructions).toContain('"maxRisk":"low"')
     expect(bundle.renderedInstructions).toContain('"currency":"CNY"')
     expect(bundle.renderedInstructions).toContain('"action":"ask"')
     expect(bundle.renderedInstructions).not.toMatch(/metadata-secret|metadata-password|sqlite:\/\/\/private/)
@@ -183,7 +183,7 @@ describe('assistant role context engine', () => {
     expect(bundle.renderedInstructions).toContain(observation.id)
 
     twin.updateAssistantRole('context-tester', {
-      decisionAuthority: { policy: 'z'.repeat(10_000) },
+      decisionAuthority: { maxRisk: 'low', allowedTargets: Array.from({ length: 64 }, (_, index) => `target-${index}-${'z'.repeat(200)}`) },
       escalationRules: Array.from({ length: 10 }, (_, index) => ({ index, rule: 'r'.repeat(500) })),
     })
     twin.updateContextRecipe('context-tester', 'metadata-recipe', { limits: { perSection: 5, totalCharacters: 1000 } })
@@ -351,7 +351,7 @@ function roleInput(overrides: Record<string, unknown> = {}) {
   return {
     id: 'context-tester', name: 'Context Tester', persona: 'Use bounded context.',
     dataScope: { domains: ['health'], sections: ['subject', 'goals', 'constraints', 'entities', 'relations'], includeProvenance: true },
-    capabilityScope: { allow: ['twin.read'], deny: [], enforcement: 'declarative_phase_2' as const },
+    capabilityScope: { allow: ['twin.read'], deny: [], enforcement: 'action_fabric_v1' as const },
     memoryNamespace: 'assistant.context-tester', ...overrides,
   } as Parameters<typeof import('../../packages/server/src/services/hermes/personal-twin').createAssistantRole>[0]
 }

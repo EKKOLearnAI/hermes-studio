@@ -31,7 +31,7 @@ const profileNames = computed(() => profilesStore.profiles.map(profile => profil
 
 function blankRole(): AssistantRoleDetail {
   const now = new Date().toISOString()
-  return { id: '', name: '', description: '', persona: '', builtIn: false, enabled: true, dataScope: { domains: [], sections: [], includeProvenance: true }, capabilityScope: { allow: [], deny: [], enforcement: 'declarative_phase_2' }, decisionAuthority: {}, spendingLimits: {}, memoryNamespace: '', escalationRules: [], createdAt: now, updatedAt: now, profileMappings: [], primaryProfileName: null, mappingStale: false, recipeCount: 0, recipes: [] }
+  return { id: '', name: '', description: '', persona: '', builtIn: false, enabled: true, dataScope: { domains: [], sections: [], includeProvenance: true }, capabilityScope: { allow: [], deny: [], enforcement: 'action_fabric_v1' }, decisionAuthority: { maxRisk: 'none' }, spendingLimits: { currency: null, perAction: 0, daily: 0 }, memoryNamespace: '', escalationRules: [], createdAt: now, updatedAt: now, profileMappings: [], primaryProfileName: null, mappingStale: false, recipeCount: 0, recipes: [] }
 }
 
 async function loadDetail(id: string | null): Promise<AssistantRoleDetail | null> {

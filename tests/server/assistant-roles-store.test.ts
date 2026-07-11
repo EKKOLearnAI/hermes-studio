@@ -33,7 +33,7 @@ describe('assistant role registry', () => {
       'home-manager',
     ])
     expect(seeded.every(role => role.builtIn && role.enabled)).toBe(true)
-    expect(seeded.every(role => role.capabilityScope.enforcement === 'declarative_phase_2')).toBe(true)
+    expect(seeded.every(role => role.capabilityScope.enforcement === 'action_fabric_v1')).toBe(true)
     expect(seeded.map(role => [role.id, role.dataScope.domains])).toEqual([
       ['chief-of-staff', [...roles.TWIN_DOMAINS]],
       ['entertainment-assistant', ['entertainment', 'life', 'commerce']],
@@ -56,6 +56,22 @@ describe('assistant role registry', () => {
 
     expect(roles.getAssistantRole('health-manager')?.description).toBe('My health lead')
     expect(() => roles.deleteAssistantRole('health-manager')).toThrow(/built-in/i)
+  })
+
+  it('migrates Phase 2 capability scopes once without changing permissions or read paths', async () => {
+    const roles = await import('../../packages/server/src/services/hermes/personal-twin')
+    roles.ensureBuiltInAssistantRoles()
+    roles.withPersonalTwinDb(db => db.prepare(`UPDATE twin_assistant_roles SET capability_scope_json=? WHERE id=?`).run(
+      JSON.stringify({ allow: ['simulator.echo'], deny: ['action.execute'], enforcement: 'declarative_phase_2' }),
+      'health-manager',
+    ))
+
+    expect(roles.getAssistantRole('health-manager')?.capabilityScope.enforcement).toBe('declarative_phase_2')
+    expect(roles.migrateAssistantRoleCapabilityEnforcement()).toBe(1)
+    expect(roles.migrateAssistantRoleCapabilityEnforcement()).toBe(0)
+    expect(roles.getAssistantRole('health-manager')?.capabilityScope).toEqual({
+      allow: ['simulator.echo'], deny: ['action.execute'], enforcement: 'action_fabric_v1',
+    })
   })
 
   it('creates, updates, and deletes custom roles atomically with their recipes', async () => {
@@ -107,10 +123,10 @@ describe('assistant role registry', () => {
     ['domain', validRole({ dataScope: { domains: ['secrets' as never], sections: ['subject'], includeProvenance: false } }), /domain/i],
     ['section', validRole({ dataScope: { domains: ['health'], sections: ['passwords' as never], includeProvenance: false } }), /section/i],
     ['duplicate domain', validRole({ dataScope: { domains: ['health', 'health'], sections: ['subject'], includeProvenance: false } }), /unique|duplicate/i],
-    ['capability id', validRole({ capabilityScope: { allow: ['shell rm -rf'], deny: [], enforcement: 'declarative_phase_2' } }), /capability/i],
+    ['capability id', validRole({ capabilityScope: { allow: ['shell rm -rf'], deny: [], enforcement: 'action_fabric_v1' } }), /capability/i],
     ['persona length', validRole({ persona: 'x'.repeat(12_001) }), /persona/i],
     ['description length', validRole({ description: 'x'.repeat(501) }), /description/i],
-    ['capability count', validRole({ capabilityScope: { allow: Array.from({ length: 65 }, (_, index) => `tool.${index}`), deny: [], enforcement: 'declarative_phase_2' } }), /capability/i],
+    ['capability count', validRole({ capabilityScope: { allow: Array.from({ length: 65 }, (_, index) => `tool.${index}`), deny: [], enforcement: 'action_fabric_v1' } }), /capability/i],
     ['escalation count', validRole({ escalationRules: Array.from({ length: 33 }, (_, index) => ({ index })) }), /escalation/i],
     ['non-json-safe values', validRole({ decisionAuthority: { limit: Number.NaN } }), /json/i],
   ])('rejects invalid %s input', async (_label, input, message) => {
@@ -200,10 +216,10 @@ function validRole(overrides: Record<string, unknown> = {}) {
     capabilityScope: {
       allow: ['twin.read'],
       deny: ['action.execute'],
-      enforcement: 'declarative_phase_2',
+      enforcement: 'action_fabric_v1',
     },
-    decisionAuthority: { mode: 'recommend' },
-    spendingLimits: { currency: 'CNY', perAction: 0 },
+    decisionAuthority: { maxRisk: 'none' },
+    spendingLimits: { currency: 'CNY', perAction: 0, daily: 0 },
     memoryNamespace: 'assistant.custom-coach',
     escalationRules: [{ when: 'uncertain', action: 'ask' }],
     ...overrides,

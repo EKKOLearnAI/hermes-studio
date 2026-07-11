@@ -186,7 +186,7 @@ function validRole(overrides: Record<string, unknown> = {}) {
     capabilityScope: {
       allow: ['twin.read'],
       deny: [],
-      enforcement: 'declarative_phase_2',
+      enforcement: 'action_fabric_v1',
     },
     memoryNamespace: 'assistant.recovery-coach',
     ...overrides,

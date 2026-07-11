@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, reactive, ref } from 'vue'
 
-const role = { id: 'health-manager', name: 'Health Manager', description: 'Health lead', persona: 'Careful', builtIn: true, enabled: true, dataScope: { domains: ['health'], sections: ['observations'], includeProvenance: true }, capabilityScope: { allow: [], deny: [], enforcement: 'declarative_phase_2' }, decisionAuthority: {}, spendingLimits: {}, memoryNamespace: 'health', escalationRules: [], createdAt: '', updatedAt: '', profileMappings: [], primaryProfileName: 'missing', mappingStale: true, recipeCount: 1 }
+const role = { id: 'health-manager', name: 'Health Manager', description: 'Health lead', persona: 'Careful', builtIn: true, enabled: true, dataScope: { domains: ['health'], sections: ['observations'], includeProvenance: true }, capabilityScope: { allow: [], deny: [], enforcement: 'action_fabric_v1' }, decisionAuthority: { maxRisk: 'none' }, spendingLimits: { currency: null, perAction: 0, daily: 0 }, memoryNamespace: 'health', escalationRules: [], createdAt: '', updatedAt: '', profileMappings: [], primaryProfileName: 'missing', mappingStale: true, recipeCount: 1 }
 const custom = { ...role, id: 'custom-coach', name: 'Custom Coach', builtIn: false, primaryProfileName: 'default', mappingStale: false }
 const store = reactive({
   roles: [role, custom] as any[], selectedRoleId: 'health-manager' as string | null, loading: false, saving: false, preview: null as any, error: null as string | null,

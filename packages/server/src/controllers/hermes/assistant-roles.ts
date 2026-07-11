@@ -17,8 +17,10 @@ import {
 import type {
   AssistantRoleCapabilityScope,
   AssistantRoleDataScope,
+  AssistantRoleDecisionAuthority,
   AssistantRoleInput,
   AssistantRolePatch,
+  AssistantRoleSpendingLimits,
   ContextRecipeInput,
   ContextRecipePatch,
   RoleContextOptions,
@@ -94,8 +96,8 @@ function dataScope(value: unknown): AssistantRoleDataScope {
 function capabilityScope(value: unknown): AssistantRoleCapabilityScope {
   if (!isRecord(value)) throw new RequestValidationError('capabilityScope must be a JSON object')
   onlyFields(value, new Set(['allow', 'deny', 'enforcement']))
-  if (value.enforcement !== 'declarative_phase_2') {
-    throw new RequestValidationError('capabilityScope.enforcement must be declarative_phase_2')
+  if (value.enforcement !== 'action_fabric_v1') {
+    throw new RequestValidationError('capabilityScope.enforcement must be action_fabric_v1')
   }
   return {
     allow: stringArray(value.allow, 'capabilityScope.allow'),
@@ -107,6 +109,35 @@ function capabilityScope(value: unknown): AssistantRoleCapabilityScope {
 function jsonObject(value: unknown, field: string): Record<string, unknown> {
   if (!isRecord(value)) throw new RequestValidationError(`${field} must be a JSON object`)
   return value
+}
+
+const RISKS = ['none', 'low', 'medium', 'high', 'critical'] as const
+function decisionAuthority(value: unknown): AssistantRoleDecisionAuthority {
+  const authority = jsonObject(value, 'decisionAuthority')
+  onlyFields(authority, new Set(['maxRisk', 'requireApprovalAbove', 'allowedTargets']))
+  if (!RISKS.includes(authority.maxRisk as typeof RISKS[number])) throw new RequestValidationError('decisionAuthority.maxRisk is invalid')
+  if (authority.requireApprovalAbove !== undefined
+    && !RISKS.includes(authority.requireApprovalAbove as typeof RISKS[number])) {
+    throw new RequestValidationError('decisionAuthority.requireApprovalAbove is invalid')
+  }
+  const targets = authority.allowedTargets === undefined ? undefined : stringArray(authority.allowedTargets, 'decisionAuthority.allowedTargets')
+  if (targets?.some(target => target === '*')) throw new RequestValidationError('decisionAuthority.allowedTargets must be literal')
+  return { maxRisk: authority.maxRisk as typeof RISKS[number],
+    ...(authority.requireApprovalAbove === undefined ? {} : { requireApprovalAbove: authority.requireApprovalAbove as typeof RISKS[number] }),
+    ...(targets === undefined ? {} : { allowedTargets: targets }) }
+}
+
+function spendingLimits(value: unknown): AssistantRoleSpendingLimits {
+  const limits = jsonObject(value, 'spendingLimits')
+  onlyFields(limits, new Set(['currency', 'perAction', 'daily']))
+  if (!(limits.currency === null || (typeof limits.currency === 'string' && /^[A-Z]{3}$/.test(limits.currency)))) {
+    throw new RequestValidationError('spendingLimits.currency is invalid')
+  }
+  if (!Number.isSafeInteger(limits.perAction) || (limits.perAction as number) < 0
+    || !Number.isSafeInteger(limits.daily) || (limits.daily as number) < 0) {
+    throw new RequestValidationError('spendingLimits values must be non-negative integer minor units')
+  }
+  return { currency: limits.currency as string | null, perAction: limits.perAction as number, daily: limits.daily as number }
 }
 
 function objectArray(value: unknown, field: string): Array<Record<string, unknown>> {
@@ -172,8 +203,8 @@ function parseCreate(ctx: Context): AssistantRoleInput {
   if (id !== undefined) input.id = id
   if (description !== undefined) input.description = description
   if (enabled !== undefined) input.enabled = enabled
-  if (Object.prototype.hasOwnProperty.call(body, 'decisionAuthority')) input.decisionAuthority = jsonObject(body.decisionAuthority, 'decisionAuthority')
-  if (Object.prototype.hasOwnProperty.call(body, 'spendingLimits')) input.spendingLimits = jsonObject(body.spendingLimits, 'spendingLimits')
+  if (Object.prototype.hasOwnProperty.call(body, 'decisionAuthority')) input.decisionAuthority = decisionAuthority(body.decisionAuthority)
+  if (Object.prototype.hasOwnProperty.call(body, 'spendingLimits')) input.spendingLimits = spendingLimits(body.spendingLimits)
   if (Object.prototype.hasOwnProperty.call(body, 'escalationRules')) input.escalationRules = objectArray(body.escalationRules, 'escalationRules')
   return input
 }
@@ -190,8 +221,8 @@ function parsePatch(ctx: Context): AssistantRolePatch {
   if (enabled !== undefined) patch.enabled = enabled
   if (Object.prototype.hasOwnProperty.call(body, 'dataScope')) patch.dataScope = dataScope(body.dataScope)
   if (Object.prototype.hasOwnProperty.call(body, 'capabilityScope')) patch.capabilityScope = capabilityScope(body.capabilityScope)
-  if (Object.prototype.hasOwnProperty.call(body, 'decisionAuthority')) patch.decisionAuthority = jsonObject(body.decisionAuthority, 'decisionAuthority')
-  if (Object.prototype.hasOwnProperty.call(body, 'spendingLimits')) patch.spendingLimits = jsonObject(body.spendingLimits, 'spendingLimits')
+  if (Object.prototype.hasOwnProperty.call(body, 'decisionAuthority')) patch.decisionAuthority = decisionAuthority(body.decisionAuthority)
+  if (Object.prototype.hasOwnProperty.call(body, 'spendingLimits')) patch.spendingLimits = spendingLimits(body.spendingLimits)
   if (Object.prototype.hasOwnProperty.call(body, 'escalationRules')) patch.escalationRules = objectArray(body.escalationRules, 'escalationRules')
   if (Object.keys(patch).length === 0) throw new RequestValidationError('Assistant role patch must include at least one field')
   return patch
