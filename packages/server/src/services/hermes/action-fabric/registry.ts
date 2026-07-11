@@ -153,7 +153,7 @@ export function createFabricCapability(input: FabricCapabilityInput): FabricCapa
 
 export function updateFabricCapability(
   id: string,
-  updates: Partial<Omit<FabricCapabilityInput, 'id' | 'version'>>,
+  updates: Partial<Omit<FabricCapabilityInput, 'id'>>,
 ): FabricCapability {
   return withActionFabricDb(db => transaction(db, () => {
     const existing = selectCapability(db, id)
@@ -167,19 +167,29 @@ export function updateFabricCapability(
       targetRestrictions: existing.targetRestrictions, cost: existing.cost, enabled: existing.enabled,
       ...updates,
     })
+    const semanticsChanged = semanticDigest(input) !== semanticDigest({
+      id: existing.id, version: existing.version, description: existing.description,
+      inputSchema: existing.inputSchema, outputSchema: existing.outputSchema, risk: existing.risk,
+      sideEffect: existing.sideEffect, idempotency: existing.idempotency, reversible: existing.reversible,
+      compensationCapabilityId: existing.compensationCapabilityId,
+      verificationStrategy: existing.verificationStrategy, authentication: existing.authentication,
+      targetRestrictions: existing.targetRestrictions, cost: existing.cost, enabled: existing.enabled,
+    })
+    if (semanticsChanged && input.version <= existing.version) {
+      throw new Error('Capability contract version must increase for semantic changes')
+    }
+    if (input.version < existing.version) throw new Error('Capability contract version must not decrease')
     const digest = capabilityDigest(input)
     const now = new Date().toISOString()
-    db.prepare(`UPDATE fabric_capabilities SET description=?, input_schema_json=?, output_schema_json=?, risk=?,
+    db.prepare(`UPDATE fabric_capabilities SET version=?, description=?, input_schema_json=?, output_schema_json=?, risk=?,
       side_effect=?, idempotency=?, reversible=?, compensation_capability_id=?, verification_strategy=?,
       authentication_json=?, target_restrictions_json=?, cost_currency=?, cost_estimated_minor=?,
       contract_digest=?, enabled=?, updated_at=? WHERE id=?`).run(
-      input.description, json(input.inputSchema), json(input.outputSchema), input.risk, Number(input.sideEffect),
+      input.version, input.description, json(input.inputSchema), json(input.outputSchema), input.risk, Number(input.sideEffect),
       input.idempotency, Number(input.reversible), input.compensationCapabilityId, input.verificationStrategy,
       json(input.authentication), json(input.targetRestrictions), input.cost.currency, input.cost.estimatedMinor,
       digest, Number(input.enabled), now, id,
     )
-    db.prepare('UPDATE fabric_executor_capabilities SET contract_digest=? WHERE capability_id=? AND capability_version=?')
-      .run(digest, id, input.version)
     return selectCapability(db, id)!
   }))
 }
@@ -245,7 +255,7 @@ export function bindFabricExecutorCapability(
     if (!capability) throw new Error(`Capability not found: ${capabilityId}`)
     if (capability.version !== capabilityVersion) throw new Error('Binding version must match capability version')
     if (capability.contractDigest !== contractDigest) throw new Error('Binding digest must match capability contract digest')
-    insertBindingIfMissing(db, executorId, capability)
+    upsertBinding(db, executorId, capability)
     return parseBinding(db.prepare(`SELECT * FROM fabric_executor_capabilities
       WHERE executor_id=? AND capability_id=?`).get(executorId, capabilityId) as BindingRow)
   }))
@@ -295,11 +305,9 @@ function hasCompleteBuiltInRegistry(db: DatabaseSync): boolean {
     WHERE id IN (${BUILT_IN_CAPABILITIES.map(() => '?').join(',')})`).get(...BUILT_IN_CAPABILITIES.map(item => item.id)) as { count: number }
   const executors = db.prepare(`SELECT COUNT(*) AS count FROM fabric_executors
     WHERE id IN (${BUILT_IN_EXECUTORS.map(() => '?').join(',')})`).get(...BUILT_IN_EXECUTORS.map(item => item.id)) as { count: number }
-  const bindings = db.prepare(`SELECT COUNT(*) AS count FROM fabric_executor_capabilities b
-    JOIN fabric_capabilities c ON c.id=b.capability_id
-    WHERE b.capability_version=c.version AND b.contract_digest=c.contract_digest AND (
-      (b.executor_id='simulator-main' AND b.capability_id IN ('simulator.echo','simulator.counter.increment')) OR
-      (b.executor_id='internal-twin' AND b.capability_id='internal.twin.preference.set'))`).get() as { count: number }
+  const bindings = db.prepare(`SELECT COUNT(*) AS count FROM fabric_executor_capabilities b WHERE
+    (b.executor_id='simulator-main' AND b.capability_id IN ('simulator.echo','simulator.counter.increment')) OR
+    (b.executor_id='internal-twin' AND b.capability_id='internal.twin.preference.set')`).get() as { count: number }
   return capabilities.count === BUILT_IN_CAPABILITIES.length
     && executors.count === BUILT_IN_EXECUTORS.length
     && bindings.count === BUILT_IN_BINDINGS.length
@@ -383,17 +391,20 @@ function insertExecutor(db: DatabaseSync, input: FabricExecutorInput): void {
 function insertBindingIfMissing(db: DatabaseSync, executorId: string, capability: FabricCapability): void {
   const existing = db.prepare(`SELECT capability_version, contract_digest FROM fabric_executor_capabilities
     WHERE executor_id=? AND capability_id=?`).get(executorId, capability.id) as { capability_version: number; contract_digest: string } | undefined
-  if (existing) {
-    if (existing.capability_version !== capability.version || existing.contract_digest !== capability.contractDigest) {
-      db.prepare(`UPDATE fabric_executor_capabilities SET capability_version=?, contract_digest=?, created_at=?
-        WHERE executor_id=? AND capability_id=?`).run(
-        capability.version, capability.contractDigest, new Date().toISOString(), executorId, capability.id,
-      )
-    }
-    return
-  }
+  if (existing) return
   db.prepare(`INSERT INTO fabric_executor_capabilities(executor_id,capability_id,capability_version,
     contract_digest,created_at) VALUES(?,?,?,?,?)`).run(
+    executorId, capability.id, capability.version, capability.contractDigest, new Date().toISOString(),
+  )
+}
+
+function upsertBinding(db: DatabaseSync, executorId: string, capability: FabricCapability): void {
+  db.prepare(`INSERT INTO fabric_executor_capabilities(executor_id,capability_id,capability_version,
+    contract_digest,created_at) VALUES(?,?,?,?,?)
+    ON CONFLICT(executor_id, capability_id) DO UPDATE SET
+      capability_version=excluded.capability_version,
+      contract_digest=excluded.contract_digest,
+      created_at=excluded.created_at`).run(
     executorId, capability.id, capability.version, capability.contractDigest, new Date().toISOString(),
   )
 }
@@ -442,6 +453,11 @@ function capabilityDigest(input: FabricCapabilityInput): string {
   return digest(contract)
 }
 
+function semanticDigest(input: FabricCapabilityInput): string {
+  const { enabled: _enabled, version: _version, ...semantics } = input
+  return digest(semantics)
+}
+
 function digest(value: unknown): string {
   return createHash('sha256').update(stableStringify(value)).digest('hex')
 }
@@ -476,9 +492,49 @@ function assertJsonObject(value: unknown, label: string): asserts value is Fabri
 }
 
 function assertJsonBound(value: unknown, label: string): void {
-  let serialized: string
-  try { serialized = JSON.stringify(value) } catch { throw new Error(`${label} must be valid JSON`) }
-  if (serialized === undefined || serialized.length > MAX_JSON) throw new Error(`${label} JSON is too large`)
+  assertStrictJson(value, label, new WeakSet())
+  const serialized = JSON.stringify(value)
+  if (serialized.length > MAX_JSON) throw new Error(`${label} JSON is too large`)
+}
+
+function assertStrictJson(value: unknown, label: string, ancestors: WeakSet<object>): void {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error(`${label} JSON numbers must be finite`)
+    return
+  }
+  if (typeof value !== 'object') throw new Error(`${label} contains an unsafe non-JSON value`)
+  if (ancestors.has(value)) throw new Error(`${label} JSON contains a cycle`)
+  ancestors.add(value)
+  try {
+    if (Array.isArray(value)) {
+      if (value.length > MAX_ARRAY) throw new Error(`${label} JSON array is too large`)
+      for (let index = 0; index < value.length; index += 1) {
+        if (!Object.prototype.hasOwnProperty.call(value, index)) throw new Error(`${label} JSON arrays must not contain holes`)
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+        if (!descriptor?.enumerable || !('value' in descriptor)) {
+          throw new Error(`${label} JSON array entries must be own enumerable data properties`)
+        }
+        assertStrictJson(descriptor.value, label, ancestors)
+      }
+      const extraKeys = Reflect.ownKeys(value).filter(key => key !== 'length' && !/^\d+$/.test(String(key)))
+      if (extraKeys.length > 0) throw new Error(`${label} JSON array contains unsafe keys`)
+      return
+    }
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) throw new Error(`${label} JSON must use plain objects`)
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== 'string') throw new Error(`${label} JSON contains unsafe symbol keys`)
+      if (key === '__proto__' || key === 'prototype' || key === 'constructor') {
+        throw new Error(`${label} JSON contains an unsafe key`)
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor?.enumerable || !('value' in descriptor)) throw new Error(`${label} JSON keys must be own enumerable data properties`)
+      assertStrictJson(descriptor.value, label, ancestors)
+    }
+  } finally {
+    ancestors.delete(value)
+  }
 }
 
 function assertStringArray(value: unknown, label: string): asserts value is string[] {

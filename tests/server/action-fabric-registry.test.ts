@@ -79,7 +79,7 @@ describe('action fabric registry', () => {
 
   it('reseed is idempotent and never overwrites operator edits or runtime state', () => {
     ensureBuiltInFabricRegistry()
-    updateFabricCapability('simulator.echo', { description: 'Operator description', enabled: false })
+    updateFabricCapability('simulator.echo', { version: 2, description: 'Operator description', enabled: false })
     setFabricExecutorEnabled('simulator-main', false)
     updateFabricExecutorHealth('simulator-main', 'degraded', { reason: 'maintenance' })
 
@@ -95,7 +95,7 @@ describe('action fabric registry', () => {
       .toEqual({ count: 3 })
   })
 
-  it('uses a read-only fast path for a complete registry and repairs stale binding contracts', () => {
+  it('uses a read-only fast path and preserves stale bindings for explicit rebind', () => {
     ensureBuiltInFabricRegistry()
     const writer = new DatabaseSync(getActionFabricDbPath())
     writer.exec('PRAGMA journal_mode = WAL')
@@ -112,7 +112,7 @@ describe('action fabric registry', () => {
     ensureBuiltInFabricRegistry()
     expect(withActionFabricDb(db => db.prepare(`SELECT b.contract_digest = c.contract_digest AS matches
       FROM fabric_executor_capabilities b JOIN fabric_capabilities c ON c.id=b.capability_id
-      WHERE b.capability_id='simulator.echo'`).get())).toEqual({ matches: 1 })
+      WHERE b.capability_id='simulator.echo'`).get())).toEqual({ matches: 0 })
   })
 
   it.each(['mcp', 'browser'])('rejects unsupported executor type %s from create and update APIs', type => {
@@ -176,7 +176,71 @@ describe('action fabric registry', () => {
     expect(resolveFabricExecutor(echo.id, { environments: ['simulator'] })?.executor.id).toBe('simulator-main')
   })
 
-  it('changes the policy evaluation token after executor risk-relevant state changes', () => {
+  it('pins semantic changes to a new version and requires an explicit matching rebind', () => {
+    ensureBuiltInFabricRegistry()
+    const first = resolveFabricExecutor('simulator.echo', { environments: ['simulator'] })!
+
+    expect(() => updateFabricCapability('simulator.echo', { risk: 'medium' })).toThrow(/version.*increase/i)
+    expect(resolveFabricExecutor('simulator.echo', { environments: ['simulator'] })?.policyEvaluationToken)
+      .toBe(first.policyEvaluationToken)
+
+    const updated = updateFabricCapability('simulator.echo', { version: 2, risk: 'medium' })
+    expect(resolveFabricExecutor('simulator.echo', { environments: ['simulator'] })).toBeNull()
+    expect(withActionFabricDb(db => db.prepare(`SELECT capability_version, contract_digest
+      FROM fabric_executor_capabilities WHERE executor_id='simulator-main' AND capability_id='simulator.echo'`).get()))
+      .toEqual({ capability_version: 1, contract_digest: first.binding.contractDigest })
+
+    ensureBuiltInFabricRegistry()
+    expect(resolveFabricExecutor('simulator.echo', { environments: ['simulator'] })).toBeNull()
+    bindFabricExecutorCapability('simulator-main', updated.id, updated.version, updated.contractDigest)
+    const rebound = resolveFabricExecutor('simulator.echo', { environments: ['simulator'] })!
+    expect(rebound.policyEvaluationToken).not.toBe(first.policyEvaluationToken)
+  })
+
+  it('allows operational toggles without a contract version bump', () => {
+    ensureBuiltInFabricRegistry()
+    const before = getFabricCapability('simulator.echo')!
+    const disabled = updateFabricCapability('simulator.echo', { enabled: false })
+
+    expect(disabled).toMatchObject({ version: before.version, contractDigest: before.contractDigest, enabled: false })
+  })
+
+  it.each([
+    ['undefined', { value: undefined }],
+    ['function', { value: () => undefined }],
+    ['symbol', { value: Symbol('unsafe') }],
+    ['bigint', { value: BigInt(1) }],
+    ['NaN', { value: Number.NaN }],
+    ['Infinity', { value: Number.POSITIVE_INFINITY }],
+    ['non-plain object', { value: new Date() }],
+    ['dangerous key', JSON.parse('{"__proto__":{"polluted":true}}')],
+  ])('rejects unsafe recursive schema JSON: %s', (_label, inputSchema) => {
+    expect(() => createFabricCapability(capability({ inputSchema }) as never)).toThrow(/invalid.*json|unsafe|plain|finite|cycle/i)
+  })
+
+  it('rejects cycles, symbol keys, and unsafe executor JSON payloads', () => {
+    const cyclic: Record<string, unknown> = {}
+    cyclic.self = cyclic
+    const symbolKey = { type: 'object' } as Record<PropertyKey, unknown>
+    symbolKey[Symbol('unsafe')] = true
+
+    expect(() => createFabricCapability(capability({ outputSchema: cyclic }) as never)).toThrow(/cycle/i)
+    expect(() => createFabricCapability(capability({ inputSchema: symbolKey }) as never)).toThrow(/unsafe|symbol/i)
+    expect(() => createFabricExecutor({
+      id: 'unsafe-simulator', type: 'simulator', name: 'Unsafe', environment: 'simulator',
+      configuration: { value: undefined }, enabled: true,
+    } as never)).toThrow(/invalid.*json|unsafe/i)
+  })
+
+  it('rejects non-enumerable array entries before canonicalization', () => {
+    const inputSchema: unknown[] = [{ type: 'string' }]
+    Object.defineProperty(inputSchema, '0', { value: inputSchema[0], enumerable: false })
+
+    expect(() => createFabricCapability(capability({ inputSchema: { anyOf: inputSchema } }) as never))
+      .toThrow(/enumerable/i)
+  })
+
+  it('changes the policy token after an executor environment change', () => {
     ensureBuiltInFabricRegistry()
     const first = resolveFabricExecutor('simulator.echo', { environments: ['simulator'] })!
 
@@ -184,8 +248,5 @@ describe('action fabric registry', () => {
     const second = resolveFabricExecutor('simulator.echo', { environments: ['internal'] })!
     expect(second.policyEvaluationToken).not.toBe(first.policyEvaluationToken)
 
-    updateFabricCapability('simulator.echo', { risk: 'medium' })
-    const third = resolveFabricExecutor('simulator.echo', { environments: ['internal'] })!
-    expect(third.policyEvaluationToken).not.toBe(second.policyEvaluationToken)
   })
 })
