@@ -1,8 +1,8 @@
-import { createHmac, randomBytes, randomUUID } from 'crypto'
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { dirname, join } from 'path'
+import { createHash, createHmac, randomUUID } from 'crypto'
+import { dirname } from 'path'
 import type { DatabaseSync } from 'node:sqlite'
 import { getActionFabricDbPath, withActionFabricDb } from './database'
+import { FabricAuditKeyProvider } from './audit-key'
 import type {
   FabricAuditEvent,
   FabricAuditEventInput,
@@ -29,12 +29,14 @@ const SENSITIVE_COMPOUND_KEY = /(?:^|[_-])(?:api|private|secret|access|client|en
 const CONNECTION_STRING = /(?:\b(?:postgres(?:ql)?|mysql|mariadb|mssql|sqlserver|oracle|cockroachdb|mongodb(?:\+srv)?|rediss?|amqps?|nats|kafka|snowflake):\/\/|\bsqlite:\/{1,3}|\bjdbc:[a-z][a-z0-9+.-]*:(?:\/\/)?)/i
 const URL_USERINFO = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/i
 const WINDOWS_ABSOLUTE_PATH = /(?:^|[\s("'=])(?:[a-z]:[\\/]|\\\\[^\\\s]+\\[^\\\s]+)/i
-const UNIX_ABSOLUTE_PATH = /(?:^\/(?:[^/\s]+\/)+[^/\s]+|(?:^|[\s("'=])\/(?:etc|home|Users|usr|app|workspace|data|var|tmp|opt|root|srv|private|mnt|Volumes|proc|sys|dev)(?:\/[^\s"'<>]*)?)/i
+const UNIX_ABSOLUTE_PATH = /(?:^|[\s("'=])\/(?:etc|home|Users|usr|app|workspace|data|var|tmp|opt|root|srv|private|mnt|Volumes|proc|sys|dev)(?:\/[^\s"'<>]*)?/i
+const EMBEDDED_SENSITIVE_PATH = /(?:^|[\s("'=])\/(?:[^\s/"'<>]+\/)*(?:[^\s/"'<>]*\.(?:db|sqlite|sqlite3|pem|key|env)|credentials?(?:\.[^\s/"'<>]+)?)(?:$|[\s,;:)"])/i
 const FILE_URL = /\bfile:\/{2,3}[^\s"'<>]+/i
 const CREDENTIAL_MARKER = /(?:\bBearer\s+[a-z0-9._~+/=-]+|\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|password|secret|credential|authorization|cookie)\s*[:=]\s*\S+)/i
 const API_KEY_VALUE = /\b(?:sk-(?:live-|test-|proj-)?[a-z0-9_-]{12,}|AKIA[A-Z0-9]{16}|gh[pousr]_[a-z0-9]{20,}|xox[baprs]-[a-z0-9-]{12,}|AIza[a-z0-9_-]{20,})\b/i
 const JWT_VALUE = /\beyJ[a-z0-9_-]{8,}\.[a-z0-9_-]{4,}\.[a-z0-9_-]{4,}\b/i
 const PRIVATE_KEY_MARKER = /-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----/i
+const auditKeyProviders = new Map<string, FabricAuditKeyProvider>()
 
 type AuditRow = {
   sequence: number; id: string; event_type: string; actor_user_id: string
@@ -58,7 +60,7 @@ export interface FabricOutboxClaimOptions {
 export function appendFabricAuditEvent(db: DatabaseSync, input: FabricAuditEventInput): FabricAuditEvent {
   requireTransaction(db)
   const auditKey = getAuditKey()
-  ensureAuditFormat(db)
+  ensureAuditFormat(db, auditKey)
   validateText(input.eventType, 200, 'FABRIC_AUDIT_INVALID_EVENT_TYPE')
   validateText(input.actorUserId, 200, 'FABRIC_AUDIT_INVALID_ACTOR')
   validateText(input.aggregateId, 500, 'FABRIC_AUDIT_INVALID_AGGREGATE')
@@ -135,58 +137,12 @@ export function verifyFabricAuditChain(): {
   firstInvalidSequence: number | null
 } {
   return withActionFabricDb(db => {
-    const rows = db.prepare('SELECT * FROM fabric_audit_events ORDER BY sequence ASC').all() as AuditRow[]
     const format = db.prepare('SELECT value FROM fabric_meta WHERE key = ?').get(AUDIT_FORMAT_KEY) as
       { value: string } | undefined
-    if (rows.length > 0 && format?.value !== AUDIT_FORMAT) {
-      return { valid: false, checked: 0, firstInvalidSequence: 1 }
-    }
+    if (format === undefined) return verifyChain(db, legacyDigest)
+    if (format.value !== AUDIT_FORMAT) return { valid: false, checked: 0, firstInvalidSequence: 1 }
     const auditKey = getAuditKey()
-    let previousHash = GENESIS_HASH
-    let expectedSequence = 1
-    let checked = 0
-    for (const row of rows) {
-      let payload: FabricJsonObject
-      try {
-        payload = parseJsonObject(row.payload_json)
-      } catch {
-        return { valid: false, checked, firstInvalidSequence: row.sequence }
-      }
-      const calculated = mac(auditKey, canonicalStringify({
-        sequence: row.sequence,
-        eventType: row.event_type,
-        actorUserId: row.actor_user_id,
-        aggregateType: row.aggregate_type,
-        aggregateId: row.aggregate_id,
-        payload,
-        occurredAt: row.occurred_at,
-        previousHash: row.previous_hash,
-      }))
-      const expectedId = `audit-${row.sequence}-${calculated.slice(0, 24)}`
-      if (row.sequence !== expectedSequence || row.previous_hash !== previousHash
-        || row.hash !== calculated || row.id !== expectedId) {
-        return { valid: false, checked, firstInvalidSequence: row.sequence }
-      }
-      checked += 1
-      expectedSequence += 1
-      previousHash = row.hash
-    }
-    const headRow = db.prepare('SELECT value FROM fabric_meta WHERE key = ?').get(AUDIT_HEAD_KEY) as
-      { value: string } | undefined
-    if (rows.length === 0) {
-      if (headRow !== undefined) return { valid: false, checked: 0, firstInvalidSequence: 1 }
-      return { valid: true, checked: 0, firstInvalidSequence: null }
-    }
-    let head: { sequence?: unknown; hash?: unknown }
-    try {
-      head = JSON.parse(headRow?.value ?? '') as { sequence?: unknown; hash?: unknown }
-    } catch {
-      return { valid: false, checked, firstInvalidSequence: expectedSequence }
-    }
-    if (head.sequence !== rows.at(-1)!.sequence || head.hash !== rows.at(-1)!.hash) {
-      return { valid: false, checked, firstInvalidSequence: expectedSequence }
-    }
-    return { valid: true, checked, firstInvalidSequence: null }
+    return verifyChain(db, value => mac(auditKey, value))
   })
 }
 
@@ -328,13 +284,94 @@ function assertStoredAuditHead(
   throw new Error('FABRIC_AUDIT_CHAIN_CORRUPT')
 }
 
-function ensureAuditFormat(db: DatabaseSync): void {
+function ensureAuditFormat(db: DatabaseSync, auditKey: Buffer): void {
   const row = db.prepare('SELECT value FROM fabric_meta WHERE key = ?').get(AUDIT_FORMAT_KEY) as
     { value: string } | undefined
   if (row?.value === AUDIT_FORMAT) return
+  if (row !== undefined) throw new Error('FABRIC_AUDIT_FORMAT_MIGRATION_REQUIRED')
   const count = db.prepare('SELECT COUNT(*) AS count FROM fabric_audit_events').get() as { count: number }
-  if (count.count > 0 || row !== undefined) throw new Error('FABRIC_AUDIT_FORMAT_MIGRATION_REQUIRED')
+  if (count.count > 0) {
+    const verification = verifyChain(db, legacyDigest)
+    if (!verification.valid) throw new Error('FABRIC_AUDIT_LEGACY_INVALID')
+    let previousHash = GENESIS_HASH
+    let finalSequence = 0
+    const update = db.prepare(`UPDATE fabric_audit_events
+      SET id = ?, previous_hash = ?, hash = ? WHERE sequence = ?`)
+    for (const row of db.prepare(
+      'SELECT * FROM fabric_audit_events ORDER BY sequence ASC',
+    ).iterate() as IterableIterator<AuditRow>) {
+      const payload = parseJsonObject(row.payload_json)
+      const hash = mac(auditKey, canonicalStringify(immutableAuditFields(row, payload, previousHash)))
+      update.run(`audit-${row.sequence}-${hash.slice(0, 24)}`, previousHash, hash, row.sequence)
+      previousHash = hash
+      finalSequence = row.sequence
+    }
+    db.prepare('UPDATE fabric_meta SET value = ? WHERE key = ?')
+      .run(canonicalStringify({ sequence: finalSequence, hash: previousHash }), AUDIT_HEAD_KEY)
+  }
   db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run(AUDIT_FORMAT_KEY, AUDIT_FORMAT)
+}
+
+function verifyChain(
+  db: DatabaseSync,
+  calculate: (canonical: string) => string,
+): { valid: boolean; checked: number; firstInvalidSequence: number | null } {
+  let previousHash = GENESIS_HASH
+  let expectedSequence = 1
+  let checked = 0
+  let finalSequence = 0
+  for (const row of db.prepare(
+    'SELECT * FROM fabric_audit_events ORDER BY sequence ASC',
+  ).iterate() as IterableIterator<AuditRow>) {
+    let payload: FabricJsonObject
+    try {
+      payload = parseJsonObject(row.payload_json)
+    } catch {
+      return { valid: false, checked, firstInvalidSequence: row.sequence }
+    }
+    const calculated = calculate(canonicalStringify(immutableAuditFields(row, payload, row.previous_hash)))
+    const expectedId = `audit-${row.sequence}-${calculated.slice(0, 24)}`
+    if (row.sequence !== expectedSequence || row.previous_hash !== previousHash
+      || row.hash !== calculated || row.id !== expectedId) {
+      return { valid: false, checked, firstInvalidSequence: row.sequence }
+    }
+    checked += 1
+    expectedSequence += 1
+    finalSequence = row.sequence
+    previousHash = row.hash
+  }
+  const headRow = db.prepare('SELECT value FROM fabric_meta WHERE key = ?').get(AUDIT_HEAD_KEY) as
+    { value: string } | undefined
+  if (checked === 0) {
+    if (headRow !== undefined) return { valid: false, checked: 0, firstInvalidSequence: 1 }
+    return { valid: true, checked: 0, firstInvalidSequence: null }
+  }
+  try {
+    const head = JSON.parse(headRow?.value ?? '') as { sequence?: unknown; hash?: unknown }
+    if (head.sequence !== finalSequence || head.hash !== previousHash) {
+      return { valid: false, checked, firstInvalidSequence: expectedSequence }
+    }
+  } catch {
+    return { valid: false, checked, firstInvalidSequence: expectedSequence }
+  }
+  return { valid: true, checked, firstInvalidSequence: null }
+}
+
+function immutableAuditFields(row: AuditRow, payload: FabricJsonObject, previousHash: string): FabricJsonObject {
+  return {
+    sequence: row.sequence,
+    eventType: row.event_type,
+    actorUserId: row.actor_user_id,
+    aggregateType: row.aggregate_type,
+    aggregateId: row.aggregate_id,
+    payload,
+    occurredAt: row.occurred_at,
+    previousHash,
+  }
+}
+
+function legacyDigest(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex')
 }
 
 function parseOutboxRow(row: OutboxRow): FabricOutboxRecord {
@@ -444,10 +481,14 @@ function isSensitiveKey(value: string): boolean {
 }
 
 function containsSensitiveString(value: string): boolean {
+  const trimmed = value.trim()
+  const wholeUnixPath = /^\/\S+$/.test(trimmed) && !/^\/api(?:\/|$)/i.test(trimmed)
   return CONNECTION_STRING.test(value)
     || URL_USERINFO.test(value)
     || WINDOWS_ABSOLUTE_PATH.test(value)
     || UNIX_ABSOLUTE_PATH.test(value)
+    || wholeUnixPath
+    || EMBEDDED_SENSITIVE_PATH.test(value)
     || FILE_URL.test(value)
     || CREDENTIAL_MARKER.test(value)
     || API_KEY_VALUE.test(value)
@@ -483,42 +524,13 @@ function isCanonicalTimestamp(value: string): boolean {
 }
 
 function getAuditKey(): Buffer {
-  const managed = process.env.HERMES_ACTION_FABRIC_AUDIT_KEY
-  if (managed !== undefined) return parseAuditKey(managed)
   const directory = dirname(getActionFabricDbPath())
-  const path = join(directory, '.action-fabric-audit-key')
-  mkdirSync(directory, { recursive: true })
-  try {
-    writeFileSync(path, randomBytes(32).toString('hex'), { encoding: 'utf8', flag: 'wx', mode: 0o600 })
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw new Error('FABRIC_AUDIT_KEY_UNAVAILABLE')
+  let provider = auditKeyProviders.get(directory)
+  if (provider === undefined) {
+    provider = new FabricAuditKeyProvider({ directory })
+    auditKeyProviders.set(directory, provider)
   }
-  try {
-    chmodSync(path, 0o600)
-    return parseAuditKey(readFileSync(path, 'utf8'))
-  } catch (error) {
-    if (error instanceof Error && error.message === 'FABRIC_AUDIT_KEY_INVALID') throw error
-    throw new Error('FABRIC_AUDIT_KEY_UNAVAILABLE')
-  }
-}
-
-function parseAuditKey(value: string): Buffer {
-  let key: Buffer
-  if (/^(?:hex:)?[a-f0-9]{64,}$/i.test(value)) {
-    const encoded = value.startsWith('hex:') ? value.slice(4) : value
-    if (encoded.length % 2 !== 0) throw new Error('FABRIC_AUDIT_KEY_INVALID')
-    key = Buffer.from(encoded, 'hex')
-  } else if (value.startsWith('base64:')) {
-    const encoded = value.slice(7)
-    if (!/^[a-z0-9+/]+={0,2}$/i.test(encoded)) throw new Error('FABRIC_AUDIT_KEY_INVALID')
-    key = Buffer.from(encoded, 'base64')
-  } else if (/^[\x20-\x7e]{32,256}$/.test(value)) {
-    key = Buffer.from(value, 'utf8')
-  } else {
-    throw new Error('FABRIC_AUDIT_KEY_INVALID')
-  }
-  if (key.length < 32 || key.length > 256) throw new Error('FABRIC_AUDIT_KEY_INVALID')
-  return key
+  return provider.getKey()
 }
 
 function mac(key: Buffer, value: string): string {
