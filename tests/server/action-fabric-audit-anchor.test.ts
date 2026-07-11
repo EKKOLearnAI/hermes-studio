@@ -1,7 +1,9 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { spawnSync } from 'child_process'
+import { spawn, spawnSync } from 'child_process'
+import { pathToFileURL } from 'url'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -28,6 +30,9 @@ describe('action fabric external audit anchor', () => {
   const keyText = 'anchor-test-managed-key-at-least-32-bytes'
   const key = Buffer.from(keyText)
   const genesis = { sequence: 0, hash: '0'.repeat(64) }
+  const lockModuleUrl = pathToFileURL(join(
+    process.cwd(), 'packages/server/src/services/hermes/action-fabric/audit-lock.ts',
+  )).href
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'fabric-audit-anchor-'))
@@ -114,21 +119,53 @@ describe('action fabric external audit anchor', () => {
     expect(source).toMatch(/db\.exec\('COMMIT'\)[\s\S]{0,500}compareAndSwapFabricAuditAnchor\(directory/)
   })
 
-  it('allows a child reader but excludes a child writer throughout the pending transaction window', () => {
+  const contenderScript = (directory: string, timeout: number) =>
+    `import(${JSON.stringify(lockModuleUrl)}).then(({withFabricAuditWriterLock})=>{try{`+
+    `withFabricAuditWriterLock(${JSON.stringify(directory)},()=>{}, {busyTimeoutMs:${timeout}});process.exit(0)`+
+    `}catch(e){process.exit(e?.message==='FABRIC_AUDIT_WRITER_BUSY'?7:8)}})`
+
+  it('allows a child reader but excludes the actual child SQLite mutex contender', () => {
     const path = getActionFabricDbPath()
     const lockPath = getFabricAuditWriterLockPath(join(home, 'personal'))
     const reader = `const{DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);`+
       `d.exec('PRAGMA busy_timeout=0');try{d.prepare('SELECT COUNT(*) FROM fabric_audit_events').get();process.exit(0)}catch{process.exit(7)}`
-    const writer = `const{openSync,closeSync,unlinkSync}=require('fs');try{const f=openSync(process.argv[1],'wx');`+
-      `closeSync(f);unlinkSync(process.argv[1]);process.exit(0)}catch{process.exit(7)}`
+    const directory = join(home, 'personal')
     withFabricAuditedTransaction(db => {
       event(db, 'pending')
-      const anchorBefore = readFileSync(getFabricAuditAnchorPath(join(home, 'personal')), 'utf8')
+      const anchorBefore = readFileSync(getFabricAuditAnchorPath(directory), 'utf8')
       expect(spawnSync(process.execPath, ['-e', reader, path]).status).toBe(0)
-      expect(spawnSync(process.execPath, ['-e', writer, lockPath]).status).toBe(7)
-      expect(readFileSync(getFabricAuditAnchorPath(join(home, 'personal')), 'utf8')).toBe(anchorBefore)
+      expect(spawnSync(process.execPath, ['--experimental-strip-types', '-e', contenderScript(directory, 100)]).status).toBe(7)
+      expect(readFileSync(getFabricAuditAnchorPath(directory), 'utf8')).toBe(anchorBefore)
     })
-    expect(spawnSync(process.execPath, ['-e', writer, lockPath]).status).toBe(0)
+    expect(spawnSync(process.execPath, ['--experimental-strip-types', '-e', contenderScript(directory, 500)]).status).toBe(0)
+    expect(readFileSync(lockPath).subarray(0, 16).toString()).toBe('SQLite format 3\u0000')
+    const lockDb = new DatabaseSync(lockPath, { readOnly: true })
+    try {
+      expect(lockDb.prepare('SELECT COUNT(*) AS count FROM audit_writer_mutex').get()).toEqual({ count: 0 })
+    } finally {
+      lockDb.close()
+    }
+    const lockBytes = readFileSync(lockPath)
+    expect(lockBytes.includes(Buffer.from(keyText))).toBe(false)
+    expect(lockBytes.includes(Buffer.from('pending'))).toBe(false)
+    expect(() => getFabricAuditWriterLockPath(join(home, 'outside'))).toThrow('FABRIC_AUDIT_WRITER_LOCK_PATH_INVALID')
+  })
+
+  it('automatically releases the actual SQLite mutex when its child holder is killed', async () => {
+    const directory = join(home, 'personal')
+    const holderScript = `import(${JSON.stringify(lockModuleUrl)}).then(({withFabricAuditWriterLock})=>{`+
+      `withFabricAuditWriterLock(${JSON.stringify(directory)},()=>{console.log('held');`+
+      `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,30000)})})`
+    const holder = spawn(process.execPath, ['--experimental-strip-types', '-e', holderScript], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('child lock timeout')), 5_000)
+      holder.stdout!.once('data', () => { clearTimeout(timer); resolve() })
+    })
+    holder.kill()
+    await new Promise(resolve => holder.once('exit', resolve))
+    expect(spawnSync(process.execPath, ['--experimental-strip-types', '-e', contenderScript(directory, 500)]).status).toBe(0)
   })
 
   it('detects genuine-head database truncation against the external monotonic checkpoint', () => {

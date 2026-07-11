@@ -1,67 +1,71 @@
-import { randomUUID } from 'crypto'
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { mkdirSync } from 'fs'
+import { basename, dirname, resolve } from 'path'
+import { DatabaseSync } from 'node:sqlite'
 
-const WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(4))
+const DEFAULT_BUSY_TIMEOUT_MS = 5_000
+const MAX_BUSY_TIMEOUT_MS = 60_000
 
-export function getFabricAuditWriterLockPath(directory: string): string {
-  return join(directory, '.action-fabric-audit-writer.lock')
+export interface FabricAuditWriterLockOptions {
+  busyTimeoutMs?: number
 }
 
-export function withFabricAuditWriterLock<T>(directory: string, operation: () => T): T {
-  mkdirSync(directory, { recursive: true })
-  const path = getFabricAuditWriterLockPath(directory)
-  const token = randomUUID()
-  const encoded = JSON.stringify({ pid: process.pid, token })
-  const deadline = Date.now() + 5_000
-  while (true) {
-    try {
-      const descriptor = openSync(path, 'wx', 0o600)
-      try { writeFileSync(descriptor, encoded, 'utf8') } finally { closeSync(descriptor) }
-      break
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw new Error('FABRIC_AUDIT_WRITER_LOCK_UNAVAILABLE')
-      const existing = readLock(path)
-      if (existing === null) throw new Error('FABRIC_AUDIT_WRITER_LOCK_INVALID')
-      if (!isProcessAlive(existing.pid)) {
-        const current = readFileSync(path, 'utf8')
-        if (current === existing.encoded) {
-          try { unlinkSync(path) } catch { /* another recovery attempt won */ }
-        }
-        continue
-      }
-      if (Date.now() >= deadline) throw new Error('FABRIC_AUDIT_WRITER_BUSY')
-      Atomics.wait(WAIT_BUFFER, 0, 0, 25)
-    }
+export function getFabricAuditWriterLockPath(directory: string): string {
+  const personalDirectory = resolve(directory)
+  if (basename(personalDirectory) !== 'personal') {
+    throw new Error('FABRIC_AUDIT_WRITER_LOCK_PATH_INVALID')
   }
+  const lockPath = resolve(personalDirectory, '.action-fabric-audit-lock')
+  if (dirname(lockPath) !== personalDirectory) {
+    throw new Error('FABRIC_AUDIT_WRITER_LOCK_PATH_INVALID')
+  }
+  return lockPath
+}
+
+export function withFabricAuditWriterLock<T>(
+  directory: string,
+  operation: () => T,
+  options: FabricAuditWriterLockOptions = {},
+): T {
+  const busyTimeoutMs = options.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS
+  if (!Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs < 0 || busyTimeoutMs > MAX_BUSY_TIMEOUT_MS) {
+    throw new Error('FABRIC_AUDIT_WRITER_LOCK_OPTIONS_INVALID')
+  }
+
+  const lockPath = getFabricAuditWriterLockPath(directory)
+  mkdirSync(resolve(directory), { recursive: true })
+
+  let database: DatabaseSync | undefined
+  try {
+    database = new DatabaseSync(lockPath)
+    database.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`)
+    database.exec('PRAGMA journal_mode = DELETE')
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS audit_writer_mutex (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1)
+      )
+    `)
+    database.exec('BEGIN EXCLUSIVE')
+  } catch (error) {
+    try { database?.close() } catch { /* preserve the acquisition failure */ }
+    if (isSqliteBusy(error)) throw new Error('FABRIC_AUDIT_WRITER_BUSY')
+    throw new Error('FABRIC_AUDIT_WRITER_LOCK_UNAVAILABLE')
+  }
+
   try {
     return operation()
   } finally {
-    let current: string
-    try { current = readFileSync(path, 'utf8') } catch { throw new Error('FABRIC_AUDIT_WRITER_LOCK_LOST') }
-    if (current !== encoded) throw new Error('FABRIC_AUDIT_WRITER_LOCK_LOST')
-    try { unlinkSync(path) } catch { throw new Error('FABRIC_AUDIT_WRITER_LOCK_UNAVAILABLE') }
+    try {
+      if (database.isTransaction) database.exec('ROLLBACK')
+    } finally {
+      database.close()
+    }
   }
 }
 
-function readLock(path: string): { pid: number; token: string; encoded: string } | null {
-  try {
-    const encoded = readFileSync(path, 'utf8')
-    const parsed = JSON.parse(encoded) as { pid?: unknown; token?: unknown }
-    return Number.isSafeInteger(parsed.pid) && (parsed.pid as number) > 0
-      && typeof parsed.token === 'string' && /^[a-f0-9-]{36}$/.test(parsed.token)
-      ? { pid: parsed.pid as number, token: parsed.token, encoded }
-      : null
-  } catch {
-    return null
-  }
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM'
-  }
+function isSqliteBusy(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const code = (error as Error & { code?: unknown }).code
+  return code === 'SQLITE_BUSY'
+    || code === 'SQLITE_LOCKED'
+    || /database is (?:busy|locked)/i.test(error.message)
 }
