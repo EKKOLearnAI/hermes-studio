@@ -5,8 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   approveFabricWorkflow,
+  bindFabricExecutorCapability,
   cancelFabricWorkflow,
   createFabricIntent,
+  getFabricCapability,
   ensureBuiltInFabricRegistry,
   evaluateFabricPolicy,
   getFabricIntent,
@@ -16,6 +18,7 @@ import {
   rejectFabricWorkflow,
   requestFabricCompensation,
   retryFabricWorkflow,
+  updateFabricCapability,
   withActionFabricDb,
 } from '../../packages/server/src/services/hermes/action-fabric'
 import { ensureBuiltInAssistantRoles, updateAssistantRole } from '../../packages/server/src/services/hermes/personal-twin'
@@ -46,9 +49,12 @@ describe('Action Fabric durable workflows', () => {
 
     expect(result.policyDecision).toMatchObject({ outcome: 'allow', executorId: 'simulator-main' })
     expect(result.workflow).toMatchObject({ intentId: result.intent.id, executorId: 'simulator-main', state: 'preparing' })
-    expect(result.workflow.steps).toEqual([
-      expect.objectContaining({ ordinal: 0, kind: 'execute', state: 'pending', executorId: 'simulator-main' }),
+    expect(result.workflow.steps.map(step => ({ ordinal: step.ordinal, kind: step.kind, state: step.state }))).toEqual([
+      { ordinal: 0, kind: 'prepare', state: 'pending' },
+      { ordinal: 1, kind: 'execute', state: 'pending' },
+      { ordinal: 2, kind: 'verify', state: 'pending' },
     ])
+    expect(result.workflow.steps[1].input).toMatchObject({ actionInput: { message: 'hello' } })
     expect(getFabricIntent(result.intent.id)).toEqual(result.intent)
     expect(getFabricWorkflow(result.workflow.id)).toEqual(result.workflow)
     const order = withActionFabricDb(db => ({
@@ -61,10 +67,61 @@ describe('Action Fabric durable workflows', () => {
 
   it('returns the original intent and workflow for an idempotent replay without adding audit events', () => {
     const first = createFabricIntent(intent())
+    expect(createFabricIntent(intent({
+      idempotencyKey: 'array-payload', input: { messages: ['one', { text: 'two' }] },
+    })).workflow.steps[1].input).toMatchObject({ actionInput: { messages: ['one', { text: 'two' }] } })
     const auditCount = listFabricAuditEvents().length
     const replay = createFabricIntent(intent())
 
     expect(replay).toEqual(first)
+    expect(replay.workflow.steps.map(step => step.executionToken))
+      .toEqual(first.workflow.steps.map(step => step.executionToken))
+    expect(listFabricAuditEvents()).toHaveLength(auditCount)
+  })
+
+  it('persists bounded non-sensitive execution payloads but rejects sensitive material', () => {
+    configureRole(['internal.twin.preference.set', 'simulator.echo'], 'critical', ['personal-twin', 'simulator'])
+    const preference = createFabricIntent(intent({
+      capabilityId: 'internal.twin.preference.set', idempotencyKey: 'preference-payload',
+      target: { id: 'personal-twin' }, input: { key: 'theme', value: 'dark' },
+    }))
+    expect(preference.workflow.steps[1].input).toMatchObject({
+      actionInput: { key: 'theme', value: 'dark' }, target: { id: 'personal-twin' },
+    })
+
+    const auditCount = listFabricAuditEvents().length
+    expect(() => createFabricIntent(intent({
+      idempotencyKey: 'secret-payload', input: { password: 'do-not-store' },
+    }))).toThrow('FABRIC_WORKFLOW_SENSITIVE_PAYLOAD')
+    expect(() => createFabricIntent(intent({
+      idempotencyKey: 'path-payload', input: { message: 'C:\\Users\\alice\\secret.txt' },
+    }))).toThrow('FABRIC_WORKFLOW_SENSITIVE_PAYLOAD')
+    expect(() => createFabricIntent(intent({
+      idempotencyKey: 'large-payload', input: { message: 'x'.repeat(40_000) },
+    }))).toThrow('FABRIC_WORKFLOW_PAYLOAD_LIMIT')
+    expect(() => createFabricIntent(intent({
+      idempotencyKey: 'nested-secret', input: { profile: { apiKey: 'not-safe' } },
+    }))).toThrow('FABRIC_WORKFLOW_SENSITIVE_PAYLOAD')
+    let deep: Record<string, unknown> = { value: 'leaf' }
+    for (let index = 0; index < 10; index += 1) deep = { child: deep }
+    expect(() => createFabricIntent(intent({
+      idempotencyKey: 'deep-payload', input: deep,
+    }))).toThrow('FABRIC_WORKFLOW_PAYLOAD_LIMIT')
+    const getter = vi.fn(() => 'must-not-run')
+    const accessor: unknown[] = []
+    Object.defineProperty(accessor, '0', { enumerable: true, get: getter })
+    accessor.length = 1
+    expect(() => createFabricIntent(intent({
+      idempotencyKey: 'accessor-payload', input: { items: accessor },
+    }))).toThrow('FABRIC_WORKFLOW_INVALID_PAYLOAD')
+    expect(getter).not.toHaveBeenCalled()
+    const objectGetter = vi.fn(() => 'password')
+    const accessorObject: Record<string, unknown> = {}
+    Object.defineProperty(accessorObject, 'key', { enumerable: true, get: objectGetter })
+    expect(() => createFabricIntent(intent({
+      idempotencyKey: 'object-accessor-payload', input: { nested: accessorObject },
+    }))).toThrow('FABRIC_WORKFLOW_INVALID_PAYLOAD')
+    expect(objectGetter).not.toHaveBeenCalled()
     expect(listFabricAuditEvents()).toHaveLength(auditCount)
   })
 
@@ -109,9 +166,8 @@ describe('Action Fabric durable workflows', () => {
 
     expect(result.policyDecision.outcome).toBe('waiting_user')
     expect(result.workflow).toMatchObject({ state: 'waiting_user', leaseOwner: null, leaseExpiresAt: null })
-    expect(result.workflow.steps).toEqual([
-      expect.objectContaining({ ordinal: 0, state: 'waiting_user' }),
-    ])
+    expect(result.workflow.steps).toHaveLength(3)
+    expect(result.workflow.steps.every(step => step.state === 'waiting_user')).toBe(true)
   })
 
   it('approves only an unchanged material digest and policy version', () => {
@@ -121,7 +177,8 @@ describe('Action Fabric durable workflows', () => {
     }))
     const approved = approveFabricWorkflow(created.workflow.id, 'admin-1')
     expect(approved).toMatchObject({ state: 'preparing', version: 1 })
-    expect(approved.steps[0]).toMatchObject({ state: 'pending', executionToken: created.workflow.steps[0].executionToken })
+    expect(approved.steps.map(step => step.state)).toEqual(['pending', 'pending', 'pending'])
+    expect(approved.steps.map(step => step.executionToken)).toEqual(created.workflow.steps.map(step => step.executionToken))
 
     const stale = createFabricIntent(intent({
       capabilityId: 'simulator.counter.increment', idempotencyKey: 'stale-approval',
@@ -166,12 +223,70 @@ describe('Action Fabric durable workflows', () => {
     expect(() => requestFabricCompensation(irreversible.workflow.id, 'admin-1', 'undo'))
       .toThrow('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
 
+  })
+
+  it.each([
+    ['allow', 'critical', ['internal.twin.preference.set'], 'preparing', 'compensating'],
+    ['waiting_user', 'none', ['internal.twin.preference.set'], 'waiting_user', 'compensating'],
+    ['deny', 'critical', [], 'denied', 'succeeded'],
+  ] as const)('creates one independently policy-checked compensation workflow for %s', (
+    _outcome, approval, allow, compensationState, originalState,
+  ) => {
     configureRole(['internal.twin.preference.set'], 'critical', ['personal-twin'])
-    const reversible = createFabricIntent(intent({
-      capabilityId: 'internal.twin.preference.set', idempotencyKey: 'compensate', target: { id: 'personal-twin' },
+    const original = createFabricIntent(intent({
+      capabilityId: 'internal.twin.preference.set', idempotencyKey: `original-${_outcome}`,
+      target: { id: 'personal-twin' }, input: { key: 'theme', value: 'dark' },
     }))
-    forceWorkflowState(reversible.workflow.id, 'succeeded')
-    expect(requestFabricCompensation(reversible.workflow.id, 'admin-1', 'undo').state).toBe('compensating')
+    forceWorkflowState(original.workflow.id, 'succeeded')
+
+    // Upgrade the current registry contract after the original workflow captured version 1.
+    const current = getFabricCapability('internal.twin.preference.set')!
+    updateFabricCapability(current.id, { version: 2, description: `${current.description} v2` })
+    bindFabricExecutorCapability('internal-twin', current.id, 2, getFabricCapability(current.id)!.contractDigest)
+    configureRole([...allow], approval, ['personal-twin'])
+
+    const requested = requestFabricCompensation(original.workflow.id, 'admin-1', 'restore prior value')
+    expect(requested.state).toBe(originalState)
+    expect(requested.compensationIntentId).toMatch(/^intent-/)
+    expect(requested.compensationIntentId).not.toBe(original.intent.id)
+    const compensation = withActionFabricDb(db => db.prepare(
+      'SELECT id FROM fabric_workflows WHERE intent_id=?',
+    ).get(requested.compensationIntentId!) as { id: string })
+    expect(getFabricWorkflow(compensation.id)).toMatchObject({
+      state: compensationState,
+      intent: { capabilityId: 'internal.twin.preference.set' },
+    })
+    const replay = requestFabricCompensation(original.workflow.id, 'admin-1', 'restore prior value')
+    expect(replay.compensationIntentId).toBe(requested.compensationIntentId)
+    expect(withActionFabricDb(db => (db.prepare(
+      'SELECT COUNT(*) AS count FROM fabric_action_intents WHERE id=?',
+    ).get(requested.compensationIntentId!) as { count: number }).count)).toBe(1)
+  })
+
+  it('recovers an orphaned compensation workflow without duplicating it', () => {
+    configureRole(['internal.twin.preference.set'], 'critical', ['personal-twin'])
+    const original = createFabricIntent(intent({
+      capabilityId: 'internal.twin.preference.set', idempotencyKey: 'orphan-compensation',
+      target: { id: 'personal-twin' }, input: { key: 'theme', value: 'dark' },
+    }))
+    forceWorkflowState(original.workflow.id, 'succeeded')
+    withActionFabricDb(db => db.exec(`CREATE TRIGGER fail_compensation_link BEFORE INSERT ON fabric_outbox
+      WHEN NEW.topic='fabric.workflow.compensation_requested'
+      BEGIN SELECT RAISE(ABORT, 'compensation link unavailable'); END`))
+
+    expect(() => requestFabricCompensation(original.workflow.id, 'admin-1', 'undo'))
+      .toThrow(/compensation link unavailable/)
+    expect(getFabricWorkflow(original.workflow.id)).toMatchObject({ state: 'succeeded', compensationIntentId: null })
+    const orphan = withActionFabricDb(db => db.prepare(
+      'SELECT id FROM fabric_action_intents WHERE idempotency_key=?',
+    ).get(`compensation:${original.workflow.id}`) as { id: string })
+    withActionFabricDb(db => db.exec('DROP TRIGGER fail_compensation_link'))
+
+    const recovered = requestFabricCompensation(original.workflow.id, 'admin-1', 'undo')
+    expect(recovered.compensationIntentId).toBe(orphan.id)
+    expect(withActionFabricDb(db => (db.prepare(
+      'SELECT COUNT(*) AS count FROM fabric_action_intents WHERE idempotency_key=?',
+    ).get(`compensation:${original.workflow.id}`) as { count: number }).count)).toBe(1)
   })
 
   it('writes each transition audit and outbox atomically', () => {

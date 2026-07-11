@@ -19,6 +19,15 @@ import type {
 
 const MAX_LIST_LIMIT = 200
 const SUPPORTED_POLICY_VERSION = 1
+const MAX_PAYLOAD_BYTES = 32_768
+const MAX_PAYLOAD_DEPTH = 8
+const MAX_PAYLOAD_ITEMS = 64
+const MAX_PAYLOAD_NODES = 4_096
+const MAX_PAYLOAD_STRING_BYTES = 8_192
+const SENSITIVE_FIELD = /(?:^|[_-])(secret|token|password|credential|cookie|auth(?:orization|entication)?|path|file|directory|dir|url|uri|dsn)(?:$|[_-])/i
+const SENSITIVE_COMPOUND_FIELD = /^(?:api|private|secret|access|client|encryption|signing|service|account)(?:[_-]?key|Key)$/i
+const SENSITIVE_SEMANTIC_VALUE = /^(?:secret|token|password|credential|cookie|authorization|authentication|api[_ -]?key|access[_ -]?token)$/i
+const SENSITIVE_STRING = /(?:\bBearer\s+\S+|\b(?:api[_ -]?key|access[_ -]?token|password|secret|credential)\s*[:=]\s*\S+|-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----|\b(?:postgres(?:ql)?|mysql|mongodb|redis|amqps?):\/\/|(?:^|[\s("'=])(?:[a-z]:[\\/]|\\\\|\/(?:etc|home|Users|usr|app|workspace|data|var|tmp|opt|root|mnt)\/))/i
 
 export interface FabricIntentResult {
   intent: FabricActionIntent
@@ -70,6 +79,7 @@ interface StepRow {
 }
 
 export function createFabricIntent(input: FabricActionIntentInput): FabricIntentResult {
+  const payload = actionPayload(input)
   const decision = evaluateFabricPolicy(input)
   return withFabricAuditedTransaction(db => {
     const existing = selectWorkflowByIntent(db, decision.intentId)
@@ -93,13 +103,17 @@ export function createFabricIntent(input: FabricActionIntentInput): FabricIntent
     )
     if (decision.outcome !== 'deny') {
       const stepState: FabricStepState = decision.outcome === 'waiting_user' ? 'waiting_user' : 'pending'
-      db.prepare(`INSERT INTO fabric_steps(
-        id,workflow_id,ordinal,kind,state,execution_token,executor_id,input_json,evidence_json,
-        attempt,created_at,updated_at
-      ) VALUES(?,?,0,'execute',?,?,?,?, '[]',0,?,?)`).run(
-        `step-${randomUUID()}`, workflowId, stepState, `execution-${randomUUID()}`,
-        executorId, JSON.stringify(intent.input), now, now,
-      )
+      const contract = captureIntentContract(db, intent)
+      const stepInput = canonicalStringify({ ...payload, contract })
+      for (const [ordinal, kind] of ['prepare', 'execute', 'verify'].entries()) {
+        db.prepare(`INSERT INTO fabric_steps(
+          id,workflow_id,ordinal,kind,state,execution_token,executor_id,input_json,evidence_json,
+          attempt,created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,?,?,'[]',0,?,?)`).run(
+          `step-${randomUUID()}`, workflowId, ordinal, kind, stepState, `execution-${randomUUID()}`,
+          executorId, stepInput, now, now,
+        )
+      }
     }
     bindBudgetReservation(db, decision.id, workflowId)
     appendFabricAuditEvent(db, {
@@ -188,7 +202,58 @@ export function retryFabricWorkflow(id: string, actorUserId: string): FabricWork
 }
 
 export function requestFabricCompensation(id: string, actorUserId: string, reason: string): FabricWorkflowDetail {
-  return transitionWorkflow(id, actorUserId, 'compensate', reason)
+  validateText(id, 200, 'FABRIC_WORKFLOW_INVALID_ID')
+  validateText(actorUserId, 200, 'FABRIC_WORKFLOW_INVALID_ACTOR')
+  validateText(reason, 2_000, 'FABRIC_WORKFLOW_INVALID_REASON')
+  const context = withActionFabricDb(db => compensationContext(db, id))
+  if (context.workflow.compensation_intent_id !== null) return getFabricWorkflow(id)!
+  if (TRANSITIONS.compensate[context.workflow.state] === undefined) {
+    throw new Error('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
+  }
+  if (!context.contract.reversible || context.contract.compensationCapabilityId === null) {
+    throw new Error('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
+  }
+  const compensation = createFabricIntent({
+    capabilityId: context.contract.compensationCapabilityId,
+    requestedByRoleId: context.intent.requestedByRoleId,
+    requestedByUserId: context.intent.requestedByUserId,
+    idempotencyKey: `compensation:${id}`,
+    goal: 'Compensate a completed Action Fabric workflow',
+    target: context.payload.target,
+    input: { originalWorkflowId: id, originalExecutionToken: context.executeToken },
+    constraints: { compensationForWorkflowId: id },
+    rationale: reason,
+  })
+  return withFabricAuditedTransaction(db => {
+    const current = requireWorkflow(db, id)
+    if (current.compensation_intent_id !== null) return detailForWorkflow(db, current)
+    if (current.state !== 'succeeded') throw new Error('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
+    const verified = compensationContext(db, id)
+    if (verified.contract.capabilityVersion !== context.contract.capabilityVersion
+      || verified.contract.contractDigest !== context.contract.contractDigest
+      || verified.contract.compensationCapabilityId !== context.contract.compensationCapabilityId) {
+      throw new Error('FABRIC_WORKFLOW_CONTRACT_STALE')
+    }
+    const destination = compensation.policyDecision.outcome === 'deny' ? current.state : 'compensating'
+    const now = new Date().toISOString()
+    const result = db.prepare(`UPDATE fabric_workflows SET compensation_intent_id=?,state=?,version=version+1,
+      updated_at=?,completed_at=? WHERE id=? AND version=? AND state='succeeded' AND compensation_intent_id IS NULL`).run(
+      compensation.intent.id, destination, now, destination === 'succeeded' ? current.completed_at : null,
+      id, current.version,
+    )
+    if (result.changes !== 1) throw new Error('FABRIC_WORKFLOW_CONFLICT')
+    appendFabricAuditEvent(db, {
+      eventType: 'workflow.compensation_requested', actorUserId, aggregateType: 'workflow', aggregateId: id,
+      payload: { compensationIntentId: compensation.intent.id, compensationWorkflowId: compensation.workflow.id,
+        policyOutcome: compensation.policyDecision.outcome, from: current.state, to: destination, reason },
+      occurredAt: now,
+    })
+    appendFabricOutbox(db, 'fabric.workflow.compensation_requested', id, {
+      compensationIntentId: compensation.intent.id, compensationWorkflowId: compensation.workflow.id,
+      policyOutcome: compensation.policyDecision.outcome, from: current.state, to: destination,
+    })
+    return detailForWorkflow(db, requireWorkflow(db, id))
+  })
 }
 
 function transitionWorkflow(
@@ -211,7 +276,6 @@ function transitionWorkflow(
     const intent = requireIntent(db, current.intent_id)
     const decision = current.policy_decision_id ? requireDecision(db, current.policy_decision_id) : null
     if (action === 'approve') assertApprovalCurrent(db, intent, decision)
-    if (action === 'compensate') assertCompensatable(db, intent.capabilityId)
 
     const now = new Date().toISOString()
     const completedAt = isTerminal(destination) ? now : null
@@ -254,14 +318,6 @@ function assertApprovalCurrent(
   }
 }
 
-function assertCompensatable(db: DatabaseSync, capabilityId: string): void {
-  const row = db.prepare(`SELECT reversible, compensation_capability_id FROM fabric_capabilities WHERE id=?`).get(capabilityId) as
-    { reversible: number; compensation_capability_id: string | null } | undefined
-  if (!row || row.reversible !== 1 || row.compensation_capability_id === null) {
-    throw new Error('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
-  }
-}
-
 function updateStepsForAction(db: DatabaseSync, workflowId: string, action: WorkflowAction, now: string): void {
   if (action === 'approve') {
     db.prepare(`UPDATE fabric_steps SET state='pending',updated_at=?
@@ -274,6 +330,56 @@ function updateStepsForAction(db: DatabaseSync, workflowId: string, action: Work
       output_json=NULL,evidence_json='[]',started_at=NULL,completed_at=NULL,updated_at=?
       WHERE workflow_id=? AND state='failed'`).run(now, workflowId)
   }
+}
+
+interface CapturedContract {
+  capabilityVersion: number
+  contractDigest: string
+  reversible: boolean
+  compensationCapabilityId: string | null
+}
+
+interface ActionPayload {
+  actionInput: FabricJsonObject
+  target: FabricJsonObject
+  constraints: FabricJsonObject
+}
+
+function captureIntentContract(db: DatabaseSync, intent: FabricActionIntent): CapturedContract {
+  const row = db.prepare(`SELECT version,contract_digest,reversible,compensation_capability_id
+    FROM fabric_capabilities WHERE id=?`).get(intent.capabilityId) as {
+      version: number; contract_digest: string; reversible: number; compensation_capability_id: string | null
+    } | undefined
+  if (!row || row.version !== intent.capabilityVersion) throw new Error('FABRIC_WORKFLOW_CONTRACT_STALE')
+  return { capabilityVersion: row.version, contractDigest: row.contract_digest, reversible: row.reversible === 1,
+    compensationCapabilityId: row.compensation_capability_id }
+}
+
+function compensationContext(db: DatabaseSync, id: string): {
+  workflow: WorkflowRow
+  intent: FabricActionIntent
+  payload: ActionPayload
+  contract: CapturedContract
+  executeToken: string
+} {
+  const workflow = requireWorkflow(db, id)
+  const intent = requireIntent(db, workflow.intent_id)
+  const prepare = db.prepare(`SELECT input_json FROM fabric_steps
+    WHERE workflow_id=? AND ordinal=0 AND kind='prepare'`).get(id) as { input_json: string } | undefined
+  const execute = db.prepare(`SELECT execution_token FROM fabric_steps
+    WHERE workflow_id=? AND ordinal=1 AND kind='execute'`).get(id) as { execution_token: string } | undefined
+  if (!prepare || !execute) throw new Error('FABRIC_WORKFLOW_CONTRACT_UNAVAILABLE')
+  const stored = parseObject(prepare.input_json) as Record<string, unknown>
+  const contract = stored.contract as Partial<CapturedContract> | undefined
+  const payload = { actionInput: stored.actionInput, target: stored.target, constraints: stored.constraints }
+  if (!contract || contract.capabilityVersion !== intent.capabilityVersion
+    || typeof contract.contractDigest !== 'string' || typeof contract.reversible !== 'boolean'
+    || !(typeof contract.compensationCapabilityId === 'string' || contract.compensationCapabilityId === null)
+    || !isJsonObject(payload.actionInput) || !isJsonObject(payload.target) || !isJsonObject(payload.constraints)) {
+    throw new Error('FABRIC_WORKFLOW_CONTRACT_UNAVAILABLE')
+  }
+  return { workflow, intent, payload: payload as ActionPayload, contract: contract as CapturedContract,
+    executeToken: execute.execution_token }
 }
 
 function bindBudgetReservation(db: DatabaseSync, decisionId: string, workflowId: string): void {
@@ -374,6 +480,86 @@ function parseObject(value: string): FabricJsonObject {
   const parsed: unknown = JSON.parse(value)
   if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('FABRIC_WORKFLOW_CORRUPT_JSON')
   return parsed as FabricJsonObject
+}
+
+function actionPayload(input: FabricActionIntentInput): ActionPayload {
+  const budget = { nodes: 0 }
+  const payload = strictJson({ actionInput: input.input, target: input.target, constraints: input.constraints }, 0, budget)
+  if (!isJsonObject(payload)) throw new Error('FABRIC_WORKFLOW_INVALID_PAYLOAD')
+  const canonical = canonicalStringify(payload)
+  if (Buffer.byteLength(canonical, 'utf8') > MAX_PAYLOAD_BYTES) throw new Error('FABRIC_WORKFLOW_PAYLOAD_LIMIT')
+  return payload as unknown as ActionPayload
+}
+
+function strictJson(value: unknown, depth: number, budget: { nodes: number }): unknown {
+  budget.nodes += 1
+  if (budget.nodes > MAX_PAYLOAD_NODES || depth > MAX_PAYLOAD_DEPTH) throw new Error('FABRIC_WORKFLOW_PAYLOAD_LIMIT')
+  if (typeof value === 'string') {
+    if (Buffer.byteLength(value, 'utf8') > MAX_PAYLOAD_STRING_BYTES) throw new Error('FABRIC_WORKFLOW_PAYLOAD_LIMIT')
+    if (SENSITIVE_STRING.test(value)) throw new Error('FABRIC_WORKFLOW_SENSITIVE_PAYLOAD')
+    return value
+  }
+  if (value === null || typeof value === 'boolean') return value
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error('FABRIC_WORKFLOW_INVALID_PAYLOAD')
+    return value
+  }
+  if (typeof value !== 'object') throw new Error('FABRIC_WORKFLOW_INVALID_PAYLOAD')
+  if (Array.isArray(value)) {
+    if (value.length > MAX_PAYLOAD_ITEMS) throw new Error('FABRIC_WORKFLOW_PAYLOAD_LIMIT')
+    const keys = Reflect.ownKeys(value)
+    if (keys.some(key => typeof key !== 'string' || (key !== 'length' && !/^(0|[1-9]\d*)$/.test(key)))) {
+      throw new Error('FABRIC_WORKFLOW_INVALID_PAYLOAD')
+    }
+    const output: unknown[] = []
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+      if (!descriptor?.enumerable || !('value' in descriptor)) throw new Error('FABRIC_WORKFLOW_INVALID_PAYLOAD')
+      output.push(strictJson(descriptor.value, depth + 1, budget))
+    }
+    return output
+  }
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) throw new Error('FABRIC_WORKFLOW_INVALID_PAYLOAD')
+  const source = value as Record<string, unknown>
+  const keys = Reflect.ownKeys(source)
+  if (keys.length > MAX_PAYLOAD_ITEMS || keys.some(key => typeof key !== 'string')) {
+    throw new Error(keys.length > MAX_PAYLOAD_ITEMS ? 'FABRIC_WORKFLOW_PAYLOAD_LIMIT' : 'FABRIC_WORKFLOW_INVALID_PAYLOAD')
+  }
+  const semanticName = ['key', 'name', 'type', 'kind'].map(key => {
+    const descriptor = Object.getOwnPropertyDescriptor(source, key)
+    if (descriptor === undefined) return undefined
+    if (!descriptor.enumerable || !('value' in descriptor)) throw new Error('FABRIC_WORKFLOW_INVALID_PAYLOAD')
+    return descriptor.value
+  }).find(item => typeof item === 'string' && SENSITIVE_SEMANTIC_VALUE.test(item))
+  const output: FabricJsonObject = {}
+  for (const key of (keys as string[]).sort()) {
+    const descriptor = Object.getOwnPropertyDescriptor(source, key)
+    if (!descriptor?.enumerable || !('value' in descriptor)) throw new Error('FABRIC_WORKFLOW_INVALID_PAYLOAD')
+    if (key === '__proto__' || key === 'prototype' || key === 'constructor'
+      || SENSITIVE_FIELD.test(key) || SENSITIVE_COMPOUND_FIELD.test(key)
+      || (semanticName !== undefined && /^(value|content|data)$/i.test(key))) {
+      throw new Error('FABRIC_WORKFLOW_SENSITIVE_PAYLOAD')
+    }
+    output[key] = strictJson(descriptor.value, depth + 1, budget)
+  }
+  return output
+}
+
+function canonicalStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalStringify).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalStringify(item)}`).join(',')}}`
+  }
+  const encoded = JSON.stringify(value)
+  if (encoded === undefined) throw new Error('FABRIC_WORKFLOW_INVALID_PAYLOAD')
+  return encoded
+}
+
+function isJsonObject(value: unknown): value is FabricJsonObject {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 function boundedLimit(value: number | undefined): number {
