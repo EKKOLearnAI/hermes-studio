@@ -15,6 +15,7 @@ import {
   migrateLegacyFabricAuditChain,
   setFabricEmergencyStop,
   verifyFabricAuditChain,
+  withFabricAuditedTransaction,
   withActionFabricDb,
 } from '../../packages/server/src/services/hermes/action-fabric'
 
@@ -41,10 +42,8 @@ describe('action fabric audit, outbox, and control', () => {
     rmSync(hermesHome, { recursive: true, force: true })
   })
 
-  const append = (payload: Record<string, unknown>, eventType = 'workflow.created') => withActionFabricDb(db => {
-    db.exec('BEGIN IMMEDIATE')
-    try {
-      const event = appendFabricAuditEvent(db, {
+  const append = (payload: Record<string, unknown>, eventType = 'workflow.created') => withFabricAuditedTransaction(db => {
+      return appendFabricAuditEvent(db, {
         eventType,
         actorUserId: 'user-1',
         aggregateType: 'workflow',
@@ -52,12 +51,6 @@ describe('action fabric audit, outbox, and control', () => {
         payload,
         occurredAt: '2026-07-12T00:00:00.000Z',
       })
-      db.exec('COMMIT')
-      return event
-    } catch (error) {
-      db.exec('ROLLBACK')
-      throw error
-    }
   })
 
   const canonical = (value: unknown): string => {
@@ -139,7 +132,7 @@ describe('action fabric audit, outbox, and control', () => {
     append({ state: 'running' }, 'workflow.updated')
     withActionFabricDb(db => db.exec('DELETE FROM fabric_audit_events WHERE sequence=2'))
 
-    expect(() => append({ state: 'succeeded' }, 'workflow.updated')).toThrow('FABRIC_AUDIT_CHAIN_CORRUPT')
+    expect(() => append({ state: 'succeeded' }, 'workflow.updated')).toThrow('FABRIC_AUDIT_ANCHOR_MISMATCH')
   })
 
   it('recursively redacts secrets, semantic key/value pairs, paths, connections, and raw errors', () => {
@@ -286,12 +279,17 @@ describe('action fabric audit, outbox, and control', () => {
         appendFabricAuditEvent(db, {
           eventType: 'test', actorUserId: 'user-1', aggregateType: 'system', aggregateId: 'system', payload: {},
         })
+      } finally {
+        db.exec('ROLLBACK')
+      }
+    })).toThrow('FABRIC_AUDITED_TRANSACTION_REQUIRED')
+
+    expect(() => withFabricAuditedTransaction(db => {
+        appendFabricAuditEvent(db, {
+          eventType: 'test', actorUserId: 'user-1', aggregateType: 'system', aggregateId: 'system', payload: {},
+        })
         appendFabricOutbox(db, 'fabric.test', 'system', { ok: true })
         throw new Error('rollback')
-      } catch (error) {
-        db.exec('ROLLBACK')
-        throw error
-      }
     })).toThrow('rollback')
     expect(listFabricAuditEvents()).toEqual([])
     expect(listPendingFabricOutbox()).toEqual([])
@@ -353,7 +351,7 @@ describe('action fabric audit, outbox, and control', () => {
         .run(JSON.stringify({ hash: forged, sequence: 1 }))
     })
     expect(verifyFabricAuditChain()).toEqual({ valid: false, checked: 0, firstInvalidSequence: 1 })
-    expect(() => append({ state: 'running' })).toThrow('FABRIC_AUDIT_CHAIN_CORRUPT')
+    expect(() => append({ state: 'running' })).toThrow('FABRIC_AUDIT_ANCHOR_MISMATCH')
   })
 
   it('reports a valid legacy chain as needing migration and requires explicit pre-bound migration', () => {

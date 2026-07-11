@@ -3,6 +3,11 @@ import { dirname } from 'path'
 import type { DatabaseSync } from 'node:sqlite'
 import { getActionFabricDbPath, withActionFabricDb } from './database'
 import { FabricAuditKeyProvider } from './audit-key'
+import {
+  readFabricAuditAnchor,
+  writeFabricAuditAnchor,
+  type FabricAuditCheckpoint,
+} from './audit-anchor'
 import type {
   FabricAuditEvent,
   FabricAuditEventInput,
@@ -37,6 +42,12 @@ const API_KEY_VALUE = /\b(?:sk-(?:live-|test-|proj-)?[a-z0-9_-]{12,}|AKIA[A-Z0-9
 const JWT_VALUE = /\beyJ[a-z0-9_-]{8,}\.[a-z0-9_-]{4,}\.[a-z0-9_-]{4,}\b/i
 const PRIVATE_KEY_MARKER = /-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----/i
 const auditKeyProviders = new Map<string, FabricAuditKeyProvider>()
+const auditedTransactions = new WeakMap<DatabaseSync, {
+  directory: string
+  key: Buffer
+  previous: FabricAuditCheckpoint
+  next: FabricAuditCheckpoint
+}>()
 
 type AuditRow = {
   sequence: number; id: string; event_type: string; actor_user_id: string
@@ -50,6 +61,7 @@ type OutboxRow = {
   locked_until: string | null; created_at: string; published_at: string | null
   claim_token: string | null
 }
+type FabricSynchronousResult<T> = T & (T extends PromiseLike<unknown> ? never : unknown)
 
 export interface FabricOutboxClaimOptions {
   limit?: number
@@ -59,8 +71,10 @@ export interface FabricOutboxClaimOptions {
 
 export function appendFabricAuditEvent(db: DatabaseSync, input: FabricAuditEventInput): FabricAuditEvent {
   requireTransaction(db)
+  const audited = auditedTransactions.get(db)
+  if (audited === undefined) throw new Error('FABRIC_AUDITED_TRANSACTION_REQUIRED')
   ensureAuditFormat(db)
-  const auditKey = getAuditKey()
+  const auditKey = audited.key
   validateText(input.eventType, 200, 'FABRIC_AUDIT_INVALID_EVENT_TYPE')
   validateText(input.actorUserId, 200, 'FABRIC_AUDIT_INVALID_ACTOR')
   validateText(input.aggregateId, 500, 'FABRIC_AUDIT_INVALID_AGGREGATE')
@@ -98,7 +112,56 @@ export function appendFabricAuditEvent(db: DatabaseSync, input: FabricAuditEvent
     INSERT INTO fabric_meta(key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(AUDIT_HEAD_KEY, canonicalStringify({ sequence, hash }))
+  audited.next = { sequence, hash }
+  writeFabricAuditAnchor(audited.directory, audited.key, {
+    committed: audited.previous,
+    pending: { previous: audited.previous, next: audited.next },
+  })
   return { ...input, payload, occurredAt, sequence, id, previousHash, hash }
+}
+
+export function withFabricAuditedTransaction<T>(
+  operation: (db: DatabaseSync) => FabricSynchronousResult<T>,
+): T {
+  return withActionFabricDb(db => {
+    const directory = dirname(getActionFabricDbPath())
+    const key = getAuditKey()
+    const preflightCheckpoint = readDatabaseCheckpoint(db)
+    const previous = readAuditFormat(db) === null && preflightCheckpoint.sequence > 0
+      ? preflightCheckpoint
+      : reconcileAuditAnchor(db, directory, key)
+    db.exec('BEGIN IMMEDIATE')
+    let committed = false
+    const context = { directory, key, previous, next: previous }
+    auditedTransactions.set(db, context)
+    try {
+      const lockedCheckpoint = readDatabaseCheckpoint(db)
+      if (!sameCheckpoint(lockedCheckpoint, previous)) throw new Error('FABRIC_AUDIT_ANCHOR_MISMATCH')
+      const format = readAuditFormat(db)
+      if (format === AUDIT_FORMAT) {
+        const verification = verifyChain(db, value => mac(key, value))
+        if (!verification.valid) throw new Error('FABRIC_AUDIT_CHAIN_CORRUPT')
+      }
+      const result = operation(db)
+      if (isPromiseLike(result)) throw new TypeError('Fabric audited transaction must be synchronous')
+      db.exec('COMMIT')
+      committed = true
+      if (!sameCheckpoint(context.next, context.previous)) {
+        writeFabricAuditAnchor(directory, key, { committed: context.next, pending: null })
+      }
+      return result
+    } catch (error) {
+      if (!committed) {
+        if (db.isTransaction) db.exec('ROLLBACK')
+        if (!sameCheckpoint(context.next, context.previous)) {
+          writeFabricAuditAnchor(directory, key, { committed: context.previous, pending: null })
+        }
+      }
+      throw error
+    } finally {
+      auditedTransactions.delete(db)
+    }
+  })
 }
 
 export function listFabricAuditEvents(options: FabricAuditListOptions = {}): FabricAuditEvent[] {
@@ -149,39 +212,75 @@ export function verifyFabricAuditChain(): {
     }
     if (format.value !== AUDIT_FORMAT) return { valid: false, checked: 0, firstInvalidSequence: 1 }
     const auditKey = getAuditKey()
-    return verifyChain(db, value => mac(auditKey, value))
+    const verification = verifyChain(db, value => mac(auditKey, value))
+    if (!verification.valid) return verification
+    try {
+      reconcileAuditAnchor(db, dirname(getActionFabricDbPath()), auditKey)
+      return verification
+    } catch {
+      return { valid: false, checked: verification.checked, firstInvalidSequence: null }
+    }
   })
 }
 
 export function migrateLegacyFabricAuditChain(): { migrated: boolean; checked: number } {
   return withActionFabricDb(db => {
     db.exec('BEGIN IMMEDIATE')
+    let committed = false
+    let legacyCheckpoint: FabricAuditCheckpoint | null = null
+    let anchorPending = false
+    const directory = dirname(getActionFabricDbPath())
     try {
       const format = db.prepare('SELECT value FROM fabric_meta WHERE key = ?').get(AUDIT_FORMAT_KEY) as
         { value: string } | undefined
       if (format?.value === AUDIT_FORMAT) {
         const auditKey = getAuditKey()
+        reconcileAuditAnchor(db, directory, auditKey)
         const verification = verifyChain(db, value => mac(auditKey, value))
         if (!verification.valid) throw new Error('FABRIC_AUDIT_CHAIN_CORRUPT')
         db.exec('COMMIT')
+        committed = true
         return { migrated: false, checked: verification.checked }
       }
       if (format !== undefined) throw new Error('FABRIC_AUDIT_FORMAT_MIGRATION_REQUIRED')
       const expectedHead = readExpectedLegacyHead()
       const verification = verifyChain(db, legacyDigest)
       if (!verification.valid) throw new Error('FABRIC_AUDIT_LEGACY_INVALID')
-      const storedHead = readStoredAuditHead(db)
-      if (storedHead === null || !/^[a-f0-9]{64}$/.test(storedHead.hash)
-        || storedHead.sequence !== verification.checked
-        || !timingSafeEqual(Buffer.from(expectedHead, 'hex'), Buffer.from(storedHead.hash, 'hex'))) {
+      legacyCheckpoint = readStoredAuditHead(db)
+      if (legacyCheckpoint === null || !/^[a-f0-9]{64}$/.test(legacyCheckpoint.hash)
+        || legacyCheckpoint.sequence !== verification.checked
+        || !timingSafeEqual(Buffer.from(expectedHead, 'hex'), Buffer.from(legacyCheckpoint.hash, 'hex'))) {
         throw new Error('FABRIC_AUDIT_LEGACY_HEAD_MISMATCH')
       }
-      resignLegacyChain(db, getAuditKey())
+      const auditKey = getAuditKey()
+      const existingAnchor = readFabricAuditAnchor(directory, auditKey)
+      if (existingAnchor !== null) {
+        const recoverable = existingAnchor.pending !== null
+          && sameCheckpoint(existingAnchor.pending.previous, legacyCheckpoint)
+          && sameCheckpoint(existingAnchor.committed, legacyCheckpoint)
+        if (!recoverable && !sameCheckpoint(existingAnchor.committed, legacyCheckpoint)) {
+          throw new Error('FABRIC_AUDIT_ANCHOR_MISMATCH')
+        }
+      }
+      const nextCheckpoint = calculateResignedCheckpoint(db, auditKey)
+      writeFabricAuditAnchor(directory, auditKey, {
+        committed: legacyCheckpoint,
+        pending: { previous: legacyCheckpoint, next: nextCheckpoint },
+      })
+      anchorPending = true
+      resignLegacyChain(db, auditKey)
       db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run(AUDIT_FORMAT_KEY, AUDIT_FORMAT)
       db.exec('COMMIT')
+      committed = true
+      writeFabricAuditAnchor(directory, auditKey, { committed: nextCheckpoint, pending: null })
       return { migrated: true, checked: verification.checked }
     } catch (error) {
-      db.exec('ROLLBACK')
+      if (!committed) {
+        if (db.isTransaction) db.exec('ROLLBACK')
+        if (anchorPending && legacyCheckpoint !== null) {
+          writeFabricAuditAnchor(directory, getAuditKey(), { committed: legacyCheckpoint, pending: null })
+        }
+      }
       throw error
     }
   })
@@ -353,6 +452,19 @@ function resignLegacyChain(db: DatabaseSync, auditKey: Buffer): void {
     .run(canonicalStringify({ sequence: finalSequence, hash: previousHash }), AUDIT_HEAD_KEY)
 }
 
+function calculateResignedCheckpoint(db: DatabaseSync, auditKey: Buffer): FabricAuditCheckpoint {
+  let previousHash = GENESIS_HASH
+  let sequence = 0
+  for (const row of db.prepare(
+    'SELECT * FROM fabric_audit_events ORDER BY sequence ASC',
+  ).iterate() as IterableIterator<AuditRow>) {
+    const payload = parseJsonObject(row.payload_json)
+    previousHash = mac(auditKey, canonicalStringify(immutableAuditFields(row, payload, previousHash)))
+    sequence = row.sequence
+  }
+  return { sequence, hash: previousHash }
+}
+
 function readExpectedLegacyHead(): string {
   const value = process.env.HERMES_ACTION_FABRIC_LEGACY_AUDIT_HEAD
   if (value === undefined) throw new Error('FABRIC_AUDIT_LEGACY_AUTH_REQUIRED')
@@ -372,6 +484,64 @@ function readStoredAuditHead(db: DatabaseSync): { sequence: number; hash: string
   } catch {
     return null
   }
+}
+
+function reconcileAuditAnchor(
+  db: DatabaseSync,
+  directory: string,
+  key: Buffer,
+): FabricAuditCheckpoint {
+  const checkpoint = readDatabaseCheckpoint(db)
+  const format = readAuditFormat(db)
+  const anchor = readFabricAuditAnchor(directory, key)
+  if (anchor === null) {
+    if (checkpoint.sequence === 0) {
+      writeFabricAuditAnchor(directory, key, { committed: checkpoint, pending: null })
+      return checkpoint
+    }
+    if (format === null) return checkpoint
+    throw new Error('FABRIC_AUDIT_ANCHOR_REQUIRED')
+  }
+  if (anchor.pending !== null) {
+    if (sameCheckpoint(checkpoint, anchor.pending.next)) {
+      writeFabricAuditAnchor(directory, key, { committed: anchor.pending.next, pending: null })
+      return anchor.pending.next
+    }
+    if (sameCheckpoint(checkpoint, anchor.pending.previous)) {
+      writeFabricAuditAnchor(directory, key, { committed: anchor.pending.previous, pending: null })
+      return anchor.pending.previous
+    }
+    throw new Error('FABRIC_AUDIT_ANCHOR_MISMATCH')
+  }
+  if (!sameCheckpoint(checkpoint, anchor.committed)) throw new Error('FABRIC_AUDIT_ANCHOR_MISMATCH')
+  return anchor.committed
+}
+
+function readDatabaseCheckpoint(db: DatabaseSync): FabricAuditCheckpoint {
+  const last = db.prepare('SELECT sequence, hash FROM fabric_audit_events ORDER BY sequence DESC LIMIT 1').get() as
+    FabricAuditCheckpoint | undefined
+  const head = readStoredAuditHead(db)
+  if (last === undefined) {
+    if (head !== null) throw new Error('FABRIC_AUDIT_ANCHOR_MISMATCH')
+    return { sequence: 0, hash: GENESIS_HASH }
+  }
+  if (head === null || !sameCheckpoint(last, head)) throw new Error('FABRIC_AUDIT_ANCHOR_MISMATCH')
+  return last
+}
+
+function readAuditFormat(db: DatabaseSync): string | null {
+  const row = db.prepare('SELECT value FROM fabric_meta WHERE key = ?').get(AUDIT_FORMAT_KEY) as
+    { value: string } | undefined
+  return row?.value ?? null
+}
+
+function sameCheckpoint(left: FabricAuditCheckpoint, right: FabricAuditCheckpoint): boolean {
+  return left.sequence === right.sequence && left.hash === right.hash
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return false
+  return typeof (value as { then?: unknown }).then === 'function'
 }
 
 function verifyChain(
