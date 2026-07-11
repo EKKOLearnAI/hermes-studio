@@ -25,7 +25,10 @@ export function createSimulatorExecutorAdapter(options: SimulatorExecutorOptions
     throw new Error('SIMULATOR_EXECUTION_CACHE_LIMIT_INVALID')
   }
   const counters = new Map<string, number>()
-  const executions = new Map<string, { materialDigest: string; promise: Promise<FabricExecuteResult> }>()
+  const executions = new Map<string, {
+    materialDigest: string
+    promise: Promise<FabricExecuteResult> | null
+  }>()
 
   return {
     id: 'simulator-main',
@@ -37,26 +40,18 @@ export function createSimulatorExecutorAdapter(options: SimulatorExecutorOptions
       const materialDigest = executionMaterialDigest(context)
       const existing = executions.get(context.executionToken)
       if (existing) {
-        return existing.materialDigest === materialDigest
-          ? existing.promise
-          : Promise.resolve(failure('permanent_failure', 'SIMULATOR_EXECUTION_TOKEN_CONFLICT'))
+        if (existing.materialDigest !== materialDigest) {
+          return Promise.resolve(failure('permanent_failure', 'SIMULATOR_EXECUTION_TOKEN_MATERIAL_CONFLICT'))
+        }
+        if (existing.promise) return existing.promise
+        return startExecution(existing, context, options, counters)
       }
       if (executions.size >= maxExecutionTokens) {
         return Promise.resolve(failure('permanent_failure', 'SIMULATOR_EXECUTION_CACHE_FULL'))
       }
-      // No rejected execution promise escapes the adapter: its side-effect status is unknown,
-      // so the normalized outcome remains cached and is never retried blindly.
-      const pending = executeOnce(context, options, counters)
-        .catch(() => failure('unknown', 'SIMULATOR_EXECUTION_EXCEPTION'))
-      const entry = { materialDigest, promise: pending }
+      const entry = { materialDigest, promise: null as Promise<FabricExecuteResult> | null }
       executions.set(context.executionToken, entry)
-      void pending.then(result => {
-        if (result.outcome === 'temporary_failure' && result.safeToRetry
-          && executions.get(context.executionToken) === entry) {
-          executions.delete(context.executionToken)
-        }
-      })
-      return pending
+      return startExecution(entry, context, options, counters)
     },
     async verify(context): Promise<FabricVerifyResult> {
       if (options.faultFor?.(context, 'verify') === 'verification_mismatch') {
@@ -82,11 +77,37 @@ export function createSimulatorExecutorAdapter(options: SimulatorExecutorOptions
 
 function executionMaterialDigest(context: FabricExecutionContext): string {
   return createHash('sha256').update(canonical({
+    intentId: context.intentId,
+    workflowId: context.workflowId,
+    stepId: context.stepId,
+    executorId: context.executorId,
     capabilityId: context.capabilityId,
     capabilityVersion: context.capabilityVersion,
+    contractDigest: context.contractDigest,
     input: context.input,
     target: context.target,
+    preparedOutput: context.preparedOutput ?? null,
   }), 'utf8').digest('hex')
+}
+
+function startExecution(
+  entry: { materialDigest: string; promise: Promise<FabricExecuteResult> | null },
+  context: FabricExecutionContext,
+  options: SimulatorExecutorOptions,
+  counters: Map<string, number>,
+): Promise<FabricExecuteResult> {
+  // No rejected execution promise escapes the adapter: its side-effect status is unknown,
+  // so the normalized outcome remains cached and is never retried blindly.
+  const pending = executeOnce(context, options, counters)
+    .catch(() => failure('unknown', 'SIMULATOR_EXECUTION_EXCEPTION'))
+  entry.promise = pending
+  void pending.then(result => {
+    // Preserve the token/material tombstone. Only the retryable result is cleared.
+    if (result.outcome === 'temporary_failure' && result.safeToRetry && entry.promise === pending) {
+      entry.promise = null
+    }
+  })
+  return pending
 }
 
 async function executeOnce(

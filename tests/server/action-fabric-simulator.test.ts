@@ -83,10 +83,12 @@ describe('Action Fabric simulator executors', () => {
 
     await expect(invokeFabricExecutor('execute', { ...original, input: { amount: 9, counter: 'jobs' } }))
       .resolves.toMatchObject({
-        outcome: 'permanent_failure', errorCode: 'SIMULATOR_EXECUTION_TOKEN_CONFLICT', safeToRetry: false,
+        outcome: 'permanent_failure', errorCode: 'SIMULATOR_EXECUTION_TOKEN_MATERIAL_CONFLICT', safeToRetry: false,
       })
     await expect(invokeFabricExecutor('execute', executionContext('simulator.echo', 'bound-token', { amount: 2 })))
-      .resolves.toMatchObject({ outcome: 'permanent_failure', errorCode: 'SIMULATOR_EXECUTION_TOKEN_CONFLICT' })
+      .resolves.toMatchObject({ outcome: 'permanent_failure', errorCode: 'SIMULATOR_EXECUTION_TOKEN_MATERIAL_CONFLICT' })
+    await expect(invokeFabricExecutor('execute', { ...original, preparedOutput: { checkpoint: 'changed' } }))
+      .resolves.toMatchObject({ outcome: 'permanent_failure', errorCode: 'SIMULATOR_EXECUTION_TOKEN_MATERIAL_CONFLICT' })
     await expect(invokeFabricExecutor('execute', original)).resolves.toMatchObject({ output: { value: 2 } })
   })
 
@@ -103,9 +105,28 @@ describe('Action Fabric simulator executors', () => {
       expect.objectContaining({ outcome: 'temporary_failure', safeToRetry: true }),
       expect.objectContaining({ outcome: 'temporary_failure', safeToRetry: true }),
     ])
+    await expect(invokeFabricExecutor('execute', { ...context, input: { message: 'different' } }))
+      .resolves.toMatchObject({
+        outcome: 'permanent_failure', errorCode: 'SIMULATOR_EXECUTION_TOKEN_MATERIAL_CONFLICT', safeToRetry: false,
+      })
     await expect(invokeFabricExecutor('execute', context))
       .resolves.toMatchObject({ outcome: 'succeeded', output: { message: 'recover' } })
     expect(attempts).toBe(2)
+  })
+
+  it('counts retry tombstones toward the hard token capacity', async () => {
+    let first = true
+    registerFabricExecutorAdapter(createSimulatorExecutorAdapter({
+      maxExecutionTokens: 1,
+      faultFor: () => first ? (first = false, 'temporary_failure') : null,
+    }))
+    const context = executionContext('simulator.echo', 'tombstone-one', { message: 'retry' })
+    await expect(invokeFabricExecutor('execute', context))
+      .resolves.toMatchObject({ outcome: 'temporary_failure', safeToRetry: true })
+    await expect(invokeFabricExecutor('execute', { ...context, executionToken: 'tombstone-two' }))
+      .resolves.toMatchObject({ outcome: 'permanent_failure', errorCode: 'SIMULATOR_EXECUTION_CACHE_FULL' })
+    await expect(invokeFabricExecutor('execute', context))
+      .resolves.toMatchObject({ outcome: 'succeeded', output: { message: 'retry' } })
   })
 
   it('normalizes a rejected execution promise to a cached unknown outcome', async () => {
@@ -266,6 +287,60 @@ describe('Action Fabric simulator executors', () => {
     expect(result.outcome).toBe('succeeded')
     expect(Buffer.byteLength(JSON.stringify(result.evidence), 'utf8')).toBeLessThanOrEqual(24_000)
     expect(JSON.stringify(result.evidence)).toContain('_truncated')
+  })
+
+  it('shares one result budget across large output and evidence', async () => {
+    const adapter = successfulAdapter(Object.fromEntries(
+      Array.from({ length: 12 }, (_, index) => [`evidence-${index}`, 'e'.repeat(2_000)]),
+    ))
+    adapter.execute = async () => ({
+      outcome: 'succeeded',
+      output: Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`output-${index}`, 'o'.repeat(2_000)])),
+      evidence: [{ kind: 'combined', summary: 'combined', data: Object.fromEntries(
+        Array.from({ length: 12 }, (_, index) => [`evidence-${index}`, 'e'.repeat(2_000)]),
+      ) }],
+      errorCode: null, safeToRetry: false,
+    })
+    registerFabricExecutorAdapter(adapter)
+
+    const result = await invokeFabricExecutor('execute', executionContext('simulator.echo', 'combined-budget', {}))
+    expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThanOrEqual(24_000)
+    expect(JSON.stringify(result)).not.toContain('e'.repeat(2_000))
+  })
+
+  it('hard-checks final JSON bytes including quote and backslash escaping overhead', async () => {
+    const adapter = successfulAdapter({})
+    adapter.execute = async () => ({
+      outcome: 'succeeded',
+      output: Object.fromEntries(Array.from({ length: 64 }, (_, index) => [
+        `escaped-${index}`, `${'\\'.repeat(200)}${'"'.repeat(100)}`,
+      ])),
+      evidence: [], errorCode: null, safeToRetry: false,
+    })
+    registerFabricExecutorAdapter(adapter)
+
+    const result = await invokeFabricExecutor('execute', executionContext('simulator.echo', 'escaped-budget', {}))
+    expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThanOrEqual(24_000)
+    expect(result).toMatchObject({
+      outcome: 'unknown', errorCode: 'FABRIC_EXECUTOR_CONTRACT_VIOLATION', safeToRetry: false,
+    })
+  })
+
+  it('shares the node budget between output and evidence without visiting excess evidence nodes', async () => {
+    const adapter = successfulAdapter({})
+    const output = { groups: Array.from({ length: 64 }, (_, group) => ({
+      group, values: Array.from({ length: 7 }, (_, value) => ({ value })),
+    })) }
+    adapter.execute = async () => ({
+      outcome: 'succeeded', output,
+      evidence: [{ kind: 'late', summary: 'late', data: { marker: 'EVIDENCE_SHOULD_NOT_SURVIVE' } }],
+      errorCode: null, safeToRetry: false,
+    })
+    registerFabricExecutorAdapter(adapter)
+
+    const result = await invokeFabricExecutor('execute', executionContext('simulator.echo', 'shared-nodes', {}))
+    expect(JSON.stringify(result)).not.toContain('EVIDENCE_SHOULD_NOT_SURVIVE')
+    expect(JSON.stringify(result)).toContain('_truncated')
   })
 
   it('rejects proxy evidence before traps and bounds huge enumerable objects without reading accessors', async () => {

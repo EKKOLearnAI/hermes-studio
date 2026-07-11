@@ -76,7 +76,7 @@ const MAX_EVIDENCE = 16
 const MAX_DEPTH = 6
 const MAX_ITEMS = 64
 const MAX_STRING = 2_000
-const MAX_EVIDENCE_BYTES = 24_000
+const MAX_RESULT_BYTES = 24_000
 const MAX_SANITIZED_BYTES = 22_000
 const MAX_NODES = 512
 const REDACTED = '[REDACTED]'
@@ -160,12 +160,13 @@ function sanitizeResult(phase: FabricExecutorPhase, raw: unknown, now?: string):
   if (!isPlainRecord(raw)) throw new Error('invalid result')
   const outcome = dataProperty(raw, 'outcome')
   if (typeof outcome !== 'string' || !PHASE_OUTCOMES[phase].has(outcome)) throw new Error('invalid outcome')
+  const budget = newBudget()
   const outputValue = dataProperty(raw, 'output')
   if (!isPlainRecord(outputValue)) throw new Error('invalid output')
-  const output = sanitizeObject(outputValue, newBudget())
+  const output = sanitizeObject(outputValue, budget)
   const evidenceValue = dataProperty(raw, 'evidence')
   if (isProxyValue(evidenceValue) || !Array.isArray(evidenceValue)) throw new Error('invalid evidence')
-  const evidence = sanitizeEvidence(evidenceValue, now)
+  const evidence = sanitizeEvidence(evidenceValue, now, budget)
   const errorValue = dataProperty(raw, 'errorCode')
   const errorCode = typeof errorValue === 'string' && /^[A-Z][A-Z0-9_]{1,127}$/.test(errorValue) ? errorValue : null
   const retryValue = dataProperty(raw, 'safeToRetry')
@@ -175,7 +176,11 @@ function sanitizeResult(phase: FabricExecutorPhase, raw: unknown, now?: string):
   const mayRetry = phase === 'execute' && outcome === 'temporary_failure'
   if (retryValue && !mayRetry) throw new Error('invalid retry combination')
   const safeToRetry = mayRetry && retryValue
-  return { outcome, output, evidence, errorCode, safeToRetry } as FabricExecutorResult
+  const result = { outcome, output, evidence, errorCode, safeToRetry } as FabricExecutorResult
+  if (Buffer.byteLength(JSON.stringify(result), 'utf8') > MAX_RESULT_BYTES) {
+    throw new Error('result exceeds persisted JSON budget')
+  }
+  return result
 }
 
 function exceptionResult(phase: FabricExecutorPhase, now?: string): FabricExecutorResult {
@@ -198,12 +203,16 @@ function contractViolationResult(phase: FabricExecutorPhase, now?: string): Fabr
   } as FabricExecutorResult
 }
 
-function sanitizeEvidence(value: unknown, now?: string): FabricEvidence[] {
+function sanitizeEvidence(value: unknown, now: string | undefined, budget: SanitizationBudget): FabricEvidence[] {
   if (isProxyValue(value) || !Array.isArray(value)) return []
+  if (budget.truncated || budget.nodes >= MAX_NODES || budget.bytes >= MAX_SANITIZED_BYTES) {
+    return [truncationEvidence(now)]
+  }
   const entries: FabricEvidence[] = []
-  const budget = newBudget()
   const length = Math.min(value.length, MAX_EVIDENCE)
   for (let index = 0; index < length; index += 1) {
+    budget.nodes += 1
+    if (budget.nodes > MAX_NODES) { budget.truncated = true; break }
     charge(budget, 96)
     const property = Object.getOwnPropertyDescriptor(value, String(index))
     const item = property && 'value' in property ? property.value : undefined
@@ -223,11 +232,11 @@ function sanitizeEvidence(value: unknown, now?: string): FabricEvidence[] {
   }
   if (value.length > MAX_EVIDENCE) budget.truncated = true
   if (budget.truncated) markEvidenceTruncated(entries, now)
-  while (Buffer.byteLength(JSON.stringify(entries), 'utf8') > MAX_EVIDENCE_BYTES && entries.length > 1) {
+  while (Buffer.byteLength(JSON.stringify(entries), 'utf8') > MAX_RESULT_BYTES && entries.length > 1) {
     entries.pop()
     markEvidenceTruncated(entries, now)
   }
-  if (Buffer.byteLength(JSON.stringify(entries), 'utf8') > MAX_EVIDENCE_BYTES) {
+  if (Buffer.byteLength(JSON.stringify(entries), 'utf8') > MAX_RESULT_BYTES) {
     return [truncationEvidence(now)]
   }
   return entries
