@@ -156,8 +156,8 @@ export async function processActionFabricOnce(
       compensation = null
     }
   }
-  const finishNow = validDate(options.clock?.() ?? options.now ?? new Date())
-  const committed = commitClaim(claim, result, finishNow, compensation)
+  const finishClock = options.clock ?? (options.now === undefined ? () => new Date() : () => now)
+  const committed = commitClaim(claim, result, finishClock, compensation)
   const errorClass = result.errorCode ?? result.outcome
   if (committed) logger.info({ workerId, workflowId: claim.workflowId, stepId: claim.stepId,
     phase: claim.phase, outcome: result.outcome, errorClass }, '[action-fabric] worker cycle')
@@ -389,10 +389,12 @@ function buildClaim(
 function commitClaim(
   claim: WorkflowClaim,
   result: FabricExecutorResult,
-  now: Date,
+  finishClock: () => Date,
   preparedCompensation?: PreparedFabricCompensation | null,
 ): boolean {
   return withFabricAuditedTransaction(db => {
+    const now = validDate(finishClock())
+    const nowIso = now.toISOString()
     const current = db.prepare('SELECT state,version,lease_owner,lease_expires_at,max_attempts,attempt FROM fabric_workflows WHERE id=?')
       .get(claim.workflowId) as { state: FabricWorkflowState; version: number; lease_owner: string | null;
         lease_expires_at: string | null; max_attempts: number; attempt: number } | undefined
@@ -400,9 +402,8 @@ function commitClaim(
       { state: string; execution_token: string; attempt: number } | undefined
     if (!current || !step || current.version !== claim.workflowVersion || current.lease_owner !== claim.workerId
       || current.lease_expires_at !== claim.leaseExpiresAt || step.execution_token !== claim.executionToken
-      || current.lease_expires_at <= now.toISOString()
+      || current.lease_expires_at <= nowIso
       || (!isStateForPhase(current.state, claim.phase)) || (claim.phase !== 'interrupt' && step.state !== 'running')) return false
-    const nowIso = now.toISOString()
     let transition = outcomeTransition(claim, result, current, now)
     let compensationIntentId: string | null = null
     let compensationWorkflowId: string | null = null

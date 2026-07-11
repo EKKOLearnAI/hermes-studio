@@ -111,6 +111,36 @@ describe('Action Fabric durable worker', () => {
     expect(getFabricWorkflow(workflow.id)?.steps[0].state).toBe('running')
   })
 
+  it('samples the single finish clock from the audited commit and validates both lease outcomes', async () => {
+    registerFabricExecutorAdapter(createSimulatorExecutorAdapter())
+    const expired = create('lock-expired').workflow
+    let sampledInsideCommit = false
+    const expiredResult = await processActionFabricOnce({
+      workerId: 'worker-a', now: base,
+      clock: () => {
+        sampledInsideCommit = new Error().stack?.includes('commitClaim') === true
+        return plus(31)
+      },
+    })
+    expect(sampledInsideCommit).toBe(true)
+    expect(expiredResult).toMatchObject({ stale: true })
+    expect(getFabricWorkflow(expired.id)?.steps[0].state).toBe('running')
+    withActionFabricDb(db => {
+      db.prepare("UPDATE fabric_workflows SET state='waiting_user',lease_owner=NULL,lease_expires_at=NULL WHERE id=?")
+        .run(expired.id)
+      db.prepare("UPDATE fabric_steps SET state='waiting_user' WHERE workflow_id=? AND state='running'").run(expired.id)
+    })
+
+    const healthy = create('lock-healthy').workflow
+    let samples = 0
+    const healthyResult = await processActionFabricOnce({
+      workerId: 'worker-b', now: plus(32), clock: () => { samples += 1; return plus(33) },
+    })
+    expect(samples).toBe(1)
+    expect(healthyResult.stale).toBeUndefined()
+    expect(getFabricWorkflow(healthy.id)?.steps[0].state).toBe('succeeded')
+  })
+
   it('recovers an expired non-idempotent execute by verification without reinvoking the side effect', async () => {
     let executes = 0
     let verifies = 0
