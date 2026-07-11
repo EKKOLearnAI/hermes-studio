@@ -3,8 +3,10 @@ import { dirname } from 'path'
 import type { DatabaseSync } from 'node:sqlite'
 import { getActionFabricDbPath, withActionFabricDb } from './database'
 import { FabricAuditKeyProvider } from './audit-key'
+import { withFabricAuditWriterLock } from './audit-lock'
 import {
   readFabricAuditAnchor,
+  compareAndSwapFabricAuditAnchor,
   writeFabricAuditAnchor,
   type FabricAuditCheckpoint,
 } from './audit-anchor'
@@ -112,11 +114,18 @@ export function appendFabricAuditEvent(db: DatabaseSync, input: FabricAuditEvent
     INSERT INTO fabric_meta(key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(AUDIT_HEAD_KEY, canonicalStringify({ sequence, hash }))
-  audited.next = { sequence, hash }
-  writeFabricAuditAnchor(audited.directory, audited.key, {
+  const next = { sequence, hash }
+  const expectedAnchor = sameCheckpoint(audited.next, audited.previous)
+    ? { committed: audited.previous, pending: null }
+    : { committed: audited.previous, pending: { previous: audited.previous, next: audited.next } }
+  const pendingAnchor = {
     committed: audited.previous,
-    pending: { previous: audited.previous, next: audited.next },
-  })
+    pending: { previous: audited.previous, next },
+  }
+  if (!compareAndSwapFabricAuditAnchor(audited.directory, audited.key, expectedAnchor, pendingAnchor)) {
+    throw new Error('FABRIC_AUDIT_ANCHOR_CONFLICT')
+  }
+  audited.next = next
   return { ...input, payload, occurredAt, sequence, id, previousHash, hash }
 }
 
@@ -125,18 +134,18 @@ export function withFabricAuditedTransaction<T>(
 ): T {
   return withActionFabricDb(db => {
     const directory = dirname(getActionFabricDbPath())
+    return withFabricAuditWriterLock(directory, () => {
     const key = getAuditKey()
-    const preflightCheckpoint = readDatabaseCheckpoint(db)
-    const previous = readAuditFormat(db) === null && preflightCheckpoint.sequence > 0
-      ? preflightCheckpoint
-      : reconcileAuditAnchor(db, directory, key)
     db.exec('BEGIN IMMEDIATE')
     let committed = false
-    const context = { directory, key, previous, next: previous }
-    auditedTransactions.set(db, context)
+    let context: { directory: string; key: Buffer; previous: FabricAuditCheckpoint; next: FabricAuditCheckpoint } | null = null
     try {
-      const lockedCheckpoint = readDatabaseCheckpoint(db)
-      if (!sameCheckpoint(lockedCheckpoint, previous)) throw new Error('FABRIC_AUDIT_ANCHOR_MISMATCH')
+      const checkpoint = readDatabaseCheckpoint(db)
+      const previous = readAuditFormat(db) === null && checkpoint.sequence > 0
+        ? checkpoint
+        : reconcileAuditAnchor(db, directory, key)
+      context = { directory, key, previous, next: previous }
+      auditedTransactions.set(db, context)
       const format = readAuditFormat(db)
       if (format === AUDIT_FORMAT) {
         const verification = verifyChain(db, value => mac(key, value))
@@ -147,20 +156,27 @@ export function withFabricAuditedTransaction<T>(
       db.exec('COMMIT')
       committed = true
       if (!sameCheckpoint(context.next, context.previous)) {
-        writeFabricAuditAnchor(directory, key, { committed: context.next, pending: null })
+        const pending = { committed: context.previous, pending: { previous: context.previous, next: context.next } }
+        if (!compareAndSwapFabricAuditAnchor(directory, key, pending, { committed: context.next, pending: null })) {
+          throw new Error('FABRIC_AUDIT_ANCHOR_CONFLICT')
+        }
       }
       return result
     } catch (error) {
       if (!committed) {
         if (db.isTransaction) db.exec('ROLLBACK')
-        if (!sameCheckpoint(context.next, context.previous)) {
-          writeFabricAuditAnchor(directory, key, { committed: context.previous, pending: null })
+        if (context !== null && !sameCheckpoint(context.next, context.previous)) {
+          const pending = { committed: context.previous, pending: { previous: context.previous, next: context.next } }
+          if (!compareAndSwapFabricAuditAnchor(directory, key, pending, { committed: context.previous, pending: null })) {
+            throw new Error('FABRIC_AUDIT_ANCHOR_CONFLICT')
+          }
         }
       }
       throw error
     } finally {
-      auditedTransactions.delete(db)
+      if (context !== null) auditedTransactions.delete(db)
     }
+    })
   })
 }
 
@@ -215,8 +231,9 @@ export function verifyFabricAuditChain(): {
     const verification = verifyChain(db, value => mac(auditKey, value))
     if (!verification.valid) return verification
     try {
-      reconcileAuditAnchor(db, dirname(getActionFabricDbPath()), auditKey)
-      return verification
+      return auditAnchorMatchesSnapshot(db, dirname(getActionFabricDbPath()), auditKey)
+        ? verification
+        : { valid: false, checked: verification.checked, firstInvalidSequence: null }
     } catch {
       return { valid: false, checked: verification.checked, firstInvalidSequence: null }
     }
@@ -225,11 +242,13 @@ export function verifyFabricAuditChain(): {
 
 export function migrateLegacyFabricAuditChain(): { migrated: boolean; checked: number } {
   return withActionFabricDb(db => {
+    const directory = dirname(getActionFabricDbPath())
+    return withFabricAuditWriterLock(directory, () => {
     db.exec('BEGIN IMMEDIATE')
     let committed = false
     let legacyCheckpoint: FabricAuditCheckpoint | null = null
+    let nextCheckpoint: FabricAuditCheckpoint | null = null
     let anchorPending = false
-    const directory = dirname(getActionFabricDbPath())
     try {
       const format = db.prepare('SELECT value FROM fabric_meta WHERE key = ?').get(AUDIT_FORMAT_KEY) as
         { value: string } | undefined
@@ -262,27 +281,39 @@ export function migrateLegacyFabricAuditChain(): { migrated: boolean; checked: n
           throw new Error('FABRIC_AUDIT_ANCHOR_MISMATCH')
         }
       }
-      const nextCheckpoint = calculateResignedCheckpoint(db, auditKey)
-      writeFabricAuditAnchor(directory, auditKey, {
+      nextCheckpoint = calculateResignedCheckpoint(db, auditKey)
+      const pendingAnchor = {
         committed: legacyCheckpoint,
         pending: { previous: legacyCheckpoint, next: nextCheckpoint },
-      })
+      }
+      if (!compareAndSwapFabricAuditAnchor(directory, auditKey, existingAnchor, pendingAnchor)) {
+        throw new Error('FABRIC_AUDIT_ANCHOR_CONFLICT')
+      }
       anchorPending = true
       resignLegacyChain(db, auditKey)
       db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run(AUDIT_FORMAT_KEY, AUDIT_FORMAT)
       db.exec('COMMIT')
       committed = true
-      writeFabricAuditAnchor(directory, auditKey, { committed: nextCheckpoint, pending: null })
+      if (!compareAndSwapFabricAuditAnchor(directory, auditKey, pendingAnchor, { committed: nextCheckpoint, pending: null })) {
+        throw new Error('FABRIC_AUDIT_ANCHOR_CONFLICT')
+      }
       return { migrated: true, checked: verification.checked }
     } catch (error) {
       if (!committed) {
         if (db.isTransaction) db.exec('ROLLBACK')
-        if (anchorPending && legacyCheckpoint !== null) {
-          writeFabricAuditAnchor(directory, getAuditKey(), { committed: legacyCheckpoint, pending: null })
+        if (anchorPending && legacyCheckpoint !== null && nextCheckpoint !== null) {
+          const pendingAnchor = {
+            committed: legacyCheckpoint,
+            pending: { previous: legacyCheckpoint, next: nextCheckpoint },
+          }
+          if (!compareAndSwapFabricAuditAnchor(
+            directory, getAuditKey(), pendingAnchor, { committed: legacyCheckpoint, pending: null },
+          )) throw new Error('FABRIC_AUDIT_ANCHOR_CONFLICT')
         }
       }
       throw error
     }
+    })
   })
 }
 
@@ -496,7 +527,9 @@ function reconcileAuditAnchor(
   const anchor = readFabricAuditAnchor(directory, key)
   if (anchor === null) {
     if (checkpoint.sequence === 0) {
-      writeFabricAuditAnchor(directory, key, { committed: checkpoint, pending: null })
+      if (!compareAndSwapFabricAuditAnchor(directory, key, null, { committed: checkpoint, pending: null })) {
+        throw new Error('FABRIC_AUDIT_ANCHOR_CONFLICT')
+      }
       return checkpoint
     }
     if (format === null) return checkpoint
@@ -504,17 +537,31 @@ function reconcileAuditAnchor(
   }
   if (anchor.pending !== null) {
     if (sameCheckpoint(checkpoint, anchor.pending.next)) {
-      writeFabricAuditAnchor(directory, key, { committed: anchor.pending.next, pending: null })
+      if (!compareAndSwapFabricAuditAnchor(directory, key, anchor, { committed: anchor.pending.next, pending: null })) {
+        throw new Error('FABRIC_AUDIT_ANCHOR_CONFLICT')
+      }
       return anchor.pending.next
     }
     if (sameCheckpoint(checkpoint, anchor.pending.previous)) {
-      writeFabricAuditAnchor(directory, key, { committed: anchor.pending.previous, pending: null })
+      if (!compareAndSwapFabricAuditAnchor(directory, key, anchor, { committed: anchor.pending.previous, pending: null })) {
+        throw new Error('FABRIC_AUDIT_ANCHOR_CONFLICT')
+      }
       return anchor.pending.previous
     }
     throw new Error('FABRIC_AUDIT_ANCHOR_MISMATCH')
   }
   if (!sameCheckpoint(checkpoint, anchor.committed)) throw new Error('FABRIC_AUDIT_ANCHOR_MISMATCH')
   return anchor.committed
+}
+
+function auditAnchorMatchesSnapshot(db: DatabaseSync, directory: string, key: Buffer): boolean {
+  const checkpoint = readDatabaseCheckpoint(db)
+  const anchor = readFabricAuditAnchor(directory, key)
+  if (anchor === null) return checkpoint.sequence === 0
+  if (anchor.pending !== null) {
+    return sameCheckpoint(checkpoint, anchor.pending.previous) || sameCheckpoint(checkpoint, anchor.pending.next)
+  }
+  return sameCheckpoint(checkpoint, anchor.committed)
 }
 
 function readDatabaseCheckpoint(db: DatabaseSync): FabricAuditCheckpoint {

@@ -1,11 +1,13 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { spawnSync } from 'child_process'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   appendFabricAuditEvent,
   getFabricControlState,
+  getActionFabricDbPath,
   setFabricEmergencyStop,
   verifyFabricAuditChain,
   withActionFabricDb,
@@ -13,9 +15,11 @@ import {
 } from '../../packages/server/src/services/hermes/action-fabric'
 import {
   getFabricAuditAnchorPath,
+  compareAndSwapFabricAuditAnchor,
   readFabricAuditAnchor,
   writeFabricAuditAnchor,
 } from '../../packages/server/src/services/hermes/action-fabric/audit-anchor'
+import { getFabricAuditWriterLockPath } from '../../packages/server/src/services/hermes/action-fabric/audit-lock'
 
 describe('action fabric external audit anchor', () => {
   const originalHome = process.env.HERMES_HOME
@@ -75,6 +79,9 @@ describe('action fabric external audit anchor', () => {
     writeFabricAuditAnchor(directory, key, {
       committed: checkpoint1, pending: { previous: checkpoint1, next: hypothetical2 },
     })
+    const pendingBeforeVerify = readFileSync(getFabricAuditAnchorPath(directory), 'utf8')
+    expect(verifyFabricAuditChain()).toMatchObject({ valid: true })
+    expect(readFileSync(getFabricAuditAnchorPath(directory), 'utf8')).toBe(pendingBeforeVerify)
     withFabricAuditedTransaction(db => db.prepare('SELECT 1').get())
     expect(readFabricAuditAnchor(directory, key)).toMatchObject({ committed: checkpoint1, pending: null })
 
@@ -85,6 +92,43 @@ describe('action fabric external audit anchor', () => {
     })
     withFabricAuditedTransaction(db => db.prepare('SELECT 1').get())
     expect(readFabricAuditAnchor(directory, key)).toMatchObject({ committed: checkpoint2, pending: null })
+  })
+
+  it('uses anchor CAS so a stale finalizer cannot clobber a later pending transition', () => {
+    const first = withFabricAuditedTransaction(db => event(db, 'one'))
+    const directory = join(home, 'personal')
+    const checkpoint1 = { sequence: first.sequence, hash: first.hash }
+    const stalePending = { committed: checkpoint1, pending: { previous: checkpoint1, next: { sequence: 2, hash: '2'.repeat(64) } } }
+    const laterPending = { committed: checkpoint1, pending: { previous: checkpoint1, next: { sequence: 3, hash: '3'.repeat(64) } } }
+    writeFabricAuditAnchor(directory, key, laterPending)
+
+    expect(compareAndSwapFabricAuditAnchor(directory, key, stalePending, {
+      committed: stalePending.pending.next, pending: null,
+    })).toBe(false)
+    expect(readFabricAuditAnchor(directory, key)).toEqual(laterPending)
+  })
+
+  it('holds a cross-process writer guard through anchor finalization', () => {
+    const source = readFileSync(join(process.cwd(), 'packages/server/src/services/hermes/action-fabric/audit.ts'), 'utf8')
+    expect(source).toContain('withFabricAuditWriterLock(directory')
+    expect(source).toMatch(/db\.exec\('COMMIT'\)[\s\S]{0,500}compareAndSwapFabricAuditAnchor\(directory/)
+  })
+
+  it('allows a child reader but excludes a child writer throughout the pending transaction window', () => {
+    const path = getActionFabricDbPath()
+    const lockPath = getFabricAuditWriterLockPath(join(home, 'personal'))
+    const reader = `const{DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);`+
+      `d.exec('PRAGMA busy_timeout=0');try{d.prepare('SELECT COUNT(*) FROM fabric_audit_events').get();process.exit(0)}catch{process.exit(7)}`
+    const writer = `const{openSync,closeSync,unlinkSync}=require('fs');try{const f=openSync(process.argv[1],'wx');`+
+      `closeSync(f);unlinkSync(process.argv[1]);process.exit(0)}catch{process.exit(7)}`
+    withFabricAuditedTransaction(db => {
+      event(db, 'pending')
+      const anchorBefore = readFileSync(getFabricAuditAnchorPath(join(home, 'personal')), 'utf8')
+      expect(spawnSync(process.execPath, ['-e', reader, path]).status).toBe(0)
+      expect(spawnSync(process.execPath, ['-e', writer, lockPath]).status).toBe(7)
+      expect(readFileSync(getFabricAuditAnchorPath(join(home, 'personal')), 'utf8')).toBe(anchorBefore)
+    })
+    expect(spawnSync(process.execPath, ['-e', writer, lockPath]).status).toBe(0)
   })
 
   it('detects genuine-head database truncation against the external monotonic checkpoint', () => {

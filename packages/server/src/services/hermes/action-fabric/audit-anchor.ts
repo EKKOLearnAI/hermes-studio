@@ -74,6 +74,18 @@ export function writeFabricAuditAnchor(
   }
 }
 
+export function compareAndSwapFabricAuditAnchor(
+  directory: string,
+  key: Buffer,
+  expected: FabricAuditAnchorState | null,
+  next: FabricAuditAnchorState,
+): boolean {
+  const current = readFabricAuditAnchor(directory, key)
+  if (!sameState(current, expected)) return false
+  writeFabricAuditAnchor(directory, key, next)
+  return true
+}
+
 function anchorMac(key: Buffer, value: Omit<StoredAnchor, 'mac'>): string {
   return createHmac('sha256', key).update(canonicalStringify(value), 'utf8').digest('hex')
 }
@@ -97,6 +109,11 @@ function isAnchorState(committed: unknown, pending: unknown): committed is Fabri
   return pending === null || (pending.previous.sequence === committed.sequence
     && pending.previous.hash === committed.hash
     && pending.next.sequence >= pending.previous.sequence)
+}
+
+function sameState(left: FabricAuditAnchorState | null, right: FabricAuditAnchorState | null): boolean {
+  if (left === null || right === null) return left === right
+  return canonicalStringify(left) === canonicalStringify(right)
 }
 
 function canonicalStringify(value: unknown): string {
