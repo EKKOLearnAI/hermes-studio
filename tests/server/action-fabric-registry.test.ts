@@ -3,7 +3,7 @@ import { createHash } from 'crypto'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   bindFabricExecutorCapability,
@@ -328,5 +328,26 @@ describe('action fabric registry', () => {
     const ordered = resolveFabricExecutor('simulator.echo', { environments: ['internal', 'simulator'] })!
     const reversedAndDuplicated = resolveFabricExecutor('simulator.echo', { environments: ['simulator', 'internal', 'simulator'] })!
     expect(reversedAndDuplicated).toEqual(ordered)
+  })
+
+  it('reads the complete resolution and policy revision from one atomic registry statement', () => {
+    ensureBuiltInFabricRegistry()
+    const prepare = vi.spyOn(DatabaseSync.prototype, 'prepare')
+    try {
+      const resolved = resolveFabricExecutor('simulator.echo', { environments: ['simulator'] })
+      expect(resolved).not.toBeNull()
+
+      const resolutionReads = prepare.mock.calls.map(([sql]) => String(sql)).filter(sql =>
+        /\bSELECT\b/i.test(sql)
+        && /(FROM|JOIN)\s+fabric_(capabilities|executors|executor_capabilities)\b/i.test(sql),
+      )
+      expect(resolutionReads).toHaveLength(1)
+      expect(resolutionReads[0]).toMatch(/fabric_capabilities/)
+      expect(resolutionReads[0]).toMatch(/fabric_executor_capabilities/)
+      expect(resolutionReads[0]).toMatch(/fabric_executors/)
+      expect(resolutionReads[0]).toMatch(/fabric_meta/)
+    } finally {
+      prepare.mockRestore()
+    }
   })
 })

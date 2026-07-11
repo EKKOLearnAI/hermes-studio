@@ -73,6 +73,24 @@ type BindingRow = {
   contract_digest: string; created_at: string
 }
 
+type ResolutionRow = {
+  capability_id: string; capability_version: number; capability_domain: string; capability_verb: string
+  capability_description: string; capability_input_schema_json: string; capability_output_schema_json: string
+  capability_risk: FabricRisk; capability_side_effect: number; capability_idempotency: FabricIdempotency
+  capability_reversible: number; capability_compensation_capability_id: string | null
+  capability_verification_strategy: string; capability_authentication_json: string
+  capability_target_restrictions_json: string; capability_cost_currency: string | null
+  capability_cost_estimated_minor: number; capability_contract_digest: string; capability_enabled: number
+  capability_created_at: string; capability_updated_at: string
+  executor_id: string; executor_type: FabricExecutorType; executor_name: string
+  executor_environment: FabricEnvironment; executor_health: FabricExecutorHealth
+  executor_health_details_json: string; executor_configuration_json: string; executor_enabled: number
+  executor_policy_version: number; executor_created_at: string; executor_updated_at: string
+  binding_executor_id: string; binding_capability_id: string; binding_capability_version: number
+  binding_contract_digest: string; binding_created_at: string
+  policy_revision_value: string
+}
+
 const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
   {
     id: 'simulator.echo', version: 1, description: 'Echo structured input without external side effects',
@@ -274,25 +292,70 @@ export function resolveFabricExecutor(
 ): ResolvedFabricExecutor | null {
   const environments = normalizeEnvironments(options.environments)
   return withActionFabricDb(db => {
-    const capability = selectCapability(db, capabilityId)
-    if (!capability || !capability.enabled) return null
-    const policyRevision = readRegistryPolicyRevision(db)
     const placeholders = environments.map(() => '?').join(',')
-    const row = db.prepare(`SELECT e.*, b.executor_id AS binding_executor_id,
+    const row = db.prepare(`WITH registry_revision AS (
+      SELECT value FROM fabric_meta WHERE key='registry_policy_revision'
+    )
+      SELECT
+      c.id AS capability_id, c.version AS capability_version, c.domain AS capability_domain,
+      c.verb AS capability_verb, c.description AS capability_description,
+      c.input_schema_json AS capability_input_schema_json, c.output_schema_json AS capability_output_schema_json,
+      c.risk AS capability_risk, c.side_effect AS capability_side_effect,
+      c.idempotency AS capability_idempotency, c.reversible AS capability_reversible,
+      c.compensation_capability_id AS capability_compensation_capability_id,
+      c.verification_strategy AS capability_verification_strategy,
+      c.authentication_json AS capability_authentication_json,
+      c.target_restrictions_json AS capability_target_restrictions_json,
+      c.cost_currency AS capability_cost_currency, c.cost_estimated_minor AS capability_cost_estimated_minor,
+      c.contract_digest AS capability_contract_digest, c.enabled AS capability_enabled,
+      c.created_at AS capability_created_at, c.updated_at AS capability_updated_at,
+      e.id AS executor_id, e.type AS executor_type, e.name AS executor_name,
+      e.environment AS executor_environment, e.health AS executor_health,
+      e.health_details_json AS executor_health_details_json,
+      e.configuration_json AS executor_configuration_json, e.enabled AS executor_enabled,
+      e.policy_version AS executor_policy_version, e.created_at AS executor_created_at,
+      e.updated_at AS executor_updated_at,
+      b.executor_id AS binding_executor_id,
       b.capability_id AS binding_capability_id, b.capability_version AS binding_capability_version,
-      b.contract_digest AS binding_contract_digest, b.created_at AS binding_created_at
-      FROM fabric_executors e JOIN fabric_executor_capabilities b ON b.executor_id=e.id
-      WHERE b.capability_id=? AND b.capability_version=? AND b.contract_digest=?
+      b.contract_digest AS binding_contract_digest, b.created_at AS binding_created_at,
+      r.value AS policy_revision_value
+      FROM fabric_capabilities c
+      JOIN fabric_executor_capabilities b ON b.capability_id=c.id
+        AND b.capability_version=c.version AND b.contract_digest=c.contract_digest
+      JOIN fabric_executors e ON e.id=b.executor_id
+      CROSS JOIN registry_revision r
+      WHERE c.id=? AND c.enabled=1
         AND e.enabled=1 AND e.health='healthy' AND e.environment IN (${placeholders})
-      ORDER BY e.id LIMIT 1`).get(capability.id, capability.version, capability.contractDigest, ...environments) as
-        (ExecutorRow & { binding_executor_id: string; binding_capability_id: string; binding_capability_version: number; binding_contract_digest: string; binding_created_at: string }) | undefined
+      ORDER BY e.id LIMIT 1`).get(capabilityId, ...environments) as ResolutionRow | undefined
     if (!row) return null
-    const executor = parseExecutor(row)
+    const capability = parseCapability({
+      id: row.capability_id, version: row.capability_version, domain: row.capability_domain,
+      verb: row.capability_verb, description: row.capability_description,
+      input_schema_json: row.capability_input_schema_json, output_schema_json: row.capability_output_schema_json,
+      risk: row.capability_risk, side_effect: row.capability_side_effect,
+      idempotency: row.capability_idempotency, reversible: row.capability_reversible,
+      compensation_capability_id: row.capability_compensation_capability_id,
+      verification_strategy: row.capability_verification_strategy,
+      authentication_json: row.capability_authentication_json,
+      target_restrictions_json: row.capability_target_restrictions_json,
+      cost_currency: row.capability_cost_currency, cost_estimated_minor: row.capability_cost_estimated_minor,
+      contract_digest: row.capability_contract_digest, enabled: row.capability_enabled,
+      created_at: row.capability_created_at, updated_at: row.capability_updated_at,
+    })
+    const executor = parseExecutor({
+      id: row.executor_id, type: row.executor_type, name: row.executor_name,
+      environment: row.executor_environment, health: row.executor_health,
+      health_details_json: row.executor_health_details_json,
+      configuration_json: row.executor_configuration_json, enabled: row.executor_enabled,
+      policy_version: row.executor_policy_version, created_at: row.executor_created_at,
+      updated_at: row.executor_updated_at,
+    })
     const binding: FabricExecutorCapability = {
       executorId: row.binding_executor_id, capabilityId: row.binding_capability_id,
       capabilityVersion: row.binding_capability_version, contractDigest: row.binding_contract_digest,
       createdAt: row.binding_created_at,
     }
+    const policyRevision = parseRegistryPolicyRevision(row.policy_revision_value)
     return {
       executor, capability, binding, policyRevision,
       policyEvaluationToken: digest({
@@ -577,8 +640,12 @@ function normalizeEnvironments(value: unknown): FabricEnvironment[] {
 function readRegistryPolicyRevision(db: DatabaseSync): number {
   const row = db.prepare("SELECT value FROM fabric_meta WHERE key='registry_policy_revision'").get() as { value: string } | undefined
   if (!row) return 0
-  if (!/^(0|[1-9]\d*)$/.test(row.value)) throw new Error('Registry policy revision is invalid')
-  const revision = Number(row.value)
+  return parseRegistryPolicyRevision(row.value)
+}
+
+function parseRegistryPolicyRevision(value: string): number {
+  if (!/^(0|[1-9]\d*)$/.test(value)) throw new Error('Registry policy revision is invalid')
+  const revision = Number(value)
   if (!Number.isSafeInteger(revision)) throw new Error('Registry policy revision is invalid')
   return revision
 }
