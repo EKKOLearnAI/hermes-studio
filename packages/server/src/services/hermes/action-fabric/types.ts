@@ -234,6 +234,11 @@ export interface FabricOutboxRecord {
   publishedAt: string | null
 }
 
+/** At-least-once consumers must deduplicate delivery using the immutable outbox `id`. */
+export interface FabricClaimedOutboxRecord extends FabricOutboxRecord {
+  claimToken: string
+}
+
 export interface FabricCapabilityListOptions {
   domain?: string
   risk?: FabricRisk

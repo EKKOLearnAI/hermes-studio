@@ -45,7 +45,7 @@ describe('action fabric database', () => {
     if (hermesHome) rmSync(hermesHome, { recursive: true, force: true })
   })
 
-  it('creates one global database below Hermes home with schema version one', async () => {
+  it('creates one global database below Hermes home with schema version two', async () => {
     const { getActionFabricDbPath, withActionFabricDb } = await import(
       '../../packages/server/src/services/hermes/action-fabric'
     )
@@ -78,7 +78,12 @@ describe('action fabric database', () => {
         expect(index).toMatchObject({ unique: signature.unique, partial: signature.partial })
         expect(columns).toEqual(signature.columns)
       }
-      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '1' })
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '2' })
+      expect((db.prepare('PRAGMA table_info(fabric_outbox)').all() as Array<{
+        name: string; type: string; notnull: number; dflt_value: string | null; pk: number
+      }>).find(row => row.name === 'claim_token')).toMatchObject({
+        type: 'TEXT', notnull: 0, dflt_value: null, pk: 0,
+      })
       expect(db.prepare('SELECT id, level, version FROM fabric_control_state').all()).toEqual([
         { id: 1, level: 0, version: 0 },
       ])
@@ -101,7 +106,7 @@ describe('action fabric database', () => {
     initActionFabricSchema(db)
 
     try {
-      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '1' })
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '2' })
       expect(db.prepare('SELECT COUNT(*) AS count FROM fabric_control_state').get()).toEqual({ count: 1 })
       expect((db.prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'fabric_%'",
@@ -109,6 +114,33 @@ describe('action fabric database', () => {
     } finally {
       db.close()
     }
+  })
+
+  it('migrates schema version one outbox rows to lease claims without data loss', async () => {
+    const { getActionFabricDbPath, initActionFabricSchema } = await import(
+      '../../packages/server/src/services/hermes/action-fabric'
+    )
+    mkdirSync(join(hermesHome, 'personal'), { recursive: true })
+    const db = new DatabaseSync(getActionFabricDbPath())
+    db.exec(`
+      CREATE TABLE fabric_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT INTO fabric_meta(key, value) VALUES ('schema_version', '1');
+    `)
+    // Build the released v1 shape through a temporary v0 initialization, then restore its marker.
+    db.prepare("UPDATE fabric_meta SET value = '0' WHERE key = 'schema_version'").run()
+    initActionFabricSchema(db)
+    db.prepare("UPDATE fabric_meta SET value = '1' WHERE key = 'schema_version'").run()
+    db.exec('ALTER TABLE fabric_outbox DROP COLUMN claim_token')
+    db.prepare(`INSERT INTO fabric_outbox(
+      id, topic, aggregate_id, payload_json, status, attempts, available_at, created_at
+    ) VALUES ('outbox-existing', 'fabric.test', 'aggregate', '{}', 'pending', 0, '2026-07-12T00:00:00.000Z', '2026-07-12T00:00:00.000Z')`).run()
+
+    initActionFabricSchema(db)
+    expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '2' })
+    expect(db.prepare('SELECT id, claim_token FROM fabric_outbox').all()).toEqual([
+      { id: 'outbox-existing', claim_token: null },
+    ])
+    db.close()
   })
 
   it('enables foreign keys for every managed connection', async () => {
@@ -155,7 +187,7 @@ describe('action fabric database', () => {
     mkdirSync(join(hermesHome, 'personal'), { recursive: true })
     const db = new DatabaseSync(getActionFabricDbPath())
     db.exec('CREATE TABLE fabric_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
-    db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run('schema_version', '2')
+    db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run('schema_version', '3')
     db.close()
 
     expect(() => withActionFabricDb(current => current.prepare('SELECT 1').get())).toThrow(
@@ -213,7 +245,7 @@ describe('action fabric database', () => {
 
     try {
       expect(withActionFabricDb(db => db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()))
-        .toEqual({ value: '1' })
+        .toEqual({ value: '2' })
     } finally {
       writer.exec('ROLLBACK')
       writer.close()
@@ -263,13 +295,13 @@ describe('action fabric database', () => {
     const db = new DatabaseSync(':memory:')
     db.exec(`
       CREATE TABLE fabric_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      INSERT INTO fabric_meta(key, value) VALUES ('schema_version', '1');
+      INSERT INTO fabric_meta(key, value) VALUES ('schema_version', '2');
       CREATE VIEW fabric_capabilities AS SELECT 1 AS incompatible;
     `)
 
     try {
       expect(() => initActionFabricSchema(db)).toThrow()
-      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '1' })
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '2' })
     } finally {
       db.close()
     }

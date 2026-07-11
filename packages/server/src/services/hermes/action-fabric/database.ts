@@ -3,7 +3,7 @@ import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 const REQUIRED_TABLES = [
   'fabric_meta',
   'fabric_capabilities',
@@ -36,6 +36,9 @@ const REQUIRED_INDEX_SIGNATURES: RequiredIndexSignature[] = [
   { name: 'idx_fabric_steps_workflow_ordinal', table: 'fabric_steps', unique: true, columns: ['workflow_id', 'ordinal'], partial: false },
   { name: 'idx_fabric_workflows_state_lease', table: 'fabric_workflows', unique: false, columns: ['state', 'lease_expires_at', 'retry_at'], partial: false },
 ]
+const REQUIRED_COLUMNS = [{
+  table: 'fabric_outbox', column: 'claim_token', type: 'TEXT', notnull: 0, defaultValue: null, pk: 0,
+}]
 
 type SynchronousResult<T> = T & (T extends PromiseLike<unknown> ? never : unknown)
 
@@ -81,6 +84,10 @@ export function initActionFabricSchema(db: DatabaseSync): void {
       setSchemaVersion(db, 1)
     } else {
       createSchemaV1(db)
+    }
+    if (version < 2) {
+      migrateSchemaV2(db)
+      setSchemaVersion(db, 2)
     }
     assertSchemaComplete(db, SCHEMA_VERSION)
     db.exec('COMMIT')
@@ -144,6 +151,15 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
     throw new Error(`Action Fabric schema version ${version} is incomplete: missing ${missing.join(', ')}`)
   }
   for (const signature of REQUIRED_INDEX_SIGNATURES) assertIndexSignature(db, signature)
+  for (const required of REQUIRED_COLUMNS) {
+    const column = (db.prepare(`PRAGMA table_info("${required.table}")`).all() as Array<{
+      name: string; type: string; notnull: number; dflt_value: string | null; pk: number
+    }>).find(row => row.name === required.column)
+    if (column?.type !== required.type || column.notnull !== required.notnull
+      || column.dflt_value !== required.defaultValue || column.pk !== required.pk) {
+      throw new Error(`Action Fabric schema version ${version} is incomplete: missing ${required.table}.${required.column}`)
+    }
+  }
 }
 
 function assertIndexSignature(db: DatabaseSync, expected: RequiredIndexSignature): void {
@@ -393,4 +409,10 @@ function createSchemaV1(db: DatabaseSync): void {
       BEFORE UPDATE ON fabric_control_state WHEN NEW.version <= OLD.version
       BEGIN SELECT RAISE(ABORT, 'fabric control state version must increase'); END;
   `)
+}
+
+function migrateSchemaV2(db: DatabaseSync): void {
+  const columns = (db.prepare('PRAGMA table_info("fabric_outbox")').all() as Array<{ name: string }>)
+    .map(row => row.name)
+  if (!columns.includes('claim_token')) db.exec('ALTER TABLE fabric_outbox ADD COLUMN claim_token TEXT')
 }
