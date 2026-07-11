@@ -93,6 +93,7 @@ export interface ResolvedFabricExecutor {
   executor: FabricExecutor
   capability: FabricCapability
   binding: FabricExecutorCapability
+  policyRevision: number
   policyEvaluationToken: string
 }
 

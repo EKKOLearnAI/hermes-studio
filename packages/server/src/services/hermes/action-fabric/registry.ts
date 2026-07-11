@@ -119,6 +119,7 @@ export function ensureBuiltInFabricRegistry(): void {
         if (!capability) throw new Error(`Built-in capability is missing: ${capabilityId}`)
         insertBindingIfMissing(db, executorId, capability)
       }
+      bumpRegistryPolicyRevision(db)
     })
   })
 }
@@ -147,6 +148,7 @@ export function createFabricCapability(input: FabricCapabilityInput): FabricCapa
       throw new Error(`Capability already exists: ${normalized.id}`)
     }
     insertCapability(db, normalized, digest)
+    bumpRegistryPolicyRevision(db)
     return selectCapability(db, normalized.id)!
   }))
 }
@@ -190,6 +192,7 @@ export function updateFabricCapability(
       json(input.authentication), json(input.targetRestrictions), input.cost.currency, input.cost.estimatedMinor,
       digest, Number(input.enabled), now, id,
     )
+    bumpRegistryPolicyRevision(db)
     return selectCapability(db, id)!
   }))
 }
@@ -199,6 +202,7 @@ export function createFabricExecutor(input: FabricExecutorInput): FabricExecutor
   return withActionFabricDb(db => transaction(db, () => {
     if (selectExecutor(db, normalized.id)) throw new Error(`Executor already exists: ${normalized.id}`)
     insertExecutor(db, normalized)
+    bumpRegistryPolicyRevision(db)
     return selectExecutor(db, normalized.id)!
   }))
 }
@@ -218,6 +222,7 @@ export function updateFabricExecutor(
       policy_version=policy_version+1, updated_at=? WHERE id=?`).run(
       input.type, input.name, input.environment, json(input.configuration), Number(input.enabled), new Date().toISOString(), id,
     )
+    bumpRegistryPolicyRevision(db)
     return selectExecutor(db, id)!
   }))
 }
@@ -239,6 +244,7 @@ export function updateFabricExecutorHealth(
     if (!selectExecutor(db, id)) throw new Error(`Executor not found: ${id}`)
     db.prepare(`UPDATE fabric_executors SET health=?, health_details_json=?, policy_version=policy_version+1,
       updated_at=? WHERE id=?`).run(health, json(details), new Date().toISOString(), id)
+    bumpRegistryPolicyRevision(db)
     return selectExecutor(db, id)!
   }))
 }
@@ -256,6 +262,7 @@ export function bindFabricExecutorCapability(
     if (capability.version !== capabilityVersion) throw new Error('Binding version must match capability version')
     if (capability.contractDigest !== contractDigest) throw new Error('Binding digest must match capability contract digest')
     upsertBinding(db, executorId, capability)
+    bumpRegistryPolicyRevision(db)
     return parseBinding(db.prepare(`SELECT * FROM fabric_executor_capabilities
       WHERE executor_id=? AND capability_id=?`).get(executorId, capabilityId) as BindingRow)
   }))
@@ -265,21 +272,19 @@ export function resolveFabricExecutor(
   capabilityId: string,
   options: { environments: FabricEnvironment[] },
 ): ResolvedFabricExecutor | null {
-  if (!Array.isArray(options.environments) || options.environments.length === 0) return null
-  for (const environment of options.environments) {
-    if (!ENVIRONMENTS.has(environment)) throw new Error(`Invalid executor environment: ${String(environment)}`)
-  }
+  const environments = normalizeEnvironments(options.environments)
   return withActionFabricDb(db => {
     const capability = selectCapability(db, capabilityId)
     if (!capability || !capability.enabled) return null
-    const placeholders = options.environments.map(() => '?').join(',')
+    const policyRevision = readRegistryPolicyRevision(db)
+    const placeholders = environments.map(() => '?').join(',')
     const row = db.prepare(`SELECT e.*, b.executor_id AS binding_executor_id,
       b.capability_id AS binding_capability_id, b.capability_version AS binding_capability_version,
       b.contract_digest AS binding_contract_digest, b.created_at AS binding_created_at
       FROM fabric_executors e JOIN fabric_executor_capabilities b ON b.executor_id=e.id
       WHERE b.capability_id=? AND b.capability_version=? AND b.contract_digest=?
         AND e.enabled=1 AND e.health='healthy' AND e.environment IN (${placeholders})
-      ORDER BY e.id LIMIT 1`).get(capability.id, capability.version, capability.contractDigest, ...options.environments) as
+      ORDER BY e.id LIMIT 1`).get(capability.id, capability.version, capability.contractDigest, ...environments) as
         (ExecutorRow & { binding_executor_id: string; binding_capability_id: string; binding_capability_version: number; binding_contract_digest: string; binding_created_at: string }) | undefined
     if (!row) return null
     const executor = parseExecutor(row)
@@ -289,8 +294,9 @@ export function resolveFabricExecutor(
       createdAt: row.binding_created_at,
     }
     return {
-      executor, capability, binding,
+      executor, capability, binding, policyRevision,
       policyEvaluationToken: digest({
+        policyRevision,
         capabilityId: capability.id, capabilityVersion: capability.version,
         capabilityDigest: capability.contractDigest, risk: capability.risk,
         executorId: executor.id, executorType: executor.type, environment: executor.environment,
@@ -308,9 +314,11 @@ function hasCompleteBuiltInRegistry(db: DatabaseSync): boolean {
   const bindings = db.prepare(`SELECT COUNT(*) AS count FROM fabric_executor_capabilities b WHERE
     (b.executor_id='simulator-main' AND b.capability_id IN ('simulator.echo','simulator.counter.increment')) OR
     (b.executor_id='internal-twin' AND b.capability_id='internal.twin.preference.set')`).get() as { count: number }
+  const hasPolicyRevision = db.prepare("SELECT 1 AS present FROM fabric_meta WHERE key='registry_policy_revision'").get() !== undefined
   return capabilities.count === BUILT_IN_CAPABILITIES.length
     && executors.count === BUILT_IN_EXECUTORS.length
     && bindings.count === BUILT_IN_BINDINGS.length
+    && hasPolicyRevision
 }
 
 function validateCapability(input: FabricCapabilityInput): FabricCapabilityInput {
@@ -465,7 +473,7 @@ function digest(value: unknown): string {
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
   if (value !== null && typeof value === 'object') {
-    return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
+    return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
       .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(',')}}`
   }
   return JSON.stringify(value)
@@ -550,6 +558,38 @@ function assertStringArray(value: unknown, label: string): asserts value is stri
     throw new Error(`${label} must contain bounded non-empty strings`)
   }
   assertJsonBound(value, label)
+}
+
+function normalizeEnvironments(value: unknown): FabricEnvironment[] {
+  if (!Array.isArray(value)) throw new Error('Resolve environments must be an array')
+  if (value.length === 0) throw new Error('Resolve environments must contain at least one environment')
+  if (value.length > 4) throw new Error('Resolve environments must contain no more than four entries')
+  const environments = new Set<FabricEnvironment>()
+  for (const environment of value) {
+    if (!ENVIRONMENTS.has(environment as FabricEnvironment)) {
+      throw new Error(`Invalid executor environment: ${String(environment)}`)
+    }
+    environments.add(environment as FabricEnvironment)
+  }
+  return [...environments].sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+}
+
+function readRegistryPolicyRevision(db: DatabaseSync): number {
+  const row = db.prepare("SELECT value FROM fabric_meta WHERE key='registry_policy_revision'").get() as { value: string } | undefined
+  if (!row) return 0
+  if (!/^(0|[1-9]\d*)$/.test(row.value)) throw new Error('Registry policy revision is invalid')
+  const revision = Number(row.value)
+  if (!Number.isSafeInteger(revision)) throw new Error('Registry policy revision is invalid')
+  return revision
+}
+
+function bumpRegistryPolicyRevision(db: DatabaseSync): number {
+  const current = readRegistryPolicyRevision(db)
+  if (current >= Number.MAX_SAFE_INTEGER) throw new Error('Registry policy revision is exhausted')
+  const next = current + 1
+  db.prepare(`INSERT INTO fabric_meta(key, value) VALUES('registry_policy_revision', ?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(String(next))
+  return next
 }
 
 function transaction<T>(db: DatabaseSync, operation: () => T): T {

@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'fs'
+import { createHash } from 'crypto'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
@@ -39,6 +40,16 @@ const capability = (overrides: Record<string, unknown> = {}) => ({
   enabled: true,
   ...overrides,
 })
+
+const codeUnitCanonicalize = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(codeUnitCanonicalize).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, item]) => `${JSON.stringify(key)}:${codeUnitCanonicalize(item)}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
 
 describe('action fabric registry', () => {
   const originalHermesHome = process.env.HERMES_HOME
@@ -277,5 +288,45 @@ describe('action fabric registry', () => {
     const second = resolveFabricExecutor('simulator.echo', { environments: ['internal'] })!
     expect(second.policyEvaluationToken).not.toBe(first.policyEvaluationToken)
 
+  })
+
+  it('monotonically invalidates policy tokens across disable-enable cycles', () => {
+    ensureBuiltInFabricRegistry()
+    const first = resolveFabricExecutor('simulator.echo', { environments: ['simulator'] })!
+
+    updateFabricCapability('simulator.echo', { enabled: false })
+    expect(resolveFabricExecutor('simulator.echo', { environments: ['simulator'] })).toBeNull()
+    updateFabricCapability('simulator.echo', { enabled: true })
+    const second = resolveFabricExecutor('simulator.echo', { environments: ['simulator'] })!
+
+    expect(second.policyRevision).toBeGreaterThan(first.policyRevision)
+    expect(second.policyEvaluationToken).not.toBe(first.policyEvaluationToken)
+    expect(withActionFabricDb(db => db.prepare(
+      "SELECT value FROM fabric_meta WHERE key='registry_policy_revision'",
+    ).get())).toEqual({ value: String(second.policyRevision) })
+  })
+
+  it('uses locale-independent UTF-16 key ordering in contract digests', () => {
+    const input = capability({
+      id: 'custom.unicode.order',
+      inputSchema: { 中: 5, é: 4, a: 3, _: 2, Z: 1, '!': 0 },
+    })
+    const { enabled: _enabled, ...contract } = input
+    const expected = createHash('sha256').update(codeUnitCanonicalize(contract)).digest('hex')
+
+    expect(createFabricCapability(input).contractDigest).toBe(expected)
+  })
+
+  it('validates, bounds, deduplicates, and deterministically orders resolve environments', () => {
+    ensureBuiltInFabricRegistry()
+    expect(() => resolveFabricExecutor('simulator.echo', { environments: [] })).toThrow(/environment.*empty|at least one/i)
+    expect(() => resolveFabricExecutor('simulator.echo', { environments: 'simulator' } as never)).toThrow(/environment.*array/i)
+    expect(() => resolveFabricExecutor('simulator.echo', { environments: ['simulator', 'simulator', 'internal', 'sandbox', 'production'] }))
+      .toThrow(/environment.*four|too many/i)
+    expect(() => resolveFabricExecutor('simulator.echo', { environments: ['invalid'] as never })).toThrow(/invalid.*environment/i)
+
+    const ordered = resolveFabricExecutor('simulator.echo', { environments: ['internal', 'simulator'] })!
+    const reversedAndDuplicated = resolveFabricExecutor('simulator.echo', { environments: ['simulator', 'internal', 'simulator'] })!
+    expect(reversedAndDuplicated).toEqual(ordered)
   })
 })
