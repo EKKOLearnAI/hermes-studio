@@ -54,6 +54,11 @@ export interface FabricIntentResult {
   workflow: FabricWorkflowDetail
 }
 
+export interface PreparedFabricCompensation {
+  input: FabricActionIntentInput
+  payload: ActionPayload
+}
+
 type WorkflowAction = 'approve' | 'reject' | 'cancel' | 'retry' | 'compensate'
 
 /** Runtime-owned states eligible for a durable worker checkpoint. */
@@ -233,11 +238,10 @@ export function requestFabricCompensation(id: string, actorUserId: string, reaso
     constraints: { compensationForWorkflowId: id },
     rationale: reason,
   }
-  validatePersistedMetadata(compensationInput)
-  const compensationPayload = actionPayload(compensationInput)
-  prepareFabricPolicyEvaluation(compensationInput)
+  const prepared = prepareFabricCompensation(compensationInput)
   return withFabricAuditedTransaction(db => {
-    const compensationDecision = evaluateFabricPolicyInDb(db, compensationInput)
+    const compensation = createFabricCompensationChildInDb(db, prepared)
+    const compensationDecision = compensation.policyDecision
     const current = requireWorkflow(db, id)
     if (current.compensation_intent_id !== null) return detailForWorkflow(db, current)
     if (current.state !== 'succeeded') throw new Error('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
@@ -247,9 +251,6 @@ export function requestFabricCompensation(id: string, actorUserId: string, reaso
       || verified.contract.compensationCapabilityId !== context.contract.compensationCapabilityId) {
       throw new Error('FABRIC_WORKFLOW_CONTRACT_STALE')
     }
-    const existingChild = selectWorkflowByIntent(db, compensationDecision.intentId)
-    if (existingChild) throw new Error('FABRIC_COMPENSATION_WORKFLOW_CONFLICT')
-    const compensation = createWorkflowInDb(db, compensationDecision, compensationPayload)
     const destination = compensationDecision.outcome === 'deny' ? current.state : 'compensating'
     const now = new Date().toISOString()
     const result = db.prepare(`UPDATE fabric_workflows SET compensation_intent_id=?,state=?,version=version+1,
@@ -270,6 +271,27 @@ export function requestFabricCompensation(id: string, actorUserId: string, reaso
     })
     return detailForWorkflow(db, requireWorkflow(db, id))
   })
+}
+
+export function prepareFabricCompensation(input: FabricActionIntentInput): PreparedFabricCompensation {
+  validatePersistedMetadata(input)
+  const payload = actionPayload(input)
+  prepareFabricPolicyEvaluation(input)
+  return { input, payload }
+}
+
+/** Must be called from the transaction used to link the parent workflow. */
+export function createFabricCompensationChildInDb(
+  db: DatabaseSync,
+  prepared: PreparedFabricCompensation,
+): FabricIntentResult {
+  const decision = evaluateFabricPolicyInDb(db, prepared.input)
+  const existing = selectWorkflowByIntent(db, decision.intentId)
+  if (existing) {
+    if (existing.policy_decision_id !== decision.id) throw new Error('FABRIC_COMPENSATION_WORKFLOW_CONFLICT')
+    return resultForWorkflow(db, existing)
+  }
+  return createWorkflowInDb(db, decision, prepared.payload)
 }
 
 function transitionWorkflow(
@@ -467,6 +489,8 @@ interface CapturedContract {
   contractDigest: string
   reversible: boolean
   compensationCapabilityId: string | null
+  idempotency: 'required' | 'supported' | 'none'
+  verificationStrategy: string
 }
 
 interface ActionPayload {
@@ -476,13 +500,15 @@ interface ActionPayload {
 }
 
 function captureIntentContract(db: DatabaseSync, intent: FabricActionIntent): CapturedContract {
-  const row = db.prepare(`SELECT version,contract_digest,reversible,compensation_capability_id
+  const row = db.prepare(`SELECT version,contract_digest,reversible,compensation_capability_id,idempotency,verification_strategy
     FROM fabric_capabilities WHERE id=?`).get(intent.capabilityId) as {
       version: number; contract_digest: string; reversible: number; compensation_capability_id: string | null
+      idempotency: 'required' | 'supported' | 'none'; verification_strategy: string
     } | undefined
   if (!row || row.version !== intent.capabilityVersion) throw new Error('FABRIC_WORKFLOW_CONTRACT_STALE')
   return { capabilityVersion: row.version, contractDigest: row.contract_digest, reversible: row.reversible === 1,
-    compensationCapabilityId: row.compensation_capability_id }
+    compensationCapabilityId: row.compensation_capability_id, idempotency: row.idempotency,
+    verificationStrategy: row.verification_strategy }
 }
 
 function compensationContext(db: DatabaseSync, id: string): {
@@ -505,6 +531,8 @@ function compensationContext(db: DatabaseSync, id: string): {
   if (!contract || contract.capabilityVersion !== intent.capabilityVersion
     || typeof contract.contractDigest !== 'string' || typeof contract.reversible !== 'boolean'
     || !(typeof contract.compensationCapabilityId === 'string' || contract.compensationCapabilityId === null)
+    || !['required', 'supported', 'none'].includes(contract.idempotency ?? '')
+    || typeof contract.verificationStrategy !== 'string' || contract.verificationStrategy.length === 0
     || !isJsonObject(payload.actionInput) || !isJsonObject(payload.target) || !isJsonObject(payload.constraints)) {
     throw new Error('FABRIC_WORKFLOW_CONTRACT_UNAVAILABLE')
   }

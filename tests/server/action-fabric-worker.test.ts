@@ -138,19 +138,115 @@ describe('Action Fabric durable worker', () => {
   })
 
   it('checkpoints a reversible verification mismatch before compensation', async () => {
+    let originalWorkflowId = ''
     registerFabricExecutorAdapter(adapter({
       id: 'internal-twin', type: 'internal',
-      verify: async () => failure('mismatch', 'VERIFY_MISMATCH'),
+      verify: async context => context.workflowId === originalWorkflowId
+        ? failure('mismatch', 'VERIFY_MISMATCH') : success('verified', context),
     }))
     const workflow = createFabricIntent({
       capabilityId: 'internal.twin.preference.set', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
       idempotencyKey: 'reversible-mismatch', goal: 'set safely', target: { id: 'personal-twin' },
       input: { domain: 'preferences', key: 'theme', value: 'dark' }, constraints: {}, rationale: 'test',
     }).workflow
+    originalWorkflowId = workflow.id
 
     await runCycles(3)
-    expect(getFabricWorkflow(workflow.id)?.state).toBe('compensating')
-    expect(getFabricWorkflow(workflow.id)?.steps[2]).toMatchObject({ state: 'failed', lastErrorCode: 'VERIFY_MISMATCH' })
+    const parent = getFabricWorkflow(workflow.id)!
+    expect(parent.state).toBe('compensating')
+    expect(parent.steps[2]).toMatchObject({ state: 'failed', lastErrorCode: 'VERIFY_MISMATCH' })
+    expect(parent.compensationIntentId).toMatch(/^intent-/)
+    const child = withActionFabricDb(db => db.prepare('SELECT id,state FROM fabric_workflows WHERE intent_id=?')
+      .get(parent.compensationIntentId!) as { id: string; state: string })
+    expect(child).toMatchObject({ state: 'preparing' })
+    expect(getFabricWorkflow(child.id)?.steps[0].input.actionInput).toMatchObject({ originalWorkflowId: workflow.id })
+    await processActionFabricOnce({ now: plus(3) })
+    await processActionFabricOnce({ now: plus(4) })
+    await processActionFabricOnce({ now: plus(5) })
+    await processActionFabricOnce({ now: plus(6) })
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('compensated')
+  })
+
+  it.each([
+    ['deny', 'failed', 'denied'],
+    ['waiting', 'waiting_user', 'waiting_user'],
+  ] as const)('applies an independent %s policy decision to mismatch compensation', async (mode, parentState, childState) => {
+    registerFabricExecutorAdapter(adapter({
+      id: 'internal-twin', type: 'internal', verify: async () => failure('mismatch', 'VERIFY_MISMATCH'),
+    }))
+    const workflow = createInternal(`compensation-${mode}`).workflow
+    await runCycles(2)
+    updateAssistantRole('health-manager', {
+      enabled: true,
+      capabilityScope: mode === 'deny'
+        ? { allow: [], deny: ['internal.twin.preference.set'], enforcement: 'action_fabric_v1' }
+        : { allow: ['internal.twin.preference.set'], deny: [], enforcement: 'action_fabric_v1' },
+      decisionAuthority: { maxRisk: 'critical', requireApprovalAbove: mode === 'waiting' ? 'none' : 'critical',
+        allowedTargets: ['personal-twin'] },
+      spendingLimits: { currency: null, perAction: 0, daily: 0 },
+    })
+    await processActionFabricOnce({ now: plus(2) })
+
+    const parent = getFabricWorkflow(workflow.id)!
+    expect(parent.state).toBe(parentState)
+    const child = withActionFabricDb(db => db.prepare('SELECT state FROM fabric_workflows WHERE intent_id=?')
+      .get(parent.compensationIntentId!) as { state: string })
+    expect(child.state).toBe(childState)
+  })
+
+  it('rolls back child creation and creates exactly one child after lease recovery', async () => {
+    registerFabricExecutorAdapter(adapter({
+      id: 'internal-twin', type: 'internal', verify: async () => failure('mismatch', 'VERIFY_MISMATCH'),
+    }))
+    const workflow = createInternal('compensation-rollback').workflow
+    await runCycles(2)
+    withActionFabricDb(db => db.exec(`CREATE TRIGGER fail_worker_compensation BEFORE INSERT ON fabric_outbox
+      WHEN NEW.topic='fabric.workflow.created' BEGIN SELECT RAISE(ABORT, 'child outbox failed'); END`))
+    await expect(processActionFabricOnce({ workerId: 'worker-a', now: plus(2) })).rejects.toThrow(/child outbox failed/)
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'verifying', compensationIntentId: null })
+    withActionFabricDb(db => db.exec('DROP TRIGGER fail_worker_compensation'))
+
+    await processActionFabricOnce({ workerId: 'worker-b', now: plus(33) })
+    const parent = getFabricWorkflow(workflow.id)!
+    expect(parent.compensationIntentId).toMatch(/^intent-/)
+    expect(withActionFabricDb(db => (db.prepare(`SELECT COUNT(*) count FROM fabric_action_intents
+      WHERE idempotency_key=?`).get(`compensation:${workflow.id}`) as { count: number }).count)).toBe(1)
+  })
+
+  it('fails old incomplete contract snapshots closed without invoking an adapter', async () => {
+    let calls = 0
+    registerFabricExecutorAdapter(adapter({ prepare: async context => { calls += 1; return success('prepared', context) } }))
+    const workflow = create('legacy-contract').workflow
+    mutateCapturedContract(workflow.id, contract => { delete contract.idempotency; delete contract.verificationStrategy })
+
+    await expect(processActionFabricOnce({ now: base })).resolves.toMatchObject({ processed: false })
+    expect(calls).toBe(0)
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'waiting_user', lastErrorCode: 'FABRIC_WORKER_CONTRACT_MISSING' })
+  })
+
+  it('retries only verification when the captured contract forbids execution replay', async () => {
+    let executes = 0
+    registerFabricExecutorAdapter(adapter({
+      execute: async context => { executes += 1; return success('succeeded', context) },
+      verify: async () => failure('mismatch', 'VERIFY_MISMATCH'),
+    }))
+    const workflow = create('verify-only').workflow
+    mutateCapturedContract(workflow.id, contract => { contract.idempotency = 'none' })
+    await runCycles(3)
+    await processActionFabricOnce({ now: plus(3) })
+    await processActionFabricOnce({ now: plus(4) })
+    expect(executes).toBe(1)
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('retrying')
+  })
+
+  it('fails a mismatch closed when captured verification strategy is none', async () => {
+    registerFabricExecutorAdapter(adapter({ verify: async () => failure('mismatch', 'VERIFY_MISMATCH') }))
+    const workflow = create('no-verification').workflow
+    mutateCapturedContract(workflow.id, contract => { contract.verificationStrategy = 'none' })
+    await runCycles(3)
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({
+      state: 'waiting_user', lastErrorCode: 'FABRIC_VERIFICATION_CONTRACT_MISMATCH', retryAt: null,
+    })
   })
 
   it('opens a persistent circuit breaker after repeated adapter failures', async () => {
@@ -247,6 +343,26 @@ function create(idempotencyKey = 'worker-intent') {
     capabilityId: 'simulator.echo', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
     idempotencyKey, goal: 'execute safely', target: { id: 'simulator' }, input: { message: 'hello' },
     constraints: {}, rationale: 'test',
+  })
+}
+
+function createInternal(idempotencyKey: string) {
+  return createFabricIntent({
+    capabilityId: 'internal.twin.preference.set', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
+    idempotencyKey, goal: 'set safely', target: { id: 'personal-twin' },
+    input: { domain: 'preferences', key: 'theme', value: 'dark' }, constraints: {}, rationale: 'test',
+  })
+}
+
+function mutateCapturedContract(workflowId: string, mutate: (contract: Record<string, unknown>) => void): void {
+  withActionFabricDb(db => {
+    const rows = db.prepare('SELECT id,input_json FROM fabric_steps WHERE workflow_id=?').all(workflowId) as
+      Array<{ id: string; input_json: string }>
+    for (const row of rows) {
+      const input = JSON.parse(row.input_json) as { contract: Record<string, unknown> }
+      mutate(input.contract)
+      db.prepare('UPDATE fabric_steps SET input_json=? WHERE id=?').run(JSON.stringify(input), row.id)
+    }
   })
 }
 

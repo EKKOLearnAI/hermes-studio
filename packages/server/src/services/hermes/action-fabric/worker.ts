@@ -10,7 +10,12 @@ import {
   type FabricExecutorResult,
 } from './executors'
 import type { FabricEvidence, FabricExecutorType, FabricJsonObject, FabricWorkflowState } from './types'
-import { isFabricWorkflowWorkerState } from './workflows'
+import {
+  createFabricCompensationChildInDb,
+  isFabricWorkflowWorkerState,
+  prepareFabricCompensation,
+  type PreparedFabricCompensation,
+} from './workflows'
 
 const LEASE_MS = 30_000
 const DEFAULT_INTERVAL_MS = 1_000
@@ -47,6 +52,7 @@ interface WorkflowClaim {
   stepOrdinal: number
   stepAttempt: number
   executionToken: string
+  executeToken: string
   phase: FabricExecutorPhase
   executorId: string
   executorType: FabricExecutorType
@@ -60,7 +66,11 @@ interface WorkflowClaim {
   executionOutput?: FabricJsonObject
   leaseExpiresAt: string
   actorUserId: string
+  requestedByRoleId: string
   reversible: boolean
+  compensationCapabilityId: string | null
+  idempotency: 'required' | 'supported' | 'none'
+  verificationStrategy: string
 }
 
 interface CandidateRow {
@@ -71,6 +81,7 @@ interface CandidateRow {
   lease_expires_at: string | null
   intent_id: string
   requested_by_user_id: string
+  requested_by_role_id: string
   capability_id: string
   capability_version: number
   executor_id: string
@@ -119,7 +130,24 @@ export async function processActionFabricOnce(
   } catch (error) {
     result = invocationFailure(claim.phase, error)
   }
-  const committed = commitClaim(claim, result, now)
+  let compensation: PreparedFabricCompensation | null | undefined
+  if (claim.phase === 'verify' && result.outcome === 'mismatch' && claim.reversible
+    && claim.verificationStrategy !== 'none') {
+    try {
+      compensation = claim.compensationCapabilityId === null ? null : prepareFabricCompensation({
+        capabilityId: claim.compensationCapabilityId,
+        requestedByRoleId: claim.requestedByRoleId,
+        requestedByUserId: claim.actorUserId,
+        idempotencyKey: `compensation:${claim.workflowId}`,
+        goal: 'Compensate a verification mismatch', target: claim.target,
+        input: { originalWorkflowId: claim.workflowId, originalExecutionReference: claim.executeToken },
+        constraints: { compensationForWorkflowId: claim.workflowId }, rationale: 'Verification mismatch recovery',
+      })
+    } catch {
+      compensation = null
+    }
+  }
+  const committed = commitClaim(claim, result, now, compensation)
   const errorClass = result.errorCode ?? result.outcome
   if (committed) logger.info({ workerId, workflowId: claim.workflowId, stepId: claim.stepId,
     phase: claim.phase, outcome: result.outcome, errorClass }, '[action-fabric] worker cycle')
@@ -160,18 +188,35 @@ function claimNextWorkflow(workerId: string, now: Date): WorkflowClaim | null {
   return withFabricAuditedTransaction(db => {
     const nowIso = now.toISOString()
     const control = getFabricControlStateInDb(db)
+    if (reconcileCompensationParent(db, nowIso)) return null
     const retry = control.level < 2 ? selectRetryCandidate(db, nowIso) : undefined
     if (retry) {
-      const changed = db.prepare(`UPDATE fabric_workflows SET state='executing',version=version+1,
+      let contract: FabricJsonObject
+      try {
+        contract = parseObjectProperty(parseObject(retry.input_json), 'contract')
+      } catch (error) {
+        return moveInvalidContractToWaitingUser(db, retry, nowIso, stableErrorClass(error))
+      }
+      if (!['required', 'supported', 'none'].includes(String(contract.idempotency))
+        || typeof contract.verificationStrategy !== 'string' || !contract.verificationStrategy
+        || contract.capabilityVersion !== retry.capability_version) {
+        return moveInvalidContractToWaitingUser(db, retry, nowIso, 'FABRIC_WORKER_CONTRACT_MISSING')
+      }
+      const verifyOnly = contract.idempotency === 'none'
+        && contract.verificationStrategy !== 'none'
+        && db.prepare("SELECT 1 FROM fabric_steps WHERE workflow_id=? AND kind='verify' AND state='failed'")
+          .get(retry.workflow_id) !== undefined
+      const destination = verifyOnly ? 'verifying' : 'executing'
+      const changed = db.prepare(`UPDATE fabric_workflows SET state=?,version=version+1,
         retry_at=NULL,updated_at=? WHERE id=? AND version=? AND state='retrying' AND retry_at<=?
         AND (lease_expires_at IS NULL OR lease_expires_at<=?)`).run(
-        nowIso, retry.workflow_id, retry.workflow_version, nowIso, nowIso,
+        destination, nowIso, retry.workflow_id, retry.workflow_version, nowIso, nowIso,
       )
       if (changed.changes !== 1) return null
       db.prepare(`UPDATE fabric_steps SET state='pending',output_json=NULL,evidence_json='[]',
         last_error_code=NULL,started_at=NULL,completed_at=NULL,updated_at=?
-        WHERE workflow_id=? AND kind IN ('execute','verify')`).run(nowIso, retry.workflow_id)
-      auditTransition(db, retry, 'retrying', 'executing', 'retry_due', nowIso)
+        WHERE workflow_id=? AND kind IN (${verifyOnly ? "'verify'" : "'execute','verify'"})`).run(nowIso, retry.workflow_id)
+      auditTransition(db, retry, 'retrying', destination, 'retry_due', nowIso)
       return null
     }
     const row = selectCandidate(db, nowIso, control.level)
@@ -180,6 +225,12 @@ function claimNextWorkflow(workerId: string, now: Date): WorkflowClaim | null {
     const phase = interrupt ? 'interrupt' : phaseFor(row)
     if (control.level >= 2 && !interrupt) return moveNonInterruptibleToWaitingUser(db, row, nowIso)
     const leaseExpiresAt = new Date(now.getTime() + LEASE_MS).toISOString()
+    let claim: WorkflowClaim
+    try {
+      claim = buildClaim(db, row, workerId, row.workflow_version + 1, leaseExpiresAt, phase)
+    } catch (error) {
+      return moveInvalidContractToWaitingUser(db, row, nowIso, stableErrorClass(error))
+    }
     const recovered = row.lease_owner !== null && row.lease_expires_at !== null && row.lease_expires_at <= nowIso
     const leaseGuard = interrupt ? '' : ' AND (lease_expires_at IS NULL OR lease_expires_at<=?)'
     const parameters: Array<string | number> = [
@@ -200,7 +251,7 @@ function claimNextWorkflow(workerId: string, now: Date): WorkflowClaim | null {
     appendFabricAuditEvent(db, { eventType, actorUserId: workerId, aggregateType: 'workflow',
       aggregateId: row.workflow_id, payload: { stepId: row.step_id, phase }, occurredAt: nowIso })
     appendFabricOutbox(db, `fabric.${eventType}`, row.workflow_id, { stepId: row.step_id, phase })
-    return buildClaim(db, row, workerId, row.workflow_version + 1, leaseExpiresAt, phase)
+    return claim
   })
 }
 
@@ -223,7 +274,7 @@ function selectCandidate(db: DatabaseSync, now: string, controlLevel: number): C
 
 function candidateSelect(): string {
   return `SELECT w.id workflow_id,w.version workflow_version,w.state workflow_state,w.lease_owner,w.lease_expires_at,
-    i.id intent_id,i.requested_by_user_id,i.capability_id,i.capability_version,
+    i.id intent_id,i.requested_by_user_id,i.requested_by_role_id,i.capability_id,i.capability_version,
     e.id executor_id,e.type executor_type,e.configuration_json executor_configuration_json,
     p.policy_snapshot_json,s.id step_id,s.ordinal step_ordinal,s.kind step_kind,s.state step_state,
     s.attempt step_attempt,s.execution_token,s.input_json
@@ -247,25 +298,38 @@ function buildClaim(
   const target = parseObjectProperty(stepInput, 'target')
   const prepared = selectStepOutput(db, row.workflow_id, 0)
   const executed = selectStepOutput(db, row.workflow_id, 1)
+  const executeToken = selectStepToken(db, row.workflow_id, 1)
   const snapshot = parseObject(row.policy_snapshot_json)
   const token = snapshot.registryPolicyEvaluationToken
   if (typeof token !== 'string') throw new Error('FABRIC_WORKER_POLICY_TOKEN_MISSING')
-  if (typeof contract.contractDigest !== 'string' || typeof contract.reversible !== 'boolean') {
+  if (contract.capabilityVersion !== row.capability_version
+    || typeof contract.contractDigest !== 'string' || typeof contract.reversible !== 'boolean'
+    || !(typeof contract.compensationCapabilityId === 'string' || contract.compensationCapabilityId === null)
+    || !['required', 'supported', 'none'].includes(String(contract.idempotency))
+    || typeof contract.verificationStrategy !== 'string' || !contract.verificationStrategy) {
     throw new Error('FABRIC_WORKER_CONTRACT_MISSING')
   }
   return {
     workerId, workflowId: row.workflow_id, workflowVersion, intentId: row.intent_id,
     stepId: row.step_id, stepOrdinal: row.step_ordinal, stepAttempt: row.step_attempt + 1,
-    executionToken: row.execution_token, phase, executorId: row.executor_id, executorType: row.executor_type,
+    executionToken: row.execution_token, executeToken, phase, executorId: row.executor_id, executorType: row.executor_type,
     capabilityId: row.capability_id, capabilityVersion: row.capability_version,
     contractDigest: contract.contractDigest, policyEvaluationToken: token,
     input, target, ...(prepared ? { preparedOutput: prepared } : {}),
     ...(executed ? { executionOutput: executed } : {}), leaseExpiresAt,
-    actorUserId: row.requested_by_user_id, reversible: contract.reversible,
+    actorUserId: row.requested_by_user_id, requestedByRoleId: row.requested_by_role_id,
+    reversible: contract.reversible, compensationCapabilityId: contract.compensationCapabilityId,
+    idempotency: contract.idempotency as WorkflowClaim['idempotency'],
+    verificationStrategy: contract.verificationStrategy,
   }
 }
 
-function commitClaim(claim: WorkflowClaim, result: FabricExecutorResult, now: Date): boolean {
+function commitClaim(
+  claim: WorkflowClaim,
+  result: FabricExecutorResult,
+  now: Date,
+  preparedCompensation?: PreparedFabricCompensation | null,
+): boolean {
   return withFabricAuditedTransaction(db => {
     const current = db.prepare('SELECT state,version,lease_owner,lease_expires_at,max_attempts,attempt FROM fabric_workflows WHERE id=?')
       .get(claim.workflowId) as { state: FabricWorkflowState; version: number; lease_owner: string | null;
@@ -276,7 +340,28 @@ function commitClaim(claim: WorkflowClaim, result: FabricExecutorResult, now: Da
       || current.lease_expires_at !== claim.leaseExpiresAt || step.execution_token !== claim.executionToken
       || (!isStateForPhase(current.state, claim.phase)) || (claim.phase !== 'interrupt' && step.state !== 'running')) return false
     const nowIso = now.toISOString()
-    const transition = outcomeTransition(claim, result, current, now)
+    let transition = outcomeTransition(claim, result, current, now)
+    let compensationIntentId: string | null = null
+    let compensationWorkflowId: string | null = null
+    let compensationOutcome: string | null = null
+    if (claim.phase === 'verify' && result.outcome === 'mismatch' && claim.reversible
+      && claim.verificationStrategy !== 'none') {
+      if (!preparedCompensation) {
+        transition = compensationWaiting('FABRIC_COMPENSATION_POLICY_UNAVAILABLE', current.attempt)
+      } else {
+        const child = createFabricCompensationChildInDb(db, preparedCompensation)
+        compensationIntentId = child.intent.id
+        compensationWorkflowId = child.workflow.id
+        compensationOutcome = child.policyDecision.outcome
+        transition = child.policyDecision.outcome === 'allow'
+          ? { state: 'compensating', stepState: 'failed', attempt: current.attempt, retryAt: null,
+            errorCode: result.errorCode ?? 'FABRIC_VERIFICATION_MISMATCH', completedAt: null }
+          : child.policyDecision.outcome === 'waiting_user'
+            ? compensationWaiting('FABRIC_COMPENSATION_APPROVAL_REQUIRED', current.attempt)
+            : { state: 'failed', stepState: 'failed', attempt: current.attempt, retryAt: null,
+              errorCode: 'FABRIC_COMPENSATION_DENIED', completedAt: null }
+      }
+    }
     if (claim.phase !== 'interrupt') {
       db.prepare(`UPDATE fabric_steps SET state=?,output_json=?,evidence_json=?,last_error_code=?,
         updated_at=?,completed_at=? WHERE id=? AND state='running' AND execution_token=? AND attempt=?`).run(
@@ -291,10 +376,11 @@ function commitClaim(claim: WorkflowClaim, result: FabricExecutorResult, now: Da
         WHERE workflow_id=? AND state IN ('pending','running')`).run(nowIso, claim.workflowId)
     }
     const changed = db.prepare(`UPDATE fabric_workflows SET state=?,version=version+1,attempt=?,retry_at=?,
-      last_error_code=?,lease_owner=NULL,lease_expires_at=NULL,updated_at=?,completed_at=?
+      last_error_code=?,lease_owner=NULL,lease_expires_at=NULL,updated_at=?,completed_at=?,
+      compensation_intent_id=COALESCE(compensation_intent_id,?)
       WHERE id=? AND version=? AND lease_owner=? AND lease_expires_at=?`).run(
       transition.state, transition.attempt, transition.retryAt, transition.errorCode, nowIso,
-      transition.completedAt, claim.workflowId, current.version, claim.workerId, claim.leaseExpiresAt,
+      transition.completedAt, compensationIntentId, claim.workflowId, current.version, claim.workerId, claim.leaseExpiresAt,
     )
     if (changed.changes !== 1) throw new Error('FABRIC_WORKER_COMMIT_CONFLICT')
     updateCircuitBreaker(db, claim, result, nowIso)
@@ -302,10 +388,13 @@ function commitClaim(claim: WorkflowClaim, result: FabricExecutorResult, now: Da
     appendFabricAuditEvent(db, { eventType: 'workflow.step_checkpointed', actorUserId: claim.workerId,
       aggregateType: 'workflow', aggregateId: claim.workflowId,
       payload: { stepId: claim.stepId, phase: claim.phase, outcome: result.outcome,
-        from: current.state, to: transition.state, errorClass: result.errorCode }, occurredAt: nowIso })
+        from: current.state, to: transition.state, errorClass: result.errorCode,
+        ...(compensationIntentId ? { compensationIntentId, compensationWorkflowId, compensationOutcome } : {}) },
+      occurredAt: nowIso })
     appendFabricOutbox(db, 'fabric.workflow.step_checkpointed', claim.workflowId,
       { stepId: claim.stepId, phase: claim.phase, outcome: result.outcome,
-        from: current.state, to: transition.state, errorClass: result.errorCode })
+        from: current.state, to: transition.state, errorClass: result.errorCode,
+        ...(compensationIntentId ? { compensationIntentId, compensationWorkflowId, compensationOutcome } : {}) })
     return true
   })
 }
@@ -330,6 +419,7 @@ function outcomeTransition(
     if (result.outcome === 'succeeded') return active('verifying', current.attempt)
     if (result.outcome === 'unknown') return waiting(result.errorCode ?? 'FABRIC_EXECUTION_UNKNOWN', current.attempt)
     if (result.outcome === 'temporary_failure' && result.safeToRetry) {
+      if (claim.idempotency === 'none') return waiting('FABRIC_EXECUTION_RETRY_UNSAFE', current.attempt)
       return retryOrDeadLetter(current, result.errorCode ?? 'FABRIC_EXECUTION_TEMPORARY', now)
     }
     return terminal('dead_letter', current.max_attempts, result.errorCode ?? 'FABRIC_EXECUTION_FAILED', now)
@@ -338,6 +428,9 @@ function outcomeTransition(
     if (result.outcome === 'verified') return terminal('succeeded', current.attempt, null, now, 'succeeded')
     if (result.outcome === 'unknown') return waiting(result.errorCode ?? 'FABRIC_VERIFICATION_UNKNOWN', current.attempt)
     if (result.outcome === 'mismatch') {
+      if (claim.verificationStrategy === 'none') {
+        return waiting('FABRIC_VERIFICATION_CONTRACT_MISMATCH', current.attempt)
+      }
       if (claim.reversible) return { state: 'compensating', stepState: 'failed', attempt: current.attempt,
         retryAt: null, errorCode: result.errorCode ?? 'FABRIC_VERIFICATION_MISMATCH', completedAt: null }
       return retryOrDeadLetter(current, result.errorCode ?? 'FABRIC_VERIFICATION_MISMATCH', now)
@@ -361,6 +454,11 @@ function active(state: FabricWorkflowState, attempt: number, errorCode: string |
 
 function waiting(errorCode: string, attempt: number) {
   return { state: 'waiting_user' as const, stepState: 'waiting_user', attempt,
+    retryAt: null, errorCode, completedAt: null }
+}
+
+function compensationWaiting(errorCode: string, attempt: number) {
+  return { state: 'waiting_user' as const, stepState: 'failed', attempt,
     retryAt: null, errorCode, completedAt: null }
 }
 
@@ -424,6 +522,19 @@ function moveNonInterruptibleToWaitingUser(db: DatabaseSync, row: CandidateRow, 
   return null
 }
 
+function moveInvalidContractToWaitingUser(db: DatabaseSync, row: CandidateRow, now: string, errorCode: string): null {
+  const changed = db.prepare(`UPDATE fabric_workflows SET state='waiting_user',version=version+1,
+    lease_owner=NULL,lease_expires_at=NULL,last_error_code=?,updated_at=? WHERE id=? AND version=?`).run(
+    errorCode, now, row.workflow_id, row.workflow_version,
+  )
+  if (changed.changes === 1) {
+    db.prepare(`UPDATE fabric_steps SET state='waiting_user',last_error_code=?,updated_at=?
+      WHERE workflow_id=? AND state IN ('pending','running')`).run(errorCode, now, row.workflow_id)
+    auditTransition(db, row, row.workflow_state, 'waiting_user', 'captured_contract_invalid', now)
+  }
+  return null
+}
+
 function auditTransition(
   db: DatabaseSync,
   row: Pick<CandidateRow, 'workflow_id' | 'requested_by_user_id'>,
@@ -435,6 +546,48 @@ function auditTransition(
   appendFabricAuditEvent(db, { eventType: 'workflow.transitioned', actorUserId: row.requested_by_user_id,
     aggregateType: 'workflow', aggregateId: row.workflow_id, payload: { from, to, reason }, occurredAt: now })
   appendFabricOutbox(db, 'fabric.workflow.transitioned', row.workflow_id, { from, to, reason })
+}
+
+function reconcileCompensationParent(db: DatabaseSync, now: string): boolean {
+  const rows = db.prepare(`SELECT p.id parent_id,p.state parent_state,p.version parent_version,
+      c.id child_id,c.state child_state,i.requested_by_user_id actor_user_id
+    FROM fabric_workflows p
+    JOIN fabric_action_intents ci ON ci.id=p.compensation_intent_id
+    JOIN fabric_workflows c ON c.intent_id=ci.id
+    JOIN fabric_action_intents i ON i.id=p.intent_id
+    WHERE p.state IN ('compensating','waiting_user','failed')
+      AND NOT ((c.state IN ('succeeded','compensated') AND p.state='compensated')
+        OR (c.state IN ('denied','cancelled','dead_letter','failed') AND p.state='failed')
+        OR (c.state='waiting_user' AND p.state='waiting_user')
+        OR (c.state NOT IN ('succeeded','compensated','denied','cancelled','dead_letter','failed','waiting_user')
+          AND p.state='compensating'))
+    ORDER BY p.updated_at,p.id LIMIT 1`).all() as unknown as Array<{
+      parent_id: string; parent_state: FabricWorkflowState; parent_version: number
+      child_id: string; child_state: FabricWorkflowState; actor_user_id: string
+    }>
+  const selected = rows.map(row => ({ row, destination: compensationParentDestination(row.child_state) }))
+    .find(item => item.destination !== item.row.parent_state)
+  if (!selected) return false
+  const { row, destination } = selected
+  const changed = db.prepare(`UPDATE fabric_workflows SET state=?,version=version+1,updated_at=?,completed_at=?
+    WHERE id=? AND version=? AND state=?`).run(
+    destination, now, destination === 'compensated' ? now : null,
+    row.parent_id, row.parent_version, row.parent_state,
+  )
+  if (changed.changes !== 1) return false
+  appendFabricAuditEvent(db, { eventType: 'workflow.compensation_reconciled', actorUserId: row.actor_user_id,
+    aggregateType: 'workflow', aggregateId: row.parent_id,
+    payload: { childWorkflowId: row.child_id, childState: row.child_state,
+      from: row.parent_state, to: destination }, occurredAt: now })
+  appendFabricOutbox(db, 'fabric.workflow.compensation_reconciled', row.parent_id,
+    { childWorkflowId: row.child_id, childState: row.child_state, from: row.parent_state, to: destination })
+  return true
+}
+
+function compensationParentDestination(childState: FabricWorkflowState): FabricWorkflowState {
+  if (childState === 'succeeded' || childState === 'compensated') return 'compensated'
+  if (['denied', 'cancelled', 'dead_letter', 'failed'].includes(childState)) return 'failed'
+  return childState === 'waiting_user' ? 'waiting_user' : 'compensating'
 }
 
 function isInterruptible(row: CandidateRow): boolean {
@@ -462,6 +615,13 @@ function selectStepOutput(db: DatabaseSync, workflowId: string, ordinal: number)
   const row = db.prepare('SELECT output_json FROM fabric_steps WHERE workflow_id=? AND ordinal=? AND state=\'succeeded\'')
     .get(workflowId, ordinal) as { output_json: string | null } | undefined
   return row?.output_json ? parseObject(row.output_json) : undefined
+}
+
+function selectStepToken(db: DatabaseSync, workflowId: string, ordinal: number): string {
+  const row = db.prepare('SELECT execution_token FROM fabric_steps WHERE workflow_id=? AND ordinal=?')
+    .get(workflowId, ordinal) as { execution_token: string } | undefined
+  if (!row) throw new Error('FABRIC_WORKER_STEP_TOKEN_MISSING')
+  return row.execution_token
 }
 
 function parseObjectProperty(value: FabricJsonObject, key: string): FabricJsonObject {

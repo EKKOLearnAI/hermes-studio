@@ -59,6 +59,9 @@ describe('Action Fabric durable workflows', () => {
       { ordinal: 2, kind: 'verify', state: 'pending' },
     ])
     expect(result.workflow.steps[1].input).toMatchObject({ actionInput: { message: 'hello' } })
+    expect(result.workflow.steps[1].input.contract).toMatchObject({
+      idempotency: 'supported', verificationStrategy: 'output_equals_input',
+    })
     expect(getFabricIntent(result.intent.id)).toEqual(result.intent)
     expect(getFabricWorkflow(result.workflow.id)).toEqual(result.workflow)
     const order = withActionFabricDb(db => ({
