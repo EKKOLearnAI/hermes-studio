@@ -177,6 +177,7 @@ describe('assistant roles controller', () => {
     ['create', null],
     ['create', { name: '', persona: 'x', dataScope: {}, capabilityScope: {}, memoryNamespace: 'x' }],
     ['create', { name: 'x', persona: 'x', dataScope: { domains: ['secret'], sections: [], includeProvenance: true }, capabilityScope: { allow: [], deny: [], enforcement: 'declarative_phase_2' }, memoryNamespace: 'x' }],
+    ['update', {}],
     ['update', { enabled: 'yes' }],
     ['update', { escalationRules: [{} as object, 'bad'] }],
     ['clone', { name: 12 }],

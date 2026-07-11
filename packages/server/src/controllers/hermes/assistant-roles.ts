@@ -193,6 +193,7 @@ function parsePatch(ctx: Context): AssistantRolePatch {
   if (Object.prototype.hasOwnProperty.call(body, 'decisionAuthority')) patch.decisionAuthority = jsonObject(body.decisionAuthority, 'decisionAuthority')
   if (Object.prototype.hasOwnProperty.call(body, 'spendingLimits')) patch.spendingLimits = jsonObject(body.spendingLimits, 'spendingLimits')
   if (Object.prototype.hasOwnProperty.call(body, 'escalationRules')) patch.escalationRules = objectArray(body.escalationRules, 'escalationRules')
+  if (Object.keys(patch).length === 0) throw new RequestValidationError('Assistant role patch must include at least one field')
   return patch
 }
 
