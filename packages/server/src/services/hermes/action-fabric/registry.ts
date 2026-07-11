@@ -1,0 +1,503 @@
+import { createHash } from 'crypto'
+import type { DatabaseSync } from 'node:sqlite'
+import { withActionFabricDb } from './database'
+import type {
+  FabricCapability,
+  FabricEnvironment,
+  FabricExecutor,
+  FabricExecutorCapability,
+  FabricExecutorHealth,
+  FabricExecutorType,
+  FabricIdempotency,
+  FabricJsonObject,
+  FabricRisk,
+  ResolvedFabricExecutor,
+} from './types'
+
+const SEMANTIC_ID = /^[a-z][a-z0-9]*(?:[._:-][a-z0-9][a-z0-9-]*)+$/
+const EXECUTOR_ID = /^[a-z][a-z0-9]*(?:[.-][a-z0-9][a-z0-9-]*)*$/
+const RISKS = new Set<FabricRisk>(['none', 'low', 'medium', 'high', 'critical'])
+const IDEMPOTENCY = new Set<FabricIdempotency>(['required', 'supported', 'none'])
+const EXECUTOR_TYPES = new Set<FabricExecutorType>(['simulator', 'internal'])
+const ENVIRONMENTS = new Set<FabricEnvironment>(['simulator', 'internal', 'sandbox', 'production'])
+const HEALTH = new Set<FabricExecutorHealth>(['unknown', 'healthy', 'degraded', 'unhealthy'])
+const MAX_DESCRIPTION = 2_000
+const MAX_JSON = 32_768
+const MAX_ARRAY = 64
+const MAX_ARRAY_ITEM = 256
+
+export interface FabricCapabilityInput {
+  id: string
+  version: number
+  description: string
+  inputSchema: FabricJsonObject
+  outputSchema: FabricJsonObject
+  risk: FabricRisk
+  sideEffect: boolean
+  idempotency: FabricIdempotency
+  reversible: boolean
+  compensationCapabilityId: string | null
+  verificationStrategy: string
+  authentication: string[]
+  targetRestrictions: string[]
+  cost: { currency: string | null; estimatedMinor: number }
+  enabled: boolean
+}
+
+export interface FabricExecutorInput {
+  id: string
+  type: FabricExecutorType
+  name: string
+  environment: FabricEnvironment
+  configuration: FabricJsonObject
+  enabled: boolean
+}
+
+type CapabilityRow = {
+  id: string; version: number; domain: string; verb: string; description: string
+  input_schema_json: string; output_schema_json: string; risk: FabricRisk; side_effect: number
+  idempotency: FabricIdempotency; reversible: number; compensation_capability_id: string | null
+  verification_strategy: string; authentication_json: string; target_restrictions_json: string
+  cost_currency: string | null; cost_estimated_minor: number; contract_digest: string; enabled: number
+  created_at: string; updated_at: string
+}
+
+type ExecutorRow = {
+  id: string; type: FabricExecutorType; name: string; environment: FabricEnvironment
+  health: FabricExecutorHealth; health_details_json: string; configuration_json: string
+  enabled: number; policy_version: number; created_at: string; updated_at: string
+}
+
+type BindingRow = {
+  executor_id: string; capability_id: string; capability_version: number
+  contract_digest: string; created_at: string
+}
+
+const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
+  {
+    id: 'simulator.echo', version: 1, description: 'Echo structured input without external side effects',
+    inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, risk: 'none', sideEffect: false,
+    idempotency: 'supported', reversible: false, compensationCapabilityId: null,
+    verificationStrategy: 'output_equals_input', authentication: [], targetRestrictions: ['simulator'],
+    cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+  },
+  {
+    id: 'simulator.counter.increment', version: 1, description: 'Increment an isolated simulator counter',
+    inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, risk: 'low', sideEffect: true,
+    idempotency: 'required', reversible: false, compensationCapabilityId: null,
+    verificationStrategy: 'counter_value_match', authentication: [], targetRestrictions: ['simulator'],
+    cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+  },
+  {
+    id: 'internal.twin.preference.set', version: 1, description: 'Set a Personal Twin preference with a restorable prior value',
+    inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, risk: 'low', sideEffect: true,
+    idempotency: 'required', reversible: true, compensationCapabilityId: 'internal.twin.preference.set',
+    verificationStrategy: 'read_after_write', authentication: [], targetRestrictions: ['personal-twin'],
+    cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+  },
+]
+
+const BUILT_IN_EXECUTORS: FabricExecutorInput[] = [
+  { id: 'simulator-main', type: 'simulator', name: 'Phase 3 Simulator', environment: 'simulator', configuration: {}, enabled: true },
+  { id: 'internal-twin', type: 'internal', name: 'Personal Twin Internal Executor', environment: 'internal', configuration: {}, enabled: true },
+]
+
+const BUILT_IN_BINDINGS = [
+  ['simulator-main', 'simulator.echo'],
+  ['simulator-main', 'simulator.counter.increment'],
+  ['internal-twin', 'internal.twin.preference.set'],
+] as const
+
+export function ensureBuiltInFabricRegistry(): void {
+  withActionFabricDb(db => {
+    if (hasCompleteBuiltInRegistry(db)) return
+    transaction(db, () => {
+      for (const input of BUILT_IN_CAPABILITIES) insertCapabilityIfMissing(db, input)
+      for (const input of BUILT_IN_EXECUTORS) insertExecutorIfMissing(db, input)
+      for (const [executorId, capabilityId] of BUILT_IN_BINDINGS) {
+        const capability = selectCapability(db, capabilityId)
+        if (!capability) throw new Error(`Built-in capability is missing: ${capabilityId}`)
+        insertBindingIfMissing(db, executorId, capability)
+      }
+    })
+  })
+}
+
+export function listFabricCapabilities(): FabricCapability[] {
+  return withActionFabricDb(db => (db.prepare('SELECT * FROM fabric_capabilities ORDER BY id').all() as CapabilityRow[]).map(parseCapability))
+}
+
+export function getFabricCapability(id: string): FabricCapability | null {
+  return withActionFabricDb(db => selectCapability(db, id))
+}
+
+export function listFabricExecutors(): FabricExecutor[] {
+  return withActionFabricDb(db => (db.prepare('SELECT * FROM fabric_executors ORDER BY id').all() as ExecutorRow[]).map(parseExecutor))
+}
+
+export function createFabricCapability(input: FabricCapabilityInput): FabricCapability {
+  const normalized = validateCapability(input)
+  return withActionFabricDb(db => transaction(db, () => {
+    const existing = selectCapability(db, normalized.id)
+    const digest = capabilityDigest(normalized)
+    if (existing) {
+      if (existing.version === normalized.version && existing.contractDigest !== digest) {
+        throw new Error(`Capability contract cannot change silently at version ${normalized.version}`)
+      }
+      throw new Error(`Capability already exists: ${normalized.id}`)
+    }
+    insertCapability(db, normalized, digest)
+    return selectCapability(db, normalized.id)!
+  }))
+}
+
+export function updateFabricCapability(
+  id: string,
+  updates: Partial<Omit<FabricCapabilityInput, 'id' | 'version'>>,
+): FabricCapability {
+  return withActionFabricDb(db => transaction(db, () => {
+    const existing = selectCapability(db, id)
+    if (!existing) throw new Error(`Capability not found: ${id}`)
+    const input = validateCapability({
+      id: existing.id, version: existing.version, description: existing.description,
+      inputSchema: existing.inputSchema, outputSchema: existing.outputSchema, risk: existing.risk,
+      sideEffect: existing.sideEffect, idempotency: existing.idempotency, reversible: existing.reversible,
+      compensationCapabilityId: existing.compensationCapabilityId,
+      verificationStrategy: existing.verificationStrategy, authentication: existing.authentication,
+      targetRestrictions: existing.targetRestrictions, cost: existing.cost, enabled: existing.enabled,
+      ...updates,
+    })
+    const digest = capabilityDigest(input)
+    const now = new Date().toISOString()
+    db.prepare(`UPDATE fabric_capabilities SET description=?, input_schema_json=?, output_schema_json=?, risk=?,
+      side_effect=?, idempotency=?, reversible=?, compensation_capability_id=?, verification_strategy=?,
+      authentication_json=?, target_restrictions_json=?, cost_currency=?, cost_estimated_minor=?,
+      contract_digest=?, enabled=?, updated_at=? WHERE id=?`).run(
+      input.description, json(input.inputSchema), json(input.outputSchema), input.risk, Number(input.sideEffect),
+      input.idempotency, Number(input.reversible), input.compensationCapabilityId, input.verificationStrategy,
+      json(input.authentication), json(input.targetRestrictions), input.cost.currency, input.cost.estimatedMinor,
+      digest, Number(input.enabled), now, id,
+    )
+    db.prepare('UPDATE fabric_executor_capabilities SET contract_digest=? WHERE capability_id=? AND capability_version=?')
+      .run(digest, id, input.version)
+    return selectCapability(db, id)!
+  }))
+}
+
+export function createFabricExecutor(input: FabricExecutorInput): FabricExecutor {
+  const normalized = validateExecutor(input)
+  return withActionFabricDb(db => transaction(db, () => {
+    if (selectExecutor(db, normalized.id)) throw new Error(`Executor already exists: ${normalized.id}`)
+    insertExecutor(db, normalized)
+    return selectExecutor(db, normalized.id)!
+  }))
+}
+
+export function updateFabricExecutor(
+  id: string,
+  updates: Partial<Omit<FabricExecutorInput, 'id'>>,
+): FabricExecutor {
+  return withActionFabricDb(db => transaction(db, () => {
+    const existing = selectExecutor(db, id)
+    if (!existing) throw new Error(`Executor not found: ${id}`)
+    const input = validateExecutor({
+      id, type: existing.type, name: existing.name, environment: existing.environment,
+      configuration: existing.configuration, enabled: existing.enabled, ...updates,
+    })
+    db.prepare(`UPDATE fabric_executors SET type=?, name=?, environment=?, configuration_json=?, enabled=?,
+      policy_version=policy_version+1, updated_at=? WHERE id=?`).run(
+      input.type, input.name, input.environment, json(input.configuration), Number(input.enabled), new Date().toISOString(), id,
+    )
+    return selectExecutor(db, id)!
+  }))
+}
+
+export function setFabricExecutorEnabled(id: string, enabled: boolean): FabricExecutor {
+  if (typeof enabled !== 'boolean') throw new Error('Executor enabled must be boolean')
+  return updateFabricExecutor(id, { enabled })
+}
+
+export function updateFabricExecutorHealth(
+  id: string,
+  health: FabricExecutorHealth,
+  details: FabricJsonObject,
+): FabricExecutor {
+  if (!HEALTH.has(health)) throw new Error(`Invalid executor health: ${String(health)}`)
+  assertJsonObject(details, 'health details')
+  assertJsonBound(details, 'health details')
+  return withActionFabricDb(db => transaction(db, () => {
+    if (!selectExecutor(db, id)) throw new Error(`Executor not found: ${id}`)
+    db.prepare(`UPDATE fabric_executors SET health=?, health_details_json=?, policy_version=policy_version+1,
+      updated_at=? WHERE id=?`).run(health, json(details), new Date().toISOString(), id)
+    return selectExecutor(db, id)!
+  }))
+}
+
+export function bindFabricExecutorCapability(
+  executorId: string,
+  capabilityId: string,
+  capabilityVersion: number,
+  contractDigest: string,
+): FabricExecutorCapability {
+  return withActionFabricDb(db => transaction(db, () => {
+    if (!selectExecutor(db, executorId)) throw new Error(`Executor not found: ${executorId}`)
+    const capability = selectCapability(db, capabilityId)
+    if (!capability) throw new Error(`Capability not found: ${capabilityId}`)
+    if (capability.version !== capabilityVersion) throw new Error('Binding version must match capability version')
+    if (capability.contractDigest !== contractDigest) throw new Error('Binding digest must match capability contract digest')
+    insertBindingIfMissing(db, executorId, capability)
+    return parseBinding(db.prepare(`SELECT * FROM fabric_executor_capabilities
+      WHERE executor_id=? AND capability_id=?`).get(executorId, capabilityId) as BindingRow)
+  }))
+}
+
+export function resolveFabricExecutor(
+  capabilityId: string,
+  options: { environments: FabricEnvironment[] },
+): ResolvedFabricExecutor | null {
+  if (!Array.isArray(options.environments) || options.environments.length === 0) return null
+  for (const environment of options.environments) {
+    if (!ENVIRONMENTS.has(environment)) throw new Error(`Invalid executor environment: ${String(environment)}`)
+  }
+  return withActionFabricDb(db => {
+    const capability = selectCapability(db, capabilityId)
+    if (!capability || !capability.enabled) return null
+    const placeholders = options.environments.map(() => '?').join(',')
+    const row = db.prepare(`SELECT e.*, b.executor_id AS binding_executor_id,
+      b.capability_id AS binding_capability_id, b.capability_version AS binding_capability_version,
+      b.contract_digest AS binding_contract_digest, b.created_at AS binding_created_at
+      FROM fabric_executors e JOIN fabric_executor_capabilities b ON b.executor_id=e.id
+      WHERE b.capability_id=? AND b.capability_version=? AND b.contract_digest=?
+        AND e.enabled=1 AND e.health='healthy' AND e.environment IN (${placeholders})
+      ORDER BY e.id LIMIT 1`).get(capability.id, capability.version, capability.contractDigest, ...options.environments) as
+        (ExecutorRow & { binding_executor_id: string; binding_capability_id: string; binding_capability_version: number; binding_contract_digest: string; binding_created_at: string }) | undefined
+    if (!row) return null
+    const executor = parseExecutor(row)
+    const binding: FabricExecutorCapability = {
+      executorId: row.binding_executor_id, capabilityId: row.binding_capability_id,
+      capabilityVersion: row.binding_capability_version, contractDigest: row.binding_contract_digest,
+      createdAt: row.binding_created_at,
+    }
+    return {
+      executor, capability, binding,
+      policyEvaluationToken: digest({
+        capabilityId: capability.id, capabilityVersion: capability.version,
+        capabilityDigest: capability.contractDigest, risk: capability.risk,
+        executorId: executor.id, executorType: executor.type, environment: executor.environment,
+        health: executor.health, enabled: executor.enabled, policyVersion: executor.policyVersion,
+      }),
+    }
+  })
+}
+
+function hasCompleteBuiltInRegistry(db: DatabaseSync): boolean {
+  const capabilities = db.prepare(`SELECT COUNT(*) AS count FROM fabric_capabilities
+    WHERE id IN (${BUILT_IN_CAPABILITIES.map(() => '?').join(',')})`).get(...BUILT_IN_CAPABILITIES.map(item => item.id)) as { count: number }
+  const executors = db.prepare(`SELECT COUNT(*) AS count FROM fabric_executors
+    WHERE id IN (${BUILT_IN_EXECUTORS.map(() => '?').join(',')})`).get(...BUILT_IN_EXECUTORS.map(item => item.id)) as { count: number }
+  const bindings = db.prepare(`SELECT COUNT(*) AS count FROM fabric_executor_capabilities b
+    JOIN fabric_capabilities c ON c.id=b.capability_id
+    WHERE b.capability_version=c.version AND b.contract_digest=c.contract_digest AND (
+      (b.executor_id='simulator-main' AND b.capability_id IN ('simulator.echo','simulator.counter.increment')) OR
+      (b.executor_id='internal-twin' AND b.capability_id='internal.twin.preference.set'))`).get() as { count: number }
+  return capabilities.count === BUILT_IN_CAPABILITIES.length
+    && executors.count === BUILT_IN_EXECUTORS.length
+    && bindings.count === BUILT_IN_BINDINGS.length
+}
+
+function validateCapability(input: FabricCapabilityInput): FabricCapabilityInput {
+  if (!SEMANTIC_ID.test(input.id) || input.id.length > 160) throw new Error('Invalid capability semantic ID')
+  if (!Number.isSafeInteger(input.version) || input.version <= 0) throw new Error('Capability version must be positive')
+  if (typeof input.description !== 'string' || !input.description.trim()) throw new Error('Capability description must not be empty')
+  if (input.description.length > MAX_DESCRIPTION) throw new Error('Capability description is too large')
+  assertJsonObject(input.inputSchema, 'input schema'); assertJsonBound(input.inputSchema, 'input schema')
+  assertJsonObject(input.outputSchema, 'output schema'); assertJsonBound(input.outputSchema, 'output schema')
+  if (!RISKS.has(input.risk)) throw new Error(`Invalid capability risk: ${String(input.risk)}`)
+  if (typeof input.sideEffect !== 'boolean' || typeof input.reversible !== 'boolean' || typeof input.enabled !== 'boolean') {
+    throw new Error('Capability boolean fields must be boolean')
+  }
+  if (!IDEMPOTENCY.has(input.idempotency)) throw new Error('Invalid capability idempotency')
+  if (typeof input.verificationStrategy !== 'string' || !input.verificationStrategy.trim()) {
+    throw new Error('Capability verification strategy must not be empty')
+  }
+  if (input.verificationStrategy.length > MAX_ARRAY_ITEM) throw new Error('Capability verification strategy is too large')
+  if (input.reversible && !input.compensationCapabilityId) throw new Error('Reversible capability must declare compensation')
+  if (!input.reversible && input.compensationCapabilityId) throw new Error('Irreversible capability must not declare compensation')
+  if (input.compensationCapabilityId && !SEMANTIC_ID.test(input.compensationCapabilityId)) throw new Error('Invalid compensation capability ID')
+  assertStringArray(input.authentication, 'authentication')
+  assertStringArray(input.targetRestrictions, 'target restrictions')
+  if (!input.cost || !Number.isSafeInteger(input.cost.estimatedMinor) || input.cost.estimatedMinor < 0) {
+    throw new Error('Capability cost must be a non-negative integer')
+  }
+  if (input.cost.currency === null && input.cost.estimatedMinor !== 0) throw new Error('Capability cost currency and amount must be paired')
+  if (input.cost.currency !== null && !/^[A-Z]{3}$/.test(input.cost.currency)) throw new Error('Invalid capability cost currency')
+  return input
+}
+
+function validateExecutor(input: FabricExecutorInput): FabricExecutorInput {
+  if (!EXECUTOR_TYPES.has(input.type)) throw new Error(`Unsupported executor type in Phase 3: ${String(input.type)}`)
+  if (!EXECUTOR_ID.test(input.id) || input.id.length > 160) throw new Error('Invalid executor ID')
+  if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 256) throw new Error('Invalid executor name')
+  if (!ENVIRONMENTS.has(input.environment)) throw new Error(`Invalid executor environment: ${String(input.environment)}`)
+  assertJsonObject(input.configuration, 'executor configuration'); assertJsonBound(input.configuration, 'executor configuration')
+  if (typeof input.enabled !== 'boolean') throw new Error('Executor enabled must be boolean')
+  return input
+}
+
+function insertCapabilityIfMissing(db: DatabaseSync, input: FabricCapabilityInput): void {
+  if (selectCapability(db, input.id)) return
+  const normalized = validateCapability(input)
+  insertCapability(db, normalized, capabilityDigest(normalized))
+}
+
+function insertCapability(db: DatabaseSync, input: FabricCapabilityInput, contractDigest: string): void {
+  const [domain, ...verbParts] = input.id.split(/[._:-]/)
+  const now = new Date().toISOString()
+  db.prepare(`INSERT INTO fabric_capabilities(id, version, domain, verb, description, input_schema_json,
+    output_schema_json, risk, side_effect, idempotency, reversible, compensation_capability_id,
+    verification_strategy, authentication_json, target_restrictions_json, cost_currency,
+    cost_estimated_minor, contract_digest, enabled, created_at, updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    input.id, input.version, domain, verbParts.join('.'), input.description, json(input.inputSchema),
+    json(input.outputSchema), input.risk, Number(input.sideEffect), input.idempotency, Number(input.reversible),
+    input.compensationCapabilityId, input.verificationStrategy, json(input.authentication),
+    json(input.targetRestrictions), input.cost.currency, input.cost.estimatedMinor, contractDigest,
+    Number(input.enabled), now, now,
+  )
+}
+
+function insertExecutorIfMissing(db: DatabaseSync, input: FabricExecutorInput): void {
+  if (selectExecutor(db, input.id)) return
+  insertExecutor(db, validateExecutor(input))
+}
+
+function insertExecutor(db: DatabaseSync, input: FabricExecutorInput): void {
+  const now = new Date().toISOString()
+  db.prepare(`INSERT INTO fabric_executors(id,type,name,environment,health,health_details_json,
+    configuration_json,enabled,policy_version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,1,?,?)`).run(
+    input.id, input.type, input.name, input.environment, 'healthy', '{}', json(input.configuration),
+    Number(input.enabled), now, now,
+  )
+}
+
+function insertBindingIfMissing(db: DatabaseSync, executorId: string, capability: FabricCapability): void {
+  const existing = db.prepare(`SELECT capability_version, contract_digest FROM fabric_executor_capabilities
+    WHERE executor_id=? AND capability_id=?`).get(executorId, capability.id) as { capability_version: number; contract_digest: string } | undefined
+  if (existing) {
+    if (existing.capability_version !== capability.version || existing.contract_digest !== capability.contractDigest) {
+      db.prepare(`UPDATE fabric_executor_capabilities SET capability_version=?, contract_digest=?, created_at=?
+        WHERE executor_id=? AND capability_id=?`).run(
+        capability.version, capability.contractDigest, new Date().toISOString(), executorId, capability.id,
+      )
+    }
+    return
+  }
+  db.prepare(`INSERT INTO fabric_executor_capabilities(executor_id,capability_id,capability_version,
+    contract_digest,created_at) VALUES(?,?,?,?,?)`).run(
+    executorId, capability.id, capability.version, capability.contractDigest, new Date().toISOString(),
+  )
+}
+
+function selectCapability(db: DatabaseSync, id: string): FabricCapability | null {
+  const row = db.prepare('SELECT * FROM fabric_capabilities WHERE id=?').get(id) as CapabilityRow | undefined
+  return row ? parseCapability(row) : null
+}
+
+function selectExecutor(db: DatabaseSync, id: string): FabricExecutor | null {
+  const row = db.prepare('SELECT * FROM fabric_executors WHERE id=?').get(id) as ExecutorRow | undefined
+  return row ? parseExecutor(row) : null
+}
+
+function parseCapability(row: CapabilityRow): FabricCapability {
+  return {
+    id: row.id, version: row.version, domain: row.domain, verb: row.verb, description: row.description,
+    inputSchema: parseObject(row.input_schema_json, 'capability input schema'),
+    outputSchema: parseObject(row.output_schema_json, 'capability output schema'), risk: row.risk,
+    sideEffect: row.side_effect === 1, idempotency: row.idempotency, reversible: row.reversible === 1,
+    compensationCapabilityId: row.compensation_capability_id, verificationStrategy: row.verification_strategy,
+    authentication: parseStringArray(row.authentication_json, 'capability authentication'),
+    targetRestrictions: parseStringArray(row.target_restrictions_json, 'capability target restrictions'),
+    cost: { currency: row.cost_currency, estimatedMinor: row.cost_estimated_minor },
+    contractDigest: row.contract_digest, enabled: row.enabled === 1,
+    createdAt: row.created_at, updatedAt: row.updated_at,
+  }
+}
+
+function parseExecutor(row: ExecutorRow): FabricExecutor {
+  return {
+    id: row.id, type: row.type, name: row.name, environment: row.environment, health: row.health,
+    healthDetails: parseObject(row.health_details_json, 'executor health details'),
+    configuration: parseObject(row.configuration_json, 'executor configuration'), enabled: row.enabled === 1,
+    policyVersion: row.policy_version, createdAt: row.created_at, updatedAt: row.updated_at,
+  }
+}
+
+function parseBinding(row: BindingRow): FabricExecutorCapability {
+  return { executorId: row.executor_id, capabilityId: row.capability_id, capabilityVersion: row.capability_version,
+    contractDigest: row.contract_digest, createdAt: row.created_at }
+}
+
+function capabilityDigest(input: FabricCapabilityInput): string {
+  const { enabled: _enabled, ...contract } = input
+  return digest(contract)
+}
+
+function digest(value: unknown): string {
+  return createHash('sha256').update(stableStringify(value)).digest('hex')
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+function json(value: unknown): string { return JSON.stringify(value) }
+
+function parseObject(value: string, label: string): FabricJsonObject {
+  let parsed: unknown
+  try { parsed = JSON.parse(value) } catch { throw new Error(`Invalid ${label} JSON`) }
+  assertJsonObject(parsed, label)
+  return parsed
+}
+
+function parseStringArray(value: string, label: string): string[] {
+  let parsed: unknown
+  try { parsed = JSON.parse(value) } catch { throw new Error(`Invalid ${label} JSON`) }
+  assertStringArray(parsed, label)
+  return parsed
+}
+
+function assertJsonObject(value: unknown, label: string): asserts value is FabricJsonObject {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be a JSON object`)
+}
+
+function assertJsonBound(value: unknown, label: string): void {
+  let serialized: string
+  try { serialized = JSON.stringify(value) } catch { throw new Error(`${label} must be valid JSON`) }
+  if (serialized === undefined || serialized.length > MAX_JSON) throw new Error(`${label} JSON is too large`)
+}
+
+function assertStringArray(value: unknown, label: string): asserts value is string[] {
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array`)
+  if (value.length > MAX_ARRAY) throw new Error(`${label} array is too large`)
+  if (value.some(item => typeof item !== 'string' || !item.trim() || item.length > MAX_ARRAY_ITEM)) {
+    throw new Error(`${label} must contain bounded non-empty strings`)
+  }
+  assertJsonBound(value, label)
+}
+
+function transaction<T>(db: DatabaseSync, operation: () => T): T {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const result = operation()
+    db.exec('COMMIT')
+    return result
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
