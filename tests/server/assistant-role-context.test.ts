@@ -117,7 +117,80 @@ describe('assistant role context engine', () => {
     expect(serialized).toContain('theme')
     expect(serialized).not.toMatch(/password|credentials|token|apiKey|databasePath|dbPath|private-source|private-id/i)
     expect(bundle.sourceRecordIds.goals).toHaveLength(1)
-    expect(bundle.renderedInstructions).not.toContain(bundle.sourceRecordIds.goals![0])
+    expect(bundle.renderedInstructions).toContain('## Provenance References')
+    expect(bundle.renderedInstructions).toContain(bundle.sourceRecordIds.goals![0])
+  })
+
+  it('redacts schema-aware secret key/value tuples while retaining benign settings under a safe label', async () => {
+    const twin = await import('../../packages/server/src/services/hermes/personal-twin')
+    twin.upsertTwinEntity({
+      id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self',
+      attributes: {
+        settings: [
+          { key: 'openai_api_key', value: 'sk-live-secret' },
+          { name: 'password', value: 'password-secret' },
+          { setting: 'databaseUrl', value: 'postgres://secret' },
+          { key: 'work.hours', value: 8 },
+        ],
+      },
+    })
+    twin.createAssistantRole(roleInput({
+      dataScope: { domains: ['work'], sections: ['subject', 'constraints'], includeProvenance: false },
+    }))
+    twin.createContextRecipe('context-tester', {
+      id: 'tuple-privacy', name: 'Tuple privacy', domains: ['work'], sections: ['subject', 'constraints'],
+      limits: { perSection: 5, totalCharacters: 12_000 },
+    })
+    twin.upsertTwinConstraint({
+      subjectId: 'person:self', domain: 'work', key: 'openai_api_key', value: 'sk-constraint-secret',
+      enforcement: 'hard', source: 'test', sourceId: 'secret-constraint',
+    })
+    twin.upsertTwinConstraint({
+      subjectId: 'person:self', domain: 'work', key: 'work.hours', value: 8,
+      enforcement: 'advisory', source: 'test', sourceId: 'safe-constraint',
+    })
+
+    const bundle = twin.buildRoleContext('context-tester', { recipeId: 'tuple-privacy' })
+    const serialized = JSON.stringify(bundle.sections)
+    expect(serialized).not.toMatch(/sk-live-secret|password-secret|postgres:\/\/secret|sk-constraint-secret|openai_api_key|databaseUrl/i)
+    expect(serialized).toContain('"setting":"work.hours"')
+    expect(serialized).toContain('"value":8')
+    expect(serialized).toContain('[sensitive setting redacted]')
+  })
+
+  it('renders bounded sanitized trusted metadata and provenance references as separate blocks', async () => {
+    const twin = await import('../../packages/server/src/services/hermes/personal-twin')
+    seedSubject(twin)
+    twin.createAssistantRole(roleInput({
+      decisionAuthority: { mode: 'recommend', apiKey: 'metadata-secret' },
+      spendingLimits: { currency: 'CNY', daily: 50, databaseUrl: 'sqlite:///private' },
+      escalationRules: [{ when: 'uncertain', action: 'ask', password: 'metadata-password' }],
+      dataScope: { domains: ['health'], sections: ['observations'], includeProvenance: true },
+    }))
+    twin.createContextRecipe('context-tester', {
+      id: 'metadata-recipe', name: 'Metadata', domains: ['health'], sections: ['observations'],
+      limits: { perSection: 5, totalCharacters: 12_000 },
+    })
+    const observation = twin.recordTwinObservation(factObservation('health.sleep_hours', 8, 'sleep', '2026-01-01T00:00:00.000Z'))
+
+    const bundle = twin.buildRoleContext('context-tester', { recipeId: 'metadata-recipe' })
+    expect(bundle.renderedInstructions).toContain('## Trusted Role Metadata')
+    expect(bundle.renderedInstructions).toContain('"mode":"recommend"')
+    expect(bundle.renderedInstructions).toContain('"currency":"CNY"')
+    expect(bundle.renderedInstructions).toContain('"action":"ask"')
+    expect(bundle.renderedInstructions).not.toMatch(/metadata-secret|metadata-password|sqlite:\/\/\/private/)
+    expect(bundle.renderedInstructions).toContain('## Provenance References')
+    expect(bundle.renderedInstructions).toContain(observation.id)
+
+    twin.updateAssistantRole('context-tester', {
+      decisionAuthority: { policy: 'z'.repeat(10_000) },
+      escalationRules: Array.from({ length: 10 }, (_, index) => ({ index, rule: 'r'.repeat(500) })),
+    })
+    twin.updateContextRecipe('context-tester', 'metadata-recipe', { limits: { perSection: 5, totalCharacters: 1000 } })
+    const bounded = twin.buildRoleContext('context-tester', { recipeId: 'metadata-recipe' })
+    expect(bounded.renderedInstructions.length).toBeLessThanOrEqual(1000)
+    expect(bounded.renderedInstructions).toContain('[metadata truncated]')
+    expect(bounded.renderedInstructions).not.toContain('z'.repeat(100))
   })
 
   it('recursively removes ambiguous credentials and filesystem aliases while retaining benign fields', async () => {

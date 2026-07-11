@@ -32,6 +32,16 @@ const DEFAULT_LIMITS: ContextRecipeLimits = { perSection: 10, totalCharacters: 1
 
 type SectionRecord = Record<string, unknown>
 
+interface TrustedMetadataState {
+  capabilityScope: Record<string, unknown> | null
+  decisionAuthority: Record<string, unknown> | null
+  spendingLimits: Record<string, unknown> | null
+  escalationRules: Array<Record<string, unknown>>
+  truncated: Set<'capabilityScope' | 'decisionAuthority' | 'spendingLimits' | 'escalationRules'>
+}
+
+const TRUSTED_METADATA = new WeakMap<RoleContextBundle, TrustedMetadataState>()
+
 export function buildRoleContext(roleId: string, options: RoleContextOptions = {}): RoleContextBundle {
   const role = getAssistantRole(roleId)
   if (!role) throw new Error(`Assistant role not found: ${roleId}`)
@@ -96,8 +106,14 @@ function buildBundle(
     }
   }
 
+  const safeRole: AssistantRole = {
+    ...role,
+    decisionAuthority: sanitize(role.decisionAuthority),
+    spendingLimits: sanitize(role.spendingLimits),
+    escalationRules: role.escalationRules.map(rule => sanitize(rule)),
+  }
   const bundle: RoleContextBundle = {
-    role: { ...role },
+    role: safeRole,
     profileMapping,
     recipe: recipe ? { id: recipe.id, name: recipe.name } : null,
     generatedAt: new Date().toISOString(),
@@ -111,7 +127,7 @@ function buildBundle(
     renderedInstructions: '',
   }
 
-  fitRolePersonaToBudget(bundle)
+  prepareTrustedMetadata(bundle, role.persona)
   applyCharacterBudget(bundle, publicSections, sourceRecordIds, provenance)
   bundle.renderedInstructions = renderRoleContext(bundle)
   return bundle
@@ -219,49 +235,120 @@ function applyCharacterBudget(
     const records = available[section]
     for (let index = 0; index < records.length; index += 1) {
       bundle.sections[section].push(records[index])
-      const rendered = renderRoleContext(bundle)
-      if (rendered.length > bundle.appliedLimits.totalCharacters) {
-        bundle.sections[section].pop()
-        bundle.truncated.total = true
-        bundle.truncated.sections[section] = true
-        break
-      }
       const sourceId = ids[section]?.[index]
       if (sourceId) (bundle.sourceRecordIds[section] ||= []).push(sourceId)
       const sourceProvenance = provenanceBySection[section]?.[index]
       if (sourceProvenance) (bundle.provenance[section] ||= []).push(sourceProvenance)
+      const rendered = renderRoleContext(bundle)
+      if (rendered.length > bundle.appliedLimits.totalCharacters) {
+        bundle.sections[section].pop()
+        if (sourceId) bundle.sourceRecordIds[section]?.pop()
+        if (sourceProvenance) bundle.provenance[section]?.pop()
+        bundle.truncated.total = true
+        bundle.truncated.sections[section] = true
+        break
+      }
     }
   }
 }
 
-function fitRolePersonaToBudget(bundle: RoleContextBundle): void {
-  if (renderRoleContext(bundle).length <= bundle.appliedLimits.totalCharacters) return
+function prepareTrustedMetadata(bundle: RoleContextBundle, originalPersona: string): void {
+  const state: TrustedMetadataState = {
+    capabilityScope: null,
+    decisionAuthority: null,
+    spendingLimits: null,
+    escalationRules: [],
+    truncated: new Set(['capabilityScope', 'decisionAuthority', 'spendingLimits', 'escalationRules']),
+  }
+  TRUSTED_METADATA.set(bundle, state)
   const marker = '[persona truncated]'
-  const originalPersona = bundle.role.persona
   bundle.role = { ...bundle.role, persona: marker }
+  if (renderRoleContext(bundle).length > bundle.appliedLimits.totalCharacters) {
+    throw new Error('Role context fixed instructions exceed the configured character budget')
+  }
+
+  tryMetadataItem(bundle, state, 'capabilityScope', bundle.role.capabilityScope as unknown as Record<string, unknown>)
+  tryMetadataItem(bundle, state, 'decisionAuthority', bundle.role.decisionAuthority)
+  tryMetadataItem(bundle, state, 'spendingLimits', bundle.role.spendingLimits)
+  let allRulesFit = true
+  for (const rule of bundle.role.escalationRules) {
+    state.escalationRules.push(rule)
+    if (renderRoleContext(bundle).length > bundle.appliedLimits.totalCharacters) {
+      state.escalationRules.pop()
+      allRulesFit = false
+      break
+    }
+  }
+  if (allRulesFit) state.truncated.delete('escalationRules')
+  if (state.truncated.size > 0) bundle.truncated.total = true
+
   const fixedLength = renderRoleContext(bundle).length - marker.length
   const personaBudget = bundle.appliedLimits.totalCharacters - fixedLength
   if (personaBudget < marker.length) {
     throw new Error('Role context fixed instructions exceed the configured character budget')
+  }
+  if (originalPersona.length <= personaBudget) {
+    bundle.role.persona = originalPersona
+    return
   }
   const prefixLength = Math.max(0, personaBudget - marker.length)
   bundle.role.persona = `${originalPersona.slice(0, prefixLength)}${marker}`
   bundle.truncated.total = true
 }
 
+function tryMetadataItem(
+  bundle: RoleContextBundle,
+  state: TrustedMetadataState,
+  field: 'capabilityScope' | 'decisionAuthority' | 'spendingLimits',
+  value: Record<string, unknown>,
+): void {
+  state[field] = value
+  state.truncated.delete(field)
+  if (renderRoleContext(bundle).length <= bundle.appliedLimits.totalCharacters) return
+  state[field] = null
+  state.truncated.add(field)
+}
+
 export function renderRoleContext(bundle: RoleContextBundle): string {
+  const metadata = TRUSTED_METADATA.get(bundle)
   const lines = [
     '# Assistant Role Context',
     `Role: ${bundle.role.name} (${bundle.role.id})`,
     `Persona: ${bundle.role.persona}`,
-    `Declared capability scope (Phase 2, not enforced): ${stableJson(bundle.role.capabilityScope)}`,
+    '',
+    '## Trusted Role Metadata',
+    `Capability Scope (Phase 2, not enforced): ${renderMetadataValue(metadata, 'capabilityScope')}`,
+    `Decision Authority: ${renderMetadataValue(metadata, 'decisionAuthority')}`,
+    `Spending Limits: ${renderMetadataValue(metadata, 'spendingLimits')}`,
+    'Escalation Rules:',
   ]
+  if (metadata?.escalationRules.length) {
+    metadata.escalationRules.forEach(rule => lines.push(stableJson(rule)))
+  } else if (!metadata?.truncated.has('escalationRules')) {
+    lines.push('[]')
+  }
+  if (metadata?.truncated.has('escalationRules')) lines.push('[metadata truncated]')
   for (const section of SECTION_ORDER) {
     if (!bundle.appliedScope.sections.includes(section)) continue
     lines.push('', `## ${section[0].toUpperCase()}${section.slice(1)}`)
     for (const record of bundle.sections[section]) lines.push(stableJson(record))
   }
+  const references = SECTION_ORDER.flatMap(section =>
+    (bundle.sourceRecordIds[section] ?? []).map(referenceId => ({ section, referenceId })),
+  )
+  if (references.length) {
+    lines.push('', '## Provenance References')
+    references.forEach(reference => lines.push(stableJson(reference)))
+  }
   return lines.join('\n')
+}
+
+function renderMetadataValue(
+  metadata: TrustedMetadataState | undefined,
+  field: 'capabilityScope' | 'decisionAuthority' | 'spendingLimits',
+): string {
+  if (!metadata || metadata.truncated.has(field) || metadata[field] === null) return '[metadata truncated]'
+  return stableJson(metadata[field])
 }
 
 function sanitize(value: unknown): SectionRecord {
@@ -271,10 +358,22 @@ function sanitize(value: unknown): SectionRecord {
 function sanitizeValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sanitizeValue)
   if (!value || typeof value !== 'object') return value
+  const input = value as Record<string, unknown>
+  const identifier = ['key', 'name', 'setting', 'settingKey', 'field']
+    .map(field => input[field])
+    .find(item => typeof item === 'string')
+  if (Object.prototype.hasOwnProperty.call(input, 'value') && typeof identifier === 'string' && isSensitiveKey(identifier)) {
+    return { redacted: '[sensitive setting redacted]' }
+  }
   const output: Record<string, unknown> = {}
-  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+  for (const key of Object.keys(input).sort()) {
+    if (key === 'key' && typeof input[key] === 'string') {
+      if (isSensitiveKey(input[key])) continue
+      output.setting = sanitizeValue(input[key])
+      continue
+    }
     if (isSensitiveKey(key)) continue
-    output[key] = sanitizeValue((value as Record<string, unknown>)[key])
+    output[key] = sanitizeValue(input[key])
   }
   return output
 }
