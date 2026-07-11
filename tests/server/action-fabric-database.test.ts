@@ -19,15 +19,15 @@ const REQUIRED_TABLES = [
   'fabric_workflows',
 ]
 
-const REQUIRED_INDEXES = [
-  'idx_fabric_audit_sequence',
-  'idx_fabric_budget_daily',
-  'idx_fabric_executor_capability',
-  'idx_fabric_intent_idempotency',
-  'idx_fabric_outbox_pending',
-  'idx_fabric_policy_intent',
-  'idx_fabric_steps_workflow_ordinal',
-  'idx_fabric_workflows_state_lease',
+const REQUIRED_INDEX_SIGNATURES = [
+  { name: 'idx_fabric_audit_sequence', table: 'fabric_audit_events', unique: 1, columns: ['sequence'], partial: 0 },
+  { name: 'idx_fabric_budget_daily', table: 'fabric_budget_ledger', unique: 0, columns: ['requested_by_user_id', 'requested_by_role_id', 'ledger_date', 'currency', 'status'], partial: 0 },
+  { name: 'idx_fabric_executor_capability', table: 'fabric_executor_capabilities', unique: 0, columns: ['capability_id', 'capability_version', 'executor_id'], partial: 0 },
+  { name: 'idx_fabric_intent_idempotency', table: 'fabric_action_intents', unique: 1, columns: ['requested_by_user_id', 'requested_by_role_id', 'idempotency_key'], partial: 0 },
+  { name: 'idx_fabric_outbox_pending', table: 'fabric_outbox', unique: 0, columns: ['status', 'available_at', 'created_at'], partial: 0 },
+  { name: 'idx_fabric_policy_intent', table: 'fabric_policy_decisions', unique: 0, columns: ['intent_id', 'created_at'], partial: 0 },
+  { name: 'idx_fabric_steps_workflow_ordinal', table: 'fabric_steps', unique: 1, columns: ['workflow_id', 'ordinal'], partial: 0 },
+  { name: 'idx_fabric_workflows_state_lease', table: 'fabric_workflows', unique: 0, columns: ['state', 'lease_expires_at', 'retry_at'], partial: 0 },
 ]
 
 describe('action fabric database', () => {
@@ -64,7 +64,20 @@ describe('action fabric database', () => {
       ).all() as Array<{ name: string }>).map(row => row.name))
 
       expect(tables).toEqual(REQUIRED_TABLES)
-      expect(REQUIRED_INDEXES.every(name => indexes.has(name))).toBe(true)
+      expect(REQUIRED_INDEX_SIGNATURES.every(signature => indexes.has(signature.name))).toBe(true)
+      for (const signature of REQUIRED_INDEX_SIGNATURES) {
+        const index = (db.prepare(`PRAGMA index_list("${signature.table}")`).all() as Array<{
+          name: string
+          unique: number
+          partial: number
+        }>).find(row => row.name === signature.name)
+        const columns = (db.prepare(`PRAGMA index_info("${signature.name}")`).all() as Array<{
+          seqno: number
+          name: string
+        }>).sort((left, right) => left.seqno - right.seqno).map(row => row.name)
+        expect(index).toMatchObject({ unique: signature.unique, partial: signature.partial })
+        expect(columns).toEqual(signature.columns)
+      }
       expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '1' })
       expect(db.prepare('SELECT id, level, version FROM fabric_control_state').all()).toEqual([
         { id: 1, level: 0, version: 0 },
@@ -175,6 +188,18 @@ describe('action fabric database', () => {
     expect(withActionFabricDb(db => db.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_fabric_intent_idempotency'",
     ).get())).toEqual({ name: 'idx_fabric_intent_idempotency' })
+  })
+
+  it('rejects a same-name index with an incompatible signature', async () => {
+    const { withActionFabricDb } = await import('../../packages/server/src/services/hermes/action-fabric')
+    withActionFabricDb(db => db.exec(`
+      DROP INDEX idx_fabric_intent_idempotency;
+      CREATE INDEX idx_fabric_intent_idempotency ON fabric_action_intents(id);
+    `))
+
+    expect(() => withActionFabricDb(db => db.prepare('SELECT 1').get())).toThrow(
+      /index signature mismatch.*idx_fabric_intent_idempotency/i,
+    )
   })
 
   it('does not reserve a writer lock for steady-state managed reads', async () => {

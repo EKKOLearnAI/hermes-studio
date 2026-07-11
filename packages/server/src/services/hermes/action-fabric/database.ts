@@ -18,15 +18,23 @@ const REQUIRED_TABLES = [
   'fabric_outbox',
   'fabric_control_state',
 ]
-const REQUIRED_INDEXES = [
-  'idx_fabric_audit_sequence',
-  'idx_fabric_budget_daily',
-  'idx_fabric_executor_capability',
-  'idx_fabric_intent_idempotency',
-  'idx_fabric_outbox_pending',
-  'idx_fabric_policy_intent',
-  'idx_fabric_steps_workflow_ordinal',
-  'idx_fabric_workflows_state_lease',
+interface RequiredIndexSignature {
+  name: string
+  table: string
+  unique: boolean
+  columns: string[]
+  partial: boolean
+}
+
+const REQUIRED_INDEX_SIGNATURES: RequiredIndexSignature[] = [
+  { name: 'idx_fabric_audit_sequence', table: 'fabric_audit_events', unique: true, columns: ['sequence'], partial: false },
+  { name: 'idx_fabric_budget_daily', table: 'fabric_budget_ledger', unique: false, columns: ['requested_by_user_id', 'requested_by_role_id', 'ledger_date', 'currency', 'status'], partial: false },
+  { name: 'idx_fabric_executor_capability', table: 'fabric_executor_capabilities', unique: false, columns: ['capability_id', 'capability_version', 'executor_id'], partial: false },
+  { name: 'idx_fabric_intent_idempotency', table: 'fabric_action_intents', unique: true, columns: ['requested_by_user_id', 'requested_by_role_id', 'idempotency_key'], partial: false },
+  { name: 'idx_fabric_outbox_pending', table: 'fabric_outbox', unique: false, columns: ['status', 'available_at', 'created_at'], partial: false },
+  { name: 'idx_fabric_policy_intent', table: 'fabric_policy_decisions', unique: false, columns: ['intent_id', 'created_at'], partial: false },
+  { name: 'idx_fabric_steps_workflow_ordinal', table: 'fabric_steps', unique: true, columns: ['workflow_id', 'ordinal'], partial: false },
+  { name: 'idx_fabric_workflows_state_lease', table: 'fabric_workflows', unique: false, columns: ['state', 'lease_expires_at', 'retry_at'], partial: false },
 ]
 
 type SynchronousResult<T> = T & (T extends PromiseLike<unknown> ? never : unknown)
@@ -130,10 +138,34 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
   ).all() as Array<{ name: string }>).map(row => row.name))
   const missing = [
     ...REQUIRED_TABLES.filter(name => !tables.has(name)),
-    ...REQUIRED_INDEXES.filter(name => !indexes.has(name)),
+    ...REQUIRED_INDEX_SIGNATURES.map(signature => signature.name).filter(name => !indexes.has(name)),
   ]
   if (missing.length > 0) {
     throw new Error(`Action Fabric schema version ${version} is incomplete: missing ${missing.join(', ')}`)
+  }
+  for (const signature of REQUIRED_INDEX_SIGNATURES) assertIndexSignature(db, signature)
+}
+
+function assertIndexSignature(db: DatabaseSync, expected: RequiredIndexSignature): void {
+  const schemaRow = db.prepare(
+    "SELECT tbl_name FROM sqlite_master WHERE type = 'index' AND name = ?",
+  ).get(expected.name) as { tbl_name: string } | undefined
+  const indexRow = (db.prepare(`PRAGMA index_list("${expected.table}")`).all() as Array<{
+    name: string
+    unique: number
+    partial: number
+  }>).find(row => row.name === expected.name)
+  const columns = (db.prepare(`PRAGMA index_info("${expected.name}")`).all() as Array<{
+    seqno: number
+    name: string
+  }>).sort((left, right) => left.seqno - right.seqno).map(row => row.name)
+  const matches = schemaRow?.tbl_name === expected.table
+    && indexRow?.unique === Number(expected.unique)
+    && indexRow.partial === Number(expected.partial)
+    && columns.length === expected.columns.length
+    && columns.every((column, index) => column === expected.columns[index])
+  if (!matches) {
+    throw new Error(`Action Fabric schema index signature mismatch: ${expected.name}`)
   }
 }
 
