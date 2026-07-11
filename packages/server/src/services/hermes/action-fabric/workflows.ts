@@ -305,6 +305,9 @@ function transitionWorkflow(
   if (reason !== null) validateText(reason, 2_000, 'FABRIC_WORKFLOW_INVALID_REASON')
   return withFabricAuditedTransaction(db => {
     const current = requireWorkflow(db, id)
+    if (action === 'retry' && current.state === 'waiting_user') {
+      return retryWorkerWaitingWorkflowInDb(db, current, actorUserId)
+    }
     if (action === 'cancel' && current.state === 'cancelled') return detailForWorkflow(db, current)
     if (action === 'cancel' && (current.lease_owner !== null || hasActiveOrEffectfulStep(db, id))) {
       throw new Error('FABRIC_WORKFLOW_INVALID_TRANSITION')
@@ -336,6 +339,66 @@ function transitionWorkflow(
     })
     return detailForWorkflow(db, requireWorkflow(db, id))
   })
+}
+
+function retryWorkerWaitingWorkflowInDb(
+  db: DatabaseSync,
+  current: WorkflowRow,
+  actorUserId: string,
+): FabricWorkflowDetail {
+  const errorCode = current.last_error_code
+  const executionUnknown = errorCode === 'FABRIC_EXECUTION_OUTCOME_UNKNOWN'
+  const verificationUnknown = errorCode === 'FABRIC_VERIFICATION_OUTCOME_UNKNOWN'
+  const compensationRetry = errorCode === 'FABRIC_COMPENSATION_POLICY_UNAVAILABLE'
+  const contractRetry = errorCode === 'FABRIC_WORKER_CONTRACT_MISSING'
+  if (!executionUnknown && !verificationUnknown && !compensationRetry && !contractRetry) {
+    throw new Error('FABRIC_WORKFLOW_NOT_RETRYABLE')
+  }
+  const context = compensationContext(db, current.id)
+  if (!contractRetry && context.contract.verificationStrategy === 'none') throw new Error('FABRIC_WORKFLOW_NOT_RETRYABLE')
+  let destination: FabricWorkflowState = 'verifying'
+  if (contractRetry) {
+    const steps = db.prepare('SELECT kind,state FROM fabric_steps WHERE workflow_id=? ORDER BY ordinal')
+      .all(current.id) as unknown as Array<{ kind: string; state: FabricStepState }>
+    const prepare = steps.find(step => step.kind === 'prepare')
+    const execute = steps.find(step => step.kind === 'execute')
+    if (prepare?.state !== 'succeeded') destination = 'preparing'
+    else if (execute?.state !== 'succeeded') {
+      if (context.contract.idempotency === 'none') {
+        if (context.contract.verificationStrategy === 'none') throw new Error('FABRIC_WORKFLOW_NOT_RETRYABLE')
+        destination = 'verifying'
+      } else destination = 'executing'
+    }
+  }
+  const now = new Date().toISOString()
+  const changed = db.prepare(`UPDATE fabric_workflows SET state=?,version=version+1,
+    lease_owner=NULL,lease_expires_at=NULL,retry_at=NULL,last_error_code=NULL,updated_at=?,completed_at=NULL
+    WHERE id=? AND version=? AND state='waiting_user' AND last_error_code=?`).run(
+    destination, now, current.id, current.version, errorCode,
+  )
+  if (changed.changes !== 1) throw new Error('FABRIC_WORKFLOW_CONFLICT')
+  if (executionUnknown) {
+    db.prepare(`UPDATE fabric_steps SET state='failed',last_error_code=?,updated_at=?,completed_at=?
+      WHERE workflow_id=? AND kind='execute' AND state='waiting_user'`).run(errorCode, now, now, current.id)
+  }
+  if (contractRetry && destination === 'preparing') {
+    db.prepare(`UPDATE fabric_steps SET state='pending',last_error_code=NULL,output_json=NULL,evidence_json='[]',
+      started_at=NULL,completed_at=NULL,updated_at=? WHERE workflow_id=? AND state<>'succeeded'`).run(now, current.id)
+  } else if (contractRetry && destination === 'executing') {
+    db.prepare(`UPDATE fabric_steps SET state='pending',last_error_code=NULL,output_json=NULL,evidence_json='[]',
+      started_at=NULL,completed_at=NULL,updated_at=? WHERE workflow_id=? AND kind IN ('execute','verify')
+      AND state<>'succeeded'`).run(now, current.id)
+  } else {
+    db.prepare(`UPDATE fabric_steps SET state='pending',last_error_code=NULL,output_json=NULL,evidence_json='[]',
+      started_at=NULL,completed_at=NULL,updated_at=? WHERE workflow_id=? AND kind='verify'
+      AND state IN ('waiting_user','failed','pending')`).run(now, current.id)
+  }
+  appendFabricAuditEvent(db, { eventType: 'workflow.transitioned', actorUserId,
+    aggregateType: 'workflow', aggregateId: current.id,
+    payload: { action: 'retry', from: 'waiting_user', to: destination, reason: errorCode }, occurredAt: now })
+  appendFabricOutbox(db, 'fabric.workflow.transitioned', current.id,
+    { action: 'retry', from: 'waiting_user', to: destination, reason: errorCode })
+  return detailForWorkflow(db, requireWorkflow(db, current.id))
 }
 
 function hasActiveOrEffectfulStep(db: DatabaseSync, workflowId: string): boolean {

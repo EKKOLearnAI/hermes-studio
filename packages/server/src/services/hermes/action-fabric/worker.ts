@@ -97,13 +97,22 @@ interface CandidateRow {
   input_json: string
 }
 
-let running: { handle: FabricWorkerHandle; timer: ReturnType<typeof setInterval>; inFlight: Promise<void> | null } | null = null
+interface ManagedWorkerState {
+  generation: number
+  handle: FabricWorkerHandle
+  timer: ReturnType<typeof setInterval>
+  inFlight: Promise<void> | null
+  stopping: Promise<void> | null
+}
+
+let running: ManagedWorkerState | null = null
+let workerGeneration = 0
 
 export async function processActionFabricOnce(
-  options: { workerId?: string; now?: Date } = {},
+  options: { workerId?: string; now?: Date; clock?: () => Date } = {},
 ): Promise<FabricWorkerCycleResult> {
   const workerId = validWorkerId(options.workerId ?? `worker-${randomUUID()}`)
-  const now = validDate(options.now ?? new Date())
+  const now = validDate(options.now ?? options.clock?.() ?? new Date())
   const claim = claimNextWorkflow(workerId, now)
   if (!claim) return emptyResult(workerId)
   const context: FabricExecutionContext = {
@@ -147,7 +156,8 @@ export async function processActionFabricOnce(
       compensation = null
     }
   }
-  const committed = commitClaim(claim, result, now, compensation)
+  const finishNow = validDate(options.clock?.() ?? options.now ?? new Date())
+  const committed = commitClaim(claim, result, finishNow, compensation)
   const errorClass = result.errorCode ?? result.outcome
   if (committed) logger.info({ workerId, workflowId: claim.workflowId, stepId: claim.stepId,
     phase: claim.phase, outcome: result.outcome, errorClass }, '[action-fabric] worker cycle')
@@ -162,14 +172,22 @@ export function startActionFabricWorker(options: FabricWorkerOptions = {}): Fabr
   const workerId = validWorkerId(options.workerId ?? `worker-${randomUUID()}`)
   const intervalMs = validInterval(options.intervalMs ?? DEFAULT_INTERVAL_MS)
   const clock = options.clock ?? (() => new Date())
-  const handle: FabricWorkerHandle = { workerId, stop: stopActionFabricWorker }
-  const state = { handle, timer: undefined as unknown as ReturnType<typeof setInterval>, inFlight: null as Promise<void> | null }
+  const state = {
+    generation: ++workerGeneration,
+    handle: undefined as unknown as FabricWorkerHandle,
+    timer: undefined as unknown as ReturnType<typeof setInterval>,
+    inFlight: null as Promise<void> | null,
+    stopping: null as Promise<void> | null,
+  }
+  const handle: FabricWorkerHandle = { workerId, stop: () => stopManagedWorker(state) }
+  state.handle = handle
   state.timer = setInterval(() => {
-    if (state.inFlight) return
-    state.inFlight = processActionFabricOnce({ workerId, now: clock() })
+    if (running !== state || state.stopping || state.inFlight) return
+    const cycle = processActionFabricOnce({ workerId, clock })
       .then(() => undefined)
       .catch(error => logger.error({ workerId, errorClass: stableErrorClass(error) }, '[action-fabric] worker cycle failed'))
-      .finally(() => { state.inFlight = null })
+      .finally(() => { if (state.inFlight === cycle) state.inFlight = null })
+    state.inFlight = cycle
   }, intervalMs)
   state.timer.unref?.()
   running = state
@@ -179,16 +197,27 @@ export function startActionFabricWorker(options: FabricWorkerOptions = {}): Fabr
 export async function stopActionFabricWorker(): Promise<void> {
   const state = running
   if (!state) return
-  running = null
+  await stopManagedWorker(state)
+}
+
+function stopManagedWorker(state: ManagedWorkerState): Promise<void> {
+  if (running !== state) return state.stopping ?? Promise.resolve()
+  if (state.stopping) return state.stopping
   clearInterval(state.timer)
-  if (state.inFlight) await state.inFlight
+  const inFlight = state.inFlight
+  state.stopping = (async () => {
+    if (inFlight) await inFlight
+    if (running === state) running = null
+  })()
+  return state.stopping
 }
 
 function claimNextWorkflow(workerId: string, now: Date): WorkflowClaim | null {
   return withFabricAuditedTransaction(db => {
     const nowIso = now.toISOString()
     const control = getFabricControlStateInDb(db)
-    if (reconcileCompensationParent(db, nowIso)) return null
+    reconcileCompensationParent(db, nowIso)
+    let transitionedRetryId: string | undefined
     const retry = control.level < 2 ? selectRetryCandidate(db, nowIso) : undefined
     if (retry) {
       let contract: FabricJsonObject
@@ -217,13 +246,13 @@ function claimNextWorkflow(workerId: string, now: Date): WorkflowClaim | null {
         last_error_code=NULL,started_at=NULL,completed_at=NULL,updated_at=?
         WHERE workflow_id=? AND kind IN (${verifyOnly ? "'verify'" : "'execute','verify'"})`).run(nowIso, retry.workflow_id)
       auditTransition(db, retry, 'retrying', destination, 'retry_due', nowIso)
-      return null
+      transitionedRetryId = retry.workflow_id
     }
-    const row = selectCandidate(db, nowIso, control.level)
+    const row = selectCandidate(db, nowIso, control.level, transitionedRetryId)
     if (!row || !isFabricWorkflowWorkerState(row.workflow_state)) return null
     const interrupt = control.level >= 2 && isInterruptible(row)
     const phase = interrupt ? 'interrupt' : phaseFor(row)
-    if (control.level >= 2 && !interrupt) return moveNonInterruptibleToWaitingUser(db, row, nowIso)
+    if (control.level >= 2 && !interrupt) return null
     const leaseExpiresAt = new Date(now.getTime() + LEASE_MS).toISOString()
     let claim: WorkflowClaim
     try {
@@ -232,6 +261,9 @@ function claimNextWorkflow(workerId: string, now: Date): WorkflowClaim | null {
       return moveInvalidContractToWaitingUser(db, row, nowIso, stableErrorClass(error))
     }
     const recovered = row.lease_owner !== null && row.lease_expires_at !== null && row.lease_expires_at <= nowIso
+    if (recovered && phase === 'execute' && row.step_state === 'running' && claim.idempotency === 'none') {
+      return recoverNonIdempotentExecution(db, row, claim, nowIso)
+    }
     const leaseGuard = interrupt ? '' : ' AND (lease_expires_at IS NULL OR lease_expires_at<=?)'
     const parameters: Array<string | number> = [
       workerId, leaseExpiresAt, nowIso, row.workflow_id, row.workflow_version, row.workflow_state,
@@ -261,15 +293,45 @@ function selectRetryCandidate(db: DatabaseSync, now: string): CandidateRow | und
     .get(now, now) as CandidateRow | undefined
 }
 
-function selectCandidate(db: DatabaseSync, now: string, controlLevel: number): CandidateRow | undefined {
+function selectCandidate(
+  db: DatabaseSync,
+  now: string,
+  controlLevel: number,
+  excludeWorkflowId?: string,
+): CandidateRow | undefined {
   const states = controlLevel >= 2 ? "'preparing','executing','verifying'" : "'preparing','executing','verifying'"
   const availability = controlLevel >= 2
-    ? "AND s.state IN ('pending','running')"
+    ? "AND s.state IN ('pending','running') AND (e.type='simulator' OR json_extract(e.configuration_json,'$.interruptible')=1)"
     : "AND (s.state='pending' OR (s.state='running' AND w.lease_owner IS NOT NULL)) AND (w.lease_expires_at IS NULL OR w.lease_expires_at<=?)"
   const parameters = controlLevel >= 2 ? [] : [now]
+  const exclusion = excludeWorkflowId === undefined ? '' : 'AND w.id<>?'
+  if (excludeWorkflowId !== undefined) parameters.push(excludeWorkflowId)
   return db.prepare(`${candidateSelect()} WHERE w.state IN (${states})
     AND s.ordinal=CASE w.state WHEN 'preparing' THEN 0 WHEN 'executing' THEN 1 ELSE 2 END
-    ${availability} ORDER BY w.created_at,w.id LIMIT 1`).get(...parameters) as CandidateRow | undefined
+    ${availability} ${exclusion} ORDER BY w.created_at,w.id LIMIT 1`).get(...parameters) as CandidateRow | undefined
+}
+
+function recoverNonIdempotentExecution(
+  db: DatabaseSync,
+  row: CandidateRow,
+  claim: WorkflowClaim,
+  now: string,
+): null {
+  const canVerify = claim.verificationStrategy !== 'none'
+  const destination: FabricWorkflowState = canVerify ? 'verifying' : 'waiting_user'
+  const errorCode = canVerify ? 'FABRIC_EXECUTION_RECOVERY_VERIFY_ONLY' : 'FABRIC_EXECUTION_RECOVERY_MANUAL_REQUIRED'
+  const changed = db.prepare(`UPDATE fabric_workflows SET state=?,version=version+1,lease_owner=NULL,
+    lease_expires_at=NULL,last_error_code=?,updated_at=? WHERE id=? AND version=? AND state='executing'
+    AND lease_expires_at<=?`).run(destination, errorCode, now, row.workflow_id, row.workflow_version, now)
+  if (changed.changes !== 1) return null
+  db.prepare(`UPDATE fabric_steps SET state='failed',last_error_code=?,updated_at=?,completed_at=?
+    WHERE workflow_id=? AND kind='execute' AND state='running'`).run(errorCode, now, now, row.workflow_id)
+  db.prepare(`UPDATE fabric_steps SET state=?,last_error_code=NULL,updated_at=?
+    WHERE workflow_id=? AND kind='verify' AND state IN ('pending','waiting_user')`).run(
+    canVerify ? 'pending' : 'waiting_user', now, row.workflow_id,
+  )
+  auditTransition(db, row, 'executing', destination, 'non_idempotent_recovery', now)
+  return null
 }
 
 function candidateSelect(): string {
@@ -338,6 +400,7 @@ function commitClaim(
       { state: string; execution_token: string; attempt: number } | undefined
     if (!current || !step || current.version !== claim.workflowVersion || current.lease_owner !== claim.workerId
       || current.lease_expires_at !== claim.leaseExpiresAt || step.execution_token !== claim.executionToken
+      || current.lease_expires_at <= now.toISOString()
       || (!isStateForPhase(current.state, claim.phase)) || (claim.phase !== 'interrupt' && step.state !== 'running')) return false
     const nowIso = now.toISOString()
     let transition = outcomeTransition(claim, result, current, now)
@@ -417,7 +480,7 @@ function outcomeTransition(
   }
   if (claim.phase === 'execute') {
     if (result.outcome === 'succeeded') return active('verifying', current.attempt)
-    if (result.outcome === 'unknown') return waiting(result.errorCode ?? 'FABRIC_EXECUTION_UNKNOWN', current.attempt)
+    if (result.outcome === 'unknown') return waiting('FABRIC_EXECUTION_OUTCOME_UNKNOWN', current.attempt)
     if (result.outcome === 'temporary_failure' && result.safeToRetry) {
       if (claim.idempotency === 'none') return waiting('FABRIC_EXECUTION_RETRY_UNSAFE', current.attempt)
       return retryOrDeadLetter(current, result.errorCode ?? 'FABRIC_EXECUTION_TEMPORARY', now)
@@ -426,7 +489,7 @@ function outcomeTransition(
   }
   if (claim.phase === 'verify') {
     if (result.outcome === 'verified') return terminal('succeeded', current.attempt, null, now, 'succeeded')
-    if (result.outcome === 'unknown') return waiting(result.errorCode ?? 'FABRIC_VERIFICATION_UNKNOWN', current.attempt)
+    if (result.outcome === 'unknown') return waiting('FABRIC_VERIFICATION_OUTCOME_UNKNOWN', current.attempt)
     if (result.outcome === 'mismatch') {
       if (claim.verificationStrategy === 'none') {
         return waiting('FABRIC_VERIFICATION_CONTRACT_MISMATCH', current.attempt)
