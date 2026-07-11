@@ -62,6 +62,11 @@ describe('AssistantRoleEditor', () => {
 
   it('edits all recipe fields and supports adding and deleting recipe drafts', async () => {
     const wrapper = mount(AssistantRoleEditor, { props: { show: true, mode: 'edit', role, profileNames: ['default'] } })
+    const builtInDelete = wrapper.find('[data-test="delete-recipe"]')
+    expect(builtInDelete.attributes('disabled')).toBeDefined()
+    expect(builtInDelete.attributes('aria-label')).toContain('Built-in')
+    await builtInDelete.trigger('click')
+    expect(wrapper.findAll('[data-test="recipe-card"]')).toHaveLength(1)
     await wrapper.find('[data-test="recipe-name"]').setValue('Morning health')
     await wrapper.find('[data-test="recipe-query-template"]').setValue('last 24 hours')
     await wrapper.find('[data-test="recipe-enabled"]').trigger('click')

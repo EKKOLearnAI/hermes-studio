@@ -20,6 +20,7 @@ const detail = ref<AssistantRoleDetail | null>(null)
 const detailLoading = ref(false)
 const detailError = ref<string | null>(null)
 const editorMode = ref<'create' | 'edit'>('edit')
+const editorRoleId = ref<string | null>(null)
 const editorOpen = ref(false)
 const previewOpen = ref(false)
 const previewBundle = ref<RoleContextBundle | null>(null)
@@ -57,41 +58,48 @@ async function refresh(): Promise<void> {
 onMounted(async () => { if (!profilesStore.profiles.length) await profilesStore.fetchHermesProfiles(); await refresh() })
 
 function selectRole(role: AssistantRoleSummary): void { store.selectedRoleId = role.id; void loadDetail(role.id) }
-function selectRoleByKeyboard(event: KeyboardEvent, role: AssistantRoleSummary): void { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectRole(role) } }
-function openCreate(): void { detail.value = blankRole(); editorMode.value = 'create'; editorOpen.value = true }
-async function openEdit(role: AssistantRoleSummary): Promise<void> { editorOpen.value = false; store.selectedRoleId = role.id; const loaded = await loadDetail(role.id); if (!loaded) return; editorMode.value = 'edit'; editorOpen.value = true }
+function openCreate(): void { detail.value = blankRole(); editorRoleId.value = null; editorMode.value = 'create'; editorOpen.value = true }
+async function openEdit(role: AssistantRoleSummary): Promise<void> { editorOpen.value = false; editorRoleId.value = null; store.selectedRoleId = role.id; const loaded = await loadDetail(role.id); if (!loaded) return; editorRoleId.value = loaded.id; editorMode.value = 'edit'; editorOpen.value = true }
 async function toggleRole(role: AssistantRoleSummary, enabled: boolean): Promise<void> { try { detail.value = await store.updateRole(role.id, { enabled }) } catch (cause) { message.error(cause instanceof Error ? cause.message : String(cause)) } }
 async function cloneRole(role: AssistantRoleSummary): Promise<void> { try { await store.cloneRole(role.id, { name: `${role.name} Copy` }); message.success(m.value.clone) } catch (cause) { message.error(cause instanceof Error ? cause.message : String(cause)) } }
 function deleteRole(role: AssistantRoleSummary): void {
   if (role.builtIn) return
   dialog.warning({ title: m.value.delete, content: role.name, positiveText: m.value.delete, negativeText: m.value.cancel, async onPositiveClick() { try { await store.deleteRole(role.id); message.success(m.value.delete) } catch (cause) { message.error(cause instanceof Error ? cause.message : String(cause)) } } })
 }
-function recipeInput(recipe: ContextRecipeInput & { id?: string }): ContextRecipeInput {
+type RecipeDraft = ContextRecipeInput & { id?: string; builtIn?: boolean }
+function recipeInput(recipe: RecipeDraft): ContextRecipeInput {
   return { ...(recipe.id ? { id: recipe.id } : {}), name: recipe.name, description: recipe.description, enabled: recipe.enabled, domains: recipe.domains, sections: recipe.sections, queryTemplate: recipe.queryTemplate, limits: recipe.limits }
 }
-async function syncRecipes(roleId: string, before: ContextRecipe[], after: Array<ContextRecipeInput & { id?: string }>): Promise<void> {
+async function syncRecipes(roleId: string, before: ContextRecipe[], after: RecipeDraft[]): Promise<void> {
   const retained = new Set(after.flatMap(recipe => recipe.id ? [recipe.id] : []))
-  for (const recipe of before) if (!retained.has(recipe.id)) await store.deleteRecipe(roleId, recipe.id)
+  for (const recipe of before) if (!recipe.builtIn && !retained.has(recipe.id)) await store.deleteRecipe(roleId, recipe.id)
   for (const recipe of after) {
     const input = recipeInput(recipe)
     if (recipe.id && before.some(existing => existing.id === recipe.id)) { const { id: _id, ...patch } = input; await store.updateRecipe(roleId, recipe.id, patch) }
     else await store.createRecipe(roleId, input)
   }
 }
-async function save(payload: { role: AssistantRoleInput; profileName: string | null; recipes: Array<ContextRecipeInput & { id?: string }> }): Promise<void> {
+async function save(payload: { role: AssistantRoleInput; profileName: string | null; recipes: RecipeDraft[] }): Promise<void> {
   const original = editorMode.value === 'edit' ? detail.value : null
-  if (editorMode.value === 'edit' && (!original?.id || original.id !== store.selectedRoleId)) { editorOpen.value = false; return }
+  if (editorMode.value === 'edit' && (!original?.id || original.id !== editorRoleId.value || original.id !== store.selectedRoleId)) { editorOpen.value = false; return }
   let savedRoleId: string | null = null
   try {
     const saved = editorMode.value === 'create' ? await store.createRole(payload.role) : await store.updateRole(original!.id, payload.role)
     savedRoleId = saved.id
+    if (editorMode.value === 'create') {
+      editorMode.value = 'edit'
+      editorRoleId.value = saved.id
+      store.selectedRoleId = saved.id
+      const createdDetail = await loadDetail(saved.id)
+      if (!createdDetail) throw new Error('Created role detail could not be reloaded')
+    }
     await store.updateProfileMapping(saved.id, payload.profileName)
     await syncRecipes(saved.id, original?.recipes ?? [], payload.recipes)
     editorOpen.value = false
     await loadDetail(saved.id)
     message.success(m.value.save)
   } catch (cause) {
-    if (savedRoleId) await loadDetail(savedRoleId)
+    if (savedRoleId) { editorRoleId.value = savedRoleId; await loadDetail(savedRoleId) }
     message.error(`${m.value.partialSave} ${cause instanceof Error ? cause.message : String(cause)}`)
   }
 }
@@ -100,22 +108,20 @@ async function preview(role: AssistantRoleSummary): Promise<void> { try { store.
 
 <template>
   <section class="roles-panel">
-    <div class="toolbar"><NAlert type="warning">{{ m.phase3Warning }}</NAlert><NButton type="primary" @click="openCreate">{{ m.createRole }}</NButton></div>
+    <div class="toolbar"><NAlert type="warning">{{ m.phase3Warning }}</NAlert><NButton data-test="create-role" type="primary" @click="openCreate">{{ m.createRole }}</NButton></div>
     <NAlert v-if="store.error || detailError" type="error"><span>{{ store.error || detailError }}</span> <NButton data-test="roles-retry" size="tiny" @click="refresh">{{ m.retry }}</NButton></NAlert>
     <div v-if="store.loading && !store.roles.length" data-test="roles-loading"><NSpin :show="true">{{ m.loading }}</NSpin></div>
     <NEmpty v-else-if="!store.roles.length" data-test="roles-empty" :description="m.empty" />
     <div v-else class="role-layout">
-      <div class="role-list" role="listbox" aria-label="Assistant roles">
-        <article v-for="role in store.roles" :key="role.id" class="role-card" :class="{ selected: store.selectedRoleId === role.id }" role="option" tabindex="0" :aria-selected="store.selectedRoleId === role.id" @click="selectRole(role)" @keydown="selectRoleByKeyboard($event, role)">
-          <div class="role-heading"><strong>{{ role.name }}</strong><NTag size="small" :type="role.builtIn ? 'info' : 'default'">{{ role.builtIn ? m.builtIn : m.custom }}</NTag></div><p>{{ role.description }}</p>
-          <NAlert v-if="role.mappingStale" type="warning">{{ m.staleMapping }}</NAlert>
-          <div class="role-meta"><span>{{ role.primaryProfileName || m.noProfile }}</span><span>{{ role.recipeCount }} {{ m.recipes }}</span></div>
+      <ul class="role-list" aria-label="Assistant roles">
+        <li v-for="role in store.roles" :key="role.id" class="role-card" :class="{ selected: store.selectedRoleId === role.id }">
+          <button class="role-select" type="button" :data-test="`select-role-${role.id}`" :aria-current="store.selectedRoleId === role.id ? 'true' : undefined" @click="selectRole(role)"><span class="role-heading"><strong>{{ role.name }}</strong><NTag size="small" :type="role.builtIn ? 'info' : 'default'">{{ role.builtIn ? m.builtIn : m.custom }}</NTag></span><span class="role-description">{{ role.description }}</span><span v-if="role.mappingStale" class="stale-warning">{{ m.staleMapping }}</span><span class="role-meta"><span>{{ role.primaryProfileName || m.noProfile }}</span><span>{{ role.recipeCount }} {{ m.recipes }}</span></span></button>
           <div class="role-actions" @click.stop>
             <NSwitch :data-test="`toggle-${role.id}`" :aria-label="`${role.enabled ? m.disabled : m.enabled}: ${role.name}`" :value="role.enabled" :loading="store.saving" @update:value="toggleRole(role, $event)" />
             <NButton :data-test="`preview-${role.id}`" :aria-label="`${m.preview}: ${role.name}`" size="tiny" @click="preview(role)">{{ m.preview }}</NButton><NButton :data-test="`edit-${role.id}`" :aria-label="`${m.edit}: ${role.name}`" size="tiny" @click="openEdit(role)">{{ m.edit }}</NButton><NButton :data-test="`clone-${role.id}`" :aria-label="`${m.clone}: ${role.name}`" size="tiny" @click="cloneRole(role)">{{ m.clone }}</NButton><NButton :data-test="`delete-${role.id}`" :aria-label="`${m.delete}: ${role.name}`" size="tiny" type="error" :disabled="role.builtIn" @click="deleteRole(role)">{{ m.delete }}</NButton>
           </div>
-        </article>
-      </div>
+        </li>
+      </ul>
       <aside class="role-detail"><NSpin :show="detailLoading"><template v-if="detail"><h3>{{ detail.name }}</h3><p>{{ detail.persona }}</p><dl><dt>{{ m.domains }}</dt><dd>{{ detail.dataScope.domains.join(', ') || '—' }}</dd><dt>{{ m.sections }}</dt><dd>{{ detail.dataScope.sections.join(', ') || '—' }}</dd><dt>{{ m.profileMapping }}</dt><dd>{{ detail.primaryProfileName || m.noProfile }}</dd></dl><label>{{ m.recipes }}<select data-test="preview-recipe" v-model="previewRecipeId"><option value="">—</option><option v-for="recipe in detail.recipes.filter(item => item.enabled)" :key="recipe.id" :value="recipe.id">{{ recipe.name }}</option></select></label><label>{{ m.query }}<NInput v-model:value="previewQuery" /></label></template></NSpin></aside>
     </div>
     <AssistantRoleEditor :show="editorOpen" :mode="editorMode" :role="detail" :profile-names="profileNames" :saving="store.saving" @close="editorOpen = false" @save="save" />
@@ -124,5 +130,5 @@ async function preview(role: AssistantRoleSummary): Promise<void> { try { store.
 </template>
 
 <style scoped lang="scss">
-.roles-panel { display:flex; flex-direction:column; gap:14px; } .toolbar { display:flex; gap:12px; align-items:center; justify-content:space-between; } .toolbar :deep(.n-alert) { flex:1; } .role-layout { display:grid; grid-template-columns:minmax(360px,1.5fr) minmax(260px,1fr); gap:16px; } .role-list { display:flex; flex-direction:column; gap:10px; } .role-card,.role-detail { padding:14px; border:1px solid var(--border-color); border-radius:10px; background:var(--card-color); } .role-card { cursor:pointer; } .role-card.selected { border-color:var(--primary-color); } .role-heading,.role-meta,.role-actions { display:flex; align-items:center; gap:8px; } .role-heading { justify-content:space-between; } .role-card p { margin:8px 0; opacity:.75; } .role-meta { justify-content:space-between; font-size:12px; opacity:.7; } .role-actions { flex-wrap:wrap; margin-top:12px; } dl { display:grid; grid-template-columns:max-content 1fr; gap:8px; } dt { font-weight:600; } dd { margin:0; overflow-wrap:anywhere; } @media(max-width:800px){.role-layout{grid-template-columns:1fr}.toolbar{align-items:stretch;flex-direction:column}}
+.roles-panel { display:flex; flex-direction:column; gap:14px; } .toolbar { display:flex; gap:12px; align-items:center; justify-content:space-between; } .toolbar :deep(.n-alert) { flex:1; } .role-layout { display:grid; grid-template-columns:minmax(360px,1.5fr) minmax(260px,1fr); gap:16px; } .role-list { display:flex; flex-direction:column; gap:10px; list-style:none; padding:0; margin:0; } .role-card,.role-detail { padding:14px; border:1px solid var(--border-color); border-radius:10px; background:var(--card-color); } .role-card.selected { border-color:var(--primary-color); } .role-select { width:100%; display:flex; flex-direction:column; gap:8px; padding:0; border:0; background:transparent; color:inherit; text-align:left; cursor:pointer; } .role-heading,.role-meta,.role-actions { display:flex; align-items:center; gap:8px; } .role-heading,.role-meta { width:100%; justify-content:space-between; } .role-description { opacity:.75; } .stale-warning { color:var(--warning-color); font-size:12px; } .role-meta { font-size:12px; opacity:.7; } .role-actions { flex-wrap:wrap; margin-top:12px; } dl { display:grid; grid-template-columns:max-content 1fr; gap:8px; } dt { font-weight:600; } dd { margin:0; overflow-wrap:anywhere; } @media(max-width:800px){.role-layout{grid-template-columns:1fr}.toolbar{align-items:stretch;flex-direction:column}}
 </style>

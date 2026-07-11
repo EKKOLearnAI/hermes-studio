@@ -37,8 +37,9 @@ describe('AssistantRolesPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks(); store.roles = [role, custom] as any; store.selectedRoleId = 'health-manager'; store.error = null; store.loading = false
     store.fetchRoles.mockResolvedValue(store.roles)
-    fetchAssistantRole.mockImplementation(async (id: string) => ({ ...(id === custom.id ? custom : role), recipes: id === custom.id ? [] : [{ id: 'daily', roleId: id, name: 'Daily', description: '', enabled: true, domains: ['health'], sections: ['observations'], queryTemplate: '', limits: { perSection: 10, totalCharacters: 4000 }, createdAt: '', updatedAt: '' }] }))
-    store.updateRole.mockResolvedValue({ ...role, recipes: [] })
+    fetchAssistantRole.mockImplementation(async (id: string) => ({ ...(id === custom.id ? custom : role), recipes: [{ id: id === custom.id ? 'custom-daily' : 'daily', roleId: id, name: 'Daily', description: '', builtIn: id !== custom.id, enabled: true, domains: ['health'], sections: ['observations'], queryTemplate: '', limits: { perSection: 10, totalCharacters: 4000 }, createdAt: '', updatedAt: '' }] }))
+    store.createRole.mockResolvedValue(custom)
+    store.updateRole.mockImplementation(async (id: string) => ({ ...(id === custom.id ? custom : role), recipes: [] }))
     store.cloneRole.mockResolvedValue(custom)
     store.deleteRole.mockResolvedValue(undefined)
     store.previewContext.mockResolvedValue({ renderedInstructions: 'server bundle', sections: {}, provenance: {}, truncated: { total: false, sections: {} } })
@@ -78,15 +79,40 @@ describe('AssistantRolesPanel', () => {
     expect(store.fetchRoles).toHaveBeenCalledTimes(2)
   })
 
-  it('creates and deletes recipes to reconcile the persisted role detail', async () => {
+  it('creates and deletes custom recipes to reconcile the persisted role detail', async () => {
+    const wrapper = mount(AssistantRolesPanel)
+    await flushPromises()
+    await wrapper.find('[data-test="edit-custom-coach"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="editor-reconcile"]').trigger('click')
+    await flushPromises()
+    expect(store.deleteRecipe).toHaveBeenCalledWith('custom-coach', 'custom-daily')
+    expect(store.createRecipe).toHaveBeenCalledWith('custom-coach', expect.objectContaining({ name: 'New recipe' }))
+  })
+
+  it('never stages deletion of a built-in recipe', async () => {
     const wrapper = mount(AssistantRolesPanel)
     await flushPromises()
     await wrapper.find('[data-test="edit-health-manager"]').trigger('click')
     await flushPromises()
     await wrapper.find('[data-test="editor-reconcile"]').trigger('click')
     await flushPromises()
-    expect(store.deleteRecipe).toHaveBeenCalledWith('health-manager', 'daily')
-    expect(store.createRecipe).toHaveBeenCalledWith('health-manager', expect.objectContaining({ name: 'New recipe' }))
+    expect(store.deleteRecipe).not.toHaveBeenCalledWith('health-manager', 'daily')
+  })
+
+  it('retries a partially failed create as an update without creating a second role', async () => {
+    store.createRecipe.mockRejectedValueOnce(new Error('recipe failed')).mockResolvedValueOnce(undefined)
+    const wrapper = mount(AssistantRolesPanel)
+    await flushPromises()
+    await wrapper.find('[data-test="create-role"]').trigger('click')
+    await wrapper.find('[data-test="editor-save"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="editor-stub"]').exists()).toBe(true)
+    await wrapper.find('[data-test="editor-save"]').trigger('click')
+    await flushPromises()
+    expect(store.createRole).toHaveBeenCalledTimes(1)
+    expect(store.updateRole).toHaveBeenCalledWith('custom-coach', expect.any(Object))
+    expect(store.createRecipe).toHaveBeenCalledTimes(2)
   })
 
   it('keeps the editor open and reloads authoritative detail after a partial recipe failure', async () => {
@@ -114,12 +140,14 @@ describe('AssistantRolesPanel', () => {
   it('exposes keyboard-focusable listbox options and named controls', async () => {
     const wrapper = mount(AssistantRolesPanel)
     await flushPromises()
-    expect(wrapper.find('[role="listbox"]').exists()).toBe(true)
-    const option = wrapper.find('[role="option"]')
-    expect(option.attributes('tabindex')).toBe('0')
-    expect(option.attributes('aria-selected')).toBe('true')
+    expect(wrapper.find('ul[aria-label="Assistant roles"]').exists()).toBe(true)
+    const select = wrapper.find('[data-test="select-role-health-manager"]')
+    expect(select.element.tagName).toBe('BUTTON')
+    expect(select.attributes('aria-current')).toBe('true')
     expect(wrapper.find('[data-test="toggle-health-manager"]').attributes('aria-label')).toContain('Health Manager')
-    await option.trigger('keydown', { key: 'Enter' })
+    await select.trigger('keydown', { key: 'Enter' })
+    expect(store.selectedRoleId).toBe('health-manager')
+    await wrapper.find('[data-test="clone-custom-coach"]').trigger('click')
     expect(store.selectedRoleId).toBe('health-manager')
   })
 
