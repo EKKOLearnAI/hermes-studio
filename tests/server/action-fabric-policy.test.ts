@@ -294,6 +294,54 @@ describe('Action Fabric role policy', () => {
     expect(() => evaluateFabricPolicy(intent('health-manager', { idempotencyKey: 'getter-target', target })))
       .toThrow('FABRIC_POLICY_INVALID_JSON')
   }, 15_000)
+
+  it('binds replay and reserve behavior to the budget and workflow lifecycle', () => {
+    registerCapability('simulator.lifecycle', 'low', 'USD', 5)
+    configureRole({ allow: ['simulator.lifecycle'], spendingLimits: { currency: 'USD', perAction: 10, daily: 30 } })
+    const request = intent('health-manager', { capabilityId: 'simulator.lifecycle', idempotencyKey: 'released-flow' })
+    const released = evaluateFabricPolicy(request)
+    attachWorkflow(released, 'wf-released')
+    releaseFabricBudget('wf-released')
+    const expired = evaluateFabricPolicy(request)
+    expect(expired).toMatchObject({ outcome: 'deny', reasonCodes: ['authorization_expired'] })
+    expect(expired.id).not.toBe(released.id)
+    expect(() => reserveFabricBudget(expired.id)).toThrow('FABRIC_BUDGET_NOT_RESERVABLE')
+    expect(evaluateFabricPolicy(request).id).toBe(expired.id)
+
+    const committedRequest = intent('health-manager', { capabilityId: 'simulator.lifecycle', idempotencyKey: 'committed-flow' })
+    const committed = evaluateFabricPolicy(committedRequest)
+    attachWorkflow(committed, 'wf-committed')
+    commitFabricBudget('wf-committed')
+    expect(evaluateFabricPolicy(committedRequest).id).toBe(committed.id)
+    expect(() => reserveFabricBudget(committed.id)).toThrow('FABRIC_BUDGET_ALREADY_COMMITTED')
+
+    const ownedRequest = intent('health-manager', { capabilityId: 'simulator.lifecycle', idempotencyKey: 'owned-flow' })
+    const owned = evaluateFabricPolicy(ownedRequest)
+    attachWorkflow(owned, 'wf-owned')
+    expect(evaluateFabricPolicy(ownedRequest).id).toBe(owned.id)
+    expect(() => reserveFabricBudget(owned.id)).toThrow('FABRIC_BUDGET_OWNERSHIP_CONFLICT')
+  }, 20_000)
+
+  it('persists and audits one immutable material conflict decision that cannot reserve', () => {
+    registerCapability('simulator.conflict', 'low', 'USD', 5)
+    configureRole({ allow: ['simulator.conflict'], spendingLimits: { currency: 'USD', perAction: 10, daily: 20 } })
+    const original = evaluateFabricPolicy(intent('health-manager', {
+      capabilityId: 'simulator.conflict', idempotencyKey: 'conflict-key', input: { value: 1 },
+    }))
+    const auditBefore = withActionFabricDb(db => (db.prepare('SELECT COUNT(*) AS count FROM fabric_audit_events').get() as { count: number }).count)
+    const conflictRequest = intent('health-manager', {
+      capabilityId: 'simulator.conflict', idempotencyKey: 'conflict-key', input: { value: 2 },
+    })
+    const conflict = evaluateFabricPolicy(conflictRequest)
+    expect(conflict).toMatchObject({ outcome: 'deny', reasonCodes: ['material_input_changed'] })
+    expect(conflict.id).not.toBe(original.id)
+    expect(withActionFabricDb(db => db.prepare('SELECT outcome,reason_codes_json FROM fabric_policy_decisions WHERE id=?').get(conflict.id)))
+      .toEqual({ outcome: 'deny', reason_codes_json: '["material_input_changed"]' })
+    expect(withActionFabricDb(db => (db.prepare('SELECT COUNT(*) AS count FROM fabric_audit_events').get() as { count: number }).count))
+      .toBe(auditBefore + 1)
+    expect(() => reserveFabricBudget(conflict.id)).toThrow('FABRIC_BUDGET_NOT_RESERVABLE')
+    expect(evaluateFabricPolicy(conflictRequest).id).toBe(conflict.id)
+  }, 15_000)
 })
 
 function configureRole(options: {
@@ -327,4 +375,13 @@ function registerCapability(id: string, risk: 'none' | 'low', currency: string |
     cost: { currency, estimatedMinor }, enabled: true,
   })
   bindFabricExecutorCapability('simulator-main', id, 1, getFabricCapability(id)!.contractDigest)
+}
+
+function attachWorkflow(decision: ReturnType<typeof evaluateFabricPolicy>, workflowId: string): void {
+  withActionFabricDb(db => {
+    const now = new Date().toISOString()
+    db.prepare(`INSERT INTO fabric_workflows(id,intent_id,executor_id,policy_decision_id,state,created_at,updated_at)
+      VALUES(?,?,?,?, 'draft',?,?)`).run(workflowId, decision.intentId, decision.executorId, decision.id, now, now)
+    db.prepare('UPDATE fabric_budget_ledger SET workflow_id=? WHERE decision_id=?').run(workflowId, decision.id)
+  })
 }

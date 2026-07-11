@@ -26,6 +26,7 @@ type ReasonCode =
   | 'per_action_limit_exceeded' | 'daily_limit_exceeded' | 'currency_mismatch'
   | 'emergency_stop' | 'material_input_changed'
   | 'role_policy_invalid' | 'irreversible_requires_approval'
+  | 'authorization_expired'
 
 interface DecisionRow {
   id: string; intent_id: string; executor_id: string | null; outcome: 'allow' | 'deny' | 'waiting_user'
@@ -73,10 +74,23 @@ export function evaluateFabricPolicy(input: FabricPolicyInput, options: FabricPo
     const intentId = existing?.id ?? `intent-${randomUUID()}`
     const previous = existing ? latestDecisionForIntent(db, intentId) : undefined
     if (existing?.material_input_digest !== undefined && existing.material_input_digest !== materialInputDigest) {
-      return previous ? { ...parseDecision(previous), outcome: 'deny', reasonCodes: ['material_input_changed'],
-        materialInputDigest, budget: null } : conflictDecision(intentId, materialInputDigest, sanitizedSummary, now)
+      if (previous?.material_input_digest === materialInputDigest
+        && parseReasons(previous).includes('material_input_changed')) return parseDecision(previous)
+      return persistDenyDecision(db, { intentId, executorId: resolution?.executor.id ?? null,
+        reason: 'material_input_changed', materialInputDigest, snapshot, sanitizedSummary,
+        actorUserId: input.requestedByUserId, now })
     }
-    if (previous && sameSnapshot(previous, snapshot)) return parseDecision(previous)
+    if (previous && sameSnapshot(previous, snapshot)) {
+      if (previous.outcome === 'allow' && (previous.budget_amount_minor ?? 0) > 0) {
+        const ledger = selectLedgerByDecision(db, previous.id)
+        if (!ledger || ledger.status === 'released') {
+          return persistDenyDecision(db, { intentId, executorId: previous.executor_id,
+            reason: 'authorization_expired', materialInputDigest, snapshot, sanitizedSummary,
+            actorUserId: input.requestedByUserId, now })
+        }
+      }
+      return parseDecision(previous)
+    }
     if (previous) {
       db.prepare(`UPDATE fabric_budget_ledger SET status='released', updated_at=? WHERE status='reserved'
         AND decision_id IN (SELECT id FROM fabric_policy_decisions WHERE intent_id=?)`).run(now, intentId)
@@ -170,7 +184,12 @@ export function reserveFabricBudget(decisionId: string): FabricBudgetReservation
     const intent = requireIntentIdentity(db, decision.intent_id)
     revalidateSnapshot(db, decision, intent.requested_by_role_id)
     const existing = selectLedgerByDecision(db, decisionId)
-    if (existing) return parseLedger(existing)
+    if (existing) {
+      if (existing.status === 'released') throw new Error('FABRIC_BUDGET_ALREADY_RELEASED')
+      if (existing.status === 'committed') throw new Error('FABRIC_BUDGET_ALREADY_COMMITTED')
+      if (existing.workflow_id !== null) throw new Error('FABRIC_BUDGET_OWNERSHIP_CONFLICT')
+      return parseLedger(existing)
+    }
     const now = new Date().toISOString()
     return parseLedger(insertReservation(db, decisionId, {
       requestedByUserId: intent.requested_by_user_id, requestedByRoleId: intent.requested_by_role_id,
@@ -393,11 +412,39 @@ function sameSnapshot(decision: DecisionRow, snapshot: Record<string, unknown>):
   try { return stableStringify(JSON.parse(decision.policy_snapshot_json)) === stableStringify(snapshot) } catch { return false }
 }
 
-function conflictDecision(intentId: string, materialInputDigest: string,
-  sanitizedSummary: Record<string, unknown>, now: string): FabricPolicyDecision {
-  return { id: `conflict-${digest(`${intentId}:${materialInputDigest}`)}`, intentId, executorId: null,
-    outcome: 'deny', reasonCodes: ['material_input_changed'], policyVersion: POLICY_VERSION,
-    materialInputDigest, policySnapshot: {}, sanitizedSummary, budget: null, createdAt: now }
+function parseReasons(decision: DecisionRow): string[] {
+  try {
+    const reasons: unknown = JSON.parse(decision.reason_codes_json)
+    return Array.isArray(reasons) && reasons.every(item => typeof item === 'string') ? reasons : []
+  } catch { return [] }
+}
+
+function persistDenyDecision(db: DatabaseSync, input: {
+  intentId: string
+  executorId: string | null
+  reason: 'material_input_changed' | 'authorization_expired'
+  materialInputDigest: string
+  snapshot: Record<string, unknown>
+  sanitizedSummary: Record<string, unknown>
+  actorUserId: string
+  now: string
+}): FabricPolicyDecision {
+  const id = `decision-${randomUUID()}`
+  db.prepare(`INSERT INTO fabric_policy_decisions(id,intent_id,executor_id,outcome,reason_codes_json,
+    policy_version,material_input_digest,policy_snapshot_json,sanitized_summary_json,
+    budget_currency,budget_amount_minor,created_at) VALUES(?,?,?,'deny',?,?,?,?,?,NULL,NULL,?)`).run(
+    id, input.intentId, input.executorId, JSON.stringify([input.reason]), POLICY_VERSION,
+    input.materialInputDigest, JSON.stringify(input.snapshot), JSON.stringify(input.sanitizedSummary), input.now,
+  )
+  appendFabricAuditEvent(db, { eventType: 'policy.evaluated', actorUserId: input.actorUserId,
+    aggregateType: 'intent', aggregateId: input.intentId,
+    payload: { decisionId: id, outcome: 'deny', reasonCodes: [input.reason], sanitizedSummary: input.sanitizedSummary },
+    occurredAt: input.now })
+  appendFabricOutbox(db, 'fabric.policy.evaluated', input.intentId,
+    { decisionId: id, outcome: 'deny', reasonCodes: [input.reason] })
+  return { id, intentId: input.intentId, executorId: input.executorId, outcome: 'deny',
+    reasonCodes: [input.reason], policyVersion: POLICY_VERSION, materialInputDigest: input.materialInputDigest,
+    policySnapshot: input.snapshot, sanitizedSummary: input.sanitizedSummary, budget: null, createdAt: input.now }
 }
 
 function requireIntentIdentity(db: DatabaseSync, id: string): { requested_by_user_id: string; requested_by_role_id: string } {
