@@ -503,15 +503,29 @@ function updateCircuitBreaker(db: DatabaseSync, claim: WorkflowClaim, result: Fa
 
 function settleBudget(db: DatabaseSync, claim: WorkflowClaim, state: FabricWorkflowState, now: string): void {
   if (state !== 'succeeded' && state !== 'cancelled' && state !== 'dead_letter') return
-  const ledger = db.prepare(`SELECT id,status FROM fabric_budget_ledger WHERE workflow_id=? ORDER BY created_at LIMIT 1`)
-    .get(claim.workflowId) as { id: string; status: string } | undefined
-  if (!ledger || ledger.status !== 'reserved') return
   const status = state === 'succeeded' ? 'committed' : 'released'
-  db.prepare('UPDATE fabric_budget_ledger SET status=?,updated_at=? WHERE id=? AND status=\'reserved\'')
-    .run(status, now, ledger.id)
-  appendFabricAuditEvent(db, { eventType: `budget.${status}`, actorUserId: claim.actorUserId,
-    aggregateType: 'workflow', aggregateId: claim.workflowId, payload: {}, occurredAt: now })
-  appendFabricOutbox(db, `fabric.budget.${status}`, claim.workflowId, {})
+  settleWorkflowBudgetInDb(db, claim.workflowId, claim.actorUserId, status, now)
+}
+
+function settleWorkflowBudgetInDb(
+  db: DatabaseSync,
+  workflowId: string,
+  actorUserId: string,
+  status: 'committed' | 'released',
+  now: string,
+): boolean {
+  const ledger = db.prepare(`SELECT id,currency,amount_minor FROM fabric_budget_ledger
+    WHERE workflow_id=? AND status='reserved' ORDER BY created_at LIMIT 1`).get(workflowId) as
+    { id: string; currency: string; amount_minor: number } | undefined
+  if (!ledger) return false
+  const changed = db.prepare(`UPDATE fabric_budget_ledger SET status=?,updated_at=?
+    WHERE id=? AND workflow_id=? AND status='reserved'`).run(status, now, ledger.id, workflowId)
+  if (changed.changes !== 1) return false
+  const payload = { currency: ledger.currency, amountMinor: ledger.amount_minor }
+  appendFabricAuditEvent(db, { eventType: `budget.${status}`, actorUserId,
+    aggregateType: 'workflow', aggregateId: workflowId, payload, occurredAt: now })
+  appendFabricOutbox(db, `fabric.budget.${status}`, workflowId, payload)
+  return true
 }
 
 function moveNonInterruptibleToWaitingUser(db: DatabaseSync, row: CandidateRow, now: string): null {
@@ -550,38 +564,49 @@ function auditTransition(
 
 function reconcileCompensationParent(db: DatabaseSync, now: string): boolean {
   const rows = db.prepare(`SELECT p.id parent_id,p.state parent_state,p.version parent_version,
-      c.id child_id,c.state child_state,i.requested_by_user_id actor_user_id
+      c.id child_id,c.state child_state,i.requested_by_user_id actor_user_id,b.id budget_id
     FROM fabric_workflows p
     JOIN fabric_action_intents ci ON ci.id=p.compensation_intent_id
     JOIN fabric_workflows c ON c.intent_id=ci.id
     JOIN fabric_action_intents i ON i.id=p.intent_id
-    WHERE p.state IN ('compensating','waiting_user','failed')
-      AND NOT ((c.state IN ('succeeded','compensated') AND p.state='compensated')
+    LEFT JOIN fabric_budget_ledger b ON b.workflow_id=p.id AND b.status='reserved'
+    WHERE p.state IN ('compensating','waiting_user','failed','compensated')
+      AND (NOT ((c.state IN ('succeeded','compensated') AND p.state='compensated')
         OR (c.state IN ('denied','cancelled','dead_letter','failed') AND p.state='failed')
         OR (c.state='waiting_user' AND p.state='waiting_user')
         OR (c.state NOT IN ('succeeded','compensated','denied','cancelled','dead_letter','failed','waiting_user')
           AND p.state='compensating'))
+        OR (b.id IS NOT NULL AND c.state IN ('succeeded','compensated','denied','cancelled','dead_letter','failed')))
     ORDER BY p.updated_at,p.id LIMIT 1`).all() as unknown as Array<{
       parent_id: string; parent_state: FabricWorkflowState; parent_version: number
-      child_id: string; child_state: FabricWorkflowState; actor_user_id: string
+      child_id: string; child_state: FabricWorkflowState; actor_user_id: string; budget_id: string | null
     }>
   const selected = rows.map(row => ({ row, destination: compensationParentDestination(row.child_state) }))
-    .find(item => item.destination !== item.row.parent_state)
+    .find(item => item.destination !== item.row.parent_state || item.row.budget_id !== null)
   if (!selected) return false
   const { row, destination } = selected
-  const changed = db.prepare(`UPDATE fabric_workflows SET state=?,version=version+1,updated_at=?,completed_at=?
-    WHERE id=? AND version=? AND state=?`).run(
-    destination, now, destination === 'compensated' ? now : null,
-    row.parent_id, row.parent_version, row.parent_state,
-  )
-  if (changed.changes !== 1) return false
-  appendFabricAuditEvent(db, { eventType: 'workflow.compensation_reconciled', actorUserId: row.actor_user_id,
-    aggregateType: 'workflow', aggregateId: row.parent_id,
-    payload: { childWorkflowId: row.child_id, childState: row.child_state,
-      from: row.parent_state, to: destination }, occurredAt: now })
-  appendFabricOutbox(db, 'fabric.workflow.compensation_reconciled', row.parent_id,
-    { childWorkflowId: row.child_id, childState: row.child_state, from: row.parent_state, to: destination })
-  return true
+  let stateChanged = false
+  if (destination !== row.parent_state) {
+    const changed = db.prepare(`UPDATE fabric_workflows SET state=?,version=version+1,updated_at=?,completed_at=?
+      WHERE id=? AND version=? AND state=?`).run(
+      destination, now, destination === 'compensated' ? now : null,
+      row.parent_id, row.parent_version, row.parent_state,
+    )
+    if (changed.changes !== 1) return false
+    stateChanged = true
+    appendFabricAuditEvent(db, { eventType: 'workflow.compensation_reconciled', actorUserId: row.actor_user_id,
+      aggregateType: 'workflow', aggregateId: row.parent_id,
+      payload: { childWorkflowId: row.child_id, childState: row.child_state,
+        from: row.parent_state, to: destination }, occurredAt: now })
+    appendFabricOutbox(db, 'fabric.workflow.compensation_reconciled', row.parent_id,
+      { childWorkflowId: row.child_id, childState: row.child_state, from: row.parent_state, to: destination })
+  }
+  const budgetSettled = destination === 'compensated'
+    ? settleWorkflowBudgetInDb(db, row.parent_id, row.actor_user_id, 'released', now)
+    : destination === 'failed'
+      ? settleWorkflowBudgetInDb(db, row.parent_id, row.actor_user_id, 'committed', now)
+      : false
+  return stateChanged || budgetSettled
 }
 
 function compensationParentDestination(childState: FabricWorkflowState): FabricWorkflowState {

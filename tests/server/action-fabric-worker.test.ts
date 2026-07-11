@@ -150,6 +150,7 @@ describe('Action Fabric durable worker', () => {
       input: { domain: 'preferences', key: 'theme', value: 'dark' }, constraints: {}, rationale: 'test',
     }).workflow
     originalWorkflowId = workflow.id
+    seedReservedBudget(workflow.id)
 
     await runCycles(3)
     const parent = getFabricWorkflow(workflow.id)!
@@ -165,6 +166,12 @@ describe('Action Fabric durable worker', () => {
     await processActionFabricOnce({ now: plus(5) })
     await processActionFabricOnce({ now: plus(6) })
     expect(getFabricWorkflow(workflow.id)?.state).toBe('compensated')
+    expect(budgetStatus(workflow.id)).toBe('released')
+    const released = listFabricAuditEvents({ aggregateId: workflow.id })
+      .filter(event => event.eventType === 'budget.released').length
+    await processActionFabricOnce({ now: plus(7) })
+    expect(listFabricAuditEvents({ aggregateId: workflow.id })
+      .filter(event => event.eventType === 'budget.released')).toHaveLength(released)
   })
 
   it.each([
@@ -175,6 +182,7 @@ describe('Action Fabric durable worker', () => {
       id: 'internal-twin', type: 'internal', verify: async () => failure('mismatch', 'VERIFY_MISMATCH'),
     }))
     const workflow = createInternal(`compensation-${mode}`).workflow
+    seedReservedBudget(workflow.id)
     await runCycles(2)
     updateAssistantRole('health-manager', {
       enabled: true,
@@ -192,6 +200,8 @@ describe('Action Fabric durable worker', () => {
     const child = withActionFabricDb(db => db.prepare('SELECT state FROM fabric_workflows WHERE intent_id=?')
       .get(parent.compensationIntentId!) as { state: string })
     expect(child.state).toBe(childState)
+    await processActionFabricOnce({ now: plus(3) })
+    expect(budgetStatus(workflow.id)).toBe(mode === 'deny' ? 'committed' : 'reserved')
   })
 
   it('rolls back child creation and creates exactly one child after lease recovery', async () => {
@@ -211,6 +221,27 @@ describe('Action Fabric durable worker', () => {
     expect(parent.compensationIntentId).toMatch(/^intent-/)
     expect(withActionFabricDb(db => (db.prepare(`SELECT COUNT(*) count FROM fabric_action_intents
       WHERE idempotency_key=?`).get(`compensation:${workflow.id}`) as { count: number }).count)).toBe(1)
+  })
+
+  it('commits the parent reservation when compensation terminates unsuccessfully', async () => {
+    registerFabricExecutorAdapter(adapter({
+      id: 'internal-twin', type: 'internal', verify: async () => failure('mismatch', 'VERIFY_MISMATCH'),
+    }))
+    const workflow = createInternal('compensation-child-failed').workflow
+    seedReservedBudget(workflow.id)
+    await runCycles(3)
+    const parent = getFabricWorkflow(workflow.id)!
+    withActionFabricDb(db => db.prepare("UPDATE fabric_workflows SET state='dead_letter' WHERE intent_id=?")
+      .run(parent.compensationIntentId!))
+
+    await processActionFabricOnce({ now: plus(3) })
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('failed')
+    expect(budgetStatus(workflow.id)).toBe('committed')
+    const committed = listFabricAuditEvents({ aggregateId: workflow.id })
+      .filter(event => event.eventType === 'budget.committed').length
+    await processActionFabricOnce({ now: plus(4) })
+    expect(listFabricAuditEvents({ aggregateId: workflow.id })
+      .filter(event => event.eventType === 'budget.committed')).toHaveLength(committed)
   })
 
   it('fails old incomplete contract snapshots closed without invoking an adapter', async () => {
@@ -364,6 +395,25 @@ function mutateCapturedContract(workflowId: string, mutate: (contract: Record<st
       db.prepare('UPDATE fabric_steps SET input_json=? WHERE id=?').run(JSON.stringify(input), row.id)
     }
   })
+}
+
+function seedReservedBudget(workflowId: string): void {
+  withActionFabricDb(db => {
+    const row = db.prepare(`SELECT w.policy_decision_id decision_id,i.requested_by_user_id user_id,
+      i.requested_by_role_id role_id FROM fabric_workflows w JOIN fabric_action_intents i ON i.id=w.intent_id
+      WHERE w.id=?`).get(workflowId) as { decision_id: string; user_id: string; role_id: string }
+    db.prepare(`INSERT INTO fabric_budget_ledger(id,decision_id,workflow_id,requested_by_user_id,
+      requested_by_role_id,ledger_date,currency,amount_minor,status,created_at,updated_at)
+      VALUES(?,?,?,?,?,'2026-07-12','USD',50,'reserved',?,?)`).run(
+      `budget-test-${workflowId}`, row.decision_id, workflowId, row.user_id, row.role_id,
+      plus(0).toISOString(), plus(0).toISOString(),
+    )
+  })
+}
+
+function budgetStatus(workflowId: string): string {
+  return withActionFabricDb(db => (db.prepare('SELECT status FROM fabric_budget_ledger WHERE workflow_id=?')
+    .get(workflowId) as { status: string }).status)
 }
 
 function plus(seconds: number): Date { return new Date(baseTime() + seconds * 1_000) }
