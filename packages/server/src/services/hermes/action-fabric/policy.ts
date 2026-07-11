@@ -205,6 +205,15 @@ export function reserveFabricBudget(decisionId: string): FabricBudgetReservation
   })
 }
 
+/** Revalidates a persisted decision while the caller holds the shared audited writer transaction. */
+export function revalidateFabricDecisionInDb(db: DatabaseSync, decisionId: string): FabricPolicyDecision {
+  if (!db.isTransaction) throw new Error('FABRIC_TRANSACTION_REQUIRED')
+  const decision = requireDecision(db, decisionId)
+  const intent = requireIntentIdentity(db, decision.intent_id)
+  revalidateSnapshot(db, decision, intent.requested_by_role_id)
+  return parseDecision(decision)
+}
+
 export function commitFabricBudget(workflowId: string, actual?: FabricMoney): void {
   withFabricAuditedTransaction(db => {
     const context = requireWorkflowLedger(db, workflowId)

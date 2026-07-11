@@ -7,6 +7,7 @@ import {
   approveFabricWorkflow,
   bindFabricExecutorCapability,
   cancelFabricWorkflow,
+  createFabricCapability,
   createFabricIntent,
   getFabricCapability,
   ensureBuiltInFabricRegistry,
@@ -18,6 +19,8 @@ import {
   rejectFabricWorkflow,
   requestFabricCompensation,
   retryFabricWorkflow,
+  setFabricEmergencyStop,
+  setFabricExecutorEnabled,
   updateFabricCapability,
   withActionFabricDb,
 } from '../../packages/server/src/services/hermes/action-fabric'
@@ -173,6 +176,29 @@ describe('Action Fabric durable workflows', () => {
     })
   })
 
+  it('rejects credential-bearing metadata and opaque values before policy persistence', () => {
+    const before = durableCounts()
+    const cases = [
+      { idempotencyKey: 'Bearer abcdefghijklmnop' },
+      { idempotencyKey: 'sk-proj-abcdefghijklmnopqrstuvwxyz' },
+      { idempotencyKey: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature1234' },
+      { idempotencyKey: 'oauth-field', input: { oauthCode: 'ordinary-looking-value' } },
+      { idempotencyKey: 'bearer-value', input: { message: 'Bearer abcdefghijklmnop' } },
+      { idempotencyKey: 'api-value', input: { message: 'sk-proj-abcdefghijklmnopqrstuvwxyz' } },
+      { idempotencyKey: 'jwt-value', input: { message: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature1234' } },
+    ]
+    for (const request of cases) {
+      expect(() => createFabricIntent(intent(request))).toThrow('FABRIC_WORKFLOW_SENSITIVE_PAYLOAD')
+    }
+    expect(durableCounts()).toEqual(before)
+
+    expect(createFabricIntent(intent({
+      idempotencyKey: 'safe-locators', input: { account: 'household', url: '/api/status', path: 'relative/report' },
+    })).workflow.steps[1].input).toMatchObject({
+      actionInput: { account: 'household', url: '/api/status', path: 'relative/report' },
+    })
+  })
+
   it('repairs an interrupted creation after policy persistence without duplicating policy audit', () => {
     const request = intent({ idempotencyKey: 'interrupted' })
     const decision = evaluateFabricPolicy(request)
@@ -245,6 +271,88 @@ describe('Action Fabric durable workflows', () => {
     ).run(staleVersion.policyDecision.id))
     expect(() => approveFabricWorkflow(staleVersion.workflow.id, 'admin-1'))
       .toThrow('FABRIC_WORKFLOW_APPROVAL_STALE')
+  })
+
+  it('fails approval closed after role, registry, contract, or control changes', () => {
+    configureRole(['simulator.counter.increment'], 'none')
+    const roleChanged = createFabricIntent(intent({ capabilityId: 'simulator.counter.increment', idempotencyKey: 'role-stale' }))
+    configureRole(['simulator.counter.increment'], 'none')
+    updateAssistantRole('health-manager', { enabled: false })
+    expect(() => approveFabricWorkflow(roleChanged.workflow.id, 'admin-1')).toThrow('FABRIC_WORKFLOW_APPROVAL_STALE')
+    expect(getFabricWorkflow(roleChanged.workflow.id)?.state).toBe('waiting_user')
+
+    configureRole(['simulator.counter.increment'], 'none')
+    const registryChanged = createFabricIntent(intent({ capabilityId: 'simulator.counter.increment', idempotencyKey: 'registry-stale' }))
+    setFabricExecutorEnabled('simulator-main', false)
+    expect(() => approveFabricWorkflow(registryChanged.workflow.id, 'admin-1')).toThrow('FABRIC_WORKFLOW_APPROVAL_STALE')
+    setFabricExecutorEnabled('simulator-main', true)
+
+    const contractChanged = createFabricIntent(intent({ capabilityId: 'simulator.counter.increment', idempotencyKey: 'contract-stale' }))
+    const capability = getFabricCapability('simulator.counter.increment')!
+    updateFabricCapability(capability.id, { version: 2, description: `${capability.description} v2` })
+    bindFabricExecutorCapability('simulator-main', capability.id, 2, getFabricCapability(capability.id)!.contractDigest)
+    expect(() => approveFabricWorkflow(contractChanged.workflow.id, 'admin-1')).toThrow('FABRIC_WORKFLOW_APPROVAL_STALE')
+
+    const controlChanged = createFabricIntent(intent({ capabilityId: 'simulator.counter.increment', idempotencyKey: 'control-stale' }))
+    setFabricEmergencyStop(1, 'admin-1', 'pause')
+    expect(() => approveFabricWorkflow(controlChanged.workflow.id, 'admin-1')).toThrow('FABRIC_WORKFLOW_APPROVAL_STALE')
+  })
+
+  it('reserves current-day budget on approval and releases it atomically on cancellation', () => {
+    registerPaidCapability()
+    configureRole(['simulator.paid-approval'], 'none')
+    updateAssistantRole('health-manager', { spendingLimits: { currency: 'USD', perAction: 70, daily: 100 } })
+    vi.setSystemTime(new Date('2026-07-12T23:59:00.000Z'))
+    const waiting = createFabricIntent(intent({
+      capabilityId: 'simulator.paid-approval', idempotencyKey: 'paid-waiting',
+      expectedCost: { currency: 'USD', amountMinor: 60 },
+    }))
+    expect(withActionFabricDb(db => db.prepare(
+      'SELECT id FROM fabric_budget_ledger WHERE decision_id=?',
+    ).get(waiting.policyDecision.id))).toBeUndefined()
+
+    vi.setSystemTime(new Date('2026-07-13T00:01:00.000Z'))
+    const approved = approveFabricWorkflow(waiting.workflow.id, 'admin-1')
+    const ledger = withActionFabricDb(db => db.prepare(
+      'SELECT workflow_id,ledger_date,status FROM fabric_budget_ledger WHERE decision_id=?',
+    ).get(approved.policyDecisionId!) as { workflow_id: string; ledger_date: string; status: string })
+    expect(ledger).toEqual({ workflow_id: waiting.workflow.id, ledger_date: '2026-07-13', status: 'reserved' })
+    expect(cancelFabricWorkflow(waiting.workflow.id, 'admin-1', 'stop').state).toBe('cancelled')
+    expect(cancelFabricWorkflow(waiting.workflow.id, 'admin-1', 'stop').state).toBe('cancelled')
+    expect(withActionFabricDb(db => (db.prepare(
+      'SELECT status FROM fabric_budget_ledger WHERE workflow_id=?',
+    ).get(waiting.workflow.id) as { status: string }).status)).toBe('released')
+  })
+
+  it('does not approve waiting budget after the current daily allowance is occupied', () => {
+    registerPaidCapability()
+    configureRole(['simulator.paid-approval'], 'low')
+    updateAssistantRole('health-manager', { spendingLimits: { currency: 'USD', perAction: 70, daily: 100 } })
+    createFabricIntent(intent({ capabilityId: 'simulator.paid-approval', idempotencyKey: 'budget-occupier',
+      expectedCost: { currency: 'USD', amountMinor: 60 } }))
+    configureRole(['simulator.paid-approval'], 'none')
+    updateAssistantRole('health-manager', { spendingLimits: { currency: 'USD', perAction: 70, daily: 100 } })
+    const waiting = createFabricIntent(intent({ capabilityId: 'simulator.paid-approval', idempotencyKey: 'budget-blocked',
+      expectedCost: { currency: 'USD', amountMinor: 60 } }))
+    expect(() => approveFabricWorkflow(waiting.workflow.id, 'admin-1')).toThrow('FABRIC_WORKFLOW_APPROVAL_STALE')
+    expect(getFabricWorkflow(waiting.workflow.id)?.state).toBe('waiting_user')
+  })
+
+  it('never directly cancels executing or verifying workflows', () => {
+    for (const state of ['preparing', 'executing', 'verifying'] as const) {
+      const created = createFabricIntent(intent({ idempotencyKey: `active-${state}` }))
+      withActionFabricDb(db => {
+        db.prepare(`UPDATE fabric_workflows SET state=?,lease_owner='worker-1',lease_expires_at=? WHERE id=?`)
+          .run(state, '2026-07-12T01:05:00.000Z', created.workflow.id)
+        db.prepare(`UPDATE fabric_steps SET state='running',started_at=? WHERE workflow_id=? AND ordinal=1`)
+          .run('2026-07-12T01:00:00.000Z', created.workflow.id)
+      })
+      expect(() => cancelFabricWorkflow(created.workflow.id, 'admin-1', 'stop'))
+        .toThrow('FABRIC_WORKFLOW_INVALID_TRANSITION')
+      expect(getFabricWorkflow(created.workflow.id)).toMatchObject({
+        state, leaseOwner: 'worker-1', steps: expect.arrayContaining([expect.objectContaining({ ordinal: 1, state: 'running' })]),
+      })
+    }
   })
 
   it('uses explicit legal transitions for rejection, cancellation, retry, and compensation', () => {
@@ -328,6 +436,9 @@ describe('Action Fabric durable workflows', () => {
     const orphan = withActionFabricDb(db => db.prepare(
       'SELECT id FROM fabric_action_intents WHERE idempotency_key=?',
     ).get(`compensation:${original.workflow.id}`) as { id: string })
+    expect(withActionFabricDb(db => (db.prepare(
+      'SELECT COUNT(*) AS count FROM fabric_workflows WHERE intent_id=?',
+    ).get(orphan.id) as { count: number }).count)).toBe(0)
     withActionFabricDb(db => db.exec('DROP TRIGGER fail_compensation_link'))
 
     const recovered = requestFabricCompensation(original.workflow.id, 'admin-1', 'undo')
@@ -386,6 +497,17 @@ function forceWorkflowState(id: string, state: string): void {
   withActionFabricDb(db => db.prepare(
     'UPDATE fabric_workflows SET state=?, completed_at=? WHERE id=?',
   ).run(state, new Date().toISOString(), id))
+}
+
+function registerPaidCapability(): void {
+  createFabricCapability({
+    id: 'simulator.paid-approval', version: 1, description: 'Paid approval fixture',
+    inputSchema: {}, outputSchema: {}, risk: 'low', sideEffect: false, idempotency: 'required',
+    reversible: false, compensationCapabilityId: null, verificationStrategy: 'result', authentication: [],
+    targetRestrictions: ['simulator'], cost: { currency: 'USD', estimatedMinor: 60 }, enabled: true,
+  })
+  bindFabricExecutorCapability('simulator-main', 'simulator.paid-approval', 1,
+    getFabricCapability('simulator.paid-approval')!.contractDigest)
 }
 
 function durableCounts(): Record<string, number> {

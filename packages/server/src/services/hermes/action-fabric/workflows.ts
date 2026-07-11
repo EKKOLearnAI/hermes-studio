@@ -1,8 +1,9 @@
 import { randomUUID } from 'crypto'
 import type { DatabaseSync } from 'node:sqlite'
+import { getAssistantRole } from '../personal-twin'
 import { appendFabricAuditEvent, appendFabricOutbox, withFabricAuditedTransaction } from './audit'
 import { withActionFabricDb } from './database'
-import { evaluateFabricPolicy } from './policy'
+import { evaluateFabricPolicy, revalidateFabricDecisionInDb } from './policy'
 import type {
   FabricActionIntent,
   FabricActionIntentInput,
@@ -24,18 +25,22 @@ const MAX_PAYLOAD_DEPTH = 8
 const MAX_PAYLOAD_ITEMS = 64
 const MAX_PAYLOAD_NODES = 4_096
 const MAX_PAYLOAD_STRING_BYTES = 8_192
-const SENSITIVE_STRING = /(?:\bBearer\s+\S+|\b(?:api[_ -]?key|access[_ -]?token|password|secret|credential)\s*[:=]\s*\S+|-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----|\b(?:postgres(?:ql)?|mysql|mongodb|redis|amqps?):\/\/|(?:^|[\s("'=])(?:[a-z]:[\\/]|\\\\|\/(?:etc|home|Users|usr|app|workspace|data|var|tmp|opt|root|mnt)\/))/i
+const SENSITIVE_STRING = /(?:\bBearer\s+\S+|\bsk-(?:proj-|live-|test-)?[A-Za-z0-9_-]{12,}|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}|\b(?:api[_ -]?key|access[_ -]?token|password|secret|credential)\s*[:=]\s*\S+|-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----|\b(?:postgres(?:ql)?|mysql|mongodb|redis|amqps?):\/\/|(?:^|[\s("'=])(?:[a-z]:[\\/]|\\\\|\/(?:etc|home|Users|usr|app|workspace|data|var|tmp|opt|root|mnt)\/))/i
 const CREDENTIAL_ROOTS = new Set([
   'auth', 'authentication', 'authorization', 'access', 'refresh', 'bearer', 'secret', 'credential',
   'credentials', 'password', 'passphrase', 'private', 'api', 'client', 'cookie', 'session',
-  'encryption', 'signing', 'service', 'account',
+  'encryption', 'signing', 'service', 'account', 'oauth',
 ])
 const CREDENTIAL_SUFFIXES = new Set([
-  'token', 'value', 'data', 'key', 'secret', 'credential', 'credentials', 'password', 'passphrase',
+  'token', 'value', 'data', 'key', 'secret', 'credential', 'credentials', 'password', 'passphrase', 'code',
 ])
 const ALWAYS_SENSITIVE_TOKENS = new Set([
   'token', 'secret', 'password', 'passphrase', 'bearer', 'authorization', 'credential', 'credentials',
-  'cookie', 'session', 'path', 'file', 'directory', 'dir', 'url', 'uri', 'dsn',
+  'cookie', 'session',
+])
+const DIRECT_CREDENTIAL_KEYS = new Set([
+  'auth', 'authentication', 'authorization', 'bearer', 'secret', 'credential', 'credentials',
+  'password', 'passphrase', 'cookie', 'session', 'token',
 ])
 const UNICODE_CREDENTIAL_KEYS = new Set(['私钥', '密码', '令牌', '凭据', '密钥', '访问令牌'])
 
@@ -52,8 +57,8 @@ const TRANSITIONS: Record<WorkflowAction, Partial<Record<FabricWorkflowState, Fa
   approve: { waiting_user: 'preparing' },
   reject: { waiting_user: 'cancelled' },
   cancel: {
-    draft: 'cancelled', policy_check: 'cancelled', preparing: 'cancelled', executing: 'cancelled',
-    verifying: 'cancelled', waiting_user: 'cancelled', retrying: 'cancelled', failed: 'cancelled',
+    draft: 'cancelled', policy_check: 'cancelled', preparing: 'cancelled',
+    waiting_user: 'cancelled', retrying: 'cancelled', failed: 'cancelled',
   },
   retry: { failed: 'retrying', dead_letter: 'retrying' },
   compensate: { succeeded: 'compensating' },
@@ -89,6 +94,7 @@ interface StepRow {
 }
 
 export function createFabricIntent(input: FabricActionIntentInput): FabricIntentResult {
+  validatePersistedMetadata(input)
   const payload = actionPayload(input)
   const decision = evaluateFabricPolicy(input)
   return withFabricAuditedTransaction(db => {
@@ -97,44 +103,7 @@ export function createFabricIntent(input: FabricActionIntentInput): FabricIntent
       if (existing.policy_decision_id !== decision.id) throw new Error('FABRIC_WORKFLOW_POLICY_CONFLICT')
       return resultForWorkflow(db, existing)
     }
-
-    const intent = requireIntent(db, decision.intentId)
-    const now = new Date().toISOString()
-    const workflowId = `workflow-${randomUUID()}`
-    const state: FabricWorkflowState = decision.outcome === 'deny'
-      ? 'denied'
-      : decision.outcome === 'waiting_user' ? 'waiting_user' : 'preparing'
-    const executorId = decision.outcome === 'deny' ? null : decision.executorId
-    db.prepare(`INSERT INTO fabric_workflows(
-      id,intent_id,executor_id,policy_decision_id,state,version,attempt,max_attempts,
-      lease_owner,lease_expires_at,retry_at,last_error_code,created_at,updated_at,completed_at
-    ) VALUES(?,?,?,?,?,0,0,3,NULL,NULL,NULL,NULL,?,?,?)`).run(
-      workflowId, intent.id, executorId, decision.id, state, now, now, state === 'denied' ? now : null,
-    )
-    if (decision.outcome !== 'deny') {
-      const stepState: FabricStepState = decision.outcome === 'waiting_user' ? 'waiting_user' : 'pending'
-      const contract = captureIntentContract(db, intent)
-      const stepInput = canonicalStringify({ ...payload, contract })
-      for (const [ordinal, kind] of ['prepare', 'execute', 'verify'].entries()) {
-        db.prepare(`INSERT INTO fabric_steps(
-          id,workflow_id,ordinal,kind,state,execution_token,executor_id,input_json,evidence_json,
-          attempt,created_at,updated_at
-        ) VALUES(?,?,?,?,?,?,?,?,'[]',0,?,?)`).run(
-          `step-${randomUUID()}`, workflowId, ordinal, kind, stepState, `execution-${randomUUID()}`,
-          executorId, stepInput, now, now,
-        )
-      }
-    }
-    bindBudgetReservation(db, decision.id, workflowId)
-    appendFabricAuditEvent(db, {
-      eventType: 'workflow.created', actorUserId: intent.requestedByUserId,
-      aggregateType: 'workflow', aggregateId: workflowId,
-      payload: { intentId: intent.id, decisionId: decision.id, state }, occurredAt: now,
-    })
-    appendFabricOutbox(db, 'fabric.workflow.created', workflowId, {
-      intentId: intent.id, decisionId: decision.id, state,
-    })
-    return resultForWorkflow(db, requireWorkflow(db, workflowId))
+    return createWorkflowInDb(db, decision, payload)
   })
 }
 
@@ -196,7 +165,24 @@ export function listFabricWorkflows(options: FabricWorkflowListOptions = {}): Fa
 }
 
 export function approveFabricWorkflow(id: string, actorUserId: string): FabricWorkflowDetail {
-  return transitionWorkflow(id, actorUserId, 'approve', null)
+  validateText(id, 200, 'FABRIC_WORKFLOW_INVALID_ID')
+  validateText(actorUserId, 200, 'FABRIC_WORKFLOW_INVALID_ACTOR')
+  const context = withActionFabricDb(db => approvalContext(db, id))
+  if (context.workflow.state !== 'waiting_user') throw new Error('FABRIC_WORKFLOW_INVALID_TRANSITION')
+  const request: FabricActionIntentInput = {
+    capabilityId: context.intent.capabilityId,
+    requestedByRoleId: context.intent.requestedByRoleId,
+    requestedByUserId: context.intent.requestedByUserId,
+    idempotencyKey: context.intent.idempotencyKey,
+    goal: 'Approve an Action Fabric workflow',
+    target: context.payload.target,
+    input: context.payload.actionInput,
+    constraints: context.payload.constraints,
+    rationale: 'User approval',
+    ...(context.intent.expectedCost === undefined ? {} : { expectedCost: context.intent.expectedCost }),
+  }
+  const fresh = evaluateFabricPolicy(request)
+  return withFabricAuditedTransaction(db => approveWorkflowInDb(db, id, actorUserId, context.decision, fresh))
 }
 
 export function rejectFabricWorkflow(id: string, actorUserId: string, reason: string): FabricWorkflowDetail {
@@ -223,7 +209,7 @@ export function requestFabricCompensation(id: string, actorUserId: string, reaso
   if (!context.contract.reversible || context.contract.compensationCapabilityId === null) {
     throw new Error('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
   }
-  const compensation = createFabricIntent({
+  const compensationInput: FabricActionIntentInput = {
     capabilityId: context.contract.compensationCapabilityId,
     requestedByRoleId: context.intent.requestedByRoleId,
     requestedByUserId: context.intent.requestedByUserId,
@@ -233,7 +219,10 @@ export function requestFabricCompensation(id: string, actorUserId: string, reaso
     input: { originalWorkflowId: id, originalExecutionReference: context.executeToken },
     constraints: { compensationForWorkflowId: id },
     rationale: reason,
-  })
+  }
+  validatePersistedMetadata(compensationInput)
+  const compensationPayload = actionPayload(compensationInput)
+  const compensationDecision = evaluateFabricPolicy(compensationInput)
   return withFabricAuditedTransaction(db => {
     const current = requireWorkflow(db, id)
     if (current.compensation_intent_id !== null) return detailForWorkflow(db, current)
@@ -244,23 +233,26 @@ export function requestFabricCompensation(id: string, actorUserId: string, reaso
       || verified.contract.compensationCapabilityId !== context.contract.compensationCapabilityId) {
       throw new Error('FABRIC_WORKFLOW_CONTRACT_STALE')
     }
-    const destination = compensation.policyDecision.outcome === 'deny' ? current.state : 'compensating'
+    const existingChild = selectWorkflowByIntent(db, compensationDecision.intentId)
+    if (existingChild) throw new Error('FABRIC_COMPENSATION_WORKFLOW_CONFLICT')
+    const compensation = createWorkflowInDb(db, compensationDecision, compensationPayload)
+    const destination = compensationDecision.outcome === 'deny' ? current.state : 'compensating'
     const now = new Date().toISOString()
     const result = db.prepare(`UPDATE fabric_workflows SET compensation_intent_id=?,state=?,version=version+1,
       updated_at=?,completed_at=? WHERE id=? AND version=? AND state='succeeded' AND compensation_intent_id IS NULL`).run(
-      compensation.intent.id, destination, now, destination === 'succeeded' ? current.completed_at : null,
+      compensationDecision.intentId, destination, now, destination === 'succeeded' ? current.completed_at : null,
       id, current.version,
     )
     if (result.changes !== 1) throw new Error('FABRIC_WORKFLOW_CONFLICT')
     appendFabricAuditEvent(db, {
       eventType: 'workflow.compensation_requested', actorUserId, aggregateType: 'workflow', aggregateId: id,
-      payload: { compensationIntentId: compensation.intent.id, compensationWorkflowId: compensation.workflow.id,
-        policyOutcome: compensation.policyDecision.outcome, from: current.state, to: destination, reason },
+      payload: { compensationIntentId: compensationDecision.intentId, compensationWorkflowId: compensation.workflow.id,
+        policyOutcome: compensationDecision.outcome, from: current.state, to: destination, reason },
       occurredAt: now,
     })
     appendFabricOutbox(db, 'fabric.workflow.compensation_requested', id, {
-      compensationIntentId: compensation.intent.id, compensationWorkflowId: compensation.workflow.id,
-      policyOutcome: compensation.policyDecision.outcome, from: current.state, to: destination,
+      compensationIntentId: compensationDecision.intentId, compensationWorkflowId: compensation.workflow.id,
+      policyOutcome: compensationDecision.outcome, from: current.state, to: destination,
     })
     return detailForWorkflow(db, requireWorkflow(db, id))
   })
@@ -277,16 +269,16 @@ function transitionWorkflow(
   if (reason !== null) validateText(reason, 2_000, 'FABRIC_WORKFLOW_INVALID_REASON')
   return withFabricAuditedTransaction(db => {
     const current = requireWorkflow(db, id)
+    if (action === 'cancel' && current.state === 'cancelled') return detailForWorkflow(db, current)
+    if (action === 'cancel' && (current.lease_owner !== null || hasActiveOrEffectfulStep(db, id))) {
+      throw new Error('FABRIC_WORKFLOW_INVALID_TRANSITION')
+    }
     const destination = TRANSITIONS[action][current.state]
     if (destination === undefined) {
       throw new Error(action === 'retry'
         ? 'FABRIC_WORKFLOW_NOT_RETRYABLE'
         : action === 'compensate' ? 'FABRIC_WORKFLOW_NOT_COMPENSATABLE' : 'FABRIC_WORKFLOW_INVALID_TRANSITION')
     }
-    const intent = requireIntent(db, current.intent_id)
-    const decision = current.policy_decision_id ? requireDecision(db, current.policy_decision_id) : null
-    if (action === 'approve') assertApprovalCurrent(db, intent, decision)
-
     const now = new Date().toISOString()
     const completedAt = isTerminal(destination) ? now : null
     const attempt = action === 'retry' ? current.attempt + 1 : current.attempt
@@ -297,6 +289,7 @@ function transitionWorkflow(
     )
     if (result.changes !== 1) throw new Error('FABRIC_WORKFLOW_CONFLICT')
     updateStepsForAction(db, id, action, now)
+    if (action === 'reject' || action === 'cancel') releaseWorkflowBudgetInDb(db, current, now)
     appendFabricAuditEvent(db, {
       eventType: 'workflow.transitioned', actorUserId, aggregateType: 'workflow', aggregateId: id,
       payload: { action, from: current.state, to: destination, ...(reason === null ? {} : { reason }) },
@@ -309,23 +302,136 @@ function transitionWorkflow(
   })
 }
 
-function assertApprovalCurrent(
+function hasActiveOrEffectfulStep(db: DatabaseSync, workflowId: string): boolean {
+  return db.prepare(`SELECT 1 FROM fabric_steps WHERE workflow_id=?
+    AND (state='running' OR (ordinal>=1 AND state IN ('succeeded','compensated'))) LIMIT 1`).get(workflowId) !== undefined
+}
+
+function releaseWorkflowBudgetInDb(db: DatabaseSync, workflow: WorkflowRow, now: string): void {
+  if (!workflow.policy_decision_id) return
+  const ledger = db.prepare(`SELECT id,status FROM fabric_budget_ledger
+    WHERE decision_id=? AND workflow_id=? ORDER BY created_at LIMIT 1`).get(
+    workflow.policy_decision_id, workflow.id,
+  ) as { id: string; status: string } | undefined
+  if (!ledger || ledger.status !== 'reserved') return
+  db.prepare(`UPDATE fabric_budget_ledger SET status='released',updated_at=?
+    WHERE id=? AND status='reserved'`).run(now, ledger.id)
+  const intent = requireIntent(db, workflow.intent_id)
+  appendFabricAuditEvent(db, { eventType: 'budget.released', actorUserId: intent.requestedByUserId,
+    aggregateType: 'workflow', aggregateId: workflow.id, payload: {}, occurredAt: now })
+  appendFabricOutbox(db, 'fabric.budget.released', workflow.id, {})
+}
+
+function approvalContext(db: DatabaseSync, id: string): {
+  workflow: WorkflowRow
+  intent: FabricActionIntent
+  decision: FabricPolicyDecision
+  payload: ActionPayload
+} {
+  const workflow = requireWorkflow(db, id)
+  const intent = requireIntent(db, workflow.intent_id)
+  if (!workflow.policy_decision_id) throw new Error('FABRIC_WORKFLOW_APPROVAL_STALE')
+  const decision = parseDecision(requireDecision(db, workflow.policy_decision_id))
+  const prepare = db.prepare(`SELECT input_json FROM fabric_steps
+    WHERE workflow_id=? AND ordinal=0 AND kind='prepare'`).get(id) as { input_json: string } | undefined
+  if (!prepare) throw new Error('FABRIC_WORKFLOW_APPROVAL_STALE')
+  const stored = parseObject(prepare.input_json) as Record<string, unknown>
+  if (!isJsonObject(stored.actionInput) || !isJsonObject(stored.target) || !isJsonObject(stored.constraints)) {
+    throw new Error('FABRIC_WORKFLOW_APPROVAL_STALE')
+  }
+  return { workflow, intent, decision,
+    payload: { actionInput: stored.actionInput, target: stored.target, constraints: stored.constraints } }
+}
+
+function approveWorkflowInDb(
   db: DatabaseSync,
+  id: string,
+  actorUserId: string,
+  original: FabricPolicyDecision,
+  fresh: FabricPolicyDecision,
+): FabricWorkflowDetail {
+  const current = requireWorkflow(db, id)
+  const intent = requireIntent(db, current.intent_id)
+  if (current.state !== 'waiting_user' || current.policy_decision_id !== original.id
+    || original.outcome !== 'waiting_user' || original.policyVersion !== SUPPORTED_POLICY_VERSION
+    || original.materialInputDigest !== intent.materialInputDigest
+    || fresh.intentId !== intent.id || fresh.materialInputDigest !== intent.materialInputDigest
+    || fresh.policyVersion !== SUPPORTED_POLICY_VERSION || fresh.executorId !== original.executorId
+    || fresh.outcome === 'deny' || !sameProtectedAuthorization(original, fresh)) {
+    throw new Error('FABRIC_WORKFLOW_APPROVAL_STALE')
+  }
+  try {
+    revalidateFabricDecisionInDb(db, fresh.id)
+  } catch (error) {
+    if (error instanceof Error && /^FABRIC_POLICY_STALE_/.test(error.message)) {
+      throw new Error('FABRIC_WORKFLOW_APPROVAL_STALE')
+    }
+    throw error
+  }
+  const now = new Date().toISOString()
+  reserveApprovalBudgetInDb(db, fresh, current.id, intent, now)
+  const result = db.prepare(`UPDATE fabric_workflows SET state='preparing',version=version+1,
+    executor_id=?,policy_decision_id=?,lease_owner=NULL,lease_expires_at=NULL,retry_at=NULL,
+    last_error_code=NULL,updated_at=?,completed_at=NULL WHERE id=? AND version=? AND state='waiting_user'`).run(
+    fresh.executorId, fresh.id, now, id, current.version,
+  )
+  if (result.changes !== 1) throw new Error('FABRIC_WORKFLOW_CONFLICT')
+  updateStepsForAction(db, id, 'approve', now)
+  appendFabricAuditEvent(db, { eventType: 'workflow.transitioned', actorUserId,
+    aggregateType: 'workflow', aggregateId: id,
+    payload: { action: 'approve', from: 'waiting_user', to: 'preparing', policyDecisionId: fresh.id }, occurredAt: now })
+  appendFabricOutbox(db, 'fabric.workflow.transitioned', id,
+    { action: 'approve', from: 'waiting_user', to: 'preparing', policyDecisionId: fresh.id })
+  return detailForWorkflow(db, requireWorkflow(db, id))
+}
+
+function sameProtectedAuthorization(original: FabricPolicyDecision, fresh: FabricPolicyDecision): boolean {
+  const keys = ['roleDigest', 'registryPolicyEvaluationToken', 'controlVersion'] as const
+  return keys.every(key => original.policySnapshot[key] === fresh.policySnapshot[key])
+}
+
+function reserveApprovalBudgetInDb(
+  db: DatabaseSync,
+  decision: FabricPolicyDecision,
+  workflowId: string,
   intent: FabricActionIntent,
-  decision: DecisionRow | null,
+  now: string,
 ): void {
-  if (!decision || decision.outcome !== 'waiting_user'
-    || decision.policy_version !== SUPPORTED_POLICY_VERSION
-    || decision.material_input_digest !== intent.materialInputDigest) {
+  if (!decision.budget || decision.budget.amountMinor <= 0) return
+  const role = getAssistantRole(intent.requestedByRoleId)
+  if (!role || role.spendingLimits.currency !== decision.budget.currency
+    || decision.budget.amountMinor > role.spendingLimits.perAction) throw new Error('FABRIC_WORKFLOW_APPROVAL_STALE')
+  const ledgerDate = now.slice(0, 10)
+  const existing = db.prepare(`SELECT id,workflow_id,status,ledger_date FROM fabric_budget_ledger
+    WHERE decision_id=? ORDER BY created_at LIMIT 1`).get(decision.id) as
+    { id: string; workflow_id: string | null; status: string; ledger_date: string } | undefined
+  if (existing && (existing.status !== 'reserved'
+    || (existing.workflow_id !== null && existing.workflow_id !== workflowId)
+    || existing.ledger_date !== ledgerDate)) throw new Error('FABRIC_WORKFLOW_APPROVAL_STALE')
+  const total = db.prepare(`SELECT COALESCE(SUM(amount_minor),0) AS total FROM fabric_budget_ledger
+    WHERE requested_by_user_id=? AND requested_by_role_id=? AND ledger_date=? AND currency=?
+      AND status IN ('reserved','committed') AND decision_id<>?`).get(
+    intent.requestedByUserId, intent.requestedByRoleId, ledgerDate, decision.budget.currency, decision.id,
+  ) as { total: number }
+  if (total.total + decision.budget.amountMinor > role.spendingLimits.daily) {
     throw new Error('FABRIC_WORKFLOW_APPROVAL_STALE')
   }
-  const latest = db.prepare(`SELECT id, policy_version, material_input_digest FROM fabric_policy_decisions
-    WHERE intent_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(intent.id) as
-    { id: string; policy_version: number; material_input_digest: string } | undefined
-  if (!latest || latest.id !== decision.id || latest.policy_version !== decision.policy_version
-    || latest.material_input_digest !== intent.materialInputDigest) {
-    throw new Error('FABRIC_WORKFLOW_APPROVAL_STALE')
+  if (existing) {
+    db.prepare('UPDATE fabric_budget_ledger SET workflow_id=?,updated_at=? WHERE id=?')
+      .run(workflowId, now, existing.id)
+  } else {
+    db.prepare(`INSERT INTO fabric_budget_ledger(id,decision_id,workflow_id,requested_by_user_id,
+      requested_by_role_id,ledger_date,currency,amount_minor,status,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?, 'reserved',?,?)`).run(
+      `budget-${randomUUID()}`, decision.id, workflowId, intent.requestedByUserId, intent.requestedByRoleId,
+      ledgerDate, decision.budget.currency, decision.budget.amountMinor, now, now,
+    )
   }
+  appendFabricAuditEvent(db, { eventType: 'budget.reserved', actorUserId: intent.requestedByUserId,
+    aggregateType: 'workflow', aggregateId: workflowId,
+    payload: { currency: decision.budget.currency, amountMinor: decision.budget.amountMinor, ledgerDate }, occurredAt: now })
+  appendFabricOutbox(db, 'fabric.budget.reserved', workflowId,
+    { currency: decision.budget.currency, amountMinor: decision.budget.amountMinor, ledgerDate })
 }
 
 function updateStepsForAction(db: DatabaseSync, workflowId: string, action: WorkflowAction, now: string): void {
@@ -392,13 +498,63 @@ function compensationContext(db: DatabaseSync, id: string): {
     executeToken: execute.execution_token }
 }
 
-function bindBudgetReservation(db: DatabaseSync, decisionId: string, workflowId: string): void {
-  const ledger = db.prepare('SELECT workflow_id FROM fabric_budget_ledger WHERE decision_id=?').get(decisionId) as
-    { workflow_id: string | null } | undefined
-  if (!ledger) return
+function createWorkflowInDb(
+  db: DatabaseSync,
+  decision: FabricPolicyDecision,
+  payload: ActionPayload,
+): FabricIntentResult {
+  const intent = requireIntent(db, decision.intentId)
+  const now = new Date().toISOString()
+  const workflowId = `workflow-${randomUUID()}`
+  const state: FabricWorkflowState = decision.outcome === 'deny'
+    ? 'denied'
+    : decision.outcome === 'waiting_user' ? 'waiting_user' : 'preparing'
+  const executorId = decision.outcome === 'deny' ? null : decision.executorId
+  db.prepare(`INSERT INTO fabric_workflows(
+    id,intent_id,executor_id,policy_decision_id,state,version,attempt,max_attempts,
+    lease_owner,lease_expires_at,retry_at,last_error_code,created_at,updated_at,completed_at
+  ) VALUES(?,?,?,?,?,0,0,3,NULL,NULL,NULL,NULL,?,?,?)`).run(
+    workflowId, intent.id, executorId, decision.id, state, now, now, state === 'denied' ? now : null,
+  )
+  if (decision.outcome !== 'deny') {
+    const stepState: FabricStepState = decision.outcome === 'waiting_user' ? 'waiting_user' : 'pending'
+    const contract = captureIntentContract(db, intent)
+    const stepInput = canonicalStringify({ ...payload, contract })
+    for (const [ordinal, kind] of ['prepare', 'execute', 'verify'].entries()) {
+      db.prepare(`INSERT INTO fabric_steps(
+        id,workflow_id,ordinal,kind,state,execution_token,executor_id,input_json,evidence_json,
+        attempt,created_at,updated_at
+      ) VALUES(?,?,?,?,?,?,?,?,'[]',0,?,?)`).run(
+        `step-${randomUUID()}`, workflowId, ordinal, kind, stepState, `execution-${randomUUID()}`,
+        executorId, stepInput, now, now,
+      )
+    }
+  }
+  bindBudgetReservation(db, decision, workflowId)
+  appendFabricAuditEvent(db, {
+    eventType: 'workflow.created', actorUserId: intent.requestedByUserId,
+    aggregateType: 'workflow', aggregateId: workflowId,
+    payload: { intentId: intent.id, decisionId: decision.id, state }, occurredAt: now,
+  })
+  appendFabricOutbox(db, 'fabric.workflow.created', workflowId, {
+    intentId: intent.id, decisionId: decision.id, state,
+  })
+  return resultForWorkflow(db, requireWorkflow(db, workflowId))
+}
+
+function bindBudgetReservation(db: DatabaseSync, decision: FabricPolicyDecision, workflowId: string): void {
+  const ledger = db.prepare('SELECT workflow_id,status FROM fabric_budget_ledger WHERE decision_id=?').get(decision.id) as
+    { workflow_id: string | null; status: string } | undefined
+  if (!ledger) {
+    if (decision.outcome === 'allow' && decision.budget && decision.budget.amountMinor > 0) {
+      throw new Error('FABRIC_BUDGET_RESERVATION_MISSING')
+    }
+    return
+  }
+  if (ledger.status !== 'reserved') throw new Error('FABRIC_BUDGET_NOT_RESERVABLE')
   if (ledger.workflow_id !== null && ledger.workflow_id !== workflowId) throw new Error('FABRIC_BUDGET_OWNERSHIP_CONFLICT')
   db.prepare(`UPDATE fabric_budget_ledger SET workflow_id=?,updated_at=?
-    WHERE decision_id=? AND workflow_id IS NULL`).run(workflowId, new Date().toISOString(), decisionId)
+    WHERE decision_id=? AND workflow_id IS NULL`).run(workflowId, new Date().toISOString(), decision.id)
 }
 
 function resultForWorkflow(db: DatabaseSync, workflow: WorkflowRow): FabricIntentResult {
@@ -501,6 +657,14 @@ function actionPayload(input: FabricActionIntentInput): ActionPayload {
   return payload as unknown as ActionPayload
 }
 
+function validatePersistedMetadata(input: FabricActionIntentInput): void {
+  for (const value of [input.capabilityId, input.requestedByRoleId, input.requestedByUserId, input.idempotencyKey]) {
+    if (typeof value === 'string' && SENSITIVE_STRING.test(value)) {
+      throw new Error('FABRIC_WORKFLOW_SENSITIVE_PAYLOAD')
+    }
+  }
+}
+
 function strictJson(value: unknown, depth: number, budget: { nodes: number }): unknown {
   budget.nodes += 1
   if (budget.nodes > MAX_PAYLOAD_NODES || depth > MAX_PAYLOAD_DEPTH) throw new Error('FABRIC_WORKFLOW_PAYLOAD_LIMIT')
@@ -569,7 +733,7 @@ function isSensitivePayloadKey(key: string): boolean {
     .filter(Boolean)
   if (tokens.length === 0) return false
   if (tokens.some(token => ALWAYS_SENSITIVE_TOKENS.has(token))) return true
-  if (tokens.length === 1 && CREDENTIAL_ROOTS.has(tokens[0])) return true
+  if (tokens.length === 1 && DIRECT_CREDENTIAL_KEYS.has(tokens[0])) return true
   for (let index = 0; index < tokens.length - 1; index += 1) {
     if (CREDENTIAL_ROOTS.has(tokens[index]) && CREDENTIAL_SUFFIXES.has(tokens[index + 1])) return true
   }
