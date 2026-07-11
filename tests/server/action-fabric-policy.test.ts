@@ -320,6 +320,9 @@ describe('Action Fabric role policy', () => {
     attachWorkflow(owned, 'wf-owned')
     expect(evaluateFabricPolicy(ownedRequest).id).toBe(owned.id)
     expect(() => reserveFabricBudget(owned.id)).toThrow('FABRIC_BUDGET_OWNERSHIP_CONFLICT')
+    const ownedConflict = evaluateFabricPolicy({ ...ownedRequest, input: { message: 'changed' } })
+    expect(ownedConflict).toMatchObject({ outcome: 'deny', reasonCodes: ['material_input_changed'] })
+    expect(() => reserveFabricBudget(owned.id)).toThrow('FABRIC_BUDGET_OWNERSHIP_CONFLICT')
   }, 20_000)
 
   it('persists and audits one immutable material conflict decision that cannot reserve', () => {
@@ -338,9 +341,45 @@ describe('Action Fabric role policy', () => {
     expect(withActionFabricDb(db => db.prepare('SELECT outcome,reason_codes_json FROM fabric_policy_decisions WHERE id=?').get(conflict.id)))
       .toEqual({ outcome: 'deny', reason_codes_json: '["material_input_changed"]' })
     expect(withActionFabricDb(db => (db.prepare('SELECT COUNT(*) AS count FROM fabric_audit_events').get() as { count: number }).count))
-      .toBe(auditBefore + 1)
+      .toBe(auditBefore + 2)
     expect(() => reserveFabricBudget(conflict.id)).toThrow('FABRIC_BUDGET_NOT_RESERVABLE')
-    expect(evaluateFabricPolicy(conflictRequest).id).toBe(conflict.id)
+    expect(() => reserveFabricBudget(original.id)).toThrow('FABRIC_BUDGET_ALREADY_RELEASED')
+    expect(withActionFabricDb(db => db.prepare('SELECT status FROM fabric_budget_ledger WHERE decision_id=?').get(original.id)))
+      .toEqual({ status: 'released' })
+    const countsAfterConflict = withActionFabricDb(db => ({
+      decisions: (db.prepare('SELECT COUNT(*) AS count FROM fabric_policy_decisions').get() as { count: number }).count,
+      audit: (db.prepare('SELECT COUNT(*) AS count FROM fabric_audit_events').get() as { count: number }).count,
+      outbox: (db.prepare('SELECT COUNT(*) AS count FROM fabric_outbox').get() as { count: number }).count,
+    }))
+    const variants = [
+      conflictRequest,
+      { ...conflictRequest, input: { value: 3 } },
+      conflictRequest,
+      { ...conflictRequest, input: { value: 4 } },
+      intent('health-manager', { capabilityId: 'simulator.conflict', idempotencyKey: 'conflict-key', input: { value: 1 } }),
+    ]
+    for (const variant of variants) expect(evaluateFabricPolicy(variant).id).toBe(conflict.id)
+    expect(withActionFabricDb(db => ({
+      decisions: (db.prepare('SELECT COUNT(*) AS count FROM fabric_policy_decisions').get() as { count: number }).count,
+      audit: (db.prepare('SELECT COUNT(*) AS count FROM fabric_audit_events').get() as { count: number }).count,
+      outbox: (db.prepare('SELECT COUNT(*) AS count FROM fabric_outbox').get() as { count: number }).count,
+    }))).toEqual(countsAfterConflict)
+  }, 15_000)
+
+  it('never recreates a missing atomic reservation even when later reservations fill the daily limit', () => {
+    registerCapability('simulator.missing-ledger', 'low', 'USD', 5)
+    configureRole({ allow: ['simulator.missing-ledger'], spendingLimits: { currency: 'USD', perAction: 10, daily: 10 } })
+    const old = evaluateFabricPolicy(intent('health-manager', {
+      capabilityId: 'simulator.missing-ledger', idempotencyKey: 'missing-old',
+    }))
+    withActionFabricDb(db => db.prepare('DELETE FROM fabric_budget_ledger WHERE decision_id=?').run(old.id))
+    const filler = evaluateFabricPolicy(intent('health-manager', {
+      capabilityId: 'simulator.missing-ledger', idempotencyKey: 'filler', expectedCost: { currency: 'USD', amountMinor: 10 },
+    }))
+    expect(filler.outcome).toBe('allow')
+    expect(() => reserveFabricBudget(old.id)).toThrow('FABRIC_BUDGET_RESERVATION_MISSING')
+    expect(withActionFabricDb(db => db.prepare('SELECT COUNT(*) AS count FROM fabric_budget_ledger WHERE decision_id=?').get(old.id)))
+      .toEqual({ count: 0 })
   }, 15_000)
 })
 

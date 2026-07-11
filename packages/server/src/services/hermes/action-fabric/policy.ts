@@ -73,9 +73,20 @@ export function evaluateFabricPolicy(input: FabricPolicyInput, options: FabricPo
     ) as { id: string; material_input_digest: string } | undefined
     const intentId = existing?.id ?? `intent-${randomUUID()}`
     const previous = existing ? latestDecisionForIntent(db, intentId) : undefined
+    const poison = existing ? materialConflictForIntent(db, intentId) : undefined
+    if (poison) return parseDecision(poison)
     if (existing?.material_input_digest !== undefined && existing.material_input_digest !== materialInputDigest) {
-      if (previous?.material_input_digest === materialInputDigest
-        && parseReasons(previous).includes('material_input_changed')) return parseDecision(previous)
+      const invalidated = db.prepare(`UPDATE fabric_budget_ledger SET status='released',updated_at=?
+        WHERE status='reserved' AND workflow_id IS NULL AND decision_id IN (
+          SELECT id FROM fabric_policy_decisions WHERE intent_id=? AND outcome='allow'
+        )`).run(now, intentId).changes
+      if (invalidated > 0) {
+        appendFabricAuditEvent(db, { eventType: 'budget.authorization.invalidated',
+          actorUserId: input.requestedByUserId, aggregateType: 'intent', aggregateId: intentId,
+          payload: { releasedReservations: invalidated, reason: 'material_input_changed' }, occurredAt: now })
+        appendFabricOutbox(db, 'fabric.budget.authorization.invalidated', intentId,
+          { releasedReservations: invalidated, reason: 'material_input_changed' })
+      }
       return persistDenyDecision(db, { intentId, executorId: resolution?.executor.id ?? null,
         reason: 'material_input_changed', materialInputDigest, snapshot, sanitizedSummary,
         actorUserId: input.requestedByUserId, now })
@@ -190,10 +201,7 @@ export function reserveFabricBudget(decisionId: string): FabricBudgetReservation
       if (existing.workflow_id !== null) throw new Error('FABRIC_BUDGET_OWNERSHIP_CONFLICT')
       return parseLedger(existing)
     }
-    const now = new Date().toISOString()
-    return parseLedger(insertReservation(db, decisionId, {
-      requestedByUserId: intent.requested_by_user_id, requestedByRoleId: intent.requested_by_role_id,
-    }, { currency: decision.budget_currency, amountMinor: decision.budget_amount_minor }, utcDate(new Date()), now))
+    throw new Error('FABRIC_BUDGET_RESERVATION_MISSING')
   })
 }
 
@@ -408,15 +416,13 @@ function latestDecisionForIntent(db: DatabaseSync, intentId: string): DecisionRo
     ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(intentId) as unknown as DecisionRow | undefined
 }
 
-function sameSnapshot(decision: DecisionRow, snapshot: Record<string, unknown>): boolean {
-  try { return stableStringify(JSON.parse(decision.policy_snapshot_json)) === stableStringify(snapshot) } catch { return false }
+function materialConflictForIntent(db: DatabaseSync, intentId: string): DecisionRow | undefined {
+  return db.prepare(`SELECT * FROM fabric_policy_decisions WHERE intent_id=? AND outcome='deny'
+    AND reason_codes_json='["material_input_changed"]' ORDER BY created_at ASC, rowid ASC LIMIT 1`).get(intentId) as unknown as DecisionRow | undefined
 }
 
-function parseReasons(decision: DecisionRow): string[] {
-  try {
-    const reasons: unknown = JSON.parse(decision.reason_codes_json)
-    return Array.isArray(reasons) && reasons.every(item => typeof item === 'string') ? reasons : []
-  } catch { return [] }
+function sameSnapshot(decision: DecisionRow, snapshot: Record<string, unknown>): boolean {
+  try { return stableStringify(JSON.parse(decision.policy_snapshot_json)) === stableStringify(snapshot) } catch { return false }
 }
 
 function persistDenyDecision(db: DatabaseSync, input: {
