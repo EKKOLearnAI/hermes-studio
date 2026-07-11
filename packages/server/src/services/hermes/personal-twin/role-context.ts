@@ -333,9 +333,11 @@ export function renderRoleContext(bundle: RoleContextBundle): string {
     lines.push('', `## ${section[0].toUpperCase()}${section.slice(1)}`)
     for (const record of bundle.sections[section]) lines.push(stableJson(record))
   }
-  const references = SECTION_ORDER.flatMap(section =>
-    (bundle.sourceRecordIds[section] ?? []).map(referenceId => ({ section, referenceId })),
-  )
+  const references = bundle.appliedScope.includeProvenance
+    ? SECTION_ORDER.flatMap(section =>
+        (bundle.sourceRecordIds[section] ?? []).map(referenceId => ({ section, referenceId })),
+      )
+    : []
   if (references.length) {
     lines.push('', '## Provenance References')
     references.forEach(reference => lines.push(stableJson(reference)))

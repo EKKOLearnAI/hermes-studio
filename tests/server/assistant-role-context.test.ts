@@ -117,8 +117,8 @@ describe('assistant role context engine', () => {
     expect(serialized).toContain('theme')
     expect(serialized).not.toMatch(/password|credentials|token|apiKey|databasePath|dbPath|private-source|private-id/i)
     expect(bundle.sourceRecordIds.goals).toHaveLength(1)
-    expect(bundle.renderedInstructions).toContain('## Provenance References')
-    expect(bundle.renderedInstructions).toContain(bundle.sourceRecordIds.goals![0])
+    expect(bundle.renderedInstructions).not.toContain('## Provenance References')
+    expect(bundle.renderedInstructions).not.toContain(bundle.sourceRecordIds.goals![0])
   })
 
   it('redacts schema-aware secret key/value tuples while retaining benign settings under a safe label', async () => {
