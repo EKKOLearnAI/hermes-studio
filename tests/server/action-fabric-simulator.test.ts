@@ -74,6 +74,66 @@ describe('Action Fabric simulator executors', () => {
       .resolves.toMatchObject({ output: { counter: 'jobs', value: 2 } })
   })
 
+  it('binds an execution token to capability and canonical material input', async () => {
+    registerFabricExecutorAdapter(createSimulatorExecutorAdapter())
+    const original = executionContext('simulator.counter.increment', 'bound-token', { counter: 'jobs', amount: 2 })
+    await expect(invokeFabricExecutor('execute', original)).resolves.toMatchObject({ output: { value: 2 } })
+    await expect(invokeFabricExecutor('execute', { ...original, input: { amount: 2, counter: 'jobs' } }))
+      .resolves.toMatchObject({ outcome: 'succeeded', output: { value: 2 } })
+
+    await expect(invokeFabricExecutor('execute', { ...original, input: { amount: 9, counter: 'jobs' } }))
+      .resolves.toMatchObject({
+        outcome: 'permanent_failure', errorCode: 'SIMULATOR_EXECUTION_TOKEN_CONFLICT', safeToRetry: false,
+      })
+    await expect(invokeFabricExecutor('execute', executionContext('simulator.echo', 'bound-token', { amount: 2 })))
+      .resolves.toMatchObject({ outcome: 'permanent_failure', errorCode: 'SIMULATOR_EXECUTION_TOKEN_CONFLICT' })
+    await expect(invokeFabricExecutor('execute', original)).resolves.toMatchObject({ output: { value: 2 } })
+  })
+
+  it('clears retryable temporary outcomes but preserves single-flight execution', async () => {
+    let attempts = 0
+    registerFabricExecutorAdapter(createSimulatorExecutorAdapter({
+      faultFor: (_context, phase) => phase === 'execute' && attempts++ === 0 ? 'temporary_failure' : null,
+    }))
+    const context = executionContext('simulator.echo', 'recoverable-token', { message: 'recover' })
+    const firstPair = await Promise.all([
+      invokeFabricExecutor('execute', context), invokeFabricExecutor('execute', context),
+    ])
+    expect(firstPair).toEqual([
+      expect.objectContaining({ outcome: 'temporary_failure', safeToRetry: true }),
+      expect.objectContaining({ outcome: 'temporary_failure', safeToRetry: true }),
+    ])
+    await expect(invokeFabricExecutor('execute', context))
+      .resolves.toMatchObject({ outcome: 'succeeded', output: { message: 'recover' } })
+    expect(attempts).toBe(2)
+  })
+
+  it('normalizes a rejected execution promise to a cached unknown outcome', async () => {
+    let attempts = 0
+    registerFabricExecutorAdapter(createSimulatorExecutorAdapter({
+      faultFor: () => { attempts += 1; throw new Error('raw provider failure') },
+    }))
+    const context = executionContext('simulator.echo', 'rejected-token', { message: 'unknown' })
+    const first = await invokeFabricExecutor('execute', context)
+    const replay = await invokeFabricExecutor('execute', context)
+    expect(first).toMatchObject({
+      outcome: 'unknown', errorCode: 'SIMULATOR_EXECUTION_EXCEPTION', safeToRetry: false,
+    })
+    expect(replay).toEqual(first)
+    expect(attempts).toBe(1)
+  })
+
+  it('fails closed at the token cache bound without evicting completed side effects', async () => {
+    registerFabricExecutorAdapter(createSimulatorExecutorAdapter({ maxExecutionTokens: 1 }))
+    const first = executionContext('simulator.counter.increment', 'capacity-one', { counter: 'jobs', amount: 1 })
+    await expect(invokeFabricExecutor('execute', first)).resolves.toMatchObject({ output: { value: 1 } })
+    await expect(invokeFabricExecutor('execute', { ...first, executionToken: 'capacity-two' }))
+      .resolves.toMatchObject({
+        outcome: 'permanent_failure', errorCode: 'SIMULATOR_EXECUTION_CACHE_FULL', safeToRetry: false,
+      })
+    await expect(invokeFabricExecutor('execute', first)).resolves.toMatchObject({ output: { value: 1 } })
+  })
+
   it.each([
     ['temporary_failure', 'temporary_failure', true],
     ['permanent_failure', 'permanent_failure', false],
@@ -105,6 +165,38 @@ describe('Action Fabric simulator executors', () => {
     expect(result).toMatchObject({ outcome: 'unknown', safeToRetry: false, errorCode: 'FABRIC_EXECUTOR_EXCEPTION' })
     expect(JSON.stringify(result)).not.toContain('hunter2')
     expect(JSON.stringify(result)).not.toContain('C:\\Users\\Alice')
+  })
+
+  it.each([
+    ['prepare', { outcome: 'succeeded', errorCode: null, safeToRetry: false }],
+    ['execute', { outcome: 'succeeded', errorCode: 'SHOULD_NOT_SURVIVE', safeToRetry: false }],
+    ['verify', { outcome: 'verified', errorCode: null, safeToRetry: true }],
+    ['interrupt', { outcome: 'failed', errorCode: null, safeToRetry: false }],
+    ['compensate', { outcome: 'compensated', errorCode: null, safeToRetry: true }],
+  ] as const)('normalizes invalid %s adapter result combinations to contract violation', async (phase, invalid) => {
+    registerFabricExecutorAdapter(adapterWithRawPhaseResult(phase, invalid))
+    const result = await (invokeFabricExecutor as (
+      selectedPhase: typeof phase, context: FabricExecutionContext,
+    ) => Promise<{ errorCode: string | null; safeToRetry: boolean; evidence: unknown[] }>)(
+      phase, executionContext('simulator.echo', `invalid-${phase}`, {}),
+    )
+    expect(result).toMatchObject({
+      errorCode: 'FABRIC_EXECUTOR_CONTRACT_VIOLATION', safeToRetry: false,
+    })
+    expect(result.evidence).toEqual([expect.objectContaining({
+      kind: 'executor_contract', summary: 'Executor returned an invalid result', data: {},
+    })])
+    expect(JSON.stringify(result)).not.toContain('SHOULD_NOT_SURVIVE')
+  })
+
+  it('permits retry only for execute temporary failures', async () => {
+    registerFabricExecutorAdapter(adapterWithRawPhaseResult('execute', {
+      outcome: 'temporary_failure', errorCode: 'SIMULATOR_TEMPORARY_FAILURE', safeToRetry: true,
+    }))
+    await expect(invokeFabricExecutor('execute', executionContext('simulator.echo', 'valid-retry', {})))
+      .resolves.toMatchObject({
+        outcome: 'temporary_failure', errorCode: 'SIMULATOR_TEMPORARY_FAILURE', safeToRetry: true,
+      })
   })
 
   it('bounds hostile evidence without invoking accessors and redacts secrets and paths', async () => {
@@ -158,6 +250,45 @@ describe('Action Fabric simulator executors', () => {
         ['ordinary', { value: '[REDACTED]' }, ['[REDACTED]', '[REDACTED]']],
       ],
     })
+  })
+
+  it('shares one UTF-8 evidence budget across kind, summary, and every evidence data object', async () => {
+    const adapter = successfulAdapter({})
+    const evidence = Array.from({ length: 16 }, (_, index) => ({
+      kind: `kind-${index}-${'界'.repeat(400)}`,
+      summary: `summary-${index}-${'界'.repeat(600)}`,
+      data: { value: `data-${index}-${'界'.repeat(1_500)}` },
+    }))
+    adapter.execute = async () => ({ outcome: 'succeeded', output: {}, evidence, errorCode: null, safeToRetry: false })
+    registerFabricExecutorAdapter(adapter)
+
+    const result = await invokeFabricExecutor('execute', executionContext('simulator.echo', 'evidence-budget', {}))
+    expect(result.outcome).toBe('succeeded')
+    expect(Buffer.byteLength(JSON.stringify(result.evidence), 'utf8')).toBeLessThanOrEqual(24_000)
+    expect(JSON.stringify(result.evidence)).toContain('_truncated')
+  })
+
+  it('rejects proxy evidence before traps and bounds huge enumerable objects without reading accessors', async () => {
+    let proxyTraps = 0
+    const proxy = new Proxy({}, {
+      ownKeys: () => { proxyTraps += 1; return ['secret'] },
+      getOwnPropertyDescriptor: () => { proxyTraps += 1; return { enumerable: true, configurable: true, value: 'leak' } },
+    })
+    let getterCalls = 0
+    const huge: Record<string, unknown> = {}
+    for (let index = 0; index < 100_000; index += 1) huge[`key-${index}`] = index
+    Object.defineProperty(huge, 'hidden', { value: 'not-enumerable', enumerable: false })
+    Object.defineProperty(huge, 'getter', { enumerable: true, get: () => { getterCalls += 1; return 'leak' } })
+    registerFabricExecutorAdapter(successfulAdapter({ proxy, huge }))
+
+    const result = await invokeFabricExecutor('execute', executionContext('simulator.echo', 'bounded-object', {}))
+    expect(proxyTraps).toBe(0)
+    expect(getterCalls).toBe(0)
+    expect(result.evidence[0]?.data.proxy).toBe('[REDACTED]')
+    const bounded = result.evidence[0]?.data.huge as Record<string, unknown>
+    expect(Object.keys(bounded).length).toBeLessThanOrEqual(65)
+    expect(bounded).toHaveProperty('_truncated', true)
+    expect(bounded).not.toHaveProperty('hidden')
   })
 
   it('rejects adapter replacement and unsupported real executor types', () => {
@@ -233,4 +364,15 @@ function successfulAdapter(evidenceData: Record<string, unknown>): FabricExecuto
 function throwingAdapter(): FabricExecutorAdapter {
   const adapter = successfulAdapter({})
   return { ...adapter, execute: async () => { throw new Error('password=hunter2 at C:\\Users\\Alice\\secret.txt') } }
+}
+
+function adapterWithRawPhaseResult(
+  phase: 'prepare' | 'execute' | 'verify' | 'interrupt' | 'compensate',
+  result: { outcome: string; errorCode: string | null; safeToRetry: boolean },
+): FabricExecutorAdapter {
+  const adapter = successfulAdapter({}) as unknown as Record<string, unknown>
+  adapter[phase] = async () => ({ ...result, output: {}, evidence: [{
+    kind: 'raw', summary: 'invalid SHOULD_NOT_SURVIVE', data: { raw: 'SHOULD_NOT_SURVIVE' },
+  }] })
+  return adapter as unknown as FabricExecutorAdapter
 }

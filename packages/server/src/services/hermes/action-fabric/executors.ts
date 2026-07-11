@@ -1,3 +1,4 @@
+import { isProxy } from 'node:util/types'
 import type { FabricEvidence, FabricExecutorType, FabricJsonObject } from './types'
 import { resolveFabricExecutor } from './registry'
 import { isFabricSensitiveString } from './audit'
@@ -70,12 +71,21 @@ const PHASE_OUTCOMES: Record<FabricExecutorPhase, ReadonlySet<string>> = {
   interrupt: new Set(['interrupted', 'unsupported', 'failed', 'unknown']),
   compensate: new Set(['compensated', 'unsupported', 'failed', 'unknown']),
 }
+const SUCCESS_OUTCOMES = new Set(['prepared', 'succeeded', 'verified', 'interrupted', 'compensated'])
 const MAX_EVIDENCE = 16
 const MAX_DEPTH = 6
 const MAX_ITEMS = 64
 const MAX_STRING = 2_000
-const MAX_BYTES = 24_000
+const MAX_EVIDENCE_BYTES = 24_000
+const MAX_SANITIZED_BYTES = 22_000
+const MAX_NODES = 512
 const REDACTED = '[REDACTED]'
+
+interface SanitizationBudget {
+  bytes: number
+  nodes: number
+  truncated: boolean
+}
 
 export function registerFabricExecutorAdapter(adapter: FabricExecutorAdapter): void {
   if (adapter === null || typeof adapter !== 'object'
@@ -133,27 +143,38 @@ export async function invokeFabricExecutor(
   if (!adapter || adapter.id !== resolved.executor.id || adapter.type !== resolved.executor.type) {
     throw new Error('FABRIC_EXECUTOR_ADAPTER_UNAVAILABLE')
   }
+  let raw: unknown
   try {
-    const raw = await adapter[phase](context) as unknown
-    return sanitizeResult(phase, raw, context.now)
+    raw = await adapter[phase](context) as unknown
   } catch {
     return exceptionResult(phase, context.now)
+  }
+  try {
+    return sanitizeResult(phase, raw, context.now)
+  } catch {
+    return contractViolationResult(phase, context.now)
   }
 }
 
 function sanitizeResult(phase: FabricExecutorPhase, raw: unknown, now?: string): FabricExecutorResult {
   if (!isPlainRecord(raw)) throw new Error('invalid result')
-  const descriptor = Object.getOwnPropertyDescriptors(raw)
-  const outcome = dataProperty(descriptor, 'outcome')
+  const outcome = dataProperty(raw, 'outcome')
   if (typeof outcome !== 'string' || !PHASE_OUTCOMES[phase].has(outcome)) throw new Error('invalid outcome')
-  const outputValue = dataProperty(descriptor, 'output')
-  const output = isPlainRecord(outputValue) ? sanitizeObject(outputValue) : {}
-  const evidenceValue = dataProperty(descriptor, 'evidence')
+  const outputValue = dataProperty(raw, 'output')
+  if (!isPlainRecord(outputValue)) throw new Error('invalid output')
+  const output = sanitizeObject(outputValue, newBudget())
+  const evidenceValue = dataProperty(raw, 'evidence')
+  if (isProxyValue(evidenceValue) || !Array.isArray(evidenceValue)) throw new Error('invalid evidence')
   const evidence = sanitizeEvidence(evidenceValue, now)
-  const errorValue = dataProperty(descriptor, 'errorCode')
+  const errorValue = dataProperty(raw, 'errorCode')
   const errorCode = typeof errorValue === 'string' && /^[A-Z][A-Z0-9_]{1,127}$/.test(errorValue) ? errorValue : null
-  const retryValue = dataProperty(descriptor, 'safeToRetry')
-  const safeToRetry = outcome === 'unknown' ? false : retryValue === true
+  const retryValue = dataProperty(raw, 'safeToRetry')
+  if (typeof retryValue !== 'boolean') throw new Error('invalid retry marker')
+  const success = SUCCESS_OUTCOMES.has(outcome)
+  if ((success && errorValue !== null) || (!success && errorCode === null)) throw new Error('invalid error code')
+  const mayRetry = phase === 'execute' && outcome === 'temporary_failure'
+  if (retryValue && !mayRetry) throw new Error('invalid retry combination')
+  const safeToRetry = mayRetry && retryValue
   return { outcome, output, evidence, errorCode, safeToRetry } as FabricExecutorResult
 }
 
@@ -167,96 +188,123 @@ function exceptionResult(phase: FabricExecutorPhase, now?: string): FabricExecut
   } as FabricExecutorResult
 }
 
+function contractViolationResult(phase: FabricExecutorPhase, now?: string): FabricExecutorResult {
+  const outcome = phase === 'prepare' ? 'failed' : phase === 'execute' ? 'unknown'
+    : phase === 'verify' ? 'unknown' : phase === 'interrupt' ? 'failed' : 'unknown'
+  return {
+    outcome, output: {}, evidence: [{
+      kind: 'executor_contract', summary: 'Executor returned an invalid result', data: {}, capturedAt: validTime(now),
+    }], errorCode: 'FABRIC_EXECUTOR_CONTRACT_VIOLATION', safeToRetry: false,
+  } as FabricExecutorResult
+}
+
 function sanitizeEvidence(value: unknown, now?: string): FabricEvidence[] {
-  if (!Array.isArray(value)) return []
+  if (isProxyValue(value) || !Array.isArray(value)) return []
   const entries: FabricEvidence[] = []
-  const descriptors = Object.getOwnPropertyDescriptors(value)
+  const budget = newBudget()
   const length = Math.min(value.length, MAX_EVIDENCE)
   for (let index = 0; index < length; index += 1) {
-    const property = descriptors[String(index)]
+    charge(budget, 96)
+    const property = Object.getOwnPropertyDescriptor(value, String(index))
     const item = property && 'value' in property ? property.value : undefined
     if (!isPlainRecord(item)) continue
-    const descriptor = Object.getOwnPropertyDescriptors(item)
-    const kind = safeText(dataProperty(descriptor, 'kind'), 'evidence')
-    const summary = safeText(dataProperty(descriptor, 'summary'), 'Evidence captured')
-    const data = dataProperty(descriptor, 'data')
-    const capturedAt = dataProperty(descriptor, 'capturedAt')
+    const kind = safeText(dataProperty(item, 'kind'), 'evidence', budget)
+    const summary = safeText(dataProperty(item, 'summary'), 'Evidence captured', budget)
+    const data = dataProperty(item, 'data')
+    const capturedAt = dataProperty(item, 'capturedAt')
+    const timestamp = validTime(typeof capturedAt === 'string' ? capturedAt : now)
+    charge(budget, Buffer.byteLength(timestamp, 'utf8'))
     entries.push({
       kind, summary,
-      data: isPlainRecord(data) ? sanitizeObject(data) : {},
-      capturedAt: validTime(typeof capturedAt === 'string' ? capturedAt : now),
+      data: isPlainRecord(data) ? sanitizeObject(data, budget) : {},
+      capturedAt: timestamp,
     })
+    if (budget.truncated) break
+  }
+  if (value.length > MAX_EVIDENCE) budget.truncated = true
+  if (budget.truncated) markEvidenceTruncated(entries, now)
+  while (Buffer.byteLength(JSON.stringify(entries), 'utf8') > MAX_EVIDENCE_BYTES && entries.length > 1) {
+    entries.pop()
+    markEvidenceTruncated(entries, now)
+  }
+  if (Buffer.byteLength(JSON.stringify(entries), 'utf8') > MAX_EVIDENCE_BYTES) {
+    return [truncationEvidence(now)]
   }
   return entries
 }
 
-function sanitizeObject(value: Record<string, unknown>): FabricJsonObject {
-  const budget = { bytes: 0, nodes: 0 }
+function sanitizeObject(value: Record<string, unknown>, budget: SanitizationBudget): FabricJsonObject {
   const sanitized = sanitizeValue(value, 0, new Set(), budget)
   return isPlainRecord(sanitized) ? sanitized : { _truncated: true }
 }
 
-function sanitizeValue(value: unknown, depth: number, seen: Set<object>, budget: { bytes: number; nodes: number }): unknown {
+function sanitizeValue(value: unknown, depth: number, seen: Set<object>, budget: SanitizationBudget): unknown {
   budget.nodes += 1
-  if (budget.nodes > 512 || budget.bytes > MAX_BYTES) return { _truncated: true }
+  if (budget.nodes > MAX_NODES || budget.bytes > MAX_SANITIZED_BYTES) {
+    budget.truncated = true
+    return { _truncated: true }
+  }
   if (typeof value === 'string') {
     if (isSensitiveString(value)) return REDACTED
-    const limited = value.length > MAX_STRING ? `${value.slice(0, MAX_STRING)}…` : value
-    budget.bytes += Buffer.byteLength(limited, 'utf8')
-    return budget.bytes > MAX_BYTES ? '[TRUNCATED]' : limited
+    const limited = truncateUtf8(value, Math.min(MAX_STRING, Math.max(0, MAX_SANITIZED_BYTES - budget.bytes)))
+    charge(budget, Buffer.byteLength(limited, 'utf8'))
+    if (limited !== value) budget.truncated = true
+    return limited || '[TRUNCATED]'
   }
   if (value === null || typeof value === 'boolean') return value
   if (typeof value === 'number') return Number.isFinite(value) ? value : null
   if (typeof value !== 'object') return REDACTED
+  if (isProxyValue(value)) return REDACTED
   if (depth >= MAX_DEPTH) return { _truncated: true }
   if (seen.has(value)) return { _truncated: 'cycle' }
   if (!Array.isArray(value) && !isPlainRecord(value)) return REDACTED
   seen.add(value)
   try {
     if (Array.isArray(value)) {
-      const descriptors = Object.getOwnPropertyDescriptors(value)
       const length = Math.min(value.length, MAX_ITEMS)
       const output: unknown[] = []
       for (let index = 0; index < length; index += 1) {
-        const property = descriptors[String(index)]
+        const property = Object.getOwnPropertyDescriptor(value, String(index))
         output.push(property && 'value' in property
           ? sanitizeValue(property.value, depth + 1, seen, budget)
           : REDACTED)
       }
-      if (value.length > MAX_ITEMS) output.push({ _truncated: true })
+      if (value.length > MAX_ITEMS) { output.push({ _truncated: true }); budget.truncated = true }
       return output
     }
-    const descriptors = Object.getOwnPropertyDescriptors(value)
     const output: FabricJsonObject = {}
-    for (const key of Object.keys(descriptors).sort().slice(0, MAX_ITEMS)) {
-      budget.bytes += Buffer.byteLength(key, 'utf8')
-      const property = descriptors[key]
+    const keys = boundedEnumerableKeys(value)
+    for (const key of keys.values) {
+      charge(budget, Buffer.byteLength(key, 'utf8'))
+      const property = Object.getOwnPropertyDescriptor(value, key)
       if (!property || !('value' in property) || isSensitiveKey(key)) output[key] = REDACTED
       else output[key] = sanitizeValue(property.value, depth + 1, seen, budget)
-      if (budget.bytes > MAX_BYTES) { output._truncated = true; break }
+      if (budget.bytes > MAX_SANITIZED_BYTES) { output._truncated = true; budget.truncated = true; break }
     }
-    if (Object.keys(descriptors).length > MAX_ITEMS) output._truncated = true
+    if (keys.truncated) { output._truncated = true; budget.truncated = true }
     return output
   } finally {
     seen.delete(value)
   }
 }
 
-function dataProperty(descriptors: PropertyDescriptorMap, key: string): unknown {
-  const descriptor = descriptors[key]
+function dataProperty(value: object, key: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key)
   return descriptor && 'value' in descriptor ? descriptor.value : undefined
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  if (value === null || typeof value !== 'object' || isProxyValue(value) || Array.isArray(value)) return false
   const prototype = Object.getPrototypeOf(value)
   return prototype === Object.prototype || prototype === null
 }
 
-function safeText(value: unknown, fallback: string): string {
-  if (typeof value !== 'string' || !value.trim()) return fallback
-  if (isSensitiveString(value)) return REDACTED
-  return value.slice(0, 500)
+function safeText(value: unknown, fallback: string, budget: SanitizationBudget): string {
+  const source = typeof value === 'string' && value.trim() ? value : fallback
+  const sanitized = isSensitiveString(source) ? REDACTED : truncateUtf8(source, 500)
+  charge(budget, Buffer.byteLength(sanitized, 'utf8'))
+  if (sanitized !== source) budget.truncated = true
+  return sanitized
 }
 
 function isSensitiveKey(key: string): boolean {
@@ -265,6 +313,56 @@ function isSensitiveKey(key: string): boolean {
 
 function isSensitiveString(value: string): boolean {
   return isFabricSensitiveString(value)
+}
+
+function boundedEnumerableKeys(value: Record<string, unknown>): { values: string[]; truncated: boolean } {
+  const values: string[] = []
+  let truncated = false
+  // Symbols and non-enumerable properties are intentionally excluded from persisted JSON evidence.
+  for (const key in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue
+    if (values.length >= MAX_ITEMS) { truncated = true; break }
+    values.push(key)
+  }
+  values.sort()
+  return { values, truncated }
+}
+
+function isProxyValue(value: unknown): boolean {
+  return value !== null && (typeof value === 'object' || typeof value === 'function') && isProxy(value)
+}
+
+function newBudget(): SanitizationBudget {
+  return { bytes: 0, nodes: 0, truncated: false }
+}
+
+function charge(budget: SanitizationBudget, bytes: number): void {
+  budget.bytes += bytes
+  if (budget.bytes > MAX_SANITIZED_BYTES) budget.truncated = true
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  if (maxBytes <= 0) return ''
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value
+  let low = 0
+  let high = value.length
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2)
+    if (Buffer.byteLength(value.slice(0, middle), 'utf8') <= maxBytes) low = middle
+    else high = middle - 1
+  }
+  return value.slice(0, low)
+}
+
+function markEvidenceTruncated(entries: FabricEvidence[], now?: string): void {
+  if (entries.length === 0) { entries.push(truncationEvidence(now)); return }
+  entries[entries.length - 1]!.data._truncated = true
+}
+
+function truncationEvidence(now?: string): FabricEvidence {
+  return {
+    kind: 'evidence', summary: 'Evidence truncated', data: { _truncated: true }, capturedAt: validTime(now),
+  }
 }
 
 function validTime(value?: string): string {

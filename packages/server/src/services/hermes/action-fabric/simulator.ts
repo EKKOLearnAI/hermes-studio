@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import type {
   FabricCompensateResult,
   FabricExecutionContext,
@@ -15,11 +16,16 @@ export type SimulatorFault = 'temporary_failure' | 'permanent_failure' | 'unknow
 
 export interface SimulatorExecutorOptions {
   faultFor?: (context: FabricExecutionContext, phase: FabricExecutorPhase) => SimulatorFault | null
+  maxExecutionTokens?: number
 }
 
 export function createSimulatorExecutorAdapter(options: SimulatorExecutorOptions = {}): FabricExecutorAdapter {
+  const maxExecutionTokens = options.maxExecutionTokens ?? 4_096
+  if (!Number.isSafeInteger(maxExecutionTokens) || maxExecutionTokens < 1 || maxExecutionTokens > 100_000) {
+    throw new Error('SIMULATOR_EXECUTION_CACHE_LIMIT_INVALID')
+  }
   const counters = new Map<string, number>()
-  const executions = new Map<string, Promise<FabricExecuteResult>>()
+  const executions = new Map<string, { materialDigest: string; promise: Promise<FabricExecuteResult> }>()
 
   return {
     id: 'simulator-main',
@@ -28,10 +34,28 @@ export function createSimulatorExecutorAdapter(options: SimulatorExecutorOptions
       return success('prepared', context, { capabilityId: context.capabilityId })
     },
     execute(context): Promise<FabricExecuteResult> {
+      const materialDigest = executionMaterialDigest(context)
       const existing = executions.get(context.executionToken)
-      if (existing) return existing
+      if (existing) {
+        return existing.materialDigest === materialDigest
+          ? existing.promise
+          : Promise.resolve(failure('permanent_failure', 'SIMULATOR_EXECUTION_TOKEN_CONFLICT'))
+      }
+      if (executions.size >= maxExecutionTokens) {
+        return Promise.resolve(failure('permanent_failure', 'SIMULATOR_EXECUTION_CACHE_FULL'))
+      }
+      // No rejected execution promise escapes the adapter: its side-effect status is unknown,
+      // so the normalized outcome remains cached and is never retried blindly.
       const pending = executeOnce(context, options, counters)
-      executions.set(context.executionToken, pending)
+        .catch(() => failure('unknown', 'SIMULATOR_EXECUTION_EXCEPTION'))
+      const entry = { materialDigest, promise: pending }
+      executions.set(context.executionToken, entry)
+      void pending.then(result => {
+        if (result.outcome === 'temporary_failure' && result.safeToRetry
+          && executions.get(context.executionToken) === entry) {
+          executions.delete(context.executionToken)
+        }
+      })
       return pending
     },
     async verify(context): Promise<FabricVerifyResult> {
@@ -54,6 +78,15 @@ export function createSimulatorExecutorAdapter(options: SimulatorExecutorOptions
       return { ...success('unsupported', context, {}), errorCode: 'SIMULATOR_COMPENSATION_UNSUPPORTED' }
     },
   }
+}
+
+function executionMaterialDigest(context: FabricExecutionContext): string {
+  return createHash('sha256').update(canonical({
+    capabilityId: context.capabilityId,
+    capabilityVersion: context.capabilityVersion,
+    input: context.input,
+    target: context.target,
+  }), 'utf8').digest('hex')
 }
 
 async function executeOnce(
@@ -97,7 +130,7 @@ function evidence(context: FabricExecutionContext, summary: string): FabricEvide
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
   if (value !== null && typeof value === 'object') {
-    return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
+    return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
       .map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`
   }
   return JSON.stringify(value)
