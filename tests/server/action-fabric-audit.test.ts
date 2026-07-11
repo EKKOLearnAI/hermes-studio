@@ -12,6 +12,7 @@ import {
   listFabricAuditEvents,
   listPendingFabricOutbox,
   markFabricOutboxPublished,
+  migrateLegacyFabricAuditChain,
   setFabricEmergencyStop,
   verifyFabricAuditChain,
   withActionFabricDb,
@@ -20,12 +21,14 @@ import {
 describe('action fabric audit, outbox, and control', () => {
   const originalHermesHome = process.env.HERMES_HOME
   const originalAuditKey = process.env.HERMES_ACTION_FABRIC_AUDIT_KEY
+  const originalLegacyHead = process.env.HERMES_ACTION_FABRIC_LEGACY_AUDIT_HEAD
   let hermesHome = ''
 
   beforeEach(() => {
     hermesHome = mkdtempSync(join(tmpdir(), 'hwui-fabric-audit-'))
     process.env.HERMES_HOME = hermesHome
     process.env.HERMES_ACTION_FABRIC_AUDIT_KEY = 'audit-test-managed-key-at-least-32-bytes'
+    delete process.env.HERMES_ACTION_FABRIC_LEGACY_AUDIT_HEAD
   })
 
   afterEach(() => {
@@ -33,6 +36,8 @@ describe('action fabric audit, outbox, and control', () => {
     else process.env.HERMES_HOME = originalHermesHome
     if (originalAuditKey === undefined) delete process.env.HERMES_ACTION_FABRIC_AUDIT_KEY
     else process.env.HERMES_ACTION_FABRIC_AUDIT_KEY = originalAuditKey
+    if (originalLegacyHead === undefined) delete process.env.HERMES_ACTION_FABRIC_LEGACY_AUDIT_HEAD
+    else process.env.HERMES_ACTION_FABRIC_LEGACY_AUDIT_HEAD = originalLegacyHead
     rmSync(hermesHome, { recursive: true, force: true })
   })
 
@@ -351,10 +356,23 @@ describe('action fabric audit, outbox, and control', () => {
     expect(() => append({ state: 'running' })).toThrow('FABRIC_AUDIT_CHAIN_CORRUPT')
   })
 
-  it('verifies and atomically migrates a valid legacy SHA chain before append and control mutation', () => {
+  it('reports a valid legacy chain as needing migration and requires explicit pre-bound migration', () => {
     const legacyHashes = seedLegacyChain()
-    expect(verifyFabricAuditChain()).toEqual({ valid: true, checked: 2, firstInvalidSequence: null })
+    expect(verifyFabricAuditChain()).toEqual({
+      valid: false, checked: 2, firstInvalidSequence: null, legacyValid: true, needsMigration: true,
+    })
+    expect(() => append({ state: 'succeeded' }, 'workflow.updated'))
+      .toThrow('FABRIC_AUDIT_FORMAT_MIGRATION_REQUIRED')
+    expect(() => setFabricEmergencyStop(1, 'admin-1', 'maintenance', 0))
+      .toThrow('FABRIC_AUDIT_FORMAT_MIGRATION_REQUIRED')
+    expect(() => migrateLegacyFabricAuditChain()).toThrow('FABRIC_AUDIT_LEGACY_AUTH_REQUIRED')
 
+    process.env.HERMES_ACTION_FABRIC_LEGACY_AUDIT_HEAD = '0'.repeat(64)
+    expect(() => migrateLegacyFabricAuditChain()).toThrow('FABRIC_AUDIT_LEGACY_HEAD_MISMATCH')
+    expect(withActionFabricDb(db => db.prepare("SELECT value FROM fabric_meta WHERE key='audit_format'").get()))
+      .toBeUndefined()
+    process.env.HERMES_ACTION_FABRIC_LEGACY_AUDIT_HEAD = legacyHashes.at(-1)!
+    expect(migrateLegacyFabricAuditChain()).toEqual({ migrated: true, checked: 2 })
     append({ state: 'succeeded' }, 'workflow.updated')
     setFabricEmergencyStop(1, 'admin-1', 'maintenance', 0)
 
@@ -363,10 +381,11 @@ describe('action fabric audit, outbox, and control', () => {
     expect(migrated.slice(0, 2).map(event => event.hash)).not.toEqual(legacyHashes)
     expect(withActionFabricDb(db => db.prepare("SELECT value FROM fabric_meta WHERE key='audit_format'").get()))
       .toEqual({ value: 'hmac-sha256-v1' })
+    expect(migrateLegacyFabricAuditChain()).toEqual({ migrated: false, checked: 4 })
   })
 
   it('refuses a tampered legacy chain without changing rows or metadata', () => {
-    seedLegacyChain()
+    const legacyHashes = seedLegacyChain()
     withActionFabricDb(db => db.prepare("UPDATE fabric_audit_events SET payload_json='{}' WHERE sequence=1").run())
     const before = withActionFabricDb(db => ({
       rows: db.prepare('SELECT * FROM fabric_audit_events ORDER BY sequence').all(),
@@ -374,7 +393,9 @@ describe('action fabric audit, outbox, and control', () => {
     }))
 
     expect(verifyFabricAuditChain()).toMatchObject({ valid: false, firstInvalidSequence: 1 })
-    expect(() => append({ state: 'failed' })).toThrow('FABRIC_AUDIT_LEGACY_INVALID')
+    expect(() => append({ state: 'failed' })).toThrow('FABRIC_AUDIT_FORMAT_MIGRATION_REQUIRED')
+    process.env.HERMES_ACTION_FABRIC_LEGACY_AUDIT_HEAD = legacyHashes.at(-1)!
+    expect(() => migrateLegacyFabricAuditChain()).toThrow('FABRIC_AUDIT_LEGACY_INVALID')
     expect(withActionFabricDb(db => ({
       rows: db.prepare('SELECT * FROM fabric_audit_events ORDER BY sequence').all(),
       meta: db.prepare("SELECT * FROM fabric_meta WHERE key LIKE 'audit_%' ORDER BY key").all(),
@@ -382,18 +403,57 @@ describe('action fabric audit, outbox, and control', () => {
   })
 
   it('rolls legacy migration back on interruption and retries idempotently', () => {
-    seedLegacyChain()
+    const legacyHashes = seedLegacyChain()
+    process.env.HERMES_ACTION_FABRIC_LEGACY_AUDIT_HEAD = legacyHashes.at(-1)!
     const before = withActionFabricDb(db => db.prepare('SELECT * FROM fabric_audit_events ORDER BY sequence').all())
     withActionFabricDb(db => db.exec(`CREATE TRIGGER fail_legacy_migration BEFORE UPDATE ON fabric_audit_events
       WHEN OLD.sequence=2 BEGIN SELECT RAISE(ABORT, 'forced migration failure'); END`))
-    expect(() => append({ state: 'blocked' })).toThrow()
+    expect(() => migrateLegacyFabricAuditChain()).toThrow()
     expect(withActionFabricDb(db => db.prepare('SELECT * FROM fabric_audit_events ORDER BY sequence').all())).toEqual(before)
     expect(withActionFabricDb(db => db.prepare("SELECT value FROM fabric_meta WHERE key='audit_format'").get())).toBeUndefined()
 
     withActionFabricDb(db => db.exec('DROP TRIGGER fail_legacy_migration'))
+    expect(migrateLegacyFabricAuditChain()).toEqual({ migrated: true, checked: 2 })
     append({ state: 'running' })
     append({ state: 'succeeded' })
     expect(verifyFabricAuditChain()).toEqual({ valid: true, checked: 4, firstInvalidSequence: null })
+  })
+
+  it('prevents a database-only attacker from downgrading HMAC rows into a valid public SHA chain', () => {
+    append({ state: 'draft' })
+    append({ state: 'running' }, 'workflow.updated')
+    withActionFabricDb(db => {
+      db.exec('BEGIN IMMEDIATE')
+      let previousHash = '0'.repeat(64)
+      let finalHash = previousHash
+      for (const row of db.prepare('SELECT * FROM fabric_audit_events ORDER BY sequence').all() as Array<{
+        sequence: number; event_type: string; actor_user_id: string; aggregate_type: string
+        aggregate_id: string; payload_json: string; occurred_at: string
+      }>) {
+        const immutable = {
+          sequence: row.sequence, eventType: row.event_type, actorUserId: row.actor_user_id,
+          aggregateType: row.aggregate_type, aggregateId: row.aggregate_id,
+          payload: JSON.parse(row.payload_json), occurredAt: row.occurred_at, previousHash,
+        }
+        finalHash = createHash('sha256').update(canonical(immutable)).digest('hex')
+        db.prepare('UPDATE fabric_audit_events SET id=?, previous_hash=?, hash=? WHERE sequence=?').run(
+          `audit-${row.sequence}-${finalHash.slice(0, 24)}`, previousHash, finalHash, row.sequence,
+        )
+        previousHash = finalHash
+      }
+      db.prepare("DELETE FROM fabric_meta WHERE key='audit_format'").run()
+      db.prepare("UPDATE fabric_meta SET value=? WHERE key='audit_chain_head'")
+        .run(canonical({ sequence: 2, hash: finalHash }))
+      db.exec('COMMIT')
+    })
+
+    expect(verifyFabricAuditChain()).toEqual({
+      valid: false, checked: 2, firstInvalidSequence: null, legacyValid: true, needsMigration: true,
+    })
+    expect(() => append({ state: 'succeeded' })).toThrow('FABRIC_AUDIT_FORMAT_MIGRATION_REQUIRED')
+    expect(() => setFabricEmergencyStop(2, 'admin-1', 'downgrade test', 0))
+      .toThrow('FABRIC_AUDIT_FORMAT_MIGRATION_REQUIRED')
+    expect(() => migrateLegacyFabricAuditChain()).toThrow('FABRIC_AUDIT_LEGACY_AUTH_REQUIRED')
   })
 
   it('verifies audit chains with a constant-memory SQLite iterator', () => {

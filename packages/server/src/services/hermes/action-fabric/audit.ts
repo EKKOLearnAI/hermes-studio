@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID } from 'crypto'
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto'
 import { dirname } from 'path'
 import type { DatabaseSync } from 'node:sqlite'
 import { getActionFabricDbPath, withActionFabricDb } from './database'
@@ -59,8 +59,8 @@ export interface FabricOutboxClaimOptions {
 
 export function appendFabricAuditEvent(db: DatabaseSync, input: FabricAuditEventInput): FabricAuditEvent {
   requireTransaction(db)
+  ensureAuditFormat(db)
   const auditKey = getAuditKey()
-  ensureAuditFormat(db, auditKey)
   validateText(input.eventType, 200, 'FABRIC_AUDIT_INVALID_EVENT_TYPE')
   validateText(input.actorUserId, 200, 'FABRIC_AUDIT_INVALID_ACTOR')
   validateText(input.aggregateId, 500, 'FABRIC_AUDIT_INVALID_AGGREGATE')
@@ -135,14 +135,55 @@ export function verifyFabricAuditChain(): {
   valid: boolean
   checked: number
   firstInvalidSequence: number | null
+  legacyValid?: boolean
+  needsMigration?: boolean
 } {
   return withActionFabricDb(db => {
     const format = db.prepare('SELECT value FROM fabric_meta WHERE key = ?').get(AUDIT_FORMAT_KEY) as
       { value: string } | undefined
-    if (format === undefined) return verifyChain(db, legacyDigest)
+    if (format === undefined) {
+      const legacy = verifyChain(db, legacyDigest)
+      return legacy.valid
+        ? { ...legacy, valid: false, legacyValid: true, needsMigration: true }
+        : legacy
+    }
     if (format.value !== AUDIT_FORMAT) return { valid: false, checked: 0, firstInvalidSequence: 1 }
     const auditKey = getAuditKey()
     return verifyChain(db, value => mac(auditKey, value))
+  })
+}
+
+export function migrateLegacyFabricAuditChain(): { migrated: boolean; checked: number } {
+  return withActionFabricDb(db => {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const format = db.prepare('SELECT value FROM fabric_meta WHERE key = ?').get(AUDIT_FORMAT_KEY) as
+        { value: string } | undefined
+      if (format?.value === AUDIT_FORMAT) {
+        const auditKey = getAuditKey()
+        const verification = verifyChain(db, value => mac(auditKey, value))
+        if (!verification.valid) throw new Error('FABRIC_AUDIT_CHAIN_CORRUPT')
+        db.exec('COMMIT')
+        return { migrated: false, checked: verification.checked }
+      }
+      if (format !== undefined) throw new Error('FABRIC_AUDIT_FORMAT_MIGRATION_REQUIRED')
+      const expectedHead = readExpectedLegacyHead()
+      const verification = verifyChain(db, legacyDigest)
+      if (!verification.valid) throw new Error('FABRIC_AUDIT_LEGACY_INVALID')
+      const storedHead = readStoredAuditHead(db)
+      if (storedHead === null || !/^[a-f0-9]{64}$/.test(storedHead.hash)
+        || storedHead.sequence !== verification.checked
+        || !timingSafeEqual(Buffer.from(expectedHead, 'hex'), Buffer.from(storedHead.hash, 'hex'))) {
+        throw new Error('FABRIC_AUDIT_LEGACY_HEAD_MISMATCH')
+      }
+      resignLegacyChain(db, getAuditKey())
+      db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run(AUDIT_FORMAT_KEY, AUDIT_FORMAT)
+      db.exec('COMMIT')
+      return { migrated: true, checked: verification.checked }
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
   })
 }
 
@@ -284,32 +325,53 @@ function assertStoredAuditHead(
   throw new Error('FABRIC_AUDIT_CHAIN_CORRUPT')
 }
 
-function ensureAuditFormat(db: DatabaseSync, auditKey: Buffer): void {
+function ensureAuditFormat(db: DatabaseSync): void {
   const row = db.prepare('SELECT value FROM fabric_meta WHERE key = ?').get(AUDIT_FORMAT_KEY) as
     { value: string } | undefined
   if (row?.value === AUDIT_FORMAT) return
   if (row !== undefined) throw new Error('FABRIC_AUDIT_FORMAT_MIGRATION_REQUIRED')
   const count = db.prepare('SELECT COUNT(*) AS count FROM fabric_audit_events').get() as { count: number }
-  if (count.count > 0) {
-    const verification = verifyChain(db, legacyDigest)
-    if (!verification.valid) throw new Error('FABRIC_AUDIT_LEGACY_INVALID')
-    let previousHash = GENESIS_HASH
-    let finalSequence = 0
-    const update = db.prepare(`UPDATE fabric_audit_events
-      SET id = ?, previous_hash = ?, hash = ? WHERE sequence = ?`)
-    for (const row of db.prepare(
-      'SELECT * FROM fabric_audit_events ORDER BY sequence ASC',
-    ).iterate() as IterableIterator<AuditRow>) {
-      const payload = parseJsonObject(row.payload_json)
-      const hash = mac(auditKey, canonicalStringify(immutableAuditFields(row, payload, previousHash)))
-      update.run(`audit-${row.sequence}-${hash.slice(0, 24)}`, previousHash, hash, row.sequence)
-      previousHash = hash
-      finalSequence = row.sequence
-    }
-    db.prepare('UPDATE fabric_meta SET value = ? WHERE key = ?')
-      .run(canonicalStringify({ sequence: finalSequence, hash: previousHash }), AUDIT_HEAD_KEY)
-  }
+  if (count.count > 0) throw new Error('FABRIC_AUDIT_FORMAT_MIGRATION_REQUIRED')
   db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run(AUDIT_FORMAT_KEY, AUDIT_FORMAT)
+}
+
+function resignLegacyChain(db: DatabaseSync, auditKey: Buffer): void {
+  let previousHash = GENESIS_HASH
+  let finalSequence = 0
+  const update = db.prepare(`UPDATE fabric_audit_events
+    SET id = ?, previous_hash = ?, hash = ? WHERE sequence = ?`)
+  for (const row of db.prepare(
+    'SELECT * FROM fabric_audit_events ORDER BY sequence ASC',
+  ).iterate() as IterableIterator<AuditRow>) {
+    const payload = parseJsonObject(row.payload_json)
+    const hash = mac(auditKey, canonicalStringify(immutableAuditFields(row, payload, previousHash)))
+    update.run(`audit-${row.sequence}-${hash.slice(0, 24)}`, previousHash, hash, row.sequence)
+    previousHash = hash
+    finalSequence = row.sequence
+  }
+  db.prepare('UPDATE fabric_meta SET value = ? WHERE key = ?')
+    .run(canonicalStringify({ sequence: finalSequence, hash: previousHash }), AUDIT_HEAD_KEY)
+}
+
+function readExpectedLegacyHead(): string {
+  const value = process.env.HERMES_ACTION_FABRIC_LEGACY_AUDIT_HEAD
+  if (value === undefined) throw new Error('FABRIC_AUDIT_LEGACY_AUTH_REQUIRED')
+  if (!/^[a-f0-9]{64}$/.test(value)) throw new Error('FABRIC_AUDIT_LEGACY_AUTH_INVALID')
+  return value
+}
+
+function readStoredAuditHead(db: DatabaseSync): { sequence: number; hash: string } | null {
+  const row = db.prepare('SELECT value FROM fabric_meta WHERE key = ?').get(AUDIT_HEAD_KEY) as
+    { value: string } | undefined
+  if (row === undefined) return null
+  try {
+    const parsed = JSON.parse(row.value) as { sequence?: unknown; hash?: unknown }
+    return Number.isSafeInteger(parsed.sequence) && typeof parsed.hash === 'string'
+      ? { sequence: parsed.sequence as number, hash: parsed.hash }
+      : null
+  } catch {
+    return null
+  }
 }
 
 function verifyChain(
