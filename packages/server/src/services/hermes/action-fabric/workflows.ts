@@ -25,17 +25,19 @@ const MAX_PAYLOAD_ITEMS = 64
 const MAX_PAYLOAD_NODES = 4_096
 const MAX_PAYLOAD_STRING_BYTES = 8_192
 const SENSITIVE_STRING = /(?:\bBearer\s+\S+|\b(?:api[_ -]?key|access[_ -]?token|password|secret|credential)\s*[:=]\s*\S+|-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----|\b(?:postgres(?:ql)?|mysql|mongodb|redis|amqps?):\/\/|(?:^|[\s("'=])(?:[a-z]:[\\/]|\\\\|\/(?:etc|home|Users|usr|app|workspace|data|var|tmp|opt|root|mnt)\/))/i
-const SENSITIVE_KEY_TOKENS = new Set([
-  'token', 'secret', 'password', 'passphrase', 'bearer', 'auth', 'authorization', 'authentication',
-  'cookie', 'session', 'credential', 'credentials', 'path', 'file', 'directory', 'dir', 'url', 'uri', 'dsn',
+const CREDENTIAL_ROOTS = new Set([
+  'auth', 'authentication', 'authorization', 'access', 'refresh', 'bearer', 'secret', 'credential',
+  'credentials', 'password', 'passphrase', 'private', 'api', 'client', 'cookie', 'session',
+  'encryption', 'signing', 'service', 'account',
 ])
-const SENSITIVE_KEY_PREFIXES = new Set([
-  'api', 'private', 'access', 'refresh', 'client', 'encryption', 'signing', 'service', 'account',
+const CREDENTIAL_SUFFIXES = new Set([
+  'token', 'value', 'data', 'key', 'secret', 'credential', 'credentials', 'password', 'passphrase',
 ])
-const SENSITIVE_COMPACT_KEYS = new Set([
-  'apikey', 'privatekey', 'accesskey', 'clientkey', 'servicekey', 'accountkey',
-  'accesstoken', 'refreshtoken', 'clientsecret', 'passwordvalue',
+const ALWAYS_SENSITIVE_TOKENS = new Set([
+  'token', 'secret', 'password', 'passphrase', 'bearer', 'authorization', 'credential', 'credentials',
+  'cookie', 'session', 'path', 'file', 'directory', 'dir', 'url', 'uri', 'dsn',
 ])
+const UNICODE_CREDENTIAL_KEYS = new Set(['私钥', '密码', '令牌', '凭据', '密钥', '访问令牌'])
 
 export interface FabricIntentResult {
   intent: FabricActionIntent
@@ -555,19 +557,29 @@ function strictJson(value: unknown, depth: number, budget: { nodes: number }): u
 }
 
 function isSensitivePayloadKey(key: string): boolean {
-  if (!/^[\x20-\x7e]+$/.test(key)) return true
-  const tokens = key
+  const normalized = key.normalize('NFKC')
+  if (UNICODE_CREDENTIAL_KEYS.has(normalized)) return true
+  const tokens = normalized
     .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[^A-Za-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim()
     .toLowerCase()
     .split(/\s+/)
     .filter(Boolean)
-  if (tokens.some(token => SENSITIVE_KEY_TOKENS.has(token))) return true
-  if (SENSITIVE_COMPACT_KEYS.has(tokens.join(''))) return true
-  const keyIndex = tokens.indexOf('key')
-  return keyIndex > 0 && tokens.slice(0, keyIndex).some(token => SENSITIVE_KEY_PREFIXES.has(token))
+  if (tokens.length === 0) return false
+  if (tokens.some(token => ALWAYS_SENSITIVE_TOKENS.has(token))) return true
+  if (tokens.length === 1 && CREDENTIAL_ROOTS.has(tokens[0])) return true
+  for (let index = 0; index < tokens.length - 1; index += 1) {
+    if (CREDENTIAL_ROOTS.has(tokens[index]) && CREDENTIAL_SUFFIXES.has(tokens[index + 1])) return true
+  }
+  const compact = tokens.join('')
+  for (const root of CREDENTIAL_ROOTS) {
+    if (!compact.startsWith(root)) continue
+    const suffix = compact.slice(root.length)
+    if (suffix && CREDENTIAL_SUFFIXES.has(suffix)) return true
+  }
+  return false
 }
 
 function canonicalStringify(value: unknown): string {

@@ -131,6 +131,8 @@ describe('Action Fabric durable workflows', () => {
       'password', 'passphrase', 'privateKey', 'apiKey', 'auth', 'authorization', 'cookie', 'session',
       'credential', 'ACCESS-TOKEN', 'client-secret', 'refresh.token', '访问令牌',
       'APIKEY', 'apikey', 'ACCESSTOKEN', 'clientsecret', 'passwordvalue', 'privatekey',
+      'authtoken', 'bearertoken', 'secretvalue', 'credentialdata', 'authenticationtoken',
+      'ａｃｃｅｓｓＴｏｋｅｎ',
     ]
     const before = durableCounts()
     for (const [index, field] of fields.entries()) {
@@ -139,12 +141,36 @@ describe('Action Fabric durable workflows', () => {
         input: { nested: [{ [field]: 'must-not-persist' }] },
       }))).toThrow('FABRIC_WORKFLOW_SENSITIVE_PAYLOAD')
     }
-    for (const [index, key] of ['refreshToken', 'client-secret', 'auth.token', '私钥'].entries()) {
+    for (const [index, key] of [
+      'refreshToken', 'client-secret', 'auth.token', '私钥', 'authtoken', 'bearertoken',
+      'secretvalue', 'credentialdata', 'authenticationtoken', 'ａｃｃｅｓｓＴｏｋｅｎ',
+    ].entries()) {
       expect(() => createFabricIntent(intent({
         idempotencyKey: `credential-semantic-${index}`, input: { key, value: 'must-not-persist' },
       }))).toThrow('FABRIC_WORKFLOW_SENSITIVE_PAYLOAD')
     }
     expect(durableCounts()).toEqual(before)
+  })
+
+  it('allows localized and unrelated business keys in canonical action payloads', () => {
+    const localized = createFabricIntent(intent({
+      idempotencyKey: 'localized-safe-payload',
+      input: {
+        消息: '你好',
+        本地化: { 标签: ['健康', { 单位: '公斤' }] },
+        authStatus: 'disabled',
+        secretary: 'available',
+      },
+    }))
+
+    expect(localized.workflow.steps[1].input).toMatchObject({
+      actionInput: {
+        消息: '你好',
+        本地化: { 标签: ['健康', { 单位: '公斤' }] },
+        authStatus: 'disabled',
+        secretary: 'available',
+      },
+    })
   })
 
   it('repairs an interrupted creation after policy persistence without duplicating policy audit', () => {
