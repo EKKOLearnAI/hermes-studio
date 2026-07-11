@@ -70,18 +70,18 @@ export function evaluateFabricPolicy(input: FabricPolicyInput): FabricPolicyDeci
       reasons.push('risk_requires_approval')
       outcome = 'deny'
     } else if (role.decisionAuthority.requireApprovalAbove !== undefined
-      && risk >= RISK_ORDER[role.decisionAuthority.requireApprovalAbove]) {
+      && risk > RISK_ORDER[role.decisionAuthority.requireApprovalAbove]) {
       reasons.push('risk_requires_approval')
       outcome = 'waiting_user'
     }
     const cost = input.expectedCost ?? (resolution.capability.cost.currency === null
       ? null
       : { currency: resolution.capability.cost.currency, amountMinor: resolution.capability.cost.estimatedMinor })
-    if (outcome === 'allow' && cost && cost.amountMinor > 0) {
-      budget = cost
+    if (outcome === 'allow' && cost) {
       if (role.spendingLimits.currency !== cost.currency) reasons.push('currency_mismatch')
       else if (cost.amountMinor > role.spendingLimits.perAction) reasons.push('per_action_limit_exceeded')
       if (reasons.length > 0) outcome = 'deny'
+      else if (cost.amountMinor > 0) budget = cost
     }
   }
   if (reasons.length > 0 && outcome === 'allow') outcome = 'deny'
@@ -220,13 +220,27 @@ function emergencyBlocks(level: number, phase: 'intent' | 'execution'): boolean 
 }
 
 function targetAllowed(role: AssistantRole, resolution: ResolvedFabricExecutor, target: Record<string, unknown>): boolean {
-  const id = typeof target.id === 'string' ? target.id : typeof target.target === 'string' ? target.target : null
-  if (id === '*') return false
+  const id = normalizedLiteralTarget(target)
+  if (id === false) return false
   const roleTargets = role.decisionAuthority.allowedTargets
-  if (id !== null && (!roleTargets || !roleTargets.includes(id))) return false
+  if (roleTargets && roleTargets.length > 0 && (id === null || !roleTargets.includes(id))) return false
+  if (id !== null && (!roleTargets || roleTargets.length === 0)) return false
   if (resolution.capability.targetRestrictions.length > 0
     && (id === null || !resolution.capability.targetRestrictions.includes(id))) return false
   return true
+}
+
+/** `id` and `target` are aliases; providing both is rejected instead of applying hidden precedence. */
+function normalizedLiteralTarget(target: Record<string, unknown>): string | null | false {
+  const hasId = Object.prototype.hasOwnProperty.call(target, 'id')
+  const hasTarget = Object.prototype.hasOwnProperty.call(target, 'target')
+  if (hasId && hasTarget) return false
+  if (!hasId && !hasTarget) return null
+  const raw = hasId ? target.id : target.target
+  if (typeof raw !== 'string') return false
+  const normalized = raw.trim()
+  if (!normalized || normalized === '*') return false
+  return normalized
 }
 
 function rolePolicyMaterial(role: AssistantRole): unknown {
@@ -255,7 +269,10 @@ function validateInput(input: FabricPolicyInput): void {
   for (const value of [input.target, input.input, input.constraints]) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('FABRIC_POLICY_INVALID_JSON')
   }
-  if (input.expectedCost) validateMoney(input.expectedCost)
+  if (Object.prototype.hasOwnProperty.call(input, 'expectedCost')) {
+    if (!input.expectedCost || typeof input.expectedCost !== 'object') throw new Error('FABRIC_BUDGET_INVALID_MONEY')
+    validateMoney(input.expectedCost)
+  }
 }
 
 function validateMoney(money: FabricMoney): void {

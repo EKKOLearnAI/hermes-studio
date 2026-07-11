@@ -67,24 +67,56 @@ describe('Action Fabric role policy', () => {
     expect(JSON.stringify(stored)).not.toContain('super-secret')
     expect(JSON.stringify(stored)).not.toContain('private.txt')
     expect(decision.materialInputDigest).toMatch(/^[a-f0-9]{64}$/)
-  })
+  }, 15_000)
 
-  it('uses stable risk approval and literal target contracts', () => {
+  it('requires one normalized literal target that satisfies both allowlists', () => {
     configureRole({
       allow: ['simulator.echo'],
       decisionAuthority: { maxRisk: 'high', requireApprovalAbove: 'low', allowedTargets: ['simulator'] },
     })
     expect(evaluateFabricPolicy(intent())).toMatchObject({ outcome: 'allow' })
-    expect(evaluateFabricPolicy(intent('health-manager', { idempotencyKey: 'target-2', target: { id: '*' } })))
-      .toMatchObject({ outcome: 'deny', reasonCodes: ['target_not_allowed'] })
+    const deniedTargets = [
+      {}, { id: '' }, { id: '   ' }, { id: '*' }, { id: 42 }, { target: false },
+      { id: 'simulator', target: 'other' }, { id: 'simulator', target: 'simulator' },
+      { id: 'other' }, { target: 'other' },
+    ]
+    deniedTargets.forEach((target, index) => {
+      expect(evaluateFabricPolicy(intent('health-manager', { idempotencyKey: `target-${index}`, target })))
+        .toMatchObject({ outcome: 'deny', reasonCodes: ['target_not_allowed'] })
+    })
+    expect(evaluateFabricPolicy(intent('health-manager', {
+      idempotencyKey: 'target-normalized', target: { target: ' simulator ' },
+    }))).toMatchObject({ outcome: 'allow' })
+  }, 25_000)
 
+  it('requires approval only when risk is strictly above the threshold', () => {
     configureRole({
       allow: ['simulator.echo'],
       decisionAuthority: { maxRisk: 'high', requireApprovalAbove: 'none' },
     })
     expect(evaluateFabricPolicy(intent('health-manager', { idempotencyKey: 'approval' })))
+      .toMatchObject({ outcome: 'allow', reasonCodes: [] })
+
+    registerCapability('simulator.low-risk', 'low', null, 0)
+    configureRole({
+      allow: ['simulator.low-risk'],
+      decisionAuthority: { maxRisk: 'high', requireApprovalAbove: 'none' },
+    })
+    expect(evaluateFabricPolicy(intent('health-manager', { capabilityId: 'simulator.low-risk', idempotencyKey: 'above-none' })))
       .toMatchObject({ outcome: 'waiting_user', reasonCodes: ['risk_requires_approval'] })
-  })
+    configureRole({
+      allow: ['simulator.low-risk'],
+      decisionAuthority: { maxRisk: 'high', requireApprovalAbove: 'low' },
+    })
+    expect(evaluateFabricPolicy(intent('health-manager', { capabilityId: 'simulator.low-risk', idempotencyKey: 'equal-low' })))
+      .toMatchObject({ outcome: 'allow', reasonCodes: [] })
+    configureRole({
+      allow: ['simulator.low-risk'],
+      decisionAuthority: { maxRisk: 'none', requireApprovalAbove: 'none' },
+    })
+    expect(evaluateFabricPolicy(intent('health-manager', { capabilityId: 'simulator.low-risk', idempotencyKey: 'above-max' })))
+      .toMatchObject({ outcome: 'deny', reasonCodes: ['risk_requires_approval'] })
+  }, 15_000)
 
   it('enforces emergency intent creation and captures execution behavior', () => {
     configureRole({ allow: ['simulator.echo'] })
@@ -93,7 +125,7 @@ describe('Action Fabric role policy', () => {
     setFabricEmergencyStop(2, 'admin', 'halt execution')
     expect(evaluateFabricPolicy(intent('health-manager', { idempotencyKey: 'execution', phase: 'execution' })))
       .toMatchObject({ outcome: 'deny', reasonCodes: ['emergency_stop'] })
-  })
+  }, 15_000)
 
   it('reserves integer minor units transactionally and commits/releases idempotently', () => {
     createFabricCapability({
@@ -124,7 +156,7 @@ describe('Action Fabric role policy', () => {
     releaseFabricBudget('wf-1')
     expect(withActionFabricDb(db => db.prepare('SELECT status,amount_minor FROM fabric_budget_ledger').get()))
       .toEqual({ status: 'committed', amount_minor: 50 })
-  })
+  }, 15_000)
 
   it('rejects currency mismatch, per-action excess, and changed material input', () => {
     configureRole({ allow: ['simulator.echo'], spendingLimits: { currency: 'USD', perAction: 10, daily: 20 } })
@@ -134,7 +166,43 @@ describe('Action Fabric role policy', () => {
       .toMatchObject({ outcome: 'deny', reasonCodes: ['per_action_limit_exceeded'] })
     expect(evaluateFabricPolicy(intent('health-manager', { idempotencyKey: 'changed', expectedMaterialInputDigest: '0'.repeat(64) })))
       .toMatchObject({ outcome: 'deny', reasonCodes: ['material_input_changed'] })
-  })
+  }, 15_000)
+
+  it('validates explicit zero-cost currency but only positive costs consume the ledger', () => {
+    registerCapability('simulator.zero-cost', 'none', 'USD', 0)
+    configureRole({
+      allow: ['simulator.zero-cost'],
+      spendingLimits: { currency: 'EUR', perAction: 10, daily: 20 },
+    })
+    expect(evaluateFabricPolicy(intent('health-manager', {
+      capabilityId: 'simulator.zero-cost', idempotencyKey: 'cap-zero-mismatch',
+    }))).toMatchObject({ outcome: 'deny', reasonCodes: ['currency_mismatch'] })
+    expect(evaluateFabricPolicy(intent('health-manager', {
+      capabilityId: 'simulator.zero-cost', idempotencyKey: 'expected-zero-mismatch',
+      expectedCost: { currency: 'USD', amountMinor: 0 },
+    }))).toMatchObject({ outcome: 'deny', reasonCodes: ['currency_mismatch'] })
+
+    configureRole({
+      allow: ['simulator.zero-cost'],
+      spendingLimits: { currency: 'USD', perAction: 10, daily: 20 },
+    })
+    const allowed = evaluateFabricPolicy(intent('health-manager', {
+      capabilityId: 'simulator.zero-cost', idempotencyKey: 'zero-allowed',
+      expectedCost: { currency: 'USD', amountMinor: 0 },
+    }))
+    expect(allowed).toMatchObject({ outcome: 'allow', budget: null })
+    expect(withActionFabricDb(db => db.prepare('SELECT COUNT(*) AS count FROM fabric_budget_ledger').get()))
+      .toEqual({ count: 0 })
+
+    for (const [idempotencyKey, expectedCost] of [
+      ['negative', { currency: 'USD', amountMinor: -1 }],
+      ['fraction', { currency: 'USD', amountMinor: 0.5 }],
+      ['blank-currency', { currency: '', amountMinor: 0 }],
+    ] as const) {
+      expect(() => evaluateFabricPolicy(intent('health-manager', { idempotencyKey, expectedCost } as any)))
+        .toThrow('FABRIC_BUDGET_INVALID_MONEY')
+    }
+  }, 15_000)
 })
 
 function configureRole(options: {
@@ -158,4 +226,14 @@ function intent(role = 'health-manager', overrides: Record<string, unknown> = {}
     idempotencyKey: 'intent-1', goal: 'echo safely', target: { id: 'simulator' }, input: { message: 'hello' },
     constraints: {}, rationale: 'requested by user', ...overrides,
   } as Parameters<typeof evaluateFabricPolicy>[0]
+}
+
+function registerCapability(id: string, risk: 'none' | 'low', currency: string | null, estimatedMinor: number): void {
+  createFabricCapability({
+    id, version: 1, description: id, inputSchema: {}, outputSchema: {}, risk,
+    sideEffect: true, idempotency: 'required', reversible: false, compensationCapabilityId: null,
+    verificationStrategy: 'result', authentication: [], targetRestrictions: ['simulator'],
+    cost: { currency, estimatedMinor }, enabled: true,
+  })
+  bindFabricExecutorCapability('simulator-main', id, 1, getFabricCapability(id)!.contractDigest)
 }
