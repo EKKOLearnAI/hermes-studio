@@ -1,5 +1,6 @@
 import type { FabricEvidence, FabricExecutorType, FabricJsonObject } from './types'
 import { resolveFabricExecutor } from './registry'
+import { isFabricSensitiveString } from './audit'
 
 export type FabricExecutorPhase = 'prepare' | 'execute' | 'verify' | 'interrupt' | 'compensate'
 
@@ -263,7 +264,7 @@ function isSensitiveKey(key: string): boolean {
 }
 
 function isSensitiveString(value: string): boolean {
-  return /(?:[a-z]:\\|file:\/\/|\/(?:home|users?|var|tmp|etc)\/|password\s*[=:]|bearer\s+|-----BEGIN .*PRIVATE KEY-----)/i.test(value)
+  return isFabricSensitiveString(value)
 }
 
 function validTime(value?: string): string {

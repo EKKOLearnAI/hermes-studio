@@ -136,6 +136,30 @@ describe('Action Fabric simulator executors', () => {
     expect(encoded).toContain('_truncated')
   })
 
+  it('redacts credential values and sensitive paths even under neutral keys and nested arrays', async () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl'
+    registerFabricExecutorAdapter(successfulAdapter({
+      samples: [
+        'sk-proj-abcdefghijklmnop', jwt, '\\\\server\\share\\private.txt',
+        'file:///home/alice/private.txt', '/home/alice/private.txt', 'Bearer abcdefghijklmnop',
+        '-----BEGIN PRIVATE KEY-----',
+        ['ordinary', { value: 'sk-proj-qrstuvwxyzabcdef' }, [jwt, '\\\\server\\share\\nested.txt']],
+      ],
+      ordinary: 'The simulator completed normally',
+      apiRoute: '/api/action-fabric/workflows',
+    }))
+
+    const result = await invokeFabricExecutor('execute', executionContext('simulator.echo', 'secret-values', {}))
+    expect(result.evidence[0]?.data).toEqual({
+      apiRoute: '/api/action-fabric/workflows',
+      ordinary: 'The simulator completed normally',
+      samples: [
+        '[REDACTED]', '[REDACTED]', '[REDACTED]', '[REDACTED]', '[REDACTED]', '[REDACTED]', '[REDACTED]',
+        ['ordinary', { value: '[REDACTED]' }, ['[REDACTED]', '[REDACTED]']],
+      ],
+    })
+  })
+
   it('rejects adapter replacement and unsupported real executor types', () => {
     registerFabricExecutorAdapter(createSimulatorExecutorAdapter())
     expect(() => registerFabricExecutorAdapter(createSimulatorExecutorAdapter())).toThrow('FABRIC_EXECUTOR_ADAPTER_EXISTS')

@@ -696,7 +696,7 @@ function sanitizeValue(
     if (bytes > MAX_STRING_BYTES) throw new Error('FABRIC_AUDIT_INPUT_LIMIT')
     budget.bytes += bytes
     if (budget.bytes > MAX_INPUT_BYTES) throw new Error('FABRIC_AUDIT_INPUT_LIMIT')
-    return containsSensitiveString(value) ? REDACTED : value
+    return isFabricSensitiveString(value) ? REDACTED : value
   }
   if (value === null || typeof value === 'boolean') return value
   if (typeof value === 'number') {
@@ -764,7 +764,8 @@ function isSensitiveKey(value: string): boolean {
   return SENSITIVE_KEY.test(normalized) || SENSITIVE_COMPOUND_KEY.test(normalized)
 }
 
-function containsSensitiveString(value: string): boolean {
+/** Shared fail-closed predicate for values persisted in audit, workflow evidence, or outbox payloads. */
+export function isFabricSensitiveString(value: string): boolean {
   const trimmed = value.trim()
   const wholeUnixPath = /^\/\S+$/.test(trimmed) && !/^\/api(?:\/|$)/i.test(trimmed)
   return CONNECTION_STRING.test(value)
