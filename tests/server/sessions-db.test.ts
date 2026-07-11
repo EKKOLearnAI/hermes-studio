@@ -73,7 +73,8 @@ describe('session DB summaries', () => {
 
     expect(databaseSyncMock).toHaveBeenCalledWith('/tmp/hermes-profile/state.db', { open: true, readOnly: true })
     expect(prepareMock).toHaveBeenCalledWith(expect.stringContaining("s.source != 'tool'"))
-    expect(allMock).toHaveBeenCalledWith(200)
+    // maxPerSource = max(ceil(50/5), 50) = 50
+    expect(allMock).toHaveBeenCalledWith(50)
     expect(closeMock).toHaveBeenCalled()
     expect(rows).toEqual([
       {
@@ -133,7 +134,8 @@ describe('session DB summaries', () => {
     const rows = await mod.listSessionSummaries('telegram', 2)
 
     expect(prepareMock).toHaveBeenCalledWith(expect.stringContaining("s.source != 'tool'"))
-    expect(allMock).toHaveBeenCalledWith('telegram', 8)
+    // maxPerSource = max(ceil(2/5), 50) = 50
+    expect(allMock).toHaveBeenCalledWith('telegram', 50)
     expect(rows[0].last_active).toBe(1710000100)
     expect(rows[0].source).toBe('telegram')
     expect(rows[0].title).toBe('preview text')
