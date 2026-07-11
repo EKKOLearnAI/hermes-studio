@@ -370,6 +370,10 @@ const moduleHints = {
     purpose: 'Read the global personal digital twin, context, events, observations, and import status.',
     keywords: ['personal twin', 'digital twin', 'body state', 'life state', 'observations', 'events'],
   },
+  'Assistant Roles': {
+    purpose: 'Discover assistant role list, profile mapping, context preview, and context recipe CRUD. Capability permissions are declarative and are not enforced execution authorization in Phase 2.',
+    keywords: ['assistant roles', 'role list', 'profile mapping', 'context preview', 'context recipes'],
+  },
   Auth: {
     purpose: 'Manage Web UI authentication state and tokens.',
     keywords: ['auth', 'login', 'token', 'session'],

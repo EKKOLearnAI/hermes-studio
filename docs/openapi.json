@@ -17,6 +17,10 @@
       "description": "Anthropic OAuth"
     },
     {
+      "name": "Assistant Roles",
+      "description": "Assistant role registry, profile mappings, scoped context previews, and context recipes"
+    },
+    {
       "name": "Chat Run",
       "description": "Chat run HTTP and Socket.IO bridge operations"
     },
@@ -2580,6 +2584,774 @@
             }
           }
         ]
+      }
+    },
+    "/api/hermes/assistant-roles": {
+      "get": {
+        "tags": [
+          "Assistant Roles"
+        ],
+        "summary": "List assistant-roles",
+        "description": "GET /api/hermes/assistant-roles",
+        "operationId": "list",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Assistant Roles"
+        ],
+        "summary": "Create assistant-roles",
+        "description": "POST /api/hermes/assistant-roles",
+        "operationId": "create",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "capabilityScope": {
+                    "type": "object",
+                    "properties": {
+                      "enforcement": {
+                        "type": "string",
+                        "enum": [
+                          "declarative_phase_2"
+                        ]
+                      },
+                      "allow": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "deny": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "enforcement",
+                      "allow",
+                      "deny"
+                    ]
+                  },
+                  "dataScope": {
+                    "type": "object",
+                    "properties": {
+                      "includeProvenance": {
+                        "type": "boolean"
+                      },
+                      "domains": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "sections": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "includeProvenance",
+                      "domains",
+                      "sections"
+                    ]
+                  },
+                  "decisionAuthority": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "escalationRules": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "memoryNamespace": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "persona": {
+                    "type": "string"
+                  },
+                  "spendingLimits": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                },
+                "required": [
+                  "capabilityScope",
+                  "dataScope",
+                  "memoryNamespace",
+                  "name",
+                  "persona"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/assistant-roles/{id}": {
+      "get": {
+        "tags": [
+          "Assistant Roles"
+        ],
+        "summary": "Get :id",
+        "description": "GET /api/hermes/assistant-roles/:id",
+        "operationId": "detail",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Assistant Roles"
+        ],
+        "summary": "Update :id",
+        "description": "PUT /api/hermes/assistant-roles/:id",
+        "operationId": "update",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "capabilityScope": {
+                    "type": "object",
+                    "properties": {
+                      "enforcement": {
+                        "type": "string",
+                        "enum": [
+                          "declarative_phase_2"
+                        ]
+                      },
+                      "allow": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "deny": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "enforcement",
+                      "allow",
+                      "deny"
+                    ]
+                  },
+                  "dataScope": {
+                    "type": "object",
+                    "properties": {
+                      "includeProvenance": {
+                        "type": "boolean"
+                      },
+                      "domains": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "sections": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "includeProvenance",
+                      "domains",
+                      "sections"
+                    ]
+                  },
+                  "decisionAuthority": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "escalationRules": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  },
+                  "spendingLimits": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Assistant Roles"
+        ],
+        "summary": "Delete :id",
+        "description": "DELETE /api/hermes/assistant-roles/:id",
+        "operationId": "remove",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/assistant-roles/{id}/clone": {
+      "post": {
+        "tags": [
+          "Assistant Roles"
+        ],
+        "summary": "Create clone",
+        "description": "POST /api/hermes/assistant-roles/:id/clone",
+        "operationId": "clone",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/assistant-roles/{id}/context-recipes": {
+      "get": {
+        "tags": [
+          "Assistant Roles"
+        ],
+        "summary": "Get context-recipes",
+        "description": "GET /api/hermes/assistant-roles/:id/context-recipes",
+        "operationId": "listRecipes",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Assistant Roles"
+        ],
+        "summary": "Create context-recipes",
+        "description": "POST /api/hermes/assistant-roles/:id/context-recipes",
+        "operationId": "createRecipe",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "description": {
+                    "type": "string"
+                  },
+                  "domains": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "limits": {
+                    "type": "object",
+                    "properties": {
+                      "perSection": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50
+                      },
+                      "totalCharacters": {
+                        "type": "integer",
+                        "minimum": 1000,
+                        "maximum": 40000
+                      }
+                    },
+                    "required": [
+                      "perSection",
+                      "totalCharacters"
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "queryTemplate": {
+                    "type": "string"
+                  },
+                  "sections": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "domains",
+                  "limits",
+                  "name",
+                  "sections"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/assistant-roles/{id}/context-recipes/{recipeId}": {
+      "put": {
+        "tags": [
+          "Assistant Roles"
+        ],
+        "summary": "Update :recipeId",
+        "description": "PUT /api/hermes/assistant-roles/:id/context-recipes/:recipeId",
+        "operationId": "updateRecipe",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "recipeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "domains": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "limits": {
+                    "type": "object",
+                    "properties": {
+                      "perSection": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50
+                      },
+                      "totalCharacters": {
+                        "type": "integer",
+                        "minimum": 1000,
+                        "maximum": 40000
+                      }
+                    },
+                    "required": [
+                      "perSection",
+                      "totalCharacters"
+                    ]
+                  },
+                  "sections": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Assistant Roles"
+        ],
+        "summary": "Delete :recipeId",
+        "description": "DELETE /api/hermes/assistant-roles/:id/context-recipes/:recipeId",
+        "operationId": "removeRecipe",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "recipeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/assistant-roles/{id}/context/preview": {
+      "post": {
+        "tags": [
+          "Assistant Roles"
+        ],
+        "summary": "Create preview",
+        "description": "POST /api/hermes/assistant-roles/:id/context/preview",
+        "operationId": "previewContext",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string"
+                  },
+                  "recipeId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/assistant-roles/{id}/profile-mapping": {
+      "put": {
+        "tags": [
+          "Assistant Roles"
+        ],
+        "summary": "Update profile-mapping",
+        "description": "PUT /api/hermes/assistant-roles/:id/profile-mapping",
+        "operationId": "updateProfileMapping",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "profileName": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "profileName"
+                ]
+              }
+            }
+          }
+        }
       }
     },
     "/api/hermes/auth/anthropic/start": {

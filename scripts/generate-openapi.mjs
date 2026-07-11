@@ -75,6 +75,7 @@ const tagMappings = {
   'routes/hermes/runtime-versions.ts': { name: 'Runtime Versions', description: 'Runtime and Web UI version management' },
   'routes/hermes/write-gate.ts': { name: 'Write Gate', description: 'Hermes Agent write approval review' },
   'routes/hermes/personal-twin.ts': { name: 'Personal Twin', description: 'Global personal digital twin state and legacy synchronization' },
+  'routes/hermes/assistant-roles.ts': { name: 'Assistant Roles', description: 'Assistant role registry, profile mappings, scoped context previews, and context recipes' },
   'routes/hermes/performance-monitor.ts': { name: 'Performance', description: 'Runtime performance monitoring' },
   'routes/hermes/terminal.ts': { name: 'Terminal', description: 'WebSocket terminal' },
   'routes/health.ts': { name: 'Health', description: 'Health check' },
@@ -129,7 +130,9 @@ function scanRouteFile(filePath, tagInfo, paths) {
   while ((match = ctrlRouteRegex.exec(content)) !== null) {
     const [, method, path, controllerMethod] = match
     const controllerSource = controllerContent
-      ? extractFunctionSource(controllerContent, controllerMethod)
+      ? (tagInfo.name === 'Assistant Roles'
+          ? extractControllerSource(controllerContent, controllerMethod)
+          : extractFunctionSource(controllerContent, controllerMethod))
       : ''
     addEndpoint(paths, method, path, controllerMethod, tagInfo, content, match.index, controllerSource)
   }
@@ -156,14 +159,23 @@ function readControllerContent(routeFilePath, routeContent) {
   }
 }
 
-function extractFunctionSource(content, functionName) {
-  const functionRegex = new RegExp(`export\\s+(?:async\\s+)?function\\s+${functionName}\\b`)
+function extractFunctionSource(content, functionName, exportedOnly = false) {
+  const exportPrefix = exportedOnly ? 'export\\s+' : '(?:export\\s+)?'
+  const functionRegex = new RegExp(`${exportPrefix}(?:async\\s+)?function\\s+${functionName}\\b`)
   const match = functionRegex.exec(content)
   if (!match) return ''
 
-  const openBrace = content.indexOf('{', match.index)
+  let openBrace = content.indexOf('{', match.index)
   if (openBrace < 0) return ''
-  const closeBrace = findMatchingBrace(content, openBrace)
+  let closeBrace = findMatchingBrace(content, openBrace)
+  const beforeFirstBrace = content.slice(match.index, openBrace)
+  if (/\)\s*:\s*$/.test(beforeFirstBrace) && closeBrace >= 0) {
+    const bodyBrace = content.indexOf('{', closeBrace + 1)
+    if (bodyBrace >= 0 && !content.slice(closeBrace + 1, bodyBrace).trim()) {
+      openBrace = bodyBrace
+      closeBrace = findMatchingBrace(content, openBrace)
+    }
+  }
   if (closeBrace < 0) return ''
   return content.slice(match.index, closeBrace + 1)
 }
@@ -380,7 +392,7 @@ function inferEnumValues(name, source) {
 
 function generateRequestBody(method, source) {
   if (!['post', 'put', 'patch'].includes(method)) return null
-  if (!source || !/(ctx\.request\??\.body|requestBody\(ctx\))/.test(source)) return null
+  if (!source || !/(ctx\.request\??\.body|requestBody\(ctx\)|bodyObject\(ctx\))/.test(source)) return null
 
   const fields = extractBodyFields(source)
   const schema = {
@@ -436,6 +448,14 @@ function extractBodyFields(source) {
     })
   }
 
+  for (const name of extractBodyValidatorFieldNames(source)) {
+    addBodyField(fields, {
+      name,
+      schema: schemaFromName(name, source),
+      required: requiredNames.has(name),
+    })
+  }
+
   return Array.from(fields.values()).sort((a, b) => a.name.localeCompare(b.name))
 }
 
@@ -454,6 +474,27 @@ function mergeSchema(current, next) {
   if (current.type === 'object' && Object.keys(current).length === 1) return next
   if (next.type === 'object' && Object.keys(next).length === 1) return current
   return current
+}
+
+function extractControllerSource(content, functionName) {
+  const main = extractFunctionSource(content, functionName, true)
+  if (!main) return ''
+
+  function branch(name, trail = new Set()) {
+    if (trail.has(name)) return ''
+    const source = extractFunctionSource(content, name)
+    if (!source) return ''
+    const nextTrail = new Set(trail).add(name)
+    const children = Array.from(source.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g))
+      .map(match => branch(match[1], nextTrail))
+      .filter(Boolean)
+    return [source, ...children].join('\n')
+  }
+
+  const helperBranches = Array.from(main.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g))
+    .map(match => branch(match[1], new Set([functionName])))
+    .filter(source => /(ctx\.request\??\.body|requestBody\(ctx\)|bodyObject\(ctx\))/.test(source))
+  return [main, ...helperBranches].join('\n')
 }
 
 function extractRequestBodyTypeLiterals(source) {
@@ -563,6 +604,9 @@ function extractBodyVariableNames(source) {
   for (const match of source.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:bodyResult\.body|requestBody\(ctx\)\.body)/g)) {
     names.push(match[1])
   }
+  for (const match of source.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*bodyObject\(ctx\)/g)) {
+    names.push(match[1])
+  }
   return Array.from(new Set(names))
 }
 
@@ -577,7 +621,22 @@ function inferRequiredBodyNames(source) {
       names.add(entry.name)
     }
   }
+  for (const match of source.matchAll(/const\s+input(?:\s*:[^=]+)?\s*=\s*\{/g)) {
+    const openBrace = source.indexOf('{', match.index)
+    const closeBrace = findMatchingBrace(source, openBrace)
+    if (openBrace < 0 || closeBrace < 0) continue
+    for (const entry of splitTopLevel(source.slice(openBrace + 1, closeBrace))) {
+      const field = entry.trim().match(/^([A-Za-z_$][\w$]*)\s*:/)?.[1]
+      if (field) names.add(field)
+    }
+  }
   return names
+}
+
+function extractBodyValidatorFieldNames(source) {
+  const names = new Set()
+  collectMatches(source, /(?:requiredString|optionalString|optionalBoolean)\(\s*[A-Za-z_$][\w$]*\s*,\s*['"]([^'"]+)['"]/g, names)
+  return Array.from(names)
 }
 
 function extractRequiredNamesFromMessages(source) {
@@ -603,10 +662,61 @@ function schemaFromName(name, source) {
   if (new RegExp(`optionalBoolean\\([^,]+,\\s*['"]${escaped}['"]`).test(source)) return { type: 'boolean' }
   if (new RegExp(`optional(?:Positive)?Integer\\([^,]+,\\s*['"]${escaped}['"]`).test(source)) return { type: 'integer' }
   if (new RegExp(`(?:optional|required)\\w*StringArray\\([^,]+,\\s*['"]${escaped}['"]`).test(source)) return { type: 'array', items: { type: 'string' } }
+  if (new RegExp(`stringArray\\(\\s*\\w+\\.${escaped}\\b`).test(source)) return { type: 'array', items: { type: 'string' } }
+  if (new RegExp(`objectArray\\(\\s*\\w+\\.${escaped}\\b`).test(source)) return { type: 'array', items: { type: 'object', additionalProperties: true } }
+  if (new RegExp(`jsonObject\\(\\s*\\w+\\.${escaped}\\b`).test(source)) return { type: 'object', additionalProperties: true }
+  const validatorSchema = schemaFromObjectValidator(name, source)
+  if (validatorSchema) return validatorSchema
   const validatedSchema = schemaFromValidation(name, source)
   if (validatedSchema) return validatedSchema
+  if (new RegExp(`\\b\\w+\\.${escaped}\\s*!==?\\s*null`).test(source)) return { type: 'string', nullable: true }
   if (new RegExp(`(?:StringArray|task_ids|ids)`, 'i').test(name)) return { type: 'array', items: { type: 'string' } }
   return { type: 'string' }
+}
+
+function schemaFromObjectValidator(name, source) {
+  const escaped = escapeRegExp(name)
+  const call = source.match(new RegExp(`\\b([A-Za-z_$][\\w$]*)\\(\\s*\\w+\\.${escaped}\\b`))
+  if (!call) return null
+  const validatorSource = extractFunctionSource(source, call[1])
+  const signature = validatorSource.match(new RegExp(`function\\s+${escapeRegExp(call[1])}\\s*\\(\\s*([A-Za-z_$][\\w$]*)`))
+  if (!validatorSource || !signature) return null
+
+  const valueName = signature[1]
+  const propertyNames = Array.from(validatorSource.matchAll(new RegExp(`\\b${escapeRegExp(valueName)}\\.([A-Za-z_$][\\w$]*)`, 'g')))
+    .map(match => match[1])
+    .filter((property, index, all) => all.indexOf(property) === index)
+  if (!propertyNames.length) return null
+
+  const properties = {}
+  for (const property of propertyNames) {
+    const propertyPattern = `${escapeRegExp(valueName)}\\.${escapeRegExp(property)}`
+    if (new RegExp(`stringArray\\(\\s*${propertyPattern}\\b`).test(validatorSource)) {
+      properties[property] = { type: 'array', items: { type: 'string' } }
+      continue
+    }
+    if (new RegExp(`typeof\\s+${propertyPattern}\\s*!==?\\s*['"]boolean['"]`).test(validatorSource)) {
+      properties[property] = { type: 'boolean' }
+      continue
+    }
+    if (new RegExp(`Number\\.isInteger\\(\\s*${propertyPattern}\\s*\\)`).test(validatorSource)) {
+      const numberPattern = `(?:${propertyPattern}|\\(${propertyPattern}\\s+as\\s+number\\))`
+      const minimum = validatorSource.match(new RegExp(`${numberPattern}\\s*<\\s*(\\d+)`))?.[1]
+      const maximum = validatorSource.match(new RegExp(`${numberPattern}\\s*>\\s*(\\d+)`))?.[1]
+      properties[property] = {
+        type: 'integer',
+        ...(minimum ? { minimum: Number(minimum) } : {}),
+        ...(maximum ? { maximum: Number(maximum) } : {}),
+      }
+      continue
+    }
+    const enumValues = Array.from(validatorSource.matchAll(new RegExp(`${propertyPattern}\\s*!==?\\s*['"]([^'"]+)['"]`, 'g')))
+      .map(match => match[1])
+    properties[property] = enumValues.length
+      ? { type: 'string', enum: [...new Set(enumValues)] }
+      : { type: 'string' }
+  }
+  return { type: 'object', properties, required: propertyNames }
 }
 
 function schemaFromValidation(name, source) {
