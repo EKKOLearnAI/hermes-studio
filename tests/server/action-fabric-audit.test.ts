@@ -106,6 +106,55 @@ describe('action fabric audit, outbox, and control', () => {
     expect(JSON.stringify(payload)).toContain('[REDACTED]')
   })
 
+  it('redacts credential and absolute-path content even below benign keys and inside arrays', () => {
+    const sensitive = [
+      'postgres://alice:password@db.example/app',
+      'mysql://alice:password@db.example/app',
+      'mssql://db.example/app',
+      'sqlite:///C:/private/data.db',
+      'jdbc:postgresql://alice:password@db.example/app',
+      'mongodb+srv://alice:password@cluster.example/app',
+      'redis://:password@cache.example/0',
+      'amqps://alice:password@queue.example/vhost',
+      'https://alice:password@example.com/private',
+      'C:\\Users\\Alice\\private\\notes.txt',
+      '\\\\server\\share\\private\\notes.txt',
+      '/home/alice/.ssh/id_rsa',
+      'file:///etc/passwd',
+      'Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature',
+      'api_key=sk-live-secret-value',
+      'sk-proj-AbCdEf0123456789secret',
+      'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature123',
+      '-----BEGIN PRIVATE KEY----- private material',
+      'Database error: redis://:password@cache.example/0 at /var/log/service.log',
+    ]
+    append({ detail: sensitive[0], nested: [{ detail: sensitive.slice(1, 8) }, sensitive.slice(8)] })
+
+    const payload = listFabricAuditEvents()[0].payload
+    const encoded = JSON.stringify(payload)
+    for (const value of sensitive) expect(encoded).not.toContain(value)
+    const markers = encoded.match(/\[REDACTED:SENSITIVE:[a-f0-9]{16}\]/g) ?? []
+    expect(markers.length).toBe(sensitive.length)
+  })
+
+  it('preserves benign prose, relative labels, and ordinary HTTPS URLs below benign detail keys', () => {
+    const benign = [
+      'Request completed normally',
+      'postgres is the selected database family',
+      'reports/weekly-summary.json',
+      './fixtures/example.json',
+      'docs/api/reference',
+      'https://example.com/docs/getting-started?section=auth',
+      'The key result is customer retention',
+    ]
+    append({ detail: benign[0], nested: [{ detail: benign.slice(1, 4) }, benign.slice(4)] })
+
+    expect(listFabricAuditEvents()[0].payload).toEqual({
+      detail: benign[0],
+      nested: [{ detail: benign.slice(1, 4) }, benign.slice(4)],
+    })
+  })
+
   it('bounds persisted JSON without making distinct dropped data hash-identical and rejects non-JSON input', () => {
     const longA = append({ value: 'a'.repeat(50_000), list: Array.from({ length: 500 }, (_, index) => index) })
     const longB = append({ value: `${'a'.repeat(49_999)}b`, list: Array.from({ length: 500 }, (_, index) => index) }, 'workflow.other')

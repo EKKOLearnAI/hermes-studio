@@ -18,6 +18,15 @@ const MAX_LIST_LIMIT = 200
 const REDACTED = '[REDACTED]'
 const AUDIT_HEAD_KEY = 'audit_chain_head'
 const SENSITIVE_KEY = /(?:^|[_-])(secret|token|password|credential|key|cookie|auth(?:orization|entication)?|path|file|directory|dir|url|uri|dsn|error|exception)(?:$|[_-])/i
+const CONNECTION_STRING = /(?:\b(?:postgres(?:ql)?|mysql|mariadb|mssql|sqlserver|oracle|cockroachdb|mongodb(?:\+srv)?|rediss?|amqps?|nats|kafka|snowflake):\/\/|\bsqlite:\/{1,3}|\bjdbc:[a-z][a-z0-9+.-]*:(?:\/\/)?)/i
+const URL_USERINFO = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/i
+const WINDOWS_ABSOLUTE_PATH = /(?:^|[\s("'=])(?:[a-z]:[\\/]|\\\\[^\\\s]+\\[^\\\s]+)/i
+const UNIX_ABSOLUTE_PATH = /(?:^|[\s("'=])\/(?:etc|home|Users|var|tmp|opt|root|srv|private|mnt|Volumes|proc|sys|dev)(?:\/[^\s"'<>]*)?/i
+const FILE_URL = /\bfile:\/{2,3}[^\s"'<>]+/i
+const CREDENTIAL_MARKER = /(?:\bBearer\s+[a-z0-9._~+/=-]+|\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|password|secret|credential|authorization|cookie)\s*[:=]\s*\S+)/i
+const API_KEY_VALUE = /\b(?:sk-(?:live-|test-|proj-)?[a-z0-9_-]{12,}|AKIA[A-Z0-9]{16}|gh[pousr]_[a-z0-9]{20,}|xox[baprs]-[a-z0-9-]{12,}|AIza[a-z0-9_-]{20,})\b/i
+const JWT_VALUE = /\beyJ[a-z0-9_-]{8,}\.[a-z0-9_-]{4,}\.[a-z0-9_-]{4,}\b/i
+const PRIVATE_KEY_MARKER = /-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----/i
 
 type AuditRow = {
   sequence: number; id: string; event_type: string; actor_user_id: string
@@ -295,6 +304,7 @@ function validateStrictJson(value: unknown, seen: Set<object>): void {
 function sanitizeValue(value: unknown, depth: number, seen: Set<object>): unknown {
   if (value instanceof Error) return REDACTED
   if (typeof value === 'string') {
+    if (containsSensitiveString(value)) return `[REDACTED:SENSITIVE:${digest(value).slice(0, 16)}]`
     if (value.length <= MAX_STRING) return value
     return `${value.slice(0, MAX_STRING)}[TRUNCATED:${digest(value)}]`
   }
@@ -347,6 +357,18 @@ function compareKeys([left]: [string, unknown], [right]: [string, unknown]): num
 function isSensitiveKey(value: string): boolean {
   const normalized = value.replace(/([a-z0-9])([A-Z])/g, '$1_$2')
   return SENSITIVE_KEY.test(normalized)
+}
+
+function containsSensitiveString(value: string): boolean {
+  return CONNECTION_STRING.test(value)
+    || URL_USERINFO.test(value)
+    || WINDOWS_ABSOLUTE_PATH.test(value)
+    || UNIX_ABSOLUTE_PATH.test(value)
+    || FILE_URL.test(value)
+    || CREDENTIAL_MARKER.test(value)
+    || API_KEY_VALUE.test(value)
+    || JWT_VALUE.test(value)
+    || PRIVATE_KEY_MARKER.test(value)
 }
 
 function parseJsonObject(value: string): FabricJsonObject {
