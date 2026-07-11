@@ -104,6 +104,37 @@ describe('action fabric database', () => {
     expect(withActionFabricDb(db => db.prepare('PRAGMA foreign_keys').get())).toEqual({ foreign_keys: 1 })
   })
 
+  it('closes managed connections after successful operations and synchronous errors', async () => {
+    const { withActionFabricDb } = await import('../../packages/server/src/services/hermes/action-fabric')
+    let successfulDb: DatabaseSync | null = null
+    let throwingDb: DatabaseSync | null = null
+
+    expect(withActionFabricDb(db => {
+      successfulDb = db
+      return 'done'
+    })).toBe('done')
+    expect(() => successfulDb?.prepare('SELECT 1')).toThrow(/database is not open/i)
+
+    expect(() => withActionFabricDb(db => {
+      throwingDb = db
+      throw new Error('operation failed')
+    })).toThrow('operation failed')
+    expect(() => throwingDb?.prepare('SELECT 1')).toThrow(/database is not open/i)
+  })
+
+  it('rejects PromiseLike operation results, closes the connection, and observes rejections', async () => {
+    const { withActionFabricDb } = await import('../../packages/server/src/services/hermes/action-fabric')
+    let asyncDb: DatabaseSync | null = null
+    const asyncOperation = ((db: DatabaseSync) => {
+      asyncDb = db
+      return Promise.reject(new Error('async failure'))
+    }) as unknown as (db: DatabaseSync) => unknown
+
+    expect(() => withActionFabricDb(asyncOperation)).toThrow(/operation must be synchronous/i)
+    expect(() => asyncDb?.prepare('SELECT 1')).toThrow(/database is not open/i)
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+
   it('rejects a database created by a future schema version', async () => {
     const { getActionFabricDbPath, withActionFabricDb } = await import(
       '../../packages/server/src/services/hermes/action-fabric'
@@ -117,6 +148,70 @@ describe('action fabric database', () => {
     expect(() => withActionFabricDb(current => current.prepare('SELECT 1').get())).toThrow(
       /newer than supported version/i,
     )
+  })
+
+  it.each(['', ' ', '\t', '1.0', '+1', '01', 'version-1'])(
+    'rejects corrupt schema version marker %j',
+    async marker => {
+      const { getActionFabricDbPath, withActionFabricDb } = await import(
+        '../../packages/server/src/services/hermes/action-fabric'
+      )
+      mkdirSync(join(hermesHome, 'personal'), { recursive: true })
+      const db = new DatabaseSync(getActionFabricDbPath())
+      db.exec('CREATE TABLE fabric_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+      db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run('schema_version', marker)
+      db.close()
+
+      expect(() => withActionFabricDb(current => current.prepare('SELECT 1').get())).toThrow(
+        /schema version is invalid/i,
+      )
+    },
+  )
+
+  it('repairs a dropped required index from a current schema deterministically', async () => {
+    const { withActionFabricDb } = await import('../../packages/server/src/services/hermes/action-fabric')
+    withActionFabricDb(db => db.exec('DROP INDEX idx_fabric_intent_idempotency'))
+
+    expect(withActionFabricDb(db => db.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_fabric_intent_idempotency'",
+    ).get())).toEqual({ name: 'idx_fabric_intent_idempotency' })
+  })
+
+  it('does not reserve a writer lock for steady-state managed reads', async () => {
+    const { getActionFabricDbPath, withActionFabricDb } = await import(
+      '../../packages/server/src/services/hermes/action-fabric'
+    )
+    withActionFabricDb(db => db.prepare('SELECT 1').get())
+    const writer = new DatabaseSync(getActionFabricDbPath())
+    writer.exec('PRAGMA journal_mode = WAL')
+    writer.exec('BEGIN IMMEDIATE')
+
+    try {
+      expect(withActionFabricDb(db => db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()))
+        .toEqual({ value: '1' })
+    } finally {
+      writer.exec('ROLLBACK')
+      writer.close()
+    }
+  })
+
+  it('serializes migrations behind an existing writer transaction', async () => {
+    const { getActionFabricDbPath, initActionFabricSchema } = await import(
+      '../../packages/server/src/services/hermes/action-fabric'
+    )
+    mkdirSync(join(hermesHome, 'personal'), { recursive: true })
+    const writer = new DatabaseSync(getActionFabricDbPath())
+    const migrator = new DatabaseSync(getActionFabricDbPath())
+    migrator.exec('PRAGMA busy_timeout = 0')
+    writer.exec('BEGIN IMMEDIATE')
+
+    try {
+      expect(() => initActionFabricSchema(migrator)).toThrow(/database is locked/i)
+    } finally {
+      writer.exec('ROLLBACK')
+      migrator.close()
+      writer.close()
+    }
   })
 
   it('rolls back a failed migration without tables or a partial version update', async () => {
@@ -133,6 +228,23 @@ describe('action fabric database', () => {
     try {
       expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '0' })
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'fabric_executors'").get()).toBeUndefined()
+    } finally {
+      db.close()
+    }
+  })
+
+  it('rejects an incompatible current-version schema instead of accepting matching names', async () => {
+    const { initActionFabricSchema } = await import('../../packages/server/src/services/hermes/action-fabric')
+    const db = new DatabaseSync(':memory:')
+    db.exec(`
+      CREATE TABLE fabric_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT INTO fabric_meta(key, value) VALUES ('schema_version', '1');
+      CREATE VIEW fabric_capabilities AS SELECT 1 AS incompatible;
+    `)
+
+    try {
+      expect(() => initActionFabricSchema(db)).toThrow()
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '1' })
     } finally {
       db.close()
     }
@@ -170,6 +282,46 @@ describe('action fabric database', () => {
       expect(() => db.prepare(
         "INSERT INTO fabric_workflows(id, intent_id, state, lease_owner, lease_expires_at, created_at, updated_at) VALUES ('workflow-1', 'intent-1', 'draft', 'worker', NULL, 'now', 'now')",
       ).run()).toThrow(/check constraint/i)
+    })
+  })
+
+  it('rejects half-specified currency and amount pairs', async () => {
+    const { withActionFabricDb } = await import('../../packages/server/src/services/hermes/action-fabric')
+
+    withActionFabricDb(db => {
+      const insertCapability = db.prepare(`
+        INSERT INTO fabric_capabilities(
+          id, version, domain, verb, description, input_schema_json, output_schema_json, risk,
+          side_effect, idempotency, reversible, verification_strategy, authentication_json,
+          target_restrictions_json, cost_currency, cost_estimated_minor, contract_digest, enabled,
+          created_at, updated_at
+        ) VALUES (?, 1, 'simulator', 'echo', 'Echo', '{}', '{}', 'none', 0, 'supported', 0,
+          'result_match', '[]', '[]', ?, ?, 'digest', 1, 'now', 'now')
+      `)
+      expect(() => insertCapability.run('simulator.paid', null, 1)).toThrow(/check constraint/i)
+      insertCapability.run('simulator.echo', null, 0)
+
+      const insertIntent = db.prepare(`
+        INSERT INTO fabric_action_intents(
+          id, capability_id, capability_version, requested_by_role_id, requested_by_user_id,
+          idempotency_key, goal, target_json, input_json, constraints_json, rationale,
+          expected_cost_currency, expected_cost_minor, material_input_digest, sanitized_summary_json,
+          created_at, updated_at
+        ) VALUES (?, 'simulator.echo', 1, 'role-1', 'user-1', ?, 'Echo', '{}', '{}', '{}',
+          'test', ?, ?, 'digest', '{}', 'now', 'now')
+      `)
+      expect(() => insertIntent.run('intent-currency-only', 'key-currency', 'USD', null)).toThrow(/check constraint/i)
+      expect(() => insertIntent.run('intent-amount-only', 'key-amount', null, 100)).toThrow(/check constraint/i)
+      insertIntent.run('intent-free', 'key-free', null, null)
+
+      const insertPolicy = db.prepare(`
+        INSERT INTO fabric_policy_decisions(
+          id, intent_id, outcome, reason_codes_json, policy_version, material_input_digest,
+          policy_snapshot_json, sanitized_summary_json, budget_currency, budget_amount_minor, created_at
+        ) VALUES (?, 'intent-free', 'allow', '[]', 1, 'digest', '{}', '{}', ?, ?, 'now')
+      `)
+      expect(() => insertPolicy.run('policy-currency-only', 'USD', null)).toThrow(/check constraint/i)
+      expect(() => insertPolicy.run('policy-amount-only', null, 100)).toThrow(/check constraint/i)
     })
   })
 })

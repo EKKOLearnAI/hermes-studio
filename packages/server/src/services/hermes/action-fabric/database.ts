@@ -18,12 +18,24 @@ const REQUIRED_TABLES = [
   'fabric_outbox',
   'fabric_control_state',
 ]
+const REQUIRED_INDEXES = [
+  'idx_fabric_audit_sequence',
+  'idx_fabric_budget_daily',
+  'idx_fabric_executor_capability',
+  'idx_fabric_intent_idempotency',
+  'idx_fabric_outbox_pending',
+  'idx_fabric_policy_intent',
+  'idx_fabric_steps_workflow_ordinal',
+  'idx_fabric_workflows_state_lease',
+]
+
+type SynchronousResult<T> = T & (T extends PromiseLike<unknown> ? never : unknown)
 
 export function getActionFabricDbPath(): string {
   return join(getHermesBaseDir(), 'personal', 'action-fabric.db')
 }
 
-export function withActionFabricDb<T>(operation: (db: DatabaseSync) => T): T {
+export function withActionFabricDb<T>(operation: (db: DatabaseSync) => SynchronousResult<T>): T {
   const path = getActionFabricDbPath()
   mkdirSync(dirname(path), { recursive: true })
   const db = new DatabaseSync(path)
@@ -32,24 +44,35 @@ export function withActionFabricDb<T>(operation: (db: DatabaseSync) => T): T {
     db.exec('PRAGMA foreign_keys = ON')
     db.exec('PRAGMA journal_mode = WAL')
     initActionFabricSchema(db)
-    return operation(db)
+    const result = operation(db)
+    if (isPromiseLike(result)) {
+      void Promise.resolve(result).catch(() => undefined)
+      throw new TypeError('Action Fabric database operation must be synchronous')
+    }
+    return result
   } finally {
     db.close()
   }
 }
 
 export function initActionFabricSchema(db: DatabaseSync): void {
+  const currentVersion = readSchemaVersion(db)
+  if (currentVersion !== null) {
+    assertSupportedVersion(currentVersion)
+    if (currentVersion === SCHEMA_VERSION && isSchemaComplete(db)) return
+  }
+
   db.exec('BEGIN IMMEDIATE')
   try {
     db.exec('CREATE TABLE IF NOT EXISTS fabric_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
     const row = db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get() as { value: string } | undefined
     const version = parseSchemaVersion(row?.value)
-    if (version > SCHEMA_VERSION) {
-      throw new Error(`Action Fabric schema version ${version} is newer than supported version ${SCHEMA_VERSION}`)
-    }
+    assertSupportedVersion(version)
     if (version < 1) {
       createSchemaV1(db)
       setSchemaVersion(db, 1)
+    } else {
+      createSchemaV1(db)
     }
     assertSchemaComplete(db, SCHEMA_VERSION)
     db.exec('COMMIT')
@@ -59,13 +82,36 @@ export function initActionFabricSchema(db: DatabaseSync): void {
   }
 }
 
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return false
+  return typeof (value as { then?: unknown }).then === 'function'
+}
+
+function readSchemaVersion(db: DatabaseSync): number | null {
+  const meta = db.prepare(
+    "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'fabric_meta'",
+  ).get()
+  if (meta === undefined) return null
+  const row = db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get() as { value: string } | undefined
+  return parseSchemaVersion(row?.value)
+}
+
 function parseSchemaVersion(value: string | undefined): number {
   if (value === undefined) return 0
+  if (!/^(0|[1-9]\d*)$/.test(value)) {
+    throw new Error(`Action Fabric schema version is invalid: ${value}`)
+  }
   const version = Number(value)
-  if (!Number.isInteger(version) || version < 0) {
+  if (!Number.isSafeInteger(version)) {
     throw new Error(`Action Fabric schema version is invalid: ${value}`)
   }
   return version
+}
+
+function assertSupportedVersion(version: number): void {
+  if (version > SCHEMA_VERSION) {
+    throw new Error(`Action Fabric schema version ${version} is newer than supported version ${SCHEMA_VERSION}`)
+  }
 }
 
 function setSchemaVersion(db: DatabaseSync, version: number): void {
@@ -76,12 +122,27 @@ function setSchemaVersion(db: DatabaseSync, version: number): void {
 }
 
 function assertSchemaComplete(db: DatabaseSync, version: number): void {
-  const names = new Set((db.prepare(
+  const tables = new Set((db.prepare(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'fabric_%'",
   ).all() as Array<{ name: string }>).map(row => row.name))
-  const missing = REQUIRED_TABLES.filter(name => !names.has(name))
+  const indexes = new Set((db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_fabric_%'",
+  ).all() as Array<{ name: string }>).map(row => row.name))
+  const missing = [
+    ...REQUIRED_TABLES.filter(name => !tables.has(name)),
+    ...REQUIRED_INDEXES.filter(name => !indexes.has(name)),
+  ]
   if (missing.length > 0) {
     throw new Error(`Action Fabric schema version ${version} is incomplete: missing ${missing.join(', ')}`)
+  }
+}
+
+function isSchemaComplete(db: DatabaseSync): boolean {
+  try {
+    assertSchemaComplete(db, SCHEMA_VERSION)
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -109,6 +170,7 @@ function createSchemaV1(db: DatabaseSync): void {
       enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
+      CHECK(cost_currency IS NOT NULL OR cost_estimated_minor = 0),
       FOREIGN KEY(compensation_capability_id) REFERENCES fabric_capabilities(id)
     );
 
@@ -157,6 +219,7 @@ function createSchemaV1(db: DatabaseSync): void {
       sanitized_summary_json TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
+      CHECK((expected_cost_currency IS NULL) = (expected_cost_minor IS NULL)),
       FOREIGN KEY(capability_id) REFERENCES fabric_capabilities(id)
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_fabric_intent_idempotency
@@ -175,6 +238,7 @@ function createSchemaV1(db: DatabaseSync): void {
       budget_currency TEXT,
       budget_amount_minor INTEGER CHECK(budget_amount_minor IS NULL OR budget_amount_minor >= 0),
       created_at TEXT NOT NULL,
+      CHECK((budget_currency IS NULL) = (budget_amount_minor IS NULL)),
       FOREIGN KEY(intent_id) REFERENCES fabric_action_intents(id) ON DELETE CASCADE,
       FOREIGN KEY(executor_id) REFERENCES fabric_executors(id)
     );
