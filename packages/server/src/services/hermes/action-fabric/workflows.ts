@@ -56,6 +56,11 @@ export interface FabricIntentResult {
 
 type WorkflowAction = 'approve' | 'reject' | 'cancel' | 'retry' | 'compensate'
 
+/** Runtime-owned states eligible for a durable worker checkpoint. */
+export function isFabricWorkflowWorkerState(state: FabricWorkflowState): boolean {
+  return state === 'preparing' || state === 'executing' || state === 'verifying' || state === 'retrying'
+}
+
 // This is the sole map from public actions to destination states. Callers never select a state.
 const TRANSITIONS: Record<WorkflowAction, Partial<Record<FabricWorkflowState, FabricWorkflowState>>> = {
   approve: { waiting_user: 'preparing' },

@@ -1,0 +1,282 @@
+import { mkdtempSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import {
+  createFabricIntent,
+  createSimulatorExecutorAdapter,
+  ensureBuiltInFabricRegistry,
+  getFabricWorkflow,
+  listFabricAuditEvents,
+  processActionFabricOnce,
+  registerFabricExecutorAdapter,
+  resolveFabricExecutor,
+  setFabricEmergencyStop,
+  startActionFabricWorker,
+  stopActionFabricWorker,
+  unregisterFabricExecutorAdapter,
+  updateFabricExecutorHealth,
+  withActionFabricDb,
+  type FabricExecutionContext,
+  type FabricExecutorAdapter,
+} from '../../packages/server/src/services/hermes/action-fabric'
+import { ensureBuiltInAssistantRoles, updateAssistantRole } from '../../packages/server/src/services/hermes/personal-twin'
+import { logger } from '../../packages/server/src/services/logger'
+
+describe('Action Fabric durable worker', () => {
+  const originalHome = process.env.HERMES_HOME
+  let home = ''
+  const base = new Date('2026-07-12T01:00:00.000Z')
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'hwui-fabric-worker-'))
+    process.env.HERMES_HOME = home
+    vi.useFakeTimers()
+    vi.setSystemTime(base)
+    ensureBuiltInAssistantRoles()
+    ensureBuiltInFabricRegistry()
+    updateFabricExecutorHealth('simulator-main', 'healthy', {})
+    updateFabricExecutorHealth('internal-twin', 'healthy', {})
+    updateAssistantRole('health-manager', {
+      enabled: true,
+      capabilityScope: { allow: ['simulator.echo', 'simulator.counter.increment', 'internal.twin.preference.set'], deny: [], enforcement: 'action_fabric_v1' },
+      decisionAuthority: { maxRisk: 'critical', requireApprovalAbove: 'critical', allowedTargets: ['simulator', 'personal-twin'] },
+      spendingLimits: { currency: null, perAction: 0, daily: 0 },
+    })
+    unregisterFabricExecutorAdapter('simulator-main')
+    unregisterFabricExecutorAdapter('internal-twin')
+  })
+
+  afterEach(async () => {
+    await stopActionFabricWorker()
+    unregisterFabricExecutorAdapter('simulator-main')
+    unregisterFabricExecutorAdapter('internal-twin')
+    vi.useRealTimers()
+    if (originalHome === undefined) delete process.env.HERMES_HOME
+    else process.env.HERMES_HOME = originalHome
+    rmSync(home, { recursive: true, force: true })
+  })
+
+  it('persists prepare, execute and verify checkpoints before advancing', async () => {
+    registerFabricExecutorAdapter(createSimulatorExecutorAdapter())
+    const workflow = create().workflow
+
+    await expect(processActionFabricOnce({ workerId: 'worker-a', now: base })).resolves.toMatchObject({ processed: true, phase: 'prepare' })
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('executing')
+    expect(getFabricWorkflow(workflow.id)?.steps[0].state).toBe('succeeded')
+    await expect(processActionFabricOnce({ workerId: 'worker-a', now: plus(1) })).resolves.toMatchObject({ phase: 'execute' })
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('verifying')
+    expect(getFabricWorkflow(workflow.id)?.steps.slice(0, 2).map(step => step.state)).toEqual(['succeeded', 'succeeded'])
+    await expect(processActionFabricOnce({ workerId: 'worker-a', now: plus(2) })).resolves.toMatchObject({ phase: 'verify' })
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'succeeded', completedAt: plus(2).toISOString() })
+    expect(getFabricWorkflow(workflow.id)!.steps.map(step => step.state)).toEqual(['succeeded', 'succeeded', 'succeeded'])
+  })
+
+  it('uses an exclusive live lease and recovers only after expiry', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let calls = 0
+    registerFabricExecutorAdapter(adapter({ prepare: async context => {
+      calls += 1
+      if (calls === 1) await gate
+      return success('prepared', context)
+    } }))
+    const workflow = create().workflow
+    const first = processActionFabricOnce({ workerId: 'worker-a', now: base })
+    await vi.waitFor(() => expect(getFabricWorkflow(workflow.id)?.leaseOwner).toBe('worker-a'))
+
+    await expect(processActionFabricOnce({ workerId: 'worker-b', now: plus(1) })).resolves.toMatchObject({ processed: false })
+    await expect(processActionFabricOnce({ workerId: 'worker-b', now: plus(31) })).resolves.toMatchObject({ processed: true })
+    release()
+    await first
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('executing')
+    expect(listFabricAuditEvents({ aggregateId: workflow.id }).some(event => event.eventType === 'workflow.lease_recovered')).toBe(true)
+  })
+
+  it('never invokes an already verified step again after restart', async () => {
+    let verifies = 0
+    registerFabricExecutorAdapter(adapter({ verify: async context => { verifies += 1; return success('verified', context) } }))
+    const workflow = create().workflow
+    await runCycles(3)
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('succeeded')
+    await processActionFabricOnce({ workerId: 'restarted', now: plus(60) })
+    expect(verifies).toBe(1)
+  })
+
+  it('schedules bounded exponential retries and dead-letters on exhaustion', async () => {
+    registerFabricExecutorAdapter(adapter({ execute: async () => failure('temporary_failure', 'TEMPORARY', true) }))
+    const workflow = create('retry').workflow
+    await processActionFabricOnce({ now: base })
+    await processActionFabricOnce({ now: plus(1) })
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'retrying', attempt: 1, retryAt: plus(2).toISOString() })
+    await expect(processActionFabricOnce({ now: plus(1) })).resolves.toMatchObject({ processed: false })
+    await processActionFabricOnce({ now: plus(2) })
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('executing')
+    await processActionFabricOnce({ now: plus(3) })
+    await processActionFabricOnce({ now: plus(7) })
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('executing')
+    await processActionFabricOnce({ now: plus(8) })
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'dead_letter', attempt: 3, lastErrorCode: 'TEMPORARY' })
+  })
+
+  it('moves unknown outcomes to waiting-user without retry', async () => {
+    registerFabricExecutorAdapter(adapter({ execute: async () => failure('unknown', 'OUTCOME_UNKNOWN') }))
+    const workflow = create('unknown').workflow
+    await runCycles(2)
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'waiting_user', attempt: 0, retryAt: null })
+  })
+
+  it('treats verification mismatch according to the non-reversible contract', async () => {
+    registerFabricExecutorAdapter(adapter({ verify: async () => failure('mismatch', 'VERIFY_MISMATCH') }))
+    const workflow = create('mismatch').workflow
+    await runCycles(3)
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'retrying', attempt: 1, lastErrorCode: 'VERIFY_MISMATCH' })
+    await processActionFabricOnce({ now: plus(3) })
+    await processActionFabricOnce({ now: plus(4) })
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('verifying')
+  })
+
+  it('checkpoints a reversible verification mismatch before compensation', async () => {
+    registerFabricExecutorAdapter(adapter({
+      id: 'internal-twin', type: 'internal',
+      verify: async () => failure('mismatch', 'VERIFY_MISMATCH'),
+    }))
+    const workflow = createFabricIntent({
+      capabilityId: 'internal.twin.preference.set', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
+      idempotencyKey: 'reversible-mismatch', goal: 'set safely', target: { id: 'personal-twin' },
+      input: { domain: 'preferences', key: 'theme', value: 'dark' }, constraints: {}, rationale: 'test',
+    }).workflow
+
+    await runCycles(3)
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('compensating')
+    expect(getFabricWorkflow(workflow.id)?.steps[2]).toMatchObject({ state: 'failed', lastErrorCode: 'VERIFY_MISMATCH' })
+  })
+
+  it('opens a persistent circuit breaker after repeated adapter failures', async () => {
+    registerFabricExecutorAdapter(adapter({ prepare: async () => { throw new Error('raw secret payload') } }))
+    for (let index = 0; index < 3; index += 1) {
+      create(`breaker-${index}`)
+      await processActionFabricOnce({ now: plus(index) })
+    }
+    expect(resolveFabricExecutor('simulator.echo', { environments: ['simulator'] })).toBeNull()
+    const executor = withActionFabricDb(db => db.prepare('SELECT enabled,health,health_details_json FROM fabric_executors WHERE id=?')
+      .get('simulator-main') as { enabled: number; health: string; health_details_json: string })
+    expect(executor).toMatchObject({ enabled: 0, health: 'unhealthy' })
+    expect(JSON.parse(executor.health_details_json)).toMatchObject({ circuitBreaker: 'open' })
+  })
+
+  it('logs only durable identifiers and stable error classes', async () => {
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => undefined)
+    registerFabricExecutorAdapter(adapter({ prepare: async () => { throw new Error('password=raw-provider-secret') } }))
+    const workflow = create('safe-log').workflow
+    await processActionFabricOnce({ workerId: 'safe-worker', now: base })
+
+    const logged = JSON.stringify(info.mock.calls)
+    expect(logged).toContain(workflow.id)
+    expect(logged).toContain('FABRIC_EXECUTOR_EXCEPTION')
+    expect(logged).not.toContain('raw-provider-secret')
+    info.mockRestore()
+  })
+
+  it('level 2 stop interrupts interruptible active work but does not call execute', async () => {
+    let interrupted = 0
+    let executed = 0
+    registerFabricExecutorAdapter(adapter({
+      execute: async context => { executed += 1; return success('succeeded', context) },
+      interrupt: async context => { interrupted += 1; return success('interrupted', context) },
+    }))
+    const workflow = create('interrupt').workflow
+    await processActionFabricOnce({ now: base })
+    setFabricEmergencyStop(2, 'admin-1', 'stop')
+    await processActionFabricOnce({ now: plus(1) })
+    expect({ interrupted, executed }).toEqual({ interrupted: 1, executed: 0 })
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('cancelled')
+    expect(getFabricWorkflow(workflow.id)?.steps.every(step => step.state === 'cancelled' || step.state === 'succeeded')).toBe(true)
+  })
+
+  it('level 2 stop supersedes a live lease and rejects the stale execute commit', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let interrupted = 0
+    registerFabricExecutorAdapter(adapter({
+      execute: async context => { await gate; return success('succeeded', context) },
+      interrupt: async context => { interrupted += 1; return success('interrupted', context) },
+    }))
+    const workflow = create('active-interrupt').workflow
+    await processActionFabricOnce({ workerId: 'worker-a', now: base })
+    const executing = processActionFabricOnce({ workerId: 'worker-a', now: plus(1) })
+    await vi.waitFor(() => expect(getFabricWorkflow(workflow.id)?.steps[1].state).toBe('running'))
+    setFabricEmergencyStop(2, 'admin-1', 'stop active')
+
+    await expect(processActionFabricOnce({ workerId: 'worker-b', now: plus(2) }))
+      .resolves.toMatchObject({ processed: true, phase: 'interrupt' })
+    release()
+    await expect(executing).resolves.toMatchObject({ stale: true })
+    expect(interrupted).toBe(1)
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('cancelled')
+  })
+
+  it('never claims waiting-user, denied, or cancelled workflows', async () => {
+    const waiting = create('ineligible')
+    withActionFabricDb(db => {
+      db.prepare("UPDATE fabric_workflows SET state='waiting_user' WHERE id=?").run(waiting.workflow.id)
+      db.prepare("UPDATE fabric_steps SET state='waiting_user' WHERE workflow_id=?").run(waiting.workflow.id)
+    })
+    await expect(processActionFabricOnce({ now: base })).resolves.toMatchObject({ processed: false })
+    withActionFabricDb(db => db.prepare("UPDATE fabric_workflows SET state='denied' WHERE id=?").run(waiting.workflow.id))
+    await expect(processActionFabricOnce({ now: base })).resolves.toMatchObject({ processed: false })
+    withActionFabricDb(db => db.prepare("UPDATE fabric_workflows SET state='cancelled' WHERE id=?").run(waiting.workflow.id))
+    await expect(processActionFabricOnce({ now: base })).resolves.toMatchObject({ processed: false })
+  })
+
+  it('managed worker prevents overlapping timers and can be stopped idempotently', async () => {
+    registerFabricExecutorAdapter(createSimulatorExecutorAdapter())
+    create('timer')
+    const handle = startActionFabricWorker({ workerId: 'timer-worker', intervalMs: 10, clock: () => base })
+    expect(startActionFabricWorker()).toBe(handle)
+    await vi.advanceTimersByTimeAsync(10)
+    await stopActionFabricWorker()
+    await stopActionFabricWorker()
+    expect(getFabricWorkflow(handle.workerId === 'timer-worker' ? listWorkflowId() : '')?.steps[0].state).toBe('succeeded')
+  })
+})
+
+function create(idempotencyKey = 'worker-intent') {
+  return createFabricIntent({
+    capabilityId: 'simulator.echo', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
+    idempotencyKey, goal: 'execute safely', target: { id: 'simulator' }, input: { message: 'hello' },
+    constraints: {}, rationale: 'test',
+  })
+}
+
+function plus(seconds: number): Date { return new Date(baseTime() + seconds * 1_000) }
+function baseTime(): number { return new Date('2026-07-12T01:00:00.000Z').getTime() }
+
+async function runCycles(count: number): Promise<void> {
+  for (let index = 0; index < count; index += 1) await processActionFabricOnce({ workerId: 'worker-a', now: plus(index) })
+}
+
+function success(outcome: string, context: FabricExecutionContext) {
+  return { outcome, output: context.executionOutput ?? context.input, evidence: [], errorCode: null, safeToRetry: false } as never
+}
+
+function failure(outcome: string, errorCode: string, safeToRetry = false) {
+  return { outcome, output: {}, evidence: [], errorCode, safeToRetry } as never
+}
+
+function adapter(overrides: Partial<FabricExecutorAdapter> = {}): FabricExecutorAdapter {
+  return {
+    id: 'simulator-main', type: 'simulator',
+    async prepare(context) { return success('prepared', context) },
+    async execute(context) { return success('succeeded', context) },
+    async verify(context) { return success('verified', context) },
+    async interrupt(context) { return success('interrupted', context) },
+    async compensate(context) { return success('unsupported', context) },
+    ...overrides,
+  }
+}
+
+function listWorkflowId(): string {
+  return withActionFabricDb(db => (db.prepare('SELECT id FROM fabric_workflows ORDER BY created_at LIMIT 1').get() as { id: string }).id)
+}
