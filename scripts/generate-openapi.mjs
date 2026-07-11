@@ -636,6 +636,9 @@ function inferRequiredBodyNames(source) {
 function extractBodyValidatorFieldNames(source) {
   const names = new Set()
   collectMatches(source, /(?:requiredString|optionalString|optionalBoolean)\(\s*[A-Za-z_$][\w$]*\s*,\s*['"]([^'"]+)['"]/g, names)
+  for (const match of source.matchAll(/for\s*\(\s*const\s+[A-Za-z_$][\w$]*\s+of\s+\[([^\]]+)\]\s+as\s+const\s*\)/g)) {
+    collectMatches(match[1], /['"]([^'"]+)['"]/g, names)
+  }
   return Array.from(names)
 }
 

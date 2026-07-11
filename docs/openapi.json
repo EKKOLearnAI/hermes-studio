@@ -2873,6 +2873,9 @@
                     "type": "object",
                     "additionalProperties": true
                   },
+                  "description": {
+                    "type": "string"
+                  },
                   "enabled": {
                     "type": "boolean"
                   },
@@ -2882,6 +2885,15 @@
                       "type": "object",
                       "additionalProperties": true
                     }
+                  },
+                  "memoryNamespace": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "persona": {
+                    "type": "string"
                   },
                   "spendingLimits": {
                     "type": "object",
@@ -3165,6 +3177,9 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "description": {
+                    "type": "string"
+                  },
                   "domains": {
                     "type": "array",
                     "items": {
@@ -3192,6 +3207,12 @@
                       "perSection",
                       "totalCharacters"
                     ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "queryTemplate": {
+                    "type": "string"
                   },
                   "sections": {
                     "type": "array",

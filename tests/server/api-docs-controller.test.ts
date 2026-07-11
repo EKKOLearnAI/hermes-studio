@@ -125,6 +125,32 @@ describe('api docs controller', () => {
       },
       required: ['perSection', 'totalCharacters'],
     }))
+
+    const rolePatchSchema = ctx.body.paths['/api/hermes/assistant-roles/{id}'].put.requestBody.content['application/json'].schema
+    expect(Object.keys(rolePatchSchema.properties).sort()).toEqual([
+      'capabilityScope', 'dataScope', 'decisionAuthority', 'description', 'enabled',
+      'escalationRules', 'memoryNamespace', 'name', 'persona', 'spendingLimits',
+    ])
+    expect(rolePatchSchema.required).toBeUndefined()
+    expect(rolePatchSchema.properties).toEqual(expect.objectContaining({
+      name: { type: 'string' },
+      description: { type: 'string' },
+      persona: { type: 'string' },
+      memoryNamespace: { type: 'string' },
+      enabled: { type: 'boolean' },
+    }))
+
+    const recipePatchSchema = ctx.body.paths['/api/hermes/assistant-roles/{id}/context-recipes/{recipeId}'].put.requestBody.content['application/json'].schema
+    expect(Object.keys(recipePatchSchema.properties).sort()).toEqual([
+      'description', 'domains', 'enabled', 'limits', 'name', 'queryTemplate', 'sections',
+    ])
+    expect(recipePatchSchema.required).toBeUndefined()
+    expect(recipePatchSchema.properties).toEqual(expect.objectContaining({
+      name: { type: 'string' },
+      description: { type: 'string' },
+      queryTemplate: { type: 'string' },
+      enabled: { type: 'boolean' },
+    }))
   })
 
   it('advertises assistant role discovery without implying capability enforcement', () => {
