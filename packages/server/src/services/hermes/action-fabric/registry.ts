@@ -517,8 +517,14 @@ function assertStrictJson(value: unknown, label: string, ancestors: WeakSet<obje
         }
         assertStrictJson(descriptor.value, label, ancestors)
       }
-      const extraKeys = Reflect.ownKeys(value).filter(key => key !== 'length' && !/^\d+$/.test(String(key)))
-      if (extraKeys.length > 0) throw new Error(`${label} JSON array contains unsafe keys`)
+      for (const key of Reflect.ownKeys(value)) {
+        if (key === 'length') continue
+        if (typeof key !== 'string') throw new Error(`${label} JSON array contains an unsafe symbol key`)
+        const index = Number(key)
+        if (!Number.isSafeInteger(index) || index < 0 || index >= value.length || String(index) !== key) {
+          throw new Error(`${label} JSON array contains a non-canonical own key`)
+        }
+      }
       return
     }
     const prototype = Object.getPrototypeOf(value)

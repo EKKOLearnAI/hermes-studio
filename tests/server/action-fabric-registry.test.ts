@@ -240,6 +240,35 @@ describe('action fabric registry', () => {
       .toThrow(/enumerable/i)
   })
 
+  it.each([
+    ['leading-zero index', '01'],
+    ['negative-zero index', '-0'],
+    ['out-of-range index', '2'],
+    ['maximum non-index integer', '4294967295'],
+    ['extra string key', 'metadata'],
+  ])('rejects array own key that JSON.stringify drops: %s', (_label, key) => {
+    const inputSchema = key === '2'
+      ? new Proxy([], {
+          ownKeys: () => ['length', '2'],
+          getOwnPropertyDescriptor: (target, property) => property === '2'
+            ? { value: true, writable: true, enumerable: true, configurable: true }
+            : Reflect.getOwnPropertyDescriptor(target, property),
+        })
+      : Object.defineProperty([], key, { value: true, enumerable: true, configurable: true })
+    expect(JSON.stringify(inputSchema)).toBe('[]')
+
+    expect(() => createFabricCapability(capability({ inputSchema: { anyOf: inputSchema } }) as never))
+      .toThrow(/array.*key|canonical/i)
+  })
+
+  it('rejects symbol array keys that JSON.stringify drops', () => {
+    const inputSchema = Object.defineProperty([], Symbol('metadata'), { value: true, enumerable: true })
+    expect(JSON.stringify(inputSchema)).toBe('[]')
+
+    expect(() => createFabricCapability(capability({ inputSchema: { anyOf: inputSchema } }) as never))
+      .toThrow(/array.*key|symbol|canonical/i)
+  })
+
   it('changes the policy token after an executor environment change', () => {
     ensureBuiltInFabricRegistry()
     const first = resolveFabricExecutor('simulator.echo', { environments: ['simulator'] })!
