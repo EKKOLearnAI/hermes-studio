@@ -24,10 +24,18 @@ const MAX_PAYLOAD_DEPTH = 8
 const MAX_PAYLOAD_ITEMS = 64
 const MAX_PAYLOAD_NODES = 4_096
 const MAX_PAYLOAD_STRING_BYTES = 8_192
-const SENSITIVE_FIELD = /(?:^|[_-])(secret|token|password|credential|cookie|auth(?:orization|entication)?|path|file|directory|dir|url|uri|dsn)(?:$|[_-])/i
-const SENSITIVE_COMPOUND_FIELD = /^(?:api|private|secret|access|client|encryption|signing|service|account)(?:[_-]?key|Key)$/i
-const SENSITIVE_SEMANTIC_VALUE = /^(?:secret|token|password|credential|cookie|authorization|authentication|api[_ -]?key|access[_ -]?token)$/i
 const SENSITIVE_STRING = /(?:\bBearer\s+\S+|\b(?:api[_ -]?key|access[_ -]?token|password|secret|credential)\s*[:=]\s*\S+|-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----|\b(?:postgres(?:ql)?|mysql|mongodb|redis|amqps?):\/\/|(?:^|[\s("'=])(?:[a-z]:[\\/]|\\\\|\/(?:etc|home|Users|usr|app|workspace|data|var|tmp|opt|root|mnt)\/))/i
+const SENSITIVE_KEY_TOKENS = new Set([
+  'token', 'secret', 'password', 'passphrase', 'bearer', 'auth', 'authorization', 'authentication',
+  'cookie', 'session', 'credential', 'credentials', 'path', 'file', 'directory', 'dir', 'url', 'uri', 'dsn',
+])
+const SENSITIVE_KEY_PREFIXES = new Set([
+  'api', 'private', 'access', 'refresh', 'client', 'encryption', 'signing', 'service', 'account',
+])
+const SENSITIVE_COMPACT_KEYS = new Set([
+  'apikey', 'privatekey', 'accesskey', 'clientkey', 'servicekey', 'accountkey',
+  'accesstoken', 'refreshtoken', 'clientsecret', 'passwordvalue',
+])
 
 export interface FabricIntentResult {
   intent: FabricActionIntent
@@ -220,7 +228,7 @@ export function requestFabricCompensation(id: string, actorUserId: string, reaso
     idempotencyKey: `compensation:${id}`,
     goal: 'Compensate a completed Action Fabric workflow',
     target: context.payload.target,
-    input: { originalWorkflowId: id, originalExecutionToken: context.executeToken },
+    input: { originalWorkflowId: id, originalExecutionReference: context.executeToken },
     constraints: { compensationForWorkflowId: id },
     rationale: reason,
   })
@@ -531,19 +539,35 @@ function strictJson(value: unknown, depth: number, budget: { nodes: number }): u
     if (descriptor === undefined) return undefined
     if (!descriptor.enumerable || !('value' in descriptor)) throw new Error('FABRIC_WORKFLOW_INVALID_PAYLOAD')
     return descriptor.value
-  }).find(item => typeof item === 'string' && SENSITIVE_SEMANTIC_VALUE.test(item))
+  }).find(item => typeof item === 'string' && isSensitivePayloadKey(item))
   const output: FabricJsonObject = {}
   for (const key of (keys as string[]).sort()) {
     const descriptor = Object.getOwnPropertyDescriptor(source, key)
     if (!descriptor?.enumerable || !('value' in descriptor)) throw new Error('FABRIC_WORKFLOW_INVALID_PAYLOAD')
     if (key === '__proto__' || key === 'prototype' || key === 'constructor'
-      || SENSITIVE_FIELD.test(key) || SENSITIVE_COMPOUND_FIELD.test(key)
+      || isSensitivePayloadKey(key)
       || (semanticName !== undefined && /^(value|content|data)$/i.test(key))) {
       throw new Error('FABRIC_WORKFLOW_SENSITIVE_PAYLOAD')
     }
     output[key] = strictJson(descriptor.value, depth + 1, budget)
   }
   return output
+}
+
+function isSensitivePayloadKey(key: string): boolean {
+  if (!/^[\x20-\x7e]+$/.test(key)) return true
+  const tokens = key
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[^A-Za-z0-9]+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+  if (tokens.some(token => SENSITIVE_KEY_TOKENS.has(token))) return true
+  if (SENSITIVE_COMPACT_KEYS.has(tokens.join(''))) return true
+  const keyIndex = tokens.indexOf('key')
+  return keyIndex > 0 && tokens.slice(0, keyIndex).some(token => SENSITIVE_KEY_PREFIXES.has(token))
 }
 
 function canonicalStringify(value: unknown): string {

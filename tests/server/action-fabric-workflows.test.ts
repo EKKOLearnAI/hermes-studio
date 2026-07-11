@@ -125,6 +125,28 @@ describe('Action Fabric durable workflows', () => {
     expect(listFabricAuditEvents()).toHaveLength(auditCount)
   })
 
+  it('rejects normalized credential field variants before creating any durable records', () => {
+    const fields = [
+      'accessToken', 'refreshToken', 'clientSecret', 'passwordValue', 'bearer', 'token', 'secret',
+      'password', 'passphrase', 'privateKey', 'apiKey', 'auth', 'authorization', 'cookie', 'session',
+      'credential', 'ACCESS-TOKEN', 'client-secret', 'refresh.token', '访问令牌',
+      'APIKEY', 'apikey', 'ACCESSTOKEN', 'clientsecret', 'passwordvalue', 'privatekey',
+    ]
+    const before = durableCounts()
+    for (const [index, field] of fields.entries()) {
+      expect(() => createFabricIntent(intent({
+        idempotencyKey: `credential-field-${index}`,
+        input: { nested: [{ [field]: 'must-not-persist' }] },
+      }))).toThrow('FABRIC_WORKFLOW_SENSITIVE_PAYLOAD')
+    }
+    for (const [index, key] of ['refreshToken', 'client-secret', 'auth.token', '私钥'].entries()) {
+      expect(() => createFabricIntent(intent({
+        idempotencyKey: `credential-semantic-${index}`, input: { key, value: 'must-not-persist' },
+      }))).toThrow('FABRIC_WORKFLOW_SENSITIVE_PAYLOAD')
+    }
+    expect(durableCounts()).toEqual(before)
+  })
+
   it('repairs an interrupted creation after policy persistence without duplicating policy audit', () => {
     const request = intent({ idempotencyKey: 'interrupted' })
     const decision = evaluateFabricPolicy(request)
@@ -338,4 +360,11 @@ function forceWorkflowState(id: string, state: string): void {
   withActionFabricDb(db => db.prepare(
     'UPDATE fabric_workflows SET state=?, completed_at=? WHERE id=?',
   ).run(state, new Date().toISOString(), id))
+}
+
+function durableCounts(): Record<string, number> {
+  return withActionFabricDb(db => Object.fromEntries([
+    'fabric_action_intents', 'fabric_policy_decisions', 'fabric_workflows', 'fabric_steps',
+    'fabric_audit_events', 'fabric_outbox',
+  ].map(table => [table, (db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count])))
 }
