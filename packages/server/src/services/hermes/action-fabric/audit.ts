@@ -180,6 +180,11 @@ export function withFabricAuditedTransaction<T>(
   })
 }
 
+export function assertFabricAuditedTransaction(db: DatabaseSync): void {
+  requireTransaction(db)
+  if (!auditedTransactions.has(db)) throw new Error('FABRIC_AUDITED_TRANSACTION_REQUIRED')
+}
+
 export function listFabricAuditEvents(options: FabricAuditListOptions = {}): FabricAuditEvent[] {
   const limit = boundedLimit(options.limit)
   const clauses: string[] = []

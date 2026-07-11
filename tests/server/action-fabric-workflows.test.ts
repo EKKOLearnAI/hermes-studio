@@ -12,6 +12,7 @@ import {
   getFabricCapability,
   ensureBuiltInFabricRegistry,
   evaluateFabricPolicy,
+  evaluateFabricPolicyInDb,
   getFabricIntent,
   getFabricWorkflow,
   listFabricAuditEvents,
@@ -214,6 +215,30 @@ describe('Action Fabric durable workflows', () => {
     ).get(decision.intentId) as { count: number }).count)).toBe(1)
   })
 
+  it('rolls back policy and intent when atomic workflow creation fails', () => {
+    const before = durableCounts()
+    withActionFabricDb(db => db.exec(`CREATE TRIGGER fail_atomic_workflow BEFORE INSERT ON fabric_outbox
+      WHEN NEW.topic='fabric.workflow.created' BEGIN SELECT RAISE(ABORT, 'workflow unavailable'); END`))
+
+    expect(() => createFabricIntent(intent({ idempotencyKey: 'atomic-create-failure' })))
+      .toThrow(/workflow unavailable/)
+    expect(durableCounts()).toEqual(before)
+  })
+
+  it('rejects db-scoped policy evaluation outside an audited transaction', () => {
+    const request = intent({ idempotencyKey: 'misused-db-evaluator' })
+    evaluateFabricPolicy(request)
+    withActionFabricDb(db => {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        expect(() => evaluateFabricPolicyInDb(db, request))
+          .toThrow('FABRIC_AUDITED_TRANSACTION_REQUIRED')
+      } finally {
+        db.exec('ROLLBACK')
+      }
+    })
+  })
+
   it('fails closed when an idempotency replay resolves to a different policy decision', () => {
     const first = createFabricIntent(intent({ idempotencyKey: 'conflicting-replay' }))
 
@@ -338,6 +363,23 @@ describe('Action Fabric durable workflows', () => {
     expect(getFabricWorkflow(waiting.workflow.id)?.state).toBe('waiting_user')
   })
 
+  it('rolls back fresh approval decisions and reservations when authorization changed', () => {
+    registerPaidCapability()
+    configureRole(['simulator.paid-approval'], 'none')
+    updateAssistantRole('health-manager', { spendingLimits: { currency: 'USD', perAction: 70, daily: 100 } })
+    const waiting = createFabricIntent(intent({ capabilityId: 'simulator.paid-approval',
+      idempotencyKey: 'approval-atomic-rollback', expectedCost: { currency: 'USD', amountMinor: 60 } }))
+    const before = durableCounts()
+    configureRole(['simulator.paid-approval'], 'low')
+    updateAssistantRole('health-manager', { spendingLimits: { currency: 'USD', perAction: 70, daily: 100 } })
+
+    expect(() => approveFabricWorkflow(waiting.workflow.id, 'admin-1')).toThrow('FABRIC_WORKFLOW_APPROVAL_STALE')
+    expect(durableCounts()).toEqual(before)
+    expect(withActionFabricDb(db => db.prepare(
+      'SELECT id FROM fabric_budget_ledger WHERE decision_id<>?',
+    ).get(waiting.policyDecision.id))).toBeUndefined()
+  })
+
   it('never directly cancels executing or verifying workflows', () => {
     for (const state of ['preparing', 'executing', 'verifying'] as const) {
       const created = createFabricIntent(intent({ idempotencyKey: `active-${state}` }))
@@ -353,6 +395,36 @@ describe('Action Fabric durable workflows', () => {
         state, leaseOwner: 'worker-1', steps: expect.arrayContaining([expect.objectContaining({ ordinal: 1, state: 'running' })]),
       })
     }
+  })
+
+  it('never cancels a failed execute step that has started', () => {
+    const created = createFabricIntent(intent({ idempotencyKey: 'started-failed-execute' }))
+    withActionFabricDb(db => {
+      db.prepare(`UPDATE fabric_workflows SET state='failed',lease_owner=NULL,lease_expires_at=NULL WHERE id=?`)
+        .run(created.workflow.id)
+      db.prepare(`UPDATE fabric_steps SET state='failed',started_at=?,last_error_code='UNKNOWN'
+        WHERE workflow_id=? AND ordinal=1`).run('2026-07-12T01:00:00.000Z', created.workflow.id)
+    })
+    expect(() => cancelFabricWorkflow(created.workflow.id, 'admin-1', 'stop'))
+      .toThrow('FABRIC_WORKFLOW_INVALID_TRANSITION')
+    expect(getFabricWorkflow(created.workflow.id)).toMatchObject({ state: 'failed', leaseOwner: null,
+      steps: expect.arrayContaining([expect.objectContaining({ ordinal: 1, state: 'failed',
+        startedAt: '2026-07-12T01:00:00.000Z' })]) })
+  })
+
+  it('rejects malformed durable identifiers before any side effect', () => {
+    const before = durableCounts()
+    const cases = [
+      { idempotencyKey: 'oauth_code=secret' }, { idempotencyKey: 'refresh_token=secret' },
+      { idempotencyKey: 'has whitespace' }, { idempotencyKey: 'control\u0001char' },
+      { idempotencyKey: 'ｏａｕｔｈ' }, { requestedByUserId: '用户-1' },
+      { requestedByRoleId: 'role name' }, { capabilityId: 'simulator/echo' },
+    ]
+    for (const request of cases) {
+      expect(() => createFabricIntent(intent(request))).toThrow('FABRIC_WORKFLOW_INVALID_IDENTIFIER')
+    }
+    expect(durableCounts()).toEqual(before)
+    expect(createFabricIntent(intent({ idempotencyKey: 'valid-key_1.2:retry' })).workflow.id).toMatch(/^workflow-/)
   })
 
   it('uses explicit legal transitions for rejection, cancellation, retry, and compensation', () => {
@@ -419,7 +491,7 @@ describe('Action Fabric durable workflows', () => {
     ).get(requested.compensationIntentId!) as { count: number }).count)).toBe(1)
   })
 
-  it('recovers an orphaned compensation workflow without duplicating it', () => {
+  it('rolls back failed compensation creation and retries without duplication', () => {
     configureRole(['internal.twin.preference.set'], 'critical', ['personal-twin'])
     const original = createFabricIntent(intent({
       capabilityId: 'internal.twin.preference.set', idempotencyKey: 'orphan-compensation',
@@ -433,16 +505,13 @@ describe('Action Fabric durable workflows', () => {
     expect(() => requestFabricCompensation(original.workflow.id, 'admin-1', 'undo'))
       .toThrow(/compensation link unavailable/)
     expect(getFabricWorkflow(original.workflow.id)).toMatchObject({ state: 'succeeded', compensationIntentId: null })
-    const orphan = withActionFabricDb(db => db.prepare(
+    expect(withActionFabricDb(db => db.prepare(
       'SELECT id FROM fabric_action_intents WHERE idempotency_key=?',
-    ).get(`compensation:${original.workflow.id}`) as { id: string })
-    expect(withActionFabricDb(db => (db.prepare(
-      'SELECT COUNT(*) AS count FROM fabric_workflows WHERE intent_id=?',
-    ).get(orphan.id) as { count: number }).count)).toBe(0)
+    ).get(`compensation:${original.workflow.id}`))).toBeUndefined()
     withActionFabricDb(db => db.exec('DROP TRIGGER fail_compensation_link'))
 
     const recovered = requestFabricCompensation(original.workflow.id, 'admin-1', 'undo')
-    expect(recovered.compensationIntentId).toBe(orphan.id)
+    expect(recovered.compensationIntentId).toMatch(/^intent-/)
     expect(withActionFabricDb(db => (db.prepare(
       'SELECT COUNT(*) AS count FROM fabric_action_intents WHERE idempotency_key=?',
     ).get(`compensation:${original.workflow.id}`) as { count: number }).count)).toBe(1)

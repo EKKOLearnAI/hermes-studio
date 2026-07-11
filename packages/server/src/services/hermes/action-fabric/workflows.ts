@@ -3,7 +3,11 @@ import type { DatabaseSync } from 'node:sqlite'
 import { getAssistantRole } from '../personal-twin'
 import { appendFabricAuditEvent, appendFabricOutbox, withFabricAuditedTransaction } from './audit'
 import { withActionFabricDb } from './database'
-import { evaluateFabricPolicy, revalidateFabricDecisionInDb } from './policy'
+import {
+  evaluateFabricPolicyInDb,
+  prepareFabricPolicyEvaluation,
+  revalidateFabricDecisionInDb,
+} from './policy'
 import type {
   FabricActionIntent,
   FabricActionIntentInput,
@@ -96,8 +100,9 @@ interface StepRow {
 export function createFabricIntent(input: FabricActionIntentInput): FabricIntentResult {
   validatePersistedMetadata(input)
   const payload = actionPayload(input)
-  const decision = evaluateFabricPolicy(input)
+  prepareFabricPolicyEvaluation(input)
   return withFabricAuditedTransaction(db => {
+    const decision = evaluateFabricPolicyInDb(db, input)
     const existing = selectWorkflowByIntent(db, decision.intentId)
     if (existing) {
       if (existing.policy_decision_id !== decision.id) throw new Error('FABRIC_WORKFLOW_POLICY_CONFLICT')
@@ -181,8 +186,11 @@ export function approveFabricWorkflow(id: string, actorUserId: string): FabricWo
     rationale: 'User approval',
     ...(context.intent.expectedCost === undefined ? {} : { expectedCost: context.intent.expectedCost }),
   }
-  const fresh = evaluateFabricPolicy(request)
-  return withFabricAuditedTransaction(db => approveWorkflowInDb(db, id, actorUserId, context.decision, fresh))
+  prepareFabricPolicyEvaluation(request)
+  return withFabricAuditedTransaction(db => {
+    const fresh = evaluateFabricPolicyInDb(db, request)
+    return approveWorkflowInDb(db, id, actorUserId, context.decision, fresh)
+  })
 }
 
 export function rejectFabricWorkflow(id: string, actorUserId: string, reason: string): FabricWorkflowDetail {
@@ -222,8 +230,9 @@ export function requestFabricCompensation(id: string, actorUserId: string, reaso
   }
   validatePersistedMetadata(compensationInput)
   const compensationPayload = actionPayload(compensationInput)
-  const compensationDecision = evaluateFabricPolicy(compensationInput)
+  prepareFabricPolicyEvaluation(compensationInput)
   return withFabricAuditedTransaction(db => {
+    const compensationDecision = evaluateFabricPolicyInDb(db, compensationInput)
     const current = requireWorkflow(db, id)
     if (current.compensation_intent_id !== null) return detailForWorkflow(db, current)
     if (current.state !== 'succeeded') throw new Error('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
@@ -304,7 +313,7 @@ function transitionWorkflow(
 
 function hasActiveOrEffectfulStep(db: DatabaseSync, workflowId: string): boolean {
   return db.prepare(`SELECT 1 FROM fabric_steps WHERE workflow_id=?
-    AND (state='running' OR (ordinal>=1 AND state IN ('succeeded','compensated'))) LIMIT 1`).get(workflowId) !== undefined
+    AND (state='running' OR (ordinal>=1 AND started_at IS NOT NULL)) LIMIT 1`).get(workflowId) !== undefined
 }
 
 function releaseWorkflowBudgetInDb(db: DatabaseSync, workflow: WorkflowRow, now: string): void {
@@ -661,6 +670,10 @@ function validatePersistedMetadata(input: FabricActionIntentInput): void {
   for (const value of [input.capabilityId, input.requestedByRoleId, input.requestedByUserId, input.idempotencyKey]) {
     if (typeof value === 'string' && SENSITIVE_STRING.test(value)) {
       throw new Error('FABRIC_WORKFLOW_SENSITIVE_PAYLOAD')
+    }
+    if (typeof value !== 'string' || value.length === 0 || value.length > 256
+      || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value)) {
+      throw new Error('FABRIC_WORKFLOW_INVALID_IDENTIFIER')
     }
   }
 }

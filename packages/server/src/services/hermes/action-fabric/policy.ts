@@ -5,7 +5,12 @@ import {
   migrateAssistantRoleCapabilityEnforcement,
 } from '../personal-twin'
 import type { AssistantRole, AssistantRoleRisk } from '../personal-twin'
-import { appendFabricAuditEvent, appendFabricOutbox, withFabricAuditedTransaction } from './audit'
+import {
+  appendFabricAuditEvent,
+  appendFabricOutbox,
+  assertFabricAuditedTransaction,
+  withFabricAuditedTransaction,
+} from './audit'
 import { getFabricControlStateInDb } from './control'
 import { ensureBuiltInFabricRegistry, resolveFabricExecutorInDb } from './registry'
 import type {
@@ -42,9 +47,24 @@ interface LedgerRow {
 }
 
 export function evaluateFabricPolicy(input: FabricPolicyInput, options: FabricPolicyEvaluationOptions = {}): FabricPolicyDecision {
+  prepareFabricPolicyEvaluation(input)
+  return withFabricAuditedTransaction(db => evaluateFabricPolicyInDb(db, input, options))
+}
+
+export function prepareFabricPolicyEvaluation(input: FabricPolicyInput): void {
   validateInput(input)
   ensureBuiltInFabricRegistry()
   migrateAssistantRoleCapabilityEnforcement()
+}
+
+/** Must only be called from an existing `withFabricAuditedTransaction` callback. */
+export function evaluateFabricPolicyInDb(
+  db: DatabaseSync,
+  input: FabricPolicyInput,
+  options: FabricPolicyEvaluationOptions = {},
+): FabricPolicyDecision {
+  assertFabricAuditedTransaction(db)
+  validateInput(input)
   const environments = input.environments ?? ['simulator', 'internal']
   const materialInputDigest = digest({
     capabilityId: input.capabilityId, target: input.target, input: input.input,
@@ -52,8 +72,7 @@ export function evaluateFabricPolicy(input: FabricPolicyInput, options: FabricPo
   })
   const sanitizedSummary = summarize(input)
 
-  return withFabricAuditedTransaction(db => {
-    const instant = evaluationInstant(options)
+  const instant = evaluationInstant(options)
     const now = instant.toISOString()
     const ledgerDate = utcDate(instant)
     const role = getAssistantRole(input.requestedByRoleId)
@@ -178,12 +197,11 @@ export function evaluateFabricPolicy(input: FabricPolicyInput, options: FabricPo
       aggregateId: intentId, payload: { decisionId, outcome, reasonCodes: reasons, sanitizedSummary }, occurredAt: now,
     })
     appendFabricOutbox(db, 'fabric.policy.evaluated', intentId, { decisionId, outcome, reasonCodes: reasons })
-    return {
+  return {
       id: decisionId, intentId, executorId: resolution?.executor.id ?? null, outcome, reasonCodes: [...reasons],
       policyVersion: POLICY_VERSION, materialInputDigest, policySnapshot: snapshot, sanitizedSummary,
       budget, createdAt: now,
-    }
-  })
+  }
 }
 
 export function reserveFabricBudget(decisionId: string): FabricBudgetReservation {
@@ -207,7 +225,7 @@ export function reserveFabricBudget(decisionId: string): FabricBudgetReservation
 
 /** Revalidates a persisted decision while the caller holds the shared audited writer transaction. */
 export function revalidateFabricDecisionInDb(db: DatabaseSync, decisionId: string): FabricPolicyDecision {
-  if (!db.isTransaction) throw new Error('FABRIC_TRANSACTION_REQUIRED')
+  assertFabricAuditedTransaction(db)
   const decision = requireDecision(db, decisionId)
   const intent = requireIntentIdentity(db, decision.intent_id)
   revalidateSnapshot(db, decision, intent.requested_by_role_id)
