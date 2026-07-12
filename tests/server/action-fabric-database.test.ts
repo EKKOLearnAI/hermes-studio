@@ -30,6 +30,68 @@ const REQUIRED_INDEX_SIGNATURES = [
   { name: 'idx_fabric_workflows_state_lease', table: 'fabric_workflows', unique: 0, columns: ['state', 'lease_expires_at', 'retry_at'], partial: 0 },
 ]
 
+const REQUIRED_JSON_TRIGGERS = [
+  'fabric_capabilities_json_insert',
+  'fabric_capabilities_json_update',
+  'fabric_executors_json_insert',
+  'fabric_executors_json_update',
+  'fabric_action_intents_json_insert',
+  'fabric_action_intents_json_update',
+  'fabric_policy_decisions_json_insert',
+  'fabric_policy_decisions_json_update',
+  'fabric_steps_json_insert',
+  'fabric_steps_json_update',
+  'fabric_audit_events_json_insert',
+  'fabric_audit_events_json_update',
+  'fabric_outbox_json_insert',
+  'fabric_outbox_json_update',
+]
+
+function seedJsonConstrainedRows(db: DatabaseSync): void {
+  db.exec(`
+    INSERT INTO fabric_capabilities(
+      id, version, domain, verb, description, input_schema_json, output_schema_json, risk,
+      side_effect, idempotency, reversible, verification_strategy, authentication_json,
+      target_restrictions_json, contract_digest, enabled, created_at, updated_at
+    ) VALUES ('json.capability', 1, 'test', 'json', 'JSON fixture', '{}', '{}', 'none',
+      0, 'supported', 0, 'result_match', '[]', '[]', 'digest', 1, 'now', 'now');
+    INSERT INTO fabric_executors(
+      id, type, name, environment, health, health_details_json, configuration_json,
+      enabled, policy_version, created_at, updated_at
+    ) VALUES ('json-executor', 'simulator', 'JSON fixture', 'simulator', 'healthy', '{}', '{}',
+      1, 1, 'now', 'now');
+    INSERT INTO fabric_executor_capabilities(
+      executor_id, capability_id, capability_version, contract_digest, created_at
+    ) VALUES ('json-executor', 'json.capability', 1, 'digest', 'now');
+    INSERT INTO fabric_action_intents(
+      id, capability_id, capability_version, requested_by_role_id, requested_by_user_id,
+      idempotency_key, goal, target_json, input_json, constraints_json, rationale,
+      material_input_digest, sanitized_summary_json, created_at, updated_at
+    ) VALUES ('json-intent', 'json.capability', 1, 'role', 'user', 'json-key', 'JSON fixture',
+      '{}', '{}', '{}', 'test', 'digest', '{}', 'now', 'now');
+    INSERT INTO fabric_policy_decisions(
+      id, intent_id, executor_id, outcome, reason_codes_json, policy_version,
+      material_input_digest, policy_snapshot_json, sanitized_summary_json, created_at
+    ) VALUES ('json-policy', 'json-intent', 'json-executor', 'allow', '[]', 1,
+      'digest', '{}', '{}', 'now');
+    INSERT INTO fabric_workflows(
+      id, intent_id, executor_id, policy_decision_id, state, created_at, updated_at
+    ) VALUES ('json-workflow', 'json-intent', 'json-executor', 'json-policy', 'draft', 'now', 'now');
+    INSERT INTO fabric_steps(
+      id, workflow_id, ordinal, kind, state, execution_token, executor_id,
+      input_json, output_json, evidence_json, created_at, updated_at
+    ) VALUES ('json-step', 'json-workflow', 0, 'execute', 'pending', 'json-token', 'json-executor',
+      '{}', '{}', '[]', 'now', 'now');
+    INSERT INTO fabric_audit_events(
+      id, event_type, actor_user_id, aggregate_type, aggregate_id, payload_json,
+      occurred_at, previous_hash, hash
+    ) VALUES ('json-audit', 'test', 'user', 'system', 'json', '{}', 'now', 'previous', 'hash');
+    INSERT INTO fabric_outbox(
+      id, topic, aggregate_id, payload_json, status, attempts, available_at, created_at
+    ) VALUES ('json-outbox', 'test', 'json', '{}', 'pending', 0, 'now', 'now');
+  `)
+}
+
 describe('action fabric database', () => {
   const originalHermesHome = process.env.HERMES_HOME
   let hermesHome = ''
@@ -45,7 +107,7 @@ describe('action fabric database', () => {
     if (hermesHome) rmSync(hermesHome, { recursive: true, force: true })
   })
 
-  it('creates one global database below Hermes home with schema version two', async () => {
+  it('creates one global database below Hermes home with schema version three', async () => {
     const { getActionFabricDbPath, withActionFabricDb } = await import(
       '../../packages/server/src/services/hermes/action-fabric'
     )
@@ -62,9 +124,13 @@ describe('action fabric database', () => {
       const indexes = new Set((db.prepare(
         "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_fabric_%'",
       ).all() as Array<{ name: string }>).map(row => row.name))
+      const triggers = new Set((db.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'fabric_%_json_%'",
+      ).all() as Array<{ name: string }>).map(row => row.name))
 
       expect(tables).toEqual(REQUIRED_TABLES)
       expect(REQUIRED_INDEX_SIGNATURES.every(signature => indexes.has(signature.name))).toBe(true)
+      expect([...triggers].sort()).toEqual([...REQUIRED_JSON_TRIGGERS].sort())
       for (const signature of REQUIRED_INDEX_SIGNATURES) {
         const index = (db.prepare(`PRAGMA index_list("${signature.table}")`).all() as Array<{
           name: string
@@ -78,7 +144,7 @@ describe('action fabric database', () => {
         expect(index).toMatchObject({ unique: signature.unique, partial: signature.partial })
         expect(columns).toEqual(signature.columns)
       }
-      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '2' })
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '3' })
       expect((db.prepare('PRAGMA table_info(fabric_outbox)').all() as Array<{
         name: string; type: string; notnull: number; dflt_value: string | null; pk: number
       }>).find(row => row.name === 'claim_token')).toMatchObject({
@@ -106,7 +172,7 @@ describe('action fabric database', () => {
     initActionFabricSchema(db)
 
     try {
-      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '2' })
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '3' })
       expect(db.prepare('SELECT COUNT(*) AS count FROM fabric_control_state').get()).toEqual({ count: 1 })
       expect((db.prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'fabric_%'",
@@ -136,11 +202,126 @@ describe('action fabric database', () => {
     ) VALUES ('outbox-existing', 'fabric.test', 'aggregate', '{}', 'pending', 0, '2026-07-12T00:00:00.000Z', '2026-07-12T00:00:00.000Z')`).run()
 
     initActionFabricSchema(db)
-    expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '2' })
+    expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '3' })
     expect(db.prepare('SELECT id, claim_token FROM fabric_outbox').all()).toEqual([
       { id: 'outbox-existing', claim_token: null },
     ])
     db.close()
+  })
+
+  it('migrates valid version two JSON rows without data loss and remains idempotent', async () => {
+    const { initActionFabricSchema } = await import('../../packages/server/src/services/hermes/action-fabric')
+    const db = new DatabaseSync(':memory:')
+    initActionFabricSchema(db)
+    for (const trigger of REQUIRED_JSON_TRIGGERS) db.exec(`DROP TRIGGER "${trigger}"`)
+    db.prepare("UPDATE fabric_meta SET value = '2' WHERE key = 'schema_version'").run()
+    seedJsonConstrainedRows(db)
+
+    initActionFabricSchema(db)
+    initActionFabricSchema(db)
+
+    try {
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '3' })
+      expect(db.prepare("SELECT payload_json FROM fabric_outbox WHERE id = 'json-outbox'").get()).toEqual({ payload_json: '{}' })
+      expect(db.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'fabric_%_json_%'").get())
+        .toEqual({ count: REQUIRED_JSON_TRIGGERS.length })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('fails closed when a legacy database contains invalid JSON and preserves its version and data', async () => {
+    const { initActionFabricSchema } = await import('../../packages/server/src/services/hermes/action-fabric')
+    const db = new DatabaseSync(':memory:')
+    initActionFabricSchema(db)
+    for (const trigger of REQUIRED_JSON_TRIGGERS) db.exec(`DROP TRIGGER "${trigger}"`)
+    db.prepare("UPDATE fabric_meta SET value = '2' WHERE key = 'schema_version'").run()
+    seedJsonConstrainedRows(db)
+    db.prepare("UPDATE fabric_outbox SET payload_json = '{' WHERE id = 'json-outbox'").run()
+
+    expect(() => initActionFabricSchema(db)).toThrow(/legacy JSON.*fabric_outbox\.payload_json/i)
+
+    try {
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '2' })
+      expect(db.prepare("SELECT payload_json FROM fabric_outbox WHERE id = 'json-outbox'").get()).toEqual({ payload_json: '{' })
+      expect(db.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'fabric_%_json_%'").get())
+        .toEqual({ count: 0 })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('rejects invalid, scalar, and oversized JSON on direct SQLite inserts and updates', async () => {
+    const { withActionFabricDb } = await import('../../packages/server/src/services/hermes/action-fabric')
+    const registryLimit = 131_072
+    const payloadLimit = 32_768
+    const objectOver = JSON.stringify({ data: 'x'.repeat(registryLimit) })
+    const payloadObjectOver = JSON.stringify({ data: 'x'.repeat(payloadLimit) })
+    const arrayOver = JSON.stringify(['x'.repeat(registryLimit)])
+    const payloadArrayOver = JSON.stringify(['x'.repeat(payloadLimit)])
+    const utf8Over = JSON.stringify({ data: '界'.repeat(11_000) })
+
+    withActionFabricDb(db => {
+      seedJsonConstrainedRows(db)
+      const columns = [
+        ['fabric_capabilities', 'id', 'json.capability', 'input_schema_json', 'object', registryLimit],
+        ['fabric_capabilities', 'id', 'json.capability', 'output_schema_json', 'object', registryLimit],
+        ['fabric_capabilities', 'id', 'json.capability', 'authentication_json', 'array', registryLimit],
+        ['fabric_capabilities', 'id', 'json.capability', 'target_restrictions_json', 'array', registryLimit],
+        ['fabric_executors', 'id', 'json-executor', 'health_details_json', 'object', registryLimit],
+        ['fabric_executors', 'id', 'json-executor', 'configuration_json', 'object', registryLimit],
+        ['fabric_action_intents', 'id', 'json-intent', 'target_json', 'object', payloadLimit],
+        ['fabric_action_intents', 'id', 'json-intent', 'input_json', 'object', payloadLimit],
+        ['fabric_action_intents', 'id', 'json-intent', 'constraints_json', 'object', payloadLimit],
+        ['fabric_action_intents', 'id', 'json-intent', 'sanitized_summary_json', 'object', payloadLimit],
+        ['fabric_policy_decisions', 'id', 'json-policy', 'reason_codes_json', 'array', payloadLimit],
+        ['fabric_policy_decisions', 'id', 'json-policy', 'policy_snapshot_json', 'object', payloadLimit],
+        ['fabric_policy_decisions', 'id', 'json-policy', 'sanitized_summary_json', 'object', payloadLimit],
+        ['fabric_steps', 'id', 'json-step', 'input_json', 'object', payloadLimit],
+        ['fabric_steps', 'id', 'json-step', 'output_json', 'object', payloadLimit],
+        ['fabric_steps', 'id', 'json-step', 'evidence_json', 'array', payloadLimit],
+        ['fabric_audit_events', 'sequence', 1, 'payload_json', 'object', payloadLimit],
+        ['fabric_outbox', 'id', 'json-outbox', 'payload_json', 'object', payloadLimit],
+      ] as const
+
+      for (const [table, key, value, column, type, limit] of columns) {
+        const update = db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${key} = ?`)
+        expect(() => update.run('{', value), `${table}.${column} invalid`).toThrow(/JSON constraint/i)
+        expect(() => update.run('1', value), `${table}.${column} scalar`).toThrow(/JSON constraint/i)
+        const oversized = type === 'array'
+          ? (limit === registryLimit ? arrayOver : payloadArrayOver)
+          : (limit === registryLimit ? objectOver : payloadObjectOver)
+        expect(() => update.run(oversized, value), `${table}.${column} oversized`).toThrow(/JSON constraint/i)
+      }
+
+      const insertOutbox = db.prepare(`INSERT INTO fabric_outbox(
+        id, topic, aggregate_id, payload_json, status, attempts, available_at, created_at
+      ) VALUES (?, 'test', 'json', ?, 'pending', 0, 'now', 'now')`)
+      expect(() => insertOutbox.run('insert-invalid', '{')).toThrow(/JSON constraint/i)
+      expect(() => insertOutbox.run('insert-scalar', 'false')).toThrow(/JSON constraint/i)
+      expect(() => insertOutbox.run('insert-oversized', payloadObjectOver)).toThrow(/JSON constraint/i)
+      expect(() => insertOutbox.run('insert-utf8-oversized', utf8Over)).toThrow(/JSON constraint/i)
+      expect(() => insertOutbox.run('insert-json-blob', Buffer.from('{}'))).toThrow(/JSON constraint/i)
+    })
+  })
+
+  it('accepts legal UTF-8 JSON boundaries and 24KB executor evidence', async () => {
+    const { withActionFabricDb } = await import('../../packages/server/src/services/hermes/action-fabric')
+    const objectAt = (bytes: number) => JSON.stringify({ data: 'x'.repeat(bytes - 11) })
+    const arrayAt = (bytes: number) => JSON.stringify(['x'.repeat(bytes - 4)])
+
+    expect(Buffer.byteLength(objectAt(32_768), 'utf8')).toBe(32_768)
+    expect(Buffer.byteLength(arrayAt(32_768), 'utf8')).toBe(32_768)
+    expect(Buffer.byteLength(objectAt(131_072), 'utf8')).toBe(131_072)
+
+    withActionFabricDb(db => {
+      seedJsonConstrainedRows(db)
+      db.prepare("UPDATE fabric_capabilities SET input_schema_json = ?, authentication_json = ? WHERE id = 'json.capability'")
+        .run(objectAt(131_072), arrayAt(131_072))
+      db.prepare("UPDATE fabric_action_intents SET input_json = ? WHERE id = 'json-intent'").run(objectAt(32_768))
+      db.prepare("UPDATE fabric_steps SET evidence_json = ? WHERE id = 'json-step'").run(arrayAt(24_000))
+      db.prepare("UPDATE fabric_outbox SET payload_json = ? WHERE id = 'json-outbox'").run(objectAt(32_768))
+    })
   })
 
   it('enables foreign keys for every managed connection', async () => {
@@ -187,7 +368,7 @@ describe('action fabric database', () => {
     mkdirSync(join(hermesHome, 'personal'), { recursive: true })
     const db = new DatabaseSync(getActionFabricDbPath())
     db.exec('CREATE TABLE fabric_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
-    db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run('schema_version', '3')
+    db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run('schema_version', '4')
     db.close()
 
     expect(() => withActionFabricDb(current => current.prepare('SELECT 1').get())).toThrow(
@@ -245,7 +426,7 @@ describe('action fabric database', () => {
 
     try {
       expect(withActionFabricDb(db => db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()))
-        .toEqual({ value: '2' })
+        .toEqual({ value: '3' })
     } finally {
       writer.exec('ROLLBACK')
       writer.close()
@@ -295,13 +476,13 @@ describe('action fabric database', () => {
     const db = new DatabaseSync(':memory:')
     db.exec(`
       CREATE TABLE fabric_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      INSERT INTO fabric_meta(key, value) VALUES ('schema_version', '2');
+      INSERT INTO fabric_meta(key, value) VALUES ('schema_version', '3');
       CREATE VIEW fabric_capabilities AS SELECT 1 AS incompatible;
     `)
 
     try {
       expect(() => initActionFabricSchema(db)).toThrow()
-      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '2' })
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '3' })
     } finally {
       db.close()
     }

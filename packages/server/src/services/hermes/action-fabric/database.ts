@@ -3,7 +3,9 @@ import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
+const REGISTRY_JSON_MAX_BYTES = 131_072
+const PAYLOAD_JSON_MAX_BYTES = 32_768
 const REQUIRED_TABLES = [
   'fabric_meta',
   'fabric_capabilities',
@@ -25,6 +27,53 @@ interface RequiredIndexSignature {
   columns: string[]
   partial: boolean
 }
+
+interface JsonColumnConstraint {
+  column: string
+  type: 'object' | 'array'
+  maxBytes: number
+  nullable?: boolean
+}
+
+interface JsonTableConstraint {
+  table: string
+  columns: JsonColumnConstraint[]
+}
+
+const JSON_TABLE_CONSTRAINTS: JsonTableConstraint[] = [
+  { table: 'fabric_capabilities', columns: [
+    { column: 'input_schema_json', type: 'object', maxBytes: REGISTRY_JSON_MAX_BYTES },
+    { column: 'output_schema_json', type: 'object', maxBytes: REGISTRY_JSON_MAX_BYTES },
+    { column: 'authentication_json', type: 'array', maxBytes: REGISTRY_JSON_MAX_BYTES },
+    { column: 'target_restrictions_json', type: 'array', maxBytes: REGISTRY_JSON_MAX_BYTES },
+  ] },
+  { table: 'fabric_executors', columns: [
+    { column: 'health_details_json', type: 'object', maxBytes: REGISTRY_JSON_MAX_BYTES },
+    { column: 'configuration_json', type: 'object', maxBytes: REGISTRY_JSON_MAX_BYTES },
+  ] },
+  { table: 'fabric_action_intents', columns: [
+    { column: 'target_json', type: 'object', maxBytes: PAYLOAD_JSON_MAX_BYTES },
+    { column: 'input_json', type: 'object', maxBytes: PAYLOAD_JSON_MAX_BYTES },
+    { column: 'constraints_json', type: 'object', maxBytes: PAYLOAD_JSON_MAX_BYTES },
+    { column: 'sanitized_summary_json', type: 'object', maxBytes: PAYLOAD_JSON_MAX_BYTES },
+  ] },
+  { table: 'fabric_policy_decisions', columns: [
+    { column: 'reason_codes_json', type: 'array', maxBytes: PAYLOAD_JSON_MAX_BYTES },
+    { column: 'policy_snapshot_json', type: 'object', maxBytes: PAYLOAD_JSON_MAX_BYTES },
+    { column: 'sanitized_summary_json', type: 'object', maxBytes: PAYLOAD_JSON_MAX_BYTES },
+  ] },
+  { table: 'fabric_steps', columns: [
+    { column: 'input_json', type: 'object', maxBytes: PAYLOAD_JSON_MAX_BYTES },
+    { column: 'output_json', type: 'object', maxBytes: PAYLOAD_JSON_MAX_BYTES, nullable: true },
+    { column: 'evidence_json', type: 'array', maxBytes: PAYLOAD_JSON_MAX_BYTES },
+  ] },
+  { table: 'fabric_audit_events', columns: [
+    { column: 'payload_json', type: 'object', maxBytes: PAYLOAD_JSON_MAX_BYTES },
+  ] },
+  { table: 'fabric_outbox', columns: [
+    { column: 'payload_json', type: 'object', maxBytes: PAYLOAD_JSON_MAX_BYTES },
+  ] },
+]
 
 const REQUIRED_INDEX_SIGNATURES: RequiredIndexSignature[] = [
   { name: 'idx_fabric_audit_sequence', table: 'fabric_audit_events', unique: true, columns: ['sequence'], partial: false },
@@ -89,6 +138,12 @@ export function initActionFabricSchema(db: DatabaseSync): void {
       migrateSchemaV2(db)
       setSchemaVersion(db, 2)
     }
+    if (version < 3) {
+      migrateSchemaV3(db)
+      setSchemaVersion(db, 3)
+    } else {
+      createSchemaV3Triggers(db)
+    }
     assertSchemaComplete(db, SCHEMA_VERSION)
     db.exec('COMMIT')
   } catch (error) {
@@ -151,6 +206,10 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
     throw new Error(`Action Fabric schema version ${version} is incomplete: missing ${missing.join(', ')}`)
   }
   for (const signature of REQUIRED_INDEX_SIGNATURES) assertIndexSignature(db, signature)
+  for (const constraint of JSON_TABLE_CONSTRAINTS) {
+    assertJsonTriggerSignature(db, constraint, 'INSERT')
+    assertJsonTriggerSignature(db, constraint, 'UPDATE')
+  }
   for (const required of REQUIRED_COLUMNS) {
     const column = (db.prepare(`PRAGMA table_info("${required.table}")`).all() as Array<{
       name: string; type: string; notnull: number; dflt_value: string | null; pk: number
@@ -160,6 +219,25 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
       throw new Error(`Action Fabric schema version ${version} is incomplete: missing ${required.table}.${required.column}`)
     }
   }
+}
+
+function assertJsonTriggerSignature(
+  db: DatabaseSync,
+  constraint: JsonTableConstraint,
+  operation: 'INSERT' | 'UPDATE',
+): void {
+  const name = jsonTriggerName(constraint.table, operation)
+  const row = db.prepare(
+    "SELECT tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+  ).get(name) as { tbl_name: string; sql: string | null } | undefined
+  const expected = normalizeTriggerSql(jsonTriggerSql(constraint, operation))
+  if (row?.tbl_name !== constraint.table || row.sql === null || normalizeTriggerSql(row.sql) !== expected) {
+    throw new Error(`Action Fabric schema JSON trigger signature mismatch: ${name}`)
+  }
+}
+
+function normalizeTriggerSql(sql: string): string {
+  return sql.replace(/\bIF\s+NOT\s+EXISTS\b/gi, '').replace(/\s+/g, ' ').trim().toLowerCase()
 }
 
 function assertIndexSignature(db: DatabaseSync, expected: RequiredIndexSignature): void {
@@ -415,4 +493,59 @@ function migrateSchemaV2(db: DatabaseSync): void {
   const columns = (db.prepare('PRAGMA table_info("fabric_outbox")').all() as Array<{ name: string }>)
     .map(row => row.name)
   if (!columns.includes('claim_token')) db.exec('ALTER TABLE fabric_outbox ADD COLUMN claim_token TEXT')
+}
+
+function migrateSchemaV3(db: DatabaseSync): void {
+  assertLegacyJsonRows(db)
+  createSchemaV3Triggers(db)
+}
+
+function assertLegacyJsonRows(db: DatabaseSync): void {
+  for (const table of JSON_TABLE_CONSTRAINTS) {
+    for (const column of table.columns) {
+      const invalid = db.prepare(
+        `SELECT rowid FROM "${table.table}" WHERE ${jsonColumnInvalidExpression(column, column.column)} LIMIT 1`,
+      ).get()
+      if (invalid !== undefined) {
+        throw new Error(`Action Fabric legacy JSON constraint failed: ${table.table}.${column.column}`)
+      }
+    }
+  }
+}
+
+function createSchemaV3Triggers(db: DatabaseSync): void {
+  for (const constraint of JSON_TABLE_CONSTRAINTS) {
+    db.exec(jsonTriggerSql(constraint, 'INSERT'))
+    db.exec(jsonTriggerSql(constraint, 'UPDATE'))
+  }
+}
+
+function jsonTriggerName(table: string, operation: 'INSERT' | 'UPDATE'): string {
+  return `${table}_json_${operation.toLowerCase()}`
+}
+
+function jsonTriggerSql(constraint: JsonTableConstraint, operation: 'INSERT' | 'UPDATE'): string {
+  const invalid = constraint.columns
+    .map(column => jsonColumnInvalidExpression(column, `NEW."${column.column}"`))
+    .join('\n        OR ')
+  return `
+    CREATE TRIGGER IF NOT EXISTS "${jsonTriggerName(constraint.table, operation)}"
+    BEFORE ${operation} ON "${constraint.table}"
+    WHEN ${invalid}
+    BEGIN
+      SELECT RAISE(ABORT, 'Action Fabric JSON constraint failed: ${constraint.table}');
+    END
+  `
+}
+
+function jsonColumnInvalidExpression(column: JsonColumnConstraint, reference: string): string {
+  const valid = `CASE
+          WHEN ${reference} IS NULL THEN ${column.nullable ? 1 : 0}
+          WHEN typeof(${reference}) <> 'text' THEN 0
+          WHEN json_valid(${reference}) = 0 THEN 0
+          WHEN json_type(${reference}) <> '${column.type}' THEN 0
+          WHEN length(CAST(${reference} AS BLOB)) > ${column.maxBytes} THEN 0
+          ELSE 1
+        END`
+  return `${valid} = 0`
 }
