@@ -17,11 +17,13 @@ const { locale } = useI18n()
 const { messages: m } = useActionFabricMessages(locale)
 const announcement = ref('')
 const refreshDegraded = ref(false)
+const auditDegraded = ref(false)
 const selectedWorkflowAudit = ref<ActionAuditEventDto[]>([])
 let detailOpener: HTMLElement | null = null
 let refreshSequence = 0
 let selectionSequence = 0
 let auditGeneration = 0
+let pendingAuditToken: number | null = null
 const runningStates = new Set(['draft', 'policy_check', 'preparing', 'executing', 'verifying', 'retrying', 'compensating'])
 const completedStates = new Set(['succeeded', 'denied', 'cancelled', 'compensated'])
 const reversibleIds = computed<ReadonlySet<string>>(() => {
@@ -46,11 +48,13 @@ const selectedCapability = computed<ActionCapabilityDto | null>(() => {
   const capabilities: ActionCapabilityDto[] = store.capabilities
   return capabilities.find(item => item.id === capabilityId) ?? null
 })
-const statusText = computed(() => store.error === 'ACTION_FABRIC_REFRESH_FAILED' ? m.value.refreshWarning : store.error ? `${m.value.degraded} ${store.error}` : refreshDegraded.value ? m.value.degraded : announcement.value)
+const statusText = computed(() => store.error === 'ACTION_FABRIC_REFRESH_FAILED' ? m.value.refreshWarning : store.error ? `${m.value.degraded} ${store.error}` : refreshDegraded.value || auditDegraded.value ? m.value.degraded : announcement.value)
 
 function invalidateSelectedAudit(): void {
   auditGeneration += 1
+  pendingAuditToken = null
   selectedWorkflowAudit.value = []
+  auditDegraded.value = false
 }
 watch([() => store.selectedWorkflowId, () => store.selectedWorkflow?.id ?? null], ([selectedId, detailId], [previousId]) => {
   if (!selectedId || selectedId !== previousId || detailId !== selectedId) invalidateSelectedAudit()
@@ -71,14 +75,37 @@ async function openWorkflow(workflow: ActionWorkflowSummaryDto, event: MouseEven
   try {
     await store.selectWorkflow(workflow.id)
     if (sequence !== selectionSequence || store.selectedWorkflowId !== workflow.id) return
-    const auditToken = ++auditGeneration
-    await store.loadAudit({ aggregateType: 'workflow', aggregateId: workflow.id, limit: 100 })
-    if (sequence !== selectionSequence || auditToken !== auditGeneration
-      || store.selectedWorkflowId !== workflow.id || store.selectedWorkflow?.id !== workflow.id) return
-    const currentAudit = auditState.audit
-    selectedWorkflowAudit.value = currentAudit.filter(event => event.aggregateType === 'workflow'
-      && event.aggregateId === workflow.id).slice(0, 100)
+    await refreshSelectedWorkflowAudit(workflow.id, sequence)
   } catch { /* stores expose safe authoritative errors */ }
+}
+
+function hasCurrentSelection(id: string, sequence: number): boolean {
+  return sequence === selectionSequence && store.selectedWorkflowId === id && store.selectedWorkflow?.id === id
+}
+async function refreshSelectedWorkflowAudit(id: string, sequence: number): Promise<boolean> {
+  invalidateSelectedAudit()
+  const auditToken = auditGeneration
+  pendingAuditToken = auditToken
+  try {
+    try {
+      await store.loadAudit({ aggregateType: 'workflow', aggregateId: id, limit: 100 })
+    } catch {
+      if (hasCurrentSelection(id, sequence) && auditToken === auditGeneration) auditDegraded.value = true
+      return false
+    }
+    if (!hasCurrentSelection(id, sequence) || auditToken !== auditGeneration) return false
+    const currentAudit = auditState.audit
+    if (!currentAudit.every(event => event.aggregateType === 'workflow' && event.aggregateId === id)) {
+      selectedWorkflowAudit.value = []
+      auditDegraded.value = true
+      return false
+    }
+    selectedWorkflowAudit.value = currentAudit.slice(0, 100)
+    auditDegraded.value = false
+    return true
+  } finally {
+    if (pendingAuditToken === auditToken) pendingAuditToken = null
+  }
 }
 async function closeDrawer(): Promise<void> {
   selectionSequence += 1
@@ -90,6 +117,22 @@ async function closeDrawer(): Promise<void> {
 async function mutate(operation: () => Promise<unknown>): Promise<void> {
   announcement.value = ''
   try { await operation(); announcement.value = m.value.updated } catch { /* store error remains authoritative */ }
+}
+async function mutateControl(operation: () => Promise<unknown>): Promise<void> {
+  if (pendingAuditToken !== null) {
+    auditGeneration += 1
+    pendingAuditToken = null
+    selectedWorkflowAudit.value = []
+    auditDegraded.value = true
+  }
+  await mutate(operation)
+}
+async function mutateWorkflow(id: string, operation: () => Promise<unknown>): Promise<void> {
+  const sequence = selectionSequence
+  announcement.value = ''
+  try { await operation() } catch { return }
+  if (!hasCurrentSelection(id, sequence)) return
+  if (await refreshSelectedWorkflowAudit(id, sequence)) announcement.value = m.value.updated
 }
 </script>
 
@@ -108,8 +151,8 @@ async function mutate(operation: () => Promise<unknown>): Promise<void> {
     </div>
     <NAlert v-if="store.selectedWorkflowId && !store.selectedWorkflow && !store.loading" data-test="action-stale-selection" type="warning">{{ m.staleSelection }}</NAlert>
     <CapabilityRegistryPanel :capabilities="store.capabilities" :executors="store.executors" :roles="rolesStore.roles" />
-    <EmergencyStopPanel :control="store.control" :saving="store.saving" @update="mutate(() => store.updateEmergencyStop($event))" />
-    <WorkflowDetailDrawer :show="Boolean(store.selectedWorkflowId)" :workflow="store.selectedWorkflow" :capability="selectedCapability" :audit="selectedWorkflowAudit" :saving="store.saving" @close="closeDrawer" @approve="store.selectedWorkflowId && mutate(() => store.approveWorkflow(store.selectedWorkflowId!))" @reject="store.selectedWorkflowId && mutate(() => store.rejectWorkflow(store.selectedWorkflowId!, $event))" @retry="store.selectedWorkflowId && mutate(() => store.retryWorkflow(store.selectedWorkflowId!))" @cancel="store.selectedWorkflowId && mutate(() => store.cancelWorkflow(store.selectedWorkflowId!, $event))" @compensate="store.selectedWorkflowId && mutate(() => store.compensateWorkflow(store.selectedWorkflowId!, $event))" />
+    <EmergencyStopPanel :control="store.control" :saving="store.saving" @update="mutateControl(() => store.updateEmergencyStop($event))" />
+    <WorkflowDetailDrawer :show="Boolean(store.selectedWorkflowId)" :workflow="store.selectedWorkflow" :capability="selectedCapability" :audit="selectedWorkflowAudit" :saving="store.saving" @close="closeDrawer" @approve="store.selectedWorkflowId && mutateWorkflow(store.selectedWorkflowId, () => store.approveWorkflow(store.selectedWorkflowId!))" @reject="store.selectedWorkflowId && mutateWorkflow(store.selectedWorkflowId, () => store.rejectWorkflow(store.selectedWorkflowId!, $event))" @retry="store.selectedWorkflowId && mutateWorkflow(store.selectedWorkflowId, () => store.retryWorkflow(store.selectedWorkflowId!))" @cancel="store.selectedWorkflowId && mutateWorkflow(store.selectedWorkflowId, () => store.cancelWorkflow(store.selectedWorkflowId!, $event))" @compensate="store.selectedWorkflowId && mutateWorkflow(store.selectedWorkflowId, () => store.compensateWorkflow(store.selectedWorkflowId!, $event))" />
   </section>
 </template>
 
