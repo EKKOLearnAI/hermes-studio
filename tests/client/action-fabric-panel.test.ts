@@ -5,10 +5,11 @@ import { defineComponent, reactive, ref } from 'vue'
 
 const capability = { id: 'internal.twin.preference.set', version: 1, domain: 'twin', verb: 'set', description: 'Set preference', inputSchema: {}, outputSchema: {}, risk: 'low', sideEffect: true, idempotency: 'required', reversible: true, compensationCapabilityId: 'internal.twin.preference.restore', verificationStrategy: 'canonical read', authentication: [], targetRestrictions: ['preference'], cost: { currency: null, estimatedMinor: 0 }, enabled: true, createdAt: '', updatedAt: '' }
 const executor = { id: 'internal-twin', type: 'internal', name: 'Internal Twin', environment: 'internal', health: 'degraded', enabled: true, policyVersion: 1, createdAt: '', updatedAt: '' }
-const base = { intentId: 'intent-1', executorId: 'internal-twin', policyDecisionId: 'policy-1', compensationIntentId: null, version: 1, attempt: 1, maxAttempts: 3, leaseExpiresAt: null, retryAt: null, lastErrorCode: null, capabilityId: capability.id, goal: 'Set preference', requestedByRoleId: 'role-1', requestedByUserId: 'user-1', createdAt: '', updatedAt: '', completedAt: null }
+const noActions = { approve: false, reject: false, cancel: false, retry: false, compensate: false }
+const base = { intentId: 'intent-1', executorId: 'internal-twin', policyDecisionId: 'policy-1', compensationIntentId: null, version: 1, attempt: 1, maxAttempts: 3, leaseExpiresAt: null, retryAt: null, lastErrorCode: null, capabilityId: capability.id, goal: 'Set preference', requestedByRoleId: 'role-1', requestedByUserId: 'user-1', createdAt: '', updatedAt: '', completedAt: null, availableActions: noActions }
 const workflows = [
   { ...base, id: 'running', state: 'executing' }, { ...base, id: 'waiting', state: 'waiting_user' },
-  { ...base, id: 'failed', state: 'failed', lastErrorCode: 'temporary_failure' },
+  { ...base, id: 'failed', state: 'failed', lastErrorCode: 'temporary_failure', availableActions: { ...noActions, retry: true } },
   { ...base, id: 'reversible', state: 'succeeded', completedAt: 'now' },
   { ...base, id: 'completed', state: 'cancelled', completedAt: 'now' },
 ] as any[]
@@ -72,6 +73,14 @@ describe('ActionFabricPanel', () => {
     expect(wrapper.text()).toContain('Allowed declaration')
     expect(actionStore.loadWorkflows).toHaveBeenCalled()
     expect(rolesStore.fetchRoles).toHaveBeenCalled()
+  })
+
+  it('keeps reversible capability grouping separate from current compensation eligibility', async () => {
+    const wrapper = mount(ActionFabricPanel)
+    await flushPromises()
+    const group = wrapper.get('[data-test="group-reversible"]')
+    expect(group.text()).toContain('reversible')
+    expect(workflows.find(item => item.id === 'reversible')?.availableActions.compensate).toBe(false)
   })
 
   it('shows loading, empty, degraded retry, and stale-selection states from the store', async () => {
@@ -212,6 +221,31 @@ describe('ActionFabricPanel', () => {
     expect(actionStore.loadWorkflow).toHaveBeenCalledWith('waiting', { reportError: false })
     expect(actionStore.selectedWorkflow.state).toBe('cancelled')
     expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-new')
+  })
+
+  it('announces a control update only after the authoritative workflow refresh completes', async () => {
+    actionStore.loadAudit.mockResolvedValueOnce([{ id: 'audit-old', aggregateType: 'workflow', aggregateId: 'waiting' }])
+      .mockResolvedValueOnce([{ id: 'audit-new', aggregateType: 'workflow', aggregateId: 'waiting' }])
+    const listRefresh = deferred<any[]>()
+    const detailRefresh = deferred<any>()
+    const wrapper = mount(ActionFabricPanel)
+    await flushPromises()
+    await wrapper.get('[data-test="workflow-waiting"]').trigger('click')
+    await flushPromises()
+    actionStore.loadWorkflows.mockImplementationOnce(() => listRefresh.promise)
+    actionStore.loadWorkflow.mockImplementationOnce(() => detailRefresh.promise)
+
+    await wrapper.get('[data-test="control-update"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="status"]').text()).not.toContain('Updated')
+
+    listRefresh.resolve(actionStore.workflows)
+    await flushPromises()
+    expect(wrapper.get('[role="status"]').text()).not.toContain('Updated')
+
+    detailRefresh.resolve({ ...detail, availableActions: { ...noActions, retry: true } })
+    await flushPromises()
+    expect(wrapper.get('[role="status"]').text()).toContain('Authoritative server state reloaded')
   })
 
   it('renders returned workflow audit after control refresh even when shared audit retains old same-id data', async () => {

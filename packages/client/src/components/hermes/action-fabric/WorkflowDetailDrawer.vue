@@ -2,10 +2,10 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { NDrawer, NDrawerContent, NTag, useDialog } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import type { ActionAuditEventDto, ActionCapabilityDto, ActionJsonValue, ActionWorkflowDetailDto } from '@/api/hermes/action-fabric'
+import type { ActionAuditEventDto, ActionJsonValue, ActionWorkflowAction, ActionWorkflowDetailDto } from '@/api/hermes/action-fabric'
 import { useActionFabricMessages } from './action-fabric-messages'
 
-const props = defineProps<{ show: boolean; workflow: ActionWorkflowDetailDto | null; capability: ActionCapabilityDto | null; audit: ActionAuditEventDto[]; saving: boolean }>()
+const props = defineProps<{ show: boolean; workflow: ActionWorkflowDetailDto | null; audit: ActionAuditEventDto[]; saving: boolean }>()
 type ConfirmationComplete = () => void
 const emit = defineEmits<{
   close: []
@@ -24,10 +24,14 @@ interface ActiveConfirmation { token: number; submitted: boolean; sawSaving: boo
 const activeConfirmation = ref<ActiveConfirmation | null>(null)
 const confirming = computed(() => activeConfirmation.value !== null)
 let confirmationEpoch = 0
-const needsApproval = computed(() => props.workflow?.state === 'waiting_user')
-const canRetry = computed(() => props.workflow?.state === 'failed' || props.workflow?.state === 'dead_letter')
-const canCancel = computed(() => Boolean(props.workflow && ['draft', 'policy_check', 'preparing', 'executing', 'verifying', 'waiting_user', 'retrying'].includes(props.workflow.state)))
-const canCompensate = computed(() => Boolean(props.workflow?.state === 'succeeded' && props.capability?.reversible && !props.workflow.compensationIntentId))
+function actionAvailable(action: ActionWorkflowAction): boolean {
+  return props.workflow?.availableActions?.[action] === true
+}
+const needsApproval = computed(() => actionAvailable('approve'))
+const canReject = computed(() => actionAvailable('reject'))
+const canRetry = computed(() => actionAvailable('retry'))
+const canCancel = computed(() => actionAvailable('cancel'))
+const canCompensate = computed(() => actionAvailable('compensate'))
 
 watch(() => props.show, async show => {
   if (!show) { releaseActiveConfirmation(); return }
@@ -123,7 +127,7 @@ function closeDrawer(): void {
         <label class="reason">{{ m.reason }}<input v-model="reason" data-test="action-reason" type="text" maxlength="500"></label>
         <div class="actions" aria-label="Workflow actions">
           <button v-if="needsApproval" data-test="approve-workflow" type="button" :disabled="saving || confirming" @click="confirm(m.approve, () => needsApproval, complete => emit('approve', complete))">{{ m.approve }}</button>
-          <button v-if="needsApproval" data-test="reject-workflow" type="button" :disabled="saving || confirming || !reason.trim()" @click="withReason(m.reject, () => needsApproval, (value, complete) => emit('reject', value, complete))">{{ m.reject }}</button>
+          <button v-if="canReject" data-test="reject-workflow" type="button" :disabled="saving || confirming || !reason.trim()" @click="withReason(m.reject, () => canReject, (value, complete) => emit('reject', value, complete))">{{ m.reject }}</button>
           <button v-if="canRetry" data-test="retry-workflow" type="button" :disabled="saving || confirming" @click="confirm(m.retry, () => canRetry, complete => emit('retry', complete))">{{ m.retry }}</button>
           <button v-if="canCancel" data-test="cancel-workflow" type="button" :disabled="saving || confirming || !reason.trim()" @click="withReason(m.cancel, () => canCancel, (value, complete) => emit('cancel', value, complete))">{{ m.cancel }}</button>
           <button v-if="canCompensate" data-test="compensate-workflow" type="button" :disabled="saving || confirming || !reason.trim()" @click="withReason(m.compensate, () => canCompensate, (value, complete) => emit('compensate', value, complete))">{{ m.compensate }}</button>

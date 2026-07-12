@@ -39,11 +39,14 @@ export interface ActionPolicyDecisionDto {
   id: string; intentId: string; executorId: string | null; outcome: 'allow' | 'deny' | 'waiting_user'
   reasonCodes: string[]; policyVersion: number; sanitizedSummary: ActionJsonValue; budget: ActionMoney | null; createdAt: string
 }
+export type ActionWorkflowAction = 'approve' | 'reject' | 'cancel' | 'retry' | 'compensate'
+export type ActionWorkflowAvailableActionsDto = { [action in ActionWorkflowAction]: boolean }
 export interface ActionWorkflowSummaryDto {
   id: string; intentId: string; executorId: string | null; policyDecisionId: string | null
   compensationIntentId: string | null; state: ActionWorkflowState; version: number; attempt: number; maxAttempts: number
   leaseExpiresAt: string | null; retryAt: string | null; lastErrorCode: string | null; capabilityId: string; goal: string
   requestedByRoleId: string; requestedByUserId: string; createdAt: string; updatedAt: string; completedAt: string | null
+  availableActions: ActionWorkflowAvailableActionsDto
 }
 export interface ActionWorkflowDetailDto extends ActionWorkflowSummaryDto {
   intent: ActionIntentDto; steps: ActionStepDto[]; policyDecision: ActionPolicyDecisionDto | null

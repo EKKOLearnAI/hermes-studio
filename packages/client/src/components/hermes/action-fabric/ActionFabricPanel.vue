@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { NAlert, NButton, NEmpty, NSpin, NTag } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import type { ActionAuditEventDto, ActionCapabilityDto, ActionWorkflowSummaryDto, EmergencyStopInput } from '@/api/hermes/action-fabric'
+import type { ActionAuditEventDto, ActionWorkflowSummaryDto, EmergencyStopInput } from '@/api/hermes/action-fabric'
 import { useActionFabricStore } from '@/stores/hermes/action-fabric'
 import { useAssistantRolesStore } from '@/stores/hermes/assistant-roles'
 import CapabilityRegistryPanel from './CapabilityRegistryPanel.vue'
@@ -34,20 +34,15 @@ const groups = computed(() => ({
   running: store.workflows.filter(item => runningStates.has(item.state)),
   waiting: store.workflows.filter(item => item.state === 'waiting_user'),
   failed: store.workflows.filter(item => item.state === 'failed' || item.state === 'dead_letter'),
-  reversible: store.workflows.filter(item => item.state === 'succeeded' && !item.compensationIntentId && reversibleIds.value.has(item.capabilityId)),
-  completed: store.workflows.filter(item => completedStates.has(item.state) && !(item.state === 'succeeded' && !item.compensationIntentId && reversibleIds.value.has(item.capabilityId))),
+  reversible: store.workflows.filter(item => item.state === 'succeeded' && reversibleIds.value.has(item.capabilityId)),
+  completed: store.workflows.filter(item => completedStates.has(item.state)
+    && !(item.state === 'succeeded' && reversibleIds.value.has(item.capabilityId))),
 }))
 const groupDefinitions = computed(() => [
   { key: 'running' as const, label: m.value.running }, { key: 'waiting' as const, label: m.value.waiting },
   { key: 'failed' as const, label: m.value.failed }, { key: 'reversible' as const, label: m.value.reversible },
   { key: 'completed' as const, label: m.value.completed },
 ])
-const selectedCapability = computed<ActionCapabilityDto | null>(() => {
-  const capabilityId: string | undefined = store.selectedWorkflow?.capabilityId
-  if (!capabilityId) return null
-  const capabilities: ActionCapabilityDto[] = store.capabilities
-  return capabilities.find(item => item.id === capabilityId) ?? null
-})
 const statusText = computed(() => store.error === 'ACTION_FABRIC_REFRESH_FAILED' ? m.value.refreshWarning : store.error ? `${m.value.degraded} ${store.error}` : refreshDegraded.value || auditDegraded.value ? m.value.degraded : announcement.value)
 
 function invalidateSelectedAudit(): void {
@@ -191,7 +186,7 @@ function compensateSelected(reason: string, complete: ConfirmationComplete): voi
     <NAlert v-if="store.selectedWorkflowId && !store.selectedWorkflow && !store.loading" data-test="action-stale-selection" type="warning">{{ m.staleSelection }}</NAlert>
     <CapabilityRegistryPanel :capabilities="store.capabilities" :executors="store.executors" :roles="rolesStore.roles" />
     <EmergencyStopPanel :control="store.control" :saving="store.saving" @update="updateControl" />
-    <WorkflowDetailDrawer :show="Boolean(store.selectedWorkflowId)" :workflow="store.selectedWorkflow" :capability="selectedCapability" :audit="selectedWorkflowAudit" :saving="store.saving" @close="closeDrawer" @approve="approveSelected" @reject="rejectSelected" @retry="retrySelected" @cancel="cancelSelected" @compensate="compensateSelected" />
+    <WorkflowDetailDrawer :show="Boolean(store.selectedWorkflowId)" :workflow="store.selectedWorkflow" :audit="selectedWorkflowAudit" :saving="store.saving" @close="closeDrawer" @approve="approveSelected" @reject="rejectSelected" @retry="retrySelected" @cancel="cancelSelected" @compensate="compensateSelected" />
   </section>
 </template>
 
