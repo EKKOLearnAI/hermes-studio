@@ -196,6 +196,43 @@ describe('providers controller update', () => {
     expect(config.custom_providers[0].api_key).toBe('old-research-custom-key')
   })
 
+  it('rejects an existing dict selector whose canonical identity does not match the path provider', async () => {
+    const configPath = join(hermesHome, 'profiles', 'research', 'config.yaml')
+    const before = readFileSync(configPath, 'utf-8')
+    const { update } = await loadProvidersController()
+    const ctx = makeCtx('custom:research-proxy', {
+      api_key: 'must-not-reach-dict-proxy',
+      provider_source: 'providers',
+      provider_key: 'dict-proxy',
+    })
+
+    await update(ctx)
+
+    expect(ctx.status).toBe(404)
+    expect(readFileSync(configPath, 'utf-8')).toBe(before)
+  })
+
+  it('rejects an omitted selector when the same canonical identity exists in both custom schemas', async () => {
+    const configPath = join(hermesHome, 'profiles', 'research', 'config.yaml')
+    const config = readYaml(configPath)
+    config.providers['research-proxy'] = {
+      name: 'research-proxy',
+      base_url: 'https://dict-research.invalid/v1',
+      api_key: 'keep-dict-research-key',
+      model: 'dict-research-model',
+    }
+    writeFileSync(configPath, YAML.dump(config))
+    const before = readFileSync(configPath, 'utf-8')
+    const { update } = await loadProvidersController()
+    const ctx = makeCtx('custom:research-proxy', { api_key: 'must-not-pick-a-source' })
+
+    await update(ctx)
+
+    expect(ctx.status).toBe(400)
+    expect(ctx.body).toEqual({ error: 'Provider selector is ambiguous' })
+    expect(readFileSync(configPath, 'utf-8')).toBe(before)
+  })
+
   it('updates an env-backed custom credential at its referenced env source', async () => {
     const { update } = await loadProvidersController()
     const ctx = makeCtx('custom:env-proxy', {

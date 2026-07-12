@@ -181,6 +181,18 @@ describe('provider config projection', () => {
           api_key: 'nested-inline-value',
           extra_body: {
             api_key: 'nested-extra-value',
+            auth: 'auth-alias-value',
+            authentication: 'authentication-alias-value',
+            token_value: 'token-alias-value',
+            bearer_token_value: 'bearer-token-alias-value',
+            client_secret_token_url: 'compound-secret-metadata-value',
+            credential_token_url: 'compound-credential-metadata-value',
+            connection_string_token_url: 'compound-connection-metadata-value',
+            cookie_token_url: 'compound-cookie-metadata-value',
+            authorization_url: 'https://idp.invalid/authorize',
+            authorization_endpoint: 'https://idp.invalid/authorize-endpoint',
+            token_method: 'authorization-code',
+            tokenMethod: 'client-credentials',
             headers: {
               'x-api-key': 'header-key-value',
               authorization: 'header-auth-value',
@@ -220,6 +232,18 @@ describe('provider config projection', () => {
     expect(projected.custom_providers[0]).toMatchObject({ api_key: '', has_api_key: true })
     expect(projected.custom_providers[0].extra_body).toEqual({
       api_key: '',
+      auth: '',
+      authentication: '',
+      token_value: '',
+      bearer_token_value: '',
+      client_secret_token_url: '',
+      credential_token_url: '',
+      connection_string_token_url: '',
+      cookie_token_url: '',
+      authorization_url: 'https://idp.invalid/authorize',
+      authorization_endpoint: 'https://idp.invalid/authorize-endpoint',
+      token_method: 'authorization-code',
+      tokenMethod: 'client-credentials',
       headers: { 'x-api-key': '', authorization: '', 'Proxy-Authorization': '' },
       client_secret: '',
       secret_access_key: '',
@@ -234,6 +258,14 @@ describe('provider config projection', () => {
     for (const forbidden of [
       'nested-inline-value',
       'nested-extra-value',
+      'auth-alias-value',
+      'authentication-alias-value',
+      'token-alias-value',
+      'bearer-token-alias-value',
+      'compound-secret-metadata-value',
+      'compound-credential-metadata-value',
+      'compound-connection-metadata-value',
+      'compound-cookie-metadata-value',
       'dict-inline-value',
       'default-custom-env-value',
       'legacy-model-value',
@@ -249,5 +281,49 @@ describe('provider config projection', () => {
     ]) {
       expect(serialized).not.toContain(forbidden)
     }
+  })
+
+  it('redacts provider sections even when their parsed shapes are malformed', async () => {
+    const malformedConfig = {
+      model: [{ api_key: 'model-array-value' }],
+      custom_providers: {
+        malformed: { token_value: 'custom-object-value' },
+      },
+      providers: {
+        api_key: 'providers-entry-value',
+        base_url: 'https://malformed-provider.invalid/v1',
+      },
+    }
+
+    const projected = await projectProviderConfigForResponse(malformedConfig, {
+      profile: 'default',
+      envContent: '',
+    })
+    const serialized = JSON.stringify(projected)
+
+    expect(projected.model).toEqual([{ api_key: '' }])
+    expect(projected.custom_providers).toEqual({ malformed: { token_value: '' } })
+    expect(projected.providers).toEqual({
+      api_key: '',
+      base_url: 'https://malformed-provider.invalid/v1',
+    })
+    for (const forbidden of ['model-array-value', 'custom-object-value', 'providers-entry-value']) {
+      expect(serialized).not.toContain(forbidden)
+    }
+
+    const nestedEntryShape = await projectProviderConfigForResponse({
+      providers: {
+        api_key: { value: 'nested-providers-entry-value' },
+        base_url: { value: 'https://nested-malformed-provider.invalid/v1' },
+      },
+    }, {
+      profile: 'default',
+      envContent: '',
+    })
+    expect(nestedEntryShape.providers).toEqual({
+      api_key: '',
+      base_url: { value: 'https://nested-malformed-provider.invalid/v1' },
+    })
+    expect(JSON.stringify(nestedEntryShape)).not.toContain('nested-providers-entry-value')
   })
 })

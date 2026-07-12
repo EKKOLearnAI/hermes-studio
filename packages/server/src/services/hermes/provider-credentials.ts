@@ -63,6 +63,24 @@ const REDACTED_PROVIDER_FIELDS = new Set([
   'password',
   'secret',
 ])
+const NON_SECRET_AUTH_METADATA_SUFFIXES = [
+  'authorizationurl',
+  'authorizationendpoint',
+  'authenticationurl',
+  'authenticationendpoint',
+  'authurl',
+  'authendpoint',
+  'tokenurl',
+  'tokenendpoint',
+  'tokenmethod',
+  'authorizationmethod',
+  'authenticationmethod',
+  'authmethod',
+  'authorizationtype',
+  'authenticationtype',
+  'authtype',
+  'tokentype',
+]
 
 function isRedactedProviderField(key: string): boolean {
   if (REDACTED_PROVIDER_FIELDS.has(key)) return true
@@ -75,19 +93,22 @@ function isRedactedProviderField(key: string): boolean {
       .split(/[^a-z0-9]+/)
       .filter(Boolean),
   )
-  return normalized.includes('apikey') ||
+  const hasHighConfidenceSecretMarker = normalized.includes('apikey') ||
     (words.has('api') && words.has('key')) ||
-    words.has('authorization') ||
     words.has('secret') ||
     words.has('password') ||
     words.has('passphrase') ||
     (words.has('private') && words.has('key')) ||
     (words.has('signing') && words.has('key')) ||
-    normalized.endsWith('token') ||
-    normalized.endsWith('connectionstring') ||
-    normalized.endsWith('cookie') ||
-    normalized === 'credential' ||
-    normalized.endsWith('credential')
+    normalized.includes('connectionstring') ||
+    words.has('cookie') ||
+    words.has('credential')
+  if (hasHighConfidenceSecretMarker) return true
+  if (NON_SECRET_AUTH_METADATA_SUFFIXES.some(suffix => normalized.endsWith(suffix))) return false
+  return words.has('auth') ||
+    words.has('authentication') ||
+    words.has('authorization') ||
+    words.has('token')
 }
 
 function normalizeLookupKey(value: string): string {
@@ -360,7 +381,9 @@ function redactProviderSecretFields(value: unknown): unknown {
 }
 
 function projectProviderEntry(value: unknown, envContent: string): unknown {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return redactProviderSecretFields(value)
+  }
   const entry = value as Record<string, unknown>
   const envKey = credentialReplacement(entry.key_env) || credentialReplacement(entry.api_key_env) || ''
   const hasApiKey = hasInlineProviderSecret(entry) || Boolean(envKey && readEnvCredential(envContent, envKey))
@@ -371,6 +394,30 @@ function projectProviderEntry(value: unknown, envContent: string): unknown {
   return projected
 }
 
+function isProviderDictionary(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const providerEntryFields = new Set([
+    'name',
+    'baseurl',
+    'api',
+    'model',
+    'defaultmodel',
+    'models',
+    'keyenv',
+    'apikeyenv',
+    'apimode',
+    'contextlength',
+  ])
+  return Object.entries(value as Record<string, unknown>).every(([key, entry]) => {
+    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '')
+    return !isRedactedProviderField(key) &&
+      !providerEntryFields.has(normalizedKey) &&
+      !!entry &&
+      typeof entry === 'object' &&
+      !Array.isArray(entry)
+  })
+}
+
 export async function projectProviderConfigForResponse(
   config: Record<string, any>,
   options: { profile: string; envContent?: string },
@@ -378,24 +425,32 @@ export async function projectProviderConfigForResponse(
   const envContent = options.envContent ?? await readProfileEnv(options.profile)
   const response = { ...config }
 
-  if (config.model && typeof config.model === 'object' && !Array.isArray(config.model)) {
-    const model = config.model as Record<string, unknown>
-    const projected = redactProviderSecretFields(model) as Record<string, unknown>
-    if (hasInlineProviderSecret(model)) {
-      projected.api_key = ''
-      if ('apiKey' in model) projected.apiKey = ''
-      projected.has_api_key = true
+  if (Object.prototype.hasOwnProperty.call(config, 'model')) {
+    if (config.model && typeof config.model === 'object' && !Array.isArray(config.model)) {
+      const model = config.model as Record<string, unknown>
+      const projected = redactProviderSecretFields(model) as Record<string, unknown>
+      if (hasInlineProviderSecret(model)) {
+        projected.api_key = ''
+        if ('apiKey' in model) projected.apiKey = ''
+        projected.has_api_key = true
+      }
+      response.model = projected
+    } else {
+      response.model = redactProviderSecretFields(config.model)
     }
-    response.model = projected
   }
 
-  if (Array.isArray(config.custom_providers)) {
-    response.custom_providers = config.custom_providers.map(entry => projectProviderEntry(entry, envContent))
+  if (Object.prototype.hasOwnProperty.call(config, 'custom_providers')) {
+    response.custom_providers = Array.isArray(config.custom_providers)
+      ? config.custom_providers.map(entry => projectProviderEntry(entry, envContent))
+      : redactProviderSecretFields(config.custom_providers)
   }
-  if (config.providers && typeof config.providers === 'object' && !Array.isArray(config.providers)) {
-    response.providers = Object.fromEntries(
-      Object.entries(config.providers).map(([key, entry]) => [key, projectProviderEntry(entry, envContent)]),
-    )
+  if (Object.prototype.hasOwnProperty.call(config, 'providers')) {
+    response.providers = isProviderDictionary(config.providers)
+      ? Object.fromEntries(
+          Object.entries(config.providers).map(([key, entry]) => [key, projectProviderEntry(entry, envContent)]),
+        )
+      : redactProviderSecretFields(config.providers)
   }
 
   return response

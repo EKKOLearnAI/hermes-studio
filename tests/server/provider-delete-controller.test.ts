@@ -220,6 +220,60 @@ describe('providers controller delete', () => {
     expect(configAfter.custom_providers[0].name).toBe('shared')
   })
 
+  it('rejects an existing dict selector whose canonical identity does not match the path provider', async () => {
+    const configPath = join(hermesHome, 'config.yaml')
+    writeFileSync(configPath, [
+      'custom_providers:',
+      '  - name: shared',
+      '    base_url: https://legacy.invalid/v1',
+      '    api_key: legacy-key',
+      '    model: legacy-model',
+      'providers:',
+      '  victim:',
+      '    name: victim',
+      '    api: https://victim.invalid/v1',
+      '    api_key: victim-key',
+      '    default_model: victim-model',
+      '',
+    ].join('\n'))
+    const before = readFileSync(configPath, 'utf-8')
+    const { remove } = await loadProvidersController()
+    const ctx = makeCtx('custom:shared', {
+      query: { source: 'providers', providerKey: 'victim' },
+    })
+
+    await remove(ctx)
+
+    expect(ctx.status).toBe(404)
+    expect(readFileSync(configPath, 'utf-8')).toBe(before)
+  })
+
+  it('rejects an omitted selector when the same canonical identity exists in both custom schemas', async () => {
+    const configPath = join(hermesHome, 'config.yaml')
+    writeFileSync(configPath, [
+      'custom_providers:',
+      '  - name: shared',
+      '    base_url: https://legacy.invalid/v1',
+      '    api_key: legacy-key',
+      '    model: legacy-model',
+      'providers:',
+      '  shared:',
+      '    api: https://dict.invalid/v1',
+      '    api_key: dict-key',
+      '    default_model: dict-model',
+      '',
+    ].join('\n'))
+    const before = readFileSync(configPath, 'utf-8')
+    const { remove } = await loadProvidersController()
+    const ctx = makeCtx('custom:shared')
+
+    await remove(ctx)
+
+    expect(ctx.status).toBe(400)
+    expect(ctx.body).toEqual({ error: 'Provider selector is ambiguous' })
+    expect(readFileSync(configPath, 'utf-8')).toBe(before)
+  })
+
   it.each([
     ['unknown source', { source: 'providerz' }],
     ['list source with dict key', { source: 'custom_providers', providerKey: 'shared' }],

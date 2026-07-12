@@ -86,25 +86,63 @@ function providerKeyForCustomName(name: string): string {
   return providerPoolKeyForCustomName(name)
 }
 
-function findLegacyCustomProviderIndex(config: any, poolKey: string): number {
-  return Array.isArray(config.custom_providers)
-    ? (config.custom_providers as any[]).findIndex((e: any) => providerKeyForCustomName(e?.name) === poolKey)
-    : -1
+type CustomProviderSelection =
+  | { status: 'found'; source: 'custom_providers'; listIndex: number }
+  | { status: 'found'; source: 'providers'; dictKey: string }
+  | { status: 'not_found' }
+  | { status: 'ambiguous' }
+
+function providerEntryMatchesPoolKey(
+  entry: unknown,
+  poolKey: string,
+  providerKey = '',
+  source: ProviderConfigSource = providerKey ? 'providers' : 'custom_providers',
+): boolean {
+  try {
+    const normalized = normalizeCustomProviderEntry(entry, providerKey, source)
+    return !!normalized && providerKeyForCustomName(normalized.name) === poolKey
+  } catch {
+    return false
+  }
 }
 
-function findProviderDictKey(config: any, poolKey: string, requestedProviderKey = ''): string {
+function selectCustomProvider(
+  config: any,
+  poolKey: string,
+  requestedSource: ProviderConfigSource | '',
+  requestedProviderKey = '',
+): CustomProviderSelection {
+  const matches: Array<Extract<CustomProviderSelection, { status: 'found' }>> = []
+
+  if (requestedSource !== 'providers' && Array.isArray(config.custom_providers)) {
+    for (const [listIndex, entry] of (config.custom_providers as any[]).entries()) {
+      if (providerEntryMatchesPoolKey(entry, poolKey)) {
+        matches.push({ status: 'found', source: 'custom_providers', listIndex })
+      }
+    }
+  }
+
   const dict = config.providers
-  if (!dict || typeof dict !== 'object' || Array.isArray(dict)) return ''
-  if (requestedProviderKey) {
-    return Object.prototype.hasOwnProperty.call(dict, requestedProviderKey)
-      ? requestedProviderKey
-      : ''
+  if (requestedSource !== 'custom_providers' && dict && typeof dict === 'object' && !Array.isArray(dict)) {
+    if (requestedProviderKey) {
+      if (
+        Object.prototype.hasOwnProperty.call(dict, requestedProviderKey) &&
+        providerEntryMatchesPoolKey(dict[requestedProviderKey], poolKey, requestedProviderKey, 'providers')
+      ) {
+        matches.push({ status: 'found', source: 'providers', dictKey: requestedProviderKey })
+      }
+    } else {
+      for (const [dictKey, entry] of Object.entries(dict)) {
+        if (providerEntryMatchesPoolKey(entry, poolKey, dictKey, 'providers')) {
+          matches.push({ status: 'found', source: 'providers', dictKey })
+        }
+      }
+    }
   }
-  for (const [key, entry] of Object.entries(dict)) {
-    const normalized = normalizeCustomProviderEntry(entry, key, 'providers')
-    if (normalized && providerKeyForCustomName(normalized.name) === poolKey) return key
-  }
-  return ''
+
+  if (matches.length === 0) return { status: 'not_found' }
+  if (matches.length > 1) return { status: 'ambiguous' }
+  return matches[0]
 }
 
 export async function create(ctx: any) {
@@ -264,20 +302,21 @@ export async function update(ctx: any) {
   try {
     const profile = requestedProfile(ctx)
     if (identity.kind === 'custom') {
-      const found = await updateConfigYamlForProfile(profile, async (config) => {
-        const listIndex = requestedSource === 'providers'
-          ? -1
-          : findLegacyCustomProviderIndex(config, identity.poolKey)
-        const dictKey = requestedSource === 'custom_providers'
-          ? ''
-          : findProviderDictKey(config, identity.poolKey, requestedProviderKey)
-        const entry = listIndex >= 0
-          ? config.custom_providers[listIndex]
-          : dictKey
-            ? config.providers[dictKey]
-            : undefined
+      const mutation = await updateConfigYamlForProfile(profile, async (config) => {
+        const selection = selectCustomProvider(
+          config,
+          identity.poolKey,
+          requestedSource,
+          requestedProviderKey,
+        )
+        if (selection.status !== 'found') {
+          return { data: config, result: selection.status, write: false }
+        }
+        const entry = selection.source === 'custom_providers'
+          ? config.custom_providers[selection.listIndex]
+          : config.providers[selection.dictKey]
         if (!entry || typeof entry !== 'object') {
-          return { data: config, result: false, write: false }
+          return { data: config, result: 'not_found' as const, write: false }
         }
 
         let writeConfig = false
@@ -297,9 +336,14 @@ export async function update(ctx: any) {
           }
         }
 
-        return { data: config, result: true, write: writeConfig }
+        return { data: config, result: 'updated' as const, write: writeConfig }
       })
-      if (!found) {
+      if (mutation === 'ambiguous') {
+        ctx.status = 400
+        ctx.body = { error: 'Provider selector is ambiguous' }
+        return
+      }
+      if (mutation !== 'updated') {
         ctx.status = 404
         ctx.body = { error: `Custom provider "${identity.poolKey}" not found` }
         return
@@ -356,26 +400,22 @@ export async function remove(ctx: any) {
   try {
     const profile = requestedProfile(ctx)
     const isCustom = identity.kind === 'custom'
-    const removed = await updateConfigYamlForProfile(profile, async (config) => {
+    const removal = await updateConfigYamlForProfile(profile, async (config) => {
       if (isCustom) {
-        const removeLegacy = requestedSource !== 'providers'
-        const removeDict = requestedSource !== 'custom_providers'
-        let didRemove = false
-        if (removeLegacy) {
-          const idx = findLegacyCustomProviderIndex(config, poolKey)
-          if (idx !== -1) {
-            ;(config.custom_providers as any[]).splice(idx, 1)
-            didRemove = true
-          }
+        const selection = selectCustomProvider(
+          config,
+          poolKey,
+          requestedSource,
+          requestedProviderKey,
+        )
+        if (selection.status !== 'found') {
+          return { data: config, result: selection.status, write: false }
         }
-        if (!didRemove && removeDict) {
-          const dictKey = findProviderDictKey(config, poolKey, requestedProviderKey)
-          if (dictKey) {
-            delete config.providers[dictKey]
-            didRemove = true
-          }
+        if (selection.source === 'custom_providers') {
+          ;(config.custom_providers as any[]).splice(selection.listIndex, 1)
+        } else {
+          delete config.providers[selection.dictKey]
         }
-        if (!didRemove) return { data: config, result: false, write: false }
       } else {
         const envMapping = PROVIDER_ENV_MAP[identity.lookupKey]
         if (envMapping?.api_key_env) {
@@ -399,9 +439,14 @@ export async function remove(ctx: any) {
           config.model = {}
         }
       }
-      return { data: config, result: true }
+      return { data: config, result: 'removed' as const }
     })
-    if (!removed) {
+    if (removal === 'ambiguous') {
+      ctx.status = 400
+      ctx.body = { error: 'Provider selector is ambiguous' }
+      return
+    }
+    if (removal !== 'removed') {
       ctx.status = 404; ctx.body = { error: `Custom provider "${poolKey}" not found` }; return
     }
     if (!isCustom) {
