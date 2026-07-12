@@ -21,6 +21,7 @@ import {
   withActionFabricDb,
 } from '../../packages/server/src/services/hermes/action-fabric'
 import { ensureBuiltInAssistantRoles, updateAssistantRole } from '../../packages/server/src/services/hermes/personal-twin'
+import { runServerMain } from '../../packages/server/src/services/server-main'
 
 describe('Action Fabric runtime lifecycle', () => {
   const originalHome = process.env.HERMES_HOME
@@ -197,6 +198,54 @@ describe('Action Fabric runtime lifecycle', () => {
     ])
     expect(listFabricAuditEvents({ aggregateId: 'future-browser' }).some(event =>
       event.eventType === 'executor.external_write.disabled')).toBe(true)
+  })
+})
+
+describe('server main Action Fabric rollback', () => {
+  it('awaits runtime rollback after a later bootstrap failure before exiting', async () => {
+    const events: string[] = []
+    const original = new Error('listen failed')
+    let release!: () => void
+    const stopped = new Promise<void>(resolve => { release = resolve })
+    const pending = runServerMain({
+      bootstrap: async () => { events.push('bootstrap'); throw original },
+      stopActionFabricRuntime: async () => { events.push('stop-start'); await stopped; events.push('stop-end') },
+      reportFatal: error => events.push(error === original ? 'fatal-original' : 'fatal-wrong'),
+      reportRollbackFailure: () => events.push('rollback-failed'),
+      exit: code => { events.push(`exit-${code}`) },
+    })
+
+    await vi.waitFor(() => expect(events).toEqual(['bootstrap', 'fatal-original', 'stop-start']))
+    release()
+    await pending
+    expect(events).toEqual(['bootstrap', 'fatal-original', 'stop-start', 'stop-end', 'exit-1'])
+  })
+
+  it('reports rollback failure without masking the original bootstrap error', async () => {
+    const original = new Error('route setup failed')
+    const rollback = new Error('worker stop failed')
+    const reported: unknown[] = []
+    let exitCode: number | null = null
+    await runServerMain({
+      bootstrap: async () => { throw original },
+      stopActionFabricRuntime: async () => { throw rollback },
+      reportFatal: error => reported.push(error),
+      reportRollbackFailure: error => reported.push(error),
+      exit: code => { exitCode = code },
+    })
+    expect(reported).toEqual([original, rollback])
+    expect(exitCode).toBe(1)
+  })
+
+  it('does not stop the runtime after successful bootstrap', async () => {
+    const stop = vi.fn(async () => {})
+    const exit = vi.fn()
+    await runServerMain({
+      bootstrap: async () => {}, stopActionFabricRuntime: stop,
+      reportFatal: vi.fn(), reportRollbackFailure: vi.fn(), exit,
+    })
+    expect(stop).not.toHaveBeenCalled()
+    expect(exit).not.toHaveBeenCalled()
   })
 })
 

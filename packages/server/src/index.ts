@@ -32,7 +32,8 @@ import { createStaticCompressionMiddleware } from './middleware/static-compressi
 import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
 import { createCorsOriginResolver, securityHeaders } from './security'
 import type { ShutdownHandler } from './services/shutdown'
-import { startActionFabricRuntime } from './services/hermes/action-fabric/runtime'
+import { startActionFabricRuntime, stopActionFabricRuntime } from './services/hermes/action-fabric/runtime'
+import { runServerMain } from './services/server-main'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -396,9 +397,17 @@ export async function bootstrap() {
   startVersionCheck()
 }
 
-bootstrap().catch((error) => {
-  console.error('FATAL: Failed to start Hermes Web UI')
-  console.error(error)
-  logger.fatal(error, 'Fatal error during bootstrap')
-  process.exit(1)
+void runServerMain({
+  bootstrap,
+  stopActionFabricRuntime,
+  reportFatal(error) {
+    console.error('FATAL: Failed to start Hermes Web UI')
+    console.error(error)
+    logger.fatal(error, 'Fatal error during bootstrap')
+  },
+  reportRollbackFailure(error) {
+    console.warn('Failed to roll back Action Fabric runtime after bootstrap failure')
+    logger.warn(error, 'Failed to roll back Action Fabric runtime after bootstrap failure')
+  },
+  exit(code) { process.exit(code) },
 })

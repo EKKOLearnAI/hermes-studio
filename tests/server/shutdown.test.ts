@@ -110,4 +110,39 @@ describe('shutdown ordering', () => {
     vi.doUnmock('../../packages/server/src/db')
     vi.resetModules()
   })
+
+  it('unrefs and clears the force-exit fallback after graceful cleanup', async () => {
+    const events: string[] = []
+    let forceExit!: () => void
+    let cleared = false
+    const handle = { unref: vi.fn() }
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      events.push(`exit-${code}`)
+      return undefined
+    }) as never)
+    vi.resetModules()
+    vi.doMock('../../packages/server/src/services/hermes/action-fabric/runtime', () => ({ stopActionFabricRuntime: vi.fn() }))
+    vi.doMock('../../packages/server/src/db', () => ({ closeDb: vi.fn(() => events.push('db-close')) }))
+    vi.doMock('../../packages/server/src/controllers/update', () => ({ stopPreviewRuntime: vi.fn() }))
+    vi.doMock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
+      codingAgentRunManager: { shutdown: vi.fn() },
+    }))
+    vi.doMock('../../packages/server/src/services/hermes/gateway-runner', () => ({ shutdownManagedGateways: vi.fn() }))
+    vi.doMock('../../packages/server/src/services/global-agent/outbound-relay-client', () => ({ stopOutboundRelayClient: vi.fn() }))
+    const { createShutdownHandler } = await import('../../packages/server/src/services/shutdown')
+    const shutdown = createShutdownHandler(null, undefined, undefined, undefined, {
+      scheduleForceExit(callback) { forceExit = callback; return handle as never },
+      clearForceExit(timer) { expect(timer).toBe(handle); cleared = true; events.push('timer-clear') },
+    })
+
+    await shutdown('SIGTERM')
+    await shutdown('SIGTERM')
+    if (!cleared) forceExit()
+
+    expect(handle.unref).toHaveBeenCalledOnce()
+    expect(events).toEqual(['db-close', 'timer-clear', 'exit-0'])
+    expect(exit).toHaveBeenCalledOnce()
+    exit.mockRestore()
+    vi.resetModules()
+  })
 })

@@ -42,7 +42,23 @@ export function shouldStopManagedGatewaysOnShutdown(env: NodeJS.ProcessEnv = pro
 
 export type ShutdownHandler = (signal: string) => Promise<void>
 
-export function createShutdownHandler(server: any, groupChatServer?: any, chatRunServer?: any, agentBridgeManager?: any): ShutdownHandler {
+export interface ShutdownTimerOptions {
+  scheduleForceExit(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>
+  clearForceExit(timer: ReturnType<typeof setTimeout>): void
+}
+
+const DEFAULT_SHUTDOWN_TIMERS: ShutdownTimerOptions = {
+  scheduleForceExit: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearForceExit: timer => clearTimeout(timer),
+}
+
+export function createShutdownHandler(
+  server: any,
+  groupChatServer?: any,
+  chatRunServer?: any,
+  agentBridgeManager?: any,
+  timers: ShutdownTimerOptions = DEFAULT_SHUTDOWN_TIMERS,
+): ShutdownHandler {
   let isShuttingDown = false
 
   return async (signal: string) => {
@@ -51,7 +67,8 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
 
     // Force exit only if graceful cleanup hangs. The bridge can take up to 10s
     // to stop worker subprocesses, so this cap must be longer than that.
-    setTimeout(() => process.exit(0), getShutdownForceExitMs())
+    const forceExitTimer = timers.scheduleForceExit(() => process.exit(0), getShutdownForceExitMs())
+    forceExitTimer.unref?.()
 
     logger.info('Shutting down (%s)...', signal)
     console.log(`[shutdown] Received signal: ${signal}`)
@@ -129,6 +146,7 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
     }
 
     closeDb()
+    timers.clearForceExit(forceExitTimer)
     process.exit(0)
   }
 }
