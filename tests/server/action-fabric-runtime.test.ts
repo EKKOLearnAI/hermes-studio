@@ -254,6 +254,21 @@ describe('Action Fabric runtime lifecycle', () => {
       "SELECT value FROM fabric_meta WHERE key='registry_policy_revision'",
     ).get() as { value: string }).value))).toBe(firstRevision)
   })
+
+  it('rejects stale level-3 enforcement after a newer level-zero control version wins', async () => {
+    ensureBuiltInFabricRegistry()
+    createFabricExecutor({ id: 'stale-external', type: 'internal', name: 'Stale external writer',
+      environment: 'internal', configuration: {}, enabled: true })
+    const level3 = setFabricEmergencyStop(3, 'admin', 'old stop')
+    const level0 = setFabricEmergencyStop(0, 'admin', 'new resume', level3.version)
+
+    await expect(enforceControlStateOnce(level3.version)).resolves.toEqual({ applied: true, version: level0.version })
+    expect(withActionFabricDb(db => db.prepare(`SELECT enabled FROM fabric_executors WHERE id='stale-external'`)
+      .get())).toEqual({ enabled: 1 })
+    await expect(enforceControlStateOnce(level0.version + 1)).resolves.toEqual({
+      applied: false, version: level0.version,
+    })
+  })
 })
 
 describe('server main Action Fabric rollback', () => {

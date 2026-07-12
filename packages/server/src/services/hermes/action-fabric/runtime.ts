@@ -3,6 +3,7 @@ import { migrateAssistantRoleCapabilityEnforcement } from '../personal-twin'
 import { logger } from '../../logger'
 import { appendFabricAuditEvent, appendFabricOutbox, withFabricAuditedTransaction } from './audit'
 import { getFabricControlState } from './control'
+import { getFabricControlStateInDb } from './control'
 import { createInternalPreferenceExecutorAdapter } from './internal-preference'
 import { ensureBuiltInFabricRegistry } from './registry'
 import { createSimulatorExecutorAdapter } from './simulator'
@@ -48,12 +49,12 @@ export function stopActionFabricRuntime(): Promise<void> {
 /** Applies at least the requested durable control version before returning. */
 export async function enforceControlStateOnce(version: number): Promise<{ applied: boolean; version: number }> {
   if (!Number.isSafeInteger(version) || version < 0) throw new Error('FABRIC_RUNTIME_CONTROL_VERSION_INVALID')
-  const control = getFabricControlState()
-  if (control.version < version) throw new Error('FABRIC_RUNTIME_CONTROL_VERSION_PENDING')
-  await enforceControlState(control)
+  const result = await enforceControlState(version)
   const state = running
-  if (state) state.appliedControlVersion = Math.max(state.appliedControlVersion, control.version)
-  return { applied: true, version: control.version }
+  if (state && result.applied) {
+    state.appliedControlVersion = Math.max(state.appliedControlVersion, result.version)
+  }
+  return result
 }
 
 async function teardownRuntime(): Promise<void> {
@@ -76,13 +77,13 @@ async function bootstrapRuntime(): Promise<void> {
     registerOwnedAdapter(createSimulatorExecutorAdapter(), ownedAdapters)
     registerOwnedAdapter(createInternalPreferenceExecutorAdapter(), ownedAdapters)
     const initialControl = getFabricControlState()
-    await enforceControlState(initialControl)
+    const initialEnforcement = await enforceControlState(initialControl.version)
     startActionFabricWorker()
     workerStarted = true
     const state: RunningRuntime = {
       controlTimer: undefined as unknown as ReturnType<typeof setInterval>,
       ownedAdapters,
-      appliedControlVersion: initialControl.version,
+      appliedControlVersion: Math.max(initialControl.version, initialEnforcement.version),
       controlPoll: null,
     }
     state.controlTimer = setInterval(() => pollControl(state), CONTROL_POLL_MS)
@@ -112,8 +113,8 @@ function pollControl(state: RunningRuntime): void {
   const poll = (async () => {
     const control = getFabricControlState()
     if (control.version === state.appliedControlVersion && control.level < 2) return
-    await enforceControlState(control)
-    state.appliedControlVersion = control.version
+    const result = await enforceControlState(control.version)
+    if (result.applied) state.appliedControlVersion = Math.max(state.appliedControlVersion, result.version)
   })().catch(error => {
     logger.error({ errorClass: stableErrorClass(error) }, '[action-fabric] control enforcement failed')
   }).finally(() => {
@@ -122,13 +123,22 @@ function pollControl(state: RunningRuntime): void {
   state.controlPoll = poll
 }
 
-async function enforceControlState(control: FabricControlState): Promise<void> {
-  if (control.level < 2) return
-  withFabricAuditedTransaction(db => {
-    moveIdleNonInterruptibleWorkToWaitingUser(db, control)
+async function enforceControlState(targetVersion: number): Promise<{ applied: boolean; version: number }> {
+  const result = withFabricAuditedTransaction(db => {
+    const control = getFabricControlStateInDb(db)
+    if (control.version < targetVersion) return { applied: false, version: control.version, revoke: false }
+    if (control.level >= 2) moveIdleNonInterruptibleWorkToWaitingUser(db, control)
     if (control.level >= 3) disableExternalWriteExecutors(db, control)
+    return { applied: true, version: control.version, revoke: control.level >= 3 }
   })
-  if (control.level >= 3) await revokeExternalCredentialsSafely()
+  if (result.revoke) {
+    await revokeExternalCredentialsSafely()
+    const latest = getFabricControlState()
+    if (latest.version !== result.version || latest.level < 3) {
+      return { applied: true, version: latest.version }
+    }
+  }
+  return { applied: result.applied, version: result.version }
 }
 
 function moveIdleNonInterruptibleWorkToWaitingUser(db: DatabaseSync, control: FabricControlState): void {

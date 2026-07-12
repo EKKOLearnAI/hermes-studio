@@ -534,6 +534,63 @@ describe('Action Fabric durable workflows', () => {
   }, 20_000)
 
   it.each([
+    ['never-started non-idempotent execute', null, 'none', 'output_equals_input', 'executing'],
+    ['started execute with verification', '2026-07-12T01:00:00.000Z', 'none', 'output_equals_input', 'verifying'],
+    ['persisted successful execute', '2026-07-12T01:00:00.000Z', 'none', 'output_equals_input', 'verifying'],
+  ] as const)('resumes %s at the safe durable phase without rotating tokens or attempts', (
+    _case, startedAt, idempotency, verificationStrategy, expectedState,
+  ) => {
+    const created = createFabricIntent(intent({ idempotencyKey: `phase-${expectedState}-${startedAt ?? 'fresh'}` }))
+    const beforeTokens = created.workflow.steps.map(step => step.executionToken)
+    const level2 = setFabricEmergencyStop(2, 'admin-1', 'pause', 0)
+    withActionFabricDb(db => {
+      const row = db.prepare(`SELECT input_json FROM fabric_steps WHERE workflow_id=? AND kind='prepare'`)
+        .get(created.workflow.id) as { input_json: string }
+      const input = JSON.parse(row.input_json)
+      input.contract.idempotency = idempotency
+      input.contract.verificationStrategy = verificationStrategy
+      db.prepare(`UPDATE fabric_steps SET input_json=? WHERE workflow_id=?`).run(
+        JSON.stringify(input), created.workflow.id,
+      )
+      db.prepare(`UPDATE fabric_steps SET state='succeeded',completed_at=? WHERE workflow_id=? AND kind='prepare'`)
+        .run('2026-07-12T01:00:00.000Z', created.workflow.id)
+      db.prepare(`UPDATE fabric_steps SET state=?,started_at=?,output_json=? WHERE workflow_id=? AND kind='execute'`)
+        .run(_case === 'persisted successful execute' ? 'succeeded' : 'waiting_user', startedAt,
+          _case === 'persisted successful execute' ? '{"ok":true}' : null, created.workflow.id)
+      db.prepare(`UPDATE fabric_workflows SET state='waiting_user',last_error_code=
+        'FABRIC_CONTROL_CHANGED_REVIEW_REQUIRED' WHERE id=?`).run(created.workflow.id)
+    })
+    setFabricEmergencyStop(0, 'admin-1', 'resume', level2.version)
+
+    const resumed = retryFabricWorkflow(created.workflow.id, 'admin-1')
+    expect(resumed.state).toBe(expectedState)
+    expect(resumed.attempt).toBe(created.workflow.attempt)
+    expect(resumed.steps.map(step => step.executionToken)).toEqual(beforeTokens)
+  }, 20_000)
+
+  it('keeps an uncertain non-verifiable execute waiting and unavailable for retry', () => {
+    const created = createFabricIntent(intent({ idempotencyKey: 'phase-unsafe-no-verification' }))
+    const level2 = setFabricEmergencyStop(2, 'admin-1', 'pause', 0)
+    withActionFabricDb(db => {
+      const row = db.prepare(`SELECT input_json FROM fabric_steps WHERE workflow_id=? AND kind='prepare'`)
+        .get(created.workflow.id) as { input_json: string }
+      const input = JSON.parse(row.input_json)
+      input.contract.idempotency = 'none'
+      input.contract.verificationStrategy = 'none'
+      db.prepare(`UPDATE fabric_steps SET input_json=? WHERE workflow_id=?`).run(JSON.stringify(input), created.workflow.id)
+      db.prepare(`UPDATE fabric_steps SET state='succeeded' WHERE workflow_id=? AND kind='prepare'`).run(created.workflow.id)
+      db.prepare(`UPDATE fabric_steps SET state='waiting_user',started_at=? WHERE workflow_id=? AND kind='execute'`)
+        .run('2026-07-12T01:00:00.000Z', created.workflow.id)
+      db.prepare(`UPDATE fabric_workflows SET state='waiting_user',last_error_code=
+        'FABRIC_CONTROL_CHANGED_REVIEW_REQUIRED' WHERE id=?`).run(created.workflow.id)
+    })
+    setFabricEmergencyStop(0, 'admin-1', 'resume', level2.version)
+
+    expect(getFabricWorkflow(created.workflow.id)?.availableActions.retry).toBe(false)
+    expect(() => retryFabricWorkflow(created.workflow.id, 'admin-1')).toThrow('FABRIC_WORKFLOW_NOT_RETRYABLE')
+  }, 20_000)
+
+  it.each([
     ['allow', 'critical', ['internal.twin.preference.set'], 'preparing', 'compensating'],
     ['waiting_user', 'none', ['internal.twin.preference.set'], 'waiting_user', 'compensating'],
     ['deny', 'critical', [], 'denied', 'succeeded'],

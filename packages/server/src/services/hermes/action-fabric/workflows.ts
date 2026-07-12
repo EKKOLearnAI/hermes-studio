@@ -264,15 +264,8 @@ function recoverControlCheckpointInDb(
   }
   revalidateFabricDecisionInDb(db, fresh.id)
   bindBudgetReservation(db, fresh, id)
-  const steps = db.prepare('SELECT kind,state,started_at FROM fabric_steps WHERE workflow_id=? ORDER BY ordinal')
-    .all(id) as unknown as Array<{ kind: string; state: FabricStepState; started_at: string | null }>
-  const prepare = steps.find(step => step.kind === 'prepare')
-  const execute = steps.find(step => step.kind === 'execute')
-  let destination: FabricWorkflowState = 'preparing'
-  if (prepare?.state === 'succeeded') {
-    destination = execute?.state === 'succeeded' || execute?.started_at !== null || captured.idempotency === 'none'
-      ? 'verifying' : 'executing'
-  }
+  const destination = controlRecoveryDestinationInDb(db, current, captured)
+  if (destination === null) throw new Error('FABRIC_WORKFLOW_NOT_RETRYABLE')
   const now = new Date().toISOString()
   const changed = db.prepare(`UPDATE fabric_workflows SET state=?,version=version+1,executor_id=?,
     policy_decision_id=?,lease_owner=NULL,lease_expires_at=NULL,retry_at=NULL,last_error_code=NULL,
@@ -792,6 +785,7 @@ function availableWorkflowActionsInDb(db: DatabaseSync, workflow: WorkflowRow): 
   } else if (workflow.state === 'waiting_user') {
     if (workflow.last_error_code === 'FABRIC_CONTROL_CHANGED_REVIEW_REQUIRED') {
       retry = getFabricControlStateInDb(db).level === 0 && hasCurrentCapturedContract(db, workflow)
+        && controlRecoveryDestinationInDb(db, workflow) !== null
     } else {
       try {
         retryWorkerWaitingEligibilityInDb(db, workflow)
@@ -808,6 +802,27 @@ function availableWorkflowActionsInDb(db: DatabaseSync, workflow: WorkflowRow): 
     } catch { compensate = false }
   }
   return { approve: waitingApproval, reject: waitingApproval, cancel, retry, compensate }
+}
+
+function controlRecoveryDestinationInDb(
+  db: DatabaseSync,
+  workflow: WorkflowRow,
+  knownContract?: CapturedContract,
+): FabricWorkflowState | null {
+  const contract = knownContract ?? compensationContext(db, workflow.id).contract
+  const steps = db.prepare(`SELECT kind,state,started_at,output_json FROM fabric_steps
+    WHERE workflow_id=? ORDER BY ordinal`).all(workflow.id) as unknown as Array<{
+      kind: string; state: FabricStepState; started_at: string | null; output_json: string | null
+    }>
+  const prepare = steps.find(step => step.kind === 'prepare')
+  const execute = steps.find(step => step.kind === 'execute')
+  if (prepare?.state !== 'succeeded') return 'preparing'
+  if (!execute) return null
+  if (execute.state === 'succeeded' || execute.output_json !== null) return 'verifying'
+  if (execute.started_at === null && (execute.state === 'pending' || execute.state === 'waiting_user')) {
+    return 'executing'
+  }
+  return contract.verificationStrategy === 'none' ? null : 'verifying'
 }
 
 function hasCurrentCapturedContract(db: DatabaseSync, workflow: WorkflowRow): boolean {
