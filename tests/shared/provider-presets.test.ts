@@ -16,13 +16,210 @@ const GLM_CODING_PLAN_PROVIDER = 'glm'
 const ALIBABA_CODING_PLAN_PROVIDER = 'alibaba-coding-plan'
 const MINIMAX_PROVIDER = 'minimax'
 const MINIMAX_CN_PROVIDER = 'minimax-cn'
-const NOUS_PROVIDER = 'nous'
+
 const STEPFUN_PROVIDER = 'stepfun'
 const XAI_OAUTH_PROVIDER = 'xai-oauth'
 const GEMINI_OAUTH_PROVIDER = 'google-gemini-cli'
 const CLAUDE_OAUTH_PROVIDER = 'claude-oauth'
 const ANTHROPIC_PROVIDER = 'anthropic'
 const GPT_5_5_MODEL = 'gpt-5.5'
+
+// Ordered fallback manifests audited against NousResearch/hermes-agent
+// 4281151ae859241351ba14d8c7682dc67ff4c126. Codex values come from
+// hermes_cli/codex_models.py; Nous values match the docs catalog at
+// bab0d42038f84f44e0673e347f18f1c347daab599ce78128ed237763638b038e.
+const EXPECTED_SYNCED_PROVIDER_MODELS = {
+  'openai-codex': [
+    'gpt-5.6-sol',
+    'gpt-5.6-sol-pro',
+    'gpt-5.6-terra',
+    'gpt-5.6-terra-pro',
+    'gpt-5.6-luna',
+    'gpt-5.6-luna-pro',
+    'gpt-5.5',
+    'gpt-5.4-mini',
+    'gpt-5.4',
+    'gpt-5.3-codex',
+    'gpt-5.3-codex-spark',
+  ],
+  'openai-api': [
+    'gpt-5.6-sol',
+    'gpt-5.6-sol-pro',
+    'gpt-5.6-terra',
+    'gpt-5.6-terra-pro',
+    'gpt-5.6-luna',
+    'gpt-5.6-luna-pro',
+    'gpt-5.5',
+    'gpt-5.5-pro',
+    'gpt-5.4',
+    'gpt-5.4-mini',
+    'gpt-5.4-nano',
+    'gpt-5-mini',
+    'gpt-5.3-codex',
+    'gpt-4.1',
+    'gpt-4o',
+    'gpt-4o-mini',
+  ],
+  nous: [
+    'anthropic/claude-fable-5',
+    'anthropic/claude-opus-4.8',
+    'anthropic/claude-sonnet-5',
+    'anthropic/claude-haiku-4.5',
+    'openai/gpt-5.6-sol',
+    'openai/gpt-5.6-sol-pro',
+    'openai/gpt-5.6-terra',
+    'openai/gpt-5.6-terra-pro',
+    'openai/gpt-5.6-luna',
+    'openai/gpt-5.6-luna-pro',
+    'openai/gpt-5.5',
+    'openai/gpt-5.5-pro',
+    'openai/gpt-5.4-mini',
+    'google/gemini-3-pro-preview',
+    'google/gemini-3.1-pro-preview',
+    'google/gemini-3.5-flash',
+    'x-ai/grok-4.5',
+    'deepseek/deepseek-v4-pro',
+    'deepseek/deepseek-v4-flash',
+    'qwen/qwen3.7-max',
+    'qwen/qwen3.7-plus',
+    'qwen/qwen3.6-35b-a3b',
+    'moonshotai/kimi-k2.6',
+    'moonshotai/kimi-k2.7-code',
+    'minimax/minimax-m3',
+    'z-ai/glm-5.2',
+    'z-ai/glm-5.1',
+    'xiaomi/mimo-v2.5-pro',
+    'tencent/hy3',
+    'stepfun/step-3.7-flash',
+    'nvidia/nemotron-3-super-120b-a12b',
+    'sakana/fugu-ultra',
+  ],
+  gemini: [
+    'gemini-3.1-pro-preview',
+    'gemini-3-pro-preview',
+    'gemini-3.5-flash',
+    'gemini-3.1-flash-lite-preview',
+  ],
+  'kimi-coding': [
+    'kimi-k2.7-code',
+    'kimi-k2.6',
+    'kimi-k2.5',
+    'kimi-for-coding',
+    'kimi-k2-thinking',
+    'kimi-k2-thinking-turbo',
+    'kimi-k2-turbo-preview',
+    'kimi-k2-0905-preview',
+  ],
+  zai: [
+    'glm-5.2',
+    'glm-5.1',
+    'glm-5',
+    'glm-5v-turbo',
+    'glm-5-turbo',
+    'glm-4.7',
+    'glm-4.5',
+    'glm-4.5-flash',
+  ],
+  'opencode-go': [
+    'kimi-k2.7-code',
+    'kimi-k2.6',
+    'kimi-k2.5',
+    'glm-5.2',
+    'glm-5.1',
+    'glm-5',
+    'mimo-v2.5-pro',
+    'mimo-v2.5',
+    'mimo-v2-pro',
+    'mimo-v2-omni',
+    'minimax-m3',
+    'minimax-m2.7',
+    'minimax-m2.5',
+    'deepseek-v4-pro',
+    'deepseek-v4-flash',
+    'qwen3.7-max',
+    'qwen3.7-plus',
+    'qwen3.6-plus',
+    'qwen3.5-plus',
+  ],
+  xai: [
+    'grok-build-0.1',
+    'grok-composer-2.5-fast',
+    'grok-4.5',
+    'grok-4.3',
+    'grok-4.20-0309-reasoning',
+    'grok-4.20-0309-non-reasoning',
+    'grok-4.20-multi-agent-0309',
+  ],
+  'xai-oauth': [
+    'grok-build-0.1',
+    'grok-composer-2.5-fast',
+    'grok-4.5',
+    'grok-4.3',
+    'grok-4.20-0309-reasoning',
+    'grok-4.20-0309-non-reasoning',
+    'grok-4.20-multi-agent-0309',
+  ],
+  nvidia: [
+    'nvidia/nemotron-3-ultra-550b-a55b',
+    'nvidia/nemotron-3-super-120b-a12b',
+    'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+    'z-ai/glm-5.2',
+    'moonshotai/kimi-k2.6',
+    'minimaxai/minimax-m3',
+  ],
+  'opencode-zen': [
+    'kimi-k2.5',
+    'kimi-k2.6',
+    'gpt-5.5',
+    'gpt-5.5-pro',
+    'gpt-5.4-pro',
+    'gpt-5.4',
+    'gpt-5.4-mini',
+    'gpt-5.4-nano',
+    'gpt-5.3-codex',
+    'gpt-5.3-codex-spark',
+    'gpt-5.2',
+    'gpt-5.2-codex',
+    'gpt-5.1',
+    'gpt-5.1-codex',
+    'gpt-5.1-codex-max',
+    'gpt-5.1-codex-mini',
+    'gpt-5',
+    'gpt-5-codex',
+    'gpt-5-nano',
+    'claude-fable-5',
+    'claude-opus-4-8',
+    'claude-opus-4-7',
+    'claude-opus-4-6',
+    'claude-opus-4-5',
+    'claude-opus-4-1',
+    'claude-sonnet-4-6',
+    'claude-sonnet-4-5',
+    'claude-sonnet-4',
+    'claude-haiku-4-5',
+    'gemini-3.5-flash',
+    'gemini-3.1-pro',
+    'gemini-3-flash',
+    'minimax-m3',
+    'minimax-m2.7',
+    'minimax-m2.5',
+    'glm-5.2',
+    'glm-5.1',
+    'glm-5',
+    'kimi-k2.7-code',
+    'deepseek-v4-pro',
+    'deepseek-v4-flash',
+    'deepseek-v4-flash-free',
+    'qwen3.7-plus',
+    'qwen3.6-plus',
+    'qwen3.5-plus',
+    'grok-build-0.1',
+    'big-pickle',
+    'mimo-v2.5-free',
+    'north-mini-code-free',
+    'nemotron-3-ultra-free',
+  ],
+} as const
 
 function modelsForProvider(providerPresets: Array<{ value: string; models: string[] }>, provider: string): string[] {
   const preset = providerPresets.find((candidate) => candidate.value === provider)
@@ -148,11 +345,23 @@ describe('provider presets', () => {
     expect(models).not.toContain('grok-code-fast-1')
   })
 
-  it('hardcodes current Nous catalog and recommended models', () => {
-    const models = modelsForProvider(SERVER_PROVIDER_PRESETS, NOUS_PROVIDER)
-    expect(models).toContain('anthropic/claude-opus-4.8')
-    expect(models).toContain('qwen/qwen3.7-max')
-    expect(models).toContain('qwen/qwen3.6-35b-a3b')
-    expect(buildServerProviderModelMap()[NOUS_PROVIDER]).toContain('qwen/qwen3.7-max')
+  it('matches the audited ordered fallback manifests for synchronized providers', () => {
+    const modelMap = buildServerProviderModelMap()
+    for (const [provider, expectedModels] of Object.entries(EXPECTED_SYNCED_PROVIDER_MODELS)) {
+      expect(modelsForProvider(SERVER_PROVIDER_PRESETS, provider)).toEqual(expectedModels)
+      expect(modelMap[provider]).toEqual(expectedModels)
+    }
+
+    expect(modelsForProvider(SERVER_PROVIDER_PRESETS, OPENAI_CODEX_PROVIDER)).not.toContain('codex-auto-review')
+    expect(modelsForProvider(SERVER_PROVIDER_PRESETS, 'openai-api')).not.toContain('gpt-5.3-codex-spark')
+    const xaiModels = modelsForProvider(SERVER_PROVIDER_PRESETS, 'xai')
+    for (const nonChatModel of [
+      'grok-imagine-image',
+      'grok-imagine-image-quality',
+      'grok-imagine-video',
+      'grok-imagine-video-15s',
+    ]) {
+      expect(xaiModels).not.toContain(nonChatModel)
+    }
   })
 })
