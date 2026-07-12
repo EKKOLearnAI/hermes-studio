@@ -2042,6 +2042,7 @@ jobTriggered: 'Job acionado',
     status: {
       pending_approval: 'Aguardando aprovacao',
       approval_rejected: 'Aprovacao rejeitada',
+      skipped: 'Ignorado',
     },
   },
 

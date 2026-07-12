@@ -774,6 +774,7 @@ export default {
       failed: 'Failed',
       approval_rejected: 'Approval rejected',
       canceled: 'Canceled',
+      skipped: 'Skipped',
     },
     runs: {
       title: 'Run Records',

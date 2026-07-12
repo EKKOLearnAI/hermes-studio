@@ -740,6 +740,7 @@ function workflowNodeStatusFromRuntime(status?: WorkflowRuntimeStatus, nodeId?: 
     case 'failed':
     case 'approval_rejected':
     case 'canceled':
+    case 'skipped':
       return currentStatus
     default:
       return 'idle'
@@ -1682,6 +1683,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
   if (node.data.status === 'failed') return '#dc2626'
   if (node.data.status === 'approval_rejected') return '#b45309'
   if (node.data.status === 'canceled') return '#f97316'
+  if (node.data.status === 'skipped') return '#94a3b8'
   return '#9ca3af'
 }
 </script>

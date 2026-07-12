@@ -2042,6 +2042,7 @@ jobTriggered: 'Job ejecutado',
     status: {
       pending_approval: 'Pendiente de aprobacion',
       approval_rejected: 'Aprobacion rechazada',
+      skipped: 'Omitido',
     },
   },
 

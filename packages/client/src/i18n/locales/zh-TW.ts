@@ -774,6 +774,7 @@ export default {
       failed: '失敗',
       approval_rejected: '審批拒絕',
       canceled: '已取消',
+      skipped: '已跳過',
     },
     runs: {
       title: '執行記錄',

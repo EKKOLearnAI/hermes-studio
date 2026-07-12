@@ -33,10 +33,11 @@ import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
 import { deleteSessionForProfile } from './hermes/hermes-cli'
 import { listProfileNamesFromDisk } from './hermes/hermes-profile'
 import { logger } from './logger'
+import { compileWorkflowGraph, evaluateWorkflowEdge, type WorkflowEdgeEvaluation } from './workflow-orchestration'
 
 export type { WorkflowCreateInput, WorkflowRecord, WorkflowUpdateInput }
 
-export type WorkflowRuntimeState = 'idle' | 'queued' | 'running' | 'pending_approval' | 'completed' | 'failed' | 'approval_rejected' | 'canceled'
+export type WorkflowRuntimeState = 'idle' | 'queued' | 'running' | 'pending_approval' | 'completed' | 'failed' | 'approval_rejected' | 'canceled' | 'skipped'
 export type WorkflowRunType = 'workflow'
 export type WorkflowNodeAgent = 'hermes' | 'claude-code' | 'codex'
 
@@ -98,6 +99,7 @@ interface WorkflowEdgeSnapshot {
   id?: string
   source: string
   target: string
+  data?: unknown
 }
 
 type WorkflowManagerEvents = {
@@ -193,6 +195,7 @@ function normalizeEdge(raw: unknown): WorkflowEdgeSnapshot | null {
     id: typeof record.id === 'string' ? record.id : undefined,
     source,
     target,
+    data: record.data,
   }
 }
 
@@ -448,6 +451,15 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     }
 
     const profile = input.profile?.trim() || workflow.profile || 'default'
+    let compiledGraph: ReturnType<typeof compileWorkflowGraph>
+    try {
+      compiledGraph = compileWorkflowGraph(workflow.nodes, workflow.edges)
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error))
+      ;(err as any).status = 400
+      throw err
+    }
+    const joinModeByNodeId = new Map(compiledGraph.nodes.map(node => [node.id, node.joinMode]))
     const nodes = workflow.nodes.map(normalizeNode).filter(Boolean) as WorkflowNodeSnapshot[]
     const nodeById = new Map(nodes.map(node => [node.id, node]))
     const edges = workflow.edges.map(normalizeEdge).filter((edge): edge is WorkflowEdgeSnapshot =>
@@ -514,6 +526,8 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
 
     const completed = new Set<string>()
     const runningOrDone = new Set<string>()
+    const edgeEvaluations = new Map<WorkflowEdgeSnapshot, WorkflowEdgeEvaluation>()
+    const provisionallyHandledFailures: Array<{ node: WorkflowNodeSnapshot; error: string; targetIds: string[] }> = []
     const outputs = new Map<string, string>()
     const nodeSessionIds = new Map<string, string>()
     const nodeSessionRecordIds = new Map<string, string>()
@@ -550,11 +564,31 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
 
     try {
       while (completed.size < activeNodes.length) {
-        const ready = activeNodes.filter(node => {
-          if (runningOrDone.has(node.id)) return false
-          return (activeIncoming.get(node.id) || []).every(edge => completed.has(edge.source))
-        })
+        const edgeIsTaken = (edge: WorkflowEdgeSnapshot) => edgeEvaluations.get(edge)?.status === 'taken'
+        const nodeIsReady = (node: WorkflowNodeSnapshot) => {
+          const inbound = activeIncoming.get(node.id) || []
+          if (inbound.length === 0) return true
+          const joinMode = joinModeByNodeId.get(node.id) || 'all'
+          if (joinMode === 'any') return inbound.some(edgeIsTaken)
+          return inbound.every(edge => completed.has(edge.source)) && inbound.every(edgeIsTaken)
+        }
+        const pendingNodes = activeNodes.filter(node => !runningOrDone.has(node.id))
+        let skippedNode = false
+        for (const node of pendingNodes) {
+          const inbound = activeIncoming.get(node.id) || []
+          if (inbound.length === 0 || !inbound.every(edge => completed.has(edge.source)) || nodeIsReady(node)) continue
+          runningOrDone.add(node.id)
+          completed.add(node.id)
+          skippedNode = true
+          nodeStatuses[node.id] = 'skipped'
+          for (const edge of activeOutgoing.get(node.id) || []) {
+            edgeEvaluations.set(edge, { status: 'not_taken', reason: 'source node was skipped' })
+          }
+        }
+        const ready = activeNodes.filter(node => !runningOrDone.has(node.id) && nodeIsReady(node))
         if (ready.length === 0) {
+          if (completed.size === activeNodes.length) break
+          if (skippedNode) continue
           throw new Error('workflow graph contains a cycle or blocked dependency')
         }
         for (const node of ready) nodeStatuses[node.id] = 'running'
@@ -584,7 +618,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
           nodeSessionRecordIds.set(node.id, nodeSession.id)
           const assembledInput = await this.buildNodeUserMessage({
             node,
-            incomingEdges: activeIncoming.get(node.id) || [],
+            incomingEdges: (activeIncoming.get(node.id) || []).filter(edge => edgeEvaluations.get(edge)?.status === 'taken'),
             nodeById,
             outputs,
             overrideInput: startNodeIds.includes(node.id) ? input.input : undefined,
@@ -624,12 +658,26 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             }
             updateWorkflowRunNodeSession(nodeSession.id, { status: 'failed', finished_at: Date.now(), error })
             nodeStatuses[node.id] = 'failed'
+            outputs.set(node.id, `[Workflow node failed]\n${error}`)
+            completed.add(node.id)
+            const evaluations = (activeOutgoing.get(node.id) || []).map(edge => {
+              const evaluation = evaluateWorkflowEdge(edge, { nodeId: node.id, status: 'failure', error })
+              edgeEvaluations.set(edge, evaluation)
+              return evaluation
+            })
+            const evaluationError = evaluations.find(evaluation => evaluation.status === 'error')
+            if (evaluationError) throw new Error(evaluationError.reason)
+            const handledTargetIds = (activeOutgoing.get(node.id) || [])
+              .filter(edge => edgeEvaluations.get(edge)?.status === 'taken' && !runningOrDone.has(edge.target))
+              .map(edge => edge.target)
+            const handled = handledTargetIds.length > 0
+            if (handled) provisionallyHandledFailures.push({ node, error, targetIds: handledTargetIds })
             this.setRuntimeStatus(workflow.id, {
               status: 'running',
               runId: run.id,
               nodeStatuses: { ...nodeStatuses },
             })
-            return { node, ok: false, error }
+            return { node, ok: handled, handledFailure: handled, error }
           }
           const output = lastAssistantOutput(nodeSessionId, runResult.output)
           const approved = await this.waitForNodeApproval({
@@ -652,6 +700,11 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
           }
           outputs.set(node.id, output)
           completed.add(node.id)
+          for (const edge of activeOutgoing.get(node.id) || []) {
+            const evaluation = evaluateWorkflowEdge(edge, { nodeId: node.id, status: 'success', output })
+            edgeEvaluations.set(edge, evaluation)
+            if (evaluation.status === 'error') throw new Error(evaluation.reason)
+          }
           nodeStatuses[node.id] = 'completed'
           this.setRuntimeStatus(workflow.id, {
             status: 'running',
@@ -683,6 +736,14 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
         }
       }
 
+      const unhandledFailure = provisionallyHandledFailures.find(failure =>
+        failure.targetIds.every(targetId => nodeStatuses[targetId] === 'skipped'),
+      )
+      if (unhandledFailure) {
+        const message = `Node ${unhandledFailure.node.data.title || unhandledFailure.node.id} failed: ${unhandledFailure.error}`
+        const failedRun = failRun(message)
+        return { run: failedRun, nodeSessions: listWorkflowRunNodeSessions(run.id) }
+      }
       const finishedAt = Date.now()
       const completedRun = updateWorkflowRun(run.id, { status: 'completed', finished_at: finishedAt, error: null }) || run
       this.setRuntimeStatus(workflow.id, {

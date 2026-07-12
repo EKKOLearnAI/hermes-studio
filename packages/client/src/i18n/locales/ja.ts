@@ -2041,6 +2041,7 @@ export default {
     status: {
       pending_approval: '承認待ち',
       approval_rejected: '承認拒否',
+      skipped: 'スキップ済み',
     },
   },
 

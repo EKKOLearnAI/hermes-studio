@@ -678,6 +678,7 @@ export default {
       completed: 'Завершено',
       failed: 'Ошибка',
       approval_rejected: 'Одобрение отклонено',
+      skipped: 'Пропущено',
       canceled: 'Отменено',
     },
     runs: {

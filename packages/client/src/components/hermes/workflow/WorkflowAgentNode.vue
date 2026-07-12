@@ -427,6 +427,10 @@ async function uploadImages(files: File[]) {
   background: #f97316;
 }
 
+.status-skipped .node-status-dot {
+  background: #94a3b8;
+}
+
 .node-controls {
   display: flex;
   flex-direction: column;
