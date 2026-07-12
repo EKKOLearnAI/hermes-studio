@@ -40,8 +40,9 @@ import ActionFabricPanel from '@/components/hermes/action-fabric/ActionFabricPan
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>(yes => { resolve = yes })
-  return { promise, resolve }
+  let reject!: (cause: unknown) => void
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
 }
 
 describe('ActionFabricPanel', () => {
@@ -208,7 +209,7 @@ describe('ActionFabricPanel', () => {
     await flushPromises()
 
     expect(actionStore.loadWorkflows).toHaveBeenCalledTimes(2)
-    expect(actionStore.loadWorkflow).toHaveBeenCalledWith('waiting')
+    expect(actionStore.loadWorkflow).toHaveBeenCalledWith('waiting', { reportError: false })
     expect(actionStore.selectedWorkflow.state).toBe('cancelled')
     expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-new')
   })
@@ -251,6 +252,28 @@ describe('ActionFabricPanel', () => {
     expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-completed')
   })
 
+  it('ignores a rejected control detail refresh after selection changes to another workflow', async () => {
+    const oldDetailRefresh = deferred<any>()
+    actionStore.loadAudit.mockResolvedValueOnce([{ id: 'audit-old', aggregateType: 'workflow', aggregateId: 'waiting' }])
+      .mockResolvedValueOnce([{ id: 'audit-completed', aggregateType: 'workflow', aggregateId: 'completed' }])
+    actionStore.loadWorkflow.mockImplementationOnce(() => oldDetailRefresh.promise)
+    const wrapper = mount(ActionFabricPanel)
+    await flushPromises()
+    await wrapper.get('[data-test="workflow-waiting"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="control-update"]').trigger('click')
+    await wrapper.get('[data-test="workflow-completed"]').trigger('click')
+    await flushPromises()
+    oldDetailRefresh.reject(new Error('stale A detail unavailable'))
+    await flushPromises()
+
+    expect(actionStore.loadWorkflow).toHaveBeenCalledWith('waiting', { reportError: false })
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-completed')
+    expect(wrapper.get('[role="status"]').text()).not.toContain('Action Fabric data is degraded')
+    expect(wrapper.get('[role="status"]').text()).not.toContain('Updated')
+  })
+
   it('does not reload workflow audit after the drawer closes during a control refresh', async () => {
     const oldDetailRefresh = deferred<any>()
     actionStore.loadAudit.mockResolvedValueOnce([{ id: 'audit-old', aggregateType: 'workflow', aggregateId: 'waiting' }])
@@ -267,6 +290,26 @@ describe('ActionFabricPanel', () => {
 
     expect(actionStore.loadAudit).toHaveBeenCalledTimes(1)
     expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('')
+  })
+
+  it('ignores a rejected control detail refresh after the drawer closes', async () => {
+    const oldDetailRefresh = deferred<any>()
+    actionStore.loadAudit.mockResolvedValueOnce([{ id: 'audit-old', aggregateType: 'workflow', aggregateId: 'waiting' }])
+    actionStore.loadWorkflow.mockImplementationOnce(() => oldDetailRefresh.promise)
+    const wrapper = mount(ActionFabricPanel)
+    await flushPromises()
+    await wrapper.get('[data-test="workflow-waiting"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="control-update"]').trigger('click')
+    await wrapper.get('[data-test="drawer-close"]').trigger('click')
+    oldDetailRefresh.reject(new Error('stale A detail unavailable'))
+    await flushPromises()
+
+    expect(actionStore.loadWorkflow).toHaveBeenCalledWith('waiting', { reportError: false })
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('')
+    expect(wrapper.get('[role="status"]').text()).not.toContain('Action Fabric data is degraded')
+    expect(wrapper.get('[role="status"]').text()).not.toContain('Updated')
   })
 
   it('announces degraded instead of updated when selected detail refresh fails after control succeeds', async () => {

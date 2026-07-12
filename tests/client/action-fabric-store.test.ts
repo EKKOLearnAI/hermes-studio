@@ -231,6 +231,15 @@ describe('Action Fabric store', () => {
     expect(store.error).toBeNull()
   })
 
+  it('allows selection-scoped detail refresh failures to remain locally classified', async () => {
+    api.fetchActionWorkflow.mockRejectedValueOnce(new Error('stale detail unavailable'))
+    const store = useActionFabricStore()
+
+    await expect(store.loadWorkflow('wf-1', { reportError: false })).rejects.toThrow('stale detail unavailable')
+
+    expect(store.error).toBeNull()
+  })
+
   it('keeps saving true and authoritatively refreshes every concurrent mutation', async () => {
     const older = deferred<any>()
     api.approveActionWorkflow.mockImplementationOnce(() => older.promise)

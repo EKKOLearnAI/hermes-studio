@@ -133,8 +133,8 @@ export const useActionFabricStore = defineStore('action-fabric', () => {
     } finally { finishLoad(operation) }
   }
 
-  function loadWorkflow(id: string): Promise<ActionWorkflowDetailDto> {
-    return loadWorkflowInternal(id, true)
+  function loadWorkflow(id: string, options?: { reportError?: boolean }): Promise<ActionWorkflowDetailDto> {
+    return loadWorkflowInternal(id, options?.reportError !== false)
   }
 
   async function selectWorkflow(id: string | null): Promise<ActionWorkflowDetailDto | null> {

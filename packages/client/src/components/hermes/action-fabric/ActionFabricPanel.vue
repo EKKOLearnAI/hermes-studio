@@ -23,6 +23,7 @@ let refreshSequence = 0
 let selectionSequence = 0
 let auditGeneration = 0
 let pendingAuditToken: number | null = null
+let controlMutationSequence = 0
 const runningStates = new Set(['draft', 'policy_check', 'preparing', 'executing', 'verifying', 'retrying', 'compensating'])
 const completedStates = new Set(['succeeded', 'denied', 'cancelled', 'compensated'])
 const reversibleIds = computed<ReadonlySet<string>>(() => {
@@ -114,6 +115,7 @@ async function closeDrawer(): Promise<void> {
   detailOpener?.focus()
 }
 async function mutateControl(operation: () => Promise<unknown>): Promise<void> {
+  const controlSequence = ++controlMutationSequence
   if (pendingAuditToken !== null) {
     auditGeneration += 1
     pendingAuditToken = null
@@ -122,23 +124,32 @@ async function mutateControl(operation: () => Promise<unknown>): Promise<void> {
   }
   announcement.value = ''
   try { await operation() } catch { return }
+  if (controlSequence !== controlMutationSequence) return
 
   const storeRefreshWasDegraded = store.error === 'ACTION_FABRIC_REFRESH_FAILED'
   invalidateSelectedAudit()
   const selectedId = store.selectedWorkflowId
   const sequence = selectionSequence
-  const refreshes: Promise<unknown>[] = [store.loadWorkflows()]
-  if (selectedId && hasCurrentSelection(selectedId, sequence)) refreshes.push(store.loadWorkflow(selectedId))
-  const results = await Promise.allSettled(refreshes)
-  const authoritativeRefreshFailed = results.some(result => result.status === 'rejected')
-  refreshDegraded.value = storeRefreshWasDegraded || authoritativeRefreshFailed
+  const listRefresh = store.loadWorkflows()
+  const detailRefresh = selectedId && hasCurrentSelection(selectedId, sequence)
+    ? store.loadWorkflow(selectedId, { reportError: false })
+    : null
+  const [listResult, detailResult] = await Promise.all([
+    Promise.resolve(listRefresh).then(() => true, () => false),
+    detailRefresh ? Promise.resolve(detailRefresh).then(() => true, () => false) : Promise.resolve(true),
+  ])
+  if (controlSequence !== controlMutationSequence) return
+  const selectionIsCurrent = Boolean(selectedId && hasCurrentSelection(selectedId, sequence))
+  refreshDegraded.value = storeRefreshWasDegraded || !listResult || (selectionIsCurrent && !detailResult)
 
-  if (!selectedId || !hasCurrentSelection(selectedId, sequence)) {
+  if (!selectedId) {
     if (!refreshDegraded.value) announcement.value = m.value.updated
     return
   }
+  if (!selectionIsCurrent) return
   const auditRefreshed = await refreshSelectedWorkflowAudit(selectedId, sequence)
-  if (!auditRefreshed) refreshDegraded.value = true
+  if (controlSequence !== controlMutationSequence) return
+  if (!auditRefreshed && hasCurrentSelection(selectedId, sequence)) refreshDegraded.value = true
   if (!refreshDegraded.value) announcement.value = m.value.updated
 }
 async function mutateWorkflow(id: string, operation: () => Promise<unknown>): Promise<void> {
