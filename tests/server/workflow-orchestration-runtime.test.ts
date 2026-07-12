@@ -102,6 +102,12 @@ describe('workflow orchestration runtime', () => {
     expect(manager.getRuntimeStatus(workflow.id).nodeStatuses).toMatchObject({
       review: 'completed', recover: 'skipped', notify: 'skipped',
     })
+    const { listWorkflowRunEdgeEvaluations } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    expect(listWorkflowRunEdgeEvaluations(result.run.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        edge_id: 'recover-notify', status: 'not_taken', reason: 'source node was skipped',
+      }),
+    ]))
   })
 
   it('requires every inbound edge for the default all join mode', async () => {
@@ -261,5 +267,10 @@ describe('workflow orchestration runtime', () => {
     expect(chatRunMock.runAndWait).toHaveBeenCalledTimes(2)
     expect(chatRunMock.runAndWait.mock.calls[1][0].input).toContain('review failed')
     expect(manager.getRuntimeStatus(workflow.id).nodeStatuses).toMatchObject({ review: 'failed', recover: 'completed' })
+    const { listWorkflowRunEdgeEvaluations } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    expect(listWorkflowRunEdgeEvaluations(result.run.id)).toMatchObject([{
+      edge_id: 'review-recover', source_node_id: 'review', target_node_id: 'recover',
+      route: 'failure', status: 'taken', sequence: 0,
+    }])
   })
 })

@@ -777,6 +777,7 @@ export default {
       skipped: 'Skipped',
     },
     runs: {
+      edgeEvidence: 'Edge decisions',
       title: 'Run Records',
       refresh: 'Refresh',
       empty: 'No run records',

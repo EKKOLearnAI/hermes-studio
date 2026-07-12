@@ -777,6 +777,7 @@ export default {
       skipped: '已跳过',
     },
     runs: {
+      edgeEvidence: '边线判定',
       title: '执行记录',
       refresh: '刷新',
       empty: '暂无执行记录',

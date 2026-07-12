@@ -2043,6 +2043,9 @@ export default {
       approval_rejected: '承認拒否',
       skipped: 'スキップ済み',
     },
+    runs: {
+      edgeEvidence: 'エッジ判定',
+    },
   },
 
   // 更新履歴

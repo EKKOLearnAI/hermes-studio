@@ -1,6 +1,13 @@
 import { randomUUID } from 'crypto'
 import { getDb, jsonDelete, jsonGet, jsonGetAll, jsonSet } from '../index'
-import { WORKFLOW_RUN_NODE_SESSIONS_TABLE, WORKFLOW_RUNS_TABLE } from './schemas'
+import {
+  syncTable,
+  WORKFLOW_RUN_EDGE_EVALUATIONS_INDEXES,
+  WORKFLOW_RUN_EDGE_EVALUATIONS_SCHEMA,
+  WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE,
+  WORKFLOW_RUN_NODE_SESSIONS_TABLE,
+  WORKFLOW_RUNS_TABLE,
+} from './schemas'
 
 export type WorkflowRunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'canceled'
 export type WorkflowRunNodeStatus = 'queued' | 'running' | 'completed' | 'failed' | 'blocked' | 'approval_rejected' | 'canceled'
@@ -38,8 +45,29 @@ export interface WorkflowRunNodeSessionRecord {
   error: string | null
 }
 
+export type WorkflowRunEdgeEvaluationStatus = 'taken' | 'not_taken' | 'error'
+export type WorkflowRunEdgeRoute = 'success' | 'failure' | 'always'
+
+export interface WorkflowRunEdgeEvaluationRecord {
+  id: string
+  run_id: string
+  workflow_id: string
+  edge_id: string
+  source_node_id: string
+  target_node_id: string
+  route: WorkflowRunEdgeRoute
+  status: WorkflowRunEdgeEvaluationStatus
+  reason: string
+  sequence: number
+  evaluated_at: number
+}
+
 function profileName(value?: string | null): string {
   return value?.trim() || 'default'
+}
+
+function sqliteTableExists(db: NonNullable<ReturnType<typeof getDb>>, tableName: string): boolean {
+  return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName))
 }
 
 function parseArrayJson(value: unknown): unknown[] {
@@ -67,6 +95,22 @@ function rowToRunRecord(row: Record<string, any>): WorkflowRunRecord {
     finished_at: row.finished_at == null ? null : Number(row.finished_at),
     created_at: Number(row.created_at || 0),
     error: row.error == null || row.error === '' ? null : String(row.error),
+  }
+}
+
+function rowToEdgeEvaluationRecord(row: Record<string, any>): WorkflowRunEdgeEvaluationRecord {
+  return {
+    id: String(row.id || ''),
+    run_id: String(row.run_id || ''),
+    workflow_id: String(row.workflow_id || ''),
+    edge_id: String(row.edge_id || ''),
+    source_node_id: String(row.source_node_id || ''),
+    target_node_id: String(row.target_node_id || ''),
+    route: String(row.route || 'success') as WorkflowRunEdgeRoute,
+    status: String(row.status || 'not_taken') as WorkflowRunEdgeEvaluationStatus,
+    reason: String(row.reason || ''),
+    sequence: Number(row.sequence || 0),
+    evaluated_at: Number(row.evaluated_at || 0),
   }
 }
 
@@ -209,12 +253,18 @@ export function deleteWorkflowRun(id: string): boolean {
     for (const record of Object.values(jsonGetAll(WORKFLOW_RUN_NODE_SESSIONS_TABLE)).map(rowToNodeSessionRecord)) {
       if (record.run_id === id) jsonDelete(WORKFLOW_RUN_NODE_SESSIONS_TABLE, record.id)
     }
+    for (const record of Object.values(jsonGetAll(WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE)).map(rowToEdgeEvaluationRecord)) {
+      if (record.run_id === id) jsonDelete(WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE, record.id)
+    }
     jsonDelete(WORKFLOW_RUNS_TABLE, id)
     return true
   }
   db.exec('BEGIN')
   try {
     db.prepare(`DELETE FROM ${WORKFLOW_RUN_NODE_SESSIONS_TABLE} WHERE run_id = ?`).run(id)
+    if (sqliteTableExists(db, WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE)) {
+      db.prepare(`DELETE FROM ${WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE} WHERE run_id = ?`).run(id)
+    }
     db.prepare(`DELETE FROM ${WORKFLOW_RUNS_TABLE} WHERE id = ?`).run(id)
     db.exec('COMMIT')
   } catch (err) {
@@ -397,4 +447,71 @@ export function deleteWorkflowRunNodeSessions(runId: string, nodeIds: string[]):
     WHERE run_id = ? AND node_id IN (${placeholders})
   `).run(normalizedRunId, ...nodeIdSet)
   return rows.map(rowToNodeSessionRecord)
+}
+
+
+export function createWorkflowRunEdgeEvaluation(input: {
+  id?: string
+  run_id: string
+  workflow_id: string
+  edge_id: string
+  source_node_id: string
+  target_node_id: string
+  route: WorkflowRunEdgeRoute
+  status: WorkflowRunEdgeEvaluationStatus
+  reason: string
+  sequence: number
+  evaluated_at?: number
+}): WorkflowRunEdgeEvaluationRecord {
+  const record: WorkflowRunEdgeEvaluationRecord = {
+    id: input.id?.trim() || randomUUID(),
+    run_id: input.run_id,
+    workflow_id: input.workflow_id,
+    edge_id: input.edge_id,
+    source_node_id: input.source_node_id,
+    target_node_id: input.target_node_id,
+    route: input.route,
+    status: input.status,
+    reason: input.reason,
+    sequence: input.sequence,
+    evaluated_at: input.evaluated_at ?? Date.now(),
+  }
+  const db = getDb()
+  if (!db) {
+    jsonSet(WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE, record.id, record as any)
+    return record
+  }
+  if (!sqliteTableExists(db, WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE)) {
+    syncTable(WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE, WORKFLOW_RUN_EDGE_EVALUATIONS_SCHEMA, {
+      indexes: WORKFLOW_RUN_EDGE_EVALUATIONS_INDEXES,
+    })
+  }
+  db.prepare(`
+    INSERT INTO ${WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE} (
+      id, run_id, workflow_id, edge_id, source_node_id, target_node_id,
+      route, status, reason, sequence, evaluated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    record.id, record.run_id, record.workflow_id, record.edge_id,
+    record.source_node_id, record.target_node_id, record.route,
+    record.status, record.reason, record.sequence, record.evaluated_at,
+  )
+  return record
+}
+
+export function listWorkflowRunEdgeEvaluations(runId: string): WorkflowRunEdgeEvaluationRecord[] {
+  const db = getDb()
+  if (!db) {
+    return Object.values(jsonGetAll(WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE))
+      .map(rowToEdgeEvaluationRecord)
+      .filter(record => record.run_id === runId)
+      .sort((a, b) => a.sequence - b.sequence || a.evaluated_at - b.evaluated_at)
+  }
+  if (!sqliteTableExists(db, WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE)) return []
+  const rows = db.prepare(`
+    SELECT * FROM ${WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE}
+    WHERE run_id = ?
+    ORDER BY sequence ASC, evaluated_at ASC
+  `).all(runId) as Record<string, any>[]
+  return rows.map(rowToEdgeEvaluationRecord)
 }

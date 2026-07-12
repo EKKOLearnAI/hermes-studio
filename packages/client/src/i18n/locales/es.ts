@@ -2044,6 +2044,9 @@ jobTriggered: 'Job ejecutado',
       approval_rejected: 'Aprobacion rechazada',
       skipped: 'Omitido',
     },
+    runs: {
+      edgeEvidence: 'Decisiones de conexión',
+    },
   },
 
   // Registro de cambios

@@ -13,6 +13,7 @@ import {
 import { getExactSessionDetailFromDbWithProfile } from '../db/hermes/sessions-db'
 import {
   createWorkflowRun,
+  createWorkflowRunEdgeEvaluation,
   createWorkflowRunNodeSession,
   deleteWorkflowRun,
   deleteWorkflowRunNodeSessions,
@@ -465,6 +466,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     const edges = workflow.edges.map(normalizeEdge).filter((edge): edge is WorkflowEdgeSnapshot =>
       Boolean(edge && nodeById.has(edge.source) && nodeById.has(edge.target)),
     )
+    const compiledEdgeByRuntimeEdge = new Map(edges.map((edge, index) => [edge, compiledGraph.edges[index]]))
     if (nodes.length === 0) {
       const err = new Error('workflow has no nodes')
       ;(err as any).status = 400
@@ -533,6 +535,25 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     const nodeSessionRecordIds = new Map<string, string>()
     const nodeStatuses: Record<string, WorkflowRuntimeState> = Object.fromEntries(activeNodes.map(node => [node.id, 'queued' as const]))
     let sequence = 0
+    let edgeEvaluationSequence = 0
+
+    const recordEdgeEvaluation = (edge: WorkflowEdgeSnapshot, evaluation: WorkflowEdgeEvaluation) => {
+      const compiledEdge = compiledEdgeByRuntimeEdge.get(edge)
+      if (!compiledEdge) throw new Error(`compiled workflow edge is missing: ${edge.source} -> ${edge.target}`)
+      edgeEvaluations.set(edge, evaluation)
+      createWorkflowRunEdgeEvaluation({
+        run_id: run.id,
+        workflow_id: workflow.id,
+        edge_id: compiledEdge.id,
+        source_node_id: edge.source,
+        target_node_id: edge.target,
+        route: compiledEdge.policy.route,
+        status: evaluation.status,
+        reason: evaluation.reason,
+        sequence: edgeEvaluationSequence++,
+      })
+      return evaluation
+    }
 
     const failRun = (message: string) => {
       if (this.canceledRunIds.has(run.id) || getWorkflowRun(run.id)?.status === 'canceled') {
@@ -582,7 +603,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
           skippedNode = true
           nodeStatuses[node.id] = 'skipped'
           for (const edge of activeOutgoing.get(node.id) || []) {
-            edgeEvaluations.set(edge, { status: 'not_taken', reason: 'source node was skipped' })
+            recordEdgeEvaluation(edge, { status: 'not_taken', reason: 'source node was skipped' })
           }
         }
         const ready = activeNodes.filter(node => !runningOrDone.has(node.id) && nodeIsReady(node))
@@ -660,11 +681,9 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             nodeStatuses[node.id] = 'failed'
             outputs.set(node.id, `[Workflow node failed]\n${error}`)
             completed.add(node.id)
-            const evaluations = (activeOutgoing.get(node.id) || []).map(edge => {
-              const evaluation = evaluateWorkflowEdge(edge, { nodeId: node.id, status: 'failure', error })
-              edgeEvaluations.set(edge, evaluation)
-              return evaluation
-            })
+            const evaluations = (activeOutgoing.get(node.id) || []).map(edge =>
+              recordEdgeEvaluation(edge, evaluateWorkflowEdge(edge, { nodeId: node.id, status: 'failure', error })),
+            )
             const evaluationError = evaluations.find(evaluation => evaluation.status === 'error')
             if (evaluationError) throw new Error(evaluationError.reason)
             const handledTargetIds = (activeOutgoing.get(node.id) || [])
@@ -701,8 +720,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
           outputs.set(node.id, output)
           completed.add(node.id)
           for (const edge of activeOutgoing.get(node.id) || []) {
-            const evaluation = evaluateWorkflowEdge(edge, { nodeId: node.id, status: 'success', output })
-            edgeEvaluations.set(edge, evaluation)
+            const evaluation = recordEdgeEvaluation(edge, evaluateWorkflowEdge(edge, { nodeId: node.id, status: 'success', output }))
             if (evaluation.status === 'error') throw new Error(evaluation.reason)
           }
           nodeStatuses[node.id] = 'completed'

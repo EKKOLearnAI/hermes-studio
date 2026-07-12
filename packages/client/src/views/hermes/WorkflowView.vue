@@ -2120,6 +2120,26 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
               <span v-if="run.start_node_ids.length > 0">· {{ t('workflow.runs.startNodes', { count: run.start_node_ids.length }) }}</span>
             </div>
             <div v-if="run.error" class="workflow-run-error" :title="run.error">{{ run.error }}</div>
+            <div
+              v-if="selectedWorkflowRunId === run.id && run.edge_evaluations?.length"
+              class="workflow-run-edge-evidence"
+              @click.stop
+            >
+              <div class="workflow-run-edge-evidence-title">{{ t('workflow.runs.edgeEvidence') }}</div>
+              <div
+                v-for="evaluation in run.edge_evaluations"
+                :key="evaluation.id"
+                class="workflow-run-edge-evaluation"
+              >
+                <div class="workflow-run-edge-evaluation-meta">
+                  #{{ evaluation.sequence + 1 }} · {{ evaluation.source_node_id }} → {{ evaluation.target_node_id }}
+                </div>
+                <div class="workflow-run-edge-evaluation-status">
+                  {{ evaluation.route }} · {{ evaluation.status }}
+                </div>
+                <div class="workflow-run-edge-evaluation-reason">{{ evaluation.reason }}</div>
+              </div>
+            </div>
           </button>
         </div>
         <NDropdown
@@ -2833,6 +2853,50 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workflow-run-edge-evidence {
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid $border-light;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: default;
+}
+
+.workflow-run-edge-evidence-title {
+  color: $text-secondary;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 15px;
+}
+
+.workflow-run-edge-evaluation {
+  padding: 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.workflow-run-edge-evaluation-meta,
+.workflow-run-edge-evaluation-status,
+.workflow-run-edge-evaluation-reason {
+  font-size: 10px;
+  line-height: 14px;
+  overflow-wrap: anywhere;
+}
+
+.workflow-run-edge-evaluation-meta {
+  color: $text-primary;
+  font-weight: 600;
+}
+
+.workflow-run-edge-evaluation-status,
+.workflow-run-edge-evaluation-reason {
+  color: $text-muted;
 }
 
 .workflow-flow {

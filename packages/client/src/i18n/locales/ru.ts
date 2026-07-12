@@ -682,6 +682,7 @@ export default {
       canceled: 'Отменено',
     },
     runs: {
+      edgeEvidence: 'Решения по связям',
       title: 'Run Records',
       refresh: 'Refresh',
       empty: 'No run records',

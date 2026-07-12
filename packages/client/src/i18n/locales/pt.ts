@@ -2044,6 +2044,9 @@ jobTriggered: 'Job acionado',
       approval_rejected: 'Aprovacao rejeitada',
       skipped: 'Ignorado',
     },
+    runs: {
+      edgeEvidence: 'Decisões de aresta',
+    },
   },
 
   // Registro de alteracoes

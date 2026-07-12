@@ -59,6 +59,21 @@ export interface WorkflowRunRecord {
   updated_at?: number
   error: string | null
   node_sessions?: WorkflowRunNodeSessionRecord[]
+  edge_evaluations?: WorkflowRunEdgeEvaluationRecord[]
+}
+
+export interface WorkflowRunEdgeEvaluationRecord {
+  id: string
+  run_id: string
+  workflow_id: string
+  edge_id: string
+  source_node_id: string
+  target_node_id: string
+  route: 'success' | 'failure' | 'always'
+  status: 'taken' | 'not_taken' | 'error'
+  reason: string
+  sequence: number
+  evaluated_at: number
 }
 
 export interface WorkflowRunNodeSessionRecord {

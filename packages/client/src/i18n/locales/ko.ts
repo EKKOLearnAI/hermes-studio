@@ -2043,6 +2043,9 @@ export default {
       approval_rejected: '승인 거부',
       skipped: '건너뜀',
     },
+    runs: {
+      edgeEvidence: '에지 판정',
+    },
   },
 
   // 변경 이력

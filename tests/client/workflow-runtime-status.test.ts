@@ -18,4 +18,20 @@ describe('workflow runtime status contract', () => {
       expect(read(`packages/client/src/i18n/locales/${locale}`), locale).toMatch(/skipped:\s*['"]/)
     }
   })
+
+  it('types persisted edge evaluations on workflow run history records', () => {
+    const source = read('packages/client/src/api/hermes/workflows.ts')
+    expect(source).toMatch(/edge_evaluations\?: WorkflowRunEdgeEvaluationRecord\[\]/)
+    expect(source).toContain("status: 'taken' | 'not_taken' | 'error'")
+  })
+
+  it('renders edge evaluation evidence for the selected workflow run in every locale', () => {
+    const view = read('packages/client/src/views/hermes/WorkflowView.vue')
+    expect(view).toContain('class="workflow-run-edge-evidence"')
+    expect(view).toContain("t('workflow.runs.edgeEvidence')")
+    expect(view).toContain('selectedWorkflowRunId === run.id')
+    for (const locale of localeFiles) {
+      expect(read(`packages/client/src/i18n/locales/${locale}`), locale).toMatch(/edgeEvidence:\s*['"]/)
+    }
+  })
 })

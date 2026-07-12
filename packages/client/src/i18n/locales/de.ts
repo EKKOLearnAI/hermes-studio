@@ -2044,6 +2044,9 @@ jobTriggered: 'Job ausgelost',
       approval_rejected: 'Freigabe abgelehnt',
       skipped: 'Übersprungen',
     },
+    runs: {
+      edgeEvidence: 'Kantenentscheidungen',
+    },
   },
 
   // Anderungsprotokoll

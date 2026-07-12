@@ -2044,6 +2044,9 @@ jobTriggered: 'Job declenche',
       approval_rejected: 'Approbation refusee',
       skipped: 'Ignore',
     },
+    runs: {
+      edgeEvidence: 'Décisions de liaison',
+    },
   },
 
   // Journal des modifications
