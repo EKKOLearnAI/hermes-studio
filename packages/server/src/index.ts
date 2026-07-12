@@ -32,6 +32,7 @@ import { createStaticCompressionMiddleware } from './middleware/static-compressi
 import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
 import { createCorsOriginResolver, securityHeaders } from './security'
 import type { ShutdownHandler } from './services/shutdown'
+import { startActionFabricRuntime } from './services/hermes/action-fabric/runtime'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -283,6 +284,9 @@ export async function bootstrap() {
   const { initAllStores } = await import('./db/hermes/init')
   initAllStores()
   console.log('[bootstrap] all stores initialized')
+
+  await startActionFabricRuntime()
+  console.log('[bootstrap] action fabric runtime ready')
 
   app.use(securityHeaders())
   app.use(cors({ origin: createCorsOriginResolver(config.corsOrigins) }))

@@ -526,7 +526,7 @@ describe('Action Fabric durable worker', () => {
     expect(getFabricWorkflow(workflow.id)?.state).toBe('cancelled')
   })
 
-  it('level 2 leaves live non-interruptible work and its lease untouched', async () => {
+  it('level 2 preserves live non-interruptible work until a safe waiting-user checkpoint', async () => {
     let release!: () => void
     const gate = new Promise<void>(resolve => { release = resolve })
     registerFabricExecutorAdapter(adapter({
@@ -545,7 +545,12 @@ describe('Action Fabric durable worker', () => {
     })
     release()
     await expect(executing).resolves.not.toMatchObject({ stale: true })
-    expect(getFabricWorkflow(workflow.id)?.state).toBe('verifying')
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({
+      state: 'waiting_user', leaseOwner: null, lastErrorCode: 'FABRIC_CONTROL_CHANGED_REVIEW_REQUIRED',
+    })
+    expect(getFabricWorkflow(workflow.id)?.steps[1]).toMatchObject({
+      state: 'waiting_user', output: expect.any(Object),
+    })
   })
 
   it('managed worker interrupts its own long-running interruptible adapter at level 2', async () => {

@@ -61,6 +61,7 @@ interface WorkflowClaim {
   capabilityVersion: number
   contractDigest: string
   policyEvaluationToken: string
+  controlVersion: number
   input: FabricJsonObject
   target: FabricJsonObject
   preparedOutput?: FabricJsonObject
@@ -298,6 +299,12 @@ function claimNextWorkflow(workerId: string, now: Date, emergencyOnly = false): 
     } catch (error) {
       return moveInvalidContractToWaitingUser(db, row, nowIso, stableErrorClass(error))
     }
+    // Emergency interruption is authorized by the current control state, not by
+    // the now-stale policy snapshot that originally authorized the side effect.
+    if (phase === 'interrupt') claim.controlVersion = control.version
+    if (claim.controlVersion !== control.version) {
+      return moveControlChangedToWaitingUser(db, row, nowIso, control.version)
+    }
     const recovered = row.lease_owner !== null && row.lease_expires_at !== null && row.lease_expires_at <= nowIso
     if (recovered && phase === 'execute' && row.step_state === 'running' && claim.idempotency === 'none') {
       return recoverNonIdempotentExecution(db, row, claim, nowIso)
@@ -402,6 +409,10 @@ function buildClaim(
   const snapshot = parseObject(row.policy_snapshot_json)
   const token = snapshot.registryPolicyEvaluationToken
   if (typeof token !== 'string') throw new Error('FABRIC_WORKER_POLICY_TOKEN_MISSING')
+  const controlVersion = snapshot.controlVersion
+  if (!Number.isSafeInteger(controlVersion) || (controlVersion as number) < 0) {
+    throw new Error('FABRIC_WORKER_CONTROL_VERSION_MISSING')
+  }
   if (contract.capabilityVersion !== row.capability_version
     || typeof contract.contractDigest !== 'string' || typeof contract.reversible !== 'boolean'
     || !(typeof contract.compensationCapabilityId === 'string' || contract.compensationCapabilityId === null)
@@ -414,7 +425,7 @@ function buildClaim(
     stepId: row.step_id, stepOrdinal: row.step_ordinal, stepAttempt: row.step_attempt + 1,
     executionToken: row.execution_token, executeToken, phase, executorId: row.executor_id, executorType: row.executor_type,
     capabilityId: row.capability_id, capabilityVersion: row.capability_version,
-    contractDigest: contract.contractDigest, policyEvaluationToken: token,
+    contractDigest: contract.contractDigest, policyEvaluationToken: token, controlVersion: controlVersion as number,
     input, target, ...(prepared ? { preparedOutput: prepared } : {}),
     ...(executed ? { executionOutput: executed } : {}), leaseExpiresAt,
     actorUserId: row.requested_by_user_id, requestedByRoleId: row.requested_by_role_id,
@@ -443,6 +454,10 @@ function commitClaim(
       || current.lease_expires_at <= nowIso
       || (!isStateForPhase(current.state, claim.phase)) || (claim.phase !== 'interrupt' && step.state !== 'running')) return false
     const control = getFabricControlStateInDb(db)
+    if (control.version !== claim.controlVersion && !(claim.phase !== 'interrupt'
+      && claim.interruptible && control.level >= 2)) {
+      return checkpointControlChangedResult(db, claim, result, current, step, control.version, nowIso)
+    }
     const emergencyUncertain = claim.phase !== 'interrupt' && claim.interruptible && control.level >= 2
     let transition = emergencyUncertain
       ? compensationWaiting('FABRIC_EMERGENCY_STOP_RESULT_UNCERTAIN', current.attempt)
@@ -504,6 +519,46 @@ function commitClaim(
         ...(compensationIntentId ? { compensationIntentId, compensationWorkflowId, compensationOutcome } : {}) })
     return true
   })
+}
+
+function checkpointControlChangedResult(
+  db: DatabaseSync,
+  claim: WorkflowClaim,
+  result: FabricExecutorResult,
+  current: { state: FabricWorkflowState; version: number; lease_owner: string | null;
+    lease_expires_at: string | null; max_attempts: number; attempt: number },
+  step: { state: string; execution_token: string; attempt: number },
+  controlVersion: number,
+  now: string,
+): boolean {
+  const errorCode = 'FABRIC_CONTROL_CHANGED_REVIEW_REQUIRED'
+  if (claim.phase !== 'interrupt') {
+    const changedStep = db.prepare(`UPDATE fabric_steps SET state='waiting_user',output_json=?,evidence_json=?,
+      last_error_code=?,updated_at=?,completed_at=NULL WHERE id=? AND state='running'
+      AND execution_token=? AND attempt=?`).run(
+      JSON.stringify(result.output), JSON.stringify(result.evidence), errorCode, now,
+      claim.stepId, claim.executionToken, step.attempt,
+    )
+    if (changedStep.changes !== 1) return false
+  } else {
+    db.prepare(`UPDATE fabric_steps SET state='waiting_user',last_error_code=?,updated_at=?
+      WHERE workflow_id=? AND state IN ('pending','running')`).run(errorCode, now, claim.workflowId)
+  }
+  const changed = db.prepare(`UPDATE fabric_workflows SET state='waiting_user',version=version+1,
+    retry_at=NULL,last_error_code=?,lease_owner=NULL,lease_expires_at=NULL,updated_at=?
+    WHERE id=? AND version=? AND lease_owner=? AND lease_expires_at=?`).run(
+    errorCode, now, claim.workflowId, current.version, claim.workerId, claim.leaseExpiresAt,
+  )
+  if (changed.changes !== 1) throw new Error('FABRIC_WORKER_COMMIT_CONFLICT')
+  appendFabricAuditEvent(db, { eventType: 'workflow.control_checkpoint_required', actorUserId: claim.workerId,
+    aggregateType: 'workflow', aggregateId: claim.workflowId,
+    payload: { stepId: claim.stepId, phase: claim.phase, outcome: result.outcome,
+      from: current.state, to: 'waiting_user', policyControlVersion: claim.controlVersion, controlVersion },
+    occurredAt: now })
+  appendFabricOutbox(db, 'fabric.workflow.control_checkpoint_required', claim.workflowId,
+    { stepId: claim.stepId, phase: claim.phase, outcome: result.outcome,
+      from: current.state, to: 'waiting_user', policyControlVersion: claim.controlVersion, controlVersion })
+  return true
 }
 
 function outcomeTransition(
@@ -652,6 +707,28 @@ function moveInvalidContractToWaitingUser(db: DatabaseSync, row: CandidateRow, n
     db.prepare(`UPDATE fabric_steps SET state='waiting_user',last_error_code=?,updated_at=?
       WHERE workflow_id=? AND state IN ('pending','running')`).run(errorCode, now, row.workflow_id)
     auditTransition(db, row, row.workflow_state, 'waiting_user', 'captured_contract_invalid', now)
+  }
+  return null
+}
+
+function moveControlChangedToWaitingUser(
+  db: DatabaseSync,
+  row: CandidateRow,
+  now: string,
+  controlVersion: number,
+): null {
+  const errorCode = 'FABRIC_CONTROL_CHANGED_REVIEW_REQUIRED'
+  const changed = db.prepare(`UPDATE fabric_workflows SET state='waiting_user',version=version+1,
+    lease_owner=NULL,lease_expires_at=NULL,retry_at=NULL,last_error_code=?,updated_at=?
+    WHERE id=? AND version=?`).run(errorCode, now, row.workflow_id, row.workflow_version)
+  if (changed.changes === 1) {
+    db.prepare(`UPDATE fabric_steps SET state='waiting_user',last_error_code=?,updated_at=?
+      WHERE workflow_id=? AND state IN ('pending','running')`).run(errorCode, now, row.workflow_id)
+    appendFabricAuditEvent(db, { eventType: 'workflow.control_checkpoint_required',
+      actorUserId: row.requested_by_user_id, aggregateType: 'workflow', aggregateId: row.workflow_id,
+      payload: { from: row.workflow_state, to: 'waiting_user', controlVersion }, occurredAt: now })
+    appendFabricOutbox(db, 'fabric.workflow.control_checkpoint_required', row.workflow_id,
+      { from: row.workflow_state, to: 'waiting_user', controlVersion })
   }
   return null
 }

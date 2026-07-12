@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   getShutdownForceExitMs,
   shouldStopAgentBridgeOnShutdown,
@@ -76,5 +76,38 @@ describe('shutdown bridge policy', () => {
     process.env.HERMES_WEB_UI_SHUTDOWN_FORCE_EXIT_MS = '7000'
 
     expect(getShutdownForceExitMs()).toBe(7_000)
+  })
+})
+
+describe('shutdown ordering', () => {
+  it('awaits the Action Fabric worker before closing process databases', async () => {
+    vi.resetModules()
+    const events: string[] = []
+    let release!: () => void
+    const stopped = new Promise<void>(resolve => { release = resolve })
+    vi.doMock('../../packages/server/src/services/hermes/action-fabric/runtime', () => ({
+      stopActionFabricRuntime: vi.fn(async () => { events.push('fabric-stop-start'); await stopped; events.push('fabric-stop-end') }),
+    }))
+    vi.doMock('../../packages/server/src/db', () => ({ closeDb: vi.fn(() => events.push('db-close')) }))
+    vi.doMock('../../packages/server/src/controllers/update', () => ({ stopPreviewRuntime: vi.fn(async () => {}) }))
+    vi.doMock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
+      codingAgentRunManager: { shutdown: vi.fn() },
+    }))
+    vi.doMock('../../packages/server/src/services/hermes/gateway-runner', () => ({ shutdownManagedGateways: vi.fn() }))
+    vi.doMock('../../packages/server/src/services/global-agent/outbound-relay-client', () => ({ stopOutboundRelayClient: vi.fn() }))
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+    const { createShutdownHandler } = await import('../../packages/server/src/services/shutdown')
+    const shutdown = createShutdownHandler(null)
+
+    const pending = shutdown('SIGTERM')
+    await vi.waitFor(() => expect(events).toEqual(['fabric-stop-start']))
+    release()
+    await pending
+
+    expect(events).toEqual(['fabric-stop-start', 'fabric-stop-end', 'db-close'])
+    exit.mockRestore()
+    vi.doUnmock('../../packages/server/src/services/hermes/action-fabric/runtime')
+    vi.doUnmock('../../packages/server/src/db')
+    vi.resetModules()
   })
 })

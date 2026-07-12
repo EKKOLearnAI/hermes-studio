@@ -4,6 +4,7 @@ import { stopPreviewRuntime } from '../controllers/update'
 import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
 import { shutdownManagedGateways } from './hermes/gateway-runner'
 import { stopOutboundRelayClient } from './global-agent/outbound-relay-client'
+import { stopActionFabricRuntime } from './hermes/action-fabric/runtime'
 
 const DEFAULT_SHUTDOWN_FORCE_EXIT_MS = 15_000
 const DEFAULT_DESKTOP_SHUTDOWN_FORCE_EXIT_MS = 15_000
@@ -56,6 +57,13 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
     console.log(`[shutdown] Received signal: ${signal}`)
 
     try {
+      try {
+        await stopActionFabricRuntime()
+        logger.info('Action Fabric runtime stopped')
+      } catch (err) {
+        logger.warn(err, 'Failed to stop Action Fabric runtime (non-fatal)')
+      }
+
       try {
         await stopPreviewRuntime()
         logger.info('Preview runtime stopped')
