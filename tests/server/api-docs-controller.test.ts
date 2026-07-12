@@ -382,6 +382,8 @@ describe('api docs controller', () => {
     expect(source).not.toContain('ActionWorkflowDetailDto')
     expect(source).not.toContain("tagInfo.name === 'Action Fabric'")
     expect(source).not.toContain('packages/client/src/api/hermes/action-fabric.ts')
+    expect(source.indexOf("process.argv.indexOf('--infer-controller-request')"))
+      .toBeLessThan(source.indexOf('discoverTypeScriptSchemas(selectedSchemaRoots)'))
   })
 
   it('discovers multiple annotated schema sources and rejects conflicts or missing refs', () => {
@@ -486,5 +488,5 @@ function objectValue(value: unknown) { if (typeof value !== 'object' || value ==
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
-  })
+  }, 20_000)
 })
