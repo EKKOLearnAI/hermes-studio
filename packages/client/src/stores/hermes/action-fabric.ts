@@ -16,6 +16,7 @@ import type {
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error) }
 function isNotFound(error: unknown): boolean { return error instanceof Error && /(?:API Error )?404\b/.test(error.message) }
+const ACTION_FABRIC_REFRESH_FAILED = 'ACTION_FABRIC_REFRESH_FAILED'
 
 export const useActionFabricStore = defineStore('action-fabric', () => {
   const capabilities = ref<ActionCapabilityDto[]>([])
@@ -36,7 +37,8 @@ export const useActionFabricStore = defineStore('action-fabric', () => {
   let capabilitySequence = 0
   let executorSequence = 0
   let workflowListSequence = 0
-  let detailSequence = 0
+  let selectionGeneration = 0
+  const detailSequences = new Map<string, number>()
   let auditSequence = 0
   let controlSequence = 0
   let mutationSequence = 0
@@ -44,22 +46,24 @@ export const useActionFabricStore = defineStore('action-fabric', () => {
   let lastAuditQuery: AuditQuery = { limit: 100 }
 
   watch(selectedWorkflowId, () => {
-    detailSequence += 1
+    selectionGeneration += 1
     selectedWorkflow.value = null
   }, { flush: 'sync' })
 
-  function beginLoad() {
+  function beginLoad(reportError = true) {
     const currentGeneration = generation
-    const currentError = ++errorSequence
+    const currentError = reportError ? ++errorSequence : null
     activeLoads.value += 1
-    error.value = null
+    if (reportError) error.value = null
     return { generation: currentGeneration, error: currentError }
   }
   function finishLoad(operation: { generation: number }): void {
     if (operation.generation === generation) activeLoads.value = Math.max(0, activeLoads.value - 1)
   }
-  function recordError(operation: { generation: number; error: number }, cause: unknown): void {
-    if (operation.generation === generation && operation.error === errorSequence) error.value = errorMessage(cause)
+  function recordError(operation: { generation: number; error: number | null }, cause: unknown): void {
+    if (operation.generation === generation && operation.error !== null && operation.error === errorSequence) {
+      error.value = errorMessage(cause)
+    }
   }
 
   async function loadCapabilities(): Promise<ActionCapabilityDto[]> {
@@ -82,16 +86,19 @@ export const useActionFabricStore = defineStore('action-fabric', () => {
     } catch (cause) { recordError(operation, cause); throw cause } finally { finishLoad(operation) }
   }
 
-  async function loadWorkflows(options?: WorkflowQuery): Promise<ActionWorkflowSummaryDto[]> {
+  async function loadWorkflowsInternal(options: WorkflowQuery | undefined, invalidateSelection: boolean,
+    reportError: boolean): Promise<ActionWorkflowSummaryDto[]> {
     const query = options ? { limit: 100, ...options } : { ...lastWorkflowQuery }
     if (options) lastWorkflowQuery = query
     const sequence = ++workflowListSequence
-    const operation = beginLoad()
+    const selectionAtStart = selectionGeneration
+    const operation = beginLoad(reportError)
     try {
       const result = await actionFabricApi.fetchActionWorkflows(query)
       if (operation.generation === generation && sequence === workflowListSequence) {
         workflows.value = result.workflows
-        if (selectedWorkflowId.value && !result.workflows.some(item => item.id === selectedWorkflowId.value)) {
+        if (invalidateSelection && selectionGeneration === selectionAtStart && selectedWorkflowId.value
+          && !result.workflows.some(item => item.id === selectedWorkflowId.value)) {
           selectedWorkflowId.value = null
           selectedWorkflow.value = null
         }
@@ -100,21 +107,34 @@ export const useActionFabricStore = defineStore('action-fabric', () => {
     } catch (cause) { recordError(operation, cause); throw cause } finally { finishLoad(operation) }
   }
 
-  async function loadWorkflow(id: string): Promise<ActionWorkflowDetailDto> {
-    const sequence = ++detailSequence
-    const operation = beginLoad()
+  function loadWorkflows(options?: WorkflowQuery): Promise<ActionWorkflowSummaryDto[]> {
+    return loadWorkflowsInternal(options, true, true)
+  }
+
+  async function loadWorkflowInternal(id: string, reportError: boolean): Promise<ActionWorkflowDetailDto> {
+    const sequence = (detailSequences.get(id) ?? 0) + 1
+    detailSequences.set(id, sequence)
+    const selectionAtStart = selectionGeneration
+    const operation = beginLoad(reportError)
     try {
       const result = await actionFabricApi.fetchActionWorkflow(id)
-      if (operation.generation === generation && sequence === detailSequence && selectedWorkflowId.value === id) {
+      if (operation.generation === generation && sequence === detailSequences.get(id)
+        && selectionGeneration === selectionAtStart && selectedWorkflowId.value === id) {
         selectedWorkflow.value = result
       }
       return result
     } catch (cause) {
-      if (operation.generation === generation && sequence === detailSequence
-        && selectedWorkflowId.value === id && isNotFound(cause)) selectedWorkflowId.value = null
+      if (operation.generation === generation && sequence === detailSequences.get(id)
+        && selectionGeneration === selectionAtStart && selectedWorkflowId.value === id && isNotFound(cause)) {
+        selectedWorkflowId.value = null
+      }
       recordError(operation, cause)
       throw cause
     } finally { finishLoad(operation) }
+  }
+
+  function loadWorkflow(id: string): Promise<ActionWorkflowDetailDto> {
+    return loadWorkflowInternal(id, true)
   }
 
   async function selectWorkflow(id: string | null): Promise<ActionWorkflowDetailDto | null> {
@@ -123,11 +143,11 @@ export const useActionFabricStore = defineStore('action-fabric', () => {
     return loadWorkflow(id)
   }
 
-  async function loadAudit(options?: AuditQuery): Promise<ActionAuditEventDto[]> {
+  async function loadAuditInternal(options: AuditQuery | undefined, reportError: boolean): Promise<ActionAuditEventDto[]> {
     const query = options ? { limit: 100, ...options } : { ...lastAuditQuery }
     if (options) lastAuditQuery = query
     const sequence = ++auditSequence
-    const operation = beginLoad()
+    const operation = beginLoad(reportError)
     try {
       const result = await actionFabricApi.fetchActionAudit(query)
       if (operation.generation === generation && sequence === auditSequence) audit.value = result.events
@@ -135,9 +155,13 @@ export const useActionFabricStore = defineStore('action-fabric', () => {
     } catch (cause) { recordError(operation, cause); throw cause } finally { finishLoad(operation) }
   }
 
-  async function loadControl(): Promise<ActionControlDto> {
+  function loadAudit(options?: AuditQuery): Promise<ActionAuditEventDto[]> {
+    return loadAuditInternal(options, true)
+  }
+
+  async function loadControlInternal(reportError: boolean): Promise<ActionControlDto> {
     const sequence = ++controlSequence
-    const operation = beginLoad()
+    const operation = beginLoad(reportError)
     try {
       const result = await actionFabricApi.fetchActionControl()
       if (operation.generation === generation && sequence === controlSequence) control.value = result
@@ -145,29 +169,47 @@ export const useActionFabricStore = defineStore('action-fabric', () => {
     } catch (cause) { recordError(operation, cause); throw cause } finally { finishLoad(operation) }
   }
 
+  function loadControl(): Promise<ActionControlDto> {
+    return loadControlInternal(true)
+  }
+
   async function verifyAudit() { return actionFabricApi.verifyActionAudit() }
 
-  async function runMutation<T>(operationFn: () => Promise<T>, refresh: (result: T) => Promise<void>): Promise<T> {
+  async function runMutation<T>(operationFn: () => Promise<T>, refresh: (result: T) => Promise<boolean>): Promise<T> {
     const sequence = ++mutationSequence
     const currentGeneration = generation
-    errorSequence += 1
+    const currentError = ++errorSequence
     activeSaves.value += 1
     error.value = null
     try {
-      const result = await operationFn()
-      if (currentGeneration === generation) await refresh(result)
+      let result: T
+      try {
+        result = await operationFn()
+      } catch (cause) {
+        if (currentGeneration === generation && sequence === mutationSequence && currentError === errorSequence) {
+          error.value = errorMessage(cause)
+        }
+        throw cause
+      }
+      if (currentGeneration === generation) {
+        const failed = await refresh(result)
+        if (failed && currentGeneration === generation && sequence === mutationSequence
+          && currentError === errorSequence) error.value = ACTION_FABRIC_REFRESH_FAILED
+      }
       return result
-    } catch (cause) {
-      if (currentGeneration === generation && sequence === mutationSequence) error.value = errorMessage(cause)
-      throw cause
     } finally {
       if (currentGeneration === generation) activeSaves.value = Math.max(0, activeSaves.value - 1)
     }
   }
 
-  async function refreshWorkflow(id: string): Promise<void> {
-    await Promise.all([
-      loadWorkflow(id), loadWorkflows(), loadAudit({ aggregateType: 'workflow', aggregateId: id, limit: 100 }),
+  async function settleRefresh(tasks: Promise<unknown>[]): Promise<boolean> {
+    return (await Promise.allSettled(tasks)).some(result => result.status === 'rejected')
+  }
+
+  function refreshWorkflow(id: string): Promise<boolean> {
+    return settleRefresh([
+      loadWorkflowInternal(id, false), loadWorkflowsInternal(undefined, false, false),
+      loadAuditInternal({ aggregateType: 'workflow', aggregateId: id, limit: 100 }, false),
     ])
   }
   function approveWorkflow(id: string) {
@@ -186,15 +228,16 @@ export const useActionFabricStore = defineStore('action-fabric', () => {
     return runMutation(() => actionFabricApi.compensateActionWorkflow(id, reason), () => refreshWorkflow(id))
   }
   function createIntent(input: CreateActionIntentInput) {
-    return runMutation(() => actionFabricApi.createActionIntent(input), async result => {
+    return runMutation(() => actionFabricApi.createActionIntent(input), result => {
       selectedWorkflowId.value = result.workflow.id
-      await refreshWorkflow(result.workflow.id)
+      return refreshWorkflow(result.workflow.id)
     })
   }
   function updateEmergencyStop(input: EmergencyStopInput) {
-    return runMutation(() => actionFabricApi.updateActionEmergencyStop(input), async () => {
-      await Promise.all([loadControl(), loadWorkflows(), loadAudit({ aggregateType: 'control', limit: 100 })])
-    })
+    return runMutation(() => actionFabricApi.updateActionEmergencyStop(input), () => settleRefresh([
+      loadControlInternal(false), loadWorkflowsInternal(undefined, false, false),
+      loadAuditInternal({ aggregateType: 'control', limit: 100 }, false),
+    ]))
   }
 
   function reset(): void {
@@ -203,7 +246,8 @@ export const useActionFabricStore = defineStore('action-fabric', () => {
     capabilitySequence += 1
     executorSequence += 1
     workflowListSequence += 1
-    detailSequence += 1
+    selectionGeneration += 1
+    detailSequences.clear()
     auditSequence += 1
     controlSequence += 1
     mutationSequence += 1
@@ -227,7 +271,8 @@ export const useActionFabricStore = defineStore('action-fabric', () => {
     capabilitySequence += 1
     executorSequence += 1
     workflowListSequence += 1
-    detailSequence += 1
+    selectionGeneration += 1
+    detailSequences.clear()
     auditSequence += 1
     controlSequence += 1
     mutationSequence += 1

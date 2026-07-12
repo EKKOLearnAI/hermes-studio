@@ -98,6 +98,59 @@ describe('Action Fabric store', () => {
     expect(store.control?.version).toBe(6)
   })
 
+  it('keeps a pending selection detail isolated from a different workflow mutation refresh', async () => {
+    const mutation = deferred<any>()
+    const selectedDetail = deferred<any>()
+    const workflowB = { ...summary, id: 'wf-2' }
+    const detailB = { ...detail, ...workflowB }
+    api.approveActionWorkflow.mockImplementationOnce(() => mutation.promise)
+    api.fetchActionWorkflow.mockImplementationOnce(() => selectedDetail.promise)
+      .mockResolvedValueOnce(detail)
+    const store = useActionFabricStore()
+    store.selectedWorkflowId = 'wf-1'
+
+    const mutationAction = store.approveWorkflow('wf-1')
+    const selection = store.selectWorkflow('wf-2')
+    mutation.resolve(detail)
+    await mutationAction
+    selectedDetail.resolve(detailB)
+    await selection
+
+    expect(store.selectedWorkflowId).toBe('wf-2')
+    expect(store.selectedWorkflow).toEqual(detailB)
+  })
+
+  it('does not let an old list response invalidate a selection made after the request began', async () => {
+    const oldList = deferred<{ workflows: any[]; nextCursor: null }>()
+    const detailB = { ...detail, id: 'wf-2' }
+    api.fetchActionWorkflows.mockImplementationOnce(() => oldList.promise)
+    api.fetchActionWorkflow.mockResolvedValueOnce(detailB)
+    const store = useActionFabricStore()
+
+    const listLoad = store.loadWorkflows()
+    await store.selectWorkflow('wf-2')
+    oldList.resolve({ workflows: [summary], nextCursor: null })
+    await listLoad
+
+    expect(store.selectedWorkflowId).toBe('wf-2')
+    expect(store.selectedWorkflow).toEqual(detailB)
+  })
+
+  it('keeps the newest detail response when the same workflow is requested twice', async () => {
+    const oldDetail = deferred<any>()
+    api.fetchActionWorkflow.mockImplementationOnce(() => oldDetail.promise)
+      .mockResolvedValueOnce({ ...detail, state: 'succeeded' })
+    const store = useActionFabricStore()
+    store.selectedWorkflowId = 'wf-1'
+
+    const oldLoad = store.loadWorkflow('wf-1')
+    await store.loadWorkflow('wf-1')
+    oldDetail.resolve({ ...detail, state: 'failed' })
+    await oldLoad
+
+    expect(store.selectedWorkflow?.state).toBe('succeeded')
+  })
+
   it('invalidates missing list selections and clears a selected detail on 404', async () => {
     const store = useActionFabricStore()
     store.selectedWorkflowId = 'wf-1'
@@ -175,6 +228,71 @@ describe('Action Fabric store', () => {
     expect(api.fetchActionWorkflows).toHaveBeenCalledTimes(2)
     expect(api.fetchActionAudit).toHaveBeenCalledTimes(2)
     expect(store.error).toBeNull()
+  })
+
+  it('resolves a successful workflow mutation when refresh partially fails and exposes a retryable warning', async () => {
+    const refreshedDetail = { ...detail, state: 'succeeded' }
+    const refreshedAudit = { ...audit, id: 'audit-refreshed' }
+    api.fetchActionWorkflow.mockResolvedValueOnce(refreshedDetail)
+    api.fetchActionWorkflows.mockRejectedValueOnce(new Error('list unavailable'))
+    api.fetchActionAudit.mockResolvedValueOnce({ events: [refreshedAudit], nextAfterSequence: null })
+    const store = useActionFabricStore()
+    store.selectedWorkflowId = 'wf-1'
+
+    await expect(store.approveWorkflow('wf-1')).resolves.toEqual(detail)
+
+    expect(api.approveActionWorkflow).toHaveBeenCalledTimes(1)
+    expect(store.selectedWorkflow).toEqual(refreshedDetail)
+    expect(store.audit).toEqual([refreshedAudit])
+    expect(store.saving).toBe(false)
+    expect(store.error).toBe('ACTION_FABRIC_REFRESH_FAILED')
+
+    await store.loadWorkflows()
+    expect(store.error).toBeNull()
+    expect(api.approveActionWorkflow).toHaveBeenCalledTimes(1)
+  })
+
+  it('resolves a successful control mutation when refresh partially fails without replaying the write', async () => {
+    const refreshedControl = { ...control, level: 2, version: 5 }
+    api.fetchActionControl.mockResolvedValueOnce(refreshedControl)
+    api.fetchActionWorkflows.mockRejectedValueOnce(new Error('list unavailable'))
+    const store = useActionFabricStore()
+
+    await expect(store.updateEmergencyStop({ level: 2, reason: 'maintenance', expectedVersion: 4 }))
+      .resolves.toEqual(refreshedControl)
+
+    expect(api.updateActionEmergencyStop).toHaveBeenCalledTimes(1)
+    expect(store.control).toEqual(refreshedControl)
+    expect(store.saving).toBe(false)
+    expect(store.error).toBe('ACTION_FABRIC_REFRESH_FAILED')
+  })
+
+  it('does not let an older mutation refresh warning overwrite a newer successful load', async () => {
+    const mutation = deferred<any>()
+    api.approveActionWorkflow.mockImplementationOnce(() => mutation.promise)
+    const store = useActionFabricStore()
+    const action = store.approveWorkflow('wf-1')
+
+    await store.loadWorkflows()
+    expect(store.error).toBeNull()
+    api.fetchActionAudit.mockRejectedValueOnce(new Error('old refresh unavailable'))
+    mutation.resolve(detail)
+    await action
+
+    expect(store.error).toBeNull()
+  })
+
+  it('rejects a failed mutation without starting authoritative refreshes', async () => {
+    api.approveActionWorkflow.mockRejectedValueOnce(new Error('mutation denied'))
+    const store = useActionFabricStore()
+
+    await expect(store.approveWorkflow('wf-1')).rejects.toThrow('mutation denied')
+
+    expect(api.fetchActionWorkflow).not.toHaveBeenCalled()
+    expect(api.fetchActionWorkflows).not.toHaveBeenCalled()
+    expect(api.fetchActionAudit).not.toHaveBeenCalled()
+    expect(store.saving).toBe(false)
+    expect(store.error).toBe('mutation denied')
   })
 
   it('reset and dispose invalidate in-flight responses without leaving loading state behind', async () => {
