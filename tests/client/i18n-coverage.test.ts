@@ -131,6 +131,10 @@ const APPROVAL_AND_WRITE_GATE_LOCALIZED_KEYS = [
   'settings.session.skillsWriteApproval',
 ]
 
+const JOURNEY_DISTINCT_LOCALIZED_KEYS = [
+  'journey.nodeKinds',
+]
+
 const PLATFORM_SETTINGS_LOCALE_SPECIFIC_LOCALIZED_KEYS: Record<string, string[]> = {
   de: ['platform.qqAppId', 'platform.qqAppSecret'],
   ja: ['platform.homeserver', 'platform.accountId'],
@@ -270,6 +274,20 @@ describe('i18n locale coverage', () => {
         const localeValue = getPath(localeMessages, key)
         if (typeof localeValue === 'undefined') return [`${locale}: ${key} missing`]
         return localeValue === getPath(englishMessages, key) ? [`${locale}: ${key}`] : []
+      })
+    })
+
+    expect(untranslated).toEqual([])
+  })
+
+  it('localizes Journey node-kind copy in every raw non-English locale', () => {
+    const untranslated = Object.entries(rawMessages).flatMap(([locale, localeMessages]) => {
+      if (locale === 'en') return []
+
+      return JOURNEY_DISTINCT_LOCALIZED_KEYS.flatMap((key) => {
+        const localeValue = getPath(localeMessages, key)
+        if (typeof localeValue === 'undefined') return [`${locale}: ${key} missing`]
+        return localeValue === getPath(en, key) ? [`${locale}: ${key}`] : []
       })
     })
 
