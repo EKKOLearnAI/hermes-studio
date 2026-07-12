@@ -1,5 +1,6 @@
 import { mkdirSync } from 'fs'
 import { dirname, join } from 'path'
+import { createHash } from 'crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 import { TWIN_DOMAINS } from './types'
@@ -53,7 +54,14 @@ export function initPersonalTwinSchema(db: DatabaseSync): void {
       setSchemaVersion(db, 3)
     }
     if (version < 4) {
-      createSchemaV4(db)
+      try {
+        createSchemaV4(db)
+      } catch (error) {
+        if (error instanceof TwinPreferenceMigrationError) {
+          throw error
+        }
+        throw new Error('TWIN_PREFERENCE_MIGRATION_FAILED')
+      }
       setSchemaVersion(db, 4)
     }
     assertSchemaComplete(db, SCHEMA_VERSION)
@@ -266,6 +274,8 @@ function isSensitivePreferenceKey(key: string): boolean {
   return /(?:password|passwd|secret|token|api.?key|credential|authorization|cookie|session|private.?key)/i.test(key)
 }
 
+class TwinPreferenceMigrationError extends Error {}
+
 function isValidPreferenceKey(key: string): boolean {
   return key.length >= 1 && key.length <= 160
     && /^[a-z0-9][a-z0-9._-]*$/i.test(key)
@@ -274,18 +284,24 @@ function isValidPreferenceKey(key: string): boolean {
     && !isSensitivePreferenceKey(key)
 }
 
+function preferenceRecordRef(id: string): string {
+  const digest = createHash('sha256').update('personal-twin-preference-record\0', 'utf8')
+    .update(String(id), 'utf8').digest('hex')
+  return `record-${digest.slice(0, 24)}`
+}
+
 function canonicalPreferenceAddress(id: string, storedKey: string): string {
   const separator = storedKey.indexOf(':')
   if (separator === -1) {
     if (!isValidPreferenceKey(storedKey)) {
-      throw new Error(`Personal Twin preference record ${id} has an invalid legacy key: ${JSON.stringify(storedKey)}`)
+      throw new TwinPreferenceMigrationError(`TWIN_PREFERENCE_LEGACY_KEY_INVALID record=${preferenceRecordRef(id)}`)
     }
     return `life:${storedKey}`
   }
   const domain = storedKey.slice(0, separator)
   const key = storedKey.slice(separator + 1)
   if (!(TWIN_DOMAINS as readonly string[]).includes(domain) || !isValidPreferenceKey(key)) {
-    throw new Error(`Personal Twin preference record ${id} has an invalid canonical key: ${JSON.stringify(storedKey)}`)
+    throw new TwinPreferenceMigrationError(`TWIN_PREFERENCE_LEGACY_KEY_INVALID record=${preferenceRecordRef(id)}`)
   }
   return storedKey
 }
@@ -300,7 +316,7 @@ function createSchemaV4(db: DatabaseSync): void {
     const address = `${row.subject_id}\0${row.canonicalKey}`
     const owner = owners.get(address)
     if (owner !== undefined) {
-      throw new Error(`Personal Twin preference migration has duplicate address for records ${owner} and ${row.id}`)
+      throw new TwinPreferenceMigrationError(`TWIN_PREFERENCE_LEGACY_KEY_COLLISION records=${preferenceRecordRef(owner)},${preferenceRecordRef(row.id)}`)
     }
     owners.set(address, row.id)
   }

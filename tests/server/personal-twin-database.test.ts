@@ -214,10 +214,43 @@ describe('personal twin database', () => {
       (id,subject_id,key,value_json,confidence,source,source_id,actor,version,created_at,updated_at)
       VALUES('bad-record','person:self',?,'null',1,'legacy','bad-record','legacy',1,'created','updated')`).run(key)
 
-    expect(() => initPersonalTwinSchema(db)).toThrow(/bad-record.*key/i)
+    let migrationError = ''
+    try { initPersonalTwinSchema(db) } catch (error) { migrationError = String(error) }
+    expect(migrationError).toMatch(/TWIN_PREFERENCE_LEGACY_KEY_INVALID.*record-[a-f0-9]{16}/)
+    expect(migrationError).not.toContain('bad-record')
+    expect(migrationError).not.toContain(key)
     expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '3' })
     expect(db.prepare("SELECT key FROM twin_preferences WHERE id='bad-record'").get()).toEqual({ key })
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_twin_preferences_address'").get()).toBeUndefined()
+    db.close()
+  })
+
+  it.each([
+    'password=hunter2-from-trigger',
+    'TWIN_PREFERENCE_LEGACY_KEY_INVALID token.sk_live_spoofed',
+  ])('redacts unexpected database errors raised while migrating legacy preferences: %s', async triggerError => {
+    const { getPersonalTwinDbPath, initPersonalTwinSchema } = await import(
+      '../../packages/server/src/services/hermes/personal-twin'
+    )
+    mkdirSync(join(hermesHome, 'personal'), { recursive: true })
+    const db = new DatabaseSync(getPersonalTwinDbPath())
+    initPersonalTwinSchema(db)
+    db.prepare(`INSERT INTO twin_entities(id,type,label,attributes_json,source,source_id,created_at,updated_at)
+      VALUES('person:self','person','Self','{}','system','self','2026-07-01','2026-07-01')`).run()
+    db.exec(`DROP INDEX idx_twin_preferences_address;
+      UPDATE twin_meta SET value='3' WHERE key='schema_version';
+      CREATE TRIGGER hostile_migration_error BEFORE UPDATE OF key ON twin_preferences
+      BEGIN SELECT RAISE(ABORT, '${triggerError}'); END;`)
+    db.prepare(`INSERT INTO twin_preferences
+      (id,subject_id,key,value_json,confidence,source,source_id,actor,version,created_at,updated_at)
+      VALUES('safe-id','person:self','calendar.view','null',1,'legacy','safe-source-id','legacy',1,'created','updated')`).run()
+
+    let captured = ''
+    try { initPersonalTwinSchema(db) } catch (error) { captured = String(error) }
+    expect(captured).toContain('TWIN_PREFERENCE_MIGRATION_FAILED')
+    expect(captured).not.toContain(triggerError)
+    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '3' })
+    expect(db.prepare("SELECT key FROM twin_preferences WHERE id='safe-id'").get()).toEqual({ key: 'calendar.view' })
     db.close()
   })
 
@@ -238,11 +271,50 @@ describe('personal twin database', () => {
     insert.run('legacy-row', 'person:self', 'calendar.view', '"agenda"', 'legacy', 'legacy-row', 'legacy')
     insert.run('canonical-row', 'person:self', 'life:calendar.view', '"month"', 'native', 'canonical-row', 'native')
 
-    expect(() => initPersonalTwinSchema(db)).toThrow(/duplicate.*legacy-row.*canonical-row|duplicate.*canonical-row.*legacy-row/i)
+    let migrationError = ''
+    try { initPersonalTwinSchema(db) } catch (error) { migrationError = String(error) }
+    expect(migrationError).toMatch(/TWIN_PREFERENCE_LEGACY_KEY_COLLISION.*record-[a-f0-9]{16}.*record-[a-f0-9]{16}/)
+    expect(migrationError).not.toContain('legacy-row')
+    expect(migrationError).not.toContain('canonical-row')
+    expect(migrationError).not.toContain('calendar.view')
     expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '3' })
     expect(db.prepare('SELECT id,key FROM twin_preferences ORDER BY id').all()).toEqual([
       { id: 'canonical-row', key: 'life:calendar.view' }, { id: 'legacy-row', key: 'calendar.view' },
     ])
+    db.close()
+  })
+
+  it.each([
+    'token.sk_live_SUPERSECRET987',
+    'password=hunter2-material',
+    'C:\\Users\\Alice\\credential.txt',
+    '\\\\server\\share\\private-key.pem',
+  ])('redacts hostile legacy key and record id material from migration errors: %s', async key => {
+    const { getPersonalTwinDbPath, initPersonalTwinSchema } = await import(
+      '../../packages/server/src/services/hermes/personal-twin'
+    )
+    mkdirSync(join(hermesHome, 'personal'), { recursive: true })
+    const db = new DatabaseSync(getPersonalTwinDbPath())
+    initPersonalTwinSchema(db)
+    db.prepare(`INSERT INTO twin_entities(id,type,label,attributes_json,source,source_id,created_at,updated_at)
+      VALUES('person:self','person','Self','{}','system','self','2026-07-01','2026-07-01')`).run()
+    db.exec("DROP INDEX idx_twin_preferences_address; UPDATE twin_meta SET value='3' WHERE key='schema_version'")
+    const hostileId = `credential://${key}/record`
+    db.prepare(`INSERT INTO twin_preferences
+      (id,subject_id,key,value_json,confidence,source,source_id,actor,version,created_at,updated_at)
+      VALUES(?,'person:self',?,'null',1,'legacy','safe-source-id','legacy',1,'created','updated')`).run(hostileId, key)
+
+    let captured = ''
+    try { initPersonalTwinSchema(db) } catch (error) {
+      const actual = error as Error
+      captured = `${String(actual)}\n${actual.stack ?? ''}`
+    }
+    expect(captured).toMatch(/TWIN_PREFERENCE_LEGACY_KEY_INVALID.*record-[a-f0-9]{16}/)
+    expect(captured).not.toContain(key)
+    expect(captured).not.toContain(hostileId)
+    expect(captured).not.toMatch(/SUPERSECRET987|hunter2-material|Users\\Alice|server\\share/)
+    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '3' })
+    expect(db.prepare('SELECT id,key FROM twin_preferences').get()).toEqual({ id: hostileId, key })
     db.close()
   })
 
