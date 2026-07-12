@@ -7,11 +7,14 @@ import ProfileCreateModal from '@/components/hermes/profiles/ProfileCreateModal.
 import ProfileRenameModal from '@/components/hermes/profiles/ProfileRenameModal.vue'
 import ProfileImportModal from '@/components/hermes/profiles/ProfileImportModal.vue'
 import AssistantRolesPanel from '@/components/hermes/profiles/AssistantRolesPanel.vue'
+import ActionFabricPanel from '@/components/hermes/action-fabric/ActionFabricPanel.vue'
+import { useActionFabricMessages } from '@/components/hermes/action-fabric/action-fabric-messages'
 import { useAssistantRoleMessages } from '@/components/hermes/profiles/assistant-role-messages'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 
 const { t, locale } = useI18n()
 const { messages: roleMessages } = useAssistantRoleMessages(locale)
+const { messages: actionMessages } = useActionFabricMessages(locale)
 const profilesStore = useProfilesStore()
 
 const showCreateModal = ref(false)
@@ -71,6 +74,9 @@ function handleImported() {
         </NTabPane>
         <NTabPane name="assistant-roles" :tab="roleMessages.assistantRoles">
           <AssistantRolesPanel />
+        </NTabPane>
+        <NTabPane name="action-fabric" :tab="actionMessages.actionFabric">
+          <ActionFabricPanel />
         </NTabPane>
       </NTabs>
     </div>
