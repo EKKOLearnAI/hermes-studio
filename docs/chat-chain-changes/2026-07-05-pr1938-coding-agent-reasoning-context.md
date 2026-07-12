@@ -15,3 +15,5 @@ impact: Codex / Claude Code 单聊会话复用 Hermes 输入栏的推理强度�
 补充：全局 coding-agent 模式继续依赖用户本机 CLI 配置，不从 Web UI payload 注入 `reasoning_effort`；scoped 模式才会透传该会话级设置。
 
 补充：coding-agent 响应完成后会刷新并持久化 token usage，前端通过 `usage.updated` 接收最新 `contextTokens`，避免 Codex / Claude Code 会话上下文用量停留在旧值。
+
+修正：coding-agent usage 刷新现在按会话串行化，并在同一事件中发送 input/output/context 的完整快照；统计失败时保留旧值，避免上下文用量因竞态或异常短暂跳变为 0。

@@ -3,6 +3,7 @@ import { countTokens } from '../../packages/server/src/lib/context-compressor'
 import {
   contextTokensWithCachedOverhead,
   estimateUsageTokensFromMessages,
+  updateContextTokenUsage,
   updateMessageContextTokenUsage,
 } from '../../packages/server/src/services/hermes/run-chat/usage'
 
@@ -87,5 +88,26 @@ describe('run-chat usage token estimates', () => {
     expect(emit).toHaveBeenCalledWith('usage.updated', expect.objectContaining({
       contextTokens: 1_569,
     }))
+  })
+
+  it('does not overwrite a valid context value after a failed usage calculation', () => {
+    const emit = vi.fn()
+    const state = {
+      messages: [],
+      isWorking: false,
+      events: [],
+      queue: [],
+      contextTokens: 8_400,
+    } as any
+
+    expect(updateContextTokenUsage(
+      'session-1',
+      state,
+      emit,
+      0,
+      { inputTokens: 0, outputTokens: 0, valid: false },
+    )).toBe(8_400)
+    expect(state.contextTokens).toBe(8_400)
+    expect(emit).not.toHaveBeenCalled()
   })
 })

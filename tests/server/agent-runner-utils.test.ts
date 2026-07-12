@@ -492,7 +492,11 @@ describe('coding agent run state', () => {
 
     expect(emitted.map(event => event.event)).toContain('message.delta')
     expect(emitted.map(event => event.event)).toContain('usage.updated')
-    expect(emitted.find(event => event.event === 'usage.updated' && event.payload.contextTokens != null)?.payload).toEqual(expect.objectContaining({
+    const usageEvents = emitted.filter(event => event.event === 'usage.updated')
+    expect(usageEvents).toHaveLength(1)
+    expect(usageEvents[0].payload).toEqual(expect.objectContaining({
+      inputTokens: expect.any(Number),
+      outputTokens: expect.any(Number),
       contextTokens: expect.any(Number),
     }))
     expect(emitted.find(event => event.event === 'run.completed')?.payload).not.toHaveProperty('usage')
