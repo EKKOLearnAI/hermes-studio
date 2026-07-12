@@ -147,4 +147,27 @@ describe('WorkflowDetailDrawer', () => {
     await button.trigger('click')
     expect(warnings).toHaveLength(2)
   })
+
+  it('invalidates a confirmation when the same workflow advances version and state', async () => {
+    warnings.length = 0
+    const wrapper = mount(WorkflowDetailDrawer, { props: { show: true, workflow, capability, audit, saving: false } })
+    await wrapper.get('[data-test="approve-workflow"]').trigger('click')
+    const staleDialog = warnings[0]
+
+    await wrapper.setProps({ workflow: { ...workflow, version: 2, state: 'failed' } })
+    staleDialog.onPositiveClick()
+    staleDialog.onPositiveClick()
+    staleDialog.onNegativeClick()
+    staleDialog.onClose()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.emitted('approve')).toBeUndefined()
+    const retry = wrapper.get('[data-test="retry-workflow"]')
+    expect(retry.attributes('disabled')).toBeUndefined()
+    await Promise.all([retry.trigger('click'), retry.trigger('click')])
+    expect(warnings).toHaveLength(2)
+    warnings[1].onPositiveClick()
+    warnings[1].onPositiveClick()
+    expect(wrapper.emitted('retry')).toHaveLength(1)
+  })
 })

@@ -36,7 +36,7 @@ watch(() => props.show, async show => {
   const first = drawer.value?.querySelector<HTMLButtonElement>('button:not([disabled])')
   if (first) first.focus(); else drawer.value?.focus()
 })
-watch(() => props.workflow?.id, () => releaseActiveConfirmation())
+watch([() => props.workflow?.id, () => props.workflow?.version], () => releaseActiveConfirmation())
 watch(() => props.saving, saving => {
   const active = activeConfirmation.value
   if (!active?.submitted) return
@@ -62,8 +62,10 @@ function dismissConfirmation(token: number): void {
   const active = activeConfirmation.value
   if (active?.token === token && !active.submitted) releaseConfirmation(token)
 }
-function confirm(label: string, action: (complete: ConfirmationComplete) => void): void {
+function confirm(label: string, isAllowed: () => boolean, action: (complete: ConfirmationComplete) => void): void {
   if (!props.workflow || confirming.value) return
+  const workflowId = props.workflow.id
+  const workflowVersion = props.workflow.version
   const token = ++confirmationEpoch
   activeConfirmation.value = { token, submitted: false, sawSaving: false }
   try {
@@ -76,6 +78,10 @@ function confirm(label: string, action: (complete: ConfirmationComplete) => void
         const active = activeConfirmation.value
         if (active?.token !== token || active.submitted) return
         if (props.saving) { releaseConfirmation(token); return }
+        if (props.workflow?.id !== workflowId || props.workflow.version !== workflowVersion || !isAllowed()) {
+          releaseConfirmation(token)
+          return
+        }
         active.submitted = true
         action(() => completeConfirmation(token))
       },
@@ -87,10 +93,10 @@ function confirm(label: string, action: (complete: ConfirmationComplete) => void
     throw cause
   }
 }
-function withReason(label: string, action: (value: string, complete: ConfirmationComplete) => void): void {
+function withReason(label: string, isAllowed: () => boolean, action: (value: string, complete: ConfirmationComplete) => void): void {
   const value = reason.value.trim()
   if (!value) return
-  confirm(label, complete => action(value, complete))
+  confirm(label, isAllowed, complete => action(value, complete))
 }
 function closeDrawer(): void {
   releaseActiveConfirmation()
@@ -116,11 +122,11 @@ function closeDrawer(): void {
         <p v-if="canCompensate" data-test="compensation-eligible" role="status">{{ m.compensationEligible }}</p><p v-else>{{ m.compensationUnavailable }}</p>
         <label class="reason">{{ m.reason }}<input v-model="reason" data-test="action-reason" type="text" maxlength="500"></label>
         <div class="actions" aria-label="Workflow actions">
-          <button v-if="needsApproval" data-test="approve-workflow" type="button" :disabled="saving || confirming" @click="confirm(m.approve, complete => emit('approve', complete))">{{ m.approve }}</button>
-          <button v-if="needsApproval" data-test="reject-workflow" type="button" :disabled="saving || confirming || !reason.trim()" @click="withReason(m.reject, (value, complete) => emit('reject', value, complete))">{{ m.reject }}</button>
-          <button v-if="canRetry" data-test="retry-workflow" type="button" :disabled="saving || confirming" @click="confirm(m.retry, complete => emit('retry', complete))">{{ m.retry }}</button>
-          <button v-if="canCancel" data-test="cancel-workflow" type="button" :disabled="saving || confirming || !reason.trim()" @click="withReason(m.cancel, (value, complete) => emit('cancel', value, complete))">{{ m.cancel }}</button>
-          <button v-if="canCompensate" data-test="compensate-workflow" type="button" :disabled="saving || confirming || !reason.trim()" @click="withReason(m.compensate, (value, complete) => emit('compensate', value, complete))">{{ m.compensate }}</button>
+          <button v-if="needsApproval" data-test="approve-workflow" type="button" :disabled="saving || confirming" @click="confirm(m.approve, () => needsApproval, complete => emit('approve', complete))">{{ m.approve }}</button>
+          <button v-if="needsApproval" data-test="reject-workflow" type="button" :disabled="saving || confirming || !reason.trim()" @click="withReason(m.reject, () => needsApproval, (value, complete) => emit('reject', value, complete))">{{ m.reject }}</button>
+          <button v-if="canRetry" data-test="retry-workflow" type="button" :disabled="saving || confirming" @click="confirm(m.retry, () => canRetry, complete => emit('retry', complete))">{{ m.retry }}</button>
+          <button v-if="canCancel" data-test="cancel-workflow" type="button" :disabled="saving || confirming || !reason.trim()" @click="withReason(m.cancel, () => canCancel, (value, complete) => emit('cancel', value, complete))">{{ m.cancel }}</button>
+          <button v-if="canCompensate" data-test="compensate-workflow" type="button" :disabled="saving || confirming || !reason.trim()" @click="withReason(m.compensate, () => canCompensate, (value, complete) => emit('compensate', value, complete))">{{ m.compensate }}</button>
         </div>
       </section>
     </NDrawerContent>
