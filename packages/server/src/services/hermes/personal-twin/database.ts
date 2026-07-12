@@ -2,8 +2,9 @@ import { mkdirSync } from 'fs'
 import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
+import { TWIN_DOMAINS } from './types'
 
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
 const REQUIRED_TWIN_TABLES = [
   'twin_artifacts', 'twin_assistant_roles', 'twin_constraints', 'twin_context_recipes',
   'twin_entities', 'twin_events', 'twin_goals', 'twin_import_runs', 'twin_meta',
@@ -51,6 +52,10 @@ export function initPersonalTwinSchema(db: DatabaseSync): void {
       createSchemaV3(db)
       setSchemaVersion(db, 3)
     }
+    if (version < 4) {
+      createSchemaV4(db)
+      setSchemaVersion(db, 4)
+    }
     assertSchemaComplete(db, SCHEMA_VERSION)
     db.exec('COMMIT')
   } catch (error) {
@@ -80,6 +85,17 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
   const preferenceColumns = new Set((db.prepare("PRAGMA table_info('twin_preferences')").all() as Array<{ name: string }>).map(row => row.name))
   const missingColumns = ['actor', 'version'].filter(name => !preferenceColumns.has(name))
   if (missingColumns.length > 0) throw new Error(`Personal Twin schema version ${version} is incomplete: twin_preferences missing ${missingColumns.join(', ')}`)
+  const addressIndex = (db.prepare("PRAGMA index_list('twin_preferences')").all() as Array<{
+    name: string; unique: number; partial: number
+  }>).find(index => index.name === 'idx_twin_preferences_address')
+  const addressColumns = addressIndex
+    ? (db.prepare("PRAGMA index_info('idx_twin_preferences_address')").all() as Array<{ seqno: number; name: string }>)
+      .sort((left, right) => left.seqno - right.seqno).map(column => column.name)
+    : []
+  if (!addressIndex || addressIndex.unique !== 1 || addressIndex.partial !== 0
+    || addressColumns.length !== 2 || addressColumns[0] !== 'subject_id' || addressColumns[1] !== 'key') {
+    throw new Error(`Personal Twin schema version ${version} is incomplete: unique preference address index signature is invalid`)
+  }
 }
 
 function createSchemaV1(db: DatabaseSync): void {
@@ -244,4 +260,53 @@ function createSchemaV3(db: DatabaseSync): void {
         SELECT RAISE(ABORT, 'twin preference operations are immutable');
       END;
   `)
+}
+
+function isSensitivePreferenceKey(key: string): boolean {
+  return /(?:password|passwd|secret|token|api.?key|credential|authorization|cookie|session|private.?key)/i.test(key)
+}
+
+function isValidPreferenceKey(key: string): boolean {
+  return key.length >= 1 && key.length <= 160
+    && /^[a-z0-9][a-z0-9._-]*$/i.test(key)
+    && !key.startsWith('_')
+    && !/^(?:system|internal|admin)\./i.test(key)
+    && !isSensitivePreferenceKey(key)
+}
+
+function canonicalPreferenceAddress(id: string, storedKey: string): string {
+  const separator = storedKey.indexOf(':')
+  if (separator === -1) {
+    if (!isValidPreferenceKey(storedKey)) {
+      throw new Error(`Personal Twin preference record ${id} has an invalid legacy key: ${JSON.stringify(storedKey)}`)
+    }
+    return `life:${storedKey}`
+  }
+  const domain = storedKey.slice(0, separator)
+  const key = storedKey.slice(separator + 1)
+  if (!(TWIN_DOMAINS as readonly string[]).includes(domain) || !isValidPreferenceKey(key)) {
+    throw new Error(`Personal Twin preference record ${id} has an invalid canonical key: ${JSON.stringify(storedKey)}`)
+  }
+  return storedKey
+}
+
+function createSchemaV4(db: DatabaseSync): void {
+  const rows = db.prepare('SELECT id,subject_id,key FROM twin_preferences ORDER BY id').all() as Array<{
+    id: string; subject_id: string; key: string
+  }>
+  const mapped = rows.map(row => ({ ...row, canonicalKey: canonicalPreferenceAddress(row.id, row.key) }))
+  const owners = new Map<string, string>()
+  for (const row of mapped) {
+    const address = `${row.subject_id}\0${row.canonicalKey}`
+    const owner = owners.get(address)
+    if (owner !== undefined) {
+      throw new Error(`Personal Twin preference migration has duplicate address for records ${owner} and ${row.id}`)
+    }
+    owners.set(address, row.id)
+  }
+  const update = db.prepare('UPDATE twin_preferences SET key=? WHERE id=?')
+  for (const row of mapped) {
+    if (row.key !== row.canonicalKey) update.run(row.canonicalKey, row.id)
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_twin_preferences_address ON twin_preferences(subject_id,key)')
 }

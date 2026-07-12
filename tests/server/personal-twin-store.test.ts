@@ -163,6 +163,41 @@ describe('personal twin store', () => {
       .toEqual({ count: 1 })
   })
 
+  it('exposes a migrated legacy preference and updates the original row with CAS semantics', async () => {
+    const {
+      getTwinPreference, setTwinPreference, twinPreferenceExpectation, upsertTwinEntity, withPersonalTwinDb,
+    } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    withPersonalTwinDb(db => {
+      db.exec("DROP INDEX idx_twin_preferences_address; UPDATE twin_meta SET value='3' WHERE key='schema_version'")
+      db.prepare(`INSERT INTO twin_preferences
+        (id,subject_id,key,value_json,confidence,source,source_id,actor,version,created_at,updated_at)
+        VALUES('legacy-preference','person:self','calendar.view','"agenda"',0.6,'legacy','legacy-source-id','importer',7,'created','updated')`).run()
+    })
+
+    const migrated = getTwinPreference('person:self', 'life', 'calendar.view')
+    expect(migrated).toMatchObject({
+      id: 'legacy-preference', subjectId: 'person:self', domain: 'life', key: 'calendar.view', value: 'agenda',
+      provenance: { source: 'legacy', sourceId: 'legacy-source-id', actor: 'importer', confidence: 0.6 },
+      version: 7, createdAt: 'created', updatedAt: 'updated',
+    })
+    const updated = setTwinPreference({
+      subjectId: 'person:self', domain: 'life', key: 'calendar.view', value: 'week', source: 'action-fabric',
+      sourceId: 'legacy-update', actor: 'assistant-role', operationId: 'legacy-update-op',
+      expectedCurrent: twinPreferenceExpectation(migrated),
+    })
+
+    expect(updated).toMatchObject({ id: 'legacy-preference', value: 'week', version: 8 })
+    expect(withPersonalTwinDb(db => db.prepare(
+      "SELECT COUNT(*) count FROM twin_preferences WHERE subject_id='person:self' AND key='life:calendar.view'",
+    ).get())).toEqual({ count: 1 })
+    expect(() => setTwinPreference({
+      subjectId: 'person:self', domain: 'life', key: 'calendar.view', value: 'month', source: 'action-fabric',
+      sourceId: 'legacy-stale', actor: 'assistant-role', operationId: 'legacy-stale-op',
+      expectedCurrent: twinPreferenceExpectation(migrated),
+    })).toThrow('TWIN_PREFERENCE_CONFLICT')
+  })
+
   it('validates preference identity, domains, keys, values, and operation provenance', async () => {
     const { setTwinPreference, upsertTwinEntity } = await import('../../packages/server/src/services/hermes/personal-twin')
     upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
