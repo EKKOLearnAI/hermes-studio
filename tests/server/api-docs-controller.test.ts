@@ -147,7 +147,7 @@ describe('api docs controller', () => {
       input: { type: 'object', additionalProperties: true },
       constraints: { type: 'object', additionalProperties: true },
       rationale: { type: 'string' },
-      expectedCost: { $ref: '#/components/schemas/ActionFabricMoney' },
+      expectedCost: { type: 'object', properties: { currency: { type: 'string' }, amountMinor: { type: 'integer', minimum: 0 } }, required: ['currency', 'amountMinor'], additionalProperties: false },
     }))
     expect(ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/reject'].post.requestBody.content['application/json'].schema).toEqual({
       type: 'object', properties: { reason: { type: 'string' } }, required: ['reason'], additionalProperties: false,
@@ -178,20 +178,20 @@ describe('api docs controller', () => {
     })
 
     const successSchemas = new Map([
-      [capabilities, 'ActionFabricCapabilityListResponse'],
-      [ctx.body.paths['/api/hermes/action-fabric/executors'].get, 'ActionFabricExecutorListResponse'],
-      [ctx.body.paths['/api/hermes/action-fabric/intents'].post, 'ActionFabricIntentResult'],
-      [ctx.body.paths['/api/hermes/action-fabric/workflows'].get, 'ActionFabricWorkflowListResponse'],
-      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}'].get, 'ActionFabricWorkflowResponse'],
-      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/approve'].post, 'ActionFabricWorkflowResponse'],
-      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/reject'].post, 'ActionFabricWorkflowResponse'],
-      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/cancel'].post, 'ActionFabricWorkflowResponse'],
-      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/retry'].post, 'ActionFabricWorkflowResponse'],
-      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/compensate'].post, 'ActionFabricWorkflowResponse'],
-      [ctx.body.paths['/api/hermes/action-fabric/audit'].get, 'ActionFabricAuditListResponse'],
-      [ctx.body.paths['/api/hermes/action-fabric/audit/verify'].get, 'ActionFabricAuditVerificationResponse'],
-      [ctx.body.paths['/api/hermes/action-fabric/control'].get, 'ActionFabricControlResponse'],
-      [ctx.body.paths['/api/hermes/action-fabric/control/emergency-stop'].put, 'ActionFabricControlResponse'],
+      [capabilities, 'ActionCapabilityListResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/executors'].get, 'ActionExecutorListResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/intents'].post, 'ActionIntentResultDto'],
+      [ctx.body.paths['/api/hermes/action-fabric/workflows'].get, 'ActionWorkflowListResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}'].get, 'ActionWorkflowResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/approve'].post, 'ActionWorkflowResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/reject'].post, 'ActionWorkflowResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/cancel'].post, 'ActionWorkflowResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/retry'].post, 'ActionWorkflowResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/compensate'].post, 'ActionWorkflowResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/audit'].get, 'ActionAuditListResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/audit/verify'].get, 'ActionAuditVerificationResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/control'].get, 'ActionControlResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/control/emergency-stop'].put, 'ActionControlResponse'],
     ])
     for (const [operation, schemaName] of successSchemas) {
       expect(operation.responses['200'].content['application/json'].schema).toEqual({ $ref: `#/components/schemas/${schemaName}` })
@@ -199,8 +199,10 @@ describe('api docs controller', () => {
     for (const operation of actionFabricOperations) {
       expect(operation.responses['400'].content['application/json'].schema).toEqual({ $ref: '#/components/schemas/ActionFabricError' })
       expect(operation.responses['500'].content['application/json'].schema).toEqual({ $ref: '#/components/schemas/ActionFabricError' })
+      expect(operation.responses['401'].content['application/json'].schema).toEqual({ $ref: '#/components/schemas/AuthError' })
+      expect(operation.responses['403'].content['application/json'].schema).toEqual({ $ref: '#/components/schemas/AuthError' })
     }
-    expect(ctx.body.components.schemas.ActionFabricAvailableActions).toEqual(expect.objectContaining({
+    expect(ctx.body.components.schemas.ActionWorkflowAvailableActionsDto).toEqual(expect.objectContaining({
       type: 'object',
       properties: {
         approve: { type: 'boolean' }, reject: { type: 'boolean' }, cancel: { type: 'boolean' },
@@ -209,14 +211,28 @@ describe('api docs controller', () => {
       required: ['approve', 'reject', 'cancel', 'retry', 'compensate'],
       additionalProperties: false,
     }))
-    expect(ctx.body.components.schemas.ActionFabricControl).toEqual(expect.objectContaining({
+    expect(ctx.body.components.schemas.ActionControlDto).toEqual(expect.objectContaining({
       required: ['level', 'version', 'actorUserId', 'reason', 'updatedAt'], additionalProperties: false,
     }))
-    expect(ctx.body.components.schemas.ActionFabricWorkflowListResponse.properties.nextCursor).toEqual({ type: 'string', nullable: true })
-    expect(ctx.body.components.schemas.ActionFabricAuditListResponse.properties).toEqual(expect.objectContaining({
-      events: { type: 'array', items: { $ref: '#/components/schemas/ActionFabricAuditEvent' } },
-      nextAfterSequence: { type: 'integer', nullable: true },
+    expect(ctx.body.components.schemas.ActionWorkflowListResponse.properties.nextCursor).toEqual({ type: 'string', nullable: true })
+    expect(ctx.body.components.schemas.ActionAuditListResponse.properties).toEqual(expect.objectContaining({
+      events: { type: 'array', items: { $ref: '#/components/schemas/ActionAuditEventDto' } },
+      nextAfterSequence: { type: 'number', nullable: true },
     }))
+    expect(ctx.body.components.schemas.ActionWorkflowDetailDto).toEqual(expect.objectContaining({
+      type: 'object', additionalProperties: false,
+      properties: expect.objectContaining({ steps: { type: 'array', items: { $ref: '#/components/schemas/ActionStepDto' } } }),
+    }))
+    expect(ctx.body.components.schemas.ActionStepDto.properties).toEqual(expect.objectContaining({
+      ordinal: { type: 'number' }, kind: { type: 'string' }, state: { type: 'string' },
+      evidence: { type: 'array', items: { $ref: '#/components/schemas/ActionEvidenceDto' } },
+    }))
+    expect(ctx.body.components.schemas.AuthError.required).toEqual(['error'])
+    expect(ctx.body.components.schemas.ActionFabricError.required).toEqual(['error', 'code'])
+    for (const schema of Object.values(ctx.body.components.schemas) as any[]) {
+      const refs = JSON.stringify(schema).match(/#\/components\/schemas\/[A-Za-z_$][\w$]*/g) ?? []
+      for (const ref of refs) expect(ctx.body.components.schemas[ref.split('/').at(-1)!]).toBeTruthy()
+    }
 
     expect(ctx.body.paths['/api/hermes/assistant-roles/{id}'].put.parameters).toEqual([
       expect.objectContaining({ name: 'id', in: 'path', required: true, schema: { type: 'string' } }),
@@ -300,5 +316,15 @@ describe('api docs controller', () => {
     expect(source).toContain("'Assistant Roles': {")
     expect(source).toContain('role list, profile mapping, context preview, and context recipe CRUD')
     expect(source).toContain('Capability permissions are enforced by Action Fabric policy in Phase 3.')
+  })
+
+  it('derives annotated DTO contracts without controller-name or copied-schema tables', () => {
+    const source = readFileSync(resolve(process.cwd(), 'scripts/generate-openapi.mjs'), 'utf8')
+    expect(source).toContain('ts.createSourceFile')
+    expect(source).toContain('@openapi-response')
+    expect(source).not.toContain('generateActionFabricResponses')
+    expect(source).not.toContain("createIntent: 'Action")
+    expect(source).not.toContain('ActionCapabilityListResponse')
+    expect(source).not.toContain('ActionWorkflowDetailDto')
   })
 })

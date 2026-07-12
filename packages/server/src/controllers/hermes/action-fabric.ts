@@ -62,6 +62,9 @@ const INTENT_FIELDS = new Set([
 ])
 const SENSITIVE_KEY = /(?:secret|token|password|credential|cookie|authorization|configuration|path|directory|raw.?error|sql|jwt|api.?key|dsn|file|home|uri|url)/i
 
+/** @openapi-default-errors 400:ActionFabricError,401:AuthError,403:AuthError,404:ActionFabricError,409:ActionFabricError,422:ActionFabricError,500:ActionFabricError,503:ActionFabricError */
+
+/** @openapi-response ActionCapabilityListResponse */
 export async function capabilities(ctx: Context): Promise<void> {
   respond(ctx, () => {
     validateQuery(ctx, new Set(['domain', 'risk', 'enabled', 'limit']))
@@ -79,6 +82,7 @@ export async function capabilities(ctx: Context): Promise<void> {
   })
 }
 
+/** @openapi-response ActionExecutorListResponse */
 export async function executors(ctx: Context): Promise<void> {
   respond(ctx, () => {
     validateQuery(ctx, new Set(['type', 'environment', 'health', 'enabled', 'limit']))
@@ -98,6 +102,7 @@ export async function executors(ctx: Context): Promise<void> {
   })
 }
 
+/** @openapi-response ActionIntentResultDto */
 export async function createIntent(ctx: Context): Promise<void> {
   respond(ctx, () => {
     const body = requestBody(ctx, INTENT_FIELDS)
@@ -126,6 +131,7 @@ export async function createIntent(ctx: Context): Promise<void> {
   })
 }
 
+/** @openapi-response ActionWorkflowListResponse */
 export async function workflows(ctx: Context): Promise<void> {
   respond(ctx, () => {
     validateQuery(ctx, new Set(['state', 'capabilityId', 'requestedByRoleId', 'requestedByUserId', 'cursor', 'limit']))
@@ -149,6 +155,7 @@ export async function workflows(ctx: Context): Promise<void> {
   })
 }
 
+/** @openapi-response ActionWorkflowResponse */
 export async function workflowDetail(ctx: Context): Promise<void> {
   respond(ctx, () => {
     validateQuery(ctx, new Set())
@@ -158,6 +165,7 @@ export async function workflowDetail(ctx: Context): Promise<void> {
   })
 }
 
+/** @openapi-response ActionWorkflowResponse */
 export async function approveWorkflow(ctx: Context): Promise<void> {
   respond(ctx, () => {
     requestBody(ctx, new Set())
@@ -165,14 +173,17 @@ export async function approveWorkflow(ctx: Context): Promise<void> {
   })
 }
 
+/** @openapi-response ActionWorkflowResponse */
 export async function rejectWorkflow(ctx: Context): Promise<void> {
   respond(ctx, () => ({ workflow: publicWorkflowDetail(rejectFabricWorkflow(pathId(ctx), actorUserId(ctx), reasonBody(ctx))) }))
 }
 
+/** @openapi-response ActionWorkflowResponse */
 export async function cancelWorkflow(ctx: Context): Promise<void> {
   respond(ctx, () => ({ workflow: publicWorkflowDetail(cancelFabricWorkflow(pathId(ctx), actorUserId(ctx), reasonBody(ctx))) }))
 }
 
+/** @openapi-response ActionWorkflowResponse */
 export async function retryWorkflow(ctx: Context): Promise<void> {
   respond(ctx, () => {
     requestBody(ctx, new Set())
@@ -180,10 +191,12 @@ export async function retryWorkflow(ctx: Context): Promise<void> {
   })
 }
 
+/** @openapi-response ActionWorkflowResponse */
 export async function compensateWorkflow(ctx: Context): Promise<void> {
   respond(ctx, () => ({ workflow: publicWorkflowDetail(requestFabricCompensation(pathId(ctx), actorUserId(ctx), reasonBody(ctx))) }))
 }
 
+/** @openapi-response ActionAuditListResponse */
 export async function auditEvents(ctx: Context): Promise<void> {
   respond(ctx, () => {
     validateQuery(ctx, new Set(['aggregateType', 'aggregateId', 'eventType', 'afterSequence', 'limit']))
@@ -203,6 +216,7 @@ export async function auditEvents(ctx: Context): Promise<void> {
   })
 }
 
+/** @openapi-response ActionAuditVerificationResponse */
 export async function verifyAudit(ctx: Context): Promise<void> {
   respond(ctx, () => {
     validateQuery(ctx, new Set())
@@ -217,6 +231,7 @@ export async function verifyAudit(ctx: Context): Promise<void> {
   })
 }
 
+/** @openapi-response ActionControlResponse */
 export async function control(ctx: Context): Promise<void> {
   respond(ctx, () => {
     validateQuery(ctx, new Set())
@@ -224,6 +239,7 @@ export async function control(ctx: Context): Promise<void> {
   })
 }
 
+/** @openapi-response ActionControlResponse */
 export async function updateEmergencyStop(ctx: Context): Promise<void> {
   try {
     const body = requestBody(ctx, new Set(['level', 'reason', 'expectedVersion']))

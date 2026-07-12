@@ -61,6 +61,15 @@ export interface ActionAuditVerificationDto {
 export interface ActionControlDto {
   level: 0 | 1 | 2 | 3; version: number; actorUserId: string | null; reason: string; updatedAt: string
 }
+export interface AuthError { error: string }
+export interface ActionFabricError extends AuthError { code: string }
+export interface ActionCapabilityListResponse { capabilities: ActionCapabilityDto[] }
+export interface ActionExecutorListResponse { executors: ActionExecutorDto[] }
+export interface ActionWorkflowListResponse { workflows: ActionWorkflowSummaryDto[]; nextCursor: string | null }
+export interface ActionWorkflowResponse { workflow: ActionWorkflowDetailDto }
+export interface ActionAuditListResponse { events: ActionAuditEventDto[]; nextAfterSequence: number | null }
+export interface ActionAuditVerificationResponse { verification: ActionAuditVerificationDto }
+export interface ActionControlResponse { control: ActionControlDto }
 
 export interface CreateActionIntentInput {
   capabilityId: string; requestedByRoleId: string; idempotencyKey: string; goal: string

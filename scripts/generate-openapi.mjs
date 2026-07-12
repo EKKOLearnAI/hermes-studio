@@ -9,12 +9,14 @@
 import { readFileSync, writeFileSync, readdirSync } from 'fs'
 import { dirname, resolve, join } from 'path'
 import { fileURLToPath } from 'url'
+import ts from 'typescript'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const rootDir = resolve(__dirname, '..')
 const routesDir = join(rootDir, 'packages/server/src/routes')
 const controllersDir = join(rootDir, 'packages/server/src/controllers')
 const packageJson = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf-8'))
+const dtoSourcePath = join(rootDir, 'packages/client/src/api/hermes/action-fabric.ts')
 
 // OpenAPI template
 const openapi = {
@@ -135,7 +137,7 @@ function scanRouteFile(filePath, tagInfo, paths) {
           ? extractControllerSource(controllerContent, controllerMethod)
           : extractFunctionSource(controllerContent, controllerMethod))
       : ''
-    addEndpoint(paths, method, path, controllerMethod, tagInfo, content, match.index, controllerSource)
+    addEndpoint(paths, method, path, controllerMethod, tagInfo, content, match.index, controllerSource, controllerContent)
   }
 
   // Pattern 2: inline functions - groupChatRoutes.post('/path', async (ctx) => {...})
@@ -225,7 +227,7 @@ function findMatchingBrace(content, openBrace) {
   return -1
 }
 
-function addEndpoint(paths, method, path, controllerMethod, tagInfo, content, matchIndex, controllerSource = '') {
+function addEndpoint(paths, method, path, controllerMethod, tagInfo, content, matchIndex, controllerSource = '', controllerContent = '') {
   if (isInternalProxyRoute(path)) return
 
   // Clean path parameters
@@ -251,7 +253,7 @@ function addEndpoint(paths, method, path, controllerMethod, tagInfo, content, ma
     description,
     operationId,
     security: [{ BearerAuth: [] }],
-    responses: generateResponses(path, method, controllerMethod, tagInfo.name),
+    responses: generateResponses(path, method, extractOpenApiMetadata(controllerContent, controllerMethod)),
   }
 
   const parameters = generateParameters(openapiPath, controllerSource)
@@ -489,6 +491,18 @@ function mergeSchema(current, next) {
   return current
 }
 
+function extractOpenApiMetadata(content, functionName) {
+  if (!content) return null
+  const functionMatch = new RegExp(`export\\s+(?:async\\s+)?function\\s+${escapeRegExp(functionName)}\\b`).exec(content)
+  if (!functionMatch) return null
+  const preceding = content.slice(0, functionMatch.index)
+  const responseType = preceding.match(/\/\*\*([^*]|\*(?!\/))*@openapi-response\s+([A-Za-z_$][\w$]*)([^*]|\*(?!\/))*\*\/\s*$/)?.[2]
+  if (!responseType) return null
+  const errorsText = content.match(/@openapi-default-errors\s+([^*\r\n]+)/)?.[1] || ''
+  const errors = Object.fromEntries(errorsText.split(',').map(entry => entry.trim().split(':')).filter(([status, type]) => /^\d{3}$/.test(status) && type))
+  return { responseType, errors }
+}
+
 function extractControllerSource(content, functionName) {
   const main = extractFunctionSource(content, functionName, true)
   if (!main) return ''
@@ -687,7 +701,7 @@ function schemaFromName(name, source) {
     return { type: 'object', additionalProperties: true }
   }
   if (new RegExp(`parseMoney\\(\\w+\\.${escaped}\\)`).test(source)) {
-    return { $ref: '#/components/schemas/ActionFabricMoney' }
+    return { type: 'object', properties: { currency: { type: 'string' }, amountMinor: { type: 'integer', minimum: 0 } }, required: ['currency', 'amountMinor'], additionalProperties: false }
   }
   if (new RegExp(`requiredInteger\\([^,]+,\\s*['"]${escaped}['"]`).test(source)) return { type: 'integer' }
   const numericProperty = new RegExp(`Number\\.isSafeInteger\\(\\w+\\.${escaped}\\)`).test(source)
@@ -863,8 +877,22 @@ function generateSummary(path, method, controllerMethod) {
   return `${action} ${resource}`
 }
 
-function generateResponses(path, method, controllerMethod, tagName) {
-  if (tagName === 'Action Fabric') return generateActionFabricResponses(controllerMethod)
+function generateResponses(path, method, metadata) {
+  if (metadata) {
+    const responses = {
+      '200': {
+        description: 'Success',
+        content: { 'application/json': { schema: { $ref: `#/components/schemas/${metadata.responseType}` } } },
+      },
+    }
+    for (const [status, type] of Object.entries(metadata.errors)) {
+      responses[status] = {
+        description: status === '401' ? 'Authentication required' : 'Request failed',
+        content: { 'application/json': { schema: { $ref: `#/components/schemas/${type}` } } },
+      }
+    }
+    return responses
+  }
   const responses = {
     '200': {
       description: 'Success',
@@ -885,182 +913,89 @@ function generateResponses(path, method, controllerMethod, tagName) {
   return responses
 }
 
-function generateActionFabricResponses(controllerMethod) {
-  const successSchemaByController = {
-    capabilities: 'ActionFabricCapabilityListResponse',
-    executors: 'ActionFabricExecutorListResponse',
-    createIntent: 'ActionFabricIntentResult',
-    workflows: 'ActionFabricWorkflowListResponse',
-    workflowDetail: 'ActionFabricWorkflowResponse',
-    approveWorkflow: 'ActionFabricWorkflowResponse',
-    rejectWorkflow: 'ActionFabricWorkflowResponse',
-    cancelWorkflow: 'ActionFabricWorkflowResponse',
-    retryWorkflow: 'ActionFabricWorkflowResponse',
-    compensateWorkflow: 'ActionFabricWorkflowResponse',
-    auditEvents: 'ActionFabricAuditListResponse',
-    verifyAudit: 'ActionFabricAuditVerificationResponse',
-    control: 'ActionFabricControlResponse',
-    updateEmergencyStop: 'ActionFabricControlResponse',
+function generateTypeScriptSchemas(filePath) {
+  const source = ts.createSourceFile(filePath, readFileSync(filePath, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const declarations = new Map()
+  for (const node of source.statements) {
+    if ((ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) && node.name) declarations.set(node.name.text, node)
   }
-  const responseSchema = successSchemaByController[controllerMethod]
-  const responses = {
-    '200': {
-      description: 'Success',
-      content: { 'application/json': { schema: { $ref: `#/components/schemas/${responseSchema}` } } },
-    },
+
+  const ref = name => ({ $ref: `#/components/schemas/${name}` })
+  const isNullType = node => node.kind === ts.SyntaxKind.NullKeyword || (ts.isLiteralTypeNode(node) && node.literal.kind === ts.SyntaxKind.NullKeyword)
+  const literalValue = node => ts.isStringLiteral(node) || ts.isNumericLiteral(node) ? node.text : node.kind === ts.SyntaxKind.TrueKeyword ? true : false
+  function nullable(schema) {
+    return schema.$ref ? { allOf: [schema], nullable: true } : { ...schema, nullable: true }
   }
-  for (const status of ['400', '401', '403', '404', '409', '422', '500', '503']) {
-    responses[status] = {
-      description: status === '401' ? 'Authentication required' : 'Action Fabric request failed',
-      content: { 'application/json': { schema: { $ref: '#/components/schemas/ActionFabricError' } } },
+  function schemaForType(node) {
+    if (!node) return {}
+    if (node.kind === ts.SyntaxKind.StringKeyword) return { type: 'string' }
+    if (node.kind === ts.SyntaxKind.NumberKeyword) return { type: 'number' }
+    if (node.kind === ts.SyntaxKind.BooleanKeyword) return { type: 'boolean' }
+    if (node.kind === ts.SyntaxKind.UnknownKeyword || node.kind === ts.SyntaxKind.AnyKeyword) return {}
+    if (ts.isLiteralTypeNode(node)) return { type: typeof literalValue(node.literal) === 'number' ? 'number' : typeof literalValue(node.literal), enum: [literalValue(node.literal)] }
+    if (ts.isArrayTypeNode(node)) return { type: 'array', items: schemaForType(node.elementType) }
+    if (ts.isParenthesizedTypeNode(node)) return schemaForType(node.type)
+    if (ts.isTypeReferenceNode(node)) {
+      const name = node.typeName.getText(source)
+      if (name === 'Array') return { type: 'array', items: schemaForType(node.typeArguments?.[0]) }
+      if (name === 'Record') return { type: 'object', additionalProperties: schemaForType(node.typeArguments?.[1]) }
+      return ref(name)
     }
+    if (ts.isUnionTypeNode(node)) {
+      const hasNull = node.types.some(isNullType)
+      const members = node.types.filter(type => !isNullType(type))
+      const literalMembers = members.filter(ts.isLiteralTypeNode)
+      let schema
+      if (literalMembers.length === members.length && members.length) {
+        const values = literalMembers.map(type => literalValue(type.literal))
+        schema = { type: values.every(value => typeof value === 'number') ? 'number' : 'string', enum: values }
+      } else if (members.length === 1) schema = schemaForType(members[0])
+      else schema = { oneOf: members.map(schemaForType) }
+      return hasNull ? nullable(schema) : schema
+    }
+    if (ts.isTypeLiteralNode(node)) return objectSchema(node.members)
+    if (ts.isMappedTypeNode(node)) {
+      const keyType = node.typeParameter.constraint
+      const keySchema = schemaForType(keyType)
+      const keys = keySchema.$ref ? unionValues(keySchema.$ref.split('/').pop()) : keySchema.enum
+      const properties = Object.fromEntries((keys || []).map(key => [String(key), schemaForType(node.type)]))
+      return { type: 'object', properties, required: Object.keys(properties), additionalProperties: false }
+    }
+    return {}
   }
-  return responses
-}
-
-const stringSchema = { type: 'string' }
-const nullableStringSchema = { type: 'string', nullable: true }
-const actionFabricSchemas = {
-  ActionFabricError: {
-    type: 'object', properties: { error: stringSchema, code: stringSchema },
-    required: ['error', 'code'], additionalProperties: false,
-  },
-  ActionFabricMoney: {
-    type: 'object', properties: { currency: stringSchema, amountMinor: { type: 'integer', minimum: 0 } },
-    required: ['currency', 'amountMinor'], additionalProperties: false,
-  },
-  ActionFabricAvailableActions: {
-    type: 'object',
-    properties: {
-      approve: { type: 'boolean' }, reject: { type: 'boolean' }, cancel: { type: 'boolean' },
-      retry: { type: 'boolean' }, compensate: { type: 'boolean' },
-    },
-    required: ['approve', 'reject', 'cancel', 'retry', 'compensate'], additionalProperties: false,
-  },
-  ActionFabricControl: {
-    type: 'object',
-    properties: {
-      level: { type: 'integer', minimum: 0, maximum: 3 }, version: { type: 'integer', minimum: 0 },
-      actorUserId: nullableStringSchema, reason: stringSchema, updatedAt: stringSchema,
-    },
-    required: ['level', 'version', 'actorUserId', 'reason', 'updatedAt'], additionalProperties: false,
-  },
-  ActionFabricCapability: {
-    type: 'object',
-    properties: {
-      id: stringSchema, version: { type: 'integer' }, domain: stringSchema, verb: stringSchema,
-      description: stringSchema, inputSchema: { type: 'object', additionalProperties: true },
-      outputSchema: { type: 'object', additionalProperties: true }, risk: stringSchema,
-      sideEffect: { type: 'boolean' }, idempotency: stringSchema, reversible: { type: 'boolean' },
-      compensationCapabilityId: nullableStringSchema, verificationStrategy: stringSchema,
-      authentication: { type: 'array', items: stringSchema }, targetRestrictions: { type: 'array', items: stringSchema },
-      cost: { type: 'object', additionalProperties: true }, enabled: { type: 'boolean' },
-      createdAt: stringSchema, updatedAt: stringSchema,
-    },
-    required: ['id', 'version', 'domain', 'verb', 'description', 'inputSchema', 'outputSchema', 'risk', 'sideEffect', 'idempotency', 'reversible', 'compensationCapabilityId', 'verificationStrategy', 'authentication', 'targetRestrictions', 'cost', 'enabled', 'createdAt', 'updatedAt'],
-    additionalProperties: false,
-  },
-  ActionFabricExecutor: {
-    type: 'object',
-    properties: {
-      id: stringSchema, type: stringSchema, name: stringSchema, environment: stringSchema, health: stringSchema,
-      enabled: { type: 'boolean' }, policyVersion: { type: 'integer' }, createdAt: stringSchema, updatedAt: stringSchema,
-    },
-    required: ['id', 'type', 'name', 'environment', 'health', 'enabled', 'policyVersion', 'createdAt', 'updatedAt'],
-    additionalProperties: false,
-  },
-  ActionFabricIntent: {
-    type: 'object',
-    properties: {
-      id: stringSchema, capabilityId: stringSchema, capabilityVersion: { type: 'integer' },
-      requestedByRoleId: stringSchema, requestedByUserId: stringSchema, idempotencyKey: stringSchema,
-      goal: stringSchema, target: { type: 'object', additionalProperties: true }, input: { type: 'object', additionalProperties: true },
-      constraints: { type: 'object', additionalProperties: true }, rationale: stringSchema,
-      expectedCost: { $ref: '#/components/schemas/ActionFabricMoney' },
-      sanitizedSummary: { type: 'object', additionalProperties: true }, createdAt: stringSchema, updatedAt: stringSchema,
-    },
-    required: ['id', 'capabilityId', 'capabilityVersion', 'requestedByRoleId', 'requestedByUserId', 'idempotencyKey', 'goal', 'target', 'input', 'constraints', 'rationale', 'sanitizedSummary', 'createdAt', 'updatedAt'],
-    additionalProperties: false,
-  },
-  ActionFabricPolicyDecision: {
-    type: 'object',
-    properties: {
-      id: stringSchema, intentId: stringSchema, executorId: nullableStringSchema, outcome: stringSchema,
-      reasonCodes: { type: 'array', items: stringSchema }, policyVersion: { type: 'integer' },
-      sanitizedSummary: { type: 'object', additionalProperties: true },
-      budget: { allOf: [{ $ref: '#/components/schemas/ActionFabricMoney' }], nullable: true }, createdAt: stringSchema,
-    },
-    required: ['id', 'intentId', 'executorId', 'outcome', 'reasonCodes', 'policyVersion', 'sanitizedSummary', 'budget', 'createdAt'],
-    additionalProperties: false,
-  },
-  ActionFabricWorkflowSummary: {
-    type: 'object',
-    properties: {
-      id: stringSchema, intentId: stringSchema, executorId: nullableStringSchema, policyDecisionId: nullableStringSchema,
-      compensationIntentId: nullableStringSchema, state: stringSchema, version: { type: 'integer' }, attempt: { type: 'integer' },
-      maxAttempts: { type: 'integer' }, leaseExpiresAt: nullableStringSchema, retryAt: nullableStringSchema,
-      lastErrorCode: nullableStringSchema, capabilityId: stringSchema, goal: stringSchema,
-      requestedByRoleId: stringSchema, requestedByUserId: stringSchema, createdAt: stringSchema,
-      updatedAt: stringSchema, completedAt: nullableStringSchema,
-      availableActions: { $ref: '#/components/schemas/ActionFabricAvailableActions' },
-    },
-    required: ['id', 'intentId', 'executorId', 'policyDecisionId', 'compensationIntentId', 'state', 'version', 'attempt', 'maxAttempts', 'leaseExpiresAt', 'retryAt', 'lastErrorCode', 'capabilityId', 'goal', 'requestedByRoleId', 'requestedByUserId', 'createdAt', 'updatedAt', 'completedAt', 'availableActions'],
-    additionalProperties: false,
-  },
-  ActionFabricWorkflowDetail: {
-    allOf: [
-      { $ref: '#/components/schemas/ActionFabricWorkflowSummary' },
-      { type: 'object', properties: {
-        intent: { $ref: '#/components/schemas/ActionFabricIntent' },
-        steps: { type: 'array', items: { type: 'object', additionalProperties: true } },
-        policyDecision: { $ref: '#/components/schemas/ActionFabricPolicyDecision', nullable: true },
-      }, required: ['intent', 'steps', 'policyDecision'] },
-    ],
-  },
-  ActionFabricAuditEvent: {
-    type: 'object',
-    properties: {
-      id: stringSchema, sequence: { type: 'integer', minimum: 0 }, eventType: stringSchema,
-      actorUserId: stringSchema, aggregateType: stringSchema, aggregateId: stringSchema,
-      payload: { type: 'object', additionalProperties: true }, occurredAt: stringSchema,
-      previousHash: stringSchema, hash: stringSchema,
-    },
-    required: ['id', 'sequence', 'eventType', 'actorUserId', 'aggregateType', 'aggregateId', 'payload', 'occurredAt', 'previousHash', 'hash'],
-    additionalProperties: false,
-  },
-  ActionFabricCapabilityListResponse: wrapperSchema('capabilities', { type: 'array', items: { $ref: '#/components/schemas/ActionFabricCapability' } }),
-  ActionFabricExecutorListResponse: wrapperSchema('executors', { type: 'array', items: { $ref: '#/components/schemas/ActionFabricExecutor' } }),
-  ActionFabricWorkflowResponse: wrapperSchema('workflow', { $ref: '#/components/schemas/ActionFabricWorkflowDetail' }),
-  ActionFabricControlResponse: wrapperSchema('control', { $ref: '#/components/schemas/ActionFabricControl' }),
-  ActionFabricIntentResult: {
-    type: 'object', properties: {
-      intent: { $ref: '#/components/schemas/ActionFabricIntent' },
-      policyDecision: { $ref: '#/components/schemas/ActionFabricPolicyDecision' },
-      workflow: { $ref: '#/components/schemas/ActionFabricWorkflowDetail' },
-    }, required: ['intent', 'policyDecision', 'workflow'], additionalProperties: false,
-  },
-  ActionFabricWorkflowListResponse: {
-    type: 'object', properties: {
-      workflows: { type: 'array', items: { $ref: '#/components/schemas/ActionFabricWorkflowSummary' } },
-      nextCursor: nullableStringSchema,
-    }, required: ['workflows', 'nextCursor'], additionalProperties: false,
-  },
-  ActionFabricAuditListResponse: {
-    type: 'object', properties: {
-      events: { type: 'array', items: { $ref: '#/components/schemas/ActionFabricAuditEvent' } },
-      nextAfterSequence: { type: 'integer', nullable: true },
-    }, required: ['events', 'nextAfterSequence'], additionalProperties: false,
-  },
-  ActionFabricAuditVerificationResponse: wrapperSchema('verification', {
-    type: 'object', properties: {
-      valid: { type: 'boolean' }, checked: { type: 'integer', minimum: 0 },
-      firstInvalidSequence: { type: 'integer', nullable: true }, legacyValid: { type: 'boolean' }, needsMigration: { type: 'boolean' },
-    }, required: ['valid', 'checked', 'firstInvalidSequence'], additionalProperties: false,
-  }),
-}
-
-function wrapperSchema(name, schema) {
-  return { type: 'object', properties: { [name]: schema }, required: [name], additionalProperties: false }
+  function unionValues(name) {
+    const declaration = declarations.get(name)
+    if (!declaration || !ts.isTypeAliasDeclaration(declaration)) return []
+    return schemaForType(declaration.type).enum || []
+  }
+  function objectSchema(members, bases = []) {
+    const properties = {}
+    const required = []
+    let additionalProperties = false
+    for (const base of bases) {
+      const baseSchema = schemaForName(base)
+      Object.assign(properties, baseSchema.properties || {})
+      required.push(...(baseSchema.required || []))
+    }
+    for (const member of members) {
+      if (ts.isPropertySignature(member) && member.name) {
+        const name = member.name.getText(source).replace(/^['"]|['"]$/g, '')
+        properties[name] = schemaForType(member.type)
+        if (!member.questionToken) required.push(name)
+      } else if (ts.isIndexSignatureDeclaration(member)) {
+        additionalProperties = schemaForType(member.type)
+      }
+    }
+    return { type: 'object', properties, ...(required.length ? { required: [...new Set(required)] } : {}), additionalProperties }
+  }
+  function schemaForName(name) {
+    const declaration = declarations.get(name)
+    if (!declaration) return {}
+    if (ts.isTypeAliasDeclaration(declaration)) return schemaForType(declaration.type)
+    const bases = declaration.heritageClauses?.flatMap(clause => clause.types.map(type => type.expression.getText(source))) || []
+    return objectSchema(declaration.members, bases)
+  }
+  return Object.fromEntries(Array.from(declarations.keys()).map(name => [name, schemaForName(name)]))
 }
 
 // Add standard responses
@@ -1105,7 +1040,7 @@ openapi.components.responses = {
     },
   },
 }
-openapi.components.schemas = actionFabricSchemas
+openapi.components.schemas = generateTypeScriptSchemas(dtoSourcePath)
 
 // Add WebSocket terminal endpoint
 openapi.paths['/api/hermes/terminal'] = {
