@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { NAlert, NButton, NEmpty, NSpin, NTag } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import type { ActionCapabilityDto, ActionWorkflowSummaryDto } from '@/api/hermes/action-fabric'
+import type { ActionAuditEventDto, ActionCapabilityDto, ActionWorkflowSummaryDto } from '@/api/hermes/action-fabric'
 import { useActionFabricStore } from '@/stores/hermes/action-fabric'
 import { useAssistantRolesStore } from '@/stores/hermes/assistant-roles'
 import CapabilityRegistryPanel from './CapabilityRegistryPanel.vue'
@@ -11,14 +11,17 @@ import WorkflowDetailDrawer from './WorkflowDetailDrawer.vue'
 import { useActionFabricMessages } from './action-fabric-messages'
 
 const store = useActionFabricStore()
+const auditState = store as unknown as { audit: ActionAuditEventDto[] }
 const rolesStore = useAssistantRolesStore()
 const { locale } = useI18n()
 const { messages: m } = useActionFabricMessages(locale)
 const announcement = ref('')
 const refreshDegraded = ref(false)
+const selectedWorkflowAudit = ref<ActionAuditEventDto[]>([])
 let detailOpener: HTMLElement | null = null
 let refreshSequence = 0
 let selectionSequence = 0
+let auditGeneration = 0
 const runningStates = new Set(['draft', 'policy_check', 'preparing', 'executing', 'verifying', 'retrying', 'compensating'])
 const completedStates = new Set(['succeeded', 'denied', 'cancelled', 'compensated'])
 const reversibleIds = computed<ReadonlySet<string>>(() => {
@@ -45,6 +48,14 @@ const selectedCapability = computed<ActionCapabilityDto | null>(() => {
 })
 const statusText = computed(() => store.error === 'ACTION_FABRIC_REFRESH_FAILED' ? m.value.refreshWarning : store.error ? `${m.value.degraded} ${store.error}` : refreshDegraded.value ? m.value.degraded : announcement.value)
 
+function invalidateSelectedAudit(): void {
+  auditGeneration += 1
+  selectedWorkflowAudit.value = []
+}
+watch([() => store.selectedWorkflowId, () => store.selectedWorkflow?.id ?? null], ([selectedId, detailId], [previousId]) => {
+  if (!selectedId || selectedId !== previousId || detailId !== selectedId) invalidateSelectedAudit()
+}, { flush: 'sync' })
+
 async function refresh(): Promise<void> {
   const sequence = ++refreshSequence
   announcement.value = ''
@@ -55,15 +66,23 @@ onMounted(() => { void refresh() })
 
 async function openWorkflow(workflow: ActionWorkflowSummaryDto, event: MouseEvent): Promise<void> {
   const sequence = ++selectionSequence
+  invalidateSelectedAudit()
   detailOpener = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
   try {
     await store.selectWorkflow(workflow.id)
     if (sequence !== selectionSequence || store.selectedWorkflowId !== workflow.id) return
+    const auditToken = ++auditGeneration
     await store.loadAudit({ aggregateType: 'workflow', aggregateId: workflow.id, limit: 100 })
+    if (sequence !== selectionSequence || auditToken !== auditGeneration
+      || store.selectedWorkflowId !== workflow.id || store.selectedWorkflow?.id !== workflow.id) return
+    const currentAudit = auditState.audit
+    selectedWorkflowAudit.value = currentAudit.filter(event => event.aggregateType === 'workflow'
+      && event.aggregateId === workflow.id).slice(0, 100)
   } catch { /* stores expose safe authoritative errors */ }
 }
 async function closeDrawer(): Promise<void> {
   selectionSequence += 1
+  invalidateSelectedAudit()
   await store.selectWorkflow(null)
   await nextTick()
   detailOpener?.focus()
@@ -90,7 +109,7 @@ async function mutate(operation: () => Promise<unknown>): Promise<void> {
     <NAlert v-if="store.selectedWorkflowId && !store.selectedWorkflow && !store.loading" data-test="action-stale-selection" type="warning">{{ m.staleSelection }}</NAlert>
     <CapabilityRegistryPanel :capabilities="store.capabilities" :executors="store.executors" :roles="rolesStore.roles" />
     <EmergencyStopPanel :control="store.control" :saving="store.saving" @update="mutate(() => store.updateEmergencyStop($event))" />
-    <WorkflowDetailDrawer :show="Boolean(store.selectedWorkflowId)" :workflow="store.selectedWorkflow" :capability="selectedCapability" :audit="store.audit" :saving="store.saving" @close="closeDrawer" @approve="store.selectedWorkflowId && mutate(() => store.approveWorkflow(store.selectedWorkflowId!))" @reject="store.selectedWorkflowId && mutate(() => store.rejectWorkflow(store.selectedWorkflowId!, $event))" @retry="store.selectedWorkflowId && mutate(() => store.retryWorkflow(store.selectedWorkflowId!))" @cancel="store.selectedWorkflowId && mutate(() => store.cancelWorkflow(store.selectedWorkflowId!, $event))" @compensate="store.selectedWorkflowId && mutate(() => store.compensateWorkflow(store.selectedWorkflowId!, $event))" />
+    <WorkflowDetailDrawer :show="Boolean(store.selectedWorkflowId)" :workflow="store.selectedWorkflow" :capability="selectedCapability" :audit="selectedWorkflowAudit" :saving="store.saving" @close="closeDrawer" @approve="store.selectedWorkflowId && mutate(() => store.approveWorkflow(store.selectedWorkflowId!))" @reject="store.selectedWorkflowId && mutate(() => store.rejectWorkflow(store.selectedWorkflowId!, $event))" @retry="store.selectedWorkflowId && mutate(() => store.retryWorkflow(store.selectedWorkflowId!))" @cancel="store.selectedWorkflowId && mutate(() => store.cancelWorkflow(store.selectedWorkflowId!, $event))" @compensate="store.selectedWorkflowId && mutate(() => store.compensateWorkflow(store.selectedWorkflowId!, $event))" />
   </section>
 </template>
 

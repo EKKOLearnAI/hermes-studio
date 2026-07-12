@@ -33,7 +33,7 @@ vi.mock('naive-ui', () => ({
   NTag: defineComponent({ template: '<span><slot /></span>' }),
   useDialog: () => ({ warning: vi.fn() }),
 }))
-vi.mock('@/components/hermes/action-fabric/WorkflowDetailDrawer.vue', () => ({ default: defineComponent({ props: ['show', 'workflow'], emits: ['close'], template: '<aside v-if="show" data-test="drawer-stub"><span>{{ workflow?.id }}</span><button data-test="drawer-close" @click="$emit(\'close\')">close</button></aside>' }) }))
+vi.mock('@/components/hermes/action-fabric/WorkflowDetailDrawer.vue', () => ({ default: defineComponent({ props: ['show', 'workflow', 'audit'], emits: ['close'], template: '<aside data-test="drawer-stub" :data-show="show"><span>{{ workflow?.id }}</span><span data-test="drawer-audit">{{ audit.map((item) => item.id).join(\',\') }}</span><button v-if="show" data-test="drawer-close" @click="$emit(\'close\')">close</button></aside>' }) }))
 
 import ActionFabricPanel from '@/components/hermes/action-fabric/ActionFabricPanel.vue'
 
@@ -121,5 +121,82 @@ describe('ActionFabricPanel', () => {
 
     expect(actionStore.loadAudit).toHaveBeenCalledTimes(1)
     expect(actionStore.loadAudit).toHaveBeenCalledWith({ aggregateType: 'workflow', aggregateId: 'waiting', limit: 100 })
+  })
+
+  it('never shows workflow A audit while workflow B detail is pending when A audit returns first', async () => {
+    const auditA = deferred<any[]>()
+    const detailB = deferred<any>()
+    actionStore.loadAudit.mockImplementationOnce(async () => { const events = await auditA.promise; actionStore.audit = events; return events })
+      .mockImplementationOnce(async () => { const events = [{ id: 'audit-b', aggregateType: 'workflow', aggregateId: 'waiting' }]; actionStore.audit = events; return events })
+    actionStore.selectWorkflow.mockImplementationOnce(async (id: string) => { actionStore.selectedWorkflowId = id; actionStore.selectedWorkflow = { ...detail, id }; return actionStore.selectedWorkflow })
+      .mockImplementationOnce(async (id: string) => { actionStore.selectedWorkflowId = id; actionStore.selectedWorkflow = null; const next = await detailB.promise; actionStore.selectedWorkflow = next; return next })
+    const wrapper = mount(ActionFabricPanel)
+    await flushPromises()
+
+    await wrapper.get('[data-test="workflow-running"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="workflow-waiting"]').trigger('click')
+    auditA.resolve([{ id: 'audit-a', aggregateType: 'workflow', aggregateId: 'running' }])
+    await flushPromises()
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('')
+
+    detailB.resolve({ ...detail, id: 'waiting' })
+    await flushPromises()
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-b')
+  })
+
+  it('keeps workflow B audit when workflow A audit returns after B', async () => {
+    const auditA = deferred<any[]>()
+    actionStore.loadAudit.mockImplementationOnce(async () => { const events = await auditA.promise; actionStore.audit = events; return events })
+      .mockImplementationOnce(async () => { const events = [{ id: 'audit-b', aggregateType: 'workflow', aggregateId: 'waiting' }]; actionStore.audit = events; return events })
+    const wrapper = mount(ActionFabricPanel)
+    await flushPromises()
+
+    await wrapper.get('[data-test="workflow-running"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="workflow-waiting"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-b')
+    auditA.resolve([{ id: 'audit-a', aggregateType: 'workflow', aggregateId: 'running' }])
+    await flushPromises()
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-b')
+  })
+
+  it('keeps the selected workflow audit snapshot when control audit replaces the global store audit', async () => {
+    actionStore.loadAudit.mockImplementationOnce(async () => { const events = [{ id: 'audit-b', aggregateType: 'workflow', aggregateId: 'waiting' }]; actionStore.audit = events; return events })
+    const wrapper = mount(ActionFabricPanel)
+    await flushPromises()
+    await wrapper.get('[data-test="workflow-waiting"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-b')
+
+    actionStore.audit = [{ id: 'audit-control', aggregateType: 'control', aggregateId: 'global' }]
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-b')
+  })
+
+  it('keeps the snapshot empty when a later control request evicts the selected workflow audit load', async () => {
+    const auditB = deferred<any[]>()
+    actionStore.loadAudit.mockImplementationOnce(() => auditB.promise)
+    const wrapper = mount(ActionFabricPanel)
+    await flushPromises()
+    await wrapper.get('[data-test="workflow-waiting"]').trigger('click')
+    await flushPromises()
+
+    actionStore.audit = [{ id: 'audit-control', aggregateType: 'control', aggregateId: 'global' }]
+    auditB.resolve([{ id: 'audit-b', aggregateType: 'workflow', aggregateId: 'waiting' }])
+    await flushPromises()
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('')
+  })
+
+  it('clears the selected workflow audit snapshot immediately when the drawer closes', async () => {
+    actionStore.loadAudit.mockImplementationOnce(async () => { const events = [{ id: 'audit-b', aggregateType: 'workflow', aggregateId: 'waiting' }]; actionStore.audit = events; return events })
+    const wrapper = mount(ActionFabricPanel)
+    await flushPromises()
+    await wrapper.get('[data-test="workflow-waiting"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-b')
+    await wrapper.get('[data-test="drawer-close"]').trigger('click')
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('')
   })
 })
