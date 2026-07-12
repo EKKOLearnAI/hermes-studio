@@ -2047,6 +2047,28 @@ jobTriggered: 'Job ausgelost',
     runs: {
       edgeEvidence: 'Kantenentscheidungen',
     },
+    edgePolicy: {
+      title: 'Kantenrichtlinie',
+      route: 'Route',
+      routes: {
+        success: 'Erfolg',
+        failure: 'Fehler',
+        always: 'Immer',
+      },
+      condition: 'Bedingung',
+      path: 'Pfad',
+      operator: 'Operator',
+      value: 'JSON-Wert',
+      pathRequired: 'Pfad ist erforderlich',
+      valueInvalid: 'Wert muss gültiges JSON sein',
+      operators: {
+        equals: 'Gleich',
+        not_equals: 'Ungleich',
+        exists: 'Vorhanden',
+        truthy: 'Wahr',
+        contains: 'Enthält',
+      },
+    },
   },
 
   // Anderungsprotokoll

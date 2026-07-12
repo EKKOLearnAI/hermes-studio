@@ -2047,6 +2047,28 @@ jobTriggered: 'Job declenche',
     runs: {
       edgeEvidence: 'Décisions de liaison',
     },
+    edgePolicy: {
+      title: 'Politique de liaison',
+      route: 'Route',
+      routes: {
+        success: 'Succès',
+        failure: 'Échec',
+        always: 'Toujours',
+      },
+      condition: 'Condition',
+      path: 'Chemin',
+      operator: 'Opérateur',
+      value: 'Valeur JSON',
+      pathRequired: 'Le chemin est requis',
+      valueInvalid: 'La valeur doit être un JSON valide',
+      operators: {
+        equals: 'Égal',
+        not_equals: 'Différent',
+        exists: 'Existe',
+        truthy: 'Vrai',
+        contains: 'Contient',
+      },
+    },
   },
 
   // Journal des modifications

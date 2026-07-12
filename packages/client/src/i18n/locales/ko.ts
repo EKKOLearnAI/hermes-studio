@@ -2046,6 +2046,28 @@ export default {
     runs: {
       edgeEvidence: '에지 판정',
     },
+    edgePolicy: {
+      title: '에지 정책',
+      route: '경로',
+      routes: {
+        success: '성공',
+        failure: '실패',
+        always: '항상',
+      },
+      condition: '조건',
+      path: '경로',
+      operator: '연산자',
+      value: 'JSON 값',
+      pathRequired: '경로가 필요합니다',
+      valueInvalid: '값은 유효한 JSON이어야 합니다',
+      operators: {
+        equals: '같음',
+        not_equals: '같지 않음',
+        exists: '존재',
+        truthy: '참',
+        contains: '포함',
+      },
+    },
   },
 
   // 변경 이력

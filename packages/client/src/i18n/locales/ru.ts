@@ -734,6 +734,28 @@ export default {
       review: 'Проверьте качество результата и определите дальнейшую работу.',
     },
     newNodeTitle: 'Node {count}',
+    edgePolicy: {
+      title: 'Политика связи',
+      route: 'Маршрут',
+      routes: {
+        success: 'Успех',
+        failure: 'Ошибка',
+        always: 'Всегда',
+      },
+      condition: 'Условие',
+      path: 'Путь',
+      operator: 'Оператор',
+      value: 'Значение JSON',
+      pathRequired: 'Путь обязателен',
+      valueInvalid: 'Значение должно быть корректным JSON',
+      operators: {
+        equals: 'Равно',
+        not_equals: 'Не равно',
+        exists: 'Существует',
+        truthy: 'Истина',
+        contains: 'Содержит',
+      },
+    },
   },
 
 

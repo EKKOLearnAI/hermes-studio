@@ -2047,6 +2047,28 @@ jobTriggered: 'Job acionado',
     runs: {
       edgeEvidence: 'Decisões de aresta',
     },
+    edgePolicy: {
+      title: 'Política de aresta',
+      route: 'Rota',
+      routes: {
+        success: 'Sucesso',
+        failure: 'Falha',
+        always: 'Sempre',
+      },
+      condition: 'Condição',
+      path: 'Caminho',
+      operator: 'Operador',
+      value: 'Valor JSON',
+      pathRequired: 'O caminho é obrigatório',
+      valueInvalid: 'O valor deve ser JSON válido',
+      operators: {
+        equals: 'Igual',
+        not_equals: 'Diferente',
+        exists: 'Existe',
+        truthy: 'Verdadeiro',
+        contains: 'Contém',
+      },
+    },
   },
 
   // Registro de alteracoes

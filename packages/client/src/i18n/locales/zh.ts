@@ -829,6 +829,28 @@ export default {
       review: '审查产出质量并识别后续工作。',
     },
     newNodeTitle: '节点 {count}',
+    edgePolicy: {
+      title: '边线策略',
+      route: '路由',
+      routes: {
+        success: '成功',
+        failure: '失败',
+        always: '始终',
+      },
+      condition: '条件',
+      path: '属性路径',
+      operator: '运算符',
+      value: 'JSON 值',
+      pathRequired: '属性路径不能为空',
+      valueInvalid: '值必须是有效的 JSON',
+      operators: {
+        equals: '等于',
+        not_equals: '不等于',
+        exists: '存在',
+        truthy: '真值',
+        contains: '包含',
+      },
+    },
   },
 
   // 看板

@@ -829,6 +829,28 @@ export default {
       review: '審查產出品質並識別後續工作。',
     },
     newNodeTitle: '節點 {count}',
+    edgePolicy: {
+      title: '邊線策略',
+      route: '路由',
+      routes: {
+        success: '成功',
+        failure: '失敗',
+        always: '始終',
+      },
+      condition: '條件',
+      path: '屬性路徑',
+      operator: '運算子',
+      value: 'JSON 值',
+      pathRequired: '屬性路徑不能為空',
+      valueInvalid: '值必須是有效的 JSON',
+      operators: {
+        equals: '等於',
+        not_equals: '不等於',
+        exists: '存在',
+        truthy: '真值',
+        contains: '包含',
+      },
+    },
   },
 
   // 看板

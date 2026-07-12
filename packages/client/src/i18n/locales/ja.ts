@@ -2046,6 +2046,28 @@ export default {
     runs: {
       edgeEvidence: 'エッジ判定',
     },
+    edgePolicy: {
+      title: 'エッジポリシー',
+      route: 'ルート',
+      routes: {
+        success: '成功',
+        failure: '失敗',
+        always: '常時',
+      },
+      condition: '条件',
+      path: 'パス',
+      operator: '演算子',
+      value: 'JSON 値',
+      pathRequired: 'パスは必須です',
+      valueInvalid: '値は有効な JSON である必要があります',
+      operators: {
+        equals: '等しい',
+        not_equals: '等しくない',
+        exists: '存在',
+        truthy: '真値',
+        contains: '含む',
+      },
+    },
   },
 
   // 更新履歴

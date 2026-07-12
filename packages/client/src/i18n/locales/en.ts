@@ -829,6 +829,28 @@ export default {
       review: 'Review output quality and identify follow-up work.',
     },
     newNodeTitle: 'Node {count}',
+    edgePolicy: {
+      title: 'Edge policy',
+      route: 'Route',
+      routes: {
+        success: 'Success',
+        failure: 'Failure',
+        always: 'Always',
+      },
+      condition: 'Condition',
+      path: 'Path',
+      operator: 'Operator',
+      value: 'JSON value',
+      pathRequired: 'Path is required',
+      valueInvalid: 'Value must be valid JSON',
+      operators: {
+        equals: 'Equals',
+        not_equals: 'Not equals',
+        exists: 'Exists',
+        truthy: 'Truthy',
+        contains: 'Contains',
+      },
+    },
   },
 
   // Kanban

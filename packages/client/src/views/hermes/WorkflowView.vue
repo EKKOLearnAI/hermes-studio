@@ -88,6 +88,19 @@ interface WorkflowNode {
   data: WorkflowAgentNodeData
 }
 
+interface WorkflowEdgeCondition {
+  path: string
+  operator: 'equals' | 'not_equals' | 'exists' | 'truthy' | 'contains'
+  value?: unknown
+}
+
+interface WorkflowEdgeData {
+  orchestration: {
+    route: 'success' | 'failure' | 'always'
+    condition?: WorkflowEdgeCondition
+  }
+}
+
 interface WorkflowEdge {
   id: string
   source: string
@@ -97,6 +110,7 @@ interface WorkflowEdge {
   type: 'smoothstep'
   animated?: boolean
   markerEnd?: MarkerType
+  data?: WorkflowEdgeData
 }
 
 interface WorkflowDocument {
@@ -117,6 +131,24 @@ const contextMenuX = ref(0)
 const contextMenuY = ref(0)
 const contextMenuOpenedAt = ref(0)
 const contextMenuTarget = ref<{ type: 'node' | 'edge'; id: string } | null>(null)
+const edgePolicyEditorVisible = ref(false)
+const edgePolicyEditorEdgeId = ref<string | null>(null)
+const edgePolicyEditorRoute = ref<'success' | 'failure' | 'always'>('success')
+const edgePolicyEditorConditionEnabled = ref(false)
+const edgePolicyEditorConditionPath = ref('')
+const edgePolicyEditorConditionOperator = ref<WorkflowEdgeCondition['operator']>('equals')
+const edgePolicyEditorConditionValue = ref('')
+const edgePolicyConditionOperatorOptions = computed(() => [
+  'equals', 'not_equals', 'exists', 'truthy', 'contains',
+].map(value => ({ label: t(`workflow.edgePolicy.operators.${value}`), value })))
+const edgePolicyConditionNeedsValue = computed(() =>
+  ['equals', 'not_equals', 'contains'].includes(edgePolicyEditorConditionOperator.value),
+)
+const edgePolicyRouteOptions = computed(() => [
+  { label: t('workflow.edgePolicy.routes.success'), value: 'success' },
+  { label: t('workflow.edgePolicy.routes.failure'), value: 'failure' },
+  { label: t('workflow.edgePolicy.routes.always'), value: 'always' },
+])
 const workflowRunContextMenuVisible = ref(false)
 const workflowRunContextMenuX = ref(0)
 const workflowRunContextMenuY = ref(0)
@@ -562,8 +594,27 @@ function cloneWorkflowDefinitionNodes(source: WorkflowNode[]): WorkflowNode[] {
   }))
 }
 
+function cloneWorkflowEdgeData(data?: WorkflowEdgeData): WorkflowEdgeData | undefined {
+  if (!data) return undefined
+  const condition = data.orchestration.condition
+  return {
+    orchestration: {
+      route: data.orchestration.route,
+      ...(condition ? {
+        condition: {
+          path: condition.path,
+          operator: condition.operator,
+          ...(Object.prototype.hasOwnProperty.call(condition, 'value')
+            ? { value: structuredClone(condition.value) }
+            : {}),
+        },
+      } : {}),
+    },
+  }
+}
+
 function cloneWorkflowEdges(source: WorkflowEdge[]): WorkflowEdge[] {
-  return source.map(edge => ({ ...edge }))
+  return source.map(edge => ({ ...edge, data: cloneWorkflowEdgeData(edge.data) }))
 }
 
 function serializeWorkflowNodes(source: WorkflowNode[]): unknown[] {
@@ -642,6 +693,14 @@ function normalizeStoredNode(raw: unknown, index: number): WorkflowNode {
   }
 }
 
+function normalizeWorkflowEdgeData(raw: unknown): WorkflowEdgeData {
+  const data = raw && typeof raw === 'object' ? raw as Record<string, any> : {}
+  if (!Object.prototype.hasOwnProperty.call(data, 'orchestration')) {
+    return { orchestration: { route: 'success' } }
+  }
+  return { orchestration: structuredClone(data.orchestration) as WorkflowEdgeData['orchestration'] }
+}
+
 function normalizeStoredEdge(raw: unknown): WorkflowEdge | null {
   const record = raw && typeof raw === 'object' ? raw as Record<string, any> : {}
   if (typeof record.source !== 'string' || typeof record.target !== 'string') return null
@@ -654,6 +713,7 @@ function normalizeStoredEdge(raw: unknown): WorkflowEdge | null {
     type: 'smoothstep',
     animated: Boolean(record.animated),
     markerEnd: MarkerType.ArrowClosed,
+    data: normalizeWorkflowEdgeData(record.data),
   }
 }
 
@@ -1553,6 +1613,7 @@ function handleConnect(connection: Connection) {
     type: 'smoothstep',
     animated: true,
     markerEnd: MarkerType.ArrowClosed,
+    data: { orchestration: { route: 'success' } },
   }]
 }
 
@@ -1587,6 +1648,56 @@ function handleNodeContextMenu(payload: { event: MouseEvent | TouchEvent; node: 
 function handleNodeClick(payload: { node: { id: string } }) {
   if (!selectedWorkflowRunId.value) return
   void openWorkflowNodeSession(payload.node.id)
+}
+
+function handleEdgeClick(payload: { edge: { id: string } }) {
+  if (selectedWorkflowRunId.value) return
+  const edge = edges.value.find(item => item.id === payload.edge.id)
+  if (!edge) return
+  edgePolicyEditorEdgeId.value = edge.id
+  const policy = edge.data?.orchestration
+  edgePolicyEditorRoute.value = policy?.route || 'success'
+  edgePolicyEditorConditionEnabled.value = Boolean(policy?.condition)
+  edgePolicyEditorConditionPath.value = policy?.condition?.path || ''
+  edgePolicyEditorConditionOperator.value = policy?.condition?.operator || 'equals'
+  edgePolicyEditorConditionValue.value = policy?.condition && Object.prototype.hasOwnProperty.call(policy.condition, 'value')
+    ? JSON.stringify(policy.condition.value)
+    : ''
+  edgePolicyEditorVisible.value = true
+}
+
+function parseEdgeConditionValue(): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(edgePolicyEditorConditionValue.value) }
+  } catch {
+    return { ok: false }
+  }
+}
+
+function saveEdgePolicy() {
+  const edgeId = edgePolicyEditorEdgeId.value
+  if (!edgeId || selectedWorkflowRunId.value) return
+  let condition: WorkflowEdgeCondition | undefined
+  if (edgePolicyEditorConditionEnabled.value) {
+    const path = edgePolicyEditorConditionPath.value.trim()
+    if (!path) {
+      message.error(t('workflow.edgePolicy.pathRequired'))
+      return
+    }
+    condition = { path, operator: edgePolicyEditorConditionOperator.value }
+    if (edgePolicyConditionNeedsValue.value) {
+      const parsed = parseEdgeConditionValue()
+      if (!parsed.ok) {
+        message.error(t('workflow.edgePolicy.valueInvalid'))
+        return
+      }
+      condition.value = parsed.value
+    }
+  }
+  edges.value = edges.value.map(edge => edge.id === edgeId
+    ? { ...edge, data: { orchestration: { route: edgePolicyEditorRoute.value, ...(condition ? { condition } : {}) } } }
+    : edge)
+  edgePolicyEditorVisible.value = false
 }
 
 function handleEdgeContextMenu(payload: { event: MouseEvent | TouchEvent; edge: { id: string } }) {
@@ -1949,6 +2060,39 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
         </div>
       </header>
     <NModal
+      v-model:show="edgePolicyEditorVisible"
+      preset="card"
+      :title="t('workflow.edgePolicy.title')"
+      :style="{ width: 'min(480px, calc(100vw - 32px))' }"
+    >
+      <label class="workflow-field">
+        <span class="workflow-field-label">{{ t('workflow.edgePolicy.route') }}</span>
+        <NSelect v-model:value="edgePolicyEditorRoute" :options="edgePolicyRouteOptions" />
+      </label>
+      <NCheckbox v-model:checked="edgePolicyEditorConditionEnabled">{{ t('workflow.edgePolicy.condition') }}</NCheckbox>
+      <template v-if="edgePolicyEditorConditionEnabled">
+        <label class="workflow-field">
+          <span class="workflow-field-label">{{ t('workflow.edgePolicy.path') }}</span>
+          <NInput v-model:value="edgePolicyEditorConditionPath" />
+        </label>
+        <label class="workflow-field">
+          <span class="workflow-field-label">{{ t('workflow.edgePolicy.operator') }}</span>
+          <NSelect v-model:value="edgePolicyEditorConditionOperator" :options="edgePolicyConditionOperatorOptions" />
+        </label>
+        <label v-if="edgePolicyConditionNeedsValue" class="workflow-field">
+          <span class="workflow-field-label">{{ t('workflow.edgePolicy.value') }}</span>
+          <NInput v-model:value="edgePolicyEditorConditionValue" type="textarea" />
+        </label>
+      </template>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="edgePolicyEditorVisible = false">{{ t('common.cancel') }}</NButton>
+          <NButton type="primary" @click="saveEdgePolicy">{{ t('common.save') }}</NButton>
+        </NSpace>
+      </template>
+    </NModal>
+
+    <NModal
       v-model:show="workspaceModalVisible"
       preset="card"
       :title="t('workflow.workspace.title')"
@@ -2053,6 +2197,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
           @connect="handleConnect"
           @node-click="handleNodeClick"
           @node-context-menu="handleNodeContextMenu"
+          @edge-click="handleEdgeClick"
           @edge-context-menu="handleEdgeContextMenu"
           @pane-click="closeContextMenu"
         >

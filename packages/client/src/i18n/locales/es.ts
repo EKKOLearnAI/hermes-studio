@@ -2047,6 +2047,28 @@ jobTriggered: 'Job ejecutado',
     runs: {
       edgeEvidence: 'Decisiones de conexión',
     },
+    edgePolicy: {
+      title: 'Política de conexión',
+      route: 'Ruta',
+      routes: {
+        success: 'Éxito',
+        failure: 'Fallo',
+        always: 'Siempre',
+      },
+      condition: 'Condición',
+      path: 'Ruta de propiedad',
+      operator: 'Operador',
+      value: 'Valor JSON',
+      pathRequired: 'La ruta es obligatoria',
+      valueInvalid: 'El valor debe ser JSON válido',
+      operators: {
+        equals: 'Igual',
+        not_equals: 'Distinto',
+        exists: 'Existe',
+        truthy: 'Verdadero',
+        contains: 'Contiene',
+      },
+    },
   },
 
   // Registro de cambios
