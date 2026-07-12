@@ -140,4 +140,87 @@ describe('personal twin store', () => {
     })).toThrow(/outbox failure/i)
     expect(listTwinObservations({ entityId: 'person:self' })).toHaveLength(0)
   })
+
+  it('stores canonical preferences with provenance and idempotent outbox updates', async () => {
+    const {
+      getTwinPreference, setTwinPreference, upsertTwinEntity, withPersonalTwinDb,
+    } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+
+    const input = {
+      subjectId: 'person:self', domain: 'digital' as const, key: 'appearance.theme', value: { contrast: 1, mode: 'dark' },
+      source: 'action-fabric', sourceId: 'intent-a/workflow-a/execution-a', actor: 'action-fabric', confidence: 1,
+    }
+    const first = setTwinPreference(input)
+    const replay = setTwinPreference({ ...input, value: { mode: 'dark', contrast: 1 } })
+
+    expect(replay).toEqual(first)
+    expect(getTwinPreference('person:self', 'digital', 'appearance.theme')).toMatchObject({
+      subjectId: 'person:self', domain: 'digital', key: 'appearance.theme', value: { contrast: 1, mode: 'dark' },
+      provenance: { source: 'action-fabric', sourceId: input.sourceId, actor: 'action-fabric', confidence: 1 },
+    })
+    expect(withPersonalTwinDb(db => db.prepare("SELECT COUNT(*) count FROM twin_outbox WHERE topic='twin.preference.set'").get()))
+      .toEqual({ count: 1 })
+  })
+
+  it('validates preference identity, domains, keys, values, and operation provenance', async () => {
+    const { setTwinPreference, upsertTwinEntity } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    const valid = { subjectId: 'person:self', domain: 'life' as const, key: 'schedule.week_start', value: 'monday',
+      source: 'action-fabric', sourceId: 'intent/workflow/step', actor: 'action-fabric', confidence: 1 }
+    expect(() => setTwinPreference({ ...valid, subjectId: 'person:missing' })).toThrow(/not found/i)
+    expect(() => setTwinPreference({ ...valid, domain: 'secrets' as never })).toThrow(/domain/i)
+    expect(() => setTwinPreference({ ...valid, key: '_system.admin' })).toThrow(/reserved/i)
+    expect(() => setTwinPreference({ ...valid, key: 'x'.repeat(161) })).toThrow(/key/i)
+    expect(() => setTwinPreference({ ...valid, value: 'x'.repeat(8_193) })).toThrow(/value/i)
+    expect(() => setTwinPreference({ ...valid, value: { bad: Number.NaN } })).toThrow(/value/i)
+    expect(() => setTwinPreference({ ...valid, source: '' })).toThrow(/source/i)
+  })
+
+  it('deletes preferences atomically and makes duplicate operation tokens harmless', async () => {
+    const {
+      deleteTwinPreference, getTwinPreference, setTwinPreference, upsertTwinEntity, withPersonalTwinDb,
+    } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    setTwinPreference({ subjectId: 'person:self', domain: 'home', key: 'lighting.scene', value: 'calm',
+      source: 'action-fabric', sourceId: 'set-token', actor: 'action-fabric', confidence: 1 })
+    const operation = { source: 'action-fabric' as const, sourceId: 'delete-token', actor: 'action-fabric' }
+    deleteTwinPreference('person:self', 'home', 'lighting.scene', operation)
+    deleteTwinPreference('person:self', 'home', 'lighting.scene', operation)
+    expect(getTwinPreference('person:self', 'home', 'lighting.scene')).toBeNull()
+    expect(withPersonalTwinDb(db => db.prepare("SELECT COUNT(*) count FROM twin_outbox WHERE topic='twin.preference.deleted'").get()))
+      .toEqual({ count: 1 })
+
+    setTwinPreference({ subjectId: 'person:self', domain: 'home', key: 'lighting.scene', value: 'focus',
+      source: 'action-fabric', sourceId: 'newer-token', actor: 'action-fabric', confidence: 1 })
+    deleteTwinPreference('person:self', 'home', 'lighting.scene', operation)
+    expect(getTwinPreference('person:self', 'home', 'lighting.scene')?.value).toBe('focus')
+  })
+
+  it('rolls back preference mutations when their outbox insert fails', async () => {
+    const { getTwinPreference, setTwinPreference, upsertTwinEntity, withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    withPersonalTwinDb(db => db.exec(`CREATE TRIGGER fail_preference_outbox BEFORE INSERT ON twin_outbox
+      WHEN NEW.topic='twin.preference.set' BEGIN SELECT RAISE(ABORT, 'preference outbox failure'); END`))
+    expect(() => setTwinPreference({ subjectId: 'person:self', domain: 'digital', key: 'appearance.theme', value: 'dark',
+      source: 'action-fabric', sourceId: 'rollback-token', actor: 'action-fabric', confidence: 1 })).toThrow(/outbox failure/i)
+    expect(getTwinPreference('person:self', 'digital', 'appearance.theme')).toBeNull()
+  })
+
+  it('serializes concurrent preference writes and binds operation IDs to one material write', async () => {
+    const { getTwinPreference, setTwinPreference, upsertTwinEntity, withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    const base = { subjectId: 'person:self', domain: 'digital' as const, key: 'appearance.theme',
+      source: 'action-fabric', actor: 'action-fabric', confidence: 1 }
+    await Promise.all(Array.from({ length: 8 }, (_, index) => Promise.resolve().then(() => setTwinPreference({
+      ...base, value: `theme-${index}`, sourceId: `concurrent-${index}`,
+    }))))
+    expect(getTwinPreference('person:self', 'digital', 'appearance.theme')).not.toBeNull()
+    expect(withPersonalTwinDb(db => db.prepare("SELECT COUNT(*) count FROM twin_outbox WHERE topic='twin.preference.set'").get()))
+      .toEqual({ count: 8 })
+
+    expect(() => setTwinPreference({ ...base, key: 'appearance.font', value: 'large',
+      sourceId: 'different-provenance', operationId: 'concurrent-0' })).toThrow(/already applied|different material/i)
+    expect(getTwinPreference('person:self', 'digital', 'appearance.font')).toBeNull()
+  })
 })

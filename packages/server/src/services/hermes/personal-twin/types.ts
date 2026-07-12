@@ -266,6 +266,40 @@ export interface TwinConstraint {
   updatedAt: string
 }
 
+export interface TwinPreference {
+  id: string
+  subjectId: string
+  domain: TwinDomain
+  key: string
+  value: unknown
+  provenance: {
+    source: string
+    sourceId: string
+    actor: string
+    confidence: number
+  }
+  createdAt: string
+  updatedAt: string
+}
+
+export interface TwinPreferenceInput {
+  subjectId: string
+  domain: TwinDomain
+  key: string
+  value: unknown
+  source: string
+  sourceId: string
+  actor: string
+  operationId?: string
+  confidence?: number
+}
+
+export interface TwinPreferenceDeleteOperation {
+  source: string
+  sourceId: string
+  actor: string
+}
+
 export interface TwinOverview {
   generatedAt: string
   subject: TwinEntity
