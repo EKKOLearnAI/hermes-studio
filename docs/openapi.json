@@ -1724,7 +1724,13 @@
                   "nonce": {
                     "type": "string"
                   },
+                  "pairing_code": {
+                    "type": "string"
+                  },
                   "signature": {
+                    "type": "string"
+                  },
+                  "timestamp": {
                     "type": "string"
                   }
                 },
@@ -1776,6 +1782,9 @@
                     "type": "string"
                   },
                   "signature": {
+                    "type": "string"
+                  },
+                  "timestamp": {
                     "type": "string"
                   }
                 },
@@ -1956,7 +1965,20 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                  "local_path": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "remote_path": {
+                    "type": "string"
+                  },
+                  "timeout_ms": {
+                    "type": "string"
+                  }
+                },
                 "additionalProperties": true
               }
             }
@@ -2008,7 +2030,13 @@
                   "args": {
                     "type": "string"
                   },
+                  "command": {
+                    "type": "string"
+                  },
                   "cwd": {
+                    "type": "string"
+                  },
+                  "timeout_ms": {
                     "type": "string"
                   }
                 },
@@ -2060,6 +2088,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "cols": {
+                    "type": "string"
+                  },
+                  "rows": {
+                    "type": "string"
+                  },
                   "shell": {
                     "type": "string"
                   }
@@ -2163,7 +2197,11 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                  "data": {
+                    "type": "string"
+                  }
+                },
                 "additionalProperties": true
               }
             }
@@ -2263,7 +2301,14 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                  "cols": {
+                    "type": "string"
+                  },
+                  "rows": {
+                    "type": "string"
+                  }
+                },
                 "additionalProperties": true
               }
             }
@@ -2347,7 +2392,20 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                  "local_path": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "remote_path": {
+                    "type": "string"
+                  },
+                  "timeout_ms": {
+                    "type": "string"
+                  }
+                },
                 "additionalProperties": true
               }
             }
@@ -4994,6 +5052,7 @@
                   }
                 },
                 "required": [
+                  "id",
                   "name"
                 ],
                 "additionalProperties": true
@@ -5127,6 +5186,7 @@
                 },
                 "required": [
                   "domains",
+                  "id",
                   "limits",
                   "name",
                   "sections"
@@ -6190,7 +6250,17 @@
           "404": {
             "description": "Not found"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/hermes/config": {
@@ -8234,13 +8304,18 @@
                     "type": "string"
                   },
                   "title": {
-                    "type": "string"
+                    "type": "object",
+                    "properties": {
+                      "trim": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "trim"
+                    ]
                   },
                   "triage": {
                     "type": "boolean"
-                  },
-                  "value": {
-                    "type": "string"
                   },
                   "workspace": {
                     "type": "string"
@@ -8412,7 +8487,15 @@
                     "type": "string"
                   },
                   "slug": {
-                    "type": "string"
+                    "type": "object",
+                    "properties": {
+                      "trim": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "trim"
+                    ]
                   },
                   "switchCurrent": {
                     "type": "boolean"
@@ -8717,22 +8800,20 @@
                 "type": "object",
                 "properties": {
                   "body": {
-                    "type": "string"
-                  },
-                  "child_id": {
-                    "type": "string"
+                    "type": "object",
+                    "properties": {
+                      "trim": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "trim"
+                    ]
                   },
                   "error": {
                     "type": "string"
-                  },
-                  "parent_id": {
-                    "type": "string"
                   }
                 },
-                "required": [
-                  "child_id",
-                  "parent_id"
-                ],
                 "additionalProperties": true
               }
             }
@@ -8996,21 +9077,24 @@
                 "type": "object",
                 "properties": {
                   "body": {
-                    "type": "string"
+                    "type": "object",
+                    "properties": {
+                      "length": {
+                        "type": "string"
+                      },
+                      "some": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "length",
+                      "some"
+                    ]
                   },
                   "error": {
                     "type": "string"
-                  },
-                  "task_ids": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
                   }
                 },
-                "required": [
-                  "task_ids"
-                ],
                 "additionalProperties": true
               }
             }
@@ -9112,18 +9196,20 @@
                 "type": "object",
                 "properties": {
                   "body": {
-                    "type": "string"
+                    "type": "object",
+                    "properties": {
+                      "trim": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "trim"
+                    ]
                   },
                   "error": {
                     "type": "string"
-                  },
-                  "profile": {
-                    "type": "string"
                   }
                 },
-                "required": [
-                  "profile"
-                ],
                 "additionalProperties": true
               }
             }
@@ -9181,18 +9267,20 @@
                 "type": "object",
                 "properties": {
                   "body": {
-                    "type": "string"
+                    "type": "object",
+                    "properties": {
+                      "trim": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "trim"
+                    ]
                   },
                   "error": {
                     "type": "string"
-                  },
-                  "reason": {
-                    "type": "string"
                   }
                 },
-                "required": [
-                  "reason"
-                ],
                 "additionalProperties": true
               }
             }
@@ -9253,12 +9341,17 @@
                     "type": "string"
                   },
                   "body": {
-                    "type": "string"
+                    "type": "object",
+                    "properties": {
+                      "trim": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "trim"
+                    ]
                   },
                   "error": {
-                    "type": "string"
-                  },
-                  "value": {
                     "type": "string"
                   }
                 },
@@ -9380,7 +9473,15 @@
                     "type": "string"
                   },
                   "profile": {
-                    "type": "string"
+                    "type": "object",
+                    "properties": {
+                      "trim": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "trim"
+                    ]
                   },
                   "reason": {
                     "type": "string"
@@ -9945,7 +10046,17 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/hermes/media/apikey-image-generate": {
@@ -11841,6 +11952,14 @@
             }
           },
           {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "q",
             "in": "query",
             "required": false,
@@ -11853,7 +11972,13 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "global_agent",
+                "api_server",
+                "cli",
+                "coding_agent"
+              ]
             }
           }
         ]
@@ -11893,11 +12018,25 @@
             }
           },
           {
-            "name": "source",
+            "name": "profile",
             "in": "query",
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "global_agent",
+                "api_server",
+                "cli",
+                "coding_agent"
+              ]
             }
           }
         ]
@@ -11988,6 +12127,14 @@
             }
           },
           {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "provider",
             "in": "query",
             "required": false,
@@ -12029,6 +12176,14 @@
             "required": false,
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -12137,6 +12292,14 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ]
       }
@@ -12175,11 +12338,23 @@
             }
           },
           {
-            "name": "source",
+            "name": "profile",
             "in": "query",
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "api_server",
+                "global_agent"
+              ]
             }
           }
         ]
@@ -12217,6 +12392,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ]
       }
@@ -12250,6 +12433,14 @@
             "name": "id",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -12291,6 +12482,14 @@
             }
           },
           {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "q",
             "in": "query",
             "required": false,
@@ -12303,7 +12502,13 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "global_agent",
+                "api_server",
+                "cli",
+                "coding_agent"
+              ]
             }
           }
         ]
@@ -12408,6 +12613,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ]
       }
@@ -12442,7 +12655,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer"
             }
           }
         ]
@@ -12536,6 +12749,14 @@
             "name": "id",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -12685,6 +12906,14 @@
             "name": "id",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -13098,7 +13327,17 @@
           "404": {
             "description": "Not found"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/hermes/stt/profile-status/missing-audio": {
@@ -13124,7 +13363,17 @@
           "404": {
             "description": "Not found"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/hermes/stt/settings": {
@@ -13790,6 +14039,9 @@
                     "type": "string"
                   }
                 },
+                "required": [
+                  "tag"
+                ],
                 "additionalProperties": true
               }
             }
@@ -13832,6 +14084,9 @@
                     "type": "string"
                   }
                 },
+                "required": [
+                  "tag"
+                ],
                 "additionalProperties": true
               }
             }
@@ -13922,6 +14177,14 @@
             "required": false,
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ]
@@ -14177,14 +14440,10 @@
                   },
                   "path": {
                     "type": "string"
-                  },
-                  "title": {
-                    "type": "string"
                   }
                 },
                 "required": [
-                  "path",
-                  "title"
+                  "path"
                 ],
                 "additionalProperties": true
               }

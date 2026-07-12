@@ -80,6 +80,11 @@ describe('api docs controller', () => {
       for (const child of Object.values(value)) inspectEnums(child)
     }
     inspectEnums(ctx.body)
+    expect(ctx.body.paths['/api/hermes/workspace/folders/rename'].post.requestBody.content['application/json'].schema.properties).toEqual({
+      name: { type: 'string' }, path: { type: 'string' },
+    })
+    expect(ctx.body.paths['/api/hermes/kanban'].post.requestBody.content['application/json'].schema.properties.value).toBeUndefined()
+    expect(ctx.body.paths['/api/hermes/kanban/{id}/comments'].post.requestBody.content['application/json'].schema.properties.value).toBeUndefined()
 
     const assistantRolePaths = {
       '/api/hermes/assistant-roles': ['get', 'post'],
@@ -380,4 +385,40 @@ describe('api docs controller', () => {
       rmSync(root, { recursive: true, force: true })
     }
   }, 20_000)
+
+  it('binds controller helper calls without following imports, exported handlers, shadows, or cycles', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'openapi-controller-graph-'))
+    const fixture = resolve(root, 'controller.ts')
+    const script = resolve(process.cwd(), 'scripts/generate-openapi.mjs')
+    try {
+      writeFileSync(fixture, `
+export async function target(ctx: any) {
+  const { rename } = await import('fs/promises')
+  localBody(ctx)
+  cycleA(ctx)
+  rename('a', 'b')
+}
+function localBody(ctx: any) {
+  const { path, name } = ctx.request.body as { path?: string; name?: string }
+  return { path, name }
+}
+function cycleA(ctx: any) { cycleB(ctx) }
+function cycleB(ctx: any) { cycleA(ctx) }
+export function rename(ctx: any) {
+  const { title } = ctx.request.body as { title?: string }
+  return title
+}
+`)
+      const result = spawnSync(process.execPath, [script, '--extract-controller-source', fixture, 'target'], { encoding: 'utf8' })
+      expect(result.status).toBe(0)
+      expect(result.stdout).toContain('function localBody')
+      expect(result.stdout).toContain('{ path?: string; name?: string }')
+      expect(result.stdout).not.toContain('function rename')
+      expect(result.stdout).not.toContain('title?: string')
+      expect(result.stdout.match(/function cycleA/g)).toHaveLength(1)
+      expect(result.stdout.match(/function cycleB/g)).toHaveLength(1)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })

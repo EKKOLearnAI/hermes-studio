@@ -538,31 +538,77 @@ function extractOpenApiMetadata(content, functionName) {
 }
 
 function extractControllerSource(content, functionName) {
-  const main = extractFunctionSource(content, functionName, true)
-  if (!main) return ''
-
-  const referencedSetDeclarations = Array.from(main.matchAll(/\.\.\.([A-Z][A-Z0-9_]*)/g))
-    .map(match => {
-      const name = escapeRegExp(match[1])
-      return content.match(new RegExp(`const\\s+${name}(?:\\s*:[^=]+)?\\s*=\\s*new\\s+Set(?:<[^>]+>)?\\s*\\(\\s*\\[[\\s\\S]*?\\]\\s*\\)`))?.[0] || ''
-    })
-    .filter(Boolean)
-
-  function branch(name, trail = new Set()) {
-    if (trail.has(name)) return ''
-    const source = extractFunctionSource(content, name)
-    if (!source) return ''
-    const nextTrail = new Set(trail).add(name)
-    const children = Array.from(source.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g))
-      .map(match => branch(match[1], nextTrail))
-      .filter(Boolean)
-    return [source, ...children].join('\n')
+  const file = ts.createSourceFile('controller.ts', content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const functions = new Map()
+  const constants = new Map()
+  const isExported = node => node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword) === true
+  const hasHelperAnnotation = node => content.slice(node.getFullStart(), node.getStart(file)).includes('@openapi-helper')
+  for (const statement of file.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name) {
+      functions.set(statement.name.text, { node: statement, exported: isExported(statement), callable: !isExported(statement) || hasHelperAnnotation(statement) })
+    } else if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name)) continue
+        constants.set(declaration.name.text, statement)
+        if (declaration.initializer && (ts.isArrowFunction(declaration.initializer) || ts.isFunctionExpression(declaration.initializer))) {
+          functions.set(declaration.name.text, {
+            node: declaration.initializer,
+            exported: isExported(statement),
+            callable: !isExported(statement) || hasHelperAnnotation(statement),
+          })
+        }
+      }
+    }
   }
+  const root = functions.get(functionName)
+  if (!root?.exported) return ''
 
-  const helperBranches = Array.from(main.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g))
-    .map(match => branch(match[1], new Set([functionName])))
-    .filter(source => /(ctx\.request\??\.body|requestBody\(ctx\b|bodyObject\(ctx\))/.test(source))
-  return [...referencedSetDeclarations, main, ...helperBranches].join('\n')
+  const selected = []
+  const visited = new Set()
+  const collectBinding = (name, output) => {
+    if (ts.isIdentifier(name)) output.add(name.text)
+    else if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+      for (const element of name.elements) if (ts.isBindingElement(element)) collectBinding(element.name, output)
+    }
+  }
+  function follow(name, entry, isRoot = false) {
+    if (visited.has(name)) return
+    visited.add(name)
+    selected.push(entry.node)
+    const localBindings = new Set()
+    for (const parameter of entry.node.parameters || []) collectBinding(parameter.name, localBindings)
+    function collectLocals(node) {
+      if (ts.isVariableDeclaration(node)) collectBinding(node.name, localBindings)
+      else if (ts.isFunctionDeclaration(node) && node !== entry.node && node.name) localBindings.add(node.name.text)
+      ts.forEachChild(node, collectLocals)
+    }
+    collectLocals(entry.node.body)
+    function visitCalls(node) {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+        const called = node.expression.text
+        const helper = functions.get(called)
+        if (helper?.callable && !localBindings.has(called)) follow(called, helper)
+      }
+      ts.forEachChild(node, visitCalls)
+    }
+    visitCalls(entry.node.body)
+  }
+  follow(functionName, root, true)
+
+  const referencedConstants = new Set()
+  for (const node of selected) {
+    function visitSpread(child) {
+      if (ts.isSpreadElement(child) && ts.isIdentifier(child.expression) && constants.has(child.expression.text)) {
+        referencedConstants.add(child.expression.text)
+      }
+      ts.forEachChild(child, visitSpread)
+    }
+    visitSpread(node)
+  }
+  return [
+    ...Array.from(referencedConstants).sort().map(name => constants.get(name).getText(file)),
+    ...selected.map(node => node.getText(file)),
+  ].join('\n')
 }
 
 function extractRequestBodyTypeLiterals(source) {
@@ -651,16 +697,49 @@ function extractDestructuredBodyEntries(source) {
 
 function extractBodyPropertyNames(source) {
   const names = new Set()
-  const bodyVariableNames = extractBodyVariableNames(source)
-  bodyVariableNames.push('bodyResult.body')
-
-  for (const variableName of bodyVariableNames) {
-    const escaped = escapeRegExp(variableName)
-    collectMatches(source, new RegExp(`\\b${escaped}\\.([A-Za-z_$][\\w$]*)`, 'g'), names)
+  const file = ts.createSourceFile('controller-fragment.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const unwrap = node => {
+    while (node && (ts.isAsExpression(node) || ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node))) node = node.expression
+    return node
   }
-
-  collectMatches(source, /ctx\.request\??\.body\??\.([A-Za-z_$][\w$]*)/g, names)
-  collectMatches(source, /\(ctx\.request\.body as any\)\??\.([A-Za-z_$][\w$]*)/g, names)
+  const isCtxBody = node => {
+    node = unwrap(node)
+    if (!node) return false
+    const raw = node.getText(file).replace(/\?/g, '')
+    if (/^(?:requestBody|bodyObject)\(ctx\b/.test(raw)) return true
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && ['requestBody', 'bodyObject'].includes(node.expression.text)) return true
+    const text = raw
+    return text === 'ctx.request.body' || text === 'bodyResult.body' || text === 'requestBody(ctx).body'
+  }
+  function inspectFunction(node) {
+    const bodyVariables = new Set()
+    const functionText = node.getText(file)
+    for (const match of functionText.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:requestBody|bodyObject)\(ctx\b/g)) bodyVariables.add(match[1])
+    function collectVariables(child) {
+      if (child !== node && ts.isFunctionLike(child)) return
+      if (ts.isVariableDeclaration(child) && ts.isIdentifier(child.name) && isCtxBody(child.initializer)) bodyVariables.add(child.name.text)
+      ts.forEachChild(child, collectVariables)
+    }
+    collectVariables(node.body)
+    for (const variable of bodyVariables) collectMatches(functionText, new RegExp(`\\b${escapeRegExp(variable)}\\.([A-Za-z_$][\\w$]*)`, 'g'), names)
+    function collectProperties(child) {
+      if (child !== node && ts.isFunctionLike(child)) return
+      if (ts.isPropertyAccessExpression(child)) {
+        const expression = unwrap(child.expression)
+        if (ts.isIdentifier(expression) && bodyVariables.has(expression.text)) names.add(child.name.text)
+        const text = expression?.getText(file).replace(/\?/g, '')
+        if (text === 'ctx.request.body') names.add(child.name.text)
+      }
+      ts.forEachChild(child, collectProperties)
+    }
+    collectProperties(node.body)
+  }
+  for (const statement of file.statements) {
+    if (ts.isFunctionDeclaration(statement)) inspectFunction(statement)
+    else if (ts.isVariableStatement(statement)) for (const declaration of statement.declarationList.declarations) {
+      if (declaration.initializer && (ts.isArrowFunction(declaration.initializer) || ts.isFunctionExpression(declaration.initializer))) inspectFunction(declaration.initializer)
+    }
+  }
   return Array.from(names)
 }
 
@@ -1115,6 +1194,19 @@ openapi.components.responses = {
       },
     },
   },
+}
+const controllerExtractionIndex = process.argv.indexOf('--extract-controller-source')
+if (controllerExtractionIndex >= 0) {
+  const [filePath, handler] = process.argv.slice(controllerExtractionIndex + 1)
+  process.stdout.write(extractControllerSource(readFileSync(resolve(filePath), 'utf8'), handler))
+  process.exit(0)
+}
+const bodyExtractionIndex = process.argv.indexOf('--extract-body-properties')
+if (bodyExtractionIndex >= 0) {
+  const [filePath, handler] = process.argv.slice(bodyExtractionIndex + 1)
+  const content = readFileSync(resolve(filePath), 'utf8')
+  process.stdout.write(`${JSON.stringify(extractBodyPropertyNames(extractControllerSource(content, handler)))}\n`)
+  process.exit(0)
 }
 const schemaValidationIndex = process.argv.indexOf('--validate-schema-sources')
 const selectedSchemaRoots = schemaValidationIndex >= 0
