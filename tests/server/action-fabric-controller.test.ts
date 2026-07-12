@@ -16,8 +16,26 @@ const role = {
   id: 'operator', enabled: true,
   capabilityScope: { allow: ['simulator.echo'], deny: [], enforcement: 'action_fabric_v1' },
 }
-const workflow = { id: 'wf-1', state: 'waiting_user', version: 1 }
-const intentResult = { intent: { id: 'intent-1' }, policyDecision: { id: 'decision-1' }, workflow }
+const baseIntent = {
+  id: 'intent-1', capabilityId: 'simulator.echo', capabilityVersion: 1, requestedByRoleId: 'operator',
+  requestedByUserId: '42', idempotencyKey: 'request-1', goal: 'Echo a bounded value',
+  target: { subjectId: 'person:self' }, input: { text: 'hello' }, constraints: {}, rationale: 'Integration test',
+  materialInputDigest: 'digest', sanitizedSummary: {}, createdAt: 'now', updatedAt: 'now',
+}
+const baseDecision = {
+  id: 'decision-1', intentId: 'intent-1', executorId: 'simulator-main', outcome: 'waiting_user',
+  reasonCodes: ['approval'], policyVersion: 1, materialInputDigest: 'digest', policySnapshot: {},
+  sanitizedSummary: {}, budget: null, createdAt: 'now',
+}
+const workflow = {
+  id: 'wf-1', intentId: 'intent-1', executorId: 'simulator-main', policyDecisionId: 'decision-1',
+  compensationIntentId: null, state: 'waiting_user', version: 1, attempt: 0, maxAttempts: 3,
+  leaseOwner: null, leaseExpiresAt: null, retryAt: null, lastErrorCode: null,
+  createdAt: 'now', updatedAt: 'now', completedAt: null, capabilityId: 'simulator.echo',
+  goal: 'Echo a bounded value', requestedByRoleId: 'operator', requestedByUserId: '42',
+  intent: baseIntent, steps: [], policyDecision: baseDecision,
+}
+const intentResult = { intent: baseIntent, policyDecision: baseDecision, workflow }
 
 function context(options: {
   body?: unknown; query?: Record<string, unknown>; id?: string; user?: any; type?: string
@@ -81,6 +99,7 @@ describe('action fabric controller', () => {
     await ctrl.executors(executorCtx)
     expect(capabilityCtx.body.capabilities[0]).not.toHaveProperty('contractDigest')
     expect(capabilityCtx.body.capabilities[0]).not.toHaveProperty('configuration')
+    expect(capabilityCtx.body.capabilities[0].cost).toEqual({ currency: null, estimatedMinor: 0 })
     expect(executorCtx.body.executors[0]).not.toHaveProperty('configuration')
     expect(executorCtx.body.executors[0]).not.toHaveProperty('healthDetails')
     expect(JSON.stringify([capabilityCtx.body, executorCtx.body])).not.toMatch(/private|action-fabric\.db|alice/i)
@@ -105,7 +124,7 @@ describe('action fabric controller', () => {
     const ctx = context()
     await ctrl.capabilities(ctx)
     expect(accessed).toBe(false)
-    expect(ctx.body.capabilities[0].inputSchema.credential).toBe('[REDACTED]')
+    expect(ctx.body.capabilities[0].inputSchema).not.toHaveProperty('credential')
   })
 
   it('creates an intent with the authenticated actor and preserves idempotent replay status', async () => {
@@ -114,14 +133,19 @@ describe('action fabric controller', () => {
     await ctrl.createIntent(ctx)
     expect(fabric.createFabricIntent).toHaveBeenCalledWith({ ...validIntent, requestedByUserId: '42' })
     expect(ctx.status).toBe(200)
-    expect(ctx.body).toEqual(intentResult)
+    expect(ctx.body).toMatchObject({
+      intent: { id: 'intent-1', capabilityId: 'simulator.echo' },
+      policyDecision: { id: 'decision-1', outcome: 'waiting_user' },
+      workflow: { id: 'wf-1', state: 'waiting_user' },
+    })
+    expect(ctx.body.policyDecision).not.toHaveProperty('policySnapshot')
 
     const existing = { ...intentResult, workflow: { ...workflow, state: 'succeeded' } }
     fabric.createFabricIntent.mockReturnValueOnce(existing)
     const replay = context({ body: validIntent })
     await ctrl.createIntent(replay)
     expect(replay.status).toBe(200)
-    expect(replay.body).toEqual(existing)
+    expect(replay.body).toMatchObject({ workflow: { id: 'wf-1', state: 'succeeded' } })
   })
 
   it('rejects actor spoofing and missing, disabled, or legacy roles before intent creation', async () => {
@@ -144,11 +168,12 @@ describe('action fabric controller', () => {
     const list = context({ query: { state: 'failed', capabilityId: 'simulator.echo', requestedByRoleId: 'operator', cursor: 'wf-0', limit: '25' } })
     await ctrl.workflows(list)
     expect(fabric.listFabricWorkflows).toHaveBeenCalledWith({ state: 'failed', capabilityId: 'simulator.echo', requestedByRoleId: 'operator', cursor: 'wf-0', limit: 25 })
-    expect(list.body).toEqual({ workflows: [workflow], nextCursor: null })
+    expect(list.body).toEqual({ workflows: [expect.objectContaining({ id: 'wf-1', state: 'waiting_user' })], nextCursor: null })
+    expect(list.body.workflows[0]).not.toHaveProperty('intent')
     const detail = context({ id: 'wf-1' })
     await ctrl.workflowDetail(detail)
     expect(fabric.getFabricWorkflow).toHaveBeenCalledWith('wf-1')
-    expect(detail.body).toEqual({ workflow })
+    expect(detail.body).toMatchObject({ workflow: { id: 'wf-1', intent: { id: 'intent-1' }, steps: [] } })
   })
 
   it('delegates server-owned approve, reject, cancel, retry, and compensation actions', async () => {
@@ -163,6 +188,73 @@ describe('action fabric controller', () => {
     expect(fabric.cancelFabricWorkflow).toHaveBeenCalledWith('wf-1', '42', 'operator cancel')
     expect(fabric.retryFabricWorkflow).toHaveBeenCalledWith('wf-1', '42')
     expect(fabric.requestFabricCompensation).toHaveBeenCalledWith('wf-1', '42', 'restore prior value')
+  })
+
+  it('projects every workflow response through bounded descriptor-safe public DTOs', async () => {
+    let getterCalls = 0
+    const dangerousInput: Record<string, unknown> = { password: 'super-secret' }
+    Object.defineProperty(dangerousInput, 'computed', {
+      enumerable: true,
+      get: () => { getterCalls += 1; return 'Bearer private-token' },
+    })
+    const dangerousWorkflow = {
+      id: 'wf-1', intentId: 'intent-1', executorId: 'simulator-main', policyDecisionId: 'decision-1',
+      compensationIntentId: null, state: 'waiting_user', version: 1, attempt: 0, maxAttempts: 3,
+      leaseOwner: null, leaseExpiresAt: null, retryAt: null, lastErrorCode: null,
+      createdAt: 'now', updatedAt: 'now', completedAt: null, capabilityId: 'simulator.echo',
+      goal: 'read C:\\Users\\alice\\action-fabric.db', requestedByRoleId: 'operator', requestedByUserId: '42',
+      intent: {
+        id: 'intent-1', capabilityId: 'simulator.echo', capabilityVersion: 1, requestedByRoleId: 'operator',
+        requestedByUserId: '42', idempotencyKey: 'request-1', goal: 'read /home/alice/private.db',
+        target: { path: '/home/alice/private.db' }, input: dangerousInput,
+        constraints: {}, rationale: 'credential=private', materialInputDigest: 'digest', sanitizedSummary: {},
+        createdAt: 'now', updatedAt: 'now',
+      },
+      steps: [{
+        id: 'step-1', workflowId: 'wf-1', ordinal: 0, kind: 'prepare', state: 'pending', executionToken: 'token',
+        executorId: 'simulator-main', input: dangerousInput, output: { rawError: 'sqlite at C:\\private.db' },
+        evidence: [{ kind: 'result', summary: 'password=secret', data: { jwt: 'eyJabcdefgh.abcdef.abcdef' }, capturedAt: 'now' }],
+        attempt: 0, lastErrorCode: null, createdAt: 'now', updatedAt: 'now', startedAt: null, completedAt: null,
+      }],
+      policyDecision: {
+        id: 'decision-1', intentId: 'intent-1', executorId: 'simulator-main', outcome: 'waiting_user',
+        reasonCodes: ['approval'], policyVersion: 1, materialInputDigest: 'digest',
+        policySnapshot: { databasePath: '/home/alice/action-fabric.db' }, sanitizedSummary: {}, budget: null, createdAt: 'now',
+      },
+    }
+    Object.defineProperty(dangerousWorkflow, 'goal', {
+      enumerable: true,
+      get: () => { getterCalls += 1; return 'C:\\Users\\alice\\action-fabric.db' },
+    })
+    fabric.getFabricWorkflow.mockReturnValue(dangerousWorkflow)
+    fabric.approveFabricWorkflow.mockReturnValue(dangerousWorkflow)
+    fabric.createFabricIntent.mockReturnValue({
+      intent: dangerousWorkflow.intent, policyDecision: dangerousWorkflow.policyDecision, workflow: dangerousWorkflow,
+    })
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    const detail = context()
+    await ctrl.workflowDetail(detail)
+    const approve = context({ body: {} })
+    await ctrl.approveWorkflow(approve)
+    const create = context({ body: validIntent })
+    await ctrl.createIntent(create)
+    const encoded = JSON.stringify([detail.body, approve.body, create.body])
+    expect(getterCalls).toBe(0)
+    expect(encoded).not.toMatch(/alice|private\.db|super-secret|Bearer|credential=|eyJabcdefgh|rawError/i)
+    expect(encoded).toContain('[REDACTED]')
+    expect(detail.body.workflow).not.toBe(dangerousWorkflow)
+  })
+
+  it('sanitizes control reasons independently from trusted service output', async () => {
+    fabric.getFabricControlState.mockReturnValue({
+      level: 2, version: 9, actorUserId: '42', reason: 'password=secret at C:\\Users\\alice\\fabric.db', updatedAt: 'now',
+      internalTable: 'fabric_control_state',
+    })
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    const ctx = context()
+    await ctrl.control(ctx)
+    expect(ctx.body.control).not.toHaveProperty('internalTable')
+    expect(ctx.body.control.reason).toBe('[REDACTED]')
   })
 
   it('lists bounded audit data, verifies a safe summary, and controls emergency stop with optimistic concurrency', async () => {
@@ -180,6 +272,21 @@ describe('action fabric controller', () => {
     await ctrl.updateEmergencyStop(update)
     expect(fabric.setFabricEmergencyStop).toHaveBeenCalledWith(2, '42', 'maintenance', 4)
     expect(update.body.control.version).toBe(5)
+  })
+
+  it('does not invoke accessors while projecting audit verification', async () => {
+    let calls = 0
+    const verification: Record<string, unknown> = { valid: true, checked: 3, firstInvalidSequence: null }
+    Object.defineProperty(verification, 'legacyValid', {
+      enumerable: true,
+      get: () => { calls += 1; return true },
+    })
+    fabric.verifyFabricAuditChain.mockReturnValue(verification)
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    const ctx = context()
+    await ctrl.verifyAudit(ctx)
+    expect(calls).toBe(0)
+    expect(ctx.body.verification).not.toHaveProperty('legacyValid')
   })
 
   it.each([
@@ -227,6 +334,33 @@ describe('action fabric controller', () => {
     expect(extra.status).toBe(400)
   })
 
+  it('applies explicit strict query allowlists to every GET endpoint', async () => {
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    const cases: Array<[keyof typeof ctrl, Record<PropertyKey, unknown>]> = [
+      ['capabilities', { typo: 'true' }], ['executors', { password: 'secret' }],
+      ['workflows', { desiredState: 'succeeded' }], ['workflowDetail', { limit: '1' }],
+      ['auditEvents', { cursor: 'x' }], ['verifyAudit', { limit: '1' }], ['control', { debug: 'true' }],
+      ['capabilities', { limit: ['1', '2'] }], ['workflows', { state: '' }],
+    ]
+    for (const [handler, query] of cases) {
+      const ctx = context({ query: query as Record<string, unknown> })
+      await (ctrl[handler] as (ctx: any) => Promise<void>)(ctx)
+      expect(ctx.status, String(handler)).toBe(400)
+    }
+
+    let getterCalls = 0
+    const accessor: Record<string, unknown> = {}
+    Object.defineProperty(accessor, 'limit', { enumerable: true, get: () => { getterCalls += 1; return '1' } })
+    const symbol = { [Symbol('secret')]: 'x' }
+    const polluted = Object.assign(Object.create({ desiredState: 'succeeded' }), { limit: '1' })
+    for (const query of [accessor, symbol, polluted]) {
+      const ctx = context({ query: query as Record<string, unknown> })
+      await ctrl.capabilities(ctx)
+      expect(ctx.status).toBe(400)
+    }
+    expect(getterCalls).toBe(0)
+  })
+
   it.each([
     ['FABRIC_WORKFLOW_NOT_FOUND', 404, 'Action workflow not found'],
     ['FABRIC_CONTROL_VERSION_CONFLICT', 409, 'Action Fabric state changed'],
@@ -240,6 +374,38 @@ describe('action fabric controller', () => {
     await ctrl.workflowDetail(ctx)
     expect(ctx.status).toBe(status)
     expect(ctx.body).toEqual({ error: message, code })
+    expect(JSON.stringify(ctx.body)).not.toMatch(/fabric_action_intents|alice|password|action-fabric\.db/i)
+  })
+
+  it.each([
+    ['FABRIC_AUDIT_KEY_INVALID', 503],
+    ['FABRIC_AUDIT_KEY_UNAVAILABLE', 503],
+    ['FABRIC_AUDIT_KEY_PERMISSIONS', 503],
+    ['FABRIC_AUDIT_WRITER_BUSY', 503],
+    ['FABRIC_AUDIT_ANCHOR_UNAVAILABLE', 503],
+    ['FABRIC_AUDIT_CHAIN_CORRUPT', 503],
+    ['FABRIC_AUDIT_FORMAT_MIGRATION_REQUIRED', 503],
+    ['FABRIC_AUDIT_INPUT_LIMIT', 400],
+    ['FABRIC_BUDGET_RESERVATION_MISSING', 409],
+    ['FABRIC_BUDGET_OWNERSHIP_CONFLICT', 409],
+    ['FABRIC_IDEMPOTENCY_CONFLICT', 409],
+    ['FABRIC_WORKFLOW_APPROVAL_STALE', 409],
+    ['FABRIC_COMPENSATION_WORKFLOW_CONFLICT', 409],
+    ['FABRIC_WORKFLOW_CONTRACT_STALE', 409],
+    ['FABRIC_POLICY_INVALID_INPUT', 422],
+    ['FABRIC_WORKFLOW_NOT_COMPENSATABLE', 422],
+    ['FABRIC_EXECUTOR_NOT_FOUND', 404],
+    ['FABRIC_AUDIT_INVALID_SEQUENCE', 400],
+    ['FABRIC_INTENT_INVALID_ID', 400],
+  ])('uses an explicit public status family for %s', async (code, status) => {
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    fabric.getFabricWorkflow.mockImplementationOnce(() => {
+      throw new Error(`${code}: fabric_action_intents at C:\\Users\\alice\\action-fabric.db password=secret`)
+    })
+    const ctx = context()
+    await ctrl.workflowDetail(ctx)
+    expect(ctx.status).toBe(status)
+    expect(ctx.body.code).toBe(code)
     expect(JSON.stringify(ctx.body)).not.toMatch(/fabric_action_intents|alice|password|action-fabric\.db/i)
   })
 
