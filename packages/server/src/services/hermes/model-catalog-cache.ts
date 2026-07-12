@@ -123,14 +123,18 @@ export async function readProviderModelCatalogCache(): Promise<ProviderModelCata
   }
 }
 
-export function getCachedProviderModels(
+export function resolveProviderCatalogModels(
   cache: ProviderModelCatalogCache,
   provider: string,
   baseUrl: string,
-  freeOnly = false,
-): string[] | null {
-  const entry = cache.providers[providerModelCatalogKey(provider, baseUrl, freeOnly)]
-  return entry && entry.models.length > 0 ? entry.models : null
+  staticModels: string[],
+  options: { freeOnly?: boolean; hasStaticManifest?: boolean } = {},
+): string[] {
+  const entry = cache.providers[providerModelCatalogKey(provider, baseUrl, options.freeOnly === true)]
+  if (!entry || entry.models.length === 0) return [...staticModels]
+  const hasStaticManifest = options.hasStaticManifest ?? staticModels.length > 0
+  if (entry.source === 'fallback' && hasStaticManifest) return [...staticModels]
+  return [...entry.models]
 }
 
 export async function writeProviderModelCatalogEntry(input: {

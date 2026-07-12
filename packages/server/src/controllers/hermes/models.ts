@@ -11,9 +11,9 @@ import { getDb } from '../../db'
 import { MODEL_CONTEXT_TABLE } from '../../db/hermes/schemas'
 import { listUserProfiles } from '../../db/hermes/users-store'
 import {
-  getCachedProviderModels,
   readProviderModelCatalogCache,
   refreshConfiguredProviderModelCatalogs,
+  resolveProviderCatalogModels,
   writeProviderModelCatalogEntry,
   type ProviderModelCatalogCache,
 } from '../../services/hermes/model-catalog-cache'
@@ -393,9 +393,17 @@ async function buildAvailableForProfile(
       baseUrl = envGetValue(envMapping.base_url_env) || baseUrl
     }
     const catalogModels = PROVIDER_MODEL_CATALOG[providerKey]
-    let modelsList: string[] = catalogModels && catalogModels.length > 0 ? [...catalogModels] : [...(preset?.models || [])]
-    const cachedModels = getCachedProviderModels(modelCatalogCache, providerKey, baseUrl, providerKey === 'openrouter')
-    if (cachedModels) modelsList = [...cachedModels]
+    const staticModels: string[] = catalogModels && catalogModels.length > 0 ? [...catalogModels] : [...(preset?.models || [])]
+    let modelsList = resolveProviderCatalogModels(
+      modelCatalogCache,
+      providerKey,
+      baseUrl,
+      staticModels,
+      {
+        freeOnly: providerKey === 'openrouter',
+        hasStaticManifest: preset?.builtin === true,
+      },
+    )
     modelsList = includeConfiguredDefaultModel(providerKey, modelsList, currentDefault, currentDefaultProvider)
     if (modelsList.length > 0) {
       const apiKey = envMapping.api_key_env ? envGetValue(envMapping.api_key_env) : ''
@@ -411,17 +419,24 @@ async function buildAvailableForProfile(
       const baseUrl = cp.base_url.replace(/\/+$/, '')
       const builtinProviderKey = providerKeyWithoutCustomPrefix(providerKey)
       const builtinPreset = PROVIDER_PRESETS.find((preset: any) => preset.value === builtinProviderKey)
-      const builtinCatalogModels = isBuiltinProviderKey(providerKey)
-        ? PROVIDER_MODEL_CATALOG[builtinProviderKey] || builtinPreset?.models || []
+      const hasStaticManifest = builtinPreset?.builtin === true
+      const builtinCatalogModels = hasStaticManifest
+        ? (PROVIDER_MODEL_CATALOG[builtinProviderKey] || builtinPreset.models || [])
         : []
-      // Pull configured models from the v12+ providers.<name>.models dict (if any)
-      // alongside the legacy single `model` field; both contribute to what the
-      // UI shows. `models` is normalized to a dict shape regardless of source.
+      // Both Hermes config styles are valid: custom providers may expose a
+      // `models` mapping (for per-model metadata/API modes) as well as the
+      // legacy single `model` field. Explicit IDs remain visible alongside the
+      // resolved live-or-static provider catalog.
       const configuredModels = cp.models ? Object.keys(cp.models) : []
-      let models = [...new Set([cp.model, ...configuredModels, ...builtinCatalogModels].filter(Boolean) as string[])]
-      const cachedModels = getCachedProviderModels(modelCatalogCache, providerKey, baseUrl)
-      if (cachedModels) models = [...new Set([...models, ...cachedModels])]
-      return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', api_mode: cp.api_mode, builtin: isBuiltinProviderKey(providerKey), provider_source: cp.source, provider_key: cp.provider_key }
+      const resolvedCatalogModels = resolveProviderCatalogModels(
+        modelCatalogCache,
+        providerKey,
+        baseUrl,
+        [...builtinCatalogModels],
+        { hasStaticManifest },
+      )
+      const models = [...new Set([cp.model, ...configuredModels, ...resolvedCatalogModels].filter(Boolean) as string[])]
+      return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', api_mode: cp.api_mode, builtin: hasStaticManifest, provider_source: cp.source, provider_key: cp.provider_key }
     }),
   )
   for (const result of customFetches) {
@@ -476,7 +491,10 @@ export async function getAvailable(ctx: any) {
       )
       const allProvidersBase = PROVIDER_PRESETS.map((p: any) => providerPresetToGroup(
         p,
-        getCachedProviderModels(modelCatalogCache, p.value, p.base_url, p.value === 'openrouter') || p.models,
+        resolveProviderCatalogModels(modelCatalogCache, p.value, p.base_url, p.models, {
+          freeOnly: p.value === 'openrouter',
+          hasStaticManifest: p.builtin === true,
+        }),
       ))
       ctx.body = {
         default: visibleDefault.defaultModel,
@@ -511,7 +529,10 @@ export async function getAvailable(ctx: any) {
       groups: visibleProfileGroups,
       allProviders: applyModelAliases(PROVIDER_PRESETS.map((p: any) => providerPresetToGroup(
         p,
-        getCachedProviderModels(modelCatalogCacheForProfile, p.value, p.base_url, p.value === 'openrouter') || p.models,
+        resolveProviderCatalogModels(modelCatalogCacheForProfile, p.value, p.base_url, p.models, {
+          freeOnly: p.value === 'openrouter',
+          hasStaticManifest: p.builtin === true,
+        }),
       )), modelAliasesForProfile),
       model_aliases: modelAliasesForProfile,
       model_visibility: modelVisibilityForProfile,

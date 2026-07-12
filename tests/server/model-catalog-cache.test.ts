@@ -170,6 +170,102 @@ describe('model catalog cache', () => {
     })
   })
 
+  it('resolves cached catalogs by source and authoritative manifest presence', async () => {
+    const { providerModelCatalogKey, resolveProviderCatalogModels } = await import(
+      '../../packages/server/src/services/hermes/model-catalog-cache'
+    )
+    const provider = 'xai'
+    const baseUrl = 'https://api.x.ai/v1'
+    const key = providerModelCatalogKey(provider, baseUrl)
+    const cachedModels = ['grok-4.3', 'grok-imagine-image']
+    const currentModels = ['grok-build-0.1', 'grok-4.3']
+    const fallbackEntry = {
+      provider,
+      label: 'xAI',
+      base_url: baseUrl,
+      models: cachedModels,
+      source: 'fallback' as const,
+      updated_at: '2026-01-01T00:00:00.000Z',
+    }
+    const fallbackCache = {
+      version: 1 as const,
+      updated_at: fallbackEntry.updated_at,
+      providers: { [key]: fallbackEntry },
+    }
+
+    expect(resolveProviderCatalogModels(
+      fallbackCache,
+      provider,
+      baseUrl,
+      currentModels,
+      { hasStaticManifest: true },
+    )).toEqual(currentModels)
+    expect(resolveProviderCatalogModels(
+      fallbackCache,
+      provider,
+      baseUrl,
+      [],
+      { hasStaticManifest: true },
+    )).toEqual([])
+    expect(resolveProviderCatalogModels(
+      fallbackCache,
+      provider,
+      baseUrl,
+      [],
+      { hasStaticManifest: false },
+    )).toEqual(cachedModels)
+    expect(resolveProviderCatalogModels(
+      { ...fallbackCache, providers: { [key]: { ...fallbackEntry, source: 'live' as const } } },
+      provider,
+      baseUrl,
+      currentModels,
+      { hasStaticManifest: true },
+    )).toEqual(cachedModels)
+    expect(resolveProviderCatalogModels(
+      { ...fallbackCache, providers: {} },
+      provider,
+      baseUrl,
+      currentModels,
+      { hasStaticManifest: true },
+    )).toEqual(currentModels)
+  })
+
+  it('preserves the last-good live catalog when a refresh returns no models', async () => {
+    const { providerModelCatalogKey, refreshProviderModelCatalog } = await import(
+      '../../packages/server/src/services/hermes/model-catalog-cache'
+    )
+    const provider = 'deepseek'
+    const baseUrl = 'https://api.deepseek.com/v1'
+    const key = providerModelCatalogKey(provider, baseUrl)
+    const lastGood = {
+      provider,
+      label: 'DeepSeek',
+      base_url: baseUrl,
+      models: ['deepseek-last-good'],
+      source: 'live' as const,
+      updated_at: '2026-06-01T12:00:00.000Z',
+      profiles: ['default'],
+    }
+    cacheText = JSON.stringify({
+      version: 1,
+      updated_at: lastGood.updated_at,
+      providers: { [key]: lastGood },
+    })
+    mockFetchProviderModels.mockResolvedValueOnce([])
+
+    await refreshProviderModelCatalog({
+      provider,
+      label: 'DeepSeek',
+      base_url: baseUrl,
+      api_key: 'failed-refresh-key',
+      fallback_models: ['deepseek-chat'],
+      profiles: ['default'],
+    })
+
+    const after = JSON.parse(cacheText)
+    expect(after.providers[key]).toEqual(lastGood)
+  })
+
   it('refreshes providers from all profiles and deduplicates identical catalogs', async () => {
     const { refreshConfiguredProviderModelCatalogs, providerModelCatalogKey } = await import(
       '../../packages/server/src/services/hermes/model-catalog-cache'
