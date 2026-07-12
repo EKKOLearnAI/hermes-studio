@@ -38,12 +38,19 @@ describe('WorkflowDetailDrawer', () => {
     const wrapper = mount(WorkflowDetailDrawer, { props: { show: true, workflow, capability, audit, saving: false } })
     await wrapper.get('[data-test="approve-workflow"]').trigger('click')
     warnings.pop().onPositiveClick()
-    expect(wrapper.emitted('approve')).toEqual([[]])
+    expect(wrapper.emitted('approve')).toHaveLength(1)
+    ;(wrapper.emitted('approve')?.[0]?.[0] as () => void)()
+    await wrapper.vm.$nextTick()
     expect(wrapper.get('[data-test="reject-workflow"]').attributes('disabled')).toBeDefined()
     await wrapper.get('[data-test="action-reason"]').setValue('Not authorized')
-    for (const action of ['reject', 'cancel']) { await wrapper.get(`[data-test="${action}-workflow"]`).trigger('click'); warnings.pop().onPositiveClick() }
-    expect(wrapper.emitted('reject')?.[0]).toEqual(['Not authorized'])
-    expect(wrapper.emitted('cancel')?.[0]).toEqual(['Not authorized'])
+    for (const action of ['reject', 'cancel']) {
+      await wrapper.get(`[data-test="${action}-workflow"]`).trigger('click')
+      warnings.pop().onPositiveClick()
+      ;(wrapper.emitted(action)?.[0]?.[1] as () => void)()
+      await wrapper.vm.$nextTick()
+    }
+    expect(wrapper.emitted('reject')?.[0]?.[0]).toBe('Not authorized')
+    expect(wrapper.emitted('cancel')?.[0]?.[0]).toBe('Not authorized')
     await wrapper.get('[data-test="workflow-drawer"]').trigger('keydown', { key: 'Escape' })
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
@@ -53,11 +60,47 @@ describe('WorkflowDetailDrawer', () => {
     const failed = { ...workflow, state: 'failed' }
     const wrapper = mount(WorkflowDetailDrawer, { props: { show: true, workflow: failed, capability, audit, saving: false } })
     await wrapper.get('[data-test="retry-workflow"]').trigger('click'); warnings.pop().onPositiveClick()
-    expect(wrapper.emitted('retry')).toEqual([[]])
+    expect(wrapper.emitted('retry')).toHaveLength(1)
+    ;(wrapper.emitted('retry')?.[0]?.[0] as () => void)()
     await wrapper.setProps({ workflow: { ...workflow, state: 'succeeded' } })
     await wrapper.get('[data-test="action-reason"]').setValue('Restore preference')
     expect(wrapper.get('[data-test="compensation-eligible"]').exists()).toBe(true)
     await wrapper.get('[data-test="compensate-workflow"]').trigger('click'); warnings.pop().onPositiveClick()
-    expect(wrapper.emitted('compensate')?.[0]).toEqual(['Restore preference'])
+    expect(wrapper.emitted('compensate')?.[0]?.[0]).toBe('Restore preference')
+  })
+
+  it('serializes confirmation creation and positive submission until saving completes', async () => {
+    warnings.length = 0
+    const wrapper = mount(WorkflowDetailDrawer, { props: { show: true, workflow, capability, audit, saving: false } })
+    const button = wrapper.get('[data-test="approve-workflow"]')
+
+    await Promise.all([button.trigger('click'), button.trigger('click')])
+    expect(warnings).toHaveLength(1)
+    expect(button.attributes('disabled')).toBeDefined()
+    warnings[0].onPositiveClick()
+    warnings[0].onPositiveClick()
+    expect(wrapper.emitted('approve')).toHaveLength(1)
+    warnings[0].onClose()
+    await wrapper.vm.$nextTick()
+    expect(button.attributes('disabled')).toBeDefined()
+
+    await wrapper.setProps({ saving: true })
+    await wrapper.setProps({ saving: false })
+    expect(button.attributes('disabled')).toBeUndefined()
+    await button.trigger('click')
+    expect(warnings).toHaveLength(2)
+  })
+
+  it('releases an unsubmitted confirmation after cancellation', async () => {
+    warnings.length = 0
+    const wrapper = mount(WorkflowDetailDrawer, { props: { show: true, workflow, capability, audit, saving: false } })
+    const button = wrapper.get('[data-test="approve-workflow"]')
+
+    await button.trigger('click')
+    warnings[0].onNegativeClick()
+    await wrapper.vm.$nextTick()
+    await button.trigger('click')
+
+    expect(warnings).toHaveLength(2)
   })
 })

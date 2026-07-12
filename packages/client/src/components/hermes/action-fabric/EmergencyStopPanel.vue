@@ -1,17 +1,21 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useDialog } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import type { ActionControlDto, EmergencyStopInput } from '@/api/hermes/action-fabric'
 import { useActionFabricMessages } from './action-fabric-messages'
 
 const props = defineProps<{ control: ActionControlDto | null; saving: boolean }>()
-const emit = defineEmits<{ update: [input: EmergencyStopInput] }>()
+type ConfirmationComplete = () => void
+const emit = defineEmits<{ update: [input: EmergencyStopInput, complete: ConfirmationComplete] }>()
 const dialog = useDialog()
 const { locale } = useI18n()
 const { messages: m } = useActionFabricMessages(locale)
 const selectedLevel = ref<0 | 1 | 2 | 3>(0)
 const reason = ref('')
+const confirming = ref(false)
+let submitted = false
+let sawSaving = false
 watch(() => props.control?.level, level => { if (level !== undefined) selectedLevel.value = level }, { immediate: true })
 const levels = computed(() => [
   { level: 0 as const, title: m.value.level0, description: m.value.level0Description },
@@ -19,12 +23,50 @@ const levels = computed(() => [
   { level: 2 as const, title: m.value.level2, description: m.value.level2Description },
   { level: 3 as const, title: m.value.level3, description: m.value.level3Description },
 ])
-const canApply = computed(() => Boolean(props.control && selectedLevel.value !== props.control.level && reason.value.trim() && !props.saving))
+const canApply = computed(() => Boolean(props.control && selectedLevel.value !== props.control.level && reason.value.trim() && !props.saving && !confirming.value))
+watch(() => props.saving, saving => {
+  if (!confirming.value || !submitted) return
+  if (saving) sawSaving = true
+  else if (sawSaving) releaseConfirmation()
+})
+onBeforeUnmount(() => releaseConfirmation())
+
+function releaseConfirmation(): void {
+  confirming.value = false
+  submitted = false
+  sawSaving = false
+}
+function completeConfirmation(): void {
+  if (confirming.value && submitted) releaseConfirmation()
+}
+function dismissConfirmation(): void {
+  if (!submitted) releaseConfirmation()
+}
 
 function apply(): void {
   if (!props.control || !canApply.value) return
+  confirming.value = true
+  submitted = false
+  sawSaving = false
   const input: EmergencyStopInput = { level: selectedLevel.value, reason: reason.value.trim(), expectedVersion: props.control.version }
-  dialog.warning({ title: m.value.confirmControl, content: levels.value[selectedLevel.value].description, positiveText: m.value.applyControl, negativeText: m.value.cancel, onPositiveClick: () => emit('update', input) })
+  try {
+    dialog.warning({
+      title: m.value.confirmControl,
+      content: levels.value[selectedLevel.value].description,
+      positiveText: m.value.applyControl,
+      negativeText: m.value.cancel,
+      onPositiveClick: () => {
+        if (!confirming.value || submitted) return
+        submitted = true
+        emit('update', input, completeConfirmation)
+      },
+      onNegativeClick: dismissConfirmation,
+      onClose: dismissConfirmation,
+    })
+  } catch (cause) {
+    releaseConfirmation()
+    throw cause
+  }
 }
 </script>
 
@@ -32,14 +74,14 @@ function apply(): void {
   <section class="emergency" aria-labelledby="emergency-title">
     <h3 id="emergency-title">{{ m.emergencyStop }}</h3>
     <p v-if="control" data-test="emergency-current"><strong>{{ m.currentControl }}:</strong> {{ levels[control.level].title }} · {{ m.version }} {{ control.version }} · {{ m.lastUpdated }} {{ control.updatedAt || '—' }}</p>
-    <fieldset :disabled="saving || !control" :aria-label="m.chooseLevel">
+    <fieldset :disabled="saving || confirming || !control" :aria-label="m.chooseLevel">
       <legend>{{ m.chooseLevel }}</legend>
       <label v-for="item in levels" :key="item.level" :data-test="`emergency-level-${item.level}`" class="level-option">
         <input v-model.number="selectedLevel" type="radio" name="emergency-level" :value="item.level" :data-test="`emergency-level-input-${item.level}`">
         <span><strong>{{ item.title }}</strong><small>{{ item.description }}</small></span>
       </label>
     </fieldset>
-    <label class="reason-label">{{ m.controlReason }}<textarea v-model="reason" data-test="emergency-reason" rows="2" :disabled="saving" /></label>
+    <label class="reason-label">{{ m.controlReason }}<textarea v-model="reason" data-test="emergency-reason" rows="2" :disabled="saving || confirming" /></label>
     <p v-if="!reason.trim()" role="status" aria-live="polite">{{ m.reasonRequired }}</p>
     <button data-test="apply-emergency-stop" type="button" :disabled="!canApply" @click="apply">{{ saving ? m.saving : m.applyControl }}</button>
   </section>

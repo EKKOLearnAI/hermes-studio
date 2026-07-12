@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { NAlert, NButton, NEmpty, NSpin, NTag } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import type { ActionAuditEventDto, ActionCapabilityDto, ActionWorkflowSummaryDto } from '@/api/hermes/action-fabric'
+import type { ActionAuditEventDto, ActionCapabilityDto, ActionWorkflowSummaryDto, EmergencyStopInput } from '@/api/hermes/action-fabric'
 import { useActionFabricStore } from '@/stores/hermes/action-fabric'
 import { useAssistantRolesStore } from '@/stores/hermes/assistant-roles'
 import CapabilityRegistryPanel from './CapabilityRegistryPanel.vue'
@@ -159,6 +159,20 @@ async function mutateWorkflow(id: string, operation: () => Promise<unknown>): Pr
   if (!hasCurrentSelection(id, sequence)) return
   if (await refreshSelectedWorkflowAudit(id, sequence)) announcement.value = m.value.updated
 }
+type ConfirmationComplete = () => void
+function runSelectedMutation(complete: ConfirmationComplete, operation: (id: string) => Promise<unknown>): void {
+  const id = store.selectedWorkflowId
+  if (!id) { complete(); return }
+  void mutateWorkflow(id, () => operation(id)).finally(complete)
+}
+function updateControl(input: EmergencyStopInput, complete: ConfirmationComplete): void {
+  void mutateControl(() => store.updateEmergencyStop(input)).finally(complete)
+}
+function approveSelected(complete: ConfirmationComplete): void { runSelectedMutation(complete, id => store.approveWorkflow(id)) }
+function rejectSelected(reason: string, complete: ConfirmationComplete): void { runSelectedMutation(complete, id => store.rejectWorkflow(id, reason)) }
+function retrySelected(complete: ConfirmationComplete): void { runSelectedMutation(complete, id => store.retryWorkflow(id)) }
+function cancelSelected(reason: string, complete: ConfirmationComplete): void { runSelectedMutation(complete, id => store.cancelWorkflow(id, reason)) }
+function compensateSelected(reason: string, complete: ConfirmationComplete): void { runSelectedMutation(complete, id => store.compensateWorkflow(id, reason)) }
 </script>
 
 <template>
@@ -176,8 +190,8 @@ async function mutateWorkflow(id: string, operation: () => Promise<unknown>): Pr
     </div>
     <NAlert v-if="store.selectedWorkflowId && !store.selectedWorkflow && !store.loading" data-test="action-stale-selection" type="warning">{{ m.staleSelection }}</NAlert>
     <CapabilityRegistryPanel :capabilities="store.capabilities" :executors="store.executors" :roles="rolesStore.roles" />
-    <EmergencyStopPanel :control="store.control" :saving="store.saving" @update="mutateControl(() => store.updateEmergencyStop($event))" />
-    <WorkflowDetailDrawer :show="Boolean(store.selectedWorkflowId)" :workflow="store.selectedWorkflow" :capability="selectedCapability" :audit="selectedWorkflowAudit" :saving="store.saving" @close="closeDrawer" @approve="store.selectedWorkflowId && mutateWorkflow(store.selectedWorkflowId, () => store.approveWorkflow(store.selectedWorkflowId!))" @reject="store.selectedWorkflowId && mutateWorkflow(store.selectedWorkflowId, () => store.rejectWorkflow(store.selectedWorkflowId!, $event))" @retry="store.selectedWorkflowId && mutateWorkflow(store.selectedWorkflowId, () => store.retryWorkflow(store.selectedWorkflowId!))" @cancel="store.selectedWorkflowId && mutateWorkflow(store.selectedWorkflowId, () => store.cancelWorkflow(store.selectedWorkflowId!, $event))" @compensate="store.selectedWorkflowId && mutateWorkflow(store.selectedWorkflowId, () => store.compensateWorkflow(store.selectedWorkflowId!, $event))" />
+    <EmergencyStopPanel :control="store.control" :saving="store.saving" @update="updateControl" />
+    <WorkflowDetailDrawer :show="Boolean(store.selectedWorkflowId)" :workflow="store.selectedWorkflow" :capability="selectedCapability" :audit="selectedWorkflowAudit" :saving="store.saving" @close="closeDrawer" @approve="approveSelected" @reject="rejectSelected" @retry="retrySelected" @cancel="cancelSelected" @compensate="compensateSelected" />
   </section>
 </template>
 

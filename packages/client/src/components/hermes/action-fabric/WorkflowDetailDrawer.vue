@@ -1,49 +1,101 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { NDrawer, NDrawerContent, NTag, useDialog } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import type { ActionAuditEventDto, ActionCapabilityDto, ActionJsonValue, ActionWorkflowDetailDto } from '@/api/hermes/action-fabric'
 import { useActionFabricMessages } from './action-fabric-messages'
 
 const props = defineProps<{ show: boolean; workflow: ActionWorkflowDetailDto | null; capability: ActionCapabilityDto | null; audit: ActionAuditEventDto[]; saving: boolean }>()
-const emit = defineEmits<{ close: []; approve: []; reject: [reason: string]; retry: []; cancel: [reason: string]; compensate: [reason: string] }>()
+type ConfirmationComplete = () => void
+const emit = defineEmits<{
+  close: []
+  approve: [complete: ConfirmationComplete]
+  reject: [reason: string, complete: ConfirmationComplete]
+  retry: [complete: ConfirmationComplete]
+  cancel: [reason: string, complete: ConfirmationComplete]
+  compensate: [reason: string, complete: ConfirmationComplete]
+}>()
 const dialog = useDialog()
 const { locale } = useI18n()
 const { messages: m } = useActionFabricMessages(locale)
 const reason = ref('')
 const drawer = ref<HTMLElement | null>(null)
+const confirming = ref(false)
+let submitted = false
+let sawSaving = false
 const needsApproval = computed(() => props.workflow?.state === 'waiting_user')
 const canRetry = computed(() => props.workflow?.state === 'failed' || props.workflow?.state === 'dead_letter')
 const canCancel = computed(() => Boolean(props.workflow && ['draft', 'policy_check', 'preparing', 'executing', 'verifying', 'waiting_user', 'retrying'].includes(props.workflow.state)))
 const canCompensate = computed(() => Boolean(props.workflow?.state === 'succeeded' && props.capability?.reversible && !props.workflow.compensationIntentId))
 
 watch(() => props.show, async show => {
-  if (!show) return
+  if (!show) { releaseConfirmation(); return }
   reason.value = ''
   await nextTick()
   const first = drawer.value?.querySelector<HTMLButtonElement>('button:not([disabled])')
   if (first) first.focus(); else drawer.value?.focus()
 })
+watch(() => props.saving, saving => {
+  if (!confirming.value || !submitted) return
+  if (saving) sawSaving = true
+  else if (sawSaving) releaseConfirmation()
+})
+onBeforeUnmount(() => releaseConfirmation())
 
 function boundedJson(value: ActionJsonValue | undefined): string {
   try { return JSON.stringify(value ?? null, null, 2).slice(0, 4000) } catch { return 'null' }
 }
-function confirm(label: string, action: () => void): void {
-  if (!props.workflow) return
-  dialog.warning({ title: m.value.confirmTitle, content: `${m.value.confirmAction}: ${props.workflow.id}`, positiveText: label, negativeText: m.value.close, onPositiveClick: action })
+function releaseConfirmation(): void {
+  confirming.value = false
+  submitted = false
+  sawSaving = false
 }
-function withReason(label: string, action: (value: string) => void): void {
+function completeConfirmation(): void {
+  if (confirming.value && submitted) releaseConfirmation()
+}
+function dismissConfirmation(): void {
+  if (!submitted) releaseConfirmation()
+}
+function confirm(label: string, action: (complete: ConfirmationComplete) => void): void {
+  if (!props.workflow || confirming.value) return
+  confirming.value = true
+  submitted = false
+  sawSaving = false
+  try {
+    dialog.warning({
+      title: m.value.confirmTitle,
+      content: `${m.value.confirmAction}: ${props.workflow.id}`,
+      positiveText: label,
+      negativeText: m.value.close,
+      onPositiveClick: () => {
+        if (!confirming.value || submitted) return
+        submitted = true
+        action(completeConfirmation)
+      },
+      onNegativeClick: dismissConfirmation,
+      onClose: dismissConfirmation,
+    })
+  } catch (cause) {
+    releaseConfirmation()
+    throw cause
+  }
+}
+function withReason(label: string, action: (value: string, complete: ConfirmationComplete) => void): void {
   const value = reason.value.trim()
   if (!value) return
-  confirm(label, () => action(value))
+  confirm(label, complete => action(value, complete))
+}
+function closeDrawer(): void {
+  releaseConfirmation()
+  emit('close')
 }
 </script>
 
 <template>
-  <NDrawer :show="show" :width="680" placement="right" @update:show="!$event && emit('close')">
+  <NDrawer :show="show" :width="680" placement="right" @update:show="!$event && closeDrawer()">
     <NDrawerContent :title="m.workflow" closable>
-      <section v-if="workflow" ref="drawer" data-test="workflow-drawer" class="detail" tabindex="-1" @keydown.esc.stop="emit('close')">
-        <button type="button" class="native-close" :aria-label="m.close" @click="emit('close')">{{ m.close }}</button>
+      <section v-if="workflow" ref="drawer" data-test="workflow-drawer" class="detail" tabindex="-1" @keydown.esc.stop="closeDrawer">
+        <button type="button" class="native-close" :aria-label="m.close" @click="closeDrawer">{{ m.close }}</button>
         <dl class="summary">
           <dt>{{ m.workflow }}</dt><dd>{{ workflow.id }}</dd><dt>{{ m.role }}</dt><dd>{{ workflow.requestedByRoleId }}</dd>
           <dt>{{ m.capability }}</dt><dd>{{ workflow.capabilityId }}</dd><dt>{{ m.executor }}</dt><dd>{{ workflow.executorId || '—' }}</dd>
@@ -57,11 +109,11 @@ function withReason(label: string, action: (value: string) => void): void {
         <p v-if="canCompensate" data-test="compensation-eligible" role="status">{{ m.compensationEligible }}</p><p v-else>{{ m.compensationUnavailable }}</p>
         <label class="reason">{{ m.reason }}<input v-model="reason" data-test="action-reason" type="text" maxlength="500"></label>
         <div class="actions" aria-label="Workflow actions">
-          <button v-if="needsApproval" data-test="approve-workflow" type="button" :disabled="saving" @click="confirm(m.approve, () => emit('approve'))">{{ m.approve }}</button>
-          <button v-if="needsApproval" data-test="reject-workflow" type="button" :disabled="saving || !reason.trim()" @click="withReason(m.reject, value => emit('reject', value))">{{ m.reject }}</button>
-          <button v-if="canRetry" data-test="retry-workflow" type="button" :disabled="saving" @click="confirm(m.retry, () => emit('retry'))">{{ m.retry }}</button>
-          <button v-if="canCancel" data-test="cancel-workflow" type="button" :disabled="saving || !reason.trim()" @click="withReason(m.cancel, value => emit('cancel', value))">{{ m.cancel }}</button>
-          <button v-if="canCompensate" data-test="compensate-workflow" type="button" :disabled="saving || !reason.trim()" @click="withReason(m.compensate, value => emit('compensate', value))">{{ m.compensate }}</button>
+          <button v-if="needsApproval" data-test="approve-workflow" type="button" :disabled="saving || confirming" @click="confirm(m.approve, complete => emit('approve', complete))">{{ m.approve }}</button>
+          <button v-if="needsApproval" data-test="reject-workflow" type="button" :disabled="saving || confirming || !reason.trim()" @click="withReason(m.reject, (value, complete) => emit('reject', value, complete))">{{ m.reject }}</button>
+          <button v-if="canRetry" data-test="retry-workflow" type="button" :disabled="saving || confirming" @click="confirm(m.retry, complete => emit('retry', complete))">{{ m.retry }}</button>
+          <button v-if="canCancel" data-test="cancel-workflow" type="button" :disabled="saving || confirming || !reason.trim()" @click="withReason(m.cancel, (value, complete) => emit('cancel', value, complete))">{{ m.cancel }}</button>
+          <button v-if="canCompensate" data-test="compensate-workflow" type="button" :disabled="saving || confirming || !reason.trim()" @click="withReason(m.compensate, (value, complete) => emit('compensate', value, complete))">{{ m.compensate }}</button>
         </div>
       </section>
     </NDrawerContent>

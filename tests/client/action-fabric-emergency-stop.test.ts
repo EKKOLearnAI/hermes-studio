@@ -26,6 +26,43 @@ describe('EmergencyStopPanel', () => {
     await wrapper.get('[data-test="apply-emergency-stop"]').trigger('click')
     expect(warnings).toHaveLength(1)
     warnings[0].onPositiveClick()
-    expect(wrapper.emitted('update')?.[0]).toEqual([{ level: 2, reason: 'Incident containment', expectedVersion: 7 }])
+    expect(wrapper.emitted('update')?.[0]?.[0]).toEqual({ level: 2, reason: 'Incident containment', expectedVersion: 7 })
+  })
+
+  it('serializes dialog creation and emits one versioned update for repeated positive callbacks', async () => {
+    warnings.length = 0
+    const wrapper = mount(EmergencyStopPanel, { props: { control: { level: 0, version: 7, actorUserId: null, reason: '', updatedAt: 'now' }, saving: false } })
+    await wrapper.get('[data-test="emergency-level-input-2"]').setValue(true)
+    await wrapper.get('[data-test="emergency-reason"]').setValue('Incident containment')
+    const button = wrapper.get('[data-test="apply-emergency-stop"]')
+
+    await Promise.all([button.trigger('click'), button.trigger('click')])
+    expect(warnings).toHaveLength(1)
+    warnings[0].onPositiveClick()
+    warnings[0].onPositiveClick()
+    expect(wrapper.emitted('update')).toHaveLength(1)
+    expect(wrapper.emitted('update')?.[0]?.[0]).toEqual({ level: 2, reason: 'Incident containment', expectedVersion: 7 })
+    warnings[0].onClose()
+    await wrapper.vm.$nextTick()
+    expect(button.attributes('disabled')).toBeDefined()
+
+    await wrapper.setProps({ saving: true })
+    await wrapper.setProps({ saving: false })
+    expect(button.attributes('disabled')).toBeUndefined()
+  })
+
+  it('releases a cancelled confirmation so the same version can be confirmed again', async () => {
+    warnings.length = 0
+    const wrapper = mount(EmergencyStopPanel, { props: { control: { level: 0, version: 7, actorUserId: null, reason: '', updatedAt: 'now' }, saving: false } })
+    await wrapper.get('[data-test="emergency-level-input-2"]').setValue(true)
+    await wrapper.get('[data-test="emergency-reason"]').setValue('Incident containment')
+    const button = wrapper.get('[data-test="apply-emergency-stop"]')
+
+    await button.trigger('click')
+    warnings[0].onNegativeClick()
+    await wrapper.vm.$nextTick()
+    await button.trigger('click')
+
+    expect(warnings).toHaveLength(2)
   })
 })
