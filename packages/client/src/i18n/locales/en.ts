@@ -843,6 +843,9 @@ export default {
       value: 'JSON value',
       pathRequired: 'Path is required',
       valueInvalid: 'Value must be valid JSON',
+      loop: 'Feedback loop',
+      maxIterations: 'Maximum iterations',
+      loopConditionRequired: 'A feedback loop requires a condition',
       operators: {
         equals: 'Equals',
         not_equals: 'Not equals',

@@ -748,6 +748,9 @@ export default {
       value: 'Значение JSON',
       pathRequired: 'Путь обязателен',
       valueInvalid: 'Значение должно быть корректным JSON',
+      loop: 'Цикл обратной связи',
+      maxIterations: 'Максимум итераций',
+      loopConditionRequired: 'Для цикла обратной связи требуется условие',
       operators: {
         equals: 'Равно',
         not_equals: 'Не равно',

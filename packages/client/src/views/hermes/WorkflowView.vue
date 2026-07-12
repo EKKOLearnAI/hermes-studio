@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { NButton, NCheckbox, NDrawer, NDrawerContent, NDropdown, NInput, NModal, NPopconfirm, NSelect, NSpace, NTooltip, useMessage, type DropdownOption } from 'naive-ui'
+import { NButton, NCheckbox, NDrawer, NDrawerContent, NDropdown, NInput, NInputNumber, NModal, NPopconfirm, NSelect, NSpace, NTooltip, useMessage, type DropdownOption } from 'naive-ui'
 import {
   ConnectionLineType,
   MarkerType,
@@ -99,6 +99,7 @@ interface WorkflowEdgeData {
   orchestration: {
     route: 'success' | 'failure' | 'always'
     condition?: WorkflowEdgeCondition
+    loop?: { maxIterations: number }
   }
 }
 
@@ -140,6 +141,8 @@ const edgePolicyEditorConditionEnabled = ref(false)
 const edgePolicyEditorConditionPath = ref('')
 const edgePolicyEditorConditionOperator = ref<WorkflowEdgeCondition['operator']>('equals')
 const edgePolicyEditorConditionValue = ref('')
+const edgePolicyEditorLoopEnabled = ref(false)
+const edgePolicyEditorLoopMaxIterations = ref(2)
 const edgePolicyConditionOperatorOptions = computed(() => [
   'equals', 'not_equals', 'exists', 'truthy', 'contains',
 ].map(value => ({ label: t(`workflow.edgePolicy.operators.${value}`), value })))
@@ -598,10 +601,12 @@ function cloneWorkflowDefinitionNodes(source: WorkflowNode[]): WorkflowNode[] {
 
 function cloneWorkflowEdgeData(data?: WorkflowEdgeData): WorkflowEdgeData | undefined {
   if (!data) return undefined
-  const condition = data.orchestration.condition
+  const policy = data.orchestration
+  const condition = policy.condition
   return {
     orchestration: {
-      route: data.orchestration.route,
+      route: policy.route,
+      ...(policy.loop ? { loop: structuredClone(policy.loop) } : {}),
       ...(condition ? {
         condition: {
           path: condition.path,
@@ -1700,6 +1705,8 @@ function handleEdgeClick(payload: { edge: { id: string } }) {
   edgePolicyEditorEdgeId.value = edge.id
   const policy = edge.data?.orchestration
   edgePolicyEditorRoute.value = policy?.route || 'success'
+  edgePolicyEditorLoopEnabled.value = Boolean(policy?.loop)
+  edgePolicyEditorLoopMaxIterations.value = policy?.loop?.maxIterations || 2
   edgePolicyEditorConditionEnabled.value = Boolean(policy?.condition)
   edgePolicyEditorConditionPath.value = policy?.condition?.path || ''
   edgePolicyEditorConditionOperator.value = policy?.condition?.operator || 'equals'
@@ -1720,6 +1727,10 @@ function parseEdgeConditionValue(): { ok: true; value: unknown } | { ok: false }
 function saveEdgePolicy() {
   const edgeId = edgePolicyEditorEdgeId.value
   if (!edgeId || selectedWorkflowRunId.value) return
+  if (edgePolicyEditorLoopEnabled.value && !edgePolicyEditorConditionEnabled.value) {
+    message.error(t('workflow.edgePolicy.loopConditionRequired'))
+    return
+  }
   let condition: WorkflowEdgeCondition | undefined
   if (edgePolicyEditorConditionEnabled.value) {
     const path = edgePolicyEditorConditionPath.value.trim()
@@ -1738,7 +1749,13 @@ function saveEdgePolicy() {
     }
   }
   edges.value = edges.value.map(edge => edge.id === edgeId
-    ? { ...edge, data: { orchestration: { route: edgePolicyEditorRoute.value, ...(condition ? { condition } : {}) } } }
+    ? { ...edge, data: { orchestration: {
+        route: edgePolicyEditorRoute.value,
+        ...(condition ? { condition } : {}),
+        ...(edgePolicyEditorLoopEnabled.value
+          ? { loop: { maxIterations: edgePolicyEditorLoopMaxIterations.value } }
+          : {}),
+      } } }
     : edge)
   edgePolicyEditorVisible.value = false
 }
@@ -2127,6 +2144,11 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
           <NInput v-model:value="edgePolicyEditorConditionValue" type="textarea" />
         </label>
       </template>
+      <NCheckbox v-model:checked="edgePolicyEditorLoopEnabled">{{ t('workflow.edgePolicy.loop') }}</NCheckbox>
+      <label v-if="edgePolicyEditorLoopEnabled" class="workflow-field">
+        <span class="workflow-field-label">{{ t('workflow.edgePolicy.maxIterations') }}</span>
+        <NInputNumber v-model:value="edgePolicyEditorLoopMaxIterations" :min="1" :max="100" :precision="0" />
+      </label>
       <template #footer>
         <NSpace justify="end">
           <NButton @click="edgePolicyEditorVisible = false">{{ t('common.cancel') }}</NButton>

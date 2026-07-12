@@ -5,6 +5,8 @@ import {
   WORKFLOW_RUN_EDGE_EVALUATIONS_INDEXES,
   WORKFLOW_RUN_EDGE_EVALUATIONS_SCHEMA,
   WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE,
+  WORKFLOW_RUN_NODE_SESSIONS_INDEXES,
+  WORKFLOW_RUN_NODE_SESSIONS_SCHEMA,
   WORKFLOW_RUN_NODE_SESSIONS_TABLE,
   WORKFLOW_RUNS_TABLE,
 } from './schemas'
@@ -32,6 +34,7 @@ export interface WorkflowRunNodeSessionRecord {
   run_id: string
   workflow_id: string
   node_id: string
+  iteration_path: number[]
   session_id: string
   profile: string
   agent: string
@@ -59,6 +62,7 @@ export interface WorkflowRunEdgeEvaluationRecord {
   status: WorkflowRunEdgeEvaluationStatus
   reason: string
   sequence: number
+  iteration_path: number[]
   evaluated_at: number
 }
 
@@ -68,6 +72,12 @@ function profileName(value?: string | null): string {
 
 function sqliteTableExists(db: NonNullable<ReturnType<typeof getDb>>, tableName: string): boolean {
   return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName))
+}
+
+function ensureWorkflowRunNodeSessionIterationSchema(db: NonNullable<ReturnType<typeof getDb>>): void {
+  syncTable(WORKFLOW_RUN_NODE_SESSIONS_TABLE, WORKFLOW_RUN_NODE_SESSIONS_SCHEMA)
+  db.exec('DROP INDEX IF EXISTS uniq_workflow_run_node_sessions_run_node')
+  db.exec(WORKFLOW_RUN_NODE_SESSIONS_INDEXES.uniq_workflow_run_node_sessions_run_node_iteration)
 }
 
 function parseArrayJson(value: unknown): unknown[] {
@@ -110,6 +120,7 @@ function rowToEdgeEvaluationRecord(row: Record<string, any>): WorkflowRunEdgeEva
     status: String(row.status || 'not_taken') as WorkflowRunEdgeEvaluationStatus,
     reason: String(row.reason || ''),
     sequence: Number(row.sequence || 0),
+    iteration_path: parseArrayJson(row.iteration_path_json ?? row.iteration_path).map(Number),
     evaluated_at: Number(row.evaluated_at || 0),
   }
 }
@@ -120,6 +131,7 @@ function rowToNodeSessionRecord(row: Record<string, any>): WorkflowRunNodeSessio
     run_id: String(row.run_id || ''),
     workflow_id: String(row.workflow_id || ''),
     node_id: String(row.node_id || ''),
+    iteration_path: parseArrayJson(row.iteration_path_json ?? row.iteration_path).map(Number),
     session_id: String(row.session_id || ''),
     profile: profileName(row.profile),
     agent: String(row.agent || ''),
@@ -307,6 +319,7 @@ export function createWorkflowRunNodeSession(input: {
   run_id: string
   workflow_id: string
   node_id: string
+  iteration_path?: number[]
   session_id: string
   profile?: string | null
   agent?: string | null
@@ -323,6 +336,7 @@ export function createWorkflowRunNodeSession(input: {
     run_id: input.run_id,
     workflow_id: input.workflow_id,
     node_id: input.node_id,
+    iteration_path: input.iteration_path || [],
     session_id: input.session_id,
     profile: profileName(input.profile),
     agent: input.agent?.trim() || '',
@@ -340,16 +354,18 @@ export function createWorkflowRunNodeSession(input: {
     jsonSet(WORKFLOW_RUN_NODE_SESSIONS_TABLE, record.id, record as any)
     return record
   }
+  ensureWorkflowRunNodeSessionIterationSchema(db)
   db.prepare(`
     INSERT INTO ${WORKFLOW_RUN_NODE_SESSIONS_TABLE} (
-      id, run_id, workflow_id, node_id, session_id, profile, agent, agent_mode,
+      id, run_id, workflow_id, node_id, iteration_path_json, session_id, profile, agent, agent_mode,
       status, sequence, started_at, finished_at, created_at, updated_at, error
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     record.id,
     record.run_id,
     record.workflow_id,
     record.node_id,
+    JSON.stringify(record.iteration_path),
     record.session_id,
     record.profile,
     record.agent,
@@ -461,6 +477,7 @@ export function createWorkflowRunEdgeEvaluation(input: {
   status: WorkflowRunEdgeEvaluationStatus
   reason: string
   sequence: number
+  iteration_path?: number[]
   evaluated_at?: number
 }): WorkflowRunEdgeEvaluationRecord {
   const record: WorkflowRunEdgeEvaluationRecord = {
@@ -474,6 +491,7 @@ export function createWorkflowRunEdgeEvaluation(input: {
     status: input.status,
     reason: input.reason,
     sequence: input.sequence,
+    iteration_path: input.iteration_path || [],
     evaluated_at: input.evaluated_at ?? Date.now(),
   }
   const db = getDb()
@@ -481,20 +499,18 @@ export function createWorkflowRunEdgeEvaluation(input: {
     jsonSet(WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE, record.id, record as any)
     return record
   }
-  if (!sqliteTableExists(db, WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE)) {
-    syncTable(WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE, WORKFLOW_RUN_EDGE_EVALUATIONS_SCHEMA, {
-      indexes: WORKFLOW_RUN_EDGE_EVALUATIONS_INDEXES,
-    })
-  }
+  syncTable(WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE, WORKFLOW_RUN_EDGE_EVALUATIONS_SCHEMA, {
+    indexes: WORKFLOW_RUN_EDGE_EVALUATIONS_INDEXES,
+  })
   db.prepare(`
     INSERT INTO ${WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE} (
       id, run_id, workflow_id, edge_id, source_node_id, target_node_id,
-      route, status, reason, sequence, evaluated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      route, status, reason, sequence, iteration_path_json, evaluated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     record.id, record.run_id, record.workflow_id, record.edge_id,
     record.source_node_id, record.target_node_id, record.route,
-    record.status, record.reason, record.sequence, record.evaluated_at,
+    record.status, record.reason, record.sequence, JSON.stringify(record.iteration_path), record.evaluated_at,
   )
   return record
 }

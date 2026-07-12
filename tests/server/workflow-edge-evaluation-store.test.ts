@@ -79,6 +79,23 @@ describe('workflow edge evaluation store', () => {
     expect(listWorkflowRunEdgeEvaluations('legacy-run')).toEqual([])
   })
 
+  it('persists the loop iteration identity on edge evidence', async () => {
+    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
+    const {
+      createWorkflowRun,
+      createWorkflowRunEdgeEvaluation,
+      listWorkflowRunEdgeEvaluations,
+    } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    const workflow = createWorkflow({ name: 'Iteration evidence', profile: 'default' })
+    const run = createWorkflowRun({ workflow_id: workflow.id, status: 'running' })
+    createWorkflowRunEdgeEvaluation({
+      run_id: run.id, workflow_id: workflow.id, edge_id: 'review-draft',
+      source_node_id: 'review', target_node_id: 'draft', route: 'success',
+      status: 'taken', reason: 'feedback requested', sequence: 0, iteration_path: [2],
+    })
+    expect(listWorkflowRunEdgeEvaluations(run.id)[0].iteration_path).toEqual([2])
+  })
+
   it('deletes edge evaluations with their workflow run', async () => {
     const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
     const {

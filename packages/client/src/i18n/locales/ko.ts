@@ -2060,6 +2060,9 @@ export default {
       value: 'JSON 값',
       pathRequired: '경로가 필요합니다',
       valueInvalid: '값은 유효한 JSON이어야 합니다',
+      loop: '피드백 루프',
+      maxIterations: '최대 반복 횟수',
+      loopConditionRequired: '피드백 루프에는 조건이 필요합니다',
       operators: {
         equals: '같음',
         not_equals: '같지 않음',

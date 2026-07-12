@@ -843,6 +843,9 @@ export default {
       value: 'JSON 值',
       pathRequired: '屬性路徑不能為空',
       valueInvalid: '值必須是有效的 JSON',
+      loop: '回饋迴圈',
+      maxIterations: '最大迭代次數',
+      loopConditionRequired: '回饋迴圈必須設定條件',
       operators: {
         equals: '等於',
         not_equals: '不等於',

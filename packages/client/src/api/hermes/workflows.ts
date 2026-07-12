@@ -73,6 +73,7 @@ export interface WorkflowRunEdgeEvaluationRecord {
   status: 'taken' | 'not_taken' | 'error'
   reason: string
   sequence: number
+  iteration_path: number[]
   evaluated_at: number
 }
 

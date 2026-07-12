@@ -23,6 +23,7 @@ describe('workflow runtime status contract', () => {
     const source = read('packages/client/src/api/hermes/workflows.ts')
     expect(source).toMatch(/edge_evaluations\?: WorkflowRunEdgeEvaluationRecord\[\]/)
     expect(source).toContain("status: 'taken' | 'not_taken' | 'error'")
+    expect(source).toContain('iteration_path: number[]')
   })
 
   it('renders edge evaluation evidence for the selected workflow run in every locale', () => {

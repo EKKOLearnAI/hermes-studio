@@ -204,6 +204,7 @@ export const WORKFLOW_RUN_NODE_SESSIONS_SCHEMA: Record<string, string> = {
   run_id: 'TEXT NOT NULL',
   workflow_id: 'TEXT NOT NULL',
   node_id: 'TEXT NOT NULL',
+  iteration_path_json: "TEXT NOT NULL DEFAULT '[]'",
   session_id: 'TEXT NOT NULL',
   profile: "TEXT NOT NULL DEFAULT 'default'",
   agent: "TEXT NOT NULL DEFAULT ''",
@@ -224,7 +225,7 @@ export const WORKFLOW_RUN_NODE_SESSIONS_INDEXES = {
   idx_workflow_run_node_sessions_session: 'CREATE INDEX IF NOT EXISTS idx_workflow_run_node_sessions_session ON workflow_run_node_sessions(session_id)',
   idx_workflow_run_node_sessions_status: 'CREATE INDEX IF NOT EXISTS idx_workflow_run_node_sessions_status ON workflow_run_node_sessions(status)',
   idx_workflow_run_node_sessions_sequence: 'CREATE INDEX IF NOT EXISTS idx_workflow_run_node_sessions_sequence ON workflow_run_node_sessions(run_id, sequence)',
-  uniq_workflow_run_node_sessions_run_node: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_workflow_run_node_sessions_run_node ON workflow_run_node_sessions(run_id, node_id)',
+  uniq_workflow_run_node_sessions_run_node_iteration: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_workflow_run_node_sessions_run_node_iteration ON workflow_run_node_sessions(run_id, node_id, iteration_path_json)',
 }
 
 export const WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE = 'workflow_run_edge_evaluations'
@@ -240,6 +241,7 @@ export const WORKFLOW_RUN_EDGE_EVALUATIONS_SCHEMA: Record<string, string> = {
   status: 'TEXT NOT NULL',
   reason: 'TEXT NOT NULL',
   sequence: 'INTEGER NOT NULL',
+  iteration_path_json: "TEXT NOT NULL DEFAULT '[]'",
   evaluated_at: 'INTEGER NOT NULL',
 }
 
@@ -849,6 +851,8 @@ export function initAllHermesTables(): void {
     syncTable(WORKFLOW_RUN_NODE_SESSIONS_TABLE, WORKFLOW_RUN_NODE_SESSIONS_SCHEMA, {
       indexes: WORKFLOW_RUN_NODE_SESSIONS_INDEXES,
     })
+    db.exec('DROP INDEX IF EXISTS uniq_workflow_run_node_sessions_run_node')
+    db.exec(WORKFLOW_RUN_NODE_SESSIONS_INDEXES.uniq_workflow_run_node_sessions_run_node_iteration)
     syncTable(WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE, WORKFLOW_RUN_EDGE_EVALUATIONS_SCHEMA, {
       indexes: WORKFLOW_RUN_EDGE_EVALUATIONS_INDEXES,
     })

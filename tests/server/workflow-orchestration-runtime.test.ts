@@ -273,4 +273,104 @@ describe('workflow orchestration runtime', () => {
       route: 'failure', status: 'taken', sequence: 0,
     }])
   })
+  it('reruns a bounded feedback region with fresh sessions and stops when the condition is false', async () => {
+    chatRunMock.runAndWait
+      .mockResolvedValueOnce({ ok: true, output: 'draft 1' })
+      .mockResolvedValueOnce({ ok: true, output: '{"retry":true}' })
+      .mockResolvedValueOnce({ ok: true, output: 'draft 2' })
+      .mockResolvedValueOnce({ ok: true, output: '{"retry":false}' })
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: 'Bounded review retry', profile: 'default',
+      nodes: [
+        { id: 'draft', type: 'agent', data: { title: 'Draft', agent: 'hermes', input: 'draft' } },
+        { id: 'review', type: 'agent', data: { title: 'Review', agent: 'hermes', input: 'review' } },
+      ],
+      edges: [
+        { id: 'draft-review', source: 'draft', target: 'review' },
+        { id: 'review-retry', source: 'review', target: 'draft', data: { orchestration: {
+          route: 'success', condition: { path: 'json.retry', operator: 'truthy' }, loop: { maxIterations: 2 },
+        } } },
+      ],
+    })
+    const result = await manager.runNow(workflow.id)
+    expect({ status: result.run.status, error: result.run.error, calls: chatRunMock.runAndWait.mock.calls.length }).toEqual({ status: 'completed', error: null, calls: 4 })
+    const sessionIds = chatRunMock.runAndWait.mock.calls.map(call => call[0].session_id)
+    expect(new Set(sessionIds).size).toBe(4)
+    const secondDraftInput = String(chatRunMock.runAndWait.mock.calls[2][0].input)
+    expect(secondDraftInput).toContain('[Upstream: Review]')
+    expect(secondDraftInput).toContain('{\"retry\":true}')
+    const { listWorkflowRunEdgeEvaluations } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    expect(listWorkflowRunEdgeEvaluations(result.run.id).map(evidence => ({
+      edge: evidence.edge_id, iteration: evidence.iteration_path,
+    }))).toEqual([
+      { edge: 'draft-review', iteration: [1] },
+      { edge: 'review-retry', iteration: [1] },
+      { edge: 'draft-review', iteration: [2] },
+      { edge: 'review-retry', iteration: [2] },
+    ])
+  })
+
+  it('resets child loop iterations when an outer feedback region retries', async () => {
+    for (const output of [
+      'outer 1', 'inner 1', '{"retryInner":true}', 'inner 2', '{"retryInner":false}',
+      '{"retryOuter":true}', 'outer 2', 'inner 3', '{"retryInner":false}', '{"retryOuter":false}',
+    ]) chatRunMock.runAndWait.mockResolvedValueOnce({ ok: true, output })
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: 'Nested retries', profile: 'default',
+      nodes: [
+        { id: 'outer', type: 'agent', data: { title: 'Outer', agent: 'hermes', input: 'outer' } },
+        { id: 'inner', type: 'agent', data: { title: 'Inner', agent: 'hermes', input: 'inner' } },
+        { id: 'review', type: 'agent', data: { title: 'Review', agent: 'hermes', input: 'review' } },
+        { id: 'finish', type: 'agent', data: { title: 'Finish', agent: 'hermes', input: 'finish' } },
+      ],
+      edges: [
+        { id: 'outer-inner', source: 'outer', target: 'inner' },
+        { id: 'inner-review', source: 'inner', target: 'review' },
+        { id: 'review-finish', source: 'review', target: 'finish' },
+        { id: 'review-inner', source: 'review', target: 'inner', data: { orchestration: {
+          route: 'success', condition: { path: 'json.retryInner', operator: 'truthy' }, loop: { maxIterations: 2 },
+        } } },
+        { id: 'finish-outer', source: 'finish', target: 'outer', data: { orchestration: {
+          route: 'success', condition: { path: 'json.retryOuter', operator: 'truthy' }, loop: { maxIterations: 2 },
+        } } },
+      ],
+    })
+    const result = await manager.runNow(workflow.id)
+    expect(result.run.status).toBe('completed')
+    const { listWorkflowRunNodeSessions } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    expect(listWorkflowRunNodeSessions(result.run.id)
+      .filter(session => session.node_id === 'inner')
+      .map(session => session.iteration_path)).toEqual([[1, 1], [1, 2], [2, 1]])
+  })
+
+  it('fails before dispatching an iteration beyond the feedback limit', async () => {
+    chatRunMock.runAndWait
+      .mockResolvedValueOnce({ ok: true, output: 'draft 1' })
+      .mockResolvedValueOnce({ ok: true, output: '{"retry":true}' })
+      .mockResolvedValueOnce({ ok: true, output: 'draft 2' })
+      .mockResolvedValueOnce({ ok: true, output: '{"retry":true}' })
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: 'Feedback limit', profile: 'default',
+      nodes: [
+        { id: 'draft', type: 'agent', data: { title: 'Draft', agent: 'hermes', input: 'draft' } },
+        { id: 'review', type: 'agent', data: { title: 'Review', agent: 'hermes', input: 'review' } },
+      ],
+      edges: [
+        { id: 'draft-review', source: 'draft', target: 'review' },
+        { id: 'review-retry', source: 'review', target: 'draft', data: { orchestration: {
+          route: 'success', condition: { path: 'json.retry', operator: 'truthy' }, loop: { maxIterations: 2 },
+        } } },
+      ],
+    })
+    const result = await manager.runNow(workflow.id)
+    expect(result.run).toMatchObject({ status: 'failed', error: expect.stringContaining('loop_limit_exceeded') })
+    expect(chatRunMock.runAndWait).toHaveBeenCalledTimes(4)
+  })
+
 })

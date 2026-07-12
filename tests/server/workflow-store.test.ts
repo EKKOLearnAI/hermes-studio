@@ -135,4 +135,18 @@ describe('workflow store', () => {
     expect(getWorkflowRun(run.id)).toBeNull()
     expect(listWorkflowRunNodeSessions(run.id)).toEqual([])
   })
+  it('stores one node session per iteration path while preserving legacy identity', async () => {
+    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
+    const { createWorkflowRun, createWorkflowRunNodeSession, listWorkflowRunNodeSessions } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    const workflow = createWorkflow({ name: 'Iterations', profile: 'default' })
+    const run = createWorkflowRun({ workflow_id: workflow.id, status: 'running' })
+    createWorkflowRunNodeSession({ run_id: run.id, workflow_id: workflow.id, node_id: 'review', session_id: 'review-1', iteration_path: [1] })
+    createWorkflowRunNodeSession({ run_id: run.id, workflow_id: workflow.id, node_id: 'review', session_id: 'review-2', iteration_path: [2] })
+    const sessions = listWorkflowRunNodeSessions(run.id)
+    expect(sessions.map(session => session.iteration_path)).toEqual([[1], [2]])
+    expect(() => createWorkflowRunNodeSession({
+      run_id: run.id, workflow_id: workflow.id, node_id: 'review', session_id: 'duplicate', iteration_path: [2],
+    })).toThrow()
+  })
+
 })

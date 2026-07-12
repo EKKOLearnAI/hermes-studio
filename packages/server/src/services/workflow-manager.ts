@@ -467,6 +467,8 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       Boolean(edge && nodeById.has(edge.source) && nodeById.has(edge.target)),
     )
     const compiledEdgeByRuntimeEdge = new Map(edges.map((edge, index) => [edge, compiledGraph.edges[index]]))
+    const isFeedbackEdge = (edge: WorkflowEdgeSnapshot) => Boolean(compiledEdgeByRuntimeEdge.get(edge)?.policy.loop)
+    const forwardEdges = edges.filter(edge => !isFeedbackEdge(edge))
     if (nodes.length === 0) {
       const err = new Error('workflow has no nodes')
       ;(err as any).status = 400
@@ -479,7 +481,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       incoming.set(node.id, [])
       outgoing.set(node.id, [])
     }
-    for (const edge of edges) {
+    for (const edge of forwardEdges) {
       incoming.get(edge.target)!.push(edge)
       outgoing.get(edge.source)!.push(edge)
     }
@@ -494,16 +496,20 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     const activeIds = reachableFrom(startNodeIds, outgoing)
     const activeNodes = nodes.filter(node => activeIds.has(node.id))
     const activeEdges = edges.filter(edge => activeIds.has(edge.source) && activeIds.has(edge.target))
+    const activeForwardEdges = activeEdges.filter(edge => !isFeedbackEdge(edge))
     const activeIncoming = new Map<string, WorkflowEdgeSnapshot[]>()
+    const activeForwardIncoming = new Map<string, WorkflowEdgeSnapshot[]>()
     const activeOutgoing = new Map<string, WorkflowEdgeSnapshot[]>()
     for (const node of activeNodes) {
       activeIncoming.set(node.id, [])
+      activeForwardIncoming.set(node.id, [])
       activeOutgoing.set(node.id, [])
     }
     for (const edge of activeEdges) {
       activeIncoming.get(edge.target)!.push(edge)
       activeOutgoing.get(edge.source)!.push(edge)
     }
+    for (const edge of activeForwardEdges) activeForwardIncoming.get(edge.target)!.push(edge)
 
     const startedAt = Date.now()
     const run = createWorkflowRun({
@@ -536,6 +542,12 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     const nodeStatuses: Record<string, WorkflowRuntimeState> = Object.fromEntries(activeNodes.map(node => [node.id, 'queued' as const]))
     let sequence = 0
     let edgeEvaluationSequence = 0
+    const loopIterations = new Map<string, number>()
+    const iterationPathForNode = (nodeId: string) => compiledGraph.edges
+      .filter(edge => edge.policy.loop && edge.loopNodeIds?.includes(nodeId))
+      .sort((left, right) => (left.loopOrder || 0) - (right.loopOrder || 0))
+      .map(edge => loopIterations.get(edge.id) || 1)
+    const pendingLoopRetries: Array<{ edgeId: string; nodeIds: string[] }> = []
 
     const recordEdgeEvaluation = (edge: WorkflowEdgeSnapshot, evaluation: WorkflowEdgeEvaluation) => {
       const compiledEdge = compiledEdgeByRuntimeEdge.get(edge)
@@ -551,6 +563,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
         status: evaluation.status,
         reason: evaluation.reason,
         sequence: edgeEvaluationSequence++,
+        iteration_path: iterationPathForNode(edge.source),
       })
       return evaluation
     }
@@ -587,7 +600,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       while (completed.size < activeNodes.length) {
         const edgeIsTaken = (edge: WorkflowEdgeSnapshot) => edgeEvaluations.get(edge)?.status === 'taken'
         const nodeIsReady = (node: WorkflowNodeSnapshot) => {
-          const inbound = activeIncoming.get(node.id) || []
+          const inbound = activeForwardIncoming.get(node.id) || []
           if (inbound.length === 0) return true
           const joinMode = joinModeByNodeId.get(node.id) || 'all'
           if (joinMode === 'any') return inbound.some(edgeIsTaken)
@@ -596,7 +609,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
         const pendingNodes = activeNodes.filter(node => !runningOrDone.has(node.id))
         let skippedNode = false
         for (const node of pendingNodes) {
-          const inbound = activeIncoming.get(node.id) || []
+          const inbound = activeForwardIncoming.get(node.id) || []
           if (inbound.length === 0 || !inbound.every(edge => completed.has(edge.source)) || nodeIsReady(node)) continue
           runningOrDone.add(node.id)
           completed.add(node.id)
@@ -628,6 +641,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             run_id: run.id,
             workflow_id: workflow.id,
             node_id: node.id,
+            iteration_path: iterationPathForNode(node.id),
             session_id: nodeSessionId,
             profile,
             agent: target.agent,
@@ -722,6 +736,15 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
           for (const edge of activeOutgoing.get(node.id) || []) {
             const evaluation = recordEdgeEvaluation(edge, evaluateWorkflowEdge(edge, { nodeId: node.id, status: 'success', output }))
             if (evaluation.status === 'error') throw new Error(evaluation.reason)
+            const compiledEdge = compiledEdgeByRuntimeEdge.get(edge)
+            if (evaluation.status === 'taken' && compiledEdge?.policy.loop) {
+              const iteration = loopIterations.get(compiledEdge.id) || 1
+              if (iteration >= compiledEdge.policy.loop.maxIterations) {
+                throw new Error(`loop_limit_exceeded: ${compiledEdge.id}`)
+              }
+              loopIterations.set(compiledEdge.id, iteration + 1)
+              pendingLoopRetries.push({ edgeId: compiledEdge.id, nodeIds: compiledEdge.loopNodeIds || [] })
+            }
           }
           nodeStatuses[node.id] = 'completed'
           this.setRuntimeStatus(workflow.id, {
@@ -734,6 +757,31 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
         }))
 
         const failed = results.find(result => !result.ok)
+        if (!failed && pendingLoopRetries.length > 0) {
+          const retries = pendingLoopRetries.splice(0)
+          const retryEdgeIds = new Set(retries.map(retry => retry.edgeId))
+          const retrySourceIds = new Set(activeEdges
+            .filter(edge => retryEdgeIds.has(compiledEdgeByRuntimeEdge.get(edge)?.id || ''))
+            .map(edge => edge.source))
+          for (const retry of retries) {
+            const retryNodeIds = new Set(retry.nodeIds)
+            for (const childLoop of compiledGraph.edges.filter(edge => edge.policy.loop && edge.id !== retry.edgeId)) {
+              const childNodeIds = childLoop.loopNodeIds || []
+              if (childNodeIds.length < retryNodeIds.size && childNodeIds.every(nodeId => retryNodeIds.has(nodeId))) {
+                loopIterations.delete(childLoop.id)
+              }
+            }
+            for (const nodeId of retry.nodeIds) {
+              completed.delete(nodeId)
+              runningOrDone.delete(nodeId)
+              if (!retrySourceIds.has(nodeId)) outputs.delete(nodeId)
+              nodeStatuses[nodeId] = 'queued'
+              for (const edge of activeOutgoing.get(nodeId) || []) {
+                if (!retryEdgeIds.has(compiledEdgeByRuntimeEdge.get(edge)?.id || '')) edgeEvaluations.delete(edge)
+              }
+            }
+          }
+        }
         if (failed) {
           for (const node of activeNodes) {
             if (isUnfinishedWorkflowNodeStatus(nodeStatuses[node.id])) nodeStatuses[node.id] = 'canceled'

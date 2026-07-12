@@ -2060,6 +2060,9 @@ export default {
       value: 'JSON 値',
       pathRequired: 'パスは必須です',
       valueInvalid: '値は有効な JSON である必要があります',
+      loop: 'フィードバックループ',
+      maxIterations: '最大反復回数',
+      loopConditionRequired: 'フィードバックループには条件が必要です',
       operators: {
         equals: '等しい',
         not_equals: '等しくない',
