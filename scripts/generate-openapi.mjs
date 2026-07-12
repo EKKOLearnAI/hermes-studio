@@ -380,9 +380,7 @@ function isRequiredQueryParam(name, source) {
 
 function inferEnumValues(name, source) {
   const escaped = escapeRegExp(name)
-  const values = new Set()
-  const comparisonRegex = new RegExp(`\\b${escaped}\\b\\s*(?:===|!==)\\s*['"]([^'"]+)['"]`, 'g')
-  collectMatches(source, comparisonRegex, values)
+  const values = comparedBusinessLiterals(name, source)
   const queryEnumCall = source.match(new RegExp(`queryEnum\\(\\s*ctx\\s*,\\s*['"]${escaped}['"]\\s*,\\s*\\[([^\\]]*)\\]`))
   if (queryEnumCall) {
     collectMatches(queryEnumCall[1], /['"]([^'"]+)['"]/g, values)
@@ -402,6 +400,43 @@ function inferEnumValues(name, source) {
       .forEach(value => values.add(value))
   }
   return Array.from(values)
+}
+
+function comparedBusinessLiterals(name, source) {
+  const values = new Set()
+  const sentinels = new Set(['string', 'number', 'boolean', 'object', 'undefined', 'function', 'symbol', 'bigint'])
+  const file = ts.createSourceFile('controller-fragment.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  function visit(node) {
+    if (ts.isBinaryExpression(node)
+      && [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken].includes(node.operatorToken.kind)
+      && !ts.isTypeOfExpression(node.left)
+      && ts.isStringLiteral(node.right)) {
+      const leftName = ts.isIdentifier(node.left) ? node.left.text
+        : ts.isPropertyAccessExpression(node.left) ? node.left.name.text
+          : ts.isElementAccessExpression(node.left) && ts.isStringLiteral(node.left.argumentExpression) ? node.left.argumentExpression.text : ''
+      if (leftName === name && !sentinels.has(node.right.text)) values.add(node.right.text)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  return values
+}
+
+function guardedPrimitiveType(name, source) {
+  const types = new Set()
+  const file = ts.createSourceFile('controller-fragment.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  function visit(node) {
+    if (ts.isBinaryExpression(node) && ts.isTypeOfExpression(node.left) && ts.isStringLiteral(node.right)) {
+      const expression = node.left.expression
+      const guardedName = ts.isIdentifier(expression) ? expression.text
+        : ts.isPropertyAccessExpression(expression) ? expression.name.text
+          : ts.isElementAccessExpression(expression) && ts.isStringLiteral(expression.argumentExpression) ? expression.argumentExpression.text : ''
+      if (guardedName === name && ['string', 'number', 'boolean'].includes(node.right.text)) types.add(node.right.text)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  return types.size === 1 ? Array.from(types)[0] : null
 }
 
 function generateRequestBody(method, source) {
@@ -696,6 +731,11 @@ function extractRequiredNamesFromMessages(source) {
 
 function schemaFromName(name, source) {
   const escaped = escapeRegExp(name)
+  const guardedType = guardedPrimitiveType(name, source)
+  if (guardedType) {
+    const nullable = new RegExp(`\\b\\w+\\.${escaped}\\s*!==?\\s*null`).test(source)
+    return { type: guardedType, ...(nullable ? { nullable: true } : {}) }
+  }
   if (new RegExp(`requiredJsonObject\\([^,]+,\\s*['"]${escaped}['"]`).test(source)) {
     return { type: 'object', additionalProperties: true }
   }
@@ -784,6 +824,8 @@ function schemaFromType(type, name = '', source = '') {
 
   const validatedSchema = name ? schemaFromValidation(name, source) : null
   if (validatedSchema) return validatedSchema
+  const guardedType = name ? guardedPrimitiveType(name, source) : null
+  if (guardedType) return { type: guardedType, ...(/\bnull\b/.test(normalized) ? { nullable: true } : {}) }
   if (/\bnull\b/.test(normalized)) schema.nullable = true
   if (/string\[\]|Array<string>/.test(normalized)) {
     return { ...schema, type: 'array', items: { type: 'string' } }

@@ -60,6 +60,27 @@ describe('api docs controller', () => {
       { name: 'query', in: 'query', required: false, schema: { type: 'string' } },
     ])
 
+    for (const method of ['get', 'put']) {
+      const operation = ctx.body.paths['/api/coding-agents/{id}/config-files/{key}'][method]
+      expect(operation.parameters).toEqual(expect.arrayContaining([
+        { name: 'profile', in: 'query', required: false, schema: { type: 'string' } },
+        { name: 'provider', in: 'query', required: false, schema: { type: 'string' } },
+      ]))
+    }
+    expect(ctx.body.paths['/api/coding-agents/{id}/config-files/{key}'].put.requestBody.content['application/json'].schema.properties).toEqual(expect.objectContaining({
+      profile: { type: 'string' }, provider: { type: 'string' },
+    }))
+    expect(ctx.body.paths['/api/hermes/auth/codex/start'].post.parameters).toEqual(expect.arrayContaining([
+      { name: 'profile', in: 'query', required: false, schema: { type: 'string' } },
+    ]))
+    const typeSentinels = new Set(['string', 'number', 'boolean', 'object', 'undefined', 'function', 'symbol', 'bigint'])
+    const inspectEnums = (value: any): void => {
+      if (!value || typeof value !== 'object') return
+      if (Array.isArray(value.enum)) expect(value.enum.some((entry: unknown) => typeSentinels.has(String(entry)))).toBe(false)
+      for (const child of Object.values(value)) inspectEnums(child)
+    }
+    inspectEnums(ctx.body)
+
     const assistantRolePaths = {
       '/api/hermes/assistant-roles': ['get', 'post'],
       '/api/hermes/assistant-roles/{id}': ['get', 'put', 'delete'],

@@ -1209,10 +1209,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           },
           {
@@ -1220,10 +1217,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ]
@@ -1273,10 +1267,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           },
           {
@@ -1284,10 +1275,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -1302,12 +1290,10 @@
                     "type": "string"
                   },
                   "profile": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "type": "string"
                   },
                   "provider": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "type": "string"
                   }
                 },
                 "additionalProperties": true
@@ -5432,10 +5418,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -5487,10 +5470,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ]
@@ -5617,10 +5597,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -5672,10 +5649,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ]
@@ -5887,10 +5861,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -5942,10 +5913,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ]
@@ -6017,10 +5985,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -6072,10 +6037,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ]
@@ -6147,10 +6109,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -6202,10 +6161,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ]
@@ -6267,10 +6223,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           },
           {
@@ -6320,10 +6273,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -6389,10 +6339,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ]
@@ -6426,10 +6373,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -6485,10 +6429,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -6551,10 +6492,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -6615,10 +6553,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ]
@@ -6788,10 +6723,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           },
           {
@@ -10046,10 +9978,7 @@
             "in": "query",
             "required": true,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -10067,8 +9996,7 @@
                     "type": "string"
                   },
                   "profile": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -10111,10 +10039,7 @@
             "in": "query",
             "required": true,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -10132,8 +10057,7 @@
                     "type": "string"
                   },
                   "profile": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "type": "string"
                   },
                   "prompt": {
                     "type": "string"
@@ -11611,8 +11535,7 @@
                 "type": "object",
                 "properties": {
                   "version": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "type": "string"
                   }
                 },
                 "additionalProperties": true
@@ -11654,8 +11577,7 @@
                 "type": "object",
                 "properties": {
                   "version": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "type": "string"
                   }
                 },
                 "additionalProperties": true
@@ -11763,8 +11685,7 @@
                     "additionalProperties": true
                   },
                   "version": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "type": "string"
                   }
                 },
                 "additionalProperties": true
@@ -11843,8 +11764,7 @@
                     "additionalProperties": true
                   },
                   "version": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "type": "string"
                   }
                 },
                 "additionalProperties": true
@@ -11925,10 +11845,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           },
           {
@@ -12067,10 +11984,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           },
           {
@@ -12078,10 +11992,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ]
@@ -12384,10 +12295,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           },
           {
@@ -13384,10 +13292,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ]
@@ -13673,10 +13578,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           }
         ]
