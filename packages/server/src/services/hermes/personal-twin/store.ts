@@ -201,8 +201,10 @@ function validatePreferenceOperation(operation: { source: string; sourceId: stri
   }
 }
 
-function preferenceOperationAggregate(operationId: string): string {
-  return stableTwinId('preference-operation', [operationId])
+function preferenceOperationAggregate(source: string, operationToken: string): string {
+  const digest = createHash('sha256').update(source, 'utf8').update('\0', 'utf8')
+    .update(operationToken, 'utf8').digest('hex')
+  return `preference-operation-${digest}`
 }
 
 function preferenceMaterialDigest(value: unknown): string {
@@ -290,7 +292,7 @@ export function setTwinPreference(input: TwinPreferenceInput): TwinPreference {
   return withPersonalTwinDb(db => commitOrRollback(db, () => {
     requireEntity(db, input.subjectId)
     const storageKey = preferenceStorageKey(input.domain, input.key)
-    const aggregateId = preferenceOperationAggregate(input.operationId ?? input.sourceId)
+    const aggregateId = preferenceOperationAggregate(input.source, input.operationId ?? input.sourceId)
     const currentRow = db.prepare('SELECT * FROM twin_preferences WHERE subject_id=? AND key=?')
       .get(input.subjectId, storageKey) as PreferenceRow | undefined
     const current = currentRow ? preferenceFromRow(currentRow) : null
@@ -348,7 +350,7 @@ export function deleteTwinPreference(
     if (!current && !operation) return
     const actual = operation ?? { source: 'action-fabric' as const,
       sourceId: `delete:${subjectId}:${storageKey}:${current!.updatedAt}`, actor: 'action-fabric' as const }
-    const aggregateId = preferenceOperationAggregate(actual.sourceId)
+    const aggregateId = preferenceOperationAggregate(actual.source, actual.sourceId)
     const materialDigest = preferenceMaterialDigest({ subjectId, domain, key, source: actual.source,
       sourceId: actual.sourceId, actor: actual.actor, expectedCurrent: actual.expectedCurrent ?? null })
     const existingOperation = db.prepare('SELECT * FROM twin_preference_operations WHERE operation_id=?')

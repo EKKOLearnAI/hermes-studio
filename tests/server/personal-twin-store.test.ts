@@ -282,4 +282,34 @@ describe('personal twin store', () => {
     expect(attempts.filter(item => item.status === 'rejected')).toHaveLength(1)
     expect(getTwinPreference('person:self', 'home', 'lighting.scene')?.version).toBe(2)
   })
+
+  it('namespaces identical set and delete operation tokens by source even after outbox cleanup', async () => {
+    const { deleteTwinPreference, getTwinPreference, setTwinPreference, upsertTwinEntity, withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    const left = setTwinPreference({ subjectId: 'person:self', domain: 'life', key: 'calendar.view', value: 'agenda',
+      source: 'source-a', sourceId: 'shared-set-source-id', actor: 'actor-a', operationId: 'shared-set-operation' })
+    const right = setTwinPreference({ subjectId: 'person:self', domain: 'digital', key: 'appearance.theme', value: 'dark',
+      source: 'source-b', sourceId: 'shared-set-source-id', actor: 'actor-b', operationId: 'shared-set-operation' })
+    expect(left.provenance.source).toBe('source-a')
+    expect(right.provenance.source).toBe('source-b')
+
+    deleteTwinPreference('person:self', 'life', 'calendar.view', {
+      source: 'source-a', sourceId: 'shared-delete-token', actor: 'actor-a',
+    })
+    deleteTwinPreference('person:self', 'digital', 'appearance.theme', {
+      source: 'source-b', sourceId: 'shared-delete-token', actor: 'actor-b',
+    })
+    withPersonalTwinDb(db => db.prepare('DELETE FROM twin_outbox').run())
+    deleteTwinPreference('person:self', 'life', 'calendar.view', {
+      source: 'source-a', sourceId: 'shared-delete-token', actor: 'actor-a',
+    })
+    deleteTwinPreference('person:self', 'digital', 'appearance.theme', {
+      source: 'source-b', sourceId: 'shared-delete-token', actor: 'actor-b',
+    })
+    expect(getTwinPreference('person:self', 'life', 'calendar.view')).toBeNull()
+    expect(getTwinPreference('person:self', 'digital', 'appearance.theme')).toBeNull()
+    expect(withPersonalTwinDb(db => db.prepare('SELECT COUNT(*) count FROM twin_preference_operations').get()))
+      .toEqual({ count: 4 })
+    expect(withPersonalTwinDb(db => db.prepare('SELECT COUNT(*) count FROM twin_outbox').get())).toEqual({ count: 0 })
+  })
 })
