@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { getAssistantRole } from '../personal-twin'
 import { appendFabricAuditEvent, appendFabricOutbox, withFabricAuditedTransaction } from './audit'
 import { withActionFabricDb } from './database'
+import { getFabricControlStateInDb } from './control'
 import {
   evaluateFabricPolicyInDb,
   prepareFabricPolicyEvaluation,
@@ -17,6 +18,7 @@ import type {
   FabricStep,
   FabricStepState,
   FabricWorkflowDetail,
+  FabricWorkflowAvailableActions,
   FabricWorkflowListOptions,
   FabricWorkflowState,
   FabricWorkflowSummary,
@@ -212,7 +214,86 @@ export function cancelFabricWorkflow(id: string, actorUserId: string, reason: st
 }
 
 export function retryFabricWorkflow(id: string, actorUserId: string): FabricWorkflowDetail {
+  validateText(id, 200, 'FABRIC_WORKFLOW_INVALID_ID')
+  validateText(actorUserId, 200, 'FABRIC_WORKFLOW_INVALID_ACTOR')
+  const recovery = withActionFabricDb(db => {
+    const workflow = requireWorkflow(db, id)
+    if (workflow.state !== 'waiting_user'
+      || workflow.last_error_code !== 'FABRIC_CONTROL_CHANGED_REVIEW_REQUIRED') return null
+    const context = approvalContext(db, id)
+    return {
+      request: {
+        ...context.intent,
+        target: context.payload.target,
+        input: context.payload.actionInput,
+        constraints: context.payload.constraints,
+        phase: 'execution' as const,
+      },
+    }
+  })
+  if (recovery) {
+    prepareFabricPolicyEvaluation(recovery.request)
+    return withFabricAuditedTransaction(db => recoverControlCheckpointInDb(db, id, actorUserId, recovery.request))
+  }
   return transitionWorkflow(id, actorUserId, 'retry', null)
+}
+
+function recoverControlCheckpointInDb(
+  db: DatabaseSync,
+  id: string,
+  actorUserId: string,
+  request: FabricActionIntentInput & { phase: 'execution' },
+): FabricWorkflowDetail {
+  const current = requireWorkflow(db, id)
+  if (current.state !== 'waiting_user'
+    || current.last_error_code !== 'FABRIC_CONTROL_CHANGED_REVIEW_REQUIRED') {
+    throw new Error('FABRIC_WORKFLOW_CONFLICT')
+  }
+  if (getFabricControlStateInDb(db).level !== 0) throw new Error('FABRIC_WORKFLOW_NOT_RETRYABLE')
+  const intent = requireIntent(db, current.intent_id)
+  const captured = compensationContext(db, id).contract
+  const currentContract = captureIntentContract(db, intent)
+  if (captured.capabilityVersion !== currentContract.capabilityVersion
+    || captured.contractDigest !== currentContract.contractDigest) {
+    throw new Error('FABRIC_WORKFLOW_CONTRACT_STALE')
+  }
+  const fresh = evaluateFabricPolicyInDb(db, request)
+  if (fresh.intentId !== intent.id || fresh.outcome !== 'allow' || fresh.executorId === null
+    || fresh.materialInputDigest !== intent.materialInputDigest) {
+    throw new Error(fresh.outcome === 'deny' ? 'FABRIC_POLICY_DENIED' : 'FABRIC_WORKFLOW_APPROVAL_REQUIRED')
+  }
+  revalidateFabricDecisionInDb(db, fresh.id)
+  bindBudgetReservation(db, fresh, id)
+  const steps = db.prepare('SELECT kind,state,started_at FROM fabric_steps WHERE workflow_id=? ORDER BY ordinal')
+    .all(id) as unknown as Array<{ kind: string; state: FabricStepState; started_at: string | null }>
+  const prepare = steps.find(step => step.kind === 'prepare')
+  const execute = steps.find(step => step.kind === 'execute')
+  let destination: FabricWorkflowState = 'preparing'
+  if (prepare?.state === 'succeeded') {
+    destination = execute?.state === 'succeeded' || execute?.started_at !== null || captured.idempotency === 'none'
+      ? 'verifying' : 'executing'
+  }
+  const now = new Date().toISOString()
+  const changed = db.prepare(`UPDATE fabric_workflows SET state=?,version=version+1,executor_id=?,
+    policy_decision_id=?,lease_owner=NULL,lease_expires_at=NULL,retry_at=NULL,last_error_code=NULL,
+    updated_at=?,completed_at=NULL WHERE id=? AND version=? AND state='waiting_user'
+    AND last_error_code='FABRIC_CONTROL_CHANGED_REVIEW_REQUIRED'`).run(
+    destination, fresh.executorId, fresh.id, now, id, current.version,
+  )
+  if (changed.changes !== 1) throw new Error('FABRIC_WORKFLOW_CONFLICT')
+  const resetKinds = destination === 'preparing' ? ['prepare', 'execute', 'verify']
+    : destination === 'executing' ? ['execute', 'verify'] : ['verify']
+  for (const kind of resetKinds) {
+    db.prepare(`UPDATE fabric_steps SET state='pending',executor_id=?,last_error_code=NULL,output_json=NULL,
+      evidence_json='[]',started_at=NULL,completed_at=NULL,updated_at=?
+      WHERE workflow_id=? AND kind=? AND state<>'succeeded'`).run(fresh.executorId, now, id, kind)
+  }
+  appendFabricAuditEvent(db, { eventType: 'workflow.control_reauthorized', actorUserId,
+    aggregateType: 'workflow', aggregateId: id,
+    payload: { from: 'waiting_user', to: destination, policyDecisionId: fresh.id }, occurredAt: now })
+  appendFabricOutbox(db, 'fabric.workflow.control_reauthorized', id,
+    { from: 'waiting_user', to: destination, policyDecisionId: fresh.id })
+  return detailForWorkflow(db, requireWorkflow(db, id))
 }
 
 export function requestFabricCompensation(id: string, actorUserId: string, reason: string): FabricWorkflowDetail {
@@ -351,14 +432,9 @@ function retryWorkerWaitingWorkflowInDb(
 ): FabricWorkflowDetail {
   const errorCode = current.last_error_code
   const executionUnknown = errorCode === 'FABRIC_EXECUTION_OUTCOME_UNKNOWN'
-  const verificationUnknown = errorCode === 'FABRIC_VERIFICATION_OUTCOME_UNKNOWN'
-  const compensationRetry = errorCode === 'FABRIC_COMPENSATION_POLICY_UNAVAILABLE'
   const contractRetry = errorCode === 'FABRIC_WORKER_CONTRACT_MISSING'
-  if (!executionUnknown && !verificationUnknown && !compensationRetry && !contractRetry) {
-    throw new Error('FABRIC_WORKFLOW_NOT_RETRYABLE')
-  }
+  retryWorkerWaitingEligibilityInDb(db, current)
   const context = compensationContext(db, current.id)
-  if (!contractRetry && context.contract.verificationStrategy === 'none') throw new Error('FABRIC_WORKFLOW_NOT_RETRYABLE')
   let destination: FabricWorkflowState = 'verifying'
   if (contractRetry) {
     const steps = db.prepare('SELECT kind,state FROM fabric_steps WHERE workflow_id=? ORDER BY ordinal')
@@ -700,6 +776,62 @@ function summaryForWorkflow(db: DatabaseSync, row: WorkflowRow): FabricWorkflowS
     lastErrorCode: row.last_error_code, createdAt: row.created_at, updatedAt: row.updated_at,
     completedAt: row.completed_at, capabilityId: intent.capabilityId, goal: intent.goal,
     requestedByRoleId: intent.requestedByRoleId, requestedByUserId: intent.requestedByUserId,
+    availableActions: availableWorkflowActionsInDb(db, row),
+  }
+}
+
+function availableWorkflowActionsInDb(db: DatabaseSync, workflow: WorkflowRow): FabricWorkflowAvailableActions {
+  const decision = workflow.policy_decision_id ? parseDecision(requireDecision(db, workflow.policy_decision_id)) : null
+  const waitingApproval = workflow.state === 'waiting_user' && decision?.outcome === 'waiting_user'
+    && workflow.last_error_code === null
+  const cancel = workflow.state === 'cancelled' || (TRANSITIONS.cancel[workflow.state] !== undefined
+    && workflow.lease_owner === null && !hasActiveOrEffectfulStep(db, workflow.id))
+  let retry = false
+  if (workflow.state === 'failed' || workflow.state === 'dead_letter') {
+    try { assertPhaseAwareRetryAllowed(db, workflow); retry = true } catch { retry = false }
+  } else if (workflow.state === 'waiting_user') {
+    if (workflow.last_error_code === 'FABRIC_CONTROL_CHANGED_REVIEW_REQUIRED') {
+      retry = getFabricControlStateInDb(db).level === 0 && hasCurrentCapturedContract(db, workflow)
+    } else {
+      try {
+        retryWorkerWaitingEligibilityInDb(db, workflow)
+        retry = true
+      } catch { retry = false }
+    }
+  }
+  let compensate = false
+  if (workflow.state === 'succeeded' && workflow.compensation_intent_id === null) {
+    try {
+      const context = compensationContext(db, workflow.id)
+      compensate = context.contract.reversible && context.contract.compensationCapabilityId !== null
+        && hasCurrentCapturedContract(db, workflow)
+    } catch { compensate = false }
+  }
+  return { approve: waitingApproval, reject: waitingApproval, cancel, retry, compensate }
+}
+
+function hasCurrentCapturedContract(db: DatabaseSync, workflow: WorkflowRow): boolean {
+  try {
+    const intent = requireIntent(db, workflow.intent_id)
+    const captured = compensationContext(db, workflow.id).contract
+    const current = captureIntentContract(db, intent)
+    return captured.capabilityVersion === current.capabilityVersion
+      && captured.contractDigest === current.contractDigest
+  } catch {
+    return false
+  }
+}
+
+function retryWorkerWaitingEligibilityInDb(db: DatabaseSync, current: WorkflowRow): void {
+  const errorCode = current.last_error_code
+  const supported = errorCode === 'FABRIC_EXECUTION_OUTCOME_UNKNOWN'
+    || errorCode === 'FABRIC_VERIFICATION_OUTCOME_UNKNOWN'
+    || errorCode === 'FABRIC_COMPENSATION_POLICY_UNAVAILABLE'
+    || errorCode === 'FABRIC_WORKER_CONTRACT_MISSING'
+  if (!supported) throw new Error('FABRIC_WORKFLOW_NOT_RETRYABLE')
+  const context = compensationContext(db, current.id)
+  if (errorCode !== 'FABRIC_WORKER_CONTRACT_MISSING' && context.contract.verificationStrategy === 'none') {
+    throw new Error('FABRIC_WORKFLOW_NOT_RETRYABLE')
   }
 }
 

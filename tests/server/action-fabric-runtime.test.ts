@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createFabricIntent,
   createFabricExecutor,
+  enforceControlStateOnce,
   createSimulatorExecutorAdapter,
   ensureBuiltInFabricRegistry,
   getActionFabricDbPath,
@@ -109,6 +110,23 @@ describe('Action Fabric runtime lifecycle', () => {
     })
     expect(listFabricAuditEvents({ aggregateId: workflow.id }).some(event =>
       event.eventType === 'workflow.control_checkpoint_required')).toBe(true)
+  })
+
+  it('enforces a durable control version synchronously without waiting for the runtime poller', async () => {
+    configureRole()
+    ensureBuiltInFabricRegistry()
+    updateFabricExecutorHealth('internal-twin', 'healthy', {})
+    const workflow = createFabricIntent({
+      capabilityId: 'internal.twin.preference.set', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
+      idempotencyKey: 'runtime-sync-enforce', goal: 'set preference', target: { id: 'personal-twin' },
+      input: { subjectId: 'user-1', domain: 'general', key: 'theme', value: 'dark' }, constraints: {}, rationale: 'test',
+    }).workflow
+    const control = setFabricEmergencyStop(2, 'admin', 'pause active work')
+
+    await expect(enforceControlStateOnce(control.version)).resolves.toEqual({ applied: true, version: control.version })
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({
+      state: 'waiting_user', lastErrorCode: 'FABRIC_CONTROL_CHANGED_REVIEW_REQUIRED',
+    })
   })
 
   it('level 1 rejects new intents before any executable workflow is created', async () => {
@@ -290,7 +308,7 @@ describe('serialized Action Fabric lifecycle', () => {
   it('keeps lifecycle testing hooks out of the public barrel', () => {
     expect('createSerializedFabricLifecycle' in actionFabric).toBe(false)
     expect(Object.keys(publicRuntime).sort()).toEqual([
-      'isActionFabricRuntimeEnabled', 'startActionFabricRuntime', 'stopActionFabricRuntime',
+      'enforceControlStateOnce', 'isActionFabricRuntimeEnabled', 'startActionFabricRuntime', 'stopActionFabricRuntime',
     ])
   })
   it('finishes an in-progress stop before a requested restart', async () => {

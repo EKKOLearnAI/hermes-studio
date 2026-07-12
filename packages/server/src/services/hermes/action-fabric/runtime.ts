@@ -45,6 +45,17 @@ export function stopActionFabricRuntime(): Promise<void> {
   return runtimeLifecycle.stop()
 }
 
+/** Applies at least the requested durable control version before returning. */
+export async function enforceControlStateOnce(version: number): Promise<{ applied: boolean; version: number }> {
+  if (!Number.isSafeInteger(version) || version < 0) throw new Error('FABRIC_RUNTIME_CONTROL_VERSION_INVALID')
+  const control = getFabricControlState()
+  if (control.version < version) throw new Error('FABRIC_RUNTIME_CONTROL_VERSION_PENDING')
+  await enforceControlState(control)
+  const state = running
+  if (state) state.appliedControlVersion = Math.max(state.appliedControlVersion, control.version)
+  return { applied: true, version: control.version }
+}
+
 async function teardownRuntime(): Promise<void> {
   const state = running
   if (!state) return

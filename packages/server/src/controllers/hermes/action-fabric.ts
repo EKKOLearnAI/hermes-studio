@@ -4,6 +4,7 @@ import {
   approveFabricWorkflow,
   cancelFabricWorkflow,
   createFabricIntent,
+  enforceControlStateOnce,
   getFabricControlState,
   getFabricWorkflow,
   listFabricAuditEvents,
@@ -224,17 +225,21 @@ export async function control(ctx: Context): Promise<void> {
 }
 
 export async function updateEmergencyStop(ctx: Context): Promise<void> {
-  respond(ctx, () => {
+  try {
     const body = requestBody(ctx, new Set(['level', 'reason', 'expectedVersion']))
     if (!Number.isSafeInteger(body.level) || (body.level as number) < 0 || (body.level as number) > 3) {
       throw new FabricRequestError('level must be an integer from 0 to 3')
     }
     const reason = requiredText(body, 'reason', 2_000)
     const expectedVersion = requiredInteger(body, 'expectedVersion', 0, Number.MAX_SAFE_INTEGER)
-    return { control: publicControl(setFabricEmergencyStop(
+    const updated = setFabricEmergencyStop(
       body.level as 0 | 1 | 2 | 3, actorUserId(ctx), reason, expectedVersion,
-    )) }
-  })
+    )
+    await enforceControlStateOnce(updated.version)
+    ctx.body = { control: publicControl(updated) }
+  } catch (error) {
+    mapError(ctx, error)
+  }
 }
 
 function respond(ctx: Context, operation: () => unknown): void {
@@ -499,6 +504,18 @@ function publicWorkflowBase(workflow: unknown): Record<string, unknown> {
     goal: publicText(safe.goal), requestedByRoleId: publicText(safe.requestedByRoleId),
     requestedByUserId: publicText(safe.requestedByUserId), createdAt: publicText(safe.createdAt),
     updatedAt: publicText(safe.updatedAt), completedAt: publicNullableText(safe.completedAt),
+    availableActions: publicAvailableActions(safe.availableActions),
+  }
+}
+
+function publicAvailableActions(value: unknown): Record<string, boolean> {
+  const safe = publicRecord(value)
+  return {
+    approve: safe.approve === true,
+    reject: safe.reject === true,
+    cancel: safe.cancel === true,
+    retry: safe.retry === true,
+    compensate: safe.compensate === true,
   }
 }
 

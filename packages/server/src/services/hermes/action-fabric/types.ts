@@ -136,6 +136,15 @@ export interface FabricWorkflow {
   createdAt: string
   updatedAt: string
   completedAt: string | null
+  availableActions: FabricWorkflowAvailableActions
+}
+
+export interface FabricWorkflowAvailableActions {
+  approve: boolean
+  reject: boolean
+  cancel: boolean
+  retry: boolean
+  compensate: boolean
 }
 
 export interface FabricWorkflowSummary extends FabricWorkflow {

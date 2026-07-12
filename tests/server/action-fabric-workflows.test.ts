@@ -458,6 +458,81 @@ describe('Action Fabric durable workflows', () => {
 
   })
 
+  it('publishes authoritative action eligibility from the same workflow guards', () => {
+    const active = createFabricIntent(intent({ idempotencyKey: 'eligibility-active' }))
+    expect(active.workflow.availableActions).toEqual({
+      approve: false, reject: false, cancel: true, retry: false, compensate: false,
+    })
+    withActionFabricDb(db => db.prepare(`UPDATE fabric_workflows SET lease_owner='worker-1',
+      lease_expires_at=? WHERE id=?`).run('2026-07-12T01:05:00.000Z', active.workflow.id))
+    expect(getFabricWorkflow(active.workflow.id)?.availableActions.cancel).toBe(false)
+
+    withActionFabricDb(db => {
+      db.prepare(`UPDATE fabric_workflows SET state='failed',lease_owner=NULL,lease_expires_at=NULL WHERE id=?`)
+        .run(active.workflow.id)
+      db.prepare(`UPDATE fabric_steps SET state='failed',started_at=?,last_error_code='FAILED'
+        WHERE workflow_id=? AND kind='execute'`).run('2026-07-12T01:00:00.000Z', active.workflow.id)
+      const row = db.prepare(`SELECT input_json FROM fabric_steps WHERE workflow_id=? AND kind='prepare'`)
+        .get(active.workflow.id) as { input_json: string }
+      const input = JSON.parse(row.input_json)
+      input.contract.idempotency = 'none'
+      input.contract.verificationStrategy = 'none'
+      db.prepare(`UPDATE fabric_steps SET input_json=? WHERE workflow_id=?`).run(
+        JSON.stringify(input), active.workflow.id,
+      )
+    })
+    expect(getFabricWorkflow(active.workflow.id)?.availableActions.retry).toBe(false)
+  }, 20_000)
+
+  it('reauthorizes a level-2 control checkpoint after level zero and resumes its safe phase', () => {
+    const created = createFabricIntent(intent({ idempotencyKey: 'control-recovery' }))
+    const originalDecisionId = created.policyDecision.id
+    const level2 = setFabricEmergencyStop(2, 'admin-1', 'pause', 0)
+    withActionFabricDb(db => {
+      db.prepare(`UPDATE fabric_workflows SET state='waiting_user',last_error_code=
+        'FABRIC_CONTROL_CHANGED_REVIEW_REQUIRED' WHERE id=?`).run(created.workflow.id)
+      db.prepare(`UPDATE fabric_steps SET state='waiting_user',last_error_code=
+        'FABRIC_CONTROL_CHANGED_REVIEW_REQUIRED' WHERE workflow_id=? AND state='pending'`).run(created.workflow.id)
+    })
+    expect(getFabricWorkflow(created.workflow.id)?.availableActions.retry).toBe(false)
+    setFabricEmergencyStop(0, 'admin-1', 'resume', level2.version)
+
+    const resumed = retryFabricWorkflow(created.workflow.id, 'admin-1')
+    expect(resumed).toMatchObject({ state: 'preparing', lastErrorCode: null })
+    expect(resumed.policyDecisionId).not.toBe(originalDecisionId)
+    expect(resumed.availableActions.retry).toBe(false)
+    expect(resumed.steps.map(step => step.state)).toEqual(['pending', 'pending', 'pending'])
+  }, 20_000)
+
+  it('transfers a positive budget reservation exactly once during control reauthorization', () => {
+    registerPaidCapability()
+    updateAssistantRole('health-manager', {
+      enabled: true,
+      capabilityScope: { allow: ['simulator.paid-approval'], deny: [], enforcement: 'action_fabric_v1' },
+      decisionAuthority: { maxRisk: 'critical', requireApprovalAbove: 'critical', allowedTargets: ['simulator'] },
+      spendingLimits: { currency: 'USD', perAction: 100, daily: 100 },
+    })
+    const created = createFabricIntent(intent({
+      capabilityId: 'simulator.paid-approval', idempotencyKey: 'control-paid-recovery',
+      expectedCost: { currency: 'USD', amountMinor: 60 },
+    }))
+    const level2 = setFabricEmergencyStop(2, 'admin-1', 'pause', 0)
+    withActionFabricDb(db => db.prepare(`UPDATE fabric_workflows SET state='waiting_user',
+      last_error_code='FABRIC_CONTROL_CHANGED_REVIEW_REQUIRED' WHERE id=?`).run(created.workflow.id))
+    setFabricEmergencyStop(0, 'admin-1', 'resume', level2.version)
+
+    const resumed = retryFabricWorkflow(created.workflow.id, 'admin-1')
+    const ledgers = withActionFabricDb(db => db.prepare(`SELECT decision_id,status,workflow_id
+      FROM fabric_budget_ledger WHERE workflow_id=? OR decision_id=? ORDER BY created_at`).all(
+        created.workflow.id, created.policyDecision.id,
+      )) as unknown as Array<{ decision_id: string; status: string; workflow_id: string | null }>
+    expect(resumed.policyDecisionId).not.toBe(created.policyDecision.id)
+    expect(ledgers).toEqual([
+      { decision_id: created.policyDecision.id, status: 'released', workflow_id: created.workflow.id },
+      { decision_id: resumed.policyDecisionId, status: 'reserved', workflow_id: created.workflow.id },
+    ])
+  }, 20_000)
+
   it.each([
     ['allow', 'critical', ['internal.twin.preference.set'], 'preparing', 'compensating'],
     ['waiting_user', 'none', ['internal.twin.preference.set'], 'waiting_user', 'compensating'],

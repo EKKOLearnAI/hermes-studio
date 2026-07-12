@@ -5,7 +5,7 @@ const fabric = vi.hoisted(() => ({
   listFabricWorkflows: vi.fn(), getFabricWorkflow: vi.fn(), approveFabricWorkflow: vi.fn(),
   rejectFabricWorkflow: vi.fn(), cancelFabricWorkflow: vi.fn(), retryFabricWorkflow: vi.fn(),
   requestFabricCompensation: vi.fn(), listFabricAuditEvents: vi.fn(), verifyFabricAuditChain: vi.fn(),
-  getFabricControlState: vi.fn(), setFabricEmergencyStop: vi.fn(),
+  getFabricControlState: vi.fn(), setFabricEmergencyStop: vi.fn(), enforceControlStateOnce: vi.fn(),
 }))
 const twin = vi.hoisted(() => ({ listAssistantRolesWithMappings: vi.fn() }))
 
@@ -33,6 +33,7 @@ const workflow = {
   leaseOwner: null, leaseExpiresAt: null, retryAt: null, lastErrorCode: null,
   createdAt: 'now', updatedAt: 'now', completedAt: null, capabilityId: 'simulator.echo',
   goal: 'Echo a bounded value', requestedByRoleId: 'operator', requestedByUserId: '42',
+  availableActions: { approve: true, reject: true, cancel: true, retry: false, compensate: false },
   intent: baseIntent, steps: [], policyDecision: baseDecision,
 }
 const intentResult = { intent: baseIntent, policyDecision: baseDecision, workflow }
@@ -86,6 +87,7 @@ describe('action fabric controller', () => {
     fabric.verifyFabricAuditChain.mockReturnValue({ valid: true, checked: 3, firstInvalidSequence: null })
     fabric.getFabricControlState.mockReturnValue({ level: 0, version: 4, actorUserId: null, reason: '', updatedAt: '2026-07-12T00:00:00.000Z' })
     fabric.setFabricEmergencyStop.mockReturnValue({ level: 2, version: 5, actorUserId: '42', reason: 'maintenance', updatedAt: '2026-07-12T00:01:00.000Z' })
+    fabric.enforceControlStateOnce.mockResolvedValue({ applied: true, version: 5 })
   })
 
   it('returns bounded allowlisted capability and executor discovery views', async () => {
@@ -210,6 +212,7 @@ describe('action fabric controller', () => {
     await ctrl.workflowDetail(detail)
     expect(fabric.getFabricWorkflow).toHaveBeenCalledWith('wf-1')
     expect(detail.body).toMatchObject({ workflow: { id: 'wf-1', intent: { id: 'intent-1' }, steps: [] } })
+    expect(detail.body.workflow.availableActions).toEqual(workflow.availableActions)
   })
 
   it.each([65, 100, 200])('preserves a descriptor-safe workflow service page of %i items and its cursor', async limit => {
@@ -435,6 +438,7 @@ describe('action fabric controller', () => {
     const update = context({ body: { level: 2, reason: 'maintenance', expectedVersion: 4 } })
     await ctrl.updateEmergencyStop(update)
     expect(fabric.setFabricEmergencyStop).toHaveBeenCalledWith(2, '42', 'maintenance', 4)
+    expect(fabric.enforceControlStateOnce).toHaveBeenCalledWith(5)
     expect(update.body.control.version).toBe(5)
   })
 
