@@ -2,7 +2,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'fs'
 import { createHash } from 'crypto'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { DatabaseSync } from 'node:sqlite'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   appendFabricAuditEvent,
@@ -61,6 +62,9 @@ describe('action fabric audit, outbox, and control', () => {
     }
     return JSON.stringify(value)
   }
+
+  const plusMilliseconds = (timestamp: string, milliseconds: number) =>
+    new Date(new Date(timestamp).getTime() + milliseconds).toISOString()
 
   const seedLegacyChain = () => withActionFabricDb(db => {
     db.exec('BEGIN IMMEDIATE')
@@ -133,6 +137,32 @@ describe('action fabric audit, outbox, and control', () => {
     withActionFabricDb(db => db.exec('DELETE FROM fabric_audit_events WHERE sequence=2'))
 
     expect(() => append({ state: 'succeeded' }, 'workflow.updated')).toThrow('FABRIC_AUDIT_ANCHOR_MISMATCH')
+  })
+
+  it('keeps audited append tail validation constant-query while explicit verification scans history', () => {
+    const prepare = vi.spyOn(DatabaseSync.prototype, 'prepare')
+    try {
+      for (let index = 0; index < 40; index += 1) {
+        append({ index }, `workflow.scale.${index}`)
+      }
+      const fullScansBeforeVerify = prepare.mock.calls.filter(([sql]) =>
+        String(sql).includes('SELECT * FROM fabric_audit_events ORDER BY sequence ASC'))
+      expect(fullScansBeforeVerify).toHaveLength(0)
+
+      expect(verifyFabricAuditChain()).toEqual({ valid: true, checked: 40, firstInvalidSequence: null })
+      const fullScansAfterVerify = prepare.mock.calls.filter(([sql]) =>
+        String(sql).includes('SELECT * FROM fabric_audit_events ORDER BY sequence ASC'))
+      expect(fullScansAfterVerify).toHaveLength(1)
+    } finally {
+      prepare.mockRestore()
+    }
+  })
+
+  it('retains explicit full-chain detection for tampering before the validated tail window', () => {
+    for (let index = 0; index < 5; index += 1) append({ index }, `workflow.history.${index}`)
+    withActionFabricDb(db => db.prepare("UPDATE fabric_audit_events SET payload_json='{}' WHERE sequence=1").run())
+
+    expect(verifyFabricAuditChain()).toMatchObject({ valid: false, firstInvalidSequence: 1 })
   })
 
   it('recursively redacts secrets, semantic key/value pairs, paths, connections, and raw errors', () => {
@@ -296,41 +326,48 @@ describe('action fabric audit, outbox, and control', () => {
   })
 
   it('lists pending outbox records observationally and publishes only a current matching claim', () => {
-    withActionFabricDb(db => {
+    const availableAt = withActionFabricDb(db => {
       db.exec('BEGIN IMMEDIATE')
-      appendFabricOutbox(db, 'fabric.one', 'a', { order: 1 })
+      const first = appendFabricOutbox(db, 'fabric.one', 'a', { order: 1 })
       appendFabricOutbox(db, 'fabric.two', 'b', { order: 2 })
       db.exec('COMMIT')
+      return first.availableAt
     })
     expect(listPendingFabricOutbox(1)).toHaveLength(1)
     expect(listPendingFabricOutbox(10).map(item => item.payload)).toEqual([{ order: 1 }, { order: 2 }])
 
-    const claimed = claimPendingFabricOutbox({ limit: 1, leaseMs: 30_000, now: '2026-07-12T00:00:00.000Z' })
+    const claimed = claimPendingFabricOutbox({ limit: 1, leaseMs: 30_000, now: availableAt })
     const { id, claimToken } = claimed[0]
     expect(markFabricOutboxPublished(id, 'stale-token')).toBe(false)
-    expect(markFabricOutboxPublished(id, claimToken, '2026-07-12T00:00:01.000Z')).toBe(true)
-    expect(markFabricOutboxPublished(id, claimToken, '2026-07-12T00:00:02.000Z')).toBe(false)
+    expect(markFabricOutboxPublished(id, claimToken, plusMilliseconds(availableAt, 1_000))).toBe(true)
+    expect(markFabricOutboxPublished(id, claimToken, plusMilliseconds(availableAt, 2_000))).toBe(false)
     expect(listPendingFabricOutbox()).toHaveLength(1)
     expect(withActionFabricDb(db => db.prepare('SELECT status, attempts FROM fabric_outbox WHERE id=?').get(id)))
       .toEqual({ status: 'published', attempts: 1 })
   })
 
   it('atomically leases outbox records and reclaims the same immutable ID only after expiry', () => {
-    withActionFabricDb(db => {
+    const availableAt = withActionFabricDb(db => {
       db.exec('BEGIN IMMEDIATE')
-      appendFabricOutbox(db, 'fabric.one', 'a', { order: 1 })
+      const outbox = appendFabricOutbox(db, 'fabric.one', 'a', { order: 1 })
       db.exec('COMMIT')
+      return outbox.availableAt
     })
-    const first = claimPendingFabricOutbox({ limit: 1, leaseMs: 1_000, now: '2026-07-12T00:00:00.000Z' })
+    const first = claimPendingFabricOutbox({ limit: 1, leaseMs: 1_000, now: availableAt })
     expect(first).toHaveLength(1)
-    expect(claimPendingFabricOutbox({ limit: 1, leaseMs: 1_000, now: '2026-07-12T00:00:00.500Z' })).toEqual([])
+    expect(claimPendingFabricOutbox({
+      limit: 1, leaseMs: 1_000, now: plusMilliseconds(availableAt, 500),
+    })).toEqual([])
 
-    const reclaimed = claimPendingFabricOutbox({ limit: 1, leaseMs: 1_000, now: '2026-07-12T00:00:01.001Z' })
+    const reclaimed = claimPendingFabricOutbox({
+      limit: 1, leaseMs: 1_000, now: plusMilliseconds(availableAt, 1_001),
+    })
     expect(reclaimed).toHaveLength(1)
     expect(reclaimed[0].id).toBe(first[0].id)
     expect(reclaimed[0].claimToken).not.toBe(first[0].claimToken)
-    expect(markFabricOutboxPublished(first[0].id, first[0].claimToken, '2026-07-12T00:00:01.100Z')).toBe(false)
-    expect(markFabricOutboxPublished(reclaimed[0].id, reclaimed[0].claimToken, '2026-07-12T00:00:01.100Z')).toBe(true)
+    const publishAt = plusMilliseconds(availableAt, 1_100)
+    expect(markFabricOutboxPublished(first[0].id, first[0].claimToken, publishAt)).toBe(false)
+    expect(markFabricOutboxPublished(reclaimed[0].id, reclaimed[0].claimToken, publishAt)).toBe(true)
   })
 
   it('uses a stable managed HMAC key and rejects invalid managed keys', () => {

@@ -31,6 +31,7 @@ const MAX_VISITED_NODES = 4_096
 const MAX_LIST_LIMIT = 200
 const REDACTED = '[REDACTED]'
 const AUDIT_HEAD_KEY = 'audit_chain_head'
+const AUDIT_COUNT_KEY = 'audit_event_count'
 const SENSITIVE_KEY = /(?:^|[_-])(secret|token|password|credential|cookie|auth(?:orization|entication)?|path|file|directory|dir|url|uri|dsn|error|exception)(?:$|[_-])/i
 const SENSITIVE_COMPOUND_KEY = /(?:^|[_-])(?:api|private|secret|access|client|encryption|signing|service|account)[_-]key(?:$|[_-])/i
 const CONNECTION_STRING = /(?:\b(?:postgres(?:ql)?|mysql|mariadb|mssql|sqlserver|oracle|cockroachdb|mongodb(?:\+srv)?|rediss?|amqps?|nats|kafka|snowflake):\/\/|\bsqlite:\/{1,3}|\bjdbc:[a-z][a-z0-9+.-]*:(?:\/\/)?)/i
@@ -114,6 +115,10 @@ export function appendFabricAuditEvent(db: DatabaseSync, input: FabricAuditEvent
     INSERT INTO fabric_meta(key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(AUDIT_HEAD_KEY, canonicalStringify({ sequence, hash }))
+  db.prepare(`
+    INSERT INTO fabric_meta(key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(AUDIT_COUNT_KEY, String(sequence))
   const next = { sequence, hash }
   const expectedAnchor = sameCheckpoint(audited.next, audited.previous)
     ? { committed: audited.previous, pending: null }
@@ -148,8 +153,7 @@ export function withFabricAuditedTransaction<T>(
       auditedTransactions.set(db, context)
       const format = readAuditFormat(db)
       if (format === AUDIT_FORMAT) {
-        const verification = verifyChain(db, value => mac(key, value))
-        if (!verification.valid) throw new Error('FABRIC_AUDIT_CHAIN_CORRUPT')
+        validateAuditWriteTail(db, key, previous)
       }
       const result = operation(db)
       if (isPromiseLike(result)) throw new TypeError('Fabric audited transaction must be synchronous')
@@ -465,9 +469,10 @@ function ensureAuditFormat(db: DatabaseSync): void {
     { value: string } | undefined
   if (row?.value === AUDIT_FORMAT) return
   if (row !== undefined) throw new Error('FABRIC_AUDIT_FORMAT_MIGRATION_REQUIRED')
-  const count = db.prepare('SELECT COUNT(*) AS count FROM fabric_audit_events').get() as { count: number }
-  if (count.count > 0) throw new Error('FABRIC_AUDIT_FORMAT_MIGRATION_REQUIRED')
+  const existing = db.prepare('SELECT 1 AS present FROM fabric_audit_events LIMIT 1').get()
+  if (existing !== undefined) throw new Error('FABRIC_AUDIT_FORMAT_MIGRATION_REQUIRED')
   db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run(AUDIT_FORMAT_KEY, AUDIT_FORMAT)
+  db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run(AUDIT_COUNT_KEY, '0')
 }
 
 function resignLegacyChain(db: DatabaseSync, auditKey: Buffer): void {
@@ -486,6 +491,10 @@ function resignLegacyChain(db: DatabaseSync, auditKey: Buffer): void {
   }
   db.prepare('UPDATE fabric_meta SET value = ? WHERE key = ?')
     .run(canonicalStringify({ sequence: finalSequence, hash: previousHash }), AUDIT_HEAD_KEY)
+  db.prepare(`
+    INSERT INTO fabric_meta(key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(AUDIT_COUNT_KEY, String(finalSequence))
 }
 
 function calculateResignedCheckpoint(db: DatabaseSync, auditKey: Buffer): FabricAuditCheckpoint {
@@ -519,6 +528,59 @@ function readStoredAuditHead(db: DatabaseSync): { sequence: number; hash: string
       : null
   } catch {
     return null
+  }
+}
+
+function readStoredAuditCount(db: DatabaseSync): number | null {
+  const row = db.prepare('SELECT value FROM fabric_meta WHERE key = ?').get(AUDIT_COUNT_KEY) as
+    { value: string } | undefined
+  if (row === undefined) return null
+  if (!/^(0|[1-9]\d*)$/.test(row.value)) throw new Error('FABRIC_AUDIT_CHAIN_CORRUPT')
+  const count = Number(row.value)
+  if (!Number.isSafeInteger(count)) throw new Error('FABRIC_AUDIT_CHAIN_CORRUPT')
+  return count
+}
+
+/**
+ * The signed external anchor binds the trusted checkpoint. Under the global writer lock we only
+ * need to validate the database metadata, the anchored tail event, and its immediate predecessor.
+ * Older history remains covered by the explicit full-chain verifier.
+ */
+function validateAuditWriteTail(
+  db: DatabaseSync,
+  auditKey: Buffer,
+  checkpoint: FabricAuditCheckpoint,
+): void {
+  let storedCount = readStoredAuditCount(db)
+  if (storedCount === null) {
+    // One-time upgrade for databases created before constant-time tail metadata existed.
+    const verification = verifyChain(db, value => mac(auditKey, value))
+    if (!verification.valid) throw new Error('FABRIC_AUDIT_CHAIN_CORRUPT')
+    storedCount = verification.checked
+    db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)')
+      .run(AUDIT_COUNT_KEY, String(storedCount))
+  }
+  if (storedCount !== checkpoint.sequence) throw new Error('FABRIC_AUDIT_CHAIN_CORRUPT')
+  if (checkpoint.sequence === 0) return
+
+  const last = db.prepare('SELECT * FROM fabric_audit_events WHERE sequence = ?')
+    .get(checkpoint.sequence) as AuditRow | undefined
+  if (last === undefined) throw new Error('FABRIC_AUDIT_CHAIN_CORRUPT')
+  let payload: FabricJsonObject
+  try {
+    payload = parseJsonObject(last.payload_json)
+  } catch {
+    throw new Error('FABRIC_AUDIT_CHAIN_CORRUPT')
+  }
+  const calculated = mac(auditKey, canonicalStringify(immutableAuditFields(last, payload, last.previous_hash)))
+  const expectedPrevious = checkpoint.sequence === 1
+    ? GENESIS_HASH
+    : (db.prepare('SELECT hash FROM fabric_audit_events WHERE sequence = ?')
+      .get(checkpoint.sequence - 1) as { hash: string } | undefined)?.hash
+  if (expectedPrevious === undefined || last.previous_hash !== expectedPrevious
+    || last.hash !== checkpoint.hash || calculated !== checkpoint.hash
+    || last.id !== `audit-${last.sequence}-${calculated.slice(0, 24)}`) {
+    throw new Error('FABRIC_AUDIT_CHAIN_CORRUPT')
   }
 }
 
@@ -626,6 +688,15 @@ function verifyChain(
   }
   const headRow = db.prepare('SELECT value FROM fabric_meta WHERE key = ?').get(AUDIT_HEAD_KEY) as
     { value: string } | undefined
+  let storedCount: number | null
+  try {
+    storedCount = readStoredAuditCount(db)
+  } catch {
+    return { valid: false, checked, firstInvalidSequence: expectedSequence }
+  }
+  if (storedCount !== null && storedCount !== checked) {
+    return { valid: false, checked, firstInvalidSequence: expectedSequence }
+  }
   if (checked === 0) {
     if (headRow !== undefined) return { valid: false, checked: 0, firstInvalidSequence: 1 }
     return { valid: true, checked: 0, firstInvalidSequence: null }
