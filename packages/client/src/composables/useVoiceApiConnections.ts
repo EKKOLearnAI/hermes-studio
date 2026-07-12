@@ -96,6 +96,8 @@ export function useVoiceApiConnections() {
       vs.setMimoVoice(connection.voice || stringSetting(settings, 'voice') || vs.mimoVoice.value)
       vs.setMimoStylePrompt(stringSetting(settings, 'stylePrompt'))
       vs.setMimoVoiceDesignDesc(stringSetting(settings, 'voiceDesignDesc'))
+      const cloneFormat = stringSetting(settings, 'voiceCloneFormat')
+      if (cloneFormat === 'mp3' || cloneFormat === 'wav') vs.setMimoVoiceCloneFormat(cloneFormat)
       return
     }
 
@@ -255,13 +257,24 @@ export function useVoiceApiConnections() {
   async function saveConnection(kind: VoiceApiKind, provider: VoiceApiProvider, payload: VoiceApiSavePayload) {
     if (kind === 'tts') {
       if (!isStoredTtsProvider(provider)) throw new Error(`Unsupported TTS provider: ${String(provider)}`)
+      const settings = { ...(payload.settings || {}) }
+      const hasCloneDataUri = Object.prototype.hasOwnProperty.call(settings, 'voiceCloneDataUri')
+      const hasCloneFileName = Object.prototype.hasOwnProperty.call(settings, 'voiceCloneFileName')
+      const cloneDataUri = settings.voiceCloneDataUri
+      const cloneFileName = settings.voiceCloneFileName
+      delete settings.voiceCloneDataUri
+      delete settings.voiceCloneFileName
       const res = await saveTtsSettings(provider, {
-        settings: payload.settings as TtsStoredSettings | undefined,
+        settings: settings as TtsStoredSettings,
         secrets: payload.secrets as TtsStoredSecretsInput | undefined,
         activeProvider: provider,
       })
       await refresh()
       await setActiveConnection('tts', `tts-${provider}`)
+      if (provider === 'mimo') {
+        if (hasCloneDataUri && typeof cloneDataUri === 'string') vs.setMimoVoiceCloneDataUri(cloneDataUri)
+        if (hasCloneFileName && typeof cloneFileName === 'string') vs.setMimoVoiceCloneFileName(cloneFileName)
+      }
       return res
     }
 

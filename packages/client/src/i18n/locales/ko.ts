@@ -2046,6 +2046,16 @@ export default {
 
   // 변경 이력
   changelog: {
+    new_0_6_29_1: '이번 릴리스는 0.6.28 이후 병합된 14개 PR을 모두 포함하며 UI 일관성, MCU 오디오와 v2 하드웨어, workspace diff, 사용량 분석, Docker 업데이트, MiMo 음성 복제를 다룹니다',
+    new_0_6_29_2: '페이지 헤더, 다크 표면, 모서리 반경을 하나의 시각 시스템으로 통일하고 버전 미리보기는 유효한 태그를 시맨틱 버전순으로 정렬합니다 (#2014, #2015)',
+    new_0_6_29_3: 'ESP32 제품 페이지를 반응형으로 개편하고 웹사이트 버전 선택기에 Hermes Agent 0.18.2를 추가했습니다 (#2020, #2042)',
+    new_0_6_29_4: 'ESP32-C3 v1 업링크 오디오에 IMA-ADPCM을 적용해 대역폭을 약 4분의 1로 줄이고 녹음 한도를 2분으로 늘렸으며, OLED는 임시 상태 후 LAN IP로 돌아갑니다 (#2024, #2025)',
+    new_0_6_29_5: 'Workspace diff를 기본 접힘 상태로 표시하고 0줄 변경을 제거했으며 표준 다크 채팅 입력 배경을 복원했습니다 (#2032)',
+    new_0_6_29_6: '세션 내보내기는 잘못된 퍼센트 기호가 있는 파일명을 처리하고, Docker 업데이트는 컨테이너 내부 npm 대신 이미지 pull/recreate 안내를 표시합니다 (#2026, #2033)',
+    new_0_6_29_7: 'Bridge 도구 결과는 전체 저장하되 모델 컨텍스트에서는 앞뒤를 사용한 5,500자 요약으로 제한해 반복적인 컨텍스트 증가를 막습니다 (#2036)',
+    new_0_6_29_8: 'Hermes Agent, Claude Code, Codex, Ekko Agent의 모델 호출을 통합 기록하고 Agent 분포 보기를 추가했습니다 (#2039)',
+    new_0_6_29_9: '독립된 ESP32-C3 v2 펌웨어에 새 핀 맵을 추가해 v1과 분리했으며, v2는 기본 80% 볼륨과 1.5배 PCM 게인 및 소프트 리미팅을 사용합니다 (#2044, #2045)',
+    new_0_6_29_10: 'MiMo 음성 복제에 WAV/MP3 참조 오디오 업로드를 복원하고 현재 API 요구사항에 따라 audio.voice로 전송합니다 (#2046)',
     new_0_6_28_1: '이번 릴리스는 0.6.27 이후 병합된 PR을 반영하며 MCU 관리, 그룹 채팅 workspace diff, Coding Agent 수정, Workflow 승인, workspace diff 필터링, scheduled job 모델 선택, desktop 새 버전 표시를 포함합니다',
     new_0_6_28_2: 'MCU는 device management를 추가하고 global-agent event에 API token 인증을 요구하며 ESP32-C3 firmware를 갱신하고 remote relay login을 안정화했습니다',
     new_0_6_28_3: '그룹 채팅 workspace 변경은 workspace diff run으로 저장되어 세션 완료 후에도 room-level agent activity를 확인할 수 있습니다',

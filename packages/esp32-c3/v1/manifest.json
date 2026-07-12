@@ -4,7 +4,7 @@
   "version": "v1-esp32-c3-wifi-setup-oled",
   "buildDate": "2026-07-10",
   "chip": "esp32c3",
-  "flashSize": "4MB",
+  "flashSize": "16MB",
   "flashMode": "dio",
   "flashFrequency": "40m",
   "hardware": {

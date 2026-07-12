@@ -2047,6 +2047,16 @@ jobTriggered: 'Job ejecutado',
 
   // Registro de cambios
   changelog: {
+    new_0_6_29_1: 'Esta versión incluye los 14 PR fusionados después de 0.6.28: coherencia visual, audio MCU y hardware v2, diffs de workspace, analítica de uso, actualizaciones Docker y clonación de voz MiMo',
+    new_0_6_29_2: 'Los encabezados, superficies oscuras y radios comparten un único sistema visual, y la vista previa ordena las etiquetas por versión semántica (#2014, #2015)',
+    new_0_6_29_3: 'La página de producto ESP32 recibió un rediseño adaptable y el selector web ahora incluye Hermes Agent 0.18.2 (#2020, #2042)',
+    new_0_6_29_4: 'ESP32-C3 v1 usa IMA-ADPCM para reducir el audio ascendente a cerca de una cuarta parte, admite dos minutos de grabación y restaura la IP LAN en el OLED tras estados temporales (#2024, #2025)',
+    new_0_6_29_5: 'Los diffs de workspace empiezan contraídos y omiten cambios de cero líneas, y se restaura el fondo oscuro estándar del compositor (#2032)',
+    new_0_6_29_6: 'La exportación tolera porcentajes mal formados en nombres de archivo; las actualizaciones Docker muestran instrucciones de pull y recreación en vez de modificar npm dentro del contenedor (#2026, #2033)',
+    new_0_6_29_7: 'Los resultados Bridge se guardan completos, pero en el contexto del modelo se resumen a 5.500 caracteres de inicio y final para evitar su amplificación (#2036)',
+    new_0_6_29_8: 'La analítica unifica llamadas de Hermes Agent, Claude Code, Codex y Ekko Agent y añade una vista de distribución por agente (#2039)',
+    new_0_6_29_9: 'Un firmware ESP32-C3 v2 independiente añade el nuevo mapa de pines sin afectar v1; v2 usa 80 % por defecto, ganancia PCM de 1,5x y limitación suave (#2044, #2045)',
+    new_0_6_29_10: 'La clonación de voz MiMo recupera la carga de audio WAV/MP3 y envía la referencia mediante audio.voice como exige la API actual (#2046)',
     new_0_6_28_1: 'Esta versión cubre todos los PR fusionados después de 0.6.27, con gestión de MCU, diffs de workspace en Group Chat, correcciones de Coding Agent, aprobaciones de Workflow, filtrado de diffs, selección de modelo en jobs programados e indicador desktop de nueva versión',
     new_0_6_28_2: 'MCU añade gestión de dispositivos, exige token API para eventos global-agent, actualiza el firmware ESP32-C3 y estabiliza el login del relay remoto',
     new_0_6_28_3: 'Los cambios de workspace de Group Chat se guardan como workspace diff runs para revisar la actividad del agent de la sala tras finalizar la sesión',

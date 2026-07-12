@@ -6,6 +6,7 @@ import { useSpeech, type MimoTtsOptions, type OpenaiTtsOptions } from '@/composa
 import { useMicRecorder } from '@/composables/useMicRecorder'
 import { transcribeSpeech } from '@/api/hermes/stt'
 import { useVoiceApiConnections } from '@/composables/useVoiceApiConnections'
+import { useVoiceSettings } from '@/composables/useVoiceSettings'
 import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
 import VoiceApiCard, { type VoiceApiCardTestState } from './voice/VoiceApiCard.vue'
 import VoiceApiFormModal from './voice/VoiceApiFormModal.vue'
@@ -23,6 +24,7 @@ const { t } = useI18n()
 const message = useMessage()
 const speech = useSpeech()
 const voiceApi = useVoiceApiConnections()
+const voiceSettings = useVoiceSettings()
 
 const testText = ref(t('settings.voice.testTextDefault'))
 const showAddModal = ref(false)
@@ -151,8 +153,12 @@ function mimoOptionsFor(connection: VoiceApiConnection): MimoTtsOptions {
     authMode: options.authMode === 'api-key' || options.authMode === 'bearer' || options.authMode === 'both' ? options.authMode : undefined,
     voiceMode: options.voiceMode === 'preset' || options.voiceMode === 'voiceDesign' || options.voiceMode === 'voiceClone' ? options.voiceMode : undefined,
     voiceDesignDesc: typeof options.voiceDesignDesc === 'string' ? options.voiceDesignDesc : undefined,
-    voiceCloneDataUri: typeof options.voiceCloneDataUri === 'string' ? options.voiceCloneDataUri : undefined,
-    voiceCloneFormat: options.voiceCloneFormat === 'mp3' || options.voiceCloneFormat === 'wav' ? options.voiceCloneFormat : undefined,
+    voiceCloneDataUri: typeof options.voiceCloneDataUri === 'string'
+      ? options.voiceCloneDataUri
+      : voiceSettings.mimoVoiceCloneDataUri.value || undefined,
+    voiceCloneFormat: options.voiceCloneFormat === 'mp3' || options.voiceCloneFormat === 'wav'
+      ? options.voiceCloneFormat
+      : voiceSettings.mimoVoiceCloneFormat.value,
     stylePrompt: typeof options.stylePrompt === 'string' ? options.stylePrompt : undefined,
   }
 }

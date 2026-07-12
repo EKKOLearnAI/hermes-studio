@@ -2047,6 +2047,16 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   changelog: {
+    new_0_6_29_1: 'Diese Version umfasst alle 14 nach 0.6.28 zusammengeführten PRs: einheitliche Oberflächen, MCU-Audio und v2-Hardware, Workspace-Diffs, Nutzungsanalyse, Docker-Updates und MiMo-Stimmklonen',
+    new_0_6_29_2: 'Gemeinsame Seitenköpfe, dunkle Flächen und Radien folgen nun einem visuellen System; die Versionsvorschau sortiert gültige Tags semantisch (#2014, #2015)',
+    new_0_6_29_3: 'Die ESP32-Produktseite wurde responsiv überarbeitet und der Website-Versionswähler enthält jetzt Hermes Agent 0.18.2 (#2020, #2042)',
+    new_0_6_29_4: 'ESP32-C3 v1 nutzt für Uplink-Audio IMA-ADPCM mit etwa einem Viertel der Bandbreite und zwei Minuten Aufnahmelimit; das OLED kehrt nach Statusmeldungen zur LAN-IP zurück (#2024, #2025)',
+    new_0_6_29_5: 'Workspace-Diffs sind standardmäßig eingeklappt und filtern Änderungen mit null Zeilen; der normale dunkle Chat-Eingabehintergrund ist wiederhergestellt (#2032)',
+    new_0_6_29_6: 'Session-Exporte tolerieren fehlerhafte Prozentzeichen in Dateinamen; Docker-Upgrades zeigen Pull-/Recreate-Hinweise statt npm im Container zu verändern (#2026, #2033)',
+    new_0_6_29_7: 'Bridge-Tool-Ergebnisse bleiben vollständig gespeichert, werden im Modellkontext aber auf eine 5.500-Zeichen-Kopf-/Endzusammenfassung begrenzt (#2036)',
+    new_0_6_29_8: 'Die Nutzungsanalyse vereint Modellaufrufe von Hermes Agent, Claude Code, Codex und Ekko Agent und ergänzt eine Agent-Verteilung (#2039)',
+    new_0_6_29_9: 'Ein separates ESP32-C3-v2-Firmwareziel ergänzt die neue Pinbelegung ohne v1 zu ändern; v2 startet bei 80 % Lautstärke mit 1,5-facher PCM-Verstärkung und Soft-Limiting (#2044, #2045)',
+    new_0_6_29_10: 'MiMo-Stimmklonen unterstützt wieder WAV/MP3-Referenzuploads und sendet das Audio gemäß aktueller API über audio.voice (#2046)',
     new_0_6_28_1: 'Diese Version umfasst alle nach 0.6.27 gemergten PRs, darunter MCU-Verwaltung, Gruppenchat-Workspace-Diffs, Coding-Agent-Fixes, Workflow-Freigaben, Workspace-Diff-Filter, Modellwahl fuer geplante Jobs und Desktop-Versionshinweise',
     new_0_6_28_2: 'MCU erhaelt Device Management, verlangt API-Token-Autorisierung fuer global-agent Events, aktualisiert die ESP32-C3-Firmware und stabilisiert den Remote-Relay-Login',
     new_0_6_28_3: 'Gruppenchat-Workspace-Aenderungen werden als Workspace-Diff-Runs gespeichert, damit room-level Agent-Aktivitaet nach Sitzungsende pruefbar bleibt',

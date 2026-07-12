@@ -6,6 +6,7 @@ import type { VoiceApiConnection, VoiceApiSavePayload } from '@/types/voice-api'
 import { VOICE_API_PRESETS } from '@/constants/voiceApiPresets'
 import { DOUBAO_TTS_2_RESOURCE_ID, DOUBAO_TTS_VOICE_OPTIONS, doubaoTtsResourceForVoice } from '@/constants/doubaoTtsVoices'
 import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
+import { useVoiceSettings } from '@/composables/useVoiceSettings'
 
 const props = defineProps<{
   connection: VoiceApiConnection | null
@@ -18,10 +19,17 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const voiceSettings = useVoiceSettings()
 
 const loading = ref(false)
 const formData = ref<Record<string, string | number | undefined>>({})
 const apiKeyInput = ref('')
+const mimoCloneAudioInput = ref<HTMLInputElement | null>(null)
+const mimoCloneDataUri = ref('')
+const mimoCloneFileName = ref('')
+const mimoCloneFormat = ref<'mp3' | 'wav'>('wav')
+const MIMO_CLONE_AUDIO_MAX_BYTES = 10 * 1024 * 1024
+const MIMO_CLONE_AUDIO_ACCEPT = 'audio/mpeg,audio/mp3,audio/wav,.mp3,.wav'
 
 const preset = computed(() =>
   props.connection ? VOICE_API_PRESETS.find(p => p.kind === props.connection!.kind && p.provider === props.connection!.provider && (p.baseUrl === props.connection!.baseUrl || !p.baseUrl)) : null
@@ -60,8 +68,63 @@ watch(() => props.connection, (conn) => {
       formData.value.pitch = numberField('pitch', 0)
     }
     apiKeyInput.value = ''
+    if (conn.provider === 'mimo') {
+      mimoCloneDataUri.value = voiceSettings.mimoVoiceCloneDataUri.value
+      mimoCloneFileName.value = voiceSettings.mimoVoiceCloneFileName.value
+      mimoCloneFormat.value = voiceSettings.mimoVoiceCloneFormat.value
+    }
   }
 }, { immediate: true })
+
+function inferCloneAudioFormat(file: File): 'mp3' | 'wav' {
+  const name = file.name.toLowerCase()
+  return file.type.includes('mpeg') || file.type.includes('mp3') || name.endsWith('.mp3') ? 'mp3' : 'wav'
+}
+
+function readFileAsDataUri(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('Failed to read audio file'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function handleMimoCloneAudioChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+
+  const lowerName = file.name.toLowerCase()
+  const validType = file.type === 'audio/wav'
+    || file.type === 'audio/x-wav'
+    || file.type === 'audio/mpeg'
+    || file.type === 'audio/mp3'
+    || lowerName.endsWith('.wav')
+    || lowerName.endsWith('.mp3')
+  if (!validType || file.size > MIMO_CLONE_AUDIO_MAX_BYTES) {
+    input.value = ''
+    return
+  }
+
+  try {
+    const format = inferCloneAudioFormat(file)
+    const dataUri = await readFileAsDataUri(file)
+    const mimeType = format === 'mp3' ? 'audio/mpeg' : 'audio/wav'
+    mimoCloneDataUri.value = dataUri.replace(/^data:[^;,]*;base64,/, `data:${mimeType};base64,`)
+    mimoCloneFileName.value = file.name
+    mimoCloneFormat.value = format
+  } finally {
+    input.value = ''
+  }
+}
+
+function clearMimoCloneAudio() {
+  mimoCloneDataUri.value = ''
+  mimoCloneFileName.value = ''
+  mimoCloneFormat.value = 'wav'
+  if (mimoCloneAudioInput.value) mimoCloneAudioInput.value.value = ''
+}
 
 async function handleSave() {
   if (!props.connection) return
@@ -69,8 +132,22 @@ async function handleSave() {
   loading.value = true
   try {
     const apiKey = apiKeyInput.value.trim()
+    const settings: Record<string, unknown> = { ...formData.value }
+    if (props.connection.provider === 'mimo') {
+      const model = stringField('model')
+      settings.voiceMode = model === 'mimo-v2.5-tts-voiceclone'
+        ? 'voiceClone'
+        : model === 'mimo-v2.5-tts-voicedesign' ? 'voiceDesign' : 'preset'
+      if (model === 'mimo-v2.5-tts-voiceclone') {
+        // These fields are consumed client-side by useVoiceApiConnections and
+        // deliberately omitted from the server's small settings payload.
+        settings.voiceCloneDataUri = mimoCloneDataUri.value
+        settings.voiceCloneFileName = mimoCloneFileName.value
+        settings.voiceCloneFormat = mimoCloneFormat.value
+      }
+    }
     emit('save', props.connection, {
-      settings: { ...formData.value },
+      settings,
       ...(apiKey ? { secrets: { apiKey } } : {}),
     })
   } finally {
@@ -243,6 +320,29 @@ function handleDoubaoVoiceUpdate(value: string) {
           </NFormItem>
           <NFormItem :label="t('settings.voice.mimoVoiceDesignPrompt')" v-if="stringField('model') === 'mimo-v2.5-tts-voicedesign'">
             <NInput :value="stringField('voiceDesignDesc')" type="textarea" :rows="3" @update:value="value => setField('voiceDesignDesc', value)" />
+          </NFormItem>
+          <NFormItem :label="t('settings.voice.mimoCloneAudio')" v-if="stringField('model') === 'mimo-v2.5-tts-voiceclone'">
+            <NSpace vertical style="width: 100%">
+              <input
+                ref="mimoCloneAudioInput"
+                type="file"
+                :accept="MIMO_CLONE_AUDIO_ACCEPT"
+                style="display: none"
+                @change="handleMimoCloneAudioChange"
+              />
+              <NSpace align="center">
+                <NButton size="small" @click="mimoCloneAudioInput?.click()">
+                  {{ t('settings.voice.mimoCloneAudioUpload') }}
+                </NButton>
+                <span v-if="mimoCloneFileName" style="font-size: 12px; opacity: 0.7">
+                  {{ mimoCloneFileName }} · {{ mimoCloneFormat }}
+                </span>
+                <NButton v-if="mimoCloneDataUri" size="small" tertiary @click="clearMimoCloneAudio">
+                  {{ t('settings.voice.mimoCloneAudioClear') }}
+                </NButton>
+              </NSpace>
+              <span style="font-size: 12px; opacity: 0.6">{{ t('settings.voice.mimoCloneAudioHint') }}</span>
+            </NSpace>
           </NFormItem>
         </template>
 

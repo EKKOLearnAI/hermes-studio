@@ -13,20 +13,21 @@ interface FirmwareInfo {
   md5: string
 }
 
-type FirmwareVersion = 'v1'
+type FirmwareVersion = 'v1' | 'v2'
 type FirmwareContext = Context & { params?: Record<string, unknown> }
 
 const DEFAULT_FIRMWARE_VERSION: FirmwareVersion = 'v1'
-const SUPPORTED_FIRMWARE_VERSIONS = new Set<string>([DEFAULT_FIRMWARE_VERSION])
+const SUPPORTED_FIRMWARE_VERSIONS = new Set<string>(['v1', 'v2'] satisfies FirmwareVersion[])
 const LEGACY_FIRMWARE_ROUTE = '/api/hermes/mcu/firmware.bin'
 const LEGACY_DIST_FIRMWARE_PATH = resolve(process.cwd(), 'dist', 'mcu', 'firmware.bin')
 const DIST_FIRMWARE_PATHS: Record<FirmwareVersion, string> = {
   v1: resolve(process.cwd(), 'dist', 'mcu', 'v1', 'firmware.bin'),
+  v2: resolve(process.cwd(), 'dist', 'mcu', 'v2', 'firmware.bin'),
 }
-const DEV_FIRMWARE_PATH = resolve(
-  process.cwd(),
-  'packages/esp32-c3/v1/.pio/build/esp32-c3-devkitm-1/firmware.bin',
-)
+const DEV_FIRMWARE_PATHS: Record<FirmwareVersion, string> = {
+  v1: resolve(process.cwd(), 'packages/esp32-c3/v1/.pio/build/esp32-c3-devkitm-1/firmware.bin'),
+  v2: resolve(process.cwd(), 'packages/esp32-c3/v2/.pio/build/esp32-c3-devkitm-1/firmware.bin'),
+}
 
 function firmwareVersionFromContext(ctx: Context): FirmwareVersion | null {
   const version = String((ctx as FirmwareContext).params?.version || DEFAULT_FIRMWARE_VERSION)
@@ -41,7 +42,7 @@ function firmwareSource(version: FirmwareVersion): Pick<FirmwareInfo, 'path' | '
   if (process.env.NODE_ENV === 'production') {
     return { path: DIST_FIRMWARE_PATHS[version], channel: 'production' }
   }
-  return { path: DEV_FIRMWARE_PATH, channel: 'development' }
+  return { path: DEV_FIRMWARE_PATHS[version], channel: 'development' }
 }
 
 async function findFirmware(version: FirmwareVersion): Promise<FirmwareInfo | null> {
