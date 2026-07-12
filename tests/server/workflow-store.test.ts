@@ -110,6 +110,19 @@ describe('workflow store', () => {
     })
   })
 
+  it('persists effective execution controls with the run snapshot', async () => {
+    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
+    const { createWorkflowRun, getWorkflowRun } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    const workflow = createWorkflow({ name: 'Execution controls', profile: 'default' })
+    const run = createWorkflowRun({
+      workflow_id: workflow.id,
+      status: 'running',
+      total_timeout_ms: 1234,
+      execution_budget: 7,
+    })
+    expect(getWorkflowRun(run.id)).toMatchObject({ total_timeout_ms: 1234, execution_budget: 7 })
+  })
+
   it('deletes workflow runs and their node session records', async () => {
     const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
     const {
@@ -135,6 +148,26 @@ describe('workflow store', () => {
     expect(getWorkflowRun(run.id)).toBeNull()
     expect(listWorkflowRunNodeSessions(run.id)).toEqual([])
   })
+  it('fails closed orphaned queued and running runs after runtime restart', async () => {
+    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
+    const { createWorkflowRun, createWorkflowRunNodeSession, getWorkflowRun, listWorkflowRunNodeSessions } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    const workflow = createWorkflow({ name: 'Restart recovery', profile: 'default' })
+    const queued = createWorkflowRun({ workflow_id: workflow.id, status: 'queued' })
+    const running = createWorkflowRun({ workflow_id: workflow.id, status: 'running', started_at: Date.now() })
+    createWorkflowRunNodeSession({ run_id: running.id, workflow_id: workflow.id, node_id: 'queued', session_id: 'queued', status: 'queued' })
+    createWorkflowRunNodeSession({ run_id: running.id, workflow_id: workflow.id, node_id: 'running', session_id: 'running', status: 'running' })
+    createWorkflowRunNodeSession({ run_id: running.id, workflow_id: workflow.id, node_id: 'completed', session_id: 'completed', status: 'completed' })
+    const { getWorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    getWorkflowManager()
+    expect(getWorkflowRun(queued.id)).toMatchObject({ status: 'failed', error: 'runtime_restarted' })
+    expect(getWorkflowRun(running.id)).toMatchObject({ status: 'failed', error: 'runtime_restarted' })
+    expect(listWorkflowRunNodeSessions(running.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ node_id: 'queued', status: 'failed', error: 'runtime_restarted' }),
+      expect.objectContaining({ node_id: 'running', status: 'failed', error: 'runtime_restarted' }),
+      expect.objectContaining({ node_id: 'completed', status: 'completed' }),
+    ]))
+  })
+
   it('stores one node session per iteration path while preserving legacy identity', async () => {
     const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
     const { createWorkflowRun, createWorkflowRunNodeSession, listWorkflowRunNodeSessions } = await import('../../packages/server/src/db/hermes/workflow-run-store')

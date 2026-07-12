@@ -20,6 +20,7 @@ import {
   getWorkflowRun,
   listWorkflowRunNodeSessions,
   listWorkflowRuns,
+  recoverInterruptedWorkflowRuns,
   updateWorkflowRun,
   updateWorkflowRunNodeSession,
   type WorkflowRunNodeSessionRecord,
@@ -41,6 +42,10 @@ export type { WorkflowCreateInput, WorkflowRecord, WorkflowUpdateInput }
 export type WorkflowRuntimeState = 'idle' | 'queued' | 'running' | 'pending_approval' | 'completed' | 'failed' | 'approval_rejected' | 'canceled' | 'skipped'
 export type WorkflowRunType = 'workflow'
 export type WorkflowNodeAgent = 'hermes' | 'claude-code' | 'codex'
+const DEFAULT_WORKFLOW_TOTAL_TIMEOUT_MS = 3_600_000
+const MAX_WORKFLOW_TOTAL_TIMEOUT_MS = 86_400_000
+const DEFAULT_WORKFLOW_EXECUTION_BUDGET = 1_000
+const MAX_WORKFLOW_EXECUTION_BUDGET = 10_000
 
 export interface WorkflowNodeRunTarget {
   type: WorkflowRunType
@@ -66,6 +71,8 @@ export interface WorkflowRunNowInput {
   input?: string | null
   user?: AuthenticatedUser
   timeoutMs?: number
+  totalTimeoutMs?: number
+  executionBudget?: number
 }
 
 export interface WorkflowRerunFromNodeInput {
@@ -267,6 +274,42 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     return createWorkflow(input)
   }
 
+  validateRun(workflowId: string, input: WorkflowRunNowInput = {}): void {
+    const workflow = this.get(workflowId)
+    if (!workflow) {
+      const err = new Error('workflow not found')
+      ;(err as any).status = 404
+      throw err
+    }
+    let compiledGraph: ReturnType<typeof compileWorkflowGraph>
+    try {
+      compiledGraph = compileWorkflowGraph(workflow.nodes, workflow.edges)
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error))
+      ;(err as any).status = 400
+      throw err
+    }
+    const nodeIds = new Set(compiledGraph.nodes.map(node => node.id))
+    if (nodeIds.size === 0) {
+      const err = new Error('workflow has no nodes')
+      ;(err as any).status = 400
+      throw err
+    }
+    const inbound = new Set(compiledGraph.edges.filter(edge => !edge.policy.loop).map(edge => edge.target))
+    const requestedInput = input.startNodeIds || []
+    if (requestedInput.some(nodeId => !nodeIds.has(nodeId))) {
+      const err = new Error('workflow start nodes are invalid')
+      ;(err as any).status = 400
+      throw err
+    }
+    const starts = requestedInput.length > 0 ? requestedInput : [...nodeIds].filter(nodeId => !inbound.has(nodeId))
+    if (starts.length === 0) {
+      const err = new Error('workflow has no start nodes')
+      ;(err as any).status = 400
+      throw err
+    }
+  }
+
   update(id: string, input: WorkflowUpdateInput): WorkflowRecord | null {
     return updateWorkflow(id, input)
   }
@@ -406,6 +449,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     runId: string
     node: WorkflowNodeSnapshot
     nodeStatuses: Record<string, WorkflowRuntimeState>
+    deadlineAt?: number
   }): Promise<boolean> {
     if (!workflowNodeRequiresApproval(args.node)) return true
     if (this.canceledRunIds.has(args.runId) || getWorkflowRun(args.runId)?.status === 'canceled') return false
@@ -429,10 +473,21 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       resolve: resolveApproval,
     })
 
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined
     try {
-      const approved = await approval
+      const remainingMs = args.deadlineAt === undefined ? undefined : args.deadlineAt - Date.now()
+      if (remainingMs !== undefined && remainingMs <= 0) throw new Error('workflow_timeout')
+      const approved = remainingMs === undefined
+        ? await approval
+        : await Promise.race([
+            approval,
+            new Promise<never>((_resolve, reject) => {
+              deadlineTimer = setTimeout(() => reject(new Error('workflow_timeout')), remainingMs)
+            }),
+          ])
       return approved && !this.canceledRunIds.has(args.runId) && getWorkflowRun(args.runId)?.status !== 'canceled'
     } finally {
+      if (deadlineTimer) clearTimeout(deadlineTimer)
       this.pendingNodeApprovals.delete(key)
     }
   }
@@ -442,6 +497,18 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     if (!workflow) {
       const err = new Error('workflow not found')
       ;(err as any).status = 404
+      throw err
+    }
+    const totalTimeoutMs = input.totalTimeoutMs ?? DEFAULT_WORKFLOW_TOTAL_TIMEOUT_MS
+    const executionBudget = input.executionBudget ?? DEFAULT_WORKFLOW_EXECUTION_BUDGET
+    if (!Number.isInteger(totalTimeoutMs) || totalTimeoutMs <= 0 || totalTimeoutMs > MAX_WORKFLOW_TOTAL_TIMEOUT_MS) {
+      const err = new Error(`total_timeout_ms must be a positive integer no greater than ${MAX_WORKFLOW_TOTAL_TIMEOUT_MS}`)
+      ;(err as any).status = 400
+      throw err
+    }
+    if (!Number.isInteger(executionBudget) || executionBudget <= 0 || executionBudget > MAX_WORKFLOW_EXECUTION_BUDGET) {
+      const err = new Error(`execution_budget must be a positive integer no greater than ${MAX_WORKFLOW_EXECUTION_BUDGET}`)
+      ;(err as any).status = 400
       throw err
     }
     const chatRun = getChatRunServer()
@@ -486,7 +553,12 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       outgoing.get(edge.source)!.push(edge)
     }
     const defaultStartIds = nodes.filter(node => (incoming.get(node.id) || []).length === 0).map(node => node.id)
-    const requestedStartIds = (input.startNodeIds || []).filter(id => nodeById.has(id))
+    const requestedStartIds = input.startNodeIds || []
+    if (requestedStartIds.some(id => !nodeById.has(id))) {
+      const err = new Error('workflow start nodes are invalid')
+      ;(err as any).status = 400
+      throw err
+    }
     const startNodeIds = requestedStartIds.length > 0 ? requestedStartIds : defaultStartIds
     if (startNodeIds.length === 0) {
       const err = new Error('workflow has no start nodes')
@@ -512,6 +584,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     for (const edge of activeForwardEdges) activeForwardIncoming.get(edge.target)!.push(edge)
 
     const startedAt = Date.now()
+    const deadlineAt = startedAt + totalTimeoutMs
     const run = createWorkflowRun({
       workflow_id: workflow.id,
       profile,
@@ -520,6 +593,8 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       status: 'running',
       snapshot_nodes: workflow.nodes,
       snapshot_edges: workflow.edges,
+      total_timeout_ms: totalTimeoutMs,
+      execution_budget: executionBudget,
       started_at: startedAt,
     })
     this.canceledRunIds.delete(run.id)
@@ -542,6 +617,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     const nodeStatuses: Record<string, WorkflowRuntimeState> = Object.fromEntries(activeNodes.map(node => [node.id, 'queued' as const]))
     let sequence = 0
     let edgeEvaluationSequence = 0
+    let reservedExecutions = 0
     const loopIterations = new Map<string, number>()
     const iterationPathForNode = (nodeId: string) => compiledGraph.edges
       .filter(edge => edge.policy.loop && edge.loopNodeIds?.includes(nodeId))
@@ -598,6 +674,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
 
     try {
       while (completed.size < activeNodes.length) {
+        if (Date.now() >= deadlineAt) throw new Error('workflow_timeout')
         const edgeIsTaken = (edge: WorkflowEdgeSnapshot) => edgeEvaluations.get(edge)?.status === 'taken'
         const nodeIsReady = (node: WorkflowNodeSnapshot) => {
           const inbound = activeForwardIncoming.get(node.id) || []
@@ -625,14 +702,18 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
           if (skippedNode) continue
           throw new Error('workflow graph contains a cycle or blocked dependency')
         }
-        for (const node of ready) nodeStatuses[node.id] = 'running'
+        const remainingBudget = executionBudget - reservedExecutions
+        if (remainingBudget <= 0) throw new Error('execution_budget_exceeded')
+        const dispatchReady = ready.slice(0, remainingBudget)
+        reservedExecutions += dispatchReady.length
+        for (const node of dispatchReady) nodeStatuses[node.id] = 'running'
         this.setRuntimeStatus(workflow.id, {
           status: 'running',
           runId: run.id,
           nodeStatuses: { ...nodeStatuses },
         })
 
-        const results = await Promise.all(ready.map(async node => {
+        const results = await Promise.all(dispatchReady.map(async node => {
           const nodeSessionId = randomUUID()
           nodeSessionIds.set(node.id, nodeSessionId)
           runningOrDone.add(node.id)
@@ -659,24 +740,37 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             overrideInput: startNodeIds.includes(node.id) ? input.input : undefined,
             profile,
           })
-          const runResult = await chatRun.runAndWait({
-            session_id: nodeSessionId,
-            source: 'workflow',
-            session_source: 'workflow',
-            input: assembledInput,
-            profile,
-            workspace: workflow.workspace,
-            model: node.data.model || undefined,
-            provider: node.data.provider || undefined,
-            mode: node.data.agent === 'hermes' ? undefined : 'scoped',
-            coding_agent_id: target.codingAgentId,
-            agent_id: target.codingAgentId,
-            apiMode: node.data.apiMode || undefined,
-          }, {
-            profile,
-            user: input.user,
-            timeoutMs: input.timeoutMs,
-            approvalChoice: 'once',
+          const remainingMs = deadlineAt - Date.now()
+          if (remainingMs <= 0) throw new Error('workflow_timeout')
+          let deadlineTimer: ReturnType<typeof setTimeout> | undefined
+          const runResult = await Promise.race([
+            chatRun.runAndWait({
+              session_id: nodeSessionId,
+              source: 'workflow',
+              session_source: 'workflow',
+              input: assembledInput,
+              profile,
+              workspace: workflow.workspace,
+              model: node.data.model || undefined,
+              provider: node.data.provider || undefined,
+              mode: node.data.agent === 'hermes' ? undefined : 'scoped',
+              coding_agent_id: target.codingAgentId,
+              agent_id: target.codingAgentId,
+              apiMode: node.data.apiMode || undefined,
+            }, {
+              profile,
+              user: input.user,
+              timeoutMs: input.timeoutMs,
+              approvalChoice: 'once',
+            }),
+            new Promise<never>((_resolve, reject) => {
+              deadlineTimer = setTimeout(() => {
+                void chatRun.abortSession?.(nodeSessionId, 'workflow_timeout')
+                reject(new Error('workflow_timeout'))
+              }, remainingMs)
+            }),
+          ]).finally(() => {
+            if (deadlineTimer) clearTimeout(deadlineTimer)
           })
           if (!runResult.ok) {
             const error = runResult.error || `node ${node.id} failed`
@@ -718,6 +812,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             runId: run.id,
             node,
             nodeStatuses,
+            deadlineAt,
           })
           if (!approved) {
             const error = 'Workflow node approval rejected'
@@ -857,6 +952,18 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     }
     if (run.status === 'queued' || run.status === 'running') {
       const err = new Error('workflow run is still active')
+      ;(err as any).status = 409
+      throw err
+    }
+    const hasOrchestratedSnapshot = run.snapshot_edges.some((edge: any) =>
+      edge && typeof edge === 'object' && edge.data && typeof edge.data === 'object'
+        && Object.prototype.hasOwnProperty.call(edge.data, 'orchestration'),
+    ) || run.snapshot_nodes.some((node: any) => {
+      const joinMode = node?.data?.joinMode
+      return joinMode !== undefined && joinMode !== 'all'
+    })
+    if (hasOrchestratedSnapshot) {
+      const err = new Error('partial rerun is not supported for orchestrated workflow snapshots')
       ;(err as any).status = 409
       throw err
     }
@@ -1223,6 +1330,9 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
 let singleton: WorkflowManager | null = null
 
 export function getWorkflowManager(): WorkflowManager {
-  if (!singleton) singleton = new WorkflowManager()
+  if (!singleton) {
+    recoverInterruptedWorkflowRuns()
+    singleton = new WorkflowManager()
+  }
   return singleton
 }

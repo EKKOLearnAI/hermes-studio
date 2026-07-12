@@ -36,6 +36,119 @@ describe('workflow orchestration runtime', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
+  it('counts pending approval time against the total deadline', async () => {
+    chatRunMock.runAndWait.mockResolvedValue({ ok: true, output: 'needs approval' })
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: 'Approval deadline', profile: 'default',
+      nodes: [{ id: 'approval', type: 'agent', data: {
+        title: 'Approval', agent: 'hermes', input: 'approve', approvalRequired: true,
+      } }],
+      edges: [],
+    })
+    const result = await Promise.race([
+      manager.runNow(workflow.id, { totalTimeoutMs: 100 }),
+      new Promise<'still_waiting'>(resolve => setTimeout(() => resolve('still_waiting'), 200)),
+    ])
+    expect(result).not.toBe('still_waiting')
+    expect(result).toMatchObject({
+      run: { status: 'failed', error: expect.stringContaining('workflow_timeout') },
+      nodeSessions: [expect.objectContaining({ status: 'failed', error: 'workflow_timeout' })],
+    })
+    const completed = result as Exclude<typeof result, 'still_waiting'>
+    expect(manager.approveNode(workflow.id, completed.run.id, 'approval', true)).toBe(false)
+    expect(chatRunMock.runAndWait).toHaveBeenCalledTimes(1)
+  })
+
+  it('aborts every active parallel session when the run is stopped', async () => {
+    const pending: Array<(value: { ok: false; error: string }) => void> = []
+    chatRunMock.runAndWait.mockImplementation(() => new Promise(resolve => pending.push(resolve)))
+    chatRunMock.abortSession.mockImplementation(async () => {
+      pending.shift()?.({ ok: false, error: 'user_cancelled' })
+    })
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: 'Parallel stop', profile: 'default',
+      nodes: [
+        { id: 'first', type: 'agent', data: { title: 'First', agent: 'hermes', input: 'first' } },
+        { id: 'second', type: 'agent', data: { title: 'Second', agent: 'hermes', input: 'second' } },
+      ],
+      edges: [],
+    })
+    const runPromise = manager.runNow(workflow.id)
+    await vi.waitFor(() => expect(chatRunMock.runAndWait).toHaveBeenCalledTimes(2))
+    const runId = manager.getRuntimeStatus(workflow.id).runId!
+    await manager.stopRun(workflow.id, runId, 'user_cancelled')
+    expect(chatRunMock.abortSession).toHaveBeenCalledTimes(2)
+    expect(chatRunMock.abortSession).toHaveBeenCalledWith(expect.any(String), 'user_cancelled')
+    const result = await Promise.race([
+      runPromise,
+      new Promise<'still_waiting'>(resolve => setTimeout(() => resolve('still_waiting'), 100)),
+    ])
+    expect(result).not.toBe('still_waiting')
+    expect(result).toMatchObject({ run: { status: 'canceled' } })
+  })
+
+  it('fails a running workflow when the total deadline expires', async () => {
+    chatRunMock.runAndWait.mockImplementation(async () => {
+      await new Promise(resolve => setTimeout(resolve, 200))
+      return { ok: true, output: 'late' }
+    })
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: 'Total deadline', profile: 'default',
+      nodes: [{ id: 'slow', type: 'agent', data: { title: 'Slow', agent: 'hermes', input: 'wait' } }],
+      edges: [],
+    })
+    const result = await manager.runNow(workflow.id, { totalTimeoutMs: 100 })
+    expect(result.run).toMatchObject({ status: 'failed', error: expect.stringContaining('workflow_timeout') })
+    expect(chatRunMock.abortSession).toHaveBeenCalledWith(expect.any(String), 'workflow_timeout')
+  })
+
+  it('does not oversubscribe the execution budget across parallel ready nodes', async () => {
+    chatRunMock.runAndWait.mockResolvedValue({ ok: true, output: 'done' })
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: 'Parallel execution budget', profile: 'default',
+      nodes: [
+        { id: 'first', type: 'agent', data: { title: 'First', agent: 'hermes', input: 'first' } },
+        { id: 'second', type: 'agent', data: { title: 'Second', agent: 'hermes', input: 'second' } },
+      ],
+      edges: [],
+    })
+    const result = await manager.runNow(workflow.id, { executionBudget: 1 })
+    expect(result.run).toMatchObject({ status: 'failed', error: expect.stringContaining('execution_budget_exceeded') })
+    expect(chatRunMock.runAndWait).toHaveBeenCalledTimes(1)
+    expect(result.nodeSessions).toHaveLength(1)
+  })
+
+  it('fails before creating a session beyond the execution budget', async () => {
+    chatRunMock.runAndWait.mockResolvedValue({ ok: true, output: 'done' })
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: 'Execution budget', profile: 'default',
+      nodes: [
+        { id: 'first', type: 'agent', data: { title: 'First', agent: 'hermes', input: 'first' } },
+        { id: 'second', type: 'agent', data: { title: 'Second', agent: 'hermes', input: 'second' } },
+      ],
+      edges: [{ id: 'first-second', source: 'first', target: 'second' }],
+    })
+    const result = await manager.runNow(workflow.id, { executionBudget: 1 })
+    expect(result.run).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('execution_budget_exceeded'),
+      execution_budget: 1,
+      total_timeout_ms: 3_600_000,
+    })
+    expect(chatRunMock.runAndWait).toHaveBeenCalledTimes(1)
+    expect(result.nodeSessions).toHaveLength(1)
+  })
+
   it('keeps the legacy fail-fast behavior when failure is not handled', async () => {
     chatRunMock.runAndWait.mockResolvedValueOnce({ ok: false, error: 'review failed' })
     const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')

@@ -8,6 +8,7 @@ import {
   WORKFLOW_RUN_NODE_SESSIONS_INDEXES,
   WORKFLOW_RUN_NODE_SESSIONS_SCHEMA,
   WORKFLOW_RUN_NODE_SESSIONS_TABLE,
+  WORKFLOW_RUNS_SCHEMA,
   WORKFLOW_RUNS_TABLE,
 } from './schemas'
 
@@ -23,6 +24,8 @@ export interface WorkflowRunRecord {
   status: WorkflowRunStatus
   snapshot_nodes: unknown[]
   snapshot_edges: unknown[]
+  total_timeout_ms: number | null
+  execution_budget: number | null
   started_at: number | null
   finished_at: number | null
   created_at: number
@@ -101,6 +104,8 @@ function rowToRunRecord(row: Record<string, any>): WorkflowRunRecord {
     status: String(row.status || 'queued') as WorkflowRunStatus,
     snapshot_nodes: parseArrayJson(row.snapshot_nodes_json ?? row.snapshot_nodes),
     snapshot_edges: parseArrayJson(row.snapshot_edges_json ?? row.snapshot_edges),
+    total_timeout_ms: row.total_timeout_ms == null ? null : Number(row.total_timeout_ms),
+    execution_budget: row.execution_budget == null ? null : Number(row.execution_budget),
     started_at: row.started_at == null ? null : Number(row.started_at),
     finished_at: row.finished_at == null ? null : Number(row.finished_at),
     created_at: Number(row.created_at || 0),
@@ -155,6 +160,8 @@ export function createWorkflowRun(input: {
   status?: WorkflowRunStatus
   snapshot_nodes?: unknown[]
   snapshot_edges?: unknown[]
+  total_timeout_ms?: number | null
+  execution_budget?: number | null
   started_at?: number | null
   error?: string | null
 }): WorkflowRunRecord {
@@ -168,6 +175,8 @@ export function createWorkflowRun(input: {
     status: input.status || 'queued',
     snapshot_nodes: input.snapshot_nodes || [],
     snapshot_edges: input.snapshot_edges || [],
+    total_timeout_ms: input.total_timeout_ms ?? null,
+    execution_budget: input.execution_budget ?? null,
     started_at: input.started_at ?? null,
     finished_at: null,
     created_at: now,
@@ -182,6 +191,8 @@ export function createWorkflowRun(input: {
     status: record.status,
     snapshot_nodes_json: JSON.stringify(record.snapshot_nodes),
     snapshot_edges_json: JSON.stringify(record.snapshot_edges),
+    total_timeout_ms: record.total_timeout_ms,
+    execution_budget: record.execution_budget,
     started_at: record.started_at,
     finished_at: record.finished_at,
     created_at: record.created_at,
@@ -192,11 +203,13 @@ export function createWorkflowRun(input: {
     jsonSet(WORKFLOW_RUNS_TABLE, record.id, row as any)
     return record
   }
+  syncTable(WORKFLOW_RUNS_TABLE, WORKFLOW_RUNS_SCHEMA)
   db.prepare(`
     INSERT INTO ${WORKFLOW_RUNS_TABLE} (
       id, workflow_id, profile, workspace, start_node_ids_json, status,
-      snapshot_nodes_json, snapshot_edges_json, started_at, finished_at, created_at, error
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      snapshot_nodes_json, snapshot_edges_json, total_timeout_ms, execution_budget,
+      started_at, finished_at, created_at, error
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     row.id,
     row.workflow_id,
@@ -206,6 +219,8 @@ export function createWorkflowRun(input: {
     row.status,
     row.snapshot_nodes_json,
     row.snapshot_edges_json,
+    row.total_timeout_ms,
+    row.execution_budget,
     row.started_at,
     row.finished_at,
     row.created_at,
@@ -312,6 +327,53 @@ export function listWorkflowRuns(workflowId?: string | null, limit = 100): Workf
     LIMIT ?
   `).all(safeLimit) as Record<string, any>[]
   return rows.map(rowToRunRecord)
+}
+
+export function recoverInterruptedWorkflowRuns(reason = 'runtime_restarted'): number {
+  const now = Date.now()
+  const db = getDb()
+  if (!db) {
+    const runs = Object.values(jsonGetAll(WORKFLOW_RUNS_TABLE)).map(rowToRunRecord)
+    let recovered = 0
+    for (const run of runs) {
+      if (run.status !== 'queued' && run.status !== 'running') continue
+      jsonSet(WORKFLOW_RUNS_TABLE, run.id, {
+        ...run, status: 'failed', finished_at: now, error: reason,
+      } as any)
+      recovered += 1
+      for (const session of Object.values(jsonGetAll(WORKFLOW_RUN_NODE_SESSIONS_TABLE)).map(rowToNodeSessionRecord)) {
+        if (session.run_id !== run.id || (session.status !== 'queued' && session.status !== 'running')) continue
+        jsonSet(WORKFLOW_RUN_NODE_SESSIONS_TABLE, session.id, {
+          ...session, status: 'failed', finished_at: now, updated_at: now, error: reason,
+        } as any)
+      }
+    }
+    return recovered
+  }
+  db.exec('BEGIN')
+  try {
+    const interrupted = db.prepare(`
+      SELECT id FROM ${WORKFLOW_RUNS_TABLE} WHERE status IN ('queued', 'running')
+    `).all() as Array<{ id: string }>
+    if (interrupted.length > 0) {
+      db.prepare(`
+        UPDATE ${WORKFLOW_RUN_NODE_SESSIONS_TABLE}
+        SET status = 'failed', finished_at = ?, updated_at = ?, error = ?
+        WHERE run_id IN (SELECT id FROM ${WORKFLOW_RUNS_TABLE} WHERE status IN ('queued', 'running'))
+          AND status IN ('queued', 'running')
+      `).run(now, now, reason)
+      db.prepare(`
+        UPDATE ${WORKFLOW_RUNS_TABLE}
+        SET status = 'failed', finished_at = ?, error = ?
+        WHERE status IN ('queued', 'running')
+      `).run(now, reason)
+    }
+    db.exec('COMMIT')
+    return interrupted.length
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
 }
 
 export function createWorkflowRunNodeSession(input: {

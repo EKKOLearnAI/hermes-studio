@@ -216,6 +216,40 @@ describe('workflow manager', () => {
     }
   })
 
+  it('rejects explicitly requested start nodes that are absent from the workflow', async () => {
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: `Invalid start ${Date.now()}`, profile: 'default',
+      nodes: [{ id: 'first', type: 'agent', data: { title: 'First', agent: 'hermes', input: 'first' } }],
+      edges: [],
+    })
+    expect(() => manager.validateRun(workflow.id, { startNodeIds: ['missing'] })).toThrow('workflow start nodes are invalid')
+  })
+
+  it('rejects partial rerun for a non-legacy orchestration snapshot', async () => {
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const { createWorkflowRun } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    const manager = new WorkflowManager()
+    const snapshotNodes = [
+      { id: 'first', type: 'agent', data: { title: 'First', agent: 'hermes', input: 'first' } },
+      { id: 'second', type: 'agent', data: { title: 'Second', agent: 'hermes', input: 'second' } },
+    ]
+    const snapshotEdges = [{
+      id: 'first-second', source: 'first', target: 'second',
+      data: { orchestration: { route: 'always' } },
+    }]
+    const workflow = manager.create({ name: `Orchestrated rerun ${Date.now()}`, profile: 'default', nodes: snapshotNodes, edges: snapshotEdges })
+    const run = createWorkflowRun({
+      workflow_id: workflow.id, profile: 'default', status: 'failed',
+      snapshot_nodes: snapshotNodes, snapshot_edges: snapshotEdges,
+    })
+    await expect(manager.rerunFromNode(workflow.id, run.id, 'first')).rejects.toMatchObject({
+      message: 'partial rerun is not supported for orchestrated workflow snapshots',
+      status: 409,
+    })
+  })
+
   it('reruns incomplete external upstream dependencies for downstream joins', async () => {
     const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
     const {

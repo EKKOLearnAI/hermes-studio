@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const managerMock = vi.hoisted(() => ({
   get: vi.fn(),
+  validateRun: vi.fn(),
   deleteRun: vi.fn(),
   rerunFromNode: vi.fn(),
   runNow: vi.fn(),
@@ -42,6 +43,7 @@ function ctx(overrides: Record<string, any> = {}) {
 describe('workflow controller', () => {
   beforeEach(() => {
     managerMock.get.mockReset()
+    managerMock.validateRun.mockReset()
     managerMock.deleteRun.mockReset()
     managerMock.rerunFromNode.mockReset()
     managerMock.runNow.mockReset()
@@ -102,6 +104,38 @@ describe('workflow controller', () => {
     })
     expect(c.status).toBe(202)
     expect(c.body).toEqual({ ok: true, status: 'accepted' })
+  })
+
+  it('rejects synchronous workflow preflight before returning accepted', async () => {
+    managerMock.get.mockReturnValue({ id: 'workflow-1', profile: 'default' })
+    managerMock.runNow.mockResolvedValue({ run: { id: 'run-1', status: 'completed' }, nodeSessions: [] })
+    managerMock.validateRun.mockImplementation(() => {
+      const error = new Error('workflow graph contains a cycle') as Error & { status: number }
+      error.status = 400
+      throw error
+    })
+    const mod = await import('../../packages/server/src/controllers/hermes/workflows')
+    const c = ctx({ params: { id: 'workflow-1' }, request: { body: {} } })
+    await mod.runNow(c)
+    expect(c.status).toBe(400)
+    expect(c.body).toEqual({ error: 'workflow graph contains a cycle' })
+    expect(managerMock.runNow).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [{ total_timeout_ms: 0 }, 'total_timeout_ms'],
+    [{ total_timeout_ms: 86_400_001 }, 'total_timeout_ms'],
+    [{ execution_budget: 1.5 }, 'execution_budget'],
+    [{ execution_budget: 10_001 }, 'execution_budget'],
+  ])('rejects invalid workflow execution limits before accepting the run', async (body, field) => {
+    managerMock.get.mockReturnValue({ id: 'workflow-1', profile: 'default' })
+    managerMock.runNow.mockResolvedValue({ run: { id: 'run-1', status: 'completed' }, nodeSessions: [] })
+    const mod = await import('../../packages/server/src/controllers/hermes/workflows')
+    const c = ctx({ params: { id: 'workflow-1' }, request: { body } })
+    await mod.runNow(c)
+    expect(c.status).toBe(400)
+    expect(c.body).toMatchObject({ error: expect.stringContaining(field) })
+    expect(managerMock.runNow).not.toHaveBeenCalled()
   })
 
   it('stops a workflow run through the workflow manager', async () => {

@@ -104,6 +104,14 @@ function optionalPositiveNumber(value: unknown, name: string): { value?: number;
   if (!Number.isFinite(numberValue) || numberValue <= 0) return { error: `${name} must be a positive number` }
   return { value: numberValue }
 }
+function optionalPositiveInteger(value: unknown, name: string, maximum: number): { value?: number; error?: string } {
+  if (value === undefined || value === null) return {}
+  const numberValue = typeof value === 'number' ? value : Number(value)
+  if (!Number.isInteger(numberValue) || numberValue <= 0 || numberValue > maximum) {
+    return { error: `${name} must be a positive integer no greater than ${maximum}` }
+  }
+  return { value: numberValue }
+}
 
 function optionalBoolean(value: unknown, name: string): { value?: boolean; error?: string } {
   if (value === undefined || value === null) return {}
@@ -451,7 +459,9 @@ export async function runNow(ctx: Context) {
   const startNodeIds = optionalStringArray(body.start_node_ids ?? body.startNodeIds, 'start_node_ids')
   const input = optionalNullableString(body.input, 'input')
   const timeoutMs = optionalPositiveNumber(body.timeout_ms ?? body.timeoutMs, 'timeout_ms')
-  if (rejectBadRequest(ctx, startNodeIds.error || input.error || timeoutMs.error)) return
+  const totalTimeoutMs = optionalPositiveInteger(body.total_timeout_ms ?? body.totalTimeoutMs, 'total_timeout_ms', 86_400_000)
+  const executionBudget = optionalPositiveInteger(body.execution_budget ?? body.executionBudget, 'execution_budget', 10_000)
+  if (rejectBadRequest(ctx, startNodeIds.error || input.error || timeoutMs.error || totalTimeoutMs.error || executionBudget.error)) return
 
   const runInput: WorkflowRunNowInput = {
     profile: workflow.profile,
@@ -460,8 +470,17 @@ export async function runNow(ctx: Context) {
   if (startNodeIds.value !== undefined) runInput.startNodeIds = startNodeIds.value
   if (input.value !== undefined) runInput.input = input.value
   if (timeoutMs.value !== undefined) runInput.timeoutMs = timeoutMs.value
+  if (totalTimeoutMs.value !== undefined) runInput.totalTimeoutMs = totalTimeoutMs.value
+  if (executionBudget.value !== undefined) runInput.executionBudget = executionBudget.value
 
   const manager = getWorkflowManager()
+  try {
+    manager.validateRun(id, runInput)
+  } catch (err: any) {
+    ctx.status = Number(err?.status) || 400
+    ctx.body = { error: err?.message || 'workflow preflight failed' }
+    return
+  }
   void manager.runNow(id, runInput).catch((err: any) => {
     const message = err?.message || 'failed to run workflow'
     logger.error(err, '[workflow] async run failed for workflow %s', id)

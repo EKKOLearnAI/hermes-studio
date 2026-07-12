@@ -185,6 +185,8 @@ export const WORKFLOW_RUNS_SCHEMA: Record<string, string> = {
   status: "TEXT NOT NULL DEFAULT 'queued'",
   snapshot_nodes_json: "TEXT NOT NULL DEFAULT '[]'",
   snapshot_edges_json: "TEXT NOT NULL DEFAULT '[]'",
+  total_timeout_ms: 'INTEGER',
+  execution_budget: 'INTEGER',
   started_at: 'INTEGER',
   finished_at: 'INTEGER',
   created_at: 'INTEGER NOT NULL',

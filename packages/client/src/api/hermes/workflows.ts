@@ -53,6 +53,8 @@ export interface WorkflowRunRecord {
   status: WorkflowRunStatus
   snapshot_nodes: unknown[]
   snapshot_edges: unknown[]
+  total_timeout_ms: number | null
+  execution_budget: number | null
   started_at: number | null
   finished_at: number | null
   created_at: number
@@ -99,6 +101,8 @@ export interface WorkflowRunNowRequest {
   start_node_ids?: string[]
   input?: string | null
   timeout_ms?: number
+  total_timeout_ms?: number
+  execution_budget?: number
 }
 
 export interface WorkflowRerunFromNodeRequest {
