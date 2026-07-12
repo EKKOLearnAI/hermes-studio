@@ -49,7 +49,7 @@ export interface FabricExecutorInput {
   type: FabricExecutorType
   name: string
   environment: FabricEnvironment
-  configuration: FabricJsonObject & { externalWrite: boolean }
+  configuration: FabricJsonObject
   enabled: boolean
 }
 
@@ -128,7 +128,7 @@ const BUILT_IN_BINDINGS = [
 
 export function ensureBuiltInFabricRegistry(): void {
   withActionFabricDb(db => {
-    if (hasCompleteBuiltInRegistry(db) && hasValidBuiltInExternalWriteClassification(db)) return
+    if (hasCompleteBuiltInRegistry(db) && hasValidExternalWriteClassification(db)) return
     transaction(db, () => {
       const wasComplete = hasCompleteBuiltInRegistry(db)
       for (const input of BUILT_IN_CAPABILITIES) insertCapabilityIfMissing(db, input)
@@ -138,7 +138,7 @@ export function ensureBuiltInFabricRegistry(): void {
         if (!capability) throw new Error(`Built-in capability is missing: ${capabilityId}`)
         insertBindingIfMissing(db, executorId, capability)
       }
-      const backfilled = backfillBuiltInExternalWriteClassification(db)
+      const backfilled = backfillExternalWriteClassification(db)
       if (!wasComplete || backfilled) bumpRegistryPolicyRevision(db)
     })
   })
@@ -236,7 +236,7 @@ export function updateFabricExecutor(
     if (!existing) throw new Error(`Executor not found: ${id}`)
     const input = validateExecutor({
       id, type: existing.type, name: existing.name, environment: existing.environment,
-      configuration: existing.configuration as FabricExecutorInput['configuration'],
+      configuration: existing.configuration,
       enabled: existing.enabled, ...updates,
     })
     db.prepare(`UPDATE fabric_executors SET type=?, name=?, environment=?, configuration_json=?, enabled=?,
@@ -394,10 +394,10 @@ function hasCompleteBuiltInRegistry(db: DatabaseSync): boolean {
     && hasPolicyRevision
 }
 
-function hasValidBuiltInExternalWriteClassification(db: DatabaseSync): boolean {
+function hasValidExternalWriteClassification(db: DatabaseSync): boolean {
   const rows = db.prepare(`SELECT configuration_json FROM fabric_executors
-    WHERE id IN ('simulator-main','internal-twin')`).all() as Array<{ configuration_json: string }>
-  return rows.length === 2 && rows.every(row => {
+    ORDER BY id`).all() as Array<{ configuration_json: string }>
+  return rows.every(row => {
     try {
       const value = JSON.parse(row.configuration_json) as Record<string, unknown>
       return typeof value.externalWrite === 'boolean'
@@ -405,9 +405,9 @@ function hasValidBuiltInExternalWriteClassification(db: DatabaseSync): boolean {
   })
 }
 
-function backfillBuiltInExternalWriteClassification(db: DatabaseSync): boolean {
-  const rows = db.prepare(`SELECT id,configuration_json FROM fabric_executors
-    WHERE id IN ('simulator-main','internal-twin')`).all() as Array<{ id: string; configuration_json: string }>
+function backfillExternalWriteClassification(db: DatabaseSync): boolean {
+  const rows = db.prepare(`SELECT id,type,configuration_json FROM fabric_executors ORDER BY id`).all() as
+    Array<{ id: string; type: string; configuration_json: string }>
   let changed = false
   for (const row of rows) {
     let configuration: FabricJsonObject = {}
@@ -416,8 +416,9 @@ function backfillBuiltInExternalWriteClassification(db: DatabaseSync): boolean {
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) configuration = parsed as FabricJsonObject
     } catch { /* known built-ins are safe to reconstruct */ }
     if (typeof configuration.externalWrite === 'boolean') continue
+    const externalWrite = normalizeExternalWrite(row.type, row.id, configuration.externalWrite)
     db.prepare(`UPDATE fabric_executors SET configuration_json=?,policy_version=policy_version+1,updated_at=?
-      WHERE id=?`).run(json({ ...configuration, externalWrite: false }), new Date().toISOString(), row.id)
+      WHERE id=?`).run(json({ ...configuration, externalWrite }), new Date().toISOString(), row.id)
     changed = true
   }
   return changed
@@ -458,11 +459,15 @@ function validateExecutor(input: FabricExecutorInput): FabricExecutorInput {
   if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 256) throw new Error('Invalid executor name')
   if (!ENVIRONMENTS.has(input.environment)) throw new Error(`Invalid executor environment: ${String(input.environment)}`)
   assertJsonObject(input.configuration, 'executor configuration'); assertJsonBound(input.configuration, 'executor configuration')
-  if (typeof input.configuration.externalWrite !== 'boolean') {
-    throw new Error('Executor externalWrite classification must be boolean')
-  }
   if (typeof input.enabled !== 'boolean') throw new Error('Executor enabled must be boolean')
-  return input
+  return { ...input, configuration: { ...input.configuration,
+    externalWrite: normalizeExternalWrite(input.type, input.id, input.configuration.externalWrite) } }
+}
+
+function normalizeExternalWrite(type: string, id: string, value: unknown): boolean {
+  if (typeof value === 'boolean') return value
+  if (type === 'simulator' || id === 'internal-twin') return false
+  return true
 }
 
 function insertCapabilityIfMissing(db: DatabaseSync, input: FabricCapabilityInput): void {

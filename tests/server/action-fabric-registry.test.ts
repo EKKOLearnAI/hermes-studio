@@ -243,15 +243,21 @@ describe('action fabric registry', () => {
     } as never)).toThrow(/invalid.*json|unsafe/i)
   })
 
-  it('requires an explicit external-write classification for every new executor', () => {
-    expect(() => createFabricExecutor({
+  it('normalizes legacy-compatible executor input to an explicit persisted classification', () => {
+    const missing = createFabricExecutor({
       id: 'internal-missing-scope', type: 'internal', name: 'Missing scope', environment: 'internal',
       configuration: {}, enabled: true,
-    } as never)).toThrow('Executor externalWrite classification must be boolean')
-    expect(() => createFabricExecutor({
+    })
+    const malformed = createFabricExecutor({
       id: 'internal-invalid-scope', type: 'internal', name: 'Invalid scope', environment: 'internal',
       configuration: { externalWrite: 'false' }, enabled: true,
-    } as never)).toThrow('Executor externalWrite classification must be boolean')
+    } as never)
+    const simulator = createFabricExecutor({
+      id: 'simulator-compatible', type: 'simulator', name: 'Simulator', environment: 'simulator',
+      configuration: {}, enabled: true,
+    })
+    expect([missing.configuration.externalWrite, malformed.configuration.externalWrite,
+      simulator.configuration.externalWrite]).toEqual([true, true, false])
   })
 
   it('safely backfills legacy built-in classification without changing explicit operator scope', () => {
@@ -260,11 +266,17 @@ describe('action fabric registry', () => {
       db.prepare("UPDATE fabric_executors SET configuration_json='{}' WHERE id='simulator-main'").run()
       db.prepare(`UPDATE fabric_executors SET configuration_json='{"externalWrite":true}'
         WHERE id='internal-twin'`).run()
+      db.prepare(`INSERT INTO fabric_executors(id,type,name,environment,health,health_details_json,
+        configuration_json,enabled,policy_version,created_at,updated_at)
+        VALUES('legacy-internal','internal','Legacy','internal','healthy','{}','{}',1,1,?,?)`).run(
+        new Date().toISOString(), new Date().toISOString(),
+      )
     })
     ensureBuiltInFabricRegistry()
     const executors = listFabricExecutors()
     expect(executors.find(item => item.id === 'simulator-main')?.configuration.externalWrite).toBe(false)
     expect(executors.find(item => item.id === 'internal-twin')?.configuration.externalWrite).toBe(true)
+    expect(executors.find(item => item.id === 'legacy-internal')?.configuration.externalWrite).toBe(true)
   })
 
   it('rejects non-enumerable array entries before canonicalization', () => {

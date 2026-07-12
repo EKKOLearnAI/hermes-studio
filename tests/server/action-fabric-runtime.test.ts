@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createFabricIntent,
   createFabricExecutor,
-  createSerializedFabricLifecycle,
   createSimulatorExecutorAdapter,
   ensureBuiltInFabricRegistry,
   getActionFabricDbPath,
@@ -22,6 +21,9 @@ import {
   unregisterFabricExecutorAdapter,
   withActionFabricDb,
 } from '../../packages/server/src/services/hermes/action-fabric'
+import * as actionFabric from '../../packages/server/src/services/hermes/action-fabric'
+import * as publicRuntime from '../../packages/server/src/services/hermes/action-fabric/runtime'
+import { createSerializedFabricLifecycle } from '../../packages/server/src/services/hermes/action-fabric/runtime-lifecycle'
 import { ensureBuiltInAssistantRoles, updateAssistantRole } from '../../packages/server/src/services/hermes/personal-twin'
 import { runServerMain } from '../../packages/server/src/services/server-main'
 
@@ -208,7 +210,7 @@ describe('Action Fabric runtime lifecycle', () => {
   it('disables explicit internal external writes once without penalizing a valid local contract', async () => {
     ensureBuiltInFabricRegistry()
     createFabricExecutor({ id: 'internal-external', type: 'internal', name: 'External writer', environment: 'internal',
-      configuration: { externalWrite: true }, enabled: true })
+      configuration: {}, enabled: true })
     createFabricExecutor({ id: 'internal-local', type: 'internal', name: 'Local writer', environment: 'internal',
       configuration: { externalWrite: false }, enabled: true })
     await startActionFabricRuntime()
@@ -285,6 +287,12 @@ describe('server main Action Fabric rollback', () => {
 })
 
 describe('serialized Action Fabric lifecycle', () => {
+  it('keeps lifecycle testing hooks out of the public barrel', () => {
+    expect('createSerializedFabricLifecycle' in actionFabric).toBe(false)
+    expect(Object.keys(publicRuntime).sort()).toEqual([
+      'isActionFabricRuntimeEnabled', 'startActionFabricRuntime', 'stopActionFabricRuntime',
+    ])
+  })
   it('finishes an in-progress stop before a requested restart', async () => {
     const events: string[] = []
     let timers = 0
