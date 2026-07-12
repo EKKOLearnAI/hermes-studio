@@ -74,9 +74,9 @@ describe('action fabric registry', () => {
       'simulator.counter.increment',
       'simulator.echo',
     ])
-    expect(listFabricExecutors().map(item => [item.id, item.type, item.environment])).toEqual([
-      ['internal-twin', 'internal', 'internal'],
-      ['simulator-main', 'simulator', 'simulator'],
+    expect(listFabricExecutors().map(item => [item.id, item.type, item.environment, item.configuration.externalWrite])).toEqual([
+      ['internal-twin', 'internal', 'internal', false],
+      ['simulator-main', 'simulator', 'simulator', false],
     ])
     expect(withActionFabricDb(db => db.prepare(`
       SELECT executor_id, capability_id, capability_version
@@ -128,7 +128,7 @@ describe('action fabric registry', () => {
 
   it.each(['mcp', 'browser'])('rejects unsupported executor type %s from create and update APIs', type => {
     expect(() => createFabricExecutor({
-      id: `${type}-main`, type, name: type, environment: 'sandbox', configuration: {}, enabled: true,
+      id: `${type}-main`, type, name: type, environment: 'sandbox', configuration: { externalWrite: false }, enabled: true,
     } as never)).toThrow(/unsupported executor type/i)
 
     ensureBuiltInFabricRegistry()
@@ -161,7 +161,7 @@ describe('action fabric registry', () => {
     ensureBuiltInFabricRegistry()
     createFabricExecutor({
       id: 'simulator-secondary', type: 'simulator', name: 'Secondary', environment: 'simulator',
-      configuration: {}, enabled: true,
+      configuration: { externalWrite: false }, enabled: true,
     })
     const echo = getFabricCapability('simulator.echo')!
 
@@ -175,7 +175,7 @@ describe('action fabric registry', () => {
     ensureBuiltInFabricRegistry()
     createFabricExecutor({
       id: 'aaa-simulator', type: 'simulator', name: 'Preferred', environment: 'simulator',
-      configuration: {}, enabled: true,
+      configuration: { externalWrite: false }, enabled: true,
     })
     updateFabricExecutorHealth('aaa-simulator', 'healthy', {})
     const echo = getFabricCapability('simulator.echo')!
@@ -241,6 +241,30 @@ describe('action fabric registry', () => {
       id: 'unsafe-simulator', type: 'simulator', name: 'Unsafe', environment: 'simulator',
       configuration: { value: undefined }, enabled: true,
     } as never)).toThrow(/invalid.*json|unsafe/i)
+  })
+
+  it('requires an explicit external-write classification for every new executor', () => {
+    expect(() => createFabricExecutor({
+      id: 'internal-missing-scope', type: 'internal', name: 'Missing scope', environment: 'internal',
+      configuration: {}, enabled: true,
+    } as never)).toThrow('Executor externalWrite classification must be boolean')
+    expect(() => createFabricExecutor({
+      id: 'internal-invalid-scope', type: 'internal', name: 'Invalid scope', environment: 'internal',
+      configuration: { externalWrite: 'false' }, enabled: true,
+    } as never)).toThrow('Executor externalWrite classification must be boolean')
+  })
+
+  it('safely backfills legacy built-in classification without changing explicit operator scope', () => {
+    ensureBuiltInFabricRegistry()
+    withActionFabricDb(db => {
+      db.prepare("UPDATE fabric_executors SET configuration_json='{}' WHERE id='simulator-main'").run()
+      db.prepare(`UPDATE fabric_executors SET configuration_json='{"externalWrite":true}'
+        WHERE id='internal-twin'`).run()
+    })
+    ensureBuiltInFabricRegistry()
+    const executors = listFabricExecutors()
+    expect(executors.find(item => item.id === 'simulator-main')?.configuration.externalWrite).toBe(false)
+    expect(executors.find(item => item.id === 'internal-twin')?.configuration.externalWrite).toBe(true)
   })
 
   it('rejects non-enumerable array entries before canonicalization', () => {

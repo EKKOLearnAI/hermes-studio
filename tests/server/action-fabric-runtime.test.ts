@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createFabricIntent,
+  createFabricExecutor,
+  createSerializedFabricLifecycle,
   createSimulatorExecutorAdapter,
   ensureBuiltInFabricRegistry,
   getActionFabricDbPath,
@@ -187,7 +189,7 @@ describe('Action Fabric runtime lifecycle', () => {
       db.prepare(`INSERT INTO fabric_executors(id,type,name,environment,health,health_details_json,configuration_json,
         enabled,policy_version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
         'future-browser', 'browser', 'Future browser', 'production', 'healthy', '{}',
-        JSON.stringify({ externalWrite: true }), 1, 1, new Date().toISOString(), new Date().toISOString(),
+        JSON.stringify({}), 1, 1, new Date().toISOString(), new Date().toISOString(),
       )
       db.exec('PRAGMA ignore_check_constraints = OFF')
     })
@@ -201,6 +203,36 @@ describe('Action Fabric runtime lifecycle', () => {
     ])
     expect(listFabricAuditEvents({ aggregateId: 'future-browser' }).some(event =>
       event.eventType === 'executor.external_write.disabled')).toBe(true)
+  })
+
+  it('disables explicit internal external writes once without penalizing a valid local contract', async () => {
+    ensureBuiltInFabricRegistry()
+    createFabricExecutor({ id: 'internal-external', type: 'internal', name: 'External writer', environment: 'internal',
+      configuration: { externalWrite: true }, enabled: true })
+    createFabricExecutor({ id: 'internal-local', type: 'internal', name: 'Local writer', environment: 'internal',
+      configuration: { externalWrite: false }, enabled: true })
+    await startActionFabricRuntime()
+    setFabricEmergencyStop(3, 'admin', 'disable external writes')
+    await vi.advanceTimersByTimeAsync(300)
+    const firstRevision = withActionFabricDb(db => Number((db.prepare(
+      "SELECT value FROM fabric_meta WHERE key='registry_policy_revision'",
+    ).get() as { value: string }).value))
+    const firstAuditCount = listFabricAuditEvents({ aggregateId: 'internal-external' })
+      .filter(event => event.eventType === 'executor.external_write.disabled').length
+    await vi.advanceTimersByTimeAsync(500)
+    const states = withActionFabricDb(db => db.prepare(
+      "SELECT id,enabled FROM fabric_executors WHERE id LIKE 'internal-%' ORDER BY id",
+    ).all())
+    expect(states).toEqual([
+      expect.objectContaining({ id: 'internal-external', enabled: 0 }),
+      expect.objectContaining({ id: 'internal-local', enabled: 1 }),
+      expect.objectContaining({ id: 'internal-twin', enabled: 1 }),
+    ])
+    expect(listFabricAuditEvents({ aggregateId: 'internal-external' })
+      .filter(event => event.eventType === 'executor.external_write.disabled')).toHaveLength(firstAuditCount)
+    expect(withActionFabricDb(db => Number((db.prepare(
+      "SELECT value FROM fabric_meta WHERE key='registry_policy_revision'",
+    ).get() as { value: string }).value))).toBe(firstRevision)
   })
 })
 
@@ -249,6 +281,60 @@ describe('server main Action Fabric rollback', () => {
     })
     expect(stop).not.toHaveBeenCalled()
     expect(exit).not.toHaveBeenCalled()
+  })
+})
+
+describe('serialized Action Fabric lifecycle', () => {
+  it('finishes an in-progress stop before a requested restart', async () => {
+    const events: string[] = []
+    let timers = 0
+    let adapters = 0
+    let releaseStop!: () => void
+    const stopGate = new Promise<void>(resolve => { releaseStop = resolve })
+    const lifecycle = createSerializedFabricLifecycle({
+      async start() { events.push('start'); timers += 1; adapters += 1 },
+      async stop() { events.push('stop-start'); await stopGate; timers -= 1; adapters -= 1; events.push('stop-end') },
+    })
+    await lifecycle.start()
+    const stopping = lifecycle.stop()
+    await vi.waitFor(() => expect(events).toEqual(['start', 'stop-start']))
+    let restarted = false
+    const restarting = lifecycle.start().then(() => { restarted = true })
+    await Promise.resolve()
+    expect(restarted).toBe(false)
+    releaseStop()
+    await Promise.all([stopping, restarting])
+    expect(events).toEqual(['start', 'stop-start', 'stop-end', 'start'])
+    expect({ timers, adapters }).toEqual({ timers: 1, adapters: 1 })
+  })
+
+  it('finishes an in-progress start before a requested stop', async () => {
+    const events: string[] = []
+    let active = 0
+    let releaseStart!: () => void
+    const startGate = new Promise<void>(resolve => { releaseStart = resolve })
+    const lifecycle = createSerializedFabricLifecycle({
+      async start() { events.push('start-start'); await startGate; active += 1; events.push('start-end') },
+      async stop() { events.push('stop'); active -= 1 },
+    })
+    const starting = lifecycle.start()
+    await vi.waitFor(() => expect(events).toEqual(['start-start']))
+    const stopping = lifecycle.stop()
+    releaseStart()
+    await Promise.all([starting, stopping])
+    expect(events).toEqual(['start-start', 'start-end', 'stop'])
+    expect(active).toBe(0)
+  })
+
+  it('recovers its queue after a failed transition', async () => {
+    let attempts = 0
+    const lifecycle = createSerializedFabricLifecycle({
+      async start() { attempts += 1; if (attempts === 1) throw new Error('start failed') },
+      async stop() {},
+    })
+    await expect(lifecycle.start()).rejects.toThrow('start failed')
+    await expect(lifecycle.start()).resolves.toBeUndefined()
+    expect(attempts).toBe(2)
   })
 })
 

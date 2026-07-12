@@ -145,4 +145,35 @@ describe('shutdown ordering', () => {
     exit.mockRestore()
     vi.resetModules()
   })
+
+  it('returns one shared promise to concurrent and repeated shutdown callers', async () => {
+    vi.resetModules()
+    vi.doMock('../../packages/server/src/services/hermes/action-fabric/runtime', () => ({ stopActionFabricRuntime: vi.fn() }))
+    vi.doMock('../../packages/server/src/db', () => ({ closeDb: vi.fn() }))
+    vi.doMock('../../packages/server/src/controllers/update', () => ({ stopPreviewRuntime: vi.fn() }))
+    vi.doMock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
+      codingAgentRunManager: { shutdown: vi.fn() },
+    }))
+    vi.doMock('../../packages/server/src/services/hermes/gateway-runner', () => ({ shutdownManagedGateways: vi.fn() }))
+    vi.doMock('../../packages/server/src/services/global-agent/outbound-relay-client', () => ({ stopOutboundRelayClient: vi.fn() }))
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+    let releaseClose!: () => void
+    const closeGate = new Promise<void>(resolve => { releaseClose = resolve })
+    const { createShutdownHandler } = await import('../../packages/server/src/services/shutdown')
+    const shutdown = createShutdownHandler(null, undefined, undefined, undefined, {
+      scheduleForceExit: () => ({ unref: vi.fn() }) as never,
+      clearForceExit: vi.fn(),
+      closeDatabase: vi.fn(async () => { await closeGate }),
+    })
+
+    const first = shutdown('SIGTERM')
+    const second = shutdown('SIGINT')
+    expect(second).toBe(first)
+    releaseClose()
+    await first
+    expect(shutdown('SIGUSR2')).toBe(first)
+    expect(exit).toHaveBeenCalledOnce()
+    exit.mockRestore()
+    vi.resetModules()
+  })
 })

@@ -45,6 +45,7 @@ export type ShutdownHandler = (signal: string) => Promise<void>
 export interface ShutdownTimerOptions {
   scheduleForceExit(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>
   clearForceExit(timer: ReturnType<typeof setTimeout>): void
+  closeDatabase?: () => void | Promise<void>
 }
 
 const DEFAULT_SHUTDOWN_TIMERS: ShutdownTimerOptions = {
@@ -59,11 +60,11 @@ export function createShutdownHandler(
   agentBridgeManager?: any,
   timers: ShutdownTimerOptions = DEFAULT_SHUTDOWN_TIMERS,
 ): ShutdownHandler {
-  let isShuttingDown = false
+  let shutdownPromise: Promise<void> | null = null
 
-  return async (signal: string) => {
-    if (isShuttingDown) return
-    isShuttingDown = true
+  return (signal: string) => {
+    if (shutdownPromise) return shutdownPromise
+    shutdownPromise = (async () => {
 
     // Force exit only if graceful cleanup hangs. The bridge can take up to 10s
     // to stop worker subprocesses, so this cap must be longer than that.
@@ -145,9 +146,11 @@ export function createShutdownHandler(
       logger.error(err, 'Shutdown error')
     }
 
-    closeDb()
+    await (timers.closeDatabase ?? closeDb)()
     timers.clearForceExit(forceExitTimer)
     process.exit(0)
+    })()
+    return shutdownPromise
   }
 }
 

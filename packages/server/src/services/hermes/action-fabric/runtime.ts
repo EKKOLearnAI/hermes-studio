@@ -25,8 +25,37 @@ interface RunningRuntime {
 }
 
 let running: RunningRuntime | null = null
-let starting: Promise<void> | null = null
-let stopping: Promise<void> | null = null
+
+export interface FabricLifecycleHooks { start(): Promise<void>; stop(): Promise<void> }
+export interface FabricSerializedLifecycle { start(): Promise<void>; stop(): Promise<void> }
+
+export function createSerializedFabricLifecycle(hooks: FabricLifecycleHooks): FabricSerializedLifecycle {
+  let tail = Promise.resolve()
+  let active = false
+  const enqueue = (operation: () => Promise<void>): Promise<void> => {
+    const result = tail.then(operation)
+    tail = result.catch(() => undefined)
+    return result
+  }
+  return {
+    start() {
+      return enqueue(async () => {
+        if (active) return
+        await hooks.start()
+        active = true
+      })
+    },
+    stop() {
+      return enqueue(async () => {
+        if (!active) return
+        await hooks.stop()
+        active = false
+      })
+    },
+  }
+}
+
+const runtimeLifecycle = createSerializedFabricLifecycle({ start: bootstrapRuntime, stop: teardownRuntime })
 
 export function isActionFabricRuntimeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const disabled = String(env.HERMES_ACTION_FABRIC_DISABLED ?? '').trim().toLowerCase()
@@ -35,44 +64,23 @@ export function isActionFabricRuntimeEnabled(env: NodeJS.ProcessEnv = process.en
   return String(env.NODE_ENV ?? '').trim().toLowerCase() !== 'test'
 }
 
-export async function startActionFabricRuntime(): Promise<void> {
-  if (!isActionFabricRuntimeEnabled()) return
-  if (running) return
-  if (starting) return starting
-  if (stopping) await stopping
-  if (running) return
-  if (starting) return starting
-
-  const operation = bootstrapRuntime()
-  starting = operation
-  try {
-    await operation
-  } finally {
-    if (starting === operation) starting = null
-  }
+export function startActionFabricRuntime(): Promise<void> {
+  if (!isActionFabricRuntimeEnabled()) return Promise.resolve()
+  return runtimeLifecycle.start()
 }
 
-export async function stopActionFabricRuntime(): Promise<void> {
-  if (stopping) return stopping
-  if (starting) {
-    try { await starting } catch { return }
-  }
-  if (stopping) return stopping
+export function stopActionFabricRuntime(): Promise<void> {
+  return runtimeLifecycle.stop()
+}
+
+async function teardownRuntime(): Promise<void> {
   const state = running
   if (!state) return
-  const operation = (async () => {
-    clearInterval(state.controlTimer)
-    if (state.controlPoll) await state.controlPoll
-    await stopActionFabricWorker()
-    for (const id of state.ownedAdapters.reverse()) unregisterFabricExecutorAdapter(id)
-    if (running === state) running = null
-  })()
-  stopping = operation
-  try {
-    await operation
-  } finally {
-    if (stopping === operation) stopping = null
-  }
+  clearInterval(state.controlTimer)
+  if (state.controlPoll) await state.controlPoll
+  await stopActionFabricWorker()
+  for (const id of [...state.ownedAdapters].reverse()) unregisterFabricExecutorAdapter(id)
+  if (running === state) running = null
 }
 
 async function bootstrapRuntime(): Promise<void> {
@@ -190,7 +198,8 @@ function isInterruptible(type: string, configurationJson: string): boolean {
 
 function isExternalWriteExecutor(type: string, configurationJson: string): boolean {
   if (type !== 'simulator' && type !== 'internal') return true
-  return readBooleanMetadata(configurationJson, 'externalWrite') === true
+  // Only an explicit, validated local-only declaration is safe at level 3.
+  return readBooleanMetadata(configurationJson, 'externalWrite') !== false
 }
 
 function readBooleanMetadata(value: string, key: string): boolean | null {
