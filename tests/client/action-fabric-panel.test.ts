@@ -17,7 +17,7 @@ const actionStore = reactive({
   capabilities: [capability] as any[], executors: [executor] as any[], workflows, selectedWorkflowId: null as string | null,
   selectedWorkflow: null as any, audit: [] as any[], control: { level: 0, version: 1, actorUserId: null, reason: '', updatedAt: '' } as any,
   loading: false, saving: false, error: null as string | null,
-  loadCapabilities: vi.fn(), loadExecutors: vi.fn(), loadWorkflows: vi.fn(), loadAudit: vi.fn(), loadControl: vi.fn(),
+  loadCapabilities: vi.fn(), loadExecutors: vi.fn(), loadWorkflows: vi.fn(), loadWorkflow: vi.fn(), loadAudit: vi.fn(), loadControl: vi.fn(),
   selectWorkflow: vi.fn(), approveWorkflow: vi.fn(), rejectWorkflow: vi.fn(), retryWorkflow: vi.fn(), cancelWorkflow: vi.fn(), compensateWorkflow: vi.fn(), updateEmergencyStop: vi.fn(),
 })
 const rolesStore = reactive({ roles: [{ id: 'role-1', name: 'Operator', enabled: true, capabilityScope: { allow: [capability.id], deny: [], enforcement: 'action_fabric_v1' } }] as any[], fetchRoles: vi.fn() })
@@ -50,6 +50,7 @@ describe('ActionFabricPanel', () => {
     actionStore.selectedWorkflowId = null; actionStore.selectedWorkflow = null; actionStore.audit = []; actionStore.error = null; actionStore.loading = false
     actionStore.loadCapabilities.mockResolvedValue(actionStore.capabilities); actionStore.loadExecutors.mockResolvedValue(actionStore.executors)
     actionStore.loadWorkflows.mockResolvedValue(actionStore.workflows); actionStore.loadAudit.mockResolvedValue([]); actionStore.loadControl.mockResolvedValue(actionStore.control)
+    actionStore.loadWorkflow.mockImplementation(async (id: string) => { actionStore.selectedWorkflow = { ...detail, id }; return actionStore.selectedWorkflow })
     actionStore.selectWorkflow.mockImplementation(async (id: string) => { actionStore.selectedWorkflowId = id; actionStore.selectedWorkflow = { ...detail, id }; return actionStore.selectedWorkflow })
     actionStore.approveWorkflow.mockResolvedValue(detail); actionStore.retryWorkflow.mockResolvedValue(detail); actionStore.updateEmergencyStop.mockResolvedValue(actionStore.control)
     rolesStore.fetchRoles.mockResolvedValue(rolesStore.roles)
@@ -177,7 +178,7 @@ describe('ActionFabricPanel', () => {
     expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-b')
   })
 
-  it('keeps the snapshot empty when a later control request evicts the selected workflow audit load', async () => {
+  it('uses the request payload when a later control request evicts the selected workflow audit from shared state', async () => {
     const auditB = deferred<any[]>()
     actionStore.loadAudit.mockImplementationOnce(() => auditB.promise)
     const wrapper = mount(ActionFabricPanel)
@@ -188,7 +189,100 @@ describe('ActionFabricPanel', () => {
     actionStore.audit = [{ id: 'audit-control', aggregateType: 'control', aggregateId: 'global' }]
     auditB.resolve([{ id: 'audit-b', aggregateType: 'workflow', aggregateId: 'waiting' }])
     await flushPromises()
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-b')
+  })
+
+  it('refreshes selected detail and workflow audit after a successful emergency control mutation', async () => {
+    actionStore.loadAudit.mockResolvedValueOnce([{ id: 'audit-old', aggregateType: 'workflow', aggregateId: 'waiting' }])
+      .mockResolvedValueOnce([{ id: 'audit-new', aggregateType: 'workflow', aggregateId: 'waiting' }])
+    actionStore.loadWorkflow.mockImplementationOnce(async (id: string) => {
+      actionStore.selectedWorkflow = { ...detail, id, state: 'cancelled' }
+      return actionStore.selectedWorkflow
+    })
+    const wrapper = mount(ActionFabricPanel)
+    await flushPromises()
+    await wrapper.get('[data-test="workflow-waiting"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="control-update"]').trigger('click')
+    await flushPromises()
+
+    expect(actionStore.loadWorkflows).toHaveBeenCalledTimes(2)
+    expect(actionStore.loadWorkflow).toHaveBeenCalledWith('waiting')
+    expect(actionStore.selectedWorkflow.state).toBe('cancelled')
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-new')
+  })
+
+  it('renders returned workflow audit after control refresh even when shared audit retains old same-id data', async () => {
+    actionStore.loadAudit.mockResolvedValueOnce([{ id: 'audit-old', aggregateType: 'workflow', aggregateId: 'waiting' }])
+      .mockImplementationOnce(async () => {
+        actionStore.audit = [{ id: 'audit-old', aggregateType: 'workflow', aggregateId: 'waiting' }]
+        return [{ id: 'audit-new', aggregateType: 'workflow', aggregateId: 'waiting' }]
+      })
+    const wrapper = mount(ActionFabricPanel)
+    await flushPromises()
+    await wrapper.get('[data-test="workflow-waiting"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="control-update"]').trigger('click')
+    await flushPromises()
+
+    expect(actionStore.audit[0].id).toBe('audit-old')
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-new')
+  })
+
+  it('does not apply a control refresh for the old workflow after selection changes', async () => {
+    const oldDetailRefresh = deferred<any>()
+    actionStore.loadAudit.mockResolvedValueOnce([{ id: 'audit-old', aggregateType: 'workflow', aggregateId: 'waiting' }])
+      .mockResolvedValueOnce([{ id: 'audit-completed', aggregateType: 'workflow', aggregateId: 'completed' }])
+    actionStore.loadWorkflow.mockImplementationOnce(() => oldDetailRefresh.promise)
+    const wrapper = mount(ActionFabricPanel)
+    await flushPromises()
+    await wrapper.get('[data-test="workflow-waiting"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="control-update"]').trigger('click')
+    await wrapper.get('[data-test="workflow-completed"]').trigger('click')
+    await flushPromises()
+    oldDetailRefresh.resolve({ ...detail, id: 'waiting', state: 'cancelled' })
+    await flushPromises()
+
+    expect(actionStore.loadAudit).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-completed')
+  })
+
+  it('does not reload workflow audit after the drawer closes during a control refresh', async () => {
+    const oldDetailRefresh = deferred<any>()
+    actionStore.loadAudit.mockResolvedValueOnce([{ id: 'audit-old', aggregateType: 'workflow', aggregateId: 'waiting' }])
+    actionStore.loadWorkflow.mockImplementationOnce(() => oldDetailRefresh.promise)
+    const wrapper = mount(ActionFabricPanel)
+    await flushPromises()
+    await wrapper.get('[data-test="workflow-waiting"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="control-update"]').trigger('click')
+    await wrapper.get('[data-test="drawer-close"]').trigger('click')
+    oldDetailRefresh.resolve({ ...detail, id: 'waiting', state: 'cancelled' })
+    await flushPromises()
+
+    expect(actionStore.loadAudit).toHaveBeenCalledTimes(1)
     expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('')
+  })
+
+  it('announces degraded instead of updated when selected detail refresh fails after control succeeds', async () => {
+    actionStore.loadAudit.mockResolvedValueOnce([{ id: 'audit-old', aggregateType: 'workflow', aggregateId: 'waiting' }])
+    actionStore.loadWorkflow.mockRejectedValueOnce(new Error('detail unavailable'))
+    const wrapper = mount(ActionFabricPanel)
+    await flushPromises()
+    await wrapper.get('[data-test="workflow-waiting"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="control-update"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('')
+    expect(wrapper.get('[role="status"]').text()).toContain('Action Fabric data is degraded')
+    expect(wrapper.get('[role="status"]').text()).not.toContain('Updated')
   })
 
   it('clears the selected workflow audit snapshot immediately when the drawer closes', async () => {
@@ -240,7 +334,7 @@ describe('ActionFabricPanel', () => {
     expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-c')
   })
 
-  it('clears old workflow audit and announces degraded when mutation audit refresh is evicted by control', async () => {
+  it('uses a mutation audit request payload even when shared audit is replaced by control data', async () => {
     const refreshedAudit = deferred<any[]>()
     actionStore.loadAudit.mockImplementationOnce(async () => { const events = [{ id: 'audit-b-old', aggregateType: 'workflow', aggregateId: 'waiting' }]; actionStore.audit = events; return events })
       .mockImplementationOnce(() => refreshedAudit.promise)
@@ -254,8 +348,8 @@ describe('ActionFabricPanel', () => {
     refreshedAudit.resolve([{ id: 'audit-b-new', aggregateType: 'workflow', aggregateId: 'waiting' }])
     await flushPromises()
 
-    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('')
-    expect(wrapper.get('[role="status"]').text()).toContain('Action Fabric data is degraded')
+    expect(wrapper.get('[data-test="drawer-audit"]').text()).toBe('audit-b-new')
+    expect(wrapper.get('[role="status"]').text()).not.toContain('Action Fabric data is degraded')
   })
 
   it('invalidates a pending mutation audit refresh as soon as a concurrent control mutation starts', async () => {

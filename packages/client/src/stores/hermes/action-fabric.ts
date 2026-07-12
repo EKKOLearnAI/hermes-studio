@@ -150,8 +150,9 @@ export const useActionFabricStore = defineStore('action-fabric', () => {
     const operation = beginLoad(reportError)
     try {
       const result = await actionFabricApi.fetchActionAudit(query)
-      if (operation.generation === generation && sequence === auditSequence) audit.value = result.events
-      return result.events
+      const events = result.events.slice()
+      if (operation.generation === generation && sequence === auditSequence) audit.value = events.slice()
+      return events
     } catch (cause) { recordError(operation, cause); throw cause } finally { finishLoad(operation) }
   }
 

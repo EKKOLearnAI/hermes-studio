@@ -11,7 +11,6 @@ import WorkflowDetailDrawer from './WorkflowDetailDrawer.vue'
 import { useActionFabricMessages } from './action-fabric-messages'
 
 const store = useActionFabricStore()
-const auditState = store as unknown as { audit: ActionAuditEventDto[] }
 const rolesStore = useAssistantRolesStore()
 const { locale } = useI18n()
 const { messages: m } = useActionFabricMessages(locale)
@@ -87,20 +86,20 @@ async function refreshSelectedWorkflowAudit(id: string, sequence: number): Promi
   const auditToken = auditGeneration
   pendingAuditToken = auditToken
   try {
+    let events: ActionAuditEventDto[]
     try {
-      await store.loadAudit({ aggregateType: 'workflow', aggregateId: id, limit: 100 })
+      events = await store.loadAudit({ aggregateType: 'workflow', aggregateId: id, limit: 100 })
     } catch {
       if (hasCurrentSelection(id, sequence) && auditToken === auditGeneration) auditDegraded.value = true
       return false
     }
     if (!hasCurrentSelection(id, sequence) || auditToken !== auditGeneration) return false
-    const currentAudit = auditState.audit
-    if (!currentAudit.every(event => event.aggregateType === 'workflow' && event.aggregateId === id)) {
+    if (!events.every(event => event.aggregateType === 'workflow' && event.aggregateId === id)) {
       selectedWorkflowAudit.value = []
       auditDegraded.value = true
       return false
     }
-    selectedWorkflowAudit.value = currentAudit.slice(0, 100)
+    selectedWorkflowAudit.value = events.slice(0, 100)
     auditDegraded.value = false
     return true
   } finally {
@@ -114,10 +113,6 @@ async function closeDrawer(): Promise<void> {
   await nextTick()
   detailOpener?.focus()
 }
-async function mutate(operation: () => Promise<unknown>): Promise<void> {
-  announcement.value = ''
-  try { await operation(); announcement.value = m.value.updated } catch { /* store error remains authoritative */ }
-}
 async function mutateControl(operation: () => Promise<unknown>): Promise<void> {
   if (pendingAuditToken !== null) {
     auditGeneration += 1
@@ -125,7 +120,26 @@ async function mutateControl(operation: () => Promise<unknown>): Promise<void> {
     selectedWorkflowAudit.value = []
     auditDegraded.value = true
   }
-  await mutate(operation)
+  announcement.value = ''
+  try { await operation() } catch { return }
+
+  const storeRefreshWasDegraded = store.error === 'ACTION_FABRIC_REFRESH_FAILED'
+  invalidateSelectedAudit()
+  const selectedId = store.selectedWorkflowId
+  const sequence = selectionSequence
+  const refreshes: Promise<unknown>[] = [store.loadWorkflows()]
+  if (selectedId && hasCurrentSelection(selectedId, sequence)) refreshes.push(store.loadWorkflow(selectedId))
+  const results = await Promise.allSettled(refreshes)
+  const authoritativeRefreshFailed = results.some(result => result.status === 'rejected')
+  refreshDegraded.value = storeRefreshWasDegraded || authoritativeRefreshFailed
+
+  if (!selectedId || !hasCurrentSelection(selectedId, sequence)) {
+    if (!refreshDegraded.value) announcement.value = m.value.updated
+    return
+  }
+  const auditRefreshed = await refreshSelectedWorkflowAudit(selectedId, sequence)
+  if (!auditRefreshed) refreshDegraded.value = true
+  if (!refreshDegraded.value) announcement.value = m.value.updated
 }
 async function mutateWorkflow(id: string, operation: () => Promise<unknown>): Promise<void> {
   const sequence = selectionSequence

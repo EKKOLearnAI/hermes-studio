@@ -98,6 +98,26 @@ describe('Action Fabric store', () => {
     expect(store.control?.version).toBe(6)
   })
 
+  it('returns each audit request own authoritative payload while shared state keeps the newest response', async () => {
+    const olderAudit = deferred<{ events: any[]; nextAfterSequence: null }>()
+    const oldEvents = [{ ...audit, id: 'audit-old' }]
+    const newEvents = [{ ...audit, id: 'audit-new' }]
+    api.fetchActionAudit.mockImplementationOnce(() => olderAudit.promise)
+      .mockResolvedValueOnce({ events: newEvents, nextAfterSequence: null })
+    const store = useActionFabricStore()
+
+    const olderLoad = store.loadAudit({ aggregateType: 'workflow', aggregateId: 'wf-1' })
+    const newerResult = await store.loadAudit({ aggregateType: 'control' })
+    olderAudit.resolve({ events: oldEvents, nextAfterSequence: null })
+    const olderResult = await olderLoad
+
+    expect(newerResult).toEqual(newEvents)
+    expect(olderResult).toEqual(oldEvents)
+    expect(store.audit).toEqual(newEvents)
+    newerResult.push({ ...audit, id: 'caller-local' })
+    expect(store.audit.map(event => event.id)).toEqual(['audit-new'])
+  })
+
   it('keeps a pending selection detail isolated from a different workflow mutation refresh', async () => {
     const mutation = deferred<any>()
     const selectedDetail = deferred<any>()
