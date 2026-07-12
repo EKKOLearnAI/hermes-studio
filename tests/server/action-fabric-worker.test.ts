@@ -27,12 +27,14 @@ import { logger } from '../../packages/server/src/services/logger'
 
 describe('Action Fabric durable worker', () => {
   const originalHome = process.env.HERMES_HOME
+  const originalAuditKey = process.env.HERMES_ACTION_FABRIC_AUDIT_KEY
   let home = ''
   const base = new Date('2026-07-12T01:00:00.000Z')
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'hwui-fabric-worker-'))
     process.env.HERMES_HOME = home
+    process.env.HERMES_ACTION_FABRIC_AUDIT_KEY = 'worker-test-managed-audit-key-at-least-32-bytes'
     vi.useFakeTimers()
     vi.setSystemTime(base)
     ensureBuiltInAssistantRoles()
@@ -56,6 +58,8 @@ describe('Action Fabric durable worker', () => {
     vi.useRealTimers()
     if (originalHome === undefined) delete process.env.HERMES_HOME
     else process.env.HERMES_HOME = originalHome
+    if (originalAuditKey === undefined) delete process.env.HERMES_ACTION_FABRIC_AUDIT_KEY
+    else process.env.HERMES_ACTION_FABRIC_AUDIT_KEY = originalAuditKey
     rmSync(home, { recursive: true, force: true })
   })
 

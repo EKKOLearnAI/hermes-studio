@@ -25,6 +25,7 @@ import { runServerMain } from '../../packages/server/src/services/server-main'
 
 describe('Action Fabric runtime lifecycle', () => {
   const originalHome = process.env.HERMES_HOME
+  const originalAuditKey = process.env.HERMES_ACTION_FABRIC_AUDIT_KEY
   const originalDisabled = process.env.HERMES_ACTION_FABRIC_DISABLED
   const originalNodeEnv = process.env.NODE_ENV
   let home = ''
@@ -32,6 +33,7 @@ describe('Action Fabric runtime lifecycle', () => {
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'hwui-fabric-runtime-'))
     process.env.HERMES_HOME = home
+    process.env.HERMES_ACTION_FABRIC_AUDIT_KEY = 'runtime-test-managed-audit-key-at-least-32-bytes'
     process.env.NODE_ENV = 'test'
     process.env.HERMES_ACTION_FABRIC_DISABLED = '0'
     vi.useFakeTimers()
@@ -42,6 +44,7 @@ describe('Action Fabric runtime lifecycle', () => {
     await stopActionFabricRuntime()
     vi.useRealTimers()
     restore('HERMES_HOME', originalHome)
+    restore('HERMES_ACTION_FABRIC_AUDIT_KEY', originalAuditKey)
     restore('HERMES_ACTION_FABRIC_DISABLED', originalDisabled)
     restore('NODE_ENV', originalNodeEnv)
     rmSync(home, { recursive: true, force: true })
