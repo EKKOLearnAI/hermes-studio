@@ -7,6 +7,7 @@ import {
   VueFlow,
   useVueFlow,
   type Connection,
+  type OnConnectStartParams,
 } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -126,6 +127,7 @@ interface WorkflowDocument {
 }
 
 const nextNodeIndex = ref(1)
+const pendingOutputConnectionSource = ref<string | null>(null)
 const contextMenuVisible = ref(false)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
@@ -1602,6 +1604,7 @@ function expandNodeHeightForImages(style: WorkflowNode['style'], imageCount: num
 }
 
 function handleConnect(connection: Connection) {
+  pendingOutputConnectionSource.value = null
   if (selectedWorkflowRunId.value) return
   if (!isValidWorkflowConnection(connection)) return
   const exists = edges.value.some(edge => edge.source === connection.source && edge.target === connection.target)
@@ -1615,6 +1618,46 @@ function handleConnect(connection: Connection) {
     markerEnd: MarkerType.ArrowClosed,
     data: { orchestration: { route: 'success' } },
   }]
+}
+
+function handleConnectStart({ nodeId, handleId, handleType }: OnConnectStartParams) {
+  if (selectedWorkflowRunId.value || handleType !== 'source' || handleId !== 'output' || !nodeId) {
+    pendingOutputConnectionSource.value = null
+    return
+  }
+  pendingOutputConnectionSource.value = nodeId
+}
+
+async function handleConnectEnd(event?: MouseEvent) {
+  const source = pendingOutputConnectionSource.value
+  pendingOutputConnectionSource.value = null
+  if (selectedWorkflowRunId.value) return
+  if (!source || !event || !activeWorkflowId.value) return
+  if (!nodes.value.some(node => node.id === source)) return
+  const target = event.target instanceof Element ? event.target : null
+  if (!target || !workflowCanvasRef.value?.contains(target)) return
+  if (target.closest('.vue-flow__node, .vue-flow__edge, .vue-flow__handle, .vue-flow__controls, .vue-flow__minimap')) return
+
+  const id = `agent-${nextNodeIndex.value}`
+  const position = screenToFlowCoordinate({ x: event.clientX, y: event.clientY })
+  nodes.value = [
+    ...nodes.value,
+    makeNode(id, t('workflow.newNodeTitle', { count: nextNodeIndex.value }), position, { agent: 'hermes' }),
+  ]
+  edges.value = [...edges.value, {
+    id: `${source}-${id}`,
+    source,
+    target: id,
+    sourceHandle: 'output',
+    targetHandle: 'input',
+    type: 'smoothstep',
+    animated: true,
+    markerEnd: MarkerType.ArrowClosed,
+    data: { orchestration: { route: 'success' } },
+  }]
+  nextNodeIndex.value += 1
+  ensureSkillOptionsForVisibleNodes()
+  await nextTick()
 }
 
 function deleteNode(nodeId: string) {
@@ -2195,6 +2238,8 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
           :default-edge-options="{ type: 'smoothstep', markerEnd: MarkerType.ArrowClosed }"
           class="workflow-flow"
           @connect="handleConnect"
+          @connect-start="handleConnectStart"
+          @connect-end="handleConnectEnd"
           @node-click="handleNodeClick"
           @node-context-menu="handleNodeContextMenu"
           @edge-click="handleEdgeClick"
