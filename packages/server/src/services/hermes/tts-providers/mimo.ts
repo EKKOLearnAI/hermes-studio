@@ -74,16 +74,7 @@ function buildMessages(text: string, opts: MimoTtsProviderOptions) {
     return [
       {
         role: 'user',
-        content: [
-          { type: 'text', text: opts.stylePrompt || '' },
-          {
-            type: 'input_audio',
-            input_audio: {
-              data: opts.voiceCloneDataUri,
-              format: opts.voiceCloneFormat || 'wav',
-            },
-          },
-        ],
+        content: opts.stylePrompt || '',
       },
       {
         role: 'assistant',
@@ -116,6 +107,8 @@ function buildAudio(opts: MimoTtsProviderOptions): Record<string, string> {
 
   if (mode === 'preset' && opts.voice) {
     audio.voice = opts.voice
+  } else if (mode === 'voiceClone' && opts.voiceCloneDataUri) {
+    audio.voice = opts.voiceCloneDataUri
   }
 
   return audio

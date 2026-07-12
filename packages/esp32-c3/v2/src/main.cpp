@@ -15,46 +15,49 @@
 
 namespace {
 #ifndef HERMES_MCU_FIRMWARE_VERSION
-#define HERMES_MCU_FIRMWARE_VERSION "v1"
+#define HERMES_MCU_FIRMWARE_VERSION "v2"
 #endif
 #ifndef HERMES_MCU_FIRMWARE_MANIFEST_PATH
-#define HERMES_MCU_FIRMWARE_MANIFEST_PATH "/api/hermes/mcu/firmware/v1/manifest"
+#define HERMES_MCU_FIRMWARE_MANIFEST_PATH "/api/hermes/mcu/firmware/v2/manifest"
 #endif
 #ifndef HERMES_PIN_BATTERY_ADC
-#define HERMES_PIN_BATTERY_ADC 3
+#define HERMES_PIN_BATTERY_ADC 2
 #endif
 #ifndef HERMES_PIN_I2C_SDA
-#define HERMES_PIN_I2C_SDA 0
+#define HERMES_PIN_I2C_SDA 3
 #endif
 #ifndef HERMES_PIN_I2C_SCL
-#define HERMES_PIN_I2C_SCL 1
+#define HERMES_PIN_I2C_SCL 4
 #endif
 #ifndef HERMES_PIN_I2S_DOUT
-#define HERMES_PIN_I2S_DOUT 4
+#define HERMES_PIN_I2S_DOUT 5
 #endif
 #ifndef HERMES_PIN_I2S_WS
-#define HERMES_PIN_I2S_WS 5
+#define HERMES_PIN_I2S_WS 6
 #endif
 #ifndef HERMES_PIN_I2S_DIN
-#define HERMES_PIN_I2S_DIN 6
+#define HERMES_PIN_I2S_DIN 7
 #endif
 #ifndef HERMES_PIN_I2S_BCK
-#define HERMES_PIN_I2S_BCK 7
+#define HERMES_PIN_I2S_BCK 8
 #endif
 #ifndef HERMES_PIN_I2S_MCK
-#define HERMES_PIN_I2S_MCK 8
+#define HERMES_PIN_I2S_MCK 10
 #endif
 #ifndef HERMES_PIN_BOOT
 #define HERMES_PIN_BOOT 9
 #endif
 #ifndef HERMES_PIN_PA_EN
-#define HERMES_PIN_PA_EN 10
+#define HERMES_PIN_PA_EN 11
 #endif
 #ifndef HERMES_ES8311_DAC_VOLUME
-#define HERMES_ES8311_DAC_VOLUME 0xC0
+#define HERMES_ES8311_DAC_VOLUME 0xBF
 #endif
 #ifndef HERMES_DEFAULT_OUTPUT_VOLUME_PERCENT
-#define HERMES_DEFAULT_OUTPUT_VOLUME_PERCENT 70
+#define HERMES_DEFAULT_OUTPUT_VOLUME_PERCENT 80
+#endif
+#ifndef HERMES_MAX_OUTPUT_VOLUME_PERCENT
+#define HERMES_MAX_OUTPUT_VOLUME_PERCENT 100
 #endif
 
 constexpr char kApName[] = "HStudio-WIFI";
@@ -148,7 +151,9 @@ constexpr size_t kVoiceStreamAdpcmMaxBytes = kMcuAdpcmHeaderBytes + ((kVoiceStre
 constexpr size_t kVoiceRecordMaxFrames = (kVoiceInputSampleRate * kVoiceRecordMs) / 1000UL;
 constexpr size_t kVoiceRecordBufferBytes = 44 + kVoiceRecordMaxFrames * sizeof(int16_t);
 constexpr uint8_t kDefaultOutputVolumePercent = HERMES_DEFAULT_OUTPUT_VOLUME_PERCENT;
-constexpr int16_t kVoiceOutputLimit = 24000;
+constexpr uint8_t kMaxOutputVolumePercent = HERMES_MAX_OUTPUT_VOLUME_PERCENT;
+constexpr int32_t kVoiceBoostKnee = 18000;
+constexpr int32_t kVoiceBoostCeiling = 28000;
 constexpr uint8_t kEs8311DacVolume = HERMES_ES8311_DAC_VOLUME;
 constexpr i2s_port_t kI2sPort = I2S_NUM_0;
 
@@ -897,12 +902,14 @@ void forgetAllWifiCredentials() {
 
 void loadAudioPreferences() {
   prefs.begin("mcu", true);
-  outputVolumePercent = clampUiValue(static_cast<uint32_t>(prefs.getUChar("volume", kDefaultOutputVolumePercent)), 100);
+  outputVolumePercent = clampUiValue(
+      static_cast<uint32_t>(prefs.getUChar("volume", kDefaultOutputVolumePercent)),
+      kMaxOutputVolumePercent);
   prefs.end();
 }
 
 void saveOutputVolume(uint8_t volume) {
-  outputVolumePercent = clampUiValue(volume, 100);
+  outputVolumePercent = clampUiValue(volume, kMaxOutputVolumePercent);
   prefs.begin("mcu", false);
   prefs.putUChar("volume", outputVolumePercent);
   prefs.end();
@@ -1435,9 +1442,14 @@ bool setI2sSampleRate(uint32_t sampleRate) {
 }
 
 int16_t shapeOutputSample(int16_t sample) {
-  int32_t value = (static_cast<int32_t>(sample) * static_cast<int32_t>(outputVolumePercent) * 10) / 1000;
-  if (value > kVoiceOutputLimit) value = kVoiceOutputLimit;
-  if (value < -kVoiceOutputLimit) value = -kVoiceOutputLimit;
+  int32_t value = (static_cast<int32_t>(sample) * static_cast<int32_t>(outputVolumePercent) * 15) / 1000;
+  int32_t magnitude = value < 0 ? -value : value;
+  if (magnitude > kVoiceBoostKnee) {
+    const int32_t excess = magnitude - kVoiceBoostKnee;
+    const int32_t range = kVoiceBoostCeiling - kVoiceBoostKnee;
+    magnitude = kVoiceBoostKnee + (excess * range) / (excess + range);
+    value = value < 0 ? -magnitude : magnitude;
+  }
   return static_cast<int16_t>(value);
 }
 
@@ -1984,7 +1996,9 @@ String manualDevicePrefKey(int index) {
 void cleanupMcuPreferences() {
   prefs.begin("mcu", true);
   String deviceCode = prefs.getString("device_code", "");
-  uint8_t volume = prefs.getUChar("volume", kDefaultOutputVolumePercent);
+  uint8_t volume = clampUiValue(
+      static_cast<uint32_t>(prefs.getUChar("volume", kDefaultOutputVolumePercent)),
+      kMaxOutputVolumePercent);
   String activeKey = prefs.getString("active_key", "");
   String activeAddr = prefs.getString("active_addr", "");
   String activeUrl = prefs.getString("active_url", "");
@@ -2497,7 +2511,9 @@ void sendStatusPage() {
   html += F("<section class='card'><h2>音频</h2>");
   html += F("<form method='post' action='/device/audio'><div class='field'><span class='label'>播放音量 <output id='volume-output'>");
   html += outputVolumePercent;
-  html += F("%</output></span><input name='volume' type='range' min='0' max='100' step='5' value='");
+  html += F("%</output></span><input name='volume' type='range' min='0' max='");
+  html += String(kMaxOutputVolumePercent);
+  html += F("' step='5' value='");
   html += outputVolumePercent;
   html += F("' oninput=\"document.getElementById('volume-output').textContent=this.value+'%'\"></div>");
   html += F("<div class='btn-row'><button class='btn primary' type='submit'>保存音量</button></div>");
@@ -2678,7 +2694,7 @@ void handleDeviceAudio() {
   }
   int volume = rawVolume.toInt();
   if (volume < 0) volume = 0;
-  if (volume > 100) volume = 100;
+  if (volume > kMaxOutputVolumePercent) volume = kMaxOutputVolumePercent;
   saveOutputVolume(static_cast<uint8_t>(volume));
   lastAudioDetail = String(F("output volume ")) + String(outputVolumePercent) + F("%");
   server.sendHeader(F("Location"), F("/device"), true);

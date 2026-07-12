@@ -2426,6 +2426,16 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_29_1: 'This release covers all 14 PRs merged after 0.6.28, spanning visual consistency, MCU audio and v2 hardware, workspace diffs, model usage analytics, Docker updates, and MiMo voice cloning',
+    new_0_6_29_2: 'Shared page headers, dark surfaces, and radius tokens now follow one visual system, while version previews sort valid tags by semantic version (#2014, #2015)',
+    new_0_6_29_3: 'The ESP32 product page has a responsive redesign, and the website version selector now includes Hermes Agent 0.18.2 (#2020, #2042)',
+    new_0_6_29_4: 'ESP32-C3 v1 uplink audio now uses IMA-ADPCM at about one quarter of the bandwidth with a two-minute recording limit, and the OLED returns to the LAN IP after transient states (#2024, #2025)',
+    new_0_6_29_5: 'Workspace diffs start collapsed and suppress zero-line changes, while the standard dark chat composer background is restored (#2032)',
+    new_0_6_29_6: 'Session exports tolerate malformed percent signs in filenames, and Docker upgrades now show image pull and recreate guidance instead of modifying npm inside the container (#2026, #2033)',
+    new_0_6_29_7: 'Bridge tool results remain fully persisted but are projected to a 5,500-character head/tail summary in model context to prevent repeated context amplification (#2036)',
+    new_0_6_29_8: 'Usage analytics now unify model calls from Hermes Agent, Claude Code, Codex, and Ekko Agent and add an Agent distribution view (#2039)',
+    new_0_6_29_9: 'A separate ESP32-C3 v2 firmware target adds the new hardware pin map without affecting v1; v2 defaults to 80% volume with 1.5x PCM gain and soft limiting (#2044, #2045)',
+    new_0_6_29_10: 'MiMo voice cloning restores WAV/MP3 reference-audio upload and sends the reference through audio.voice as required by the current API (#2046)',
     new_0_6_28_1: 'This release covers every PR merged after 0.6.27, including MCU management, group chat workspace diffs, coding-agent fixes, workflow approvals, workspace diff filtering, scheduled-job model selection, and desktop version update hints',
     new_0_6_28_2: 'MCU support adds device management, requires API-token authorization for global-agent events, refreshes the ESP32-C3 firmware, and stabilizes remote relay login',
     new_0_6_28_3: 'Group Chat workspace changes now persist as workspace diff runs so room-level agent activity can be reviewed after the session completes',
