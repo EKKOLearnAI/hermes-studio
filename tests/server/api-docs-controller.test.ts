@@ -96,6 +96,21 @@ describe('api docs controller', () => {
         type: 'object', additionalProperties: true,
       })
     }
+    const providerModes = ['chat_completions', 'codex_responses', 'anthropic_messages', 'bedrock_converse', 'codex_app_server']
+    for (const [path, method] of [['/api/hermes/config/providers', 'post'], ['/api/hermes/config/providers/{poolKey}', 'put']] as const) {
+      expect(ctx.body.paths[path][method].requestBody.content['application/json'].schema.properties.api_mode).toEqual({
+        type: 'string', enum: providerModes,
+      })
+    }
+    expect(ctx.body.paths['/api/hermes/sessions/batch-delete'].post.requestBody.content['application/json'].schema.properties.sessions).toEqual({
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { id: { type: 'string' }, profile: { type: 'string', nullable: true } },
+        required: ['id'],
+        additionalProperties: false,
+      },
+    })
 
     const assistantRolePaths = {
       '/api/hermes/assistant-roles': ['get', 'post'],
@@ -439,8 +454,10 @@ export function rename(ctx: any) {
     const script = resolve(process.cwd(), 'scripts/generate-openapi.mjs')
     try {
       writeFileSync(fixture, `
+type LocalMode = 'alpha' | 'beta'
+interface LocalTarget { id: string; label?: string }
 export function target(ctx: any) {
-  const payload = ctx.request.body as { title?: unknown; count?: unknown; note?: unknown; tags?: unknown; options?: unknown; values: Record<string, any> }
+  const payload = ctx.request.body as { title?: unknown; count?: unknown; note?: unknown; tags?: unknown; options?: unknown; values: Record<string, any>; mode: LocalMode; targets: LocalTarget[] }
   requiredString(payload.title)
   requiredNumber(payload.count)
   optionalString(payload.note)
@@ -463,6 +480,8 @@ function objectValue(value: unknown) { if (typeof value !== 'object' || value ==
       expect(properties.tags).toEqual({ type: 'array', items: { type: 'string' } })
       expect(properties.options).toEqual(expect.objectContaining({ type: 'object' }))
       expect(properties.values).toEqual({ type: 'object', additionalProperties: true })
+      expect(properties.mode).toEqual({ type: 'string', enum: ['alpha', 'beta'] })
+      expect(properties.targets).toEqual(expect.objectContaining({ type: 'array', items: expect.objectContaining({ type: 'object' }) }))
       expect(JSON.stringify(properties)).not.toMatch(/"(?:trim|toLowerCase)"/)
     } finally {
       rmSync(root, { recursive: true, force: true })

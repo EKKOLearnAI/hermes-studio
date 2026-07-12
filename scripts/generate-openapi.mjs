@@ -473,10 +473,11 @@ function extractBodyFields(source) {
 
   for (const typeLiteral of extractRequestBodyTypeLiterals(source)) {
     for (const field of parseTypeLiteralFields(typeLiteral)) {
+      const explicitSchema = explicitTypeSchema(field.type, source)
       addBodyField(fields, {
         name: field.name,
-        schema: schemaFromType(field.type, field.name, source),
-        explicit: !/^(?:unknown|any)$/.test(field.type.trim()),
+        schema: explicitSchema || schemaFromType(field.type, field.name, source),
+        explicit: Boolean(explicitSchema),
         required: requiredNames.has(field.name) || !field.optional,
       })
     }
@@ -552,9 +553,13 @@ function extractControllerSource(content, functionName) {
   const file = ts.createSourceFile('controller.ts', content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const functions = new Map()
   const constants = new Map()
+  const typeDeclarations = new Map()
   const isExported = node => node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword) === true
   const hasHelperAnnotation = node => content.slice(node.getFullStart(), node.getStart(file)).includes('@openapi-helper')
   for (const statement of file.statements) {
+    if ((ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) && statement.name) {
+      typeDeclarations.set(statement.name.text, statement)
+    }
     if (ts.isFunctionDeclaration(statement) && statement.name) {
       functions.set(statement.name.text, { node: statement, exported: isExported(statement), callable: !isExported(statement) || hasHelperAnnotation(statement) })
     } else if (ts.isVariableStatement(statement)) {
@@ -607,6 +612,16 @@ function extractControllerSource(content, functionName) {
   follow(functionName, root, true)
 
   const referencedConstants = new Set()
+  const referencedTypes = new Set()
+  const collectTypeReferences = node => {
+    if (ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName) && typeDeclarations.has(node.typeName.text)) {
+      if (referencedTypes.has(node.typeName.text)) return
+      referencedTypes.add(node.typeName.text)
+      collectTypeReferences(typeDeclarations.get(node.typeName.text))
+    }
+    ts.forEachChild(node, collectTypeReferences)
+  }
+  for (const node of selected) collectTypeReferences(node)
   for (const node of selected) {
     function visitSpread(child) {
       if (ts.isSpreadElement(child) && ts.isIdentifier(child.expression) && constants.has(child.expression.text)) {
@@ -617,6 +632,7 @@ function extractControllerSource(content, functionName) {
     visitSpread(node)
   }
   return [
+    ...Array.from(referencedTypes).sort().map(name => typeDeclarations.get(name).getText(file)),
     ...Array.from(referencedConstants).sort().map(name => constants.get(name).getText(file)),
     ...selected.map(node => node.getText(file)),
   ].join('\n')
@@ -938,9 +954,81 @@ function schemaFromValidation(name, source) {
   return null
 }
 
+function explicitTypeSchema(type, source) {
+  const file = ts.createSourceFile('controller-types.ts', `${source}\ntype __OpenApiField = ${type}`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const declarations = new Map()
+  let root = null
+  for (const statement of file.statements) {
+    if ((ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) && statement.name) {
+      if (statement.name.text === '__OpenApiField' && ts.isTypeAliasDeclaration(statement)) root = statement.type
+      else declarations.set(statement.name.text, statement)
+    }
+  }
+  const resolving = new Set()
+  function resolveNode(node) {
+    if (!node) return null
+    if (node.kind === ts.SyntaxKind.StringKeyword) return { type: 'string' }
+    if (node.kind === ts.SyntaxKind.NumberKeyword) return { type: 'number' }
+    if (node.kind === ts.SyntaxKind.BooleanKeyword) return { type: 'boolean' }
+    if (node.kind === ts.SyntaxKind.UnknownKeyword || node.kind === ts.SyntaxKind.AnyKeyword) return null
+    if (ts.isLiteralTypeNode(node)) {
+      if (node.literal.kind === ts.SyntaxKind.NullKeyword) return { nullable: true }
+      if (ts.isStringLiteral(node.literal)) return { type: 'string', enum: [node.literal.text] }
+      if (ts.isNumericLiteral(node.literal)) return { type: 'number', enum: [Number(node.literal.text)] }
+    }
+    if (ts.isArrayTypeNode(node)) {
+      const items = resolveNode(node.elementType)
+      return items ? { type: 'array', items } : null
+    }
+    if (ts.isUnionTypeNode(node)) {
+      const nullable = node.types.some(member => ts.isLiteralTypeNode(member) && member.literal.kind === ts.SyntaxKind.NullKeyword)
+      const members = node.types.filter(member => !(ts.isLiteralTypeNode(member) && member.literal.kind === ts.SyntaxKind.NullKeyword))
+      const schemas = members.map(resolveNode)
+      if (schemas.some(schema => !schema)) return null
+      const literals = schemas.every(schema => schema.enum?.length === 1)
+      const schema = literals
+        ? { type: schemas.every(item => item.type === 'number') ? 'number' : 'string', enum: schemas.flatMap(item => item.enum) }
+        : schemas.length === 1 ? schemas[0] : { oneOf: schemas }
+      return nullable ? { ...schema, nullable: true } : schema
+    }
+    if (ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName)) {
+      if (node.typeName.text === 'Array') {
+        const items = resolveNode(node.typeArguments?.[0])
+        return items ? { type: 'array', items } : null
+      }
+      if (node.typeName.text === 'Record') return { type: 'object', additionalProperties: true }
+      const declaration = declarations.get(node.typeName.text)
+      if (!declaration || resolving.has(node.typeName.text)) return null
+      resolving.add(node.typeName.text)
+      const result = ts.isTypeAliasDeclaration(declaration) ? resolveNode(declaration.type) : objectFromMembers(declaration.members)
+      resolving.delete(node.typeName.text)
+      return result
+    }
+    if (ts.isTypeLiteralNode(node)) return objectFromMembers(node.members)
+    return null
+  }
+  function objectFromMembers(members) {
+    const properties = {}
+    const required = []
+    for (const member of members) {
+      if (!ts.isPropertySignature(member) || !member.name) continue
+      const schema = resolveNode(member.type)
+      if (!schema) return null
+      const name = member.name.getText(file).replace(/^['"]|['"]$/g, '')
+      properties[name] = schema
+      if (!member.questionToken) required.push(name)
+    }
+    return { type: 'object', properties, ...(required.length ? { required } : {}), additionalProperties: false }
+  }
+  return resolveNode(root)
+}
+
 function schemaFromType(type, name = '', source = '') {
   const normalized = type.replace(/\s+/g, ' ')
   const schema = {}
+
+  const explicit = explicitTypeSchema(type, source)
+  if (explicit) return explicit
 
   const validatedSchema = name ? schemaFromValidation(name, source) : null
   if (validatedSchema) return validatedSchema

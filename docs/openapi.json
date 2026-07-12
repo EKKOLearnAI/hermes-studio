@@ -665,8 +665,8 @@
                 "type": "object",
                 "properties": {
                   "defaultProfile": {
-                    "nullable": true,
-                    "type": "string"
+                    "type": "string",
+                    "nullable": true
                   },
                   "password": {
                     "type": "string"
@@ -734,8 +734,8 @@
                 "type": "object",
                 "properties": {
                   "defaultProfile": {
-                    "nullable": true,
-                    "type": "string"
+                    "type": "string",
+                    "nullable": true
                   },
                   "password": {
                     "type": "string"
@@ -6656,7 +6656,14 @@
                     "type": "string"
                   },
                   "api_mode": {
-                    "type": "object"
+                    "type": "string",
+                    "enum": [
+                      "chat_completions",
+                      "codex_responses",
+                      "anthropic_messages",
+                      "bedrock_converse",
+                      "codex_app_server"
+                    ]
                   },
                   "base_url": {
                     "type": "string"
@@ -6671,8 +6678,8 @@
                     "type": "string"
                   },
                   "providerKey": {
-                    "nullable": true,
-                    "type": "string"
+                    "type": "string",
+                    "nullable": true
                   }
                 },
                 "required": [
@@ -6733,7 +6740,14 @@
                     "type": "string"
                   },
                   "api_mode": {
-                    "type": "object"
+                    "type": "string",
+                    "enum": [
+                      "chat_completions",
+                      "codex_responses",
+                      "anthropic_messages",
+                      "bedrock_converse",
+                      "codex_app_server"
+                    ]
                   },
                   "base_url": {
                     "type": "string"
@@ -7314,10 +7328,43 @@
                 "type": "object",
                 "properties": {
                   "agents": {
-                    "type": "boolean"
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "profile": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "invited": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "profile"
+                      ],
+                      "additionalProperties": false
+                    }
                   },
                   "compression": {
-                    "type": "number"
+                    "type": "object",
+                    "properties": {
+                      "triggerTokens": {
+                        "type": "number"
+                      },
+                      "maxHistoryTokens": {
+                        "type": "number"
+                      },
+                      "tailMessageCount": {
+                        "type": "number"
+                      }
+                    },
+                    "additionalProperties": false
                   },
                   "inviteCode": {
                     "type": "string"
@@ -12005,7 +12052,23 @@
                     }
                   },
                   "sessions": {
-                    "type": "object"
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "profile": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "required": [
