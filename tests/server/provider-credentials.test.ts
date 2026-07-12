@@ -326,4 +326,25 @@ describe('provider config projection', () => {
     })
     expect(JSON.stringify(nestedEntryShape)).not.toContain('nested-providers-entry-value')
   })
+
+  it('blanks unkeyed scalar values in malformed provider sections', async () => {
+    const projected = await projectProviderConfigForResponse({
+      model: 'model-scalar-value',
+      custom_providers: ['custom-scalar-value'],
+      providers: 'providers-scalar-value',
+    }, {
+      profile: 'default',
+      envContent: '',
+    })
+
+    expect(projected).toMatchObject({
+      model: '',
+      custom_providers: [''],
+      providers: '',
+    })
+    const serialized = JSON.stringify(projected)
+    for (const forbidden of ['model-scalar-value', 'custom-scalar-value', 'providers-scalar-value']) {
+      expect(serialized).not.toContain(forbidden)
+    }
+  })
 })

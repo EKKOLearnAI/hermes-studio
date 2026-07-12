@@ -380,9 +380,15 @@ function redactProviderSecretFields(value: unknown): unknown {
   return output
 }
 
+function redactMalformedProviderSection(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactMalformedProviderSection)
+  if (!value || typeof value !== 'object') return ''
+  return redactProviderSecretFields(value)
+}
+
 function projectProviderEntry(value: unknown, envContent: string): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return redactProviderSecretFields(value)
+    return redactMalformedProviderSection(value)
   }
   const entry = value as Record<string, unknown>
   const envKey = credentialReplacement(entry.key_env) || credentialReplacement(entry.api_key_env) || ''
@@ -436,21 +442,21 @@ export async function projectProviderConfigForResponse(
       }
       response.model = projected
     } else {
-      response.model = redactProviderSecretFields(config.model)
+      response.model = redactMalformedProviderSection(config.model)
     }
   }
 
   if (Object.prototype.hasOwnProperty.call(config, 'custom_providers')) {
     response.custom_providers = Array.isArray(config.custom_providers)
       ? config.custom_providers.map(entry => projectProviderEntry(entry, envContent))
-      : redactProviderSecretFields(config.custom_providers)
+      : redactMalformedProviderSection(config.custom_providers)
   }
   if (Object.prototype.hasOwnProperty.call(config, 'providers')) {
     response.providers = isProviderDictionary(config.providers)
       ? Object.fromEntries(
           Object.entries(config.providers).map(([key, entry]) => [key, projectProviderEntry(entry, envContent)]),
         )
-      : redactProviderSecretFields(config.providers)
+      : redactMalformedProviderSection(config.providers)
   }
 
   return response
