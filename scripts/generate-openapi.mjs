@@ -520,8 +520,10 @@ function addBodyField(fields, next) {
 }
 
 function mergeSchema(current, next) {
-  if (current.type === 'object' && Object.keys(current).length === 1) return next
-  if (next.type === 'object' && Object.keys(next).length === 1) return current
+  const isUnknownObject = schema => schema.type === 'object'
+    && (Object.keys(schema).length === 1 || (schema.additionalProperties === true && !schema.properties))
+  if (isUnknownObject(current)) return next
+  if (isUnknownObject(next)) return current
   return current
 }
 
@@ -853,13 +855,43 @@ function schemaFromObjectValidator(name, source) {
   if (!validatorSource || !signature) return null
 
   const valueName = signature[1]
-  const propertyNames = Array.from(validatorSource.matchAll(new RegExp(`\\b${escapeRegExp(valueName)}\\.([A-Za-z_$][\\w$]*)`, 'g')))
-    .map(match => match[1])
-    .filter((property, index, all) => all.indexOf(property) === index)
-  if (!propertyNames.length) return null
+  const validatorFile = ts.createSourceFile('validator.ts', validatorSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const primitiveTypes = new Set()
+  let objectGuard = false
+  let arrayGuard = false
+  let arrayItemType = null
+  const propertyNames = new Set()
+  function visit(node) {
+    if (ts.isBinaryExpression(node) && ts.isTypeOfExpression(node.left) && ts.isIdentifier(node.left.expression)
+      && node.left.expression.text === valueName && ts.isStringLiteral(node.right)) {
+      if (['string', 'number', 'boolean', 'bigint'].includes(node.right.text)) primitiveTypes.add(node.right.text)
+      if (node.right.text === 'object') objectGuard = true
+    }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+      && node.expression.expression.getText(validatorFile) === 'Array' && node.expression.name.text === 'isArray'
+      && ts.isIdentifier(node.arguments[0]) && node.arguments[0].text === valueName) {
+      if (ts.isPrefixUnaryExpression(node.parent) && node.parent.operator === ts.SyntaxKind.ExclamationToken) arrayGuard = true
+    }
+    if (ts.isTypeOfExpression(node) && ts.isIdentifier(node.expression) && node.expression.text !== valueName
+      && ts.isBinaryExpression(node.parent) && ts.isStringLiteral(node.parent.right)
+      && ['string', 'number', 'boolean'].includes(node.parent.right.text)) arrayItemType = node.parent.right.text
+    if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === valueName) {
+      const isMethodCall = ts.isCallExpression(node.parent) && node.parent.expression === node
+      if (!isMethodCall) propertyNames.add(node.name.text)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(validatorFile)
+  if (primitiveTypes.size === 1) {
+    const type = Array.from(primitiveTypes)[0]
+    return { type: type === 'bigint' ? 'integer' : type }
+  }
+  if (!objectGuard && arrayGuard) return { type: 'array', items: arrayItemType ? { type: arrayItemType } : {} }
+  const dataProperties = Array.from(propertyNames)
+  if (!objectGuard && !dataProperties.length) return null
 
   const properties = {}
-  for (const property of propertyNames) {
+  for (const property of dataProperties) {
     const propertyPattern = `${escapeRegExp(valueName)}\\.${escapeRegExp(property)}`
     if (new RegExp(`stringArray\\(\\s*${propertyPattern}\\b`).test(validatorSource)) {
       properties[property] = { type: 'array', items: { type: 'string' } }
@@ -886,7 +918,7 @@ function schemaFromObjectValidator(name, source) {
       ? { type: 'string', enum: [...new Set(enumValues)] }
       : { type: 'string' }
   }
-  return { type: 'object', properties, required: propertyNames }
+  return { type: 'object', properties, required: dataProperties }
 }
 
 function schemaFromValidation(name, source) {
@@ -1206,6 +1238,13 @@ if (bodyExtractionIndex >= 0) {
   const [filePath, handler] = process.argv.slice(bodyExtractionIndex + 1)
   const content = readFileSync(resolve(filePath), 'utf8')
   process.stdout.write(`${JSON.stringify(extractBodyPropertyNames(extractControllerSource(content, handler)))}\n`)
+  process.exit(0)
+}
+const requestInferenceIndex = process.argv.indexOf('--infer-controller-request')
+if (requestInferenceIndex >= 0) {
+  const [filePath, handler] = process.argv.slice(requestInferenceIndex + 1)
+  const content = readFileSync(resolve(filePath), 'utf8')
+  process.stdout.write(`${JSON.stringify(generateRequestBody('post', extractControllerSource(content, handler)))}\n`)
   process.exit(0)
 }
 const schemaValidationIndex = process.argv.indexOf('--validate-schema-sources')
