@@ -1,6 +1,6 @@
 ---
 date: 2026-07-12
-pr: TBD
+pr: 2054
 commit: 7d0740d0
 feature: Studio custom-provider model selection
 impact: Prevents a custom provider alias from triggering a redundant client rebuild that drops configured default headers and causes WAF 403 responses.
