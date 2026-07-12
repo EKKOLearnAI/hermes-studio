@@ -96,10 +96,17 @@ interface WorkflowNodeSnapshot {
     provider: string
     model: string
     apiMode: string
+    reasoningEffort: string
     input: string
     skills: string[]
     images: string[]
     approvalRequired: boolean
+    executionPolicy?: {
+      allowedToolsets?: string[]
+      allowedTools?: string[]
+      skipMemory?: boolean
+      skipContextFiles?: boolean
+    }
   }
 }
 
@@ -164,6 +171,17 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter(item => typeof item === 'string' && item.trim()).map(item => item.trim()) : []
 }
 
+function normalizeExecutionPolicy(value: unknown): WorkflowNodeSnapshot['data']['executionPolicy'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const policy: NonNullable<WorkflowNodeSnapshot['data']['executionPolicy']> = {}
+  if (Object.prototype.hasOwnProperty.call(record, 'allowedToolsets')) policy.allowedToolsets = stringArray(record.allowedToolsets)
+  if (Object.prototype.hasOwnProperty.call(record, 'allowedTools')) policy.allowedTools = stringArray(record.allowedTools)
+  if (record.skipMemory === true) policy.skipMemory = true
+  if (record.skipContextFiles === true) policy.skipContextFiles = true
+  return policy
+}
+
 function normalizeNode(raw: unknown): WorkflowNodeSnapshot | null {
   const record = raw && typeof raw === 'object' ? raw as Record<string, any> : {}
   const id = typeof record.id === 'string' && record.id.trim() ? record.id.trim() : ''
@@ -178,11 +196,64 @@ function normalizeNode(raw: unknown): WorkflowNodeSnapshot | null {
       provider: typeof data.provider === 'string' ? data.provider.trim() : '',
       model: typeof data.model === 'string' ? data.model.trim() : '',
       apiMode: typeof data.apiMode === 'string' ? data.apiMode.trim() : '',
+      reasoningEffort: typeof data.reasoningEffort === 'string' ? data.reasoningEffort.trim() : '',
       input: typeof data.input === 'string' ? data.input : '',
       skills: stringArray(data.skills),
       images: stringArray(data.images),
       approvalRequired: data.approvalRequired === true,
+      executionPolicy: normalizeExecutionPolicy(data.executionPolicy),
     },
+  }
+}
+
+const WORKFLOW_REASONING_EFFORTS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+
+function validateWorkflowNodeExecutionPolicies(nodes: unknown[]): void {
+  for (const raw of nodes) {
+    const record = raw && typeof raw === 'object' ? raw as Record<string, any> : {}
+    const rawData = record.data && typeof record.data === 'object' ? record.data as Record<string, any> : {}
+    if (Object.prototype.hasOwnProperty.call(rawData, 'executionPolicy')) {
+      const policy = rawData.executionPolicy
+      const validObject = policy && typeof policy === 'object' && !Array.isArray(policy)
+      const allowedKeys = new Set(['allowedToolsets', 'allowedTools', 'skipMemory', 'skipContextFiles'])
+      const valid = validObject
+        && Object.keys(policy).every(key => allowedKeys.has(key))
+        && ['allowedToolsets', 'allowedTools'].every(key => !Object.prototype.hasOwnProperty.call(policy, key)
+          || (Array.isArray(policy[key]) && policy[key].every((item: unknown) => typeof item === 'string' && item.trim())))
+        && ['skipMemory', 'skipContextFiles'].every(key => !Object.prototype.hasOwnProperty.call(policy, key)
+          || typeof policy[key] === 'boolean')
+      if (!valid) {
+        const err = new Error('workflow node executionPolicy is invalid')
+        ;(err as any).status = 400
+        throw err
+      }
+    }
+    const node = normalizeNode(raw)
+    if (node?.data.executionPolicy && node.data.agent !== 'hermes') {
+      const err = new Error('workflow node executionPolicy is supported for Hermes nodes only')
+      ;(err as any).status = 400
+      throw err
+    }
+  }
+}
+
+function validateWorkflowNodeTargets(nodes: unknown[]): void {
+  for (const raw of nodes) {
+    const record = raw && typeof raw === 'object' ? raw as Record<string, any> : {}
+    const data = record.data && typeof record.data === 'object' ? record.data as Record<string, any> : {}
+    const target = ['provider', 'model', 'apiMode'].map(key => typeof data[key] === 'string' ? data[key].trim() : '')
+    const specified = target.filter(Boolean).length
+    if (specified !== 0 && specified !== target.length) {
+      const err = new Error('workflow node target must set provider, model, and apiMode together')
+      ;(err as any).status = 400
+      throw err
+    }
+    const reasoningEffort = typeof data.reasoningEffort === 'string' ? data.reasoningEffort.trim() : ''
+    if (reasoningEffort && reasoningEffort !== 'default' && !WORKFLOW_REASONING_EFFORTS.has(reasoningEffort)) {
+      const err = new Error('workflow node reasoningEffort is invalid')
+      ;(err as any).status = 400
+      throw err
+    }
   }
 }
 
@@ -281,6 +352,8 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       ;(err as any).status = 404
       throw err
     }
+    validateWorkflowNodeTargets(workflow.nodes)
+    validateWorkflowNodeExecutionPolicies(workflow.nodes)
     let compiledGraph: ReturnType<typeof compileWorkflowGraph>
     try {
       compiledGraph = compileWorkflowGraph(workflow.nodes, workflow.edges)
@@ -519,6 +592,8 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     }
 
     const profile = input.profile?.trim() || workflow.profile || 'default'
+    validateWorkflowNodeTargets(workflow.nodes)
+    validateWorkflowNodeExecutionPolicies(workflow.nodes)
     let compiledGraph: ReturnType<typeof compileWorkflowGraph>
     try {
       compiledGraph = compileWorkflowGraph(workflow.nodes, workflow.edges)
@@ -757,6 +832,10 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
               coding_agent_id: target.codingAgentId,
               agent_id: target.codingAgentId,
               apiMode: node.data.apiMode || undefined,
+              ...(node.data.reasoningEffort && node.data.reasoningEffort !== 'default'
+                ? { reasoning_effort: node.data.reasoningEffort }
+                : {}),
+              ...(node.data.executionPolicy ? { execution_policy: node.data.executionPolicy } : {}),
             }, {
               profile,
               user: input.user,

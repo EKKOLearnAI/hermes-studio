@@ -56,6 +56,15 @@ export interface QueuedRun {
   commandPassthrough?: boolean
   originSocketId?: string
   goalContinuation?: boolean
+  reasoningEffort?: string
+  executionPolicy?: WorkflowExecutionPolicy
+}
+
+export interface WorkflowExecutionPolicy {
+  allowedToolsets?: string[]
+  allowedTools?: string[]
+  skipMemory?: boolean
+  skipContextFiles?: boolean
 }
 
 export interface SessionState {
@@ -78,6 +87,7 @@ export interface SessionState {
   queue: QueuedRun[]
   responseRun?: ResponseRunState
   source?: ChatRunSource
+  executionPolicy?: WorkflowExecutionPolicy
   bridgePendingAssistantContent?: string
   bridgePendingReasoningContent?: string
   bridgePendingToolCallMarkup?: string

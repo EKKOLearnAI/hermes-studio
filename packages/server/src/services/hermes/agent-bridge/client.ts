@@ -1,3 +1,4 @@
+import type { WorkflowExecutionPolicy } from '../run-chat/types'
 import { setTimeout as delay } from 'timers/promises'
 import { createConnection, type Socket } from 'net'
 import { tmpdir } from 'os'
@@ -53,6 +54,7 @@ export interface AgentBridgeChatOptions {
   /** Local patch (reasoning-effort): per-session reasoning effort override.
    * Empty/undefined = use config.yaml default. */
   reasoning_effort?: string
+  executionPolicy?: WorkflowExecutionPolicy
 }
 
 export type AgentBridgeMessage =
@@ -446,6 +448,7 @@ export class AgentBridgeClient {
       ...(options.force_compress ? { force_compress: true } : {}),
       // Local patch (reasoning-effort): per-session reasoning effort override.
       ...(options.reasoning_effort ? { reasoning_effort: options.reasoning_effort } : {}),
+      ...(options.executionPolicy ? { execution_policy: options.executionPolicy } : {}),
     })
   }
 
@@ -454,7 +457,7 @@ export class AgentBridgeClient {
     messages: unknown[],
     instructions?: string,
     profile?: string,
-    options: Pick<AgentBridgeChatOptions, 'model' | 'provider' | 'workspace'> = {},
+    options: Pick<AgentBridgeChatOptions, 'model' | 'provider' | 'workspace' | 'executionPolicy'> = {},
   ): Promise<AgentBridgeContextEstimate> {
     return this.request<AgentBridgeContextEstimate>({
       action: 'context_estimate',
@@ -465,6 +468,7 @@ export class AgentBridgeClient {
       ...(options.model ? { model: options.model } : {}),
       ...(options.provider ? { provider: options.provider } : {}),
       ...(options.workspace ? { workspace: options.workspace } : {}),
+      ...(options.executionPolicy ? { execution_policy: options.executionPolicy } : {}),
     })
   }
 

@@ -539,6 +539,7 @@ export default {
         medium: 'Mittel',
         high: 'Hoch',
         xhigh: 'Sehr hoch',
+        max: 'Max',
       },
     },
     showToolCalls: 'Tool-Aufrufe anzeigen',
@@ -2038,6 +2039,10 @@ jobTriggered: 'Job ausgelost',
   workflow: {
     node: {
       approvalRequired: 'Freigabe nach Lauf',
+      allowedToolsets: 'Allowed toolsets (empty = none)',
+      allowedTools: 'Allowed tools (empty = none)',
+      skipMemory: 'Skip memory',
+      skipContextFiles: 'Skip context files',
     },
     status: {
       pending_approval: 'Wartet auf Freigabe',

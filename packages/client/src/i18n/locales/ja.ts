@@ -539,6 +539,7 @@ export default {
         medium: '中',
         high: '高',
         xhigh: '最高',
+        max: 'Max',
       },
     },
     showToolCalls: 'ツール呼び出しを表示',
@@ -2037,6 +2038,10 @@ export default {
   workflow: {
     node: {
       approvalRequired: '完了後承認',
+      allowedToolsets: 'Allowed toolsets (empty = none)',
+      allowedTools: 'Allowed tools (empty = none)',
+      skipMemory: 'Skip memory',
+      skipContextFiles: 'Skip context files',
     },
     status: {
       pending_approval: '承認待ち',

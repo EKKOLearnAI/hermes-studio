@@ -36,6 +36,131 @@ describe('workflow orchestration runtime', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
+  it('rejects a malformed execution policy before creating a run', async () => {
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: 'Malformed policy', profile: 'default',
+      nodes: [{ id: 'agent', type: 'agent', data: {
+        title: 'Agent', agent: 'hermes', input: 'work',
+        executionPolicy: { allowedToolsets: 'browser' },
+      } }], edges: [],
+    })
+    expect(() => manager.validateRun(workflow.id)).toThrow('workflow node executionPolicy is invalid')
+    await expect(manager.runNow(workflow.id)).rejects.toThrow('workflow node executionPolicy is invalid')
+    expect(chatRunMock.runAndWait).not.toHaveBeenCalled()
+    const { listWorkflowRuns } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    expect(listWorkflowRuns(workflow.id)).toEqual([])
+  })
+
+  it('rejects a Hermes execution policy on a coding agent before creating a run', async () => {
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: 'Unsupported coding policy', profile: 'default',
+      nodes: [{ id: 'agent', type: 'agent', data: {
+        title: 'Agent', agent: 'codex', input: 'work',
+        executionPolicy: { allowedToolsets: [] },
+      } }],
+      edges: [],
+    })
+    expect(() => manager.validateRun(workflow.id)).toThrow('executionPolicy is supported for Hermes nodes only')
+    await expect(manager.runNow(workflow.id)).rejects.toThrow('executionPolicy is supported for Hermes nodes only')
+    expect(chatRunMock.runAndWait).not.toHaveBeenCalled()
+    const { listWorkflowRuns } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    expect(listWorkflowRuns(workflow.id)).toEqual([])
+  })
+
+  it('forwards an exact Hermes execution policy without widening empty allowlists', async () => {
+    chatRunMock.runAndWait.mockResolvedValue({ ok: true, output: 'done' })
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: 'Restricted Hermes', profile: 'default',
+      nodes: [{ id: 'agent', type: 'agent', data: {
+        title: 'Agent', agent: 'hermes', input: 'work',
+        executionPolicy: {
+          allowedToolsets: [], allowedTools: [], skipMemory: true, skipContextFiles: true,
+        },
+      } }],
+      edges: [],
+    })
+    const result = await manager.runNow(workflow.id)
+    expect(result.run.status).toBe('completed')
+    expect(chatRunMock.runAndWait).toHaveBeenCalledWith(expect.objectContaining({
+      execution_policy: {
+        allowedToolsets: [], allowedTools: [], skipMemory: true, skipContextFiles: true,
+      },
+    }), expect.any(Object))
+  })
+
+  it('forwards an explicit canonical reasoning effort with the node target', async () => {
+    chatRunMock.runAndWait.mockResolvedValue({ ok: true, output: 'done' })
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: 'Reasoning wire', profile: 'default',
+      nodes: [{ id: 'agent', type: 'agent', data: {
+        title: 'Agent', agent: 'hermes', provider: 'custom:test', model: 'model-a',
+        apiMode: 'chat_completions', reasoningEffort: 'max', input: 'work',
+      } }],
+      edges: [],
+    })
+    const result = await manager.runNow(workflow.id)
+    expect(result.run.status).toBe('completed')
+    expect(chatRunMock.runAndWait).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'custom:test', model: 'model-a', apiMode: 'chat_completions', reasoning_effort: 'max',
+    }), expect.any(Object))
+  })
+
+  it('omits the reasoning override when the node uses default', async () => {
+    chatRunMock.runAndWait.mockResolvedValue({ ok: true, output: 'done' })
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: 'Default reasoning', profile: 'default',
+      nodes: [{ id: 'agent', type: 'agent', data: {
+        title: 'Agent', agent: 'hermes', reasoningEffort: 'default', input: 'work',
+      } }],
+      edges: [],
+    })
+    await manager.runNow(workflow.id)
+    const request = chatRunMock.runAndWait.mock.calls[0]?.[0]
+    expect(request).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('rejects an invalid reasoning effort before creating a run', async () => {
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: 'Invalid reasoning', profile: 'default',
+      nodes: [{ id: 'agent', type: 'agent', data: {
+        title: 'Agent', agent: 'hermes', reasoningEffort: 'ultra', input: 'work',
+      } }],
+      edges: [],
+    })
+    await expect(manager.runNow(workflow.id)).rejects.toThrow('workflow node reasoningEffort is invalid')
+    expect(chatRunMock.runAndWait).not.toHaveBeenCalled()
+    const { listWorkflowRuns } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    expect(listWorkflowRuns(workflow.id)).toEqual([])
+  })
+
+  it('rejects a partial provider model target before creating a run', async () => {
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: 'Partial target', profile: 'default',
+      nodes: [{ id: 'agent', type: 'agent', data: {
+        title: 'Agent', agent: 'hermes', provider: 'custom:test', input: 'work',
+      } }],
+      edges: [],
+    })
+    await expect(manager.runNow(workflow.id)).rejects.toThrow('workflow node target must set provider, model, and apiMode together')
+    expect(chatRunMock.runAndWait).not.toHaveBeenCalled()
+    const { listWorkflowRuns } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    expect(listWorkflowRuns(workflow.id)).toEqual([])
+  })
+
   it('counts pending approval time against the total deadline', async () => {
     chatRunMock.runAndWait.mockResolvedValue({ ok: true, output: 'needs approval' })
     const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')

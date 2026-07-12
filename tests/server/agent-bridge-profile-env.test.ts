@@ -750,4 +750,163 @@ print(json.dumps({
       listener: [4321],
     })
   })
+  it('applies an exact allowed-tools whitelist after agent tool assembly', async () => {
+    await writeFile(join(tempDir, 'config.yaml'), 'model:\n  default: fake-model\n', 'utf-8')
+
+    const result = await runBridgeProbe(`
+import importlib.util
+import json
+import os
+import sys
+import types
+
+spec = importlib.util.spec_from_file_location("hermes_bridge", os.environ["BRIDGE_PATH"])
+bridge = importlib.util.module_from_spec(spec)
+sys.modules["hermes_bridge"] = bridge
+spec.loader.exec_module(bridge)
+
+root = os.environ["TEST_HERMES_HOME"]
+os.environ["HERMES_HOME"] = root
+os.environ["HERMES_AGENT_BRIDGE_BASE_HOME"] = root
+
+run_agent = types.ModuleType("run_agent")
+class FakeAgent:
+    def __init__(self, **kwargs):
+        self.tools = [
+            {"type": "function", "function": {"name": "browser_navigate"}},
+            {"type": "function", "function": {"name": "browser_snapshot"}},
+            {"type": "function", "function": {"name": "browser_type"}},
+        ]
+        self.valid_tool_names = {"browser_navigate", "browser_snapshot", "browser_type"}
+        self._context_engine_tool_names = {"browser_type"}
+        self._skip_mcp_refresh = False
+        self.skip_memory = kwargs.get("skip_memory")
+        self.skip_context_files = kwargs.get("skip_context_files")
+run_agent.AIAgent = FakeAgent
+sys.modules["run_agent"] = run_agent
+
+class FakeDbHolder:
+    error = None
+    def get_for_profile(self, profile):
+        return None
+
+bridge._ensure_agent_imports = lambda: None
+bridge._load_cfg = lambda: {"model": {"default": "fake-model"}, "agent": {}}
+bridge._resolve_runtime = lambda model, provider=None: {"provider": "fake"}
+bridge._load_enabled_toolsets = lambda: ["browser"]
+bridge._discover_bridge_mcp_tools = lambda: []
+bridge._load_reasoning_config = lambda: None
+bridge._load_service_tier = lambda: None
+
+pool = bridge.AgentPool()
+pool._db = FakeDbHolder()
+session = pool.get_or_create(
+    "session-exact-tools",
+    profile="default",
+    execution_policy={
+        "allowedToolsets": ["browser"],
+        "allowedTools": ["browser_navigate", "browser_snapshot"],
+        "skipMemory": True,
+        "skipContextFiles": True,
+    },
+)
+
+print(json.dumps({
+    "tools": [tool["function"]["name"] for tool in session.agent.tools],
+    "valid_tool_names": sorted(session.agent.valid_tool_names),
+    "context_engine_tool_names": sorted(session.agent._context_engine_tool_names),
+    "allowed_tools": session.config.get("allowed_tools"),
+    "skip_mcp_refresh": session.agent._skip_mcp_refresh,
+    "skip_memory": session.agent.skip_memory,
+    "skip_context_files": session.agent.skip_context_files,
+}))
+`)
+
+    expect(result).toEqual({
+      tools: ['browser_navigate', 'browser_snapshot'],
+      valid_tool_names: ['browser_navigate', 'browser_snapshot'],
+      context_engine_tool_names: [],
+      allowed_tools: ['browser_navigate', 'browser_snapshot'],
+      skip_mcp_refresh: true,
+      skip_memory: true,
+      skip_context_files: true,
+    })
+  })
+
+
+  it('recreates an idle session when its execution policy changes', async () => {
+    await writeFile(join(tempDir, 'config.yaml'), 'model:\n  default: fake-model\n', 'utf-8')
+
+    const result = await runBridgeProbe(`
+import importlib.util
+import json
+import os
+import sys
+import types
+
+spec = importlib.util.spec_from_file_location("hermes_bridge", os.environ["BRIDGE_PATH"])
+bridge = importlib.util.module_from_spec(spec)
+sys.modules["hermes_bridge"] = bridge
+spec.loader.exec_module(bridge)
+
+root = os.environ["TEST_HERMES_HOME"]
+os.environ["HERMES_HOME"] = root
+os.environ["HERMES_AGENT_BRIDGE_BASE_HOME"] = root
+
+created = []
+run_agent = types.ModuleType("run_agent")
+class FakeAgent:
+    def __init__(self, **kwargs):
+        created.append(1)
+        self.tools = [
+            {"type": "function", "function": {"name": "browser_navigate"}},
+            {"type": "function", "function": {"name": "browser_snapshot"}},
+        ]
+        self.valid_tool_names = {"browser_navigate", "browser_snapshot"}
+        self._context_engine_tool_names = set()
+        self._skip_mcp_refresh = False
+run_agent.AIAgent = FakeAgent
+sys.modules["run_agent"] = run_agent
+
+class FakeDbHolder:
+    error = None
+    def get_for_profile(self, profile):
+        return None
+
+bridge._ensure_agent_imports = lambda: None
+bridge._load_cfg = lambda: {"model": {"default": "fake-model"}, "agent": {}}
+bridge._resolve_runtime = lambda model, provider=None: {"provider": "fake"}
+bridge._load_enabled_toolsets = lambda: ["browser"]
+bridge._discover_bridge_mcp_tools = lambda: []
+bridge._load_reasoning_config = lambda: None
+bridge._load_service_tier = lambda: None
+
+pool = bridge.AgentPool()
+pool._db = FakeDbHolder()
+first = pool.get_or_create(
+    "session-policy-change",
+    profile="default",
+    execution_policy={"allowedToolsets": ["browser"], "allowedTools": ["browser_navigate"], "skipMemory": True},
+)
+second = pool.get_or_create(
+    "session-policy-change",
+    profile="default",
+    execution_policy={"allowedToolsets": ["browser"], "allowedTools": ["browser_navigate"], "skipMemory": False},
+)
+
+print(json.dumps({
+    "created": len(created),
+    "same_session": first is second,
+    "tools": [tool["function"]["name"] for tool in second.agent.tools],
+}))
+`)
+
+    expect(result).toEqual({
+      created: 2,
+      same_session: false,
+      tools: ['browser_navigate'],
+    })
+  })
+
+
 })

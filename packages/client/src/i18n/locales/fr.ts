@@ -539,6 +539,7 @@ export default {
         medium: 'Moyen',
         high: 'Élevé',
         xhigh: 'Très élevé',
+        max: 'Max',
       },
     },
     showToolCalls: 'Afficher les appels d’outils',
@@ -2038,6 +2039,10 @@ jobTriggered: 'Job declenche',
   workflow: {
     node: {
       approvalRequired: 'Approbation apres noeud',
+      allowedToolsets: 'Allowed toolsets (empty = none)',
+      allowedTools: 'Allowed tools (empty = none)',
+      skipMemory: 'Skip memory',
+      skipContextFiles: 'Skip context files',
     },
     status: {
       pending_approval: 'En attente d\'approbation',

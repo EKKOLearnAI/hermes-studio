@@ -23,7 +23,7 @@ import { getOrCreateSession } from './compression'
 import { loadSessionStateFromDb, resolveRunSource } from './load-state'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
 import { contentBlocksToString } from './content-blocks'
-import type { ChatCodingAgentId, ContentBlock, QueuedRun, SessionState } from './types'
+import type { ChatCodingAgentId, ContentBlock, QueuedRun, SessionState, WorkflowExecutionPolicy } from './types'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
 import { observeRunChatPetEvent } from '../pet-state-socket'
@@ -205,6 +205,7 @@ export class ChatRunSocket {
       allow_command_passthrough?: boolean
       // Local patch (reasoning-effort): per-session reasoning effort override.
       reasoning_effort?: string
+      execution_policy?: WorkflowExecutionPolicy
     }) => {
       let runProfile: string
       try {
@@ -274,6 +275,8 @@ export class ChatRunSocket {
             mcpServers: data.mcpServers,
             mcp_servers: data.mcp_servers,
             commandPassthrough: data.allow_command_passthrough,
+            reasoningEffort: data.reasoning_effort,
+            executionPolicy: data.execution_policy,
             originSocketId: socket.id,
           })
           this.nsp.to(`session:${data.session_id}`).emit('run.queued', {
@@ -412,6 +415,8 @@ export class ChatRunSocket {
       mcp_servers?: Record<string, unknown>
       one_shot_model?: boolean
       allow_command_passthrough?: boolean
+      reasoning_effort?: string
+      execution_policy?: WorkflowExecutionPolicy
       onEvent?: (event: string, payload: any) => void
     },
     profile: string,
@@ -662,6 +667,8 @@ export class ChatRunSocket {
       mcp_servers: next.mcp_servers,
       one_shot_model: next.oneShotModel,
       allow_command_passthrough: next.commandPassthrough,
+      reasoning_effort: next.reasoningEffort,
+      execution_policy: next.executionPolicy,
     }, next.profile || fallbackProfile, skipUserMessage)
   }
 
@@ -695,6 +702,7 @@ export class ChatRunSocket {
       mcp_servers?: Record<string, unknown>
       profile?: string
       reasoning_effort?: string
+      execution_policy?: WorkflowExecutionPolicy
     },
     options: { profile?: string; user?: AuthenticatedUser; timeoutMs?: number; approvalChoice?: ChatRunAutoApprovalChoice } = {},
   ): Promise<ChatRunAndWaitResult> {

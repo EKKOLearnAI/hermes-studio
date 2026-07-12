@@ -539,6 +539,7 @@ export default {
         medium: '중간',
         high: '높음',
         xhigh: '매우 높음',
+        max: 'Max',
       },
     },
     showToolCalls: '도구 호출 표시',
@@ -2037,6 +2038,10 @@ export default {
   workflow: {
     node: {
       approvalRequired: '완료 후 승인',
+      allowedToolsets: 'Allowed toolsets (empty = none)',
+      allowedTools: 'Allowed tools (empty = none)',
+      skipMemory: 'Skip memory',
+      skipContextFiles: 'Skip context files',
     },
     status: {
       pending_approval: '승인 대기',
