@@ -65,4 +65,54 @@ describe('EmergencyStopPanel', () => {
 
     expect(warnings).toHaveLength(2)
   })
+
+  it('does not let a stale completion release a newer submitted versioned update', async () => {
+    warnings.length = 0
+    const wrapper = mount(EmergencyStopPanel, { props: { control: { level: 0, version: 7, actorUserId: null, reason: '', updatedAt: 'now' }, saving: false } })
+    await wrapper.get('[data-test="emergency-level-input-2"]').setValue(true)
+    await wrapper.get('[data-test="emergency-reason"]').setValue('Incident containment')
+    const button = wrapper.get('[data-test="apply-emergency-stop"]')
+
+    await button.trigger('click')
+    warnings[0].onPositiveClick()
+    const completeA = wrapper.emitted('update')?.[0]?.[1] as () => void
+    await wrapper.setProps({ saving: true })
+    await wrapper.setProps({ saving: false })
+    await button.trigger('click')
+    warnings[1].onPositiveClick()
+    const completeB = wrapper.emitted('update')?.[1]?.[1] as () => void
+
+    completeA()
+    await wrapper.vm.$nextTick()
+    expect(button.attributes('disabled')).toBeDefined()
+    await button.trigger('click')
+    expect(warnings).toHaveLength(2)
+    expect(wrapper.emitted('update')?.map(args => (args[0] as any).expectedVersion)).toEqual([7, 7])
+
+    completeB()
+    await wrapper.vm.$nextTick()
+    expect(button.attributes('disabled')).toBeUndefined()
+  })
+
+  it('ignores stale dialog callbacks after the authoritative control version changes', async () => {
+    warnings.length = 0
+    const wrapper = mount(EmergencyStopPanel, { props: { control: { level: 0, version: 7, actorUserId: null, reason: '', updatedAt: 'now' }, saving: false } })
+    await wrapper.get('[data-test="emergency-level-input-2"]').setValue(true)
+    await wrapper.get('[data-test="emergency-reason"]').setValue('Incident containment')
+    await wrapper.get('[data-test="apply-emergency-stop"]').trigger('click')
+    const staleDialog = warnings[0]
+
+    await wrapper.setProps({ control: { level: 0, version: 8, actorUserId: null, reason: '', updatedAt: 'later' } })
+    const button = wrapper.get('[data-test="apply-emergency-stop"]')
+    await button.trigger('click')
+    staleDialog.onNegativeClick()
+    staleDialog.onClose()
+    await wrapper.vm.$nextTick()
+
+    expect(button.attributes('disabled')).toBeDefined()
+    warnings[1].onPositiveClick()
+    warnings[1].onPositiveClick()
+    expect(wrapper.emitted('update')).toHaveLength(1)
+    expect(wrapper.emitted('update')?.[0]?.[0]).toMatchObject({ expectedVersion: 8 })
+  })
 })

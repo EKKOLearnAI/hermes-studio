@@ -103,4 +103,48 @@ describe('WorkflowDetailDrawer', () => {
 
     expect(warnings).toHaveLength(2)
   })
+
+  it('does not let a stale completion release a newer submitted confirmation', async () => {
+    warnings.length = 0
+    const wrapper = mount(WorkflowDetailDrawer, { props: { show: true, workflow, capability, audit, saving: false } })
+    const button = wrapper.get('[data-test="approve-workflow"]')
+
+    await button.trigger('click')
+    warnings[0].onPositiveClick()
+    const completeA = wrapper.emitted('approve')?.[0]?.[0] as () => void
+    await wrapper.setProps({ saving: true })
+    await wrapper.setProps({ saving: false })
+    await button.trigger('click')
+    warnings[1].onPositiveClick()
+    const completeB = wrapper.emitted('approve')?.[1]?.[0] as () => void
+
+    completeA()
+    await wrapper.vm.$nextTick()
+    expect(button.attributes('disabled')).toBeDefined()
+    await button.trigger('click')
+    expect(warnings).toHaveLength(2)
+
+    completeB()
+    await wrapper.vm.$nextTick()
+    expect(button.attributes('disabled')).toBeUndefined()
+  })
+
+  it('ignores stale dialog callbacks after close, reopen, and workflow replacement', async () => {
+    warnings.length = 0
+    const wrapper = mount(WorkflowDetailDrawer, { props: { show: true, workflow, capability, audit, saving: false } })
+    await wrapper.get('[data-test="approve-workflow"]').trigger('click')
+    const staleDialog = warnings[0]
+
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true, workflow: { ...workflow, id: 'wf-2' } })
+    const button = wrapper.get('[data-test="approve-workflow"]')
+    await button.trigger('click')
+    staleDialog.onNegativeClick()
+    staleDialog.onClose()
+    await wrapper.vm.$nextTick()
+
+    expect(button.attributes('disabled')).toBeDefined()
+    await button.trigger('click')
+    expect(warnings).toHaveLength(2)
+  })
 })

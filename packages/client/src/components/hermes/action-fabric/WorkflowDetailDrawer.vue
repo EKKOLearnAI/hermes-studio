@@ -20,47 +20,52 @@ const { locale } = useI18n()
 const { messages: m } = useActionFabricMessages(locale)
 const reason = ref('')
 const drawer = ref<HTMLElement | null>(null)
-const confirming = ref(false)
-let submitted = false
-let sawSaving = false
+interface ActiveConfirmation { token: number; submitted: boolean; sawSaving: boolean }
+const activeConfirmation = ref<ActiveConfirmation | null>(null)
+const confirming = computed(() => activeConfirmation.value !== null)
+let confirmationEpoch = 0
 const needsApproval = computed(() => props.workflow?.state === 'waiting_user')
 const canRetry = computed(() => props.workflow?.state === 'failed' || props.workflow?.state === 'dead_letter')
 const canCancel = computed(() => Boolean(props.workflow && ['draft', 'policy_check', 'preparing', 'executing', 'verifying', 'waiting_user', 'retrying'].includes(props.workflow.state)))
 const canCompensate = computed(() => Boolean(props.workflow?.state === 'succeeded' && props.capability?.reversible && !props.workflow.compensationIntentId))
 
 watch(() => props.show, async show => {
-  if (!show) { releaseConfirmation(); return }
+  if (!show) { releaseActiveConfirmation(); return }
   reason.value = ''
   await nextTick()
   const first = drawer.value?.querySelector<HTMLButtonElement>('button:not([disabled])')
   if (first) first.focus(); else drawer.value?.focus()
 })
+watch(() => props.workflow?.id, () => releaseActiveConfirmation())
 watch(() => props.saving, saving => {
-  if (!confirming.value || !submitted) return
-  if (saving) sawSaving = true
-  else if (sawSaving) releaseConfirmation()
+  const active = activeConfirmation.value
+  if (!active?.submitted) return
+  if (saving) active.sawSaving = true
+  else if (active.sawSaving) releaseConfirmation(active.token)
 })
-onBeforeUnmount(() => releaseConfirmation())
+onBeforeUnmount(() => releaseActiveConfirmation())
 
 function boundedJson(value: ActionJsonValue | undefined): string {
   try { return JSON.stringify(value ?? null, null, 2).slice(0, 4000) } catch { return 'null' }
 }
-function releaseConfirmation(): void {
-  confirming.value = false
-  submitted = false
-  sawSaving = false
+function releaseActiveConfirmation(): void {
+  activeConfirmation.value = null
 }
-function completeConfirmation(): void {
-  if (confirming.value && submitted) releaseConfirmation()
+function releaseConfirmation(token: number): void {
+  if (activeConfirmation.value?.token === token) activeConfirmation.value = null
 }
-function dismissConfirmation(): void {
-  if (!submitted) releaseConfirmation()
+function completeConfirmation(token: number): void {
+  const active = activeConfirmation.value
+  if (active?.token === token && active.submitted) releaseConfirmation(token)
+}
+function dismissConfirmation(token: number): void {
+  const active = activeConfirmation.value
+  if (active?.token === token && !active.submitted) releaseConfirmation(token)
 }
 function confirm(label: string, action: (complete: ConfirmationComplete) => void): void {
   if (!props.workflow || confirming.value) return
-  confirming.value = true
-  submitted = false
-  sawSaving = false
+  const token = ++confirmationEpoch
+  activeConfirmation.value = { token, submitted: false, sawSaving: false }
   try {
     dialog.warning({
       title: m.value.confirmTitle,
@@ -68,15 +73,17 @@ function confirm(label: string, action: (complete: ConfirmationComplete) => void
       positiveText: label,
       negativeText: m.value.close,
       onPositiveClick: () => {
-        if (!confirming.value || submitted) return
-        submitted = true
-        action(completeConfirmation)
+        const active = activeConfirmation.value
+        if (active?.token !== token || active.submitted) return
+        if (props.saving) { releaseConfirmation(token); return }
+        active.submitted = true
+        action(() => completeConfirmation(token))
       },
-      onNegativeClick: dismissConfirmation,
-      onClose: dismissConfirmation,
+      onNegativeClick: () => dismissConfirmation(token),
+      onClose: () => dismissConfirmation(token),
     })
   } catch (cause) {
-    releaseConfirmation()
+    releaseConfirmation(token)
     throw cause
   }
 }
@@ -86,7 +93,7 @@ function withReason(label: string, action: (value: string, complete: Confirmatio
   confirm(label, complete => action(value, complete))
 }
 function closeDrawer(): void {
-  releaseConfirmation()
+  releaseActiveConfirmation()
   emit('close')
 }
 </script>

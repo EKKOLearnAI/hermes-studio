@@ -13,10 +13,12 @@ const { locale } = useI18n()
 const { messages: m } = useActionFabricMessages(locale)
 const selectedLevel = ref<0 | 1 | 2 | 3>(0)
 const reason = ref('')
-const confirming = ref(false)
-let submitted = false
-let sawSaving = false
+interface ActiveConfirmation { token: number; submitted: boolean; sawSaving: boolean }
+const activeConfirmation = ref<ActiveConfirmation | null>(null)
+const confirming = computed(() => activeConfirmation.value !== null)
+let confirmationEpoch = 0
 watch(() => props.control?.level, level => { if (level !== undefined) selectedLevel.value = level }, { immediate: true })
+watch(() => props.control?.version, () => releaseActiveConfirmation())
 const levels = computed(() => [
   { level: 0 as const, title: m.value.level0, description: m.value.level0Description },
   { level: 1 as const, title: m.value.level1, description: m.value.level1Description },
@@ -25,29 +27,32 @@ const levels = computed(() => [
 ])
 const canApply = computed(() => Boolean(props.control && selectedLevel.value !== props.control.level && reason.value.trim() && !props.saving && !confirming.value))
 watch(() => props.saving, saving => {
-  if (!confirming.value || !submitted) return
-  if (saving) sawSaving = true
-  else if (sawSaving) releaseConfirmation()
+  const active = activeConfirmation.value
+  if (!active?.submitted) return
+  if (saving) active.sawSaving = true
+  else if (active.sawSaving) releaseConfirmation(active.token)
 })
-onBeforeUnmount(() => releaseConfirmation())
+onBeforeUnmount(() => releaseActiveConfirmation())
 
-function releaseConfirmation(): void {
-  confirming.value = false
-  submitted = false
-  sawSaving = false
+function releaseActiveConfirmation(): void {
+  activeConfirmation.value = null
 }
-function completeConfirmation(): void {
-  if (confirming.value && submitted) releaseConfirmation()
+function releaseConfirmation(token: number): void {
+  if (activeConfirmation.value?.token === token) activeConfirmation.value = null
 }
-function dismissConfirmation(): void {
-  if (!submitted) releaseConfirmation()
+function completeConfirmation(token: number): void {
+  const active = activeConfirmation.value
+  if (active?.token === token && active.submitted) releaseConfirmation(token)
+}
+function dismissConfirmation(token: number): void {
+  const active = activeConfirmation.value
+  if (active?.token === token && !active.submitted) releaseConfirmation(token)
 }
 
 function apply(): void {
   if (!props.control || !canApply.value) return
-  confirming.value = true
-  submitted = false
-  sawSaving = false
+  const token = ++confirmationEpoch
+  activeConfirmation.value = { token, submitted: false, sawSaving: false }
   const input: EmergencyStopInput = { level: selectedLevel.value, reason: reason.value.trim(), expectedVersion: props.control.version }
   try {
     dialog.warning({
@@ -56,15 +61,17 @@ function apply(): void {
       positiveText: m.value.applyControl,
       negativeText: m.value.cancel,
       onPositiveClick: () => {
-        if (!confirming.value || submitted) return
-        submitted = true
-        emit('update', input, completeConfirmation)
+        const active = activeConfirmation.value
+        if (active?.token !== token || active.submitted) return
+        if (props.saving) { releaseConfirmation(token); return }
+        active.submitted = true
+        emit('update', input, () => completeConfirmation(token))
       },
-      onNegativeClick: dismissConfirmation,
-      onClose: dismissConfirmation,
+      onNegativeClick: () => dismissConfirmation(token),
+      onClose: () => dismissConfirmation(token),
     })
   } catch (cause) {
-    releaseConfirmation()
+    releaseConfirmation(token)
     throw cause
   }
 }
