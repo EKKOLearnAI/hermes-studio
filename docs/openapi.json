@@ -6355,7 +6355,8 @@
                     "type": "string"
                   },
                   "values": {
-                    "type": "string"
+                    "type": "object",
+                    "additionalProperties": true
                   }
                 },
                 "required": [
@@ -6508,7 +6509,8 @@
                     "type": "string"
                   },
                   "values": {
-                    "type": "string"
+                    "type": "object",
+                    "additionalProperties": true
                   }
                 },
                 "required": [
@@ -6654,7 +6656,7 @@
                     "type": "string"
                   },
                   "api_mode": {
-                    "type": "string"
+                    "type": "object"
                   },
                   "base_url": {
                     "type": "string"
@@ -6731,7 +6733,7 @@
                     "type": "string"
                   },
                   "api_mode": {
-                    "type": "string"
+                    "type": "object"
                   },
                   "base_url": {
                     "type": "string"
@@ -12003,7 +12005,7 @@
                     }
                   },
                   "sessions": {
-                    "type": "string"
+                    "type": "object"
                   }
                 },
                 "required": [

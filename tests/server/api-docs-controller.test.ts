@@ -91,6 +91,11 @@ describe('api docs controller', () => {
     expect(ctx.body.paths['/api/hermes/kanban/{id}/comments'].post.requestBody.content['application/json'].schema.properties.value).toBeUndefined()
     expect(ctx.body.paths['/api/hermes/kanban'].post.requestBody.content['application/json'].schema.properties.title).toEqual({ type: 'string' })
     expect(ctx.body.paths['/api/hermes/kanban/{id}/comments'].post.requestBody.content['application/json'].schema.properties.body).toEqual({ type: 'string' })
+    for (const path of ['/api/hermes/config', '/api/hermes/config/credentials']) {
+      expect(ctx.body.paths[path].put.requestBody.content['application/json'].schema.properties.values).toEqual({
+        type: 'object', additionalProperties: true,
+      })
+    }
 
     const assistantRolePaths = {
       '/api/hermes/assistant-roles': ['get', 'post'],
@@ -435,13 +440,16 @@ export function rename(ctx: any) {
     try {
       writeFileSync(fixture, `
 export function target(ctx: any) {
-  const payload = ctx.request.body as { title?: unknown; note?: unknown; tags?: unknown; options?: unknown }
+  const payload = ctx.request.body as { title?: unknown; count?: unknown; note?: unknown; tags?: unknown; options?: unknown; values: Record<string, any> }
   requiredString(payload.title)
+  requiredNumber(payload.count)
   optionalString(payload.note)
   stringArray(payload.tags)
   objectValue(payload.options)
+  requiredString(payload.values)
 }
 function requiredString(value: unknown) { if (typeof value !== 'string' || !value.trim()) throw new Error(); return value }
+function requiredNumber(value: unknown) { if (typeof value !== 'number') throw new Error(); return value }
 function optionalString(value: unknown) { if (value == null) return; if (typeof value !== 'string') throw new Error(); return value.toLowerCase() }
 function stringArray(value: unknown) { if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) throw new Error(); return value }
 function objectValue(value: unknown) { if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(); const enabled = (value as any).enabled; if (typeof enabled !== 'boolean') throw new Error(); return value }
@@ -450,9 +458,11 @@ function objectValue(value: unknown) { if (typeof value !== 'object' || value ==
       expect(result.status).toBe(0)
       const properties = JSON.parse(result.stdout).content['application/json'].schema.properties
       expect(properties.title).toEqual({ type: 'string' })
+      expect(properties.count).toEqual({ type: 'number' })
       expect(properties.note).toEqual({ type: 'string' })
       expect(properties.tags).toEqual({ type: 'array', items: { type: 'string' } })
       expect(properties.options).toEqual(expect.objectContaining({ type: 'object' }))
+      expect(properties.values).toEqual({ type: 'object', additionalProperties: true })
       expect(JSON.stringify(properties)).not.toMatch(/"(?:trim|toLowerCase)"/)
     } finally {
       rmSync(root, { recursive: true, force: true })

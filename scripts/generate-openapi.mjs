@@ -476,6 +476,7 @@ function extractBodyFields(source) {
       addBodyField(fields, {
         name: field.name,
         schema: schemaFromType(field.type, field.name, source),
+        explicit: !/^(?:unknown|any)$/.test(field.type.trim()),
         required: requiredNames.has(field.name) || !field.optional,
       })
     }
@@ -516,10 +517,18 @@ function addBodyField(fields, next) {
     return
   }
   existing.required = existing.required || next.required
+  if (existing.explicit) return
+  if (next.explicit) {
+    existing.schema = next.schema
+    existing.explicit = true
+    return
+  }
   existing.schema = mergeSchema(existing.schema, next.schema)
 }
 
 function mergeSchema(current, next) {
+  if (Object.keys(current).length === 0) return next
+  if (Object.keys(next).length === 0) return current
   const isUnknownObject = schema => schema.type === 'object'
     && (Object.keys(schema).length === 1 || (schema.additionalProperties === true && !schema.properties))
   if (isUnknownObject(current)) return next
@@ -943,7 +952,8 @@ function schemaFromType(type, name = '', source = '') {
   }
   if (/number/.test(normalized)) return { ...schema, type: 'number' }
   if (/boolean/.test(normalized)) return { ...schema, type: 'boolean' }
-  if (/Record<|unknown|any|object|\{/.test(normalized)) return { ...schema, type: 'object', additionalProperties: true }
+  if (/^(?:unknown|any)$/.test(normalized)) return schema
+  if (/Record<|object|\{/.test(normalized)) return { ...schema, type: 'object', additionalProperties: true }
   if (/string/.test(normalized)) return { ...schema, type: 'string' }
   return { ...schema, type: 'object' }
 }
