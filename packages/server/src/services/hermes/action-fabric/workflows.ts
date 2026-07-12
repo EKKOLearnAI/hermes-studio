@@ -308,6 +308,9 @@ function transitionWorkflow(
     if (action === 'retry' && current.state === 'waiting_user') {
       return retryWorkerWaitingWorkflowInDb(db, current, actorUserId)
     }
+    if (action === 'retry' && (current.state === 'failed' || current.state === 'dead_letter')) {
+      assertPhaseAwareRetryAllowed(db, current)
+    }
     if (action === 'cancel' && current.state === 'cancelled') return detailForWorkflow(db, current)
     if (action === 'cancel' && (current.lease_owner !== null || hasActiveOrEffectfulStep(db, id))) {
       throw new Error('FABRIC_WORKFLOW_INVALID_TRANSITION')
@@ -399,6 +402,21 @@ function retryWorkerWaitingWorkflowInDb(
   appendFabricOutbox(db, 'fabric.workflow.transitioned', current.id,
     { action: 'retry', from: 'waiting_user', to: destination, reason: errorCode })
   return detailForWorkflow(db, requireWorkflow(db, current.id))
+}
+
+function assertPhaseAwareRetryAllowed(db: DatabaseSync, workflow: WorkflowRow): void {
+  if (workflow.compensation_intent_id !== null) throw new Error('FABRIC_WORKFLOW_NOT_RETRYABLE')
+  const failed = db.prepare(`SELECT kind FROM fabric_steps WHERE workflow_id=? AND state='failed'
+    ORDER BY ordinal LIMIT 1`).get(workflow.id) as { kind: string } | undefined
+  if (!failed || !['prepare', 'execute', 'verify'].includes(failed.kind)) {
+    throw new Error('FABRIC_WORKFLOW_NOT_RETRYABLE')
+  }
+  if (failed.kind === 'execute') {
+    const contract = compensationContext(db, workflow.id).contract
+    if (contract.idempotency === 'none' && contract.verificationStrategy === 'none') {
+      throw new Error('FABRIC_WORKFLOW_NOT_RETRYABLE')
+    }
+  }
 }
 
 function hasActiveOrEffectfulStep(db: DatabaseSync, workflowId: string): boolean {
@@ -540,10 +558,6 @@ function updateStepsForAction(db: DatabaseSync, workflowId: string, action: Work
   } else if (action === 'reject' || action === 'cancel') {
     db.prepare(`UPDATE fabric_steps SET state='cancelled',updated_at=?,completed_at=?
       WHERE workflow_id=? AND state IN ('pending','running','waiting_user','failed')`).run(now, now, workflowId)
-  } else if (action === 'retry') {
-    db.prepare(`UPDATE fabric_steps SET state='pending',attempt=attempt+1,last_error_code=NULL,
-      output_json=NULL,evidence_json='[]',started_at=NULL,completed_at=NULL,updated_at=?
-      WHERE workflow_id=? AND state='failed'`).run(now, workflowId)
   }
 }
 

@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { logger } from '../../logger'
 import { appendFabricAuditEvent, appendFabricOutbox, withFabricAuditedTransaction } from './audit'
-import { getFabricControlStateInDb } from './control'
+import { getFabricControlState, getFabricControlStateInDb } from './control'
 import {
   invokeFabricExecutor,
   type FabricExecutionContext,
@@ -36,6 +36,7 @@ export interface FabricWorkerOptions {
   workerId?: string
   intervalMs?: number
   clock?: () => Date
+  controlPollMs?: number
 }
 
 export interface FabricWorkerHandle {
@@ -71,6 +72,7 @@ interface WorkflowClaim {
   compensationCapabilityId: string | null
   idempotency: 'required' | 'supported' | 'none'
   verificationStrategy: string
+  interruptible: boolean
 }
 
 interface CandidateRow {
@@ -101,7 +103,9 @@ interface ManagedWorkerState {
   generation: number
   handle: FabricWorkerHandle
   timer: ReturnType<typeof setInterval>
+  controlTimer: ReturnType<typeof setInterval>
   inFlight: Promise<void> | null
+  interruptInFlight: Promise<void> | null
   stopping: Promise<void> | null
 }
 
@@ -111,9 +115,16 @@ let workerGeneration = 0
 export async function processActionFabricOnce(
   options: { workerId?: string; now?: Date; clock?: () => Date } = {},
 ): Promise<FabricWorkerCycleResult> {
+  return processActionFabricCycle(options, false)
+}
+
+async function processActionFabricCycle(
+  options: { workerId?: string; now?: Date; clock?: () => Date },
+  emergencyOnly: boolean,
+): Promise<FabricWorkerCycleResult> {
   const workerId = validWorkerId(options.workerId ?? `worker-${randomUUID()}`)
   const now = validDate(options.now ?? options.clock?.() ?? new Date())
-  const claim = claimNextWorkflow(workerId, now)
+  const claim = claimNextWorkflow(workerId, now, emergencyOnly)
   if (!claim) return emptyResult(workerId)
   const context: FabricExecutionContext = {
     intentId: claim.intentId,
@@ -171,12 +182,15 @@ export function startActionFabricWorker(options: FabricWorkerOptions = {}): Fabr
   if (running) return running.handle
   const workerId = validWorkerId(options.workerId ?? `worker-${randomUUID()}`)
   const intervalMs = validInterval(options.intervalMs ?? DEFAULT_INTERVAL_MS)
+  const controlPollMs = validInterval(options.controlPollMs ?? Math.min(intervalMs, 250))
   const clock = options.clock ?? (() => new Date())
   const state = {
     generation: ++workerGeneration,
     handle: undefined as unknown as FabricWorkerHandle,
     timer: undefined as unknown as ReturnType<typeof setInterval>,
+    controlTimer: undefined as unknown as ReturnType<typeof setInterval>,
     inFlight: null as Promise<void> | null,
+    interruptInFlight: null as Promise<void> | null,
     stopping: null as Promise<void> | null,
   }
   const handle: FabricWorkerHandle = { workerId, stop: () => stopManagedWorker(state) }
@@ -190,6 +204,17 @@ export function startActionFabricWorker(options: FabricWorkerOptions = {}): Fabr
     state.inFlight = cycle
   }, intervalMs)
   state.timer.unref?.()
+  state.controlTimer = setInterval(() => {
+    if (running !== state || state.stopping || !state.inFlight || state.interruptInFlight) return
+    if (getFabricControlState().level < 2) return
+    const interrupt = processActionFabricCycle({ workerId: `${workerId}:interrupt`, clock }, true)
+      .then(() => undefined)
+      .catch(error => logger.error({ workerId, errorClass: stableErrorClass(error) },
+        '[action-fabric] emergency interrupt cycle failed'))
+      .finally(() => { if (state.interruptInFlight === interrupt) state.interruptInFlight = null })
+    state.interruptInFlight = interrupt
+  }, controlPollMs)
+  state.controlTimer.unref?.()
   running = state
   return handle
 }
@@ -204,21 +229,25 @@ function stopManagedWorker(state: ManagedWorkerState): Promise<void> {
   if (running !== state) return state.stopping ?? Promise.resolve()
   if (state.stopping) return state.stopping
   clearInterval(state.timer)
+  clearInterval(state.controlTimer)
   const inFlight = state.inFlight
+  const interruptInFlight = state.interruptInFlight
   state.stopping = (async () => {
     if (inFlight) await inFlight
+    if (interruptInFlight) await interruptInFlight
     if (running === state) running = null
   })()
   return state.stopping
 }
 
-function claimNextWorkflow(workerId: string, now: Date): WorkflowClaim | null {
+function claimNextWorkflow(workerId: string, now: Date, emergencyOnly = false): WorkflowClaim | null {
   return withFabricAuditedTransaction(db => {
     const nowIso = now.toISOString()
     const control = getFabricControlStateInDb(db)
-    reconcileCompensationParent(db, nowIso)
+    if (emergencyOnly && control.level < 2) return null
+    if (!emergencyOnly) reconcileCompensationParent(db, nowIso)
     let transitionedRetryId: string | undefined
-    const retry = control.level < 2 ? selectRetryCandidate(db, nowIso) : undefined
+    const retry = !emergencyOnly && control.level < 2 ? selectRetryCandidate(db, nowIso) : undefined
     if (retry) {
       let contract: FabricJsonObject
       try {
@@ -231,20 +260,29 @@ function claimNextWorkflow(workerId: string, now: Date): WorkflowClaim | null {
         || contract.capabilityVersion !== retry.capability_version) {
         return moveInvalidContractToWaitingUser(db, retry, nowIso, 'FABRIC_WORKER_CONTRACT_MISSING')
       }
-      const verifyOnly = contract.idempotency === 'none'
-        && contract.verificationStrategy !== 'none'
-        && db.prepare("SELECT 1 FROM fabric_steps WHERE workflow_id=? AND kind='verify' AND state='failed'")
-          .get(retry.workflow_id) !== undefined
-      const destination = verifyOnly ? 'verifying' : 'executing'
+      const failed = db.prepare(`SELECT ordinal,kind FROM fabric_steps WHERE workflow_id=? AND state='failed'
+        ORDER BY ordinal LIMIT 1`).get(retry.workflow_id) as { ordinal: number; kind: string } | undefined
+      if (!failed || !['prepare', 'execute', 'verify'].includes(failed.kind)) {
+        return moveInvalidContractToWaitingUser(db, retry, nowIso, 'FABRIC_RETRY_PHASE_UNAVAILABLE')
+      }
+      const verifyOnly = failed.kind === 'verify'
+        || (failed.kind === 'execute' && contract.idempotency === 'none' && contract.verificationStrategy !== 'none')
+      if (failed.kind === 'execute' && contract.idempotency === 'none' && contract.verificationStrategy === 'none') {
+        return moveInvalidContractToWaitingUser(db, retry, nowIso, 'FABRIC_EXECUTION_RETRY_UNSAFE')
+      }
+      const destination = failed.kind === 'prepare' ? 'preparing' : verifyOnly ? 'verifying' : 'executing'
       const changed = db.prepare(`UPDATE fabric_workflows SET state=?,version=version+1,
-        retry_at=NULL,updated_at=? WHERE id=? AND version=? AND state='retrying' AND retry_at<=?
+        retry_at=NULL,updated_at=? WHERE id=? AND version=? AND state='retrying'
+        AND (retry_at IS NULL OR retry_at<=?)
         AND (lease_expires_at IS NULL OR lease_expires_at<=?)`).run(
         destination, nowIso, retry.workflow_id, retry.workflow_version, nowIso, nowIso,
       )
       if (changed.changes !== 1) return null
       db.prepare(`UPDATE fabric_steps SET state='pending',output_json=NULL,evidence_json='[]',
         last_error_code=NULL,started_at=NULL,completed_at=NULL,updated_at=?
-        WHERE workflow_id=? AND kind IN (${verifyOnly ? "'verify'" : "'execute','verify'"})`).run(nowIso, retry.workflow_id)
+        WHERE workflow_id=? AND ordinal>=? AND state<>'cancelled'`).run(
+        nowIso, retry.workflow_id, verifyOnly ? 2 : failed.ordinal,
+      )
       auditTransition(db, retry, 'retrying', destination, 'retry_due', nowIso)
       transitionedRetryId = retry.workflow_id
     }
@@ -288,7 +326,7 @@ function claimNextWorkflow(workerId: string, now: Date): WorkflowClaim | null {
 }
 
 function selectRetryCandidate(db: DatabaseSync, now: string): CandidateRow | undefined {
-  return db.prepare(`${candidateSelect()} WHERE w.state='retrying' AND w.retry_at<=?
+  return db.prepare(`${candidateSelect()} WHERE w.state='retrying' AND (w.retry_at IS NULL OR w.retry_at<=?)
     AND (w.lease_expires_at IS NULL OR w.lease_expires_at<=?) ORDER BY w.retry_at,w.created_at LIMIT 1`)
     .get(now, now) as CandidateRow | undefined
 }
@@ -382,7 +420,7 @@ function buildClaim(
     actorUserId: row.requested_by_user_id, requestedByRoleId: row.requested_by_role_id,
     reversible: contract.reversible, compensationCapabilityId: contract.compensationCapabilityId,
     idempotency: contract.idempotency as WorkflowClaim['idempotency'],
-    verificationStrategy: contract.verificationStrategy,
+    verificationStrategy: contract.verificationStrategy, interruptible: isInterruptible(row),
   }
 }
 
@@ -404,11 +442,15 @@ function commitClaim(
       || current.lease_expires_at !== claim.leaseExpiresAt || step.execution_token !== claim.executionToken
       || current.lease_expires_at <= nowIso
       || (!isStateForPhase(current.state, claim.phase)) || (claim.phase !== 'interrupt' && step.state !== 'running')) return false
-    let transition = outcomeTransition(claim, result, current, now)
+    const control = getFabricControlStateInDb(db)
+    const emergencyUncertain = claim.phase !== 'interrupt' && claim.interruptible && control.level >= 2
+    let transition = emergencyUncertain
+      ? compensationWaiting('FABRIC_EMERGENCY_STOP_RESULT_UNCERTAIN', current.attempt)
+      : outcomeTransition(claim, result, current, now)
     let compensationIntentId: string | null = null
     let compensationWorkflowId: string | null = null
     let compensationOutcome: string | null = null
-    if (claim.phase === 'verify' && result.outcome === 'mismatch' && claim.reversible
+    if (!emergencyUncertain && claim.phase === 'verify' && result.outcome === 'mismatch' && claim.reversible
       && claim.verificationStrategy !== 'none') {
       if (!preparedCompensation) {
         transition = compensationWaiting('FABRIC_COMPENSATION_POLICY_UNAVAILABLE', current.attempt)
@@ -429,7 +471,8 @@ function commitClaim(
     if (claim.phase !== 'interrupt') {
       db.prepare(`UPDATE fabric_steps SET state=?,output_json=?,evidence_json=?,last_error_code=?,
         updated_at=?,completed_at=? WHERE id=? AND state='running' AND execution_token=? AND attempt=?`).run(
-        transition.stepState, JSON.stringify(result.output), JSON.stringify(result.evidence), result.errorCode,
+        transition.stepState, emergencyUncertain ? null : JSON.stringify(result.output), JSON.stringify(result.evidence),
+        emergencyUncertain ? transition.errorCode : result.errorCode,
         nowIso, transition.stepState === 'waiting_user' ? null : nowIso, claim.stepId, claim.executionToken, step.attempt,
       )
     } else if (transition.state === 'cancelled') {
@@ -452,12 +495,12 @@ function commitClaim(
     appendFabricAuditEvent(db, { eventType: 'workflow.step_checkpointed', actorUserId: claim.workerId,
       aggregateType: 'workflow', aggregateId: claim.workflowId,
       payload: { stepId: claim.stepId, phase: claim.phase, outcome: result.outcome,
-        from: current.state, to: transition.state, errorClass: result.errorCode,
+        from: current.state, to: transition.state, errorClass: transition.errorCode ?? result.errorCode,
         ...(compensationIntentId ? { compensationIntentId, compensationWorkflowId, compensationOutcome } : {}) },
       occurredAt: nowIso })
     appendFabricOutbox(db, 'fabric.workflow.step_checkpointed', claim.workflowId,
       { stepId: claim.stepId, phase: claim.phase, outcome: result.outcome,
-        from: current.state, to: transition.state, errorClass: result.errorCode,
+        from: current.state, to: transition.state, errorClass: transition.errorCode ?? result.errorCode,
         ...(compensationIntentId ? { compensationIntentId, compensationWorkflowId, compensationOutcome } : {}) })
     return true
   })

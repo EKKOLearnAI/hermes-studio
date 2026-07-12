@@ -445,9 +445,11 @@ describe('Action Fabric durable workflows', () => {
 
     const failed = createFabricIntent(intent({ idempotencyKey: 'retry' }))
     forceWorkflowState(failed.workflow.id, 'failed')
+    withActionFabricDb(db => db.prepare("UPDATE fabric_steps SET state='failed' WHERE workflow_id=? AND kind='prepare'")
+      .run(failed.workflow.id))
     const retried = retryFabricWorkflow(failed.workflow.id, 'admin-1')
     expect(retried).toMatchObject({ state: 'retrying', version: 1 })
-    expect(retried.steps[0]).toMatchObject({ state: 'pending', executionToken: failed.workflow.steps[0].executionToken })
+    expect(retried.steps[0]).toMatchObject({ state: 'failed', executionToken: failed.workflow.steps[0].executionToken })
 
     const irreversible = createFabricIntent(intent({ idempotencyKey: 'not-reversible' }))
     forceWorkflowState(irreversible.workflow.id, 'succeeded')

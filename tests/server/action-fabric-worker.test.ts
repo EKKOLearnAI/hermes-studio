@@ -190,6 +190,37 @@ describe('Action Fabric durable worker', () => {
     expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'dead_letter', attempt: 3, lastErrorCode: 'TEMPORARY' })
   })
 
+  it('reactivates a user retry at the failed prepare phase before downstream steps', async () => {
+    let prepares = 0
+    registerFabricExecutorAdapter(adapter({ prepare: async context => {
+      prepares += 1
+      return prepares === 1 ? failure('failed', 'PREPARE_FAILED') : success('prepared', context)
+    } }))
+    const workflow = create('prepare-retry').workflow
+    await processActionFabricOnce({ now: base })
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('dead_letter')
+    expect(retryFabricWorkflow(workflow.id, 'admin-1').state).toBe('retrying')
+
+    await processActionFabricOnce({ now: plus(1) })
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('preparing')
+    await processActionFabricOnce({ now: plus(2) })
+    expect(prepares).toBe(2)
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('executing')
+  })
+
+  it('rejects manual execute retry when the captured contract is non-idempotent and unverifiable', () => {
+    const workflow = create('unsafe-manual-retry').workflow
+    mutateCapturedContract(workflow.id, contract => {
+      contract.idempotency = 'none'
+      contract.verificationStrategy = 'none'
+    })
+    withActionFabricDb(db => {
+      db.prepare("UPDATE fabric_workflows SET state='dead_letter' WHERE id=?").run(workflow.id)
+      db.prepare("UPDATE fabric_steps SET state='failed' WHERE workflow_id=? AND kind='execute'").run(workflow.id)
+    })
+    expect(() => retryFabricWorkflow(workflow.id, 'admin-1')).toThrow('FABRIC_WORKFLOW_NOT_RETRYABLE')
+  })
+
   it('advances due retry bookkeeping without starving normal executable work', async () => {
     registerFabricExecutorAdapter(createSimulatorExecutorAdapter())
     const retrying = create('fair-retry').workflow
@@ -276,8 +307,9 @@ describe('Action Fabric durable worker', () => {
     await runCycles(3)
     expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'retrying', attempt: 1, lastErrorCode: 'VERIFY_MISMATCH' })
     await processActionFabricOnce({ now: plus(3) })
-    await processActionFabricOnce({ now: plus(4) })
     expect(getFabricWorkflow(workflow.id)?.state).toBe('verifying')
+    await processActionFabricOnce({ now: plus(4) })
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('retrying')
   })
 
   it('checkpoints a reversible verification mismatch before compensation', async () => {
@@ -374,8 +406,11 @@ describe('Action Fabric durable worker', () => {
     seedReservedBudget(workflow.id)
     await runCycles(3)
     const parent = getFabricWorkflow(workflow.id)!
-    withActionFabricDb(db => db.prepare("UPDATE fabric_workflows SET state='dead_letter' WHERE intent_id=?")
-      .run(parent.compensationIntentId!))
+    withActionFabricDb(db => {
+      const child = db.prepare('SELECT id FROM fabric_workflows WHERE intent_id=?').get(parent.compensationIntentId!) as { id: string }
+      db.prepare("UPDATE fabric_workflows SET state='dead_letter' WHERE id=?").run(child.id)
+      db.prepare("UPDATE fabric_steps SET state='failed' WHERE workflow_id=? AND kind='prepare'").run(child.id)
+    })
 
     await processActionFabricOnce({ now: plus(3) })
     expect(getFabricWorkflow(workflow.id)?.state).toBe('failed')
@@ -385,6 +420,10 @@ describe('Action Fabric durable worker', () => {
     await processActionFabricOnce({ now: plus(4) })
     expect(listFabricAuditEvents({ aggregateId: workflow.id })
       .filter(event => event.eventType === 'budget.committed')).toHaveLength(committed)
+    expect(() => retryFabricWorkflow(workflow.id, 'admin-1')).toThrow('FABRIC_WORKFLOW_NOT_RETRYABLE')
+    const childId = withActionFabricDb(db => (db.prepare('SELECT id FROM fabric_workflows WHERE intent_id=?')
+      .get(parent.compensationIntentId!) as { id: string }).id)
+    expect(retryFabricWorkflow(childId, 'admin-1').state).toBe('retrying')
   })
 
   it('fails old incomplete contract snapshots closed without invoking an adapter', async () => {
@@ -507,6 +546,47 @@ describe('Action Fabric durable worker', () => {
     release()
     await expect(executing).resolves.not.toMatchObject({ stale: true })
     expect(getFabricWorkflow(workflow.id)?.state).toBe('verifying')
+  })
+
+  it('managed worker interrupts its own long-running interruptible adapter at level 2', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let interrupted = 0
+    registerFabricExecutorAdapter(adapter({
+      execute: async context => { await gate; return success('succeeded', context) },
+      interrupt: async context => { interrupted += 1; return success('interrupted', context) },
+    }))
+    const workflow = create('managed-emergency').workflow
+    const handle = startActionFabricWorker({ workerId: 'managed-emergency', intervalMs: 10,
+      controlPollMs: 5, clock: () => plus(1) })
+    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(10)
+    await vi.waitFor(() => expect(getFabricWorkflow(workflow.id)?.steps[1].state).toBe('running'))
+    setFabricEmergencyStop(2, 'admin-1', 'interrupt now')
+
+    await vi.advanceTimersByTimeAsync(5)
+    await vi.waitFor(() => expect(interrupted).toBe(1))
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('cancelled')
+    release()
+    await handle.stop()
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('cancelled')
+  })
+
+  it('rechecks level 2 under the commit lock before accepting a completed interruptible result', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    registerFabricExecutorAdapter(adapter({ execute: async context => { await gate; return success('succeeded', context) } }))
+    const workflow = create('commit-control-race').workflow
+    await processActionFabricOnce({ now: base })
+    const executing = processActionFabricOnce({ workerId: 'worker-a', now: plus(1) })
+    await vi.waitFor(() => expect(getFabricWorkflow(workflow.id)?.steps[1].state).toBe('running'))
+    setFabricEmergencyStop(2, 'admin-1', 'race close')
+    release()
+
+    await executing
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({
+      state: 'waiting_user', lastErrorCode: 'FABRIC_EMERGENCY_STOP_RESULT_UNCERTAIN',
+    })
   })
 
   it('never claims waiting-user, denied, or cancelled workflows', async () => {
