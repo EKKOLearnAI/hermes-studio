@@ -317,6 +317,53 @@ assert session.config["base_url"] == "https://custom.example/v1"
 `)
   })
 
+  it('rebuilds an idle agent when credentials change under the same runtime', () => {
+    runPython(String.raw`
+${harness}
+
+def fake_resolve_runtime(model, provider=None):
+    return {
+        "provider": "custom",
+        "base_url": "https://custom.example/v1",
+        "api_key": "rotated-key",
+        "api_mode": "chat_completions",
+    }
+
+bridge._resolve_runtime = fake_resolve_runtime
+pool, _fake_db = make_pool()
+
+class SwitchableAgent:
+    def __init__(self):
+        self.model = "same-model"
+        self.provider = "custom"
+        self.base_url = "https://custom.example/v1"
+        self.api_key = "old-key"
+        self.api_mode = "chat_completions"
+        self.switch_calls = []
+
+    def switch_model(self, **kwargs):
+        self.switch_calls.append(kwargs)
+        self.api_key = kwargs["api_key"]
+
+agent = SwitchableAgent()
+session = bridge.AgentSession(
+    session_id="session-rotated-key",
+    agent=agent,
+    config={"profile": "default", "model": "same-model", "provider": "custom:liuzheng"},
+)
+pool._sessions["session-rotated-key"] = session
+
+result = pool.switch_session_model(
+    "session-rotated-key", "same-model", "custom:liuzheng", "default",
+)
+
+assert result["switched"] is True
+assert result["provider"] == "custom:liuzheng"
+assert len(agent.switch_calls) == 1
+assert agent.switch_calls[0]["api_key"] == "rotated-key"
+`)
+  })
+
   it('defers a loaded session model switch while a run is active and applies it after completion', () => {
     runPython(String.raw`
 ${harness}

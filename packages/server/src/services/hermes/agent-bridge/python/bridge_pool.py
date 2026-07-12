@@ -335,6 +335,8 @@ class AgentPool:
         resolved_base_url = str(runtime.get("base_url") or "").rstrip("/")
         current_api_mode = str(getattr(session.agent, "api_mode", "") or "")
         resolved_api_mode = str(runtime.get("api_mode") or "")
+        current_api_key = getattr(session.agent, "api_key", None)
+        resolved_api_key = runtime.get("api_key")
 
         # Provider selectors such as custom:liuzheng normalize to the runtime
         # provider "custom". Re-selecting that same runtime must not rebuild the
@@ -345,6 +347,7 @@ class AgentPool:
             and resolved_provider == current_agent_provider
             and resolved_base_url == current_base_url
             and resolved_api_mode == current_api_mode
+            and resolved_api_key == current_api_key
         )
         if runtime_unchanged:
             session.config.update({
@@ -401,7 +404,7 @@ class AgentPool:
         return {
             "session_id": session.session_id,
             "model": requested_model,
-            "provider": resolved_provider,
+            "provider": effective_provider,
             "loaded": True,
             "switched": True,
         }
