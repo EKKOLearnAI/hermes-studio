@@ -34,6 +34,7 @@ import type {
   FabricWorkflowSummary,
 } from '../../services/hermes/action-fabric'
 import { listAssistantRolesWithMappings } from '../../services/hermes/personal-twin'
+import { isFabricSensitiveString } from '../../services/hermes/action-fabric/audit'
 
 class FabricRequestError extends Error {}
 
@@ -58,7 +59,6 @@ const INTENT_FIELDS = new Set([
   'constraints', 'rationale', 'expectedCost',
 ])
 const SENSITIVE_KEY = /(?:secret|token|password|credential|cookie|authorization|configuration|path|directory|raw.?error|sql|jwt|api.?key|dsn|file|home|uri|url)/i
-const SENSITIVE_VALUE = /(?:\b(?:password|secret|credential|token|authorization|cookie|api[_ -]?key)\s*[:=]|\bsk-(?:proj-|live-|test-)?[A-Za-z0-9_-]{8,}|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}|-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----|(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\[^\\\s]+|\/(?:home|Users|root|var|tmp|data|etc|workspace|app|mnt)\/)|\bfile:\/{2,3}|\b[^\s/\\]+\.(?:db|sqlite|sqlite3|pem|key|env)\b|(?:postgres|mysql|mongodb|redis|sqlite|amqps?):\/\/)/i
 
 export async function capabilities(ctx: Context): Promise<void> {
   respond(ctx, () => {
@@ -336,7 +336,7 @@ function requiredText(body: Record<string, unknown>, field: string, max: number)
   if (typeof value !== 'string' || value.trim().length === 0 || value.length > max || /[\u0000-\u001f]/.test(value)) {
     throw new FabricRequestError(`${field} must be a bounded non-empty string`)
   }
-  if (SENSITIVE_VALUE.test(value)) throw new FabricRequestError(`${field} contains sensitive material`)
+  if (isFabricSensitiveString(value)) throw new FabricRequestError(`${field} contains sensitive material`)
   return value
 }
 
@@ -659,7 +659,7 @@ function sanitizePublicJson(
 }
 
 function safeString(value: string): string {
-  if (typeof value !== 'string' || SENSITIVE_VALUE.test(value)) return '[REDACTED]'
+  if (typeof value !== 'string' || isFabricSensitiveString(value)) return '[REDACTED]'
   return Buffer.byteLength(value, 'utf8') > MAX_STRING_BYTES ? '[TRUNCATED]' : value
 }
 
@@ -701,8 +701,11 @@ const PUBLIC_ERROR_RULES: readonly PublicErrorRule[] = [
   },
   {
     status: 409, message: 'Action Fabric state changed',
-    prefixes: ['FABRIC_BUDGET_', 'FABRIC_IDEMPOTENCY_'],
+    prefixes: ['FABRIC_IDEMPOTENCY_'],
     exact: new Set([
+      'FABRIC_BUDGET_RESERVATION_MISSING', 'FABRIC_BUDGET_ALREADY_RELEASED',
+      'FABRIC_BUDGET_ALREADY_COMMITTED', 'FABRIC_BUDGET_OWNERSHIP_CONFLICT',
+      'FABRIC_BUDGET_NOT_RESERVABLE', 'FABRIC_BUDGET_COMMIT_CONFLICT', 'FABRIC_BUDGET_CONFLICT',
       'FABRIC_CONTROL_VERSION_CONFLICT', 'FABRIC_WORKFLOW_POLICY_CONFLICT', 'FABRIC_WORKFLOW_CONFLICT',
       'FABRIC_WORKFLOW_APPROVAL_STALE', 'FABRIC_WORKFLOW_CONTRACT_STALE',
       'FABRIC_WORKFLOW_CONTRACT_UNAVAILABLE', 'FABRIC_COMPENSATION_WORKFLOW_CONFLICT',
@@ -713,6 +716,7 @@ const PUBLIC_ERROR_RULES: readonly PublicErrorRule[] = [
   {
     status: 422, message: 'Action request cannot be processed',
     exact: new Set([
+      'FABRIC_BUDGET_LIMIT_EXCEEDED', 'FABRIC_BUDGET_CURRENCY_MISMATCH',
       'FABRIC_ROLE_UNAVAILABLE', 'FABRIC_WORKFLOW_NOT_RETRYABLE', 'FABRIC_WORKFLOW_NOT_COMPENSATABLE',
       'FABRIC_WORKFLOW_INVALID_TRANSITION', 'FABRIC_WORKFLOW_APPROVAL_REQUIRED',
     ]),
@@ -720,6 +724,7 @@ const PUBLIC_ERROR_RULES: readonly PublicErrorRule[] = [
   },
   {
     status: 400, message: 'Invalid request',
+    exact: new Set(['FABRIC_BUDGET_INVALID_MONEY']),
     prefixes: [
       'FABRIC_REQUEST_', 'FABRIC_WORKFLOW_INVALID_', 'FABRIC_WORKFLOW_PAYLOAD_',
       'FABRIC_WORKFLOW_SENSITIVE_', 'FABRIC_AUDIT_INVALID_', 'FABRIC_LIST_INVALID_',

@@ -56,6 +56,17 @@ const validIntent = {
   expectedCost: { currency: 'CNY', amountMinor: 12 },
 }
 
+const credentialValues = [
+  'Bearer abc.def_ghi-123',
+  'AKIA1234567890ABCDEF',
+  'ghp_1234567890abcdefghij',
+  'xoxb-123456789012-abcdef',
+  'AIza1234567890abcdefghij',
+  'eyJabcdefghijk.eyJabcdef.abcdefghi',
+  'sk-proj-1234567890abcdef',
+  'C:\\Users\\alice\\action-fabric.db',
+] as const
+
 describe('action fabric controller', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -146,6 +157,31 @@ describe('action fabric controller', () => {
     await ctrl.createIntent(replay)
     expect(replay.status).toBe(200)
     expect(replay.body).toMatchObject({ workflow: { id: 'wf-1', state: 'succeeded' } })
+  })
+
+  it.each(credentialValues)('rejects credential-shaped required text without invoking services: %s', async credential => {
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    for (const body of [
+      { ...validIntent, goal: credential },
+      { ...validIntent, rationale: credential },
+    ]) {
+      const ctx = context({ body })
+      await ctrl.createIntent(ctx)
+      expect(ctx.status).toBe(400)
+    }
+    const controlCtx = context({ body: { level: 2, reason: credential, expectedVersion: 4 } })
+    await ctrl.updateEmergencyStop(controlCtx)
+    expect(controlCtx.status).toBe(400)
+    expect(fabric.createFabricIntent).not.toHaveBeenCalled()
+    expect(fabric.setFabricEmergencyStop).not.toHaveBeenCalled()
+  })
+
+  it('preserves ordinary required text that does not contain credential material', async () => {
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    const ctx = context({ body: { ...validIntent, goal: 'Review the weekly action summary', rationale: 'Requested by the operator' } })
+    await ctrl.createIntent(ctx)
+    expect(ctx.status).toBe(200)
+    expect(fabric.createFabricIntent).toHaveBeenCalledOnce()
   })
 
   it('rejects actor spoofing and missing, disabled, or legacy roles before intent creation', async () => {
@@ -243,6 +279,51 @@ describe('action fabric controller', () => {
     expect(encoded).not.toMatch(/alice|private\.db|super-secret|Bearer|credential=|eyJabcdefgh|rawError/i)
     expect(encoded).toContain('[REDACTED]')
     expect(detail.body.workflow).not.toBe(dangerousWorkflow)
+  })
+
+  it.each(credentialValues)('redacts credential-shaped values from every public text and JSON surface: %s', async credential => {
+    let getterCalls = 0
+    const output: Record<string, unknown> = {
+      plain: credential,
+      nested: { value: credential },
+      list: [credential],
+    }
+    Object.defineProperty(output, 'computed', {
+      enumerable: true,
+      get: () => { getterCalls += 1; return credential },
+    })
+    const unsafeWorkflow = {
+      ...workflow,
+      goal: credential,
+      intent: { ...baseIntent, goal: credential, rationale: credential },
+      steps: [{
+        id: 'step-1', workflowId: 'wf-1', ordinal: 1, kind: 'execute', state: 'succeeded',
+        executorId: 'simulator-main', input: {}, output,
+        evidence: [{ kind: 'result', summary: credential,
+          data: { plain: credential, nested: { value: credential }, list: [credential] }, capturedAt: 'now' }],
+        attempt: 1, lastErrorCode: null, createdAt: 'now', updatedAt: 'now', startedAt: 'now', completedAt: 'now',
+      }],
+    }
+    fabric.getFabricWorkflow.mockReturnValue(unsafeWorkflow)
+    fabric.getFabricControlState.mockReturnValue({
+      level: 1, version: 5, actorUserId: '42', reason: credential, updatedAt: 'now',
+    })
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    const detail = context()
+    await ctrl.workflowDetail(detail)
+    const controlCtx = context()
+    await ctrl.control(controlCtx)
+    expect(getterCalls).toBe(0)
+    expect(detail.body.workflow.goal).toBe('[REDACTED]')
+    expect(detail.body.workflow.intent.goal).toBe('[REDACTED]')
+    expect(detail.body.workflow.intent.rationale).toBe('[REDACTED]')
+    expect(detail.body.workflow.steps[0].output).toEqual({
+      plain: '[REDACTED]', nested: { value: '[REDACTED]' }, list: ['[REDACTED]'], computed: '[REDACTED]',
+    })
+    expect(detail.body.workflow.steps[0].evidence[0]).toMatchObject({
+      summary: '[REDACTED]', data: { plain: '[REDACTED]', nested: { value: '[REDACTED]' }, list: ['[REDACTED]'] },
+    })
+    expect(controlCtx.body.control.reason).toBe('[REDACTED]')
   })
 
   it('sanitizes control reasons independently from trusted service output', async () => {
@@ -407,6 +488,26 @@ describe('action fabric controller', () => {
     expect(ctx.status).toBe(status)
     expect(ctx.body.code).toBe(code)
     expect(JSON.stringify(ctx.body)).not.toMatch(/fabric_action_intents|alice|password|action-fabric\.db/i)
+  })
+
+  it.each([
+    ['FABRIC_BUDGET_INVALID_MONEY', 400],
+    ['FABRIC_BUDGET_LIMIT_EXCEEDED', 422],
+    ['FABRIC_BUDGET_CURRENCY_MISMATCH', 422],
+    ['FABRIC_BUDGET_RESERVATION_MISSING', 409],
+    ['FABRIC_BUDGET_ALREADY_RELEASED', 409],
+    ['FABRIC_BUDGET_ALREADY_COMMITTED', 409],
+    ['FABRIC_BUDGET_OWNERSHIP_CONFLICT', 409],
+    ['FABRIC_BUDGET_NOT_RESERVABLE', 409],
+    ['FABRIC_BUDGET_COMMIT_CONFLICT', 409],
+    ['FABRIC_BUDGET_UNRECOGNIZED_FAILURE', 500],
+  ])('maps budget code %s only through its explicit HTTP family', async (code, status) => {
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    fabric.getFabricWorkflow.mockImplementationOnce(() => { throw new Error(code) })
+    const ctx = context()
+    await ctrl.workflowDetail(ctx)
+    expect(ctx.status).toBe(status)
+    expect(ctx.body.code).toBe(status === 500 ? 'FABRIC_INTERNAL_ERROR' : code)
   })
 
   it('maps unknown failures to a sanitized 500', async () => {
