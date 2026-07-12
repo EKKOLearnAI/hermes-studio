@@ -77,16 +77,18 @@ describe('Action Fabric internal preference executor', () => {
       source: 'action-fabric', sourceId: 'seed', actor: 'action-fabric', confidence: 1 })
     const existing = executionContext('execute-existing', { subjectId: 'person:self', domain: 'life', key: 'calendar.view', value: 'week' })
     const prior = await invokeFabricExecutor('prepare', existing)
-    await invokeFabricExecutor('execute', { ...existing, preparedOutput: prior.output })
-    await expect(invokeFabricExecutor('compensate', { ...existing, preparedOutput: prior.output }))
+    const existingExecuted = await invokeFabricExecutor('execute', { ...existing, preparedOutput: prior.output })
+    await expect(invokeFabricExecutor('compensate', { ...existing, preparedOutput: prior.output,
+      executionOutput: existingExecuted.output }))
       .resolves.toMatchObject({ outcome: 'compensated' })
     expect(getTwinPreference('person:self', 'life', 'calendar.view')).toMatchObject({ value: 'agenda',
       provenance: { sourceId: 'seed' } })
 
     const created = executionContext('execute-new', { subjectId: 'person:self', domain: 'home', key: 'lighting.scene', value: 'calm' })
     const absent = await invokeFabricExecutor('prepare', created)
-    await invokeFabricExecutor('execute', { ...created, preparedOutput: absent.output })
-    const compensated = await invokeFabricExecutor('compensate', { ...created, preparedOutput: absent.output })
+    const createdExecuted = await invokeFabricExecutor('execute', { ...created, preparedOutput: absent.output })
+    const compensated = await invokeFabricExecutor('compensate', { ...created, preparedOutput: absent.output,
+      executionOutput: createdExecuted.output })
     expect(compensated.outcome).toBe('compensated')
     expect(getTwinPreference('person:self', 'home', 'lighting.scene')).toBeNull()
   })
@@ -141,6 +143,42 @@ describe('Action Fabric internal preference executor', () => {
     })
     expect(listFabricAuditEvents({ aggregateId: original.workflow.id }).map(event => event.eventType))
       .toEqual(expect.arrayContaining(['workflow.compensation_requested', 'workflow.compensation_reconciled']))
+  })
+
+  it('refuses execution when state changed after prepare instead of overwriting the newer value', async () => {
+    const context = executionContext('cas-execute', { subjectId: 'person:self', domain: 'digital',
+      key: 'appearance.theme', value: 'action-value' })
+    const prepared = await invokeFabricExecutor('prepare', context)
+    setTwinPreference({ subjectId: 'person:self', domain: 'digital', key: 'appearance.theme', value: 'user-value',
+      source: 'user', sourceId: 'user-after-prepare', actor: 'user', operationId: 'user-after-prepare' })
+    await expect(invokeFabricExecutor('execute', { ...context, preparedOutput: prepared.output })).resolves.toMatchObject({
+      outcome: 'permanent_failure', errorCode: 'TWIN_PREFERENCE_CONFLICT', safeToRetry: false,
+    })
+    expect(getTwinPreference('person:self', 'digital', 'appearance.theme')?.value).toBe('user-value')
+  })
+
+  it('refuses restore or delete compensation after a newer writer changed the action result', async () => {
+    setTwinPreference({ subjectId: 'person:self', domain: 'life', key: 'calendar.view', value: 'agenda',
+      source: 'user', sourceId: 'prior', actor: 'user', operationId: 'prior-op' })
+    const restore = executionContext('cas-restore', { subjectId: 'person:self', domain: 'life', key: 'calendar.view', value: 'week' })
+    const restorePrepared = await invokeFabricExecutor('prepare', restore)
+    const restoreExecuted = await invokeFabricExecutor('execute', { ...restore, preparedOutput: restorePrepared.output })
+    setTwinPreference({ subjectId: 'person:self', domain: 'life', key: 'calendar.view', value: 'month',
+      source: 'user', sourceId: 'newer', actor: 'user', operationId: 'newer-op' })
+    await expect(invokeFabricExecutor('compensate', { ...restore, preparedOutput: restorePrepared.output,
+      executionOutput: restoreExecuted.output })).resolves.toMatchObject({
+      outcome: 'unknown', errorCode: 'TWIN_PREFERENCE_CONFLICT', safeToRetry: false,
+    })
+    expect(getTwinPreference('person:self', 'life', 'calendar.view')?.value).toBe('month')
+
+    const remove = executionContext('cas-delete', { subjectId: 'person:self', domain: 'home', key: 'lighting.scene', value: 'calm' })
+    const removePrepared = await invokeFabricExecutor('prepare', remove)
+    const removeExecuted = await invokeFabricExecutor('execute', { ...remove, preparedOutput: removePrepared.output })
+    setTwinPreference({ subjectId: 'person:self', domain: 'home', key: 'lighting.scene', value: 'focus',
+      source: 'user', sourceId: 'newer-home', actor: 'user', operationId: 'newer-home-op' })
+    await expect(invokeFabricExecutor('compensate', { ...remove, preparedOutput: removePrepared.output,
+      executionOutput: removeExecuted.output })).resolves.toMatchObject({ outcome: 'unknown', errorCode: 'TWIN_PREFERENCE_CONFLICT' })
+    expect(getTwinPreference('person:self', 'home', 'lighting.scene')?.value).toBe('focus')
   })
 
   function executionContext(executionToken: string, input: Record<string, unknown>): FabricExecutionContext {

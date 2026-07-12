@@ -278,8 +278,15 @@ export interface TwinPreference {
     actor: string
     confidence: number
   }
+  version: number
   createdAt: string
   updatedAt: string
+}
+
+export type TwinPreferenceExpectation = { state: 'absent' } | {
+  state: 'present'
+  version: number
+  digest: string
 }
 
 export interface TwinPreferenceInput {
@@ -291,6 +298,7 @@ export interface TwinPreferenceInput {
   sourceId: string
   actor: string
   operationId?: string
+  expectedCurrent?: TwinPreferenceExpectation
   confidence?: number
 }
 
@@ -298,6 +306,7 @@ export interface TwinPreferenceDeleteOperation {
   source: string
   sourceId: string
   actor: string
+  expectedCurrent?: TwinPreferenceExpectation
 }
 
 export interface TwinOverview {

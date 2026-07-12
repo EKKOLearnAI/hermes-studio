@@ -11,7 +11,7 @@ import {
   TwinRelation, TwinRelationInput, TwinRelationListOptions,
   TwinEvent, TwinEventInput, TwinObservation, TwinObservationInput,
   TwinImmutableRecordConflictError, TwinProvenance, TwinDomain, TWIN_DOMAINS,
-  TwinPreference, TwinPreferenceDeleteOperation, TwinPreferenceInput,
+  TwinPreference, TwinPreferenceDeleteOperation, TwinPreferenceExpectation, TwinPreferenceInput,
 } from './types'
 
 type StablePart = string | number | boolean | null | undefined
@@ -22,7 +22,8 @@ interface GoalRow { id: string; subject_id: string; domain: string; title: strin
 interface ConstraintRow { id: string; subject_id: string; domain: string; key: string; value_json: string; enforcement: 'hard' | 'advisory'; source: string; source_id: string; created_at: string; updated_at: string }
 interface ObservationRow { id: string; entity_id: string; metric: string; value_json: string; unit: string | null; observed_at: string; ingested_at: string; source: string; source_id: string; actor: string; confidence: number; confirmation_state: TwinProvenance['confirmationState']; evidence_json: string; schema_version: number }
 interface EventRow { id: string; event_type: string; subject_id: string | null; payload_json: string; occurred_at: string; ingested_at: string; source: string; source_id: string; actor: string; confidence: number; confirmation_state: TwinProvenance['confirmationState']; evidence_json: string; schema_version: number }
-interface PreferenceRow { id: string; subject_id: string; key: string; value_json: string; confidence: number; source: string; source_id: string; created_at: string; updated_at: string }
+interface PreferenceRow { id: string; subject_id: string; key: string; value_json: string; confidence: number; source: string; source_id: string; actor: string; version: number; created_at: string; updated_at: string }
+interface PreferenceOperationRow { operation_id: string; material_digest: string; kind: 'set' | 'delete'; subject_id: string; domain: string; key: string; result_snapshot_json: string; result_digest: string; status: 'applied'; created_at: string; updated_at: string }
 
 export function stableTwinId(prefix: string, parts: StablePart[]): string {
   const encoded = parts.map(part => {
@@ -92,13 +93,14 @@ function constraintFromRow(row: ConstraintRow): TwinConstraint {
 }
 
 function preferenceStorageKey(domain: TwinDomain, key: string): string { return `${domain}:${key}` }
-function preferenceFromRow(row: PreferenceRow, actor = row.source): TwinPreference {
+function preferenceFromRow(row: PreferenceRow): TwinPreference {
   const separator = row.key.indexOf(':')
   if (separator < 1) throw new Error('Twin preference has an invalid canonical key')
   return {
     id: row.id, subjectId: row.subject_id, domain: row.key.slice(0, separator) as TwinDomain,
     key: row.key.slice(separator + 1), value: parseJson(row.value_json, null),
-    provenance: { source: row.source, sourceId: row.source_id, actor, confidence: row.confidence },
+    provenance: { source: row.source, sourceId: row.source_id, actor: row.actor, confidence: row.confidence },
+    version: row.version,
     createdAt: row.created_at, updatedAt: row.updated_at,
   }
 }
@@ -109,7 +111,11 @@ function canonicalPreferenceJson(value: unknown): string {
   const visit = (item: unknown, depth: number): string => {
     nodes += 1
     if (nodes > 256 || depth > 6) throw new Error('Twin preference value exceeds structural bounds')
-    if (item === null || typeof item === 'boolean' || typeof item === 'string') return JSON.stringify(item)
+    if (item === null || typeof item === 'boolean') return JSON.stringify(item)
+    if (typeof item === 'string') {
+      if (isSensitivePreferenceText(item)) throw new Error('Twin preference value is sensitive')
+      return JSON.stringify(item)
+    }
     if (typeof item === 'number') {
       if (!Number.isFinite(item)) throw new Error('Twin preference value must contain finite JSON numbers')
       return JSON.stringify(item)
@@ -144,6 +150,7 @@ function canonicalPreferenceJson(value: unknown): string {
       if (keys.length > 64) throw new Error('Twin preference value exceeds object bounds')
       return `{${keys.map(key => {
         if (key.length > 160) throw new Error('Twin preference value key is too long')
+        if (isSensitivePreferenceText(key)) throw new Error('Twin preference value key is sensitive')
         const descriptor = Object.getOwnPropertyDescriptor(record, key)
         if (!descriptor?.enumerable || !('value' in descriptor)) throw new Error('Twin preference value must be schema-safe JSON')
         return `${JSON.stringify(key)}:${visit(descriptor.value, depth + 1)}`
@@ -153,6 +160,16 @@ function canonicalPreferenceJson(value: unknown): string {
   const encoded = visit(value, 0)
   if (Buffer.byteLength(encoded, 'utf8') > 8_192) throw new Error('Twin preference value exceeds 8192 bytes')
   return encoded
+}
+
+function isSensitivePreferenceText(value: string): boolean {
+  return /(?:password|passwd|secret|api.?key|credential|authorization|cookie|session|private.?key)/i.test(value)
+    || /\btoken\s*[:=]/i.test(value)
+    || /(?:^|\s)bearer\s+[a-z0-9._-]+/i.test(value)
+    || /\beyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b/.test(value)
+    || /\b(?:sk|pk)-[a-zA-Z0-9_-]{16,}\b/.test(value)
+    || /^[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i.test(value)
+    || /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(value)
 }
 
 function validatePreferenceAddress(subjectId: string, domain: TwinDomain, key: string): void {
@@ -166,30 +183,93 @@ function validatePreferenceAddress(subjectId: string, domain: TwinDomain, key: s
   if (typeof key !== 'string' || key.length < 1 || key.length > 160 || !/^[a-z0-9][a-z0-9._-]*$/i.test(key)) {
     throw new Error('Twin preference key is invalid')
   }
-}
-
-function validatePreferenceOperation(operation: { source: string; sourceId: string; actor: string }): void {
-  if (!/^[a-z][a-z0-9._:-]{0,159}$/i.test(operation.source)
-    || !/^[a-z][a-z0-9._:-]{0,159}$/i.test(operation.actor)) throw new Error('Twin preference source and actor are invalid')
-  if (typeof operation.sourceId !== 'string' || operation.sourceId.length < 1 || operation.sourceId.length > 500) {
-    throw new Error('Twin preference sourceId is invalid')
+  if (/(?:password|passwd|secret|token|api.?key|credential|authorization|cookie|session|private.?key)/i.test(key)) {
+    throw new Error('Twin preference key is sensitive')
   }
 }
 
-function preferenceOperationAggregate(source: string, sourceId: string): string {
-  return stableTwinId('preference-operation', [source, sourceId])
+function validatePreferenceOperation(operation: { source: string; sourceId: string; actor: string; operationId?: string }): void {
+  if (!/^[a-z][a-z0-9._:-]{0,159}$/i.test(operation.source)
+    || !/^[a-z][a-z0-9._:-]{0,159}$/i.test(operation.actor)) throw new Error('Twin preference source and actor are invalid')
+  if (typeof operation.sourceId !== 'string' || operation.sourceId.length < 1 || operation.sourceId.length > 500
+    || !/^[a-z0-9][a-z0-9._:/-]*$/i.test(operation.sourceId) || isSensitivePreferenceText(operation.sourceId)) {
+    throw new Error('Twin preference sourceId is invalid')
+  }
+  if (operation.operationId !== undefined && (operation.operationId.length < 1 || operation.operationId.length > 500
+    || !/^[a-z0-9][a-z0-9._:/-]*$/i.test(operation.operationId) || isSensitivePreferenceText(operation.operationId))) {
+    throw new Error('Twin preference operationId is invalid')
+  }
+}
+
+function preferenceOperationAggregate(operationId: string): string {
+  return stableTwinId('preference-operation', [operationId])
 }
 
 function preferenceMaterialDigest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
 
-function preferenceActor(db: DatabaseSync, row: PreferenceRow): string {
-  const actor = db.prepare(`SELECT json_extract(payload_json,'$.actor') actor FROM twin_outbox
-    WHERE topic='twin.preference.set' AND json_extract(payload_json,'$.recordId')=?
-      AND json_extract(payload_json,'$.source')=? AND json_extract(payload_json,'$.sourceId')=?
-    ORDER BY created_at DESC LIMIT 1`).get(row.id, row.source, row.source_id) as { actor: string | null } | undefined
-  return typeof actor?.actor === 'string' ? actor.actor : row.source
+function preferenceSnapshot(preference: TwinPreference | null): Record<string, unknown> {
+  return preference === null ? { state: 'absent' } : { state: 'present', preference }
+}
+
+function preferenceSnapshotDigest(preference: TwinPreference | null): string {
+  return preferenceMaterialDigest(preferenceSnapshot(preference))
+}
+
+export function twinPreferenceExpectation(preference: TwinPreference | null): TwinPreferenceExpectation {
+  return preference === null ? { state: 'absent' } : {
+    state: 'present', version: preference.version, digest: preferenceSnapshotDigest(preference),
+  }
+}
+
+function assertExpectedPreference(current: TwinPreference | null, expected: TwinPreferenceExpectation | undefined): void {
+  if (expected === undefined) return
+  if (expected.state !== 'absent' && (expected.state !== 'present' || !Number.isSafeInteger(expected.version)
+    || expected.version < 1 || !/^[a-f0-9]{64}$/.test(expected.digest))) throw new Error('TWIN_PREFERENCE_EXPECTATION_INVALID')
+  const matches = expected.state === 'absent'
+    ? current === null
+    : current !== null && current.version === expected.version && preferenceSnapshotDigest(current) === expected.digest
+  if (!matches) throw new Error('TWIN_PREFERENCE_CONFLICT')
+}
+
+function parseOperationResult(row: PreferenceOperationRow): TwinPreference | null {
+  const snapshot = parseJson<{ state?: unknown; preference?: unknown }>(row.result_snapshot_json, {})
+  if (snapshot.state === 'absent') return null
+  if (snapshot.state !== 'present' || !snapshot.preference || typeof snapshot.preference !== 'object') {
+    throw new Error('TWIN_PREFERENCE_OPERATION_CORRUPT')
+  }
+  return snapshot.preference as TwinPreference
+}
+
+function replayPreferenceOperation(
+  row: PreferenceOperationRow,
+  materialDigest: string,
+  current: TwinPreference | null,
+): TwinPreference | null {
+  if (row.material_digest !== materialDigest) throw new Error('TWIN_PREFERENCE_OPERATION_CONFLICT')
+  const recorded = parseOperationResult(row)
+  if (row.result_digest !== preferenceSnapshotDigest(recorded)
+    || preferenceSnapshotDigest(current) !== row.result_digest) throw new Error('TWIN_PREFERENCE_OPERATION_STALE')
+  return recorded
+}
+
+function insertPreferenceOperation(
+  db: DatabaseSync,
+  operationId: string,
+  materialDigest: string,
+  kind: 'set' | 'delete',
+  address: { subjectId: string; domain: TwinDomain; key: string },
+  result: TwinPreference | null,
+  timestamp: string,
+): void {
+  const snapshot = JSON.stringify(preferenceSnapshot(result))
+  if (Buffer.byteLength(snapshot, 'utf8') > 12_000) throw new Error('TWIN_PREFERENCE_OPERATION_RESULT_TOO_LARGE')
+  db.prepare(`INSERT INTO twin_preference_operations(operation_id,material_digest,kind,subject_id,domain,key,
+    result_snapshot_json,result_digest,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?, 'applied',?,?)`).run(
+    operationId, materialDigest, kind, address.subjectId, address.domain, address.key, snapshot,
+    preferenceSnapshotDigest(result), timestamp, timestamp,
+  )
 }
 
 export function getTwinPreference(subjectId: string, domain: TwinDomain, key: string): TwinPreference | null {
@@ -197,7 +277,7 @@ export function getTwinPreference(subjectId: string, domain: TwinDomain, key: st
   return withPersonalTwinDb(db => {
     const row = db.prepare('SELECT * FROM twin_preferences WHERE subject_id=? AND key=?')
       .get(subjectId, preferenceStorageKey(domain, key)) as PreferenceRow | undefined
-    return row ? preferenceFromRow(row, preferenceActor(db, row)) : null
+    return row ? preferenceFromRow(row) : null
   })
 }
 
@@ -210,40 +290,44 @@ export function setTwinPreference(input: TwinPreferenceInput): TwinPreference {
   return withPersonalTwinDb(db => commitOrRollback(db, () => {
     requireEntity(db, input.subjectId)
     const storageKey = preferenceStorageKey(input.domain, input.key)
-    const aggregateId = preferenceOperationAggregate(input.source, input.operationId ?? input.sourceId)
-    const operation = db.prepare("SELECT payload_json FROM twin_outbox WHERE topic='twin.preference.set' AND aggregate_id=?")
-      .get(aggregateId) as { payload_json: string } | undefined
-    const current = db.prepare('SELECT * FROM twin_preferences WHERE subject_id=? AND key=?')
+    const aggregateId = preferenceOperationAggregate(input.operationId ?? input.sourceId)
+    const currentRow = db.prepare('SELECT * FROM twin_preferences WHERE subject_id=? AND key=?')
       .get(input.subjectId, storageKey) as PreferenceRow | undefined
+    const current = currentRow ? preferenceFromRow(currentRow) : null
     const materialDigest = preferenceMaterialDigest({ subjectId: input.subjectId, domain: input.domain, key: input.key,
-      valueJson, source: input.source, sourceId: input.sourceId, actor: input.actor, confidence })
+      valueJson, source: input.source, sourceId: input.sourceId, actor: input.actor, confidence,
+      expectedCurrent: input.expectedCurrent ?? null })
+    const operation = db.prepare('SELECT * FROM twin_preference_operations WHERE operation_id=?')
+      .get(aggregateId) as unknown as PreferenceOperationRow | undefined
     if (operation) {
-      const recorded = parseJson<Record<string, unknown>>(operation.payload_json, {})
-      if (recorded.materialDigest !== materialDigest) {
-        throw new TwinImmutableRecordConflictError('Twin preference operation token is bound to different material')
-      }
-      if (!current) throw new TwinImmutableRecordConflictError('Twin preference operation was already applied but is no longer current')
-      return preferenceFromRow(current, preferenceActor(db, current))
+      const replay = replayPreferenceOperation(operation, materialDigest, current)
+      if (!replay) throw new Error('TWIN_PREFERENCE_OPERATION_CORRUPT')
+      return replay
     }
+    assertExpectedPreference(current, input.expectedCurrent)
     const operationOwner = db.prepare('SELECT subject_id,key FROM twin_preferences WHERE source=? AND source_id=?')
       .get(input.source, input.sourceId) as { subject_id: string; key: string } | undefined
     if (operationOwner && (operationOwner.subject_id !== input.subjectId || operationOwner.key !== storageKey)) {
       throw new TwinImmutableRecordConflictError('Twin preference operation token is bound to different material')
     }
     const timestamp = nowIso()
-    const id = current?.id ?? stableTwinId('preference', [input.subjectId, storageKey])
-    db.prepare(`INSERT INTO twin_preferences(id,subject_id,key,value_json,confidence,source,source_id,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET value_json=excluded.value_json,
-      confidence=excluded.confidence,source=excluded.source,source_id=excluded.source_id,updated_at=excluded.updated_at`)
+    const id = currentRow?.id ?? stableTwinId('preference', [input.subjectId, storageKey])
+    const version = (currentRow?.version ?? 0) + 1
+    db.prepare(`INSERT INTO twin_preferences(id,subject_id,key,value_json,confidence,source,source_id,actor,version,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET value_json=excluded.value_json,
+      confidence=excluded.confidence,source=excluded.source,source_id=excluded.source_id,actor=excluded.actor,
+      version=excluded.version,updated_at=excluded.updated_at`)
       .run(id, input.subjectId, storageKey, valueJson, confidence, input.source, input.sourceId,
-        current?.created_at ?? timestamp, timestamp)
+        input.actor, version, currentRow?.created_at ?? timestamp, timestamp)
+    const result = preferenceFromRow(db.prepare('SELECT * FROM twin_preferences WHERE id=?').get(id) as unknown as PreferenceRow)
+    insertPreferenceOperation(db, aggregateId, materialDigest, 'set', input, result, timestamp)
     db.prepare(`INSERT INTO twin_outbox(id,topic,aggregate_id,payload_json,status,available_at,created_at)
       VALUES(?,?,?,?,'pending',?,?)`).run(
       outboxId('twin.preference.set', aggregateId), 'twin.preference.set', aggregateId,
       jsonString({ recordId: id, subjectId: input.subjectId, domain: input.domain, key: input.key,
         source: input.source, sourceId: input.sourceId, actor: input.actor, materialDigest }), timestamp, timestamp,
     )
-    return preferenceFromRow(db.prepare('SELECT * FROM twin_preferences WHERE id=?').get(id) as unknown as PreferenceRow, input.actor)
+    return result
   }))
 }
 
@@ -258,23 +342,25 @@ export function deleteTwinPreference(
   withPersonalTwinDb(db => commitOrRollback(db, () => {
     requireEntity(db, subjectId)
     const storageKey = preferenceStorageKey(domain, key)
-    const current = db.prepare('SELECT * FROM twin_preferences WHERE subject_id=? AND key=?')
+    const currentRow = db.prepare('SELECT * FROM twin_preferences WHERE subject_id=? AND key=?')
       .get(subjectId, storageKey) as PreferenceRow | undefined
+    const current = currentRow ? preferenceFromRow(currentRow) : null
     if (!current && !operation) return
     const actual = operation ?? { source: 'action-fabric' as const,
-      sourceId: `delete:${subjectId}:${storageKey}:${current!.updated_at}`, actor: 'action-fabric' as const }
-    const aggregateId = preferenceOperationAggregate(actual.source, actual.sourceId)
-    const existingOperation = db.prepare("SELECT payload_json FROM twin_outbox WHERE topic='twin.preference.deleted' AND aggregate_id=?")
-      .get(aggregateId) as { payload_json: string } | undefined
+      sourceId: `delete:${subjectId}:${storageKey}:${current!.updatedAt}`, actor: 'action-fabric' as const }
+    const aggregateId = preferenceOperationAggregate(actual.sourceId)
+    const materialDigest = preferenceMaterialDigest({ subjectId, domain, key, source: actual.source,
+      sourceId: actual.sourceId, actor: actual.actor, expectedCurrent: actual.expectedCurrent ?? null })
+    const existingOperation = db.prepare('SELECT * FROM twin_preference_operations WHERE operation_id=?')
+      .get(aggregateId) as unknown as PreferenceOperationRow | undefined
     if (existingOperation) {
-      const recorded = parseJson<Record<string, unknown>>(existingOperation.payload_json, {})
-      if (recorded.subjectId !== subjectId || recorded.domain !== domain || recorded.key !== key) {
-        throw new TwinImmutableRecordConflictError('Twin preference delete token is bound to different material')
-      }
+      replayPreferenceOperation(existingOperation, materialDigest, current)
       return
     }
+    assertExpectedPreference(current, actual.expectedCurrent)
     db.prepare('DELETE FROM twin_preferences WHERE subject_id=? AND key=?').run(subjectId, storageKey)
     const timestamp = nowIso()
+    insertPreferenceOperation(db, aggregateId, materialDigest, 'delete', { subjectId, domain, key }, null, timestamp)
     db.prepare(`INSERT INTO twin_outbox(id,topic,aggregate_id,payload_json,status,available_at,created_at)
       VALUES(?,?,?,?,'pending',?,?)`).run(
       outboxId('twin.preference.deleted', aggregateId), 'twin.preference.deleted', aggregateId,

@@ -3,9 +3,11 @@ import {
   deleteTwinPreference,
   getTwinPreference,
   setTwinPreference,
+  twinPreferenceExpectation,
   TWIN_DOMAINS,
   type TwinDomain,
   type TwinPreference,
+  type TwinPreferenceExpectation,
 } from '../personal-twin'
 import { isFabricSensitiveString } from './audit'
 import { withActionFabricDb } from './database'
@@ -27,6 +29,7 @@ interface PreferenceAddress { subjectId: string; domain: TwinDomain; key: string
 interface PreparedPreference extends PreferenceAddress {
   existed: boolean
   prior: { value: unknown; provenance: TwinPreference['provenance'] } | null
+  expectedCurrent: TwinPreferenceExpectation
   operation?: 'restore' | 'delete'
 }
 
@@ -45,6 +48,7 @@ export function createInternalPreferenceExecutorAdapter(): FabricExecutorAdapter
         return prepared(context, {
           ...address, existed: prior !== null,
           prior: prior ? { value: prior.value, provenance: prior.provenance } : null,
+          expectedCurrent: twinPreferenceExpectation(prior),
         })
       } catch (error) {
         return failure('failed', stablePrepareError(error))
@@ -55,26 +59,33 @@ export function createInternalPreferenceExecutorAdapter(): FabricExecutorAdapter
         requireCapability(context)
         const preparedState = parsePrepared(context.preparedOutput)
         assertCompensationContext(context, preparedState)
+        let applied: TwinPreference | null = null
         if (preparedState.operation === 'delete') {
           deleteTwinPreference(preparedState.subjectId, preparedState.domain, preparedState.key,
-            actionOperation(context, 'compensate-delete'))
+            { ...actionOperation(context, 'compensate-delete'), expectedCurrent: preparedState.expectedCurrent })
         } else if (preparedState.operation === 'restore') {
           if (!preparedState.prior) throw new Error('TWIN_PREFERENCE_PREPARATION_INVALID')
-          setTwinPreference({
+          applied = setTwinPreference({
             subjectId: preparedState.subjectId, domain: preparedState.domain, key: preparedState.key,
             value: preparedState.prior.value, source: preparedState.prior.provenance.source,
             sourceId: preparedState.prior.provenance.sourceId, actor: preparedState.prior.provenance.actor,
             confidence: preparedState.prior.provenance.confidence, operationId: sourceId(context, 'compensate-restore'),
+            expectedCurrent: preparedState.expectedCurrent,
           })
         } else {
           const address = parseAddress(context.input)
           assertSameAddress(address, preparedState)
           assertNonSensitive(address.key, context.input.value)
-          setTwinPreference({ ...address, value: context.input.value, source: 'action-fabric',
-            sourceId: sourceId(context, 'execute'), actor: 'action-fabric', confidence: 1 })
+          applied = setTwinPreference({ ...address, value: context.input.value, source: 'action-fabric',
+            sourceId: sourceId(context, 'execute'), actor: 'action-fabric', confidence: 1,
+            expectedCurrent: preparedState.expectedCurrent })
         }
-        return succeeded(context, preparedState)
+        return succeeded(context, preparedState, applied)
       } catch (error) {
+        if (error instanceof Error && ['TWIN_PREFERENCE_CONFLICT', 'TWIN_PREFERENCE_OPERATION_STALE',
+          'TWIN_PREFERENCE_OPERATION_CONFLICT'].includes(error.message)) {
+          return failure('permanent_failure', error.message)
+        }
         if (isValidationError(error)) return failure('permanent_failure', stableExecuteError(error))
         return failure('temporary_failure', 'TWIN_PREFERENCE_WRITE_FAILED', true)
       }
@@ -109,19 +120,24 @@ export function createInternalPreferenceExecutorAdapter(): FabricExecutorAdapter
       try {
         requireCapability(context)
         const state = parsePrepared(context.preparedOutput)
+        const expectedCurrent = executionExpectation(context.executionOutput)
         if (state.existed) {
           if (!state.prior) throw new Error('TWIN_PREFERENCE_PREPARATION_INVALID')
           setTwinPreference({ subjectId: state.subjectId, domain: state.domain, key: state.key,
             value: state.prior.value, source: state.prior.provenance.source,
             sourceId: state.prior.provenance.sourceId, actor: state.prior.provenance.actor,
-            confidence: state.prior.provenance.confidence, operationId: sourceId(context, 'compensate-restore') })
+            confidence: state.prior.provenance.confidence, operationId: sourceId(context, 'compensate-restore'),
+            expectedCurrent })
         } else {
-          deleteTwinPreference(state.subjectId, state.domain, state.key, actionOperation(context, 'compensate-delete'))
+          deleteTwinPreference(state.subjectId, state.domain, state.key,
+            { ...actionOperation(context, 'compensate-delete'), expectedCurrent })
         }
         return { outcome: 'compensated', output: resultOutput(state, sourceId(context, 'compensate')),
           evidence: evidence(context, 'preference_compensated'), errorCode: null, safeToRetry: false }
-      } catch {
-        return failure('unknown', 'TWIN_PREFERENCE_COMPENSATION_FAILED')
+      } catch (error) {
+        return failure('unknown', error instanceof Error && ['TWIN_PREFERENCE_CONFLICT',
+          'TWIN_PREFERENCE_OPERATION_STALE', 'TWIN_PREFERENCE_OPERATION_CONFLICT'].includes(error.message)
+          ? error.message : 'TWIN_PREFERENCE_COMPENSATION_FAILED')
       }
     },
   }
@@ -136,17 +152,20 @@ function compensationParent(input: FabricJsonObject): string | null {
 
 function loadParentPreparation(workflowId: string, context: FabricExecutionContext): PreparedPreference {
   return withActionFabricDb(db => {
-    const row = db.prepare(`SELECT s.output_json FROM fabric_steps s
+    const row = db.prepare(`SELECT s.output_json,executed.output_json execution_output_json FROM fabric_steps s
+      JOIN fabric_steps executed ON executed.workflow_id=s.workflow_id AND executed.kind='execute'
+        AND executed.ordinal=1 AND executed.state='succeeded'
       JOIN fabric_workflows parent ON parent.id=s.workflow_id
       JOIN fabric_workflows child ON child.id=? AND child.intent_id=?
       WHERE s.workflow_id=? AND s.kind='prepare' AND s.ordinal=0 AND s.state='succeeded'
         AND parent.compensation_intent_id=?`).get(
       context.workflowId, context.intentId, workflowId, context.intentId,
     ) as
-      { output_json: string | null } | undefined
-    if (!row?.output_json) throw new Error('TWIN_PREFERENCE_COMPENSATION_PARENT_UNAVAILABLE')
+      { output_json: string | null; execution_output_json: string | null } | undefined
+    if (!row?.output_json || !row.execution_output_json) throw new Error('TWIN_PREFERENCE_COMPENSATION_PARENT_UNAVAILABLE')
     const parent = parsePrepared(JSON.parse(row.output_json) as FabricJsonObject)
-    return { ...parent, operation: parent.existed ? 'restore' : 'delete' }
+    return { ...parent, expectedCurrent: executionExpectation(JSON.parse(row.execution_output_json) as FabricJsonObject),
+      operation: parent.existed ? 'restore' : 'delete' }
   })
 }
 
@@ -174,6 +193,7 @@ function parsePrepared(value: FabricJsonObject | undefined): PreparedPreference 
     throw new Error('TWIN_PREFERENCE_PREPARATION_INVALID')
   }
   const operation = value.operation
+  const expectedCurrent = parseExpectation(value.expectedCurrent)
   if (!(operation === undefined || operation === 'restore' || operation === 'delete')) {
     throw new Error('TWIN_PREFERENCE_PREPARATION_INVALID')
   }
@@ -188,7 +208,7 @@ function parsePrepared(value: FabricJsonObject | undefined): PreparedPreference 
     prior = { value: value.prior.value, provenance: provenance as unknown as TwinPreference['provenance'] }
   }
   if (value.existed !== (prior !== null)) throw new Error('TWIN_PREFERENCE_PREPARATION_INVALID')
-  return { ...address, existed: value.existed, prior, ...(operation ? { operation } : {}) }
+  return { ...address, existed: value.existed, prior, expectedCurrent, ...(operation ? { operation } : {}) }
 }
 
 function assertNonSensitive(key: string, value: unknown): void {
@@ -253,9 +273,11 @@ function prepared(context: FabricExecutionContext, output: PreparedPreference): 
     evidence: evidence(context, 'preference_prepared'), errorCode: null, safeToRetry: false }
 }
 
-function succeeded(context: FabricExecutionContext, state: PreparedPreference): FabricExecuteResult {
+function succeeded(context: FabricExecutionContext, state: PreparedPreference, applied: TwinPreference | null): FabricExecuteResult {
   const id = sourceId(context, state.operation ? `execute-${state.operation}` : 'execute')
-  return { outcome: 'succeeded', output: resultOutput(state, id), evidence: evidence(context, 'preference_written'),
+  return { outcome: 'succeeded', output: { ...resultOutput(state, id),
+    resultExpectation: twinPreferenceExpectation(applied) as unknown as FabricJsonObject },
+  evidence: evidence(context, 'preference_written'),
     errorCode: null, safeToRetry: false }
 }
 
@@ -266,6 +288,23 @@ function verified(context: FabricExecutionContext, state: PreparedPreference): F
 
 function resultOutput(state: PreferenceAddress, sourceIdValue: string): FabricJsonObject {
   return { subjectId: state.subjectId, domain: state.domain, key: state.key, sourceId: sourceIdValue }
+}
+
+function parseExpectation(value: unknown): TwinPreferenceExpectation {
+  if (!isRecord(value) || (value.state !== 'absent' && value.state !== 'present')) {
+    throw new Error('TWIN_PREFERENCE_PREPARATION_INVALID')
+  }
+  if (value.state === 'absent') return { state: 'absent' }
+  if (!Number.isSafeInteger(value.version) || Number(value.version) < 1
+    || typeof value.digest !== 'string' || !/^[a-f0-9]{64}$/.test(value.digest)) {
+    throw new Error('TWIN_PREFERENCE_PREPARATION_INVALID')
+  }
+  return { state: 'present', version: Number(value.version), digest: value.digest }
+}
+
+function executionExpectation(output: FabricJsonObject | undefined): TwinPreferenceExpectation {
+  if (!output) throw new Error('TWIN_PREFERENCE_EXECUTION_RESULT_MISSING')
+  return parseExpectation(output.resultExpectation)
 }
 
 function evidence(context: FabricExecutionContext, summary: string) {

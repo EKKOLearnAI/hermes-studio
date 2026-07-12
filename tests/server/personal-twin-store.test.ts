@@ -186,14 +186,18 @@ describe('personal twin store', () => {
       source: 'action-fabric', sourceId: 'set-token', actor: 'action-fabric', confidence: 1 })
     const operation = { source: 'action-fabric' as const, sourceId: 'delete-token', actor: 'action-fabric' }
     deleteTwinPreference('person:self', 'home', 'lighting.scene', operation)
+    withPersonalTwinDb(db => db.prepare('DELETE FROM twin_outbox').run())
     deleteTwinPreference('person:self', 'home', 'lighting.scene', operation)
     expect(getTwinPreference('person:self', 'home', 'lighting.scene')).toBeNull()
     expect(withPersonalTwinDb(db => db.prepare("SELECT COUNT(*) count FROM twin_outbox WHERE topic='twin.preference.deleted'").get()))
+      .toEqual({ count: 0 })
+    expect(withPersonalTwinDb(db => db.prepare("SELECT COUNT(*) count FROM twin_preference_operations WHERE kind='delete'").get()))
       .toEqual({ count: 1 })
 
     setTwinPreference({ subjectId: 'person:self', domain: 'home', key: 'lighting.scene', value: 'focus',
       source: 'action-fabric', sourceId: 'newer-token', actor: 'action-fabric', confidence: 1 })
-    deleteTwinPreference('person:self', 'home', 'lighting.scene', operation)
+    expect(() => deleteTwinPreference('person:self', 'home', 'lighting.scene', operation))
+      .toThrow('TWIN_PREFERENCE_OPERATION_STALE')
     expect(getTwinPreference('person:self', 'home', 'lighting.scene')?.value).toBe('focus')
   })
 
@@ -220,7 +224,62 @@ describe('personal twin store', () => {
       .toEqual({ count: 8 })
 
     expect(() => setTwinPreference({ ...base, key: 'appearance.font', value: 'large',
-      sourceId: 'different-provenance', operationId: 'concurrent-0' })).toThrow(/already applied|different material/i)
+      sourceId: 'different-provenance', operationId: 'concurrent-0' })).toThrow('TWIN_PREFERENCE_OPERATION_CONFLICT')
     expect(getTwinPreference('person:self', 'digital', 'appearance.font')).toBeNull()
+  })
+
+  it('uses a durable operation ledger when outbox publication rows are gone and rejects stale replay', async () => {
+    const { getTwinPreference, setTwinPreference, twinPreferenceExpectation, upsertTwinEntity, withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    const base = { subjectId: 'person:self', domain: 'life' as const, key: 'calendar.view',
+      source: 'action-fabric', actor: 'assistant-role', confidence: 0.8 }
+    const firstInput = { ...base, value: 'agenda', sourceId: 'token-1', operationId: 'operation-1' }
+    const first = setTwinPreference(firstInput)
+    withPersonalTwinDb(db => db.prepare('DELETE FROM twin_outbox').run())
+    expect(setTwinPreference(firstInput)).toEqual(first)
+    expect(withPersonalTwinDb(db => db.prepare('SELECT COUNT(*) count FROM twin_preference_operations').get()))
+      .toEqual({ count: 1 })
+    expect(withPersonalTwinDb(db => db.prepare('SELECT COUNT(*) count FROM twin_outbox').get())).toEqual({ count: 0 })
+
+    setTwinPreference({ ...base, value: 'week', sourceId: 'token-2', operationId: 'operation-2',
+      expectedCurrent: twinPreferenceExpectation(first) })
+    expect(() => setTwinPreference(firstInput)).toThrow('TWIN_PREFERENCE_OPERATION_STALE')
+    expect(getTwinPreference('person:self', 'life', 'calendar.view')).toMatchObject({
+      value: 'week', provenance: { actor: 'assistant-role' }, version: 2,
+    })
+    expect(() => setTwinPreference({ ...firstInput, value: 'month' })).toThrow('TWIN_PREFERENCE_OPERATION_CONFLICT')
+  })
+
+  it('compares exact preference state in the same transaction before set or delete', async () => {
+    const { deleteTwinPreference, getTwinPreference, setTwinPreference, twinPreferenceExpectation, upsertTwinEntity } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    const absent = { state: 'absent' as const }
+    const first = setTwinPreference({ subjectId: 'person:self', domain: 'digital', key: 'appearance.theme', value: 'dark',
+      source: 'action-fabric', sourceId: 'cas-1', actor: 'role-a', operationId: 'cas-op-1', expectedCurrent: absent })
+    expect(() => setTwinPreference({ subjectId: 'person:self', domain: 'digital', key: 'appearance.theme', value: 'light',
+      source: 'action-fabric', sourceId: 'cas-2', actor: 'role-b', operationId: 'cas-op-2', expectedCurrent: absent }))
+      .toThrow('TWIN_PREFERENCE_CONFLICT')
+    const expected = twinPreferenceExpectation(first)
+    setTwinPreference({ subjectId: 'person:self', domain: 'digital', key: 'appearance.theme', value: 'light',
+      source: 'action-fabric', sourceId: 'cas-3', actor: 'role-b', operationId: 'cas-op-3', expectedCurrent: expected })
+    expect(() => deleteTwinPreference('person:self', 'digital', 'appearance.theme', {
+      source: 'action-fabric', sourceId: 'delete-cas', actor: 'role-a', expectedCurrent: expected,
+    })).toThrow('TWIN_PREFERENCE_CONFLICT')
+    expect(getTwinPreference('person:self', 'digital', 'appearance.theme')?.value).toBe('light')
+  })
+
+  it('allows only one concurrent compare-and-set contender to win', async () => {
+    const { getTwinPreference, setTwinPreference, twinPreferenceExpectation, upsertTwinEntity } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    const initial = setTwinPreference({ subjectId: 'person:self', domain: 'home', key: 'lighting.scene', value: 'calm',
+      source: 'action-fabric', sourceId: 'cas-seed', actor: 'seed', operationId: 'cas-seed-op' })
+    const expectedCurrent = twinPreferenceExpectation(initial)
+    const attempts = await Promise.allSettled(['focus', 'sleep'].map((value, index) => Promise.resolve().then(() => setTwinPreference({
+      subjectId: 'person:self', domain: 'home' as const, key: 'lighting.scene', value,
+      source: 'action-fabric', sourceId: `race-${index}`, actor: 'race', operationId: `race-op-${index}`, expectedCurrent,
+    }))))
+    expect(attempts.filter(item => item.status === 'fulfilled')).toHaveLength(1)
+    expect(attempts.filter(item => item.status === 'rejected')).toHaveLength(1)
+    expect(getTwinPreference('person:self', 'home', 'lighting.scene')?.version).toBe(2)
   })
 })

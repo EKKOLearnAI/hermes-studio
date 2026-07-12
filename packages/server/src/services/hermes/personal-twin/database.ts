@@ -3,11 +3,11 @@ import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 const REQUIRED_TWIN_TABLES = [
   'twin_artifacts', 'twin_assistant_roles', 'twin_constraints', 'twin_context_recipes',
   'twin_entities', 'twin_events', 'twin_goals', 'twin_import_runs', 'twin_meta',
-  'twin_observations', 'twin_outbox', 'twin_preferences', 'twin_projections',
+  'twin_observations', 'twin_outbox', 'twin_preference_operations', 'twin_preferences', 'twin_projections',
   'twin_relations', 'twin_role_profile_mappings',
 ]
 
@@ -47,6 +47,10 @@ export function initPersonalTwinSchema(db: DatabaseSync): void {
       createSchemaV2(db)
       setSchemaVersion(db, 2)
     }
+    if (version < 3) {
+      createSchemaV3(db)
+      setSchemaVersion(db, 3)
+    }
     assertSchemaComplete(db, SCHEMA_VERSION)
     db.exec('COMMIT')
   } catch (error) {
@@ -73,6 +77,9 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
   const names = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'twin_%'").all() as Array<{ name: string }>).map(row => row.name))
   const missing = REQUIRED_TWIN_TABLES.filter(name => !names.has(name))
   if (missing.length > 0) throw new Error(`Personal Twin schema version ${version} is incomplete: missing ${missing.join(', ')}`)
+  const preferenceColumns = new Set((db.prepare("PRAGMA table_info('twin_preferences')").all() as Array<{ name: string }>).map(row => row.name))
+  const missingColumns = ['actor', 'version'].filter(name => !preferenceColumns.has(name))
+  if (missingColumns.length > 0) throw new Error(`Personal Twin schema version ${version} is incomplete: twin_preferences missing ${missingColumns.join(', ')}`)
 }
 
 function createSchemaV1(db: DatabaseSync): void {
@@ -122,6 +129,7 @@ function createSchemaV1(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS twin_preferences (
       id TEXT PRIMARY KEY, subject_id TEXT NOT NULL, key TEXT NOT NULL, value_json TEXT NOT NULL,
       confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1), source TEXT NOT NULL, source_id TEXT NOT NULL,
+      actor TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(source, source_id), FOREIGN KEY(subject_id) REFERENCES twin_entities(id)
     );
     CREATE TABLE IF NOT EXISTS twin_constraints (
@@ -200,5 +208,40 @@ function createSchemaV2(db: DatabaseSync): void {
       UNIQUE(role_id, name),
       FOREIGN KEY(role_id) REFERENCES twin_assistant_roles(id) ON DELETE CASCADE
     );
+  `)
+}
+
+function createSchemaV3(db: DatabaseSync): void {
+  const columns = new Set((db.prepare("PRAGMA table_info('twin_preferences')").all() as Array<{ name: string }>).map(row => row.name))
+  if (!columns.has('actor')) {
+    db.exec("ALTER TABLE twin_preferences ADD COLUMN actor TEXT NOT NULL DEFAULT ''")
+    db.exec("UPDATE twin_preferences SET actor=source WHERE actor='' OR actor IS NULL")
+  }
+  if (!columns.has('version')) db.exec('ALTER TABLE twin_preferences ADD COLUMN version INTEGER NOT NULL DEFAULT 1')
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS twin_preference_operations (
+      operation_id TEXT PRIMARY KEY,
+      material_digest TEXT NOT NULL CHECK(length(material_digest)=64),
+      kind TEXT NOT NULL CHECK(kind IN ('set','delete')),
+      subject_id TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      key TEXT NOT NULL,
+      result_snapshot_json TEXT NOT NULL CHECK(length(CAST(result_snapshot_json AS BLOB)) <= 12000 AND json_valid(result_snapshot_json)),
+      result_digest TEXT NOT NULL CHECK(length(result_digest)=64),
+      status TEXT NOT NULL CHECK(status='applied'),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(subject_id) REFERENCES twin_entities(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_twin_preference_operations_address
+      ON twin_preference_operations(subject_id,domain,key,created_at);
+    CREATE TRIGGER IF NOT EXISTS trg_twin_preference_operations_no_update
+      BEFORE UPDATE ON twin_preference_operations BEGIN
+        SELECT RAISE(ABORT, 'twin preference operations are immutable');
+      END;
+    CREATE TRIGGER IF NOT EXISTS trg_twin_preference_operations_no_delete
+      BEFORE DELETE ON twin_preference_operations BEGIN
+        SELECT RAISE(ABORT, 'twin preference operations are immutable');
+      END;
   `)
 }
