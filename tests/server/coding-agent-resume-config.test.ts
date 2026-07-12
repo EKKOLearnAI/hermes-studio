@@ -189,7 +189,6 @@ describe('coding agent resumed session config', () => {
       provider: 'deepseek',
       model: 'deepseek-v4-pro',
       baseUrl: 'https://api.xiaomimimo.com/v1',
-      apiKey: 'sk-xiaomi',
       apiMode: 'chat_completions',
     })
 

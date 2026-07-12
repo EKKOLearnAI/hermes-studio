@@ -464,7 +464,7 @@ async function resolveStoredProviderLaunchInput<T extends CodingAgentLaunchInput
   }
 
   const identity = canonicalProviderIdentity(provider)
-  if (isStaleBuiltinEndpoint(identity, baseUrl)) {
+  if (!apiKey && isStaleBuiltinEndpoint(identity, baseUrl)) {
     baseUrl = ''
     apiKey = ''
     apiMode = undefined

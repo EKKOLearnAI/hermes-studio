@@ -15,6 +15,7 @@ import { logger } from '../../services/logger'
 const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex', 'google-gemini-cli', 'claude-oauth'])
 const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth', 'openai-codex', 'google-gemini-cli', 'claude-oauth'])
 type ProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages' | 'bedrock_converse' | 'codex_app_server'
+type ProviderConfigSource = 'custom_providers' | 'providers'
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -233,20 +234,32 @@ export async function update(ctx: any) {
   } = ctx.request.body as {
     name?: string
     base_url?: string
-    api_key?: string
+    api_key?: string | null
     model?: string
     api_mode?: ProviderApiMode
-    provider_source?: 'custom_providers' | 'providers'
+    provider_source?: ProviderConfigSource
     provider_key?: string
   }
   const customApiMode = normalizeApiMode(api_mode)
   const replacement = credentialReplacement(api_key)
   const requestedProviderKey = String(provider_key || '').trim()
-  const requestedSource = provider_source === 'custom_providers' || provider_source === 'providers'
-    ? provider_source
-    : requestedProviderKey
-      ? 'providers'
-      : ''
+  const rawRequestedSource = String(provider_source || '').trim()
+  if (rawRequestedSource && rawRequestedSource !== 'custom_providers' && rawRequestedSource !== 'providers') {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid provider source' }
+    return
+  }
+  const requestedSource: ProviderConfigSource | '' = rawRequestedSource as ProviderConfigSource | ''
+    || (requestedProviderKey ? 'providers' : '')
+  if (
+    (identity.kind !== 'custom' && (requestedSource || requestedProviderKey)) ||
+    (requestedSource === 'custom_providers' && requestedProviderKey) ||
+    (requestedSource === 'providers' && !requestedProviderKey)
+  ) {
+    ctx.status = 400
+    ctx.body = { error: 'Provider source and provider key do not identify one credential source' }
+    return
+  }
 
   try {
     const profile = requestedProfile(ctx)
@@ -274,12 +287,13 @@ export async function update(ctx: any) {
         if (customApiMode !== undefined) { entry.api_mode = customApiMode; writeConfig = true }
 
         if (replacement) {
+          const inlineApiKey = credentialReplacement(entry.api_key)
           const envKey = String(entry.key_env || entry.api_key_env || '').trim()
-          if (envKey) {
-            await saveEnvValueForProfile(profile, envKey, replacement)
-          } else {
+          if (inlineApiKey || !envKey) {
             entry.api_key = replacement
             writeConfig = true
+          } else {
+            await saveEnvValueForProfile(profile, envKey, replacement)
           }
         }
 
@@ -321,10 +335,24 @@ export async function remove(ctx: any) {
   }
   const poolKey = identity.poolKey
   const query = ctx.query as { source?: string; providerKey?: string }
-  const requestedSource = query?.source === 'providers' || query?.source === 'custom_providers'
-    ? query.source
-    : ''
+  if (query?.source && query.source !== 'providers' && query.source !== 'custom_providers') {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid provider source' }
+    return
+  }
+  const rawRequestedSource = String(query?.source || '').trim()
   const requestedProviderKey = typeof query?.providerKey === 'string' ? query.providerKey.trim() : ''
+  const requestedSource: ProviderConfigSource | '' = rawRequestedSource as ProviderConfigSource | ''
+    || (requestedProviderKey ? 'providers' : '')
+  if (
+    (identity.kind !== 'custom' && (requestedSource || requestedProviderKey)) ||
+    (requestedSource === 'custom_providers' && requestedProviderKey) ||
+    (requestedSource === 'providers' && !requestedProviderKey)
+  ) {
+    ctx.status = 400
+    ctx.body = { error: 'Provider source and provider key do not identify one credential source' }
+    return
+  }
   try {
     const profile = requestedProfile(ctx)
     const isCustom = identity.kind === 'custom'

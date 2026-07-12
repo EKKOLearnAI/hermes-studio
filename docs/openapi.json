@@ -3671,6 +3671,7 @@
                 "type": "object",
                 "properties": {
                   "api_key": {
+                    "nullable": true,
                     "type": "string"
                   },
                   "api_mode": {
@@ -3689,7 +3690,11 @@
                     "type": "string"
                   },
                   "provider_source": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                      "custom_providers",
+                      "providers"
+                    ]
                   }
                 }
               }

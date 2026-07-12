@@ -170,7 +170,7 @@ function normalizeBaseUrl(value: unknown): string {
   return String(value || '').trim().replace(/\/+$/, '')
 }
 
-function normalizeStoredApiMode(value: unknown, fallback: StoredProviderApiMode): StoredProviderApiMode {
+function parseStoredApiMode(value: unknown): StoredProviderApiMode | undefined {
   const mode = String(value || '').trim()
   if (
     mode === 'chat_completions' ||
@@ -181,7 +181,11 @@ function normalizeStoredApiMode(value: unknown, fallback: StoredProviderApiMode)
   ) {
     return mode
   }
-  return fallback
+  return undefined
+}
+
+function normalizeStoredApiMode(value: unknown, fallback: StoredProviderApiMode): StoredProviderApiMode {
+  return parseStoredApiMode(value) || fallback
 }
 
 function inferApiMode(providerKey: string, baseUrl: string): StoredProviderApiMode {
@@ -302,8 +306,20 @@ export function assertStoredProviderRuntimeMatch(
   }
 
   const suppliedMode = String(suppliedApiMode || '').trim()
-  if (suppliedMode && normalizeStoredApiMode(suppliedMode, stored.apiMode) !== stored.apiMode) {
-    throw new ProviderCredentialError('Provider API protocol does not match the stored credential source')
+  if (suppliedMode) {
+    const normalizedSuppliedMode = parseStoredApiMode(suppliedMode)
+    if (!normalizedSuppliedMode) {
+      throw new ProviderCredentialError('Invalid provider API protocol')
+    }
+    const comparableSuppliedMode = normalizedSuppliedMode === 'codex_app_server'
+      ? 'codex_responses'
+      : normalizedSuppliedMode
+    const comparableStoredMode = stored.apiMode === 'codex_app_server'
+      ? 'codex_responses'
+      : stored.apiMode
+    if (comparableSuppliedMode !== comparableStoredMode) {
+      throw new ProviderCredentialError('Provider API protocol does not match the stored credential source')
+    }
   }
 }
 

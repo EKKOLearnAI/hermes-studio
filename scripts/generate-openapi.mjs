@@ -608,6 +608,9 @@ function schemaFromType(type) {
   const schema = {}
 
   if (/\bnull\b/.test(normalized)) schema.nullable = true
+  if (/ProviderConfigSource/.test(normalized)) {
+    return { ...schema, type: 'string', enum: ['custom_providers', 'providers'] }
+  }
   if (/SessionProviderApiMode|CodingAgentApiMode/.test(normalized)) {
     return { ...schema, type: 'string', enum: ['chat_completions', 'codex_responses', 'anthropic_messages'] }
   }

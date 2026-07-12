@@ -52,6 +52,11 @@ describe('providers controller update', () => {
       '    base_url: https://env.invalid/v1',
       '    key_env: CUSTOM_PROXY_KEY',
       '    model: env-model',
+      '  - name: mixed-proxy',
+      '    base_url: https://mixed.invalid/v1',
+      '    api_key: old-mixed-inline-key',
+      '    key_env: MIXED_PROXY_KEY',
+      '    model: mixed-model',
       'providers:',
       '  dict-proxy:',
       '    name: dict-proxy',
@@ -63,6 +68,7 @@ describe('providers controller update', () => {
     writeFileSync(join(hermesHome, 'profiles', 'research', '.env'), [
       'DEEPSEEK_API_KEY=old-research-key',
       'CUSTOM_PROXY_KEY=old-custom-env-key',
+      'MIXED_PROXY_KEY=old-mixed-env-key',
       '',
     ].join('\n'))
   })
@@ -204,6 +210,43 @@ describe('providers controller update', () => {
     expect(config.custom_providers[1]).toMatchObject({ key_env: 'CUSTOM_PROXY_KEY' })
     expect(config.custom_providers[1]).not.toHaveProperty('api_key')
     expect(readFileSync(join(hermesHome, 'profiles', 'research', '.env'), 'utf-8')).toContain('CUSTOM_PROXY_KEY=new-custom-env-key')
+  })
+
+  it('rotates the active inline credential when a custom provider also declares key_env', async () => {
+    const { update } = await loadProvidersController()
+    const ctx = makeCtx('custom:mixed-proxy', {
+      api_key: 'new-mixed-inline-key',
+      provider_source: 'custom_providers',
+    })
+
+    await update(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    const config = readYaml(join(hermesHome, 'profiles', 'research', 'config.yaml'))
+    expect(config.custom_providers[2]).toMatchObject({
+      api_key: 'new-mixed-inline-key',
+      key_env: 'MIXED_PROXY_KEY',
+    })
+    expect(readFileSync(join(hermesHome, 'profiles', 'research', '.env'), 'utf-8')).toContain('MIXED_PROXY_KEY=old-mixed-env-key')
+  })
+
+  it.each([
+    ['unknown source', { provider_source: 'providerz' }],
+    ['list source with dict key', { provider_source: 'custom_providers', provider_key: 'dict-proxy' }],
+    ['dict source without dict key', { provider_source: 'providers' }],
+  ])('rejects a fail-open custom source selector: %s', async (_label, selector) => {
+    const configPath = join(hermesHome, 'profiles', 'research', 'config.yaml')
+    const before = readFileSync(configPath, 'utf-8')
+    const { update } = await loadProvidersController()
+    const ctx = makeCtx('custom:research-proxy', {
+      api_key: 'must-not-be-written',
+      ...selector,
+    })
+
+    await update(ctx)
+
+    expect(ctx.status).toBe(400)
+    expect(readFileSync(configPath, 'utf-8')).toBe(before)
   })
 
   it('keeps builtin and same-named custom update identities isolated', async () => {

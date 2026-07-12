@@ -99,6 +99,12 @@ describe('coding agent launch preparation', () => {
       apiMode: 'chat_completions' as const,
       message: 'Provider API protocol does not match the stored credential source',
     },
+    {
+      label: 'invalid protocol',
+      baseUrl: 'https://stored.invalid/v1',
+      apiMode: 'not-a-protocol' as any,
+      message: 'Invalid provider API protocol',
+    },
   ])('rejects a mismatched caller $label before hydrating a stored credential', async ({ baseUrl, apiMode, message: expectedMessage }) => {
     makeHome()
     writeFileSync(join(process.env.HERMES_HOME!, 'config.yaml'), [
@@ -796,6 +802,38 @@ describe('coding agent launch preparation', () => {
     expect(config).toMatch(/experimental_bearer_token = "hwui_[^"]+"/)
     expect(config).not.toContain('base_url = "https://ai-pixel.online/v1"')
     expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'ai-pixel.online', 'codex'))
+  })
+
+  it('preserves an explicit request credential even when its endpoint matches another builtin preset', async () => {
+    makeHome()
+    writeFileSync(join(process.env.HERMES_HOME!, '.env'), 'DEEPSEEK_API_KEY=stored-deepseek-value\n')
+    const launch = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      baseUrl: 'https://api.xiaomimimo.com/v1',
+      apiKey: 'explicit-request-value',
+      apiMode: 'chat_completions',
+    })
+    const config = readFileSync(join(launch.rootDir, 'config.toml'), 'utf-8')
+    const routeKey = config.match(/\/api\/codex-proxy\/([^/]+)\/v1/)?.[1] || ''
+    const token = config.match(/experimental_bearer_token = "([^"]+)"/)?.[1] || ''
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      id: 'chatcmpl_explicit',
+      choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'ok' } }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await codexProxyResponses(makeProxyContext(routeKey, token, {
+      max_output_tokens: 16,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
+    }))
+
+    expect(fetchMock).toHaveBeenCalledWith('https://api.xiaomimimo.com/v1/chat/completions', expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: 'Bearer explicit-request-value' }),
+    }))
+    expect(JSON.stringify(launch)).not.toContain('explicit-request-value')
+    expect(JSON.stringify(launch)).not.toContain('stored-deepseek-value')
   })
 
   it('defaults Codex providers without an api mode to Chat Completions', async () => {
