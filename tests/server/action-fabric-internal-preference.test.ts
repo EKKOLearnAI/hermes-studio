@@ -24,11 +24,13 @@ import {
 
 describe('Action Fabric internal preference executor', () => {
   const originalHome = process.env.HERMES_HOME
+  const originalAuditKey = process.env.HERMES_ACTION_FABRIC_AUDIT_KEY
   let home = ''
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'hwui-fabric-preference-'))
     process.env.HERMES_HOME = home
+    process.env.HERMES_ACTION_FABRIC_AUDIT_KEY = 'preference-test-managed-audit-key-32-bytes'
     ensureBuiltInFabricRegistry()
     ensureBuiltInAssistantRoles()
     updateFabricExecutorHealth('internal-twin', 'healthy', {})
@@ -47,6 +49,8 @@ describe('Action Fabric internal preference executor', () => {
     unregisterFabricExecutorAdapter('internal-twin')
     if (originalHome === undefined) delete process.env.HERMES_HOME
     else process.env.HERMES_HOME = originalHome
+    if (originalAuditKey === undefined) delete process.env.HERMES_ACTION_FABRIC_AUDIT_KEY
+    else process.env.HERMES_ACTION_FABRIC_AUDIT_KEY = originalAuditKey
     rmSync(home, { recursive: true, force: true })
   })
 
