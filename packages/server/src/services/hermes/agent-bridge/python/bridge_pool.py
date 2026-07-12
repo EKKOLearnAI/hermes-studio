@@ -297,7 +297,11 @@ class AgentPool:
                         "requested_session_id": session_id,
                         "profile": profile or "default",
                         "model": resolved_model,
-                        "provider": runtime.get("provider"),
+                        # Keep the user-facing provider selector (for example
+                        # custom:liuzheng) separate from the normalized runtime
+                        # provider (custom). Otherwise the next request sees a
+                        # false provider change and rebuilds the client.
+                        "provider": requested_provider or runtime.get("provider"),
                         "base_url": runtime.get("base_url"),
                         "api_mode": runtime.get("api_mode"),
                         "platform": _bridge_platform(),
@@ -363,6 +367,45 @@ class AgentPool:
             runtime = _resolve_runtime(requested_model, requested_provider or None)
 
         resolved_provider = str(runtime.get("provider") or requested_provider or "")
+        effective_provider = requested_provider or resolved_provider
+        current_agent_provider = str(getattr(session.agent, "provider", "") or "")
+        current_agent_model = str(getattr(session.agent, "model", "") or "")
+        current_base_url = str(getattr(session.agent, "base_url", "") or "").rstrip("/")
+        resolved_base_url = str(runtime.get("base_url") or "").rstrip("/")
+        current_api_mode = str(getattr(session.agent, "api_mode", "") or "")
+        resolved_api_mode = str(runtime.get("api_mode") or "")
+        current_api_key = getattr(session.agent, "api_key", None)
+        resolved_api_key = runtime.get("api_key")
+
+        # Provider selectors such as custom:liuzheng normalize to the runtime
+        # provider "custom". Re-selecting that same runtime must not rebuild the
+        # client: switch_model reconstructs _client_kwargs, and affected Hermes
+        # runtimes lose model.default_headers during that reconstruction.
+        runtime_unchanged = (
+            requested_model == current_agent_model
+            and resolved_provider == current_agent_provider
+            and resolved_base_url == current_base_url
+            and resolved_api_mode == current_api_mode
+            and resolved_api_key == current_api_key
+        )
+        if runtime_unchanged:
+            session.config.update({
+                "profile": target_profile,
+                "model": requested_model,
+                "provider": effective_provider,
+                "base_url": runtime.get("base_url"),
+                "api_mode": runtime.get("api_mode"),
+            })
+            session.config.pop("pending_model_switch", None)
+            session.last_used_at = time.time()
+            return {
+                "switched": True,
+                "deferred": False,
+                "session_id": session.session_id,
+                "model": requested_model,
+                "provider": effective_provider,
+            }
+
         switch_model = getattr(session.agent, "switch_model", None)
         if not callable(switch_model):
             raise RuntimeError("loaded agent does not support switch_model")
@@ -379,7 +422,7 @@ class AgentPool:
         session.config.update({
             "profile": target_profile,
             "model": requested_model,
-            "provider": resolved_provider,
+            "provider": effective_provider,
             "base_url": runtime.get("base_url"),
             "api_mode": runtime.get("api_mode"),
         })
@@ -400,7 +443,7 @@ class AgentPool:
         return {
             "session_id": session.session_id,
             "model": requested_model,
-            "provider": resolved_provider,
+            "provider": effective_provider,
             "loaded": True,
             "switched": True,
         }
