@@ -1,9 +1,6 @@
 import { cleanTtsText } from '../hermes/tts-providers/text'
 
-const DEFAULT_MAX_SEGMENT_CHARS = 90
-const MIN_SEGMENT_CHARS = 24
-const SENTENCE_BOUNDARY_RE = /[。！？!?]/
-const SOFT_BOUNDARY_RE = /[，,；;、\n]/
+const PARAGRAPH_END_RE = /[。！？!?.…][\s"'”’）)\]】》]*$/
 
 export interface McuSpeechSegmenter {
   pushDelta(delta: string): string[]
@@ -13,11 +10,6 @@ export interface McuSpeechSegmenter {
 
 export interface McuSpeechSegmenterOptions {
   maxChars?: number
-}
-
-interface BoundaryScan {
-  sentenceBoundary: number
-  softBoundary: number
 }
 
 export function normalizeMcuSpeechText(text: string): string {
@@ -43,17 +35,11 @@ export function normalizeMcuSpeechText(text: string): string {
     .trim()
 }
 
-function advancePastTrailingClosers(text: string, index: number): number {
-  let end = index
-  while (end < text.length && /[\s"'”’）)\]】》]/.test(text[end])) {
-    end += 1
-  }
-  return end
+function paragraphEndsNormally(text: string): boolean {
+  return PARAGRAPH_END_RE.test(text.trimEnd())
 }
 
-function scanBoundaries(text: string): BoundaryScan {
-  let sentenceBoundary = -1
-  let softBoundary = -1
+function findReadyParagraphBoundary(text: string): number {
   let inFence = false
   let inInlineCode = false
   let inLinkText = false
@@ -109,30 +95,28 @@ function scanBoundaries(text: string): BoundaryScan {
       continue
     }
 
-    if (SENTENCE_BOUNDARY_RE.test(char)) {
-      sentenceBoundary = advancePastTrailingClosers(text, i + 1)
-    } else if (SOFT_BOUNDARY_RE.test(char)) {
-      softBoundary = advancePastTrailingClosers(text, i + 1)
+    if (char === '\n' || char === '\r') {
+      let end = i + 1
+      if (char === '\r' && text[i + 1] === '\n') {
+        end += 1
+        i += 1
+      }
+      if (paragraphEndsNormally(text.slice(0, end))) return end
     }
   }
 
-  return { sentenceBoundary, softBoundary }
+  return -1
 }
 
 export function createMcuSpeechSegmenter(options: McuSpeechSegmenterOptions = {}): McuSpeechSegmenter {
-  const maxChars = Math.max(MIN_SEGMENT_CHARS, options.maxChars || DEFAULT_MAX_SEGMENT_CHARS)
+  void options
   let buffer = ''
 
   function takeReadySegments(force = false): string[] {
     const segments: string[] = []
 
     while (buffer.length > 0) {
-      const boundaries = scanBoundaries(buffer)
-      let end = boundaries.sentenceBoundary
-
-      if (end < 0 && buffer.length >= maxChars) {
-        end = boundaries.softBoundary
-      }
+      let end = findReadyParagraphBoundary(buffer)
       if (end < 0 && force) {
         end = buffer.length
       }

@@ -61,6 +61,9 @@ export function getCorsOrigins(env: Record<string, string | undefined> = process
 }
 
 const appHome = getWebUiHome()
+const remoteRelay = {
+  url: 'https://api.hermes-studio.ai',
+}
 
 export const config = {
   port: parseInt(process.env.PORT || '8648', 10),
@@ -70,4 +73,5 @@ export const config = {
   uploadDir: process.env.UPLOAD_DIR || join(appHome, 'upload'),
   dataDir: resolve(__dirname, '..', 'data'),
   corsOrigins: getCorsOrigins(),
+  remoteRelay,
 }

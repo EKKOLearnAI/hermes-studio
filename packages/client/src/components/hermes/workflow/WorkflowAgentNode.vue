@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { Handle, Position, type NodeProps } from '@vue-flow/core'
 import { NodeResizer } from '@vue-flow/node-resizer'
-import { NInput, NSelect, NTooltip, useMessage } from 'naive-ui'
+import { NInput, NSelect, NSwitch, NTooltip, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import WorkflowModelSelector from './WorkflowModelSelector.vue'
 import type { WorkflowAgentNodeData, WorkflowAgentNodeEditableData } from './types'
@@ -176,6 +176,15 @@ async function uploadImages(files: File[]) {
         :placeholder="t('workflow.node.apiMode')"
         @update:value="value => updateField('apiMode', value as CodingAgentApiMode)"
       />
+      <label class="node-toggle-row">
+        <span>{{ t('workflow.node.approvalRequired') }}</span>
+        <NSwitch
+          :value="data.approvalRequired === true"
+          size="small"
+          :disabled="data.readonly"
+          @update:value="value => updateField('approvalRequired', value)"
+        />
+      </label>
       <NSelect
         :value="data.skills"
         :options="data.skillOptions"
@@ -397,6 +406,15 @@ async function uploadImages(files: File[]) {
   box-shadow: 0 0 8px rgba(37, 99, 235, 0.65);
 }
 
+.status-pending_approval .node-status-dot {
+  background: #d97706;
+  box-shadow: 0 0 8px rgba(217, 119, 6, 0.55);
+}
+
+.status-approval_rejected .node-status-dot {
+  background: #b45309;
+}
+
 .status-completed .node-status-dot {
   background: #16a34a;
 }
@@ -416,6 +434,18 @@ async function uploadImages(files: File[]) {
   padding: 12px;
   flex: 1;
   min-height: 0;
+}
+
+.node-toggle-row {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px;
+  color: $text-secondary;
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 .node-prompt-input {

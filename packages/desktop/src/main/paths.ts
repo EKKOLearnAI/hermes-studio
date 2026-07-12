@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { homedir, platform } from 'node:os'
 import {
@@ -15,12 +15,13 @@ const MIN_COMPATIBLE_WEB_UI_VERSION = '0.6.23'
 const PACKAGED_RUNTIME_RELEASE_NAME = 'runtime-release.json'
 const ACTIVE_RUNTIME_VERSION_NAME = 'active-version.json'
 let legacyWebUiVersionsCleaned = false
+let incompleteActiveWebUiWarningPath = ''
 
 export function isPackaged() {
   return !!app?.isPackaged
 }
 
-function defaultWebuiDir(): string {
+export function defaultWebuiDir(): string {
   if (isPackaged()) return resolve(process.resourcesPath, 'webui')
   return process.env.HERMES_WEB_UI_DIR?.trim() || resolve(app?.getAppPath?.() || resolve(process.cwd(), 'packages', 'desktop'), '..', '..')
 }
@@ -40,7 +41,7 @@ type ActiveRuntimeVersion = {
 
 function runtimeRequiredFiles(root: string): string[] {
   const python = isWin ? join(root, 'python', 'python.exe') : join(root, 'python', 'bin', 'python3')
-  const hermes = isWin ? join(root, 'python', 'Scripts', 'hermes.exe') : join(root, 'python', 'bin', 'hermes')
+  const hermes = isWin ? join(root, 'python', 'Scripts', 'hermes.cmd') : join(root, 'python', 'bin', 'hermes')
   const node = isWin ? join(root, 'node', 'node.exe') : join(root, 'node', 'bin', 'node')
   const files = [python, hermes, node]
   if (isWin) files.push(join(root, 'git', 'cmd', 'git.exe'))
@@ -105,6 +106,24 @@ function readActiveRuntimeVersion(): ActiveRuntimeVersion | null {
   }
 }
 
+export function clearActiveWebUiDirectory(expectedDirectory?: string): void {
+  const file = activeRuntimeVersionFile()
+  const active = readActiveRuntimeVersion()
+  if (!active || typeof active !== 'object') return
+  const currentDirectory = typeof active.webUiDirectory === 'string' ? active.webUiDirectory.trim() : ''
+  if (!currentDirectory) return
+  if (expectedDirectory && resolve(currentDirectory) !== resolve(expectedDirectory)) return
+
+  const next = { ...(active as Record<string, unknown>) }
+  delete next.webUiDirectory
+  delete next.webUiVersion
+  try {
+    writeFileSync(file, JSON.stringify(next, null, 2) + '\n')
+  } catch (err) {
+    console.warn('[desktop] failed to clear active Web UI directory:', err instanceof Error ? err.message : String(err))
+  }
+}
+
 function cleanupLegacyWebUiVersions(): void {
   if (legacyWebUiVersionsCleaned) return
   legacyWebUiVersionsCleaned = true
@@ -130,6 +149,14 @@ function cleanupLegacyWebUiVersions(): void {
 // Bundled web-ui directory.
 // dev:  <repo root> (or HERMES_WEB_UI_DIR)
 // prod: <resources>/webui
+export function webuiServerEntryFor(root: string): string {
+  return join(root, 'dist', 'server', 'index.js')
+}
+
+function webuiDirectoryReady(root: string): boolean {
+  return existsSync(webuiServerEntryFor(root))
+}
+
 // active-version.json can pin the Web UI path used to start the local server.
 export function webuiDir(): string {
   const override = process.env.HERMES_WEB_UI_DIR?.trim()
@@ -138,18 +165,27 @@ export function webuiDir(): string {
   cleanupLegacyWebUiVersions()
 
   const active = readActiveRuntimeVersion()
+  const activeWebUiDirectory = typeof active?.webUiDirectory === 'string' ? active.webUiDirectory.trim() : ''
   if (active?.platform === runtimePlatformKey()
-    && typeof active.webUiDirectory === 'string'
-    && active.webUiDirectory.trim()
-    && existsSync(active.webUiDirectory)) {
-    return resolve(active.webUiDirectory)
+    && activeWebUiDirectory
+    && webuiDirectoryReady(activeWebUiDirectory)) {
+    return resolve(activeWebUiDirectory)
+  }
+
+  if (active?.platform === runtimePlatformKey()
+    && activeWebUiDirectory
+    && existsSync(activeWebUiDirectory)
+    && incompleteActiveWebUiWarningPath !== activeWebUiDirectory) {
+    incompleteActiveWebUiWarningPath = activeWebUiDirectory
+    console.warn(`[desktop] ignored incomplete active Web UI directory ${activeWebUiDirectory}; missing ${webuiServerEntryFor(activeWebUiDirectory)}`)
+    clearActiveWebUiDirectory(activeWebUiDirectory)
   }
 
   return defaultWebuiDir()
 }
 
 export function webuiServerEntry(): string {
-  return join(webuiDir(), 'dist', 'server', 'index.js')
+  return webuiServerEntryFor(webuiDir())
 }
 
 function runtimeReleaseMetadata(): RuntimeReleaseMetadata | null {
@@ -312,7 +348,7 @@ export function bundledPython(): string {
 }
 
 export function hermesBin(): string {
-  return isWin ? join(pythonBinDir(), 'hermes.exe') : join(pythonBinDir(), 'hermes')
+  return isWin ? join(pythonBinDir(), 'hermes.cmd') : join(pythonBinDir(), 'hermes')
 }
 
 export function hermesBinExists(): boolean {

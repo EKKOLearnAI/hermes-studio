@@ -128,6 +128,8 @@ describe('ekko-agent model requests', () => {
         prompt_tokens: 10,
         completion_tokens: 5,
         total_tokens: 15,
+        prompt_tokens_details: { cached_tokens: 7 },
+        completion_tokens_details: { reasoning_tokens: 2 },
       },
     })
 
@@ -137,9 +139,11 @@ describe('ekko-agent model requests', () => {
       content: 'Done.',
       finishReason: 'tool_calls',
       usage: {
-        inputTokens: 10,
+        inputTokens: 3,
         outputTokens: 5,
         totalTokens: 15,
+        cacheReadTokens: 7,
+        reasoningTokens: 2,
       },
       toolCalls: [
         {
@@ -270,6 +274,45 @@ describe('ekko-agent model requests', () => {
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
       authorization: 'Bearer test-key',
       'x-api-key': 'test-key',
+    })
+  })
+
+  it('merges Anthropic streaming input, output, and cache usage', async () => {
+    const encoder = new TextEncoder()
+    const fetchMock = vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":0,"cache_read_input_tokens":80,"cache_creation_input_tokens":5}}}\n\n'))
+        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}\n\n'))
+        controller.enqueue(encoder.encode('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}\n\n'))
+        controller.enqueue(encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'))
+        controller.close()
+      },
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    const client = new AnthropicMessagesModelClient({
+      id: 'anthropic',
+      type: 'anthropic',
+      requestStyle: 'anthropic-messages',
+      baseUrl: 'https://api.anthropic.com',
+      apiKey: 'test-key',
+      defaultModel: 'claude-sonnet',
+    }, { fetch: fetchMock })
+
+    const events = []
+    for await (const event of client.stream({
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: true,
+    })) events.push(event)
+
+    expect(events).toContainEqual({
+      type: 'usage',
+      usage: {
+        inputTokens: 100,
+        outputTokens: 7,
+        totalTokens: 107,
+        cacheReadTokens: 80,
+        cacheWriteTokens: 5,
+        reasoningTokens: undefined,
+      },
     })
   })
 

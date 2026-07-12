@@ -54,6 +54,8 @@ interface OpenAIResponsesResponse {
     input_tokens?: number
     output_tokens?: number
     total_tokens?: number
+    input_tokens_details?: { cached_tokens?: number }
+    output_tokens_details?: { reasoning_tokens?: number }
   }
   status?: string
   error?: {
@@ -210,10 +212,14 @@ function normalizeToolCall(id: string, name: string, argumentsText: string): Age
 }
 
 function normalizeUsage(usage: NonNullable<OpenAIResponsesResponse['usage']>): ModelUsage {
+  const cacheReadTokens = usage.input_tokens_details?.cached_tokens ?? 0
+  const inputTokens = usage.input_tokens ?? 0
   return {
-    inputTokens: usage.input_tokens,
+    inputTokens: Math.max(0, inputTokens - cacheReadTokens),
     outputTokens: usage.output_tokens,
     totalTokens: usage.total_tokens,
+    cacheReadTokens,
+    reasoningTokens: usage.output_tokens_details?.reasoning_tokens,
   }
 }
 

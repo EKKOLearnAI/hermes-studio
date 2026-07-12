@@ -472,16 +472,6 @@ onMounted(() => {
   flex-direction: column;
 }
 
-.page-header {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 21px 20px;
-  border-bottom: 1px solid $border-color;
-}
-
 .header-actions {
   display: flex;
   align-items: center;
@@ -493,13 +483,6 @@ onMounted(() => {
 .manual-pairing-input {
   width: 280px;
   max-width: min(280px, 100%);
-}
-
-.header-title {
-  margin: 0;
-  color: $text-primary;
-  font-size: 16px;
-  font-weight: 600;
 }
 
 .header-meta {

@@ -14,6 +14,7 @@ const chatApi = vi.hoisted(() => ({
   sessionCommandHandlers: [] as Array<(event: any) => void>,
   peerUserMessageHandlers: [] as Array<(event: any) => void>,
   sessionTitleUpdatedHandlers: [] as Array<(event: any) => void>,
+  sessionWorkspaceUpdatedHandlers: [] as Array<(event: any) => void>,
 }))
 
 vi.mock('@/api/hermes/chat', () => ({
@@ -34,6 +35,10 @@ vi.mock('@/api/hermes/chat', () => ({
   }),
   onSessionTitleUpdated: vi.fn((handler: (event: any) => void) => {
     chatApi.sessionTitleUpdatedHandlers.push(handler)
+    return vi.fn()
+  }),
+  onSessionWorkspaceUpdated: vi.fn((handler: (event: any) => void) => {
+    chatApi.sessionWorkspaceUpdatedHandlers.push(handler)
     return vi.fn()
   }),
 }))

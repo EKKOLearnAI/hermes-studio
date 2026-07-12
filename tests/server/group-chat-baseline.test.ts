@@ -38,7 +38,7 @@ describe('group chat baseline behavior', () => {
 
     const alice = await connectGroupChatClient(port, 'user-a', 'Alice')
     harness.sockets.push(alice)
-    const joined = await emitAck<any>(alice, 'join', { roomId: 'room-1' })
+    const joined = await emitAck<any>(alice, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
 
     expect(joined).toMatchObject({ roomId: 'room-1' })
     expect(joined.messages.map((m: any) => m.id)).toEqual(['msg-1'])
@@ -51,8 +51,8 @@ describe('group chat baseline behavior', () => {
     const alice = await connectGroupChatClient(port, 'user-a', 'Alice')
     const bob = await connectGroupChatClient(port, 'user-b', 'Bob')
     harness.sockets.push(alice, bob)
-    await emitAck(alice, 'join', { roomId: 'room-1' })
-    await emitAck(bob, 'join', { roomId: 'room-1' })
+    await emitAck(alice, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    await emitAck(bob, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
 
     const seenByBob = once<any>(bob, 'message')
     const ack = await emitAck<any>(alice, 'message', { roomId: 'room-1', id: 'client-msg-1', content: 'hello room' })

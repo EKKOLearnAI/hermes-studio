@@ -112,7 +112,21 @@ describe('resumeBridgeRun', () => {
         status: 'running',
         output: 'Hello',
         deltas: ['Hello'],
-        events: [],
+        events: [{
+          event: 'model.usage',
+          api_request_id: 'request-before-resume',
+          turn_id: 'turn-1',
+          api_call_count: 1,
+          model: 'gpt-test-response',
+          provider: 'openai',
+          usage: {
+            input_tokens: 80,
+            output_tokens: 12,
+            cache_read_tokens: 50,
+            cache_write_tokens: 3,
+            reasoning_tokens: 4,
+          },
+        }],
       })),
       getOutput: vi.fn(async () => ({
         ok: true,
@@ -163,7 +177,22 @@ describe('resumeBridgeRun', () => {
     )
 
     expect(bridge.getResult).toHaveBeenCalledWith('run-resume')
-    expect(bridge.getOutput).toHaveBeenCalledWith('run-resume', 1, 0)
+    expect(bridge.getOutput).toHaveBeenCalledWith('run-resume', 1, 1)
+    expect(updateUsageMock).toHaveBeenCalledWith('session-resume', expect.objectContaining({
+      runId: 'run-resume:api:request-before-resume',
+      source: 'hermes',
+      usageScope: 'model_call',
+      apiCalls: 1,
+      inputTokens: 80,
+      outputTokens: 12,
+      cacheReadTokens: 50,
+      cacheWriteTokens: 3,
+      reasoningTokens: 4,
+      model: 'gpt-test-response',
+      provider: 'openai',
+      isEstimated: false,
+    }))
+    expect(updateUsageMock).toHaveBeenCalledTimes(1)
     expect(emitted).toEqual(expect.arrayContaining([
       expect.objectContaining({
         event: 'message.delta',

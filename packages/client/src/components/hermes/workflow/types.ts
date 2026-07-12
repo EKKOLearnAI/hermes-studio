@@ -7,7 +7,7 @@ export interface WorkflowSelectOption extends SelectOption {
   value: string
 }
 
-export type WorkflowNodeStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed' | 'canceled'
+export type WorkflowNodeStatus = 'idle' | 'queued' | 'running' | 'pending_approval' | 'completed' | 'failed' | 'approval_rejected' | 'canceled'
 
 export interface WorkflowAgentNodeData {
   title: string
@@ -18,6 +18,7 @@ export interface WorkflowAgentNodeData {
   input: string
   skills: string[]
   images: string[]
+  approvalRequired: boolean
   status: WorkflowNodeStatus
   statusError?: string | null
   readonly?: boolean
@@ -29,4 +30,4 @@ export interface WorkflowAgentNodeData {
   onUploadImages: (id: string, files: File[]) => Promise<string[]>
 }
 
-export type WorkflowAgentNodeEditableData = Pick<WorkflowAgentNodeData, 'title' | 'agent' | 'provider' | 'model' | 'apiMode' | 'input' | 'skills' | 'images'>
+export type WorkflowAgentNodeEditableData = Pick<WorkflowAgentNodeData, 'title' | 'agent' | 'provider' | 'model' | 'apiMode' | 'input' | 'skills' | 'images' | 'approvalRequired'>

@@ -13,8 +13,19 @@ describe('mcu interaction helpers', () => {
     const segmenter = createMcuSpeechSegmenter({ maxChars: 24 })
 
     expect(segmenter.pushDelta('你好，')).toEqual([])
-    expect(segmenter.pushDelta('我开始处理了。下一步')).toEqual(['你好，我开始处理了。'])
+    expect(segmenter.pushDelta('我开始处理了。\n下一步')).toEqual(['你好，我开始处理了。'])
     expect(segmenter.flush()).toBe('下一步')
+  })
+
+  it('keeps unfinished paragraphs together and ignores max character soft splits', () => {
+    const segmenter = createMcuSpeechSegmenter({ maxChars: 24 })
+
+    expect(segmenter.pushDelta('第一段没结束\n')).toEqual([])
+    expect(segmenter.pushDelta('第二段结束了。\n')).toEqual(['第一段没结束 第二段结束了。'])
+    expect(segmenter.pushDelta('这是一段很长很长的内容，没有句末换行，也不会按长度提前切')).toEqual([])
+    expect(segmenter.pushDelta('，直到段落结束。\n')).toEqual([
+      '这是一段很长很长的内容，没有句末换行，也不会按长度提前切，直到段落结束。',
+    ])
   })
 
   it('maps tool events to MCU display events', () => {

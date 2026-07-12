@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const managerMock = vi.hoisted(() => ({
   runIdForSession: vi.fn(),
   isSessionLaunchCompatible: vi.fn(),
+  isSessionProcessing: vi.fn(),
   stop: vi.fn(),
 }))
 const startCodingAgentRunMock = vi.hoisted(() => vi.fn())
@@ -10,6 +11,7 @@ const sendCodingAgentRunInputMock = vi.hoisted(() => vi.fn())
 const writeModelRunProfileTokenMock = vi.hoisted(() => vi.fn(async () => undefined))
 const getSystemPromptMock = vi.hoisted(() => vi.fn(() => 'system prompt'))
 const getSessionMock = vi.hoisted(() => vi.fn())
+const updateSessionMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
   codingAgentRunManager: managerMock,
@@ -30,12 +32,18 @@ vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
 
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   getSession: getSessionMock,
+  updateSession: updateSessionMock,
+}))
+
+vi.mock('../../packages/server/src/services/logger', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
 describe('handleCodingAgentRun', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     getSessionMock.mockReturnValue(null)
+    managerMock.isSessionProcessing.mockReturnValue(false)
     writeModelRunProfileTokenMock.mockResolvedValue(undefined)
     getSystemPromptMock.mockReturnValue('system prompt')
   })
@@ -192,6 +200,86 @@ describe('handleCodingAgentRun', () => {
     }, 'default', sessionMap as any)
 
     expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith('session-1', 'hello claude', 'system prompt')
+  })
+
+  it('reopens an ended coding-agent session before sending a new input', async () => {
+    managerMock.runIdForSession.mockReturnValue('agent-session-1')
+    managerMock.isSessionLaunchCompatible.mockReturnValue(true)
+    sendCodingAgentRunInputMock.mockResolvedValue({ runId: 'agent-session-1' })
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      source: 'coding_agent',
+      agent: 'codex',
+      ended_at: 123,
+      end_reason: 'complete',
+    })
+
+    const { handleCodingAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-coding-agent-run')
+    const state = {
+      messages: [],
+      isWorking: false,
+      isAborting: false,
+      events: [],
+      queue: [],
+    }
+    const sessionMap = new Map([['session-1', state]])
+    const socket = {
+      join: vi.fn(),
+      emit: vi.fn(),
+    }
+
+    await handleCodingAgentRun({} as any, socket as any, {
+      session_id: 'session-1',
+      input: 'continue',
+      coding_agent_id: 'codex',
+    }, 'default', sessionMap as any)
+
+    expect(updateSessionMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
+      ended_at: null,
+      end_reason: null,
+      last_active: expect.any(Number),
+    }))
+    expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith('session-1', 'continue', 'system prompt')
+  })
+
+  it('marks a reopened coding-agent session as errored when input send fails before processing starts', async () => {
+    managerMock.runIdForSession.mockReturnValue('agent-session-1')
+    managerMock.isSessionLaunchCompatible.mockReturnValue(true)
+    managerMock.isSessionProcessing.mockReturnValue(false)
+    sendCodingAgentRunInputMock.mockRejectedValue(new Error('send failed'))
+
+    const { handleCodingAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-coding-agent-run')
+    const state = {
+      messages: [],
+      isWorking: false,
+      isAborting: false,
+      events: [],
+      queue: [],
+    }
+    const sessionMap = new Map([['session-1', state]])
+    const socket = {
+      join: vi.fn(),
+      emit: vi.fn(),
+    }
+
+    await expect(handleCodingAgentRun({} as any, socket as any, {
+      session_id: 'session-1',
+      input: 'continue',
+      coding_agent_id: 'codex',
+    }, 'default', sessionMap as any)).rejects.toThrow('send failed')
+
+    expect(updateSessionMock.mock.calls.map(call => call[1])).toEqual([
+      expect.objectContaining({
+        ended_at: null,
+        end_reason: null,
+        last_active: expect.any(Number),
+      }),
+      expect.objectContaining({
+        ended_at: expect.any(Number),
+        end_reason: 'error',
+      }),
+    ])
+    expect(state.isWorking).toBe(false)
   })
 
   it('keeps profile token handling separate from the system prompt for authenticated users', async () => {

@@ -3,7 +3,7 @@
   "info": {
     "title": "Hermes Studio API",
     "description": "Hermes Studio API — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.",
-    "version": "0.6.25"
+    "version": "0.6.29"
   },
   "servers": [
     {
@@ -471,11 +471,20 @@
                   "account": {
                     "type": "string"
                   },
+                  "device_code": {
+                    "type": "string"
+                  },
                   "id": {
                     "type": "string"
                   },
                   "password": {
                     "type": "string"
+                  },
+                  "relayMode": {
+                    "type": "string"
+                  },
+                  "remote": {
+                    "type": "boolean"
                   },
                   "token": {
                     "type": "string"
@@ -4254,6 +4263,9 @@
                   },
                   "name": {
                     "type": "string"
+                  },
+                  "workspace": {
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -4777,6 +4789,66 @@
                 },
                 "required": [
                   "inviteCode"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/workspace": {
+      "put": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Update workspace",
+        "description": "PUT /api/hermes/group-chat/rooms/:roomId/workspace",
+        "operationId": "updateWorkspace",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden - Workspace folder is not allowed"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "workspace": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "workspace"
                 ]
               }
             }
@@ -9262,6 +9334,22 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "api_mode": {
+                    "type": "string",
+                    "enum": [
+                      "chat_completions",
+                      "codex_responses",
+                      "anthropic_messages"
+                    ]
+                  },
+                  "apiMode": {
+                    "type": "string",
+                    "enum": [
+                      "chat_completions",
+                      "codex_responses",
+                      "anthropic_messages"
+                    ]
+                  },
                   "model": {
                     "type": "string"
                   },
@@ -9455,6 +9543,147 @@
         }
       }
     },
+    "/api/hermes/sessions/{id}/workspace-file/copy": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create copy",
+        "description": "POST /api/hermes/sessions/:id/workspace-file/copy",
+        "operationId": "copyWorkspaceFile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "destPath": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "srcPath": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/sessions/{id}/workspace-file/delete": {
+      "delete": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Delete delete",
+        "description": "DELETE /api/hermes/sessions/:id/workspace-file/delete",
+        "operationId": "deleteWorkspaceFile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/sessions/{id}/workspace-file/mkdir": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create mkdir",
+        "description": "POST /api/hermes/sessions/:id/workspace-file/mkdir",
+        "operationId": "mkdirWorkspaceFile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/sessions/{id}/workspace-file/read": {
       "get": {
         "tags": [
@@ -9497,6 +9726,62 @@
             }
           }
         ]
+      }
+    },
+    "/api/hermes/sessions/{id}/workspace-file/rename": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create rename",
+        "description": "POST /api/hermes/sessions/:id/workspace-file/rename",
+        "operationId": "renameWorkspaceFile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "newPath": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "oldPath": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/hermes/sessions/{id}/workspace-file/write": {
@@ -9553,6 +9838,50 @@
             }
           }
         }
+      }
+    },
+    "/api/hermes/sessions/{id}/workspace-files/list": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get list",
+        "description": "GET /api/hermes/sessions/:id/workspace-files/list",
+        "operationId": "listWorkspaceFiles",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/hermes/sessions/{id}/workspace-run-changes": {

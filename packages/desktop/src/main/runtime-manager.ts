@@ -86,7 +86,7 @@ function requiredRuntimeFiles(root: string): string[] {
     ? join(root, 'python', 'python.exe')
     : join(root, 'python', 'bin', 'python3')
   const hermesBin = process.platform === 'win32'
-    ? join(root, 'python', 'Scripts', 'hermes.exe')
+    ? join(root, 'python', 'Scripts', 'hermes.cmd')
     : join(root, 'python', 'bin', 'hermes')
   const nodeBin = process.platform === 'win32'
     ? join(root, 'node', 'node.exe')
@@ -107,7 +107,7 @@ function runtimeReady(): boolean {
 function rootRuntimeReady(root: string): boolean {
   const gitPath = process.platform === 'win32' ? join(root, 'git', 'cmd', 'git.exe') : null
   return existsSync(process.platform === 'win32' ? join(root, 'python', 'python.exe') : join(root, 'python', 'bin', 'python3'))
-    && existsSync(process.platform === 'win32' ? join(root, 'python', 'Scripts', 'hermes.exe') : join(root, 'python', 'bin', 'hermes'))
+    && existsSync(process.platform === 'win32' ? join(root, 'python', 'Scripts', 'hermes.cmd') : join(root, 'python', 'bin', 'hermes'))
     && existsSync(process.platform === 'win32' ? join(root, 'node', 'node.exe') : join(root, 'node', 'bin', 'node'))
     && (!gitPath || existsSync(gitPath))
 }

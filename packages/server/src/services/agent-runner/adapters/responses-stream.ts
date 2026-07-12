@@ -60,17 +60,32 @@ function extractSseEventName(event: string): string {
     .trim() || ''
 }
 
+function openAiChatUsageToResponsesUsage(usage: Record<string, any>): Record<string, unknown> {
+  const inputTokens = Number(usage.prompt_tokens ?? usage.input_tokens ?? 0)
+  const outputTokens = Number(usage.completion_tokens ?? usage.output_tokens ?? 0)
+  const promptDetails = usage.prompt_tokens_details || usage.input_tokens_details
+  const completionDetails = usage.completion_tokens_details || usage.output_tokens_details
+  return {
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    total_tokens: Number(usage.total_tokens ?? inputTokens + outputTokens),
+    ...(promptDetails ? { input_tokens_details: promptDetails } : {}),
+    ...(completionDetails ? { output_tokens_details: completionDetails } : {}),
+  }
+}
+
 export async function* openAiChatSseToResponsesEvents(
   stream: AsyncIterable<Uint8Array>,
   target: ResponsesStreamAdapterTarget,
 ): AsyncGenerator<CanonicalResponsesEvent> {
   const decoder = new TextDecoder()
-  const id = `resp_${Date.now()}`
+  const id = `resp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   const messageId = `msg_${id}`
   let buffer = ''
   let textStarted = false
   let text = ''
   let reasoning = ''
+  let usage: Record<string, unknown> | undefined
   const toolCalls = new Map<number, { id: string; name: string; arguments: string; added: boolean }>()
 
   yield {
@@ -90,6 +105,9 @@ export async function* openAiChatSseToResponsesEvents(
       for (const dataLine of extractSseData(event)) {
         if (!dataLine || dataLine === '[DONE]') continue
         const data = safeJsonParse(dataLine)
+        if (data?.usage && typeof data.usage === 'object') {
+          usage = { ...(usage || {}), ...data.usage }
+        }
         const choice = data?.choices?.[0]
         if (!choice) continue
 
@@ -261,6 +279,7 @@ export async function* openAiChatSseToResponsesEvents(
         status: 'completed',
         model: target.model,
         output,
+        ...(usage ? { usage: openAiChatUsageToResponsesUsage(usage) } : {}),
       },
     },
   }
@@ -302,6 +321,7 @@ export async function* anthropicMessagesSseToResponsesEvents(
   let textStarted = false
   let text = ''
   let reasoning = ''
+  let usage: Record<string, unknown> | undefined
   const toolBlocks = new Map<number, { id: string; name: string; arguments: string; added: boolean }>()
 
   yield {
@@ -372,6 +392,15 @@ export async function* anthropicMessagesSseToResponsesEvents(
         if (eventName === 'message_start' || data?.type === 'message_start') {
           id = String(data?.message?.id || id)
           messageId = `msg_${id}`
+          if (data?.message?.usage && typeof data.message.usage === 'object') {
+            usage = { ...(usage || {}), ...data.message.usage }
+          }
+        }
+
+        if (eventName === 'message_delta' || data?.type === 'message_delta') {
+          if (data?.usage && typeof data.usage === 'object') {
+            usage = { ...(usage || {}), ...data.usage }
+          }
         }
 
         if (eventName === 'content_block_start' || data?.type === 'content_block_start') {
@@ -493,7 +522,14 @@ export async function* anthropicMessagesSseToResponsesEvents(
     type: 'response.completed',
     data: {
       type: 'response.completed',
-      response: { id, object: 'response', status: 'completed', model: target.model, output },
+      response: {
+        id,
+        object: 'response',
+        status: 'completed',
+        model: target.model,
+        output,
+        ...(usage ? { usage } : {}),
+      },
     },
   }
 }

@@ -675,23 +675,6 @@ async function saveToolsVisibility() {
   place-items: center;
 }
 
-.page-header {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 21px 20px;
-  border-bottom: 1px solid $border-color;
-}
-
-.header-title {
-  margin: 0;
-  color: $text-primary;
-  font-size: 16px;
-  font-weight: 600;
-}
-
 .header-actions {
   display: flex;
   align-items: center;
@@ -714,8 +697,8 @@ async function saveToolsVisibility() {
 .summary-card {
   padding: 14px;
   border: 1px solid $border-color;
-  border-radius: 12px;
-  background: $bg-secondary;
+  border-radius: $radius-md;
+  background: $bg-card;
   display: flex;
   flex-direction: column;
   gap: 6px;

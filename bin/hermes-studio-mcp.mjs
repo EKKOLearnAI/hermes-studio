@@ -703,6 +703,71 @@ function findProvidersForModel(payload, model) {
   }
 }
 
+function modelAlias(group, model) {
+  const alias = group.model_meta?.[model]?.alias
+  return typeof alias === 'string' ? alias.trim() : ''
+}
+
+function compactAvailableModelsPayload(payload, args = {}) {
+  if (args.include_details === true) return payload
+
+  const query = String(args.query || '').trim()
+  const queryLower = query.toLowerCase()
+  const limit = boundedInteger(args.limit_per_provider, 20, 1, 100)
+  const groups = availableModelGroups(payload)
+  const providers = []
+  let returnedModelCount = 0
+  let matchedModelCount = 0
+
+  for (const group of groups) {
+    const providerMatches = queryLower &&
+      (`${group.provider} ${group.label}`).toLowerCase().includes(queryLower)
+    const matchedModels = queryLower
+      ? group.models.filter(model => {
+          const alias = modelAlias(group, model)
+          return providerMatches ||
+            model.toLowerCase().includes(queryLower) ||
+            Boolean(alias && alias.toLowerCase().includes(queryLower))
+        })
+      : group.models
+    if (queryLower && matchedModels.length === 0) continue
+
+    const returnedModels = matchedModels.slice(0, limit)
+    const aliases = {}
+    for (const model of returnedModels) {
+      const alias = modelAlias(group, model)
+      if (alias) aliases[model] = alias
+    }
+    matchedModelCount += matchedModels.length
+    returnedModelCount += returnedModels.length
+    providers.push({
+      provider: group.provider,
+      label: group.label || group.provider,
+      model_count: group.models.length,
+      matched_model_count: matchedModels.length,
+      returned_model_count: returnedModels.length,
+      omitted_model_count: Math.max(0, matchedModels.length - returnedModels.length),
+      models: returnedModels,
+      ...(Object.keys(aliases).length ? { aliases } : {}),
+    })
+  }
+
+  const totalModelCount = groups.reduce((sum, group) => sum + group.models.length, 0)
+  return {
+    default: payload?.default || '',
+    default_provider: payload?.default_provider || '',
+    provider_count: groups.length,
+    model_count: totalModelCount,
+    returned_provider_count: providers.length,
+    returned_model_count: returnedModelCount,
+    matched_model_count: queryLower ? matchedModelCount : totalModelCount,
+    limit_per_provider: limit,
+    ...(query ? { query } : {}),
+    providers,
+    note: 'Compact MCP response. Use query to narrow models, limit_per_provider to adjust returned models, or include_details=true to return the raw available-models payload.',
+  }
+}
+
 const tools = [
   {
     name: 'hermes_studio_api_openapi_get',
@@ -962,8 +1027,21 @@ const tools = [
   {
     name: 'hermes_studio_use_available_models',
     toolset: 'use',
-    description: 'List available Hermes Studio models for the selected profile.',
-    inputSchema: inputSchema(),
+    description: 'List available Hermes Studio models for the selected profile as a compact provider/model summary. Use query to narrow results or include_details=true only when raw provider metadata is required.',
+    inputSchema: inputSchema({
+        query: {
+          type: 'string',
+          description: 'Optional case-insensitive provider, model, or alias substring filter.',
+        },
+        limit_per_provider: {
+          type: 'number',
+          description: 'Maximum model ids to return for each provider. Defaults to 20, maximum 100.',
+        },
+        include_details: {
+          type: 'boolean',
+          description: 'Return the raw /api/hermes/available-models payload, including full provider metadata. Defaults to false.',
+        },
+      }),
   },
   {
     name: 'hermes_studio_use_model_provider_get',
@@ -1472,7 +1550,10 @@ async function callTool(name, args = {}) {
     case 'hermes_studio_use_profiles_list':
       return jsonText(await request('/api/hermes/profiles', withAuthArgs(args)))
     case 'hermes_studio_use_available_models':
-      return jsonText(await request('/api/hermes/available-models', withAuthArgs(args)))
+      return jsonText(compactAvailableModelsPayload(
+        await request('/api/hermes/available-models', withAuthArgs(args)),
+        args,
+      ))
     case 'hermes_studio_use_model_provider_get':
       return jsonText(findProvidersForModel(
         await request('/api/hermes/available-models', withAuthArgs(args)),

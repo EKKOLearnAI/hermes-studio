@@ -32,6 +32,15 @@ const mockJobsStore = vi.hoisted(() => ({
   updateJob: vi.fn(),
 }))
 
+const mockAppStore = vi.hoisted(() => ({
+  modelGroups: [
+    { provider: 'openai', label: 'OpenAI', models: ['gpt-4.1', 'gpt-4.1-mini'] },
+    { provider: 'anthropic', label: 'Anthropic', models: ['claude-sonnet-4'] },
+  ],
+  loadModels: vi.fn(async () => undefined),
+  displayModelName: vi.fn((model: string) => model),
+}))
+
 const mockFetchSkills = vi.hoisted(() => vi.fn(async () => ({
   categories: [
     {
@@ -53,6 +62,10 @@ vi.mock('@/stores/hermes/settings', () => ({
 
 vi.mock('@/stores/hermes/jobs', () => ({
   useJobsStore: () => mockJobsStore,
+}))
+
+vi.mock('@/stores/hermes/app', () => ({
+  useAppStore: () => mockAppStore,
 }))
 
 vi.mock('@/api/hermes/jobs', async () => {
@@ -90,9 +103,14 @@ vi.mock('naive-ui', () => ({
     template: '<input class="n-input-number-stub" :value="value" type="number" @input="$emit(\'update:value\', Number($event.target.value))" />',
   }),
   NSelect: defineComponent({
-    props: { value: { required: false }, options: { type: Array, default: () => [] }, multiple: { type: Boolean, default: false } },
+    props: {
+      value: { required: false },
+      options: { type: Array, default: () => [] },
+      multiple: { type: Boolean, default: false },
+      disabled: { type: Boolean, default: false },
+    },
     emits: ['update:value'],
-    template: '<select class="n-select-stub" :multiple="multiple" @change="$emit(\'update:value\', multiple ? Array.from($event.target.selectedOptions).map(option => option.value) : $event.target.value)"><option v-for="option in options" :key="option.value" :value="option.value" :disabled="option.disabled">{{ option.label }}</option></select>',
+    template: '<select class="n-select-stub" :multiple="multiple" :disabled="disabled" @change="$emit(\'update:value\', multiple ? Array.from($event.target.selectedOptions).map(option => option.value) : $event.target.value)"><option v-for="option in options" :key="option.value" :value="option.value" :disabled="option.disabled">{{ option.label }}</option></select>',
   }),
   NButton: defineComponent({
     emits: ['click'],
@@ -117,6 +135,7 @@ describe('JobFormModal deliver targets', () => {
     await flushPromises()
 
     expect(mockSettingsStore.fetchSettings).toHaveBeenCalledOnce()
+    expect(mockAppStore.loadModels).toHaveBeenCalledOnce()
   })
 
   it('shows every supported platform channel in deliver target options', async () => {
@@ -132,7 +151,7 @@ describe('JobFormModal deliver targets', () => {
     await flushPromises()
 
     expect(mockSettingsStore.fetchSettings).not.toHaveBeenCalled()
-    const labels = wrapper.findAll('.n-select-stub')[2].text()
+    const labels = wrapper.findAll('.n-select-stub')[4].text()
     expect(labels).toContain('Telegram')
     expect(labels).toContain('Discord')
     expect(labels).toContain('Slack')
@@ -144,7 +163,7 @@ describe('JobFormModal deliver targets', () => {
     expect(labels).toContain('DingTalk')
     expect(labels).toContain('QQBot')
 
-    const options = wrapper.findAll('.n-select-stub')[2].findAll('option')
+    const options = wrapper.findAll('.n-select-stub')[4].findAll('option')
     const optionByValue = Object.fromEntries(options.map(option => [option.attributes('value'), option]))
     expect(optionByValue.telegram.attributes('disabled')).toBeUndefined()
     expect(optionByValue.qqbot.attributes('disabled')).toBeUndefined()
@@ -164,7 +183,7 @@ describe('JobFormModal deliver targets', () => {
     await inputs[0].setValue('Daily research')
     await inputs[1].setValue('0 9 * * *')
     await inputs[2].setValue('summarize updates')
-    await wrapper.findAll('.n-select-stub')[1].setValue(['planner', 'reviewer'])
+    await wrapper.findAll('.n-select-stub')[3].setValue(['planner', 'reviewer'])
     await wrapper.findAll('.n-button-stub')[1].trigger('click')
     await flushPromises()
 
@@ -175,6 +194,32 @@ describe('JobFormModal deliver targets', () => {
       deliver: 'origin',
       skills: ['planner', 'reviewer'],
       repeat: undefined,
+      provider: undefined,
+      model: undefined,
     })
+  })
+
+  it('submits selected provider and model when creating a job', async () => {
+    mockSettingsStore.platforms = { telegram: { token: 'telegram-token' } }
+    mockJobsStore.createJob.mockResolvedValue({ id: 'job-1' })
+    const wrapper = mount(JobFormModal, {
+      props: { jobId: null },
+    })
+
+    await flushPromises()
+    const inputs = wrapper.findAll('.n-input-stub')
+    await inputs[0].setValue('Daily research')
+    await inputs[1].setValue('0 9 * * *')
+    await inputs[2].setValue('summarize updates')
+    await wrapper.findAll('.n-select-stub')[0].setValue('openai')
+    await flushPromises()
+    await wrapper.findAll('.n-select-stub')[1].setValue('gpt-4.1-mini')
+    await wrapper.findAll('.n-button-stub')[1].trigger('click')
+    await flushPromises()
+
+    expect(mockJobsStore.createJob).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'openai',
+      model: 'gpt-4.1-mini',
+    }))
   })
 })

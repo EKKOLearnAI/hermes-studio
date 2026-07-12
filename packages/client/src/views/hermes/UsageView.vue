@@ -6,6 +6,7 @@ import { useUsageStore } from '@/stores/hermes/usage'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import StatCards from '@/components/hermes/usage/StatCards.vue'
 import ModelBreakdown from '@/components/hermes/usage/ModelBreakdown.vue'
+import AgentBreakdown from '@/components/hermes/usage/AgentBreakdown.vue'
 import DailyTrend from '@/components/hermes/usage/DailyTrend.vue'
 
 const { t } = useI18n()
@@ -72,6 +73,7 @@ onMounted(() => {
       <template v-else-if="usageStore.hasData">
         <StatCards />
         <ModelBreakdown />
+        <AgentBreakdown />
         <DailyTrend />
       </template>
 
@@ -89,23 +91,6 @@ onMounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
-}
-
-.page-header {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 21px 20px;
-  border-bottom: 1px solid $border-color;
-}
-
-.header-title {
-  margin: 0;
-  color: $text-primary;
-  font-size: 16px;
-  font-weight: 600;
 }
 
 .usage-toolbar,

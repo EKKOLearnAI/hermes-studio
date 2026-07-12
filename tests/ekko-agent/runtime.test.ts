@@ -92,6 +92,63 @@ describe('ekko-agent runtime', () => {
     expect(events).toEqual(['run.started', 'model.started', 'context.estimated', 'model.message', 'run.completed'])
   })
 
+  it('emits one model usage event for each completed non-streaming model call', async () => {
+    const client = modelClient(() => ({
+      content: 'hello',
+      usage: {
+        inputTokens: 10,
+        outputTokens: 4,
+        cacheReadTokens: 6,
+        reasoningTokens: 2,
+      },
+    }))
+    const runtime = new AgentRuntime({ modelClient: client, tools: new AgentToolRegistry() })
+    const usageEvents: any[] = []
+
+    await runtime.run({
+      messages: ['hi'],
+      onEvent: event => {
+        if (event.type === 'model.usage') usageEvents.push(event)
+      },
+    })
+
+    expect(usageEvents).toEqual([{
+      type: 'model.usage',
+      runId: expect.any(String),
+      step: 1,
+      usage: {
+        inputTokens: 10,
+        outputTokens: 4,
+        cacheReadTokens: 6,
+        reasoningTokens: 2,
+      },
+    }])
+  })
+
+  it('collapses repeated streaming usage updates into one event per model call', async () => {
+    const client = streamingModelClient([
+      { type: 'text-delta', text: 'ok' },
+      { type: 'usage', usage: { inputTokens: 8, outputTokens: 1 } },
+      { type: 'usage', usage: { inputTokens: 8, outputTokens: 2, cacheReadTokens: 5 } },
+      { type: 'done', response: { finishReason: 'stop' } },
+    ])
+    const runtime = new AgentRuntime({ modelClient: client, tools: new AgentToolRegistry() })
+    const usageEvents: any[] = []
+
+    await runtime.run({
+      messages: ['hi'],
+      onEvent: event => {
+        if (event.type === 'model.usage') usageEvents.push(event)
+      },
+    })
+
+    expect(usageEvents).toHaveLength(1)
+    expect(usageEvents[0]).toMatchObject({
+      step: 1,
+      usage: { inputTokens: 8, outputTokens: 2, cacheReadTokens: 5 },
+    })
+  })
+
   it('emits model reasoning before the assistant message', async () => {
     const client = modelClient(() => ({
       content: 'answer',

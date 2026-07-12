@@ -113,7 +113,7 @@ async function handleDownload(entry: FileEntry) {
           <div class="file-actions">
             <NButton v-if="isPreviewableFile(entry.name) && !entry.isDir" size="tiny" quaternary @click.stop="handlePreview(entry)" :title="t('files.preview')">👁️</NButton>
             <NButton v-if="isTextFile(entry.name) && !entry.isDir" size="tiny" quaternary @click.stop="filesStore.openEditor(entry.path)" :title="t('files.edit')">✏️</NButton>
-            <NButton v-if="!entry.isDir" size="tiny" quaternary @click.stop="handleDownload(entry)" :title="t('files.download')">⬇️</NButton>
+            <NButton v-if="!filesStore.currentWorkspaceSessionId && !entry.isDir" size="tiny" quaternary @click.stop="handleDownload(entry)" :title="t('files.download')">⬇️</NButton>
           </div>
         </div>
       </div>

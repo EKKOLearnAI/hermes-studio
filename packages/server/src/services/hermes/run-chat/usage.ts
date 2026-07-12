@@ -8,6 +8,7 @@ import {
 } from '../../../db/hermes/session-store'
 import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
+import { truncateToolResultForContext } from '../../../lib/tool-result-context'
 import { logger } from '../../logger'
 import type { SessionState } from './types'
 
@@ -20,15 +21,13 @@ type UsageTokenMessage = {
 export interface CalculatedUsage {
   inputTokens: number
   outputTokens: number
+  contextInputTokens?: number
+  contextOutputTokens?: number
   /**
    * False means the database/token calculation failed and the values should
    * not be written back as a fresh usage snapshot.
    */
   valid: boolean
-}
-
-interface CalcUsageOptions {
-  emit?: boolean
 }
 
 function contentToUsageText(content: unknown): string {
@@ -58,38 +57,50 @@ export async function calcAndUpdateUsage(
   sid: string,
   state: SessionState,
   emit: (event: string, payload: any) => void,
-  options: CalcUsageOptions = {},
+  options: { truncateToolResultsForContext?: boolean; emit?: boolean } = {},
 ): Promise<CalculatedUsage> {
   try {
     const detail = getSessionDetail(sid)
-    const msgs = detail?.messages
+    const storedMessages = detail?.messages
       ?.filter(m => m.role === 'user' || m.role === 'assistant' || m.role === 'tool') || []
-
     const snapshot = getCompressionSnapshot(sid)
-    let inputTokens: number
-    let outputTokens: number
-    if (snapshot && msgs.length && snapshot.lastMessageIndex >= 0 && snapshot.lastMessageIndex < msgs.length) {
-      const newMessages = msgs.slice(snapshot.lastMessageIndex + 1)
-      const newUsage = estimateUsageTokensFromMessages(newMessages)
-      inputTokens = countTokens(SUMMARY_PREFIX + snapshot.summary) +
-        newUsage.inputTokens
-      outputTokens = newUsage.outputTokens
-    } else {
-      const usage = estimateUsageTokensFromMessages(msgs)
-      inputTokens = usage.inputTokens
-      outputTokens = usage.outputTokens
+    const estimateSnapshotUsage = (messages: typeof storedMessages) => {
+      if (snapshot && messages.length && snapshot.lastMessageIndex >= 0 && snapshot.lastMessageIndex < messages.length) {
+        const newMessages = messages.slice(snapshot.lastMessageIndex + 1)
+        const newUsage = estimateUsageTokensFromMessages(newMessages)
+        return {
+          inputTokens: countTokens(SUMMARY_PREFIX + snapshot.summary) + newUsage.inputTokens,
+          outputTokens: newUsage.outputTokens,
+        }
+      }
+      return estimateUsageTokensFromMessages(messages)
     }
-    state.inputTokens = inputTokens
-    state.outputTokens = outputTokens
+    const usage = estimateSnapshotUsage(storedMessages)
+    const contextUsage = options.truncateToolResultsForContext
+      ? estimateSnapshotUsage(storedMessages.map(message => message.role === 'tool'
+        ? { ...message, content: truncateToolResultForContext(message.content || '') }
+        : message))
+      : undefined
+    state.inputTokens = usage.inputTokens
+    state.outputTokens = usage.outputTokens
     if (options.emit !== false) {
       emit('usage.updated', {
         event: 'usage.updated',
         session_id: sid,
-        inputTokens,
-        outputTokens,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
       })
     }
-    return { inputTokens, outputTokens, valid: true }
+    return {
+      ...usage,
+      ...(contextUsage
+        ? {
+            contextInputTokens: contextUsage.inputTokens,
+            contextOutputTokens: contextUsage.outputTokens,
+          }
+        : {}),
+      valid: true,
+    }
   } catch (err: any) {
     logger.warn(err, '[chat-run-socket] failed to calculate usage for session %s', sid)
     return {

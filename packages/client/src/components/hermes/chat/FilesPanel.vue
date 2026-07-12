@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useI18n } from 'vue-i18n'
 import { NButton } from 'naive-ui'
@@ -17,6 +17,11 @@ import type { FileEntry } from '@/api/hermes/files'
 const filesStore = useFilesStore()
 const { t } = useI18n()
 
+const props = defineProps<{
+  workspaceSessionId?: string | null
+  workspace?: string | null
+}>()
+
 const contextMenuRef = ref<InstanceType<typeof FileContextMenu> | null>(null)
 const showUpload = ref(false)
 const showRenameModal = ref(false)
@@ -24,6 +29,7 @@ const renameMode = ref<'newFile' | 'newFolder' | 'rename'>('newFile')
 const renameEntry = ref<FileEntry | null>(null)
 const renameTargetPath = ref<string | null>(null)
 const showSidebar = ref(false)
+const lastStandardPath = ref('')
 
 function handleContextMenu(e: MouseEvent, entry: FileEntry) {
   contextMenuRef.value?.show(e, entry)
@@ -57,8 +63,26 @@ function handleRename(entry: FileEntry) {
   showRenameModal.value = true
 }
 
+watch(
+  () => [props.workspaceSessionId, props.workspace] as const,
+  ([workspaceSessionId, workspace]) => {
+    if (workspaceSessionId && workspace) {
+      if (!filesStore.currentWorkspaceSessionId) lastStandardPath.value = filesStore.currentPath
+      void filesStore.fetchEntries('', { workspaceSessionId })
+      return
+    }
+    if (filesStore.currentWorkspaceSessionId) {
+      void filesStore.fetchEntries(lastStandardPath.value, { profile: null, workspaceSessionId: null })
+    }
+  },
+)
+
 onMounted(() => {
-  filesStore.fetchEntries('', { profile: null })
+  if (props.workspaceSessionId && props.workspace) {
+    void filesStore.fetchEntries('', { workspaceSessionId: props.workspaceSessionId })
+  } else if (!filesStore.entries.length && !filesStore.loading) {
+    void filesStore.fetchEntries('', { profile: null, workspaceSessionId: null })
+  }
 })
 </script>
 
@@ -73,7 +97,7 @@ onMounted(() => {
       class="files-tree-panel"
       :class="{ 'mobile-visible': showSidebar }"
     >
-      <FileTree />
+      <FileTree :workspace-key="workspace" />
     </div>
     <div class="files-main-panel">
       <div class="main-toolbar">
@@ -91,10 +115,15 @@ onMounted(() => {
           {{ t('files.fileTree') }}
         </NButton>
         <FileToolbar
+          :allow-upload="!workspace"
           @show-new-file="handleShowNewFile"
           @show-new-folder="handleShowNewFolder"
           @show-upload="showUpload = true"
         />
+      </div>
+      <div v-if="workspace" class="workspace-context" :title="workspace">
+        <span class="workspace-context-label">{{ t('chat.workspace') }}</span>
+        <span class="workspace-context-path">{{ workspace }}</span>
       </div>
       <FileBreadcrumb />
       <div class="files-content">
@@ -193,6 +222,30 @@ onMounted(() => {
     padding: 8px 8px;
     flex-wrap: wrap;
   }
+}
+
+.workspace-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 16px 4px;
+  color: $text-secondary;
+  font-size: 12px;
+}
+
+.workspace-context-label {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: $text-muted;
+}
+
+.workspace-context-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: $font-code;
 }
 
 .sidebar-toggle {

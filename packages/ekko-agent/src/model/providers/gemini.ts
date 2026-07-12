@@ -51,6 +51,8 @@ interface GeminiResponse {
     promptTokenCount?: number
     candidatesTokenCount?: number
     totalTokenCount?: number
+    cachedContentTokenCount?: number
+    thoughtsTokenCount?: number
   }
 }
 
@@ -180,6 +182,8 @@ function normalizeUsage(usage: NonNullable<GeminiResponse['usageMetadata']>): Mo
     inputTokens: usage.promptTokenCount,
     outputTokens: usage.candidatesTokenCount,
     totalTokens: usage.totalTokenCount,
+    cacheReadTokens: usage.cachedContentTokenCount,
+    reasoningTokens: usage.thoughtsTokenCount,
   }
 }
 

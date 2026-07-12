@@ -482,15 +482,10 @@ run(pyBin, [
 ])
 
 const hermesBin = TARGET_OS === 'win32'
-  ? resolve(PY_DIR, 'Scripts', 'hermes.exe')
+  ? resolve(PY_DIR, 'Scripts', 'hermes.cmd')
   : resolve(PY_DIR, 'bin', 'hermes')
 const hermesCheckCommand = TARGET_OS === 'win32' ? pyBin : hermesBin
 const hermesCheckArgs = TARGET_OS === 'win32' ? ['-m', 'hermes_cli.main', '--version'] : ['--version']
-
-if (!existsSync(hermesBin)) {
-  console.error(`hermes binary not found at ${hermesBin} after install`)
-  process.exit(1)
-}
 
 // hermes-web-ui's agent-bridge searches for `run_agent.py` at <python_root>/run_agent.py
 // (and a few neighbouring dirs). pip places it at site-packages/run_agent.py — surface
@@ -521,17 +516,26 @@ function siteRunAgentRelative() {
 // shebang to the build-time Python path) with a relative wrapper so the
 // bundled venv works after being moved into the .app/.exe payload.
 if (TARGET_OS === 'win32') {
-  // Windows: pip generates a .exe launcher that embeds a relative shebang
-  // already. Add a .cmd wrapper that prefers the colocated python.exe.
-  const cmdPath = resolve(PY_DIR, 'Scripts', 'hermes.cmd')
-  writeFileSync(
-    cmdPath,
-    [
-      '@echo off',
-      'set "PY=%~dp0..\\python.exe"',
-      '"%PY%" -m hermes_cli.main %*',
-    ].join('\r\n'),
-  )
+  // Windows: uv/pip .exe launchers can embed build-machine paths. Replace the
+  // Hermes entry points with relocatable .cmd wrappers and remove the .exe
+  // trampolines so PATHEXT lookups cannot pick a stale launcher first.
+  const wrappers = [
+    ['hermes', 'hermes_cli.main'],
+    ['hermes-agent', 'run_agent'],
+    ['hermes-acp', 'acp_adapter.entry'],
+  ]
+  for (const [name, mod] of wrappers) {
+    const cmdPath = resolve(PY_DIR, 'Scripts', `${name}.cmd`)
+    writeFileSync(
+      cmdPath,
+      [
+        '@echo off',
+        'set "PY=%~dp0..\\python.exe"',
+        `"%PY%" -m ${mod} %*`,
+      ].join('\r\n'),
+    )
+    rmSync(resolve(PY_DIR, 'Scripts', `${name}.exe`), { force: true })
+  }
 } else {
   const launcher = [
     '#!/bin/sh',
@@ -555,6 +559,11 @@ if (TARGET_OS === 'win32') {
 }
 
 console.log(`✓ hermes installed at ${hermesBin} (relocatable launcher)`)
+
+if (!existsSync(hermesBin)) {
+  console.error(`hermes binary not found at ${hermesBin} after install`)
+  process.exit(1)
+}
 
 run(hermesCheckCommand, hermesCheckArgs)
 

@@ -12,7 +12,8 @@ import type { ChatCodingAgentId } from './types'
 import { writeModelRunProfileToken } from './model-run-prompt'
 import type { AuthenticatedUser } from '../../../middleware/user-auth'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
-import { getSession } from '../../../db/hermes/session-store'
+import { getSession, updateSession } from '../../../db/hermes/session-store'
+import { logger } from '../../logger'
 
 export interface CodingAgentRunSocketData {
   input: string | ContentBlock[]
@@ -64,11 +65,13 @@ export async function handleCodingAgentRun(
   const storedSession = getSession(sessionId)
   const launchProvider = data.provider || (mode === 'scoped' ? storedSession?.provider || undefined : undefined)
   const launchModel = data.model || (mode === 'scoped' ? storedSession?.model || undefined : undefined)
+  const launchApiMode = data.apiMode || data.api_mode || (mode === 'scoped' ? storedSession?.api_mode || undefined : undefined)
   if (runId && !codingAgentRunManager.isSessionLaunchCompatible(sessionId, {
     agentId,
     mode,
     provider: launchProvider,
     model: launchModel,
+    apiMode: launchApiMode,
     reasoningEffort: data.reasoning_effort,
   })) {
     codingAgentRunManager.stop(sessionId, { reportClosed: false })
@@ -84,7 +87,7 @@ export async function handleCodingAgentRun(
       workspace: data.workspace,
       baseUrl: data.baseUrl || data.base_url,
       apiKey: data.apiKey || data.api_key,
-      apiMode: data.apiMode || data.api_mode,
+      apiMode: launchApiMode,
       reasoningEffort: data.reasoning_effort,
       sessionSource: data.session_source,
     }, state)
@@ -93,6 +96,15 @@ export async function handleCodingAgentRun(
 
   state.isWorking = true
   state.runId = runId
+  try {
+    updateSession(sessionId, {
+      ended_at: null,
+      end_reason: null,
+      last_active: Math.floor(Date.now() / 1000),
+    })
+  } catch (err) {
+    logger.warn(err, '[chat-run-socket] failed to reopen coding-agent session %s', sessionId)
+  }
 
   try {
     const inputText = contentBlocksToString(data.input)
@@ -112,6 +124,14 @@ export async function handleCodingAgentRun(
       state.activeRunMarker = undefined
       state.events = []
       state.responseRun = undefined
+      try {
+        updateSession(sessionId, {
+          ended_at: Math.floor(Date.now() / 1000),
+          end_reason: 'error',
+        })
+      } catch (updateErr) {
+        logger.warn(updateErr, '[chat-run-socket] failed to write coding-agent send error end marker for %s', sessionId)
+      }
     }
     throw err
   }

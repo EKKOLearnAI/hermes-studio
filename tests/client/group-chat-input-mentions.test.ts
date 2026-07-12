@@ -66,6 +66,29 @@ describe('GroupChatInput mentions', () => {
     await nextTick()
 
     expect((wrapper.get('textarea').element as HTMLTextAreaElement).style.height).toBe('168px')
+    expect((wrapper.get('.input-wrapper').element as HTMLElement).style.minHeight).toBe('231px')
+  })
+
+  it('applies display setting changes after a manual resize', async () => {
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = {}
+
+    const wrapper = mount(GroupChatInput, {
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+    const resizeHandle = wrapper.get('.resize-handle')
+
+    await resizeHandle.trigger('mousedown', { clientY: 100 })
+    document.dispatchEvent(new MouseEvent('mousemove', { clientY: 50 }))
+    document.dispatchEvent(new MouseEvent('mouseup'))
+    await nextTick()
+
+    settingsStore.display.chat_input_height = 216
+    await nextTick()
+
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).style.height).toBe('216px')
+    expect((wrapper.get('.input-wrapper').element as HTMLElement).style.minHeight).toBe('279px')
   })
 
   it('preserves mobile auto height when a desktop preference is configured', async () => {

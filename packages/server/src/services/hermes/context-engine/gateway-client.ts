@@ -4,7 +4,6 @@ import {
     buildFullSummaryPrompt,
     buildIncrementalUpdatePrompt,
 } from './prompt'
-import { updateUsage } from '../../../db/hermes/usage-store'
 import { logger } from '../../logger'
 import { AgentBridgeClient, type AgentBridgeRunResult } from '../agent-bridge'
 
@@ -70,18 +69,6 @@ export class GatewaySummarizer implements GatewayCaller {
             const output = String(payload?.final_response || result.output || '').trim()
             if (!output) throw new Error('Empty summarization response')
 
-            const usage = payload?.usage || payload?.response?.usage
-            if (usage) {
-                updateUsage(roomId, {
-                    inputTokens: usage.input_tokens ?? usage.inputTokens ?? 0,
-                    outputTokens: usage.output_tokens ?? usage.outputTokens ?? 0,
-                    cacheReadTokens: usage.cache_read_tokens ?? usage.cacheReadTokens ?? 0,
-                    cacheWriteTokens: usage.cache_write_tokens ?? usage.cacheWriteTokens ?? 0,
-                    reasoningTokens: usage.reasoning_tokens ?? usage.reasoningTokens ?? 0,
-                    model: payload?.model || payload?.response?.model || '',
-                    profile,
-                })
-            }
             logger.debug(`[GatewaySummarizer] Bridge compression completed for room ${roomId} (profile=${profile})`)
             return { summary: output, sessionId }
         } finally {

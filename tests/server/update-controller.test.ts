@@ -11,7 +11,11 @@ type UpdateControllerMocks = {
   appendFileSync: ReturnType<typeof vi.fn>
 }
 
-async function loadUpdateController(overrides: Partial<UpdateControllerMocks> = {}) {
+type LoadUpdateControllerOptions = Partial<UpdateControllerMocks> & {
+  isDocker?: boolean
+}
+
+async function loadUpdateController(overrides: LoadUpdateControllerOptions = {}) {
   const execFile = overrides.execFile ?? vi.fn((_command: string, _args: string[], _options: any, callback: any) => callback(null, '', ''))
   const execFileSync = overrides.execFileSync ?? vi.fn().mockReturnValue('updated')
   const unref = overrides.unref ?? vi.fn()
@@ -35,6 +39,9 @@ async function loadUpdateController(overrides: Partial<UpdateControllerMocks> = 
     readFileSync,
     rmSync: vi.fn(),
     writeFileSync: vi.fn(),
+  }))
+  vi.doMock('../../packages/server/src/services/runtime-environment', () => ({
+    isDockerContainer: () => overrides.isDocker === true,
   }))
 
   const mod = await import('../../packages/server/src/controllers/update')
@@ -85,6 +92,7 @@ describe('update controller', () => {
     vi.useRealTimers()
     vi.doUnmock('child_process')
     vi.doUnmock('fs')
+    vi.doUnmock('../../packages/server/src/services/runtime-environment')
     vi.unstubAllGlobals()
     if (originalPort === undefined) {
       delete process.env.PORT
@@ -214,12 +222,38 @@ describe('update controller', () => {
     expect(exitSpy).not.toHaveBeenCalled()
   })
 
+  it('rejects in-container npm updates with Docker recreation guidance', async () => {
+    const { handleUpdate, mocks } = await loadUpdateController({ isDocker: true })
+    const ctx = createMockCtx()
+
+    await handleUpdate(ctx)
+
+    expect(ctx.status).toBe(400)
+    expect(ctx.body).toEqual({
+      success: false,
+      code: 'docker_environment',
+      message: expect.stringContaining('docker compose pull'),
+    })
+    expect(mocks.execFileSync).not.toHaveBeenCalled()
+    expect(mocks.spawn).not.toHaveBeenCalled()
+  })
+
   it('loads preview tags through async git with a short timeout', async () => {
     process.env.HERMES_WEB_UI_PREVIEW_REPO = 'https://github.com/EKKOLearnAI/hermes-studio'
     const execFile = vi.fn((_command: string, _args: string[], _options: any, callback: any) => {
       callback(null, [
+        'ghi789\trefs/tags/v0.6.9',
+        'jkl012\trefs/tags/v0.6.10-beta',
         'abc123\trefs/tags/v0.6.6',
-        'def456\trefs/tags/v0.6.7',
+        'def456\trefs/tags/v0.6.10',
+        'mno345\trefs/tags/v0.6.28',
+        'pqr678\trefs/tags/v0.6.6-linux-desktop-fixes-test-20260530200253',
+        'stu901\trefs/tags/0.6.29',
+        'vwx234\trefs/tags/v0.6.27',
+        'yz0567\trefs/tags/v0.6.26',
+        'bcd890\trefs/tags/v0.6.25',
+        'efg123\trefs/tags/v0.6.24',
+        'hij456\trefs/tags/v0.6.23',
       ].join('\n'), '')
     })
     const execFileSync = vi.fn(() => 'git version 2.0.0')
@@ -232,8 +266,14 @@ describe('update controller', () => {
     expect(ctx.body).toEqual({
       tags: [
         { name: 'main', sha: '' },
-        { name: 'v0.6.7', sha: 'def456' },
-        { name: 'v0.6.6', sha: 'abc123' },
+        { name: 'v0.6.28', sha: 'mno345' },
+        { name: 'v0.6.27', sha: 'vwx234' },
+        { name: 'v0.6.26', sha: 'yz0567' },
+        { name: 'v0.6.25', sha: 'bcd890' },
+        { name: 'v0.6.24', sha: 'efg123' },
+        { name: 'v0.6.23', sha: 'hij456' },
+        { name: 'v0.6.10', sha: 'def456' },
+        { name: 'v0.6.10-beta', sha: 'jkl012' },
       ],
     })
     expect(mocks.execFile).toHaveBeenCalledWith(
@@ -253,8 +293,18 @@ describe('update controller', () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => [
-        { name: 'v0.6.7', commit: { sha: 'def456' } },
+        { name: 'v0.6.9', commit: { sha: 'ghi789' } },
         { name: 'v0.6.6', commit: { sha: 'abc123' } },
+        { name: 'v0.6.10-beta', commit: { sha: 'jkl012' } },
+        { name: 'v0.6.28', commit: { sha: 'mno345' } },
+        { name: 'v0.6.10', commit: { sha: 'def456' } },
+        { name: 'v0.6.6-linux-desktop-fixes-test-20260530200253', commit: { sha: 'pqr678' } },
+        { name: '0.6.29', commit: { sha: 'stu901' } },
+        { name: 'v0.6.27', commit: { sha: 'vwx234' } },
+        { name: 'v0.6.26', commit: { sha: 'yz0567' } },
+        { name: 'v0.6.25', commit: { sha: 'bcd890' } },
+        { name: 'v0.6.24', commit: { sha: 'efg123' } },
+        { name: 'v0.6.23', commit: { sha: 'hij456' } },
       ],
     }))
     vi.stubGlobal('fetch', fetchMock)
@@ -267,8 +317,14 @@ describe('update controller', () => {
     expect(ctx.body).toEqual({
       tags: [
         { name: 'main', sha: '' },
-        { name: 'v0.6.7', sha: 'def456' },
-        { name: 'v0.6.6', sha: 'abc123' },
+        { name: 'v0.6.28', sha: 'mno345' },
+        { name: 'v0.6.27', sha: 'vwx234' },
+        { name: 'v0.6.26', sha: 'yz0567' },
+        { name: 'v0.6.25', sha: 'bcd890' },
+        { name: 'v0.6.24', sha: 'efg123' },
+        { name: 'v0.6.23', sha: 'hij456' },
+        { name: 'v0.6.10', sha: 'def456' },
+        { name: 'v0.6.10-beta', sha: 'jkl012' },
       ],
     })
     expect(fetchMock).toHaveBeenCalledWith(

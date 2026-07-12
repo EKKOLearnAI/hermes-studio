@@ -21,7 +21,8 @@ function bundledCliPythonForWindows(hermesBin: string): string | null {
   const envPython = process.env.HERMES_AGENT_CLI_PYTHON?.trim()
   if (envPython) return envPython
 
-  if (basename(hermesBin).toLowerCase() !== 'hermes.exe') return null
+  const launcher = basename(hermesBin).toLowerCase()
+  if (launcher !== 'hermes.exe' && launcher !== 'hermes.cmd') return null
   const python = resolve(dirname(hermesBin), '..', 'python.exe')
   return existsSync(python) ? python : null
 }

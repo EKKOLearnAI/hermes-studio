@@ -189,6 +189,68 @@ describe('bridge run final context usage', () => {
     for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
   })
 
+  it('reopens an ended bridge session when starting a new run', async () => {
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      model: 'gpt-test',
+      provider: 'openai',
+      workspace: '/tmp/hermes-bridge-final-context/default/workspace',
+      ended_at: 1_770_000_000,
+      end_reason: 'complete',
+    })
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    const sessionMap = new Map([['session-1', state]])
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({
+        token_count: 12345,
+        fixed_context_tokens: 12327,
+        message_count: 2,
+        tool_count: 4,
+        system_prompt_chars: 13,
+      }),
+      streamOutput: vi.fn(async function* () {
+        yield { run_id: 'run-1', done: true, status: 'completed', output: 'done' }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      { input: 'hello again', session_id: 'session-1' },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    const reopenCallIndex = updateSessionMock.mock.calls.findIndex(([sessionId, data]) => (
+      sessionId === 'session-1' &&
+      data.ended_at === null &&
+      data.end_reason === null &&
+      typeof data.last_active === 'number'
+    ))
+    const endedCallIndex = updateSessionMock.mock.calls.findIndex(([sessionId, data]) => (
+      sessionId === 'session-1' &&
+      typeof data.ended_at === 'number' &&
+      data.end_reason === 'complete'
+    ))
+
+    expect(reopenCallIndex).toBeGreaterThanOrEqual(0)
+    expect(endedCallIndex).toBeGreaterThanOrEqual(0)
+    expect(reopenCallIndex).toBeLessThan(endedCallIndex)
+    expect(emit).toHaveBeenCalledWith('run.completed', expect.objectContaining({
+      output: 'done',
+    }))
+  })
+
   it('refreshes full context tokens when a bridge run completes', async () => {
     const emit = vi.fn()
     const nsp = makeNamespace(emit)
@@ -329,7 +391,7 @@ describe('bridge run final context usage', () => {
     )
   })
 
-  it('uses result.final_response for moa when a terminal bridge chunk has no streamed output', async () => {
+  it('uses result.final_response for moa and records only its exact model-call event', async () => {
     resolveBridgeRunModelConfigMock.mockResolvedValueOnce({ model: 'default', provider: 'moa' })
     const emit = vi.fn()
     const nsp = makeNamespace(emit)
@@ -351,7 +413,25 @@ describe('bridge run final context usage', () => {
           done: true,
           status: 'completed',
           output: '',
-          result: { final_response: '你好呀！' },
+          events: [{
+            event: 'model.usage',
+            api_request_id: 'request-1',
+            turn_id: 'turn-1',
+            api_call_count: 1,
+            model: 'moa-aggregator',
+            provider: 'openai',
+            usage: {
+              input_tokens: 120,
+              output_tokens: 30,
+              cache_read_tokens: 20,
+              cache_write_tokens: 4,
+              reasoning_tokens: 6,
+            },
+          }],
+          result: {
+            final_response: '你好呀！',
+            usage: { input_tokens: 999, output_tokens: 999 },
+          },
         }
       }),
     } as any
@@ -374,6 +454,22 @@ describe('bridge run final context usage', () => {
     expect(emit).toHaveBeenCalledWith('run.completed', expect.objectContaining({
       output: '你好呀！',
     }))
+    expect(updateUsageMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
+      runId: 'run-1:api:request-1',
+      source: 'hermes',
+      usageScope: 'model_call',
+      apiCalls: 1,
+      inputTokens: 120,
+      outputTokens: 30,
+      cacheReadTokens: 20,
+      cacheWriteTokens: 4,
+      reasoningTokens: 6,
+      model: 'moa-aggregator',
+      provider: 'openai',
+      profile: 'default',
+      isEstimated: false,
+    }))
+    expect(updateUsageMock).toHaveBeenCalledTimes(1)
   })
 
   it('does not synthesize non-moa assistant output from result.final_response', async () => {

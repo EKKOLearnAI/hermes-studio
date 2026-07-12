@@ -521,6 +521,7 @@ export class ChatRunSocket {
       parentTitle: sessionDetail?.parent_title || null,
       parentLastMessage: sessionDetail?.parent_last_message || null,
       parentLastMessageRole: sessionDetail?.parent_last_message_role || null,
+      workspace: sessionDetail?.workspace || null,
       isWorking: state.isWorking,
       isAborting: state.isAborting || false,
       events: resumeEvents,

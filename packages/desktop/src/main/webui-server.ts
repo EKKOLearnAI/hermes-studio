@@ -2,7 +2,7 @@ import { ChildProcess, execFile, spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync, readdirSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
-import { dirname, delimiter, join } from 'node:path'
+import { dirname, delimiter, join, resolve } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
 import { app } from 'electron'
@@ -11,7 +11,9 @@ import {
   bundledGit,
   bundledNode,
   gitPathDirs,
-  webuiServerEntry,
+  clearActiveWebUiDirectory,
+  defaultWebuiDir,
+  webuiServerEntryFor,
   webuiDir,
   hermesBin,
   webUiHome,
@@ -305,9 +307,10 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   ensureNativeModules()
   const token = ensureToken()
   currentServerPort = port
-  const entry = webuiServerEntry()
-  if (!existsSync(entry)) {
-    throw new Error(`Web UI server entry not found at ${entry}. Run: npm run build:webui`)
+  const primaryWebUiDir = webuiDir()
+  const primaryEntry = webuiServerEntryFor(primaryWebUiDir)
+  if (!existsSync(primaryEntry)) {
+    throw new Error(`Web UI server entry not found at ${primaryEntry}. Run: npm run build:webui`)
   }
 
   const home = webUiHome()
@@ -403,26 +406,53 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     PATH: runtimePath,
   }
 
+  const fallbackWebUiDir = defaultWebuiDir()
+  try {
+    return await launchWebUiServer(primaryWebUiDir, primaryEntry, env, port)
+  } catch (err) {
+    if (resolve(primaryWebUiDir) === resolve(fallbackWebUiDir)) throw err
+
+    const fallbackEntry = webuiServerEntryFor(fallbackWebUiDir)
+    if (!existsSync(fallbackEntry)) throw err
+
+    console.warn(`[webui] startup failed for active Web UI at ${primaryWebUiDir}; retrying bundled Web UI at ${fallbackWebUiDir}: ${err instanceof Error ? err.message : String(err)}`)
+    clearActiveWebUiDirectory(primaryWebUiDir)
+    return await launchWebUiServer(fallbackWebUiDir, fallbackEntry, env, port)
+  }
+}
+
+async function launchWebUiServer(webUiDirectory: string, entry: string, env: NodeJS.ProcessEnv, port: number): Promise<string> {
   serverProc = spawn(process.execPath, [entry], {
-    cwd: webuiDir(),
+    cwd: webUiDirectory,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
 
+  const launchedProc = serverProc
   const bridgeStartup = createAgentBridgeStartupTracker()
 
-  serverProc.stdout?.on('data', (chunk: Buffer) => {
+  launchedProc.stdout?.on('data', (chunk: Buffer) => {
     bridgeStartup.observe(chunk)
-    process.stdout.write(`[webui] ${chunk}`)
+    try {
+      process.stdout.write(`[webui] ${chunk}`)
+    } catch {
+      /* EPIPE: parent stdout closed, ignore */
+    }
   })
-  serverProc.stderr?.on('data', (chunk: Buffer) => {
+  launchedProc.stdout?.on('error', () => { /* EPIPE: ignore */ })
+  launchedProc.stderr?.on('data', (chunk: Buffer) => {
     bridgeStartup.observe(chunk)
-    process.stderr.write(`[webui] ${chunk}`)
+    try {
+      process.stderr.write(`[webui] ${chunk}`)
+    } catch {
+      /* EPIPE: parent stderr closed, ignore */
+    }
   })
-  serverProc.on('exit', (code, signal) => {
+  launchedProc.stderr?.on('error', () => { /* EPIPE: ignore */ })
+  launchedProc.on('exit', (code, signal) => {
     console.error(`[webui] server exited code=${code} signal=${signal}`)
-    serverProc = null
+    if (serverProc === launchedProc) serverProc = null
     if (!app.isReady() || code !== 0) {
       // Best-effort: if server dies abnormally during startup, surface to user
     }
@@ -430,7 +460,18 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
 
   const timeoutMs = readyTimeoutMs()
   const bridgeReady = bridgeStartup.wait(timeoutMs)
-  await waitForReady(port, timeoutMs)
+  const exitBeforeReady = new Promise<never>((_, reject) => {
+    launchedProc.once('exit', (code, signal) => {
+      reject(new Error(`Web UI server exited before becoming ready code=${code} signal=${signal}`))
+    })
+  })
+  try {
+    await Promise.race([waitForReady(port, timeoutMs), exitBeforeReady])
+  } catch (err) {
+    await terminateLaunchedProcess(launchedProc)
+    if (serverProc === launchedProc) serverProc = null
+    throw err
+  }
   const fullStartupTimeoutMs = fullStartupWaitMs()
   if (fullStartupTimeoutMs > 0) {
     await Promise.race([
@@ -446,6 +487,18 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     })
   }
   return getServerUrl(port)
+}
+
+async function terminateLaunchedProcess(proc: ChildProcess): Promise<void> {
+  if (proc.killed || proc.exitCode !== null || proc.signalCode !== null) return
+  await new Promise<void>(resolveDone => {
+    const timer = setTimeout(() => resolveDone(), 3000)
+    proc.once('exit', () => {
+      clearTimeout(timer)
+      resolveDone()
+    })
+    killProcessTree(proc)
+  })
 }
 
 async function waitForReady(port: number, timeoutMs: number): Promise<void> {

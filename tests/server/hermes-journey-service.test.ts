@@ -47,4 +47,22 @@ describe('hermes journey service', () => {
     const { getJourneyGraph } = await import('../../packages/server/src/services/hermes/journey')
     await expect(getJourneyGraph('default')).rejects.toThrow('Hermes journey returned invalid JSON')
   })
+
+  it('asks users to update Hermes when the journey command is unsupported', async () => {
+    mockExecHermes.mockRejectedValueOnce(Object.assign(new Error('exit 2'), {
+      stderr: "usage: hermes [-h] {chat,config}\nhermes: error: argument command: invalid choice: 'journey'",
+    }))
+
+    const { getJourneyGraph } = await import('../../packages/server/src/services/hermes/journey')
+    await expect(getJourneyGraph('default')).rejects.toThrow('Please update Hermes to 0.18.0 or later to use Learning Journey.')
+  })
+
+  it('keeps non-version CLI errors actionable', async () => {
+    mockExecHermes.mockRejectedValueOnce(Object.assign(new Error('exit 1'), {
+      stderr: 'database is locked',
+    }))
+
+    const { getJourneyGraph } = await import('../../packages/server/src/services/hermes/journey')
+    await expect(getJourneyGraph('default')).rejects.toThrow('Failed to load Hermes journey graph: database is locked')
+  })
 })

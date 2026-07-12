@@ -99,6 +99,8 @@ interface OpenAIChatResponse {
     prompt_tokens?: number
     completion_tokens?: number
     total_tokens?: number
+    prompt_tokens_details?: { cached_tokens?: number }
+    completion_tokens_details?: { reasoning_tokens?: number }
   } | null
   error?: {
     message?: string
@@ -336,10 +338,14 @@ function normalizeContent(content: OpenAIMessageContent): string {
 }
 
 function normalizeUsage(usage: NonNullable<OpenAIChatResponse['usage']>): ModelUsage {
+  const cacheReadTokens = usage.prompt_tokens_details?.cached_tokens ?? 0
+  const inputTokens = usage.prompt_tokens ?? 0
   return {
-    inputTokens: usage.prompt_tokens,
+    inputTokens: Math.max(0, inputTokens - cacheReadTokens),
     outputTokens: usage.completion_tokens,
     totalTokens: usage.total_tokens,
+    cacheReadTokens,
+    reasoningTokens: usage.completion_tokens_details?.reasoning_tokens,
   }
 }
 

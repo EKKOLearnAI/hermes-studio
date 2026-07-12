@@ -196,8 +196,10 @@ export class AgentRuntime {
         if (request.stream && modelClient.capabilities.streaming) {
           return await this.streamModelResponse(request, modelClient, runId, step, emit)
         }
+        const response = await modelClient.create(request)
+        if (response.usage) emit({ type: 'model.usage', runId, step, usage: response.usage })
         return {
-          response: await modelClient.create(request),
+          response,
           emittedReasoning: false,
         }
       } catch (error) {
@@ -234,17 +236,20 @@ export class AgentRuntime {
           emit({ type: 'model.reasoning', runId, step, text: event.text })
         } else if (event.type === 'tool-call') {
           emit({ type: 'model.tool_call', runId, step, toolCall: event.toolCall })
-        } else if (event.type === 'usage') {
-          emit({ type: 'model.usage', runId, step, usage: event.usage })
         } else if (event.type === 'error') {
           throw new Error(event.error)
         }
         yield event
       }
     })())
+    if (output.message.usage) {
+      emit({ type: 'model.usage', runId, step, usage: output.message.usage })
+    }
     if (isEmptyModelResponse(output.message)) {
+      const response = await modelClient.create({ ...request, stream: false })
+      if (response.usage) emit({ type: 'model.usage', runId, step, usage: response.usage })
       return {
-        response: await modelClient.create({ ...request, stream: false }),
+        response,
         emittedReasoning: false,
       }
     }

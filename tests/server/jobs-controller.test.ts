@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -189,4 +189,55 @@ describe('Hermes jobs controller', () => {
       )
     }
   })
+
+  it('persists selected provider and model after creating a job without unsupported CLI flags', async () => {
+    testState.execFile.mockImplementation((_bin, args, _opts, cb) => {
+      expect(args).not.toContain('--model')
+      expect(args).not.toContain('--provider')
+      const cronDir = join(tempDir, 'cron')
+      mkdirSync(cronDir, { recursive: true })
+      writeFileSync(join(cronDir, 'jobs.json'), JSON.stringify({
+        jobs: [{
+          id: 'created123456',
+          job_id: 'created123456',
+          name: 'daily',
+          schedule: { kind: 'cron', expr: '0 9 * * *', display: '0 9 * * *' },
+          schedule_display: '0 9 * * *',
+          prompt: 'daily summary',
+          repeat: { times: null, completed: 0 },
+        }],
+      }))
+      cb(null, { stdout: '', stderr: '' })
+    })
+
+    const ctx = createMockCtx({
+      request: { body: { name: 'daily', schedule: '0 9 * * *', prompt: 'daily summary', provider: 'openai', model: 'gpt-4.1-mini' } },
+    })
+    await create(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body.job.provider).toBe('openai')
+    expect(ctx.body.job.model).toBe('gpt-4.1-mini')
+    const persisted = JSON.parse(readFileSync(join(tempDir, 'cron', 'jobs.json'), 'utf-8'))
+    expect(persisted.jobs[0].provider).toBe('openai')
+    expect(persisted.jobs[0].model).toBe('gpt-4.1-mini')
+  })
+
+  it('persists selected provider and model after editing a job', async () => {
+    writeExistingJob(tempDir)
+
+    const ctx = createMockCtx({
+      request: { body: { provider: 'anthropic', model: 'claude-sonnet-4' } },
+    })
+    await update(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(testState.execFile).not.toHaveBeenCalled()
+    expect(ctx.body.job.provider).toBe('anthropic')
+    expect(ctx.body.job.model).toBe('claude-sonnet-4')
+    const persisted = JSON.parse(readFileSync(join(tempDir, 'cron', 'jobs.json'), 'utf-8'))
+    expect(persisted.jobs[0].provider).toBe('anthropic')
+    expect(persisted.jobs[0].model).toBe('claude-sonnet-4')
+  })
+
 })

@@ -29,10 +29,15 @@ interface FlatNode {
 
 const props = defineProps<{
   modelValue: string | null
+  showFavorite?: boolean
+  favorite?: boolean
+  favoriteDisabled?: boolean
+  favoriteTitle?: string
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string | null]
+  'toggle-favorite': []
 }>()
 
 const { t } = useI18n()
@@ -366,7 +371,20 @@ const flatNodes = computed<FlatNode[]>(() => {
     <!-- Selected path display -->
     <div v-if="selectedPath" class="folder-selected">
       <span class="folder-selected-label">{{ t('chat.folderPickerSelected') }}</span>
-      <span class="folder-selected-path">{{ selectedPath }}</span>
+      <span class="folder-selected-path" :title="selectedPath">{{ selectedPath }}</span>
+      <button
+        v-if="props.showFavorite"
+        class="folder-selected-favorite"
+        type="button"
+        :disabled="props.favoriteDisabled"
+        :title="props.favoriteTitle"
+        :aria-label="props.favoriteTitle"
+        @click.stop="emit('toggle-favorite')"
+      >
+        <span class="folder-selected-star" :class="{ 'is-pinned': props.favorite }">
+          {{ props.favorite ? '★' : '☆' }}
+        </span>
+      </button>
     </div>
 
     <NDropdown
@@ -503,7 +521,7 @@ const flatNodes = computed<FlatNode[]>(() => {
   border-radius: 4px;
   font-size: 12px;
   display: flex;
-  gap: 4px;
+  gap: 8px;
   align-items: center;
   min-width: 0;
   flex-shrink: 0;
@@ -516,9 +534,46 @@ const flatNodes = computed<FlatNode[]>(() => {
 
 .folder-selected-path {
   font-family: monospace;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+
+.folder-selected-favorite {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  padding: 0;
+  margin-left: 2px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.55);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s, color 0.15s;
+
+  &:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+    transform: scale(1.08);
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+}
+
+.folder-selected-star {
+  font-size: 16px;
+  line-height: 1;
+
+  &.is-pinned {
+    color: #f5a623;
+  }
 }
 </style>

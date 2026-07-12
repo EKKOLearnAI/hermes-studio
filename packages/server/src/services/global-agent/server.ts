@@ -9,6 +9,7 @@ import { userCanAccessProfile } from '../../db/hermes/users-store'
 import { config } from '../../config'
 import { getChatRunServer } from '../../routes/hermes/chat-run'
 import { transcodeToPcmS16le } from '../hermes/stt-providers/audio-convert'
+import { decodeMcuImaAdpcm, encodeMcuImaAdpcm } from '../hermes/mcu-adpcm'
 import { MCU_TTS_SAMPLE_RATE, mcuPromptText, mcuPromptUrl } from '../hermes/mcu-prompts'
 import { createMcuSpeechSegmenter, normalizeMcuSpeechText } from './mcu-speech-segmenter'
 import type {
@@ -103,6 +104,7 @@ const MCU_FORWARD_EVENTS = [
   'voice.stream.start',
   'voice.stream.chunk',
   'voice.stream.end',
+  'voice.stream.abort',
   'voice.recorded',
   'interaction.status',
   'tool.started',
@@ -158,14 +160,23 @@ interface McuAudioWaiter {
   timer: ReturnType<typeof setTimeout>
 }
 
+interface EnqueuedMcuSpeechSegment {
+  playbackDone: Promise<void>
+}
+
+type McuSpeechSynthesisResult =
+  | { ok: true; audio: { url: string; mimeType: string } }
+  | { ok: false; err: unknown; aborted: boolean }
+
 interface McuVoiceStreamState {
   interactionId: string
   profile: string
+  mimeType: string
   sampleRate: number
   channels: number
   bitsPerSample: number
   bytes: number
-  chunks: Buffer[]
+  chunks: Array<{ offset: number; chunk: Buffer; seq?: number; crc32?: number }>
   userToken: string
 }
 
@@ -352,6 +363,17 @@ function isTextualResponse(contentType: string): boolean {
   return TEXTUAL_RESPONSE_TYPES.some(prefix => lower.startsWith(prefix) || lower.includes(prefix))
 }
 
+function crc32(buffer: Buffer): number {
+  let crc = 0xffffffff
+  for (const byte of buffer) {
+    crc ^= byte
+    for (let i = 0; i < 8; i += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
 async function readResponseBody(response: Response): Promise<{ body?: string; bodyBase64?: string; truncated?: boolean }> {
   const contentType = response.headers.get('content-type') || ''
   if (!response.body) return {}
@@ -453,6 +475,21 @@ export class GlobalAgentServer {
     return Array.from(this.clients.keys())
   }
 
+  hasMcuDeviceCode(deviceCode: string): boolean {
+    const expected = deviceCode.trim()
+    if (!expected) return false
+    for (const socket of this.clients.values()) {
+      const auth = socket.handshake.auth || {}
+      const raw = typeof auth.deviceCode === 'string'
+        ? auth.deviceCode
+        : typeof auth.device_code === 'string'
+          ? auth.device_code
+          : ''
+      if (raw.trim() === expected) return true
+    }
+    return false
+  }
+
   async httpRequest(request: RelayHttpRequest, options: GlobalAgentRequestOptions = {}): Promise<RelayHttpResponse> {
     const socket = this.resolveClient(options.clientId)
     if (!socket) {
@@ -505,6 +542,8 @@ export class GlobalAgentServer {
     })
     let segmentIndex = 0
     let ttsQueue = Promise.resolve()
+    const playbackQueue: Promise<void>[] = []
+    let previousPlaybackDone = Promise.resolve()
     let settled = false
     let output = ''
     const speechSegmenter = createMcuSpeechSegmenter()
@@ -533,8 +572,26 @@ export class GlobalAgentServer {
       const segmentText = normalizeMcuSpeechText(text)
       if (!segmentText) return
       const segmentId = `${options.interactionId}-tts-${++segmentIndex}`
+      this.emitMcuEvent({ type: 'interaction.status', interactionId: options.interactionId, status: 'speaking' }, { clientId: options.clientId })
+      const controller = this.registerMcuTtsAbortController(options.interactionId)
+      const audioResult: Promise<McuSpeechSynthesisResult> = this.synthesizeMcuSpeech(
+        segmentText,
+        options.userToken,
+        options.profile,
+        controller.signal,
+      )
+        .then(audio => ({ ok: true as const, audio }))
+        .catch(err => ({ ok: false as const, err, aborted: controller.signal.aborted }))
+        .finally(() => {
+          this.releaseMcuTtsAbortController(options.interactionId, controller)
+        })
       ttsQueue = ttsQueue
-        .then(() => this.enqueueMcuSpeechSegment(options, segmentId, segmentText))
+        .then(async () => {
+          await previousPlaybackDone
+          const audio = await this.enqueueMcuSpeechSegment(options, segmentId, segmentText, audioResult)
+          previousPlaybackDone = audio.playbackDone
+          playbackQueue.push(audio.playbackDone)
+        })
         .catch((err) => {
           if (err instanceof Error && err.message === 'audio.interrupted') {
             this.interruptedMcuInteractions.add(options.interactionId)
@@ -647,14 +704,23 @@ export class GlobalAgentServer {
         }
       }
       flushCompletedAssistantMessage()
-      ttsQueue.finally(() => {
-        if (this.interruptedMcuInteractions.has(options.interactionId)) {
+      ttsQueue
+        .then(async () => {
+          await Promise.all(playbackQueue)
+          if (this.interruptedMcuInteractions.has(options.interactionId)) {
+            finish()
+            return
+          }
+          this.emitMcuEvent({ type: 'interaction.status', interactionId: options.interactionId, status: 'completed' }, { clientId: options.clientId })
           finish()
-          return
-        }
-        this.emitMcuEvent({ type: 'interaction.status', interactionId: options.interactionId, status: 'completed' }, { clientId: options.clientId })
-        finish()
-      })
+        })
+        .catch((err) => {
+          if (this.interruptedMcuInteractions.has(options.interactionId) || (err instanceof Error && err.message === 'audio.interrupted')) {
+            finish()
+            return
+          }
+          fail(err instanceof Error ? err.message : String(err))
+        })
     })
     socket.on('run.failed', (event: Record<string, unknown> = {}) => {
       fail(typeof event.error === 'string' ? event.error : 'chat-run failed')
@@ -1069,12 +1135,61 @@ export class GlobalAgentServer {
     return socket.id
   }
 
+  private mcuApiToken(payload: Record<string, unknown>): string {
+    const raw = typeof payload.apiToken === 'string'
+      ? payload.apiToken
+      : typeof payload.api_token === 'string'
+        ? payload.api_token
+        : typeof payload.authorization === 'string'
+          ? payload.authorization
+          : ''
+    const trimmed = raw.trim()
+    return trimmed.toLowerCase().startsWith('bearer ') ? trimmed.slice(7).trim() : trimmed
+  }
+
+  private authorizeMcuEvent(clientId: string, event: string, payload: Record<string, unknown>): boolean {
+    const socket = this.clients.get(clientId)
+    const expectedToken = String(socket?.data.userToken || '')
+    const providedToken = this.mcuApiToken(payload)
+    if (!socket || !expectedToken || !providedToken || providedToken !== expectedToken) {
+      logger.warn({ clientId, event }, '[global-agent] rejected MCU event with invalid API token')
+      this.emitMcuEvent({
+        type: 'auth.invalid',
+        event,
+        text: mcuPromptText('token-invalid'),
+        url: mcuPromptUrl('token-invalid'),
+        mimeType: 'audio/x-pcm',
+        channels: 1,
+        sampleRate: MCU_TTS_SAMPLE_RATE,
+      }, { clientId })
+      return false
+    }
+
+    const profile = typeof payload.profile === 'string' ? payload.profile.trim() : ''
+    const user = socket.data.user as AuthenticatedUser | undefined
+    if (profile && user && !this.canAccessProfile(user, profile)) {
+      logger.warn({ clientId, event, profile, userId: user.id }, '[global-agent] rejected MCU event for inaccessible profile')
+      return false
+    }
+
+    return true
+  }
+
+  private redactMcuAuthPayload(payload: Record<string, unknown>): Record<string, unknown> {
+    const redacted = { ...payload }
+    delete redacted.apiToken
+    delete redacted.api_token
+    delete redacted.authorization
+    return redacted
+  }
+
   private forwardMcuEvent(clientId: string, event: string, payload: unknown): void {
     const body = isRecord(payload)
       ? { ...payload, type: typeof payload.type === 'string' && payload.type ? payload.type : event }
       : { type: event, payload }
+    if (!this.authorizeMcuEvent(clientId, event, body)) return
     this.handleMcuClientEvent(clientId, event, body)
-    this.emitFrontendBridgeEvent(clientId, body)
+    this.emitFrontendBridgeEvent(clientId, this.redactMcuAuthPayload(body))
   }
 
   private mcuSessionId(clientId: string | undefined, profile: string): string {
@@ -1091,7 +1206,7 @@ export class GlobalAgentServer {
     return `mcu-${instance}-${profileId}`
   }
 
-  private async synthesizeMcuSpeech(text: string, userToken: string, profile: string, signal?: AbortSignal): Promise<{ url: string }> {
+  private async synthesizeMcuSpeech(text: string, userToken: string, profile: string, signal?: AbortSignal): Promise<{ url: string; mimeType: string }> {
     const headers = {
       Authorization: `Bearer ${userToken}`,
       'Content-Type': 'application/json',
@@ -1112,7 +1227,11 @@ export class GlobalAgentServer {
       let audio: Buffer<ArrayBufferLike> = Buffer.from(await response.arrayBuffer())
       if (!audio.length) throw new Error(`${context} returned empty audio`)
       const contentType = String(response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
-      if (contentType === 'audio/x-pcm' || contentType === 'audio/pcm') return audio
+      const sourceBytes = audio.length
+      if (contentType === 'audio/x-pcm' || contentType === 'audio/pcm') {
+        logger.info({ context, contentType, sourceBytes, pcmBytes: audio.length }, '[global-agent] MCU TTS PCM audio ready')
+        return audio
+      }
 
       const converted = await transcodeToPcmS16le(audio, contentType || 'application/octet-stream', {
         sampleRate: MCU_TTS_SAMPLE_RATE,
@@ -1122,6 +1241,13 @@ export class GlobalAgentServer {
       }
       audio = converted.audio
       if (!audio.length) throw new Error(`${context} PCM conversion returned empty audio`)
+      logger.info({
+        context,
+        contentType: contentType || 'application/octet-stream',
+        sourceBytes,
+        pcmBytes: audio.length,
+        sampleRate: MCU_TTS_SAMPLE_RATE,
+      }, '[global-agent] MCU TTS decoded to PCM')
       return audio
     }
 
@@ -1143,62 +1269,62 @@ export class GlobalAgentServer {
     try {
       audio = await readPcmAudio(response, 'MCU TTS')
     } catch (err) {
-      logger.warn({ err }, '[global-agent] MCU TTS audio conversion failed, falling back to Edge TTS')
-      try {
-        const fallback = await this.fetchImpl(`${this.localBaseUrl}/api/hermes/tts/synthesize`, {
-          method: 'POST',
-          headers,
-          signal,
-          body: JSON.stringify({
-            provider: 'edge',
-            text,
-            options: MCU_TTS_OPTIONS,
-          }),
-        })
-        if (!fallback.ok) {
-          const detail = await fallback.text().catch(() => '')
-          throw new Error(`MCU TTS conversion failed and Edge fallback failed: ${fallback.status}${detail ? ` ${detail.slice(0, 200)}` : ''}`)
-        }
-        audio = await readPcmAudio(fallback, 'MCU Edge TTS fallback')
-      } catch (fallbackError) {
-        throw fallbackError
+      logger.warn({ err }, '[global-agent] MCU TTS audio decode failed, falling back to Edge TTS')
+      const fallback = await requestTts('edge')
+      if (!fallback.ok) {
+        const detail = await fallback.text().catch(() => '')
+        throw new Error(`MCU TTS decode failed and Edge fallback failed: ${fallback.status}${detail ? ` ${detail.slice(0, 200)}` : ''}`)
       }
+      audio = await readPcmAudio(fallback, 'MCU Edge TTS fallback')
     }
 
     const dir = join(config.appHome, 'mcu-audio')
     await mkdir(dir, { recursive: true })
-    const file = `${randomUUID()}.pcm`
-    await writeFile(join(dir, file), audio)
-    return { url: `/api/hermes/mcu/audio/${file}` }
+    const file = `${randomUUID()}.adpcm`
+    const encoded = encodeMcuImaAdpcm(audio, MCU_TTS_SAMPLE_RATE)
+    await writeFile(join(dir, file), encoded)
+    logger.info({
+      file,
+      textChars: text.length,
+      pcmBytes: audio.length,
+      adpcmBytes: encoded.length,
+      ratio: audio.length > 0 ? Number((encoded.length / audio.length).toFixed(3)) : 0,
+    }, '[global-agent] MCU TTS encoded to ADPCM')
+    return { url: `/api/hermes/mcu/audio/${file}`, mimeType: 'audio/x-ima-adpcm' }
   }
 
-  private async enqueueMcuSpeechSegment(options: McuVoiceChatTurnOptions, segmentId: string, text: string): Promise<void> {
-    if (this.interruptedMcuInteractions.has(options.interactionId)) return
-    this.emitMcuEvent({ type: 'interaction.status', interactionId: options.interactionId, status: 'speaking' }, { clientId: options.clientId })
-    const controller = this.registerMcuTtsAbortController(options.interactionId)
-    try {
-      const audio = await this.synthesizeMcuSpeech(text, options.userToken, options.profile, controller.signal)
-      if (this.interruptedMcuInteractions.has(options.interactionId) || controller.signal.aborted) return
-      const waitForDone = this.waitForMcuAudioDone(segmentId, Math.max(90_000, Math.min(text.length * 1200, 300_000)))
-      this.emitMcuEvent({
-        type: 'audio.enqueue',
-        interactionId: options.interactionId,
-        segmentId,
-        text: '',
-        url: audio.url,
-        mimeType: 'audio/x-pcm',
-        channels: 1,
-        sampleRate: MCU_TTS_SAMPLE_RATE,
-        durationMs: Math.max(1200, Math.min(text.length * 180, 12_000)),
-        completionManagedByServer: true,
-      }, { clientId: options.clientId })
-      await waitForDone
-    } catch (err) {
-      if (controller.signal.aborted) throw new Error('audio.interrupted')
-      throw err
-    } finally {
-      this.releaseMcuTtsAbortController(options.interactionId, controller)
+  private async enqueueMcuSpeechSegment(
+    options: McuVoiceChatTurnOptions,
+    segmentId: string,
+    text: string,
+    audioResult: Promise<McuSpeechSynthesisResult>,
+  ): Promise<EnqueuedMcuSpeechSegment> {
+    if (this.interruptedMcuInteractions.has(options.interactionId)) {
+      return { playbackDone: Promise.resolve() }
     }
+    const result = await audioResult
+    if (!result.ok) {
+      if (result.aborted) throw new Error('audio.interrupted')
+      throw result.err
+    }
+    if (this.interruptedMcuInteractions.has(options.interactionId)) {
+      return { playbackDone: Promise.resolve() }
+    }
+    const waitForDone = this.waitForMcuAudioDone(segmentId, Math.max(90_000, Math.min(text.length * 1200, 300_000)))
+    waitForDone.catch(() => undefined)
+    this.emitMcuEvent({
+      type: 'audio.enqueue',
+      interactionId: options.interactionId,
+      segmentId,
+      text: '',
+      url: result.audio.url,
+      mimeType: result.audio.mimeType,
+      channels: 1,
+      sampleRate: MCU_TTS_SAMPLE_RATE,
+      durationMs: Math.max(1200, Math.min(text.length * 180, 12_000)),
+      completionManagedByServer: true,
+    }, { clientId: options.clientId })
+    return { playbackDone: waitForDone }
   }
 
   private waitForMcuAudioDone(segmentId: string, timeoutMs: number): Promise<void> {
@@ -1378,6 +1504,11 @@ export class GlobalAgentServer {
       return
     }
 
+    if (event === 'voice.stream.abort') {
+      this.handleMcuVoiceStreamAbort(clientId, payload)
+      return
+    }
+
     if (event === 'audio.done' || event === 'audio.interrupted' || event === 'audio.dropped') {
       if (event === 'audio.interrupted' && typeof payload.interactionId === 'string') {
         this.abortActiveMcuRun(payload.interactionId)
@@ -1421,6 +1552,9 @@ export class GlobalAgentServer {
     this.mcuVoiceStreams.set(clientId, {
       interactionId,
       profile: typeof payload.profile === 'string' && payload.profile.trim() ? payload.profile.trim() : this.frontendProfile(socket) || 'default',
+      mimeType: typeof payload.mimeType === 'string' && payload.mimeType.trim()
+        ? payload.mimeType.trim().toLowerCase()
+        : 'audio/pcm',
       sampleRate: Number.isFinite(Number(payload.sampleRate)) ? Number(payload.sampleRate) : MCU_TTS_SAMPLE_RATE,
       channels: Number(payload.channels) === 1 ? 1 : 2,
       bitsPerSample: Number(payload.bitsPerSample) === 16 ? 16 : 16,
@@ -1434,35 +1568,196 @@ export class GlobalAgentServer {
 
   private handleMcuVoiceStreamChunk(clientId: string, payload: Record<string, unknown>): void {
     const stream = this.mcuVoiceStreams.get(clientId)
-    if (!stream) return
-    const data = typeof payload.data === 'string' ? payload.data : ''
-    if (!data) return
-    const chunk = Buffer.from(data, 'base64')
-    if (!chunk.length) return
-    stream.chunks.push(chunk)
+    const payloadInteractionId = typeof payload.interactionId === 'string' ? payload.interactionId.trim() : ''
+    const interactionId = typeof payload.interactionId === 'string' ? payload.interactionId.trim() : ''
+    const seq = Number(payload.seq)
+    const normalizedSeq = Number.isFinite(seq) && seq >= 0 ? Math.floor(seq) : undefined
+    const expectsAck = normalizedSeq !== undefined || Number.isFinite(Number(payload.crc32))
+    if (!stream) {
+      if (expectsAck) {
+        this.emitMcuEvent({
+          type: 'voice.stream.chunk.ack',
+          interactionId: payloadInteractionId || undefined,
+          seq: normalizedSeq,
+          offset: Number.isFinite(Number(payload.offset)) ? Math.floor(Number(payload.offset)) : undefined,
+          ok: false,
+          reason: 'missing_stream',
+        }, { clientId })
+      }
+      return
+    }
+    const ack = (ok: boolean, reason?: string, offset?: number, bytes?: number, checksum?: number) => {
+      if (!expectsAck) return
+      this.emitMcuEvent({
+        type: 'voice.stream.chunk.ack',
+        interactionId: stream.interactionId,
+        seq: normalizedSeq,
+        offset,
+        bytes,
+        crc32: checksum,
+        ok,
+        reason,
+      }, { clientId })
+    }
+    if (interactionId && interactionId !== stream.interactionId) {
+      logger.warn({
+        clientId,
+        streamInteractionId: stream.interactionId,
+        chunkInteractionId: interactionId,
+      }, '[global-agent] ignoring MCU voice stream chunk for stale interaction')
+      ack(false, 'stale_interaction')
+      return
+    }
+    const data = payload.data
+    let chunk: Buffer
+    if (typeof data === 'string') {
+      chunk = Buffer.from(data, 'base64')
+    } else if (Buffer.isBuffer(data)) {
+      chunk = Buffer.from(data)
+    } else if (data instanceof Uint8Array) {
+      chunk = Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+    } else if (data instanceof ArrayBuffer) {
+      chunk = Buffer.from(data)
+    } else {
+      ack(false, 'missing_data')
+      return
+    }
+    if (!chunk.length) {
+      ack(false, 'empty_data')
+      return
+    }
+    const offset = Number(payload.offset)
+    const normalizedOffset = Number.isFinite(offset) && offset >= 0 ? Math.floor(offset) : stream.bytes
+    const expectedBytes = Number(payload.bytes)
+    if (Number.isFinite(expectedBytes) && expectedBytes >= 0 && Math.floor(expectedBytes) !== chunk.byteLength) {
+      ack(false, 'byte_count_mismatch', normalizedOffset, chunk.byteLength)
+      return
+    }
+    const checksum = crc32(chunk)
+    const expectedChecksum = Number(payload.crc32)
+    if (Number.isFinite(expectedChecksum) && expectedChecksum >= 0 && (Math.floor(expectedChecksum) >>> 0) !== checksum) {
+      ack(false, 'crc_mismatch', normalizedOffset, chunk.byteLength, checksum)
+      return
+    }
+    const existing = stream.chunks.find(part => part.offset === normalizedOffset)
+    if (existing) {
+      if (existing.chunk.equals(chunk)) {
+        ack(true, undefined, normalizedOffset, chunk.byteLength, checksum)
+        return
+      }
+      ack(false, 'offset_conflict', normalizedOffset, chunk.byteLength, checksum)
+      return
+    }
+    if (normalizedOffset !== stream.bytes) {
+      logger.warn({
+        clientId,
+        interactionId: stream.interactionId,
+        expectedOffset: stream.bytes,
+        actualOffset: normalizedOffset,
+        bytes: chunk.byteLength,
+      }, '[global-agent] rejecting out-of-order MCU voice stream chunk')
+      ack(false, 'out_of_order', normalizedOffset, chunk.byteLength, checksum)
+      return
+    }
+    stream.chunks.push({ offset: normalizedOffset, chunk, seq: normalizedSeq, crc32: checksum })
     stream.bytes += chunk.byteLength
+    ack(true, undefined, normalizedOffset, chunk.byteLength, checksum)
   }
 
   private async handleMcuVoiceStreamEnd(clientId: string, payload: Record<string, unknown>): Promise<void> {
     const stream = this.mcuVoiceStreams.get(clientId)
-    this.mcuVoiceStreams.delete(clientId)
     if (!stream) {
       this.emitMcuEvent({ type: 'interaction.status', status: 'failed', text: 'missing voice stream metadata' }, { clientId })
       return
     }
-    const pcm = Buffer.concat(stream.chunks, stream.bytes)
+    const interactionId = typeof payload.interactionId === 'string' ? payload.interactionId.trim() : ''
+    if (interactionId && interactionId !== stream.interactionId) {
+      logger.warn({
+        clientId,
+        streamInteractionId: stream.interactionId,
+        endInteractionId: interactionId,
+      }, '[global-agent] ignoring MCU voice stream end for stale interaction')
+      return
+    }
+    this.mcuVoiceStreams.delete(clientId)
+    const expectedBytes = Number(payload.bytes)
+    const sortedChunks = [...stream.chunks].sort((a, b) => a.offset - b.offset)
+    let expectedOffset = 0
+    for (const part of sortedChunks) {
+      if (part.offset !== expectedOffset) {
+        logger.warn({
+          clientId,
+          interactionId: stream.interactionId,
+          expectedOffset,
+          actualOffset: part.offset,
+          receivedBytes: stream.bytes,
+          expectedBytes: Number.isFinite(expectedBytes) ? expectedBytes : undefined,
+        }, '[global-agent] MCU voice stream has a chunk gap')
+        this.emitMcuEvent({
+          type: 'interaction.status',
+          interactionId: stream.interactionId,
+          status: 'failed',
+          text: 'voice stream chunk gap',
+        }, { clientId })
+        return
+      }
+      expectedOffset += part.chunk.byteLength
+    }
     logger.info({
       clientId,
-      bytes: pcm.length,
-      expectedBytes: Number(payload.bytes),
+      bytes: stream.bytes,
+      expectedBytes,
       interactionId: stream.interactionId,
+      mimeType: stream.mimeType,
     }, '[global-agent] MCU voice stream completed')
-    if (!pcm.length) {
+    if (Number.isFinite(expectedBytes) && expectedBytes >= 0 && stream.bytes !== expectedBytes) {
+      logger.warn({
+        clientId,
+        interactionId: stream.interactionId,
+        bytes: stream.bytes,
+        expectedBytes,
+      }, '[global-agent] MCU voice stream byte count mismatch')
+      this.emitMcuEvent({
+        type: 'interaction.status',
+        interactionId: stream.interactionId,
+        status: 'failed',
+        text: 'voice stream incomplete',
+      }, { clientId })
+      return
+    }
+    if (!stream.bytes) {
       this.emitMcuEvent({
         type: 'interaction.status',
         interactionId: stream.interactionId,
         status: 'failed',
         text: 'empty voice stream',
+      }, { clientId })
+      return
+    }
+    let pcm: Buffer
+    try {
+      if (stream.mimeType === 'audio/x-ima-adpcm' || stream.mimeType === 'audio/ima-adpcm') {
+        const decodedChunks = sortedChunks.map(({ chunk }) => {
+          const decoded = decodeMcuImaAdpcm(chunk)
+          if (decoded.sampleRate !== stream.sampleRate) {
+            throw new Error(`IMA-ADPCM sample rate ${decoded.sampleRate} does not match stream rate ${stream.sampleRate}`)
+          }
+          if (decoded.channels !== stream.channels) {
+            throw new Error(`IMA-ADPCM channels ${decoded.channels} do not match stream channels ${stream.channels}`)
+          }
+          return decoded.pcm
+        })
+        pcm = Buffer.concat(decodedChunks)
+      } else {
+        pcm = Buffer.concat(sortedChunks.map(part => part.chunk), stream.bytes)
+      }
+    } catch (err) {
+      logger.warn({ err, clientId, interactionId: stream.interactionId }, '[global-agent] MCU voice stream decode failed')
+      this.emitMcuEvent({
+        type: 'interaction.status',
+        interactionId: stream.interactionId,
+        status: 'failed',
+        text: err instanceof Error ? err.message : 'voice stream decode failed',
       }, { clientId })
       return
     }
@@ -1503,6 +1798,32 @@ export class GlobalAgentServer {
         text: err instanceof Error ? err.message : String(err),
       }, { clientId })
     }
+  }
+
+  private handleMcuVoiceStreamAbort(clientId: string, payload: Record<string, unknown>): void {
+    const stream = this.mcuVoiceStreams.get(clientId)
+    const payloadInteractionId = typeof payload.interactionId === 'string' ? payload.interactionId.trim() : ''
+    if (stream && payloadInteractionId && payloadInteractionId !== stream.interactionId) {
+      logger.warn({
+        clientId,
+        streamInteractionId: stream.interactionId,
+        abortInteractionId: payloadInteractionId,
+      }, '[global-agent] ignoring MCU voice stream abort for stale interaction')
+      return
+    }
+    this.mcuVoiceStreams.delete(clientId)
+    const interactionId = payloadInteractionId
+      ? payloadInteractionId
+      : stream?.interactionId
+    const reason = typeof payload.reason === 'string' && payload.reason.trim()
+      ? payload.reason.trim()
+      : 'aborted'
+    this.emitMcuEvent({
+      type: 'interaction.status',
+      interactionId,
+      status: 'failed',
+      text: `voice stream ${reason}`,
+    }, { clientId })
   }
 
   private async enqueuePromptAudioFromVoiceTurn(clientId: string, interactionId: string, payload: Record<string, unknown>): Promise<boolean> {

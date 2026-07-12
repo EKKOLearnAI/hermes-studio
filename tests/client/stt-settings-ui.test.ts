@@ -14,6 +14,7 @@ const mockDeleteSttBaseUrlPreset = vi.fn()
 const mockTranscribeSpeech = vi.fn()
 const mockFetchTtsSettings = vi.fn()
 const mockSaveTtsSettings = vi.fn()
+const mockSaveActiveTtsProvider = vi.fn()
 const mockClearTtsSecret = vi.fn()
 const mockDeleteTtsProvider = vi.fn()
 const mockDeleteTtsBaseUrlPreset = vi.fn()
@@ -394,6 +395,7 @@ vi.mock('@/composables/useMicRecorder', () => ({
 vi.mock('@/api/hermes/tts-settings', () => ({
   fetchTtsSettings: mockFetchTtsSettings,
   saveTtsSettings: mockSaveTtsSettings,
+  saveActiveTtsProvider: mockSaveActiveTtsProvider,
   clearTtsSecret: mockClearTtsSecret,
   deleteTtsProvider: mockDeleteTtsProvider,
   deleteTtsBaseUrlPreset: mockDeleteTtsBaseUrlPreset,
@@ -524,6 +526,7 @@ describe('useSttSettings', () => {
     mockMicRecorderState.value = { status: 'idle', error: null, startedAt: null, mimeType: null }
     mockFetchTtsSettings.mockReset()
     mockSaveTtsSettings.mockReset()
+    mockSaveActiveTtsProvider.mockReset()
     mockClearTtsSecret.mockReset()
     mockDeleteTtsProvider.mockReset()
     mockDeleteTtsBaseUrlPreset.mockReset()
@@ -733,6 +736,7 @@ describe('VoiceSettings STT UI', () => {
     mockMicRecorderState.value = { status: 'idle', error: null, startedAt: null, mimeType: null }
     mockFetchTtsSettings.mockReset()
     mockSaveTtsSettings.mockReset()
+    mockSaveActiveTtsProvider.mockReset()
     mockClearTtsSecret.mockReset()
     mockDeleteTtsProvider.mockReset()
     mockDeleteTtsBaseUrlPreset.mockReset()
@@ -747,6 +751,7 @@ describe('VoiceSettings STT UI', () => {
     installSpeechSynthesis()
     mockFetchSttSettings.mockResolvedValue({ providers: [] })
     mockFetchTtsSettings.mockResolvedValue({ providers: [] })
+    mockSaveActiveTtsProvider.mockResolvedValue('edge')
     mockSaveActiveSttProvider.mockResolvedValue('browser')
   })
 
@@ -808,6 +813,42 @@ describe('VoiceSettings STT UI', () => {
     expect(wrapper.text()).not.toContain('raw-openai-secret')
     expect(wrapper.find('[data-testid="stt-provider-select"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="stt-custom-base-url"]').exists()).toBe(false)
+  })
+
+  it('uses server active TTS provider instead of stale local voice settings', async () => {
+    voiceSettingsMock.provider.value = 'edge'
+    mockFetchTtsSettings.mockResolvedValue({
+      activeProvider: 'doubao',
+      providers: [
+        {
+          provider: 'doubao',
+          settings: {
+            baseUrl: 'https://openspeech.bytedance.com/api/v3/tts/unidirectional',
+            model: 'seed-tts-2.0',
+            voice: 'zh_female_xiaohe_uranus_bigtts',
+          },
+          secrets: { apiKey: '[stored]' },
+          updatedAt: 4,
+        },
+      ],
+    })
+    mockSaveActiveTtsProvider.mockResolvedValue('edge')
+
+    const wrapper = await mountComponent()
+    await flushPromises()
+
+    expect(wrapper.find('.active-summary').text()).toContain('Doubao')
+    expect(wrapper.findAll('.voice-api-card').find(card => card.text().includes('Doubao'))?.text()).toContain('Active')
+
+    await wrapper.findAll('.voice-api-card')
+      .find(card => card.text().includes('Edge TTS'))!
+      .findAll('button')
+      .find(button => button.text().includes('Set active'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockSaveActiveTtsProvider).toHaveBeenCalledWith('edge')
+    expect(wrapper.find('.active-summary').text()).toContain('Edge TTS')
   })
 
   it('adds a Groq STT preset through the unified add API modal and stores it as custom STT', async () => {

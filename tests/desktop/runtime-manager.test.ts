@@ -17,6 +17,7 @@ vi.mock('electron', () => ({
 }))
 
 const originalEnv = { ...process.env }
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 const tempDirs: string[] = []
 const servers: Server[] = []
 
@@ -32,7 +33,7 @@ function createRuntimeFiles(root: string) {
     mkdirSync(join(root, 'node'), { recursive: true })
     mkdirSync(join(root, 'git', 'cmd'), { recursive: true })
     writeFileSync(join(root, 'python', 'python.exe'), '')
-    writeFileSync(join(root, 'python', 'Scripts', 'hermes.exe'), '')
+    writeFileSync(join(root, 'python', 'Scripts', 'hermes.cmd'), '')
     writeFileSync(join(root, 'node', 'node.exe'), '')
     writeFileSync(join(root, 'git', 'cmd', 'git.exe'), '')
   } else {
@@ -48,6 +49,10 @@ function createRuntimeFiles(root: string) {
     hermesAgentVersion: '0.17.0',
     asset: { name: 'hermes-runtime-test.tar.gz' },
   }))
+}
+
+function setPlatform(platform: NodeJS.Platform): void {
+  Object.defineProperty(process, 'platform', { value: platform })
 }
 
 async function createRuntimeArchive(): Promise<string> {
@@ -87,6 +92,7 @@ describe('desktop runtime manager', () => {
 
   afterEach(async () => {
     process.env = { ...originalEnv }
+    if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
     vi.resetModules()
     await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))))
     for (const dir of tempDirs.splice(0)) {
@@ -121,5 +127,25 @@ describe('desktop runtime manager', () => {
     expect(existsSync(staleDownloadPath)).toBe(true)
     expect(existsSync(join(runtimeRoot, 'runtime-manifest.json'))).toBe(true)
     expect(existsSync(join(process.env.HERMES_WEB_UI_HOME!, 'desktop-runtime', 'active-version.json'))).toBe(true)
+  })
+
+  it('accepts Windows runtime archives that contain hermes.cmd without hermes.exe', async () => {
+    setPlatform('win32')
+    const archive = await createRuntimeArchive()
+    process.env.HERMES_DESKTOP_RUNTIME_URL = await serveFile(archive)
+
+    const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
+    const { ensureDesktopRuntime } = await import('../../packages/desktop/src/main/runtime-manager')
+    await ensureDesktopRuntime()
+
+    const runtimeRoot = join(
+      process.env.HERMES_WEB_UI_HOME!,
+      'desktop-runtime',
+      'hermes',
+      '0.17.0',
+      runtimePlatformKey(),
+    )
+    expect(existsSync(join(runtimeRoot, 'python', 'Scripts', 'hermes.cmd'))).toBe(true)
+    expect(existsSync(join(runtimeRoot, 'python', 'Scripts', 'hermes.exe'))).toBe(false)
   })
 })

@@ -3,9 +3,11 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { createServer } from 'net'
 import { delimiter, dirname, extname, join, resolve } from 'path'
 import { getWebUiHome } from '../config'
+import { isDockerContainer } from '../services/runtime-environment'
 
 let updateInProgress = false
 const NODE_ENVIRONMENT_MISSING_CODE = 'node_environment_missing'
+const DOCKER_ENVIRONMENT_CODE = 'docker_environment'
 
 const PREVIEW_DIR_NAME = 'hermes-web-ui-pereview'
 const PREVIEW_HOME_DIR_NAME = 'hermes-web-ui-pereview-home'
@@ -18,11 +20,17 @@ const PREVIEW_AGENT_BRIDGE_TRANSPORT_ENV = 'HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_T
 const PREVIEW_FRONTEND_URL = `http://localhost:${PREVIEW_FRONTEND_PORT}`
 const PREVIEW_TAG_REF_PATTERN = /^[A-Za-z0-9._/-]+$/
 const PREVIEW_MAIN_REF = 'main'
+const PREVIEW_VERSION_TAG_LIMIT = 8
 const PREVIEW_TAGS_CACHE_MS = 5 * 60 * 1000
 
 type PreviewTagRef = { name: string; sha: string }
 type PreviewTagsCache = { expiresAt: number; tags: PreviewTagRef[] }
 type PreviewActionResult = { success: boolean; message?: string; code?: string }
+
+type ParsedPreviewVersion = {
+  core: string
+  prerelease: string
+}
 
 class PreviewRuntimeState {
   process: ChildProcess | null = null
@@ -147,7 +155,39 @@ function parsePreviewTagRefs(output: string): PreviewTagRef[] {
       return { sha: sha || '', name: (ref || '').replace(/^refs\/tags\//, '') }
     })
     .filter(tag => tag.name)
-    .reverse()
+}
+
+function parsePreviewVersion(name: string): ParsedPreviewVersion | null {
+  const match = name.trim().match(/^v(\d+\.\d+\.\d+)(?:-((?:alpha|beta|rc)(?:[.-]\d+)?))?$/)
+  if (!match) return null
+  return { core: match[1], prerelease: match[2] || '' }
+}
+
+function comparePreviewVersions(left: PreviewTagRef, right: PreviewTagRef): number {
+  const leftVersion = parsePreviewVersion(left.name)
+  const rightVersion = parsePreviewVersion(right.name)
+
+  if (!leftVersion || !rightVersion) {
+    if (leftVersion) return -1
+    if (rightVersion) return 1
+    return right.name.localeCompare(left.name, undefined, { numeric: true })
+  }
+
+  const coreOrder = rightVersion.core.localeCompare(leftVersion.core, undefined, { numeric: true })
+  if (coreOrder !== 0) return coreOrder
+  if (!leftVersion.prerelease && rightVersion.prerelease) return -1
+  if (leftVersion.prerelease && !rightVersion.prerelease) return 1
+  return rightVersion.prerelease.localeCompare(leftVersion.prerelease, undefined, { numeric: true })
+}
+
+function withPreviewMain(tags: PreviewTagRef[]): PreviewTagRef[] {
+  return [
+    { name: PREVIEW_MAIN_REF, sha: '' },
+    ...tags
+      .filter(tag => parsePreviewVersion(tag.name))
+      .sort(comparePreviewVersions)
+      .slice(0, PREVIEW_VERSION_TAG_LIMIT),
+  ]
 }
 
 function execFileText(
@@ -1027,6 +1067,20 @@ export async function handleUpdate(ctx: any) {
     return
   }
 
+  // Docker 环境中 npm 全局安装方式不可用，引导用户使用 docker pull 升级
+  if (isDockerContainer()) {
+    ctx.status = 400
+    ctx.body = {
+      success: false,
+      code: DOCKER_ENVIRONMENT_CODE,
+      message: 'hermes-web-ui update is not available inside Docker. '
+        + 'Please pull a new image and recreate the container:\n\n'
+        + '  docker compose pull\n'
+        + '  docker compose up -d --force-recreate',
+    }
+    return
+  }
+
   updateInProgress = true
   let keepUpdateLockForRestart = false
 
@@ -1088,7 +1142,7 @@ export async function previewTags(ctx: any) {
 
   try {
     appendPreviewActionLog('load tags with git ls-remote')
-    const tags = [{ name: PREVIEW_MAIN_REF, sha: '' }, ...await listPreviewTagsWithGitAsync()]
+    const tags = withPreviewMain(await listPreviewTagsWithGitAsync())
     previewState.setTags(tags)
     ctx.body = { tags }
     return
@@ -1107,12 +1161,9 @@ export async function previewTags(ctx: any) {
     }
 
     const tags = await res.json() as Array<{ name?: string; commit?: { sha?: string } }>
-    const parsedTags = [
-      { name: PREVIEW_MAIN_REF, sha: '' },
-      ...tags
+    const parsedTags = withPreviewMain(tags
       .filter((tag): tag is { name: string; commit?: { sha?: string } } => typeof tag.name === 'string' && Boolean(tag.name.trim()))
-      .map(tag => ({ name: tag.name, sha: tag.commit?.sha || '' })),
-    ]
+      .map(tag => ({ name: tag.name, sha: tag.commit?.sha || '' })))
     previewState.setTags(parsedTags)
     ctx.body = { tags: parsedTags }
   } catch (apiErr: any) {

@@ -46,6 +46,8 @@ interface AnthropicResponse {
   usage?: {
     input_tokens?: number
     output_tokens?: number
+    cache_read_input_tokens?: number
+    cache_creation_input_tokens?: number
   }
   stop_reason?: string
 }
@@ -98,10 +100,19 @@ export class AnthropicMessagesModelClient implements ModelClient {
 
     const toolCallBlocks = new Map<number, { id: string; name: string; argumentsText: string }>()
     let finishReason: string | undefined
+    let usage: ModelUsage | undefined
 
     for await (const event of readServerSentEvents(response)) {
       const chunk = parseJson<Record<string, unknown>>(event)
       if (!chunk) continue
+
+      if (chunk.type === 'message_start' && isPlainRecord(chunk.message) && isPlainRecord(chunk.message.usage)) {
+        usage = mergeUsage(usage, normalizeUsage(chunk.message.usage as NonNullable<AnthropicResponse['usage']>))
+      }
+
+      if (chunk.type === 'message_delta' && isPlainRecord(chunk.usage)) {
+        usage = mergeUsage(usage, normalizeUsage(chunk.usage as NonNullable<AnthropicResponse['usage']>))
+      }
 
       if (chunk.type === 'content_block_start' && isPlainRecord(chunk.content_block)) {
         const index = typeof chunk.index === 'number' ? chunk.index : 0
@@ -133,6 +144,7 @@ export class AnthropicMessagesModelClient implements ModelClient {
         for (const toolCall of toolCallBlocks.values()) {
           yield { type: 'tool-call', toolCall: normalizeToolCall(toolCall.id, toolCall.name, toolCall.argumentsText) }
         }
+        if (usage) yield { type: 'usage', usage }
         yield { type: 'done', response: { finishReason } }
         return
       }
@@ -220,6 +232,22 @@ function normalizeUsage(usage: NonNullable<AnthropicResponse['usage']>): ModelUs
     inputTokens: usage.input_tokens,
     outputTokens: usage.output_tokens,
     totalTokens: (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
+    cacheReadTokens: usage.cache_read_input_tokens,
+    cacheWriteTokens: usage.cache_creation_input_tokens,
+  }
+}
+
+function mergeUsage(current: ModelUsage | undefined, next: ModelUsage): ModelUsage {
+  const merged = {
+    inputTokens: next.inputTokens ?? current?.inputTokens,
+    outputTokens: next.outputTokens ?? current?.outputTokens,
+    cacheReadTokens: next.cacheReadTokens ?? current?.cacheReadTokens,
+    cacheWriteTokens: next.cacheWriteTokens ?? current?.cacheWriteTokens,
+    reasoningTokens: next.reasoningTokens ?? current?.reasoningTokens,
+  }
+  return {
+    ...merged,
+    totalTokens: (merged.inputTokens ?? 0) + (merged.outputTokens ?? 0),
   }
 }
 

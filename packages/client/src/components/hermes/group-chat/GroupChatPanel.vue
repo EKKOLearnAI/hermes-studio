@@ -2,18 +2,19 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber, NDropdown, type DropdownOption } from 'naive-ui'
+import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber, NDropdown, NModal, type DropdownOption } from 'naive-ui'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { updateRoomConfig, forceCompress } from '@/api/hermes/group-chat'
 import GroupMessageList from './GroupMessageList.vue'
 import GroupChatInput from './GroupChatInput.vue'
+import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import SettingsCircuitBadge from '@/components/layout/SettingsCircuitBadge.vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
-import type { RoomAgent } from '@/api/hermes/group-chat'
+import type { RoomAgent, RoomInfo } from '@/api/hermes/group-chat'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -56,6 +57,17 @@ function agentAvatarName(agent: RoomAgent): string {
 }
 
 const hasRoom = computed(() => !!store.currentRoomId)
+const currentRoom = computed(() => store.rooms.find(room => room.id === store.currentRoomId) || null)
+const contextRoom = computed(() => store.rooms.find(room => room.id === contextRoomId.value) || null)
+function canManageRoom(room: Pick<RoomInfo, 'canManage'> | null | undefined): boolean {
+    return room?.canManage === true
+}
+const currentRoomCanManage = computed(() => canManageRoom(currentRoom.value))
+const visibleApproval = computed(() => currentRoomCanManage.value ? store.activePendingApproval : null)
+const currentWorkspaceLabel = computed(() => workspaceBasename(currentRoom.value?.workspace || ''))
+const showWorkspaceModal = ref(false)
+const workspaceRoomId = ref<string | null>(null)
+const workspaceValue = ref('')
 
 /** Resolve the current user's custom avatar — first from the member list, then from the cached current-user value. */
 const userMemberAvatar = computed(() => {
@@ -69,11 +81,16 @@ const userMemberAvatar = computed(() => {
     } catch { /* malformed JSON — fall through to multiavatar */ }
     return null
 })
-const visibleApproval = computed(() => store.activePendingApproval)
 
 function formatTokens(tokens: number): string {
     if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k tokens`
     return `${tokens} tokens`
+}
+
+function workspaceBasename(path: string): string {
+    const trimmed = String(path || '').trim().replace(/[\\/]+$/, '')
+    if (!trimmed) return ''
+    return trimmed.split(/[\\/]/).pop() || trimmed
 }
 
 function toggleSidebar() {
@@ -157,10 +174,10 @@ function extractApiErrorMessage(err: any): string {
     return raw || t('common.saveFailed')
 }
 
-async function handleCreateRoom(name: string, inviteCode: string, userName: string, description: string, compression: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number }) {
+async function handleCreateRoom(name: string, inviteCode: string, userName: string, description: string, compression: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number }, workspace: string) {
     try {
         store.setUserInfo(userName, description)
-        const res = await store.createNewRoom(name, inviteCode, undefined, compression)
+        const res = await store.createNewRoom(name, inviteCode, undefined, compression, workspace)
         showCreateModal.value = false
         const failureMessage = formatAgentFailures(res.agentResults)
         if (failureMessage) message.warning(failureMessage)
@@ -172,6 +189,8 @@ async function handleCreateRoom(name: string, inviteCode: string, userName: stri
 }
 
 async function handleDeleteRoom(roomId: string) {
+    const room = store.rooms.find(r => r.id === roomId)
+    if (!canManageRoom(room)) return
     try {
         await store.deleteRoom(roomId)
         if (store.currentRoomId === roomId) {
@@ -194,10 +213,14 @@ async function copyRoomLink(roomId: string) {
     else message.error(t('common.copied') + ' ✗')
 }
 
-const roomContextMenuOptions = computed<DropdownOption[]>(() => [
-    { label: t('groupChat.copyRoomLink'), key: 'copy-link' },
-    { label: t('groupChat.cloneRoom'), key: 'clone-room' },
-])
+const roomContextMenuOptions = computed<DropdownOption[]>(() => {
+    const options: DropdownOption[] = [{ label: t('groupChat.copyRoomLink'), key: 'copy-link' }]
+    if (canManageRoom(contextRoom.value)) {
+        options.push({ label: t('chat.setWorkspace'), key: 'set-workspace' })
+        options.push({ label: t('groupChat.cloneRoom'), key: 'clone-room' })
+    }
+    return options
+})
 
 function handleRoomContextMenu(event: MouseEvent, roomId: string) {
     event.preventDefault()
@@ -217,13 +240,18 @@ function handleRoomContextSelect(key: string) {
     if (!roomId) return
     if (key === 'copy-link') {
         void copyRoomLink(roomId)
+    } else if (key === 'set-workspace') {
+        if (!canManageRoom(contextRoom.value)) return
+        handleOpenWorkspacePicker(roomId)
     } else if (key === 'clone-room') {
+        if (!canManageRoom(contextRoom.value)) return
         handleOpenCloneRoom(roomId)
     }
 }
 
 function handleOpenCloneRoom(roomId: string) {
     const room = store.rooms.find(r => r.id === roomId)
+    if (!canManageRoom(room)) return
     cloneSourceRoomId.value = roomId
     cloneRoomName.value = room?.name ? `${room.name} Copy` : ''
     cloneInviteCode.value = generateCode()
@@ -252,6 +280,7 @@ async function confirmCloneRoom() {
 
 async function handleClearRoomContext() {
     if (!store.currentRoomId) return
+    if (!currentRoomCanManage.value) return
     if (store.contextStatuses.size > 0) {
         message.warning(t('groupChat.compressingInProgress'))
         return
@@ -282,6 +311,7 @@ async function handleSendMessage(content: string, attachments?: Attachment[]) {
 }
 
 async function handleAddAgent() {
+    if (!currentRoomCanManage.value) return
     await profilesStore.fetchProfiles()
     showAddAgentModal.value = true
 }
@@ -323,7 +353,37 @@ async function confirmAddAgent() {
     }
 }
 
+function handleOpenWorkspacePicker(roomId = store.currentRoomId || '') {
+    if (!roomId) return
+    const room = store.rooms.find(r => r.id === roomId)
+    if (!canManageRoom(room)) return
+    workspaceRoomId.value = roomId
+    workspaceValue.value = room?.workspace || ''
+    showWorkspaceModal.value = true
+}
+
+async function handleSaveWorkspace() {
+    const roomId = workspaceRoomId.value || store.currentRoomId
+    if (!roomId) return
+    const room = store.rooms.find(r => r.id === roomId)
+    if (!canManageRoom(room)) return
+    try {
+        await store.setRoomWorkspace(roomId, String(workspaceValue.value || '').trim())
+        showWorkspaceModal.value = false
+        workspaceRoomId.value = null
+        message.success(t('chat.workspaceSet'))
+    } catch (err: any) {
+        message.error(err?.message || t('chat.workspaceSetFailed'))
+    }
+}
+
+async function handleClearWorkspace() {
+    workspaceValue.value = ''
+    await handleSaveWorkspace()
+}
+
 function handleOpenCompressionConfig() {
+    if (!currentRoomCanManage.value) return
     const room = store.rooms.find(r => r.id === store.currentRoomId)
     if (room) {
         compressionConfig.value = {
@@ -337,6 +397,7 @@ function handleOpenCompressionConfig() {
 
 async function handleSaveCompressionConfig() {
     if (!store.currentRoomId) return
+    if (!currentRoomCanManage.value) return
     try {
         const res = await updateRoomConfig(store.currentRoomId, { ...compressionConfig.value })
         const idx = store.rooms.findIndex(r => r.id === store.currentRoomId)
@@ -350,6 +411,7 @@ async function handleSaveCompressionConfig() {
 
 async function handleForceCompress() {
     if (!store.currentRoomId || isCompressing.value) return
+    if (!currentRoomCanManage.value) return
     if (store.contextStatuses.size > 0) {
         message.warning(t('groupChat.compressingInProgress'))
         return
@@ -367,6 +429,7 @@ async function handleForceCompress() {
 
 async function handleRemoveAgent(agentId: string) {
     if (!store.currentRoomId) return
+    if (!currentRoomCanManage.value) return
     try {
         await store.removeAgentFromRoom(store.currentRoomId, agentId)
     } catch {
@@ -375,6 +438,7 @@ async function handleRemoveAgent(agentId: string) {
 }
 
 async function handleInterruptAgent(agentName: string) {
+    if (!currentRoomCanManage.value) return
     try {
         await store.interruptAgent(agentName)
     } catch (err: any) {
@@ -383,6 +447,7 @@ async function handleInterruptAgent(agentName: string) {
 }
 
 async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
+    if (!currentRoomCanManage.value) return
     try {
         await store.respondApproval(choice)
     } catch (err: any) {
@@ -422,7 +487,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         <span v-if="room.inviteCode" class="room-code">{{ room.inviteCode }}</span>
                         <span class="room-tokens">{{ formatTokens(room.totalTokens || 0) }}</span>
                     </div>
-                    <NPopconfirm @positive-click="handleDeleteRoom(room.id)">
+                    <NPopconfirm v-if="canManageRoom(room)" @positive-click="handleDeleteRoom(room.id)">
                         <template #trigger>
                             <button class="room-action-btn danger" @click.stop>
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -461,19 +526,32 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
         <!-- Main chat area -->
         <div
             class="chat-main"
-            :class="{ 'chat-main--drop-active': isChatDropActive }"
             @dragover="handleChatDragOver"
             @dragenter="handleChatDragEnter"
             @dragleave="handleChatDragLeave"
             @drop="handleChatDrop"
         >
             <div class="chat-header">
-                <button class="icon-btn header-sidebar-toggle" @click="toggleSidebar">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="9" y1="3" x2="9" y2="21" />
-                    </svg>
-                </button>
-                <span class="room-title-text">{{ store.roomName || (store.currentRoomId || t('groupChat.title')) }}</span>
+                <div class="header-left">
+                    <button class="icon-btn header-sidebar-toggle" @click="toggleSidebar">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="9" y1="3" x2="9" y2="21" />
+                        </svg>
+                    </button>
+                    <span class="room-title-text">{{ store.roomName || (store.currentRoomId || t('groupChat.title')) }}</span>
+                    <button
+                        v-if="currentRoom?.workspace"
+                        class="workspace-badge"
+                        type="button"
+                        :title="currentRoom.workspace"
+                        @click="() => handleOpenWorkspacePicker()"
+                    >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                        </svg>
+                        <span>{{ currentWorkspaceLabel }}</span>
+                    </button>
+                </div>
                 <div class="header-info">
                     <!-- Stacked avatars (user + agents) -->
                     <NPopover v-if="store.agents.length" trigger="click" placement="bottom-end" :width="220">
@@ -509,7 +587,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                     <span class="agent-popover-name">{{ agent.name }}</span>
                                     <span class="agent-popover-profile">{{ agent.profile }}</span>
                                 </div>
-                                <button class="agent-popover-remove" @click="handleRemoveAgent(agent.id)">
+                                <button v-if="currentRoomCanManage" class="agent-popover-remove" @click="handleRemoveAgent(agent.id)">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                 </button>
                             </div>
@@ -521,13 +599,13 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :avatar="userMemberAvatar" :size="24" />
                         </span>
                     </div>
-                    <button class="icon-btn" :title="t('groupChat.addAgent')" @click="handleAddAgent">
+                    <button v-if="currentRoomCanManage" class="icon-btn" :title="t('groupChat.addAgent')" @click="handleAddAgent">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                     </button>
-                    <button class="icon-btn" :title="t('groupChat.compressionConfig')" @click="handleOpenCompressionConfig">
+                    <button v-if="currentRoomCanManage" class="icon-btn" :title="t('groupChat.compressionConfig')" @click="handleOpenCompressionConfig">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 4.6a1.65 1.65 0 0 0 1.51 1V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1.51 1z"/></svg>
                     </button>
-                    <NPopconfirm @positive-click="handleClearRoomContext">
+                    <NPopconfirm v-if="currentRoomCanManage" @positive-click="handleClearRoomContext">
                         <template #trigger>
                             <button class="icon-btn" :title="t('groupChat.clearContext')">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -544,73 +622,79 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                 </div>
             </div>
 
-            <div v-if="hasRoom" class="group-chat-surface">
-                <div class="group-message-shell">
-                    <GroupMessageList />
-                    <Transition name="approval-float">
-                        <div v-if="visibleApproval" class="approval-float-panel">
-                            <div class="approval-float-header">
-                                <span class="approval-float-icon" aria-hidden="true">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
-                                        <path d="m9 12 2 2 4-4" />
-                                    </svg>
+            <div
+                v-if="hasRoom"
+                class="group-chat-content-wrapper"
+                :class="{ 'chat-main--drop-active': isChatDropActive }"
+            >
+                <div class="group-chat-surface">
+                    <div class="group-message-shell">
+                        <GroupMessageList />
+                        <Transition name="approval-float">
+                            <div v-if="visibleApproval" class="approval-float-panel">
+                                <div class="approval-float-header">
+                                    <span class="approval-float-icon" aria-hidden="true">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+                                            <path d="m9 12 2 2 4-4" />
+                                        </svg>
+                                    </span>
+                                    <span>{{ t('chat.approvalKicker') }}</span>
+                                </div>
+                                <div class="approval-float-title">
+                                    <span v-if="visibleApproval.agentName">@{{ visibleApproval.agentName }} · </span>{{ t('chat.approvalTitle') }}
+                                </div>
+                                <div class="approval-float-desc">{{ visibleApproval.description }}</div>
+                                <code class="approval-float-command">{{ visibleApproval.command }}</code>
+                                <div class="approval-float-actions">
+                                    <NButton v-if="visibleApproval.isMemoryWrite" size="small" type="primary" @click="handleApproval('once')">
+                                        {{ t('chat.approvalAgree') }}
+                                    </NButton>
+                                    <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('once')" size="small" type="primary" @click="handleApproval('once')">
+                                        {{ t('chat.approvalAllowOnce') }}
+                                    </NButton>
+                                    <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('session')" size="small" secondary @click="handleApproval('session')">
+                                        {{ t('chat.approvalAllowSession') }}
+                                    </NButton>
+                                    <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('always')" size="small" secondary @click="handleApproval('always')">
+                                        {{ t('chat.approvalAlways') }}
+                                    </NButton>
+                                    <NButton v-if="visibleApproval.isMemoryWrite || visibleApproval.choices.includes('deny')" size="small" type="error" secondary @click="handleApproval('deny')">
+                                        {{ t('chat.approvalDeny') }}
+                                    </NButton>
+                                </div>
+                            </div>
+                        </Transition>
+                    </div>
+                    <div v-if="store.contextStatuses.size > 0 || (store.typingText && store.contextStatuses.size === 0)" class="status-bar">
+                        <div v-if="store.contextStatuses.size > 0" class="context-status-list">
+                            <div v-for="[name, status] in store.contextStatuses" :key="name" class="context-status">
+                                <span class="typing-dots">
+                                    <span /><span /><span />
                                 </span>
-                                <span>{{ t('chat.approvalKicker') }}</span>
-                            </div>
-                            <div class="approval-float-title">
-                                <span v-if="visibleApproval.agentName">@{{ visibleApproval.agentName }} · </span>{{ t('chat.approvalTitle') }}
-                            </div>
-                            <div class="approval-float-desc">{{ visibleApproval.description }}</div>
-                            <code class="approval-float-command">{{ visibleApproval.command }}</code>
-                            <div class="approval-float-actions">
-                                <NButton v-if="visibleApproval.isMemoryWrite" size="small" type="primary" @click="handleApproval('once')">
-                                    {{ t('chat.approvalAgree') }}
-                                </NButton>
-                                <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('once')" size="small" type="primary" @click="handleApproval('once')">
-                                    {{ t('chat.approvalAllowOnce') }}
-                                </NButton>
-                                <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('session')" size="small" secondary @click="handleApproval('session')">
-                                    {{ t('chat.approvalAllowSession') }}
-                                </NButton>
-                                <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('always')" size="small" secondary @click="handleApproval('always')">
-                                    {{ t('chat.approvalAlways') }}
-                                </NButton>
-                                <NButton v-if="visibleApproval.isMemoryWrite || visibleApproval.choices.includes('deny')" size="small" type="error" secondary @click="handleApproval('deny')">
-                                    {{ t('chat.approvalDeny') }}
-                                </NButton>
+                                <span v-if="status.status === 'compressing'">
+                                    @{{ status.agentName }} {{ t('groupChat.agentCompressing') }}
+                                </span>
+                                <span v-else>
+                                    @{{ status.agentName }} {{ t('groupChat.agentReplying') }}
+                                </span>
+                                <button v-if="currentRoomCanManage" class="context-stop-btn" :title="t('common.cancel')" @click="handleInterruptAgent(status.agentName)">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                        <line x1="18" y1="6" x2="6" y2="18" />
+                                        <line x1="6" y1="6" x2="18" y2="18" />
+                                    </svg>
+                                </button>
                             </div>
                         </div>
-                    </Transition>
-                </div>
-                <div v-if="store.contextStatuses.size > 0 || (store.typingText && store.contextStatuses.size === 0)" class="status-bar">
-                    <div v-if="store.contextStatuses.size > 0" class="context-status-list">
-                        <div v-for="[name, status] in store.contextStatuses" :key="name" class="context-status">
+                        <div v-else-if="store.typingText" class="typing-indicator">
                             <span class="typing-dots">
                                 <span /><span /><span />
                             </span>
-                            <span v-if="status.status === 'compressing'">
-                                @{{ status.agentName }} {{ t('groupChat.agentCompressing') }}
-                            </span>
-                            <span v-else>
-                                @{{ status.agentName }} {{ t('groupChat.agentReplying') }}
-                            </span>
-                            <button class="context-stop-btn" :title="t('common.cancel')" @click="handleInterruptAgent(status.agentName)">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                                    <line x1="18" y1="6" x2="6" y2="18" />
-                                    <line x1="6" y1="6" x2="18" y2="18" />
-                                </svg>
-                            </button>
+                            {{ store.typingText }}
                         </div>
                     </div>
-                    <div v-else-if="store.typingText" class="typing-indicator">
-                        <span class="typing-dots">
-                            <span /><span /><span />
-                        </span>
-                        {{ store.typingText }}
-                    </div>
+                    <GroupChatInput ref="groupChatInputRef" @send="handleSendMessage" />
                 </div>
-                <GroupChatInput ref="groupChatInputRef" @send="handleSendMessage" />
             </div>
 
             <div v-else class="no-room">
@@ -703,6 +787,22 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     </div>
                 </div>
             </div>
+            <NModal
+                v-model:show="showWorkspaceModal"
+                preset="dialog"
+                :title="t('chat.setWorkspaceTitle')"
+                class="workspace-modal"
+                style="width: 520px; max-width: 92vw"
+            >
+                <FolderPicker v-model="workspaceValue" />
+                <template #action>
+                    <NSpace justify="end">
+                        <NButton @click="showWorkspaceModal = false">{{ t('common.cancel') }}</NButton>
+                        <NButton @click="handleClearWorkspace">{{ t('workflow.workspace.clear') }}</NButton>
+                        <NButton type="primary" @click="handleSaveWorkspace">{{ t('common.save') }}</NButton>
+                    </NSpace>
+                </template>
+            </NModal>
             <div v-if="showCompressionModal" class="modal-backdrop" @click.self="showCompressionModal = false">
                 <div class="modal">
                     <h3>{{ t('groupChat.compressionConfig') }}</h3>
@@ -740,6 +840,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                 </div>
             </div>
         </Teleport>
+
     </div>
 </template>
 
@@ -1231,6 +1332,16 @@ export default defineComponent({ components: { CreateRoomForm } })
     position: relative;
 }
 
+.group-chat-content-wrapper {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+}
+
 .group-chat-surface {
     flex: 1;
     min-height: 0;
@@ -1290,14 +1401,23 @@ export default defineComponent({ components: { CreateRoomForm } })
         margin-left: -10px;
     }
 
+    .header-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        overflow: hidden;
+        flex: 1;
+        min-width: 0;
+    }
+
     .room-title-text {
         font-size: 16px;
         font-weight: 600;
         color: $text-primary;
-        flex: 1;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        min-width: 0;
     }
 
     .header-info {
@@ -1305,6 +1425,39 @@ export default defineComponent({ components: { CreateRoomForm } })
         align-items: center;
         gap: 8px;
         flex-shrink: 0;
+    }
+
+    .workspace-badge {
+        border: 0;
+        font-size: 11px;
+        line-height: 16px;
+        color: $text-muted;
+        background: rgba(255, 255, 255, 0.05);
+        padding: 2px 8px;
+        border-radius: 4px;
+        max-width: 160px;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        overflow: hidden;
+        cursor: pointer;
+        flex-shrink: 0;
+
+        svg {
+            flex: 0 0 auto;
+        }
+
+        span {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        &:hover {
+            color: $text-secondary;
+            background: rgba(var(--accent-primary-rgb), 0.06);
+        }
     }
 
     .member-count {

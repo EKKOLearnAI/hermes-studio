@@ -176,6 +176,84 @@ describe('run chat compression trigger', () => {
     ])
   })
 
+  it('projects complete persisted tool results into a 5500-character bridge history', async () => {
+    const completeToolResult = `HEAD-${'x'.repeat(7_000)}-TAIL`
+    const detail = {
+      messages: [
+        {
+          id: 1,
+          session_id: 'session-1',
+          role: 'tool',
+          content: completeToolResult,
+          tool_call_id: 'tool-call-1',
+          tool_name: 'session_get',
+          timestamp: 1,
+        },
+      ],
+    }
+    getSessionDetailMock.mockReturnValue(detail)
+
+    const { buildDbHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const history = await buildDbHistory('session-1')
+    const projected = String(history[0]?.content || '')
+
+    expect(projected).toHaveLength(5_500)
+    expect(projected).toContain('... [truncated]')
+    expect(projected).toMatch(/^HEAD-/)
+    expect(projected).toMatch(/-TAIL$/)
+    expect(detail.messages[0].content).toBe(completeToolResult)
+  })
+
+  it('uses the 5500-character bridge history for context tokens instead of complete DB usage', async () => {
+    const completeToolResult = `HEAD-${'x'.repeat(70_000)}-TAIL`
+    getSessionDetailMock.mockReturnValue({
+      messages: [
+        {
+          id: 1,
+          session_id: 'session-1',
+          role: 'tool',
+          content: completeToolResult,
+          tool_call_id: 'tool-call-1',
+          tool_name: 'session_get',
+          timestamp: 1,
+        },
+      ],
+    })
+    calcAndUpdateUsageMock.mockResolvedValue({
+      inputTokens: 0,
+      outputTokens: 500_000,
+      contextInputTokens: 0,
+      contextOutputTokens: 5_500,
+    })
+    estimateUsageTokensFromMessagesMock.mockImplementation((messages: any[]) => ({
+      inputTokens: 0,
+      outputTokens: messages.reduce((sum, message) => sum + String(message.content || '').length, 0),
+    }))
+    const contextTokenEstimator = vi.fn(async (_messages: any[], messageTokens: number) => messageTokens)
+
+    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const history = await buildCompressedHistory(
+      'session-1',
+      'default',
+      'http://upstream',
+      undefined,
+      vi.fn(),
+      new Map(),
+      {},
+      contextTokenEstimator,
+    )
+
+    expect(String(history[0]?.content || '')).toHaveLength(5_500)
+    expect(calcAndUpdateUsageMock).toHaveBeenCalledWith(
+      'session-1',
+      expect.any(Object),
+      expect.any(Function),
+      { truncateToolResultsForContext: true },
+    )
+    expect(contextTokenEstimator).toHaveBeenCalledWith(expect.any(Array), 5_500)
+    expect(compressorCompressMock).not.toHaveBeenCalled()
+  })
+
   it('does not compress long low-token history just because it has more than 150 messages', async () => {
     const messages = Array.from({ length: 152 }, (_, index) => ({
       id: index + 1,

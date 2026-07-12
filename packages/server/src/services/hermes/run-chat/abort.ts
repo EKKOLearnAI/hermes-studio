@@ -3,7 +3,7 @@
  */
 
 import type { Server, Socket } from 'socket.io'
-import { updateSessionStats } from '../../../db/hermes/session-store'
+import { updateSession, updateSessionStats } from '../../../db/hermes/session-store'
 import { logger } from '../../logger'
 import { codingAgentRunManager } from '../../agent-runner/coding-agent-run-manager'
 import { flushBridgePendingToDb } from './bridge-message'
@@ -67,14 +67,21 @@ export async function handleAbort(
   })
   logger.info({ sessionId, runId }, '[chat-run-socket][abort] started')
 
+  // Workflow sessions can be backed either by Hermes bridge runs or by scoped
+  // coding-agent runners. Prefer the coding-agent runtime when it owns the
+  // session; otherwise source='workflow' is misclassified as a bridge run and
+  // bridge.interrupt returns "unknown session" while the coding agent keeps
+  // running.
+  const shouldAbortThroughBridge = isBridgeRunSource(activeState.source) && !isCodingAgentRun
+
   // Flush in-memory assistant text to DB before aborting the stream.
-  if (isBridgeRunSource(activeState.source)) {
+  if (shouldAbortThroughBridge) {
     flushBridgePendingToDb(activeState, sessionId)
   } else {
     flushResponseRunToDb(activeState, sessionId)
   }
 
-  if (isBridgeRunSource(activeState.source)) {
+  if (shouldAbortThroughBridge) {
     let interruptResult: any = null
     try {
       interruptResult = await bridge.interrupt(sessionId, 'Aborted by user', activeState.profile)
@@ -109,7 +116,7 @@ export async function handleAbort(
       await markAbortCompleted(nsp, socket, sessionId, runId || 'bridge_abort_timeout', sessionMap, runQueuedItem, false)
       return
     }
-  } else if (activeState.source === 'coding_agent') {
+  } else if (isCodingAgentRun) {
     activeState.abortController?.abort()
     codingAgentRunManager.stop(sessionId, { reportClosed: false })
   } else if (activeState.abortController) {
@@ -173,6 +180,15 @@ export async function markAbortCompleted(
     state.events = []
     runQueuedItem(socket, sessionId, next, profile || 'default')
     return
+  }
+
+  try {
+    updateSession(sessionId, {
+      ended_at: Math.floor(Date.now() / 1000),
+      end_reason: 'abort',
+    })
+  } catch (err) {
+    logger.warn(err, '[chat-run-socket][abort] failed to write cancellation end marker for session %s', sessionId)
   }
 
   state.events = []

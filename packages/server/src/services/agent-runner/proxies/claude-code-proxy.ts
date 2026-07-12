@@ -149,6 +149,7 @@ function observeResponsesEvents(target: ClaudeCodeProxyTarget, events: AsyncIter
   void (async () => {
     try {
       for await (const event of events) {
+        codingAgentRunManager.handleProxyUsageEvent(target.agentSessionId, event)
         codingAgentRunManager.handleResponseEvent(target.agentSessionId, event)
       }
     } catch (err) {

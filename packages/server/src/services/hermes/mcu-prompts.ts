@@ -5,7 +5,7 @@ import { config } from '../../config'
 
 export const MCU_TTS_SAMPLE_RATE = 24_000
 
-export type McuPromptId = 'missing-stt' | 'stt-failed' | 'tts-failed' | 'no-device'
+export type McuPromptId = 'missing-stt' | 'stt-failed' | 'tts-failed' | 'no-device' | 'token-invalid'
 
 interface McuPromptDefinition {
   fileName: string
@@ -29,6 +29,10 @@ export const MCU_PROMPTS: Record<McuPromptId, McuPromptDefinition> = {
     fileName: 'no-device-24k.s16le.pcm',
     text: '你当前没有连接的设备哦，请到网页上连接设备',
   },
+  'token-invalid': {
+    fileName: 'token-invalid-24k.s16le.pcm',
+    text: '当前token验证失败，请重新登录',
+  },
 }
 
 export function mcuPromptText(id: McuPromptId): string {
@@ -44,7 +48,7 @@ export function mcuPromptUrl(id: McuPromptId): string {
 }
 
 export function isValidMcuAudioFileName(file: string): boolean {
-  return /^[a-f0-9-]+\.pcm$/i.test(file) || Object.values(MCU_PROMPTS).some(prompt => prompt.fileName === file)
+  return /^[a-f0-9-]+\.(?:pcm|adpcm)$/i.test(file) || Object.values(MCU_PROMPTS).some(prompt => prompt.fileName === file)
 }
 
 async function existingFile(path: string): Promise<string | null> {

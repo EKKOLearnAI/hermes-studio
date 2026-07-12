@@ -19,6 +19,7 @@ import { mkdir, writeFile } from 'fs/promises'
 import { resolve } from 'path'
 import { logger } from '../../services/logger'
 import { AgentBridgeClient, type AgentBridgeRunResult } from '../../services/hermes/agent-bridge'
+import { truncateToolResultForContext } from '../tool-result-context'
 import {
   getCompressionSnapshot,
   saveCompressionSnapshot,
@@ -360,9 +361,7 @@ export function serializeForSummary(messages: ChatMessage[]): string {
     const role = msg.role === 'tool' ? `[tool:${msg.name || 'unknown'}]` : msg.role
     let content = contentToString(msg.content || '')
 
-    if (msg.role === 'tool' && content.length > 5500) {
-      content = content.slice(0, 4000) + '\n... [truncated]\n...' + content.slice(-1500)
-    }
+    if (msg.role === 'tool') content = truncateToolResultForContext(content)
 
     if (msg.role === 'assistant' && msg.tool_calls?.length) {
       const toolsInfo = msg.tool_calls.map(tc => {

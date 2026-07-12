@@ -2,9 +2,9 @@
   "name": "HStudio ESP32-C3 Wi-Fi Setup Firmware v1",
   "firmwareVersion": "v1",
   "version": "v1-esp32-c3-wifi-setup-oled",
-  "buildDate": "2026-06-18",
+  "buildDate": "2026-07-10",
   "chip": "esp32c3",
-  "flashSize": "4MB",
+  "flashSize": "16MB",
   "flashMode": "dio",
   "flashFrequency": "40m",
   "hardware": {
@@ -28,6 +28,9 @@
     "MCU login form for discovered endpoints",
     "Profile selection after MCU login",
     "Socket.IO client connection to selected Hermes Web UI",
+    "Wi-Fi history scan before startup reconnect",
+    "Wi-Fi reprovisioning without clearing history",
+    "Remote active machine reauthentication",
     "OLED status UI and idle animation"
   ]
 }

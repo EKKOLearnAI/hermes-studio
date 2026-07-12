@@ -119,6 +119,8 @@ describe('Database Schema Synchronization', () => {
         WORKFLOW_RUNS_SCHEMA,
         WORKFLOW_RUN_NODE_SESSIONS_TABLE,
         WORKFLOW_RUN_NODE_SESSIONS_SCHEMA,
+        MCU_DEVICES_TABLE,
+        MCU_DEVICES_SCHEMA,
       } =
         await import('../../packages/server/src/db/hermes/schemas')
 
@@ -135,6 +137,10 @@ describe('Database Schema Synchronization', () => {
       expect(usageCols.has('id')).toBe(true)
       expect(usageCols.has('session_id')).toBe(true)
       expect(usageCols.has('input_tokens')).toBe(true)
+      const usageRunIndex = db.prepare(
+        `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_session_usage_run'`,
+      ).get()
+      expect(usageRunIndex).toBeTruthy()
 
       // Verify SESSIONS_TABLE was created
       expect(tableExists(db, SESSIONS_TABLE)).toBe(true)
@@ -177,6 +183,22 @@ describe('Database Schema Synchronization', () => {
       expect(workflowRunNodeSessionCols.has('session_id')).toBe(true)
       expect(workflowRunNodeSessionCols.has('status')).toBe(true)
       expect(workflowRunNodeSessionCols.has('agent')).toBe(true)
+
+      expect(tableExists(db, MCU_DEVICES_TABLE)).toBe(true)
+      const mcuDeviceCols = getTableColumns(db, MCU_DEVICES_TABLE)
+      expect(mcuDeviceCols.size).toBe(Object.keys(MCU_DEVICES_SCHEMA).length)
+      expect(mcuDeviceCols.has('id')).toBe(true)
+      expect(mcuDeviceCols.has('name')).toBe(true)
+      expect(mcuDeviceCols.has('device_code')).toBe(true)
+      expect(mcuDeviceCols.has('is_official')).toBe(true)
+      expect(mcuDeviceCols.has('created_at')).toBe(true)
+
+      db.prepare(`INSERT INTO "${MCU_DEVICES_TABLE}" (name, device_code, is_official) VALUES (?, ?, ?)`)
+        .run('MCU 1', 'device-code-1', 1)
+      expect(() => {
+        db.prepare(`INSERT INTO "${MCU_DEVICES_TABLE}" (name, device_code, is_official) VALUES (?, ?, ?)`)
+          .run('MCU Duplicate', 'device-code-1', 0)
+      }).toThrow()
     })
   })
 
@@ -200,6 +222,11 @@ describe('Database Schema Synchronization', () => {
       expect(cols.has('output_tokens')).toBe(true)
       expect(cols.has('cache_read_tokens')).toBe(true)
       expect(cols.has('cache_write_tokens')).toBe(true)
+      expect(cols.has('run_id')).toBe(true)
+      expect(cols.has('source')).toBe(true)
+      expect(cols.has('agent')).toBe(true)
+      expect(cols.has('provider')).toBe(true)
+      expect(cols.has('is_estimated')).toBe(true)
 
       // Verify data integrity (should be preserved)
       const row = db.prepare(`SELECT * FROM "${USAGE_TABLE}" WHERE session_id = ?`).get('test-1')

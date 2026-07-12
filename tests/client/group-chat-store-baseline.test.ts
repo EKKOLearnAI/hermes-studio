@@ -15,6 +15,22 @@ const groupChatApiMock = vi.hoisted(() => {
       handlers.set(event, existing)
       return socket
     }),
+    once: vi.fn((event: string, cb: Function) => {
+      const wrapped = (...args: any[]) => {
+        socket.off(event, wrapped)
+        cb(...args)
+      }
+      return socket.on(event, wrapped)
+    }),
+    off: vi.fn((event: string, cb?: Function) => {
+      if (!cb) {
+        handlers.delete(event)
+        return socket
+      }
+      const existing = handlers.get(event) || []
+      handlers.set(event, existing.filter(handler => handler !== cb))
+      return socket
+    }),
     emit: vi.fn((event: string, data?: any, ack?: Function) => {
       if (event === 'join' && ack) ack(joinAck)
       if (event === 'message' && ack) ack({ id: data?.id })
@@ -130,7 +146,10 @@ describe('group chat store baseline lifecycle', () => {
     clientApiMock.getStoredUsername.mockReturnValue(null)
     authApiMock.fetchCurrentUser.mockRejectedValue(new Error('not signed in'))
     fetchMock.mockReset()
+    groupChatApiMock.socket.connected = true
     groupChatApiMock.socket.on.mockClear()
+    groupChatApiMock.socket.once.mockClear()
+    groupChatApiMock.socket.off.mockClear()
     groupChatApiMock.socket.emit.mockReset()
     groupChatApiMock.socket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
       if (event === 'join' && ack) ack({ members: [], agents: [], typingUsers: [], contextStatuses: [] })
@@ -190,6 +209,44 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.totalMessages).toBe(5)
     expect(store.hasMoreBefore).toBe(true)
     expect(store.contextStatuses.get('Agent')).toEqual({ agentName: 'Agent', status: 'replying' })
+  })
+
+  it('joins invite rooms over realtime before fetching protected detail when the socket starts disconnected', async () => {
+    const store = await loadStore()
+    const order: string[] = []
+
+    groupChatApiMock.socket.connected = false
+    groupChatApiMock.getSocket.mockImplementation((options?: { requireConnected?: boolean }) => (
+      groupChatApiMock.socket.connected || options?.requireConnected === false ? groupChatApiMock.socket : null
+    ))
+    groupChatApiMock.socket.once.mockImplementation((event: string, cb: Function) => {
+      if (event === 'connect') {
+        setTimeout(() => {
+          groupChatApiMock.socket.connected = true
+          cb()
+        }, 0)
+      }
+      return groupChatApiMock.socket
+    })
+    groupChatApiMock.socket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
+      if (event === 'join' && ack) {
+        order.push(data?.inviteCode ? 'invite-join' : 'detail-join')
+        ack({ roomName: 'Realtime Room', members: [member], agents: [], typingUsers: [], contextStatuses: [] })
+      }
+      return groupChatApiMock.socket
+    })
+    groupChatApiMock.joinRoomByCode.mockResolvedValue({ room })
+    groupChatApiMock.getRoomDetail.mockImplementation(async () => {
+      order.push('detail')
+      return { room, messages: [], agents: [], members: [member], total: 0, hasMore: false }
+    })
+
+    await store.joinByCode('ROOM1')
+
+    expect(groupChatApiMock.connectGroupChat).toHaveBeenCalled()
+    expect(groupChatApiMock.getRoomDetail).toHaveBeenCalledWith('room-1')
+    expect(order).toEqual(['invite-join', 'detail', 'detail-join'])
+    expect(store.currentRoomId).toBe('room-1')
   })
 
   it('sends text-only messages through the room socket', async () => {

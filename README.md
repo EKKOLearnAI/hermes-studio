@@ -421,12 +421,6 @@ The BFF layer handles Socket.IO chat streaming, the Hermes agent bridge, profile
 
 **Backend:** Koa 2 (BFF server) + node-pty (web terminal)
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=EKKOLearnAI/hermes-studio&type=Date)](https://star-history.com/#EKKOLearnAI/hermes-studio&Date)
-
-<!-- If the chart above doesn't load, visit https://star-history.com/#EKKOLearnAI/hermes-studio -->
-
 ## License
 
 [BSL-1.1](./LICENSE)

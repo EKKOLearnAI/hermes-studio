@@ -1,1086 +1,478 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hermes ESP32-C3 桌面 AI 对话小方盒 | Hermes Studio</title>
-  <meta name="description" content="Hermes ESP32-C3 桌面 AI 对话小方盒介绍页。带小屏、麦克风、扬声器和实体按键，通过局域网连接 Hermes Studio。">
-  <style>
-    :root {
-      color-scheme: dark;
-      --bg: #11100f;
-      --bg-2: #171314;
-      --panel: #1d1718;
-      --panel-2: #231b1d;
-      --text: #fff7ee;
-      --muted: #d6c8c5;
-      --soft: #8f807e;
-      --line: rgba(255, 247, 238, 0.14);
-      --accent: #00d6d1;
-      --accent-2: #83ffff;
-      --pink: #f3a0aa;
-      --pink-deep: #c86b78;
-      --warn: #ffd06c;
-      --radius: 24px;
-      --max: 1180px;
-      --shadow: 0 28px 90px rgba(0, 0, 0, 0.36);
-    }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    html {
-      scroll-behavior: smooth;
-    }
-
-    body {
-      margin: 0;
-      background:
-        radial-gradient(circle at 18% 8%, rgba(243, 160, 170, 0.16), transparent 32rem),
-        radial-gradient(circle at 82% 14%, rgba(0, 214, 209, 0.14), transparent 30rem),
-        linear-gradient(180deg, var(--bg), #140f11 42%, #0f1111);
-      color: var(--text);
-      font-family: "Yuanti SC", "Hannotate SC", "PingFang SC", "Hiragino Sans GB", sans-serif;
-      line-height: 1.7;
-      overflow-x: hidden;
-    }
-
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      z-index: -2;
-      pointer-events: none;
-      background-image:
-        linear-gradient(rgba(255, 247, 238, 0.045) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255, 247, 238, 0.035) 1px, transparent 1px);
-      background-size: 44px 44px;
-      mask-image: linear-gradient(180deg, rgba(0,0,0,.9), rgba(0,0,0,.35));
-    }
-
-    body::after {
-      content: "";
-      position: fixed;
-      inset: 0;
-      z-index: -1;
-      pointer-events: none;
-      opacity: 0.22;
-      background-image: radial-gradient(circle at center, rgba(255,255,255,.18) 0 1px, transparent 1px);
-      background-size: 5px 5px;
-      mix-blend-mode: soft-light;
-    }
-
-    a {
-      color: inherit;
-      text-decoration: none;
-    }
-
-    img {
-      display: block;
-      max-width: 100%;
-      height: auto;
-    }
-
-    .shell {
-      width: min(var(--max), calc(100% - 36px));
-      margin: 0 auto;
-    }
-
-    .site-nav {
-      position: sticky;
-      top: 0;
-      z-index: 20;
-      height: 72px;
-      display: flex;
-      align-items: center;
-      border-bottom: 1px solid var(--line);
-      background: rgba(17, 16, 15, 0.82);
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
-    }
-
-    .nav-inner {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 20px;
-      width: min(var(--max), calc(100% - 36px));
-      margin: 0 auto;
-    }
-
-    .brand {
-      display: inline-flex;
-      align-items: center;
-      gap: 12px;
-      min-width: 0;
-      font-weight: 900;
-      letter-spacing: 0.02em;
-      white-space: nowrap;
-    }
-
-    .brand-mark {
-      width: 36px;
-      height: 36px;
-      border: 1px solid rgba(0, 214, 209, 0.58);
-      border-radius: 12px;
-      background: #fff;
-      display: grid;
-      place-items: center;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 12px 32px rgba(0, 214, 209, .12);
-      overflow: hidden;
-    }
-
-    .brand-mark img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      object-position: center;
-    }
-
-    .nav-links {
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: clamp(12px, 2.4vw, 28px);
-      color: var(--muted);
-      font-size: 14px;
-      white-space: nowrap;
-    }
-
-    .nav-links a {
-      transition: color .22s ease, transform .22s ease;
-    }
-
-    .nav-links a:hover {
-      color: var(--accent-2);
-      transform: translateY(-1px);
-    }
-
-    .hero {
-      min-height: calc(100dvh - 72px);
-      display: grid;
-      align-items: center;
-      padding: clamp(42px, 7vw, 84px) 0 56px;
-    }
-
-    .hero-grid {
-      display: grid;
-      grid-template-columns: minmax(0, 0.9fr) minmax(420px, 1.1fr);
-      gap: clamp(34px, 6vw, 76px);
-      align-items: center;
-    }
-
-    .label {
-      display: inline-flex;
-      align-items: center;
-      width: fit-content;
-      border: 1px solid rgba(0, 214, 209, 0.45);
-      border-radius: 999px;
-      padding: 8px 13px;
-      color: var(--accent-2);
-      background: rgba(0, 214, 209, 0.08);
-      font-family: "Menlo", "Monaco", monospace;
-      font-size: 12px;
-      letter-spacing: 0.02em;
-    }
-
-    h1, h2, h3 {
-      margin: 0;
-      line-height: 1.08;
-      letter-spacing: 0;
-    }
-
-    h1 {
-      margin-top: 22px;
-      font-size: clamp(44px, 7vw, 82px);
-      max-width: 9.6em;
-    }
-
-    .hero-copy p {
-      max-width: 560px;
-      margin: 22px 0 0;
-      color: var(--muted);
-      font-size: clamp(17px, 2vw, 22px);
-    }
-
-    .price-row {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: baseline;
-      gap: 12px;
-      margin-top: 18px;
-      font-weight: 900;
-    }
-
-    .price-original {
-      color: var(--soft);
-      font-size: 16px;
-      text-decoration: line-through;
-      text-decoration-thickness: 2px;
-    }
-
-    .price-presale {
-      color: var(--warn);
-      font-size: clamp(24px, 3vw, 34px);
-      line-height: 1.1;
-    }
-
-    .hero-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      margin-top: 30px;
-    }
-
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 48px;
-      padding: 0 20px;
-      border-radius: 999px;
-      border: 1px solid rgba(255,255,255,.14);
-      font-weight: 900;
-      transition: transform .2s ease, border-color .2s ease, background .2s ease, color .2s ease;
-      white-space: nowrap;
-    }
-
-    .btn:active {
-      transform: translateY(1px) scale(.99);
-    }
-
-    .btn-primary {
-      background: var(--accent);
-      color: #062524;
-      border-color: var(--accent);
-      box-shadow: 0 18px 48px rgba(0, 214, 209, .18);
-    }
-
-    .btn-primary:hover {
-      background: var(--accent-2);
-      border-color: var(--accent-2);
-      transform: translateY(-2px);
-    }
-
-    .btn-secondary {
-      color: var(--text);
-      background: rgba(255, 247, 238, 0.06);
-    }
-
-    .btn-secondary:hover {
-      border-color: rgba(0, 214, 209, .58);
-      color: var(--accent-2);
-      transform: translateY(-2px);
-    }
-
-    .hero-media {
-      position: relative;
-      min-width: 0;
-    }
-
-    .hero-card {
-      border: 1px solid var(--line);
-      border-radius: calc(var(--radius) + 8px);
-      background:
-        linear-gradient(145deg, rgba(255,255,255,.08), rgba(255,255,255,.02)),
-        rgba(29, 23, 24, .78);
-      box-shadow: var(--shadow);
-      overflow: hidden;
-      transform: rotate(1.2deg);
-    }
-
-    .hero-card img {
-      aspect-ratio: 1 / 1;
-      width: 100%;
-      object-fit: cover;
-    }
-
-    section {
-      padding: clamp(58px, 8vw, 110px) 0;
-      position: relative;
-    }
-
-    .section-head {
-      max-width: 760px;
-      margin-bottom: 34px;
-    }
-
-    .section-head h2 {
-      font-size: clamp(34px, 5vw, 58px);
-    }
-
-    .section-head p {
-      margin: 16px 0 0;
-      color: var(--muted);
-      font-size: clamp(16px, 1.8vw, 19px);
-      max-width: 65ch;
-    }
-
-    .proof-row {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-      margin-top: 38px;
-    }
-
-    .proof {
-      min-height: 138px;
-      padding: 22px;
-      border-radius: var(--radius);
-      background: rgba(255, 247, 238, 0.055);
-      border: 1px solid var(--line);
-    }
-
-    .proof b {
-      display: block;
-      color: var(--accent-2);
-      font-family: "Menlo", "Monaco", monospace;
-      font-size: 28px;
-      line-height: 1;
-    }
-
-    .proof span {
-      display: block;
-      margin-top: 12px;
-      color: var(--muted);
-      font-size: 15px;
-    }
-
-    .showcase-grid {
-      display: grid;
-      grid-template-columns: 1.15fr .85fr;
-      gap: 18px;
-      align-items: stretch;
-    }
-
-    .feature-panel {
-      border-radius: calc(var(--radius) + 6px);
-      border: 1px solid var(--line);
-      background:
-        linear-gradient(145deg, rgba(0, 214, 209, 0.08), rgba(243, 160, 170, 0.08)),
-        rgba(29, 23, 24, .72);
-      overflow: hidden;
-      box-shadow: var(--shadow);
-    }
-
-    .feature-panel img {
-      width: 100%;
-      height: 100%;
-      min-height: 420px;
-      object-fit: cover;
-    }
-
-    .feature-list {
-      display: grid;
-      gap: 18px;
-    }
-
-    .feature-copy {
-      border-radius: var(--radius);
-      border: 1px solid var(--line);
-      background: rgba(255, 247, 238, 0.055);
-      padding: clamp(22px, 3vw, 32px);
-    }
-
-    .feature-copy h3 {
-      font-size: clamp(24px, 3vw, 34px);
-      margin-bottom: 12px;
-    }
-
-    .feature-copy p {
-      color: var(--muted);
-      margin: 0;
-    }
-
-    .gallery {
-      display: grid;
-      grid-template-columns: repeat(12, 1fr);
-      gap: 16px;
-    }
-
-    .gallery figure {
-      margin: 0;
-      border-radius: var(--radius);
-      border: 1px solid var(--line);
-      background: rgba(255, 247, 238, 0.05);
-      overflow: hidden;
-      box-shadow: 0 20px 58px rgba(0, 0, 0, 0.18);
-    }
-
-    .gallery figure:nth-child(1) { grid-column: span 5; }
-    .gallery figure:nth-child(2) { grid-column: span 4; }
-    .gallery figure:nth-child(3) { grid-column: span 3; }
-    .gallery figure:nth-child(4) { grid-column: span 4; }
-    .gallery figure:nth-child(5) { grid-column: span 4; }
-    .gallery figure:nth-child(6) { grid-column: span 4; }
-    .gallery figure:nth-child(7) { grid-column: span 5; }
-    .gallery figure:nth-child(8) { grid-column: span 3; }
-    .gallery figure:nth-child(9) { grid-column: span 4; }
-    .gallery figure:nth-child(10) { grid-column: span 4; }
-    .gallery figure.contact-sheet { grid-column: 1 / -1; }
-
-    .gallery img {
-      width: 100%;
-      aspect-ratio: 1 / 1;
-      object-fit: cover;
-      transition: transform .55s cubic-bezier(.16, 1, .3, 1);
-    }
-
-    .gallery figure.contact-sheet img {
-      aspect-ratio: 2.5 / 1;
-    }
-
-    .gallery figure:hover img {
-      transform: scale(1.035);
-    }
-
-    .gallery figcaption {
-      padding: 14px 16px 16px;
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    .use-flow {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 18px;
-      align-items: start;
-    }
-
-    .flow-card {
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      padding: clamp(22px, 3vw, 34px);
-      background: rgba(255, 247, 238, 0.055);
-    }
-
-    .flow-card h3 {
-      font-size: clamp(23px, 3vw, 34px);
-      margin-bottom: 14px;
-    }
-
-    .flow-card ol {
-      margin: 0;
-      padding-left: 1.3em;
-      color: var(--muted);
-    }
-
-    .flow-card li + li {
-      margin-top: 10px;
-    }
-
-    .code-note {
-      margin-top: 18px;
-      display: block;
-      width: fit-content;
-      max-width: 100%;
-      overflow-x: auto;
-      border: 1px solid rgba(0, 214, 209, .3);
-      border-radius: 16px;
-      padding: 12px 14px;
-      color: var(--accent-2);
-      background: rgba(0, 214, 209, 0.07);
-      font-family: "Menlo", "Monaco", monospace;
-      font-size: 13px;
-      white-space: nowrap;
-    }
-
-    .spec-layout {
-      display: grid;
-      grid-template-columns: .95fr 1.05fr;
-      gap: 20px;
-      align-items: start;
-    }
-
-    .spec-photo {
-      position: sticky;
-      top: 96px;
-      border-radius: calc(var(--radius) + 6px);
-      overflow: hidden;
-      border: 1px solid var(--line);
-      background: var(--panel);
-      box-shadow: var(--shadow);
-    }
-
-    .spec-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 14px;
-    }
-
-    .spec {
-      min-height: 132px;
-      border-radius: var(--radius);
-      border: 1px solid var(--line);
-      padding: 20px;
-      background:
-        linear-gradient(155deg, rgba(255, 247, 238, .07), rgba(255, 247, 238, .025));
-    }
-
-    .spec small {
-      display: block;
-      color: var(--soft);
-      margin-bottom: 8px;
-    }
-
-    .spec strong {
-      display: block;
-      font-size: clamp(20px, 3vw, 30px);
-      color: var(--text);
-      line-height: 1.15;
-    }
-
-    .notice {
-      border-radius: calc(var(--radius) + 4px);
-      border: 1px solid rgba(255, 208, 108, 0.34);
-      background:
-        linear-gradient(135deg, rgba(255, 208, 108, .1), rgba(0, 214, 209, .06)),
-        rgba(35, 27, 29, .78);
-      padding: clamp(24px, 4vw, 42px);
-      display: grid;
-      grid-template-columns: .8fr 1.2fr;
-      gap: 24px;
-      align-items: start;
-    }
-
-    .notice h2 {
-      font-size: clamp(30px, 4vw, 48px);
-    }
-
-    .notice-video {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 58px;
-      margin-top: 30px;
-      padding: 0 30px;
-      border-radius: 999px;
-      border: 1px solid rgba(0, 214, 209, .55);
-      background: var(--accent);
-      color: #062524;
-      font-size: 17px;
-      font-weight: 950;
-      box-shadow: 0 22px 58px rgba(0, 214, 209, .22);
-      transition: transform .2s ease, background .2s ease, box-shadow .2s ease;
-    }
-
-    .notice-video:hover {
-      background: var(--accent-2);
-      transform: translateY(-2px);
-      box-shadow: 0 28px 72px rgba(55, 244, 238, .28);
-    }
-
-    .notice-list {
-      display: grid;
-      gap: 12px;
-      color: var(--muted);
-    }
-
-    .notice-list p {
-      margin: 0;
-      padding: 14px 16px;
-      border-radius: 16px;
-      border: 1px solid rgba(255,255,255,.1);
-      background: rgba(255,255,255,.04);
-    }
-
-    .faq {
-      display: grid;
-      grid-template-columns: .88fr 1.12fr;
-      gap: 22px;
-      align-items: start;
-    }
-
-    .faq-image {
-      border-radius: calc(var(--radius) + 6px);
-      overflow: hidden;
-      border: 1px solid var(--line);
-      box-shadow: var(--shadow);
-    }
-
-    .faq-list {
-      display: grid;
-      gap: 12px;
-    }
-
-    details {
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      background: rgba(255, 247, 238, 0.052);
-      overflow: hidden;
-    }
-
-    summary {
-      cursor: pointer;
-      padding: 18px 20px;
-      font-weight: 900;
-      color: var(--text);
-    }
-
-    details p {
-      margin: 0;
-      padding: 0 20px 20px;
-      color: var(--muted);
-    }
-
-    .closing {
-      padding-bottom: 80px;
-    }
-
-    .closing-box {
-      border-radius: calc(var(--radius) + 10px);
-      border: 1px solid rgba(0, 214, 209, .38);
-      background:
-        radial-gradient(circle at 76% 16%, rgba(0, 214, 209, .18), transparent 24rem),
-        linear-gradient(145deg, rgba(255,255,255,.08), rgba(255,255,255,.03)),
-        rgba(23, 19, 20, .86);
-      box-shadow: var(--shadow);
-      padding: clamp(28px, 5vw, 56px);
-      display: grid;
-      grid-template-columns: 1.2fr .8fr;
-      gap: 28px;
-      align-items: center;
-    }
-
-    .closing h2 {
-      font-size: clamp(34px, 5vw, 62px);
-      margin-bottom: 14px;
-    }
-
-    .closing p {
-      color: var(--muted);
-      margin: 0;
-      max-width: 60ch;
-    }
-
-    .package {
-      display: grid;
-      gap: 10px;
-      color: var(--muted);
-    }
-
-    .package span {
-      border-radius: 14px;
-      border: 1px solid var(--line);
-      background: rgba(255,255,255,.04);
-      padding: 12px 14px;
-    }
-
-    footer {
-      border-top: 1px solid var(--line);
-      padding: 28px 0 44px;
-      color: var(--soft);
-      font-size: 14px;
-    }
-
-    .footer-inner {
-      display: flex;
-      justify-content: space-between;
-      gap: 18px;
-      flex-wrap: wrap;
-    }
-
-    @media (prefers-reduced-motion: no-preference) {
-      .hero-copy, .hero-media, .proof, .feature-copy, .gallery figure, .flow-card, .spec, .notice, details {
-        animation: rise .72s cubic-bezier(.16, 1, .3, 1) both;
-      }
-
-      .hero-media { animation-delay: .08s; }
-      .proof:nth-child(2), .gallery figure:nth-child(2), .flow-card:nth-child(2) { animation-delay: .08s; }
-      .proof:nth-child(3), .gallery figure:nth-child(3) { animation-delay: .14s; }
-      .proof:nth-child(4), .gallery figure:nth-child(4) { animation-delay: .2s; }
-
-      @keyframes rise {
-        from { opacity: 0; transform: translateY(20px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-    }
-
-    @media (max-width: 980px) {
-      .hero-grid,
-      .showcase-grid,
-      .use-flow,
-      .spec-layout,
-      .notice,
-      .faq,
-      .closing-box {
-        grid-template-columns: 1fr;
-      }
-
-      .hero-grid {
-        gap: 34px;
-      }
-
-      .hero-card {
-        transform: none;
-      }
-
-      .proof-row {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .spec-photo {
-        position: static;
-      }
-
-      .gallery figure,
-      .gallery figure:nth-child(1),
-      .gallery figure:nth-child(2),
-      .gallery figure:nth-child(3),
-      .gallery figure:nth-child(4),
-      .gallery figure:nth-child(5),
-      .gallery figure:nth-child(6) {
-        grid-column: span 6;
-      }
-    }
-
-    @media (max-width: 720px) {
-      .site-nav {
-        height: auto;
-        min-height: 66px;
-      }
-
-      .nav-inner {
-        align-items: flex-start;
-        flex-direction: column;
-        padding: 14px 0;
-        gap: 12px;
-      }
-
-      .nav-links {
-        width: 100%;
-        overflow-x: auto;
-        justify-content: flex-start;
-        padding-bottom: 2px;
-      }
-
-      .hero {
-        min-height: auto;
-        padding-top: 34px;
-      }
-
-      h1 {
-        font-size: clamp(40px, 13vw, 58px);
-      }
-
-      .proof-row,
-      .spec-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .gallery {
-        grid-template-columns: 1fr;
-      }
-
-      .gallery figure,
-      .gallery figure:nth-child(n) {
-        grid-column: auto;
-      }
-    }
-  </style>
-</head>
-<body>
-  <header class="site-nav">
-    <div class="nav-inner">
-      <a class="brand" href="#top" aria-label="Hermes ESP32-C3 首页">
-        <span class="brand-mark"><img src="hermes-avatar-logo.png" alt=""></span>
-        <span>ESP32-C3 + Hermes Studio</span>
-      </a>
-      <nav class="nav-links" aria-label="页面导航">
-        <a href="#features">硬件亮点</a>
-        <a href="#gallery">产品图</a>
-        <a href="https://www.bilibili.com/video/BV1XfjJ6HEJF/?buvid=Y249B8269A108DAF48919C259A9DE04595BF&amp;from_spmid=main.space.0.0&amp;is_story_h5=false&amp;mid=NnXeSXRwQaaNqUgUnsx36Q%3D%3D&amp;p=1&amp;plat_id=114&amp;share_from=ugc&amp;share_medium=iphone&amp;share_plat=ios&amp;share_session_id=05D2CFF5-8FED-4709-9F97-26D684FA50E9&amp;share_source=WEIXIN&amp;share_tag=s_i&amp;timestamp=1782200632&amp;unique_k=82v3yJz&amp;up_id=257809052" target="_blank" rel="noopener noreferrer">使用教程</a>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f2f2ee" />
+    <meta
+      name="description"
+      content="Hermes ESP32-C3 桌面 AI 对话小方盒，带小屏、麦克风、扬声器和实体按键。"
+    />
+    <title>Hermes ESP32-C3 | 把你的 AI 放到桌面上</title>
+    <link rel="icon" type="image/png" href="public/assets/products/hd/black-hd.png" />
+    <link rel="stylesheet" href="styles.css" />
+    <script defer src="script.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+    <header class="site-header">
+      <div class="header-shell">
+        <a class="brand" href="#top" aria-label="Hermes ESP32-C3 首页">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>HERMES <i>/</i> ESP32-C3</span>
+        </a>
+
+        <nav class="desktop-nav" aria-label="主导航">
+          <a href="#hardware">功能</a>
+          <a href="#colors">配色</a>
+          <a href="#connection">如何工作</a>
+          <a href="#specs">规格</a>
+        </nav>
+
+        <div class="header-actions">
+          <a
+            class="docs-link"
+            href="https://hermes-studio.ai/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Hermes Studio 官网
+          </a>
+          <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="mobile-menu">
+            <span class="sr-only">打开菜单</span>
+            <span></span><span></span>
+          </button>
+        </div>
+      </div>
+
+      <nav class="mobile-nav" id="mobile-menu" aria-label="移动端主导航">
+        <a href="#hardware">功能</a>
+        <a href="#colors">配色</a>
+        <a href="#connection">如何工作</a>
         <a href="#specs">规格</a>
-        <a href="#faq">问答</a>
       </nav>
-    </div>
-  </header>
+    </header>
 
-  <main id="top">
-    <section class="hero">
-      <div class="shell hero-grid">
-        <div class="hero-copy">
-          <span class="label">ESP32-C3 + Hermes Studio</span>
-          <h1>桌面 AI 对话小方盒</h1>
-          <p>带小屏、麦克风、扬声器和实体按键，通过局域网连接电脑端 Hermes Studio。</p>
-          <div class="price-row" aria-label="价格">
-            <span class="price-original">原价 99</span>
-            <span class="price-presale">已售罄</span>
+    <main id="main-content">
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <div class="hero-copy reveal">
+          <p class="eyebrow">ESP32-C3 / HERMES STUDIO</p>
+          <h1 id="hero-title">把你的 AI，<br /><em>放到桌面上。</em></h1>
+          <p class="hero-intro hero-purchase-intro">
+            <strong class="hero-price"><span>¥</span>99</strong>
+            <span>通过以下渠道购买</span>
+          </p>
+          <div class="purchase-links" aria-label="购买与社区渠道">
+            <a
+              class="purchase-icon-link"
+              href="https://www.goofish.com/item?id=1061059557051&amp;spm=widle.12011849.copy.detail&amp;ut_sk=1.Z39DFAK6GPgDAOkQ8AmuzKPg_12431167_1782134125235.copy.detail.1061059557051.3314708927"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往闲鱼购买"
+              title="闲鱼"
+            >
+              <img src="public/assets/icons/goofish.png" alt="" />
+              <span class="sr-only">闲鱼</span>
+            </a>
+            <a
+              class="purchase-icon-link"
+              href="https://www.xiaohongshu.com/explore/6a392766000000000603388a?source=webshare&amp;xhsshare=pc_web&amp;xsec_token=CBIdoSWLtVJK2hb23fBG8KsuTMVKROk6O6NR-ornGx584=&amp;xsec_source=pc_share"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往小红书购买"
+              title="小红书"
+            >
+              <img src="public/assets/icons/xiaohongshu.png" alt="" />
+              <span class="sr-only">小红书</span>
+            </a>
+            <a
+              class="purchase-icon-link"
+              href="https://v.douyin.com/1ckDESgpG9k/"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往抖音主页"
+              title="抖音"
+            >
+              <img src="public/assets/icons/douyin.png" alt="" />
+              <span class="sr-only">抖音</span>
+            </a>
+            <a
+              class="purchase-icon-link purchase-icon-link--inset"
+              href="https://space.bilibili.com/257809052"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往哔哩哔哩主页"
+              title="哔哩哔哩"
+            >
+              <img src="public/assets/icons/bilibili.png" alt="" />
+              <span class="sr-only">哔哩哔哩</span>
+            </a>
+            <a
+              class="purchase-icon-link purchase-icon-link--inset"
+              href="https://github.com/EKKOLearnAI/hermes-studio"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往 GitHub 项目主页"
+              title="GitHub"
+            >
+              <img src="public/assets/icons/github.svg" alt="" />
+              <span class="sr-only">GitHub</span>
+            </a>
           </div>
-          <div class="hero-actions">
-            <a class="btn btn-primary" href="https://www.bilibili.com/video/BV1XfjJ6HEJF/?buvid=Y249B8269A108DAF48919C259A9DE04595BF&amp;from_spmid=main.space.0.0&amp;is_story_h5=false&amp;mid=NnXeSXRwQaaNqUgUnsx36Q%3D%3D&amp;p=1&amp;plat_id=114&amp;share_from=ugc&amp;share_medium=iphone&amp;share_plat=ios&amp;share_session_id=05D2CFF5-8FED-4709-9F97-26D684FA50E9&amp;share_source=WEIXIN&amp;share_tag=s_i&amp;timestamp=1782200632&amp;unique_k=82v3yJz&amp;up_id=257809052" target="_blank" rel="noopener noreferrer">查看使用教程</a>
-            <a class="btn btn-secondary" href="https://m.tb.cn/h.RJXBNRb?tk=mOCHgSTIunn" target="_blank" rel="noopener noreferrer">闲鱼购买</a>
-            <a class="btn btn-secondary" href="https://www.xiaohongshu.com/discovery/item/6a392766000000000603388a?source=webshare&amp;xhsshare=pc_web&amp;xsec_token=CBIdoSWLtVJK2hb23fBG8KsuTMVKROk6O6NR-ornGx584=&amp;xsec_source=pc_share" target="_blank" rel="noopener noreferrer">小红书购买</a>
+        </div>
+
+        <div class="hero-visual reveal reveal-delay" data-orbit-stage>
+          <div class="orbit-ring orbit-ring--outer" aria-hidden="true"></div>
+          <div class="orbit-ring orbit-ring--inner" aria-hidden="true"></div>
+          <div class="orbit-caption" aria-hidden="true">
+            <span>7 COLORS</span>
+            <span>ONE DESKTOP</span>
+          </div>
+
+          <div class="orbit-device" data-index="0" data-color="pink">
+            <img src="public/assets/products/hd/pink-hd.png" alt="玫瑰粉 Hermes ESP32-C3 正面设备" />
+          </div>
+          <div class="orbit-device" data-index="1" data-color="white">
+            <img src="public/assets/products/hd/white-hd.png" alt="暖瓷白 Hermes ESP32-C3 正面设备" />
+          </div>
+          <div class="orbit-device" data-index="2" data-color="orange">
+            <img src="public/assets/products/hd/orange-hd.png" alt="杏橙 Hermes ESP32-C3 背面设备" />
+          </div>
+          <div class="orbit-device" data-index="3" data-color="blue">
+            <img src="public/assets/products/hd/blue-hd.png" alt="天空蓝 Hermes ESP32-C3 侧面设备" />
+          </div>
+          <div class="orbit-device" data-index="4" data-color="green">
+            <img src="public/assets/products/hd/green-hd.png" alt="薄荷绿 Hermes ESP32-C3 正面设备" />
+          </div>
+          <div class="orbit-device" data-index="5" data-color="black">
+            <img src="public/assets/products/hd/black-hd.png" alt="石墨黑 Hermes ESP32-C3 正面设备" />
+          </div>
+          <div class="orbit-device" data-index="6" data-color="red">
+            <img src="public/assets/products/hd/red-hd.png" alt="深莓红 Hermes ESP32-C3 正面设备" />
+          </div>
+
+          <div class="orbit-status">
+            <span class="status-swatch" data-status-swatch></span>
+            <span data-status-label>玫瑰粉</span>
           </div>
         </div>
+      </section>
 
-        <div class="hero-media" aria-label="Hermes ESP32-C3 产品主图">
-          <div class="hero-card">
-            <img src="hermes-colorway-card-02.png" alt="暖白 Hermes ESP32-C3 小方盒正面，小屏显示 HSTUDIO 和状态文字">
+      <section class="signal-section" aria-labelledby="signal-title">
+        <div class="section-intro reveal">
+          <h2 id="signal-title">一个小方盒，一套完整的桌面回应。</h2>
+          <p>它把语音输入、AI 回复和实体反馈，放进一个可以真正触碰的设备里。</p>
+        </div>
+        <div class="signal-grid" role="list">
+          <div class="signal-item reveal" role="listitem">
+            <span class="signal-index">01</span>
+            <strong>听见</strong>
+            <p>麦克风接住你的声音。</p>
+          </div>
+          <div class="signal-item reveal reveal-delay-1" role="listitem">
+            <span class="signal-index">02</span>
+            <strong>理解</strong>
+            <p>Hermes Studio 负责模型与服务。</p>
+          </div>
+          <div class="signal-item reveal reveal-delay-2" role="listitem">
+            <span class="signal-index">03</span>
+            <strong>回应</strong>
+            <p>扬声器把回复带回桌面。</p>
+          </div>
+          <div class="signal-item reveal reveal-delay-3" role="listitem">
+            <span class="signal-index">04</span>
+            <strong>触碰</strong>
+            <p>实体按键让控制动作更明确。</p>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <section id="features">
-      <div class="shell">
-        <div class="section-head">
-          <h2>把 Hermes Studio 放到桌面上</h2>
-          <p>ESP32 负责硬件交互，Hermes Studio 负责模型、语音识别和语音合成。适合开源硬件玩家和 AI Agent 用户。</p>
+      <section class="feature-section feature-section--screen" id="hardware" aria-labelledby="screen-title">
+        <div class="feature-visual reveal">
+          <span class="feature-orbit" aria-hidden="true"></span>
+          <img src="public/assets/products/hd/pink-hd.png" alt="玫瑰粉设备正面的小屏显示表情和连接状态" />
+        </div>
+        <div class="feature-copy reveal reveal-delay">
+          <p class="feature-kicker">小屏表情入口</p>
+          <h2 id="screen-title">让状态被看见。</h2>
+          <p>
+            正面小屏显示连接状态、配网提示和表情反馈。它不只是一个开发板，更像一件会回应你的桌面设备。
+          </p>
+        </div>
+      </section>
+
+      <section class="colors-section" id="colors" aria-labelledby="colors-title">
+        <div class="colors-heading reveal">
+          <h2 id="colors-title">七种颜色，同一张桌面。</h2>
+          <p>从安静的暖瓷白，到更有存在感的深莓红。选一台和你的桌面相处舒服的颜色。</p>
         </div>
 
-        <div class="proof-row" aria-label="核心卖点">
-          <div class="proof">
-            <b>2.4G</b>
-            <span>连接 2.4GHz Wi-Fi，在同一局域网内与电脑通信。</span>
+        <div class="color-rail" role="list" aria-label="选择设备颜色">
+          <button class="color-item is-selected" type="button" data-color-choice="pink" aria-pressed="true" role="listitem">
+            <span class="color-image"><img src="public/assets/products/hd/pink-hd.png" alt="" /></span>
+            <span class="color-name">玫瑰粉</span>
+            <span class="color-code">PINK</span>
+          </button>
+          <button class="color-item" type="button" data-color-choice="green" aria-pressed="false" role="listitem">
+            <span class="color-image"><img src="public/assets/products/hd/green-hd.png" alt="" /></span>
+            <span class="color-name">薄荷绿</span>
+            <span class="color-code">GREEN</span>
+          </button>
+          <button class="color-item" type="button" data-color-choice="red" aria-pressed="false" role="listitem">
+            <span class="color-image"><img src="public/assets/products/hd/red-hd.png" alt="" /></span>
+            <span class="color-name">深莓红</span>
+            <span class="color-code">RED</span>
+          </button>
+          <button class="color-item" type="button" data-color-choice="white" aria-pressed="false" role="listitem">
+            <span class="color-image"><img src="public/assets/products/hd/white-hd.png" alt="" /></span>
+            <span class="color-name">暖瓷白</span>
+            <span class="color-code">WHITE</span>
+          </button>
+          <button class="color-item" type="button" data-color-choice="blue" aria-pressed="false" role="listitem">
+            <span class="color-image"><img src="public/assets/products/hd/blue-hd.png" alt="" /></span>
+            <span class="color-name">天空蓝</span>
+            <span class="color-code">BLUE</span>
+          </button>
+          <button class="color-item" type="button" data-color-choice="orange" aria-pressed="false" role="listitem">
+            <span class="color-image"><img src="public/assets/products/hd/orange-hd.png" alt="" /></span>
+            <span class="color-name">杏橙</span>
+            <span class="color-code">ORANGE</span>
+          </button>
+          <button class="color-item" type="button" data-color-choice="black" aria-pressed="false" role="listitem">
+            <span class="color-image"><img src="public/assets/products/hd/black-hd.png" alt="" /></span>
+            <span class="color-name">石墨黑</span>
+            <span class="color-code">BLACK</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="connection-section" id="connection" aria-labelledby="connection-title">
+        <div class="connection-layout">
+          <div class="connection-heading reveal">
+            <p class="connection-kicker">CONNECTION / 连接方式</p>
+            <h2 id="connection-title">硬件在桌面，AI 在 Studio。</h2>
+            <p>小方盒负责听见、显示与播放；电脑或云服务器上的 Hermes Studio 负责模型、语音识别和语音合成。</p>
+            <div class="connection-facts" aria-label="连接要求">
+              <span><i aria-hidden="true"></i> 2.4GHz Wi-Fi</span>
+              <span><i aria-hidden="true"></i> Hermes Studio 在线</span>
+            </div>
+            <a class="connection-docs-link" href="https://hermes-studio.ai/#/docs/esp32" target="_blank" rel="noreferrer">
+              查看配对说明 <span aria-hidden="true">↗</span>
+            </a>
           </div>
-          <div class="proof">
-            <b>STT</b>
-            <span>语音输入由电脑端 Hermes Studio 接入识别服务。</span>
-          </div>
-          <div class="proof">
-            <b>TTS</b>
-            <span>AI 回复可转成语音，由小方盒扬声器播放。</span>
-          </div>
-          <div class="proof">
-            <b>DIY</b>
-            <span>适合二次开发、固件迭代和桌面助手原型展示。</span>
-          </div>
-        </div>
-      </div>
-    </section>
 
-    <section>
-      <div class="shell showcase-grid">
-        <div class="feature-panel">
-          <img src="hermes-colorway-card-07.png" alt="石墨黑 Hermes ESP32-C3 小方盒斜侧成品视角">
-        </div>
-        <div class="feature-list">
-          <article class="feature-copy">
-            <h3>小屏表情入口</h3>
-            <p>正面屏幕用于显示连接状态、配网提示和表情反馈，比单纯开发板更像一个完整桌面设备。</p>
-          </article>
-          <article class="feature-copy">
-            <h3>实体按键控制</h3>
-            <p>侧边按键适合触发语音交互、切换模式或做开发调试入口，让控制动作更明确。</p>
-          </article>
-          <article class="feature-copy">
-            <h3>背面扬声器孔</h3>
-            <p>背面开孔用于语音播报和状态提示，定位是近场桌面反馈，不是大功率音箱。</p>
-          </article>
-        </div>
-      </div>
-    </section>
+          <div class="connection-panel reveal reveal-delay">
+            <div class="connection-panel-header">
+              <span class="connection-panel-title">DEVICE ROUTE / 设备链路</span>
+              <span class="connection-panel-status"><i aria-hidden="true"></i> 双向通信</span>
+            </div>
 
-    <section id="gallery">
-      <div class="shell">
-        <div class="section-head">
-          <h2>每个角度都能说明功能</h2>
-          <p>商品详情页，从正面、小屏、侧键、背面扬声器到桌面摆放都覆盖到了。</p>
-        </div>
+            <div class="system-map" aria-label="设备与 Hermes Studio 的双向连接路径">
+              <div class="system-node system-node--device">
+                <span class="system-node-index">01 / DEVICE</span>
+                <span class="system-icon system-icon--box" aria-hidden="true"></span>
+                <strong>Hermes 小方盒</strong>
+                <small>麦克风 · 屏幕 · 扬声器 · 按键</small>
+              </div>
 
-        <div class="gallery" aria-label="产品图片画廊">
-          <figure>
-            <img src="hermes-colorway-card-02.png" alt="暖白成品主视觉">
-            <figcaption>暖白正面主图，适合作为商品封面和首屏主视觉。</figcaption>
-          </figure>
-          <figure>
-            <img src="hermes-colorway-card-01.png" alt="玫瑰粉正面小屏表情入口">
-            <figcaption>玫瑰粉正面屏幕和表情状态，适合作为桌面 AI 对话入口展示。</figcaption>
-          </figure>
-          <figure>
-            <img src="hermes-colorway-card-03.png" alt="柠檬黄小方盒侧前结构">
-            <figcaption>柠檬黄侧前角度展示机身厚度、屏幕凹槽和外壳层次。</figcaption>
-          </figure>
-          <figure>
-            <img src="hermes-colorway-card-04.png" alt="橙色小方盒背面扬声器开孔">
-            <figcaption>橙色背面扬声器孔用于语音播报和状态提示。</figcaption>
-          </figure>
-          <figure>
-            <img src="hermes-colorway-card-05.png" alt="蓝色小方盒侧边实体按键">
-            <figcaption>蓝色侧边按键保留真实控制手感，适合触发和调试。</figcaption>
-          </figure>
-          <figure>
-            <img src="hermes-colorway-card-06.png" alt="绿色小方盒桌面陪伴视角">
-            <figcaption>绿色桌面摆放视角，展示屏幕表情和小方盒的陪伴感。</figcaption>
-          </figure>
-          <figure>
-            <img src="hermes-colorway-card-07.png" alt="石墨黑小方盒三维产品感">
-            <figcaption>石墨黑斜侧成品角度，展示屏幕、顶部、侧边按键和整体厚度。</figcaption>
-          </figure>
-          <figure>
-            <img src="hermes-colorway-card-08.png" alt="深红小方盒顶部结构俯视">
-            <figcaption>深红顶部结构展示轻巧方盒形态，适合桌面摆放。</figcaption>
-          </figure>
-          <figure>
-            <img src="hermes-colorway-card-09.png" alt="玫瑰粉小方盒屏幕光效">
-            <figcaption>玫瑰粉侧前角度突出屏幕光效，适合说明状态反馈和配网提示。</figcaption>
-          </figure>
-          <figure class="contact-sheet">
-            <img src="hermes-colorway-cards-contact-sheet.png" alt="Hermes ESP32-C3 多色产品图总览">
-            <figcaption>多色版本总览图，适合放在详情页末尾展示完整色系和角度覆盖。</figcaption>
-          </figure>
-        </div>
-      </div>
-    </section>
+              <div class="system-transport" aria-label="通过网络双向传输">
+                <span class="transport-name">2.4GHz Wi-Fi / Internet</span>
+                <div class="transport-lane transport-lane--outbound">
+                  <span>语音与按键事件</span>
+                  <i aria-hidden="true"></i>
+                </div>
+                <div class="transport-lane transport-lane--inbound">
+                  <i aria-hidden="true"></i>
+                  <span>语音与屏幕状态</span>
+                </div>
+                <small>局域网直连或远程服务</small>
+              </div>
 
-    <section id="tutorial">
-      <div class="shell">
-        <div class="section-head">
-          <h2>从通电到对话</h2>
-          <p>第一次使用需要配网、连接 Hermes Studio，并在电脑端完成语音和模型服务配置。</p>
-        </div>
+              <div class="system-node system-node--studio">
+                <span class="system-node-index">02 / RUNTIME</span>
+                <span class="system-icon system-icon--studio" aria-hidden="true"></span>
+                <strong>Hermes Studio</strong>
+                <small>Agent · 模型 · STT · TTS</small>
+              </div>
+            </div>
 
-        <div class="use-flow">
-          <article class="flow-card">
-            <h3>设备配网</h3>
-            <ol>
-              <li>用 USB 给小方盒供电，内置电池。</li>
-              <li>首次开机进入配网模式。</li>
-              <li>手机或电脑连接 Hstudio-WIFI。</li>
-              <li>进入 192.168.4.1，选择 Wi-Fi 进行连接并保存。</li>
-              <li>等待页面跳转，会显示当前设备在当前局域网的 IP。</li>
-              <li>点击下方设备登录，使用 Hermes Studio 账号密码登录，并选择对应 profile。</li>
+            <ol class="connection-steps" aria-label="连接设备的三个步骤">
+              <li>
+                <span>01</span>
+                <strong>启动 Studio</strong>
+                <small>在电脑或服务器运行 Hermes Studio。</small>
+              </li>
+              <li>
+                <span>02</span>
+                <strong>接入网络</strong>
+                <small>让设备连上可访问 Studio 的 2.4GHz Wi-Fi。</small>
+              </li>
+              <li>
+                <span>03</span>
+                <strong>完成配对</strong>
+                <small>在设备页输入配对码，之后即可开始对话。</small>
+              </li>
             </ol>
-            <code class="code-note">http://192.168.4.1</code>
-          </article>
-
-          <article class="flow-card">
-            <h3>连接 Hermes Studio</h3>
-            <ol>
-              <li>电脑和 ESP32 保持在同一个局域网。</li>
-              <li>打开电脑端 Hermes Studio，进入设置页面的语音设置。</li>
-              <li>完成语音 API Key 的设置。</li>
-              <li>浏览器进入当前设备的局域网 IP 设置页。</li>
-              <li>在网络设备区域点击刷新探测。</li>
-              <li>服务端填写 Hermes Studio 的服务端 IP + 端口。</li>
-              <li>也可以点击域名添加，保存后完成连接。</li>
-            </ol>
-            <code class="code-note">示例：http://电脑局域网IP:8748</code>
-          </article>
-        </div>
-      </div>
-    </section>
-
-    <section id="specs">
-      <div class="shell spec-layout">
-        <div class="spec-photo">
-          <img src="hermes-colorway-card-06.png" alt="绿色 Hermes ESP32-C3 放在桌面使用的陪伴视角">
-        </div>
-
-        <div>
-          <div class="section-head">
-            <h2>规格与定位</h2>
-            <p>它是开源硬件风格的桌面入口，不是完全独立的消费级智能音箱。</p>
-          </div>
-
-          <div class="spec-grid">
-            <div class="spec">
-              <small>主控</small>
-              <strong>ESP32-C3</strong>
-            </div>
-            <div class="spec">
-              <small>网络</small>
-              <strong>2.4GHz Wi-Fi</strong>
-            </div>
-            <div class="spec">
-              <small>显示</small>
-              <strong>正面小屏</strong>
-            </div>
-            <div class="spec">
-              <small>音频</small>
-              <strong>麦克风 + 扬声器</strong>
-            </div>
-            <div class="spec">
-              <small>控制</small>
-              <strong>侧边实体按键</strong>
-            </div>
-            <div class="spec">
-              <small>软件</small>
-              <strong>Hermes Studio 固件</strong>
-            </div>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <section id="notice">
-      <div class="shell">
-        <div class="notice">
-          <div>
-            <h2>购买前请确认</h2>
-            <a class="notice-video" href="https://www.bilibili.com/video/BV1pH7K6PEGe?buvid=Y249B8269A108DAF48919C259A9DE04595BF&amp;from_spmid=dt.dt.video.0&amp;is_story_h5=false&amp;mid=NnXeSXRwQaaNqUgUnsx36Q%3D%3D&amp;plat_id=114&amp;share_from=ugc&amp;share_medium=iphone&amp;share_plat=ios&amp;share_session_id=FD5C1A66-7B63-4D3A-B7EB-5D9D916708C5&amp;share_source=weixin&amp;share_tag=s_i&amp;timestamp=1782122548&amp;unique_k=n5spdtp&amp;up_id=257809052" target="_blank" rel="noopener noreferrer">视频教程</a>
-          </div>
-          <div class="notice-list">
-            <p>本设备需要配合电脑端或者云服务器 Hermes Studio 使用，不是离线独立大模型设备。</p>
-            <p>AI 回复、语音识别和语音合成依赖用户自己的软件与服务配置。</p>
-            <p>ESP32 访问电脑时必须填写电脑局域网 IP，不能填写 127.0.0.1。</p>
-            <p>3D 打印外壳可能有轻微层纹，音频效果更适合近场桌面交互。</p>
-          </div>
+      <section class="feature-section feature-section--button" aria-labelledby="button-title">
+        <div class="feature-copy reveal">
+          <p class="feature-kicker">实体按键控制</p>
+          <h2 id="button-title">每次触碰，都有回应。</h2>
+          <p>
+            侧边按键适合触发语音交互、切换模式或进入开发调试，让控制动作从屏幕里回到手上。
+          </p>
         </div>
-      </div>
-    </section>
-
-    <section id="faq">
-      <div class="shell faq">
-        <div class="faq-image">
-          <img src="hermes-colorway-card-09.png" alt="玫瑰粉 Hermes ESP32-C3 屏幕光效和状态反馈">
+        <div class="feature-visual feature-visual--blue reveal reveal-delay">
+          <span class="feature-orbit" aria-hidden="true"></span>
+          <img src="public/assets/products/hd/blue-hd.png" alt="天空蓝设备侧边的两个实体按键" />
         </div>
+      </section>
 
-        <div>
-          <div class="section-head">
-            <h2>常见问题</h2>
-            <p>这些问题适合直接放到商品页，能提前过滤不适合买家。</p>
+      <section class="specs-section" id="specs" aria-labelledby="specs-title">
+        <div class="specs-heading reveal">
+          <h2 id="specs-title">它适合怎样的桌面。</h2>
+          <p>这是开源硬件风格的桌面入口，不是完全独立的消费级智能音箱。</p>
+        </div>
+        <div class="spec-columns">
+          <div class="spec-group reveal">
+            <h3>核心规格</h3>
+            <dl>
+              <div><dt>主控</dt><dd>ESP32-C3</dd></div>
+              <div><dt>网络</dt><dd>2.4GHz Wi-Fi</dd></div>
+              <div><dt>显示</dt><dd>正面小屏</dd></div>
+              <div><dt>音频</dt><dd>麦克风 + 扬声器</dd></div>
+              <div><dt>控制</dt><dd>侧边实体按键</dd></div>
+              <div><dt>软件</dt><dd>Hermes Studio 固件</dd></div>
+            </dl>
           </div>
-
-          <div class="faq-list">
-            <details open>
-              <summary>它能脱离电脑单独聊天吗？</summary>
-              <p>不能。它需要连接电脑端或者云服务器 Hermes Studio。ESP32 负责硬件交互，AI 能力由 Hermes Studio 和用户配置的服务提供。</p>
-            </details>
-            <details>
-              <summary>买来后需要配置什么？</summary>
-              <p>需要给设备配 Wi-Fi，在 Hermes Studio 中完成配对，并配置语音识别、语音合成和模型服务。</p>
-            </details>
-            <details>
-              <summary>为什么不能填写 127.0.0.1？</summary>
-              <p>对 ESP32 来说，127.0.0.1 代表 ESP32 自己，不是你的电脑。需要填写电脑在局域网里的 IP 地址。</p>
-            </details>
-            <details>
-              <summary>声音适合什么场景？</summary>
-              <p>适合桌面近距离听，定位是语音提示和近场对话反馈，不是大功率音箱或远场智能音箱。</p>
-            </details>
-            <details>
-              <summary>可以二次开发吗？</summary>
-              <p>可以。它适合有 ESP32、Arduino、PlatformIO 或 Hermes Studio 使用基础的用户继续修改固件和交互逻辑。</p>
-            </details>
+          <div class="fit-group reveal reveal-delay">
+            <h3>适合这些人</h3>
+            <ul>
+              <li>开源硬件玩家</li>
+              <li>AI Agent 用户</li>
+              <li>桌面助手原型开发者</li>
+              <li>想要实体 AI 交互入口的用户</li>
+            </ul>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <section class="closing">
-      <div class="shell closing-box">
-        <div>
-          <h2>适合 AI 玩家，也适合商品展示</h2>
-          <p>发货前建议完成固件刷入和基础通电检查。买家收到后按教程配网、配对和配置语音服务即可开始体验。</p>
+      <section class="notice-section" aria-labelledby="notice-title">
+        <div class="notice-copy reveal">
+          <h2 id="notice-title">买之前，先确认这五件事。</h2>
+          <p>了解它需要怎样的服务和网络环境，才能判断它是不是适合你的设备。</p>
         </div>
-        <div class="package" aria-label="建议发货内容">
-          <span>Hermes ESP32-C3 小方盒 x 1</span>
-          <span>已刷入固件</span>
-          <span>使用说明 x 1</span>
-          <span>USB 线按实际发货填写</span>
+        <div class="notice-list reveal reveal-delay">
+          <p><span>01</span> 需要电脑端或云服务器 Hermes Studio，不能完全脱离服务独立聊天。</p>
+          <p><span>02</span> AI 回复、语音识别和语音合成依赖你自己的软件与服务配置。</p>
+          <p><span>03</span> ESP32 访问电脑时要填写局域网 IP。</p>
+          <p><span>04</span> 3D 打印外壳可能有轻微层纹。</p>
+          <p><span>05</span> 音频定位是桌面近场反馈，不是远场或大功率音箱。</p>
         </div>
-      </div>
-    </section>
-  </main>
+      </section>
 
-  <footer>
-    <div class="shell footer-inner">
-      <span>Hermes ESP32-C3 介绍页</span>
-      <span>AI 能力依赖 Hermes Studio、模型服务、STT 和 TTS 配置</span>
-    </div>
-  </footer>
-</body>
+      <section class="faq-section" aria-labelledby="faq-title">
+        <div class="faq-heading reveal">
+          <h2 id="faq-title">常见问题</h2>
+        </div>
+        <div class="faq-list reveal reveal-delay">
+          <details>
+            <summary>它能脱离电脑单独聊天吗<span aria-hidden="true">+</span></summary>
+            <p>不能。它需要连接电脑端或者云服务器 Hermes Studio。ESP32 负责硬件交互，AI 能力由 Hermes Studio 和你配置的服务提供。</p>
+          </details>
+          <details>
+            <summary>买来后需要配置什么<span aria-hidden="true">+</span></summary>
+            <p>需要给设备配 Wi-Fi，在 Hermes Studio 中完成配对，并配置语音识别、语音合成和模型服务。</p>
+          </details>
+          <details>
+            <summary>声音适合什么场景<span aria-hidden="true">+</span></summary>
+            <p>适合桌面近距离听，定位是语音提示和近场对话反馈，不是大功率音箱或远场智能音箱。</p>
+          </details>
+          <details>
+            <summary>可以二次开发吗<span aria-hidden="true">+</span></summary>
+            <p>可以。它适合有 ESP32、Arduino、PlatformIO 或 Hermes Studio 使用基础的用户继续修改固件和交互逻辑。</p>
+          </details>
+        </div>
+      </section>
+
+      <section class="purchase-section" id="purchase" aria-labelledby="purchase-title">
+        <div class="purchase-copy reveal">
+          <h2 id="purchase-title">让 AI 有一个在桌面上的位置。</h2>
+          <p>先看清楚它，再选一台真正想长期相处的颜色。</p>
+          <div class="purchase-links" aria-label="购买与社区渠道">
+            <a
+              class="purchase-icon-link"
+              href="https://www.goofish.com/item?id=1061059557051&amp;spm=widle.12011849.copy.detail&amp;ut_sk=1.Z39DFAK6GPgDAOkQ8AmuzKPg_12431167_1782134125235.copy.detail.1061059557051.3314708927"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往闲鱼购买"
+              title="闲鱼"
+            >
+              <img src="public/assets/icons/goofish.png" alt="" />
+              <span class="sr-only">闲鱼</span>
+            </a>
+            <a
+              class="purchase-icon-link"
+              href="https://www.xiaohongshu.com/explore/6a392766000000000603388a?source=webshare&amp;xhsshare=pc_web&amp;xsec_token=CBIdoSWLtVJK2hb23fBG8KsuTMVKROk6O6NR-ornGx584=&amp;xsec_source=pc_share"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往小红书购买"
+              title="小红书"
+            >
+              <img src="public/assets/icons/xiaohongshu.png" alt="" />
+              <span class="sr-only">小红书</span>
+            </a>
+            <a
+              class="purchase-icon-link"
+              href="https://v.douyin.com/1ckDESgpG9k/"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往抖音主页"
+              title="抖音"
+            >
+              <img src="public/assets/icons/douyin.png" alt="" />
+              <span class="sr-only">抖音</span>
+            </a>
+            <a
+              class="purchase-icon-link purchase-icon-link--inset"
+              href="https://space.bilibili.com/257809052"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往哔哩哔哩主页"
+              title="哔哩哔哩"
+            >
+              <img src="public/assets/icons/bilibili.png" alt="" />
+              <span class="sr-only">哔哩哔哩</span>
+            </a>
+            <a
+              class="purchase-icon-link purchase-icon-link--inset"
+              href="https://github.com/EKKOLearnAI/hermes-studio"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往 GitHub 项目主页"
+              title="GitHub"
+            >
+              <img src="public/assets/icons/github.svg" alt="" />
+              <span class="sr-only">GitHub</span>
+            </a>
+          </div>
+          <small>价格与供货状态以购买页面为准。</small>
+        </div>
+        <div class="purchase-visual reveal reveal-delay">
+          <span class="purchase-shadow" aria-hidden="true"></span>
+          <img src="public/assets/products/hd/white-hd.png" alt="暖瓷白 Hermes ESP32-C3 桌面设备" />
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>HERMES / ESP32-C3</span>
+      <span>桌面 AI 对话小方盒</span>
+      <a href="https://hermes-studio.ai/#/docs/esp32" target="_blank" rel="noreferrer">产品介绍 ↗</a>
+    </footer>
+  </body>
 </html>

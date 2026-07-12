@@ -42,7 +42,7 @@ export interface WorkflowBatchDeleteResult {
 }
 
 export type WorkflowRunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'canceled'
-export type WorkflowRunNodeStatus = 'queued' | 'running' | 'completed' | 'failed' | 'blocked' | 'canceled'
+export type WorkflowRunNodeStatus = 'queued' | 'running' | 'completed' | 'failed' | 'blocked' | 'approval_rejected' | 'canceled'
 
 export interface WorkflowRunRecord {
   id: string
@@ -164,6 +164,16 @@ export async function deleteWorkflowRun(id: string, runId: string): Promise<void
   await request<{ ok: true }>(
     `/api/hermes/workflows/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}`,
     { method: 'DELETE' },
+  )
+}
+
+export async function approveWorkflowNode(id: string, runId: string, nodeId: string, approved: boolean): Promise<void> {
+  await request<{ ok: true }>(
+    `/api/hermes/workflows/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/approval`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ approved }),
+    },
   )
 }
 

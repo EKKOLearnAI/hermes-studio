@@ -27,6 +27,8 @@ export interface WorkspaceRunChangeFileDetail extends WorkspaceRunChangeFileSumm
 
 export interface WorkspaceRunChangeSummary {
   change_id: string
+  room_id: string
+  message_id: string
   session_id: string
   run_id: string
   source: 'run'
@@ -45,6 +47,8 @@ export interface WorkspaceRunChangeSummary {
 
 export interface SaveWorkspaceRunChangeInput {
   change_id: string
+  room_id?: string
+  message_id?: string
   session_id: string
   run_id?: string
   source?: 'run'
@@ -101,6 +105,8 @@ function mapFileDetail(row: Record<string, unknown>): WorkspaceRunChangeFileDeta
 function mapSummary(row: Record<string, unknown>, files: WorkspaceRunChangeFileSummary[]): WorkspaceRunChangeSummary {
   return {
     change_id: String(row.change_id || ''),
+    room_id: String(row.room_id || ''),
+    message_id: String(row.message_id || ''),
     session_id: String(row.session_id || ''),
     run_id: String(row.run_id || ''),
     source: 'run',
@@ -118,62 +124,86 @@ function mapSummary(row: Record<string, unknown>, files: WorkspaceRunChangeFileS
   }
 }
 
+type HermesDb = NonNullable<ReturnType<typeof getDb>>
+
+function readWorkspaceRunChange(db: HermesDb, sessionId: string, changeId: string): WorkspaceRunChangeSummary | null {
+  const row = db.prepare(
+    `SELECT * FROM ${WORKSPACE_RUN_CHANGES_TABLE} WHERE session_id = ? AND change_id = ?`,
+  ).get(sessionId, changeId) as Record<string, unknown> | undefined
+  if (!row) return null
+  const files = db.prepare(
+    `SELECT id, change_id, session_id, path, old_path, change_type, additions, deletions,
+      size_before, size_after, patch_bytes, truncated, binary, created_at
+     FROM ${WORKSPACE_RUN_CHANGE_FILES_TABLE}
+     WHERE session_id = ? AND change_id = ?
+     ORDER BY path COLLATE NOCASE ASC`,
+  ).all(sessionId, changeId) as Record<string, unknown>[]
+  return mapSummary(row, files.map(mapFileSummary))
+}
+
+export function insertWorkspaceRunChange(db: HermesDb, change: SaveWorkspaceRunChangeInput): WorkspaceRunChangeSummary | null {
+  const createdAt = Math.floor(Date.now() / 1000)
+  db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGE_FILES_TABLE} WHERE change_id = ?`).run(change.change_id)
+  db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGES_TABLE} WHERE change_id = ?`).run(change.change_id)
+  db.prepare(
+    `INSERT INTO ${WORKSPACE_RUN_CHANGES_TABLE} (
+      change_id, room_id, message_id, session_id, run_id, source, workspace, workspace_kind, started_at, finished_at,
+      files_changed, additions, deletions, truncated, total_patch_bytes, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    change.change_id,
+    change.room_id || '',
+    change.message_id || '',
+    change.session_id,
+    change.run_id || '',
+    change.source || 'run',
+    change.workspace,
+    change.workspace_kind || 'git',
+    change.started_at,
+    change.finished_at,
+    change.files_changed,
+    change.additions,
+    change.deletions,
+    change.truncated ? 1 : 0,
+    change.total_patch_bytes,
+    createdAt,
+  )
+
+  const insertFile = db.prepare(
+    `INSERT INTO ${WORKSPACE_RUN_CHANGE_FILES_TABLE} (
+      change_id, session_id, path, old_path, change_type, additions, deletions,
+      size_before, size_after, patch, patch_bytes, truncated, binary, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+  for (const file of change.files) {
+    insertFile.run(
+      change.change_id,
+      change.session_id,
+      file.path,
+      file.old_path || null,
+      file.change_type,
+      file.additions,
+      file.deletions,
+      file.size_before ?? null,
+      file.size_after ?? null,
+      file.patch || null,
+      file.patch_bytes,
+      file.truncated ? 1 : 0,
+      file.binary ? 1 : 0,
+      createdAt,
+    )
+  }
+  return readWorkspaceRunChange(db, change.session_id, change.change_id)
+}
+
 export function saveWorkspaceRunChange(change: SaveWorkspaceRunChangeInput): WorkspaceRunChangeSummary | null {
   if (!isSqliteAvailable()) return null
   const db = getDb()
   if (!db) return null
 
-  const createdAt = Math.floor(Date.now() / 1000)
   db.exec('BEGIN')
   try {
-    db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGE_FILES_TABLE} WHERE change_id = ?`).run(change.change_id)
-    db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGES_TABLE} WHERE change_id = ?`).run(change.change_id)
-    db.prepare(
-      `INSERT INTO ${WORKSPACE_RUN_CHANGES_TABLE} (
-        change_id, session_id, run_id, source, workspace, workspace_kind, started_at, finished_at,
-        files_changed, additions, deletions, truncated, total_patch_bytes, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      change.change_id,
-      change.session_id,
-      change.run_id || '',
-      change.source || 'run',
-      change.workspace,
-      change.workspace_kind || 'git',
-      change.started_at,
-      change.finished_at,
-      change.files_changed,
-      change.additions,
-      change.deletions,
-      change.truncated ? 1 : 0,
-      change.total_patch_bytes,
-      createdAt,
-    )
-
-    const insertFile = db.prepare(
-      `INSERT INTO ${WORKSPACE_RUN_CHANGE_FILES_TABLE} (
-        change_id, session_id, path, old_path, change_type, additions, deletions,
-        size_before, size_after, patch, patch_bytes, truncated, binary, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    for (const file of change.files) {
-      insertFile.run(
-        change.change_id,
-        change.session_id,
-        file.path,
-        file.old_path || null,
-        file.change_type,
-        file.additions,
-        file.deletions,
-        file.size_before ?? null,
-        file.size_after ?? null,
-        file.patch || null,
-        file.patch_bytes,
-        file.truncated ? 1 : 0,
-        file.binary ? 1 : 0,
-        createdAt,
-      )
-    }
+    insertWorkspaceRunChange(db, change)
     db.exec('COMMIT')
   } catch (err) {
     db.exec('ROLLBACK')
@@ -187,18 +217,7 @@ export function getWorkspaceRunChange(sessionId: string, changeId: string): Work
   if (!isSqliteAvailable()) return null
   const db = getDb()
   if (!db) return null
-  const row = db.prepare(
-    `SELECT * FROM ${WORKSPACE_RUN_CHANGES_TABLE} WHERE session_id = ? AND change_id = ?`,
-  ).get(sessionId, changeId) as Record<string, unknown> | undefined
-  if (!row) return null
-  const files = db.prepare(
-    `SELECT id, change_id, session_id, path, old_path, change_type, additions, deletions,
-      size_before, size_after, patch_bytes, truncated, binary, created_at
-     FROM ${WORKSPACE_RUN_CHANGE_FILES_TABLE}
-     WHERE session_id = ? AND change_id = ?
-     ORDER BY path COLLATE NOCASE ASC`,
-  ).all(sessionId, changeId) as Record<string, unknown>[]
-  return mapSummary(row, files.map(mapFileSummary))
+  return readWorkspaceRunChange(db, sessionId, changeId)
 }
 
 export function listWorkspaceRunChangesForSession(sessionId: string): WorkspaceRunChangeSummary[] {
@@ -261,6 +280,32 @@ export function deleteWorkspaceRunChangesForSession(sessionId: string): void {
     if (isOptionalCleanupSqliteError(err)) return
     throw err
   }
+}
+
+export function deleteWorkspaceRunChangesForRoom(db: any, roomId: string, beforeTimestamp?: number): void {
+  const room = String(roomId || '').trim()
+  if (!room) return
+  const rows = beforeTimestamp == null
+    ? db.prepare(`SELECT change_id FROM ${WORKSPACE_RUN_CHANGES_TABLE} WHERE room_id = ?`).all(room)
+    : db.prepare(
+      `SELECT c.change_id
+       FROM ${WORKSPACE_RUN_CHANGES_TABLE} c
+       INNER JOIN gc_messages m ON m.id = c.message_id AND m.roomId = c.room_id
+       WHERE c.room_id = ? AND m.timestamp < ?`,
+    ).all(room, beforeTimestamp)
+  const ids = rows.map((row: any) => String(row.change_id || '').trim()).filter(Boolean)
+  if (!ids.length) return
+  const placeholders = ids.map(() => '?').join(',')
+  db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGE_FILES_TABLE} WHERE change_id IN (${placeholders})`).run(...ids)
+  db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGES_TABLE} WHERE change_id IN (${placeholders})`).run(...ids)
+}
+
+export function deleteWorkspaceRunChangesByChangeIds(db: any, changeIds: string[]): void {
+  const ids = [...new Set(changeIds.map(id => String(id || '').trim()).filter(Boolean))]
+  if (!ids.length) return
+  const placeholders = ids.map(() => '?').join(',')
+  db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGE_FILES_TABLE} WHERE change_id IN (${placeholders})`).run(...ids)
+  db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGES_TABLE} WHERE change_id IN (${placeholders})`).run(...ids)
 }
 
 function isOptionalCleanupSqliteError(err: unknown): boolean {

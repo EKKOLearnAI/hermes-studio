@@ -6,8 +6,8 @@
 import type { Server, Socket } from 'socket.io'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
 import { getSession, getSessionDetail, createSession, addMessage, updateSession, updateSessionStats } from '../../../db/hermes/session-store'
-import { updateUsage } from '../../../db/hermes/usage-store'
 import { logger, bridgeLogger } from '../../logger'
+import { normalizeTokenUsage, recordSessionUsage } from '../../usage-recorder'
 import { AgentBridgeClient, type AgentBridgeContextEstimate, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
 import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview, isContentBlockArray } from './content-blocks'
 import { buildCompressedHistory, buildDbHistory, buildSnapshotAwareHistory, forceCompressBridgeHistory, pushState, replaceState } from './compression'
@@ -340,6 +340,7 @@ export async function handleBridgeRun(
     : getSystemPrompt(undefined, { source: data.session_source || data.source })
   const sessionRow = getSession(session_id)
   const workspace = await ensureHermesRunWorkspace(profile, sessionRow?.workspace || data.workspace)
+  const shouldEmitWorkspaceUpdate = Boolean(workspace && !sessionRow?.workspace)
   if (sessionRow && !sessionRow.workspace) updateSession(session_id, { workspace })
   const sessionModel = sessionRow?.model || ''
   const sessionProvider = sessionRow?.provider || ''
@@ -373,6 +374,13 @@ export async function handleBridgeRun(
       ? await loadSessionStateFromDbFn(session_id, sessionMap)
       : { messages: [], isWorking: false, events: [], queue: [] }
     sessionMap.set(session_id, state)
+  }
+  if (sessionRow) {
+    try {
+      updateSession(session_id, { ended_at: null, end_reason: null, last_active: now })
+    } catch (err) {
+      bridgeLogger.warn(err, '[chat-run-socket] failed to reopen session %s for bridge run', session_id)
+    }
   }
 
   state.isWorking = true
@@ -460,6 +468,12 @@ export async function handleBridgeRun(
     if (!data.onEvent && !nsp.adapter.rooms.get(`session:${session_id}`)?.size && socket.connected) {
       socket.emit(event, tagged)
     }
+  }
+  if (shouldEmitWorkspaceUpdate) {
+    emit('session.workspace.updated', {
+      event: 'session.workspace.updated',
+      workspace,
+    })
   }
 
   const history = await buildCompressedHistory(
@@ -653,11 +667,6 @@ export async function handleBridgeRun(
       emit,
       bridge,
     })
-    updateUsage(session_id, {
-      inputTokens: errUsage.inputTokens,
-      outputTokens: errUsage.outputTokens,
-      profile,
-    })
     emit('run.failed', {
       event: 'run.failed',
       error: message,
@@ -666,7 +675,15 @@ export async function handleBridgeRun(
       contextTokens: errContextTokens,
       queue_remaining: queueLen,
     })
-    if (queueLen > 0) dequeueNextQueuedRun(socket, session_id)
+    if (queueLen > 0) {
+      dequeueNextQueuedRun(socket, session_id)
+    } else {
+      try {
+        updateSession(session_id, { ended_at: Math.floor(Date.now() / 1000), end_reason: 'error' })
+      } catch (endErr) {
+        bridgeLogger.warn(endErr, '[chat-run-socket] failed to write ended_at for session %s', session_id)
+      }
+    }
   }
 }
 
@@ -730,6 +747,17 @@ export async function resumeBridgeRun(
   try {
     const snapshot = await bridge.getResult(runId)
     const deltas = Array.isArray(snapshot.deltas) ? snapshot.deltas.map(String) : []
+    const snapshotEvents = Array.isArray(snapshot.events) ? snapshot.events : []
+    for (const event of snapshotEvents) {
+      if (!event || typeof event !== 'object' || Array.isArray(event)) continue
+      const bridgeEvent = event as Record<string, unknown>
+      if (bridgeEvent.event === 'model.usage') {
+        recordBridgeModelUsage(sessionId, runId, bridgeEvent, profile, {
+          model: args.model,
+          provider: args.provider,
+        })
+      }
+    }
     const output = typeof snapshot.output === 'string' ? snapshot.output : deltas.join('')
     const persisted = state.bridgeOutput || ''
     const missingOutput = output && output.startsWith(persisted) ? output.slice(persisted.length) : ''
@@ -750,7 +778,7 @@ export async function resumeBridgeRun(
           output,
           done: false,
           events: [],
-          event_cursor: Array.isArray(snapshot.events) ? snapshot.events.length : 0,
+          event_cursor: snapshotEvents.length,
           error: null,
         },
         emit,
@@ -764,7 +792,7 @@ export async function resumeBridgeRun(
       )
     }
     cursor = deltas.length
-    eventCursor = Array.isArray(snapshot.events) ? snapshot.events.length : 0
+    eventCursor = snapshotEvents.length
   } catch (err) {
     bridgeLogger.warn({
       err: err instanceof Error ? { message: err.message, name: err.name } : err,
@@ -813,6 +841,13 @@ export async function resumeBridgeRun(
       error: err instanceof Error ? err.message : String(err),
       resumed: true,
     })
+    if ((state.queue?.length ?? 0) === 0) {
+      try {
+        updateSession(sessionId, { ended_at: Math.floor(Date.now() / 1000), end_reason: 'error' })
+      } catch (endErr) {
+        bridgeLogger.warn(endErr, '[chat-run-socket] failed to write ended_at for session %s', sessionId)
+      }
+    }
   }
 }
 
@@ -909,6 +944,50 @@ async function estimateSnapshotAwareMessageTokens(args: {
   }
 }
 
+function recordBridgeModelUsage(
+  sessionId: string,
+  bridgeRunId: string,
+  event: Record<string, unknown>,
+  profile: string,
+  modelContext: { model?: string | null; provider?: string | null },
+): void {
+  const usage = normalizeTokenUsage(event.usage)
+  if (usage.isEstimated) {
+    bridgeLogger.warn({
+      sessionId,
+      bridgeRunId,
+      apiRequestId: event.api_request_id,
+    }, '[chat-run-socket] ignoring incomplete Hermes model usage event')
+    return
+  }
+
+  const apiRequestId = stringValue(event.api_request_id)
+  const turnId = stringValue(event.turn_id)
+  const apiCallCount = Number(event.api_call_count)
+  const fallbackId = turnId && Number.isFinite(apiCallCount)
+    ? `${turnId}:${Math.max(0, Math.floor(apiCallCount))}`
+    : ''
+  const requestKey = apiRequestId || fallbackId
+  if (!requestKey) {
+    bridgeLogger.warn({ sessionId, bridgeRunId }, '[chat-run-socket] ignoring Hermes model usage event without request identity')
+    return
+  }
+
+  recordSessionUsage({
+    sessionId,
+    runId: `${bridgeRunId}:api:${requestKey}`,
+    source: 'hermes',
+    agent: 'hermes',
+    usageScope: 'model_call',
+    apiCalls: 1,
+    usage: event.usage,
+    model: stringValue(event.model) || modelContext.model,
+    provider: stringValue(event.provider) || modelContext.provider,
+    profile,
+    isEstimated: false,
+  })
+}
+
 async function applyBridgeChunkAsync(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
@@ -953,7 +1032,9 @@ async function applyBridgeChunkAsync(
       processBridgeTextDelta(state, sessionId, runMarker, chunk.run_id, String((ev as any).delta || ''), emit)
       continue
     }
-    if (evType === 'session.title.updated') {
+    if (evType === 'model.usage') {
+      recordBridgeModelUsage(sessionId, chunk.run_id, ev, profile, modelContext)
+    } else if (evType === 'session.title.updated') {
       syncBridgeGeneratedTitle(sessionId, (ev as any).title, emit)
     } else if (evType === 'bridge.context.ready') {
       cacheBridgeContext(state, ev, workspace)
@@ -1357,11 +1438,6 @@ async function applyBridgeChunkAsync(
     emit,
     bridge,
   })
-  updateUsage(sessionId, {
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    profile: state.profile,
-  })
   const hadQueuedRunBeforeGoalEvaluation = state.queue.length > 0
   const eventName = terminalError ? 'run.failed' : 'run.completed'
   let workspaceRunChange: ReturnType<typeof completeWorkspaceRunCheckpoint> = null
@@ -1430,6 +1506,11 @@ async function applyBridgeChunkAsync(
   } else if (!state.activeRunMarker) {
     state.isWorking = false
     state.profile = undefined
+    try {
+      updateSession(sessionId, { ended_at: Math.floor(Date.now() / 1000), end_reason: terminalError ? 'error' : 'complete' })
+    } catch (endErr) {
+      bridgeLogger.warn(endErr, '[chat-run-socket] failed to write ended_at for session %s', sessionId)
+    }
   }
 }
 

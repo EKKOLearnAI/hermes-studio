@@ -124,6 +124,7 @@ export function anthropicToOpenAiChat(body: any, target: AnthropicAdapterTarget,
     ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
     ...(tools?.length ? { tools } : {}),
     stream,
+    ...(stream ? { stream_options: { include_usage: true } } : {}),
   }
 }
 

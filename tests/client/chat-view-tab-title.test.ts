@@ -35,12 +35,15 @@ vi.mock('@/api/hermes/chat', () => ({
   onPeerUserMessage: vi.fn(() => vi.fn()),
   onSessionCommand: vi.fn(() => vi.fn()),
   onSessionTitleUpdated: vi.fn(() => vi.fn()),
+  onSessionWorkspaceUpdated: vi.fn(() => vi.fn()),
 }))
 
 vi.mock('@/api/hermes/sessions', () => ({
   archiveSession: vi.fn(),
   fetchSessions: vi.fn(),
   fetchSessionMessagesPage: vi.fn(),
+  fetchWorkspaceRunChangesForSession: vi.fn(async () => []),
+  fetchWorkspaceRunChangeFile: vi.fn(async () => null),
   deleteSession: vi.fn(),
   setSessionModel: vi.fn(),
 }))

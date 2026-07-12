@@ -219,15 +219,26 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 21px 20px;
+  gap: 12px;
+  min-height: 64px;
+  padding: 14px 20px;
   border-bottom: 1px solid $border-color;
   flex-shrink: 0;
 }
 
 .header-title {
+  margin: 0;
   font-size: 16px;
   font-weight: 600;
+  line-height: 1.4;
   color: $text-primary;
+}
+
+.page-header > .header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 // Responsive utility classes for inline width replacement

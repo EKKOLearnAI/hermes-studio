@@ -608,6 +608,9 @@ function schemaFromType(type) {
   const schema = {}
 
   if (/\bnull\b/.test(normalized)) schema.nullable = true
+  if (/SessionProviderApiMode|CodingAgentApiMode/.test(normalized)) {
+    return { ...schema, type: 'string', enum: ['chat_completions', 'codex_responses', 'anthropic_messages'] }
+  }
   if (/string\[\]|Array<string>/.test(normalized)) {
     return { ...schema, type: 'array', items: { type: 'string' } }
   }
@@ -715,6 +718,11 @@ function generateResponses(path, method) {
 
   if (method === 'post' || method === 'put' || method === 'patch') {
     responses['400'] = { $ref: '#/components/responses/BadRequest' }
+  }
+
+  if (path === '/api/hermes/group-chat/rooms/:roomId/workspace') {
+    responses['403'] = { description: 'Forbidden - Workspace folder is not allowed' }
+    responses['404'] = { $ref: '#/components/responses/NotFound' }
   }
 
   return responses

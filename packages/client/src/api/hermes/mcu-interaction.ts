@@ -7,6 +7,7 @@ export type McuInteractionStatus =
   | 'listening'
   | 'transcribing'
   | 'thinking'
+  | 'clearing'
   | 'tool'
   | 'speaking'
   | 'completed'
@@ -81,7 +82,7 @@ interface McuInteractionDependencies {
   makeInteractionId: () => string
 }
 
-const DEFAULT_SEGMENT_MAX_CHARS = 90
+const PARAGRAPH_END_RE = /[。！？!?.…][\s"'”’）)\]】》]*$/
 
 const defaultDeps: McuInteractionDependencies = {
   startRun: startRunViaSocket,
@@ -105,41 +106,88 @@ function normalizeSpeechText(text: string): string {
     .trim()
 }
 
-function findSentenceBoundary(text: string): number {
-  let lastBoundary = -1
-  const pattern = /[。！？!?]\s*|\n{2,}/g
-  let match: RegExpExecArray | null
-  while ((match = pattern.exec(text)) !== null) {
-    lastBoundary = match.index + match[0].length
-  }
-  return lastBoundary
+function paragraphEndsNormally(text: string): boolean {
+  return PARAGRAPH_END_RE.test(text.trimEnd())
 }
 
-function findSoftBoundary(text: string): number {
-  const softBoundaryChars = ['，', ',', '；', ';', '、', '\n']
-  let lastBoundary = -1
-  for (const char of softBoundaryChars) {
-    const index = text.lastIndexOf(char)
-    if (index > lastBoundary) lastBoundary = index + char.length
+function findReadyParagraphBoundary(text: string): number {
+  let inFence = false
+  let inInlineCode = false
+  let inLinkText = false
+  let inLinkUrl = false
+  let inUrl = false
+
+  for (let i = 0; i < text.length; i += 1) {
+    const rest = text.slice(i)
+
+    if (rest.startsWith('```')) {
+      inFence = !inFence
+      i += 2
+      continue
+    }
+
+    if (inFence) continue
+
+    const char = text[i]
+
+    if (char === '`') {
+      inInlineCode = !inInlineCode
+      continue
+    }
+    if (inInlineCode) continue
+
+    if (inLinkUrl) {
+      if (char === ')') inLinkUrl = false
+      continue
+    }
+
+    if (inUrl) {
+      if (/\s/.test(char)) inUrl = false
+      else continue
+    }
+
+    if (rest.startsWith('http://') || rest.startsWith('https://') || rest.startsWith('www.')) {
+      inUrl = true
+      if (rest.startsWith('https://')) i += 7
+      else if (rest.startsWith('http://')) i += 6
+      else i += 3
+      continue
+    }
+    if (inLinkText) {
+      if (char === ']' && text[i + 1] === '(') {
+        inLinkText = false
+        inLinkUrl = true
+        i += 1
+      }
+      continue
+    }
+    if (char === '[') {
+      inLinkText = true
+      continue
+    }
+
+    if (char === '\n' || char === '\r') {
+      let end = i + 1
+      if (char === '\r' && text[i + 1] === '\n') {
+        end += 1
+        i += 1
+      }
+      if (paragraphEndsNormally(text.slice(0, end))) return end
+    }
   }
-  return lastBoundary
+
+  return -1
 }
 
 export function createMcuSpeechSegmenter(options: McuSpeechSegmenterOptions = {}): McuSpeechSegmenter {
-  const maxChars = Math.max(24, options.maxChars || DEFAULT_SEGMENT_MAX_CHARS)
+  void options
   let buffer = ''
 
   function takeReadySegments(force = false): string[] {
     const segments: string[] = []
 
     while (buffer.length > 0) {
-      const boundary = findSentenceBoundary(buffer)
-      let end = boundary
-
-      if (end < 0 && buffer.length >= maxChars) {
-        const softBoundary = findSoftBoundary(buffer.slice(0, maxChars))
-        end = softBoundary > 0 ? softBoundary : maxChars
-      }
+      let end = findReadyParagraphBoundary(buffer)
 
       if (end < 0) {
         if (!force) break
@@ -151,10 +199,6 @@ export function createMcuSpeechSegmenter(options: McuSpeechSegmenterOptions = {}
 
       if (segment) {
         segments.push(segment)
-      }
-
-      if (!force && buffer.length < maxChars && findSentenceBoundary(buffer) < 0) {
-        break
       }
     }
 

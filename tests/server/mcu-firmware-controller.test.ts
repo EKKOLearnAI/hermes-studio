@@ -67,13 +67,35 @@ describe('MCU firmware controller', () => {
     })
   })
 
+  it('serves v2 from its isolated firmware directory', async () => {
+    tempRoot = await makeTempRoot()
+    process.chdir(tempRoot)
+    vi.stubEnv('NODE_ENV', 'production')
+
+    const firmware = Buffer.from('firmware-v2')
+    await writeFile(path.join(tempRoot, 'dist/mcu/v2/firmware.bin'), firmware)
+    const ctrl = await import('../../packages/server/src/controllers/hermes/mcu-firmware')
+    const ctx = makeCtx({ version: 'v2' })
+
+    await ctrl.manifest(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body).toMatchObject({
+      updateAvailable: true,
+      firmwareVersion: 'v2',
+      size: firmware.length,
+      md5: createHash('md5').update(firmware).digest('hex'),
+      url: '/api/hermes/mcu/firmware/v2/firmware.bin',
+    })
+  })
+
   it('rejects unsupported firmware versions', async () => {
     tempRoot = await makeTempRoot()
     process.chdir(tempRoot)
     vi.stubEnv('NODE_ENV', 'production')
 
     const ctrl = await import('../../packages/server/src/controllers/hermes/mcu-firmware')
-    const ctx = makeCtx({ version: 'v2' })
+    const ctx = makeCtx({ version: 'v3' })
 
     await ctrl.manifest(ctx)
 
@@ -88,6 +110,7 @@ describe('MCU firmware controller', () => {
 async function makeTempRoot(): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mcu-firmware-'))
   await mkdir(path.join(root, 'dist/mcu/v1'), { recursive: true })
+  await mkdir(path.join(root, 'dist/mcu/v2'), { recursive: true })
   return root
 }
 

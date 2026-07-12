@@ -3,7 +3,7 @@ import { getDb, jsonDelete, jsonGet, jsonGetAll, jsonSet } from '../index'
 import { WORKFLOW_RUN_NODE_SESSIONS_TABLE, WORKFLOW_RUNS_TABLE } from './schemas'
 
 export type WorkflowRunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'canceled'
-export type WorkflowRunNodeStatus = 'queued' | 'running' | 'completed' | 'failed' | 'blocked' | 'canceled'
+export type WorkflowRunNodeStatus = 'queued' | 'running' | 'completed' | 'failed' | 'blocked' | 'approval_rejected' | 'canceled'
 
 export interface WorkflowRunRecord {
   id: string

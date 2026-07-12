@@ -147,6 +147,45 @@ class AgentPool:
         self._exec_ask_depth = 0
         self._exec_ask_previous: str | None = None
 
+    def _install_usage_hook(self) -> None:
+        """Observe exact per-request model usage without requiring a user plugin."""
+        try:
+            from hermes_cli.plugins import get_plugin_manager
+
+            manager = get_plugin_manager()
+            hooks = getattr(manager, "_hooks", None)
+            if not isinstance(hooks, dict):
+                raise RuntimeError("Hermes plugin manager does not expose its hook registry")
+            callbacks = hooks.setdefault("post_api_request", [])
+            callback = self._post_api_request_usage_hook
+            if callback not in callbacks:
+                callbacks.append(callback)
+        except Exception as exc:
+            print(
+                f"[hermes_bridge] failed to install model usage hook: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    def _post_api_request_usage_hook(self, **kwargs: Any) -> None:
+        session_id = str(kwargs.get("session_id") or "").strip()
+        usage = kwargs.get("usage")
+        if not session_id or not isinstance(usage, dict):
+            return
+        self._append_event(session_id, {
+            "event": "model.usage",
+            "api_request_id": str(kwargs.get("api_request_id") or "").strip(),
+            "turn_id": str(kwargs.get("turn_id") or "").strip(),
+            "api_call_count": kwargs.get("api_call_count"),
+            "usage": usage,
+            "model": kwargs.get("response_model") or kwargs.get("model"),
+            "provider": kwargs.get("provider"),
+            "api_mode": kwargs.get("api_mode"),
+            "api_duration": kwargs.get("api_duration"),
+            "started_at": kwargs.get("started_at"),
+            "ended_at": kwargs.get("ended_at"),
+        })
+
     def get_or_create(
         self,
         session_id: str,
@@ -1119,6 +1158,10 @@ class AgentPool:
         reasoning_effort: str | None = None,
     ) -> RunRecord:
         session = self.get_or_create(session_id, profile=profile, model=model, provider=provider)
+        # Install after agent construction so any runtime plugin initialization
+        # has completed. Rechecking on every run also recovers from a forced
+        # plugin reload that clears the manager's callback registry.
+        self._install_usage_hook()
         with session.lock:
             if session.running:
                 raise RuntimeError(f"session {session_id} is already running")

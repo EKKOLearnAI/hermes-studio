@@ -342,7 +342,8 @@ describe('agent runner Responses stream adapters', () => {
 	      'data: {"choices":[{"delta":{"content":"he"}}]}\n\n',
 	      'data: {"choices":[{"delta":{"content":"llo"}}]}\r\n\r\n',
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"lookup","arguments":"{\\"id\\":"}}]}}]}\n\n',
-      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]}}]}\n\n',
+	      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]}}]}\n\n',
+	      'data: {"id":"chatcmpl_usage","choices":[],"usage":{"prompt_tokens":120,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":30}}}\n\n',
       'data: [DONE]\n\n',
     ]), codexTarget))
 
@@ -372,6 +373,13 @@ describe('agent runner Responses stream adapters', () => {
 	      response: {
 	        model: 'test-model',
 	        status: 'completed',
+	        id: expect.stringMatching(/^resp_/),
+	        usage: {
+	          input_tokens: 120,
+	          output_tokens: 7,
+	          total_tokens: 127,
+	          input_tokens_details: { cached_tokens: 30 },
+	        },
 	        output: [
 	          { type: 'reasoning', summary: [{ type: 'summary_text', text: 'think' }] },
 	          { type: 'message', content: [{ type: 'output_text', text: 'hello' }] },
@@ -379,6 +387,7 @@ describe('agent runner Responses stream adapters', () => {
         ],
       },
     })
+    expect((events[13].data as any).response.id).toBe((events[0].data as any).response.id)
   })
 
   it('marks expanded Hermes MCP Chat SSE tool calls with their Responses namespace', async () => {
@@ -404,11 +413,12 @@ describe('agent runner Responses stream adapters', () => {
 
   it('normalizes Anthropic Messages SSE text and tool calls to Responses events', async () => {
 	    const events = await collectEvents(anthropicMessagesSseToResponsesEvents(encodedChunks([
-	      'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1"}}\n\n',
+	      'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":80,"cache_read_input_tokens":20}}}\n\n',
 	      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"think"}}\n\n',
 	      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}\n\n',
       'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}\r\n\r\n',
       'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"id\\":1}"}}\n\n',
+      'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":9}}\n\n',
     ]), codexTarget))
 
 	    expect(events.map(event => event.type)).toEqual([
@@ -433,6 +443,7 @@ describe('agent runner Responses stream adapters', () => {
 	    expect(events[11].data).toMatchObject({
 	      response: {
 	        id: 'msg_1',
+	        usage: { input_tokens: 80, cache_read_input_tokens: 20, output_tokens: 9 },
 	        output: [
 	          { type: 'reasoning', summary: [{ type: 'summary_text', text: 'think' }] },
 	          { type: 'message', content: [{ type: 'output_text', text: 'hi' }] },
@@ -614,7 +625,8 @@ describe('agent runner Anthropic stream adapters', () => {
       'data: {"choices":[{"delta":{"reasoning_content":"think"}}]}\n\n',
       'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"lookup","arguments":"{\\"id\\":"}}]}}]}\r\n\r\n',
-      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]},"finish_reason":"tool_calls"}],"usage":{"completion_tokens":7}}\n\n',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]},"finish_reason":"tool_calls"}]}\n\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":7}}\n\n',
     ]), anthropicTarget))
 
     expect(events.map(event => event.type)).toEqual([

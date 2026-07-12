@@ -42,6 +42,9 @@ export interface ModelUsage {
   inputTokens?: number
   outputTokens?: number
   totalTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  reasoningTokens?: number
 }
 
 export interface ModelRequest {

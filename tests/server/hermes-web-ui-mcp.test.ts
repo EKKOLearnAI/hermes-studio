@@ -545,6 +545,14 @@ describe('hermes-web-ui MCP server', () => {
       name: 'hermes_studio_use_available_models',
       arguments: {},
     })
+    writeRpc(child, 30, 'tools/call', {
+      name: 'hermes_studio_use_available_models',
+      arguments: { query: 'claude', limit_per_provider: 1 },
+    })
+    writeRpc(child, 31, 'tools/call', {
+      name: 'hermes_studio_use_available_models',
+      arguments: { include_details: true },
+    })
     writeRpc(child, 13, 'tools/call', {
       name: 'hermes_studio_use_model_provider_get',
       arguments: { model: 'gpt-5.1' },
@@ -670,7 +678,30 @@ describe('hermes-web-ui MCP server', () => {
     const profiles = JSON.parse((await waitForRpc(responses, 7)).result.content[0].text)
     expect(profiles.profiles).toEqual(['default'])
     const models = JSON.parse((await waitForRpc(responses, 8)).result.content[0].text)
+    expect(models).toMatchObject({
+      default: 'gpt-5.1',
+      default_provider: 'openai',
+      provider_count: 2,
+      model_count: 3,
+      returned_model_count: 3,
+    })
     expect(models.providers[0].models).toEqual(['gpt-5.1'])
+    expect(JSON.stringify(models)).not.toContain('model_meta')
+    const filteredModels = JSON.parse((await waitForRpc(responses, 30)).result.content[0].text)
+    expect(filteredModels).toMatchObject({
+      query: 'claude',
+      returned_provider_count: 1,
+      returned_model_count: 1,
+      providers: [
+        {
+          provider: 'openrouter',
+          models: ['claude-sonnet'],
+          aliases: { 'claude-sonnet': 'Claude Sonnet' },
+        },
+      ],
+    })
+    const detailedModels = JSON.parse((await waitForRpc(responses, 31)).result.content[0].text)
+    expect(detailedModels.providers[1].model_meta).toEqual({ 'claude-sonnet': { alias: 'Claude Sonnet' } })
     const modelProvider = JSON.parse((await waitForRpc(responses, 13)).result.content[0].text)
     expect(modelProvider).toMatchObject({
       model: 'gpt-5.1',

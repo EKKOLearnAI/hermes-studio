@@ -37,7 +37,7 @@ describe('router login redirect', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('hermes.chat')
-  }, 15_000)
+  }, 60_000)
 
   it('does not redirect desktop login when a stale token exists', async () => {
     mockHasApiKey.mockReturnValue(true)

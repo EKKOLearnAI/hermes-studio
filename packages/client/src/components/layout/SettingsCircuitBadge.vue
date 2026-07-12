@@ -1,5 +1,219 @@
 <script setup lang="ts">
-import { NTooltip } from 'naive-ui'
+import { computed, h, ref } from 'vue'
+import { NButton, NDataTable, NForm, NFormItem, NInput, NModal, NSpace, NTag, NTooltip, useDialog, useMessage } from 'naive-ui'
+import type { DataTableColumns } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
+import { connectMcuDeviceRemote, createMcuDevice, deleteMcuDevice, disconnectMcuDeviceRemote, fetchMcuDevices, updateMcuDeviceName, type McuDevice } from '@/api/hermes/mcu-devices'
+
+const { t } = useI18n()
+const message = useMessage()
+const dialog = useDialog()
+const purchaseUrl = 'https://hermes-studio.ai/docs/hermes-esp32-intro/index.html'
+const showModal = ref(false)
+const showAddModal = ref(false)
+const loading = ref(false)
+const saving = ref(false)
+const connectingDeviceId = ref(0)
+const editing = ref(false)
+const devices = ref<McuDevice[]>([])
+const form = ref({
+  name: '',
+  device_code: '',
+})
+const editForm = ref({
+  id: 0,
+  name: '',
+})
+
+function renderConnectionStatus(connected: boolean | undefined) {
+  return h(NTag, {
+    size: 'small',
+    type: connected ? 'success' : 'default',
+    bordered: false,
+  }, { default: () => connected ? t('mcuDevices.connected') : t('mcuDevices.disconnected') })
+}
+
+const columns = computed<DataTableColumns<McuDevice>>(() => [
+  {
+    title: t('mcuDevices.name'),
+    key: 'name',
+    ellipsis: { tooltip: true },
+  },
+  {
+    title: t('mcuDevices.deviceCode'),
+    key: 'device_code',
+    ellipsis: { tooltip: true },
+  },
+  {
+    title: t('mcuDevices.channel'),
+    key: 'is_official',
+    width: 96,
+    render(row) {
+      return h(NTag, {
+        size: 'small',
+        type: row.is_official ? 'success' : 'warning',
+        bordered: false,
+      }, { default: () => row.is_official ? t('mcuDevices.official') : t('mcuDevices.unofficial') })
+    },
+  },
+  {
+    title: t('mcuDevices.lanStatus'),
+    key: 'lan_connected',
+    width: 96,
+    render(row) {
+      return renderConnectionStatus(row.lan_connected)
+    },
+  },
+  {
+    title: t('mcuDevices.remoteStatus'),
+    key: 'remote_connected',
+    width: 96,
+    render(row) {
+      return renderConnectionStatus(row.remote_connected)
+    },
+  },
+  {
+    title: t('mcuDevices.actions'),
+    key: 'actions',
+    width: 220,
+    render(row) {
+      return h(NSpace, { size: 4 }, {
+        default: () => [
+          h(NButton, {
+            size: 'tiny',
+            quaternary: true,
+            onClick: () => openEditModal(row),
+          }, { default: () => t('mcuDevices.edit') }),
+          h(NButton, {
+            size: 'tiny',
+            quaternary: true,
+            type: row.remote_connected ? 'warning' : 'primary',
+            loading: connectingDeviceId.value === row.id,
+            disabled: connectingDeviceId.value !== 0 || (!row.is_official && !row.remote_connected),
+            onClick: () => toggleRemoteDevice(row),
+          }, { default: () => row.remote_connected ? t('mcuDevices.remoteDisconnect') : t('mcuDevices.remoteConnect') }),
+          h(NButton, {
+            size: 'tiny',
+            quaternary: true,
+            type: 'error',
+            onClick: () => confirmDeleteDevice(row),
+          }, { default: () => t('mcuDevices.delete') }),
+        ],
+      })
+    },
+  },
+])
+
+async function loadDevices() {
+  loading.value = true
+  try {
+    const response = await fetchMcuDevices()
+    devices.value = response.devices
+  } catch (error: any) {
+    message.error(error?.message || t('mcuDevices.loadFailed'))
+  } finally {
+    loading.value = false
+  }
+}
+
+function openModal() {
+  showModal.value = true
+  void loadDevices()
+}
+
+function openAddModal() {
+  form.value = { name: '', device_code: '' }
+  showAddModal.value = true
+}
+
+function openPurchasePage() {
+  window.open(purchaseUrl, '_blank', 'noopener,noreferrer')
+}
+
+async function submitDevice(): Promise<boolean | void> {
+  const deviceCode = form.value.device_code.trim()
+  if (!deviceCode) {
+    message.warning(t('mcuDevices.deviceCodeRequired'))
+    return false
+  }
+
+  saving.value = true
+  try {
+    const response = await createMcuDevice({
+      name: form.value.name.trim(),
+      device_code: deviceCode,
+    })
+    devices.value = response.devices
+    form.value = { name: '', device_code: '' }
+    showAddModal.value = false
+    message.success(t('mcuDevices.added'))
+  } catch (error: any) {
+    message.error(error?.message || t('mcuDevices.addFailed'))
+    return false
+  } finally {
+    saving.value = false
+  }
+}
+
+function openEditModal(device: McuDevice) {
+  editForm.value = {
+    id: device.id,
+    name: device.name,
+  }
+  editing.value = true
+}
+
+async function submitEdit() {
+  if (!editForm.value.id) return
+  saving.value = true
+  try {
+    const response = await updateMcuDeviceName(editForm.value.id, editForm.value.name)
+    devices.value = response.devices
+    editing.value = false
+    message.success(t('mcuDevices.nameUpdated'))
+  } catch (error: any) {
+    message.error(error?.message || t('mcuDevices.nameUpdateFailed'))
+  } finally {
+    saving.value = false
+  }
+}
+
+async function toggleRemoteDevice(device: McuDevice) {
+  connectingDeviceId.value = device.id
+  try {
+    const response = device.remote_connected
+      ? await disconnectMcuDeviceRemote(device.id)
+      : await connectMcuDeviceRemote(device.id)
+    devices.value = response.devices
+    message.success(t(device.remote_connected ? 'mcuDevices.remoteDisconnected' : 'mcuDevices.remoteConnected'))
+  } catch (error: any) {
+    message.error(error?.message || t(device.remote_connected ? 'mcuDevices.remoteDisconnectFailed' : 'mcuDevices.remoteConnectFailed'))
+  } finally {
+    connectingDeviceId.value = 0
+  }
+}
+
+function confirmDeleteDevice(device: McuDevice) {
+  dialog.warning({
+    title: t('mcuDevices.deleteTitle'),
+    content: t('mcuDevices.deleteConfirm', { name: device.name || device.device_code }),
+    positiveText: t('mcuDevices.delete'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => {
+      saving.value = true
+      try {
+        const response = await deleteMcuDevice(device.id)
+        devices.value = response.devices
+        message.success(t('mcuDevices.deleted'))
+      } catch (error: any) {
+        message.error(error?.message || t('mcuDevices.deleteFailed'))
+        return false
+      } finally {
+        saving.value = false
+      }
+    },
+  })
+}
 </script>
 
 <template>
@@ -32,7 +246,7 @@ import { NTooltip } from 'naive-ui'
   -->
   <NTooltip trigger="hover" placement="top">
     <template #trigger>
-      <a class="settings-circuit-link" href="https://hermes-studio.ai/docs/hermes-esp32-intro/index.html" target="_blank" rel="noopener noreferrer" aria-label="小方盒" @click.stop>
+      <button class="settings-circuit-link" type="button" :aria-label="t('mcuDevices.title')" @click.stop="openModal">
         <svg class="settings-circuit-badge settings-circuit-badge--pcb" viewBox="0 0 36 22" fill="none" aria-hidden="true">
           <rect class="settings-pcb-board" x="3" y="3" width="30" height="16" rx="3" />
           <path class="settings-pcb-copper" d="M7 7h6v4h7v-3h9" />
@@ -52,10 +266,82 @@ import { NTooltip } from 'naive-ui'
           <circle class="settings-pcb-via" cx="20" cy="5" r="0.8" />
           <circle class="settings-pcb-via" cx="29" cy="17" r="0.8" />
         </svg>
-      </a>
+      </button>
     </template>
-    小方盒
+    {{ t('mcuDevices.title') }}
   </NTooltip>
+  <NModal v-model:show="showModal" :show-icon="false">
+    <div class="mcu-device-dialog">
+      <div class="mcu-device-header">
+        <div>
+          <div class="mcu-device-title">{{ t('mcuDevices.title') }}</div>
+          <div class="mcu-device-subtitle">{{ t('mcuDevices.subtitle') }}</div>
+        </div>
+        <button class="mcu-device-close" type="button" :aria-label="t('mcuDevices.close')" @click="showModal = false">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
+      <div class="mcu-device-table">
+        <NDataTable
+          style="height: 100%;"
+          size="small"
+          :columns="columns"
+          :data="devices"
+          :loading="loading"
+          :bordered="false"
+          :single-line="false"
+          :row-key="(row: McuDevice) => row.id"
+          flex-height
+        />
+      </div>
+      <div class="mcu-device-actions">
+        <NButton type="primary" @click="openAddModal">{{ t('mcuDevices.add') }}</NButton>
+        <NButton secondary @click="openPurchasePage">{{ t('mcuDevices.purchase') }}</NButton>
+      </div>
+    </div>
+  </NModal>
+  <NModal
+    v-model:show="showAddModal"
+    preset="dialog"
+    :title="t('mcuDevices.addTitle')"
+    :positive-text="t('mcuDevices.add')"
+    :negative-text="t('common.cancel')"
+    :positive-button-props="{ loading: saving }"
+    @positive-click="submitDevice"
+  >
+    <NForm label-placement="top">
+      <NFormItem :label="t('mcuDevices.name')">
+        <NInput v-model:value="form.name" :placeholder="t('mcuDevices.nameOptional')" :disabled="saving" />
+      </NFormItem>
+      <NFormItem :label="t('mcuDevices.deviceCode')" required>
+        <NInput
+          v-model:value="form.device_code"
+          :placeholder="t('mcuDevices.deviceCodePlaceholder')"
+          :disabled="saving"
+          @keydown.enter.prevent="submitDevice"
+        />
+      </NFormItem>
+    </NForm>
+  </NModal>
+  <NModal
+    v-model:show="editing"
+    preset="dialog"
+    :title="t('mcuDevices.editNameTitle')"
+    :positive-text="t('common.save')"
+    :negative-text="t('common.cancel')"
+    :positive-button-props="{ loading: saving }"
+    @positive-click="submitEdit"
+  >
+    <NInput
+      v-model:value="editForm.name"
+      :placeholder="t('mcuDevices.nameOptional')"
+      :disabled="saving"
+      @keydown.enter.prevent="submitEdit"
+    />
+  </NModal>
   <!-- Style 3: current scan line
   <svg class="settings-circuit-badge settings-circuit-badge--scan" viewBox="0 0 36 20" fill="none" aria-hidden="true">
     <path class="settings-scan-track" d="M3 10h6l3-5h7l3 10h5l3-5h3" />
@@ -88,17 +374,123 @@ import { NTooltip } from 'naive-ui'
   flex: 0 0 auto;
   width: 36px;
   height: 28px;
+  border: 0;
   border-radius: 8px;
+  background: transparent;
   align-items: center;
   margin-left: auto;
   color: inherit;
-  text-decoration: none;
+  cursor: pointer;
   transition:
     background-color 0.16s ease,
     color 0.16s ease;
 
   &:hover {
     background: rgba(214, 160, 25, 0.08);
+  }
+}
+
+.mcu-device-dialog {
+  width: min(880px, calc(100vw - 48px));
+  height: min(680px, calc(100vh - 72px));
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.mcu-device-header {
+  flex: 0 0 auto;
+  min-height: 68px;
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.mcu-device-title {
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 22px;
+  color: var(--text-primary);
+}
+
+.mcu-device-subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+
+.mcu-device-close {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+
+  &:hover {
+    background: rgba(var(--text-muted-rgb), 0.14);
+    color: var(--text-primary);
+  }
+}
+
+.mcu-device-actions {
+  flex: 0 0 auto;
+  padding: 12px 18px 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+}
+
+.mcu-device-table {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px 18px;
+  overflow: hidden;
+
+  :deep(.n-data-table) {
+    height: 100%;
+    --n-td-color: var(--bg-card);
+    --n-th-color: var(--bg-secondary);
+    --n-border-color: var(--border-color);
+    --n-td-text-color: var(--text-primary);
+    --n-th-text-color: var(--text-secondary);
+  }
+
+  :deep(.n-data-table-base-table) {
+    height: 100%;
+  }
+
+  :deep(.n-data-table-base-table-body) {
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .mcu-device-dialog {
+    width: calc(100vw - 24px);
+    height: calc(100vh - 32px);
+  }
+
+  .mcu-device-actions {
+    justify-content: stretch;
+
+    :deep(.n-button) {
+      flex: 1;
+    }
   }
 }
 

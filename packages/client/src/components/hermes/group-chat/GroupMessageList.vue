@@ -11,7 +11,13 @@ const { t } = useI18n()
 const { toolTraceVisible } = useToolTraceVisibility()
 const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null)
 const showScrollBottomButton = ref(false)
-const displayMessages = computed(() => store.sortedMessages.filter(msg => msg.role !== 'tool' || toolTraceVisible.value || msg.toolStatus === 'running'))
+const displayMessages = computed(() => store.sortedMessages.filter(msg =>
+    msg.role !== 'tool' ||
+    toolTraceVisible.value ||
+    msg.toolStatus === 'running' ||
+    msg.toolName === 'workspace_diff' ||
+    msg.tool_name === 'workspace_diff',
+))
 const listPadding = computed(() => store.activePendingApproval ? '16px 20px 260px' : '16px 20px')
 let pendingInitialBottomRoomId: string | null = store.currentRoomId
 

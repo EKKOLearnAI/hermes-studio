@@ -424,12 +424,6 @@ BFF 层负责：Socket.IO 聊天流式推送、Hermes agent bridge、按 Profile
 
 **后端：** Koa 2（BFF 服务器）+ node-pty（Web 终端）
 
-## Star 历史
-
-[![Star 历史图表](https://api.star-history.com/svg?repos=EKKOLearnAI/hermes-studio&type=Date)](https://star-history.com/#EKKOLearnAI/hermes-studio&Date)
-
-<!-- 如上方图表未加载，可访问 https://star-history.com/#EKKOLearnAI/hermes-studio -->
-
 ## 许可证
 
 [BSL-1.1](./LICENSE)

@@ -25,6 +25,9 @@ import {
 import { issueUserJwt } from '../middleware/user-auth'
 import { listProfileNamesFromDisk } from '../services/hermes/hermes-profile'
 import { startOutboundRelayClient, stopOutboundRelayClient } from '../services/global-agent/outbound-relay-client'
+import { getLanEndpointKind } from '../services/lan-discovery'
+import { getPublicSystemInfo } from '../services/system-info'
+import { config } from '../config'
 
 /**
  * GET /api/auth/status
@@ -236,10 +239,27 @@ function requestBaseUrl(ctx: Context): string | undefined {
   return `${ctx.protocol || 'http'}://${host}`
 }
 
+async function verifyRemoteRelayDeviceCode(deviceCode: string): Promise<boolean> {
+  const url = `${config.remoteRelay.url.replace(/\/$/, '')}/global-agent/device/${encodeURIComponent(deviceCode)}`
+  const response = await fetch(url, { method: 'GET' })
+  return response.ok
+}
+
+async function localRelayMachineInfo(url: string) {
+  const info = await getPublicSystemInfo()
+  return {
+    ...info,
+    http_port: config.port,
+    endpoint_kind: getLanEndpointKind(config.port),
+    url,
+    relay_url: config.remoteRelay.url,
+  }
+}
+
 /**
  * POST /api/auth/mcu-login
  * Authenticate with the existing username/password login for an MCU/device.
- * When a legacy relay URL is provided, connect this Hermes Studio instance to it.
+ * When remote relay is requested or a legacy relay URL is provided, connect this Hermes Studio instance to it.
  * Body: { token, id, account, password, url? }.
  */
 export async function microcontrollerLogin(ctx: Context) {
@@ -249,12 +269,18 @@ export async function microcontrollerLogin(ctx: Context) {
     id,
     account,
     password,
+    relayMode,
+    remote,
+    device_code: deviceCode,
   } = ctx.request.body as {
     token?: string
     url?: string
     id?: string
     account?: string
     password?: string
+    relayMode?: string
+    remote?: boolean
+    device_code?: string
   }
 
   if (!relayToken || !id || !account || !password) {
@@ -263,27 +289,62 @@ export async function microcontrollerLogin(ctx: Context) {
     return
   }
 
-  const relayUrl = typeof url === 'string' && url.trim() ? normalizeRelayUrl(url) : null
+  const wantsRemoteRelay = relayMode === 'remote' || remote === true
+  const remoteRelayUrl = wantsRemoteRelay ? config.remoteRelay.url : ''
+  const relayUrl = typeof url === 'string' && url.trim()
+    ? normalizeRelayUrl(url)
+    : remoteRelayUrl || null
   if (url && !relayUrl) {
     ctx.status = 400
     ctx.body = { error: 'url must be a valid http, https, ws, or wss URL' }
     return
   }
 
+  const normalizedDeviceCode = typeof deviceCode === 'string' ? deviceCode.trim() : ''
+  if (wantsRemoteRelay && !normalizedDeviceCode) {
+    ctx.status = 400
+    ctx.body = { error: '缺少设备码' }
+    return
+  }
+
   const result = await passwordLogin(ctx, account, password)
   if (!result.ok) return
 
+  if (wantsRemoteRelay) {
+    try {
+      if (!await verifyRemoteRelayDeviceCode(normalizedDeviceCode)) {
+        ctx.status = 403
+        ctx.body = { error: '非官方设备码' }
+        return
+      }
+    } catch (err: any) {
+      ctx.status = 502
+      ctx.body = { error: err?.message || '远程设备码校验失败' }
+      return
+    }
+  }
+
   const connectionId = id.trim()
-  stopOutboundRelayClient(connectionId)
-  if (relayUrl) {
+  const forwardedRemoteMcuLogin = wantsRemoteRelay && ctx.get('x-hermes-relay-forwarded') === 'mcu-socket.io'
+  if (!forwardedRemoteMcuLogin) {
+    stopOutboundRelayClient(connectionId)
+  }
+  if (relayUrl && !forwardedRemoteMcuLogin) {
+    const relayStartUrl = wantsRemoteRelay && relayUrl === remoteRelayUrl
+      ? config.remoteRelay.url
+      : relayUrl
+    const localBaseUrl = requestBaseUrl(ctx)
+    const machineInfo = localBaseUrl ? await localRelayMachineInfo(localBaseUrl) : undefined
     const client = startOutboundRelayClient({
       connectionId,
-      relayUrl,
+      relayUrl: relayStartUrl,
       relayToken,
       userToken: result.token,
       instanceId: connectionId,
-      localBaseUrl: requestBaseUrl(ctx),
-      relayProtocol: relayUrl.startsWith('ws://') || relayUrl.startsWith('wss://') ? 'websocket' : 'socket.io',
+      ...(normalizedDeviceCode ? { deviceCode: normalizedDeviceCode } : {}),
+      ...(localBaseUrl ? { localBaseUrl } : {}),
+      ...(machineInfo ? { machineInfo } : {}),
+      relayProtocol: wantsRemoteRelay ? 'mcu-socket.io' : 'socket.io',
     })
     if (!client) {
       ctx.status = 400
@@ -298,6 +359,7 @@ export async function microcontrollerLogin(ctx: Context) {
     relay: {
       connected: Boolean(relayUrl),
       id: connectionId,
+      ...(wantsRemoteRelay && relayUrl === remoteRelayUrl ? { remote: true } : {}),
       ...(relayUrl ? { url: relayUrl } : {}),
     },
   }

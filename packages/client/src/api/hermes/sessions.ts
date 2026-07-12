@@ -11,6 +11,7 @@ export interface SessionSummary {
   agent_native_session_id?: string
   model: string
   provider?: string
+  api_mode?: ProviderApiMode
   title: string | null
   parent_session_id?: string | null
   fork_point_message_id?: string | null
@@ -175,6 +176,16 @@ export async function readSessionWorkspaceFile(
   )
 }
 
+export async function listSessionWorkspaceFiles(
+  sessionId: string,
+  path: string = '',
+): Promise<{ entries: Array<{ name: string; path: string; absolutePath?: string; isDir: boolean; size: number; modTime: string }>; path: string; absolutePath?: string }> {
+  const params = new URLSearchParams()
+  if (path) params.set('path', path)
+  const query = params.toString()
+  return request(`/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-files/list${query ? `?${query}` : ''}`)
+}
+
 export async function writeSessionWorkspaceFile(
   sessionId: string,
   path: string,
@@ -186,6 +197,34 @@ export async function writeSessionWorkspaceFile(
       method: 'PUT',
       body: JSON.stringify({ path, content }),
     },
+  )
+}
+
+export async function mkdirSessionWorkspaceFile(sessionId: string, path: string): Promise<void> {
+  await request<{ ok: boolean }>(
+    `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-file/mkdir`,
+    { method: 'POST', body: JSON.stringify({ path }) },
+  )
+}
+
+export async function deleteSessionWorkspaceFile(sessionId: string, path: string, recursive = false): Promise<void> {
+  await request<{ ok: boolean }>(
+    `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-file/delete`,
+    { method: 'DELETE', body: JSON.stringify({ path, recursive }) },
+  )
+}
+
+export async function renameSessionWorkspaceFile(sessionId: string, oldPath: string, newPath: string): Promise<void> {
+  await request<{ ok: boolean }>(
+    `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-file/rename`,
+    { method: 'POST', body: JSON.stringify({ oldPath, newPath }) },
+  )
+}
+
+export async function copySessionWorkspaceFile(sessionId: string, srcPath: string, destPath: string): Promise<void> {
+  await request<{ ok: boolean }>(
+    `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-file/copy`,
+    { method: 'POST', body: JSON.stringify({ srcPath, destPath }) },
   )
 }
 
@@ -385,7 +424,14 @@ export async function exportSession(id: string, mode: 'full' | 'compressed' = 'f
   const contentDisposition = res.headers.get('Content-Disposition') || ''
   let filename = `session_${id}.${ext}`
   const match = contentDisposition.match(/filename\*?=(?:UTF-8'')?([^;\n]+)/i)
-  if (match) filename = decodeURIComponent(match[1].replace(/"/g, ''))
+  if (match) {
+    const dispositionFilename = match[1].replace(/"/g, '')
+    try {
+      filename = decodeURIComponent(dispositionFilename)
+    } catch {
+      filename = dispositionFilename
+    }
+  }
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
   a.download = filename
@@ -405,6 +451,15 @@ export interface UsageStatsResponse {
   period_days?: number
   model_usage: Array<{
     model: string
+    input_tokens: number
+    output_tokens: number
+    cache_read_tokens: number
+    cache_write_tokens: number
+    reasoning_tokens: number
+    sessions: number
+  }>
+  agent_usage?: Array<{
+    agent: string
     input_tokens: number
     output_tokens: number
     cache_read_tokens: number

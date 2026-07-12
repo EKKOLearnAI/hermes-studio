@@ -11,6 +11,7 @@ function readRootPackage() {
 
 type LoadHealthControllerOptions = {
   injectedVersion?: string
+  isDocker?: boolean
   bridgeReadiness?: any
   bridgeReadinessError?: Error
   managerError?: Error
@@ -59,6 +60,9 @@ async function loadHealthController(options: LoadHealthControllerOptions = {}) {
 
   vi.doMock('../../packages/server/src/services/hermes/agent-bridge/manager', () => ({
     getAgentBridgeManager,
+  }))
+  vi.doMock('../../packages/server/src/services/runtime-environment', () => ({
+    isDockerContainer: () => options.isDocker === true,
   }))
 
   const health = await import('../../packages/server/src/controllers/health')
@@ -166,6 +170,29 @@ describe('health controller version metadata', () => {
     const { checkLatestVersion } = await loadHealthControllerWithoutInjectedVersion()
 
     await expect(checkLatestVersion()).resolves.toBeUndefined()
+  })
+
+  it('reports Docker while retaining version checks for upgrade guidance', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ version: '0.6.29' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { checkLatestVersion, healthCheck } = await loadHealthController({
+      injectedVersion: '0.6.28',
+      isDocker: true,
+    })
+
+    await checkLatestVersion()
+    const ctx = createMockCtx()
+    await healthCheck(ctx)
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(ctx.body).toEqual(expect.objectContaining({
+      is_docker: true,
+      webui_latest: '0.6.29',
+      webui_update_available: true,
+    }))
   })
 
   it('includes sanitized agent bridge readiness fields without leaking the endpoint path', async () => {

@@ -6,6 +6,7 @@ const managerMock = vi.hoisted(() => ({
   rerunFromNode: vi.fn(),
   runNow: vi.fn(),
   stopRun: vi.fn(),
+  approveNode: vi.fn(),
 }))
 const listWorkflowRunsMock = vi.hoisted(() => vi.fn())
 const listWorkflowRunNodeSessionsMock = vi.hoisted(() => vi.fn())
@@ -43,6 +44,7 @@ describe('workflow controller', () => {
     managerMock.rerunFromNode.mockReset()
     managerMock.runNow.mockReset()
     managerMock.stopRun.mockReset()
+    managerMock.approveNode.mockReset()
     listWorkflowRunNodeSessionsMock.mockReset()
     listWorkflowRunsMock.mockReset()
     listUserProfilesMock.mockReset()
@@ -146,6 +148,40 @@ describe('workflow controller', () => {
     await mod.deleteRun(c)
 
     expect(managerMock.deleteRun).toHaveBeenCalledWith('workflow-1', 'run-1')
+    expect(c.body).toEqual({ ok: true })
+  })
+
+  it('approves a pending workflow node through the workflow manager', async () => {
+    managerMock.get.mockReturnValue({ id: 'workflow-1', profile: 'default' })
+    managerMock.approveNode.mockReturnValue(true)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/workflows')
+    const c = ctx({
+      params: { id: 'workflow-1', runId: 'run-1', nodeId: 'node-1' },
+      request: { body: { approved: true } },
+    })
+
+    await mod.approveNode(c)
+
+    expect(managerMock.approveNode).toHaveBeenCalledWith('workflow-1', 'run-1', 'node-1', true)
+    expect(managerMock.stopRun).not.toHaveBeenCalled()
+    expect(c.body).toEqual({ ok: true })
+  })
+
+  it('records a workflow node rejection without stopping the run immediately', async () => {
+    managerMock.get.mockReturnValue({ id: 'workflow-1', profile: 'default' })
+    managerMock.approveNode.mockReturnValue(true)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/workflows')
+    const c = ctx({
+      params: { id: 'workflow-1', runId: 'run-1', nodeId: 'node-1' },
+      request: { body: { approved: false } },
+    })
+
+    await mod.approveNode(c)
+
+    expect(managerMock.approveNode).toHaveBeenCalledWith('workflow-1', 'run-1', 'node-1', false)
+    expect(managerMock.stopRun).not.toHaveBeenCalled()
     expect(c.body).toEqual({ ok: true })
   })
 

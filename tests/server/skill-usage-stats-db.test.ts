@@ -1,20 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
+import { mkdtempSync, mkdirSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
-const dbMock = vi.hoisted(() => ({
-  current: null as DatabaseSync | null,
-}))
+let hermesHome = ''
 
-vi.mock('../../packages/server/src/db/index', () => ({
-  getDb: () => dbMock.current,
-}))
-
-function createWebUiDb(): DatabaseSync {
-  const db = new DatabaseSync(':memory:')
+function createStateDb(profileDir = hermesHome, withIndexes = true): DatabaseSync {
+  mkdirSync(profileDir, { recursive: true })
+  const db = new DatabaseSync(join(profileDir, 'state.db'))
   db.exec(`
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
-      profile TEXT NOT NULL DEFAULT 'default',
       source TEXT,
       started_at INTEGER
     );
@@ -28,14 +25,24 @@ function createWebUiDb(): DatabaseSync {
       tool_name TEXT,
       timestamp INTEGER
     );
-    CREATE INDEX idx_messages_session_id ON messages(session_id);
   `)
+  if (withIndexes) {
+    db.exec(`
+      CREATE INDEX idx_sessions_started ON sessions(started_at);
+      CREATE INDEX idx_messages_session ON messages(session_id);
+    `)
+  }
   return db
 }
 
-function insertSession(db: DatabaseSync, row: { id: string; profile?: string; source?: string; started_at: number }) {
-  db.prepare('INSERT INTO sessions (id, profile, source, started_at) VALUES (?, ?, ?, ?)')
-    .run(row.id, row.profile ?? 'default', row.source ?? 'api_server', row.started_at)
+function createProfileStateDb(profile: string): DatabaseSync {
+  const profileDir = join(hermesHome, 'profiles', profile)
+  return createStateDb(profileDir)
+}
+
+function insertSession(db: DatabaseSync, row: { id: string; source?: string; started_at: number }) {
+  db.prepare('INSERT INTO sessions (id, source, started_at) VALUES (?, ?, ?)')
+    .run(row.id, row.source ?? 'api_server', row.started_at)
 }
 
 function insertToolResult(db: DatabaseSync, row: {
@@ -57,17 +64,19 @@ function insertAssistantToolCalls(db: DatabaseSync, sessionId: string, timestamp
 describe('Hermes skill usage analytics DB aggregation', () => {
   beforeEach(() => {
     vi.resetModules()
-    dbMock.current = createWebUiDb()
+    hermesHome = mkdtempSync(join(tmpdir(), 'wui-skill-usage-'))
+    process.env.HERMES_HOME = hermesHome
   })
 
   afterEach(() => {
-    dbMock.current?.close()
-    dbMock.current = null
+    delete process.env.HERMES_HOME
+    if (hermesHome) rmSync(hermesHome, { recursive: true, force: true })
+    hermesHome = ''
   })
 
-  it('counts completed skill loads and edits from Web UI sessions inside the requested profile and period', async () => {
+  it('counts completed skill loads and edits from canonical Hermes state.db by event timestamp', async () => {
     const now = 1_700_000_000
-    const db = dbMock.current!
+    const db = createStateDb()
 
     insertSession(db, { id: 'recent-chat', started_at: now - 60 })
     insertToolResult(db, {
@@ -89,11 +98,6 @@ describe('Hermes skill usage analytics DB aggregation', () => {
     })
     insertToolResult(db, {
       sessionId: 'recent-chat',
-      timestamp: now - 35,
-      content: '[skill_view] name=github-pr-workflow (22,106 chars)',
-    })
-    insertToolResult(db, {
-      sessionId: 'recent-chat',
       timestamp: now - 32,
       toolName: 'skill_view',
       content: JSON.stringify({
@@ -111,6 +115,11 @@ describe('Hermes skill usage analytics DB aggregation', () => {
       toolName: 'terminal',
       content: 'noop',
     })
+    insertToolResult(db, {
+      sessionId: 'recent-chat',
+      timestamp: now - 10 * 86400,
+      content: '[skill_view] name=old-message-inside-recent-session (1 chars)',
+    })
 
     insertSession(db, { id: 'web-api-session', started_at: now - 30 })
     insertAssistantToolCalls(db, 'web-api-session', now - 22, [
@@ -125,7 +134,7 @@ describe('Hermes skill usage analytics DB aggregation', () => {
       sessionId: 'web-api-session',
       timestamp: now - 20,
       toolCallId: 'call_api_skill_view',
-      content: JSON.stringify({ success: true, name: 'api-server-skill', description: 'API-server JSON tool result' }),
+      content: JSON.stringify({ success: true, description: 'API-server JSON tool result without skill name' }),
     })
 
     insertSession(db, { id: 'old-chat', started_at: now - 10 * 86400 })
@@ -142,12 +151,7 @@ describe('Hermes skill usage analytics DB aggregation', () => {
       content: '[skill_view] name=late-session-skill (1 chars)',
     })
 
-    insertSession(db, { id: 'other-profile-chat', profile: 'tester', started_at: now - 30 })
-    insertToolResult(db, {
-      sessionId: 'other-profile-chat',
-      timestamp: now - 20,
-      content: '[skill_view] name=other-profile-skill (1 chars)',
-    })
+    db.close()
 
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
     const result = await mod.getSkillUsageStatsFromDb(7, now, 'default')
@@ -155,21 +159,20 @@ describe('Hermes skill usage analytics DB aggregation', () => {
     expect(result).toEqual({
       period_days: 7,
       summary: {
-        total_skill_loads: 6,
+        total_skill_loads: 5,
         total_skill_edits: 1,
-        total_skill_actions: 7,
-        distinct_skills_used: 5,
+        total_skill_actions: 6,
+        distinct_skills_used: 4,
       },
       by_day: [
         {
           date: '2023-11-14',
-          view_count: 6,
+          view_count: 5,
           manage_count: 1,
-          total_count: 7,
+          total_count: 6,
           skills: [
             { skill: 'hermes-agent', view_count: 2, manage_count: 1, total_count: 3 },
             { skill: 'api-server-skill', view_count: 1, manage_count: 0, total_count: 1 },
-            { skill: 'github-pr-workflow', view_count: 1, manage_count: 0, total_count: 1 },
             { skill: 'github-project-analysis', view_count: 1, manage_count: 0, total_count: 1 },
             { skill: 'late-session-skill', view_count: 1, manage_count: 0, total_count: 1 },
           ],
@@ -181,7 +184,7 @@ describe('Hermes skill usage analytics DB aggregation', () => {
           view_count: 2,
           manage_count: 1,
           total_count: 3,
-          percentage: 3 / 7 * 100,
+          percentage: 3 / 6 * 100,
           last_used_at: now - 40,
         },
         {
@@ -189,7 +192,7 @@ describe('Hermes skill usage analytics DB aggregation', () => {
           view_count: 1,
           manage_count: 0,
           total_count: 1,
-          percentage: 1 / 7 * 100,
+          percentage: 1 / 6 * 100,
           last_used_at: now - 20,
         },
         {
@@ -197,26 +200,127 @@ describe('Hermes skill usage analytics DB aggregation', () => {
           view_count: 1,
           manage_count: 0,
           total_count: 1,
-          percentage: 1 / 7 * 100,
+          percentage: 1 / 6 * 100,
           last_used_at: now - 32,
-        },
-        {
-          skill: 'github-pr-workflow',
-          view_count: 1,
-          manage_count: 0,
-          total_count: 1,
-          percentage: 1 / 7 * 100,
-          last_used_at: now - 35,
         },
         {
           skill: 'late-session-skill',
           view_count: 1,
           manage_count: 0,
           total_count: 1,
-          percentage: 1 / 7 * 100,
+          percentage: 1 / 6 * 100,
           last_used_at: now - 40,
         },
       ],
     })
+  })
+
+  it('returns empty stats when the requested Hermes profile has no state.db yet', async () => {
+    const now = 1_700_000_000
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const result = await mod.getSkillUsageStatsFromDb(7, now, 'default')
+
+    expect(result).toEqual({
+      period_days: 7,
+      summary: {
+        total_skill_loads: 0,
+        total_skill_edits: 0,
+        total_skill_actions: 0,
+        distinct_skills_used: 0,
+      },
+      by_day: [],
+      top_skills: [],
+    })
+  })
+
+  it('does not fall back to default usage when a named Hermes profile is missing', async () => {
+    const now = 1_700_000_000
+    const db = createStateDb()
+    insertSession(db, { id: 'default-chat', started_at: now - 60 })
+    insertToolResult(db, {
+      sessionId: 'default-chat',
+      timestamp: now - 50,
+      content: '[skill_view] name=default-skill (1 chars)',
+    })
+    db.close()
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const result = await mod.getSkillUsageStatsFromDb(7, now, 'deleted-profile')
+
+    expect(result).toEqual({
+      period_days: 7,
+      summary: {
+        total_skill_loads: 0,
+        total_skill_edits: 0,
+        total_skill_actions: 0,
+        distinct_skills_used: 0,
+      },
+      by_day: [],
+      top_skills: [],
+    })
+  })
+
+  it('falls back when a readable Hermes state.db lacks optional performance indexes', async () => {
+    const now = 1_700_000_000
+    const db = createStateDb(hermesHome, false)
+    insertSession(db, { id: 'indexless-chat', started_at: now - 60 })
+    insertToolResult(db, {
+      sessionId: 'indexless-chat',
+      timestamp: now - 50,
+      content: '[skill_view] name=indexless-skill (1 chars)',
+    })
+    db.close()
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const result = await mod.getSkillUsageStatsFromDb(7, now, 'default')
+
+    expect(result.summary).toMatchObject({
+      total_skill_loads: 1,
+      total_skill_edits: 0,
+      total_skill_actions: 1,
+      distinct_skills_used: 1,
+    })
+    expect(result.top_skills[0]?.skill).toBe('indexless-skill')
+  })
+
+  it('uses the requested Hermes profile state.db instead of a Web UI-local profile column', async () => {
+    const now = 1_700_000_000
+    const defaultDb = createStateDb()
+    insertSession(defaultDb, { id: 'default-chat', started_at: now - 60 })
+    insertToolResult(defaultDb, {
+      sessionId: 'default-chat',
+      timestamp: now - 50,
+      content: '[skill_view] name=default-skill (1 chars)',
+    })
+    defaultDb.close()
+
+    const testerDb = createProfileStateDb('tester')
+    insertSession(testerDb, { id: 'tester-chat', started_at: now - 60 })
+    insertToolResult(testerDb, {
+      sessionId: 'tester-chat',
+      timestamp: now - 50,
+      content: '[skill_view] name=tester-skill (1 chars)',
+    })
+    testerDb.close()
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+
+    const defaultResult = await mod.getSkillUsageStatsFromDb(7, now, 'default')
+    expect(defaultResult.summary).toMatchObject({
+      total_skill_loads: 1,
+      total_skill_edits: 0,
+      total_skill_actions: 1,
+      distinct_skills_used: 1,
+    })
+    expect(defaultResult.top_skills[0]?.skill).toBe('default-skill')
+
+    const testerResult = await mod.getSkillUsageStatsFromDb(7, now, 'tester')
+    expect(testerResult.summary).toMatchObject({
+      total_skill_loads: 1,
+      total_skill_edits: 0,
+      total_skill_actions: 1,
+      distinct_skills_used: 1,
+    })
+    expect(testerResult.top_skills[0]?.skill).toBe('tester-skill')
   })
 })

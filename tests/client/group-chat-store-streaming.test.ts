@@ -64,6 +64,7 @@ const room: RoomInfo = {
   id: 'room-1',
   name: 'Test Room',
   inviteCode: 'ROOM1',
+  workspace: '',
 }
 
 function assistantMessage(overrides: Partial<ChatMessage>): ChatMessage {

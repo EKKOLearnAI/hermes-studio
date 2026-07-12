@@ -625,7 +625,7 @@ export async function mcuAudio(ctx: Context) {
       ctx.body = { error: 'audio not found' }
       return
     }
-    ctx.set('Content-Type', 'audio/x-pcm')
+    ctx.set('Content-Type', file.toLowerCase().endsWith('.adpcm') ? 'audio/x-ima-adpcm' : 'audio/x-pcm')
     ctx.set('Content-Length', String(info.size))
     ctx.set('Cache-Control', audio.bundled ? 'public, max-age=31536000, immutable' : 'no-store')
     ctx.body = createReadStream(audio.path)
