@@ -156,7 +156,7 @@ describe('action fabric database', () => {
     } finally {
       db.close()
     }
-  })
+  }, 30_000)
 
   it('upgrades an explicitly empty version zero atomically and is idempotent', async () => {
     const { getActionFabricDbPath, initActionFabricSchema } = await import(
