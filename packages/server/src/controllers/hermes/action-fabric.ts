@@ -1,4 +1,5 @@
 import type { Context } from 'koa'
+import { isProxy } from 'node:util/types'
 import {
   approveFabricWorkflow,
   cancelFabricWorkflow,
@@ -139,7 +140,7 @@ export async function workflows(ctx: Context): Promise<void> {
     if (requestedByUserId !== undefined) options.requestedByUserId = requestedByUserId
     if (cursor !== undefined) options.cursor = cursor
     options.limit = queryLimit(ctx)
-    const result = publicServiceArray<FabricWorkflowSummary>(listFabricWorkflows(options))
+    const result = publicServiceArray<FabricWorkflowSummary>(listFabricWorkflows(options), options.limit ?? 100)
     return {
       workflows: result.map(publicWorkflowSummary),
       nextCursor: result.length === options.limit ? result.at(-1)?.id ?? null : null,
@@ -196,7 +197,7 @@ export async function auditEvents(ctx: Context): Promise<void> {
       ...(eventType === undefined ? {} : { eventType }),
       ...(afterSequence === undefined ? {} : { afterSequence }),
       limit,
-    })).map(publicAuditEvent)
+    }), limit).map(publicAuditEvent)
     return { events, nextAfterSequence: events.length === limit ? events.at(-1)?.sequence ?? null : null }
   })
 }
@@ -610,9 +611,26 @@ function publicMappedArray<T>(value: unknown, projector: (item: unknown) => T): 
   return value.slice(0, MAX_JSON_ITEMS).map(projector)
 }
 
-function publicServiceArray<T>(value: unknown): T[] {
-  const safe = publicJson(value)
-  return Array.isArray(safe) ? safe as T[] : []
+function publicServiceArray<T>(value: unknown, serviceLimit = MAX_LIST_LIMIT): T[] {
+  if (!Number.isSafeInteger(serviceLimit) || serviceLimit < 0 || serviceLimit > MAX_LIST_LIMIT) return []
+  if (value === null || typeof value !== 'object' || isProxy(value) || !Array.isArray(value)
+    || Object.getPrototypeOf(value) !== Array.prototype) return []
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length')
+  if (!lengthDescriptor || !('value' in lengthDescriptor) || !Number.isSafeInteger(lengthDescriptor.value)
+    || lengthDescriptor.value < 0 || lengthDescriptor.value > serviceLimit) return []
+  const length = lengthDescriptor.value as number
+  const keys = Reflect.ownKeys(value)
+  if (keys.length !== length + 1 || keys.some(key => typeof key !== 'string'
+    || (key !== 'length' && (!/^(0|[1-9]\d*)$/.test(key) || Number(key) >= length)))) return []
+  const output: T[] = []
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+    if (!descriptor?.enumerable || !('value' in descriptor)) return []
+    const item = publicJson(descriptor.value)
+    if (!isPlainObject(item)) return []
+    output.push(item as T)
+  }
+  return output
 }
 
 function publicJson(value: unknown): unknown {
@@ -629,7 +647,7 @@ function sanitizePublicJson(
   if (depth > MAX_JSON_DEPTH || budget.nodes > MAX_JSON_NODES || budget.bytes > MAX_JSON_BYTES) return '[TRUNCATED]'
   if (typeof value === 'string') return safeString(value)
   if (value === null || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))) return value
-  if (typeof value !== 'object') return '[REDACTED]'
+  if (typeof value !== 'object' || isProxy(value)) return '[REDACTED]'
   if (ancestors.has(value)) return '[REDACTED]'
   ancestors.add(value)
   try {

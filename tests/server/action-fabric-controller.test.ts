@@ -212,6 +212,89 @@ describe('action fabric controller', () => {
     expect(detail.body).toMatchObject({ workflow: { id: 'wf-1', intent: { id: 'intent-1' }, steps: [] } })
   })
 
+  it.each([65, 100, 200])('preserves a descriptor-safe workflow service page of %i items and its cursor', async limit => {
+    fabric.listFabricWorkflows.mockReturnValue(Array.from({ length: limit }, (_, index) => ({
+      ...workflow, id: `wf-${String(index).padStart(3, '0')}`, intentId: `intent-${index}`,
+    })))
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    const ctx = context({ query: { limit: String(limit) } })
+    await ctrl.workflows(ctx)
+    expect(ctx.body.workflows).toHaveLength(limit)
+    expect(ctx.body.nextCursor).toBe(`wf-${String(limit - 1).padStart(3, '0')}`)
+  })
+
+  it.each([65, 100, 200])('preserves a descriptor-safe audit service page of %i items and its cursor', async limit => {
+    fabric.listFabricAuditEvents.mockReturnValue(Array.from({ length: limit }, (_, index) => ({
+      id: `audit-${index}`, sequence: index + 1, eventType: 'workflow.changed', actorUserId: '42',
+      aggregateType: 'workflow', aggregateId: `wf-${index}`, payload: { index }, occurredAt: 'now',
+      previousHash: `previous-${index}`, hash: `hash-${index}`,
+    })))
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    const ctx = context({ query: { limit: String(limit) } })
+    await ctrl.auditEvents(ctx)
+    expect(ctx.body.events).toHaveLength(limit)
+    expect(ctx.body.nextAfterSequence).toBe(limit)
+  })
+
+  it('filters bounded capability and executor service pages beyond nested JSON index 64', async () => {
+    fabric.listFabricCapabilities.mockReturnValue(Array.from({ length: 100 }, (_, index) => ({
+      id: `domain-${index}.read`, version: 1, domain: index === 80 ? 'target' : 'other', verb: 'read',
+      description: `Capability ${index}`, inputSchema: {}, outputSchema: {}, risk: 'none', sideEffect: false,
+      idempotency: 'supported', reversible: false, compensationCapabilityId: null, verificationStrategy: 'canonical',
+      authentication: [], targetRestrictions: [], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+      createdAt: 'now', updatedAt: 'now',
+    })))
+    fabric.listFabricExecutors.mockReturnValue(Array.from({ length: 100 }, (_, index) => ({
+      id: `executor-${index}`, type: 'simulator', name: `Executor ${index}`,
+      environment: index === 80 ? 'internal' : 'simulator', health: 'healthy', enabled: true,
+      policyVersion: 1, createdAt: 'now', updatedAt: 'now',
+    })))
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    const capabilitiesCtx = context({ query: { domain: 'target', limit: '10' } })
+    await ctrl.capabilities(capabilitiesCtx)
+    expect(capabilitiesCtx.body.capabilities.map((item: any) => item.id)).toEqual(['domain-80.read'])
+    const executorsCtx = context({ query: { environment: 'internal', limit: '10' } })
+    await ctrl.executors(executorsCtx)
+    expect(executorsCtx.body.executors.map((item: any) => item.id)).toEqual(['executor-80'])
+  })
+
+  it('fails closed for proxied, sparse, accessor-indexed, and oversized top-level service collections', async () => {
+    let getterCalls = 0
+    const accessor = [workflow]
+    Object.defineProperty(accessor, '0', { enumerable: true, get: () => { getterCalls += 1; return workflow } })
+    const candidates: unknown[] = [
+      new Proxy([workflow], {}),
+      Array(2),
+      accessor,
+      Array.from({ length: 201 }, () => workflow),
+      { 0: workflow, length: 1 },
+    ]
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    for (const candidate of candidates) {
+      fabric.listFabricWorkflows.mockReturnValueOnce(candidate)
+      const ctx = context({ query: { limit: '200' } })
+      await ctrl.workflows(ctx)
+      expect(ctx.body).toEqual({ workflows: [], nextCursor: null })
+    }
+    expect(getterCalls).toBe(0)
+  })
+
+  it('fails closed when a paginated service returns more items than the validated endpoint limit', async () => {
+    fabric.listFabricWorkflows.mockReturnValue(Array.from({ length: 11 }, (_, index) => ({ ...workflow, id: `wf-${index}` })))
+    fabric.listFabricAuditEvents.mockReturnValue(Array.from({ length: 11 }, (_, index) => ({
+      id: `audit-${index}`, sequence: index + 1, eventType: 'workflow.changed', actorUserId: '42',
+      aggregateType: 'workflow', aggregateId: `wf-${index}`, payload: {}, occurredAt: 'now',
+      previousHash: `previous-${index}`, hash: `hash-${index}`,
+    })))
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    const workflowCtx = context({ query: { limit: '10' } })
+    await ctrl.workflows(workflowCtx)
+    expect(workflowCtx.body).toEqual({ workflows: [], nextCursor: null })
+    const auditCtx = context({ query: { limit: '10' } })
+    await ctrl.auditEvents(auditCtx)
+    expect(auditCtx.body).toEqual({ events: [], nextAfterSequence: null })
+  })
+
   it('delegates server-owned approve, reject, cancel, retry, and compensation actions', async () => {
     const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
     await ctrl.approveWorkflow(context({ body: {} }))
