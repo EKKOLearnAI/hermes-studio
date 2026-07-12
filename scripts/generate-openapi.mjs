@@ -16,7 +16,10 @@ const rootDir = resolve(__dirname, '..')
 const routesDir = join(rootDir, 'packages/server/src/routes')
 const controllersDir = join(rootDir, 'packages/server/src/controllers')
 const packageJson = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf-8'))
-const dtoSourcePath = join(rootDir, 'packages/client/src/api/hermes/action-fabric.ts')
+const schemaSourceRoots = [
+  join(rootDir, 'packages/client/src/api'),
+  join(rootDir, 'packages/server/src/shared'),
+]
 
 // OpenAPI template
 const openapi = {
@@ -132,11 +135,7 @@ function scanRouteFile(filePath, tagInfo, paths) {
   let match
   while ((match = ctrlRouteRegex.exec(content)) !== null) {
     const [, method, path, controllerMethod] = match
-    const controllerSource = controllerContent
-      ? (tagInfo.name === 'Assistant Roles' || tagInfo.name === 'Action Fabric'
-          ? extractControllerSource(controllerContent, controllerMethod)
-          : extractFunctionSource(controllerContent, controllerMethod))
-      : ''
+    const controllerSource = controllerContent ? extractControllerSource(controllerContent, controllerMethod) : ''
     addEndpoint(paths, method, path, controllerMethod, tagInfo, content, match.index, controllerSource, controllerContent)
   }
 
@@ -998,6 +997,41 @@ function generateTypeScriptSchemas(filePath) {
   return Object.fromEntries(Array.from(declarations.keys()).map(name => [name, schemaForName(name)]))
 }
 
+function discoverTypeScriptSchemas(roots) {
+  const files = []
+  function visit(path) {
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      const child = join(path, entry.name)
+      if (entry.isDirectory()) visit(child)
+      else if (entry.isFile() && entry.name.endsWith('.ts')) files.push(child)
+    }
+  }
+  for (const root of roots) visit(root)
+  const schemas = {}
+  for (const file of files.sort()) {
+    const source = readFileSync(file, 'utf8')
+    if (!/^\s*\/\*\*[\s\S]*?@openapi-schema-source[\s\S]*?\*\//.test(source)) continue
+    for (const [name, schema] of Object.entries(generateTypeScriptSchemas(file))) {
+      if (schemas[name] && JSON.stringify(schemas[name]) !== JSON.stringify(schema)) {
+        throw new Error(`Conflicting OpenAPI schema declaration: ${name}`)
+      }
+      schemas[name] = schema
+    }
+  }
+  const missing = new Set()
+  const inspect = value => {
+    if (!value || typeof value !== 'object') return
+    if (typeof value.$ref === 'string' && value.$ref.startsWith('#/components/schemas/')) {
+      const name = value.$ref.slice('#/components/schemas/'.length)
+      if (!schemas[name]) missing.add(name)
+    }
+    for (const child of Object.values(value)) inspect(child)
+  }
+  for (const schema of Object.values(schemas)) inspect(schema)
+  if (missing.size) throw new Error(`Missing OpenAPI schema references: ${Array.from(missing).sort().join(', ')}`)
+  return schemas
+}
+
 // Add standard responses
 openapi.components.responses = {
   Unauthorized: {
@@ -1040,7 +1074,15 @@ openapi.components.responses = {
     },
   },
 }
-openapi.components.schemas = generateTypeScriptSchemas(dtoSourcePath)
+const schemaValidationIndex = process.argv.indexOf('--validate-schema-sources')
+const selectedSchemaRoots = schemaValidationIndex >= 0
+  ? process.argv.slice(schemaValidationIndex + 1).map(path => resolve(path))
+  : schemaSourceRoots
+openapi.components.schemas = discoverTypeScriptSchemas(selectedSchemaRoots)
+if (schemaValidationIndex >= 0) {
+  process.stdout.write(`${JSON.stringify(openapi.components.schemas)}\n`)
+  process.exit(0)
+}
 
 // Add WebSocket terminal endpoint
 openapi.paths['/api/hermes/terminal'] = {

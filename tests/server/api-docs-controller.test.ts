@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { spawnSync } from 'node:child_process'
 import { openapi } from '../../packages/server/src/controllers/api-docs'
 
 describe('api docs controller', () => {
@@ -326,5 +328,35 @@ describe('api docs controller', () => {
     expect(source).not.toContain("createIntent: 'Action")
     expect(source).not.toContain('ActionCapabilityListResponse')
     expect(source).not.toContain('ActionWorkflowDetailDto')
+    expect(source).not.toContain("tagInfo.name === 'Action Fabric'")
+    expect(source).not.toContain('packages/client/src/api/hermes/action-fabric.ts')
   })
+
+  it('discovers multiple annotated schema sources and rejects conflicts or missing refs', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'openapi-schema-sources-'))
+    const script = resolve(process.cwd(), 'scripts/generate-openapi.mjs')
+    const run = () => spawnSync(process.execPath, [script, '--validate-schema-sources', root], { encoding: 'utf8' })
+    try {
+      writeFileSync(resolve(root, 'one.ts'), '/** @openapi-schema-source */\nexport interface Alpha { value: string }\n')
+      writeFileSync(resolve(root, 'two.ts'), '/** @openapi-schema-source */\nexport interface Beta { alpha: Alpha; enabled?: boolean }\n')
+      const success = run()
+      expect(success.status).toBe(0)
+      expect(JSON.parse(success.stdout)).toEqual(expect.objectContaining({
+        Alpha: expect.objectContaining({ required: ['value'] }),
+        Beta: expect.objectContaining({ properties: expect.objectContaining({ alpha: { $ref: '#/components/schemas/Alpha' } }) }),
+      }))
+
+      writeFileSync(resolve(root, 'conflict.ts'), '/** @openapi-schema-source */\nexport interface Alpha { value: number }\n')
+      const conflict = run()
+      expect(conflict.status).not.toBe(0)
+      expect(conflict.stderr).toContain('Conflicting OpenAPI schema declaration: Alpha')
+      rmSync(resolve(root, 'conflict.ts'))
+      writeFileSync(resolve(root, 'missing.ts'), '/** @openapi-schema-source */\nexport interface MissingRef { child: DoesNotExist }\n')
+      const missing = run()
+      expect(missing.status).not.toBe(0)
+      expect(missing.stderr).toContain('Missing OpenAPI schema references: DoesNotExist')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 20_000)
 })

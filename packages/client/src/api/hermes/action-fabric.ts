@@ -1,3 +1,4 @@
+/** @openapi-schema-source */
 import { request } from '@/api/client'
 
 export type ActionRisk = 'none' | 'low' | 'medium' | 'high' | 'critical'

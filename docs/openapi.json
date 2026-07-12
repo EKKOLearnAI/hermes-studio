@@ -1203,6 +1203,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
           }
         ]
       },
@@ -1245,6 +1267,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
           }
         ],
         "requestBody": {
@@ -1256,6 +1300,14 @@
                 "properties": {
                   "content": {
                     "type": "string"
+                  },
+                  "profile": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "provider": {
+                    "type": "object",
+                    "additionalProperties": true
                   }
                 },
                 "additionalProperties": true
@@ -5373,6 +5425,35 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "profile": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true
+              }
+            }
+          }
         }
       }
     },
@@ -5399,7 +5480,20 @@
           "404": {
             "description": "Not found"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ]
       }
     },
     "/api/hermes/auth/anthropic/submit/{sessionId}": {
@@ -5516,6 +5610,35 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "profile": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true
+              }
+            }
+          }
         }
       }
     },
@@ -5542,7 +5665,20 @@
           "404": {
             "description": "Not found"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ]
       }
     },
     "/api/hermes/auth/copilot/check-token": {
@@ -5744,6 +5880,35 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "profile": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true
+              }
+            }
+          }
         }
       }
     },
@@ -5770,7 +5935,20 @@
           "404": {
             "description": "Not found"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ]
       }
     },
     "/api/hermes/auth/nous/poll/{sessionId}": {
@@ -5832,6 +6010,35 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "profile": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true
+              }
+            }
+          }
         }
       }
     },
@@ -5858,7 +6065,20 @@
           "404": {
             "description": "Not found"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ]
       }
     },
     "/api/hermes/auth/xai/poll/{sessionId}": {
@@ -5920,6 +6140,35 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "profile": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true
+              }
+            }
+          }
         }
       }
     },
@@ -5946,7 +6195,20 @@
           "404": {
             "description": "Not found"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ]
       }
     },
     "/api/hermes/available-models": {
@@ -6001,6 +6263,17 @@
         },
         "parameters": [
           {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          },
+          {
             "name": "section",
             "in": "query",
             "required": false,
@@ -6041,6 +6314,19 @@
             "$ref": "#/components/responses/Unauthorized"
           }
         },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -6048,6 +6334,9 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "profile": {
+                    "type": "string"
+                  },
                   "restart": {
                     "type": "boolean"
                   },
@@ -6093,7 +6382,20 @@
           "404": {
             "description": "Not found"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -6118,6 +6420,19 @@
             "$ref": "#/components/responses/Unauthorized"
           }
         },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -6128,6 +6443,9 @@
                   "auxiliary": {
                     "type": "object",
                     "additionalProperties": true
+                  },
+                  "profile": {
+                    "type": "string"
                   }
                 },
                 "additionalProperties": true
@@ -6161,6 +6479,19 @@
             "$ref": "#/components/responses/Unauthorized"
           }
         },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -6169,6 +6500,9 @@
                 "type": "object",
                 "properties": {
                   "platform": {
+                    "type": "string"
+                  },
+                  "profile": {
                     "type": "string"
                   },
                   "values": {
@@ -6211,6 +6545,19 @@
             "$ref": "#/components/responses/Unauthorized"
           }
         },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -6219,6 +6566,9 @@
                 "type": "object",
                 "properties": {
                   "default": {
+                    "type": "string"
+                  },
+                  "profile": {
                     "type": "string"
                   },
                   "provider": {
@@ -6258,7 +6608,20 @@
           "404": {
             "description": "Not found"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ]
       }
     },
     "/api/hermes/config/providers": {
@@ -7559,6 +7922,18 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
         }
       }
     },
@@ -7629,7 +8004,19 @@
               "type": "string"
             }
           }
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
       },
       "delete": {
         "tags": [
@@ -7919,6 +8306,9 @@
                   },
                   "triage": {
                     "type": "boolean"
+                  },
+                  "value": {
+                    "type": "string"
                   },
                   "workspace": {
                     "type": "string"
@@ -8935,6 +9325,9 @@
                   },
                   "error": {
                     "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -9647,6 +10040,19 @@
             "$ref": "#/components/responses/Unauthorized"
           }
         },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -9659,8 +10065,15 @@
                   },
                   "output_path": {
                     "type": "string"
+                  },
+                  "profile": {
+                    "type": "object",
+                    "additionalProperties": true
                   }
                 },
+                "required": [
+                  "profile"
+                ],
                 "additionalProperties": true
               }
             }
@@ -9692,6 +10105,19 @@
             "$ref": "#/components/responses/Unauthorized"
           }
         },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -9705,6 +10131,10 @@
                   "output_path": {
                     "type": "string"
                   },
+                  "profile": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
                   "prompt": {
                     "type": "string"
                   },
@@ -9713,6 +10143,7 @@
                   }
                 },
                 "required": [
+                  "profile",
                   "prompt"
                 ],
                 "additionalProperties": true
@@ -13844,10 +14275,14 @@
                   },
                   "path": {
                     "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
                   }
                 },
                 "required": [
-                  "path"
+                  "path",
+                  "title"
                 ],
                 "additionalProperties": true
               }
