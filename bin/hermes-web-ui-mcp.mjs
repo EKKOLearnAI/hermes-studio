@@ -362,6 +362,10 @@ function compactBodyFields(requestBody) {
 }
 
 const moduleHints = {
+  'Action Fabric': {
+    purpose: 'Governed action capability discovery, intent creation, workflow review, audit inspection, and emergency stop. Phase 3 supports simulator and reversible internal executors only. No real MCP, browser, payment, device, Home Assistant, desktop, or Android execution is available.',
+    keywords: ['action fabric', 'capability discovery', 'intent creation', 'workflow review', 'audit inspection', 'emergency stop'],
+  },
   'API Docs': {
     purpose: 'Discover the Web UI API catalog and generated OpenAPI metadata.',
     keywords: ['操作手册', '接口文档', 'API 文档', 'openapi', 'route catalog'],
@@ -371,7 +375,7 @@ const moduleHints = {
     keywords: ['personal twin', 'digital twin', 'body state', 'life state', 'observations', 'events'],
   },
   'Assistant Roles': {
-    purpose: 'Discover assistant role list, profile mapping, context preview, and context recipe CRUD. Capability permissions are declarative and are not enforced execution authorization in Phase 2.',
+    purpose: 'Discover assistant role list, profile mapping, context preview, and context recipe CRUD. Capability permissions are enforced by Action Fabric policy in Phase 3.',
     keywords: ['assistant roles', 'role list', 'profile mapping', 'context preview', 'context recipes'],
   },
   Auth: {

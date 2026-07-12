@@ -76,6 +76,7 @@ const tagMappings = {
   'routes/hermes/write-gate.ts': { name: 'Write Gate', description: 'Hermes Agent write approval review' },
   'routes/hermes/personal-twin.ts': { name: 'Personal Twin', description: 'Global personal digital twin state and legacy synchronization' },
   'routes/hermes/assistant-roles.ts': { name: 'Assistant Roles', description: 'Assistant role registry, profile mappings, scoped context previews, and context recipes' },
+  'routes/hermes/action-fabric.ts': { name: 'Action Fabric', description: 'Governed capability discovery, durable action workflows, audit, and emergency controls' },
   'routes/hermes/performance-monitor.ts': { name: 'Performance', description: 'Runtime performance monitoring' },
   'routes/hermes/terminal.ts': { name: 'Terminal', description: 'WebSocket terminal' },
   'routes/health.ts': { name: 'Health', description: 'Health check' },
@@ -130,7 +131,7 @@ function scanRouteFile(filePath, tagInfo, paths) {
   while ((match = ctrlRouteRegex.exec(content)) !== null) {
     const [, method, path, controllerMethod] = match
     const controllerSource = controllerContent
-      ? (tagInfo.name === 'Assistant Roles'
+      ? (tagInfo.name === 'Assistant Roles' || tagInfo.name === 'Action Fabric'
           ? extractControllerSource(controllerContent, controllerMethod)
           : extractFunctionSource(controllerContent, controllerMethod))
       : ''
@@ -250,7 +251,7 @@ function addEndpoint(paths, method, path, controllerMethod, tagInfo, content, ma
     description,
     operationId,
     security: [{ BearerAuth: [] }],
-    responses: generateResponses(path, method),
+    responses: generateResponses(path, method, controllerMethod, tagInfo.name),
   }
 
   const parameters = generateParameters(openapiPath, controllerSource)
@@ -308,6 +309,8 @@ function extractQueryParamNames(source) {
   collectMatches(source, /ctx\.query\??\.(\w+)/g, names)
   collectMatches(source, /ctx\.query\[['"]([^'"]+)['"]\]/g, names)
   collectMatches(source, /(?:stringQuery|integerQuery)\(\s*ctx\s*,\s*['"]([^'"]+)['"]\s*\)/g, names)
+  collectMatches(source, /(?:queryIdentifier|queryEnum|queryBoolean|queryInteger)\(\s*ctx\s*,\s*['"]([^'"]+)['"]/g, names)
+  if (/\bqueryLimit\(\s*ctx\s*\)/.test(source)) names.add('limit')
 
   for (const match of source.matchAll(/const\s+\{([^}]+)\}\s*=\s*ctx\.query/g)) {
     for (const name of parseDestructuredNames(match[1])) names.add(name)
@@ -354,7 +357,8 @@ function queryParamSchema(name, source) {
 
 function inferParamType(name, source) {
   const escaped = escapeRegExp(name)
-  if (new RegExp(`integerQuery\\(\\s*ctx\\s*,\\s*['"]${escaped}['"]\\s*\\)`).test(source)) {
+  if (new RegExp(`(?:integerQuery|queryInteger)\\(\\s*ctx\\s*,\\s*['"]${escaped}['"]`).test(source)
+    || (name === 'limit' && /\bqueryLimit\(\s*ctx\s*\)/.test(source))) {
     return 'integer'
   }
   if (new RegExp(`parseInt\\([^)]*\\b${escaped}\\b`).test(source) || new RegExp(`Number\\([^)]*\\b${escaped}\\b`).test(source)) {
@@ -363,7 +367,7 @@ function inferParamType(name, source) {
   if (new RegExp(`\\b${escaped}\\b[^\\n]*(?:===|!==)\\s*['"](?:true|false|0|1)['"]`).test(source)) {
     return 'boolean'
   }
-  if (new RegExp(`boolQuery\\([^)]*\\b${escaped}\\b`).test(source)) {
+  if (new RegExp(`(?:boolQuery|queryBoolean)\\([^)]*\\b${escaped}\\b`).test(source)) {
     return 'boolean'
   }
   return 'string'
@@ -378,6 +382,15 @@ function inferEnumValues(name, source) {
   const values = new Set()
   const comparisonRegex = new RegExp(`\\b${escaped}\\b\\s*(?:===|!==)\\s*['"]([^'"]+)['"]`, 'g')
   collectMatches(source, comparisonRegex, values)
+  const queryEnumCall = source.match(new RegExp(`queryEnum\\(\\s*ctx\\s*,\\s*['"]${escaped}['"]\\s*,\\s*\\[([^\\]]*)\\]`))
+  if (queryEnumCall) {
+    collectMatches(queryEnumCall[1], /['"]([^'"]+)['"]/g, values)
+    const spreadSet = queryEnumCall[1].match(/\.\.\.([A-Z][A-Z0-9_]*)/)?.[1]
+    if (spreadSet) {
+      const declaration = source.match(new RegExp(`const\\s+${escapeRegExp(spreadSet)}[\\s\\S]*?new\\s+Set(?:<[^>]+>)?\\s*\\(\\s*\\[([\\s\\S]*?)\\]\\s*\\)`))
+      if (declaration) collectMatches(declaration[1], /['"]([^'"]+)['"]/g, values)
+    }
+  }
   const allowedRegex = new RegExp(`${escaped}\\s+must be\\s+([^'"\`\\n]+)`, 'i')
   const allowedMatch = source.match(allowedRegex)
   if (allowedMatch) {
@@ -392,7 +405,7 @@ function inferEnumValues(name, source) {
 
 function generateRequestBody(method, source) {
   if (!['post', 'put', 'patch'].includes(method)) return null
-  if (!source || !/(ctx\.request\??\.body|requestBody\(ctx\)|bodyObject\(ctx\))/.test(source)) return null
+  if (!source || !/(ctx\.request\??\.body|requestBody\(ctx\b|bodyObject\(ctx\))/.test(source)) return null
 
   const fields = extractBodyFields(source)
   const schema = {
@@ -406,7 +419,7 @@ function generateRequestBody(method, source) {
 
   const required = fields.filter(field => field.required).map(field => field.name)
   if (required.length) schema.required = required
-  if (!fields.length) schema.additionalProperties = true
+  schema.additionalProperties = /requestBody\(ctx,\s*(?:[A-Z_]+|new Set)/.test(source) ? false : true
 
   return {
     required: true,
@@ -480,6 +493,13 @@ function extractControllerSource(content, functionName) {
   const main = extractFunctionSource(content, functionName, true)
   if (!main) return ''
 
+  const referencedSetDeclarations = Array.from(main.matchAll(/\.\.\.([A-Z][A-Z0-9_]*)/g))
+    .map(match => {
+      const name = escapeRegExp(match[1])
+      return content.match(new RegExp(`const\\s+${name}(?:\\s*:[^=]+)?\\s*=\\s*new\\s+Set(?:<[^>]+>)?\\s*\\(\\s*\\[[\\s\\S]*?\\]\\s*\\)`))?.[0] || ''
+    })
+    .filter(Boolean)
+
   function branch(name, trail = new Set()) {
     if (trail.has(name)) return ''
     const source = extractFunctionSource(content, name)
@@ -493,8 +513,8 @@ function extractControllerSource(content, functionName) {
 
   const helperBranches = Array.from(main.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g))
     .map(match => branch(match[1], new Set([functionName])))
-    .filter(source => /(ctx\.request\??\.body|requestBody\(ctx\)|bodyObject\(ctx\))/.test(source))
-  return [main, ...helperBranches].join('\n')
+    .filter(source => /(ctx\.request\??\.body|requestBody\(ctx\b|bodyObject\(ctx\))/.test(source))
+  return [...referencedSetDeclarations, main, ...helperBranches].join('\n')
 }
 
 function extractRequestBodyTypeLiterals(source) {
@@ -601,7 +621,7 @@ function extractBodyVariableNames(source) {
   for (const match of source.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:\([^)]*\)\s*)?ctx\.request\??\.body/g)) {
     names.push(match[1])
   }
-  for (const match of source.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:bodyResult\.body|requestBody\(ctx\)\.body)/g)) {
+  for (const match of source.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:bodyResult\.body|requestBody\(ctx\b[^)]*\)(?:\.body)?)/g)) {
     names.push(match[1])
   }
   for (const match of source.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*bodyObject\(ctx\)/g)) {
@@ -613,6 +633,7 @@ function extractBodyVariableNames(source) {
 function inferRequiredBodyNames(source) {
   const names = extractRequiredNamesFromMessages(source)
   collectMatches(source, /required\w*\([^,]+,\s*['"]([^'"]+)['"]/g, names)
+  collectMatches(source, /Number\.isSafeInteger\(\w+\.([A-Za-z_$][\w$]*)\)/g, names)
   for (const entry of extractDestructuredBodyEntries(source)) {
     const escaped = escapeRegExp(entry.local)
     if (new RegExp(`if\\s*\\([^)]*!\\s*${escaped}\\b`).test(source)
@@ -635,7 +656,7 @@ function inferRequiredBodyNames(source) {
 
 function extractBodyValidatorFieldNames(source) {
   const names = new Set()
-  collectMatches(source, /(?:requiredString|optionalString|optionalBoolean)\(\s*[A-Za-z_$][\w$]*\s*,\s*['"]([^'"]+)['"]/g, names)
+  collectMatches(source, /(?:requiredString|requiredIdentifier|requiredText|requiredJsonObject|requiredInteger|optionalString|optionalBoolean)\(\s*[A-Za-z_$][\w$]*\s*,\s*['"]([^'"]+)['"]/g, names)
   for (const match of source.matchAll(/for\s*\(\s*const\s+[A-Za-z_$][\w$]*\s+of\s+\[([^\]]+)\]\s+as\s+const\s*\)/g)) {
     collectMatches(match[1], /['"]([^'"]+)['"]/g, names)
   }
@@ -662,6 +683,20 @@ function extractRequiredNamesFromMessages(source) {
 
 function schemaFromName(name, source) {
   const escaped = escapeRegExp(name)
+  if (new RegExp(`requiredJsonObject\\([^,]+,\\s*['"]${escaped}['"]`).test(source)) {
+    return { type: 'object', additionalProperties: true }
+  }
+  if (new RegExp(`parseMoney\\(\\w+\\.${escaped}\\)`).test(source)) {
+    return { $ref: '#/components/schemas/ActionFabricMoney' }
+  }
+  if (new RegExp(`requiredInteger\\([^,]+,\\s*['"]${escaped}['"]`).test(source)) return { type: 'integer' }
+  const numericProperty = new RegExp(`Number\\.isSafeInteger\\(\\w+\\.${escaped}\\)`).test(source)
+  if (numericProperty) {
+    const propertyPattern = `(?:\\w+\\.${escaped}|\\(\\w+\\.${escaped}\\s+as\\s+number\\))`
+    const minimum = source.match(new RegExp(`${propertyPattern}\\s*<\\s*(\\d+)`))?.[1]
+    const maximum = source.match(new RegExp(`${propertyPattern}\\s*>\\s*(\\d+)`))?.[1]
+    return { type: 'integer', ...(minimum ? { minimum: Number(minimum) } : {}), ...(maximum ? { maximum: Number(maximum) } : {}) }
+  }
   if (new RegExp(`optionalBoolean\\([^,]+,\\s*['"]${escaped}['"]`).test(source)) return { type: 'boolean' }
   if (new RegExp(`optional(?:Positive)?Integer\\([^,]+,\\s*['"]${escaped}['"]`).test(source)) return { type: 'integer' }
   if (new RegExp(`(?:optional|required)\\w*StringArray\\([^,]+,\\s*['"]${escaped}['"]`).test(source)) return { type: 'array', items: { type: 'string' } }
@@ -828,7 +863,8 @@ function generateSummary(path, method, controllerMethod) {
   return `${action} ${resource}`
 }
 
-function generateResponses(path, method) {
+function generateResponses(path, method, controllerMethod, tagName) {
+  if (tagName === 'Action Fabric') return generateActionFabricResponses(controllerMethod)
   const responses = {
     '200': {
       description: 'Success',
@@ -847,6 +883,184 @@ function generateResponses(path, method) {
   }
 
   return responses
+}
+
+function generateActionFabricResponses(controllerMethod) {
+  const successSchemaByController = {
+    capabilities: 'ActionFabricCapabilityListResponse',
+    executors: 'ActionFabricExecutorListResponse',
+    createIntent: 'ActionFabricIntentResult',
+    workflows: 'ActionFabricWorkflowListResponse',
+    workflowDetail: 'ActionFabricWorkflowResponse',
+    approveWorkflow: 'ActionFabricWorkflowResponse',
+    rejectWorkflow: 'ActionFabricWorkflowResponse',
+    cancelWorkflow: 'ActionFabricWorkflowResponse',
+    retryWorkflow: 'ActionFabricWorkflowResponse',
+    compensateWorkflow: 'ActionFabricWorkflowResponse',
+    auditEvents: 'ActionFabricAuditListResponse',
+    verifyAudit: 'ActionFabricAuditVerificationResponse',
+    control: 'ActionFabricControlResponse',
+    updateEmergencyStop: 'ActionFabricControlResponse',
+  }
+  const responseSchema = successSchemaByController[controllerMethod]
+  const responses = {
+    '200': {
+      description: 'Success',
+      content: { 'application/json': { schema: { $ref: `#/components/schemas/${responseSchema}` } } },
+    },
+  }
+  for (const status of ['400', '401', '403', '404', '409', '422', '500', '503']) {
+    responses[status] = {
+      description: status === '401' ? 'Authentication required' : 'Action Fabric request failed',
+      content: { 'application/json': { schema: { $ref: '#/components/schemas/ActionFabricError' } } },
+    }
+  }
+  return responses
+}
+
+const stringSchema = { type: 'string' }
+const nullableStringSchema = { type: 'string', nullable: true }
+const actionFabricSchemas = {
+  ActionFabricError: {
+    type: 'object', properties: { error: stringSchema, code: stringSchema },
+    required: ['error', 'code'], additionalProperties: false,
+  },
+  ActionFabricMoney: {
+    type: 'object', properties: { currency: stringSchema, amountMinor: { type: 'integer', minimum: 0 } },
+    required: ['currency', 'amountMinor'], additionalProperties: false,
+  },
+  ActionFabricAvailableActions: {
+    type: 'object',
+    properties: {
+      approve: { type: 'boolean' }, reject: { type: 'boolean' }, cancel: { type: 'boolean' },
+      retry: { type: 'boolean' }, compensate: { type: 'boolean' },
+    },
+    required: ['approve', 'reject', 'cancel', 'retry', 'compensate'], additionalProperties: false,
+  },
+  ActionFabricControl: {
+    type: 'object',
+    properties: {
+      level: { type: 'integer', minimum: 0, maximum: 3 }, version: { type: 'integer', minimum: 0 },
+      actorUserId: nullableStringSchema, reason: stringSchema, updatedAt: stringSchema,
+    },
+    required: ['level', 'version', 'actorUserId', 'reason', 'updatedAt'], additionalProperties: false,
+  },
+  ActionFabricCapability: {
+    type: 'object',
+    properties: {
+      id: stringSchema, version: { type: 'integer' }, domain: stringSchema, verb: stringSchema,
+      description: stringSchema, inputSchema: { type: 'object', additionalProperties: true },
+      outputSchema: { type: 'object', additionalProperties: true }, risk: stringSchema,
+      sideEffect: { type: 'boolean' }, idempotency: stringSchema, reversible: { type: 'boolean' },
+      compensationCapabilityId: nullableStringSchema, verificationStrategy: stringSchema,
+      authentication: { type: 'array', items: stringSchema }, targetRestrictions: { type: 'array', items: stringSchema },
+      cost: { type: 'object', additionalProperties: true }, enabled: { type: 'boolean' },
+      createdAt: stringSchema, updatedAt: stringSchema,
+    },
+    required: ['id', 'version', 'domain', 'verb', 'description', 'inputSchema', 'outputSchema', 'risk', 'sideEffect', 'idempotency', 'reversible', 'compensationCapabilityId', 'verificationStrategy', 'authentication', 'targetRestrictions', 'cost', 'enabled', 'createdAt', 'updatedAt'],
+    additionalProperties: false,
+  },
+  ActionFabricExecutor: {
+    type: 'object',
+    properties: {
+      id: stringSchema, type: stringSchema, name: stringSchema, environment: stringSchema, health: stringSchema,
+      enabled: { type: 'boolean' }, policyVersion: { type: 'integer' }, createdAt: stringSchema, updatedAt: stringSchema,
+    },
+    required: ['id', 'type', 'name', 'environment', 'health', 'enabled', 'policyVersion', 'createdAt', 'updatedAt'],
+    additionalProperties: false,
+  },
+  ActionFabricIntent: {
+    type: 'object',
+    properties: {
+      id: stringSchema, capabilityId: stringSchema, capabilityVersion: { type: 'integer' },
+      requestedByRoleId: stringSchema, requestedByUserId: stringSchema, idempotencyKey: stringSchema,
+      goal: stringSchema, target: { type: 'object', additionalProperties: true }, input: { type: 'object', additionalProperties: true },
+      constraints: { type: 'object', additionalProperties: true }, rationale: stringSchema,
+      expectedCost: { $ref: '#/components/schemas/ActionFabricMoney' },
+      sanitizedSummary: { type: 'object', additionalProperties: true }, createdAt: stringSchema, updatedAt: stringSchema,
+    },
+    required: ['id', 'capabilityId', 'capabilityVersion', 'requestedByRoleId', 'requestedByUserId', 'idempotencyKey', 'goal', 'target', 'input', 'constraints', 'rationale', 'sanitizedSummary', 'createdAt', 'updatedAt'],
+    additionalProperties: false,
+  },
+  ActionFabricPolicyDecision: {
+    type: 'object',
+    properties: {
+      id: stringSchema, intentId: stringSchema, executorId: nullableStringSchema, outcome: stringSchema,
+      reasonCodes: { type: 'array', items: stringSchema }, policyVersion: { type: 'integer' },
+      sanitizedSummary: { type: 'object', additionalProperties: true },
+      budget: { allOf: [{ $ref: '#/components/schemas/ActionFabricMoney' }], nullable: true }, createdAt: stringSchema,
+    },
+    required: ['id', 'intentId', 'executorId', 'outcome', 'reasonCodes', 'policyVersion', 'sanitizedSummary', 'budget', 'createdAt'],
+    additionalProperties: false,
+  },
+  ActionFabricWorkflowSummary: {
+    type: 'object',
+    properties: {
+      id: stringSchema, intentId: stringSchema, executorId: nullableStringSchema, policyDecisionId: nullableStringSchema,
+      compensationIntentId: nullableStringSchema, state: stringSchema, version: { type: 'integer' }, attempt: { type: 'integer' },
+      maxAttempts: { type: 'integer' }, leaseExpiresAt: nullableStringSchema, retryAt: nullableStringSchema,
+      lastErrorCode: nullableStringSchema, capabilityId: stringSchema, goal: stringSchema,
+      requestedByRoleId: stringSchema, requestedByUserId: stringSchema, createdAt: stringSchema,
+      updatedAt: stringSchema, completedAt: nullableStringSchema,
+      availableActions: { $ref: '#/components/schemas/ActionFabricAvailableActions' },
+    },
+    required: ['id', 'intentId', 'executorId', 'policyDecisionId', 'compensationIntentId', 'state', 'version', 'attempt', 'maxAttempts', 'leaseExpiresAt', 'retryAt', 'lastErrorCode', 'capabilityId', 'goal', 'requestedByRoleId', 'requestedByUserId', 'createdAt', 'updatedAt', 'completedAt', 'availableActions'],
+    additionalProperties: false,
+  },
+  ActionFabricWorkflowDetail: {
+    allOf: [
+      { $ref: '#/components/schemas/ActionFabricWorkflowSummary' },
+      { type: 'object', properties: {
+        intent: { $ref: '#/components/schemas/ActionFabricIntent' },
+        steps: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        policyDecision: { $ref: '#/components/schemas/ActionFabricPolicyDecision', nullable: true },
+      }, required: ['intent', 'steps', 'policyDecision'] },
+    ],
+  },
+  ActionFabricAuditEvent: {
+    type: 'object',
+    properties: {
+      id: stringSchema, sequence: { type: 'integer', minimum: 0 }, eventType: stringSchema,
+      actorUserId: stringSchema, aggregateType: stringSchema, aggregateId: stringSchema,
+      payload: { type: 'object', additionalProperties: true }, occurredAt: stringSchema,
+      previousHash: stringSchema, hash: stringSchema,
+    },
+    required: ['id', 'sequence', 'eventType', 'actorUserId', 'aggregateType', 'aggregateId', 'payload', 'occurredAt', 'previousHash', 'hash'],
+    additionalProperties: false,
+  },
+  ActionFabricCapabilityListResponse: wrapperSchema('capabilities', { type: 'array', items: { $ref: '#/components/schemas/ActionFabricCapability' } }),
+  ActionFabricExecutorListResponse: wrapperSchema('executors', { type: 'array', items: { $ref: '#/components/schemas/ActionFabricExecutor' } }),
+  ActionFabricWorkflowResponse: wrapperSchema('workflow', { $ref: '#/components/schemas/ActionFabricWorkflowDetail' }),
+  ActionFabricControlResponse: wrapperSchema('control', { $ref: '#/components/schemas/ActionFabricControl' }),
+  ActionFabricIntentResult: {
+    type: 'object', properties: {
+      intent: { $ref: '#/components/schemas/ActionFabricIntent' },
+      policyDecision: { $ref: '#/components/schemas/ActionFabricPolicyDecision' },
+      workflow: { $ref: '#/components/schemas/ActionFabricWorkflowDetail' },
+    }, required: ['intent', 'policyDecision', 'workflow'], additionalProperties: false,
+  },
+  ActionFabricWorkflowListResponse: {
+    type: 'object', properties: {
+      workflows: { type: 'array', items: { $ref: '#/components/schemas/ActionFabricWorkflowSummary' } },
+      nextCursor: nullableStringSchema,
+    }, required: ['workflows', 'nextCursor'], additionalProperties: false,
+  },
+  ActionFabricAuditListResponse: {
+    type: 'object', properties: {
+      events: { type: 'array', items: { $ref: '#/components/schemas/ActionFabricAuditEvent' } },
+      nextAfterSequence: { type: 'integer', nullable: true },
+    }, required: ['events', 'nextAfterSequence'], additionalProperties: false,
+  },
+  ActionFabricAuditVerificationResponse: wrapperSchema('verification', {
+    type: 'object', properties: {
+      valid: { type: 'boolean' }, checked: { type: 'integer', minimum: 0 },
+      firstInvalidSequence: { type: 'integer', nullable: true }, legacyValid: { type: 'boolean' }, needsMigration: { type: 'boolean' },
+    }, required: ['valid', 'checked', 'firstInvalidSequence'], additionalProperties: false,
+  }),
+}
+
+function wrapperSchema(name, schema) {
+  return { type: 'object', properties: { [name]: schema }, required: [name], additionalProperties: false }
 }
 
 // Add standard responses
@@ -891,6 +1105,7 @@ openapi.components.responses = {
     },
   },
 }
+openapi.components.schemas = actionFabricSchemas
 
 // Add WebSocket terminal endpoint
 openapi.paths['/api/hermes/terminal'] = {

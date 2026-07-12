@@ -76,6 +76,148 @@ describe('api docs controller', () => {
     expect(ctx.body.tags).toContainEqual(expect.objectContaining({ name: 'Personal Twin' }))
     expect(ctx.body.tags).toContainEqual(expect.objectContaining({ name: 'Assistant Roles' }))
 
+    const actionFabricPaths = {
+      '/api/hermes/action-fabric/capabilities': ['get'],
+      '/api/hermes/action-fabric/executors': ['get'],
+      '/api/hermes/action-fabric/intents': ['post'],
+      '/api/hermes/action-fabric/workflows': ['get'],
+      '/api/hermes/action-fabric/workflows/{id}': ['get'],
+      '/api/hermes/action-fabric/workflows/{id}/approve': ['post'],
+      '/api/hermes/action-fabric/workflows/{id}/reject': ['post'],
+      '/api/hermes/action-fabric/workflows/{id}/cancel': ['post'],
+      '/api/hermes/action-fabric/workflows/{id}/retry': ['post'],
+      '/api/hermes/action-fabric/workflows/{id}/compensate': ['post'],
+      '/api/hermes/action-fabric/audit': ['get'],
+      '/api/hermes/action-fabric/audit/verify': ['get'],
+      '/api/hermes/action-fabric/control': ['get'],
+      '/api/hermes/action-fabric/control/emergency-stop': ['put'],
+    } as const
+    const actionFabricOperations = Object.entries(actionFabricPaths).flatMap(([path, methods]) =>
+      methods.map(method => ctx.body.paths[path]?.[method]),
+    )
+    expect(actionFabricOperations).toHaveLength(14)
+    expect(actionFabricOperations.every(Boolean)).toBe(true)
+    expect(actionFabricOperations.every(operation => operation.tags[0] === 'Action Fabric')).toBe(true)
+    expect(ctx.body.tags).toContainEqual(expect.objectContaining({ name: 'Action Fabric' }))
+
+    const capabilities = ctx.body.paths['/api/hermes/action-fabric/capabilities'].get
+    expect(capabilities.parameters).toEqual([
+      { name: 'domain', in: 'query', required: false, schema: { type: 'string' } },
+      { name: 'enabled', in: 'query', required: false, schema: { type: 'boolean' } },
+      { name: 'limit', in: 'query', required: false, schema: { type: 'integer' } },
+      { name: 'risk', in: 'query', required: false, schema: { type: 'string', enum: ['none', 'low', 'medium', 'high', 'critical'] } },
+    ])
+    expect(ctx.body.paths['/api/hermes/action-fabric/executors'].get.parameters).toEqual([
+      { name: 'enabled', in: 'query', required: false, schema: { type: 'boolean' } },
+      { name: 'environment', in: 'query', required: false, schema: { type: 'string', enum: ['simulator', 'internal', 'sandbox', 'production'] } },
+      { name: 'health', in: 'query', required: false, schema: { type: 'string', enum: ['unknown', 'healthy', 'degraded', 'unhealthy'] } },
+      { name: 'limit', in: 'query', required: false, schema: { type: 'integer' } },
+      { name: 'type', in: 'query', required: false, schema: { type: 'string', enum: ['simulator', 'internal'] } },
+    ])
+    expect(ctx.body.paths['/api/hermes/action-fabric/workflows'].get.parameters).toEqual([
+      { name: 'capabilityId', in: 'query', required: false, schema: { type: 'string' } },
+      { name: 'cursor', in: 'query', required: false, schema: { type: 'string' } },
+      { name: 'limit', in: 'query', required: false, schema: { type: 'integer' } },
+      { name: 'requestedByRoleId', in: 'query', required: false, schema: { type: 'string' } },
+      { name: 'requestedByUserId', in: 'query', required: false, schema: { type: 'string' } },
+      expect.objectContaining({ name: 'state', in: 'query', required: false, schema: expect.objectContaining({ type: 'string', enum: expect.arrayContaining(['waiting_user', 'succeeded', 'failed']) }) }),
+    ])
+    expect(ctx.body.paths['/api/hermes/action-fabric/audit'].get.parameters).toEqual([
+      { name: 'afterSequence', in: 'query', required: false, schema: { type: 'integer' } },
+      { name: 'aggregateId', in: 'query', required: false, schema: { type: 'string' } },
+      expect.objectContaining({ name: 'aggregateType', in: 'query', required: false, schema: { type: 'string', enum: ['capability', 'executor', 'intent', 'workflow', 'control', 'system'] } }),
+      { name: 'eventType', in: 'query', required: false, schema: { type: 'string' } },
+      { name: 'limit', in: 'query', required: false, schema: { type: 'integer' } },
+    ])
+    for (const suffix of ['', '/approve', '/reject', '/cancel', '/retry', '/compensate']) {
+      const operation = ctx.body.paths[`/api/hermes/action-fabric/workflows/{id}${suffix}`][suffix ? 'post' : 'get']
+      expect(operation.parameters).toEqual([{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }])
+    }
+
+    const intentBody = ctx.body.paths['/api/hermes/action-fabric/intents'].post.requestBody.content['application/json'].schema
+    expect(intentBody.required).toEqual([
+      'capabilityId', 'constraints', 'goal', 'idempotencyKey', 'input', 'rationale', 'requestedByRoleId', 'target',
+    ])
+    expect(intentBody.properties).toEqual(expect.objectContaining({
+      capabilityId: { type: 'string' },
+      requestedByRoleId: { type: 'string' },
+      idempotencyKey: { type: 'string' },
+      goal: { type: 'string' },
+      target: { type: 'object', additionalProperties: true },
+      input: { type: 'object', additionalProperties: true },
+      constraints: { type: 'object', additionalProperties: true },
+      rationale: { type: 'string' },
+      expectedCost: { $ref: '#/components/schemas/ActionFabricMoney' },
+    }))
+    expect(ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/reject'].post.requestBody.content['application/json'].schema).toEqual({
+      type: 'object', properties: { reason: { type: 'string' } }, required: ['reason'], additionalProperties: false,
+    })
+    for (const action of ['reject', 'cancel', 'compensate']) {
+      expect(ctx.body.paths[`/api/hermes/action-fabric/workflows/{id}/${action}`].post.requestBody.content['application/json'].schema).toEqual({
+        type: 'object', properties: { reason: { type: 'string' } }, required: ['reason'], additionalProperties: false,
+      })
+    }
+    for (const action of ['approve', 'retry']) {
+      expect(ctx.body.paths[`/api/hermes/action-fabric/workflows/{id}/${action}`].post.requestBody.content['application/json'].schema).toEqual({
+        type: 'object', properties: {}, additionalProperties: false,
+      })
+    }
+    for (const operation of actionFabricOperations.filter(operation => operation.operationId !== 'createIntent'
+      && !['approveWorkflow', 'rejectWorkflow', 'cancelWorkflow', 'retryWorkflow', 'compensateWorkflow', 'updateEmergencyStop'].includes(operation.operationId))) {
+      expect(operation.requestBody).toBeUndefined()
+    }
+    expect(ctx.body.paths['/api/hermes/action-fabric/control/emergency-stop'].put.requestBody.content['application/json'].schema).toEqual({
+      type: 'object',
+      properties: {
+        expectedVersion: { type: 'integer' },
+        level: { type: 'integer', minimum: 0, maximum: 3 },
+        reason: { type: 'string' },
+      },
+      required: ['expectedVersion', 'level', 'reason'],
+      additionalProperties: false,
+    })
+
+    const successSchemas = new Map([
+      [capabilities, 'ActionFabricCapabilityListResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/executors'].get, 'ActionFabricExecutorListResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/intents'].post, 'ActionFabricIntentResult'],
+      [ctx.body.paths['/api/hermes/action-fabric/workflows'].get, 'ActionFabricWorkflowListResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}'].get, 'ActionFabricWorkflowResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/approve'].post, 'ActionFabricWorkflowResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/reject'].post, 'ActionFabricWorkflowResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/cancel'].post, 'ActionFabricWorkflowResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/retry'].post, 'ActionFabricWorkflowResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/workflows/{id}/compensate'].post, 'ActionFabricWorkflowResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/audit'].get, 'ActionFabricAuditListResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/audit/verify'].get, 'ActionFabricAuditVerificationResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/control'].get, 'ActionFabricControlResponse'],
+      [ctx.body.paths['/api/hermes/action-fabric/control/emergency-stop'].put, 'ActionFabricControlResponse'],
+    ])
+    for (const [operation, schemaName] of successSchemas) {
+      expect(operation.responses['200'].content['application/json'].schema).toEqual({ $ref: `#/components/schemas/${schemaName}` })
+    }
+    for (const operation of actionFabricOperations) {
+      expect(operation.responses['400'].content['application/json'].schema).toEqual({ $ref: '#/components/schemas/ActionFabricError' })
+      expect(operation.responses['500'].content['application/json'].schema).toEqual({ $ref: '#/components/schemas/ActionFabricError' })
+    }
+    expect(ctx.body.components.schemas.ActionFabricAvailableActions).toEqual(expect.objectContaining({
+      type: 'object',
+      properties: {
+        approve: { type: 'boolean' }, reject: { type: 'boolean' }, cancel: { type: 'boolean' },
+        retry: { type: 'boolean' }, compensate: { type: 'boolean' },
+      },
+      required: ['approve', 'reject', 'cancel', 'retry', 'compensate'],
+      additionalProperties: false,
+    }))
+    expect(ctx.body.components.schemas.ActionFabricControl).toEqual(expect.objectContaining({
+      required: ['level', 'version', 'actorUserId', 'reason', 'updatedAt'], additionalProperties: false,
+    }))
+    expect(ctx.body.components.schemas.ActionFabricWorkflowListResponse.properties.nextCursor).toEqual({ type: 'string', nullable: true })
+    expect(ctx.body.components.schemas.ActionFabricAuditListResponse.properties).toEqual(expect.objectContaining({
+      events: { type: 'array', items: { $ref: '#/components/schemas/ActionFabricAuditEvent' } },
+      nextAfterSequence: { type: 'integer', nullable: true },
+    }))
+
     expect(ctx.body.paths['/api/hermes/assistant-roles/{id}'].put.parameters).toEqual([
       expect.objectContaining({ name: 'id', in: 'path', required: true, schema: { type: 'string' } }),
     ])
@@ -99,7 +241,7 @@ describe('api docs controller', () => {
       properties: expect.objectContaining({
         allow: { type: 'array', items: { type: 'string' } },
         deny: { type: 'array', items: { type: 'string' } },
-        enforcement: { type: 'string', enum: ['declarative_phase_2'] },
+        enforcement: { type: 'string', enum: ['action_fabric_v1'] },
       }),
     }))
 
@@ -153,10 +295,10 @@ describe('api docs controller', () => {
     }))
   })
 
-  it('advertises assistant role discovery without implying capability enforcement', () => {
+  it('advertises assistant role discovery with Action Fabric enforcement', () => {
     const source = readFileSync(resolve(process.cwd(), 'bin/hermes-web-ui-mcp.mjs'), 'utf8')
     expect(source).toContain("'Assistant Roles': {")
     expect(source).toContain('role list, profile mapping, context preview, and context recipe CRUD')
-    expect(source).toContain('Capability permissions are declarative and are not enforced execution authorization in Phase 2.')
+    expect(source).toContain('Capability permissions are enforced by Action Fabric policy in Phase 3.')
   })
 })

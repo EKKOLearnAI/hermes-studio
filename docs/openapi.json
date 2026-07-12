@@ -13,6 +13,10 @@
   ],
   "tags": [
     {
+      "name": "Action Fabric",
+      "description": "Governed capability discovery, durable action workflows, audit, and emergency controls"
+    },
+    {
       "name": "Anthropic Auth",
       "description": "Anthropic OAuth"
     },
@@ -233,7 +237,8 @@
                     "type": "object",
                     "additionalProperties": true
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -281,7 +286,8 @@
                 "required": [
                   "currentPassword",
                   "newPassword"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -329,7 +335,8 @@
                 "required": [
                   "currentPassword",
                   "newUsername"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -434,7 +441,8 @@
                 "required": [
                   "password",
                   "username"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -493,7 +501,8 @@
                   "id",
                   "password",
                   "token"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -678,7 +687,8 @@
                   "username": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -748,7 +758,8 @@
                   "username": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -1111,7 +1122,8 @@
                   "input": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -1245,7 +1257,8 @@
                   "content": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -1352,7 +1365,8 @@
                   "provider": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -1423,7 +1437,8 @@
                   "provider": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -1497,7 +1512,8 @@
                   "sessionId": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -1673,7 +1689,8 @@
                   "signature": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -1723,7 +1740,8 @@
                   "signature": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -1764,7 +1782,8 @@
                   "url": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -1954,7 +1973,8 @@
                   "cwd": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -2005,7 +2025,8 @@
                   "shell": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -2510,7 +2531,8 @@
                   "pairing_code": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -2586,6 +2608,1942 @@
         ]
       }
     },
+    "/api/hermes/action-fabric/audit": {
+      "get": {
+        "tags": [
+          "Action Fabric"
+        ],
+        "summary": "Get audit",
+        "description": "GET /api/hermes/action-fabric/audit",
+        "operationId": "auditEvents",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricAuditListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "afterSequence",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "aggregateId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "aggregateType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "capability",
+                "executor",
+                "intent",
+                "workflow",
+                "control",
+                "system"
+              ]
+            }
+          },
+          {
+            "name": "eventType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/action-fabric/audit/verify": {
+      "get": {
+        "tags": [
+          "Action Fabric"
+        ],
+        "summary": "Get verify",
+        "description": "GET /api/hermes/action-fabric/audit/verify",
+        "operationId": "verifyAudit",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricAuditVerificationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/action-fabric/capabilities": {
+      "get": {
+        "tags": [
+          "Action Fabric"
+        ],
+        "summary": "Get capabilities",
+        "description": "GET /api/hermes/action-fabric/capabilities",
+        "operationId": "capabilities",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricCapabilityListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "domain",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "enabled",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "risk",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "none",
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/action-fabric/control": {
+      "get": {
+        "tags": [
+          "Action Fabric"
+        ],
+        "summary": "Get control",
+        "description": "GET /api/hermes/action-fabric/control",
+        "operationId": "control",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricControlResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/action-fabric/control/emergency-stop": {
+      "put": {
+        "tags": [
+          "Action Fabric"
+        ],
+        "summary": "Update emergency-stop",
+        "description": "PUT /api/hermes/action-fabric/control/emergency-stop",
+        "operationId": "updateEmergencyStop",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricControlResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer"
+                  },
+                  "level": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 3
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "level",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/action-fabric/executors": {
+      "get": {
+        "tags": [
+          "Action Fabric"
+        ],
+        "summary": "Get executors",
+        "description": "GET /api/hermes/action-fabric/executors",
+        "operationId": "executors",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricExecutorListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "enabled",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "simulator",
+                "internal",
+                "sandbox",
+                "production"
+              ]
+            }
+          },
+          {
+            "name": "health",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "unknown",
+                "healthy",
+                "degraded",
+                "unhealthy"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "simulator",
+                "internal"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/action-fabric/intents": {
+      "post": {
+        "tags": [
+          "Action Fabric"
+        ],
+        "summary": "Create intents",
+        "description": "POST /api/hermes/action-fabric/intents",
+        "operationId": "createIntent",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricIntentResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "capabilityId": {
+                    "type": "string"
+                  },
+                  "constraints": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "expectedCost": {
+                    "$ref": "#/components/schemas/ActionFabricMoney"
+                  },
+                  "goal": {
+                    "type": "string"
+                  },
+                  "idempotencyKey": {
+                    "type": "string"
+                  },
+                  "input": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "rationale": {
+                    "type": "string"
+                  },
+                  "requestedByRoleId": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                },
+                "required": [
+                  "capabilityId",
+                  "constraints",
+                  "goal",
+                  "idempotencyKey",
+                  "input",
+                  "rationale",
+                  "requestedByRoleId",
+                  "target"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/action-fabric/workflows": {
+      "get": {
+        "tags": [
+          "Action Fabric"
+        ],
+        "summary": "Get workflows",
+        "description": "GET /api/hermes/action-fabric/workflows",
+        "operationId": "workflows",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricWorkflowListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "capabilityId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "requestedByRoleId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "requestedByUserId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "policy_check",
+                "preparing",
+                "executing",
+                "verifying",
+                "waiting_user",
+                "retrying",
+                "compensating",
+                "succeeded",
+                "denied",
+                "cancelled",
+                "failed",
+                "dead_letter",
+                "compensated"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/action-fabric/workflows/{id}": {
+      "get": {
+        "tags": [
+          "Action Fabric"
+        ],
+        "summary": "Get :id",
+        "description": "GET /api/hermes/action-fabric/workflows/:id",
+        "operationId": "workflowDetail",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricWorkflowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/action-fabric/workflows/{id}/approve": {
+      "post": {
+        "tags": [
+          "Action Fabric"
+        ],
+        "summary": "Create approve",
+        "description": "POST /api/hermes/action-fabric/workflows/:id/approve",
+        "operationId": "approveWorkflow",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricWorkflowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/action-fabric/workflows/{id}/cancel": {
+      "post": {
+        "tags": [
+          "Action Fabric"
+        ],
+        "summary": "Create cancel",
+        "description": "POST /api/hermes/action-fabric/workflows/:id/cancel",
+        "operationId": "cancelWorkflow",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricWorkflowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/action-fabric/workflows/{id}/compensate": {
+      "post": {
+        "tags": [
+          "Action Fabric"
+        ],
+        "summary": "Create compensate",
+        "description": "POST /api/hermes/action-fabric/workflows/:id/compensate",
+        "operationId": "compensateWorkflow",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricWorkflowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/action-fabric/workflows/{id}/reject": {
+      "post": {
+        "tags": [
+          "Action Fabric"
+        ],
+        "summary": "Create reject",
+        "description": "POST /api/hermes/action-fabric/workflows/:id/reject",
+        "operationId": "rejectWorkflow",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricWorkflowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/action-fabric/workflows/{id}/retry": {
+      "post": {
+        "tags": [
+          "Action Fabric"
+        ],
+        "summary": "Create retry",
+        "description": "POST /api/hermes/action-fabric/workflows/:id/retry",
+        "operationId": "retryWorkflow",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricWorkflowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Action Fabric request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionFabricError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/assistant-roles": {
       "get": {
         "tags": [
@@ -2647,7 +4605,7 @@
                       "enforcement": {
                         "type": "string",
                         "enum": [
-                          "declarative_phase_2"
+                          "action_fabric_v1"
                         ]
                       },
                       "allow": {
@@ -2695,8 +4653,7 @@
                     ]
                   },
                   "decisionAuthority": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "type": "string"
                   },
                   "description": {
                     "type": "string"
@@ -2724,8 +4681,7 @@
                     "type": "string"
                   },
                   "spendingLimits": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -2734,7 +4690,8 @@
                   "memoryNamespace",
                   "name",
                   "persona"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -2822,7 +4779,7 @@
                       "enforcement": {
                         "type": "string",
                         "enum": [
-                          "declarative_phase_2"
+                          "action_fabric_v1"
                         ]
                       },
                       "allow": {
@@ -2870,8 +4827,7 @@
                     ]
                   },
                   "decisionAuthority": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "type": "string"
                   },
                   "description": {
                     "type": "string"
@@ -2896,10 +4852,10 @@
                     "type": "string"
                   },
                   "spendingLimits": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -2987,7 +4943,8 @@
                 },
                 "required": [
                   "name"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -3121,7 +5078,8 @@
                   "limits",
                   "name",
                   "sections"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -3220,7 +5178,8 @@
                       "type": "string"
                     }
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -3313,7 +5272,8 @@
                   "recipeId": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -3368,7 +5328,8 @@
                 },
                 "required": [
                   "profileName"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -3474,7 +5435,8 @@
                 },
                 "required": [
                   "code"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -4086,7 +6048,8 @@
                 "required": [
                   "section",
                   "values"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -4152,7 +6115,8 @@
                     "type": "object",
                     "additionalProperties": true
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -4201,7 +6165,8 @@
                 "required": [
                   "platform",
                   "values"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -4248,7 +6213,8 @@
                 },
                 "required": [
                   "default"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -4340,7 +6306,8 @@
                   "base_url",
                   "model",
                   "name"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -4403,7 +6370,8 @@
                   "name": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -4626,7 +6594,8 @@
                 "required": [
                   "destPath",
                   "srcPath"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -4729,7 +6698,8 @@
                 },
                 "required": [
                   "path"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -4813,7 +6783,8 @@
                 "required": [
                   "newPath",
                   "oldPath"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -4932,7 +6903,8 @@
                 },
                 "required": [
                   "path"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -4986,7 +6958,8 @@
                 "required": [
                   "inviteCode",
                   "name"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -5192,7 +7165,8 @@
                 },
                 "required": [
                   "profile"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -5357,7 +7331,8 @@
                   "name": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -5450,7 +7425,8 @@
                   "triggerTokens": {
                     "type": "number"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -5504,7 +7480,8 @@
                 },
                 "required": [
                   "inviteCode"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -5896,6 +7873,9 @@
                   "branch": {
                     "type": "string"
                   },
+                  "error": {
+                    "type": "string"
+                  },
                   "goalMaxTurns": {
                     "type": "integer"
                   },
@@ -5932,7 +7912,8 @@
                 },
                 "required": [
                   "title"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -6076,10 +8057,16 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "body": {
+                    "type": "string"
+                  },
                   "color": {
                     "type": "string"
                   },
                   "description": {
+                    "type": "string"
+                  },
+                  "error": {
                     "type": "string"
                   },
                   "icon": {
@@ -6097,7 +8084,8 @@
                 },
                 "required": [
                   "slug"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -6204,6 +8192,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "body": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": "string"
+                  },
                   "summary": {
                     "type": "string"
                   },
@@ -6216,7 +8210,8 @@
                 },
                 "required": [
                   "task_ids"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -6321,8 +8316,14 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "body": {
+                    "type": "string"
+                  },
                   "dryRun": {
                     "type": "boolean"
+                  },
+                  "error": {
+                    "type": "string"
                   },
                   "failureLimit": {
                     "type": "integer"
@@ -6330,7 +8331,8 @@
                   "max": {
                     "type": "integer"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -6378,7 +8380,13 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "body": {
+                    "type": "string"
+                  },
                   "child_id": {
+                    "type": "string"
+                  },
+                  "error": {
                     "type": "string"
                   },
                   "parent_id": {
@@ -6388,7 +8396,8 @@
                 "required": [
                   "child_id",
                   "parent_id"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -6577,6 +8586,12 @@
                   "assignee": {
                     "type": "string"
                   },
+                  "body": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": "string"
+                  },
                   "ids": {
                     "type": "array",
                     "items": {
@@ -6595,7 +8610,8 @@
                 },
                 "required": [
                   "ids"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -6643,6 +8659,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "body": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": "string"
+                  },
                   "task_ids": {
                     "type": "array",
                     "items": {
@@ -6652,7 +8674,8 @@
                 },
                 "required": [
                   "task_ids"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -6752,13 +8775,20 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "body": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": "string"
+                  },
                   "profile": {
                     "type": "string"
                   }
                 },
                 "required": [
                   "profile"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -6814,13 +8844,20 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "body": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": "string"
+                  },
                   "reason": {
                     "type": "string"
                   }
                 },
                 "required": [
                   "reason"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -6881,11 +8918,15 @@
                   },
                   "body": {
                     "type": "string"
+                  },
+                  "error": {
+                    "type": "string"
                   }
                 },
                 "required": [
                   "body"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -6993,6 +9034,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "body": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": "string"
+                  },
                   "profile": {
                     "type": "string"
                   },
@@ -7005,7 +9052,8 @@
                 },
                 "required": [
                   "profile"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -7061,10 +9109,17 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "body": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": "string"
+                  },
                   "reason": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -7122,8 +9177,15 @@
                 "properties": {
                   "author": {
                     "type": "string"
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -7584,7 +9646,8 @@
                   "output_path": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -7637,7 +9700,8 @@
                 },
                 "required": [
                   "prompt"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -7709,7 +9773,8 @@
                 "required": [
                   "content",
                   "section"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -7756,7 +9821,8 @@
                   "provider": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -7866,7 +9932,8 @@
                 },
                 "required": [
                   "context_limit"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -8008,7 +10075,8 @@
                 },
                 "required": [
                   "context_limit"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -8058,7 +10126,8 @@
                   "provider": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -8310,7 +10379,8 @@
                       "type": "string"
                     }
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -8485,7 +10555,8 @@
                 },
                 "required": [
                   "name"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -8529,7 +10600,8 @@
                 },
                 "required": [
                   "name"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -8715,7 +10787,8 @@
                   "type": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -8872,7 +10945,8 @@
                 },
                 "required": [
                   "new_name"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -9000,7 +11074,8 @@
                   "update_cache": {
                     "type": "boolean"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -9094,7 +11169,8 @@
                     "type": "object",
                     "additionalProperties": true
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -9136,7 +11212,8 @@
                     "type": "object",
                     "additionalProperties": true
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -9244,7 +11321,8 @@
                     "type": "object",
                     "additionalProperties": true
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -9323,7 +11401,8 @@
                     "type": "object",
                     "additionalProperties": true
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -9505,7 +11584,8 @@
                 },
                 "required": [
                   "ids"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -10124,7 +12204,8 @@
                 },
                 "required": [
                   "model"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -10178,7 +12259,8 @@
                 },
                 "required": [
                   "title"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -10265,7 +12347,8 @@
                   "workspace": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -10426,7 +12509,8 @@
                 },
                 "required": [
                   "name"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -10473,7 +12557,8 @@
                 },
                 "required": [
                   "name"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -10750,7 +12835,8 @@
                     "type": "object",
                     "additionalProperties": true
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -10810,7 +12896,8 @@
                     "type": "object",
                     "additionalProperties": true
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -10968,7 +13055,8 @@
                 },
                 "required": [
                   "text"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -11036,7 +13124,8 @@
                     "type": "object",
                     "additionalProperties": true
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -11096,7 +13185,8 @@
                     "type": "object",
                     "additionalProperties": true
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -11232,7 +13322,8 @@
                 },
                 "required": [
                   "text"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -11351,7 +13442,8 @@
                   "tag": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -11392,7 +13484,8 @@
                   "tag": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -11593,7 +13686,8 @@
                 "required": [
                   "account_id",
                   "token"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -11671,7 +13765,8 @@
                   "parentPath": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -11739,7 +13834,8 @@
                 },
                 "required": [
                   "path"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -11982,7 +14078,8 @@
                 },
                 "required": [
                   "input"
-                ]
+                ],
+                "additionalProperties": true
               }
             }
           }
@@ -12113,7 +14210,8 @@
                   "event": {
                     "type": "string"
                   }
-                }
+                },
+                "additionalProperties": true
               }
             }
           }
@@ -12147,7 +14245,691 @@
         "bearerFormat": "API Token"
       }
     },
-    "schemas": {},
+    "schemas": {
+      "ActionFabricError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "code"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricMoney": {
+        "type": "object",
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "amountMinor": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "currency",
+          "amountMinor"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricAvailableActions": {
+        "type": "object",
+        "properties": {
+          "approve": {
+            "type": "boolean"
+          },
+          "reject": {
+            "type": "boolean"
+          },
+          "cancel": {
+            "type": "boolean"
+          },
+          "retry": {
+            "type": "boolean"
+          },
+          "compensate": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "approve",
+          "reject",
+          "cancel",
+          "retry",
+          "compensate"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricControl": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "actorUserId": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "level",
+          "version",
+          "actorUserId",
+          "reason",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricCapability": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "verb": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "outputSchema": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "risk": {
+            "type": "string"
+          },
+          "sideEffect": {
+            "type": "boolean"
+          },
+          "idempotency": {
+            "type": "string"
+          },
+          "reversible": {
+            "type": "boolean"
+          },
+          "compensationCapabilityId": {
+            "type": "string",
+            "nullable": true
+          },
+          "verificationStrategy": {
+            "type": "string"
+          },
+          "authentication": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "targetRestrictions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cost": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "domain",
+          "verb",
+          "description",
+          "inputSchema",
+          "outputSchema",
+          "risk",
+          "sideEffect",
+          "idempotency",
+          "reversible",
+          "compensationCapabilityId",
+          "verificationStrategy",
+          "authentication",
+          "targetRestrictions",
+          "cost",
+          "enabled",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricExecutor": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "health": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "policyVersion": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "name",
+          "environment",
+          "health",
+          "enabled",
+          "policyVersion",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricIntent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "capabilityId": {
+            "type": "string"
+          },
+          "capabilityVersion": {
+            "type": "integer"
+          },
+          "requestedByRoleId": {
+            "type": "string"
+          },
+          "requestedByUserId": {
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "target": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "input": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "constraints": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "expectedCost": {
+            "$ref": "#/components/schemas/ActionFabricMoney"
+          },
+          "sanitizedSummary": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "capabilityId",
+          "capabilityVersion",
+          "requestedByRoleId",
+          "requestedByUserId",
+          "idempotencyKey",
+          "goal",
+          "target",
+          "input",
+          "constraints",
+          "rationale",
+          "sanitizedSummary",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricPolicyDecision": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "intentId": {
+            "type": "string"
+          },
+          "executorId": {
+            "type": "string",
+            "nullable": true
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "reasonCodes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "policyVersion": {
+            "type": "integer"
+          },
+          "sanitizedSummary": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "budget": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ActionFabricMoney"
+              }
+            ],
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "intentId",
+          "executorId",
+          "outcome",
+          "reasonCodes",
+          "policyVersion",
+          "sanitizedSummary",
+          "budget",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricWorkflowSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "intentId": {
+            "type": "string"
+          },
+          "executorId": {
+            "type": "string",
+            "nullable": true
+          },
+          "policyDecisionId": {
+            "type": "string",
+            "nullable": true
+          },
+          "compensationIntentId": {
+            "type": "string",
+            "nullable": true
+          },
+          "state": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "attempt": {
+            "type": "integer"
+          },
+          "maxAttempts": {
+            "type": "integer"
+          },
+          "leaseExpiresAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "retryAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastErrorCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "capabilityId": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "requestedByRoleId": {
+            "type": "string"
+          },
+          "requestedByUserId": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "completedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "availableActions": {
+            "$ref": "#/components/schemas/ActionFabricAvailableActions"
+          }
+        },
+        "required": [
+          "id",
+          "intentId",
+          "executorId",
+          "policyDecisionId",
+          "compensationIntentId",
+          "state",
+          "version",
+          "attempt",
+          "maxAttempts",
+          "leaseExpiresAt",
+          "retryAt",
+          "lastErrorCode",
+          "capabilityId",
+          "goal",
+          "requestedByRoleId",
+          "requestedByUserId",
+          "createdAt",
+          "updatedAt",
+          "completedAt",
+          "availableActions"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricWorkflowDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ActionFabricWorkflowSummary"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "intent": {
+                "$ref": "#/components/schemas/ActionFabricIntent"
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "policyDecision": {
+                "$ref": "#/components/schemas/ActionFabricPolicyDecision",
+                "nullable": true
+              }
+            },
+            "required": [
+              "intent",
+              "steps",
+              "policyDecision"
+            ]
+          }
+        ]
+      },
+      "ActionFabricAuditEvent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "eventType": {
+            "type": "string"
+          },
+          "actorUserId": {
+            "type": "string"
+          },
+          "aggregateType": {
+            "type": "string"
+          },
+          "aggregateId": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "occurredAt": {
+            "type": "string"
+          },
+          "previousHash": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "sequence",
+          "eventType",
+          "actorUserId",
+          "aggregateType",
+          "aggregateId",
+          "payload",
+          "occurredAt",
+          "previousHash",
+          "hash"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricCapabilityListResponse": {
+        "type": "object",
+        "properties": {
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionFabricCapability"
+            }
+          }
+        },
+        "required": [
+          "capabilities"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricExecutorListResponse": {
+        "type": "object",
+        "properties": {
+          "executors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionFabricExecutor"
+            }
+          }
+        },
+        "required": [
+          "executors"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricWorkflowResponse": {
+        "type": "object",
+        "properties": {
+          "workflow": {
+            "$ref": "#/components/schemas/ActionFabricWorkflowDetail"
+          }
+        },
+        "required": [
+          "workflow"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricControlResponse": {
+        "type": "object",
+        "properties": {
+          "control": {
+            "$ref": "#/components/schemas/ActionFabricControl"
+          }
+        },
+        "required": [
+          "control"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricIntentResult": {
+        "type": "object",
+        "properties": {
+          "intent": {
+            "$ref": "#/components/schemas/ActionFabricIntent"
+          },
+          "policyDecision": {
+            "$ref": "#/components/schemas/ActionFabricPolicyDecision"
+          },
+          "workflow": {
+            "$ref": "#/components/schemas/ActionFabricWorkflowDetail"
+          }
+        },
+        "required": [
+          "intent",
+          "policyDecision",
+          "workflow"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricWorkflowListResponse": {
+        "type": "object",
+        "properties": {
+          "workflows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionFabricWorkflowSummary"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "workflows",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricAuditListResponse": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionFabricAuditEvent"
+            }
+          },
+          "nextAfterSequence": {
+            "type": "integer",
+            "nullable": true
+          }
+        },
+        "required": [
+          "events",
+          "nextAfterSequence"
+        ],
+        "additionalProperties": false
+      },
+      "ActionFabricAuditVerificationResponse": {
+        "type": "object",
+        "properties": {
+          "verification": {
+            "type": "object",
+            "properties": {
+              "valid": {
+                "type": "boolean"
+              },
+              "checked": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "firstInvalidSequence": {
+                "type": "integer",
+                "nullable": true
+              },
+              "legacyValid": {
+                "type": "boolean"
+              },
+              "needsMigration": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "valid",
+              "checked",
+              "firstInvalidSequence"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "verification"
+        ],
+        "additionalProperties": false
+      }
+    },
     "responses": {
       "Unauthorized": {
         "description": "Unauthorized - Invalid or missing authentication token",
