@@ -48,10 +48,21 @@ describe('providers controller update', () => {
       '    base_url: https://research.invalid/v1',
       '    api_key: old-research-custom-key',
       '    model: research-model',
+      '  - name: env-proxy',
+      '    base_url: https://env.invalid/v1',
+      '    key_env: CUSTOM_PROXY_KEY',
+      '    model: env-model',
+      'providers:',
+      '  dict-proxy:',
+      '    name: dict-proxy',
+      '    base_url: https://dict.invalid/v1',
+      '    api_key: old-dict-key',
+      '    model: dict-model',
       '',
     ].join('\n'))
     writeFileSync(join(hermesHome, 'profiles', 'research', '.env'), [
       'DEEPSEEK_API_KEY=old-research-key',
+      'CUSTOM_PROXY_KEY=old-custom-env-key',
       '',
     ].join('\n'))
   })
@@ -99,6 +110,135 @@ describe('providers controller update', () => {
     const researchConfig = readYaml(join(hermesHome, 'profiles', 'research', 'config.yaml'))
     expect(defaultConfig.custom_providers[0].api_key).toBe('keep-default-custom-key')
     expect(researchConfig.custom_providers[0].api_key).toBe('new-research-custom-key')
+  })
+
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['empty', ''],
+    ['whitespace', '   '],
+  ])('treats a %s builtin credential replacement as a successful no-op', async (_label, value) => {
+    const envPath = join(hermesHome, 'profiles', 'research', '.env')
+    const before = readFileSync(envPath, 'utf-8')
+    const { update } = await loadProvidersController()
+    const ctx = makeCtx('deepseek', { api_key: value })
+
+    await update(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    expect(readFileSync(envPath, 'utf-8')).toBe(before)
+  })
+
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['empty', ''],
+    ['whitespace', '   '],
+  ])('treats a %s list-backed custom credential replacement as a successful no-op', async (_label, value) => {
+    const configPath = join(hermesHome, 'profiles', 'research', 'config.yaml')
+    const before = readYaml(configPath)
+    const { update } = await loadProvidersController()
+    const ctx = makeCtx('custom:research-proxy', { api_key: value, provider_source: 'custom_providers' })
+
+    await update(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    expect(readYaml(configPath)).toEqual(before)
+  })
+
+  it.each([
+    ['dict undefined', 'custom:dict-proxy', 'providers', 'dict-proxy', undefined],
+    ['dict null', 'custom:dict-proxy', 'providers', 'dict-proxy', null],
+    ['dict empty', 'custom:dict-proxy', 'providers', 'dict-proxy', ''],
+    ['dict whitespace', 'custom:dict-proxy', 'providers', 'dict-proxy', '   '],
+    ['env undefined', 'custom:env-proxy', 'custom_providers', '', undefined],
+    ['env null', 'custom:env-proxy', 'custom_providers', '', null],
+    ['env empty', 'custom:env-proxy', 'custom_providers', '', ''],
+    ['env whitespace', 'custom:env-proxy', 'custom_providers', '', '   '],
+  ])('treats a %s replacement as a no-op at the original source', async (_label, poolKey, source, providerKey, value) => {
+    const configPath = join(hermesHome, 'profiles', 'research', 'config.yaml')
+    const envPath = join(hermesHome, 'profiles', 'research', '.env')
+    const configBefore = readYaml(configPath)
+    const envBefore = readFileSync(envPath, 'utf-8')
+    const { update } = await loadProvidersController()
+    const ctx = makeCtx(poolKey, {
+      api_key: value,
+      provider_source: source,
+      ...(providerKey ? { provider_key: providerKey } : {}),
+    })
+
+    await update(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    expect(readYaml(configPath)).toEqual(configBefore)
+    expect(readFileSync(envPath, 'utf-8')).toBe(envBefore)
+  })
+
+  it('updates the exact dict-backed custom source and leaves same-profile siblings unchanged', async () => {
+    const { update } = await loadProvidersController()
+    const ctx = makeCtx('custom:dict-proxy', {
+      api_key: 'new-dict-key',
+      provider_source: 'providers',
+      provider_key: 'dict-proxy',
+    })
+
+    await update(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    const config = readYaml(join(hermesHome, 'profiles', 'research', 'config.yaml'))
+    expect(config.providers['dict-proxy'].api_key).toBe('new-dict-key')
+    expect(config.custom_providers[0].api_key).toBe('old-research-custom-key')
+  })
+
+  it('updates an env-backed custom credential at its referenced env source', async () => {
+    const { update } = await loadProvidersController()
+    const ctx = makeCtx('custom:env-proxy', {
+      api_key: 'new-custom-env-key',
+      provider_source: 'custom_providers',
+    })
+
+    await update(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    const config = readYaml(join(hermesHome, 'profiles', 'research', 'config.yaml'))
+    expect(config.custom_providers[1]).toMatchObject({ key_env: 'CUSTOM_PROXY_KEY' })
+    expect(config.custom_providers[1]).not.toHaveProperty('api_key')
+    expect(readFileSync(join(hermesHome, 'profiles', 'research', '.env'), 'utf-8')).toContain('CUSTOM_PROXY_KEY=new-custom-env-key')
+  })
+
+  it('keeps builtin and same-named custom update identities isolated', async () => {
+    const configPath = join(hermesHome, 'profiles', 'research', 'config.yaml')
+    const config = readYaml(configPath)
+    config.custom_providers.push({
+      name: 'deepseek',
+      base_url: 'https://custom-deepseek.invalid/v1',
+      api_key: 'old-custom-deepseek-key',
+      model: 'custom-deepseek-model',
+    })
+    writeFileSync(configPath, YAML.dump(config))
+    const envPath = join(hermesHome, 'profiles', 'research', '.env')
+    const envBefore = readFileSync(envPath, 'utf-8')
+    const { update } = await loadProvidersController()
+    const ctx = makeCtx('custom:deepseek', {
+      api_key: 'new-custom-deepseek-key',
+      provider_source: 'custom_providers',
+    })
+
+    await update(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    const updated = readYaml(configPath)
+    expect(updated.custom_providers.find((entry: any) => entry.name === 'deepseek').api_key).toBe('new-custom-deepseek-key')
+    expect(readFileSync(envPath, 'utf-8')).toBe(envBefore)
+  })
+
+  it.each(['', 'custom:', 'custom:bad key'])('rejects invalid provider identity %j with 400', async (poolKey) => {
+    const { update } = await loadProvidersController()
+    const ctx = makeCtx(poolKey, { api_key: 'replacement-value' })
+
+    await update(ctx)
+
+    expect(ctx.status).toBe(400)
   })
 
   it('updates custom provider api_mode in the request-scoped profile config only', async () => {

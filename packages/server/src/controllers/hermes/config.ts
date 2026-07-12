@@ -7,6 +7,7 @@ import { saveEnvValueForProfile } from '../../services/config-helpers'
 import { logger } from '../../services/logger'
 import { safeFileStore } from '../../services/safe-file-store'
 import { EXCLUSIVE_PLATFORM_CREDENTIAL_KEYS } from '../../services/hermes/profile-credentials'
+import { projectProviderConfigForResponse } from '../../services/hermes/provider-credentials'
 
 const PLATFORM_SECTIONS = new Set([
   'telegram', 'discord', 'slack', 'whatsapp', 'matrix',
@@ -349,6 +350,7 @@ export async function getConfig(ctx: any) {
       }
       config.platforms = existing
     }
+    const responseConfig = await projectProviderConfigForResponse(config, { profile })
     const { section, sections } = ctx.query
     if (section) {
       const key = section as string
@@ -360,7 +362,7 @@ export async function getConfig(ctx: any) {
         ctx.body = { proxy }
         return
       }
-      ctx.body = { [key]: config[key] || {} }
+      ctx.body = { [key]: responseConfig[key] || {} }
     } else if (sections) {
       const keys = (sections as string).split(',')
       const result: Record<string, any> = {}
@@ -370,11 +372,11 @@ export async function getConfig(ctx: any) {
           ? gatewayAutoStart
           : trimmed === 'proxy'
             ? proxy
-            : (config[trimmed] || {})
+            : (responseConfig[trimmed] || {})
       }
       ctx.body = result
     } else {
-      ctx.body = { ...config, gatewayAutoStart, proxy }
+      ctx.body = { ...responseConfig, gatewayAutoStart, proxy }
     }
   } catch (err: any) {
     ctx.status = 500; ctx.body = { error: err.message }

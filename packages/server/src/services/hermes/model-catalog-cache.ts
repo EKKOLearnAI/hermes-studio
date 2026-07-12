@@ -5,6 +5,7 @@ import { PROVIDER_PRESETS } from '../../shared/providers'
 import { fetchProviderModels, PROVIDER_ENV_MAP, readConfigYamlForProfile } from '../config-helpers'
 import { readAppConfig } from '../app-config'
 import { getCompatibleCustomProviders } from './custom-providers-compat'
+import { resolveStoredProviderRuntime } from './provider-credentials'
 import { resolveCopilotOAuthToken } from './copilot-models'
 import { logger } from '../logger'
 import { safeFileStore } from '../safe-file-store'
@@ -380,9 +381,11 @@ async function collectRefreshCandidates(): Promise<RefreshCandidate[]> {
   const copilotEnabled = appConfig.copilotEnabled === true
 
   for (const profile of listProfileNamesFromDisk()) {
+    let envContent = ''
     let env: Record<string, string> = {}
     try {
-      env = parseEnv(await readFile(join(getProfileDir(profile), '.env'), 'utf-8'))
+      envContent = await readFile(join(getProfileDir(profile), '.env'), 'utf-8')
+      env = parseEnv(envContent)
     } catch {}
 
     let configYaml: Record<string, any> = {}
@@ -442,9 +445,23 @@ async function collectRefreshCandidates(): Promise<RefreshCandidate[]> {
     const customProviders = getCompatibleCustomProviders(configYaml)
     for (const cp of customProviders) {
       const name = cp.name
-      const baseUrl = normalizeCatalogBaseUrl(cp.base_url)
-      if (!name || !baseUrl) continue
+      if (!name) continue
       const provider = providerKeyForCustom(name)
+      let baseUrl = normalizeCatalogBaseUrl(cp.base_url)
+      let apiKey = cp.api_key || ''
+      try {
+        const runtime = await resolveStoredProviderRuntime({
+          profile,
+          poolKey: provider,
+          config: configYaml,
+          envContent,
+        })
+        baseUrl = normalizeCatalogBaseUrl(runtime.baseUrl || baseUrl)
+        apiKey = runtime.apiKey
+      } catch (err) {
+        logger.warn(err, '[model-catalog-cache] custom provider credential resolution failed for %s', provider)
+      }
+      if (!baseUrl) continue
       const presetModels = presetsByProvider.get(name)?.models || []
       // Respect the configured `models:` whitelist (v12+ dict) when present —
       // those entries should always be reachable as fallbacks even before a
@@ -454,7 +471,7 @@ async function collectRefreshCandidates(): Promise<RefreshCandidate[]> {
         provider,
         label: name,
         base_url: baseUrl,
-        api_key: cp.api_key || '',
+        api_key: apiKey,
         fallback_models: uniqueModels([cp.model, ...configuredModels, ...presetModels]),
         profile,
       })

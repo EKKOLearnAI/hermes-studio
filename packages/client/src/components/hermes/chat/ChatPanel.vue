@@ -549,7 +549,7 @@ const newChatNeedsBaseUrl = computed(() =>
   isNewChatCodingAgent.value && effectiveNewChatAgentMode.value === "scoped" && !selectedNewChatProviderGroup.value?.base_url,
 );
 const newChatNeedsApiKey = computed(() =>
-  isNewChatCodingAgent.value && effectiveNewChatAgentMode.value === "scoped" && !selectedNewChatProviderGroup.value?.api_key,
+  isNewChatCodingAgent.value && effectiveNewChatAgentMode.value === "scoped" && !selectedNewChatProviderGroup.value?.has_api_key,
 );
 const canConfirmNewChat = computed(() => {
   if (!newChatProfile.value) return false;
@@ -694,7 +694,7 @@ async function confirmNewChat() {
     codingAgentMode: source === "coding_agent" ? codingAgentMode : undefined,
     workspace: newChatWorkspace.value || null,
     baseUrl: source === "coding_agent" && !isGlobalCodingAgent ? group?.base_url || newChatBaseUrl.value.trim() || undefined : undefined,
-    apiKey: source === "coding_agent" && !isGlobalCodingAgent ? group?.api_key || newChatApiKey.value.trim() || undefined : undefined,
+    apiKey: source === "coding_agent" && !isGlobalCodingAgent ? newChatApiKey.value.trim() || undefined : undefined,
     apiMode: isNewChatExternalCodingAgent.value && !isGlobalCodingAgent ? newChatApiMode.value : undefined,
   });
   // Record workspace to recent list

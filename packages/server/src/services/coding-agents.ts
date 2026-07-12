@@ -6,14 +6,17 @@ import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
 import { getWebUiHome } from '../config'
-import { PROVIDER_ENV_MAP, readConfigYamlForProfile, safeReadFile } from './config-helpers'
-import { getCompatibleCustomProviders } from './hermes/custom-providers-compat'
+import { safeReadFile } from './config-helpers'
 import { registerClaudeCodeProxyTarget } from './agent-runner/proxies/claude-code-proxy'
 import { registerCodexProxyTarget } from './agent-runner/proxies/codex-proxy'
 import type { ApiMode } from './agent-runner/types'
 import { PROVIDER_PRESETS } from '../shared/providers'
 import { getModelContextLength } from './hermes/model-context'
-import { getProfileDir } from './hermes/hermes-profile'
+import {
+  assertStoredProviderRuntimeMatch,
+  canonicalProviderIdentity,
+  resolveStoredProviderRuntime,
+} from './hermes/provider-credentials'
 import { getSystemPrompt } from '../lib/llm-prompt'
 import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
 import { getSession, updateSession, type HermesSessionRow } from '../db/hermes/session-store'
@@ -392,92 +395,27 @@ function normalizeConfigScope(scope: CodingAgentConfigScope = {}): Required<Codi
   }
 }
 
-function slugProviderName(value: string): string {
-  return String(value || '').trim().toLowerCase().replace(/ /g, '-')
-}
-
-function providerKeyWithoutCustomPrefix(providerKey: string): string {
-  if (providerKey.startsWith('custom:')) return providerKey.slice('custom:'.length)
-  if (providerKey.startsWith('custom_')) return providerKey.slice('custom_'.length)
-  return providerKey
-}
-
-function providerLookupCandidates(provider: string): string[] {
-  const trimmed = String(provider || '').trim()
-  const withoutCustom = providerKeyWithoutCustomPrefix(trimmed)
-  return [...new Set([
-    trimmed,
-    withoutCustom,
-    withoutCustom ? `custom:${withoutCustom}` : '',
-    withoutCustom ? `custom_${withoutCustom}` : '',
-  ].filter(Boolean))]
-}
-
-function parseEnvValue(envContent: string, key: string): string {
-  if (!key) return ''
-  const lines = envContent.split(/\r?\n/)
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-    const eqIndex = trimmed.indexOf('=')
-    if (eqIndex === -1) continue
-    if (trimmed.slice(0, eqIndex).trim() !== key) continue
-    const raw = trimmed.slice(eqIndex + 1).trim()
-    if (
-      (raw.startsWith('"') && raw.endsWith('"')) ||
-      (raw.startsWith("'") && raw.endsWith("'"))
-    ) {
-      return raw.slice(1, -1)
-    }
-    return raw
-  }
-  return ''
-}
-
-function inferLaunchApiMode(provider: string, baseUrl: string, fallback: ApiMode = 'chat_completions'): ApiMode {
-  const providerKey = String(provider || '').toLowerCase()
-  const normalizedBaseUrl = String(baseUrl || '').toLowerCase()
-  if (
-    providerKey.includes('claude') ||
-    providerKey === 'anthropic' ||
-    normalizedBaseUrl.includes('anthropic') ||
-    normalizedBaseUrl.includes('/anthropic')
-  ) {
-    return 'anthropic_messages'
-  }
-  if (
-    providerKey === 'deepseek' ||
-    providerKey === 'lmstudio' ||
-    normalizedBaseUrl.includes('deepseek') ||
-    normalizedBaseUrl.includes('127.0.0.1') ||
-    normalizedBaseUrl.includes('localhost')
-  ) {
-    return 'chat_completions'
-  }
-  return fallback
-}
-
-function providerPresetHost(value?: string): string {
-  const url = String(value || '').trim()
-  if (!url) return ''
+function providerPresetHost(value: unknown): string {
+  const endpoint = String(value || '').trim()
+  if (!endpoint) return ''
   try {
-    return new URL(url).hostname.toLowerCase()
+    return new URL(endpoint).hostname.toLowerCase()
   } catch {
     return ''
   }
 }
 
-function belongsToDifferentBuiltinProvider(provider: string, baseUrl: string): boolean {
-  const providerKey = providerKeyWithoutCustomPrefix(String(provider || '').trim().toLowerCase())
-  if (!providerKey || provider !== providerKey) return false
-  const currentPreset = PROVIDER_PRESETS.find(item => item.value === providerKey)
-  if (!currentPreset) return false
+function isStaleBuiltinEndpoint(
+  identity: ReturnType<typeof canonicalProviderIdentity>,
+  baseUrl: string,
+): boolean {
+  if (identity.kind !== 'builtin') return false
   const inputHost = providerPresetHost(baseUrl)
-  const currentHost = providerPresetHost(currentPreset.base_url)
+  const currentPreset = PROVIDER_PRESETS.find(item => item.value === identity.lookupKey)
+  const currentHost = providerPresetHost(currentPreset?.base_url)
   if (!inputHost || !currentHost || inputHost === currentHost) return false
-  return PROVIDER_PRESETS.some((item) => (
-    item.value !== providerKey &&
-    providerPresetHost(item.base_url) === inputHost
+  return PROVIDER_PRESETS.some(item => (
+    item.value !== identity.lookupKey && providerPresetHost(item.base_url) === inputHost
   ))
 }
 
@@ -494,93 +432,84 @@ function assertScopedCodingAgentProviderAllowed(mode: CodingAgentLaunchResult['m
   throw err
 }
 
-async function resolveStoredProviderLaunchInput(
-  input: CodingAgentLaunchInput & { sessionId: string },
+async function resolveStoredProviderLaunchInput<T extends CodingAgentLaunchInput>(
+  input: T,
   existingSession: HermesSessionRow | null,
-): Promise<CodingAgentLaunchInput & { sessionId: string }> {
+): Promise<T> {
   if (input.mode === 'global') return input
 
   const profile = String(input.profile || existingSession?.profile || 'default').trim() || 'default'
   const inputProvider = String(input.provider || '').trim()
   const storedProvider = String(existingSession?.provider || '').trim()
-  const provider = String(inputProvider || storedProvider).trim()
+  const provider = inputProvider || storedProvider
   const model = String(input.model || existingSession?.model || '').trim()
   const workspace = input.workspace || existingSession?.workspace || undefined
   let baseUrl = String(input.baseUrl || '').trim()
   let apiKey = String(input.apiKey || '').trim()
-  const storedApiMode = !inputProvider || inputProvider === storedProvider
+  const sessionApiMode = !inputProvider || inputProvider === storedProvider
     ? normalizeStoredLaunchApiMode(existingSession?.api_mode)
     : undefined
-  let apiMode = input.apiMode || storedApiMode
-  let canonicalProvider = provider
-  const ignoredStaleProviderRuntime = belongsToDifferentBuiltinProvider(provider, baseUrl)
-  if (ignoredStaleProviderRuntime) {
+  let apiMode = input.apiMode || sessionApiMode
+
+  if (!provider) {
+    return {
+      ...input,
+      profile,
+      model: model || input.model,
+      workspace,
+      baseUrl,
+      apiKey,
+      apiMode,
+    } as T
+  }
+
+  const identity = canonicalProviderIdentity(provider)
+  if (isStaleBuiltinEndpoint(identity, baseUrl)) {
     baseUrl = ''
     apiKey = ''
+    apiMode = undefined
   }
 
-  if (!provider || (baseUrl && apiKey && apiMode)) {
-    return { ...input, profile, provider: provider || input.provider, model: model || input.model, workspace, baseUrl, apiKey, apiMode }
-  }
-
-  let config: Record<string, any> = {}
+  let stored: Awaited<ReturnType<typeof resolveStoredProviderRuntime>>
   try {
-    config = await readConfigYamlForProfile(profile)
-  } catch {}
-  const envContent = await safeReadFile(join(getProfileDir(profile), '.env')) || ''
-  const normalizedProvider = providerKeyWithoutCustomPrefix(provider)
-  const preset = PROVIDER_PRESETS.find(item => item.value === normalizedProvider)
-  const candidates = providerLookupCandidates(provider)
-
-  const customProviders = getCompatibleCustomProviders(config)
-  const customEntry = customProviders.find((entry) => {
-    const name = slugProviderName(String(entry?.name || ''))
-    return candidates.includes(`custom:${name}`) || candidates.includes(`custom_${name}`) || candidates.includes(name)
-  })
-  if (customEntry) {
-    canonicalProvider = `custom:${slugProviderName(String(customEntry.name || normalizedProvider))}`
-    if (!baseUrl) baseUrl = String(customEntry.base_url || '').trim()
-    if (!apiKey) apiKey = String(customEntry.api_key || '').trim()
-    if (!apiKey) {
-      const keyEnv = String(customEntry.key_env || '').trim()
-      if (keyEnv) apiKey = parseEnvValue(envContent, keyEnv)
-    }
-    if (!apiMode) {
-      apiMode = normalizeLaunchApiMode(
-        customEntry.api_mode,
-        preset?.api_mode || inferLaunchApiMode(canonicalProvider, baseUrl, 'chat_completions'),
-      )
-    }
+    stored = await resolveStoredProviderRuntime({
+      profile,
+      poolKey: identity.poolKey,
+    })
+  } catch (err: any) {
+    if (err?.status !== 404) throw err
+    return {
+      ...input,
+      profile,
+      provider: identity.poolKey,
+      model: model || input.model,
+      workspace,
+      baseUrl,
+      apiKey,
+      apiMode,
+    } as T
   }
 
-  const canonicalProviderKey = providerKeyWithoutCustomPrefix(canonicalProvider)
-  const canonicalPreset = PROVIDER_PRESETS.find(item => item.value === canonicalProviderKey) || preset
-  const envMapping = PROVIDER_ENV_MAP[canonicalProviderKey]
-  if (!baseUrl) {
-    baseUrl = envMapping?.base_url_env
-      ? parseEnvValue(envContent, envMapping.base_url_env) || canonicalPreset?.base_url || ''
-      : canonicalPreset?.base_url || ''
-  }
-  if (!apiKey && envMapping?.api_key_env) {
-    apiKey = parseEnvValue(envContent, envMapping.api_key_env)
-  }
-  if (!apiMode) {
-    apiMode = normalizeLaunchApiMode(
-      canonicalPreset?.api_mode,
-      inferLaunchApiMode(canonicalProvider, baseUrl, 'chat_completions'),
-    )
+  if (!apiKey && stored.hasApiKey) {
+    assertStoredProviderRuntimeMatch(baseUrl, apiMode, stored)
+    baseUrl = stored.baseUrl
+    apiKey = stored.apiKey
+    apiMode = stored.apiMode
+  } else {
+    if (!baseUrl) baseUrl = stored.baseUrl
+    if (!apiMode) apiMode = stored.apiMode
   }
 
   return {
     ...input,
     profile,
-    provider: canonicalProvider,
+    provider: stored.identity.poolKey,
     model: model || input.model,
     workspace,
-    baseUrl: baseUrl || (ignoredStaleProviderRuntime ? '' : input.baseUrl),
-    apiKey: apiKey || (ignoredStaleProviderRuntime ? '' : input.apiKey),
+    baseUrl,
+    apiKey,
     apiMode,
-  }
+  } as T
 }
 
 function normalizeStoredLaunchApiMode(value: unknown): ApiMode | undefined {
@@ -1644,7 +1573,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     }
   }
 
-  const provider = normalizeScopeSegment(input.provider, 'default', 'provider')
+  input = await resolveStoredProviderLaunchInput(input, null)
+
+  const provider = canonicalProviderIdentity(String(input.provider || '')).poolKey
   const scope = normalizeConfigScope({ profile: input.profile, provider })
   const model = String(input.model || '').trim()
   const apiKey = String(input.apiKey || '').trim()
@@ -1822,7 +1753,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     agentId: tool.id,
     mode,
     profile: scope.profile,
-    provider: scope.provider,
+    provider,
     model,
     apiMode,
     rootDir,

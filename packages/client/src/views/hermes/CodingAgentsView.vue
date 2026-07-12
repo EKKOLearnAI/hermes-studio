@@ -314,7 +314,6 @@ function currentLaunchRequest() {
     provider: launchProvider.value,
     model: launchModel.value,
     baseUrl: provider?.base_url || '',
-    apiKey: provider?.api_key || '',
     apiMode: launchApiMode.value,
   }
 }

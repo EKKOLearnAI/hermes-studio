@@ -200,6 +200,33 @@ describe('model catalog cache', () => {
     })
   })
 
+  it('uses env-backed custom credentials for live catalog refresh', async () => {
+    mockListProfileNamesFromDisk.mockReturnValue(['default'])
+    mockReadFile.mockImplementation(async (path: string) => {
+      if (path === '/hermes/default/.env') return 'CUSTOM_CATALOG_KEY=env-catalog-value\n'
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+    })
+    mockReadConfigYamlForProfile.mockResolvedValue({
+      custom_providers: [{
+        name: 'Env Catalog',
+        base_url: 'https://env-catalog.invalid/v1',
+        key_env: 'CUSTOM_CATALOG_KEY',
+        model: 'env-fallback',
+      }],
+    })
+
+    const { refreshConfiguredProviderModelCatalogs } = await import(
+      '../../packages/server/src/services/hermes/model-catalog-cache'
+    )
+    await refreshConfiguredProviderModelCatalogs({ force: true })
+
+    expect(mockFetchProviderModels).toHaveBeenCalledWith(
+      'https://env-catalog.invalid/v1',
+      'env-catalog-value',
+      false,
+    )
+  })
+
   it('adds authorized providers to the catalog cache and fetches live models for compatible auth providers', async () => {
     mockListProfileNamesFromDisk.mockReturnValue(['default'])
     mockReadAppConfig.mockResolvedValue({ copilotEnabled: true })

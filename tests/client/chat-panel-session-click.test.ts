@@ -41,6 +41,15 @@ describe('ChatPanel session clicks', () => {
     expect(source).toContain('selectedGroup?.models.includes(selectedModel)')
   })
 
+  it('uses credential presence without forwarding provider secrets into coding-agent sessions', () => {
+    const panelSource = readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8')
+    const storeSource = readFileSync('packages/client/src/stores/hermes/chat.ts', 'utf8')
+
+    expect(panelSource).toContain('selectedNewChatProviderGroup.value?.has_api_key')
+    expect(panelSource).not.toContain('group?.api_key || newChatApiKey.value')
+    expect(storeSource).not.toContain('providerGroup?.api_key')
+  })
+
   it('uses a create action in the new chat drawer instead of duplicating the new chat trigger label', () => {
     const source = readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8')
 

@@ -2,11 +2,13 @@
 import { ref, onMounted } from 'vue'
 import { NInput, NButton, NSpin, NEmpty, useMessage } from 'naive-ui'
 import { useModelsStore } from '@/stores/hermes/models'
+import { useAppStore } from '@/stores/hermes/app'
 import { updateProvider } from '@/api/hermes/system'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const modelsStore = useModelsStore()
+const appStore = useAppStore()
 const message = useMessage()
 
 const savingKey = ref<string | null>(null)
@@ -18,17 +20,29 @@ onMounted(() => {
   }
 })
 
-const isCustom = (provider: string) => {
-  const g = modelsStore.providers.find(p => p.provider === provider)
-  return !g?.builtin && provider.startsWith('custom:')
-}
+const isCustom = (provider: string) => provider.startsWith('custom:')
 
 function getEditKey(provider: string): string {
   if (!(provider in editKeys.value)) {
-    const g = modelsStore.providers.find(p => p.provider === provider)
-    editKeys.value[provider] = g?.api_key || ''
+    editKeys.value[provider] = ''
   }
   return editKeys.value[provider]
+}
+
+function credentialUpdate(providerKey: string, apiKey: string) {
+  const group = modelsStore.providers.find(provider => provider.provider === providerKey)
+  return {
+    api_key: apiKey,
+    ...(isCustom(providerKey) && group?.provider_source ? { provider_source: group.provider_source } : {}),
+    ...(isCustom(providerKey) && group?.provider_key ? { provider_key: group.provider_key } : {}),
+  }
+}
+
+async function refreshProviderState() {
+  await Promise.all([
+    modelsStore.fetchProviders(),
+    appStore.reloadModels({ preserveSelection: true }),
+  ])
 }
 
 async function handleSaveApiKey(providerKey: string) {
@@ -39,9 +53,10 @@ async function handleSaveApiKey(providerKey: string) {
   }
   savingKey.value = providerKey
   try {
-    await updateProvider(providerKey, { api_key: key.trim() })
+    await updateProvider(providerKey, credentialUpdate(providerKey, key.trim()))
+    editKeys.value[providerKey] = ''
     message.success(t('settings.models.saved'))
-    await modelsStore.fetchProviders()
+    await refreshProviderState()
   } catch (e: any) {
     message.error(e.message || t('settings.models.saveFailed'))
   } finally {
@@ -51,11 +66,16 @@ async function handleSaveApiKey(providerKey: string) {
 
 async function handleSaveCustom(providerKey: string) {
   const key = getEditKey(providerKey)
+  if (!key.trim()) {
+    message.warning(t('settings.models.apiKeyPlaceholder'))
+    return
+  }
   savingKey.value = providerKey
   try {
-    await updateProvider(providerKey, { api_key: key.trim() })
+    await updateProvider(providerKey, credentialUpdate(providerKey, key.trim()))
+    editKeys.value[providerKey] = ''
     message.success(t('settings.models.saved'))
-    await modelsStore.fetchProviders()
+    await refreshProviderState()
   } catch (e: any) {
     message.error(e.message || t('settings.models.saveFailed'))
   } finally {
@@ -86,7 +106,7 @@ async function handleSaveCustom(providerKey: string) {
               :value="getEditKey(g.provider)"
               type="password"
               show-password-on="click"
-              :placeholder="t('settings.models.apiKeyPlaceholder')"
+              :placeholder="g.has_api_key ? '••••••••' : t('settings.models.apiKeyPlaceholder')"
               autocomplete="off"
               @update:value="v => editKeys[g.provider] = v"
             />
@@ -94,6 +114,7 @@ async function handleSaveCustom(providerKey: string) {
               type="primary"
               size="small"
               :loading="savingKey === g.provider"
+              :disabled="!getEditKey(g.provider).trim()"
               @click="handleSaveApiKey(g.provider)"
             >
               {{ t('settings.models.save') }}
@@ -108,7 +129,7 @@ async function handleSaveCustom(providerKey: string) {
               :value="getEditKey(g.provider)"
               type="password"
               show-password-on="click"
-              :placeholder="t('settings.models.apiKeyPlaceholder')"
+              :placeholder="g.has_api_key ? '••••••••' : t('settings.models.apiKeyPlaceholder')"
               autocomplete="off"
               @update:value="v => editKeys[g.provider] = v"
             />
@@ -116,6 +137,7 @@ async function handleSaveCustom(providerKey: string) {
               type="primary"
               size="small"
               :loading="savingKey === g.provider"
+              :disabled="!getEditKey(g.provider).trim()"
               @click="handleSaveCustom(g.provider)"
             >
               {{ t('settings.models.save') }}

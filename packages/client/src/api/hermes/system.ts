@@ -95,7 +95,10 @@ export interface AvailableModelGroup {
   models: string[]
   /** Full unfiltered model catalog for this provider, used to restore hidden WUI models. */
   available_models?: string[]
+  /** Always empty in responses; stored credentials remain server-side. */
   api_key: string
+  /** Non-secret signal that a request-scoped provider credential is configured. */
+  has_api_key?: boolean
   api_mode?: ProviderApiMode
   builtin?: boolean
   /** Env var used by Hermes to override this provider's base URL. If present, the preset URL is editable. */
@@ -253,6 +256,8 @@ export async function updateProvider(poolKey: string, data: {
   api_key?: string
   model?: string
   api_mode?: ProviderApiMode
+  provider_source?: 'custom_providers' | 'providers'
+  provider_key?: string
 }): Promise<void> {
   await request(`/api/hermes/config/providers/${encodeURIComponent(poolKey)}`, {
     method: 'PUT',

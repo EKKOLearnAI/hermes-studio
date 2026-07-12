@@ -3684,6 +3684,12 @@
                   },
                   "name": {
                     "type": "string"
+                  },
+                  "provider_key": {
+                    "type": "string"
+                  },
+                  "provider_source": {
+                    "type": "string"
                   }
                 }
               }

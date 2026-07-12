@@ -4,6 +4,11 @@ import { join } from 'path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { updateConfigYamlForProfile, saveEnvValueForProfile, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { getCompatibleCustomProviders, normalizeCustomProviderEntry } from '../../services/hermes/custom-providers-compat'
+import {
+  canonicalProviderIdentity,
+  credentialReplacement,
+  providerPoolKeyForCustomName,
+} from '../../services/hermes/provider-credentials'
 import { PROVIDER_PRESETS } from '../../shared/providers'
 import { logger } from '../../services/logger'
 
@@ -77,7 +82,7 @@ function shouldPersistBuiltinBaseUrl(poolKey: string, requestedBaseUrl: string):
 }
 
 function providerKeyForCustomName(name: string): string {
-  return `custom:${String(name || '').trim().toLowerCase().replace(/ /g, '-')}`
+  return providerPoolKeyForCustomName(name)
 }
 
 function findLegacyCustomProviderIndex(config: any, poolKey: string): number {
@@ -89,8 +94,10 @@ function findLegacyCustomProviderIndex(config: any, poolKey: string): number {
 function findProviderDictKey(config: any, poolKey: string, requestedProviderKey = ''): string {
   const dict = config.providers
   if (!dict || typeof dict !== 'object' || Array.isArray(dict)) return ''
-  if (requestedProviderKey && Object.prototype.hasOwnProperty.call(dict, requestedProviderKey)) {
-    return requestedProviderKey
+  if (requestedProviderKey) {
+    return Object.prototype.hasOwnProperty.call(dict, requestedProviderKey)
+      ? requestedProviderKey
+      : ''
   }
   for (const [key, entry] of Object.entries(dict)) {
     const normalized = normalizeCustomProviderEntry(entry, key, 'providers')
@@ -104,9 +111,22 @@ export async function create(ctx: any) {
     name: string; base_url: string; api_key: string; model: string; context_length?: number; providerKey?: string | null; api_mode?: ProviderApiMode
   }
   const normalizedName = String(name || '').trim()
-  const poolKey = providerKey || `custom:${normalizedName.toLowerCase().replace(/ /g, '-')}`
-  const isBuiltin = poolKey in PROVIDER_ENV_MAP
-  const effectiveBaseUrl = isBuiltin ? builtinBaseUrl(poolKey, base_url) : base_url
+  let identity: ReturnType<typeof canonicalProviderIdentity>
+  try {
+    identity = canonicalProviderIdentity(providerKey || providerPoolKeyForCustomName(normalizedName))
+  } catch (err: any) {
+    ctx.status = err?.status || 400
+    ctx.body = { error: err?.message || 'Invalid provider pool key' }
+    return
+  }
+  const poolKey = identity.poolKey
+  const isBuiltin = identity.kind === 'builtin' && identity.lookupKey in PROVIDER_ENV_MAP
+  if (identity.kind === 'builtin' && !isBuiltin) {
+    ctx.status = 400
+    ctx.body = { error: `Unknown built-in provider "${identity.poolKey}"` }
+    return
+  }
+  const effectiveBaseUrl = isBuiltin ? builtinBaseUrl(identity.lookupKey, base_url) : base_url
   const customApiMode = normalizeApiMode(api_mode)
   if (!normalizedName || !effectiveBaseUrl || !model) {
     ctx.status = 400; ctx.body = { error: 'Missing name, base_url, or model' }; return
@@ -193,48 +213,113 @@ export async function create(ctx: any) {
 }
 
 export async function update(ctx: any) {
-  const poolKey = decodeURIComponent(ctx.params.poolKey)
-  const { name, base_url, api_key, model, api_mode } = ctx.request.body as {
-    name?: string; base_url?: string; api_key?: string; model?: string; api_mode?: ProviderApiMode
+  let identity: ReturnType<typeof canonicalProviderIdentity>
+  try {
+    identity = canonicalProviderIdentity(decodeURIComponent(String(ctx.params.poolKey || '')))
+  } catch (err: any) {
+    ctx.status = err?.status || 400
+    ctx.body = { error: err?.message || 'Invalid provider pool key' }
+    return
+  }
+
+  const {
+    name,
+    base_url,
+    api_key,
+    model,
+    api_mode,
+    provider_source,
+    provider_key,
+  } = ctx.request.body as {
+    name?: string
+    base_url?: string
+    api_key?: string
+    model?: string
+    api_mode?: ProviderApiMode
+    provider_source?: 'custom_providers' | 'providers'
+    provider_key?: string
   }
   const customApiMode = normalizeApiMode(api_mode)
+  const replacement = credentialReplacement(api_key)
+  const requestedProviderKey = String(provider_key || '').trim()
+  const requestedSource = provider_source === 'custom_providers' || provider_source === 'providers'
+    ? provider_source
+    : requestedProviderKey
+      ? 'providers'
+      : ''
+
   try {
     const profile = requestedProfile(ctx)
-    const isCustom = poolKey.startsWith('custom:')
-    if (isCustom) {
-      const found = await updateConfigYamlForProfile(profile, (config) => {
-        if (!Array.isArray(config.custom_providers)) return { data: config, result: false, write: false }
-        const entry = (config.custom_providers as any[]).find((e: any) => {
-          return `custom:${e.name.trim().toLowerCase().replace(/ /g, '-')}` === poolKey
-        })
-        if (!entry) return { data: config, result: false, write: false }
-        if (name !== undefined) entry.name = name
-        if (base_url !== undefined) entry.base_url = base_url
-        if (api_key !== undefined) entry.api_key = api_key
-        if (model !== undefined) entry.model = model
-        if (customApiMode !== undefined) entry.api_mode = customApiMode
-        return { data: config, result: true }
+    if (identity.kind === 'custom') {
+      const found = await updateConfigYamlForProfile(profile, async (config) => {
+        const listIndex = requestedSource === 'providers'
+          ? -1
+          : findLegacyCustomProviderIndex(config, identity.poolKey)
+        const dictKey = requestedSource === 'custom_providers'
+          ? ''
+          : findProviderDictKey(config, identity.poolKey, requestedProviderKey)
+        const entry = listIndex >= 0
+          ? config.custom_providers[listIndex]
+          : dictKey
+            ? config.providers[dictKey]
+            : undefined
+        if (!entry || typeof entry !== 'object') {
+          return { data: config, result: false, write: false }
+        }
+
+        let writeConfig = false
+        if (name !== undefined) { entry.name = name; writeConfig = true }
+        if (base_url !== undefined) { entry.base_url = base_url; writeConfig = true }
+        if (model !== undefined) { entry.model = model; writeConfig = true }
+        if (customApiMode !== undefined) { entry.api_mode = customApiMode; writeConfig = true }
+
+        if (replacement) {
+          const envKey = String(entry.key_env || entry.api_key_env || '').trim()
+          if (envKey) {
+            await saveEnvValueForProfile(profile, envKey, replacement)
+          } else {
+            entry.api_key = replacement
+            writeConfig = true
+          }
+        }
+
+        return { data: config, result: true, write: writeConfig }
       })
       if (!found) {
-        ctx.status = 404; ctx.body = { error: `Custom provider "${poolKey}" not found` }; return
+        ctx.status = 404
+        ctx.body = { error: `Custom provider "${identity.poolKey}" not found` }
+        return
       }
     } else {
-      const envMapping = PROVIDER_ENV_MAP[poolKey]
+      const envMapping = PROVIDER_ENV_MAP[identity.lookupKey]
       if (!envMapping?.api_key_env) {
-        ctx.status = 400; ctx.body = { error: `Cannot update credentials for "${poolKey}"` }; return
+        ctx.status = 400
+        ctx.body = { error: `Cannot update credentials for "${identity.poolKey}"` }
+        return
       }
-      if (api_key !== undefined) { await saveEnvValueForProfile(profile, envMapping.api_key_env, api_key) }
+      if (replacement) {
+        await saveEnvValueForProfile(profile, envMapping.api_key_env, replacement)
+      }
     }
     // TODO: Test if provider works without gateway restart
     // try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
     ctx.body = { success: true }
   } catch (err: any) {
-    ctx.status = 500; ctx.body = { error: err.message }
+    ctx.status = err?.status || 500
+    ctx.body = { error: err.message }
   }
 }
 
 export async function remove(ctx: any) {
-  const poolKey = decodeURIComponent(ctx.params.poolKey)
+  let identity: ReturnType<typeof canonicalProviderIdentity>
+  try {
+    identity = canonicalProviderIdentity(decodeURIComponent(String(ctx.params.poolKey || '')))
+  } catch (err: any) {
+    ctx.status = err?.status || 400
+    ctx.body = { error: err?.message || 'Invalid provider pool key' }
+    return
+  }
+  const poolKey = identity.poolKey
   const query = ctx.query as { source?: string; providerKey?: string }
   const requestedSource = query?.source === 'providers' || query?.source === 'custom_providers'
     ? query.source
@@ -242,7 +327,7 @@ export async function remove(ctx: any) {
   const requestedProviderKey = typeof query?.providerKey === 'string' ? query.providerKey.trim() : ''
   try {
     const profile = requestedProfile(ctx)
-    const isCustom = poolKey.startsWith('custom:')
+    const isCustom = identity.kind === 'custom'
     const removed = await updateConfigYamlForProfile(profile, async (config) => {
       if (isCustom) {
         const removeLegacy = requestedSource !== 'providers'
@@ -264,7 +349,7 @@ export async function remove(ctx: any) {
         }
         if (!didRemove) return { data: config, result: false, write: false }
       } else {
-        const envMapping = PROVIDER_ENV_MAP[poolKey]
+        const envMapping = PROVIDER_ENV_MAP[identity.lookupKey]
         if (envMapping?.api_key_env) {
           await saveEnvValueForProfile(profile, envMapping.api_key_env, '')
         }
@@ -292,7 +377,7 @@ export async function remove(ctx: any) {
       ctx.status = 404; ctx.body = { error: `Custom provider "${poolKey}" not found` }; return
     }
     if (!isCustom) {
-      const envMapping = PROVIDER_ENV_MAP[poolKey]
+      const envMapping = PROVIDER_ENV_MAP[identity.lookupKey]
       if (!envMapping) {
         ctx.status = 404; ctx.body = { error: `Provider "${poolKey}" not found` }; return
       }

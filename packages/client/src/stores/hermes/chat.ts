@@ -2430,7 +2430,7 @@ export const useChatStore = defineStore('chat', () => {
               coding_agent_id: codingAgentId,
               mode: codingAgentMode,
               baseUrl: codingAgentMode === 'global' ? undefined : activeSession.value?.baseUrl || providerGroup?.base_url || undefined,
-              apiKey: codingAgentMode === 'global' ? undefined : activeSession.value?.apiKey || providerGroup?.api_key || undefined,
+              apiKey: codingAgentMode === 'global' ? undefined : activeSession.value?.apiKey || undefined,
               apiMode: codingAgentApiMode,
             }
           : {}),

@@ -19,6 +19,8 @@ function makeHome() {
   const home = mkdtempSync(join(tmpdir(), 'hermes-coding-agent-launch-'))
   homes.push(home)
   process.env.HERMES_WEB_UI_HOME = home
+  process.env.HERMES_HOME = join(home, 'hermes-home')
+  mkdirSync(process.env.HERMES_HOME, { recursive: true })
   process.env.HERMES_CODING_AGENT_GLOBAL_HOME = join(home, 'global-home')
   return home
 }
@@ -29,6 +31,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.HERMES_WEB_UI_HOME
+  delete process.env.HERMES_HOME
   delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
   delete process.env.HERMES_AGENT_NODE
   vi.restoreAllMocks()
@@ -52,6 +55,183 @@ function makeProxyContext(routeKey: string, token: string, body: any): any {
 }
 
 describe('coding agent launch preparation', () => {
+  it('hydrates a matching custom stored runtime without exposing the stored credential', async () => {
+    makeHome()
+    const storedValue = 'stored-provider-value'
+    writeFileSync(join(process.env.HERMES_HOME!, 'config.yaml'), [
+      'custom_providers:',
+      '  - name: stored-proxy',
+      '    base_url: https://stored.invalid/v1',
+      `    api_key: ${storedValue}`,
+      '    model: stored-model',
+      '    api_mode: codex_responses',
+      '',
+    ].join('\n'))
+
+    const result = await prepareCodingAgentLaunch('codex', {
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'custom:stored-proxy',
+      model: 'stored-model',
+      baseUrl: 'https://stored.invalid/v1',
+      apiMode: 'codex_responses',
+    })
+
+    const configPath = result.files.find(file => file.key === 'config')?.absolutePath
+    expect(configPath).toBeTruthy()
+    const config = readFileSync(configPath!, 'utf8')
+    expect(config).toMatch(/base_url = "http:\/\/127\.0\.0\.1:\d+\/api\/codex-proxy\/[^"]+\/v1"/)
+    expect(config).not.toContain(storedValue)
+    expect(JSON.stringify(result)).not.toContain(storedValue)
+    expect(result.provider).toBe('custom:stored-proxy')
+  })
+
+  it.each([
+    {
+      label: 'endpoint',
+      baseUrl: 'https://attacker.invalid/v1',
+      apiMode: 'codex_responses' as const,
+      message: 'Provider endpoint does not match the stored credential source',
+    },
+    {
+      label: 'protocol',
+      baseUrl: 'https://stored.invalid/v1',
+      apiMode: 'chat_completions' as const,
+      message: 'Provider API protocol does not match the stored credential source',
+    },
+  ])('rejects a mismatched caller $label before hydrating a stored credential', async ({ baseUrl, apiMode, message: expectedMessage }) => {
+    makeHome()
+    writeFileSync(join(process.env.HERMES_HOME!, 'config.yaml'), [
+      'custom_providers:',
+      '  - name: stored-proxy',
+      '    base_url: https://stored.invalid/v1',
+      '    api_key: stored-provider-value',
+      '    model: stored-model',
+      '    api_mode: codex_responses',
+      '',
+    ].join('\n'))
+
+    await expect(prepareCodingAgentLaunch('codex', {
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'custom:stored-proxy',
+      model: 'stored-model',
+      baseUrl,
+      apiMode,
+    })).rejects.toMatchObject({ message: expectedMessage, status: 400 })
+  })
+
+  it('does not redirect a builtin identity to a same-named custom provider', async () => {
+    makeHome()
+    writeFileSync(join(process.env.HERMES_HOME!, '.env'), 'DEEPSEEK_API_KEY=builtin-deepseek-value\n')
+    writeFileSync(join(process.env.HERMES_HOME!, 'config.yaml'), [
+      'custom_providers:',
+      '  - name: deepseek',
+      '    base_url: https://custom-deepseek.invalid/v1',
+      '    api_key: custom-deepseek-value',
+      '    model: custom-model',
+      '',
+    ].join('\n'))
+
+    const launch = await prepareCodingAgentLaunch('codex', {
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      baseUrl: 'https://api.deepseek.com',
+      apiMode: 'chat_completions',
+    })
+
+    const config = readFileSync(join(launch.rootDir, 'config.toml'), 'utf-8')
+    expect(launch.provider).toBe('deepseek')
+    expect(config).toContain('/api/codex-proxy/')
+    expect(config).not.toContain('custom-deepseek.invalid')
+    expect(JSON.stringify(launch)).not.toContain('custom-deepseek-value')
+  })
+
+  it('does not consume a builtin credential for an explicit same-named custom identity', async () => {
+    makeHome()
+    writeFileSync(join(process.env.HERMES_HOME!, '.env'), 'DEEPSEEK_API_KEY=builtin-deepseek-value\n')
+    writeFileSync(join(process.env.HERMES_HOME!, 'config.yaml'), [
+      'custom_providers:',
+      '  - name: deepseek',
+      '    base_url: https://custom-deepseek.invalid/v1',
+      '    model: custom-model',
+      '',
+    ].join('\n'))
+
+    const launch = await prepareCodingAgentLaunch('codex', {
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'custom:deepseek',
+      model: 'custom-model',
+      baseUrl: 'https://custom-deepseek.invalid/v1',
+      apiMode: 'chat_completions',
+    })
+
+    const config = readFileSync(join(launch.rootDir, 'config.toml'), 'utf-8')
+    expect(launch.provider).toBe('custom:deepseek')
+    expect(config).toContain('base_url = "https://custom-deepseek.invalid/v1"')
+    expect(config).not.toContain('/api/codex-proxy/')
+    expect(JSON.stringify(launch)).not.toContain('builtin-deepseek-value')
+  })
+
+  it('launches an env-backed custom provider without a browser-provided credential', async () => {
+    makeHome()
+    writeFileSync(join(process.env.HERMES_HOME!, '.env'), 'CUSTOM_PROXY_KEY=env-backed-value\n')
+    writeFileSync(join(process.env.HERMES_HOME!, 'config.yaml'), [
+      'custom_providers:',
+      '  - name: env-proxy',
+      '    base_url: https://env-proxy.invalid/v1',
+      '    key_env: CUSTOM_PROXY_KEY',
+      '    model: env-model',
+      '    api_mode: codex_responses',
+      '',
+    ].join('\n'))
+
+    const launch = await prepareCodingAgentLaunch('codex', {
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'custom:env-proxy',
+      model: 'env-model',
+      baseUrl: 'https://env-proxy.invalid/v1',
+      apiMode: 'codex_responses',
+    })
+
+    const config = readFileSync(join(launch.rootDir, 'config.toml'), 'utf-8')
+    expect(config).toContain('/api/codex-proxy/')
+    expect(config).not.toContain('env-backed-value')
+  })
+
+  it('keeps an explicit request credential request-scoped and does not persist it', async () => {
+    makeHome()
+    const configPath = join(process.env.HERMES_HOME!, 'config.yaml')
+    const sourceConfig = [
+      'custom_providers:',
+      '  - name: manual-proxy',
+      '    base_url: https://manual.invalid/v1',
+      '    model: manual-model',
+      '    api_mode: codex_responses',
+      '',
+    ].join('\n')
+    writeFileSync(configPath, sourceConfig)
+    const manualValue = ['one', 'request', 'value'].join('-')
+
+    const launch = await prepareCodingAgentLaunch('codex', {
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'custom:manual-proxy',
+      model: 'manual-model',
+      baseUrl: 'https://manual.invalid/v1',
+      apiKey: manualValue,
+      apiMode: 'codex_responses',
+    })
+
+    expect(readFileSync(configPath, 'utf-8')).toBe(sourceConfig)
+    expect(readFileSync(join(launch.rootDir, 'config.toml'), 'utf-8')).not.toContain('one-request-value')
+    expect(JSON.stringify(launch)).not.toContain('one-request-value')
+  })
+
   it('launches Claude Code with the global config when requested', async () => {
     const home = makeHome()
 

@@ -73,6 +73,54 @@ afterEach(async () => {
 })
 
 describe('config controller locked file updates', () => {
+  it('recursively redacts provider credentials from full and section projections without mutating storage', async () => {
+    const listValue = ['list', 'stored', 'value'].join('-')
+    const nestedValue = ['nested', 'stored', 'value'].join('-')
+    const dictValue = ['dict', 'stored', 'value'].join('-')
+    const envValue = ['env', 'stored', 'value'].join('-')
+    await writeFile(join(hermesHome, 'config.yaml'), [
+      'providers:',
+      '  dict-proxy:',
+      '    base_url: https://dict.invalid/v1',
+      `    api_key: ${dictValue}`,
+      'custom_providers:',
+      '  - name: list-proxy',
+      '    base_url: https://list.invalid/v1',
+      `    api_key: ${listValue}`,
+      '    extra_body:',
+      `      authorization: ${nestedValue}`,
+      '  - name: env-proxy',
+      '    base_url: https://env.invalid/v1',
+      '    key_env: CUSTOM_PROXY_KEY',
+      '',
+    ].join('\n'), 'utf-8')
+    await writeFile(join(hermesHome, '.env'), `CUSTOM_PROXY_KEY=${envValue}\n`, 'utf-8')
+    const { getConfig } = await loadController()
+
+    const fullCtx = makeCtx({})
+    await getConfig(fullCtx)
+
+    expect(fullCtx.body.providers['dict-proxy']).toMatchObject({ api_key: '', has_api_key: true })
+    expect(fullCtx.body.custom_providers[0]).toMatchObject({ api_key: '', has_api_key: true })
+    expect(fullCtx.body.custom_providers[0].extra_body.authorization).toBe('')
+    expect(fullCtx.body.custom_providers[1]).toMatchObject({ api_key: '', has_api_key: true })
+    const serialized = JSON.stringify(fullCtx.body)
+    for (const forbidden of [listValue, nestedValue, dictValue, envValue]) {
+      expect(serialized).not.toContain(forbidden)
+    }
+
+    const sectionCtx = makeCtx({})
+    sectionCtx.query = { section: 'custom_providers' }
+    await getConfig(sectionCtx)
+    expect(sectionCtx.body.custom_providers[0]).toMatchObject({ api_key: '', has_api_key: true })
+    expect(JSON.stringify(sectionCtx.body)).not.toContain(listValue)
+
+    const persisted = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
+    expect(persisted.providers['dict-proxy'].api_key).toBe(dictValue)
+    expect(persisted.custom_providers[0].api_key).toBe(listValue)
+    expect(persisted.custom_providers[0].extra_body.authorization).toBe(nestedValue)
+  })
+
   it('deep merges a config section and restarts the gateway through hermes-cli', async () => {
     await writeFile(join(hermesHome, 'config.yaml'), [
       'telegram:',

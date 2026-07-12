@@ -32,7 +32,9 @@ vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getActiveEnvPath: () => '/fake/home/.hermes/.env',
   getActiveAuthPath: () => '/fake/home/.hermes/auth.json',
   getActiveProfileName: () => 'default',
-  getProfileDir: () => '/fake/home/.hermes',
+  getProfileDir: (profile = 'default') => profile === 'default'
+    ? '/fake/home/.hermes'
+    : `/fake/home/.hermes/profiles/${profile}`,
   listProfileNamesFromDisk: mockListProfileNamesFromDisk,
 }))
 
@@ -220,8 +222,11 @@ describe('models controller — model visibility', () => {
         provider: 'deepseek',
         models: ['deepseek-live', 'deepseek-new'],
         available_models: ['deepseek-live', 'deepseek-new'],
+        api_key: '',
+        has_api_key: true,
       }),
     ]))
+    expect(JSON.stringify(ctx.body)).not.toContain('sk-test')
     expect(mockFetchProviderModels).not.toHaveBeenCalled()
   })
 
@@ -299,6 +304,8 @@ describe('models controller — model visibility', () => {
         label: 'OpenRouter',
         models: ['openrouter/auto'],
         available_models: ['openrouter/auto'],
+        api_key: '',
+        has_api_key: false,
       }),
     ]))
   })
@@ -393,8 +400,68 @@ describe('models controller — model visibility', () => {
         provider: 'custom:research-proxy',
         api_mode: 'chat_completions',
         models: ['research-model'],
+        api_key: '',
+        has_api_key: true,
       }),
     ]))
+    expect(JSON.stringify(ctx.body)).not.toContain('sk-test')
+  })
+
+  it('resolves env-backed custom credential presence without returning the value', async () => {
+    mockReadFile.mockResolvedValue('CUSTOM_PROXY_KEY=custom-env-value\n')
+    mockReadConfigYamlForProfile.mockResolvedValue({
+      model: { default: 'research-model', provider: 'custom:env-proxy' },
+      custom_providers: [
+        {
+          name: 'env-proxy',
+          base_url: 'https://env-proxy.invalid/v1',
+          model: 'research-model',
+          key_env: 'CUSTOM_PROXY_KEY',
+        },
+      ],
+    })
+
+    const ctx = makeCtx()
+    ctx.query = { profile: 'default' }
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'custom:env-proxy',
+        api_key: '',
+        has_api_key: true,
+      }),
+    ]))
+    expect(JSON.stringify(ctx.body)).not.toContain('custom-env-value')
+  })
+
+  it('merges credential presence with logical OR across visible profiles', async () => {
+    mockListProfileNamesFromDisk.mockReturnValue(['default', 'research'])
+    mockReadFile.mockImplementation(async (path: string) => (
+      String(path).includes('/profiles/research/') ? '' : 'DEEPSEEK_API_KEY=default-only-value\n'
+    ))
+    mockReadConfigYamlForProfile.mockImplementation(async (profile: string) => ({
+      model: { default: `${profile}-model`, provider: 'deepseek' },
+    }))
+
+    const ctx = makeCtx()
+    ctx.state = { user: { id: 1, username: 'admin', role: 'super_admin' } }
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: 'deepseek', api_key: '', has_api_key: true }),
+    ]))
+    expect(ctx.body.profiles).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        profile: 'research',
+        groups: expect.any(Array),
+      }),
+    ]))
+    const research = ctx.body.profiles.find((entry: any) => entry.profile === 'research')
+    expect(research.groups).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: 'deepseek', has_api_key: true }),
+    ]))
+    expect(JSON.stringify(ctx.body)).not.toContain('default-only-value')
   })
 
   it('returns LM Studio configured default model when env credentials exist and catalog is empty', async () => {
