@@ -68,13 +68,26 @@ function isRedactedProviderField(key: string): boolean {
   if (REDACTED_PROVIDER_FIELDS.has(key)) return true
   const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '')
   if (!normalized || normalized === 'hasapikey' || normalized.endsWith('env')) return false
+  const words = new Set(
+    key
+      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean),
+  )
   return normalized.includes('apikey') ||
-    normalized === 'authorization' ||
+    (words.has('api') && words.has('key')) ||
+    words.has('authorization') ||
+    words.has('secret') ||
+    words.has('password') ||
+    words.has('passphrase') ||
+    (words.has('private') && words.has('key')) ||
+    (words.has('signing') && words.has('key')) ||
     normalized.endsWith('token') ||
-    normalized.endsWith('password') ||
-    normalized.endsWith('secret') ||
     normalized.endsWith('connectionstring') ||
-    normalized === 'credential'
+    normalized.endsWith('cookie') ||
+    normalized === 'credential' ||
+    normalized.endsWith('credential')
 }
 
 function normalizeLookupKey(value: string): string {
