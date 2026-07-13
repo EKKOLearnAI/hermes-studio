@@ -28,6 +28,7 @@ export function createHealthStateConnector(options: {
     source: {
       id: 'health-state',
       domains: ['diet', 'fitness', 'sleep'],
+      cursorKind: 'timestamp',
       capabilities: { read: ['diet', 'fitness', 'sleep'], write: [] },
       access: async () => ({ configurationState: 'configured', authorizationState: 'not_required' }),
       load: async ({ cursor, now }) => {

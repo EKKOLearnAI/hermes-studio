@@ -333,6 +333,55 @@ describe('health-loop connectors', () => {
     expect((await connector.status()).cursor).toBe(forward)
   })
 
+  it('fails closed on impossible persisted freshness and attempt time combinations', async () => {
+    const { FileHealthConnectorStateStore } = await import('../../packages/server/src/services/hermes/health-loop/connectors')
+    const { createStructuredImportConnector } = await import('../../packages/server/src/services/hermes/health-loop/connectors/structured-import')
+    const cases: Array<[string, Record<string, unknown>, 'healthy' | 'unavailable']> = [
+      ['future-freshness', { health: 'healthy', lastAttemptAt: '2026-07-13T01:00:00Z', freshnessByDomain: { diet: '2026-07-13T02:00:00Z' } }, 'unavailable'],
+      ['future-success', { health: 'healthy', lastAttemptAt: '2026-07-13T01:00:00Z', lastSuccessAt: '2026-07-13T02:00:00Z' }, 'unavailable'],
+      ['freshness-without-attempt', { health: 'healthy', freshnessByDomain: { diet: '2026-07-13T00:00:00Z' } }, 'unavailable'],
+      ['success-without-attempt', { health: 'healthy', lastSuccessAt: '2026-07-13T00:00:00Z' }, 'unavailable'],
+      ['equal-freshness', { health: 'healthy', lastAttemptAt: '2026-07-13T01:00:00Z', lastSuccessAt: '2026-07-13T01:00:00Z', freshnessByDomain: { diet: '2026-07-13T01:00:00Z' } }, 'healthy'],
+      ['earlier-freshness', { health: 'healthy', lastAttemptAt: '2026-07-13T01:00:00Z', lastSuccessAt: '2026-07-13T00:30:00Z', freshnessByDomain: { diet: '2026-07-13T00:00:00Z' } }, 'healthy'],
+      ['never-attempted', { health: 'unavailable' }, 'unavailable'],
+    ]
+    for (const [id, state, expectedHealth] of cases) {
+      const path = join(root, `${id}.json`)
+      await writeFile(path, JSON.stringify({ version: 1, connectors: { [id]: state } }), 'utf8')
+      const connector = createStructuredImportConnector({ id, format: 'json', content: '[]', stateStore: new FileHealthConnectorStateStore(path), ingest: () => ({} as never) })
+      const status = await connector.status()
+      expect(status.health).toBe(expectedHealth)
+      if (id !== 'never-attempted' && expectedHealth === 'unavailable') expect(status.errorCode).toBe('CONNECTOR_STATE_CORRUPT')
+    }
+  })
+
+  it('keeps generic connector cursors opaque while validating declared timestamp cursors', async () => {
+    const { FileHealthConnectorStateStore, createConnectorCursor, createManagedHealthConnector } = await import('../../packages/server/src/services/hermes/health-loop/connectors')
+    const opaquePath = join(root, 'opaque-state.json')
+    await writeFile(opaquePath, JSON.stringify({ version: 1, connectors: { opaque: {
+      health: 'healthy', lastAttemptAt: '2026-07-13T01:00:00Z', cursor: 'vendor/page+7==',
+    } } }), 'utf8')
+    const sourceBase = {
+      domains: ['diet'] as const, capabilities: { read: ['diet'] as const, write: [] as const },
+      access: async () => ({ configurationState: 'configured' as const, authorizationState: 'not_required' as const }),
+      load: async () => ({ envelopes: [] }),
+    }
+    const opaque = createManagedHealthConnector({
+      stateStore: new FileHealthConnectorStateStore(opaquePath), ingest: () => ({} as never), source: { id: 'opaque', ...sourceBase },
+    })
+    expect(await opaque.status()).toMatchObject({ health: 'healthy', cursor: 'vendor/page+7==' })
+
+    const timestampPath = join(root, 'timestamp-state.json')
+    await writeFile(timestampPath, JSON.stringify({ version: 1, connectors: { timestamp: {
+      health: 'healthy', lastAttemptAt: '2026-07-13T01:00:00Z', cursor: createConnectorCursor('2026-07-13T02:00:00Z', 'future'),
+    } } }), 'utf8')
+    const timestamp = createManagedHealthConnector({
+      stateStore: new FileHealthConnectorStateStore(timestampPath), ingest: () => ({} as never),
+      source: { id: 'timestamp', cursorKind: 'timestamp', ...sourceBase },
+    })
+    expect(await timestamp.status()).toMatchObject({ health: 'unavailable', errorCode: 'CONNECTOR_STATE_CORRUPT' })
+  })
+
   it('distinguishes provider status failure from corrupt local state without leaking details', async () => {
     const { FileHealthConnectorStateStore } = await import('../../packages/server/src/services/hermes/health-loop/connectors')
     const { createS400HealthConnector } = await import('../../packages/server/src/services/hermes/health-loop/connectors/s400')

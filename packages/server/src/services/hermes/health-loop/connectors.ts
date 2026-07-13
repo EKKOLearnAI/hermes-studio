@@ -6,7 +6,6 @@ import type { HealthDomain, HealthIngestionEnvelope, HealthIngestionResult } fro
 
 const CONNECTOR_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 const SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/
-const CURSOR = /^[A-Za-z0-9_-]{1,512}$/
 const ERROR_CODE = /^[A-Z][A-Z0-9_]{1,79}$/
 const RFC3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(?:Z|([+-])(\d{2}):(\d{2}))$/
 const MAX_STATE_BYTES = 65_536
@@ -150,6 +149,7 @@ export function defaultHealthConnectorStateStore(profile = 'default'): FileHealt
 export interface ManagedConnectorSource {
   id: string
   domains: HealthDomain[]
+  cursorKind?: 'opaque' | 'timestamp'
   access(): Promise<HealthConnectorAccessState>
   capabilities: HealthConnectorCapabilities
   load(input: { cursor?: string; now: string }): Promise<{ envelopes: HealthIngestionEnvelope[]; cursor?: string; health?: HealthConnectorHealth }>
@@ -203,11 +203,14 @@ export function createManagedHealthConnector(options: {
       } catch {
         throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
       }
-      if (input.cursor !== undefined && previous?.cursor !== undefined && compareCursorValues(input.cursor, previous.cursor) < 0) {
-        throw new HealthConnectorError('CONNECTOR_CURSOR_CONFLICT')
+      if (input.cursor !== undefined && previous?.cursor !== undefined) {
+        if (source.cursorKind === 'timestamp') {
+          if (compareCursorValues(input.cursor, previous.cursor) < 0) throw new HealthConnectorError('CONNECTOR_CURSOR_CONFLICT')
+        } else if (input.cursor !== previous.cursor) throw new HealthConnectorError('CONNECTOR_CURSOR_CONFLICT')
       }
-      const cursor = maxCursor(input.cursor, previous?.cursor)
-      if (cursor && compareTimestampInstants(cursorTimestamp(cursor), now) > 0) {
+      const cursor = source.cursorKind === 'timestamp' ? maxCursor(input.cursor, previous?.cursor) : (input.cursor ?? previous?.cursor)
+      const inputCursorTime = cursor ? comparableCursorTimestamp(cursor, source.cursorKind) : undefined
+      if (inputCursorTime && compareTimestampInstants(inputCursorTime, now) > 0) {
         throw new HealthConnectorError('CONNECTOR_CURSOR_CONFLICT')
       }
       let freshnessByDomain = { ...(previous?.freshnessByDomain ?? {}) }
@@ -238,7 +241,9 @@ export function createManagedHealthConnector(options: {
           const current = freshnessByDomain[envelope.domain]
           if (!current || compareTimestampInstants(envelope.observedAt, current) > 0) freshnessByDomain[envelope.domain] = envelope.observedAt
         }
-        const nextCursor = maxCursor(cursor, loaded.cursor)
+        const nextCursor = source.cursorKind === 'timestamp' ? maxCursor(cursor, loaded.cursor) : (loaded.cursor ?? cursor)
+        const nextCursorTime = nextCursor ? comparableCursorTimestamp(nextCursor, source.cursorKind) : undefined
+        if (nextCursorTime && compareTimestampInstants(nextCursorTime, now) > 0) throw new HealthConnectorError('CONNECTOR_CURSOR_CONFLICT')
         const successful: PersistedConnectorState = {
           health: loaded.health ?? 'healthy', lastAttemptAt: now, lastSuccessAt: now,
           ...(nextCursor ? { cursor: nextCursor } : {}),
@@ -287,11 +292,9 @@ export function createConnectorCursor(observedAt: string, sourceId: string): str
 }
 
 export function compareEnvelopeCursor(envelope: HealthIngestionEnvelope, cursor: string): number {
-  validateCursor(cursor)
-  const decoded = Buffer.from(cursor, 'base64url').toString('utf8')
-  const separator = decoded.indexOf('\0')
-  const timeOrder = compareTimestampInstants(validateTimestamp(envelope.observedAt), decoded.slice(0, separator))
-  return timeOrder || Buffer.compare(Buffer.from(envelope.sourceId, 'utf8'), Buffer.from(decoded.slice(separator + 1), 'utf8'))
+  const [cursorTime, cursorSource] = decodeTimestampCursor(cursor)
+  const timeOrder = compareTimestampInstants(validateTimestamp(envelope.observedAt), cursorTime)
+  return timeOrder || Buffer.compare(Buffer.from(envelope.sourceId, 'utf8'), Buffer.from(cursorSource, 'utf8'))
 }
 
 export function compareHealthEnvelopeOrder(left: HealthIngestionEnvelope, right: HealthIngestionEnvelope): number {
@@ -341,14 +344,28 @@ function validateState(value: unknown): asserts value is PersistedConnectorState
       validateTimestamp(timestamp, 'CONNECTOR_STATE_CORRUPT')
     }
   }
+  const attempt = typeof value.lastAttemptAt === 'string' ? value.lastAttemptAt : undefined
+  const success = typeof value.lastSuccessAt === 'string' ? value.lastSuccessAt : undefined
+  const freshness = isPlainObject(value.freshnessByDomain) ? Object.values(value.freshnessByDomain) as string[] : []
+  if (!attempt && (success || freshness.length > 0)) throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
+  if (attempt && success && compareTimestampInstants(success, attempt) > 0) throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
+  if (attempt && freshness.some(timestamp => compareTimestampInstants(timestamp, attempt) > 0)) throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
+  if (attempt && typeof value.cursor === 'string' && RFC3339.test(value.cursor)) {
+    validateTimestamp(value.cursor, 'CONNECTOR_STATE_CORRUPT')
+    if (compareTimestampInstants(value.cursor, attempt) > 0) throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
+  }
   if (value.errorCode !== undefined && (typeof value.errorCode !== 'string' || !ERROR_CODE.test(value.errorCode))) {
     throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
   }
 }
 
 function validateStateForSource(state: PersistedConnectorState | undefined, source: ManagedConnectorSource): void {
-  if (!state?.freshnessByDomain) return
-  if (Object.keys(state.freshnessByDomain).some(domain => !source.domains.includes(domain as HealthDomain))) {
+  if (!state) return
+  if (state.freshnessByDomain && Object.keys(state.freshnessByDomain).some(domain => !source.domains.includes(domain as HealthDomain))) {
+    throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
+  }
+  if (source.cursorKind === 'timestamp' && state.cursor && state.lastAttemptAt
+    && compareTimestampInstants(cursorTimestamp(state.cursor), state.lastAttemptAt) > 0) {
     throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
   }
 }
@@ -383,15 +400,23 @@ function validateAccess(access: HealthConnectorAccessState): void {
 }
 
 function validateCursor(cursor: string, errorCode = 'CONNECTOR_INVALID_CURSOR'): void {
-  if (typeof cursor !== 'string' || !CURSOR.test(cursor)) throw new HealthConnectorError(errorCode)
+  if (typeof cursor !== 'string' || cursor.length < 1 || cursor.length > 512 || Buffer.byteLength(cursor, 'utf8') > 512 || !/^[\x21-\x7e]+$/.test(cursor)) {
+    throw new HealthConnectorError(errorCode)
+  }
+}
+
+function decodeTimestampCursor(cursor: string, errorCode = 'CONNECTOR_INVALID_CURSOR'): [string, string] {
+  validateCursor(cursor, errorCode)
   try {
     const decodedBuffer = Buffer.from(cursor, 'base64url')
     if (decodedBuffer.toString('base64url') !== cursor) throw new Error('non-canonical cursor')
     const decoded = decodedBuffer.toString('utf8')
     const separator = decoded.indexOf('\0')
     if (separator <= 0 || separator !== decoded.lastIndexOf('\0')) throw new Error('invalid cursor fields')
-    validateTimestamp(decoded.slice(0, separator), errorCode)
-    if (!SOURCE_ID.test(decoded.slice(separator + 1))) throw new Error('invalid cursor source')
+    const timestamp = validateTimestamp(decoded.slice(0, separator), errorCode)
+    const sourceId = decoded.slice(separator + 1)
+    if (!SOURCE_ID.test(sourceId)) throw new Error('invalid cursor source')
+    return [timestamp, sourceId]
   } catch (error) {
     if (error instanceof HealthConnectorError && error.code === errorCode) throw error
     throw new HealthConnectorError(errorCode)
@@ -429,20 +454,19 @@ function maxCursor(left: string | undefined, right: string | undefined): string 
 }
 
 function compareCursorValues(left: string, right: string): number {
-  const decode = (value: string): [string, string] => {
-    const decoded = Buffer.from(value, 'base64url').toString('utf8')
-    const separator = decoded.indexOf('\0')
-    return [decoded.slice(0, separator), decoded.slice(separator + 1)]
-  }
-  const [leftTime, leftSource] = decode(left); const [rightTime, rightSource] = decode(right)
+  const [leftTime, leftSource] = decodeTimestampCursor(left); const [rightTime, rightSource] = decodeTimestampCursor(right)
   return compareTimestampInstants(leftTime, rightTime)
     || Buffer.compare(Buffer.from(leftSource, 'utf8'), Buffer.from(rightSource, 'utf8'))
 }
 
 function cursorTimestamp(cursor: string): string {
-  validateCursor(cursor)
-  const decoded = Buffer.from(cursor, 'base64url').toString('utf8')
-  return decoded.slice(0, decoded.indexOf('\0'))
+  return decodeTimestampCursor(cursor)[0]
+}
+
+function comparableCursorTimestamp(cursor: string, kind: ManagedConnectorSource['cursorKind']): string | undefined {
+  if (kind === 'timestamp') return cursorTimestamp(cursor)
+  if (!RFC3339.test(cursor)) return undefined
+  return validateTimestamp(cursor)
 }
 
 function timestampNanoseconds(value: string): bigint {

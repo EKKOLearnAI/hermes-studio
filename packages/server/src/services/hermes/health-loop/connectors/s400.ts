@@ -35,6 +35,7 @@ export function createS400HealthConnector(options: {
     source: {
       id: 's400',
       domains: ['body_composition'],
+      cursorKind: 'timestamp',
       capabilities: { read: ['body_composition'], write: [] },
       access: async () => {
         const settings = await settingsReader(profile)
