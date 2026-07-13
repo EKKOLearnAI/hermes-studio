@@ -225,6 +225,27 @@ describe('health-loop ingestion', () => {
     expect(() => normalizeHealthIngestionEnvelope(oversizedKey)).toThrow(/HEALTH_INGESTION_INVALID_JSON/)
   })
 
+  it('rejects every unpaired UTF-16 surrogate path while accepting legal emoji pairs', async () => {
+    const { HealthIngestionError, normalizeHealthIngestionEnvelope } = await import('../../packages/server/src/services/hermes/health-loop')
+    const invalid = [
+      { ...fixtures[2], payload: { ...fixtures[2].payload, capture: { views: ['\ud800', '\ud801'], quality: 1 } } },
+      { ...fixtures[0], payload: { ...fixtures[0].payload, note: '\ud800' } },
+      { ...fixtures[0], payload: { ...fixtures[0].payload, ['\ud801']: true } },
+    ]
+    for (const envelope of invalid) expect(() => normalizeHealthIngestionEnvelope(envelope)).toThrow(HealthIngestionError)
+    expect(() => normalizeHealthIngestionEnvelope({
+      ...fixtures[4], payload: { ...fixtures[4].payload, foods: [{ name: 'meal-\ud83d\ude00', portionGrams: 10 }] },
+    })).not.toThrow()
+  })
+
+  it('validates leap days with proleptic Gregorian rules including year zero', async () => {
+    const { HealthIngestionError, normalizeHealthIngestionEnvelope } = await import('../../packages/server/src/services/hermes/health-loop')
+    const normalizeTime = (observedAt: string) => normalizeHealthIngestionEnvelope({ ...fixtures[0], observedAt })
+    expect(normalizeTime('0000-02-29T00:00:00Z').observedAt).toBe('0000-02-29T00:00:00Z')
+    expect(() => normalizeTime('1900-02-29T00:00:00Z')).toThrow(HealthIngestionError)
+    expect(normalizeTime('2000-02-29T00:00:00Z').observedAt).toBe('2000-02-29T00:00:00Z')
+  })
+
   it('rejects invalid newly approved fields in every domain with sanitized errors', async () => {
     const { HealthIngestionError, normalizeHealthIngestionEnvelope } = await import('../../packages/server/src/services/hermes/health-loop')
     const invalid: HealthIngestionEnvelope[] = [

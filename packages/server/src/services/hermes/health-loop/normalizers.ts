@@ -28,9 +28,13 @@ function rawUtf8Length(value: string, limit = Number.POSITIVE_INFINITY): number 
     const code = value.charCodeAt(index)
     if (code <= 0x7f) bytes += 1
     else if (code <= 0x7ff) bytes += 2
-    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length
-      && value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff) {
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      if (index + 1 >= value.length || value.charCodeAt(index + 1) < 0xdc00 || value.charCodeAt(index + 1) > 0xdfff) {
+        fail('HEALTH_INGESTION_INVALID_JSON', 'unpaired UTF-16 surrogates are not allowed')
+      }
       bytes += 4; index += 1
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      fail('HEALTH_INGESTION_INVALID_JSON', 'unpaired UTF-16 surrogates are not allowed')
     } else bytes += 3
     if (bytes > limit) return bytes
   }
@@ -49,12 +53,17 @@ function validateSafeJson(value: unknown): void {
     addBytes(2)
     for (let index = 0; index < valueToMeasure.length; index += 1) {
       const code = valueToMeasure.charCodeAt(index)
+      if (code >= 0xd800 && code <= 0xdbff) {
+        if (index + 1 >= valueToMeasure.length || valueToMeasure.charCodeAt(index + 1) < 0xdc00 || valueToMeasure.charCodeAt(index + 1) > 0xdfff) {
+          fail('HEALTH_INGESTION_INVALID_JSON', 'unpaired UTF-16 surrogates are not allowed')
+        }
+        addBytes(4); index += 1; continue
+      }
+      if (code >= 0xdc00 && code <= 0xdfff) fail('HEALTH_INGESTION_INVALID_JSON', 'unpaired UTF-16 surrogates are not allowed')
       if (code === 0x22 || code === 0x5c || code === 0x08 || code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d) addBytes(2)
-      else if (code < 0x20 || (code >= 0xd800 && code <= 0xdfff
-        && !(code <= 0xdbff && index + 1 < valueToMeasure.length && valueToMeasure.charCodeAt(index + 1) >= 0xdc00 && valueToMeasure.charCodeAt(index + 1) <= 0xdfff))) addBytes(6)
+      else if (code < 0x20) addBytes(6)
       else if (code <= 0x7f) addBytes(1)
       else if (code <= 0x7ff) addBytes(2)
-      else if (code >= 0xd800 && code <= 0xdbff) { addBytes(4); index += 1 }
       else addBytes(3)
     }
   }
@@ -139,6 +148,11 @@ function daysFromCivil(year: number, month: number, day: number): number {
   return era * 146_097 + dayOfEra - 719_468
 }
 
+function daysInGregorianMonth(year: number, month: number): number {
+  if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28
+  return [4, 6, 9, 11].includes(month) ? 30 : 31
+}
+
 function strictTimestamp(value: unknown, field: string): string {
   if (typeof value !== 'string') fail('HEALTH_INGESTION_INVALID_TIMESTAMP', `${field} must be RFC3339`)
   const match = RFC3339.exec(value)
@@ -146,7 +160,7 @@ function strictTimestamp(value: unknown, field: string): string {
   const year = Number(match[1]); const month = Number(match[2]); const day = Number(match[3])
   const hour = Number(match[4]); const minute = Number(match[5]); const second = Number(match[6])
   const offsetHour = match[10] ? Number(match[10]) : 0; const offsetMinute = match[11] ? Number(match[11]) : 0
-  const days = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  const days = month >= 1 && month <= 12 ? daysInGregorianMonth(year, month) : 0
   if (month < 1 || month > 12 || day < 1 || day > days || hour > 23 || minute > 59 || second > 59
     || offsetHour > 14 || offsetMinute > 59 || (offsetHour === 14 && offsetMinute !== 0)) {
     fail('HEALTH_INGESTION_INVALID_TIMESTAMP', `${field} must be RFC3339`)
