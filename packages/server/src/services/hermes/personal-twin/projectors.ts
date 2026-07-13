@@ -203,35 +203,54 @@ export function rebuildTwinProjections(): void {
   })
 }
 
-export function writeTwinProjection(input: TwinProjectionWrite): TwinProjection {
-  const valueJson = validateProjectionWrite(input)
+export function writeTwinProjectionBatch(inputs: TwinProjectionWrite[]): TwinProjection[] {
+  if (!Array.isArray(inputs) || inputs.length < 1 || inputs.length > 128) {
+    throw new Error('Twin projection batch must contain between 1 and 128 writes')
+  }
+  const addresses = new Set<string>()
+  const prepared = inputs.map(input => {
+    const address = `${input.subjectId}\0${input.key}`
+    if (addresses.has(address)) throw new Error('Twin projection batch contains a duplicate address')
+    addresses.add(address)
+    return { input, valueJson: validateProjectionWrite(input) }
+  })
   return withPersonalTwinDb(db => {
     db.exec('BEGIN IMMEDIATE')
     try {
-      requireProjectionSubject(db, input.subjectId)
-      const current = db.prepare('SELECT * FROM twin_projections WHERE projection_key = ? AND subject_id = ?')
-        .get(input.key, input.subjectId) as unknown as ProjectionRow | undefined
-      const currentVersion = current?.version ?? 0
-      if (input.expectedVersion !== undefined && input.expectedVersion !== currentVersion) {
-        throw new Error('TWIN_PROJECTION_CONFLICT')
+      const currentByAddress = new Map<string, ProjectionRow | undefined>()
+      for (const { input } of prepared) {
+        requireProjectionSubject(db, input.subjectId)
+        const current = db.prepare('SELECT * FROM twin_projections WHERE projection_key = ? AND subject_id = ?')
+          .get(input.key, input.subjectId) as unknown as ProjectionRow | undefined
+        currentByAddress.set(`${input.subjectId}\0${input.key}`, current)
+        if (input.expectedVersion !== undefined && input.expectedVersion !== (current?.version ?? 0)) {
+          throw new Error('TWIN_PROJECTION_CONFLICT')
+        }
       }
-      const version = currentVersion + 1
-      db.prepare(`
-        INSERT INTO twin_projections (projection_key, subject_id, value_json, source_record_id, version, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(projection_key, subject_id) DO UPDATE SET
-          value_json=excluded.value_json, source_record_id=excluded.source_record_id,
-          version=excluded.version, updated_at=excluded.updated_at
-      `).run(input.key, input.subjectId, valueJson, input.sourceRecordId, version, input.updatedAt)
-      const result = db.prepare('SELECT * FROM twin_projections WHERE projection_key = ? AND subject_id = ?')
-        .get(input.key, input.subjectId) as unknown as ProjectionRow
+      const write = db.prepare(`
+          INSERT INTO twin_projections (projection_key, subject_id, value_json, source_record_id, version, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(projection_key, subject_id) DO UPDATE SET
+            value_json=excluded.value_json, source_record_id=excluded.source_record_id,
+            version=excluded.version, updated_at=excluded.updated_at
+        `)
+      for (const { input, valueJson } of prepared) {
+        const current = currentByAddress.get(`${input.subjectId}\0${input.key}`)
+        write.run(input.key, input.subjectId, valueJson, input.sourceRecordId, (current?.version ?? 0) + 1, input.updatedAt)
+      }
+      const result = prepared.map(({ input }) => db.prepare('SELECT * FROM twin_projections WHERE projection_key = ? AND subject_id = ?')
+        .get(input.key, input.subjectId) as unknown as ProjectionRow)
       db.exec('COMMIT')
-      return projectionFromRow(result)
+      return result.map(projectionFromRow)
     } catch (error) {
       db.exec('ROLLBACK')
       throw error
     }
   })
+}
+
+export function writeTwinProjection(input: TwinProjectionWrite): TwinProjection {
+  return writeTwinProjectionBatch([input])[0]
 }
 
 export function listTwinProjections(prefix: string, subjectId: string): TwinProjection[] {
