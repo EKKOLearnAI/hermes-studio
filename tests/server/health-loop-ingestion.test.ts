@@ -122,7 +122,7 @@ describe('health-loop ingestion', () => {
       'health.skin.device': { value: 'pixel-9' }, 'health.skin.comparison_baseline': { value: 'skin-baseline-2026-07' },
     })
     expect(metrics(4)).toMatchObject({
-      'health.diet.meal_time': { value: '2026-07-13T12:10:00+08:00' }, 'health.diet.parser_confidence': { value: 0.86 },
+      'health.diet.meal_time': { value: '2026-07-13T04:10:00Z' }, 'health.diet.parser_confidence': { value: 0.86 },
       'health.diet.confirmation_status': { value: 'confirmed' },
       'health.diet.supplements': { value: [{ name: 'creatine', amount: 5, unit: 'g' }] },
     })
@@ -136,7 +136,7 @@ describe('health-loop ingestion', () => {
       'health.sleep.freshness_minutes': { unit: 'min' }, 'health.sleep.subjective_recovery': { value: 7 },
     })
     expect(metrics(7)['health.internal_health.markers'].value).toEqual([expect.objectContaining({
-      key: 'fasting_glucose', displayLabel: 'Fasting glucose', measuredAt: '2026-07-01T08:15:00+08:00', referenceInterval: { low: 3.9, high: 6.1 },
+      key: 'fasting_glucose', displayLabel: 'Fasting glucose', measuredAt: '2026-07-01T00:15:00Z', referenceInterval: { low: 3.9, high: 6.1 },
       evidence: { page: 2, region: 'lab-table-row-4' },
     })])
   })
@@ -183,6 +183,46 @@ describe('health-loop ingestion', () => {
     const reversedSets = { ...workoutWithDistinctSets, payload: { ...workoutWithDistinctSets.payload, exercises: [{ ...exercises[0], sets: [...orderedSets].reverse() }, exercises[1]] } }
     expect(normalizeHealthIngestionEnvelope(reversedSets).materialDigest)
       .not.toBe(normalizeHealthIngestionEnvelope(workoutWithDistinctSets).materialDigest)
+  })
+
+  it('uses UTF-8 byte order for canonically equivalent Unicode spellings without merging them', async () => {
+    const { normalizeHealthIngestionEnvelope } = await import('../../packages/server/src/services/hermes/health-loop')
+    const composed = { name: '\u00e9', portionGrams: 10 }
+    const decomposed = { name: 'e\u0301', portionGrams: 10 }
+    const first = { ...fixtures[4], sourceId: 'unicode-foods', payload: { ...fixtures[4].payload, foods: [composed, decomposed] } }
+    const reversed = { ...first, payload: { ...first.payload, foods: [decomposed, composed] } }
+    const left = normalizeHealthIngestionEnvelope(first); const right = normalizeHealthIngestionEnvelope(reversed)
+
+    expect(right).toEqual(left)
+    expect(left.observations.find(item => item.metric === 'health.diet.foods')?.value).toEqual([decomposed, composed])
+  })
+
+  it('canonicalizes RFC3339 instants to UTC without losing nanosecond distinctions', async () => {
+    const { normalizeHealthIngestionEnvelope } = await import('../../packages/server/src/services/hermes/health-loop')
+    const normalizeTime = (timestamp: string) => normalizeHealthIngestionEnvelope({ ...fixtures[0], observedAt: timestamp })
+    const utc = normalizeTime('2026-07-13T00:00:00.100000000Z')
+    const offset = normalizeTime('2026-07-13T08:00:00.1+08:00')
+    const shorter = normalizeTime('2026-07-13T00:00:00.100Z')
+
+    expect(offset).toEqual(utc)
+    expect(shorter).toEqual(utc)
+    expect(utc.observedAt).toBe('2026-07-13T00:00:00.1Z')
+    expect(normalizeTime('2026-07-13T00:00:00.100000001Z').materialDigest).not.toBe(utc.materialDigest)
+    expect(normalizeTime('2026-07-13T00:00:00.100000002Z').materialDigest)
+      .not.toBe(normalizeTime('2026-07-13T00:00:00.100000001Z').materialDigest)
+  })
+
+  it('enforces raw JSON bytes incrementally, rejects oversized keys, and accepts the exact byte boundary', async () => {
+    const { HealthIngestionError, normalizeHealthIngestionEnvelope } = await import('../../packages/server/src/services/hermes/health-loop')
+    const base = { ...fixtures[0], payload: { weightKg: 84, padding: '' } }
+    const baseBytes = Buffer.byteLength(JSON.stringify(base), 'utf8')
+    const atLimit = { ...base, payload: { ...base.payload, padding: 'x'.repeat(65_536 - baseBytes) } }
+    const overLimit = { ...atLimit, payload: { ...atLimit.payload, padding: `${atLimit.payload.padding}x` } }
+    const oversizedKey = { ...fixtures[0], payload: { weightKg: 84, ['k'.repeat(257)]: true } }
+
+    expect(() => normalizeHealthIngestionEnvelope(atLimit)).not.toThrow()
+    expect(() => normalizeHealthIngestionEnvelope(overLimit)).toThrow(HealthIngestionError)
+    expect(() => normalizeHealthIngestionEnvelope(oversizedKey)).toThrow(/HEALTH_INGESTION_INVALID_JSON/)
   })
 
   it('rejects invalid newly approved fields in every domain with sanitized errors', async () => {

@@ -8,6 +8,7 @@ import {
 const MAX_JSON_DEPTH = 8
 const MAX_JSON_NODES = 512
 const MAX_JSON_BYTES = 65_536
+const MAX_JSON_KEY_BYTES = 256
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/
 const ARTIFACT_ID = /^artifact-[0-9a-f]{64}$/
 const RFC3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|([+-])(\d{2}):(\d{2}))$/
@@ -17,16 +18,55 @@ function fail(code: ConstructorParameters<typeof HealthIngestionError>[0], detai
   throw new HealthIngestionError(code, detail)
 }
 
-function canonicalSafeJson(value: unknown): string {
+function compareUtf8(left: string, right: string): number {
+  return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'))
+}
+
+function rawUtf8Length(value: string, limit = Number.POSITIVE_INFINITY): number {
+  let bytes = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code <= 0x7f) bytes += 1
+    else if (code <= 0x7ff) bytes += 2
+    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length
+      && value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff) {
+      bytes += 4; index += 1
+    } else bytes += 3
+    if (bytes > limit) return bytes
+  }
+  return bytes
+}
+
+function validateSafeJson(value: unknown): void {
   let nodes = 0
+  let bytes = 0
   const seen = new Set<object>()
-  const visit = (item: unknown, depth: number): string => {
+  const addBytes = (count: number): void => {
+    bytes += count
+    if (bytes > MAX_JSON_BYTES) fail('HEALTH_INGESTION_INVALID_JSON', 'JSON byte limit exceeded')
+  }
+  const addStringBytes = (valueToMeasure: string): void => {
+    addBytes(2)
+    for (let index = 0; index < valueToMeasure.length; index += 1) {
+      const code = valueToMeasure.charCodeAt(index)
+      if (code === 0x22 || code === 0x5c || code === 0x08 || code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d) addBytes(2)
+      else if (code < 0x20 || (code >= 0xd800 && code <= 0xdfff
+        && !(code <= 0xdbff && index + 1 < valueToMeasure.length && valueToMeasure.charCodeAt(index + 1) >= 0xdc00 && valueToMeasure.charCodeAt(index + 1) <= 0xdfff))) addBytes(6)
+      else if (code <= 0x7f) addBytes(1)
+      else if (code <= 0x7ff) addBytes(2)
+      else if (code >= 0xd800 && code <= 0xdbff) { addBytes(4); index += 1 }
+      else addBytes(3)
+    }
+  }
+  const visit = (item: unknown, depth: number): void => {
     nodes += 1
     if (nodes > MAX_JSON_NODES || depth > MAX_JSON_DEPTH) fail('HEALTH_INGESTION_INVALID_JSON', 'JSON structural limits exceeded')
-    if (item === null || typeof item === 'boolean' || typeof item === 'string') return JSON.stringify(item)
+    if (item === null) { addBytes(4); return }
+    if (typeof item === 'boolean') { addBytes(item ? 4 : 5); return }
+    if (typeof item === 'string') { addStringBytes(item); return }
     if (typeof item === 'number') {
       if (!Number.isFinite(item)) fail('HEALTH_INGESTION_INVALID_JSON', 'JSON numbers must be finite')
-      return JSON.stringify(item)
+      addBytes(String(item).length); return
     }
     if (typeof item !== 'object' || item === null || isProxy(item)) fail('HEALTH_INGESTION_INVALID_JSON', 'payload must be plain JSON')
     if (seen.has(item)) fail('HEALTH_INGESTION_INVALID_JSON', 'JSON cycles are not allowed')
@@ -39,31 +79,45 @@ function canonicalSafeJson(value: unknown): string {
         if (item.length > 128 || keys.some(key => typeof key !== 'string' || (key !== 'length' && !/^(?:0|[1-9][0-9]*)$/.test(key)))) {
           fail('HEALTH_INGESTION_INVALID_JSON', 'JSON array limits exceeded')
         }
-        const values: string[] = []
+        addBytes(1)
         for (let index = 0; index < item.length; index += 1) {
+          if (index > 0) addBytes(1)
           const descriptor = Object.getOwnPropertyDescriptor(item, String(index))
           if (!descriptor?.enumerable || !('value' in descriptor)) fail('HEALTH_INGESTION_INVALID_JSON', 'JSON accessors are not allowed')
-          values.push(visit(descriptor.value, depth + 1))
+          visit(descriptor.value, depth + 1)
         }
-        return `[${values.join(',')}]`
+        addBytes(1); return
       }
       const keys = Reflect.ownKeys(item)
       if (keys.some(key => typeof key !== 'string')) fail('HEALTH_INGESTION_INVALID_JSON', 'JSON symbol keys are not allowed')
-      const output: string[] = []
-      for (const key of (keys as string[]).sort()) {
+      if (keys.length > MAX_JSON_NODES) fail('HEALTH_INGESTION_INVALID_JSON', 'JSON structural limits exceeded')
+      addBytes(1)
+      for (let index = 0; index < keys.length; index += 1) {
+        const key = keys[index] as string
+        if (index > 0) addBytes(1)
         if (POISON_KEYS.has(key)) fail('HEALTH_INGESTION_INVALID_JSON', 'prototype keys are not allowed')
+        if (rawUtf8Length(key, MAX_JSON_KEY_BYTES) > MAX_JSON_KEY_BYTES) fail('HEALTH_INGESTION_INVALID_JSON', 'JSON key byte limit exceeded')
         const descriptor = Object.getOwnPropertyDescriptor(item, key)
         if (!descriptor?.enumerable || !('value' in descriptor)) fail('HEALTH_INGESTION_INVALID_JSON', 'JSON accessors are not allowed')
-        output.push(`${JSON.stringify(key)}:${visit(descriptor.value, depth + 1)}`)
+        addStringBytes(key); addBytes(1); visit(descriptor.value, depth + 1)
       }
-      return `{${output.join(',')}}`
+      addBytes(1)
     } finally {
       seen.delete(item)
     }
   }
-  const json = visit(value, 0)
-  if (Buffer.byteLength(json, 'utf8') > MAX_JSON_BYTES) fail('HEALTH_INGESTION_INVALID_JSON', 'JSON byte limit exceeded')
-  return json
+  visit(value, 0)
+}
+
+function canonicalSafeJson(value: unknown): string {
+  validateSafeJson(value)
+  const visit = (item: unknown): string => {
+    if (item === null || typeof item === 'boolean' || typeof item === 'string' || typeof item === 'number') return JSON.stringify(item)
+    if (Array.isArray(item)) return `[${item.map(visit).join(',')}]`
+    const record = item as Record<string, unknown>
+    return `{${Object.keys(record).sort(compareUtf8).map(key => `${JSON.stringify(key)}:${visit(record[key])}`).join(',')}}`
+  }
+  return visit(value)
 }
 
 function plainRecord(value: unknown, field = 'payload'): Record<string, unknown> {
@@ -73,6 +127,16 @@ function plainRecord(value: unknown, field = 'payload'): Record<string, unknown>
   const prototype = Object.getPrototypeOf(value)
   if (prototype !== Object.prototype && prototype !== null) fail('HEALTH_INGESTION_INVALID_PAYLOAD', `${field} must be an object`)
   return value as Record<string, unknown>
+}
+
+function daysFromCivil(year: number, month: number, day: number): number {
+  const adjustedYear = year - (month <= 2 ? 1 : 0)
+  const era = Math.floor(adjustedYear / 400)
+  const yearOfEra = adjustedYear - era * 400
+  const shiftedMonth = month + (month > 2 ? -3 : 9)
+  const dayOfYear = Math.floor((153 * shiftedMonth + 2) / 5) + day - 1
+  const dayOfEra = yearOfEra * 365 + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100) + dayOfYear
+  return era * 146_097 + dayOfEra - 719_468
 }
 
 function strictTimestamp(value: unknown, field: string): string {
@@ -87,7 +151,16 @@ function strictTimestamp(value: unknown, field: string): string {
     || offsetHour > 14 || offsetMinute > 59 || (offsetHour === 14 && offsetMinute !== 0)) {
     fail('HEALTH_INGESTION_INVALID_TIMESTAMP', `${field} must be RFC3339`)
   }
-  return value
+  const offsetSign = match[9] === '-' ? -1 : 1
+  const offsetSeconds = match[8] === 'Z' ? 0 : offsetSign * (offsetHour * 60 + offsetMinute) * 60
+  const epochSeconds = daysFromCivil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second - offsetSeconds
+  const utc = new Date(epochSeconds * 1_000).toISOString()
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/.test(utc)) {
+    fail('HEALTH_INGESTION_INVALID_TIMESTAMP', `${field} UTC instant is outside the supported range`)
+  }
+  const nanoseconds = (match[7] ?? '').padEnd(9, '0')
+  const canonicalFraction = nanoseconds.replace(/0+$/, '')
+  return `${utc.slice(0, 19)}${canonicalFraction ? `.${canonicalFraction}` : ''}Z`
 }
 
 function dateOnly(value: unknown, field: string): string {
@@ -143,12 +216,12 @@ function add(output: NormalizedHealthObservation[], metric: string, value: unkno
 
 function unorderedUnique<T>(values: T[]): T[] {
   const byCanonical = new Map(values.map(value => [canonicalSafeJson(value), value]))
-  return [...byCanonical.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, value]) => value)
+  return [...byCanonical.entries()].sort(([left], [right]) => compareUtf8(left, right)).map(([, value]) => value)
 }
 
 function unorderedBag<T>(values: T[]): T[] {
   return values.map(value => ({ canonical: canonicalSafeJson(value), value }))
-    .sort((left, right) => left.canonical.localeCompare(right.canonical)).map(item => item.value)
+    .sort((left, right) => compareUtf8(left.canonical, right.canonical)).map(item => item.value)
 }
 
 function normalizeBody(record: Record<string, unknown>): NormalizedHealthObservation[] {
@@ -230,7 +303,7 @@ function normalizePosture(record: Record<string, unknown>): NormalizedHealthObse
   if (record.capture !== undefined) {
     const capture = plainRecord(record.capture, 'capture')
     if (!Array.isArray(capture.views) || capture.views.length < 1 || capture.views.length > 4) fail('HEALTH_INGESTION_INVALID_PAYLOAD', 'capture.views is invalid')
-    add(output, 'health.posture.capture', { views: [...new Set(capture.views.map((view, index) => text(view, `capture.views[${index}]`, 20)))].sort(), quality: number(capture.quality, 'capture.quality', 0, 1) })
+    add(output, 'health.posture.capture', { views: [...new Set(capture.views.map((view, index) => text(view, `capture.views[${index}]`, 20)))].sort(compareUtf8), quality: number(capture.quality, 'capture.quality', 0, 1) })
   }
   if (record.modelVersion !== undefined) add(output, 'health.posture.model_version', boundedIdentifier(record.modelVersion, 'modelVersion', 64))
   add(output, 'health.posture.model_confidence', optionalNumber(record, 'modelConfidence', 0, 1))
@@ -327,7 +400,7 @@ function normalizeFitness(record: Record<string, unknown>): NormalizedHealthObse
       if (exercise.intensity !== undefined) normalized.intensity = boundedIdentifier(exercise.intensity, 'exercise.intensity', 30)
       if (exercise.muscles !== undefined) {
         if (!Array.isArray(exercise.muscles) || exercise.muscles.length > 32) fail('HEALTH_INGESTION_INVALID_PAYLOAD', 'exercise.muscles is invalid')
-        normalized.muscles = [...new Set(exercise.muscles.map((muscle, index) => boundedIdentifier(muscle, `exercise.muscles[${index}]`, 50) as string))].sort()
+        normalized.muscles = [...new Set(exercise.muscles.map((muscle, index) => boundedIdentifier(muscle, `exercise.muscles[${index}]`, 50) as string))].sort(compareUtf8)
       }
       const pain = optionalNumber(exercise, 'pain', 0, 10); if (pain !== undefined) normalized.pain = pain
       const rpe = optionalNumber(exercise, 'rpe', 0, 10); if (rpe !== undefined) normalized.rpe = rpe
@@ -344,7 +417,7 @@ function normalizeFitness(record: Record<string, unknown>): NormalizedHealthObse
   if (record.intensity !== undefined) add(output, 'health.fitness.intensity', boundedIdentifier(record.intensity, 'intensity', 30))
   if (record.muscles !== undefined) {
     if (!Array.isArray(record.muscles) || record.muscles.length > 32) fail('HEALTH_INGESTION_INVALID_PAYLOAD', 'muscles is invalid')
-    add(output, 'health.fitness.muscles', [...new Set(record.muscles.map((muscle, index) => boundedIdentifier(muscle, `muscles[${index}]`, 50)!))].sort())
+    add(output, 'health.fitness.muscles', [...new Set(record.muscles.map((muscle, index) => boundedIdentifier(muscle, `muscles[${index}]`, 50)!))].sort(compareUtf8))
   }
   add(output, 'health.fitness.completed', optionalBoolean(record, 'completed'))
   return output
@@ -429,7 +502,7 @@ const CONFIRMATION: Record<HealthEvidenceClass, NormalizedHealthIngestion['confi
 }
 
 export function normalizeHealthIngestionEnvelope(input: HealthIngestionEnvelope): NormalizedHealthIngestion {
-  canonicalSafeJson(input)
+  validateSafeJson(input)
   if (!input || typeof input !== 'object' || !HEALTH_DOMAINS.includes(input.domain)) fail('HEALTH_INGESTION_INVALID_ENVELOPE', 'domain is invalid')
   const source = boundedIdentifier(input.source, 'source', 64)!
   const sourceId = boundedIdentifier(input.sourceId, 'sourceId', 200)!
@@ -442,9 +515,9 @@ export function normalizeHealthIngestionEnvelope(input: HealthIngestionEnvelope)
   const artifactIds = [...new Set((input.artifactIds ?? []).map(id => {
     if (typeof id !== 'string' || !ARTIFACT_ID.test(id)) fail('HEALTH_INGESTION_INVALID_ARTIFACT_ID', 'artifact ID is invalid')
     return id
-  }))].sort()
+  }))].sort(compareUtf8)
   if (artifactIds.length > 32) fail('HEALTH_INGESTION_INVALID_ARTIFACT_ID', 'too many artifact IDs')
-  const observations = NORMALIZERS[input.domain](payload).sort((left, right) => left.metric.localeCompare(right.metric))
+  const observations = NORMALIZERS[input.domain](payload).sort((left, right) => compareUtf8(left.metric, right.metric))
   if (observations.length === 0) fail('HEALTH_INGESTION_INVALID_PAYLOAD', 'payload contains no supported facts')
   const material = { domain: input.domain, observedAt, evidenceClass: input.evidenceClass, confidence, artifactIds, parserVersion: parserVersion ?? null, observations }
   const materialDigest = createHash('sha256').update(canonicalSafeJson(material)).digest('hex')
