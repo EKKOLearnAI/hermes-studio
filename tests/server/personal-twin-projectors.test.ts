@@ -66,6 +66,28 @@ describe('personal twin projectors and context', () => {
     expect(withPersonalTwinDb(db => db.prepare("SELECT COUNT(*) AS count FROM twin_outbox WHERE aggregate_id LIKE 'observation-%'").get())).toEqual({ count: 1 })
   })
 
+  it('keeps legacy latest projections readable outside custom key and value bounds', async () => {
+    const {
+      getTwinProjection, rebuildTwinProjections, recordTwinObservation, upsertTwinEntity, writeTwinProjection,
+    } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    const metric = 'Legacy Metric/%'
+    const oversizedValue = { payload: 'x'.repeat(17_000) }
+    recordTwinObservation({
+      entityId: 'person:self', metric, value: oversizedValue, observedAt: '2026-07-13T08:00:00.000Z',
+      source: 'legacy-import', sourceId: 'oversized-latest', actor: 'legacy-import', confidence: 1,
+      confirmationState: 'observed',
+    })
+
+    expect(getTwinProjection(`latest:${metric}`, 'person:self')?.value).toMatchObject({ value: oversizedValue })
+    rebuildTwinProjections()
+    expect(getTwinProjection(`latest:${metric}`, 'person:self')?.value).toMatchObject({ value: oversizedValue })
+    expect(() => writeTwinProjection({
+      key: 'health:oversized', subjectId: 'person:self', value: oversizedValue,
+      sourceRecordId: 'custom-oversized', updatedAt: '2026-07-13T08:00:00.000Z',
+    })).toThrow(/value/i)
+  })
+
   it('writes custom projections with atomic compare-and-set versioning', async () => {
     const {
       getTwinProjection, upsertTwinEntity, writeTwinProjection,
@@ -142,6 +164,26 @@ describe('personal twin projectors and context', () => {
     expect(() => writeTwinProjection({
       key: 'health:bad', subjectId: 'person:self', value: { score: Number.NaN }, sourceRecordId: 'bad-json', updatedAt: '2026-07-13T08:00:00.000Z',
     })).toThrow(/value/i)
+  })
+
+  it('rejects poison keys in custom projection writes and DTO reads', async () => {
+    const {
+      getTwinProjection, upsertTwinEntity, withPersonalTwinDb, writeTwinProjection,
+    } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    const poison = JSON.parse('{"nested":{"__proto__":{"polluted":true}}}') as Record<string, unknown>
+    expect(() => writeTwinProjection({
+      key: 'health:poison', subjectId: 'person:self', value: poison,
+      sourceRecordId: 'poison-write', updatedAt: '2026-07-13T08:00:00.000Z',
+    })).toThrow(/value/i)
+
+    writeTwinProjection({
+      key: 'health:safe', subjectId: 'person:self', value: { safe: true },
+      sourceRecordId: 'safe-write', updatedAt: '2026-07-13T08:00:00.000Z',
+    })
+    withPersonalTwinDb(db => db.prepare("UPDATE twin_projections SET value_json=? WHERE projection_key='health:safe'")
+      .run('{"nested":{"constructor":{"polluted":true}}}'))
+    expect(() => getTwinProjection('health:safe', 'person:self')).toThrow(/value/i)
   })
 
   it('preserves canonical subject attributes while serving overview and context', async () => {

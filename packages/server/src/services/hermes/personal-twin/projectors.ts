@@ -11,8 +11,34 @@ function parseJson<T>(value: string, fallback: T): T {
 }
 
 function projectionFromRow(row: ProjectionRow): TwinProjection {
-  const valueJson = canonicalProjectionJson(parseJson<unknown>(row.value_json, null))
-  return { key: row.projection_key, subjectId: row.subject_id, value: JSON.parse(valueJson) as Record<string, unknown>, sourceRecordId: row.source_record_id, version: row.version, updatedAt: row.updated_at }
+  const value = projectionValueFromJson(row.value_json, !row.projection_key.startsWith('latest:'))
+  return { key: row.projection_key, subjectId: row.subject_id, value, sourceRecordId: row.source_record_id, version: row.version, updatedAt: row.updated_at }
+}
+
+const PROJECTION_POISON_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+function assertProjectionPoisonFree(value: Record<string, unknown>): void {
+  const pending: unknown[] = [value]
+  while (pending.length > 0) {
+    const item = pending.pop()
+    if (!item || typeof item !== 'object') continue
+    for (const key of Object.keys(item)) {
+      if (PROJECTION_POISON_KEYS.has(key)) throw new Error('Twin projection value contains a poison key')
+      pending.push((item as Record<string, unknown>)[key])
+    }
+  }
+}
+
+function projectionValueFromJson(valueJson: string, strictCustomBounds: boolean): Record<string, unknown> {
+  try {
+    const value = JSON.parse(valueJson) as unknown
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('root')
+    assertProjectionPoisonFree(value as Record<string, unknown>)
+    if (!strictCustomBounds) return value as Record<string, unknown>
+    return JSON.parse(canonicalProjectionJson(value)) as Record<string, unknown>
+  } catch {
+    throw new Error('Twin projection value is invalid or exceeds structural bounds')
+  }
 }
 
 function canonicalProjectionJson(value: unknown): string {
@@ -47,6 +73,7 @@ function canonicalProjectionJson(value: unknown): string {
       const keys = Reflect.ownKeys(record)
       if (keys.some(key => typeof key !== 'string') || keys.length > 128) throw new Error('shape')
       return `{${(keys as string[]).sort().map(key => {
+        if (PROJECTION_POISON_KEYS.has(key)) throw new Error('poison')
         if (key.length < 1 || key.length > 160) throw new Error('key')
         const descriptor = Object.getOwnPropertyDescriptor(record, key)
         if (!descriptor?.enumerable || !('value' in descriptor)) throw new Error('shape')
@@ -221,7 +248,10 @@ export function listTwinProjections(prefix: string, subjectId: string): TwinProj
 }
 
 export function getTwinProjection(key: string, subjectId: string): TwinProjection | null {
-  validateProjectionKey(key, false)
+  if (typeof key !== 'string' || (key.startsWith('latest:') ? key.length <= 'latest:'.length : false)) {
+    throw new Error('Twin projection key is invalid')
+  }
+  if (!key.startsWith('latest:')) validateProjectionKey(key, false)
   return withPersonalTwinDb(db => {
     requireProjectionSubject(db, subjectId)
     const row = db.prepare('SELECT * FROM twin_projections WHERE projection_key = ? AND subject_id = ?').get(key, subjectId) as unknown as ProjectionRow | undefined

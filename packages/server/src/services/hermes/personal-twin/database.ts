@@ -68,6 +68,7 @@ export function initPersonalTwinSchema(db: DatabaseSync): void {
       createSchemaV5(db)
       setSchemaVersion(db, 5)
     }
+    normalizeLegacyArtifactSourceIndex(db)
     assertSchemaComplete(db, SCHEMA_VERSION)
     db.exec('COMMIT')
   } catch (error) {
@@ -118,7 +119,7 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
   if (!columnsMatch(artifactColumns, expectedArtifactColumns)) {
     throw new Error(`Personal Twin schema version ${version} is incomplete: twin_artifacts column signature is invalid`)
   }
-  assertIndexSignature(db, version, 'twin_artifacts', 'idx_twin_artifacts_source_identity', ['source', 'source_id'], true)
+  assertIndexSignature(db, version, 'twin_artifacts', 'idx_twin_artifacts_source_identity', ['source', 'source_id'], false)
   const contentHashIndexes = db.prepare("PRAGMA index_list('twin_artifacts')").all() as Array<{
     name: string; unique: number; partial: number
   }>
@@ -404,7 +405,7 @@ function createSchemaV5(db: DatabaseSync): void {
     db.exec("ALTER TABLE twin_artifacts ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json) AND length(CAST(metadata_json AS BLOB)) <= 8192)")
   }
   db.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_twin_artifacts_source_identity
+    CREATE INDEX IF NOT EXISTS idx_twin_artifacts_source_identity
       ON twin_artifacts(source, source_id);
     CREATE TABLE IF NOT EXISTS twin_artifact_consents (
       manifest_digest TEXT PRIMARY KEY CHECK(length(manifest_digest) = 64 AND manifest_digest NOT GLOB '*[^0-9a-f]*'),
@@ -418,4 +419,15 @@ function createSchemaV5(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_twin_artifact_consents_status
       ON twin_artifact_consents(processor, expires_at, consumed_at, revoked_at);
   `)
+}
+
+function normalizeLegacyArtifactSourceIndex(db: DatabaseSync): void {
+  const index = (db.prepare("PRAGMA index_list('twin_artifacts')").all() as Array<{
+    name: string; unique: number; partial: number
+  }>).find(candidate => candidate.name === 'idx_twin_artifacts_source_identity')
+  if (index?.unique === 1 && index.partial === 0
+    && indexColumns(db, index.name).join('\0') === ['source', 'source_id'].join('\0')) {
+    db.exec(`DROP INDEX idx_twin_artifacts_source_identity;
+      CREATE INDEX idx_twin_artifacts_source_identity ON twin_artifacts(source, source_id)`)
+  }
 }

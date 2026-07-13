@@ -136,6 +136,25 @@ describe('personal twin store', () => {
     expect(() => getTwinArtifact(valid.contentHash)).toThrow(/path/i)
   })
 
+  it('rejects poison keys in artifact metadata writes and DTO reads', async () => {
+    const { getTwinArtifact, upsertTwinArtifact, withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
+    const base = {
+      mediaType: 'application/json', relativePath: 'health/imports/metadata.json', sizeBytes: 100,
+      sensitivity: 'health' as const, source: 'health-import',
+    }
+    const poison = JSON.parse('{"nested":{"__proto__":{"polluted":true}}}') as Record<string, unknown>
+    expect(() => upsertTwinArtifact({
+      ...base, contentHash: '1'.repeat(64), sourceId: 'poison-write', metadata: poison,
+    })).toThrow(/metadata/i)
+
+    upsertTwinArtifact({
+      ...base, contentHash: '2'.repeat(64), sourceId: 'safe-write', metadata: { safe: true },
+    })
+    withPersonalTwinDb(db => db.prepare("UPDATE twin_artifacts SET metadata_json=? WHERE content_hash=?")
+      .run('{"nested":{"prototype":{"polluted":true}}}', '2'.repeat(64)))
+    expect(() => getTwinArtifact('2'.repeat(64))).toThrow(/metadata/i)
+  })
+
   it('records observations and events idempotently with transactional outbox entries', async () => {
     const {
       listTwinEvents,

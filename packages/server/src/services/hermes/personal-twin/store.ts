@@ -97,7 +97,7 @@ function constraintFromRow(row: ConstraintRow): TwinConstraint {
 function canonicalArtifactMetadataJson(metadata: Record<string, unknown>): string {
   try {
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new Error('invalid')
-    return canonicalPreferenceJson(metadata)
+    return canonicalPreferenceJson(metadata, true)
   } catch {
     throw new Error('Twin artifact metadata is invalid or exceeds structural bounds')
   }
@@ -137,7 +137,7 @@ function preferenceFromRow(row: PreferenceRow): TwinPreference {
   }
 }
 
-function canonicalPreferenceJson(value: unknown): string {
+function canonicalPreferenceJson(value: unknown, rejectPoisonKeys = false): string {
   let nodes = 0
   const seen = new Set<object>()
   const visit = (item: unknown, depth: number): string => {
@@ -181,6 +181,9 @@ function canonicalPreferenceJson(value: unknown): string {
       const keys = ownKeys.sort() as string[]
       if (keys.length > 64) throw new Error('Twin preference value exceeds object bounds')
       return `{${keys.map(key => {
+        if (rejectPoisonKeys && (key === '__proto__' || key === 'constructor' || key === 'prototype')) {
+          throw new Error('Twin preference value contains a poison key')
+        }
         if (key.length > 160) throw new Error('Twin preference value key is too long')
         if (isSensitivePreferenceText(key)) throw new Error('Twin preference value key is sensitive')
         const descriptor = Object.getOwnPropertyDescriptor(record, key)
@@ -453,8 +456,12 @@ export function upsertTwinArtifact(input: TwinArtifactInput): TwinArtifact {
   const { contentHash, metadataJson } = validateArtifactInput(input)
   return withPersonalTwinDb(db => commitOrRollback(db, () => {
     const byHash = db.prepare('SELECT * FROM twin_artifacts WHERE content_hash = ?').get(contentHash) as unknown as ArtifactRow | undefined
-    const bySource = db.prepare('SELECT * FROM twin_artifacts WHERE source = ? AND source_id = ?')
-      .get(input.source, input.sourceId) as unknown as ArtifactRow | undefined
+    const sourceMatches = db.prepare('SELECT * FROM twin_artifacts WHERE source = ? AND source_id = ? ORDER BY id LIMIT 2')
+      .all(input.source, input.sourceId) as unknown as ArtifactRow[]
+    if (sourceMatches.length > 1) {
+      throw new TwinImmutableRecordConflictError('Twin artifact source identity is ambiguous')
+    }
+    const bySource = sourceMatches[0]
     const existing = byHash ?? bySource
     if (existing) {
       if ((byHash && bySource && byHash.id !== bySource.id) || !artifactMatches(existing, input, metadataJson)) {

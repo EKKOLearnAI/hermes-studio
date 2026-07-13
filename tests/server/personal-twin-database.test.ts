@@ -350,8 +350,8 @@ describe('personal twin database', () => {
     db.close()
   })
 
-  it('migrates v4 artifacts to v5 metadata and consent schema without data loss', async () => {
-    const { getPersonalTwinDbPath, initPersonalTwinSchema } = await import(
+  it('migrates v4 artifacts with ambiguous source identities without data loss', async () => {
+    const { getPersonalTwinDbPath, initPersonalTwinSchema, upsertTwinArtifact } = await import(
       '../../packages/server/src/services/hermes/personal-twin'
     )
     mkdirSync(join(hermesHome, 'personal'), { recursive: true })
@@ -374,6 +374,10 @@ describe('personal twin database', () => {
       'artifact-legacy', 'application/pdf', 'a'.repeat(64), 'health/reports/legacy.pdf', 42,
       'legacy-import', 'report-1', '2026-07-01T00:00:00.000Z',
     )
+    db.prepare(`INSERT INTO twin_artifacts VALUES(?,?,?,?,?,?,?,?)`).run(
+      'artifact-legacy-duplicate-source', 'application/pdf', 'b'.repeat(64), 'health/reports/legacy-copy.pdf', 43,
+      'legacy-import', 'report-1', '2026-07-02T00:00:00.000Z',
+    )
 
     initPersonalTwinSchema(db)
 
@@ -384,14 +388,19 @@ describe('personal twin database', () => {
       relative_path: 'health/reports/legacy.pdf', size_bytes: 42, source: 'legacy-import', source_id: 'report-1',
       created_at: '2026-07-01T00:00:00.000Z', sensitivity: 'general', metadata_json: '{}',
     })
-    expect(() => db.prepare(`INSERT INTO twin_artifacts
-      (id,media_type,content_hash,relative_path,size_bytes,source,source_id,created_at,sensitivity,metadata_json)
-      VALUES('artifact-other','application/pdf',?,'other.pdf',42,'legacy-import','report-1','2026-07-02','general','{}')`).run('b'.repeat(64)))
-      .toThrow(/unique/i)
+    expect(db.prepare("SELECT COUNT(*) AS count FROM twin_artifacts WHERE source='legacy-import' AND source_id='report-1'").get())
+      .toEqual({ count: 2 })
+    const sourceIndex = (db.prepare("PRAGMA index_list('twin_artifacts')").all() as Array<{ name: string; unique: number }>)
+      .find(index => index.name === 'idx_twin_artifacts_source_identity')
+    expect(sourceIndex).toMatchObject({ unique: 0 })
     expect((db.prepare("PRAGMA index_info('idx_twin_artifact_consents_status')").all() as Array<{ seqno: number; name: string }>)
       .sort((left, right) => left.seqno - right.seqno).map(column => column.name))
       .toEqual(['processor', 'expires_at', 'consumed_at', 'revoked_at'])
     db.close()
+    expect(() => upsertTwinArtifact({
+      mediaType: 'application/pdf', contentHash: 'a'.repeat(64), relativePath: 'health/reports/legacy.pdf', sizeBytes: 42,
+      sensitivity: 'general', metadata: {}, source: 'legacy-import', sourceId: 'report-1',
+    })).toThrow(/different material|ambiguous/i)
   })
 
   it('fails closed when an asserted v5 artifact index signature is incomplete', async () => {
@@ -406,6 +415,27 @@ describe('personal twin database', () => {
 
     expect(() => initPersonalTwinSchema(db)).toThrow(/artifact.*index.*signature|index.*signature.*artifact/i)
     expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '5' })
+    db.close()
+  })
+
+  it('normalizes the earlier v5 unique artifact source index without touching rows', async () => {
+    const { getPersonalTwinDbPath, initPersonalTwinSchema } = await import(
+      '../../packages/server/src/services/hermes/personal-twin'
+    )
+    mkdirSync(join(hermesHome, 'personal'), { recursive: true })
+    const db = new DatabaseSync(getPersonalTwinDbPath())
+    initPersonalTwinSchema(db)
+    db.exec(`DROP INDEX idx_twin_artifacts_source_identity;
+      CREATE UNIQUE INDEX idx_twin_artifacts_source_identity ON twin_artifacts(source,source_id)`)
+    db.prepare(`INSERT INTO twin_artifacts
+      (id,media_type,content_hash,relative_path,size_bytes,source,source_id,created_at,sensitivity,metadata_json)
+      VALUES('legacy-v5','application/pdf',?,'legacy-v5.pdf',1,'legacy','one','2026-07-01','general','{}')`).run('e'.repeat(64))
+
+    expect(() => initPersonalTwinSchema(db)).not.toThrow()
+    const index = (db.prepare("PRAGMA index_list('twin_artifacts')").all() as Array<{ name: string; unique: number }>)
+      .find(candidate => candidate.name === 'idx_twin_artifacts_source_identity')
+    expect(index).toMatchObject({ unique: 0 })
+    expect(db.prepare("SELECT id FROM twin_artifacts WHERE id='legacy-v5'").get()).toEqual({ id: 'legacy-v5' })
     db.close()
   })
 
