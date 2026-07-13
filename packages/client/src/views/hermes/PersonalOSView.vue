@@ -42,6 +42,13 @@ const reminderQuietSummary = computed(() => {
   if (!reminderSettings.value) return '--'
   return `${reminderSettings.value.quietStart}-${reminderSettings.value.quietEnd}`
 })
+const systemModules = [
+  { key: 'planning', href: '#/hermes/personal-os/planning' },
+  { key: 'fitness', href: '#/hermes/personal-os/fitness' },
+  { key: 'diet', href: '#/hermes/personal-os/health?tab=diet' },
+  { key: 'skin', href: '#/hermes/personal-os/health?tab=skin' },
+  { key: 'health', href: '#/hermes/personal-os/health' },
+]
 
 onMounted(loadOverview)
 
@@ -237,6 +244,27 @@ async function testWeixinReminder() {
         <div class="secondary-actions">
           <a href="#/hermes/personal-os/planning" class="secondary-link">{{ t('personalOS.openFullPlan') }}</a>
           <a href="#/hermes/personal-os/health" class="secondary-link">{{ t('personalOS.openHealth') }}</a>
+        </div>
+      </section>
+
+      <section class="systems-section" data-test="module-grid">
+        <div class="section-heading">
+          <div>
+            <span class="panel-kicker">{{ t('personalOS.systems.kicker') }}</span>
+            <h3>{{ t('personalOS.systems.title') }}</h3>
+          </div>
+          <p>{{ t('personalOS.systems.summary') }}</p>
+        </div>
+        <div class="system-grid">
+          <a
+            v-for="module in systemModules"
+            :key="module.key"
+            class="system-entry"
+            :href="module.href"
+          >
+            <strong>{{ t(`personalOS.systems.${module.key}.title`) }}</strong>
+            <span>{{ t(`personalOS.systems.${module.key}.summary`) }}</span>
+          </a>
         </div>
       </section>
 
@@ -438,6 +466,70 @@ async function testWeixinReminder() {
   margin-top: 16px;
 }
 
+.systems-section {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--card-color);
+  padding: 16px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+
+  h3,
+  p {
+    margin: 0;
+  }
+
+  h3 {
+    margin-top: 4px;
+    font-size: 18px;
+  }
+
+  p {
+    max-width: 460px;
+    color: var(--text-color-2);
+    line-height: 1.55;
+  }
+}
+
+.system-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.system-entry {
+  min-width: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-color);
+  padding: 12px;
+  text-decoration: none;
+
+  strong,
+  span {
+    display: block;
+  }
+
+  span {
+    margin-top: 6px;
+    color: var(--text-color-3);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+}
+
+.system-entry:hover {
+  border-color: var(--primary-color);
+}
+
 .panel {
   min-width: 0;
   border: 1px solid var(--border-color);
@@ -466,7 +558,8 @@ async function testWeixinReminder() {
   .command-main,
   .fallback-row,
   .secondary-actions,
-  .reminder-header {
+  .reminder-header,
+  .section-heading {
     flex-direction: column;
   }
 
@@ -475,7 +568,8 @@ async function testWeixinReminder() {
   }
 
   .signal-strip,
-  .support-grid {
+  .support-grid,
+  .system-grid {
     grid-template-columns: 1fr;
   }
 }

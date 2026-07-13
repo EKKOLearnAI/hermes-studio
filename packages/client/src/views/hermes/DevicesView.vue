@@ -20,6 +20,15 @@ import {
   type LanDiscoveryState,
   type LanEndpointKind,
 } from '@/api/hermes/devices'
+import {
+  fetchHealthScaleReadings,
+  fetchScaleSyncSettings,
+  runScaleSync,
+  type HealthScaleReading,
+  type HealthScaleReadingsSummary,
+  type ScaleSyncResult,
+  type ScaleSyncSettings,
+} from '@/api/hermes/health-state'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -31,6 +40,8 @@ const manualPairingUrl = ref('')
 const updatingDeviceId = ref('')
 const showRequests = ref(false)
 const copyingPairingLink = ref(false)
+const healthDeviceLoading = ref(false)
+const healthDeviceSyncing = ref(false)
 const showPairingCodeModal = ref(false)
 const pairingCodeInput = ref('')
 const pendingPairingDevice = ref<LanDeviceInfo | null>(null)
@@ -40,6 +51,9 @@ const state = ref<LanDiscoveryState>({
   devices: [],
   requests: [],
 })
+const scaleReadingsSummary = ref<HealthScaleReadingsSummary | null>(null)
+const scaleSyncSettings = ref<ScaleSyncSettings | null>(null)
+const lastScaleSyncResult = ref<ScaleSyncResult | null>(null)
 
 const devices = computed(() =>
   [...state.value.devices].sort((a, b) => {
@@ -54,6 +68,30 @@ const devices = computed(() =>
 const pairingRequesting = computed(() =>
   Boolean(pendingPairingDevice.value && updatingDeviceId.value === pendingPairingDevice.value.id),
 )
+
+const latestScaleReading = computed(() => scaleReadingsSummary.value?.latest || null)
+
+const scaleReadingRecords = computed(() =>
+  (scaleReadingsSummary.value?.readings || [])
+    .slice(0, 8),
+)
+
+const healthDeviceMetrics = computed(() => {
+  const reading = latestScaleReading.value
+  if (!reading) return []
+  return [
+    { key: 'weight', label: t('devices.healthDevice.weight'), value: formatKg(reading.weightKg) },
+    { key: 'bodyFat', label: t('devices.healthDevice.bodyFat'), value: formatPercent(reading.bodyFatPercent) },
+    { key: 'bmi', label: t('devices.healthDevice.bmi'), value: displayValue(reading.bmi) },
+    { key: 'muscleMass', label: t('devices.healthDevice.muscleMass'), value: formatKg(reading.muscleMassKg) },
+    { key: 'skeletalMuscleMass', label: t('devices.healthDevice.skeletalMuscleMass'), value: formatKg(reading.skeletalMuscleMassKg) },
+    { key: 'bodyWater', label: t('devices.healthDevice.bodyWater'), value: formatPercent(reading.bodyWaterPercent) },
+    { key: 'boneSalt', label: t('devices.healthDevice.boneSalt'), value: formatKg(reading.boneSaltKg) },
+    { key: 'proteinMass', label: t('devices.healthDevice.proteinMass'), value: formatKg(reading.proteinMassKg) },
+    { key: 'basalMetabolism', label: t('devices.healthDevice.basalMetabolism'), value: reading.basalMetabolismKcal == null ? '--' : `${reading.basalMetabolismKcal} kcal` },
+    { key: 'bodyScore', label: t('devices.healthDevice.bodyScore'), value: displayValue(reading.bodyScore) },
+  ]
+})
 
 function endpointOrder(kind: LanEndpointKind): number {
   if (kind === 'web') return 0
@@ -138,6 +176,30 @@ function formatTime(value: string | number | null): string {
   return date.toLocaleString()
 }
 
+function formatKg(value: number | null | undefined): string {
+  return value == null ? '--' : `${value} kg`
+}
+
+function formatPercent(value: number | null | undefined): string {
+  return value == null ? '--' : `${value}%`
+}
+
+function displayValue(value: number | string | null | undefined): string {
+  return value === null || value === undefined || value === '' ? '--' : String(value)
+}
+
+function readingValue(record: Record<string, unknown>, key: keyof HealthScaleReading): unknown {
+  const value = record.value
+  return value && typeof value === 'object' ? (value as Partial<HealthScaleReading>)[key] : null
+}
+
+function scaleSyncStatusText(): string {
+  if (lastScaleSyncResult.value?.status === 'synced') return t('devices.healthDevice.syncedCount', { count: lastScaleSyncResult.value.importedCount })
+  if (lastScaleSyncResult.value?.reason) return t(`health.scaleSync.reason.${lastScaleSyncResult.value.reason}`)
+  if (scaleSyncSettings.value?.configured) return t('devices.healthDevice.connected')
+  return t('devices.healthDevice.notConfigured')
+}
+
 function formatVersion(value: string): string {
   return value || t('devices.unknown')
 }
@@ -159,6 +221,34 @@ async function loadDevices() {
     message.error(err?.message || t('devices.loadFailed'))
   } finally {
     loading.value = false
+  }
+}
+
+async function loadHealthDevice() {
+  healthDeviceLoading.value = true
+  try {
+    const [settings, overview] = await Promise.all([
+      fetchScaleSyncSettings('default'),
+      fetchHealthScaleReadings({ profile: 'default', limit: 20 }),
+    ])
+    scaleSyncSettings.value = settings
+    scaleReadingsSummary.value = overview
+  } catch (err: any) {
+    message.error(err?.message || t('devices.healthDevice.loadFailed'))
+  } finally {
+    healthDeviceLoading.value = false
+  }
+}
+
+async function syncHealthDevice() {
+  healthDeviceSyncing.value = true
+  try {
+    lastScaleSyncResult.value = await runScaleSync('default')
+    scaleReadingsSummary.value = await fetchHealthScaleReadings({ profile: 'default', limit: 20 })
+  } catch (err: any) {
+    message.error(err?.message || t('devices.healthDevice.syncFailed'))
+  } finally {
+    healthDeviceSyncing.value = false
   }
 }
 
@@ -272,6 +362,7 @@ async function requestManualPairing() {
 
 onMounted(() => {
   void loadDevices()
+  void loadHealthDevice()
 })
 </script>
 
@@ -310,6 +401,69 @@ onMounted(() => {
 
     <NSpin :show="loading" class="devices-spin">
       <div class="devices-content">
+        <section class="health-device-section" data-test="health-device-card">
+          <div class="section-heading">
+            <div>
+              <h3>米家体脂秤 S400</h3>
+              <p>{{ t('devices.healthDevice.summary') }}</p>
+            </div>
+            <div class="section-actions">
+              <NButton size="small" secondary @click="$router.push('/hermes/personal-os/health')">
+                {{ t('devices.healthDevice.openHealth') }}
+              </NButton>
+              <NButton size="small" secondary @click="$router.push('/hermes/settings?tab=integrations')">
+                {{ t('devices.healthDevice.openSettings') }}
+              </NButton>
+              <NButton size="small" type="primary" :loading="healthDeviceSyncing" @click="syncHealthDevice">
+                {{ t('devices.healthDevice.syncNow') }}
+              </NButton>
+            </div>
+          </div>
+
+          <div class="health-device-card">
+            <div class="health-device-status">
+              <NTag size="small" :type="scaleSyncSettings?.configured ? 'success' : 'warning'" round>
+                {{ scaleSyncStatusText() }}
+              </NTag>
+              <span>{{ scaleSyncSettings?.source || 'xiaomihome' }} / {{ scaleSyncSettings?.scaleModel || 'yunmai.scales.ms103' }}</span>
+              <span>{{ latestScaleReading ? formatTime(latestScaleReading.measuredAt) : t('devices.never') }}</span>
+            </div>
+
+            <div v-if="latestScaleReading" class="health-device-metrics">
+              <div v-for="metric in healthDeviceMetrics" :key="metric.key" class="health-device-metric">
+                <span>{{ metric.label }}</span>
+                <strong>{{ metric.value }}</strong>
+              </div>
+            </div>
+            <div v-else class="health-device-empty">
+              {{ healthDeviceLoading ? t('devices.healthDevice.loading') : t('devices.healthDevice.noData') }}
+            </div>
+
+            <div class="health-device-history">
+              <div class="history-title">
+                <span>{{ t('devices.healthDevice.recentReadings') }}</span>
+                <span>{{ scaleReadingsSummary?.total ?? scaleReadingRecords.length }}</span>
+              </div>
+              <div v-if="scaleReadingRecords.length" class="history-table">
+                <div class="history-row history-row-head">
+                  <span>{{ t('devices.healthDevice.measuredAt') }}</span>
+                  <span>{{ t('devices.healthDevice.weight') }}</span>
+                  <span>{{ t('devices.healthDevice.bodyFat') }}</span>
+                  <span>{{ t('devices.healthDevice.bmi') }}</span>
+                  <span>{{ t('devices.healthDevice.muscleMass') }}</span>
+                </div>
+                <div v-for="record in scaleReadingRecords" :key="String(record.id)" class="history-row" data-test="health-device-history-row">
+                  <span>{{ formatTime(String(record.recordedAt || '')) }}</span>
+                  <span>{{ formatKg(readingValue(record, 'weightKg') as number | null) }}</span>
+                  <span>{{ formatPercent(readingValue(record, 'bodyFatPercent') as number | null) }}</span>
+                  <span>{{ displayValue(readingValue(record, 'bmi') as number | null) }}</span>
+                  <span>{{ formatKg(readingValue(record, 'muscleMassKg') as number | null) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <div v-if="devices.length === 0 && !loading" class="empty-state">
           <div class="empty-title">{{ t('devices.empty') }}</div>
           <NButton size="small" :loading="scanning || state.scanning" @click="refreshDevices">
@@ -528,6 +682,138 @@ onMounted(() => {
   padding: 20px;
 }
 
+.health-device-section {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.section-heading,
+.section-actions,
+.health-device-status,
+.history-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-heading {
+  justify-content: space-between;
+
+  h3 {
+    margin: 0;
+    color: $text-primary;
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  p {
+    margin: 4px 0 0;
+    color: $text-muted;
+    font-size: 12px;
+  }
+}
+
+.section-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.health-device-card {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
+  background: $bg-card;
+}
+
+.health-device-status {
+  flex-wrap: wrap;
+  color: $text-muted;
+  font-size: 12px;
+}
+
+.health-device-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 8px;
+}
+
+.health-device-metric {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
+  background: rgba(255, 255, 255, 0.02);
+
+  span {
+    color: $text-muted;
+    font-size: 12px;
+  }
+
+  strong {
+    color: $text-primary;
+    font-size: 15px;
+    font-weight: 650;
+  }
+}
+
+.health-device-empty {
+  padding: 18px;
+  color: $text-muted;
+  text-align: center;
+}
+
+.health-device-history {
+  display: grid;
+  gap: 8px;
+}
+
+.history-title {
+  justify-content: space-between;
+  color: $text-secondary;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.history-table {
+  display: grid;
+  overflow-x: auto;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
+}
+
+.history-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.4fr) repeat(4, minmax(88px, 1fr));
+  gap: 8px;
+  min-width: 620px;
+  padding: 8px 10px;
+  border-top: 1px solid $border-color;
+  color: $text-secondary;
+  font-size: 12px;
+
+  &:first-child {
+    border-top: 0;
+  }
+
+  span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.history-row-head {
+  color: $text-muted;
+  background: rgba(255, 255, 255, 0.03);
+  font-weight: 600;
+}
+
 .empty-state {
   height: 100%;
   min-height: 280px;
@@ -708,6 +994,15 @@ onMounted(() => {
 
   .header-meta {
     flex-basis: 100%;
+  }
+
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .section-actions {
+    justify-content: flex-start;
   }
 }
 </style>

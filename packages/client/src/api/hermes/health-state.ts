@@ -52,6 +52,93 @@ export interface HealthMicronutrientSummary {
   }>
 }
 
+export interface HealthBodyProfile {
+  latestMeasurements: {
+    id: string
+    title: string
+    source: string
+    notes: string
+    recordedAt: string
+    measurements: Record<string, number>
+    weightKg: number | null
+    bodyFatPercent: number | null
+  } | null
+  posture: {
+    id: string
+    title: string
+    source: string
+    notes: string
+    recordedAt: string
+    priority: string
+    issues: string[]
+    compensationChain: string[]
+    pain: Array<Record<string, unknown>>
+  } | null
+  skin: {
+    id: string
+    title: string
+    source: string
+    notes: string
+    recordedAt: string
+    concerns: string[]
+    routine: Record<string, unknown>
+  } | null
+  nextDataNeeded: string[]
+}
+
+export interface HealthScaleReading {
+  measuredAt: string
+  sourceDevice: string
+  sourceModel: string | null
+  weightKg: number
+  bmi: number | null
+  bodyFatPercent: number | null
+  bodyScore: number | null
+  bodyWaterKg: number | null
+  bodyWaterPercent: number | null
+  fatMassKg: number | null
+  boneSaltKg: number | null
+  boneSaltPercent: number | null
+  proteinMassKg: number | null
+  proteinPercent: number | null
+  muscleMassKg: number | null
+  musclePercent: number | null
+  skeletalMuscleMassKg: number | null
+  visceralFatLevel: number | null
+  basalMetabolismKcal: number | null
+  waistHipRatio: number | null
+  bodyAge: number | null
+  leanBodyMassKg: number | null
+}
+
+export interface ScaleSyncSettings {
+  enabled: boolean
+  source: 'mifitness' | 'xiaomihome'
+  username: string
+  hasPassword: boolean
+  passwordMasked: string
+  region: string
+  scaleModel: string
+  scaleconnectPath: string
+  configured: boolean
+}
+
+export interface ScaleSyncResult {
+  status: 'synced' | 'skipped' | 'failed'
+  reason?: string
+  command?: string
+  importedCount: number
+  readings: Array<Record<string, unknown>>
+  stderr?: string
+  verificationUrl?: string
+}
+
+export interface HealthScaleReadingsSummary {
+  latest: HealthScaleReading | null
+  readings: Array<Record<string, unknown>>
+  total: number
+}
+
 export interface HealthOverview {
   generatedAt: string
   profile: string
@@ -68,7 +155,9 @@ export interface HealthOverview {
   externalSummary: HealthExternalSummary
   internalMarkers: HealthInternalMarker[]
   micronutrientSummary: HealthMicronutrientSummary
+  bodyProfile: HealthBodyProfile
   latestPlan: Record<string, unknown> | null
+  latestScaleReading: HealthScaleReading | null
   supplementSummary: Record<string, unknown>
   bodyMap: Array<Record<string, unknown>>
   records: Array<Record<string, unknown>>
@@ -88,8 +177,21 @@ function withProfile(path: string, profile?: string | null): string {
   return `${path}${separator}profile=${encodeURIComponent(profile)}`
 }
 
-export async function fetchHealthOverview(options: { profile?: string | null } = {}): Promise<HealthOverview> {
-  const res = await request<{ overview: HealthOverview }>(withProfile('/api/hermes/health/overview', options.profile))
+function appendQuery(path: string, params: Record<string, string | number | boolean | null | undefined>): string {
+  let result = path
+  for (const [key, value] of Object.entries(params)) {
+    if (value === null || value === undefined) continue
+    const separator = result.includes('?') ? '&' : '?'
+    result = `${result}${separator}${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`
+  }
+  return result
+}
+
+export async function fetchHealthOverview(options: { profile?: string | null; includeRecords?: boolean } = {}): Promise<HealthOverview> {
+  const path = appendQuery(withProfile('/api/hermes/health/overview', options.profile), {
+    includeRecords: options.includeRecords === false ? false : undefined,
+  })
+  const res = await request<{ overview: HealthOverview }>(path)
   return res.overview
 }
 
@@ -124,12 +226,47 @@ export async function fetchHealthRecords(profile?: string | null): Promise<Array
   return res.records
 }
 
+export async function fetchHealthScaleReadings(options: { profile?: string | null; limit?: number } = {}): Promise<HealthScaleReadingsSummary> {
+  return request<HealthScaleReadingsSummary>(appendQuery(withProfile('/api/hermes/health/scale-readings', options.profile), {
+    limit: options.limit,
+  }))
+}
+
 export async function createHealthRecord(payload: Record<string, unknown>, profile?: string | null): Promise<Record<string, unknown>> {
   const res = await request<{ record: Record<string, unknown> }>(
     withProfile('/api/hermes/health/records', profile),
     { method: 'POST', body: JSON.stringify(payload) },
   )
   return res.record
+}
+
+export async function createHealthScaleReading(payload: Record<string, unknown>, profile?: string | null): Promise<Record<string, unknown>> {
+  const res = await request<{ reading: Record<string, unknown> }>(
+    withProfile('/api/hermes/health/scale-readings', profile),
+    { method: 'POST', body: JSON.stringify(payload) },
+  )
+  return res.reading
+}
+
+export async function fetchScaleSyncSettings(profile?: string | null): Promise<ScaleSyncSettings> {
+  const res = await request<{ settings: ScaleSyncSettings }>(withProfile('/api/hermes/health/scale-sync', profile))
+  return res.settings
+}
+
+export async function updateScaleSyncSettings(payload: Record<string, unknown>, profile?: string | null): Promise<ScaleSyncSettings> {
+  const res = await request<{ settings: ScaleSyncSettings }>(
+    withProfile('/api/hermes/health/scale-sync', profile),
+    { method: 'PUT', body: JSON.stringify(payload) },
+  )
+  return res.settings
+}
+
+export async function runScaleSync(profile?: string | null): Promise<ScaleSyncResult> {
+  const res = await request<{ result: ScaleSyncResult }>(
+    withProfile('/api/hermes/health/scale-sync/run', profile),
+    { method: 'POST', body: JSON.stringify({}) },
+  )
+  return res.result
 }
 
 export async function fetchHealthWorkouts(profile?: string | null): Promise<Array<Record<string, unknown>>> {

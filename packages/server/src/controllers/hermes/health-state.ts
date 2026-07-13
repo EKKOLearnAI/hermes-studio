@@ -4,6 +4,7 @@ import {
   createHealthCheckIn,
   createHealthFoodLog,
   createHealthRecord,
+  createHealthScaleReading,
   createHealthWorkout,
   getHealthBodyMap,
   getHealthOverview,
@@ -11,11 +12,17 @@ import {
   getTodayHealthPlan,
   listHealthFoodItems,
   listHealthFoodLogs,
+  listHealthScaleReadings,
   listHealthRecords,
   listHealthWorkouts,
   updateHealthBodyMap,
   updateHealthProfile,
 } from '../../services/hermes/health-state'
+import {
+  getScaleSyncSettings,
+  runScaleSync,
+  updateScaleSyncSettings,
+} from '../../services/hermes/scale-sync'
 
 function profileFrom(ctx: Context): string | undefined {
   const queryProfile = typeof ctx.query.profile === 'string' ? ctx.query.profile : undefined
@@ -58,7 +65,8 @@ function bodyFrom(ctx: Context): Record<string, unknown> {
 export async function overview(ctx: Context): Promise<void> {
   const profile = profileFrom(ctx)
   if (denyProfileAccess(ctx, profile)) return
-  ctx.body = { overview: getHealthOverview({ profile }) }
+  const includeRecords = ctx.query.includeRecords === 'false' ? false : undefined
+  ctx.body = { overview: getHealthOverview({ profile, includeRecords }) }
 }
 
 export async function getProfile(ctx: Context): Promise<void> {
@@ -97,6 +105,37 @@ export async function createRecord(ctx: Context): Promise<void> {
   const profile = profileFrom(ctx)
   if (denyProfileAccess(ctx, profile)) return
   ctx.body = { record: createHealthRecord(bodyFrom(ctx), actorFrom(ctx), profile) }
+}
+
+export async function createScaleReading(ctx: Context): Promise<void> {
+  const profile = profileFrom(ctx)
+  if (denyProfileAccess(ctx, profile)) return
+  ctx.body = { reading: createHealthScaleReading(bodyFrom(ctx), actorFrom(ctx), profile) }
+}
+
+export async function listScaleReadings(ctx: Context): Promise<void> {
+  const profile = profileFrom(ctx)
+  if (denyProfileAccess(ctx, profile)) return
+  const rawLimit = typeof ctx.query.limit === 'string' ? Number(ctx.query.limit) : 20
+  ctx.body = listHealthScaleReadings({ profile, limit: Number.isFinite(rawLimit) ? rawLimit : 20 })
+}
+
+export async function getScaleSync(ctx: Context): Promise<void> {
+  const profile = profileFrom(ctx)
+  if (denyProfileAccess(ctx, profile)) return
+  ctx.body = { settings: await getScaleSyncSettings(normalizedProfile(profile)) }
+}
+
+export async function updateScaleSync(ctx: Context): Promise<void> {
+  const profile = profileFrom(ctx)
+  if (denyProfileAccess(ctx, profile)) return
+  ctx.body = { settings: await updateScaleSyncSettings(bodyFrom(ctx), normalizedProfile(profile)) }
+}
+
+export async function runScaleSyncNow(ctx: Context): Promise<void> {
+  const profile = profileFrom(ctx)
+  if (denyProfileAccess(ctx, profile)) return
+  ctx.body = { result: await runScaleSync(normalizedProfile(profile), actorFrom(ctx)) }
 }
 
 export async function listWorkouts(ctx: Context): Promise<void> {

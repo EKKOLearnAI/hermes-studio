@@ -82,6 +82,73 @@ describe('health state service', () => {
     }
   })
 
+  it('stores S400 scale readings and exposes the latest body composition in overview', async () => {
+    const { createHealthScaleReading, getHealthOverview, listHealthScaleReadings } = await import('../../packages/server/src/services/hermes/health-state')
+
+    const reading = createHealthScaleReading({
+      measuredAt: '2026-07-08T08:41:00+08:00',
+      sourceDevice: 'Mi Body Composition Scale S400',
+      sourceModel: 'yunmai.scales.ms103',
+      weightKg: 85,
+      bmi: 26.8,
+      bodyFatPercent: 23.9,
+      bodyScore: 81,
+      muscleMassKg: 61.2,
+      skeletalMuscleMassKg: 34.3,
+      bodyWaterPercent: 55.6,
+      visceralFatLevel: 10,
+      basalMetabolismKcal: 1768,
+      bodyAge: 24,
+      leanBodyMassKg: 64.7,
+    }, 'user', 'default')
+
+    expect(reading).toMatchObject({
+      kind: 'scale_reading',
+      source: 'Mi Body Composition Scale S400',
+      value: {
+        weightKg: 85,
+        bodyFatPercent: 23.9,
+        sourceModel: 'yunmai.scales.ms103',
+      },
+      recordedAt: '2026-07-08T08:41:00+08:00',
+    })
+
+    const overview = getHealthOverview({ profile: 'default' })
+    expect(overview.weightSummary.currentKg).toBe(85)
+    createHealthScaleReading({
+      measuredAt: '2026-07-08T08:41:00+08:00',
+      sourceDevice: 'Mi Body Composition Scale S400',
+      sourceModel: 'yunmai.scales.ms103',
+      weightKg: 85,
+      bmi: 26.8,
+      bodyFatPercent: 23.9,
+    }, 'user', 'default')
+    const recordsAfterDuplicateSync = getHealthOverview({ profile: 'default' }).records
+    expect(recordsAfterDuplicateSync.filter(record => record.kind === 'scale_reading')).toHaveLength(1)
+    expect(recordsAfterDuplicateSync.filter(record => record.kind === 'weight')).toHaveLength(1)
+    expect(overview.latestScaleReading).toMatchObject({
+      weightKg: 85,
+      bmi: 26.8,
+      bodyFatPercent: 23.9,
+      bodyScore: 81,
+      sourceDevice: 'Mi Body Composition Scale S400',
+      sourceModel: 'yunmai.scales.ms103',
+    })
+
+    createHealthScaleReading({
+      measuredAt: '2026-07-09T08:00:00+08:00',
+      sourceDevice: 'Mi Body Composition Scale S400',
+      sourceModel: 'yunmai.scales.ms103',
+      weightKg: 84.5,
+      bmi: 26.7,
+    }, 'user', 'default')
+    const scaleSummary = listHealthScaleReadings({ profile: 'default', limit: 1 })
+    expect(scaleSummary.total).toBe(2)
+    expect(scaleSummary.latest).toMatchObject({ weightKg: 84.5, measuredAt: '2026-07-09T08:00:00+08:00' })
+    expect(scaleSummary.readings).toHaveLength(1)
+    expect(scaleSummary.readings[0]).toMatchObject({ value: { weightKg: 84.5 } })
+  })
+
   it('aggregates health overview from records, food, workouts, body map, plans, and supplements', async () => {
     const { getHealthOverview, getHealthStateDbPath } = await import('../../packages/server/src/services/hermes/health-state')
 
@@ -286,6 +353,98 @@ describe('health state service', () => {
     expect(overview.topBodyConcerns[0]).toMatchObject({ id: 'body-shoulders', region: 'shoulders', priority: 'high' })
     expect(overview.latestPlan).toMatchObject({ id: 'plan-today', planDate: today, notes: 'Prioritize shoulder stability.' })
     expect(overview.supplementSummary).toMatchObject({ total: 2, completedToday: 1, remainingToday: 1 })
+  })
+
+  it('builds a personal body profile from measurements, posture, and skin records', async () => {
+    const { getHealthOverview, getHealthStateDbPath } = await import('../../packages/server/src/services/hermes/health-state')
+
+    getHealthOverview({ profile: 'default' })
+    const db = new DatabaseSync(getHealthStateDbPath('default'))
+    const now = '2026-07-08T12:00:00.000Z'
+    const baselineRecordedAt = '2025-12-16T10:30:00+08:00'
+    try {
+      db.prepare(`
+        INSERT INTO health_records (
+          id, kind, title, value_json, unit, source, notes, recorded_at, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        'body-measurement-baseline',
+        'body_measurement',
+        'Obsidian body measurements baseline',
+        JSON.stringify({
+          measurements: {
+            chest_cm: 102.5,
+            waist_cm: 86,
+            hip_cm: 102,
+            left_upper_arm_relaxed_cm: 34.5,
+            right_upper_arm_relaxed_cm: 34.8,
+          },
+          weightKg: 83.5,
+          bodyFatPercent: 21.1,
+        }),
+        'mixed',
+        'obsidian-import',
+        '2025-12-16 乐刻健身房测',
+        baselineRecordedAt,
+        now,
+        now,
+        'posture-baseline',
+        'posture_assessment',
+        'Posture assessment baseline',
+        JSON.stringify({
+          issues: ['pelvic_rotation_right', 'right_scapula_downward_rotation'],
+          priority: 'high',
+          pain: [{ area: 'right_neck_shoulder', score: null }],
+          compensationChain: ['pelvis_right_rotation', 'lumbar_right_rotation', 'thorax_right_posterior_rotation', 'neck_left_shift_right_rotation'],
+        }),
+        'mixed',
+        'obsidian-import',
+        '右侧骨盆旋前、右侧肩胛下回旋、右侧肩颈紧绷',
+        baselineRecordedAt,
+        now,
+        now,
+        'skin-routine-baseline',
+        'skin_assessment',
+        'Skin routine baseline',
+        JSON.stringify({
+          concerns: ['acne_marks', 'acne', 'blackheads', 'hydration'],
+          routine: { morning: ['cleanse', 'toner', 'serum', 'moisturizer', 'sunscreen'] },
+        }),
+        'mixed',
+        'obsidian-import',
+        '淡化痘印、消灭痘痘黑头、水润有光泽',
+        baselineRecordedAt,
+        now,
+        now,
+      )
+
+      const overview = getHealthOverview({ profile: 'default', includeRecords: false })
+
+      expect(overview.bodyProfile.latestMeasurements).toMatchObject({
+        source: 'obsidian-import',
+        measurements: {
+          chest_cm: 102.5,
+          waist_cm: 86,
+          hip_cm: 102,
+          left_upper_arm_relaxed_cm: 34.5,
+          right_upper_arm_relaxed_cm: 34.8,
+        },
+        weightKg: 83.5,
+        bodyFatPercent: 21.1,
+      })
+      expect(overview.bodyProfile.posture).toMatchObject({
+        priority: 'high',
+        issues: ['pelvic_rotation_right', 'right_scapula_downward_rotation'],
+      })
+      expect(overview.bodyProfile.skin).toMatchObject({
+        concerns: ['acne_marks', 'acne', 'blackheads', 'hydration'],
+      })
+      expect(overview.bodyProfile.nextDataNeeded).toContain('body_measurements_recheck')
+      expect(overview.records).toEqual([])
+    } finally {
+      db.close()
+    }
   })
 
   it('derives digital twin external and internal health summaries', async () => {

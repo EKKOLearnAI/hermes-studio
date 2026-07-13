@@ -1,5 +1,5 @@
 import { mkdirSync } from 'fs'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { getProfileDir } from './hermes-profile'
@@ -8,6 +8,14 @@ const SCHEMA_VERSION = 1
 
 function id(prefix: string): string {
   return `${prefix}-${randomUUID().replace(/-/g, '').slice(0, 12)}`
+}
+
+function stableId(prefix: string, parts: Array<string | number | null | undefined>): string {
+  const hash = createHash('sha1')
+    .update(parts.map(part => String(part ?? '')).join('|'))
+    .digest('hex')
+    .slice(0, 16)
+  return `${prefix}-${hash}`
 }
 
 export interface HealthProfile {
@@ -120,6 +128,64 @@ export interface HealthDigitalTwinSummary {
   micronutrientGapCount: number
 }
 
+export interface HealthBodyProfileRecord {
+  id: string
+  title: string
+  source: string
+  notes: string
+  recordedAt: string
+}
+
+export interface HealthBodyMeasurementsProfile extends HealthBodyProfileRecord {
+  measurements: Record<string, number>
+  weightKg: number | null
+  bodyFatPercent: number | null
+}
+
+export interface HealthPostureProfile extends HealthBodyProfileRecord {
+  priority: string
+  issues: string[]
+  compensationChain: string[]
+  pain: Array<Record<string, unknown>>
+}
+
+export interface HealthSkinProfile extends HealthBodyProfileRecord {
+  concerns: string[]
+  routine: Record<string, unknown>
+}
+
+export interface HealthBodyProfile {
+  latestMeasurements: HealthBodyMeasurementsProfile | null
+  posture: HealthPostureProfile | null
+  skin: HealthSkinProfile | null
+  nextDataNeeded: string[]
+}
+
+export interface HealthScaleReading {
+  measuredAt: string
+  sourceDevice: string
+  sourceModel: string | null
+  weightKg: number
+  bmi: number | null
+  bodyFatPercent: number | null
+  bodyScore: number | null
+  bodyWaterKg: number | null
+  bodyWaterPercent: number | null
+  fatMassKg: number | null
+  boneSaltKg: number | null
+  boneSaltPercent: number | null
+  proteinMassKg: number | null
+  proteinPercent: number | null
+  muscleMassKg: number | null
+  musclePercent: number | null
+  skeletalMuscleMassKg: number | null
+  visceralFatLevel: number | null
+  basalMetabolismKcal: number | null
+  waistHipRatio: number | null
+  bodyAge: number | null
+  leanBodyMassKg: number | null
+}
+
 export interface HealthOverview {
   generatedAt: string
   profile: string
@@ -132,7 +198,9 @@ export interface HealthOverview {
   externalSummary: HealthExternalSummary
   internalMarkers: HealthInternalMarker[]
   micronutrientSummary: HealthMicronutrientSummary
+  bodyProfile: HealthBodyProfile
   latestPlan: HealthDailyPlanSummary | null
+  latestScaleReading: HealthScaleReading | null
   supplementSummary: HealthSupplementSummary
   bodyMap: Array<Record<string, unknown>>
   records: Array<Record<string, unknown>>
@@ -144,6 +212,12 @@ export interface HealthOverview {
   supplementLogs: Array<Record<string, unknown>>
   dailyPlans: HealthDailyPlanSummary[]
   dailyCheckins: Array<Record<string, unknown>>
+}
+
+export interface HealthScaleReadingSummary {
+  latest: HealthScaleReading | null
+  readings: Array<Record<string, unknown>>
+  total: number
 }
 
 interface HealthProfileRow {
@@ -438,9 +512,10 @@ function ensureColumns(db: DatabaseSync, table: string, columns: Record<string, 
   })
 }
 
-export function getHealthOverview(options: { profile?: string } | string = {}): HealthOverview {
+export function getHealthOverview(options: { profile?: string; includeRecords?: boolean } | string = {}): HealthOverview {
   const opts = typeof options === 'string' ? { profile: options } : options
   const profile = profileName(opts.profile)
+  const includeRecords = opts.includeRecords !== false
   const db = openHealthStateDb(profile)
   try {
     const row = db.prepare('SELECT * FROM health_profile ORDER BY datetime(updated_at) DESC, id DESC LIMIT 1').get() as HealthProfileRow | undefined
@@ -480,6 +555,8 @@ export function getHealthOverview(options: { profile?: string } | string = {}): 
     const internalMarkers = buildInternalMarkers(records)
     const micronutrientSummary = buildMicronutrientSummary(healthProfile.nutritionTargets, foodLogs)
     const externalSummary = buildExternalSummary(weightSummary, topBodyConcerns, recentWorkouts)
+    const bodyProfile = buildBodyProfile(records)
+    const latestScaleReading = buildLatestScaleReading(records)
 
     return {
       generatedAt: nowIso(),
@@ -493,10 +570,12 @@ export function getHealthOverview(options: { profile?: string } | string = {}): 
       externalSummary,
       internalMarkers,
       micronutrientSummary,
+      bodyProfile,
       latestPlan: dailyPlans[0] ? rowToDailyPlanSummary(dailyPlans[0]) : null,
+      latestScaleReading,
       supplementSummary: buildSupplementSummary(supplements, supplementLogs),
       bodyMap: bodyMapRows.map(rowToBodyMapRecord),
-      records: records.map(rowToHealthRecord),
+      records: includeRecords ? records.map(rowToHealthRecord) : [],
       workouts: workouts.map(rowToWorkoutRecord),
       foodItems,
       foodLogs: foodLogs.map(rowToFoodLogRecord),
@@ -622,25 +701,62 @@ export function listHealthRecords(profile?: string): Array<Record<string, unknow
   return getHealthOverview({ profile }).records
 }
 
+export function listHealthScaleReadings(options: { profile?: string; limit?: number } = {}): HealthScaleReadingSummary {
+  const db = openHealthStateDb(options.profile)
+  const limit = Math.max(1, Math.min(200, Math.floor(options.limit || 20)))
+  try {
+    const totalRow = db.prepare("SELECT COUNT(*) AS total FROM health_records WHERE kind = 'scale_reading'").get() as { total: number }
+    const rows = db.prepare(`
+      SELECT * FROM health_records
+      WHERE kind = 'scale_reading'
+      ORDER BY datetime(recorded_at) DESC, id DESC
+      LIMIT ?
+    `).all(limit) as unknown as HealthRecordRow[]
+    const readings = rows.map(rowToHealthRecord)
+    const latest = rows[0] ? buildLatestScaleReading([rows[0]]) : null
+    return { latest, readings, total: Number(totalRow?.total || 0) }
+  } finally {
+    db.close()
+  }
+}
+
 export function createHealthRecord(input: Record<string, unknown>, actor = 'user', profile?: string): Record<string, unknown> {
   const db = openHealthStateDb(profile)
-  const recordId = text(input.id) || id('health-record')
   const kind = text(input.kind || input.category || 'metric')
+  let recordId = ''
   try {
     const createdAt = nowIso()
     const value = Object.prototype.hasOwnProperty.call(input, 'value') ? { value: input.value } : input.valueJson || input.value_json || null
+    const valueJson = JSON.stringify(value)
+    const source = text(input.source || actor)
+    const recordedAt = text(input.recordedAt || input.recorded_at || createdAt)
+    const existing = db.prepare(`
+      SELECT id FROM health_records
+      WHERE kind = ? AND source = ? AND recorded_at = ? AND value_json = ?
+      LIMIT 1
+    `).get(kind, source, recordedAt, valueJson) as { id: string } | undefined
+    recordId = existing?.id || text(input.id) || id('health-record')
     db.prepare(`
       INSERT INTO health_records (id, kind, title, value_json, unit, source, notes, recorded_at, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        kind=excluded.kind,
+        title=excluded.title,
+        value_json=excluded.value_json,
+        unit=excluded.unit,
+        source=excluded.source,
+        notes=excluded.notes,
+        recorded_at=excluded.recorded_at,
+        updated_at=excluded.updated_at
     `).run(
       recordId,
       kind,
       text(input.title || kind),
-      JSON.stringify(value),
+      valueJson,
       text(input.unit),
-      text(input.source || actor),
+      source,
       text(input.notes),
-      text(input.recordedAt || input.recorded_at || createdAt),
+      recordedAt,
       createdAt,
       createdAt,
     )
@@ -648,6 +764,33 @@ export function createHealthRecord(input: Record<string, unknown>, actor = 'user
     db.close()
   }
   return listHealthRecords(profile).find(record => record.id === recordId) || { id: recordId, kind }
+}
+
+export function createHealthScaleReading(input: Record<string, unknown>, actor = 'user', profile?: string): Record<string, unknown> {
+  const reading = normalizeScaleReading(input)
+  const source = reading.sourceDevice || actor
+  const sourceModel = reading.sourceModel || ''
+  const recordKey = [source, sourceModel, reading.measuredAt, reading.weightKg]
+  const scaleRecord = createHealthRecord({
+    id: stableId('health-scale-reading', recordKey),
+    kind: 'scale_reading',
+    title: 'Body composition scale reading',
+    valueJson: reading,
+    source,
+    unit: 'mixed',
+    recordedAt: reading.measuredAt,
+  }, actor, profile)
+  createHealthRecord({
+    id: stableId('health-weight', recordKey),
+    kind: 'weight',
+    title: 'Weight',
+    value: reading.weightKg,
+    unit: 'kg',
+    source,
+    notes: `From ${reading.sourceDevice}`,
+    recordedAt: reading.measuredAt,
+  }, actor, profile)
+  return scaleRecord
 }
 
 export function listHealthWorkouts(profile?: string): Array<Record<string, unknown>> {
@@ -862,6 +1005,116 @@ function buildInternalMarkers(records: HealthRecordRow[]): HealthInternalMarker[
         notes: record.notes,
       }
     })
+}
+
+function buildBodyProfile(records: HealthRecordRow[]): HealthBodyProfile {
+  const latestMeasurements = latestRecord(records, 'body_measurement')
+  const posture = latestRecord(records, 'posture_assessment')
+  const skin = latestRecord(records, 'skin_assessment')
+  const profile: HealthBodyProfile = {
+    latestMeasurements: latestMeasurements ? rowToBodyMeasurementsProfile(latestMeasurements) : null,
+    posture: posture ? rowToPostureProfile(posture) : null,
+    skin: skin ? rowToSkinProfile(skin) : null,
+    nextDataNeeded: [],
+  }
+  if (!profile.latestMeasurements || olderThanDays(profile.latestMeasurements.recordedAt, 30)) {
+    profile.nextDataNeeded.push('body_measurements_recheck')
+  }
+  if (!profile.posture || olderThanDays(profile.posture.recordedAt, 30)) {
+    profile.nextDataNeeded.push('posture_recheck')
+  }
+  if (!profile.skin || olderThanDays(profile.skin.recordedAt, 14)) {
+    profile.nextDataNeeded.push('skin_status_recheck')
+  }
+  return profile
+}
+
+function latestRecord(records: HealthRecordRow[], kind: string): HealthRecordRow | null {
+  return records.find(record => record.kind === kind) || null
+}
+
+function rowToBodyMeasurementsProfile(row: HealthRecordRow): HealthBodyMeasurementsProfile {
+  const value = parseJson<Record<string, unknown>>(row.value_json, {})
+  return {
+    ...bodyProfileBase(row),
+    measurements: numericRecord(isRecord(value.measurements) ? value.measurements : value),
+    weightKg: nullableNumber(value.weightKg ?? value.weight_kg),
+    bodyFatPercent: nullableNumber(value.bodyFatPercent ?? value.body_fat_percent),
+  }
+}
+
+function rowToPostureProfile(row: HealthRecordRow): HealthPostureProfile {
+  const value = parseJson<Record<string, unknown>>(row.value_json, {})
+  return {
+    ...bodyProfileBase(row),
+    priority: text(value.priority || 'unknown'),
+    issues: stringArray(value.issues),
+    compensationChain: stringArray(value.compensationChain ?? value.compensation_chain),
+    pain: Array.isArray(value.pain) ? value.pain.filter(isRecord) : [],
+  }
+}
+
+function rowToSkinProfile(row: HealthRecordRow): HealthSkinProfile {
+  const value = parseJson<Record<string, unknown>>(row.value_json, {})
+  return {
+    ...bodyProfileBase(row),
+    concerns: stringArray(value.concerns),
+    routine: isRecord(value.routine) ? value.routine : {},
+  }
+}
+
+function bodyProfileBase(row: HealthRecordRow): HealthBodyProfileRecord {
+  return {
+    id: row.id,
+    title: row.title,
+    source: row.source,
+    notes: row.notes,
+    recordedAt: row.recorded_at,
+  }
+}
+
+function olderThanDays(value: string, days: number): boolean {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return true
+  return Date.now() - date.getTime() > days * 24 * 60 * 60 * 1000
+}
+
+function buildLatestScaleReading(records: HealthRecordRow[]): HealthScaleReading | null {
+  const row = records.find(record => record.kind === 'scale_reading')
+  if (!row) return null
+  const value = parseJson<Record<string, unknown>>(row.value_json, {})
+  const reading = normalizeScaleReading({ ...value, measuredAt: value.measuredAt || row.recorded_at, sourceDevice: value.sourceDevice || row.source })
+  return reading
+}
+
+function normalizeScaleReading(input: Record<string, unknown>): HealthScaleReading {
+  const weightKg = nullableNumber(input.weightKg ?? input.weight_kg ?? input.Weight ?? input.weight)
+  if (weightKg === null || weightKg <= 0) throw new Error('Scale reading requires weightKg')
+  const measuredAt = text(input.measuredAt ?? input.measured_at ?? input.Date ?? input.date ?? nowIso())
+  return {
+    measuredAt,
+    sourceDevice: text(input.sourceDevice ?? input.source_device ?? input.Source ?? input.source ?? 'Body Composition Scale'),
+    sourceModel: nullableText(input.sourceModel ?? input.source_model ?? input.model),
+    weightKg,
+    bmi: nullableNumber(input.bmi ?? input.BMI),
+    bodyFatPercent: nullableNumber(input.bodyFatPercent ?? input.body_fat_percent ?? input.BodyFat),
+    bodyScore: nullableNumber(input.bodyScore ?? input.body_score ?? input.BodyScore),
+    bodyWaterKg: nullableNumber(input.bodyWaterKg ?? input.body_water_kg),
+    bodyWaterPercent: nullableNumber(input.bodyWaterPercent ?? input.body_water_percent ?? input.BodyWater),
+    fatMassKg: nullableNumber(input.fatMassKg ?? input.fat_mass_kg),
+    boneSaltKg: nullableNumber(input.boneSaltKg ?? input.bone_salt_kg ?? input.BoneMass),
+    boneSaltPercent: nullableNumber(input.boneSaltPercent ?? input.bone_salt_percent),
+    proteinMassKg: nullableNumber(input.proteinMassKg ?? input.protein_mass_kg ?? input.ProteinMass),
+    proteinPercent: nullableNumber(input.proteinPercent ?? input.protein_percent),
+    muscleMassKg: nullableNumber(input.muscleMassKg ?? input.muscle_mass_kg ?? input.MuscleMass),
+    musclePercent: nullableNumber(input.musclePercent ?? input.muscle_percent),
+    skeletalMuscleMassKg: nullableNumber(input.skeletalMuscleMassKg ?? input.skeletal_muscle_mass_kg ?? input.SkeletalMuscleMass),
+    visceralFatLevel: nullableNumber(input.visceralFatLevel ?? input.visceral_fat_level ?? input.VisceralFat),
+    basalMetabolismKcal: nullableNumber(input.basalMetabolismKcal ?? input.basal_metabolism_kcal ?? input.BasalMetabolism),
+    waistHipRatio: nullableNumber(input.waistHipRatio ?? input.waist_hip_ratio),
+    bodyAge: nullableNumber(input.bodyAge ?? input.body_age ?? input.MetabolicAge),
+    leanBodyMassKg: nullableNumber(input.leanBodyMassKg ?? input.lean_body_mass_kg),
+  }
 }
 
 function buildMicronutrientSummary(targets: Record<string, number>, foodLogs: HealthFoodLogRow[]): HealthMicronutrientSummary {
@@ -1130,6 +1383,15 @@ function numericRecord(value: Record<string, unknown>): Record<string, number> {
     if (numeric !== null) result[key] = numeric
   })
   return result
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.map(item => String(item || '').trim()).filter(Boolean)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
 function numericValue(value: unknown): number | null {

@@ -18,16 +18,37 @@ import {
 } from './body-visualization'
 import ProfessionalAnatomyViewer from './ProfessionalAnatomyViewer.vue'
 
+export interface BodyRegionMetric {
+  label: string
+  value: string
+}
+
+export interface BodyRegionData {
+  title: string
+  metrics: BodyRegionMetric[]
+  notes?: string[]
+}
+
+export interface SkinAppearanceLayer {
+  title: string
+  concerns: string[]
+  notes?: string[]
+}
+
 const props = withDefaults(defineProps<{
   bodyMap?: HealthBodyMap
   selectedRegion?: BodyRegionId
   workouts?: HealthWorkoutLike[]
   postureProfile?: HealthPostureProfile | null
+  regionData?: Partial<Record<BodyRegionId, BodyRegionData>>
+  skinLayer?: SkinAppearanceLayer | null
 }>(), {
   bodyMap: () => ({}),
   selectedRegion: 'chest',
   workouts: () => [],
   postureProfile: null,
+  regionData: () => ({}),
+  skinLayer: null,
 })
 
 const emit = defineEmits<{
@@ -67,6 +88,7 @@ const professionalAssets = computed(() => {
 })
 const selectedAssetFiles = computed(() => selectedAnatomy.value.assets.map(asset => asset.file))
 const relatedWorkout = computed(() => getRelatedWorkoutSummary(activeRegion.value, props.workouts))
+const selectedRegionData = computed(() => props.regionData?.[activeRegion.value] ?? null)
 const postureOverlays = computed(() =>
   getVisiblePostureIssueOverlays(props.postureProfile)
     .filter(overlay => overlay.regionIds.includes(activeRegion.value)),
@@ -209,6 +231,30 @@ function toneLabel(tone: string): string {
           <dd>{{ priorityLabel(selectedSummary.priority) }}</dd>
         </div>
       </dl>
+
+      <div class="detail-section">
+        <h5>区域数据</h5>
+        <div v-if="selectedRegionData" class="region-data" data-test="selected-region-data">
+          <strong>{{ selectedRegionData.title }}</strong>
+          <dl>
+            <div v-for="metric in selectedRegionData.metrics" :key="`${metric.label}-${metric.value}`">
+              <dt>{{ metric.label }}</dt>
+              <dd>{{ metric.value }}</dd>
+            </div>
+          </dl>
+          <p v-for="note in selectedRegionData.notes || []" :key="note" class="muted">{{ note }}</p>
+        </div>
+        <p v-else class="muted" data-test="selected-region-data">当前区域暂无围度、体成分或体态细节</p>
+      </div>
+
+      <div class="detail-section" data-test="skin-appearance-layer">
+        <h5>{{ skinLayer?.title || '全身皮肤外观层' }}</h5>
+        <div v-if="skinLayer?.concerns?.length" class="skin-chip-list">
+          <span v-for="concern in skinLayer.concerns" :key="concern">{{ concern }}</span>
+        </div>
+        <p v-for="note in skinLayer?.notes || []" :key="note" class="muted">{{ note }}</p>
+        <p v-if="!skinLayer" class="muted">皮肤状态待记录，后续支持按全身区域管理。</p>
+      </div>
 
       <div class="detail-section">
         <h5>模型资产</h5>
@@ -580,6 +626,55 @@ h5 {
   color: #0f172a;
   font-size: 18px;
   font-weight: 700;
+}
+
+.region-data {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.region-data > strong {
+  font-size: 14px;
+}
+
+.region-data dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.region-data dl > div {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.region-data dt {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.region-data dd {
+  margin: 3px 0 0;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.skin-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.skin-chip-list span {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  color: #334155;
+  font-size: 13px;
+  padding: 6px 8px;
 }
 
 .detail-section {

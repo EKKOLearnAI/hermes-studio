@@ -165,9 +165,23 @@ describe('PersonalOSView', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="autopilot-command-center"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="module-grid"]').exists()).toBe(false)
     expect(wrapper.html()).toContain('/hermes/personal-os/planning')
     expect(wrapper.html()).toContain('/hermes/personal-os/health')
+  })
+
+  it('keeps full Personal OS systems available from the command center', async () => {
+    const wrapper = mount(PersonalOSView)
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="autopilot-command-center"]').exists()).toBe(true)
+    const moduleGrid = wrapper.find('[data-test="module-grid"]')
+    expect(moduleGrid.exists()).toBe(true)
+    expect(moduleGrid.text()).toContain('personalOS.systems.planning.title')
+    expect(moduleGrid.text()).toContain('personalOS.systems.fitness.title')
+    expect(moduleGrid.text()).toContain('personalOS.systems.diet.title')
+    expect(moduleGrid.text()).toContain('personalOS.systems.skin.title')
+    expect(moduleGrid.text()).toContain('personalOS.systems.health.title')
+    expect(moduleGrid.html()).toContain('/hermes/personal-os/fitness')
   })
 
   it('submits one-sentence quick logs from the command center', async () => {
