@@ -184,12 +184,16 @@ describe('health loop legacy migration', () => {
     health.createHealthRecord({ id: 'lab-measured', kind: 'lab_result', valueJson: marker, unit: 'mmol/L', recordedAt: '2026-07-01T08:00:00Z', source: 'laboratory_device' }, 'user', 'default')
     health.createHealthRecord({ id: 'lab-manual', kind: 'lab_result', valueJson: marker, unit: 'mmol/L', recordedAt: '2026-07-02T08:00:00Z', source: 'manual' }, 'user', 'default')
     health.createHealthRecord({ id: 'hospital-structured', kind: 'lab', valueJson: marker, unit: 'mmol/L', recordedAt: '2026-07-03T08:00:00Z', source: 'hospital_report' }, 'user', 'default')
+    health.createHealthRecord({ id: 'lab-legacy', kind: 'lab', valueJson: marker, unit: 'mmol/L', recordedAt: '2026-07-04T08:00:00Z', source: 'legacy' }, 'user', 'default')
+    health.createHealthRecord({ id: 'lab-user', kind: 'lab', valueJson: marker, unit: 'mmol/L', recordedAt: '2026-07-05T08:00:00Z', source: 'user' }, 'user', 'default')
     migration.syncLegacyHealthTwinSources({ profiles: ['default'] })
     const events = twin.listTwinEvents({ eventType: 'health.ingestion.recorded', limit: 100 })
     const evidence = (id: string) => events.find(event => event.provenance.sourceId.includes(id))
     expect(evidence('lab-measured')).toMatchObject({ provenance: { confirmationState: 'inferred', evidence: [expect.objectContaining({ evidenceClass: 'measured' })] }, payload: { pendingConfirmation: true } })
     expect(evidence('lab-manual')?.provenance.evidence).toContainEqual(expect.objectContaining({ evidenceClass: 'reported' }))
     expect(evidence('hospital-structured')?.provenance.evidence).toContainEqual(expect.objectContaining({ evidenceClass: 'measured' }))
+    expect(evidence('lab-legacy')).toMatchObject({ provenance: { confirmationState: 'inferred', evidence: [expect.objectContaining({ evidenceClass: 'measured' })] }, payload: { pendingConfirmation: true } })
+    expect(evidence('lab-user')).toMatchObject({ provenance: { confirmationState: 'inferred', evidence: [expect.objectContaining({ evidenceClass: 'reported' })] }, payload: { pendingConfirmation: true } })
   })
 
   it('rejects unequal dual sleep aliases without writing the logical record', async () => {

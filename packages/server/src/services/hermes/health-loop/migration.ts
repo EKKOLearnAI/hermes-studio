@@ -232,7 +232,7 @@ function internalEnvelope(profile: string, item: Record<string, unknown>): Healt
   if (typeof providerFlag === 'string' && providerFlag) marker.providerAbnormalFlag = providerFlag
   const source = String(item.source ?? '').toLowerCase()
   const explicitlyReported = /(?:manual|user|self|reported|obsidian)/.test(source)
-  const reliableKind = new Set(['lab_result', 'blood_test', 'urine_test', 'blood', 'urine', 'biomarker', 'vital', 'blood_pressure']).has(kind)
+  const reliableKind = new Set(['lab', 'lab_result', 'blood_test', 'urine_test', 'blood', 'urine', 'biomarker', 'vital', 'blood_pressure']).has(kind)
   const reliableSource = /(?:laboratory|\blab\b|hospital|clinic|device|checkup)/.test(source)
   const evidenceClass: HealthEvidenceClass = !explicitlyReported && (reliableKind || reliableSource) ? 'measured' : 'reported'
   return envelope(profile, 'internal_health', `internal-markers:${kind}:${id}`, observedAt, evidenceClass, { markers: [marker], reportDate: observedAt.slice(0, 10) })
