@@ -56,7 +56,7 @@ describe('health-loop deterministic projectors', () => {
     for (const key of HEALTH_PROJECTION_KEYS) {
       expect(Object.keys(first[key])).toEqual([
         'schemaVersion', 'ruleVersion', 'state', 'inputRecordIds', 'effectiveAt', 'computedAt',
-        'freshness', 'confidence', 'conflicts', 'missing', 'rationale',
+        'freshness', 'confidence', 'conflicts', 'conflictCount', 'conflictOmittedCount', 'missing', 'rationale',
       ])
       expect(first[key]).toMatchObject({ schemaVersion: 1, ruleVersion: 'health-rules-fixture-v7', computedAt: '2026-07-14T12:00:00Z' })
       expect(first[key].rationale.every(item => !/diagnos/i.test(item.message))).toBe(true)
@@ -285,6 +285,58 @@ describe('health-loop deterministic projectors', () => {
       expect.objectContaining({ recordId: 'observed-lab' }), expect.objectContaining({ recordId: 'reported-lab' }),
     ])
     expect(projection.missing).toContain('confirmed_markers')
+  })
+
+  it('bounds internal marker summaries while retaining all 4096 audit references', async () => {
+    const health = await import('../../packages/server/src/services/hermes/health-loop')
+    const twin = await import('../../packages/server/src/services/hermes/personal-twin')
+    const records = Array.from({ length: health.MAX_HEALTH_PROJECTION_INPUTS }, (_, index) => {
+      const padded = String(index).padStart(4, '0')
+      return observation({
+        id: `internal-${padded}-${'i'.repeat(178)}`,
+        metric: 'health.internal_health.markers',
+        observedAt: '2026-07-01T00:00:00.000Z',
+        value: Array.from({ length: 10 }, (_marker, markerIndex) => ({
+          key: `marker-${markerIndex}`, value: `${index}-${'x'.repeat(48)}`, unit: 'unit',
+          referenceInterval: `${'r'.repeat(32)}-${markerIndex}`,
+        })),
+        provenance: {
+          source: 'fixture', sourceId: `internal-${padded}`, actor: 'fixture', confidence: 0.9,
+          confirmationState: index % 2 === 0 ? 'confirmed' : 'observed',
+          evidence: [{ evidenceClass: 'measured' }], schemaVersion: 1,
+        },
+      })
+    })
+
+    const values = health.computeHealthProjections(records, { computedAt })
+    const internal = values['health.internal_state']
+    expect(internal.inputRecordIds).toHaveLength(health.MAX_HEALTH_PROJECTION_INPUTS)
+    expect(values['health.readiness_state'].inputRecordIds).toHaveLength(health.MAX_HEALTH_PROJECTION_INPUTS)
+    expect(internal.state).toMatchObject({
+      summaryLimitPerBucket: health.MAX_INTERNAL_MARKER_SUMMARIES_PER_BUCKET,
+      confirmedCount: 2_048, pendingCount: 2_048,
+      confirmedOmittedCount: 2_048 - health.MAX_INTERNAL_MARKER_SUMMARIES_PER_BUCKET,
+      pendingOmittedCount: 2_048 - health.MAX_INTERNAL_MARKER_SUMMARIES_PER_BUCKET,
+    })
+    expect(internal.state.confirmed).toHaveLength(health.MAX_INTERNAL_MARKER_SUMMARIES_PER_BUCKET)
+    expect(internal.state.pending).toHaveLength(health.MAX_INTERNAL_MARKER_SUMMARIES_PER_BUCKET)
+    expect((internal.state.confirmed as Array<{ recordId: string }>)[0].recordId).toMatch(/^internal-0000-/)
+    expect((internal.state.pending as Array<{ recordId: string }>)[0].recordId).toMatch(/^internal-0001-/)
+    expect(internal.missing).not.toContain('confirmed_markers')
+    expect(internal.freshness.status).toBe('conflict')
+    expect(internal).toMatchObject({ conflictCount: 1, conflictOmittedCount: 0 })
+    expect(internal.conflicts[0]).toMatchObject({
+      code: 'VALUE_CONFLICT', recordCount: health.MAX_HEALTH_PROJECTION_INPUTS,
+      omittedRecordCount: health.MAX_HEALTH_PROJECTION_INPUTS - health.MAX_HEALTH_CONFLICT_RECORD_IDS,
+    })
+    expect(internal.conflicts[0].recordIds).toHaveLength(health.MAX_HEALTH_CONFLICT_RECORD_IDS)
+
+    twin.upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    expect(() => health.persistHealthProjections(values)).not.toThrow()
+    const stored = twin.getTwinProjection('health.internal_state', 'person:self')
+    expect(stored?.value.inputRecordIds).toHaveLength(health.MAX_HEALTH_PROJECTION_INPUTS)
+    expect((stored?.value.state as { confirmedCount: number; pendingCount: number })).toMatchObject({ confirmedCount: 2_048, pendingCount: 2_048 })
+    expect(twin.getTwinProjection('health.readiness_state', 'person:self')?.value.inputRecordIds).toHaveLength(health.MAX_HEALTH_PROJECTION_INPUTS)
   })
 
   it('derives finite conservative health math without inventing missing inputs', async () => {

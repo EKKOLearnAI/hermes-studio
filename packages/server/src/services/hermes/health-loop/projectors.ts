@@ -14,6 +14,9 @@ export const HEALTH_PROJECTION_KEYS = [
 export type HealthProjectionKey = typeof HEALTH_PROJECTION_KEYS[number]
 export const DEFAULT_HEALTH_RULE_VERSION = 'health-rules-v1'
 export const MAX_HEALTH_PROJECTION_INPUTS = 4_096
+export const MAX_INTERNAL_MARKER_SUMMARIES_PER_BUCKET = 32
+export const MAX_HEALTH_CONFLICT_SUMMARIES = 32
+export const MAX_HEALTH_CONFLICT_RECORD_IDS = 8
 
 export const HEALTH_FRESHNESS_POLICY = {
   version: 'health-freshness-v1',
@@ -33,6 +36,8 @@ export interface HealthProjectionConflict {
   code: 'FUTURE_RECORD' | 'INVALID_RECORD' | 'UNIT_CONFLICT' | 'VALUE_CONFLICT' | 'SOURCE_CONFLICT'
   metric: string
   recordIds: string[]
+  recordCount: number
+  omittedRecordCount: number
   message: string
 }
 
@@ -51,6 +56,8 @@ export interface HealthProjectionEnvelope {
   }
   confidence: number
   conflicts: HealthProjectionConflict[]
+  conflictCount: number
+  conflictOmittedCount: number
   missing: string[]
   rationale: Array<{ code: string; message: string }>
 }
@@ -78,6 +85,7 @@ interface DomainResult {
   effectiveAt: string | null
   freshnessAt: string | null
   conflicts: HealthProjectionConflict[]
+  conflictCount: number
   missing: string[]
   confidence: number
 }
@@ -144,6 +152,16 @@ function compareNanoseconds(left: bigint, right: bigint): number {
   return left < right ? -1 : left > right ? 1 : 0
 }
 
+function compareCandidateRecency(left: Candidate, right: Candidate): number {
+  return compareNanoseconds(right.atNs, left.atNs)
+    || compareUtf8(left.record.provenance.source, right.record.provenance.source)
+    || compareUtf8(left.record.provenance.sourceId, right.record.provenance.sourceId)
+    || compareUtf8(left.record.id, right.record.id)
+    || compareUtf8(left.record.provenance.confirmationState, right.record.provenance.confirmationState)
+    || compareUtf8(left.evidenceClass, right.evidenceClass)
+    || compareUtf8(stableJson(left.record.value), stableJson(right.record.value))
+}
+
 function evidenceClass(record: TwinObservation): HealthEvidenceClass | null {
   if (!record.provenance || !Array.isArray(record.provenance.evidence)) return null
   const values = [...new Set(record.provenance.evidence.map(item => item?.evidenceClass)
@@ -163,12 +181,20 @@ function conflict(code: HealthProjectionConflict['code'], metric: string, record
     VALUE_CONFLICT: 'Values disagree at the same effective time, so no value was selected.',
     SOURCE_CONFLICT: 'Source identity is inconsistent and requires reconciliation.',
   }
-  return { code, metric, recordIds: recordIds(records), message: messages[code] }
+  const ids = recordIds(records)
+  return { code, metric, recordIds: ids, recordCount: ids.length, omittedRecordCount: 0, message: messages[code] }
 }
 
 function conflictSort(left: HealthProjectionConflict, right: HealthProjectionConflict): number {
   return compareUtf8(left.code, right.code) || compareUtf8(left.metric, right.metric)
     || compareUtf8(left.recordIds.join('\0'), right.recordIds.join('\0'))
+}
+
+function summarizeConflicts(conflicts: readonly HealthProjectionConflict[]): HealthProjectionConflict[] {
+  return [...conflicts].sort(conflictSort).slice(0, MAX_HEALTH_CONFLICT_SUMMARIES).map(item => {
+    const ids = [...item.recordIds].sort(compareUtf8).slice(0, MAX_HEALTH_CONFLICT_RECORD_IDS)
+    return { ...item, recordIds: ids, recordCount: item.recordCount, omittedRecordCount: item.recordCount - ids.length }
+  })
 }
 
 function safeMetric(metric: string): boolean {
@@ -321,7 +347,7 @@ function genericDomain(records: readonly TwinObservation[], prefixes: readonly s
     ? selectedTimes.sort(compareHealthTimestamps)[0] ?? null : null
   return {
     state: { current, evidence }, candidates: accepted, inputRecordIds: recordIds(relevant),
-    effectiveAt: latest?.canonicalObservedAt ?? null, freshnessAt, conflicts: conflicts.sort(conflictSort), missing,
+    effectiveAt: latest?.canonicalObservedAt ?? null, freshnessAt, conflicts: conflicts.sort(conflictSort), conflictCount: conflicts.length, missing,
     confidence: weightedConfidence(accepted.map(item => ({ confidence: item.record.provenance.confidence, weight: 1 }))) ?? 0,
   }
 }
@@ -341,13 +367,14 @@ function freshness(domain: FreshnessDomain, result: DomainResult, computedNs: bi
 function envelope(result: DomainResult, domain: FreshnessDomain, options: Required<ComputeHealthProjectionOptions>, computedNs: bigint): HealthProjectionEnvelope {
   const fresh = freshness(domain, result, computedNs)
   const penalty = fresh.status === 'conflict' ? 0.5 : fresh.status === 'stale' ? 0.7 : fresh.status === 'missing' ? 0 : 1
+  const conflicts = summarizeConflicts(result.conflicts)
   return {
     schemaVersion: 1, ruleVersion: options.ruleVersion, state: result.state, inputRecordIds: result.inputRecordIds,
     effectiveAt: result.effectiveAt, computedAt: options.computedAt, freshness: fresh,
     confidence: roundHealthNumber(result.confidence * penalty, 4) ?? 0,
-    conflicts: result.conflicts, missing: result.missing,
-    rationale: [{ code: result.conflicts.length ? 'HEALTH_STATE_CONFLICT' : result.missing.length ? 'HEALTH_STATE_INCOMPLETE' : 'HEALTH_STATE_CURRENT',
-      message: result.conflicts.length ? 'Conflicting evidence is retained for review.' : result.missing.length ? 'State is incomplete because required evidence is missing.' : 'State was computed from canonical health evidence.' }],
+    conflicts, conflictCount: result.conflictCount, conflictOmittedCount: result.conflictCount - conflicts.length, missing: result.missing,
+    rationale: [{ code: result.conflictCount ? 'HEALTH_STATE_CONFLICT' : result.missing.length ? 'HEALTH_STATE_INCOMPLETE' : 'HEALTH_STATE_CURRENT',
+      message: result.conflictCount ? 'Conflicting evidence is retained for review.' : result.missing.length ? 'State is incomplete because required evidence is missing.' : 'State was computed from canonical health evidence.' }],
   }
 }
 
@@ -412,16 +439,23 @@ function recoveryResult(records: readonly TwinObservation[], cutoffNs: bigint): 
 function internalResult(records: readonly TwinObservation[], cutoffNs: bigint): DomainResult {
   const base = genericDomain(records, ['health.internal_health.'], cutoffNs, ['markers'])
   const markers = base.candidates.filter(item => item.record.metric === 'health.internal_health.markers')
-  const pending = markers.filter(item => item.record.provenance.confirmationState !== 'confirmed')
-    .map(item => ({ recordId: item.record.id, observedAt: item.canonicalObservedAt, evidenceClass: item.evidenceClass, markers: publicValue(item.record) }))
+  const pendingCandidates = markers.filter(item => item.record.provenance.confirmationState !== 'confirmed')
   const confirmedCandidates = markers.filter(item => item.record.provenance.confirmationState === 'confirmed')
-  const confirmed = confirmedCandidates
+  const summarize = (candidates: readonly Candidate[]) => [...candidates].sort(compareCandidateRecency)
+    .slice(0, MAX_INTERNAL_MARKER_SUMMARIES_PER_BUCKET)
     .map(item => ({ recordId: item.record.id, observedAt: item.canonicalObservedAt, evidenceClass: item.evidenceClass, markers: publicValue(item.record) }))
-  pending.sort((left, right) => compareUtf8(left.recordId, right.recordId)); confirmed.sort((left, right) => compareUtf8(left.recordId, right.recordId))
-  const freshestConfirmed = [...confirmedCandidates].sort((left, right) => compareNanoseconds(right.atNs, left.atNs)
-    || compareUtf8(left.record.id, right.record.id))[0]
+  const confirmed = summarize(confirmedCandidates)
+  const pending = summarize(pendingCandidates)
+  const freshestConfirmed = [...confirmedCandidates].sort(compareCandidateRecency)[0]
   return {
-    ...withState(base, { confirmed, pending }, confirmed.length ? [] : ['confirmed_markers']),
+    ...withState(base, {
+      confirmed, pending,
+      summaryLimitPerBucket: MAX_INTERNAL_MARKER_SUMMARIES_PER_BUCKET,
+      confirmedCount: confirmedCandidates.length,
+      pendingCount: pendingCandidates.length,
+      confirmedOmittedCount: confirmedCandidates.length - confirmed.length,
+      pendingOmittedCount: pendingCandidates.length - pending.length,
+    }, confirmedCandidates.length ? [] : ['confirmed_markers']),
     freshnessAt: freshestConfirmed?.canonicalObservedAt ?? null,
   }
 }
@@ -438,6 +472,7 @@ function readinessResult(dependencies: {
   const orderedDependencies = Object.entries(dependencies) as Array<[keyof typeof dependencies, HealthProjectionEnvelope]>
   const inputRecordIds = [...new Set(orderedDependencies.flatMap(([, item]) => item.inputRecordIds))].sort(compareUtf8)
   const conflicts = orderedDependencies.flatMap(([, item]) => item.conflicts).sort(conflictSort)
+  const conflictCount = orderedDependencies.reduce((total, [, item]) => total + item.conflictCount, 0)
   const recover = dependencies.recovery
   const nutrition = dependencies.nutrition
   const training = dependencies.training
@@ -478,7 +513,7 @@ function readinessResult(dependencies: {
   return {
     state: {
       status, score, dependencies: dependencyState,
-    }, candidates: [], inputRecordIds, effectiveAt: effective, freshnessAt: effective, conflicts, missing,
+    }, candidates: [], inputRecordIds, effectiveAt: effective, freshnessAt: effective, conflicts, conflictCount, missing,
     confidence: components.length < 2 ? 0 : weightedConfidence(orderedDependencies.map(([, item]) => ({ confidence: item.confidence, weight: 1 }))) ?? 0,
   }
 }
