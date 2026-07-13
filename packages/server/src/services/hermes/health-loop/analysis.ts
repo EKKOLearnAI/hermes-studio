@@ -74,6 +74,12 @@ export interface HealthAnalysisProcessorIdentity {
   locality: 'local' | 'remote'
 }
 
+export type HealthAnalysisSemanticType = 'number' | 'string' | 'boolean' | 'record' | 'array'
+export interface HealthAnalysisFieldSpec {
+  unit: string | null
+  semanticType: HealthAnalysisSemanticType
+}
+
 const POISON_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
 const ARTIFACT_ID = /^artifact-[0-9a-f]{64}$/
 const CONSENT_TOKEN = /^[0-9a-f]{64}$/
@@ -87,13 +93,21 @@ const QUALITY_GUIDANCE: Record<string, string> = {
   scale_reference: 'Include the required scale reference.', region_mismatch: 'Recapture the selected body region.',
 }
 
-const REQUESTED_FIELDS: Readonly<Record<HealthCapturePurpose, readonly string[]>> = Object.freeze({
-  measurement: Object.freeze(['chestCm', 'waistCm', 'hipCm', 'leftArmCm', 'rightArmCm', 'leftThighCm', 'rightThighCm', 'leftCalfCm', 'rightCalfCm', 'method', 'calibrationMethod', 'calibrationId', 'captureConditions']),
-  posture: Object.freeze(['findings', 'angles', 'landmarks', 'capture']),
-  skin: Object.freeze(['region', 'appearances', 'trend', 'lightingProfile', 'distanceCm', 'device', 'comparisonBaseline']),
-  diet: Object.freeze(['foods', 'supplements', 'mealTime', 'caloriesKcal', 'proteinG', 'carbsG', 'fatG', 'waterMl', 'micros', 'portionConfirmed', 'confirmationStatus']),
-  internal_health: Object.freeze(['markers', 'reportDate', 'institution']),
+const spec = (semanticType: HealthAnalysisSemanticType, unit: string | null = null): HealthAnalysisFieldSpec => Object.freeze({ semanticType, unit })
+const measurementUnits = Object.fromEntries(['chestCm', 'waistCm', 'hipCm', 'leftArmCm', 'rightArmCm', 'leftThighCm', 'rightThighCm', 'leftCalfCm', 'rightCalfCm']
+  .map(field => [field, spec('number', 'cm')]))
+
+export const HEALTH_ANALYSIS_FIELD_SPECS: Readonly<Record<HealthCapturePurpose, Readonly<Record<string, HealthAnalysisFieldSpec>>>> = Object.freeze({
+  measurement: Object.freeze({ ...measurementUnits, method: spec('string'), calibrationMethod: spec('string'), calibrationId: spec('string'), captureConditions: spec('record') }),
+  posture: Object.freeze({ findings: spec('array'), angles: spec('record', 'degree'), landmarks: spec('array'), capture: spec('record') }),
+  skin: Object.freeze({ region: spec('string'), appearances: spec('array'), trend: spec('string'), lightingProfile: spec('string'), distanceCm: spec('number', 'cm'), device: spec('string'), comparisonBaseline: spec('string') }),
+  diet: Object.freeze({ foods: spec('array'), supplements: spec('array'), mealTime: spec('string'), caloriesKcal: spec('number', 'kcal'), proteinG: spec('number', 'g'), carbsG: spec('number', 'g'), fatG: spec('number', 'g'), waterMl: spec('number', 'mL'), micros: spec('record'), portionConfirmed: spec('boolean'), confirmationStatus: spec('string') }),
+  internal_health: Object.freeze({ markers: spec('array'), reportDate: spec('string'), institution: spec('string') }),
 })
+
+const REQUESTED_FIELDS: Readonly<Record<HealthCapturePurpose, readonly string[]>> = Object.freeze(Object.fromEntries(
+  Object.entries(HEALTH_ANALYSIS_FIELD_SPECS).map(([purpose, fields]) => [purpose, Object.freeze(Object.keys(fields))]),
+) as Record<HealthCapturePurpose, readonly string[]>)
 
 const PAYLOAD_NESTED_KEYS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   captureConditions: Object.freeze(['lightingProfile', 'distanceCm', 'deviceModel', 'view', 'scaleReference', 'ambientLux']),
@@ -292,6 +306,20 @@ function cloneValue(value: unknown): unknown {
   return result
 }
 
+function validateFieldSemantics(purpose: HealthCapturePurpose, field: Record<string, unknown>): void {
+  const fieldName = field.field as string
+  const fieldSpec = HEALTH_ANALYSIS_FIELD_SPECS[purpose][fieldName]
+  if (!fieldSpec) fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+  if (fieldSpec.unit === null ? field.unit !== undefined : field.unit !== fieldSpec.unit) fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+  const value = field.value
+  const valid = fieldSpec.semanticType === 'number' ? typeof value === 'number' && Number.isFinite(value)
+    : fieldSpec.semanticType === 'string' ? typeof value === 'string'
+      : fieldSpec.semanticType === 'boolean' ? typeof value === 'boolean'
+        : fieldSpec.semanticType === 'array' ? Array.isArray(value)
+          : !!value && typeof value === 'object' && !Array.isArray(value) && !isProxy(value)
+  if (!valid) fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+}
+
 function digestSuffix(value: string): string { return createHash('sha256').update(value).digest('hex').slice(0, 16) }
 
 export function finalizeHealthAnalysis(
@@ -324,6 +352,7 @@ export function finalizeHealthAnalysis(
     const fieldName = semantic(field.field, 100, 'HEALTH_ANALYSIS_INVALID_OUTPUT')
     if (!request.requestedFields.includes(fieldName) || seenFields.has(fieldName)) fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
     seenFields.add(fieldName)
+    validateFieldSemantics(request.purpose, field)
     const evidence = exactRecord(field.evidence, ['artifactId'], ['region', 'page'], 'HEALTH_ANALYSIS_INVALID_OUTPUT')
     if (typeof evidence.artifactId !== 'string' || !request.artifactIds.includes(evidence.artifactId)) fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
     if (evidence.region !== undefined && (typeof evidence.region !== 'string' || !request.selectedRegions.includes(evidence.region))) fail('HEALTH_ANALYSIS_INVALID_OUTPUT')

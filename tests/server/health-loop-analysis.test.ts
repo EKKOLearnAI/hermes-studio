@@ -30,7 +30,8 @@ describe('health artifact analysis', () => {
     const { finalizeHealthAnalysis } = await import('../../packages/server/src/services/hermes/health-loop/analysis')
     const artifactId = `artifact-${'a'.repeat(64)}`
     const fields = Object.entries(payload).map(([field, value]) => ({
-      field, value, confidence: 0.86, evidence: { artifactId, ...(purpose === 'internal_health' ? { page: 2, region: 'page:2/lab-row' } : { region: 'subject' }) },
+      field, value, ...(purpose === 'measurement' ? { unit: 'cm' } : purpose === 'posture' ? { unit: 'degree' } : {}),
+      confidence: 0.86, evidence: { artifactId, ...(purpose === 'internal_health' ? { page: 2, region: 'page:2/lab-row' } : { region: 'subject' }) },
     }))
     const request = {
       schemaVersion: 'health-analysis-request/v1' as const, profile: 'default', purpose, sourceId: `${purpose}-1`, observedAt,
@@ -58,7 +59,7 @@ describe('health artifact analysis', () => {
     const result = finalizeHealthAnalysis(request, {
       schemaVersion: 'health-analyzer-output/v1', modelVersion: 'model-1', parserVersion: 'parser-1', overallConfidence: 0.4,
       captureQuality: { score: 0.4, reasons: ['blur'] },
-      fields: [{ field: 'waistCm', value: 88, confidence: 0.4, evidence: { artifactId, region: 'subject' } }],
+      fields: [{ field: 'waistCm', value: 88, unit: 'cm', confidence: 0.4, evidence: { artifactId, region: 'subject' } }],
     }, { processor: 'local:test', locality: 'local' })
     expect(result).toEqual({
       schemaVersion: 'health-analysis-result/v1', purpose: 'measurement', status: 'recapture_required', modelVersion: 'model-1', parserVersion: 'parser-1',
@@ -87,6 +88,45 @@ describe('health artifact analysis', () => {
     expect(noReason).toMatchObject({ code: 'HEALTH_ANALYSIS_INVALID_OUTPUT' })
   })
 
+  it('binds canonical units and semantic types before low-quality or completed output can proceed', async () => {
+    const { finalizeHealthAnalysis } = await import('../../packages/server/src/services/hermes/health-loop/analysis')
+    const artifactId = `artifact-${'a'.repeat(64)}`
+    const cases = [
+      { purpose: 'measurement' as const, field: 'waistCm', value: 88, unit: 'cm' },
+      { purpose: 'posture' as const, field: 'angles', value: { headForwardDeg: 8 }, unit: 'degree' },
+      { purpose: 'skin' as const, field: 'distanceCm', value: 40, unit: 'cm' },
+      { purpose: 'diet' as const, field: 'caloriesKcal', value: 520, unit: 'kcal' },
+      { purpose: 'diet' as const, field: 'proteinG', value: 30, unit: 'g' },
+      { purpose: 'diet' as const, field: 'waterMl', value: 350, unit: 'mL' },
+    ]
+    for (const [index, current] of cases.entries()) {
+      const request = { schemaVersion: 'health-analysis-request/v1' as const, profile: 'default', purpose: current.purpose, sourceId: `unit-${index}`, observedAt,
+        artifactIds: [artifactId], selectedRegions: ['subject'], requestedFields: [current.field] }
+      const output = { schemaVersion: 'health-analyzer-output/v1', modelVersion: 'model-1', parserVersion: 'parser-1', overallConfidence: 0.9,
+        captureQuality: { score: 0.9, reasons: [] }, fields: [{ field: current.field, value: current.value, unit: current.unit, confidence: 0.9, evidence: { artifactId, region: 'subject' } }] }
+      expect(finalizeHealthAnalysis(request, output, { processor: 'local:test', locality: 'local' }).status).toBe('completed')
+      for (const badUnit of [undefined, current.unit === 'kg' ? 'cm' : 'kg']) {
+        const field = { ...output.fields[0], ...(badUnit === undefined ? {} : { unit: badUnit }) }
+        if (badUnit === undefined) delete (field as { unit?: string }).unit
+        const error = (() => { try { finalizeHealthAnalysis(request, { ...output, fields: [field] }, { processor: 'local:test', locality: 'local' }); return null } catch (value) { return value } })()
+        expect(error).toMatchObject({ code: 'HEALTH_ANALYSIS_INVALID_OUTPUT' })
+      }
+    }
+
+    const mealRequest = { schemaVersion: 'health-analysis-request/v1' as const, profile: 'default', purpose: 'diet' as const, sourceId: 'unitless', observedAt,
+      artifactIds: [artifactId], selectedRegions: ['subject'], requestedFields: ['mealTime'] }
+    const mealOutput = { schemaVersion: 'health-analyzer-output/v1', modelVersion: 'model-1', parserVersion: 'parser-1', overallConfidence: 0.9,
+      captureQuality: { score: 0.9, reasons: [] }, fields: [{ field: 'mealTime', value: observedAt, unit: 'second', confidence: 0.9, evidence: { artifactId, region: 'subject' } }] }
+    expect(() => finalizeHealthAnalysis(mealRequest, mealOutput, { processor: 'local:test', locality: 'local' }))
+      .toThrowError('HEALTH_ANALYSIS_INVALID_OUTPUT')
+
+    const lowRequest = { ...mealRequest, purpose: 'measurement' as const, sourceId: 'semantic-low', requestedFields: ['waistCm'] }
+    const lowOutput = { ...mealOutput, captureQuality: { score: 0.4, reasons: ['blur'] },
+      fields: [{ field: 'waistCm', value: '88', unit: 'cm', confidence: 0.4, evidence: { artifactId, region: 'subject' } }] }
+    expect(() => finalizeHealthAnalysis(lowRequest, lowOutput, { processor: 'local:test', locality: 'local' }))
+      .toThrowError('HEALTH_ANALYSIS_INVALID_OUTPUT')
+  })
+
   it('fails closed on fields outside the request, bad evidence, invalid confidence, unknown keys, and hostile graphs', async () => {
     const { finalizeHealthAnalysis } = await import('../../packages/server/src/services/hermes/health-loop/analysis')
     const artifactId = `artifact-${'c'.repeat(64)}`
@@ -97,7 +137,7 @@ describe('health artifact analysis', () => {
     const base = {
       schemaVersion: 'health-analyzer-output/v1', modelVersion: 'model-1', parserVersion: 'parser-1', overallConfidence: 0.9,
       captureQuality: { score: 0.9, reasons: [] },
-      fields: [{ field: 'waistCm', value: 88, confidence: 0.9, evidence: { artifactId, region: 'subject' } }],
+      fields: [{ field: 'waistCm', value: 88, unit: 'cm', confidence: 0.9, evidence: { artifactId, region: 'subject' } }],
     }
     const hostile: Record<string, unknown> = { ...base }; hostile.fields = hostile
     const accessor = { ...base }; Object.defineProperty(accessor, 'fields', { enumerable: true, get: () => base.fields })
@@ -138,7 +178,7 @@ describe('health artifact analysis', () => {
     }
     const json = await analyzer.analyze({ request: { ...base, purpose: 'measurement', requestedFields: ['waistCm'] }, format: 'json', content: JSON.stringify({
       schemaVersion: 'health-analyzer-output/v1', modelVersion: 'structured', parserVersion: 'structured-json-v1', overallConfidence: 1,
-      captureQuality: { score: 1, reasons: [] }, fields: [{ field: 'waistCm', value: 88, confidence: 1, evidence: { artifactId, region: 'subject' } }],
+      captureQuality: { score: 1, reasons: [] }, fields: [{ field: 'waistCm', value: 88, unit: 'cm', confidence: 1, evidence: { artifactId, region: 'subject' } }],
     }) })
     expect(json.envelope?.payload).toMatchObject({ waistCm: 88 })
 
@@ -154,6 +194,24 @@ describe('health artifact analysis', () => {
       .rejects.toMatchObject({ code: 'HEALTH_ANALYSIS_INVALID_INPUT' })
   })
 
+  it('rejects mixed report artifacts and preserves page and region evidence for one scoped document', async () => {
+    const { createStructuredHealthAnalyzer } = await import('../../packages/server/src/services/hermes/health-loop/analyzers/structured')
+    const analyzer = createStructuredHealthAnalyzer()
+    const first = `artifact-${'b'.repeat(64)}`; const second = `artifact-${'c'.repeat(64)}`
+    const request = { schemaVersion: 'health-analysis-request/v1' as const, profile: 'default', purpose: 'internal_health' as const, sourceId: 'report-evidence', observedAt,
+      artifactIds: [first, second], selectedRegions: ['page:1/row-a', 'page:2/row-b'], requestedFields: ['markers'] }
+    const row = (artifactId: string, page: number, region: string, key: string) => `marker\t${key}\t5.2\tmmol/L\t1\t${artifactId}\t${page}\t${region}`
+    await expect(analyzer.analyze({ request, format: 'report_text', content: `${row(first, 1, 'page:1/row-a', 'glucose')}\n${row(second, 2, 'page:2/row-b', 'hba1c')}` }))
+      .rejects.toMatchObject({ code: 'HEALTH_ANALYSIS_INVALID_INPUT' })
+
+    const result = await analyzer.analyze({ request: { ...request, artifactIds: [first] }, format: 'report_text',
+      content: `${row(first, 1, 'page:1/row-a', 'glucose')}\n${row(first, 2, 'page:2/row-b', 'hba1c')}` })
+    expect(result.envelope?.payload).toMatchObject({ markers: [
+      expect.objectContaining({ key: 'glucose', evidence: { page: 1, region: 'page:1/row-a' } }),
+      expect.objectContaining({ key: 'hba1c', evidence: { page: 2, region: 'page:2/row-b' } }),
+    ] })
+  })
+
   it('emits a stable Task3 envelope whose exact replay is a no-op', async () => {
     const { finalizeHealthAnalysis } = await import('../../packages/server/src/services/hermes/health-loop/analysis')
     const { ingestHealthEnvelope } = await import('../../packages/server/src/services/hermes/health-loop/ingestion')
@@ -162,7 +220,7 @@ describe('health artifact analysis', () => {
       artifactIds: [artifactId], selectedRegions: ['subject'], requestedFields: ['waistCm'] }
     const result = finalizeHealthAnalysis(request, {
       schemaVersion: 'health-analyzer-output/v1', modelVersion: 'measure-1', parserVersion: 'vision-json-v1', overallConfidence: 0.9,
-      captureQuality: { score: 0.9, reasons: [] }, fields: [{ field: 'waistCm', value: 88, confidence: 0.9, evidence: { artifactId, region: 'subject' } }],
+      captureQuality: { score: 0.9, reasons: [] }, fields: [{ field: 'waistCm', value: 88, unit: 'cm', confidence: 0.9, evidence: { artifactId, region: 'subject' } }],
     }, { processor: 'local:test', locality: 'local' })
     const first = ingestHealthEnvelope(result.envelope!)
     const replay = ingestHealthEnvelope(result.envelope!)
@@ -189,22 +247,25 @@ describe('health artifact analysis', () => {
     const { createAuxiliaryVisionAnalyzer } = await import('../../packages/server/src/services/hermes/health-loop/analyzers/auxiliary-vision')
     const artifactId = `artifact-${'1'.repeat(64)}`
     const order: string[] = []
+    const content = Buffer.from('png')
     const broker = { consume: vi.fn(async () => { order.push('consume'); return { consentId: 'consent-1', manifestDigest: 'a'.repeat(64), consumedAt: observedAt } }) }
-    const vault = { read: vi.fn(async () => { order.push('read'); return { artifact: { id: artifactId, mediaType: 'image/png', sizeBytes: 3, metadata: { secret: 'drop' }, relativePath: 'secret/path' }, content: Buffer.from('png') } }) }
+    const artifactMetadataResolver = vi.fn(async () => { order.push('metadata'); return { id: artifactId, mediaType: 'image/png', sizeBytes: 3 } })
+    const vault = { read: vi.fn(async () => { order.push('read'); return { artifact: { id: artifactId, mediaType: 'image/png', sizeBytes: 3, metadata: { secret: 'drop' }, relativePath: 'secret/path' }, content } }) }
     const client = { analyze: vi.fn(async (input: any) => {
       order.push('client')
       expect(input.artifacts).toEqual([{ artifactId, mediaType: 'image/png', content: Buffer.from('png') }])
+      expect(input.artifacts[0].content).toBe(content)
       expect(JSON.stringify(input)).not.toMatch(/secret\/path|bearer|api_key/i)
       return JSON.stringify({ schemaVersion: 'health-analyzer-output/v1', modelVersion: 'vision-1', parserVersion: 'vision-json-v1', overallConfidence: 0.9,
-        captureQuality: { score: 0.9, reasons: [] }, fields: [{ field: 'waistCm', value: 88, confidence: 0.9, evidence: { artifactId, region: 'subject' } }] })
+        captureQuality: { score: 0.9, reasons: [] }, fields: [{ field: 'waistCm', value: 88, unit: 'cm', confidence: 0.9, evidence: { artifactId, region: 'subject' } }] })
     }) }
     const resolver = vi.fn(async () => ({ provider: 'remote:test', model: 'vision-1', locality: 'remote' as const, timeoutMs: 1_000 }))
-    const analyzer = createAuxiliaryVisionAnalyzer({ resolver, client, vault: vault as any, consentBroker: broker as any, maxResponseBytes: 8192 })
+    const analyzer = createAuxiliaryVisionAnalyzer({ resolver, client, vault: vault as any, consentBroker: broker as any, artifactMetadataResolver, maxResponseBytes: 8192 })
     const manifest = { artifactIds: [artifactId], processor: 'remote:test', purpose: 'measurement' as const, selectedRegions: ['subject'], requestedFields: ['waistCm'], retention: 'no_retention' as const }
     const request = { schemaVersion: 'health-analysis-request/v1' as const, profile: 'default', purpose: 'measurement' as const, sourceId: 'remote-1', observedAt,
       artifactIds: [artifactId], selectedRegions: ['subject'], requestedFields: ['waistCm'], manifest, consentToken: '0'.repeat(64) }
     await expect(analyzer.analyze(request)).resolves.toMatchObject({ status: 'completed' })
-    expect(order).toEqual(['consume', 'read', 'client'])
+    expect(order).toEqual(['consume', 'metadata', 'read', 'client'])
     broker.consume.mockRejectedValueOnce(Object.assign(new Error('replayed token secret'), { code: 'HEALTH_CONSENT_REPLAYED' }))
     await expect(analyzer.analyze(request)).rejects.toMatchObject({ code: 'HEALTH_ANALYSIS_CONSENT_DENIED' })
     expect(client.analyze).toHaveBeenCalledTimes(1)
@@ -216,16 +277,17 @@ describe('health artifact analysis', () => {
     const output = JSON.stringify({ schemaVersion: 'health-analyzer-output/v1', modelVersion: 'vision-1', parserVersion: 'vision-json-v1', overallConfidence: 0.9,
       captureQuality: { score: 0.9, reasons: [] }, fields: [{ field: 'appearances', value: [{ type: 'redness', severity: 0.1 }], confidence: 0.9, evidence: { artifactId, region: 'face' } }] })
     const vault = { read: vi.fn(async () => ({ artifact: { id: artifactId, mediaType: 'image/png', sizeBytes: 3 }, content: Buffer.from('png') })) }
+    const artifactMetadataResolver = async () => ({ id: artifactId, mediaType: 'image/png', sizeBytes: 3 })
     const client = { analyze: vi.fn(async () => output) }
     const denied = createAuxiliaryVisionAnalyzer({ resolver: async () => ({ provider: 'remote:test', model: 'vision-1', locality: 'remote', timeoutMs: 100 }), client,
-      vault: vault as any, consentBroker: { consume: vi.fn(async () => { throw new Error('db corrupt path C:\\secret') }) } as any })
+      vault: vault as any, artifactMetadataResolver, consentBroker: { consume: vi.fn(async () => { throw new Error('db corrupt path C:\\secret') }) } as any })
     const request = { schemaVersion: 'health-analysis-request/v1' as const, profile: 'default', purpose: 'skin' as const, sourceId: 'skin-1', observedAt,
       artifactIds: [artifactId], selectedRegions: ['face'], requestedFields: ['appearances'],
       manifest: { artifactIds: [artifactId], processor: 'remote:test', purpose: 'skin' as const, selectedRegions: ['face'], requestedFields: ['appearances'], retention: 'no_retention' as const }, consentToken: '0'.repeat(64) }
     await expect(denied.analyze(request)).rejects.toMatchObject({ code: 'HEALTH_ANALYSIS_CONSENT_DENIED' })
     expect(vault.read).not.toHaveBeenCalled(); expect(client.analyze).not.toHaveBeenCalled()
 
-    const local = createAuxiliaryVisionAnalyzer({ resolver: async () => ({ provider: 'local:test', model: 'vision-1', locality: 'local', timeoutMs: 100 }), client, vault: vault as any })
+    const local = createAuxiliaryVisionAnalyzer({ resolver: async () => ({ provider: 'local:test', model: 'vision-1', locality: 'local', timeoutMs: 100 }), client, vault: vault as any, artifactMetadataResolver })
     const { manifest: _manifest, consentToken: _consentToken, ...localRequest } = request
     await expect(local.analyze(localRequest)).resolves.toMatchObject({ status: 'completed' })
     expect(client.analyze).toHaveBeenCalledTimes(1)
@@ -303,7 +365,8 @@ describe('health artifact analysis', () => {
     const client = { analyze: vi.fn(async (input: any) => {
       const current = cases.find(item => item.field === input.requestedFields[0])!
       return JSON.stringify({ schemaVersion: 'health-analyzer-output/v1', modelVersion: 'vision-1', parserVersion: 'vision-json-v1', overallConfidence: 0.9,
-        captureQuality: { score: 0.9, reasons: [] }, fields: [{ field: current.field, value: current.value, confidence: 0.9, evidence: { artifactId: artifact.id, region: 'subject' } }] })
+        captureQuality: { score: 0.9, reasons: [] }, fields: [{ field: current.field, value: current.value,
+          ...(current.field === 'waistCm' ? { unit: 'cm' } : {}), confidence: 0.9, evidence: { artifactId: artifact.id, region: 'subject' } }] })
     }) }
     const analyzer = createAuxiliaryVisionAnalyzer({ resolver: async () => ({ provider: 'remote:test', model: 'vision-1', locality: 'remote', timeoutMs: 1000 }), client, vault, consentBroker: broker })
     for (const [index, current] of cases.entries()) {
@@ -345,7 +408,8 @@ describe('health artifact analysis', () => {
     const vault = { read: async () => ({ artifact: { id: artifactId, mediaType: 'image/png', sizeBytes: 3 }, content: Buffer.from('png') }) }
     const run = async (response: string | (() => Promise<string>), maxResponseBytes = 1024) => {
       const client = { analyze: typeof response === 'function' ? response : async () => response }
-      return createAuxiliaryVisionAnalyzer({ resolver: async () => ({ provider: 'local:test', model: 'vision-1', locality: 'local', timeoutMs: 10 }), client, vault: vault as any, maxResponseBytes }).analyze(request)
+      return createAuxiliaryVisionAnalyzer({ resolver: async () => ({ provider: 'local:test', model: 'vision-1', locality: 'local', timeoutMs: 10 }), client, vault: vault as any,
+        artifactMetadataResolver: async () => ({ id: artifactId, mediaType: 'image/png', sizeBytes: 3 }), maxResponseBytes }).analyze(request)
     }
     for (const response of ['```json\n{}\n```', '{} trailing', '{}{}', 'x'.repeat(1025), JSON.stringify({ schemaVersion: 'wrong' }),
       JSON.stringify({ schemaVersion: 'health-analyzer-output/v1', modelVersion: 'wrong', parserVersion: 'vision-json-v1', overallConfidence: 1, captureQuality: { score: 1, reasons: [] }, fields: [] }),
@@ -355,5 +419,57 @@ describe('health artifact analysis', () => {
       expect(error.message).not.toContain(response)
     }
     await expect(run(() => new Promise(resolve => setTimeout(() => resolve('{}'), 100)))).rejects.toMatchObject({ code: 'HEALTH_ANALYSIS_TIMEOUT' })
+  })
+
+  it('preflights count, per-artifact, and aggregate budgets before reads and rechecks actual bytes without copying', async () => {
+    const { createAuxiliaryVisionAnalyzer, HEALTH_VISION_ARTIFACT_LIMITS } = await import('../../packages/server/src/services/hermes/health-loop/analyzers/auxiliary-vision')
+    const ids = Array.from({ length: 9 }, (_, index) => `artifact-${index.toString(16).repeat(64)}`)
+    const request = (artifactIds: string[]) => ({ schemaVersion: 'health-analysis-request/v1' as const, profile: 'default', purpose: 'measurement' as const,
+      sourceId: `budget-${artifactIds.length}`, observedAt, artifactIds, selectedRegions: ['subject'], requestedFields: ['waistCm'] })
+    const response = (artifactId: string) => JSON.stringify({ schemaVersion: 'health-analyzer-output/v1', modelVersion: 'vision-1', parserVersion: 'vision-json-v1', overallConfidence: 0.9,
+      captureQuality: { score: 0.9, reasons: [] }, fields: [{ field: 'waistCm', value: 88, unit: 'cm', confidence: 0.9, evidence: { artifactId, region: 'subject' } }] })
+    const create = (sizes: Map<string, number>, contents = new Map<string, Buffer>()) => {
+      const read = vi.fn(async (artifactId: string) => ({ artifact: { id: artifactId, mediaType: 'image/png', sizeBytes: sizes.get(artifactId)! },
+        content: contents.get(artifactId) ?? Buffer.alloc(sizes.get(artifactId)!) }))
+      const client = { analyze: vi.fn(async (input: any) => response(input.artifacts[0].artifactId)) }
+      const artifactMetadataResolver = vi.fn(async (artifactId: string) => sizes.has(artifactId)
+        ? { id: artifactId, mediaType: 'image/png', sizeBytes: sizes.get(artifactId)! } : null)
+      const analyzer = createAuxiliaryVisionAnalyzer({ resolver: async () => ({ provider: 'local:test', model: 'vision-1', locality: 'local', timeoutMs: 1000 }),
+        client, vault: { read } as any, artifactMetadataResolver })
+      return { analyzer, read, client, artifactMetadataResolver }
+    }
+
+    const overCount = create(new Map(ids.map(id => [id, 1])))
+    await expect(overCount.analyzer.analyze(request(ids))).rejects.toMatchObject({ code: 'HEALTH_ANALYSIS_ARTIFACT_DENIED' })
+    expect(overCount.read).not.toHaveBeenCalled(); expect(overCount.client.analyze).not.toHaveBeenCalled()
+
+    const perId = ids[0]; const overPer = create(new Map([[perId, HEALTH_VISION_ARTIFACT_LIMITS.maxArtifactBytes + 1]]))
+    await expect(overPer.analyzer.analyze(request([perId]))).rejects.toMatchObject({ code: 'HEALTH_ANALYSIS_ARTIFACT_DENIED' })
+    expect(overPer.read).not.toHaveBeenCalled(); expect(overPer.client.analyze).not.toHaveBeenCalled()
+
+    const remoteConsume = vi.fn(async () => ({ consentId: 'consent-budget', manifestDigest: 'a'.repeat(64), consumedAt: observedAt }))
+    const remote = createAuxiliaryVisionAnalyzer({ resolver: async () => ({ provider: 'remote:test', model: 'vision-1', locality: 'remote', timeoutMs: 1000 }),
+      client: overPer.client, vault: { read: overPer.read } as any, consentBroker: { consume: remoteConsume } as any,
+      artifactMetadataResolver: overPer.artifactMetadataResolver })
+    const remoteManifest = { artifactIds: [perId], processor: 'remote:test', purpose: 'measurement' as const, selectedRegions: ['subject'], requestedFields: ['waistCm'], retention: 'no_retention' as const }
+    await expect(remote.analyze({ ...request([perId]), manifest: remoteManifest, consentToken: '0'.repeat(64) }))
+      .rejects.toMatchObject({ code: 'HEALTH_ANALYSIS_ARTIFACT_DENIED' })
+    expect(remoteConsume).toHaveBeenCalledTimes(1); expect(overPer.read).not.toHaveBeenCalled(); expect(overPer.client.analyze).not.toHaveBeenCalled()
+
+    const totalIds = ids.slice(0, 3); const overTotal = create(new Map(totalIds.map(id => [id, 23 * 1024 * 1024])))
+    await expect(overTotal.analyzer.analyze(request(totalIds))).rejects.toMatchObject({ code: 'HEALTH_ANALYSIS_ARTIFACT_DENIED' })
+    expect(overTotal.read).not.toHaveBeenCalled(); expect(overTotal.client.analyze).not.toHaveBeenCalled()
+
+    const actual = Buffer.from('four'); const lied = create(new Map([[perId, 3]]), new Map([[perId, actual]]))
+    await expect(lied.analyzer.analyze(request([perId]))).rejects.toMatchObject({ code: 'HEALTH_ANALYSIS_ARTIFACT_DENIED' })
+    expect(lied.read).toHaveBeenCalledTimes(1); expect(lied.client.analyze).not.toHaveBeenCalled()
+
+    const original = Buffer.from('png'); const exact = create(new Map([[perId, original.byteLength]]), new Map([[perId, original]]))
+    exact.client.analyze.mockImplementationOnce(async (input: any) => {
+      expect(input.artifacts[0].content).toBe(original)
+      return response(perId)
+    })
+    await expect(exact.analyzer.analyze(request([perId]))).resolves.toMatchObject({ status: 'completed' })
+    expect(exact.client.analyze).toHaveBeenCalledTimes(1)
   })
 })

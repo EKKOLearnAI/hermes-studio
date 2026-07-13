@@ -131,6 +131,7 @@ function reportOutput(text: string, maxRows: number): unknown {
       confidence: strictNumeric(columns[4]), artifactId: columns[5], page, region: columns[7],
     }
   })
+  if (new Set(markers.map(marker => marker.artifactId)).size !== 1) invalid()
   const confidence = markers.reduce((sum, marker) => sum + marker.confidence, 0) / markers.length
   return {
     schemaVersion: 'health-analyzer-output/v1', modelVersion: 'structured', parserVersion: 'structured-report-text-v1', overallConfidence: confidence,
