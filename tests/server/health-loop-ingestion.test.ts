@@ -8,22 +8,30 @@ const observedAt = '2026-07-13T08:00:00.000Z'
 
 const fixtures: HealthIngestionEnvelope[] = [
   { domain: 'body_composition', source: 'mi-s400', sourceId: 'reading-1', observedAt, evidenceClass: 'measured', confidence: 0.99,
-    payload: { weightKg: 84.2, bmi: 26.6, bodyFatPercent: 21.4, muscleMassKg: 62.1, boneMassKg: 3.2, waterPercent: 55.1, visceralFatLevel: 9, bmrKcal: 1840,
-      proteinPercent: 18.2, subcutaneousFatPercent: 17.1, fatMassKg: 18, leanBodyMassKg: 66.2, skeletalMusclePercent: 42.3, bodyScore: 82, idealWeightKg: 74 } },
+    payload: { weightKg: 84.2, bmi: 26.6, bodyFatPercent: 21.4, muscleMassKg: 62.1, boneSaltKg: 3.2, bodyWaterPercent: 55.1, visceralFatLevel: 9, basalMetabolismKcal: 1840,
+      proteinPercent: 18.2, subcutaneousFatPercent: 17.1, fatMassKg: 18, leanMassKg: 66.2, skeletalMusclePercent: 42.3, bodyScore: 82, idealWeightKg: 74,
+      waistHipRatio: 0.89, bodyAgeYears: 31, deviceModel: 'xiaomi-s400' } },
   { domain: 'measurements', source: 'guided-measurement', sourceId: 'measurement-1', observedAt, evidenceClass: 'reported', confidence: 0.9,
-    payload: { waistCm: 88, hipCm: 99, leftArmCm: 33, rightArmCm: 33.5, leftThighCm: 57, rightThighCm: 57.4, method: 'tape', calibrationId: 'tape-2026' } },
+    payload: { waistCm: 88, hipCm: 99, leftArmCm: 33, rightArmCm: 33.5, leftThighCm: 57, rightThighCm: 57.4, calibrationMethod: 'scale-reference', calibrationId: 'tape-2026',
+      captureConditions: { lightingProfile: 'daylight', distanceCm: 180, deviceModel: 'pixel-9', view: 'front', scaleReference: 'a4-sheet' }, modelVersion: 'measure-2.1', modelConfidence: 0.83 } },
   { domain: 'posture', source: 'local-pose', sourceId: 'posture-1', observedAt, evidenceClass: 'inferred', confidence: 0.82,
-    payload: { findings: [{ code: 'forward_head', severity: 0.4, confidence: 0.81 }], angles: { headForwardDeg: 12.5 }, capture: { views: ['front', 'side'], quality: 0.92 }, modelVersion: 'pose-1.2', modelConfidence: 0.84 } },
+    payload: { findings: [{ code: 'forward_head', severity: 0.4, confidence: 0.81 }], angles: { headForwardDeg: 12.5 }, landmarks: [{ name: 'left_shoulder', x: 0.31, y: 0.42, confidence: 0.91 }], capture: { views: ['front', 'side'], quality: 0.92 }, modelVersion: 'pose-1.2', modelConfidence: 0.84 } },
   { domain: 'skin', source: 'local-skin', sourceId: 'skin-1', observedAt, evidenceClass: 'inferred', confidence: 0.76,
-    payload: { region: 'face', appearances: [{ type: 'redness', severity: 0.3 }], trend: 'stable', captureQuality: 0.88 } },
+    payload: { region: 'face', appearances: [{ type: 'redness', severity: 0.3 }], trend: 'stable', captureQuality: 0.88, lightingProfile: 'daylight', distanceCm: 40, device: 'pixel-9', comparisonBaseline: 'skin-baseline-2026-07' } },
   { domain: 'diet', source: 'meal-log', sourceId: 'meal-1', observedAt, evidenceClass: 'reported', confidence: 0.85,
-    payload: { foods: [{ name: 'rice', portionGrams: 180 }], caloriesKcal: 520, proteinG: 30, carbsG: 65, fatG: 14, micros: { fiberG: 8, sodiumMg: 640 }, waterMl: 350, portionConfirmed: true } },
+    payload: { foods: [{ name: 'rice', portionGrams: 180 }], supplements: [{ name: 'creatine', amount: 5, unit: 'g' }], mealTime: '2026-07-13T12:10:00+08:00', caloriesKcal: 520, proteinG: 30, carbsG: 65, fatG: 14,
+      micros: { fiberG: 8, sodiumMg: 640 }, waterMl: 350, parserConfidence: 0.86, portionConfirmed: true, confirmationStatus: 'confirmed' } },
   { domain: 'fitness', source: 'training-log', sourceId: 'workout-1', observedAt, evidenceClass: 'measured', confidence: 0.95,
-    payload: { exercise: 'squat', sets: 4, reps: 8, loadKg: 80, durationMinutes: 42, intensity: 'vigorous', muscles: ['quadriceps', 'glutes'], pain: 0, rpe: 8, completed: true } },
+    payload: { exercises: [{ name: 'squat', sets: [{ reps: 8, loadKg: 80, rpe: 8, completed: true }, { reps: 8, loadKg: 80, rpe: 8, completed: true }], muscles: ['quadriceps', 'glutes'] },
+      { name: 'plank', sets: [{ durationSeconds: 60, completed: true }], muscles: ['core'] }], durationMinutes: 42, intensity: 'vigorous', muscles: ['quadriceps', 'glutes'], pain: 0, rpe: 8, trainingLoad: 320, completed: true } },
   { domain: 'sleep', source: 'mi-fitness', sourceId: 'sleep-1', observedAt, evidenceClass: 'measured', confidence: 0.93,
-    payload: { startedAt: '2026-07-12T23:10:00+08:00', endedAt: '2026-07-13T06:40:00+08:00', durationMinutes: 450, interruptions: 2, stages: { deepMinutes: 90, remMinutes: 105, lightMinutes: 240 }, restingHeartRateBpm: 58, recoveryScore: 81 } },
+    payload: { startedAt: '2026-07-12T23:10:00+08:00', endedAt: '2026-07-13T06:40:00+08:00', durationMinutes: 450, interruptions: 2,
+      stages: { deepMinutes: 90, remMinutes: 105, lightMinutes: 240 }, restingHeartRateBpm: 58, restingRespiratoryRateBrpm: 14, restingSpo2Percent: 97,
+      freshnessMinutes: 20, subjectiveRecovery: 7, recoveryScore: 81 } },
   { domain: 'internal_health', source: 'report-parser', sourceId: 'report-1', observedAt, evidenceClass: 'inferred', confidence: 0.88,
-    payload: { markers: [{ name: 'fasting_glucose', value: 5.2, unit: 'mmol/L', referenceLow: 3.9, referenceHigh: 6.1, providerFlag: 'normal' }], reportDate: '2026-07-01', institution: 'Example Hospital', reportArtifactId: `artifact-${'a'.repeat(64)}`, pendingConfirmation: true } },
+    payload: { markers: [{ key: 'fasting_glucose', displayLabel: 'Fasting glucose', value: 5.2, unit: 'mmol/L', referenceInterval: { low: 3.9, high: 6.1 },
+      providerFlag: 'normal', measuredAt: '2026-07-01T08:15:00+08:00', evidence: { page: 2, region: 'lab-table-row-4' } }],
+      reportDate: '2026-07-01', institution: 'Example Hospital', reportArtifactId: `artifact-${'a'.repeat(64)}`, pendingConfirmation: true } },
 ]
 
 describe('health-loop ingestion', () => {
@@ -90,6 +98,97 @@ describe('health-loop ingestion', () => {
     expect(body.observations.find(item => item.metric === 'health.body_composition.body_score')).toMatchObject({ value: 82, unit: null })
     expect(normalizeHealthIngestionEnvelope(fixtures[2]).observations)
       .toContainEqual({ metric: 'health.posture.model_confidence', value: 0.84, unit: null })
+  })
+
+  it('covers the complete approved canonical field set in each domain fixture', async () => {
+    const { normalizeHealthIngestionEnvelope } = await import('../../packages/server/src/services/hermes/health-loop')
+    const metrics = (index: number) => Object.fromEntries(normalizeHealthIngestionEnvelope(fixtures[index]).observations.map(item => [item.metric, item]))
+
+    expect(metrics(0)).toMatchObject({
+      'health.body_composition.waist_hip_ratio': { value: 0.89 },
+      'health.body_composition.device_model': { value: 'xiaomi-s400' },
+      'health.body_composition.bone_mass_kg': { unit: 'kg' },
+      'health.body_composition.metabolic_age_years': { unit: 'year' },
+    })
+    expect(metrics(1)).toMatchObject({
+      'health.measurements.calibration_method': { value: 'scale-reference' },
+      'health.measurements.capture_conditions': { value: { lightingProfile: 'daylight', distanceCm: 180, deviceModel: 'pixel-9', view: 'front', scaleReference: 'a4-sheet' } },
+      'health.measurements.model_version': { value: 'measure-2.1' },
+      'health.measurements.model_confidence': { value: 0.83 },
+    })
+    expect(metrics(2)).toMatchObject({ 'health.posture.landmarks': { value: [{ name: 'left_shoulder', x: 0.31, y: 0.42, confidence: 0.91 }] } })
+    expect(metrics(3)).toMatchObject({
+      'health.skin.lighting_profile': { value: 'daylight' }, 'health.skin.distance_cm': { value: 40, unit: 'cm' },
+      'health.skin.device': { value: 'pixel-9' }, 'health.skin.comparison_baseline': { value: 'skin-baseline-2026-07' },
+    })
+    expect(metrics(4)).toMatchObject({
+      'health.diet.meal_time': { value: '2026-07-13T12:10:00+08:00' }, 'health.diet.parser_confidence': { value: 0.86 },
+      'health.diet.confirmation_status': { value: 'confirmed' },
+      'health.diet.supplements': { value: [{ name: 'creatine', amount: 5, unit: 'g' }] },
+    })
+    expect(metrics(5)['health.fitness.exercises'].value).toEqual([
+      expect.objectContaining({ name: 'squat', sets: [expect.objectContaining({ reps: 8, loadKg: 80 }), expect.objectContaining({ reps: 8, loadKg: 80 })] }),
+      expect.objectContaining({ name: 'plank', sets: [{ durationSeconds: 60, completed: true }], muscles: ['core'] }),
+    ])
+    expect(metrics(5)['health.fitness.training_load']).toMatchObject({ value: 320 })
+    expect(metrics(6)).toMatchObject({
+      'health.sleep.resting_respiratory_rate_brpm': { unit: 'breath/min' }, 'health.sleep.resting_spo2_percent': { unit: '%' },
+      'health.sleep.freshness_minutes': { unit: 'min' }, 'health.sleep.subjective_recovery': { value: 7 },
+    })
+    expect(metrics(7)['health.internal_health.markers'].value).toEqual([expect.objectContaining({
+      key: 'fasting_glucose', displayLabel: 'Fasting glucose', measuredAt: '2026-07-01T08:15:00+08:00', referenceInterval: { low: 3.9, high: 6.1 },
+      evidence: { page: 2, region: 'lab-table-row-4' },
+    })])
+  })
+
+  it('sorts and deduplicates unordered semantic sets so reversed replay is a no-op', async () => {
+    const { ingestHealthEnvelope, normalizeHealthIngestionEnvelope } = await import('../../packages/server/src/services/hermes/health-loop')
+    const findingA = { code: 'forward_head', severity: 0.4, confidence: 0.8 }
+    const findingB = { code: 'shoulder_asymmetry', severity: 0.2, confidence: 0.9 }
+    const appearanceA = { type: 'redness', severity: 0.3 }
+    const appearanceB = { type: 'dryness', severity: 0.1 }
+    const markerA = { key: 'fasting_glucose', displayLabel: 'Fasting glucose', value: 5.2, unit: 'mmol/L', measuredAt: observedAt, evidence: { page: 2, region: 'row-4' } }
+    const markerB = { key: 'hba1c', displayLabel: 'HbA1c', value: 5.3, unit: '%', measuredAt: observedAt, evidence: { page: 2, region: 'row-5' } }
+    const landmarkA = { name: 'left_shoulder', x: 0.3, y: 0.4, confidence: 0.9 }
+    const landmarkB = { name: 'right_shoulder', x: 0.7, y: 0.4, confidence: 0.9 }
+    const foodA = { name: 'rice', portionGrams: 180 }; const foodB = { name: 'chicken', portionGrams: 150 }
+    const supplementA = { name: 'creatine', amount: 5, unit: 'g' }; const supplementB = { name: 'vitamin D', amount: 25, unit: 'ug' }
+    const cases: Array<[HealthIngestionEnvelope, HealthIngestionEnvelope]> = [
+      [{ ...fixtures[2], sourceId: 'posture-set', payload: { ...fixtures[2].payload, findings: [findingA, findingB, findingA], landmarks: [landmarkA, landmarkB, landmarkA] } },
+        { ...fixtures[2], sourceId: 'posture-set', payload: { ...fixtures[2].payload, findings: [findingB, findingA], landmarks: [landmarkB, landmarkA] } }],
+      [{ ...fixtures[3], sourceId: 'skin-set', payload: { ...fixtures[3].payload, appearances: [appearanceA, appearanceB, appearanceA] } },
+        { ...fixtures[3], sourceId: 'skin-set', payload: { ...fixtures[3].payload, appearances: [appearanceB, appearanceA] } }],
+      [{ ...fixtures[4], sourceId: 'diet-set', payload: { ...fixtures[4].payload, foods: [foodA, foodB, foodA], supplements: [supplementA, supplementB, supplementA] } },
+        { ...fixtures[4], sourceId: 'diet-set', payload: { ...fixtures[4].payload, foods: [foodB, foodA], supplements: [supplementB, supplementA] } }],
+      [{ ...fixtures[7], sourceId: 'marker-set', payload: { ...fixtures[7].payload, markers: [markerA, markerB, markerA] } },
+        { ...fixtures[7], sourceId: 'marker-set', payload: { ...fixtures[7].payload, markers: [markerB, markerA] } }],
+    ]
+    for (const [first, reversed] of cases) {
+      expect(normalizeHealthIngestionEnvelope(reversed)).toEqual(normalizeHealthIngestionEnvelope(first))
+      const inserted = ingestHealthEnvelope(first); const replay = ingestHealthEnvelope(reversed)
+      expect(replay.event.id).toBe(inserted.event.id)
+      expect(replay.observations.map(item => item.id)).toEqual(inserted.observations.map(item => item.id))
+    }
+
+    const ordered = fixtures[5]
+    const reversedExercises = { ...ordered, payload: { ...ordered.payload, exercises: [...(ordered.payload.exercises as unknown[])].reverse() } }
+    expect(normalizeHealthIngestionEnvelope(reversedExercises).materialDigest)
+      .not.toBe(normalizeHealthIngestionEnvelope(ordered).materialDigest)
+  })
+
+  it('rejects invalid newly approved fields in every domain with sanitized errors', async () => {
+    const { HealthIngestionError, normalizeHealthIngestionEnvelope } = await import('../../packages/server/src/services/hermes/health-loop')
+    const invalid: HealthIngestionEnvelope[] = [
+      { ...fixtures[0], payload: { ...fixtures[0].payload, deviceModel: '   ' } },
+      { ...fixtures[1], payload: { ...fixtures[1].payload, captureConditions: { unknown: true } } },
+      { ...fixtures[2], payload: { ...fixtures[2].payload, landmarks: [{ name: 'nose', x: 11, y: 0.5, confidence: 1 }] } },
+      { ...fixtures[3], payload: { ...fixtures[3].payload, distanceCm: 0 } },
+      { ...fixtures[4], payload: { ...fixtures[4].payload, supplements: [{ name: 'creatine', amount: -1, unit: 'g' }] } },
+      { ...fixtures[5], payload: { ...fixtures[5].payload, exercises: [{ name: 'squat', sets: [{ loadKg: 2_000 }] }] } },
+      { ...fixtures[6], payload: { ...fixtures[6].payload, subjectiveRecovery: 11 } },
+      { ...fixtures[7], payload: { ...fixtures[7].payload, markers: [{ key: 'glucose', displayLabel: 'Glucose', value: 5, unit: 'mmol/L', evidence: { page: 0 } }] } },
+    ]
+    for (const envelope of invalid) expect(() => normalizeHealthIngestionEnvelope(envelope)).toThrow(HealthIngestionError)
   })
 
   it('enforces strict RFC3339 timestamps, numeric bounds, and semantic string budgets', async () => {
