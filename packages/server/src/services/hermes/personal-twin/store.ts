@@ -492,31 +492,33 @@ export function getTwinArtifact(contentHash: string): TwinArtifact | null {
 }
 
 export function upsertTwinEntity(input: TwinEntityInput): TwinEntity {
-  return withPersonalTwinDb(db => {
-    if (!input.source.trim() || !input.sourceId.trim()) throw new Error('Twin entity source and sourceId are required')
-    if (input.id === 'person:self' && (input.source !== 'system' || input.sourceId !== 'self')) throw new TwinIdentityConflictError('person:self is reserved for the canonical system identity')
-    const existing = db.prepare('SELECT id, attributes_json FROM twin_entities WHERE source = ? AND source_id = ?').get(input.source, input.sourceId) as { id: string; attributes_json: string } | undefined
-    const id = existing?.id || input.id || stableTwinId('entity', [input.source, input.sourceId])
-    if (existing && input.id && existing.id !== input.id) throw new TwinIdentityConflictError(`Provenance ${input.source}/${input.sourceId} already owns ${existing.id}`)
-    ensureIdentityAvailable(db, id, input.source, input.sourceId)
-    const timestamp = nowIso()
-    db.prepare(`
-      INSERT INTO twin_entities (id, type, label, attributes_json, source, source_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(source, source_id) DO UPDATE SET
-        type = excluded.type, label = excluded.label, attributes_json = excluded.attributes_json, updated_at = excluded.updated_at
-    `).run(
-      id,
-      input.type,
-      input.label,
-      input.attributes === undefined && existing ? existing.attributes_json : jsonString(input.attributes || {}),
-      input.source,
-      input.sourceId,
-      timestamp,
-      timestamp,
-    )
-    return entityFromRow(db.prepare('SELECT * FROM twin_entities WHERE source = ? AND source_id = ?').get(input.source, input.sourceId) as unknown as EntityRow)
-  })
+  return withPersonalTwinDb(db => upsertTwinEntityInDb(db, input))
+}
+
+function upsertTwinEntityInDb(db: DatabaseSync, input: TwinEntityInput): TwinEntity {
+  if (!input.source.trim() || !input.sourceId.trim()) throw new Error('Twin entity source and sourceId are required')
+  if (input.id === 'person:self' && (input.source !== 'system' || input.sourceId !== 'self')) throw new TwinIdentityConflictError('person:self is reserved for the canonical system identity')
+  const existing = db.prepare('SELECT id, attributes_json FROM twin_entities WHERE source = ? AND source_id = ?').get(input.source, input.sourceId) as { id: string; attributes_json: string } | undefined
+  const id = existing?.id || input.id || stableTwinId('entity', [input.source, input.sourceId])
+  if (existing && input.id && existing.id !== input.id) throw new TwinIdentityConflictError(`Provenance ${input.source}/${input.sourceId} already owns ${existing.id}`)
+  ensureIdentityAvailable(db, id, input.source, input.sourceId)
+  const timestamp = nowIso()
+  db.prepare(`
+    INSERT INTO twin_entities (id, type, label, attributes_json, source, source_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(source, source_id) DO UPDATE SET
+      type = excluded.type, label = excluded.label, attributes_json = excluded.attributes_json, updated_at = excluded.updated_at
+  `).run(
+    id,
+    input.type,
+    input.label,
+    input.attributes === undefined && existing ? existing.attributes_json : jsonString(input.attributes || {}),
+    input.source,
+    input.sourceId,
+    timestamp,
+    timestamp,
+  )
+  return entityFromRow(db.prepare('SELECT * FROM twin_entities WHERE source = ? AND source_id = ?').get(input.source, input.sourceId) as unknown as EntityRow)
 }
 
 export function getTwinEntity(id: string): TwinEntity | null {
@@ -708,28 +710,31 @@ export function listTwinConstraintsForContext(options: { domains: TwinDomain[]; 
 
 export function recordTwinObservation(input: TwinObservationInput): TwinObservation {
   validateFactInput(input.source, input.sourceId, input.actor, input.confidence, input.observedAt)
-  return withPersonalTwinDb(db => commitOrRollback(db, () => {
-    requireEntity(db, input.entityId)
-    const id = stableTwinId('observation', [input.source, input.sourceId, input.metric])
-    const ingestedAt = nowIso()
-    const evidence = input.evidence || []
-    const result = db.prepare(`
-      INSERT INTO twin_observations (id, entity_id, metric, value_json, unit, observed_at, ingested_at, source, source_id, actor, confidence, confirmation_state, evidence_json, schema_version)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(source, source_id, metric) DO NOTHING
-    `).run(id, input.entityId, input.metric, jsonString(input.value), input.unit ?? null, input.observedAt, ingestedAt, input.source, input.sourceId, input.actor, input.confidence, input.confirmationState, jsonString(evidence), 1)
-    const existing = db.prepare('SELECT * FROM twin_observations WHERE source = ? AND source_id = ? AND metric = ?').get(input.source, input.sourceId, input.metric) as unknown as ObservationRow
-    if (Number(result.changes) === 0 && (
-      existing.entity_id !== input.entityId || existing.value_json !== jsonString(input.value) || existing.unit !== (input.unit ?? null) || existing.observed_at !== input.observedAt || existing.actor !== input.actor || existing.confidence !== input.confidence || existing.confirmation_state !== input.confirmationState || existing.evidence_json !== jsonString(evidence)
-    )) throw new TwinImmutableRecordConflictError(`Observation ${input.source}/${input.sourceId}/${input.metric} already contains different data`)
-    if (Number(result.changes) === 1) {
-      db.prepare(`INSERT INTO twin_outbox (id, topic, aggregate_id, payload_json, status, available_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)`)
-        .run(outboxId('twin.observation.recorded', id), 'twin.observation.recorded', id, jsonString({ recordId: id, metric: input.metric, source: input.source, sourceId: input.sourceId }), ingestedAt, ingestedAt)
-    }
-    const observation = observationFromRow(existing)
-    if (Number(result.changes) === 1) projectObservation(db, observation)
-    return observation
-  }))
+  return withPersonalTwinDb(db => commitOrRollback(db, () => recordTwinObservationInDb(db, input)))
+}
+
+function recordTwinObservationInDb(db: DatabaseSync, input: TwinObservationInput): TwinObservation {
+  validateFactInput(input.source, input.sourceId, input.actor, input.confidence, input.observedAt)
+  requireEntity(db, input.entityId)
+  const id = stableTwinId('observation', [input.source, input.sourceId, input.metric])
+  const ingestedAt = nowIso()
+  const evidence = input.evidence || []
+  const result = db.prepare(`
+    INSERT INTO twin_observations (id, entity_id, metric, value_json, unit, observed_at, ingested_at, source, source_id, actor, confidence, confirmation_state, evidence_json, schema_version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(source, source_id, metric) DO NOTHING
+  `).run(id, input.entityId, input.metric, jsonString(input.value), input.unit ?? null, input.observedAt, ingestedAt, input.source, input.sourceId, input.actor, input.confidence, input.confirmationState, jsonString(evidence), 1)
+  const existing = db.prepare('SELECT * FROM twin_observations WHERE source = ? AND source_id = ? AND metric = ?').get(input.source, input.sourceId, input.metric) as unknown as ObservationRow
+  if (Number(result.changes) === 0 && (
+    existing.entity_id !== input.entityId || existing.value_json !== jsonString(input.value) || existing.unit !== (input.unit ?? null) || existing.observed_at !== input.observedAt || existing.actor !== input.actor || existing.confidence !== input.confidence || existing.confirmation_state !== input.confirmationState || existing.evidence_json !== jsonString(evidence)
+  )) throw new TwinImmutableRecordConflictError(`Observation ${input.source}/${input.sourceId}/${input.metric} already contains different data`)
+  if (Number(result.changes) === 1) {
+    db.prepare(`INSERT INTO twin_outbox (id, topic, aggregate_id, payload_json, status, available_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)`)
+      .run(outboxId('twin.observation.recorded', id), 'twin.observation.recorded', id, jsonString({ recordId: id, metric: input.metric, source: input.source, sourceId: input.sourceId }), ingestedAt, ingestedAt)
+  }
+  const observation = observationFromRow(existing)
+  if (Number(result.changes) === 1) projectObservation(db, observation)
+  return observation
 }
 
 export function listTwinObservations(options: { entityId?: string; metric?: string; metricPrefixes?: string[]; query?: string; limit?: number } = {}): TwinObservation[] {
@@ -758,26 +763,63 @@ export function listTwinObservations(options: { entityId?: string; metric?: stri
 
 export function recordTwinEvent(input: TwinEventInput): TwinEvent {
   validateFactInput(input.source, input.sourceId, input.actor, input.confidence, input.occurredAt)
+  return withPersonalTwinDb(db => commitOrRollback(db, () => recordTwinEventInDb(db, input)))
+}
+
+function recordTwinEventInDb(db: DatabaseSync, input: TwinEventInput): TwinEvent {
+  validateFactInput(input.source, input.sourceId, input.actor, input.confidence, input.occurredAt)
+  if (input.subjectId) requireEntity(db, input.subjectId)
+  const id = stableTwinId('event', [input.source, input.sourceId, input.eventType])
+  const ingestedAt = nowIso()
+  const evidence = input.evidence || []
+  const payload = input.payload || {}
+  const result = db.prepare(`
+    INSERT INTO twin_events (id, event_type, subject_id, payload_json, occurred_at, ingested_at, source, source_id, actor, confidence, confirmation_state, evidence_json, schema_version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(source, source_id, event_type) DO NOTHING
+  `).run(id, input.eventType, input.subjectId ?? null, jsonString(payload), input.occurredAt, ingestedAt, input.source, input.sourceId, input.actor, input.confidence, input.confirmationState, jsonString(evidence), 1)
+  const existing = db.prepare('SELECT * FROM twin_events WHERE source = ? AND source_id = ? AND event_type = ?').get(input.source, input.sourceId, input.eventType) as unknown as EventRow
+  if (Number(result.changes) === 0 && (
+    existing.subject_id !== (input.subjectId ?? null) || existing.payload_json !== jsonString(payload) || existing.occurred_at !== input.occurredAt || existing.actor !== input.actor || existing.confidence !== input.confidence || existing.confirmation_state !== input.confirmationState || existing.evidence_json !== jsonString(evidence)
+  )) throw new TwinImmutableRecordConflictError(`Event ${input.source}/${input.sourceId}/${input.eventType} already contains different data`)
+  if (Number(result.changes) === 1) {
+    db.prepare(`INSERT INTO twin_outbox (id, topic, aggregate_id, payload_json, status, available_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)`)
+      .run(outboxId('twin.event.recorded', id), 'twin.event.recorded', id, jsonString({ recordId: id, eventType: input.eventType, source: input.source, sourceId: input.sourceId }), ingestedAt, ingestedAt)
+  }
+  return eventFromRow(existing)
+}
+
+export interface TwinFactBatchInput {
+  ensureCanonicalSelf?: boolean
+  observations?: TwinObservationInput[]
+  events?: TwinEventInput[]
+}
+
+/** Atomically records a bounded group of immutable facts without exposing the database handle. */
+export function recordTwinFactBatch(input: TwinFactBatchInput): {
+  observations: TwinObservation[]
+  events: TwinEvent[]
+} {
+  const observations = input.observations ?? []
+  const events = input.events ?? []
+  if (!Array.isArray(observations) || !Array.isArray(events) || observations.length + events.length > 128) {
+    throw new Error('Twin fact batch must contain at most 128 records')
+  }
   return withPersonalTwinDb(db => commitOrRollback(db, () => {
-    if (input.subjectId) requireEntity(db, input.subjectId)
-    const id = stableTwinId('event', [input.source, input.sourceId, input.eventType])
-    const ingestedAt = nowIso()
-    const evidence = input.evidence || []
-    const payload = input.payload || {}
-    const result = db.prepare(`
-      INSERT INTO twin_events (id, event_type, subject_id, payload_json, occurred_at, ingested_at, source, source_id, actor, confidence, confirmation_state, evidence_json, schema_version)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(source, source_id, event_type) DO NOTHING
-    `).run(id, input.eventType, input.subjectId ?? null, jsonString(payload), input.occurredAt, ingestedAt, input.source, input.sourceId, input.actor, input.confidence, input.confirmationState, jsonString(evidence), 1)
-    const existing = db.prepare('SELECT * FROM twin_events WHERE source = ? AND source_id = ? AND event_type = ?').get(input.source, input.sourceId, input.eventType) as unknown as EventRow
-    if (Number(result.changes) === 0 && (
-      existing.subject_id !== (input.subjectId ?? null) || existing.payload_json !== jsonString(payload) || existing.occurred_at !== input.occurredAt || existing.actor !== input.actor || existing.confidence !== input.confidence || existing.confirmation_state !== input.confirmationState || existing.evidence_json !== jsonString(evidence)
-    )) throw new TwinImmutableRecordConflictError(`Event ${input.source}/${input.sourceId}/${input.eventType} already contains different data`)
-    if (Number(result.changes) === 1) {
-      db.prepare(`INSERT INTO twin_outbox (id, topic, aggregate_id, payload_json, status, available_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)`)
-        .run(outboxId('twin.event.recorded', id), 'twin.event.recorded', id, jsonString({ recordId: id, eventType: input.eventType, source: input.source, sourceId: input.sourceId }), ingestedAt, ingestedAt)
+    if (input.ensureCanonicalSelf) {
+      const self = db.prepare('SELECT source, source_id FROM twin_entities WHERE id = ?').get('person:self') as {
+        source: string; source_id: string
+      } | undefined
+      if (!self) {
+        upsertTwinEntityInDb(db, { id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+      } else if (self.source !== 'system' || self.source_id !== 'self') {
+        throw new TwinIdentityConflictError('person:self is not owned by the canonical system identity')
+      }
     }
-    return eventFromRow(existing)
+    return {
+      observations: observations.map(observation => recordTwinObservationInDb(db, observation)),
+      events: events.map(event => recordTwinEventInDb(db, event)),
+    }
   }))
 }
 

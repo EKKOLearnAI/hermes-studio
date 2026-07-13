@@ -215,6 +215,48 @@ describe('personal twin store', () => {
     expect(listTwinObservations({ entityId: 'person:self' })).toHaveLength(0)
   })
 
+  it('commits a canonical-subject fact batch atomically without mutating existing identity attributes', async () => {
+    const {
+      getTwinEntity,
+      listTwinEvents,
+      listTwinObservations,
+      recordTwinFactBatch,
+      upsertTwinEntity,
+      withPersonalTwinDb,
+    } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({
+      id: 'person:self', type: 'person', label: 'Li Hao', attributes: { heightCm: 178 }, source: 'system', sourceId: 'self',
+    })
+    const observation = {
+      entityId: 'person:self', metric: 'body.weight_kg', value: 84, unit: 'kg', observedAt: '2026-07-13T08:00:00.000Z',
+      source: 'health-loop', sourceId: 'reading-1:body.weight_kg', actor: 'health-ingestion', confidence: 1,
+      confirmationState: 'observed' as const, evidence: [{ evidenceClass: 'measured' }],
+    }
+    const event = {
+      eventType: 'health.ingestion.recorded', subjectId: 'person:self', payload: { domain: 'body_composition' },
+      occurredAt: observation.observedAt, source: observation.source, sourceId: 'reading-1:health.ingestion.recorded',
+      actor: observation.actor, confidence: 1, confirmationState: 'observed' as const,
+      evidence: [{ evidenceClass: 'measured' }],
+    }
+
+    const first = recordTwinFactBatch({ ensureCanonicalSelf: true, observations: [observation], events: [event] })
+    const replay = recordTwinFactBatch({ ensureCanonicalSelf: true, observations: [observation], events: [event] })
+
+    expect(replay).toEqual(first)
+    expect(getTwinEntity('person:self')).toMatchObject({ label: 'Li Hao', attributes: { heightCm: 178 } })
+    expect(listTwinObservations({ entityId: 'person:self' })).toHaveLength(1)
+    expect(listTwinEvents({ subjectId: 'person:self' })).toHaveLength(1)
+    expect(withPersonalTwinDb(db => db.prepare('SELECT COUNT(*) count FROM twin_outbox').get())).toEqual({ count: 2 })
+
+    expect(() => recordTwinFactBatch({
+      ensureCanonicalSelf: true,
+      observations: [{ ...observation, sourceId: 'reading-2:body.weight_kg' }],
+      events: [{ ...event, payload: { domain: 'different' } }],
+    })).toThrow()
+    expect(listTwinObservations({ entityId: 'person:self' })).toHaveLength(1)
+    expect(withPersonalTwinDb(db => db.prepare('SELECT COUNT(*) count FROM twin_outbox').get())).toEqual({ count: 2 })
+  })
+
   it('stores canonical preferences with provenance and idempotent outbox updates', async () => {
     const {
       getTwinPreference, setTwinPreference, upsertTwinEntity, withPersonalTwinDb,
