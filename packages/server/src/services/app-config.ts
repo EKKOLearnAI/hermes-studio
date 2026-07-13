@@ -70,6 +70,9 @@ export interface AppConfig {
   // Defaults to legacy behavior: all local profiles are eligible. This is a
   // Web UI-level setting, not the active Hermes profile's config.yaml.
   gatewayAutoStart?: GatewayAutoStartConfig
+
+  // Max file upload size in MB. Default: 500.
+  maxUploadSize?: number
 }
 
 let cache: AppConfig | null = null

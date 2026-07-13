@@ -3,15 +3,27 @@ import { mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { getActiveProfileName } from '../services/hermes/hermes-profile'
 import { getProfileUploadDir } from '../services/hermes/upload-paths'
+import { readAppConfig } from '../services/app-config'
 import { MultipartParseError, parseMultipartBoundary, parseMultipartFilename, splitMultipart } from '../lib/multipart'
 
-const MAX_UPLOAD_SIZE = 50 * 1024 * 1024 // 50MB
+const DEFAULT_MAX_UPLOAD_MB = 50
+
+async function getMaxUploadBytes(): Promise<number> {
+  try {
+    const config = await readAppConfig()
+    if (typeof config.maxUploadSize === 'number' && config.maxUploadSize > 0) {
+      return config.maxUploadSize * 1024 * 1024
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_MAX_UPLOAD_MB * 1024 * 1024
+}
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
 }
 
 export async function handleUpload(ctx: any) {
+  const maxUploadBytes = await getMaxUploadBytes()
   const contentType = ctx.get('content-type') || ''
   if (!contentType.startsWith('multipart/form-data')) {
     ctx.status = 400; ctx.body = { error: 'Expected multipart/form-data' }; return
@@ -24,8 +36,8 @@ export async function handleUpload(ctx: any) {
   let totalSize = 0
   for await (const chunk of ctx.req) {
     totalSize += chunk.length
-    if (totalSize > MAX_UPLOAD_SIZE) {
-      ctx.status = 413; ctx.body = { error: `File too large (max ${MAX_UPLOAD_SIZE / 1024 / 1024}MB)` }; return
+    if (totalSize > maxUploadBytes) {
+      ctx.status = 413; ctx.body = { error: `File too large (max ${maxUploadBytes / 1024 / 1024}MB)` }; return
     }
     chunks.push(chunk)
   }
