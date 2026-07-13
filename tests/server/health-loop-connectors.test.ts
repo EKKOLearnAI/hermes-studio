@@ -36,6 +36,24 @@ describe('health-loop connectors', () => {
     expect(() => createHealthConnectorRegistry([connector('../bad')])).toThrow(/CONNECTOR_INVALID_ID/)
   })
 
+  it('isolates connector state keys from Object prototype properties', async () => {
+    const { FileHealthConnectorStateStore } = await import('../../packages/server/src/services/hermes/health-loop/connectors')
+    const { createStructuredImportConnector } = await import('../../packages/server/src/services/hermes/health-loop/connectors/structured-import')
+    for (const id of ['constructor', 'toString']) {
+      for (const legacy of [false, true]) {
+        const path = join(root, `${id}-${legacy ? 'legacy' : 'missing'}.json`)
+        if (legacy) await writeFile(path, JSON.stringify({ version: 1, connectors: {} }), 'utf8')
+        const connector = createStructuredImportConnector({
+          id, format: 'json', content: '[]', stateStore: new FileHealthConnectorStateStore(path), ingest: () => ({} as never),
+        })
+
+        expect(await connector.status()).toMatchObject({ configured: true, health: 'unavailable' })
+        await expect(connector.sync({ now: '2026-07-13T01:00:00Z' })).resolves.toMatchObject({ attemptedCount: 0 })
+        expect(await connector.status()).toMatchObject({ health: 'healthy', lastSuccessAt: '2026-07-13T01:00:00Z' })
+      }
+    }
+  }, 15_000)
+
   it('keeps a successful sync distinct from a degraded connector health report', async () => {
     const { FileHealthConnectorStateStore, createManagedHealthConnector } = await import('../../packages/server/src/services/hermes/health-loop/connectors')
     const connector = createManagedHealthConnector({

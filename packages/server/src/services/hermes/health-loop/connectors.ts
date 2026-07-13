@@ -69,6 +69,17 @@ interface ConnectorStateFile {
   connectors: Record<string, PersistedConnectorState>
 }
 
+function createConnectorStateMap(): Record<string, PersistedConnectorState> {
+  return Object.create(null) as Record<string, PersistedConnectorState>
+}
+
+function cloneConnectorState(state: PersistedConnectorState): PersistedConnectorState {
+  return {
+    ...state,
+    ...(state.freshnessByDomain ? { freshnessByDomain: { ...state.freshnessByDomain } } : {}),
+  }
+}
+
 export interface HealthConnectorStateStore {
   readonly lockKey: string
   read(connectorId: string): Promise<PersistedConnectorState | undefined>
@@ -92,7 +103,9 @@ export class FileHealthConnectorStateStore implements HealthConnectorStateStore 
   async read(connectorId: string): Promise<PersistedConnectorState | undefined> {
     validateConnectorId(connectorId)
     const file = await this.readFile()
-    return file.connectors[connectorId]
+    return Object.prototype.hasOwnProperty.call(file.connectors, connectorId)
+      ? cloneConnectorState(file.connectors[connectorId])
+      : undefined
   }
 
   async write(connectorId: string, state: PersistedConnectorState): Promise<void> {
@@ -101,7 +114,7 @@ export class FileHealthConnectorStateStore implements HealthConnectorStateStore 
     try {
       await withConnectorLock(`state:${this.lockKey}`, async () => {
         const file = await this.readFile()
-        file.connectors[connectorId] = { ...state }
+        file.connectors[connectorId] = cloneConnectorState(state)
         await mkdir(dirname(this.path), { recursive: true, mode: 0o700 })
         const temporary = `${this.path}.${process.pid}.${randomUUID()}.tmp`
         try {
@@ -127,15 +140,15 @@ export class FileHealthConnectorStateStore implements HealthConnectorStateStore 
       if (!isPlainObject(parsed) || parsed.version !== 1 || !isPlainObject(parsed.connectors)) {
         throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
       }
-      const connectors: Record<string, PersistedConnectorState> = {}
+      const connectors = createConnectorStateMap()
       for (const [id, state] of Object.entries(parsed.connectors)) {
         validateConnectorId(id)
         validateState(state)
-        connectors[id] = { ...(state as PersistedConnectorState) }
+        connectors[id] = cloneConnectorState(state)
       }
       return { version: 1, connectors }
     } catch (error: any) {
-      if (error?.code === 'ENOENT') return { version: 1, connectors: {} }
+      if (error?.code === 'ENOENT') return { version: 1, connectors: createConnectorStateMap() }
       if (error instanceof HealthConnectorError) throw error
       throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
     }
