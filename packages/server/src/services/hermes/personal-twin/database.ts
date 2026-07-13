@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 import { TWIN_DOMAINS } from './types'
 
-const SCHEMA_VERSION = 5
+const SCHEMA_VERSION = 6
 const REQUIRED_TWIN_TABLES = [
   'twin_artifacts', 'twin_artifact_consents', 'twin_assistant_roles', 'twin_constraints', 'twin_context_recipes',
   'twin_entities', 'twin_events', 'twin_goals', 'twin_import_runs', 'twin_meta',
@@ -67,6 +67,10 @@ export function initPersonalTwinSchema(db: DatabaseSync): void {
     if (version < 5) {
       createSchemaV5(db)
       setSchemaVersion(db, 5)
+    }
+    if (version < 6) {
+      createSchemaV6(db)
+      setSchemaVersion(db, 6)
     }
     normalizeLegacyArtifactSourceIndex(db)
     assertSchemaComplete(db, SCHEMA_VERSION)
@@ -130,7 +134,7 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
   }
   const consentColumns = db.prepare("PRAGMA table_info('twin_artifact_consents')").all() as unknown as ColumnInfo[]
   const expectedConsentColumns: ColumnSignature[] = [
-    ['manifest_digest', 'TEXT', 0, 1, null], ['processor', 'TEXT', 1, 0, null],
+    ['consent_id', 'TEXT', 0, 1, null], ['manifest_digest', 'TEXT', 1, 0, null], ['processor', 'TEXT', 1, 0, null],
     ['scope_json', 'TEXT', 1, 0, null], ['issued_at', 'TEXT', 1, 0, null], ['expires_at', 'TEXT', 1, 0, null],
     ['consumed_at', 'TEXT', 0, 0, null], ['revoked_at', 'TEXT', 0, 0, null],
   ]
@@ -139,6 +143,8 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
   }
   assertIndexSignature(db, version, 'twin_artifact_consents', 'idx_twin_artifact_consents_status',
     ['processor', 'expires_at', 'consumed_at', 'revoked_at'], false)
+  assertIndexSignature(db, version, 'twin_artifact_consents', 'idx_twin_artifact_consents_manifest_digest',
+    ['manifest_digest'], false)
 }
 
 interface ColumnInfo { name: string; type: string; notnull: number; pk: number; dflt_value: string | null }
@@ -418,6 +424,64 @@ function createSchemaV5(db: DatabaseSync): void {
     );
     CREATE INDEX IF NOT EXISTS idx_twin_artifact_consents_status
       ON twin_artifact_consents(processor, expires_at, consumed_at, revoked_at);
+  `)
+}
+
+function assertConsentSchemaV5(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info('twin_artifact_consents')").all() as unknown as ColumnInfo[]
+  const expected: ColumnSignature[] = [
+    ['manifest_digest', 'TEXT', 0, 1, null], ['processor', 'TEXT', 1, 0, null],
+    ['scope_json', 'TEXT', 1, 0, null], ['issued_at', 'TEXT', 1, 0, null], ['expires_at', 'TEXT', 1, 0, null],
+    ['consumed_at', 'TEXT', 0, 0, null], ['revoked_at', 'TEXT', 0, 0, null],
+  ]
+  if (!columnsMatch(columns, expected)) throw new Error('Personal Twin v5 artifact consent signature is invalid')
+  assertIndexSignature(db, 5, 'twin_artifact_consents', 'idx_twin_artifact_consents_status',
+    ['processor', 'expires_at', 'consumed_at', 'revoked_at'], false)
+}
+
+function consentSchemaV6ColumnsMatch(db: DatabaseSync): boolean {
+  const columns = db.prepare("PRAGMA table_info('twin_artifact_consents')").all() as unknown as ColumnInfo[]
+  const expected: ColumnSignature[] = [
+    ['consent_id', 'TEXT', 0, 1, null], ['manifest_digest', 'TEXT', 1, 0, null], ['processor', 'TEXT', 1, 0, null],
+    ['scope_json', 'TEXT', 1, 0, null], ['issued_at', 'TEXT', 1, 0, null], ['expires_at', 'TEXT', 1, 0, null],
+    ['consumed_at', 'TEXT', 0, 0, null], ['revoked_at', 'TEXT', 0, 0, null],
+  ]
+  return columnsMatch(columns, expected)
+}
+
+function createSchemaV6(db: DatabaseSync): void {
+  if (consentSchemaV6ColumnsMatch(db)) {
+    assertIndexSignature(db, 6, 'twin_artifact_consents', 'idx_twin_artifact_consents_status',
+      ['processor', 'expires_at', 'consumed_at', 'revoked_at'], false)
+    assertIndexSignature(db, 6, 'twin_artifact_consents', 'idx_twin_artifact_consents_manifest_digest',
+      ['manifest_digest'], false)
+    return
+  }
+  assertConsentSchemaV5(db)
+  db.exec(`
+    DROP INDEX idx_twin_artifact_consents_status;
+    ALTER TABLE twin_artifact_consents RENAME TO twin_artifact_consents_v5;
+    CREATE TABLE twin_artifact_consents (
+      consent_id TEXT PRIMARY KEY
+        CHECK(length(consent_id) BETWEEN 32 AND 80 AND consent_id NOT GLOB '*[^a-zA-Z0-9-]*'),
+      manifest_digest TEXT NOT NULL
+        CHECK(length(manifest_digest) = 64 AND manifest_digest NOT GLOB '*[^0-9a-f]*'),
+      processor TEXT NOT NULL,
+      scope_json TEXT NOT NULL CHECK(json_valid(scope_json) AND length(CAST(scope_json AS BLOB)) <= 8192),
+      issued_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      consumed_at TEXT,
+      revoked_at TEXT
+    );
+    INSERT INTO twin_artifact_consents
+      (consent_id,manifest_digest,processor,scope_json,issued_at,expires_at,consumed_at,revoked_at)
+      SELECT manifest_digest,manifest_digest,processor,scope_json,issued_at,expires_at,consumed_at,revoked_at
+      FROM twin_artifact_consents_v5;
+    DROP TABLE twin_artifact_consents_v5;
+    CREATE INDEX idx_twin_artifact_consents_status
+      ON twin_artifact_consents(processor, expires_at, consumed_at, revoked_at);
+    CREATE INDEX idx_twin_artifact_consents_manifest_digest
+      ON twin_artifact_consents(manifest_digest);
   `)
 }
 

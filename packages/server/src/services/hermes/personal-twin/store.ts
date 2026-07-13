@@ -452,23 +452,34 @@ function artifactMatches(row: ArtifactRow, input: TwinArtifactInput, metadataJso
     && row.source_id === input.sourceId
 }
 
+function preflightTwinArtifactInDb(
+  db: DatabaseSync,
+  input: TwinArtifactInput,
+  metadataJson: string,
+): TwinArtifact | null {
+  const byHash = db.prepare('SELECT * FROM twin_artifacts WHERE content_hash = ?').get(input.contentHash) as unknown as ArtifactRow | undefined
+  const sourceMatches = db.prepare('SELECT * FROM twin_artifacts WHERE source = ? AND source_id = ? ORDER BY id LIMIT 2')
+    .all(input.source, input.sourceId) as unknown as ArtifactRow[]
+  if (sourceMatches.length > 1) throw new TwinImmutableRecordConflictError('Twin artifact source identity is ambiguous')
+  const bySource = sourceMatches[0]
+  const existing = byHash ?? bySource
+  if (!existing) return null
+  if ((byHash && bySource && byHash.id !== bySource.id) || !artifactMatches(existing, input, metadataJson)) {
+    throw new TwinImmutableRecordConflictError('Twin artifact identity already contains different material')
+  }
+  return artifactFromRow(existing)
+}
+
+export function preflightTwinArtifact(input: TwinArtifactInput): TwinArtifact | null {
+  const { metadataJson } = validateArtifactInput(input)
+  return withPersonalTwinDb(db => preflightTwinArtifactInDb(db, input, metadataJson))
+}
+
 export function upsertTwinArtifact(input: TwinArtifactInput): TwinArtifact {
   const { contentHash, metadataJson } = validateArtifactInput(input)
   return withPersonalTwinDb(db => commitOrRollback(db, () => {
-    const byHash = db.prepare('SELECT * FROM twin_artifacts WHERE content_hash = ?').get(contentHash) as unknown as ArtifactRow | undefined
-    const sourceMatches = db.prepare('SELECT * FROM twin_artifacts WHERE source = ? AND source_id = ? ORDER BY id LIMIT 2')
-      .all(input.source, input.sourceId) as unknown as ArtifactRow[]
-    if (sourceMatches.length > 1) {
-      throw new TwinImmutableRecordConflictError('Twin artifact source identity is ambiguous')
-    }
-    const bySource = sourceMatches[0]
-    const existing = byHash ?? bySource
-    if (existing) {
-      if ((byHash && bySource && byHash.id !== bySource.id) || !artifactMatches(existing, input, metadataJson)) {
-        throw new TwinImmutableRecordConflictError('Twin artifact identity already contains different material')
-      }
-      return artifactFromRow(existing)
-    }
+    const existing = preflightTwinArtifactInDb(db, input, metadataJson)
+    if (existing) return existing
     const id = `artifact-${contentHash}`
     const createdAt = nowIso()
     db.prepare(`

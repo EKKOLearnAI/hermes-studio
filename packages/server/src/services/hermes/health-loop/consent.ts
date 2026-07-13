@@ -1,10 +1,11 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto'
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { getTwinArtifact, withPersonalTwinDb } from '../personal-twin'
 
 const ARTIFACT_ID = /^artifact-([0-9a-f]{64})$/
 const DIGEST = /^[0-9a-f]{64}$/
 const TOKEN = /^[0-9a-f]{64}$/
+const CONSENT_ID = /^(?:[0-9a-f]{64}|consent-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/
 const PURPOSES = ['measurement', 'posture', 'skin', 'diet', 'internal_health'] as const
 const RETENTIONS = ['no_retention', 'session', '24_hours'] as const
 const MANIFEST_KEYS = ['artifactIds', 'processor', 'purpose', 'selectedRegions', 'requestedFields', 'retention'] as const
@@ -20,7 +21,7 @@ export interface HealthProcessingManifest {
   purpose: typeof PURPOSES[number]
   selectedRegions: string[]
   requestedFields: string[]
-  retention: string
+  retention: typeof RETENTIONS[number]
 }
 
 export type HealthConsentErrorCode =
@@ -79,6 +80,7 @@ export interface HealthConsentBroker {
 }
 
 interface ConsentRow {
+  consent_id: string
   manifest_digest: string
   processor: string
   scope_json: string
@@ -89,6 +91,7 @@ interface ConsentRow {
 }
 
 interface GrantEnvelope {
+  consentId: string
   manifestDigest: string
   manifest: HealthProcessingManifest
   processor: string
@@ -96,6 +99,8 @@ interface GrantEnvelope {
   expiresAt: string
   ttlMs: number
 }
+
+type LegacyGrantEnvelope = Omit<GrantEnvelope, 'consentId'>
 
 function utf8Compare(left: string, right: string): number {
   return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'))
@@ -178,7 +183,8 @@ function canonicalManifest(input: HealthProcessingManifest, allowedProcessors: R
       throw new HealthConsentError('HEALTH_CONSENT_MANIFEST_INVALID')
     }
     const normalized: HealthProcessingManifest = {
-      artifactIds, processor, purpose: purpose as HealthProcessingManifest['purpose'], selectedRegions, requestedFields, retention,
+      artifactIds, processor, purpose: purpose as HealthProcessingManifest['purpose'], selectedRegions, requestedFields,
+      retention: retention as HealthProcessingManifest['retention'],
     }
     if (Buffer.byteLength(JSON.stringify(normalized), 'utf8') > MAX_MANIFEST_BYTES) {
       throw new HealthConsentError('HEALTH_CONSENT_MANIFEST_INVALID')
@@ -208,16 +214,17 @@ function tokenDigest(token: string): Buffer {
 }
 
 function grantEnvelope(
+  consentId: string,
   manifest: HealthProcessingManifest,
   digest: string,
   issuedAt: string,
   expiresAt: string,
   ttlMs: number,
 ): GrantEnvelope {
-  return { manifestDigest: digest, manifest, processor: manifest.processor, issuedAt, expiresAt, ttlMs }
+  return { consentId, manifestDigest: digest, manifest, processor: manifest.processor, issuedAt, expiresAt, ttlMs }
 }
 
-function grantBinding(token: string, envelope: GrantEnvelope): Buffer {
+function grantBinding(token: string, envelope: GrantEnvelope | LegacyGrantEnvelope): Buffer {
   return createHmac('sha256', Buffer.from(token, 'hex')).update(JSON.stringify(envelope)).digest()
 }
 
@@ -256,22 +263,30 @@ function storedGrant(
   row: ConsentRow,
   allowedProcessors: ReadonlySet<string>,
   maxTtlMs: number,
-): { tokenDigest: Buffer; grantBinding: Buffer; envelope: GrantEnvelope } | null {
+): { tokenDigest: Buffer; grantBinding: Buffer; envelope: GrantEnvelope | LegacyGrantEnvelope } | null {
   try {
     if (Buffer.byteLength(row.scope_json, 'utf8') > MAX_SCOPE_BYTES) return null
     const scope = JSON.parse(row.scope_json) as Record<string, unknown>
-    if (!scope || typeof scope !== 'object' || Array.isArray(scope)
-      || Object.getOwnPropertyNames(scope).sort(utf8Compare).join(',') !== 'expiresAt,grantBinding,issuedAt,manifest,tokenDigest,ttlMs') return null
+    if (!scope || typeof scope !== 'object' || Array.isArray(scope)) return null
+    const keys = Object.getOwnPropertyNames(scope).sort(utf8Compare).join(',')
+    const legacy = row.consent_id === row.manifest_digest
+      && keys === 'expiresAt,grantBinding,issuedAt,manifest,tokenDigest,ttlMs'
+    const current = keys === 'consentId,expiresAt,grantBinding,issuedAt,manifest,tokenDigest,ttlMs'
+    if (!legacy && !current) return null
     const storedManifest = canonicalManifest(scope.manifest as HealthProcessingManifest, allowedProcessors, false)
     if (manifestDigest(storedManifest) !== row.manifest_digest || storedManifest.processor !== row.processor
       || typeof scope.tokenDigest !== 'string' || !DIGEST.test(scope.tokenDigest)
       || typeof scope.grantBinding !== 'string' || !DIGEST.test(scope.grantBinding)
       || scope.issuedAt !== row.issued_at || scope.expiresAt !== row.expires_at
+      || (current && scope.consentId !== row.consent_id)
       || !Number.isSafeInteger(scope.ttlMs) || (scope.ttlMs as number) < 1 || (scope.ttlMs as number) > maxTtlMs) return null
     const issued = strictUtcMillis(scope.issuedAt)
     const expires = strictUtcMillis(scope.expiresAt)
     if (issued === null || expires === null || issued > expires || expires - issued !== scope.ttlMs) return null
-    const envelope = grantEnvelope(storedManifest, row.manifest_digest, row.issued_at, row.expires_at, scope.ttlMs as number)
+    const envelope = current
+      ? grantEnvelope(row.consent_id, storedManifest, row.manifest_digest, row.issued_at, row.expires_at, scope.ttlMs as number)
+      : { manifestDigest: row.manifest_digest, manifest: storedManifest, processor: storedManifest.processor,
+          issuedAt: row.issued_at, expiresAt: row.expires_at, ttlMs: scope.ttlMs as number }
     return {
       tokenDigest: Buffer.from(scope.tokenDigest, 'hex'),
       grantBinding: Buffer.from(scope.grantBinding, 'hex'),
@@ -280,6 +295,19 @@ function storedGrant(
   } catch {
     return null
   }
+}
+
+function validateStoredConsentCausality(row: ConsentRow): boolean {
+  if (!CONSENT_ID.test(row.consent_id) || !DIGEST.test(row.manifest_digest)) return false
+  const issued = strictUtcMillis(row.issued_at)
+  const expires = strictUtcMillis(row.expires_at)
+  const consumed = row.consumed_at === null ? null : strictUtcMillis(row.consumed_at)
+  const revoked = row.revoked_at === null ? null : strictUtcMillis(row.revoked_at)
+  if (issued === null || expires === null || issued > expires || (row.consumed_at !== null && consumed === null)
+    || (row.revoked_at !== null && revoked === null) || (consumed !== null && revoked !== null)) return false
+  if (consumed !== null && (consumed < issued || consumed > expires)) return false
+  if (revoked !== null && revoked < issued) return false
+  return true
 }
 
 function runStorage<T>(operation: () => T): T {
@@ -315,28 +343,27 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
       }
       const { date, iso: issuedAt } = safeNow(clock)
       const expiresAt = new Date(date.getTime() + ttlMs).toISOString()
+      const consentId = `consent-${randomUUID()}`
       const token = randomBytes(32).toString('hex')
       const digestHex = tokenDigest(token).toString('hex')
-      const bindingHex = grantBinding(token, grantEnvelope(manifest, digest, issuedAt, expiresAt, ttlMs)).toString('hex')
-      const scopeJson = JSON.stringify({ manifest, issuedAt, expiresAt, ttlMs, tokenDigest: digestHex, grantBinding: bindingHex })
+      const bindingHex = grantBinding(token, grantEnvelope(consentId, manifest, digest, issuedAt, expiresAt, ttlMs)).toString('hex')
+      const scopeJson = JSON.stringify({ consentId, manifest, issuedAt, expiresAt, ttlMs, tokenDigest: digestHex, grantBinding: bindingHex })
       if (Buffer.byteLength(scopeJson, 'utf8') > MAX_SCOPE_BYTES) throw new HealthConsentError('HEALTH_CONSENT_MANIFEST_INVALID')
 
       runStorage(() => transaction(db => {
-        const existing = db.prepare('SELECT * FROM twin_artifact_consents WHERE manifest_digest=?').get(digest) as unknown as ConsentRow | undefined
-        if (!existing) {
-          db.prepare(`INSERT INTO twin_artifact_consents
-            (manifest_digest,processor,scope_json,issued_at,expires_at,consumed_at,revoked_at)
-            VALUES(?,?,?,?,?,NULL,NULL)`).run(digest, manifest.processor, scopeJson, issuedAt, expiresAt)
-          return
+        const existing = db.prepare('SELECT * FROM twin_artifact_consents WHERE manifest_digest=? ORDER BY issued_at,consent_id')
+          .all(digest) as unknown as ConsentRow[]
+        if (existing.some(row => !validateStoredConsentCausality(row) || !storedGrant(row, allowedProcessors, maxTtlMs))) {
+          throw new HealthConsentError('HEALTH_CONSENT_STORAGE_FAILED')
         }
-        const terminal = existing.consumed_at !== null || existing.revoked_at !== null || existing.expires_at <= issuedAt
-        if (!terminal) throw new HealthConsentError('HEALTH_CONSENT_ACTIVE')
-        const result = db.prepare(`UPDATE twin_artifact_consents SET processor=?,scope_json=?,issued_at=?,expires_at=?,consumed_at=NULL,revoked_at=NULL
-          WHERE manifest_digest=? AND (consumed_at IS NOT NULL OR revoked_at IS NOT NULL OR expires_at<=?)`)
-          .run(manifest.processor, scopeJson, issuedAt, expiresAt, digest, issuedAt)
-        if (result.changes !== 1) throw new HealthConsentError('HEALTH_CONSENT_ACTIVE')
+        const active = existing.filter(row => row.consumed_at === null && row.revoked_at === null && row.expires_at > issuedAt)
+        if (active.length > 1) throw new HealthConsentError('HEALTH_CONSENT_STORAGE_FAILED')
+        if (active.length === 1) throw new HealthConsentError('HEALTH_CONSENT_ACTIVE')
+        db.prepare(`INSERT INTO twin_artifact_consents
+          (consent_id,manifest_digest,processor,scope_json,issued_at,expires_at,consumed_at,revoked_at)
+          VALUES(?,?,?,?,?,?,NULL,NULL)`).run(consentId, digest, manifest.processor, scopeJson, issuedAt, expiresAt)
       }))
-      return { consentId: digest, manifestDigest: digest, token, manifest, issuedAt, expiresAt }
+      return { consentId, manifestDigest: digest, token, manifest, issuedAt, expiresAt }
     },
 
     async consume(token, input): Promise<HealthConsentConsumption> {
@@ -346,37 +373,51 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
       const tokenValid = typeof token === 'string' && TOKEN.test(token)
       const suppliedDigest = tokenValid ? tokenDigest(token) : tokenDigest('invalid')
       return runStorage(() => transaction(db => {
-        const row = db.prepare('SELECT * FROM twin_artifact_consents WHERE manifest_digest=?').get(digest) as unknown as ConsentRow | undefined
-        const stored = row ? storedGrant(row, allowedProcessors, maxTtlMs) : null
-        const comparableDigest = stored?.tokenDigest ?? Buffer.alloc(32)
-        const suppliedBinding = grantBinding(tokenValid ? token : '0'.repeat(64), stored?.envelope
-          ?? grantEnvelope(manifest, digest, consumedAt, consumedAt, 1))
-        const comparableBinding = stored?.grantBinding ?? Buffer.alloc(32)
-        const digestAuthenticated = timingSafeEqual(comparableDigest, suppliedDigest)
-        const bindingAuthenticated = timingSafeEqual(comparableBinding, suppliedBinding)
-        if (!row || !stored || !tokenValid || !digestAuthenticated || !bindingAuthenticated) {
+        const rows = db.prepare('SELECT * FROM twin_artifact_consents WHERE manifest_digest=? ORDER BY issued_at,consent_id')
+          .all(digest) as unknown as ConsentRow[]
+        const active = rows.filter(row => validateStoredConsentCausality(row)
+          && row.consumed_at === null && row.revoked_at === null && row.expires_at > consumedAt)
+        if (active.length > 1 || rows.some(row => !validateStoredConsentCausality(row))) {
           throw new HealthConsentError('HEALTH_CONSENT_INVALID')
         }
+        const matches: Array<{ row: ConsentRow; stored: NonNullable<ReturnType<typeof storedGrant>> }> = []
+        for (const row of rows) {
+          const stored = storedGrant(row, allowedProcessors, maxTtlMs)
+          const comparableDigest = stored?.tokenDigest ?? Buffer.alloc(32)
+          const suppliedBinding = grantBinding(tokenValid ? token : '0'.repeat(64), stored?.envelope
+            ?? grantEnvelope(`consent-${'0'.repeat(36)}`, manifest, digest, consumedAt, consumedAt, 1))
+          const comparableBinding = stored?.grantBinding ?? Buffer.alloc(32)
+          const authenticated = timingSafeEqual(comparableDigest, suppliedDigest)
+            && timingSafeEqual(comparableBinding, suppliedBinding)
+          if (stored && authenticated) matches.push({ row, stored })
+        }
+        if (!tokenValid || matches.length !== 1 || rows.some(row => !storedGrant(row, allowedProcessors, maxTtlMs))) {
+          throw new HealthConsentError('HEALTH_CONSENT_INVALID')
+        }
+        const row = matches[0].row
         if (row.revoked_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REVOKED')
         if (row.consumed_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REPLAYED')
         if (row.expires_at <= consumedAt) throw new HealthConsentError('HEALTH_CONSENT_EXPIRED')
         const result = db.prepare(`UPDATE twin_artifact_consents SET consumed_at=?
-          WHERE manifest_digest=? AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>?`)
-          .run(consumedAt, digest, consumedAt)
+          WHERE consent_id=? AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>?`)
+          .run(consumedAt, row.consent_id, consumedAt)
         if (result.changes !== 1) throw new HealthConsentError('HEALTH_CONSENT_INVALID')
-        return { consentId: digest, manifestDigest: digest, consumedAt }
+        return { consentId: row.consent_id, manifestDigest: digest, consumedAt }
       }))
     },
 
     async revoke(consentId): Promise<HealthConsentRevocation> {
-      if (typeof consentId !== 'string' || !DIGEST.test(consentId)) throw new HealthConsentError('HEALTH_CONSENT_NOT_FOUND')
+      if (typeof consentId !== 'string' || !CONSENT_ID.test(consentId)) throw new HealthConsentError('HEALTH_CONSENT_NOT_FOUND')
       const { iso: revokedAt } = safeNow(clock)
       return runStorage(() => transaction(db => {
-        const row = db.prepare('SELECT * FROM twin_artifact_consents WHERE manifest_digest=?').get(consentId) as unknown as ConsentRow | undefined
+        const row = db.prepare('SELECT * FROM twin_artifact_consents WHERE consent_id=?').get(consentId) as unknown as ConsentRow | undefined
         if (!row) throw new HealthConsentError('HEALTH_CONSENT_NOT_FOUND')
+        if (!validateStoredConsentCausality(row) || !storedGrant(row, allowedProcessors, maxTtlMs)) {
+          throw new HealthConsentError('HEALTH_CONSENT_STORAGE_FAILED')
+        }
         if (row.consumed_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REPLAYED')
         if (row.revoked_at !== null) return { consentId, revokedAt: row.revoked_at }
-        const result = db.prepare('UPDATE twin_artifact_consents SET revoked_at=? WHERE manifest_digest=? AND consumed_at IS NULL AND revoked_at IS NULL')
+        const result = db.prepare('UPDATE twin_artifact_consents SET revoked_at=? WHERE consent_id=? AND consumed_at IS NULL AND revoked_at IS NULL')
           .run(revokedAt, consentId)
         if (result.changes !== 1) throw new HealthConsentError('HEALTH_CONSENT_INVALID')
         return { consentId, revokedAt }

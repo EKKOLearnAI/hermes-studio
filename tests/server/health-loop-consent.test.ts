@@ -36,7 +36,7 @@ describe('health remote-processing consent broker', () => {
       purpose: 'internal_health' as const,
       selectedRegions: ['page:2/region:lab-table'],
       requestedFields: ['fasting_glucose', 'hba1c'],
-      retention: 'no_retention',
+      retention: 'no_retention' as const,
     }
     return { artifact, broker, manifest }
   }
@@ -51,7 +51,8 @@ describe('health remote-processing consent broker', () => {
     }, { ttlMs: 60_000 })
 
     expect(first.token).toMatch(/^[0-9a-f]{64}$/)
-    expect(first).toMatchObject({ consentId: first.manifestDigest, issuedAt: now.toISOString() })
+    expect(first).toMatchObject({ consentId: expect.stringMatching(/^consent-[0-9a-f-]{36}$/), issuedAt: now.toISOString() })
+    expect(first.consentId).not.toBe(first.manifestDigest)
     expect(first.manifest).toEqual(manifest)
     expect(JSON.stringify(first)).not.toContain(hermesHome)
 
@@ -104,7 +105,8 @@ describe('health remote-processing consent broker', () => {
     await expect(broker.consume(reissued.token, manifest)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_REVOKED' })
 
     const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
-    const row = withPersonalTwinDb(db => db.prepare('SELECT consumed_at, revoked_at FROM twin_artifact_consents').get())
+    const row = withPersonalTwinDb(db => db.prepare('SELECT consumed_at, revoked_at FROM twin_artifact_consents WHERE consent_id=?')
+      .get(reissued.consentId))
     expect(row).toEqual({ consumed_at: null, revoked_at: now.toISOString() })
   })
 
@@ -113,15 +115,31 @@ describe('health remote-processing consent broker', () => {
     const consumed = await broker.issue(manifest)
     await broker.consume(consumed.token, manifest)
     const afterConsume = await broker.issue(manifest)
+    expect(afterConsume.consentId).not.toBe(consumed.consentId)
     expect(afterConsume.token).not.toBe(consumed.token)
     await broker.revoke(afterConsume.consentId)
     const afterRevoke = await broker.issue(manifest, { ttlMs: 1_000 })
+    expect(afterRevoke.consentId).not.toBe(afterConsume.consentId)
     now = new Date('2026-07-13T12:00:01.001Z')
     const attempts = await Promise.allSettled(Array.from({ length: 8 }, () => broker.issue(manifest)))
     expect(attempts.filter(item => item.status === 'fulfilled')).toHaveLength(1)
     expect(attempts.filter(item => item.status === 'rejected')).toHaveLength(7)
     const winner = attempts.find(item => item.status === 'fulfilled')
     expect(winner && winner.status === 'fulfilled' && winner.value.token).not.toBe(afterRevoke.token)
+    const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
+    const history = withPersonalTwinDb(db => db.prepare(`SELECT consent_id,consumed_at,revoked_at FROM twin_artifact_consents
+      WHERE manifest_digest=? ORDER BY issued_at,consent_id`).all(consumed.manifestDigest)) as Array<Record<string, unknown>>
+    expect(history).toHaveLength(4)
+    expect(new Set(history.map(row => row.consent_id)).size).toBe(4)
+    expect(history).toEqual(expect.arrayContaining([
+      expect.objectContaining({ consent_id: consumed.consentId, consumed_at: expect.any(String) }),
+      expect.objectContaining({ consent_id: afterConsume.consentId, revoked_at: expect.any(String) }),
+      expect.objectContaining({ consent_id: afterRevoke.consentId }),
+    ]))
+    await expect(broker.revoke(afterConsume.consentId)).resolves.toMatchObject({ consentId: afterConsume.consentId })
+    const activeConsentId = winner && winner.status === 'fulfilled' ? winner.value.consentId : ''
+    expect(withPersonalTwinDb(db => db.prepare('SELECT revoked_at FROM twin_artifact_consents WHERE consent_id=?').get(activeConsentId)))
+      .toEqual({ revoked_at: null })
   })
 
   it('rejects unknown artifacts, non-health artifacts, excessive TTL, and broadened manifest keys', async () => {
@@ -172,13 +190,13 @@ describe('health remote-processing consent broker', () => {
     const grant = await broker.issue(manifest)
     const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
     withPersonalTwinDb(db => {
-      const row = db.prepare('SELECT scope_json FROM twin_artifact_consents WHERE manifest_digest=?').get(grant.consentId) as { scope_json: string }
+      const row = db.prepare('SELECT scope_json FROM twin_artifact_consents WHERE consent_id=?').get(grant.consentId) as { scope_json: string }
       const scope = JSON.parse(row.scope_json)
       scope.manifest.requestedFields = ['broader_field']
-      db.prepare('UPDATE twin_artifact_consents SET scope_json=? WHERE manifest_digest=?').run(JSON.stringify(scope), grant.consentId)
+      db.prepare('UPDATE twin_artifact_consents SET scope_json=? WHERE consent_id=?').run(JSON.stringify(scope), grant.consentId)
     })
     await expect(broker.consume(grant.token, manifest)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_INVALID' })
-    expect(withPersonalTwinDb(db => db.prepare('SELECT consumed_at FROM twin_artifact_consents WHERE manifest_digest=?').get(grant.consentId)))
+    expect(withPersonalTwinDb(db => db.prepare('SELECT consumed_at FROM twin_artifact_consents WHERE consent_id=?').get(grant.consentId)))
       .toEqual({ consumed_at: null })
   })
 
@@ -186,14 +204,14 @@ describe('health remote-processing consent broker', () => {
     const { broker, manifest } = await fixture()
     const grant = await broker.issue(manifest, { ttlMs: 60_000 })
     const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
-    const original = withPersonalTwinDb(db => db.prepare('SELECT * FROM twin_artifact_consents WHERE manifest_digest=?')
+    const original = withPersonalTwinDb(db => db.prepare('SELECT * FROM twin_artifact_consents WHERE consent_id=?')
       .get(grant.consentId)) as Record<string, unknown>
     const restore = () => withPersonalTwinDb(db => db.prepare(`UPDATE twin_artifact_consents
-      SET processor=?,scope_json=?,issued_at=?,expires_at=?,consumed_at=?,revoked_at=? WHERE manifest_digest=?`).run(
+      SET processor=?,scope_json=?,issued_at=?,expires_at=?,consumed_at=?,revoked_at=? WHERE consent_id=?`).run(
       original.processor, original.scope_json, original.issued_at, original.expires_at, original.consumed_at, original.revoked_at, grant.consentId,
     ))
 
-    withPersonalTwinDb(db => db.prepare('UPDATE twin_artifact_consents SET expires_at=? WHERE manifest_digest=?')
+    withPersonalTwinDb(db => db.prepare('UPDATE twin_artifact_consents SET expires_at=? WHERE consent_id=?')
       .run('2026-07-13T12:10:00.000Z', grant.consentId))
     await expect(broker.consume(grant.token, manifest)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_INVALID' })
     restore()
@@ -202,13 +220,13 @@ describe('health remote-processing consent broker', () => {
       const scope = JSON.parse(String(original.scope_json))
       scope.expiresAt = '2026-07-13T12:10:00.000Z'
       scope.ttlMs = 600_000
-      db.prepare('UPDATE twin_artifact_consents SET expires_at=?,scope_json=? WHERE manifest_digest=?')
+      db.prepare('UPDATE twin_artifact_consents SET expires_at=?,scope_json=? WHERE consent_id=?')
         .run(scope.expiresAt, JSON.stringify(scope), grant.consentId)
     })
     await expect(broker.consume(grant.token, manifest)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_INVALID' })
     restore()
 
-    withPersonalTwinDb(db => db.prepare('UPDATE twin_artifact_consents SET processor=? WHERE manifest_digest=?')
+    withPersonalTwinDb(db => db.prepare('UPDATE twin_artifact_consents SET processor=? WHERE consent_id=?')
       .run('processor:tampered', grant.consentId))
     await expect(broker.consume(grant.token, manifest)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_INVALID' })
     restore()
@@ -217,7 +235,7 @@ describe('health remote-processing consent broker', () => {
       const scope = JSON.parse(String(original.scope_json))
       scope.issuedAt = '2026-07-13T11:59:00.000Z'
       scope.ttlMs = 120_000
-      db.prepare('UPDATE twin_artifact_consents SET issued_at=?,scope_json=? WHERE manifest_digest=?')
+      db.prepare('UPDATE twin_artifact_consents SET issued_at=?,scope_json=? WHERE consent_id=?')
         .run(scope.issuedAt, JSON.stringify(scope), grant.consentId)
     })
     await expect(broker.consume(grant.token, manifest)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_INVALID' })

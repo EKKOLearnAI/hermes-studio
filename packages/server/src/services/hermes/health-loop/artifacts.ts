@@ -4,15 +4,17 @@ import { constants as fsConstants } from 'fs'
 import {
   chmod, link, lstat, mkdir, open, realpath, unlink,
 } from 'fs/promises'
+import { DatabaseSync } from 'node:sqlite'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'path'
 import { getHermesBaseDir } from '../hermes-profile'
 import {
-  getTwinArtifact, TwinArtifact, TwinImmutableRecordConflictError, upsertTwinArtifact,
+  getTwinArtifact, preflightTwinArtifact, TwinArtifact, TwinImmutableRecordConflictError, upsertTwinArtifact,
 } from '../personal-twin'
 
 const SHA256 = /^[0-9a-f]{64}$/
 const ARTIFACT_ID = /^artifact-([0-9a-f]{64})$/
 const DEFAULT_TOTAL_LIMIT = 250 * 1024 * 1024
+const READ_CHUNK_SIZE = 64 * 1024
 const DEFAULT_MEDIA_LIMITS: Readonly<Record<string, number>> = Object.freeze({
   'application/pdf': 50 * 1024 * 1024,
   'image/jpeg': 25 * 1024 * 1024,
@@ -61,9 +63,15 @@ export interface ReadHealthArtifactResult {
 }
 
 interface VerifiedArtifactFile {
-  content: Buffer
+  content?: Buffer
   identity: { dev: bigint; ino: bigint }
 }
+
+interface VaultLockQueue {
+  tail: Promise<void>
+}
+
+const vaultLockQueues = new Map<string, VaultLockQueue>()
 
 export interface HealthArtifactVaultOptions {
   maxTotalBytes?: number
@@ -275,14 +283,33 @@ function sniffMediaType(content: Buffer): string | null {
 }
 
 function validateMedia(content: Buffer, declaredMediaType: unknown, limits: { total: number; media: Readonly<Record<string, number>> }): string {
-  if (content.length === 0) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_EMPTY')
-  if (content.length > limits.total) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_TOO_LARGE')
   if (typeof declaredMediaType !== 'string' || !(declaredMediaType in limits.media)) {
     throw new HealthArtifactVaultError('HEALTH_ARTIFACT_MEDIA_UNSUPPORTED')
   }
-  if (content.length > limits.media[declaredMediaType]) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_TOO_LARGE')
   if (sniffMediaType(content) !== declaredMediaType) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_MEDIA_MISMATCH')
   return declaredMediaType
+}
+
+function validateRawSize(
+  content: Uint8Array,
+  declaredMediaType: unknown,
+  limits: { total: number; media: Readonly<Record<string, number>> },
+): void {
+  const size = content.byteLength
+  if (size === 0) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_EMPTY')
+  if (size > limits.total) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_TOO_LARGE')
+  if (typeof declaredMediaType !== 'string' || !(declaredMediaType in limits.media)) {
+    throw new HealthArtifactVaultError('HEALTH_ARTIFACT_MEDIA_UNSUPPORTED')
+  }
+  if (size > limits.media[declaredMediaType]) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_TOO_LARGE')
+}
+
+function sameStatIdentity(
+  left: { dev: bigint; ino: bigint; size: bigint; nlink: bigint; mtimeNs: bigint },
+  right: { dev: bigint; ino: bigint; size: bigint; nlink: bigint; mtimeNs: bigint },
+): boolean {
+  return left.dev === right.dev && left.ino !== 0n && left.ino === right.ino
+    && left.size === right.size && left.nlink === right.nlink && left.mtimeNs === right.mtimeNs
 }
 
 async function verifyArtifactFile(
@@ -293,13 +320,17 @@ async function verifyArtifactFile(
   rootReal: string,
   accessController: HealthArtifactAccessController,
   expectedBasename: string,
+  returnContent = false,
 ): Promise<VerifiedArtifactFile> {
   try {
     const parent = dirname(path)
     await assertSafeDirectory(parent)
     await secureAccess(() => accessController.secureDirectory(parent))
-    const pathStat = await lstat(path)
+    const parentRealBefore = await realpath(parent)
+    const parentBefore = await lstat(parent, { bigint: true })
+    const pathStat = await lstat(path, { bigint: true })
     if (!pathStat.isFile() || pathStat.isSymbolicLink()) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
+    if (pathStat.nlink !== 1n) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_INTEGRITY_FAILED')
     await secureAccess(() => accessController.secureFile(path))
     const resolved = await realpath(path)
     if (!isPathInside(rootReal, resolved) || basename(resolved) !== expectedBasename) {
@@ -309,12 +340,47 @@ async function verifyArtifactFile(
     const handle = await open(path, flags)
     try {
       const before = await handle.stat({ bigint: true })
-      if (!before.isFile() || before.size !== BigInt(expectedSize)) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_INTEGRITY_FAILED')
-      const content = await handle.readFile()
+      const pathAfterOpen = await lstat(path, { bigint: true })
+      const parentAfterOpen = await lstat(parent, { bigint: true })
+      const parentRealAfter = await realpath(parent)
+      if (!before.isFile() || before.size !== BigInt(expectedSize) || before.nlink !== 1n
+        || !sameStatIdentity(pathStat, before) || !sameStatIdentity(pathAfterOpen, before)
+        || !sameStatIdentity(parentBefore, parentAfterOpen) || parentRealBefore !== parentRealAfter) {
+        throw new HealthArtifactVaultError('HEALTH_ARTIFACT_INTEGRITY_FAILED')
+      }
+      const content = returnContent ? Buffer.allocUnsafe(expectedSize) : undefined
+      const scratch = returnContent ? undefined : Buffer.allocUnsafe(Math.min(READ_CHUNK_SIZE, Math.max(expectedSize, 1)))
+      const hash = createHash('sha256')
+      const prefix = content?.subarray(0, Math.min(READ_CHUNK_SIZE, expectedSize))
+        ?? Buffer.allocUnsafe(Math.min(READ_CHUNK_SIZE, expectedSize))
+      let prefixLength = 0
+      let offset = 0
+      while (offset < expectedSize) {
+        const target = content ?? scratch!
+        const targetOffset = content ? offset : 0
+        const length = Math.min(target.length - targetOffset, expectedSize - offset)
+        const { bytesRead } = await handle.read(target, targetOffset, length, offset)
+        if (bytesRead === 0) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_INTEGRITY_FAILED')
+        const chunk = target.subarray(targetOffset, targetOffset + bytesRead)
+        hash.update(chunk)
+        if (!content && prefixLength < prefix.length) {
+          const copyLength = Math.min(prefix.length - prefixLength, bytesRead)
+          chunk.copy(prefix, prefixLength, 0, copyLength)
+        }
+        prefixLength = Math.min(prefix.length, prefixLength + bytesRead)
+        offset += bytesRead
+      }
+      const overflowTarget = content ?? scratch!
+      if (!content && (await handle.read(overflowTarget, 0, 1, expectedSize)).bytesRead !== 0) {
+        throw new HealthArtifactVaultError('HEALTH_ARTIFACT_INTEGRITY_FAILED')
+      }
       const after = await handle.stat({ bigint: true })
-      if (after.size !== before.size || after.dev !== before.dev || after.ino !== before.ino || after.mtimeNs !== before.mtimeNs
-        || createHash('sha256').update(content).digest('hex') !== expectedHash
-        || sniffMediaType(content) !== expectedMediaType) {
+      const pathAfterRead = await lstat(path, { bigint: true })
+      const parentAfterRead = await lstat(parent, { bigint: true })
+      if (!sameStatIdentity(before, after) || !sameStatIdentity(after, pathAfterRead)
+        || !sameStatIdentity(parentAfterOpen, parentAfterRead)
+        || hash.digest('hex') !== expectedHash
+        || sniffMediaType(prefix.subarray(0, prefixLength)) !== expectedMediaType) {
         throw new HealthArtifactVaultError('HEALTH_ARTIFACT_INTEGRITY_FAILED')
       }
       return { content, identity: { dev: before.dev, ino: before.ino } }
@@ -335,6 +401,63 @@ function assertSamePublishedIdentity(temp: VerifiedArtifactFile, final: Verified
   }
 }
 
+async function withProcessLocalVaultQueue<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  const previous = vaultLockQueues.get(key)?.tail ?? Promise.resolve()
+  let release!: () => void
+  const tail = new Promise<void>(resolvePromise => { release = resolvePromise })
+  vaultLockQueues.set(key, { tail })
+  await previous
+  try {
+    return await operation()
+  } finally {
+    release()
+    if (vaultLockQueues.get(key)?.tail === tail) vaultLockQueues.delete(key)
+  }
+}
+
+async function withVaultLock<T>(
+  lockPath: string,
+  personalReal: string,
+  accessController: HealthArtifactAccessController,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return withProcessLocalVaultQueue(lockPath, async () => {
+    const existing = await optionalLstat(lockPath)
+    if (existing && (!existing.isFile() || existing.isSymbolicLink())) {
+      throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
+    }
+    let db: DatabaseSync | undefined
+    let transactionOpen = false
+    try {
+      db = new DatabaseSync(lockPath)
+      await secureAccess(() => accessController.secureFile(lockPath))
+      const lockStat = await lstat(lockPath, { bigint: true })
+      const lockReal = await realpath(lockPath)
+      if (!lockStat.isFile() || lockStat.isSymbolicLink() || lockStat.nlink !== 1n
+        || !isPathInside(personalReal, lockReal)) {
+        throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
+      }
+      db.exec('PRAGMA busy_timeout = 30000')
+      db.exec('PRAGMA journal_mode = DELETE')
+      db.exec('CREATE TABLE IF NOT EXISTS vault_mutex (id INTEGER PRIMARY KEY CHECK (id = 1))')
+      db.exec('BEGIN EXCLUSIVE')
+      transactionOpen = true
+      const result = await operation()
+      db.exec('COMMIT')
+      transactionOpen = false
+      return result
+    } catch (error) {
+      if (transactionOpen) {
+        try { db?.exec('ROLLBACK') } catch { /* preserve the original vault error */ }
+      }
+      if (error instanceof HealthArtifactVaultError) throw error
+      throw new HealthArtifactVaultError('HEALTH_ARTIFACT_WRITE_FAILED')
+    } finally {
+      db?.close()
+    }
+  })
+}
+
 export function createHealthArtifactVault(options: HealthArtifactVaultOptions = {}): HealthArtifactVault {
   const limits = normalizeLimits(options)
   const accessController = options.accessController ?? createDefaultAccessController()
@@ -346,73 +469,106 @@ export function createHealthArtifactVault(options: HealthArtifactVaultOptions = 
       if (!input || typeof input !== 'object' || !(input.content instanceof Uint8Array)) {
         throw new HealthArtifactVaultError('HEALTH_ARTIFACT_INVALID_INPUT')
       }
-      const content = Buffer.from(input.content)
+      validateRawSize(input.content, input.declaredMediaType, limits)
+      const content = Buffer.from(input.content.buffer, input.content.byteOffset, input.content.byteLength)
       const mediaType = validateMedia(content, input.declaredMediaType, limits)
       const contentHash = createHash('sha256').update(content).digest('hex')
       const rootReal = await prepareVaultRoot(base, root, accessController)
-      const shard = resolve(root, contentHash.slice(0, 2))
-      try {
-        const shardStat = await optionalLstat(shard)
-        if (!shardStat) await createDirectoryIfMissing(shard)
-        await assertSafeDirectory(shard)
-        await secureAccess(() => accessController.secureDirectory(shard))
-        const shardReal = await realpath(shard)
-        if (!isPathInside(rootReal, shardReal)) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
-      } catch (error) {
-        if (error instanceof HealthArtifactVaultError) throw error
-        throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
-      }
-      const finalPath = resolve(shard, contentHash)
-      if (!isPathInside(root, finalPath)) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
-      const tempPath = resolve(shard, `.${contentHash}.tmp-${randomBytes(16).toString('hex')}`)
-      try {
-        const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0)
-        const handle = await open(tempPath, flags, 0o600)
-        try {
-          await secureAccess(() => accessController.secureFile(tempPath))
-          await handle.writeFile(content)
-          await handle.sync()
-        } finally {
-          await handle.close()
-        }
-        const verifiedTemp = await verifyArtifactFile(
-          tempPath, contentHash, content.length, mediaType, rootReal, accessController, basename(tempPath),
-        )
-        let publishedByRequest = false
-        try {
-          await link(tempPath, finalPath)
-          publishedByRequest = true
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-        }
-        const verifiedFinal = await verifyArtifactFile(
-          finalPath, contentHash, content.length, mediaType, rootReal, accessController, contentHash,
-        )
-        if (publishedByRequest) assertSamePublishedIdentity(verifiedTemp, verifiedFinal)
-      } catch (error) {
-        if (error instanceof HealthArtifactVaultError) throw error
-        throw new HealthArtifactVaultError('HEALTH_ARTIFACT_WRITE_FAILED')
-      } finally {
-        await unlink(tempPath).catch(() => undefined)
+      const personalReal = await realpath(resolve(base, 'personal'))
+      const lockPath = resolve(base, 'personal', '.health-artifact-vault-lock')
+      const registryInput = {
+        mediaType,
+        contentHash,
+        relativePath: `${contentHash.slice(0, 2)}/${contentHash}`,
+        sizeBytes: content.length,
+        sensitivity: 'health' as const,
+        metadata: input.metadata ?? {},
+        source: input.source,
+        sourceId: input.sourceId,
       }
 
-      try {
-        return upsertTwinArtifact({
-          mediaType,
-          contentHash,
-          relativePath: `${contentHash.slice(0, 2)}/${contentHash}`,
-          sizeBytes: content.length,
-          sensitivity: 'health',
-          metadata: input.metadata ?? {},
-          source: input.source,
-          sourceId: input.sourceId,
-        })
-      } catch (error) {
-        if (error instanceof TwinImmutableRecordConflictError) {
-          throw new HealthArtifactVaultError('HEALTH_ARTIFACT_REGISTRY_CONFLICT')
+      return withVaultLock(lockPath, personalReal, accessController, async () => {
+        let existingArtifact: TwinArtifact | null
+        try {
+          existingArtifact = preflightTwinArtifact(registryInput)
+        } catch (error) {
+          if (error instanceof TwinImmutableRecordConflictError) {
+            throw new HealthArtifactVaultError('HEALTH_ARTIFACT_REGISTRY_CONFLICT')
+          }
+          throw new HealthArtifactVaultError('HEALTH_ARTIFACT_REGISTRY_FAILED')
         }
-        throw new HealthArtifactVaultError('HEALTH_ARTIFACT_REGISTRY_FAILED')
-      }
+        const shard = resolve(root, contentHash.slice(0, 2))
+        try {
+          const shardStat = await optionalLstat(shard)
+          if (!shardStat) await createDirectoryIfMissing(shard)
+          await assertSafeDirectory(shard)
+          await secureAccess(() => accessController.secureDirectory(shard))
+          const shardReal = await realpath(shard)
+          if (!isPathInside(rootReal, shardReal)) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
+        } catch (error) {
+          if (error instanceof HealthArtifactVaultError) throw error
+          throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
+        }
+        const finalPath = resolve(shard, contentHash)
+        if (!isPathInside(root, finalPath)) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
+        if (existingArtifact) {
+          await verifyArtifactFile(
+            finalPath, contentHash, content.length, mediaType, rootReal, accessController, contentHash,
+          )
+          return existingArtifact
+        }
+
+        const tempPath = resolve(shard, `.${contentHash}.tmp-${randomBytes(16).toString('hex')}`)
+        let publishedByRequest = false
+        try {
+          const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0)
+          const handle = await open(tempPath, flags, 0o600)
+          try {
+            await secureAccess(() => accessController.secureFile(tempPath))
+            await handle.writeFile(content)
+            await handle.sync()
+          } finally {
+            await handle.close()
+          }
+          const verifiedTemp = await verifyArtifactFile(
+            tempPath, contentHash, content.length, mediaType, rootReal, accessController, basename(tempPath),
+          )
+          try {
+            await link(tempPath, finalPath)
+            publishedByRequest = true
+            await unlink(tempPath)
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+          }
+          const verifiedFinal = await verifyArtifactFile(
+            finalPath, contentHash, content.length, mediaType, rootReal, accessController, contentHash,
+          )
+          if (publishedByRequest) assertSamePublishedIdentity(verifiedTemp, verifiedFinal)
+        } catch (error) {
+          if (error instanceof HealthArtifactVaultError) throw error
+          throw new HealthArtifactVaultError('HEALTH_ARTIFACT_WRITE_FAILED')
+        } finally {
+          await unlink(tempPath).catch(() => undefined)
+        }
+
+        try {
+          return upsertTwinArtifact(registryInput)
+        } catch (error) {
+          if (publishedByRequest) {
+            let registered: TwinArtifact | null = null
+            let registryChecked = false
+            try {
+              registered = getTwinArtifact(contentHash)
+              registryChecked = true
+            } catch { /* fail closed and preserve the file */ }
+            if (registryChecked && !registered) await unlink(finalPath).catch(() => undefined)
+          }
+          if (error instanceof TwinImmutableRecordConflictError) {
+            throw new HealthArtifactVaultError('HEALTH_ARTIFACT_REGISTRY_CONFLICT')
+          }
+          throw new HealthArtifactVaultError('HEALTH_ARTIFACT_REGISTRY_FAILED')
+        }
+      })
     },
 
     async read(artifactId): Promise<ReadHealthArtifactResult> {
@@ -433,9 +589,9 @@ export function createHealthArtifactVault(options: HealthArtifactVaultOptions = 
       const path = resolve(root, ...artifact.relativePath.split('/'))
       if (!isPathInside(root, path)) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
       const verified = await verifyArtifactFile(
-        path, artifact.contentHash, artifact.sizeBytes, artifact.mediaType, rootReal, accessController, artifact.contentHash,
+        path, artifact.contentHash, artifact.sizeBytes, artifact.mediaType, rootReal, accessController, artifact.contentHash, true,
       )
-      return { artifact, content: verified.content }
+      return { artifact, content: verified.content! }
     },
   }
 }

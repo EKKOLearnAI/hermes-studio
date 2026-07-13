@@ -136,6 +136,22 @@ describe('personal twin store', () => {
     expect(() => getTwinArtifact(valid.contentHash)).toThrow(/path/i)
   })
 
+  it('preflights artifact registry identity without inserting a row', async () => {
+    const { getTwinArtifact, preflightTwinArtifact, upsertTwinArtifact } = await import(
+      '../../packages/server/src/services/hermes/personal-twin'
+    )
+    const input = {
+      mediaType: 'image/png', contentHash: '9'.repeat(64), relativePath: `99/${'9'.repeat(64)}`, sizeBytes: 12,
+      sensitivity: 'health' as const, metadata: {}, source: 'health-capture', sourceId: 'preflight-1',
+    }
+    expect(preflightTwinArtifact(input)).toBeNull()
+    expect(getTwinArtifact(input.contentHash)).toBeNull()
+    const inserted = upsertTwinArtifact(input)
+    expect(preflightTwinArtifact(input)).toEqual(inserted)
+    expect(() => preflightTwinArtifact({ ...input, contentHash: '8'.repeat(64), relativePath: `88/${'8'.repeat(64)}` }))
+      .toThrow(/different material|conflict/i)
+  })
+
   it('rejects poison keys in artifact metadata writes and DTO reads', async () => {
     const { getTwinArtifact, upsertTwinArtifact, withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
     const base = {

@@ -1,8 +1,8 @@
 import { createHash } from 'crypto'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'fs'
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('health artifact vault', () => {
   const originalHermesHome = process.env.HERMES_HOME
@@ -78,6 +78,15 @@ describe('health artifact vault', () => {
       expect(error.message).not.toContain(hermesHome)
       expect(error).not.toHaveProperty('path')
     }
+
+    const from = vi.spyOn(Buffer, 'from')
+    try {
+      await expect(vault.store({ ...valid, content: new Uint8Array(33), declaredMediaType: 'image/png' }))
+        .rejects.toMatchObject({ code: 'HEALTH_ARTIFACT_TOO_LARGE' })
+      expect(from).not.toHaveBeenCalled()
+    } finally {
+      from.mockRestore()
+    }
   })
 
   it('deduplicates concurrent identical writes and removes exclusive temp files', async () => {
@@ -138,6 +147,32 @@ describe('health artifact vault', () => {
     const error = await vault.store({ ...base, metadata: { view: 'back' } }).catch(value => value)
     expect(error).toMatchObject({ code: 'HEALTH_ARTIFACT_REGISTRY_CONFLICT' })
     expect(error.message).not.toContain(hermesHome)
+  })
+
+  it('preflights changed source identity before publishing and cleans a newly published orphan on registry failure', async () => {
+    const { createHealthArtifactVault } = await import('../../packages/server/src/services/hermes/health-loop/artifacts')
+    const vault = createHealthArtifactVault({ accessController: allowAccess() })
+    await vault.store({
+      content: png(), declaredMediaType: 'image/png', source: 'health-capture', sourceId: 'preflight-source', metadata: {},
+    })
+    const root = join(hermesHome, 'personal', 'artifacts')
+    const before = readdirSync(root, { recursive: true, withFileTypes: true }).filter(entry => entry.isFile()).map(entry => entry.name)
+    const changed = Buffer.concat([png(), Buffer.from('changed')])
+    await expect(vault.store({
+      content: changed, declaredMediaType: 'image/png', source: 'health-capture', sourceId: 'preflight-source', metadata: {},
+    })).rejects.toMatchObject({ code: 'HEALTH_ARTIFACT_REGISTRY_CONFLICT' })
+    const after = readdirSync(root, { recursive: true, withFileTypes: true }).filter(entry => entry.isFile()).map(entry => entry.name)
+    expect(after).toEqual(before)
+
+    const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
+    withPersonalTwinDb(db => db.exec(`CREATE TRIGGER fail_health_artifact_registry BEFORE INSERT ON twin_artifacts
+      BEGIN SELECT RAISE(ABORT, 'injected registry failure'); END;`))
+    const orphanContent = Buffer.concat([png(), Buffer.from('registry-failure')])
+    const orphanDigest = createHash('sha256').update(orphanContent).digest('hex')
+    await expect(vault.store({
+      content: orphanContent, declaredMediaType: 'image/png', source: 'health-capture', sourceId: 'registry-failure', metadata: {},
+    })).rejects.toMatchObject({ code: 'HEALTH_ARTIFACT_REGISTRY_FAILED' })
+    expect(existsSync(join(root, orphanDigest.slice(0, 2), orphanDigest))).toBe(false)
   })
 
   it('exports the vault and consent broker from the public health-loop entry without initialization side effects', async () => {
@@ -210,7 +245,7 @@ describe('health artifact vault', () => {
     }
   })
 
-  it('never deletes a published final when another request reuses and registers it', async () => {
+  it('serializes reuse behind publication and preserves a final after post-publish verification fails', async () => {
     const { createHealthArtifactVault } = await import('../../packages/server/src/services/hermes/health-loop/artifacts')
     const content = png()
     const digest = createHash('sha256').update(content).digest('hex')
@@ -241,9 +276,13 @@ describe('health artifact vault', () => {
     await published
     const { getTwinArtifact } = await import('../../packages/server/src/services/hermes/personal-twin')
     expect(getTwinArtifact(digest)).toBeNull()
-    const registered = await requestB.store(input)
+    let requestBSettled = false
+    const bResult = requestB.store(input).finally(() => { requestBSettled = true })
+    await new Promise(resolve => setTimeout(resolve, 25))
+    expect(requestBSettled).toBe(false)
     releaseFailure()
     const failure = await aResult
+    const registered = await bResult
 
     expect(finalReached).toBe(true)
     expect(failure).toMatchObject({ code: 'HEALTH_ARTIFACT_ACCESS_DENIED' })
@@ -254,5 +293,57 @@ describe('health artifact vault', () => {
     const files = readdirSync(join(hermesHome, 'personal', 'artifacts'), { recursive: true, withFileTypes: true })
       .filter(entry => entry.isFile()).map(entry => entry.name)
     expect(files).toEqual([digest])
+  })
+
+  it('rejects stable files with external hardlinks and detects a path exchange after access verification', async () => {
+    const { createHealthArtifactVault } = await import('../../packages/server/src/services/hermes/health-loop/artifacts')
+    const vault = createHealthArtifactVault({ accessController: allowAccess() })
+    const content = png()
+    const stored = await vault.store({
+      content, declaredMediaType: 'image/png', source: 'health-capture', sourceId: 'hardlink-check', metadata: {},
+    })
+    const finalPath = join(hermesHome, 'personal', 'artifacts', stored.relativePath)
+    const externalLink = join(hermesHome, 'personal', 'artifacts', stored.contentHash.slice(0, 2), 'external-hardlink')
+    linkSync(finalPath, externalLink)
+    await expect(vault.read(stored.id)).rejects.toMatchObject({ code: 'HEALTH_ARTIFACT_INTEGRITY_FAILED' })
+    rmSync(externalLink)
+    await expect(vault.read(stored.id)).resolves.toMatchObject({ content })
+
+    const replacement = join(hermesHome, 'personal', 'artifacts', stored.contentHash.slice(0, 2), 'replacement')
+    const displaced = join(hermesHome, 'personal', 'artifacts', stored.contentHash.slice(0, 2), 'displaced')
+    writeFileSync(replacement, content)
+    let exchanged = false
+    const swappingVault = createHealthArtifactVault({
+      accessController: {
+        secureDirectory: async () => undefined,
+        secureFile: async (path: string) => {
+          if (!exchanged && path === finalPath) {
+            exchanged = true
+            renameSync(finalPath, displaced)
+            renameSync(replacement, finalPath)
+          }
+        },
+      },
+    })
+    await expect(swappingVault.read(stored.id)).rejects.toMatchObject({ code: 'HEALTH_ARTIFACT_INTEGRITY_FAILED' })
+    expect(exchanged).toBe(true)
+    rmSync(finalPath)
+    renameSync(displaced, finalPath)
+  })
+
+  it('streams a multi-megabyte artifact without using FileHandle.readFile', async () => {
+    const { createHealthArtifactVault } = await import('../../packages/server/src/services/hermes/health-loop/artifacts')
+    const source = readFileSync('packages/server/src/services/hermes/health-loop/artifacts.ts', 'utf8')
+    expect(source).not.toMatch(/\.readFile\s*\(/)
+    const content = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.alloc(2 * 1024 * 1024, 0x5a),
+    ])
+    const vault = createHealthArtifactVault({ accessController: allowAccess() })
+    const stored = await vault.store({
+      content, declaredMediaType: 'image/png', source: 'health-capture', sourceId: 'stream-large', metadata: {},
+    })
+    const read = await vault.read(stored.id)
+    expect(read.content.equals(content)).toBe(true)
   })
 })
