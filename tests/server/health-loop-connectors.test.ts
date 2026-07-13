@@ -391,6 +391,27 @@ describe('health-loop connectors', () => {
     })
     expect(await timestamp.status()).toMatchObject({ health: 'unavailable', errorCode: 'CONNECTOR_STATE_CORRUPT' })
 
+    const malformedTimestampPath = join(root, 'malformed-timestamp-state.json')
+    await writeFile(malformedTimestampPath, JSON.stringify({ version: 1, connectors: { 'malformed-timestamp': {
+      health: 'healthy', cursor: 'vendor/page+7==',
+    } } }), 'utf8')
+    const malformedTimestamp = createManagedHealthConnector({
+      stateStore: new FileHealthConnectorStateStore(malformedTimestampPath), ingest: () => ({} as never),
+      source: { id: 'malformed-timestamp', cursorKind: 'timestamp', ...sourceBase },
+    })
+    expect(await malformedTimestamp.status()).toMatchObject({ health: 'unavailable', errorCode: 'CONNECTOR_STATE_CORRUPT' })
+
+    const validTimestampPath = join(root, 'valid-timestamp-state.json')
+    const validTimestampCursor = createConnectorCursor('2026-07-13T00:00:00Z', 'valid')
+    await writeFile(validTimestampPath, JSON.stringify({ version: 1, connectors: { 'valid-timestamp': {
+      health: 'healthy', lastAttemptAt: '2026-07-13T01:00:00Z', cursor: validTimestampCursor,
+    } } }), 'utf8')
+    const validTimestamp = createManagedHealthConnector({
+      stateStore: new FileHealthConnectorStateStore(validTimestampPath), ingest: () => ({} as never),
+      source: { id: 'valid-timestamp', cursorKind: 'timestamp', ...sourceBase },
+    })
+    expect(await validTimestamp.status()).toMatchObject({ health: 'healthy', cursor: validTimestampCursor })
+
     const rawTimestampPath = join(root, 'raw-timestamp-state.json')
     await writeFile(rawTimestampPath, JSON.stringify({ version: 1, connectors: { 'raw-timestamp': {
       health: 'healthy', lastAttemptAt: '2026-07-13T01:00:00Z', cursor: rfcLookingToken,

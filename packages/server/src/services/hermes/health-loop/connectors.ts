@@ -360,9 +360,12 @@ function validateStateForSource(state: PersistedConnectorState | undefined, sour
   if (state.freshnessByDomain && Object.keys(state.freshnessByDomain).some(domain => !source.domains.includes(domain as HealthDomain))) {
     throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
   }
-  if (source.cursorKind === 'timestamp' && state.cursor && state.lastAttemptAt
-    && compareTimestampInstants(cursorTimestamp(state.cursor), state.lastAttemptAt) > 0) {
-    throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
+  if (source.cursorKind === 'timestamp' && state.cursor) {
+    let timestamp: string
+    try { timestamp = cursorTimestamp(state.cursor) } catch { throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT') }
+    if (!state.lastAttemptAt || compareTimestampInstants(timestamp, state.lastAttemptAt) > 0) {
+      throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
+    }
   }
 }
 
