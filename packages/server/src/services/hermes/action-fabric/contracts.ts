@@ -64,17 +64,19 @@ export function effectiveCapabilityRisk(capability: FabricCapability, input: Fab
 
 export function healthStandingAuthorizationRequirements(
   capability: FabricCapability,
-  effectiveRisk: FabricRisk,
 ): string[] | null {
   const requiredAuthentication: Record<string, string[]> = {
     'health.source.sync': ['connector_credential:configured'],
     'health.artifact.analyze.local': ['artifact:local_read'],
+    'health.artifact.analyze.remote': ['one_time_consent:exact_artifact_manifest', 'processor:exact_id'],
+    'health.plan.adjust': ['health_plan:write'],
+    'health.plan.restore': ['health_plan:write'],
     'health.reminder.send': ['live_mode:enabled', 'recipient:configured_self'],
     'health.checkin.request': ['live_mode:enabled', 'recipient:configured_self'],
+    'health.followup.schedule': ['health_schedule:write'],
   }
   const expected = requiredAuthentication[capability.id]
-  return effectiveRisk === 'low' && expected !== undefined
-    && capability.idempotency === 'required'
+  return expected !== undefined && capability.idempotency === 'required'
     && sameStringSet(capability.authentication, expected) ? [...expected] : null
 }
 

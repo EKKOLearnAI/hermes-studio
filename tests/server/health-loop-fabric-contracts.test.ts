@@ -54,7 +54,8 @@ describe('health Action Fabric closed contracts', () => {
 
   it('requires an exact structured target bound to the same input values', () => {
     const base = request()
-    expect(createFabricIntent(base).policyDecision.outcome).toBe('waiting_user')
+    expect(createFabricIntent(base).policyDecision).toMatchObject({ outcome: 'deny',
+      reasonCodes: expect.arrayContaining(['standing_authorization_required']) })
     for (const target of [
       { kind: 'health_connector', connectorId: 'other' },
       { kind: 'health_connector', connectorId: 's400', extra: true },
@@ -70,8 +71,10 @@ describe('health Action Fabric closed contracts', () => {
     expect(createFabricIntent(sandbox).policyDecision).toMatchObject({ outcome: 'allow', executorId: 'health-shadow',
       policySnapshot: { environments: ['sandbox'] } })
     expect(createFabricIntent({ ...request(), idempotencyKey: 'source-live' }).policyDecision)
-      .toMatchObject({ outcome: 'waiting_user', executorId: 'health-source',
-        policySnapshot: { environments: ['production'], authorizationMode: 'per_action' } })
+      .toMatchObject({ outcome: 'deny', executorId: 'health-source',
+        reasonCodes: expect.arrayContaining(['standing_authorization_required']),
+        policySnapshot: { environments: ['production'], authorizationMode: 'standing_required',
+          standingAuthorizationMode: 'standing_required', approvalMode: 'none' } })
   })
 
   it('requires live versioned provider evidence and rechecks its exact authorization material', () => {
@@ -86,6 +89,7 @@ describe('health Action Fabric closed contracts', () => {
         providerId: 'test-health-authorization', providerVersion: 3, authorizationVersion: 7,
         expiresAt: '2099-01-01T00:00:00.000Z', digest: expect.stringMatching(/^[a-f0-9]{64}$/),
       },
+      standingAuthorizationMode: 'standing_provider', approvalMode: 'none',
     } })
     clearFabricAuthorizationProvider()
     registerFabricAuthorizationProvider({
@@ -93,7 +97,23 @@ describe('health Action Fabric closed contracts', () => {
       authorize: () => { throw new Error('provider unavailable') },
     })
     expect(createFabricIntent({ ...request(), idempotencyKey: 'source-provider-failure' }).policyDecision)
-      .toMatchObject({ outcome: 'waiting_user', policySnapshot: { authorizationMode: 'per_action' } })
+      .toMatchObject({ outcome: 'deny', reasonCodes: expect.arrayContaining(['standing_authorization_required']),
+        policySnapshot: { authorizationMode: 'standing_required', standingAuthorizationMode: 'standing_required' } })
+    clearFabricAuthorizationProvider()
+    registerFabricAuthorizationProvider({
+      id: 'denying-health-authorization', version: 1,
+      authorize: () => null,
+    })
+    expect(createFabricIntent({ ...request(), idempotencyKey: 'source-provider-deny' }).policyDecision)
+      .toMatchObject({ outcome: 'deny', reasonCodes: expect.arrayContaining(['standing_authorization_required']) })
+    clearFabricAuthorizationProvider()
+    registerFabricAuthorizationProvider({
+      id: 'expired-health-authorization', version: 1,
+      authorize: request => ({ authorizationVersion: 1, expiresAt: '2020-01-01T00:00:00.000Z',
+        grantedRequirements: [...request.requirements] }),
+    })
+    expect(createFabricIntent({ ...request(), idempotencyKey: 'source-provider-expired' }).policyDecision)
+      .toMatchObject({ outcome: 'deny', reasonCodes: expect.arrayContaining(['standing_authorization_required']) })
   })
 
   it.each([
@@ -159,8 +179,13 @@ describe('health Action Fabric closed contracts', () => {
       policySnapshot: { capabilityRisk: 'low', effectiveRisk: 'medium' } })
   })
 
-  it('keeps remote disclosure and medical/provider follow-up outside standing authorization', () => {
+  it('requires valid standing evidence before medium production work can wait for per-action approval', () => {
     const digest = 'a'.repeat(64)
+    registerFabricAuthorizationProvider({
+      id: 'test-medium-authorization', version: 1,
+      authorize: request => ({ authorizationVersion: 2, expiresAt: '2099-01-01T00:00:00.000Z',
+        grantedRequirements: [...request.requirements] }),
+    })
     updateAssistantRole('health-manager', {
       enabled: true,
       capabilityScope: { allow: ['health.artifact.analyze.remote', 'health.followup.schedule'], deny: [], enforcement: 'action_fabric_v1' },
@@ -178,7 +203,10 @@ describe('health Action Fabric closed contracts', () => {
         consentId: 'consent-1', requestedAt: '2026-07-14T00:00:00.000Z' },
     })
     expect(remote.policyDecision).toMatchObject({ outcome: 'waiting_user',
-      policySnapshot: { effectiveRisk: 'medium' } })
+      reasonCodes: expect.arrayContaining(['risk_requires_approval']),
+      policySnapshot: { effectiveRisk: 'medium', authorizationMode: 'standing_provider',
+        standingAuthorizationMode: 'standing_provider', approvalMode: 'per_action',
+        authorizationEvidence: { providerId: 'test-medium-authorization', authorizationVersion: 2 } } })
     const followup = createFabricIntent({ ...common, capabilityId: 'health.followup.schedule',
       idempotencyKey: 'provider-followup', goal: 'schedule provider review', environments: ['internal'],
       target: { kind: 'health_followup', ownerUserId: 'user-1' },

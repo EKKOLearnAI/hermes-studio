@@ -174,6 +174,15 @@ describe('action fabric controller', () => {
     })
   })
 
+  it.each(['authorizationEvidence', 'authorizationMode', 'standingRequirements'])
+    ('rejects HTTP attempts to inject server authorization material: %s', async field => {
+      const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+      const ctx = context({ body: { ...validIntent, [field]: { forged: true } } })
+      await ctrl.createIntent(ctx)
+      expect(ctx.status).toBe(400)
+      expect(fabric.createFabricIntent).not.toHaveBeenCalled()
+    })
+
   it.each([
     'production', [], ['invalid'], ['production', 'production'],
   ])('rejects invalid intent environments before invoking the service: %j', async environments => {

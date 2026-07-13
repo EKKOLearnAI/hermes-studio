@@ -4,6 +4,7 @@ import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  approveFabricWorkflow,
   createFabricIntent,
   createSimulatorExecutorAdapter,
   ensureBuiltInFabricRegistry,
@@ -119,6 +120,88 @@ describe('Action Fabric durable worker', () => {
     expect(prepared).toBe(0)
     expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'waiting_user',
       lastErrorCode: expect.stringMatching(/AUTHORIZATION/) })
+  })
+
+  it('does not execute an approved production action after its standing evidence is revoked', async () => {
+    updateAssistantRole('health-manager', {
+      enabled: true,
+      capabilityScope: { allow: ['health.source.sync'], deny: [], enforcement: 'action_fabric_v1' },
+      decisionAuthority: { maxRisk: 'critical', requireApprovalAbove: 'none',
+        allowedTargets: ['health:connector:s400'] },
+      spendingLimits: { currency: null, perAction: 0, daily: 0 },
+    })
+    let authorized = true
+    registerFabricAuthorizationProvider({
+      id: 'worker-revocable-authorization', version: 1,
+      authorize: request => authorized
+        ? { authorizationVersion: 4, expiresAt: '2099-01-01T00:00:00.000Z',
+            grantedRequirements: [...request.requirements] }
+        : null,
+    })
+    let prepared = 0
+    registerFabricExecutorAdapter(adapter({
+      id: 'health-source', type: 'connector',
+      prepare: async context => { prepared += 1; return success('prepared', context) },
+    }))
+    const created = createFabricIntent({
+      capabilityId: 'health.source.sync', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
+      idempotencyKey: 'approved-auth-revocation', goal: 'sync source', environments: ['production'],
+      target: { kind: 'health_connector', connectorId: 's400' }, constraints: {}, rationale: 'test',
+      input: { schemaVersion: 1, connectorId: 's400', requestedAt: '2026-07-12T01:00:00.000Z' },
+    })
+    expect(created.policyDecision).toMatchObject({ outcome: 'waiting_user',
+      policySnapshot: { authorizationMode: 'standing_provider', standingAuthorizationMode: 'standing_provider',
+        approvalMode: 'per_action', authorizationEvidence: { authorizationVersion: 4 } } })
+    expect(approveFabricWorkflow(created.workflow.id, 'user-1').state).toBe('preparing')
+    authorized = false
+
+    await processActionFabricOnce({ now: base })
+    expect(prepared).toBe(0)
+    expect(getFabricWorkflow(created.workflow.id)).toMatchObject({ state: 'waiting_user',
+      lastErrorCode: 'FABRIC_POLICY_STALE_AUTHORIZATION' })
+  })
+
+  it('fails legacy production snapshots closed when they lack captured standing evidence', async () => {
+    updateAssistantRole('health-manager', {
+      enabled: true,
+      capabilityScope: { allow: ['health.source.sync'], deny: [], enforcement: 'action_fabric_v1' },
+      decisionAuthority: { maxRisk: 'critical', requireApprovalAbove: 'critical',
+        allowedTargets: ['health:connector:s400'] },
+      spendingLimits: { currency: null, perAction: 0, daily: 0 },
+    })
+    registerFabricAuthorizationProvider({
+      id: 'worker-legacy-authorization', version: 1,
+      authorize: request => ({ authorizationVersion: 1, expiresAt: '2099-01-01T00:00:00.000Z',
+        grantedRequirements: [...request.requirements] }),
+    })
+    let prepared = 0
+    registerFabricExecutorAdapter(adapter({
+      id: 'health-source', type: 'connector',
+      prepare: async context => { prepared += 1; return success('prepared', context) },
+    }))
+    const workflow = createFabricIntent({
+      capabilityId: 'health.source.sync', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
+      idempotencyKey: 'legacy-production-auth', goal: 'sync source', environments: ['production'],
+      target: { kind: 'health_connector', connectorId: 's400' }, constraints: {}, rationale: 'test',
+      input: { schemaVersion: 1, connectorId: 's400', requestedAt: '2026-07-12T01:00:00.000Z' },
+    }).workflow
+    withActionFabricDb(db => {
+      const row = db.prepare('SELECT policy_snapshot_json FROM fabric_policy_decisions WHERE id=?')
+        .get(workflow.policyDecisionId!) as { policy_snapshot_json: string }
+      const snapshot = JSON.parse(row.policy_snapshot_json) as Record<string, unknown>
+      delete snapshot.standingAuthorizationRequired
+      delete snapshot.standingAuthorizationMode
+      delete snapshot.approvalMode
+      snapshot.authorizationMode = 'per_action'
+      snapshot.authorizationEvidence = null
+      db.prepare('UPDATE fabric_policy_decisions SET policy_snapshot_json=? WHERE id=?')
+        .run(JSON.stringify(snapshot), workflow.policyDecisionId!)
+    })
+
+    await processActionFabricOnce({ now: base })
+    expect(prepared).toBe(0)
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'waiting_user',
+      lastErrorCode: 'FABRIC_POLICY_STALE_AUTHORIZATION' })
   })
 
   it('uses an exclusive live lease and recovers only after expiry', async () => {
