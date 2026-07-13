@@ -141,6 +141,54 @@ describe('health-loop ingestion', () => {
     })])
   })
 
+  it('normalizes legacy reported posture and skin fields without inventing severity', async () => {
+    const { normalizeHealthIngestionEnvelope } = await import('../../packages/server/src/services/hermes/health-loop')
+    const posture: HealthIngestionEnvelope = {
+      domain: 'posture', source: 'legacy-health-state', sourceId: 'reported-posture', observedAt,
+      evidenceClass: 'reported', confidence: 1,
+      payload: {
+        reportedIssues: ['right_scapula_downward_rotation', 'pelvic_rotation_right', 'pelvic_rotation_right'],
+        reportedPriority: 'high',
+        reportedPain: [{ area: 'right_neck_shoulder', score: null }, { area: 'lower_back', score: 3 }],
+        reportedCompensationChain: ['pelvis_right_rotation', 'lumbar_right_rotation', 'neck_left_shift'],
+      },
+    }
+    const skin: HealthIngestionEnvelope = {
+      domain: 'skin', source: 'legacy-health-state', sourceId: 'reported-skin', observedAt,
+      evidenceClass: 'reported', confidence: 1,
+      payload: {
+        reportedConcerns: ['blackheads', 'acne', 'acne'],
+        reportedRoutine: { morning: ['cleanse', 'toner', 'sunscreen'], evening: ['cleanse', 'moisturizer'], weekly: ['mask'] },
+      },
+    }
+    const postureMetrics = Object.fromEntries(normalizeHealthIngestionEnvelope(posture).observations.map(item => [item.metric, item.value]))
+    const skinMetrics = Object.fromEntries(normalizeHealthIngestionEnvelope(skin).observations.map(item => [item.metric, item.value]))
+    expect(postureMetrics).toMatchObject({
+      'health.posture.reported_issues': ['pelvic_rotation_right', 'right_scapula_downward_rotation'],
+      'health.posture.reported_priority': 'high',
+      'health.posture.reported_pain': [{ area: 'right_neck_shoulder', score: null }, { area: 'lower_back', score: 3 }],
+      'health.posture.reported_compensation_chain': ['pelvis_right_rotation', 'lumbar_right_rotation', 'neck_left_shift'],
+    })
+    expect(skinMetrics).toMatchObject({
+      'health.skin.reported_concerns': ['acne', 'blackheads'],
+      'health.skin.reported_routine': { morning: ['cleanse', 'toner', 'sunscreen'], evening: ['cleanse', 'moisturizer'], weekly: ['mask'] },
+    })
+
+    const setReordered = { ...posture, payload: { ...posture.payload, reportedIssues: ['right_scapula_downward_rotation', 'pelvic_rotation_right'] } }
+    expect(normalizeHealthIngestionEnvelope(setReordered).materialDigest).toBe(normalizeHealthIngestionEnvelope(posture).materialDigest)
+    const concernsReordered = { ...skin, payload: { ...skin.payload, reportedConcerns: ['acne', 'blackheads'] } }
+    expect(normalizeHealthIngestionEnvelope(concernsReordered).materialDigest).toBe(normalizeHealthIngestionEnvelope(skin).materialDigest)
+    for (const orderedChange of [
+      { ...posture, payload: { ...posture.payload, reportedPain: [...(posture.payload.reportedPain as unknown[])].reverse() } },
+      { ...posture, payload: { ...posture.payload, reportedCompensationChain: [...(posture.payload.reportedCompensationChain as string[])].reverse() } },
+      { ...skin, payload: { ...skin.payload, reportedRoutine: { ...(skin.payload.reportedRoutine as Record<string, unknown>), morning: ['sunscreen', 'toner', 'cleanse'] } } },
+    ]) expect(normalizeHealthIngestionEnvelope(orderedChange as HealthIngestionEnvelope).materialDigest).not.toBe(
+      normalizeHealthIngestionEnvelope(orderedChange.domain === 'skin' ? skin : posture).materialDigest,
+    )
+    expect(() => normalizeHealthIngestionEnvelope({ ...posture, payload: { reportedPriority: 'unknown' } })).toThrowError(/HEALTH_INGESTION_INVALID_PAYLOAD/)
+    expect(() => normalizeHealthIngestionEnvelope({ ...skin, payload: { reportedRoutine: { bedtime: ['cleanse'] } } })).toThrowError(/HEALTH_INGESTION_INVALID_PAYLOAD/)
+  })
+
   it('sorts and deduplicates unordered semantic sets so reversed replay is a no-op', async () => {
     const { ingestHealthEnvelope, normalizeHealthIngestionEnvelope } = await import('../../packages/server/src/services/hermes/health-loop')
     const findingA = { code: 'forward_head', severity: 0.4, confidence: 0.8 }

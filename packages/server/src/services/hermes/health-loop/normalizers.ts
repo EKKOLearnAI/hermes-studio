@@ -285,6 +285,28 @@ function normalizeMeasurements(record: Record<string, unknown>): NormalizedHealt
 
 function normalizePosture(record: Record<string, unknown>): NormalizedHealthObservation[] {
   const output: NormalizedHealthObservation[] = []
+  if (record.reportedIssues !== undefined) {
+    if (!Array.isArray(record.reportedIssues) || record.reportedIssues.length > 64) fail('HEALTH_INGESTION_INVALID_PAYLOAD', 'reportedIssues is invalid')
+    add(output, 'health.posture.reported_issues', unorderedUnique(record.reportedIssues.map((issue, index) => boundedIdentifier(issue, `reportedIssues[${index}]`, 80)!)))
+  }
+  if (record.reportedPriority !== undefined) {
+    const priority = boundedIdentifier(record.reportedPriority, 'reportedPriority', 20)
+    if (!['low', 'medium', 'high'].includes(priority!)) fail('HEALTH_INGESTION_INVALID_PAYLOAD', 'reportedPriority is invalid')
+    add(output, 'health.posture.reported_priority', priority)
+  }
+  if (record.reportedPain !== undefined) {
+    if (!Array.isArray(record.reportedPain) || record.reportedPain.length > 32) fail('HEALTH_INGESTION_INVALID_PAYLOAD', 'reportedPain is invalid')
+    add(output, 'health.posture.reported_pain', record.reportedPain.map((item, index) => {
+      const pain = plainRecord(item, `reportedPain[${index}]`)
+      const keys = Object.keys(pain)
+      if (keys.some(key => !['area', 'score'].includes(key)) || !Object.prototype.hasOwnProperty.call(pain, 'score')) fail('HEALTH_INGESTION_INVALID_PAYLOAD', `reportedPain[${index}] is invalid`)
+      return { area: boundedIdentifier(pain.area, `reportedPain[${index}].area`, 80), score: pain.score === null ? null : number(pain.score, `reportedPain[${index}].score`, 0, 10) }
+    }))
+  }
+  if (record.reportedCompensationChain !== undefined) {
+    if (!Array.isArray(record.reportedCompensationChain) || record.reportedCompensationChain.length > 64) fail('HEALTH_INGESTION_INVALID_PAYLOAD', 'reportedCompensationChain is invalid')
+    add(output, 'health.posture.reported_compensation_chain', record.reportedCompensationChain.map((item, index) => boundedIdentifier(item, `reportedCompensationChain[${index}]`, 80)!))
+  }
   if (record.findings !== undefined) {
     if (!Array.isArray(record.findings) || record.findings.length > 32) fail('HEALTH_INGESTION_INVALID_PAYLOAD', 'findings is invalid')
     add(output, 'health.posture.findings', unorderedUnique(record.findings.map((item, index) => {
@@ -326,6 +348,22 @@ function normalizePosture(record: Record<string, unknown>): NormalizedHealthObse
 
 function normalizeSkin(record: Record<string, unknown>): NormalizedHealthObservation[] {
   const output: NormalizedHealthObservation[] = []
+  if (record.reportedConcerns !== undefined) {
+    if (!Array.isArray(record.reportedConcerns) || record.reportedConcerns.length > 64) fail('HEALTH_INGESTION_INVALID_PAYLOAD', 'reportedConcerns is invalid')
+    add(output, 'health.skin.reported_concerns', unorderedUnique(record.reportedConcerns.map((item, index) => boundedIdentifier(item, `reportedConcerns[${index}]`, 80)!)))
+  }
+  if (record.reportedRoutine !== undefined) {
+    const routine = plainRecord(record.reportedRoutine, 'reportedRoutine')
+    const keys = Object.keys(routine)
+    if (keys.length === 0 || keys.some(key => !['morning', 'evening', 'weekly'].includes(key))) fail('HEALTH_INGESTION_INVALID_PAYLOAD', 'reportedRoutine is invalid')
+    const normalized: Record<string, string[]> = {}
+    for (const key of ['morning', 'evening', 'weekly']) {
+      if (routine[key] === undefined) continue
+      if (!Array.isArray(routine[key]) || routine[key].length > 32) fail('HEALTH_INGESTION_INVALID_PAYLOAD', `reportedRoutine.${key} is invalid`)
+      normalized[key] = routine[key].map((item, index) => boundedIdentifier(item, `reportedRoutine.${key}[${index}]`, 80)!)
+    }
+    add(output, 'health.skin.reported_routine', normalized)
+  }
   if (record.region !== undefined) add(output, 'health.skin.region', boundedIdentifier(record.region, 'region', 60))
   if (record.appearances !== undefined) {
     if (!Array.isArray(record.appearances) || record.appearances.length > 32) fail('HEALTH_INGESTION_INVALID_PAYLOAD', 'appearances is invalid')

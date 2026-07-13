@@ -94,4 +94,36 @@ describe('legacy personal twin import', () => {
     twin.getPersonalTwinOverview()
     expect(twin.getTwinEntity('person:self')?.attributes).toMatchObject({ displayName: 'Li Hao', heightCm: 178 })
   })
+
+  it('claims one import-run owner and keeps terminal state causal with sanitized errors', async () => {
+    const legacy = await import('../../packages/server/src/services/hermes/personal-twin/legacy-import')
+    const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin/database')
+    const first = legacy.claimTwinImportRun({ source: 'test-import', fingerprint: 'a'.repeat(64), version: 'test-v1' })
+    const second = legacy.claimTwinImportRun({ source: 'test-import', fingerprint: 'a'.repeat(64), version: 'test-v1' })
+    expect(first.owner).toBe(true)
+    expect(second).toEqual(expect.objectContaining({ owner: false, runId: first.runId, status: 'started' }))
+
+    const completed = legacy.completeTwinImportRun(first, { read: 1, ingested: 1 })
+    expect(completed.status).toBe('completed')
+    expect(() => legacy.failTwinImportRun(first, 'unsafe C:\\private\\health.db marker=secret')).toThrowError(/TWIN_IMPORT_RUN_TERMINAL/)
+    const stored = withPersonalTwinDb(db => db.prepare('SELECT status, error FROM twin_import_runs WHERE id = ?').get(first.runId) as { status: string; error: string | null })
+    expect(stored).toEqual({ status: 'completed', error: null })
+
+    const failedClaim = legacy.claimTwinImportRun({ source: 'test-import', fingerprint: 'b'.repeat(64), version: 'test-v1' })
+    legacy.failTwinImportRun(failedClaim, 'HEALTH_MIGRATION_INVALID_SOURCE')
+    const failed = withPersonalTwinDb(db => db.prepare('SELECT status, error FROM twin_import_runs WHERE id = ?').get(failedClaim.runId) as { status: string; error: string })
+    expect(failed).toEqual({ status: 'failed', error: 'HEALTH_MIGRATION_INVALID_SOURCE' })
+    const retry = legacy.claimTwinImportRun({ source: 'test-import', fingerprint: 'b'.repeat(64), version: 'test-v1' })
+    expect(retry).toEqual(expect.objectContaining({ owner: true, runId: failedClaim.runId, status: 'started' }))
+    legacy.failTwinImportRun(retry, 'HEALTH_MIGRATION_INVALID_SOURCE')
+  })
+
+  it('fails closed when persisted import-run state is corrupt', async () => {
+    const legacy = await import('../../packages/server/src/services/hermes/personal-twin/legacy-import')
+    const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin/database')
+    const input = { source: 'test-corrupt', fingerprint: 'c'.repeat(64), version: 'test-v1' }
+    const claim = legacy.claimTwinImportRun(input)
+    withPersonalTwinDb(db => db.prepare("UPDATE twin_import_runs SET counts_json = '{\"version\":\"wrong\"}' WHERE id = ?").run(claim.runId))
+    expect(() => legacy.claimTwinImportRun(input)).toThrowError('TWIN_IMPORT_RUN_CORRUPT')
+  })
 })

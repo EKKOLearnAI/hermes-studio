@@ -12,6 +12,125 @@ import { recordTwinEvent, recordTwinObservation, upsertTwinConstraint, upsertTwi
 
 const IMPORTER_VERSION = 1
 
+export interface TwinImportRunClaim {
+  runId: string
+  source: string
+  fingerprint: string
+  version: string
+  owner: boolean
+  status: 'started' | 'completed' | 'failed'
+  counts: Record<string, number>
+  startedAt: string
+  completedAt?: string
+}
+
+const IMPORT_SOURCE = /^[a-z][a-z0-9._-]{0,63}$/
+const IMPORT_VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+const IMPORT_FINGERPRINT = /^[a-f0-9]{64}$/
+
+function parseImportCounts(value: unknown): Record<string, number> {
+  let parsed: unknown
+  try { parsed = JSON.parse(String(value)) } catch { throw new Error('TWIN_IMPORT_RUN_CORRUPT') }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+  const record = parsed as Record<string, unknown>
+  const counts: Record<string, number> = {}
+  for (const [key, item] of Object.entries(record)) {
+    if (key === 'version') continue
+    if (!/^[a-z][a-zA-Z0-9]{0,39}$/.test(key) || typeof item !== 'number' || !Number.isSafeInteger(item) || item < 0) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+    counts[key] = item
+  }
+  return counts
+}
+
+function importClaimFromRow(row: Record<string, unknown>, input: { source: string; fingerprint: string; version: string }, owner: boolean): TwinImportRunClaim {
+  const status = String(row.status)
+  if (!['started', 'completed', 'failed'].includes(status) || String(row.source) !== input.source || String(row.source_fingerprint) !== input.fingerprint) {
+    throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+  }
+  let stored: Record<string, unknown>
+  try { stored = JSON.parse(String(row.counts_json)) as Record<string, unknown> } catch { throw new Error('TWIN_IMPORT_RUN_CORRUPT') }
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored) || stored.version !== input.version) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+  const startedAt = String(row.started_at)
+  const completedAt = row.completed_at === null || row.completed_at === undefined ? undefined : String(row.completed_at)
+  const error = row.error === null || row.error === undefined ? undefined : String(row.error)
+  const canonicalTime = (value: string): boolean => {
+    try { return new Date(value).toISOString() === value } catch { return false }
+  }
+  if (!canonicalTime(startedAt) || (completedAt && (!canonicalTime(completedAt) || completedAt < startedAt))
+    || (status === 'started' && (completedAt || error)) || (status === 'completed' && (!completedAt || error))
+    || (status === 'failed' && (!completedAt || !error || !/^[A-Z][A-Z0-9_]{2,80}$/.test(error)))) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+  return {
+    runId: String(row.id), source: input.source, fingerprint: input.fingerprint, version: input.version,
+    owner, status: status as TwinImportRunClaim['status'], counts: parseImportCounts(row.counts_json), startedAt,
+    ...(completedAt ? { completedAt } : {}),
+  }
+}
+
+/** Atomically claims a deterministic import run. Existing runs are never stolen. */
+export function claimTwinImportRun(input: { source: string; fingerprint: string; version: string }): TwinImportRunClaim {
+  if (!IMPORT_SOURCE.test(input.source) || !IMPORT_FINGERPRINT.test(input.fingerprint) || !IMPORT_VERSION.test(input.version)) throw new Error('TWIN_IMPORT_RUN_INVALID')
+  const runId = `import-${createHash('sha256').update(`${input.source}\0${input.fingerprint}`).digest('hex').slice(0, 32)}`
+  const startedAt = nowIso()
+  return withPersonalTwinDb(db => {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const existing = db.prepare('SELECT * FROM twin_import_runs WHERE source = ? AND source_fingerprint = ?').get(input.source, input.fingerprint) as Record<string, unknown> | undefined
+      if (existing) {
+        const prior = importClaimFromRow(existing, input, false)
+        if (prior.status === 'failed') {
+          db.prepare(`UPDATE twin_import_runs SET status = 'started', counts_json = ?, error = NULL, started_at = ?, completed_at = NULL WHERE id = ? AND status = 'failed'`)
+            .run(JSON.stringify({ version: input.version }), startedAt, prior.runId)
+          const retried = db.prepare('SELECT * FROM twin_import_runs WHERE id = ?').get(prior.runId) as Record<string, unknown>
+          const result = importClaimFromRow(retried, input, true)
+          db.exec('COMMIT')
+          return result
+        }
+        const result = prior
+        db.exec('COMMIT')
+        return result
+      }
+      db.prepare(`INSERT INTO twin_import_runs (id, source, source_fingerprint, status, counts_json, started_at)
+        VALUES (?, ?, ?, 'started', ?, ?)`).run(runId, input.source, input.fingerprint, JSON.stringify({ version: input.version }), startedAt)
+      const row = db.prepare('SELECT * FROM twin_import_runs WHERE id = ?').get(runId) as Record<string, unknown>
+      const result = importClaimFromRow(row, input, true)
+      db.exec('COMMIT')
+      return result
+    } catch (error) {
+      try { db.exec('ROLLBACK') } catch { /* preserve the original failure */ }
+      throw error
+    }
+  })
+}
+
+export function completeTwinImportRun(claim: TwinImportRunClaim, counts: Record<string, number>): TwinImportRunClaim {
+  if (!claim.owner) throw new Error('TWIN_IMPORT_RUN_NOT_OWNER')
+  const validatedCounts = parseImportCounts(JSON.stringify(counts))
+  const completedAt = nowIso()
+  return withPersonalTwinDb(db => {
+    const result = db.prepare(`UPDATE twin_import_runs SET status = 'completed', counts_json = ?, error = NULL, completed_at = ?
+      WHERE id = ? AND source = ? AND source_fingerprint = ? AND status = 'started' AND completed_at IS NULL`)
+      .run(JSON.stringify({ version: claim.version, ...validatedCounts }), completedAt, claim.runId, claim.source, claim.fingerprint)
+    if (Number(result.changes) !== 1) throw new Error('TWIN_IMPORT_RUN_TERMINAL')
+    const row = db.prepare('SELECT * FROM twin_import_runs WHERE id = ?').get(claim.runId) as Record<string, unknown>
+    return importClaimFromRow(row, claim, true)
+  })
+}
+
+export function failTwinImportRun(claim: TwinImportRunClaim, errorCode: string, counts: Record<string, number> = {}): TwinImportRunClaim {
+  if (!claim.owner) throw new Error('TWIN_IMPORT_RUN_NOT_OWNER')
+  const validatedCounts = parseImportCounts(JSON.stringify(counts))
+  const sanitized = /^[A-Z][A-Z0-9_]{2,80}$/.test(errorCode) ? errorCode : 'TWIN_IMPORT_FAILED'
+  const completedAt = nowIso()
+  return withPersonalTwinDb(db => {
+    const result = db.prepare(`UPDATE twin_import_runs SET status = 'failed', counts_json = ?, error = ?, completed_at = ?
+      WHERE id = ? AND source = ? AND source_fingerprint = ? AND status = 'started' AND completed_at IS NULL`)
+      .run(JSON.stringify({ version: claim.version, ...validatedCounts }), sanitized, completedAt, claim.runId, claim.source, claim.fingerprint)
+    if (Number(result.changes) !== 1) throw new Error('TWIN_IMPORT_RUN_TERMINAL')
+    const row = db.prepare('SELECT * FROM twin_import_runs WHERE id = ?').get(claim.runId) as Record<string, unknown>
+    return importClaimFromRow(row, claim, true)
+  })
+}
+
 function nowIso(): string { return new Date().toISOString() }
 function stableId(value: string): string { return createHash('sha256').update(value).digest('hex').slice(0, 16) }
 function legacySource(profile: string, collection: string, id: unknown): string { return `health-state:${profile}:${collection}:${String(id)}` }
