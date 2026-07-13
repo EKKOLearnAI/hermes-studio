@@ -11,11 +11,35 @@ function parseJson<T>(value: string, fallback: T): T {
 }
 
 function projectionFromRow(row: ProjectionRow): TwinProjection {
-  const value = projectionValueFromJson(row.value_json, !row.projection_key.startsWith('latest:'))
+  const value = projectionValueFromJson(row.value_json, row.projection_key)
   return { key: row.projection_key, subjectId: row.subject_id, value, sourceRecordId: row.source_record_id, version: row.version, updatedAt: row.updated_at }
 }
 
 const PROJECTION_POISON_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+const HEALTH_PROJECTION_KEYS = new Set([
+  'health.body_composition_state', 'health.fat_loss_state', 'health.nutrition_state',
+  'health.training_state', 'health.recovery_state', 'health.posture_state',
+  'health.skin_state', 'health.internal_state', 'health.readiness_state',
+])
+
+interface ProjectionStructuralBounds {
+  maxNodes: number
+  maxDepth: number
+  maxArrayLength: number
+  maxObjectKeys: number
+  maxBytes: number
+}
+
+const DEFAULT_PROJECTION_BOUNDS: ProjectionStructuralBounds = {
+  maxNodes: 512, maxDepth: 8, maxArrayLength: 128, maxObjectKeys: 128, maxBytes: 16_384,
+}
+const HEALTH_PROJECTION_BOUNDS: ProjectionStructuralBounds = {
+  maxNodes: 65_536, maxDepth: 10, maxArrayLength: 4_096, maxObjectKeys: 256, maxBytes: 1_048_576,
+}
+
+function structuralBoundsForProjection(key: string): ProjectionStructuralBounds {
+  return HEALTH_PROJECTION_KEYS.has(key) ? HEALTH_PROJECTION_BOUNDS : DEFAULT_PROJECTION_BOUNDS
+}
 
 function assertProjectionPoisonFree(value: Record<string, unknown>): void {
   const pending: unknown[] = [value]
@@ -29,24 +53,24 @@ function assertProjectionPoisonFree(value: Record<string, unknown>): void {
   }
 }
 
-function projectionValueFromJson(valueJson: string, strictCustomBounds: boolean): Record<string, unknown> {
+function projectionValueFromJson(valueJson: string, key: string): Record<string, unknown> {
   try {
     const value = JSON.parse(valueJson) as unknown
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('root')
     assertProjectionPoisonFree(value as Record<string, unknown>)
-    if (!strictCustomBounds) return value as Record<string, unknown>
-    return JSON.parse(canonicalProjectionJson(value)) as Record<string, unknown>
+    if (key.startsWith('latest:')) return value as Record<string, unknown>
+    return JSON.parse(canonicalProjectionJson(value, structuralBoundsForProjection(key))) as Record<string, unknown>
   } catch {
     throw new Error('Twin projection value is invalid or exceeds structural bounds')
   }
 }
 
-function canonicalProjectionJson(value: unknown): string {
+function canonicalProjectionJson(value: unknown, bounds: ProjectionStructuralBounds): string {
   let nodes = 0
   const seen = new Set<object>()
   const visit = (item: unknown, depth: number): string => {
     nodes += 1
-    if (nodes > 512 || depth > 8) throw new Error('bounds')
+    if (nodes > bounds.maxNodes || depth > bounds.maxDepth) throw new Error('bounds')
     if (item === null || typeof item === 'boolean' || typeof item === 'string') return JSON.stringify(item)
     if (typeof item === 'number') {
       if (!Number.isFinite(item)) throw new Error('number')
@@ -58,7 +82,7 @@ function canonicalProjectionJson(value: unknown): string {
     seen.add(item)
     try {
       if (Array.isArray(item)) {
-        if (item.length > 128) throw new Error('bounds')
+        if (item.length > bounds.maxArrayLength) throw new Error('bounds')
         const ownKeys = Reflect.ownKeys(item)
         if (ownKeys.some(key => typeof key === 'symbol' || (key !== 'length' && !/^(?:0|[1-9][0-9]*)$/.test(key)))) {
           throw new Error('shape')
@@ -71,7 +95,7 @@ function canonicalProjectionJson(value: unknown): string {
       }
       const record = item as Record<string, unknown>
       const keys = Reflect.ownKeys(record)
-      if (keys.some(key => typeof key !== 'string') || keys.length > 128) throw new Error('shape')
+      if (keys.some(key => typeof key !== 'string') || keys.length > bounds.maxObjectKeys) throw new Error('shape')
       return `{${(keys as string[]).sort().map(key => {
         if (PROJECTION_POISON_KEYS.has(key)) throw new Error('poison')
         if (key.length < 1 || key.length > 160) throw new Error('key')
@@ -86,7 +110,7 @@ function canonicalProjectionJson(value: unknown): string {
   try {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('root')
     const encoded = visit(value, 0)
-    if (Buffer.byteLength(encoded, 'utf8') > 16_384) throw new Error('size')
+    if (Buffer.byteLength(encoded, 'utf8') > bounds.maxBytes) throw new Error('size')
     return encoded
   } catch {
     throw new Error('Twin projection value is invalid or exceeds structural bounds')
@@ -117,7 +141,7 @@ function validateProjectionWrite(input: TwinProjectionWrite): string {
   if (input.expectedVersion !== undefined && (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0)) {
     throw new Error('Twin projection expected version is invalid')
   }
-  return canonicalProjectionJson(input.value)
+  return canonicalProjectionJson(input.value, structuralBoundsForProjection(input.key))
 }
 
 function requireProjectionSubject(db: DatabaseSync, subjectId: string): void {

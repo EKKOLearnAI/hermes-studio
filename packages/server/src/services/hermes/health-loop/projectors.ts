@@ -76,6 +76,7 @@ interface DomainResult {
   candidates: Candidate[]
   inputRecordIds: string[]
   effectiveAt: string | null
+  freshnessAt: string | null
   conflicts: HealthProjectionConflict[]
   missing: string[]
   confidence: number
@@ -286,16 +287,19 @@ function genericDomain(records: readonly TwinObservation[], prefixes: readonly s
     const unitIds = new Set(latest.map(item => String(item.record.unit)))
     const valueIds = new Set<string>()
     for (const item of latest) valueIds.add(stableJson(item.record.value))
-    const identityOwners = new Map<string, Set<string>>()
+    const identityMaterials = new Map<string, Set<string>>()
     for (const item of latest) {
-      const owners = identityOwners.get(item.record.provenance.sourceId) ?? new Set<string>()
-      owners.add(item.record.provenance.source); identityOwners.set(item.record.provenance.sourceId, owners)
+      const identity = `${item.record.provenance.source}\0${item.record.provenance.sourceId}`
+      const materials = identityMaterials.get(identity) ?? new Set<string>()
+      materials.add(stableJson({ value: item.record.value, unit: item.record.unit }))
+      identityMaterials.set(identity, materials)
     }
+    const sourceConflict = [...identityMaterials.values()].some(materials => materials.size > 1)
     if (unitIds.size > 1) conflicts.push(conflict('UNIT_CONFLICT', metric, latest.map(item => item.record)))
     if (valueIds.size > 1) conflicts.push(conflict('VALUE_CONFLICT', metric, latest.map(item => item.record)))
-    if ([...identityOwners.values()].some(owners => owners.size > 1)) conflicts.push(conflict('SOURCE_CONFLICT', metric, latest.map(item => item.record)))
+    if (sourceConflict) conflicts.push(conflict('SOURCE_CONFLICT', metric, latest.map(item => item.record)))
     const unitBlocked = prepared.conflicts.some(item => item.code === 'UNIT_CONFLICT' && item.metric === metric)
-    if (!unitBlocked && unitIds.size === 1 && valueIds.size === 1 && ![...identityOwners.values()].some(owners => owners.size > 1)) {
+    if (!unitBlocked && unitIds.size === 1 && valueIds.size === 1 && !sourceConflict) {
       const selected = latest[0]
       current[suffix(metric, prefixes)] = {
         value: publicValue(selected.record), unit: selected.record.unit, observedAt: selected.canonicalObservedAt,
@@ -309,9 +313,15 @@ function genericDomain(records: readonly TwinObservation[], prefixes: readonly s
     || compareUtf8(left.record.provenance.sourceId, right.record.provenance.sourceId)
     || compareUtf8(left.record.id, right.record.id))[0]
   const missing = required.filter(item => !Object.prototype.hasOwnProperty.call(current, item)).sort(compareUtf8)
+  const selectedTimes = Object.values(current).map(item => {
+    const selected = item as { observedAt?: unknown }
+    return typeof selected.observedAt === 'string' ? selected.observedAt : null
+  }).filter((item): item is string => item !== null)
+  const freshnessAt = missing.length === 0 && selectedTimes.length > 0
+    ? selectedTimes.sort(compareHealthTimestamps)[0] ?? null : null
   return {
     state: { current, evidence }, candidates: accepted, inputRecordIds: recordIds(relevant),
-    effectiveAt: latest?.canonicalObservedAt ?? null, conflicts: conflicts.sort(conflictSort), missing,
+    effectiveAt: latest?.canonicalObservedAt ?? null, freshnessAt, conflicts: conflicts.sort(conflictSort), missing,
     confidence: weightedConfidence(accepted.map(item => ({ confidence: item.record.provenance.confidence, weight: 1 }))) ?? 0,
   }
 }
@@ -319,8 +329,8 @@ function genericDomain(records: readonly TwinObservation[], prefixes: readonly s
 function freshness(domain: FreshnessDomain, result: DomainResult, computedNs: bigint): HealthProjectionEnvelope['freshness'] {
   const thresholdMs = HEALTH_FRESHNESS_POLICY[domain].thresholdMs
   if (result.conflicts.length) return { policyVersion: HEALTH_FRESHNESS_POLICY.version, status: 'conflict', thresholdMs, ageMs: null }
-  if (!result.effectiveAt) return { policyVersion: HEALTH_FRESHNESS_POLICY.version, status: 'missing', thresholdMs, ageMs: null }
-  const ageNs = computedNs - timestamp(result.effectiveAt, 'EFFECTIVE_AT').nanoseconds
+  if (!result.freshnessAt) return { policyVersion: HEALTH_FRESHNESS_POLICY.version, status: 'missing', thresholdMs, ageMs: null }
+  const ageNs = computedNs - timestamp(result.freshnessAt, 'FRESHNESS_AT').nanoseconds
   const ageMs = roundHealthNumber(Number(ageNs) / 1_000_000, 6)
   return {
     policyVersion: HEALTH_FRESHNESS_POLICY.version,
@@ -402,12 +412,18 @@ function recoveryResult(records: readonly TwinObservation[], cutoffNs: bigint): 
 function internalResult(records: readonly TwinObservation[], cutoffNs: bigint): DomainResult {
   const base = genericDomain(records, ['health.internal_health.'], cutoffNs, ['markers'])
   const markers = base.candidates.filter(item => item.record.metric === 'health.internal_health.markers')
-  const pending = markers.filter(item => item.record.provenance.confirmationState === 'inferred')
+  const pending = markers.filter(item => item.record.provenance.confirmationState !== 'confirmed')
     .map(item => ({ recordId: item.record.id, observedAt: item.canonicalObservedAt, evidenceClass: item.evidenceClass, markers: publicValue(item.record) }))
-  const confirmed = markers.filter(item => item.record.provenance.confirmationState !== 'inferred')
+  const confirmedCandidates = markers.filter(item => item.record.provenance.confirmationState === 'confirmed')
+  const confirmed = confirmedCandidates
     .map(item => ({ recordId: item.record.id, observedAt: item.canonicalObservedAt, evidenceClass: item.evidenceClass, markers: publicValue(item.record) }))
   pending.sort((left, right) => compareUtf8(left.recordId, right.recordId)); confirmed.sort((left, right) => compareUtf8(left.recordId, right.recordId))
-  return withState(base, { confirmed, pending }, confirmed.length ? [] : ['confirmed_markers'])
+  const freshestConfirmed = [...confirmedCandidates].sort((left, right) => compareNanoseconds(right.atNs, left.atNs)
+    || compareUtf8(left.record.id, right.record.id))[0]
+  return {
+    ...withState(base, { confirmed, pending }, confirmed.length ? [] : ['confirmed_markers']),
+    freshnessAt: freshestConfirmed?.canonicalObservedAt ?? null,
+  }
 }
 
 function readinessResult(dependencies: {
@@ -462,7 +478,7 @@ function readinessResult(dependencies: {
   return {
     state: {
       status, score, dependencies: dependencyState,
-    }, candidates: [], inputRecordIds, effectiveAt: effective, conflicts, missing,
+    }, candidates: [], inputRecordIds, effectiveAt: effective, freshnessAt: effective, conflicts, missing,
     confidence: components.length < 2 ? 0 : weightedConfidence(orderedDependencies.map(([, item]) => ({ confidence: item.confidence, weight: 1 }))) ?? 0,
   }
 }
@@ -527,12 +543,18 @@ export interface PersistHealthProjectionOptions {
 
 export function persistHealthProjections(values: HealthProjectionSet, options: PersistHealthProjectionOptions = {}): TwinProjection[] {
   const subjectId = options.subjectId ?? 'person:self'
-  const current = new Map(listTwinProjections('health.', subjectId).map(item => [item.key, item.version]))
+  const current = new Map(listTwinProjections('health.', subjectId).map(item => [item.key, item]))
   const materialDigest = createHash('sha256').update(stableJson(values)).digest('hex')
+  const sourceRecordId = `health-projection-${materialDigest}`
+  const replay = HEALTH_PROJECTION_KEYS.map(key => current.get(key))
+  if (replay.every((item, index): item is TwinProjection => item !== undefined
+    && item.sourceRecordId === sourceRecordId && stableJson(item.value) === stableJson(values[HEALTH_PROJECTION_KEYS[index]]))) {
+    return replay
+  }
   return writeTwinProjectionBatch(HEALTH_PROJECTION_KEYS.map(key => ({
     key, subjectId, value: values[key] as unknown as Record<string, unknown>,
-    sourceRecordId: `health-projection-${materialDigest}`,
-    expectedVersion: options.expectedVersions?.[key] ?? current.get(key) ?? 0,
+    sourceRecordId,
+    expectedVersion: options.expectedVersions?.[key] ?? current.get(key)?.version ?? 0,
     updatedAt: values[key].computedAt,
   })))
 }

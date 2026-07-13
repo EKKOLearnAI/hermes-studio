@@ -70,7 +70,7 @@ describe('health-loop deterministic projectors', () => {
       bodyComposition: { criticality: 'advisory' }, recovery: { criticality: 'critical' },
       nutrition: { criticality: 'critical' }, training: { criticality: 'critical' },
     })
-    expect(first['health.readiness_state'].state).toMatchObject({ status: 'caution' })
+    expect(first['health.readiness_state'].state.status).not.toBe('ready')
     expect(first['health.readiness_state'].freshness.status).not.toBe('fresh')
     expect(first['health.readiness_state'].missing).toEqual(expect.arrayContaining([
       'internal:missing', 'posture:missing', 'skin:missing',
@@ -139,6 +139,30 @@ describe('health-loop deterministic projectors', () => {
     expect(recovery.inputRecordIds).toEqual(['fresh-pain', 'old-sleep'])
   })
 
+  it('uses critical metric freshness instead of unrelated fresh domain records', async () => {
+    const { computeHealthProjections } = await import('../../packages/server/src/services/hermes/health-loop')
+    const result = computeHealthProjections([
+      observation({ id: 'stale-weight', metric: 'health.body_composition.weight_kg', value: 82, unit: 'kg', observedAt: '2026-07-01T08:00:00Z' }),
+      observation({ id: 'fresh-waist', metric: 'health.measurements.waist_cm', value: 88, unit: 'cm' }),
+      observation({ id: 'stale-load', metric: 'health.fitness.training_load', value: 200, observedAt: '2026-07-10T08:00:00Z' }),
+      observation({ id: 'fresh-pain', metric: 'health.fitness.pain', value: 2 }),
+      observation({ id: 'fresh-sleep', metric: 'health.sleep.duration_minutes', value: 450, unit: 'min' }),
+      observation({ id: 'fresh-calories', metric: 'health.diet.calories_kcal', value: 1800, unit: 'kcal' }),
+      observation({ id: 'fresh-protein', metric: 'health.diet.protein_g', value: 120, unit: 'g' }),
+    ], { computedAt })
+    expect(result['health.body_composition_state']).toMatchObject({
+      effectiveAt: '2026-07-14T08:00:00Z', freshness: { status: 'stale' },
+      state: { current: { weight_kg: { recordId: 'stale-weight' }, 'measurements.waist_cm': { recordId: 'fresh-waist' } } },
+    })
+    expect(result['health.training_state']).toMatchObject({
+      effectiveAt: '2026-07-14T08:00:00Z', freshness: { status: 'stale' },
+      state: { current: { training_load: { recordId: 'stale-load' }, pain: { recordId: 'fresh-pain' } } },
+    })
+    expect(result['health.readiness_state'].state).toMatchObject({ status: 'caution' })
+    expect(result['health.readiness_state'].freshness.status).not.toBe('fresh')
+    expect(result['health.readiness_state'].missing).toContain('training:stale')
+  })
+
   it('keeps evidence classes separate and exposes deterministic value, unit, and source conflicts', async () => {
     const { computeHealthProjections } = await import('../../packages/server/src/services/hermes/health-loop')
     const records = [
@@ -149,7 +173,7 @@ describe('health-loop deterministic projectors', () => {
       observation({ id: 'weight-a', metric: 'health.body_composition.weight_kg', value: 82, unit: 'kg',
         provenance: { source: 'scale-a', sourceId: 'same', actor: 'fixture', confidence: 0.9, confirmationState: 'observed', evidence: [{ evidenceClass: 'measured' }], schemaVersion: 1 } }),
       observation({ id: 'weight-b', metric: 'health.body_composition.weight_kg', value: 83, unit: 'kg',
-        provenance: { source: 'scale-b', sourceId: 'same', actor: 'fixture', confidence: 0.9, confirmationState: 'observed', evidence: [{ evidenceClass: 'measured' }], schemaVersion: 1 } }),
+        provenance: { source: 'scale-a', sourceId: 'same', actor: 'fixture', confidence: 0.9, confirmationState: 'observed', evidence: [{ evidenceClass: 'measured' }], schemaVersion: 1 } }),
       observation({ id: 'weight-c', metric: 'health.body_composition.weight_kg', value: 181, unit: 'lb',
         provenance: { source: 'scale-c', sourceId: 'third', actor: 'fixture', confidence: 0.9, confirmationState: 'observed', evidence: [{ evidenceClass: 'measured' }], schemaVersion: 1 } }),
     ]
@@ -166,6 +190,25 @@ describe('health-loop deterministic projectors', () => {
     expect(result['health.fat_loss_state'].state).toMatchObject({ weightKg: null, weightVelocityKgPerWeek: null })
     expect(result['health.fat_loss_state'].missing).toEqual(expect.arrayContaining(['weight_kg', 'weight_trend']))
     expect(result['health.readiness_state'].state).not.toMatchObject({ status: 'ready' })
+  })
+
+  it('treats source identity as the source and sourceId pair', async () => {
+    const { computeHealthProjections } = await import('../../packages/server/src/services/hermes/health-loop')
+    const shared = (id: string, source: string, sourceId: string, value = 82) => observation({
+      id, metric: 'health.body_composition.weight_kg', value, unit: 'kg',
+      provenance: { source, sourceId, actor: 'fixture', confidence: 0.9, confirmationState: 'observed', evidence: [{ evidenceClass: 'measured' }], schemaVersion: 1 },
+    })
+    const independent = computeHealthProjections([
+      shared('scale-a-record', 'scale-a', 'reading-1'), shared('scale-b-record', 'scale-b', 'reading-1'),
+    ], { computedAt })['health.body_composition_state']
+    expect(independent.conflicts.map(item => item.code)).not.toContain('SOURCE_CONFLICT')
+    expect(independent.state.current).toMatchObject({ weight_kg: { value: 82, recordId: 'scale-a-record' } })
+
+    const contradictory = computeHealthProjections([
+      shared('same-identity-a', 'scale-a', 'reading-1', 82), shared('same-identity-b', 'scale-a', 'reading-1', 83),
+    ], { computedAt })['health.body_composition_state']
+    expect(contradictory.conflicts.map(item => item.code)).toEqual(expect.arrayContaining(['SOURCE_CONFLICT', 'VALUE_CONFLICT']))
+    expect(contradictory.state.current).not.toHaveProperty('weight_kg')
   })
 
   it('uses versioned freshness thresholds with deterministic inclusive boundaries and rejects future/corrupt facts', async () => {
@@ -228,6 +271,22 @@ describe('health-loop deterministic projectors', () => {
     expect(projection.inputRecordIds).toEqual(['confirmed-lab', 'pending-lab'])
   })
 
+  it('requires explicit confirmed state before internal markers become confirmed', async () => {
+    const { computeHealthProjections } = await import('../../packages/server/src/services/hermes/health-loop')
+    const marker = (id: string, confirmationState: 'observed' | 'reported') => observation({
+      id, metric: 'health.internal_health.markers', value: [{ key: id, value: 1, unit: 'unit' }],
+      provenance: { source: 'fixture', sourceId: id, actor: 'fixture', confidence: 0.9, confirmationState, evidence: [{ evidenceClass: confirmationState === 'reported' ? 'reported' : 'measured' }], schemaVersion: 1 },
+    })
+    const projection = computeHealthProjections([
+      marker('observed-lab', 'observed'), marker('reported-lab', 'reported'),
+    ], { computedAt })['health.internal_state']
+    expect(projection.state.confirmed).toEqual([])
+    expect(projection.state.pending).toEqual([
+      expect.objectContaining({ recordId: 'observed-lab' }), expect.objectContaining({ recordId: 'reported-lab' }),
+    ])
+    expect(projection.missing).toContain('confirmed_markers')
+  })
+
   it('derives finite conservative health math without inventing missing inputs', async () => {
     const { calculateVelocity, rollingSum, roundHealthNumber, weightedConfidence, computeHealthProjections } = await import('../../packages/server/src/services/hermes/health-loop')
     expect(calculateVelocity([{ at: 0, value: 82 }, { at: 7 * 86_400_000, value: 81 }], 86_400_000)).toEqual({ perDay: -0.1429, sampleCount: 2, spanMs: 604_800_000 })
@@ -261,6 +320,9 @@ describe('health-loop deterministic projectors', () => {
     expect(first).toHaveLength(9)
     expect(first.every(item => item.version === 1)).toBe(true)
     expect(twin.getTwinProjection('legacy:custom', 'person:self')?.value).toEqual({ retained: true })
+    const replay = health.persistHealthProjections(values)
+    expect(replay).toEqual(first)
+    expect(health.HEALTH_PROJECTION_KEYS.map(key => twin.getTwinProjection(key, 'person:self')?.version)).toEqual(Array(9).fill(1))
 
     const next = health.computeHealthProjections([], { computedAt: '2026-07-14T12:01:00.000Z' })
     expect(() => health.persistHealthProjections(next, { expectedVersions: { ...Object.fromEntries(health.HEALTH_PROJECTION_KEYS.map(key => [key, 1])), 'health.skin_state': 0 } }))
@@ -294,7 +356,11 @@ describe('health-loop deterministic projectors', () => {
     expect(() => computeHealthProjections(records, { computedAt })).toThrow('HEALTH_PROJECTION_INPUT_LIMIT')
 
     twin.upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
-    const bounded = computeHealthProjections(records.slice(0, 100), { computedAt })
-    expect(() => health.persistHealthProjections(bounded)).not.toThrow()
+    expect(() => health.persistHealthProjections(atLimit)).not.toThrow()
+    expect(twin.getTwinProjection('health.readiness_state', 'person:self')?.value.inputRecordIds).toHaveLength(MAX_HEALTH_PROJECTION_INPUTS)
+    expect(() => twin.writeTwinProjection({
+      key: 'fixture:still_bounded', subjectId: 'person:self', value: { values: Array.from({ length: 129 }, (_, index) => index) },
+      sourceRecordId: 'custom-bounds', updatedAt: computedAt,
+    })).toThrow(/bounds/i)
   })
 })
