@@ -126,4 +126,58 @@ describe('legacy personal twin import', () => {
     withPersonalTwinDb(db => db.prepare("UPDATE twin_import_runs SET counts_json = '{\"version\":\"wrong\"}' WHERE id = ?").run(claim.runId))
     expect(() => legacy.claimTwinImportRun(input)).toThrowError('TWIN_IMPORT_RUN_CORRUPT')
   })
+
+  it('leases import ownership with generation-bound takeover and renewal', async () => {
+    const legacy = await import('../../packages/server/src/services/hermes/personal-twin/legacy-import')
+    let now = '2026-07-14T00:00:00.000Z'
+    const options = { clock: () => now, leaseDurationMs: 1_000 }
+    const input = { source: 'lease-test', fingerprint: 'd'.repeat(64), version: 'test-v1' }
+    const ownerA = legacy.claimTwinImportRun(input, options)
+    expect(ownerA).toMatchObject({ owner: true, generation: 1, leaseExpiresAt: '2026-07-14T00:00:01.000Z', ownerToken: expect.any(String) })
+    const activeObserver = legacy.claimTwinImportRun(input, options)
+    expect(activeObserver).toMatchObject({ owner: false, generation: 1 })
+    expect(activeObserver.ownerToken).toBeUndefined()
+
+    now = '2026-07-14T00:00:02.000Z'
+    const ownerB = legacy.claimTwinImportRun(input, options)
+    expect(ownerB).toMatchObject({ owner: true, generation: 2, leaseExpiresAt: '2026-07-14T00:00:03.000Z' })
+    expect(ownerB.ownerToken).not.toBe(ownerA.ownerToken)
+    const concurrentLoser = legacy.claimTwinImportRun(input, options)
+    expect(concurrentLoser).toMatchObject({ owner: false, generation: 2 })
+    expect(concurrentLoser.ownerToken).toBeUndefined()
+    for (const finish of [
+      () => legacy.completeTwinImportRun(ownerA, { read: 1 }, options),
+      () => legacy.failTwinImportRun(ownerA, 'TEST_FAILURE', {}, options),
+    ]) expect(finish).toThrowError(/TWIN_IMPORT_RUN_(?:LEASE_LOST|NOT_OWNER)/)
+
+    now = '2026-07-14T00:00:02.500Z'
+    const renewed = legacy.renewTwinImportRun(ownerB, options)
+    expect(renewed).toMatchObject({ owner: true, generation: 2, leaseExpiresAt: '2026-07-14T00:00:03.500Z' })
+    now = '2026-07-14T00:00:03.100Z'
+    expect(legacy.claimTwinImportRun(input, options)).toMatchObject({ owner: false, generation: 2 })
+    legacy.failTwinImportRun(renewed, 'TEST_FAILURE', {}, options)
+    const ownerC = legacy.claimTwinImportRun(input, options)
+    expect(ownerC).toMatchObject({ owner: true, generation: 3 })
+    expect(JSON.stringify(ownerC)).not.toContain(ownerB.ownerToken)
+  })
+
+  it('fails closed for invalid clocks, lease bounds, and damaged lifecycle envelopes without leaking ownership tokens', async () => {
+    const legacy = await import('../../packages/server/src/services/hermes/personal-twin/legacy-import')
+    const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin/database')
+    const input = { source: 'lease-hardening', fingerprint: 'e'.repeat(64), version: 'test-v1' }
+    expect(() => legacy.claimTwinImportRun(input, { clock: () => '2026-07-14T00:00:00Z' })).toThrowError('TWIN_IMPORT_RUN_CLOCK_INVALID')
+    expect(() => legacy.claimTwinImportRun(input, { leaseDurationMs: 999 })).toThrowError('TWIN_IMPORT_RUN_LEASE_INVALID')
+    expect(() => legacy.claimTwinImportRun(input, { leaseDurationMs: 300_001 })).toThrowError('TWIN_IMPORT_RUN_LEASE_INVALID')
+
+    const owner = legacy.claimTwinImportRun(input, { clock: () => '2026-07-14T00:00:00.000Z', leaseDurationMs: 1_000 })
+    withPersonalTwinDb(db => db.prepare(`UPDATE twin_import_runs SET counts_json = ? WHERE id = ?`).run(JSON.stringify({
+      version: 'test-v1', lifecycle: { lifecycleVersion: 1, ownerToken: owner.ownerToken, generation: 0, leaseExpiresAt: '2026-07-14T00:00:01.000Z' },
+    }), owner.runId))
+    let failure = ''
+    try { legacy.claimTwinImportRun(input, { clock: () => '2026-07-14T00:00:02.000Z', leaseDurationMs: 1_000 }) } catch (error) {
+      failure = error instanceof Error ? error.message : String(error)
+    }
+    expect(failure).toBe('TWIN_IMPORT_RUN_CORRUPT')
+    expect(failure).not.toContain(owner.ownerToken)
+  })
 })

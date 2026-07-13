@@ -147,6 +147,27 @@ describe('health-loop ingestion', () => {
     expect(normalized.observations).toContainEqual({ metric: 'health.sleep.hrv_ms', value: 52, unit: 'ms' })
   })
 
+  it('ingests a logical envelope batch atomically and reports new versus replayed identities', async () => {
+    const { ingestHealthEnvelopesAtomically, ingestHealthEnvelope } = await import('../../packages/server/src/services/hermes/health-loop')
+    const { listTwinEvents, listTwinObservations, withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
+    const first = { ...fixtures[1], sourceId: 'atomic-measurements', payload: { waistCm: 88 } }
+    const second = { ...fixtures[0], sourceId: 'atomic-body', payload: { weightKg: 82 } }
+    const inserted = ingestHealthEnvelopesAtomically([first, second])
+    expect(inserted.map(item => item.status)).toEqual(['new', 'new'])
+    expect(ingestHealthEnvelopesAtomically([first, second]).map(item => item.status)).toEqual(['replayed', 'replayed'])
+
+    const conflicting = { ...second, payload: { weightKg: 83 } }
+    const third = { ...fixtures[3], sourceId: 'atomic-skin', payload: { reportedConcerns: ['acne'] }, evidenceClass: 'reported' as const }
+    const outbox = withPersonalTwinDb(db => Number((db.prepare('SELECT COUNT(*) AS n FROM twin_outbox').get() as { n: number }).n))
+    expect(() => ingestHealthEnvelopesAtomically([third, conflicting])).toThrowError(/HEALTH_INGESTION_IDENTITY_CONFLICT/)
+    expect(listTwinEvents({ eventType: 'health.ingestion.recorded', limit: 100 }).some(event => event.provenance.sourceId.includes('atomic-skin'))).toBe(false)
+    expect(listTwinObservations({ metric: 'health.skin.reported_concerns' })).toHaveLength(0)
+    expect(withPersonalTwinDb(db => Number((db.prepare('SELECT COUNT(*) AS n FROM twin_outbox').get() as { n: number }).n))).toBe(outbox)
+
+    expect(() => ingestHealthEnvelopesAtomically([first, first])).toThrowError(/duplicate/i)
+    expect(ingestHealthEnvelope(first).event.id).toBe(inserted[0].event.id)
+  })
+
   it('normalizes legacy reported posture and skin fields without inventing severity', async () => {
     const { normalizeHealthIngestionEnvelope } = await import('../../packages/server/src/services/hermes/health-loop')
     const posture: HealthIngestionEnvelope = {

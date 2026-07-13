@@ -2,9 +2,10 @@ import { createHash } from 'crypto'
 import { existsSync } from 'fs'
 import { getHealthOverview, getHealthStateDbPath, type HealthOverview } from '../health-state'
 import { listProfileNamesFromDisk } from '../hermes-profile'
-import { claimTwinImportRun, completeTwinImportRun, failTwinImportRun } from '../personal-twin/legacy-import'
-import { withPersonalTwinDb } from '../personal-twin/database'
-import { ingestHealthEnvelope } from './ingestion'
+import {
+  claimTwinImportRun, completeTwinImportRun, failTwinImportRun, renewTwinImportRun, type TwinImportRunLeaseOptions,
+} from '../personal-twin/legacy-import'
+import { ingestHealthEnvelopesAtomically } from './ingestion'
 import { HEALTH_DOMAINS, HealthIngestionError, type HealthDomain, type HealthEvidenceClass, type HealthIngestionEnvelope } from './types'
 
 const MIGRATION_VERSION = 'health-migration-v2'
@@ -348,11 +349,6 @@ function fingerprint(entries: CollectedSourceEntry[]): string {
   return createHash('sha256').update(stableJson({ version: MIGRATION_VERSION, mappingVersion: MAPPING_VERSION, records: snapshot })).digest('hex')
 }
 
-function storedEventExists(item: HealthIngestionEnvelope): boolean {
-  return withPersonalTwinDb(db => Boolean(db.prepare(`SELECT 1 FROM twin_events WHERE source = ? AND source_id = ? AND event_type = 'health.ingestion.recorded'`)
-    .get(item.source, `${item.sourceId}:health.ingestion.recorded`)))
-}
-
 function flatRunCounts(counts: HealthMigrationCounts, domains: Record<HealthDomain, number>): Record<string, number> {
   return {
     ...counts, mappingVersion: MAPPING_VERSION, mappedTotal: counts.ingested + counts.replayed,
@@ -376,12 +372,12 @@ function fromStoredCounts(values: Record<string, number>): { counts: HealthMigra
   return { counts, domains }
 }
 
-export function syncLegacyHealthTwinSources(options: { profiles?: string[] } = {}): HealthMigrationResult {
+export function syncLegacyHealthTwinSources(options: { profiles?: string[]; lease?: TwinImportRunLeaseOptions } = {}): HealthMigrationResult {
   const profiles = profilesOnDisk(options.profiles)
   let collected: CollectedHealthSources
   try { collected = collect(profiles) } catch { throw new Error('HEALTH_MIGRATION_SOURCE_UNAVAILABLE') }
   const sourceFingerprint = fingerprint(collected.entries)
-  const claim = claimTwinImportRun({ source: IMPORT_SOURCE, fingerprint: sourceFingerprint, version: MIGRATION_VERSION })
+  let claim = claimTwinImportRun({ source: IMPORT_SOURCE, fingerprint: sourceFingerprint, version: MIGRATION_VERSION }, options.lease)
   if (!claim.owner) {
     if (claim.status !== 'completed' || !claim.completedAt) throw new Error('HEALTH_MIGRATION_IN_PROGRESS')
     const stored = fromStoredCounts(claim.counts)
@@ -391,27 +387,37 @@ export function syncLegacyHealthTwinSources(options: { profiles?: string[] } = {
   const domains = emptyDomainCounts()
   try {
     for (const entry of collected.entries) {
+      claim = renewTwinImportRun(claim, options.lease)
       if (entry.errorCode) { counts.errors += 1; throw new Error(entry.errorCode) }
-      for (const item of entry.envelopes) {
-        domains[item.domain] += 1
-        const replay = storedEventExists(item)
-        try { ingestHealthEnvelope(item) } catch (error) {
-          if (error instanceof HealthIngestionError && error.code === 'HEALTH_INGESTION_IDENTITY_CONFLICT') {
-            counts.conflicts += 1
-            throw new Error('HEALTH_MIGRATION_SOURCE_CONFLICT')
-          }
-          counts.errors += 1
-          throw new Error('HEALTH_MIGRATION_INVALID_SOURCE')
+      if (entry.envelopes.length === 0) {
+        claim = renewTwinImportRun(claim, options.lease)
+        continue
+      }
+      let ingested
+      try { ingested = ingestHealthEnvelopesAtomically(entry.envelopes) } catch (error) {
+        if (error instanceof HealthIngestionError && error.code === 'HEALTH_INGESTION_IDENTITY_CONFLICT') {
+          counts.conflicts += 1
+          throw new Error('HEALTH_MIGRATION_SOURCE_CONFLICT')
         }
-        if (replay) counts.replayed += 1
+        counts.errors += 1
+        throw new Error('HEALTH_MIGRATION_INVALID_SOURCE')
+      }
+      for (let index = 0; index < entry.envelopes.length; index += 1) {
+        domains[entry.envelopes[index].domain] += 1
+        if (ingested[index].status === 'replayed') counts.replayed += 1
         else counts.ingested += 1
       }
+      claim = renewTwinImportRun(claim, options.lease)
     }
-    const completed = completeTwinImportRun(claim, flatRunCounts(counts, domains))
+    const completed = completeTwinImportRun(claim, flatRunCounts(counts, domains), options.lease)
     return { runId: completed.runId, status: 'completed', fingerprint: sourceFingerprint, version: MIGRATION_VERSION, profiles, counts, domainCounts: domains, startedAt: completed.startedAt, completedAt: completed.completedAt! }
   } catch (error) {
+    if (error instanceof Error && error.message === 'TWIN_IMPORT_RUN_LEASE_LOST') throw new Error('HEALTH_MIGRATION_LEASE_LOST')
     const code = error instanceof Error && /^HEALTH_MIGRATION_[A-Z_]+$/.test(error.message) ? error.message : 'HEALTH_MIGRATION_FAILED'
-    failTwinImportRun(claim, code, flatRunCounts(counts, domains))
+    try { failTwinImportRun(claim, code, flatRunCounts(counts, domains), options.lease) } catch (failure) {
+      if (failure instanceof Error && failure.message === 'TWIN_IMPORT_RUN_LEASE_LOST') throw new Error('HEALTH_MIGRATION_LEASE_LOST')
+      throw failure
+    }
     throw new Error(code)
   }
 }

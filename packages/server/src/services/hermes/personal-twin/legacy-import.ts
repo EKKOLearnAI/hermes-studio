@@ -1,4 +1,4 @@
-import { createHash } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { existsSync, statSync } from 'fs'
 import { getHealthOverview, getHealthStateDbPath, type HealthProfile } from '../health-state'
 import { getPersonalStateDbPath, getPersonalStateOverview } from '../personal-state'
@@ -22,24 +22,103 @@ export interface TwinImportRunClaim {
   counts: Record<string, number>
   startedAt: string
   completedAt?: string
+  generation?: number
+  ownerToken?: string
+  leaseExpiresAt?: string
+}
+
+export interface TwinImportRunLeaseOptions {
+  clock?: () => string
+  leaseDurationMs?: number
 }
 
 const IMPORT_SOURCE = /^[a-z][a-z0-9._-]{0,63}$/
 const IMPORT_VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 const IMPORT_FINGERPRINT = /^[a-f0-9]{64}$/
+const OWNER_TOKEN = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/
+const LIFECYCLE_VERSION = 1
+const DEFAULT_LEASE_MS = 60_000
+const MIN_LEASE_MS = 1_000
+const MAX_LEASE_MS = 300_000
 
-function parseImportCounts(value: unknown): Record<string, number> {
+interface StartedLifecycle {
+  lifecycleVersion: 1
+  ownerToken: string
+  generation: number
+  leaseExpiresAt: string
+}
+
+interface TerminalLifecycle {
+  lifecycleVersion: 1
+  generation: number
+}
+
+function canonicalTime(value: string): boolean {
+  try { return new Date(value).toISOString() === value } catch { return false }
+}
+
+function leaseSettings(options: TwinImportRunLeaseOptions = {}): { now: string; durationMs: number; expiresAt: string } {
+  let now: string
+  try { now = options.clock ? options.clock() : new Date().toISOString() } catch { throw new Error('TWIN_IMPORT_RUN_CLOCK_INVALID') }
+  if (!canonicalTime(now)) throw new Error('TWIN_IMPORT_RUN_CLOCK_INVALID')
+  const durationMs = options.leaseDurationMs ?? DEFAULT_LEASE_MS
+  if (!Number.isSafeInteger(durationMs) || durationMs < MIN_LEASE_MS || durationMs > MAX_LEASE_MS) throw new Error('TWIN_IMPORT_RUN_LEASE_INVALID')
+  const expiresAt = new Date(Date.parse(now) + durationMs).toISOString()
+  if (!canonicalTime(expiresAt) || expiresAt <= now) throw new Error('TWIN_IMPORT_RUN_CLOCK_INVALID')
+  return { now, durationMs, expiresAt }
+}
+
+function parseCountsEnvelope(value: unknown): Record<string, unknown> {
   let parsed: unknown
   try { parsed = JSON.parse(String(value)) } catch { throw new Error('TWIN_IMPORT_RUN_CORRUPT') }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
-  const record = parsed as Record<string, unknown>
+  return parsed as Record<string, unknown>
+}
+
+function exactKeys(record: Record<string, unknown>, expected: string[]): boolean {
+  return JSON.stringify(Object.keys(record).sort()) === JSON.stringify([...expected].sort())
+}
+
+function positiveGeneration(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+function parseStartedLifecycle(value: unknown): StartedLifecycle {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+  const lifecycle = value as Record<string, unknown>
+  if (!exactKeys(lifecycle, ['lifecycleVersion', 'ownerToken', 'generation', 'leaseExpiresAt'])
+    || lifecycle.lifecycleVersion !== LIFECYCLE_VERSION || typeof lifecycle.ownerToken !== 'string' || !OWNER_TOKEN.test(lifecycle.ownerToken)
+    || !positiveGeneration(lifecycle.generation) || typeof lifecycle.leaseExpiresAt !== 'string' || !canonicalTime(lifecycle.leaseExpiresAt)) {
+    throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+  }
+  return lifecycle as unknown as StartedLifecycle
+}
+
+function parseTerminalLifecycle(value: unknown): TerminalLifecycle {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+  const lifecycle = value as Record<string, unknown>
+  if (!exactKeys(lifecycle, ['lifecycleVersion', 'generation']) || lifecycle.lifecycleVersion !== LIFECYCLE_VERSION || !positiveGeneration(lifecycle.generation)) {
+    throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+  }
+  return lifecycle as unknown as TerminalLifecycle
+}
+
+function parseImportCounts(value: unknown): Record<string, number> {
+  const record = parseCountsEnvelope(value)
   const counts: Record<string, number> = {}
   for (const [key, item] of Object.entries(record)) {
-    if (key === 'version') continue
+    if (key === 'version' || key === 'lifecycle') continue
     if (!/^[a-z][a-zA-Z0-9]{0,39}$/.test(key) || typeof item !== 'number' || !Number.isSafeInteger(item) || item < 0) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
     counts[key] = item
   }
   return counts
+}
+
+function validateImportCounts(counts: Record<string, number>): Record<string, number> {
+  for (const [key, value] of Object.entries(counts)) {
+    if (!/^[a-z][a-zA-Z0-9]{0,39}$/.test(key) || typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+  }
+  return { ...counts }
 }
 
 function importClaimFromRow(row: Record<string, unknown>, input: { source: string; fingerprint: string; version: string }, owner: boolean): TwinImportRunClaim {
@@ -47,39 +126,53 @@ function importClaimFromRow(row: Record<string, unknown>, input: { source: strin
   if (!['started', 'completed', 'failed'].includes(status) || String(row.source) !== input.source || String(row.source_fingerprint) !== input.fingerprint) {
     throw new Error('TWIN_IMPORT_RUN_CORRUPT')
   }
-  let stored: Record<string, unknown>
-  try { stored = JSON.parse(String(row.counts_json)) as Record<string, unknown> } catch { throw new Error('TWIN_IMPORT_RUN_CORRUPT') }
-  if (!stored || typeof stored !== 'object' || Array.isArray(stored) || stored.version !== input.version) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+  const stored = parseCountsEnvelope(row.counts_json)
+  if (stored.version !== input.version) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
   const startedAt = String(row.started_at)
   const completedAt = row.completed_at === null || row.completed_at === undefined ? undefined : String(row.completed_at)
   const error = row.error === null || row.error === undefined ? undefined : String(row.error)
-  const canonicalTime = (value: string): boolean => {
-    try { return new Date(value).toISOString() === value } catch { return false }
-  }
   if (!canonicalTime(startedAt) || (completedAt && (!canonicalTime(completedAt) || completedAt < startedAt))
     || (status === 'started' && (completedAt || error)) || (status === 'completed' && (!completedAt || error))
     || (status === 'failed' && (!completedAt || !error || !/^[A-Z][A-Z0-9_]{2,80}$/.test(error)))) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+  const lifecycle = status === 'started' ? parseStartedLifecycle(stored.lifecycle)
+    : status === 'failed' ? parseTerminalLifecycle(stored.lifecycle) : undefined
+  if (status === 'started' && !exactKeys(stored, ['version', 'lifecycle'])) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+  if (status === 'started' && (lifecycle as StartedLifecycle).leaseExpiresAt <= startedAt) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+  if (status === 'completed' && stored.lifecycle !== undefined) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
   return {
     runId: String(row.id), source: input.source, fingerprint: input.fingerprint, version: input.version,
     owner, status: status as TwinImportRunClaim['status'], counts: parseImportCounts(row.counts_json), startedAt,
     ...(completedAt ? { completedAt } : {}),
+    ...(lifecycle ? { generation: lifecycle.generation } : {}),
+    ...(status === 'started' ? { leaseExpiresAt: (lifecycle as StartedLifecycle).leaseExpiresAt } : {}),
+    ...(owner && status === 'started' ? { ownerToken: (lifecycle as StartedLifecycle).ownerToken } : {}),
   }
 }
 
-/** Atomically claims a deterministic import run. Existing runs are never stolen. */
-export function claimTwinImportRun(input: { source: string; fingerprint: string; version: string }): TwinImportRunClaim {
+function startedEnvelope(version: string, generation: number, expiresAt: string): { json: string; lifecycle: StartedLifecycle } {
+  const lifecycle: StartedLifecycle = { lifecycleVersion: LIFECYCLE_VERSION, ownerToken: randomUUID(), generation, leaseExpiresAt: expiresAt }
+  return { lifecycle, json: JSON.stringify({ version, lifecycle }) }
+}
+
+/** Atomically claims a deterministic import run, taking over only after its lease expires. */
+export function claimTwinImportRun(input: { source: string; fingerprint: string; version: string }, options: TwinImportRunLeaseOptions = {}): TwinImportRunClaim {
   if (!IMPORT_SOURCE.test(input.source) || !IMPORT_FINGERPRINT.test(input.fingerprint) || !IMPORT_VERSION.test(input.version)) throw new Error('TWIN_IMPORT_RUN_INVALID')
   const runId = `import-${createHash('sha256').update(`${input.source}\0${input.fingerprint}`).digest('hex').slice(0, 32)}`
-  const startedAt = nowIso()
+  const lease = leaseSettings(options)
   return withPersonalTwinDb(db => {
     db.exec('BEGIN IMMEDIATE')
     try {
       const existing = db.prepare('SELECT * FROM twin_import_runs WHERE source = ? AND source_fingerprint = ?').get(input.source, input.fingerprint) as Record<string, unknown> | undefined
       if (existing) {
         const prior = importClaimFromRow(existing, input, false)
-        if (prior.status === 'failed') {
-          db.prepare(`UPDATE twin_import_runs SET status = 'started', counts_json = ?, error = NULL, started_at = ?, completed_at = NULL WHERE id = ? AND status = 'failed'`)
-            .run(JSON.stringify({ version: input.version }), startedAt, prior.runId)
+        if (lease.now < prior.startedAt) throw new Error('TWIN_IMPORT_RUN_CLOCK_INVALID')
+        const shouldTakeOver = prior.status === 'failed' || (prior.status === 'started' && prior.leaseExpiresAt! <= lease.now)
+        if (shouldTakeOver) {
+          const next = startedEnvelope(input.version, prior.generation! + 1, lease.expiresAt)
+          const updated = db.prepare(`UPDATE twin_import_runs SET status = 'started', counts_json = ?, error = NULL, started_at = ?, completed_at = NULL
+            WHERE id = ? AND status = ? AND counts_json = ?`)
+            .run(next.json, lease.now, prior.runId, prior.status, String(existing.counts_json))
+          if (Number(updated.changes) !== 1) throw new Error('TWIN_IMPORT_RUN_LEASE_LOST')
           const retried = db.prepare('SELECT * FROM twin_import_runs WHERE id = ?').get(prior.runId) as Record<string, unknown>
           const result = importClaimFromRow(retried, input, true)
           db.exec('COMMIT')
@@ -89,8 +182,9 @@ export function claimTwinImportRun(input: { source: string; fingerprint: string;
         db.exec('COMMIT')
         return result
       }
+      const first = startedEnvelope(input.version, 1, lease.expiresAt)
       db.prepare(`INSERT INTO twin_import_runs (id, source, source_fingerprint, status, counts_json, started_at)
-        VALUES (?, ?, ?, 'started', ?, ?)`).run(runId, input.source, input.fingerprint, JSON.stringify({ version: input.version }), startedAt)
+        VALUES (?, ?, ?, 'started', ?, ?)`).run(runId, input.source, input.fingerprint, first.json, lease.now)
       const row = db.prepare('SELECT * FROM twin_import_runs WHERE id = ?').get(runId) as Record<string, unknown>
       const result = importClaimFromRow(row, input, true)
       db.exec('COMMIT')
@@ -102,32 +196,90 @@ export function claimTwinImportRun(input: { source: string; fingerprint: string;
   })
 }
 
-export function completeTwinImportRun(claim: TwinImportRunClaim, counts: Record<string, number>): TwinImportRunClaim {
-  if (!claim.owner) throw new Error('TWIN_IMPORT_RUN_NOT_OWNER')
-  const validatedCounts = parseImportCounts(JSON.stringify(counts))
-  const completedAt = nowIso()
+function ownedStartedRow(row: Record<string, unknown> | undefined, claim: TwinImportRunClaim, now: string): { lifecycle: StartedLifecycle; countsJson: string } {
+  if (!row || String(row.id) !== claim.runId || String(row.source) !== claim.source || String(row.source_fingerprint) !== claim.fingerprint) {
+    throw new Error('TWIN_IMPORT_RUN_LEASE_LOST')
+  }
+  if (String(row.status) !== 'started') throw new Error('TWIN_IMPORT_RUN_TERMINAL')
+  const stored = parseCountsEnvelope(row.counts_json)
+  if (stored.version !== claim.version) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+  const lifecycle = parseStartedLifecycle(stored.lifecycle)
+  const startedAt = String(row.started_at)
+  if (!canonicalTime(startedAt) || lifecycle.leaseExpiresAt <= startedAt) throw new Error('TWIN_IMPORT_RUN_CORRUPT')
+  if (now < startedAt) throw new Error('TWIN_IMPORT_RUN_CLOCK_INVALID')
+  if (!claim.owner || !claim.ownerToken || !claim.generation || lifecycle.ownerToken !== claim.ownerToken || lifecycle.generation !== claim.generation || lifecycle.leaseExpiresAt <= now) {
+    throw new Error('TWIN_IMPORT_RUN_LEASE_LOST')
+  }
+  return { lifecycle, countsJson: String(row.counts_json) }
+}
+
+export function renewTwinImportRun(claim: TwinImportRunClaim, options: TwinImportRunLeaseOptions = {}): TwinImportRunClaim {
+  const lease = leaseSettings(options)
   return withPersonalTwinDb(db => {
-    const result = db.prepare(`UPDATE twin_import_runs SET status = 'completed', counts_json = ?, error = NULL, completed_at = ?
-      WHERE id = ? AND source = ? AND source_fingerprint = ? AND status = 'started' AND completed_at IS NULL`)
-      .run(JSON.stringify({ version: claim.version, ...validatedCounts }), completedAt, claim.runId, claim.source, claim.fingerprint)
-    if (Number(result.changes) !== 1) throw new Error('TWIN_IMPORT_RUN_TERMINAL')
-    const row = db.prepare('SELECT * FROM twin_import_runs WHERE id = ?').get(claim.runId) as Record<string, unknown>
-    return importClaimFromRow(row, claim, true)
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const row = db.prepare('SELECT * FROM twin_import_runs WHERE id = ?').get(claim.runId) as Record<string, unknown> | undefined
+      const owned = ownedStartedRow(row, claim, lease.now)
+      const lifecycle: StartedLifecycle = { ...owned.lifecycle, leaseExpiresAt: lease.expiresAt }
+      const result = db.prepare(`UPDATE twin_import_runs SET counts_json = ? WHERE id = ? AND status = 'started' AND counts_json = ?`)
+        .run(JSON.stringify({ version: claim.version, lifecycle }), claim.runId, owned.countsJson)
+      if (Number(result.changes) !== 1) throw new Error('TWIN_IMPORT_RUN_LEASE_LOST')
+      const updated = db.prepare('SELECT * FROM twin_import_runs WHERE id = ?').get(claim.runId) as Record<string, unknown>
+      const renewed = importClaimFromRow(updated, claim, true)
+      db.exec('COMMIT')
+      return renewed
+    } catch (error) {
+      try { db.exec('ROLLBACK') } catch { /* preserve the original failure */ }
+      throw error
+    }
   })
 }
 
-export function failTwinImportRun(claim: TwinImportRunClaim, errorCode: string, counts: Record<string, number> = {}): TwinImportRunClaim {
-  if (!claim.owner) throw new Error('TWIN_IMPORT_RUN_NOT_OWNER')
-  const validatedCounts = parseImportCounts(JSON.stringify(counts))
-  const sanitized = /^[A-Z][A-Z0-9_]{2,80}$/.test(errorCode) ? errorCode : 'TWIN_IMPORT_FAILED'
-  const completedAt = nowIso()
+export function completeTwinImportRun(claim: TwinImportRunClaim, counts: Record<string, number>, options: TwinImportRunLeaseOptions = {}): TwinImportRunClaim {
+  const validatedCounts = validateImportCounts(counts)
+  const lease = leaseSettings(options)
   return withPersonalTwinDb(db => {
-    const result = db.prepare(`UPDATE twin_import_runs SET status = 'failed', counts_json = ?, error = ?, completed_at = ?
-      WHERE id = ? AND source = ? AND source_fingerprint = ? AND status = 'started' AND completed_at IS NULL`)
-      .run(JSON.stringify({ version: claim.version, ...validatedCounts }), sanitized, completedAt, claim.runId, claim.source, claim.fingerprint)
-    if (Number(result.changes) !== 1) throw new Error('TWIN_IMPORT_RUN_TERMINAL')
-    const row = db.prepare('SELECT * FROM twin_import_runs WHERE id = ?').get(claim.runId) as Record<string, unknown>
-    return importClaimFromRow(row, claim, true)
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const row = db.prepare('SELECT * FROM twin_import_runs WHERE id = ?').get(claim.runId) as Record<string, unknown> | undefined
+      const owned = ownedStartedRow(row, claim, lease.now)
+      const result = db.prepare(`UPDATE twin_import_runs SET status = 'completed', counts_json = ?, error = NULL, completed_at = ?
+        WHERE id = ? AND status = 'started' AND counts_json = ?`)
+        .run(JSON.stringify({ version: claim.version, ...validatedCounts }), lease.now, claim.runId, owned.countsJson)
+      if (Number(result.changes) !== 1) throw new Error('TWIN_IMPORT_RUN_LEASE_LOST')
+      const updated = db.prepare('SELECT * FROM twin_import_runs WHERE id = ?').get(claim.runId) as Record<string, unknown>
+      const completed = importClaimFromRow(updated, claim, true)
+      db.exec('COMMIT')
+      return completed
+    } catch (error) {
+      try { db.exec('ROLLBACK') } catch { /* preserve the original failure */ }
+      throw error
+    }
+  })
+}
+
+export function failTwinImportRun(claim: TwinImportRunClaim, errorCode: string, counts: Record<string, number> = {}, options: TwinImportRunLeaseOptions = {}): TwinImportRunClaim {
+  const validatedCounts = validateImportCounts(counts)
+  const sanitized = /^[A-Z][A-Z0-9_]{2,80}$/.test(errorCode) ? errorCode : 'TWIN_IMPORT_FAILED'
+  const lease = leaseSettings(options)
+  return withPersonalTwinDb(db => {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const row = db.prepare('SELECT * FROM twin_import_runs WHERE id = ?').get(claim.runId) as Record<string, unknown> | undefined
+      const owned = ownedStartedRow(row, claim, lease.now)
+      const lifecycle: TerminalLifecycle = { lifecycleVersion: LIFECYCLE_VERSION, generation: owned.lifecycle.generation }
+      const result = db.prepare(`UPDATE twin_import_runs SET status = 'failed', counts_json = ?, error = ?, completed_at = ?
+        WHERE id = ? AND status = 'started' AND counts_json = ?`)
+        .run(JSON.stringify({ version: claim.version, lifecycle, ...validatedCounts }), sanitized, lease.now, claim.runId, owned.countsJson)
+      if (Number(result.changes) !== 1) throw new Error('TWIN_IMPORT_RUN_LEASE_LOST')
+      const updated = db.prepare('SELECT * FROM twin_import_runs WHERE id = ?').get(claim.runId) as Record<string, unknown>
+      const failed = importClaimFromRow(updated, claim, true)
+      db.exec('COMMIT')
+      return failed
+    } catch (error) {
+      try { db.exec('ROLLBACK') } catch { /* preserve the original failure */ }
+      throw error
+    }
   })
 }
 

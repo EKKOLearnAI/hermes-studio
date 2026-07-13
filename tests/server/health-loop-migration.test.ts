@@ -207,6 +207,68 @@ describe('health loop legacy migration', () => {
     expect(twin.listTwinEvents({ eventType: 'health.ingestion.recorded' })).toHaveLength(0)
   })
 
+  it('rolls back the first split domain when a later domain identity conflicts', async () => {
+    const health = await import('../../packages/server/src/services/hermes/health-state')
+    const migration = await import('../../packages/server/src/services/hermes/health-loop/migration')
+    const twin = await import('../../packages/server/src/services/hermes/personal-twin')
+    const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin/database')
+    const base = { id: 'split-conflict', kind: 'body_measurement', recordedAt: '2026-07-01T08:00:00Z', source: 'manual' }
+    health.createHealthRecord({ ...base, valueJson: { weightKg: 82 } }, 'user', 'default')
+    migration.syncLegacyHealthTwinSources({ profiles: ['default'] })
+    const outbox = withPersonalTwinDb(db => Number((db.prepare('SELECT COUNT(*) AS n FROM twin_outbox').get() as { n: number }).n))
+    health.createHealthRecord({ ...base, valueJson: { measurements: { waistCm: 88 }, weightKg: 83 } }, 'user', 'default')
+
+    expect(() => migration.syncLegacyHealthTwinSources({ profiles: ['default'] })).toThrowError(/HEALTH_MIGRATION_SOURCE_CONFLICT/)
+    expect(twin.listTwinObservations({ metric: 'health.measurements.waist_cm' })).toHaveLength(0)
+    expect(withPersonalTwinDb(db => Number((db.prepare('SELECT COUNT(*) AS n FROM twin_outbox').get() as { n: number }).n))).toBe(outbox)
+  })
+
+  it('takes over an expired crashed prefix and replays it without duplicate facts or outbox rows', async () => {
+    const health = await import('../../packages/server/src/services/hermes/health-state')
+    const migration = await import('../../packages/server/src/services/hermes/health-loop/migration')
+    const twin = await import('../../packages/server/src/services/hermes/personal-twin')
+    const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin/database')
+    health.createHealthWorkout({ id: 'crash-prefix-a', title: 'Walk', durationMinutes: 30, startedAt: '2026-07-01T08:00:00Z' }, 'user', 'default')
+    health.createHealthWorkout({ id: 'crash-prefix-b', title: 'Run', durationMinutes: 20, startedAt: '2026-07-02T08:00:00Z' }, 'user', 'default')
+    const completed = migration.syncLegacyHealthTwinSources({ profiles: ['default'] })
+    const fullOutbox = withPersonalTwinDb(db => Number((db.prepare('SELECT COUNT(*) AS n FROM twin_outbox').get() as { n: number }).n))
+
+    const prefixOutbox = withPersonalTwinDb(db => {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        const facts = [
+          ...db.prepare("SELECT id FROM twin_observations WHERE source_id LIKE '%crash-prefix-b%'").all(),
+          ...db.prepare("SELECT id FROM twin_events WHERE source_id LIKE '%crash-prefix-b%'").all(),
+        ] as Array<{ id: string }>
+        for (const fact of facts) db.prepare('DELETE FROM twin_outbox WHERE aggregate_id = ?').run(fact.id)
+        db.prepare("DELETE FROM twin_observations WHERE source_id LIKE '%crash-prefix-b%'").run()
+        db.prepare("DELETE FROM twin_events WHERE source_id LIKE '%crash-prefix-b%'").run()
+        db.prepare(`UPDATE twin_import_runs SET status = 'started', counts_json = ?, error = NULL, started_at = ?, completed_at = NULL WHERE id = ?`).run(JSON.stringify({
+          version: completed.version,
+          lifecycle: {
+            lifecycleVersion: 1, ownerToken: '00000000-0000-4000-8000-000000000001', generation: 1,
+            leaseExpiresAt: '2026-07-14T00:00:01.000Z',
+          },
+        }), '2026-07-14T00:00:00.000Z', completed.runId)
+        const count = Number((db.prepare('SELECT COUNT(*) AS n FROM twin_outbox').get() as { n: number }).n)
+        db.exec('COMMIT')
+        return count
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
+    })
+    expect(prefixOutbox).toBeLessThan(fullOutbox)
+
+    const recovered = migration.syncLegacyHealthTwinSources({
+      profiles: ['default'], lease: { clock: () => '2026-07-14T00:00:02.000Z', leaseDurationMs: 1_000 },
+    })
+    expect(recovered.counts).toMatchObject({ read: 2, ingested: 1, replayed: 1, conflicts: 0, errors: 0 })
+    expect(twin.listTwinEvents({ eventType: 'health.ingestion.recorded' })).toHaveLength(2)
+    expect(new Set(twin.listTwinEvents({ eventType: 'health.ingestion.recorded' }).map(event => event.id)).size).toBe(2)
+    expect(withPersonalTwinDb(db => Number((db.prepare('SELECT COUNT(*) AS n FROM twin_outbox').get() as { n: number }).n))).toBe(fullOutbox)
+  })
+
   it('fingerprints skipped source outcomes and rejects corrupt completed count schemas', async () => {
     const health = await import('../../packages/server/src/services/hermes/health-state')
     const migration = await import('../../packages/server/src/services/hermes/health-loop/migration')

@@ -724,7 +724,7 @@ export function recordTwinObservation(input: TwinObservationInput): TwinObservat
   return withPersonalTwinDb(db => commitOrRollback(db, () => recordTwinObservationInDb(db, input)))
 }
 
-function recordTwinObservationInDb(db: DatabaseSync, input: TwinObservationInput): TwinObservation {
+function recordTwinObservationInDb(db: DatabaseSync, input: TwinObservationInput, dispositions?: TwinFactDisposition[]): TwinObservation {
   validateFactInput(input.source, input.sourceId, input.actor, input.confidence, input.observedAt)
   requireEntity(db, input.entityId)
   const id = stableTwinId('observation', [input.source, input.sourceId, input.metric])
@@ -745,6 +745,7 @@ function recordTwinObservationInDb(db: DatabaseSync, input: TwinObservationInput
   }
   const observation = observationFromRow(existing)
   if (Number(result.changes) === 1) projectObservation(db, observation)
+  dispositions?.push(Number(result.changes) === 1 ? 'new' : 'replayed')
   return observation
 }
 
@@ -777,7 +778,7 @@ export function recordTwinEvent(input: TwinEventInput): TwinEvent {
   return withPersonalTwinDb(db => commitOrRollback(db, () => recordTwinEventInDb(db, input)))
 }
 
-function recordTwinEventInDb(db: DatabaseSync, input: TwinEventInput): TwinEvent {
+function recordTwinEventInDb(db: DatabaseSync, input: TwinEventInput, dispositions?: TwinFactDisposition[]): TwinEvent {
   validateFactInput(input.source, input.sourceId, input.actor, input.confidence, input.occurredAt)
   if (input.subjectId) requireEntity(db, input.subjectId)
   const id = stableTwinId('event', [input.source, input.sourceId, input.eventType])
@@ -797,6 +798,7 @@ function recordTwinEventInDb(db: DatabaseSync, input: TwinEventInput): TwinEvent
     db.prepare(`INSERT INTO twin_outbox (id, topic, aggregate_id, payload_json, status, available_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)`)
       .run(outboxId('twin.event.recorded', id), 'twin.event.recorded', id, jsonString({ recordId: id, eventType: input.eventType, source: input.source, sourceId: input.sourceId }), ingestedAt, ingestedAt)
   }
+  dispositions?.push(Number(result.changes) === 1 ? 'new' : 'replayed')
   return eventFromRow(existing)
 }
 
@@ -806,16 +808,29 @@ export interface TwinFactBatchInput {
   events?: TwinEventInput[]
 }
 
-/** Atomically records a bounded group of immutable facts without exposing the database handle. */
-export function recordTwinFactBatch(input: TwinFactBatchInput): {
+export type TwinFactDisposition = 'new' | 'replayed'
+export interface TwinFactBatchDispositionResult {
   observations: TwinObservation[]
   events: TwinEvent[]
-} {
+  observationDispositions: TwinFactDisposition[]
+  eventDispositions: TwinFactDisposition[]
+}
+export interface TwinFactDispositionGroup {
+  observationIndexes: number[]
+  eventIndexes: number[]
+}
+
+function validateTwinFactBatch(input: TwinFactBatchInput): { observations: TwinObservationInput[]; events: TwinEventInput[] } {
   const observations = input.observations ?? []
   const events = input.events ?? []
   if (!Array.isArray(observations) || !Array.isArray(events) || observations.length + events.length > 128) {
     throw new Error('Twin fact batch must contain at most 128 records')
   }
+  return { observations, events }
+}
+
+function recordTwinFactBatchDetailed(input: TwinFactBatchInput, dispositionGroups: TwinFactDispositionGroup[] = []): TwinFactBatchDispositionResult {
+  const { observations, events } = validateTwinFactBatch(input)
   return withPersonalTwinDb(db => commitOrRollback(db, () => {
     if (input.ensureCanonicalSelf) {
       const self = db.prepare('SELECT source, source_id FROM twin_entities WHERE id = ?').get('person:self') as {
@@ -827,11 +842,38 @@ export function recordTwinFactBatch(input: TwinFactBatchInput): {
         throw new TwinIdentityConflictError('person:self is not owned by the canonical system identity')
       }
     }
-    return {
-      observations: observations.map(observation => recordTwinObservationInDb(db, observation)),
-      events: events.map(event => recordTwinEventInDb(db, event)),
+    const observationDispositions: TwinFactDisposition[] = []
+    const eventDispositions: TwinFactDisposition[] = []
+    const result = {
+      observations: observations.map(observation => recordTwinObservationInDb(db, observation, observationDispositions)),
+      events: events.map(event => recordTwinEventInDb(db, event, eventDispositions)),
+      observationDispositions,
+      eventDispositions,
     }
+    for (const group of dispositionGroups) {
+      const statuses = [
+        ...group.observationIndexes.map(index => observationDispositions[index]),
+        ...group.eventIndexes.map(index => eventDispositions[index]),
+      ]
+      if (statuses.length === 0 || statuses.some(status => status === undefined)) throw new Error('Twin fact disposition group is invalid')
+      if (statuses.some(status => status !== statuses[0])) throw new TwinImmutableRecordConflictError('Twin fact identity contains a partial replay')
+    }
+    return result
   }))
+}
+
+/** Same atomic batch contract with insert/replay dispositions decided by the actual writes in the transaction. */
+export function recordTwinFactBatchWithDisposition(input: TwinFactBatchInput, dispositionGroups: TwinFactDispositionGroup[] = []): TwinFactBatchDispositionResult {
+  return recordTwinFactBatchDetailed(input, dispositionGroups)
+}
+
+/** Atomically records a bounded group of immutable facts without exposing the database handle. */
+export function recordTwinFactBatch(input: TwinFactBatchInput): {
+  observations: TwinObservation[]
+  events: TwinEvent[]
+} {
+  const result = recordTwinFactBatchDetailed(input)
+  return { observations: result.observations, events: result.events }
 }
 
 export function listTwinEvents(options: { subjectId?: string; eventType?: string; eventTypePrefixes?: string[]; query?: string; limit?: number } = {}): TwinEvent[] {
