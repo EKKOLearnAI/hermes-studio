@@ -346,4 +346,29 @@ describe('health artifact vault', () => {
     const read = await vault.read(stored.id)
     expect(read.content.equals(content)).toBe(true)
   })
+
+  it('validates complete JSON and CSV documents beyond the streaming prefix', async () => {
+    const { createHealthArtifactVault } = await import('../../packages/server/src/services/hermes/health-loop/artifacts')
+    const vault = createHealthArtifactVault({ accessController: allowAccess() })
+    const json = Buffer.from(JSON.stringify({ payload: 'x'.repeat(70 * 1024) }))
+    const csv = Buffer.from(`heading,${'x'.repeat(70 * 1024)}\nvalue,ok\n`)
+
+    const storedJson = await vault.store({
+      content: json, declaredMediaType: 'application/json', source: 'health-capture', sourceId: 'long-json', metadata: {},
+    })
+    const storedCsv = await vault.store({
+      content: csv, declaredMediaType: 'text/csv', source: 'health-capture', sourceId: 'long-csv', metadata: {},
+    })
+    expect((await vault.read(storedJson.id)).content.equals(json)).toBe(true)
+    expect((await vault.read(storedCsv.id)).content.equals(csv)).toBe(true)
+
+    await expect(vault.store({
+      content: Buffer.from('{"payload":'), declaredMediaType: 'application/json',
+      source: 'health-capture', sourceId: 'invalid-json', metadata: {},
+    })).rejects.toMatchObject({ code: 'HEALTH_ARTIFACT_MEDIA_MISMATCH' })
+    await expect(vault.store({
+      content: Buffer.from('heading,value'), declaredMediaType: 'text/csv',
+      source: 'health-capture', sourceId: 'truncated-csv', metadata: {},
+    })).rejects.toMatchObject({ code: 'HEALTH_ARTIFACT_MEDIA_MISMATCH' })
+  })
 })

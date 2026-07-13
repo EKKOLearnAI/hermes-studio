@@ -262,11 +262,17 @@ function decodeUtf8(content: Buffer): string | null {
   }
 }
 
-function sniffMediaType(content: Buffer): string | null {
+function sniffBinaryMediaType(content: Buffer): string | null {
   if (content.length >= 8 && content.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png'
   if (content.length >= 3 && content[0] === 0xff && content[1] === 0xd8 && content[2] === 0xff) return 'image/jpeg'
   if (content.length >= 5 && content.subarray(0, 5).toString('ascii') === '%PDF-') return 'application/pdf'
   if (content.length >= 12 && content.subarray(4, 8).toString('ascii') === 'ftyp') return 'video/mp4'
+  return null
+}
+
+function sniffMediaType(content: Buffer): string | null {
+  const binaryType = sniffBinaryMediaType(content)
+  if (binaryType) return binaryType
   const text = decodeUtf8(content)
   if (text === null || text.includes('\0')) return null
   const trimmed = text.trim()
@@ -351,8 +357,10 @@ async function verifyArtifactFile(
       const content = returnContent ? Buffer.allocUnsafe(expectedSize) : undefined
       const scratch = returnContent ? undefined : Buffer.allocUnsafe(Math.min(READ_CHUNK_SIZE, Math.max(expectedSize, 1)))
       const hash = createHash('sha256')
-      const prefix = content?.subarray(0, Math.min(READ_CHUNK_SIZE, expectedSize))
-        ?? Buffer.allocUnsafe(Math.min(READ_CHUNK_SIZE, expectedSize))
+      const textMedia = expectedMediaType === 'application/json' || expectedMediaType === 'text/csv'
+      const prefix = !returnContent && !textMedia
+        ? Buffer.allocUnsafe(Math.min(READ_CHUNK_SIZE, expectedSize))
+        : undefined
       let prefixLength = 0
       let offset = 0
       while (offset < expectedSize) {
@@ -363,11 +371,11 @@ async function verifyArtifactFile(
         if (bytesRead === 0) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_INTEGRITY_FAILED')
         const chunk = target.subarray(targetOffset, targetOffset + bytesRead)
         hash.update(chunk)
-        if (!content && prefixLength < prefix.length) {
+        if (prefix && prefixLength < prefix.length) {
           const copyLength = Math.min(prefix.length - prefixLength, bytesRead)
           chunk.copy(prefix, prefixLength, 0, copyLength)
         }
-        prefixLength = Math.min(prefix.length, prefixLength + bytesRead)
+        if (prefix) prefixLength = Math.min(prefix.length, prefixLength + bytesRead)
         offset += bytesRead
       }
       const overflowTarget = content ?? scratch!
@@ -377,10 +385,13 @@ async function verifyArtifactFile(
       const after = await handle.stat({ bigint: true })
       const pathAfterRead = await lstat(path, { bigint: true })
       const parentAfterRead = await lstat(parent, { bigint: true })
+      const mediaMatches = content
+        ? sniffMediaType(content) === expectedMediaType
+        : textMedia || sniffBinaryMediaType(prefix!.subarray(0, prefixLength)) === expectedMediaType
       if (!sameStatIdentity(before, after) || !sameStatIdentity(after, pathAfterRead)
         || !sameStatIdentity(parentAfterOpen, parentAfterRead)
         || hash.digest('hex') !== expectedHash
-        || sniffMediaType(prefix.subarray(0, prefixLength)) !== expectedMediaType) {
+        || !mediaMatches) {
         throw new HealthArtifactVaultError('HEALTH_ARTIFACT_INTEGRITY_FAILED')
       }
       return { content, identity: { dev: before.dev, ino: before.ino } }
