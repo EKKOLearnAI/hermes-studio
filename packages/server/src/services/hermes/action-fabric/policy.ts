@@ -90,8 +90,8 @@ export function evaluateFabricPolicyInDb(
   const authorizationRequirements = resolution && isHealthCapability(input.capabilityId)
     ? healthStandingAuthorizationRequirements(resolution.capability) : null
   const standingAuthorizationRequired = !!resolution && isHealthCapability(input.capabilityId)
-    && resolution.executor.environment === 'production' && resolution.capability.authentication.length > 0
-  const sandboxStanding = !!resolution && !!authorizationRequirements && resolution.executor.id === 'health-shadow'
+    && resolution.executor.environment === 'production'
+  const sandboxStanding = !!resolution && isHealthCapability(input.capabilityId) && resolution.executor.id === 'health-shadow'
     && resolution.executor.environment === 'sandbox' && resolution.executor.configuration.shadow === true
     && resolution.executor.configuration.externalWrite === false
   const authorizationEvidence = resolution && standingAuthorizationRequired && authorizationRequirements && targetAtoms
@@ -109,10 +109,14 @@ export function evaluateFabricPolicyInDb(
     : sandboxStanding ? 'standing_sandbox' : authorizationEvidence ? 'standing_provider'
       : standingAuthorizationRequired ? 'standing_required' : 'per_action'
   const standingAuthorizationMode = authorizationMode === 'per_action' ? 'not_required' : authorizationMode
+  const irreversibleApprovalRequired = !trustedPlanRestore && !!resolution && resolution.capability.sideEffect
+    && !resolution.capability.reversible && !standingAuthorization
+    && !(standingAuthorizationRequired && authorizationEvidence === null)
   const approvalMode = !trustedPlanRestore && resolution && risk !== null
     && ((isHealthCapability(resolution.capability.id) && risk >= RISK_ORDER.medium)
       || (role?.decisionAuthority.requireApprovalAbove !== undefined
-        && risk > RISK_ORDER[role.decisionAuthority.requireApprovalAbove])) ? 'per_action' : 'none'
+        && risk > RISK_ORDER[role.decisionAuthority.requireApprovalAbove])
+      || irreversibleApprovalRequired) ? 'per_action' : 'none'
   const materialInputDigest = digest({
     capabilityId: input.capabilityId, target: input.target, input: input.input,
     constraints: input.constraints, expectedCost: input.expectedCost ?? null,
@@ -308,7 +312,6 @@ export function revalidateFabricAuthorizationInDb(db: DatabaseSync, decisionId: 
   const resolution = resolveFabricExecutorInDb(db, capabilityId, { environments })
   if (!resolution) throw new Error('FABRIC_POLICY_STALE_AUTHORIZATION')
   const currentlyRequired = isHealthCapability(capabilityId) && resolution.executor.environment === 'production'
-    && resolution.capability.authentication.length > 0
   const mustRevalidate = currentlyRequired || snapshotRequiresStanding
   if (!mustRevalidate) return
   if (!['standing_provider', 'standing_sandbox'].includes(String(standingMode))) {
@@ -548,7 +551,38 @@ function materialConflictForIntent(db: DatabaseSync, intentId: string): Decision
 }
 
 function sameSnapshot(decision: DecisionRow, snapshot: Record<string, unknown>): boolean {
-  try { return stableStringify(JSON.parse(decision.policy_snapshot_json)) === stableStringify(snapshot) } catch { return false }
+  try {
+    const previous = normalizePolicySnapshot(JSON.parse(decision.policy_snapshot_json) as Record<string, unknown>, decision)
+    const current = normalizePolicySnapshot(snapshot)
+    return stableStringify(previous) === stableStringify(current)
+  } catch { return false }
+}
+
+function normalizePolicySnapshot(snapshot: Record<string, unknown>, decision?: DecisionRow): Record<string, unknown> {
+  const normalized = { ...snapshot }
+  if (!Object.prototype.hasOwnProperty.call(normalized, 'standingAuthorizationMode')) {
+    normalized.standingAuthorizationMode = legacyStandingAuthorizationMode(normalized.authorizationMode)
+  }
+  if (!Object.prototype.hasOwnProperty.call(normalized, 'standingAuthorizationRequired')) {
+    normalized.standingAuthorizationRequired = normalized.resolvedEnvironment === 'production'
+      && ['standing_provider', 'standing_required', 'trusted_compensation']
+        .includes(String(normalized.standingAuthorizationMode))
+  }
+  if (!Object.prototype.hasOwnProperty.call(normalized, 'approvalMode')) {
+    let reasons: unknown = []
+    try { reasons = decision ? JSON.parse(decision.reason_codes_json) : [] } catch { reasons = [] }
+    normalized.approvalMode = decision?.outcome === 'waiting_user' && Array.isArray(reasons)
+      && reasons.some(reason => reason === 'risk_requires_approval' || reason === 'irreversible_requires_approval')
+      ? 'per_action' : 'none'
+  }
+  return normalized
+}
+
+function legacyStandingAuthorizationMode(value: unknown): string {
+  if (value === 'standing_provider' || value === 'standing_sandbox'
+    || value === 'trusted_compensation' || value === 'standing_required') return value
+  if (value === 'per_action') return 'not_required'
+  return 'legacy_unverified'
 }
 
 function persistDenyDecision(db: DatabaseSync, input: {
@@ -630,8 +664,7 @@ function revalidateAuthorization(
   }
   if (standingMode !== 'standing_provider') {
     if (snapshot.standingAuthorizationRequired === true
-      || isHealthCapability(resolution.capability.id) && resolution.executor.environment === 'production'
-        && resolution.capability.authentication.length > 0) {
+      || isHealthCapability(resolution.capability.id) && resolution.executor.environment === 'production') {
       throw new Error('FABRIC_POLICY_STALE_AUTHORIZATION')
     }
     return

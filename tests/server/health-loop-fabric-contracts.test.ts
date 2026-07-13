@@ -12,6 +12,7 @@ import {
   registerFabricExecutorAdapter,
   resolveFabricExecutor,
   unregisterFabricExecutorAdapter,
+  withActionFabricDb,
   type FabricExecutorAdapter,
 } from '../../packages/server/src/services/hermes/action-fabric'
 import {
@@ -75,6 +76,17 @@ describe('health Action Fabric closed contracts', () => {
         reasonCodes: expect.arrayContaining(['standing_authorization_required']),
         policySnapshot: { environments: ['production'], authorizationMode: 'standing_required',
           standingAuthorizationMode: 'standing_required', approvalMode: 'none' } })
+  })
+
+  it('requires production standing authorization even when registry authentication is misconfigured empty', () => {
+    withActionFabricDb(db => db.prepare("UPDATE fabric_capabilities SET authentication_json='[]' WHERE id='health.source.sync'").run())
+    expect(createFabricIntent({ ...request(), idempotencyKey: 'source-empty-auth-contract' }).policyDecision)
+      .toMatchObject({ outcome: 'deny', reasonCodes: expect.arrayContaining(['standing_authorization_required']),
+        policySnapshot: { standingAuthorizationRequired: true, standingAuthorizationMode: 'standing_required' } })
+    const { environments: _environments, ...sandbox } = request()
+    expect(createFabricIntent({ ...sandbox, idempotencyKey: 'source-empty-auth-shadow' }).policyDecision)
+      .toMatchObject({ outcome: 'allow', executorId: 'health-shadow',
+        policySnapshot: { standingAuthorizationRequired: false, standingAuthorizationMode: 'standing_sandbox' } })
   })
 
   it('requires live versioned provider evidence and rechecks its exact authorization material', () => {
@@ -252,7 +264,8 @@ describe('health Action Fabric closed contracts', () => {
         restoreVersion: 3, restoreDigest: 'a'.repeat(64) },
     })
     expect(evaluateFabricPolicy(prepared.input)).toMatchObject({ outcome: 'waiting_user',
-      policySnapshot: { authorizationMode: 'per_action' } })
+      reasonCodes: expect.arrayContaining(['irreversible_requires_approval']),
+      policySnapshot: { authorizationMode: 'per_action', approvalMode: 'per_action' } })
   })
 
   it.each([

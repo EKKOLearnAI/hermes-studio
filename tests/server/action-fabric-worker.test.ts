@@ -179,12 +179,13 @@ describe('Action Fabric durable worker', () => {
       id: 'health-source', type: 'connector',
       prepare: async context => { prepared += 1; return success('prepared', context) },
     }))
-    const workflow = createFabricIntent({
+    const request = {
       capabilityId: 'health.source.sync', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
-      idempotencyKey: 'legacy-production-auth', goal: 'sync source', environments: ['production'],
+      idempotencyKey: 'legacy-production-auth', goal: 'sync source', environments: ['production'] as Array<'production'>,
       target: { kind: 'health_connector', connectorId: 's400' }, constraints: {}, rationale: 'test',
       input: { schemaVersion: 1, connectorId: 's400', requestedAt: '2026-07-12T01:00:00.000Z' },
-    }).workflow
+    }
+    const workflow = createFabricIntent(request).workflow
     withActionFabricDb(db => {
       const row = db.prepare('SELECT policy_snapshot_json FROM fabric_policy_decisions WHERE id=?')
         .get(workflow.policyDecisionId!) as { policy_snapshot_json: string }
@@ -192,6 +193,16 @@ describe('Action Fabric durable worker', () => {
       delete snapshot.standingAuthorizationRequired
       delete snapshot.standingAuthorizationMode
       delete snapshot.approvalMode
+      db.prepare('UPDATE fabric_policy_decisions SET policy_snapshot_json=? WHERE id=?')
+        .run(JSON.stringify(snapshot), workflow.policyDecisionId!)
+    })
+    const replay = createFabricIntent(request)
+    expect(replay.workflow.id).toBe(workflow.id)
+    expect(replay.policyDecision.id).toBe(workflow.policyDecisionId)
+    withActionFabricDb(db => {
+      const row = db.prepare('SELECT policy_snapshot_json FROM fabric_policy_decisions WHERE id=?')
+        .get(workflow.policyDecisionId!) as { policy_snapshot_json: string }
+      const snapshot = JSON.parse(row.policy_snapshot_json) as Record<string, unknown>
       snapshot.authorizationMode = 'per_action'
       snapshot.authorizationEvidence = null
       db.prepare('UPDATE fabric_policy_decisions SET policy_snapshot_json=? WHERE id=?')
