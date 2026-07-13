@@ -108,6 +108,7 @@ export interface FabricActionIntentInput {
   constraints: FabricJsonObject
   rationale: string
   expectedCost?: FabricMoney
+  environments?: FabricEnvironment[]
 }
 
 export interface FabricActionIntent extends FabricActionIntentInput {
@@ -194,7 +195,6 @@ export interface FabricPolicyDecision {
 }
 
 export interface FabricPolicyInput extends FabricActionIntentInput {
-  environments?: FabricEnvironment[]
   phase?: 'intent' | 'execution'
   /** Server-computed digest captured by a prior policy step; callers must not supply user-controlled values. */
   expectedMaterialInputDigest?: string

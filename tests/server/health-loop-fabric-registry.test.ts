@@ -71,7 +71,7 @@ describe('health Action Fabric registry', () => {
       risk: 'medium',
       sideEffect: true,
       authentication: ['one_time_consent:exact_artifact_manifest', 'processor:exact_id'],
-      targetRestrictions: ['artifact:exact_manifest', 'processor:exact_id'],
+      targetRestrictions: ['health:artifact', 'health:processor'],
     })
     expect(remote.inputSchema).toMatchObject({
       properties: expect.objectContaining({ consentId: expect.any(Object), manifestDigest: expect.any(Object), processorId: expect.any(Object) }),
@@ -82,7 +82,7 @@ describe('health Action Fabric registry', () => {
       risk: 'low',
       sideEffect: true,
       authentication: ['live_mode:enabled', 'recipient:configured_self'],
-      targetRestrictions: ['recipient:configured_self'],
+      targetRestrictions: ['health:recipient'],
     })
     expect(capabilities.find(item => item.id === 'health.plan.adjust')).toMatchObject({
       risk: 'low', reversible: true, compensationCapabilityId: 'health.plan.restore',
@@ -91,6 +91,15 @@ describe('health Action Fabric registry', () => {
     expect(capabilities.find(item => item.id === 'health.plan.restore')).toMatchObject({
       reversible: false, compensationCapabilityId: null, verificationStrategy: 'plan_version_compare_and_set',
     })
+    for (const id of ['health.source.sync', 'health.artifact.analyze.local', 'health.artifact.analyze.remote']) {
+      const output = capabilities.find(item => item.id === id)!.outputSchema as { properties: Record<string, any> }
+      const ids = output.properties.recordIds ?? output.properties.observationIds
+      expect(ids.maxItems).toBe(64)
+      expect(output.properties).toMatchObject({
+        totalCount: { type: 'integer', minimum: 0 }, omittedCount: { type: 'integer', minimum: 0 },
+        continuationCursor: { type: ['string', 'null'], maxLength: 2048 },
+      })
+    }
   })
 
   it('classifies every health executor and resolves shadow, internal, and live bindings exactly', () => {

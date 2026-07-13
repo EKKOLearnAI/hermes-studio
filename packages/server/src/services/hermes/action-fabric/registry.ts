@@ -81,7 +81,14 @@ function timestampSchema(): FabricJsonObject {
 }
 
 function idArraySchema(): FabricJsonObject {
-  return { type: 'array', maxItems: 4096, items: boundedIdSchema() }
+  return { type: 'array', maxItems: 64, items: boundedIdSchema() }
+}
+
+function pagedCountProperties(): Record<string, unknown> {
+  return {
+    totalCount: { type: 'integer', minimum: 0 }, omittedCount: { type: 'integer', minimum: 0 },
+    continuationCursor: { type: ['string', 'null'], minLength: 1, maxLength: 2048 },
+  }
 }
 
 function artifactAnalysisInputSchema(remote: boolean): FabricJsonObject {
@@ -102,8 +109,10 @@ function artifactAnalysisOutputSchema(remote: boolean): FabricJsonObject {
   const properties: Record<string, unknown> = {
     schemaVersion: { const: 1 }, artifactId: boundedIdSchema(), analysisId: boundedIdSchema(),
     status: { enum: ['succeeded', 'needs_review', 'failed'] }, observationIds: idArraySchema(),
+    ...pagedCountProperties(),
   }
-  const required = ['schemaVersion', 'artifactId', 'analysisId', 'status', 'observationIds']
+  const required = ['schemaVersion', 'artifactId', 'analysisId', 'status', 'observationIds',
+    'totalCount', 'omittedCount', 'continuationCursor']
   if (remote) {
     properties.processorReceiptId = boundedIdSchema()
     properties.consentId = boundedIdSchema()
@@ -192,26 +201,26 @@ const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
     }, ['schemaVersion', 'planId', 'restoredVersion', 'planDigest', 'status']),
     risk: 'low', sideEffect: true, idempotency: 'required', reversible: false, compensationCapabilityId: null,
     verificationStrategy: 'plan_version_compare_and_set', authentication: ['health_plan:write'],
-    targetRestrictions: ['plan:exact_id'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+    targetRestrictions: ['health:plan'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
   },
   {
     id: 'health.plan.adjust', version: 1, description: 'Apply a bounded reversible adjustment to an exact health plan version',
     inputSchema: objectSchema({
       schemaVersion: { const: 1 }, planId: boundedIdSchema(), expectedVersion: positiveIntegerSchema(),
-      patch: objectSchema({
-        dailyCalories: { type: 'integer', minimum: 800, maximum: 6000 },
-        trainingIntensity: { enum: ['rest', 'recovery', 'light', 'moderate', 'hard'] },
-        recoveryMinutes: { type: 'integer', minimum: 0, maximum: 240 },
-        reminderEnabled: { type: 'boolean' },
-      }, [], 1), reasonCode: boundedIdSchema(),
-    }, ['schemaVersion', 'planId', 'expectedVersion', 'patch', 'reasonCode']),
+      operation: { enum: ['reduce_training_intensity', 'review_energy_deficit', 'prioritize_food_protein',
+        'reduce_constrained_chain_load'] },
+      maximumIntensity: { enum: ['rest', 'low', 'moderate'] },
+      targetG: { type: 'integer', minimum: 1, maximum: 500 },
+      chains: { type: 'array', minItems: 1, maxItems: 32, items: boundedIdSchema() },
+      reasonCode: boundedIdSchema(),
+    }, ['schemaVersion', 'planId', 'expectedVersion', 'operation', 'reasonCode']),
     outputSchema: objectSchema({
       schemaVersion: { const: 1 }, planId: boundedIdSchema(), previousVersion: positiveIntegerSchema(),
       newVersion: positiveIntegerSchema(), previousDigest: digestSchema(), planDigest: digestSchema(),
     }, ['schemaVersion', 'planId', 'previousVersion', 'newVersion', 'previousDigest', 'planDigest']),
     risk: 'low', sideEffect: true, idempotency: 'required', reversible: true,
     compensationCapabilityId: 'health.plan.restore', verificationStrategy: 'plan_version_read_after_write',
-    authentication: ['health_plan:write'], targetRestrictions: ['plan:exact_id'],
+    authentication: ['health_plan:write'], targetRestrictions: ['health:plan'],
     cost: { currency: null, estimatedMinor: 0 }, enabled: true,
   },
   {
@@ -223,10 +232,12 @@ const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
     outputSchema: objectSchema({
       schemaVersion: { const: 1 }, connectorId: boundedIdSchema(), syncId: boundedIdSchema(),
       status: { enum: ['succeeded', 'partial', 'failed'] }, recordIds: idArraySchema(),
-    }, ['schemaVersion', 'connectorId', 'syncId', 'status', 'recordIds']),
+      ...pagedCountProperties(),
+    }, ['schemaVersion', 'connectorId', 'syncId', 'status', 'recordIds',
+      'totalCount', 'omittedCount', 'continuationCursor']),
     risk: 'low', sideEffect: true, idempotency: 'required', reversible: false, compensationCapabilityId: null,
     verificationStrategy: 'connector_cursor_and_record_ids', authentication: ['connector_credential:configured'],
-    targetRestrictions: ['connector:exact_configured_id'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+    targetRestrictions: ['health:connector'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
   },
   {
     id: 'health.artifact.analyze.local', version: 1, description: 'Analyze an exact health artifact locally without outbound disclosure',
@@ -234,7 +245,7 @@ const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
     outputSchema: artifactAnalysisOutputSchema(false),
     risk: 'low', sideEffect: true, idempotency: 'required', reversible: false, compensationCapabilityId: null,
     verificationStrategy: 'artifact_analysis_receipt', authentication: ['artifact:local_read'],
-    targetRestrictions: ['artifact:exact_manifest'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+    targetRestrictions: ['health:artifact'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
   },
   {
     id: 'health.artifact.analyze.remote', version: 1, description: 'Analyze an exact health artifact with an authorized remote processor',
@@ -243,7 +254,7 @@ const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
     risk: 'medium', sideEffect: true, idempotency: 'required', reversible: false, compensationCapabilityId: null,
     verificationStrategy: 'processor_receipt_and_consumed_consent',
     authentication: ['one_time_consent:exact_artifact_manifest', 'processor:exact_id'],
-    targetRestrictions: ['artifact:exact_manifest', 'processor:exact_id'],
+    targetRestrictions: ['health:artifact', 'health:processor'],
     cost: { currency: null, estimatedMinor: 0 }, enabled: true,
   },
   {
@@ -254,18 +265,20 @@ const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
     }, ['schemaVersion', 'actionId', 'recipient', 'messageCode', 'messageText']),
     outputSchema: messageOutputSchema(), risk: 'low', sideEffect: true, idempotency: 'required', reversible: false,
     compensationCapabilityId: null, verificationStrategy: 'provider_receipt_or_identity_lookup',
-    authentication: ['live_mode:enabled', 'recipient:configured_self'], targetRestrictions: ['recipient:configured_self'],
+    authentication: ['live_mode:enabled', 'recipient:configured_self'], targetRestrictions: ['health:recipient'],
     cost: { currency: null, estimatedMinor: 0 }, enabled: true,
   },
   {
     id: 'health.checkin.request', version: 1, description: 'Request one structured health check-in from the configured self-recipient',
     inputSchema: objectSchema({
       schemaVersion: { const: 1 }, checkinId: boundedIdSchema(), recipient: { const: 'configured-self' },
-      promptCode: boundedIdSchema(), expiresAt: timestampSchema(),
-    }, ['schemaVersion', 'checkinId', 'recipient', 'promptCode', 'expiresAt']),
+      operation: { enum: ['request_skin_recapture', 'request_marker_metadata'] },
+      reasonCode: boundedIdSchema(), requiredFields: { type: 'array', minItems: 1, maxItems: 16, items: boundedIdSchema() },
+      expiresAt: timestampSchema(),
+    }, ['schemaVersion', 'checkinId', 'recipient', 'operation', 'expiresAt']),
     outputSchema: messageOutputSchema(), risk: 'low', sideEffect: true, idempotency: 'required', reversible: false,
     compensationCapabilityId: null, verificationStrategy: 'provider_receipt_or_identity_lookup',
-    authentication: ['live_mode:enabled', 'recipient:configured_self'], targetRestrictions: ['recipient:configured_self'],
+    authentication: ['live_mode:enabled', 'recipient:configured_self'], targetRestrictions: ['health:recipient'],
     cost: { currency: null, estimatedMinor: 0 }, enabled: true,
   },
   {
@@ -273,15 +286,16 @@ const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
     inputSchema: objectSchema({
       schemaVersion: { const: 1 }, followupId: boundedIdSchema(), ownerUserId: boundedIdSchema(),
       category: { enum: ['measurement', 'capture', 'recovery', 'nutrition', 'training', 'medical_review'] },
-      dueAt: timestampSchema(),
-    }, ['schemaVersion', 'followupId', 'ownerUserId', 'category', 'dueAt']),
+      operation: { enum: ['schedule_pain_followup', 'schedule_provider_flag_review'] },
+      reasonCode: boundedIdSchema(), dueAt: timestampSchema(),
+    }, ['schemaVersion', 'followupId', 'ownerUserId', 'category', 'operation', 'reasonCode', 'dueAt']),
     outputSchema: objectSchema({
       schemaVersion: { const: 1 }, followupId: boundedIdSchema(), scheduledAt: timestampSchema(),
       status: { enum: ['scheduled', 'superseded'] },
     }, ['schemaVersion', 'followupId', 'scheduledAt', 'status']),
-    risk: 'low', sideEffect: true, idempotency: 'required', reversible: false, compensationCapabilityId: null,
+    risk: 'medium', sideEffect: true, idempotency: 'required', reversible: false, compensationCapabilityId: null,
     verificationStrategy: 'schedule_read_after_write', authentication: ['health_schedule:write'],
-    targetRestrictions: ['owner:requesting_user'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+    targetRestrictions: ['health:owner'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
   },
 ]
 
@@ -483,19 +497,20 @@ export function bindFabricExecutorCapability(
 
 export function resolveFabricExecutor(
   capabilityId: string,
-  options: { environments: FabricEnvironment[] },
+  options: { environments: FabricEnvironment[]; executorId?: string },
 ): ResolvedFabricExecutor | null {
   const environments = normalizeEnvironments(options.environments)
-  return withActionFabricDb(db => resolveFabricExecutorInDb(db, capabilityId, { environments }))
+  return withActionFabricDb(db => resolveFabricExecutorInDb(db, capabilityId, { environments, executorId: options.executorId }))
 }
 
 export function resolveFabricExecutorInDb(
   db: DatabaseSync,
   capabilityId: string,
-  options: { environments: FabricEnvironment[] },
+  options: { environments: FabricEnvironment[]; executorId?: string },
 ): ResolvedFabricExecutor | null {
   const environments = normalizeEnvironments(options.environments)
   const placeholders = environments.map(() => '?').join(',')
+  const priority = environments.map((_, index) => `WHEN ? THEN ${index}`).join(' ')
   const row = db.prepare(`WITH registry_revision AS (
       SELECT value FROM fabric_meta WHERE key='registry_policy_revision'
     )
@@ -529,7 +544,10 @@ export function resolveFabricExecutorInDb(
       CROSS JOIN registry_revision r
       WHERE c.id=? AND c.enabled=1
         AND e.enabled=1 AND e.health='healthy' AND e.environment IN (${placeholders})
-      ORDER BY e.id LIMIT 1`).get(capabilityId, ...environments) as ResolutionRow | undefined
+        AND (? IS NULL OR e.id=?)
+      ORDER BY CASE e.environment ${priority} ELSE ${environments.length} END, e.id LIMIT 1`).get(
+    capabilityId, ...environments, options.executorId ?? null, options.executorId ?? null, ...environments,
+  ) as ResolutionRow | undefined
   if (!row) return null
   const capability = parseCapability({
       id: row.capability_id, version: row.capability_version, domain: row.capability_domain,
@@ -877,7 +895,7 @@ function normalizeEnvironments(value: unknown): FabricEnvironment[] {
     }
     environments.add(environment as FabricEnvironment)
   }
-  return [...environments].sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+  return [...environments]
 }
 
 function readRegistryPolicyRevision(db: DatabaseSync): number {

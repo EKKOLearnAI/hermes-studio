@@ -220,6 +220,38 @@ describe('action fabric database', () => {
     }
   })
 
+  it('fails a v4 migration closed on orphaned child rows and preserves the version-three database', async () => {
+    const { ensureBuiltInFabricRegistry, getActionFabricDbPath, initActionFabricSchema } = await import(
+      '../../packages/server/src/services/hermes/action-fabric'
+    )
+    ensureBuiltInFabricRegistry()
+    const db = new DatabaseSync(getActionFabricDbPath())
+    try {
+      db.prepare("UPDATE fabric_meta SET value='3' WHERE key='schema_version'").run()
+      db.exec('PRAGMA foreign_keys=OFF')
+      db.exec(`
+        DROP TRIGGER fabric_executors_json_insert;
+        DROP TRIGGER fabric_executors_json_update;
+        CREATE TABLE fabric_executors_v3 (
+          id TEXT PRIMARY KEY, type TEXT NOT NULL CHECK(type IN ('simulator','internal')), name TEXT NOT NULL,
+          environment TEXT NOT NULL CHECK(environment IN ('simulator','internal','sandbox','production')),
+          health TEXT NOT NULL CHECK(health IN ('unknown','healthy','degraded','unhealthy')),
+          health_details_json TEXT NOT NULL DEFAULT '{}', configuration_json TEXT NOT NULL DEFAULT '{}',
+          enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), policy_version INTEGER NOT NULL DEFAULT 1 CHECK(policy_version > 0),
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        INSERT INTO fabric_executors_v3 SELECT * FROM fabric_executors WHERE type<>'connector';
+        DROP TABLE fabric_executors;
+        ALTER TABLE fabric_executors_v3 RENAME TO fabric_executors;
+        DELETE FROM fabric_executors WHERE id='simulator-main';
+      `)
+      const before = db.prepare('SELECT COUNT(*) count FROM fabric_executor_capabilities').get()
+      expect(() => initActionFabricSchema(db)).toThrow(/foreign key integrity/i)
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key='schema_version'").get()).toEqual({ value: '3' })
+      expect(db.prepare('SELECT COUNT(*) count FROM fabric_executor_capabilities').get()).toEqual(before)
+    } finally { db.close() }
+  })
+
   it('migrates schema version one outbox rows to lease claims without data loss', async () => {
     const { getActionFabricDbPath, initActionFabricSchema } = await import(
       '../../packages/server/src/services/hermes/action-fabric'

@@ -5,6 +5,7 @@ import { appendFabricAuditEvent, appendFabricOutbox, withFabricAuditedTransactio
 import { withActionFabricDb } from './database'
 import { getFabricControlStateInDb } from './control'
 import {
+  authorizeTrustedPlanRestoreCompensation,
   evaluateFabricPolicyInDb,
   prepareFabricPolicyEvaluation,
   revalidateFabricDecisionInDb,
@@ -301,17 +302,17 @@ export function requestFabricCompensation(id: string, actorUserId: string, reaso
   if (!context.contract.reversible || context.contract.compensationCapabilityId === null) {
     throw new Error('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
   }
-  const compensationInput: FabricActionIntentInput = {
-    capabilityId: context.contract.compensationCapabilityId,
+  const compensationInput = buildFabricCompensationInput({
+    originalCapabilityId: context.intent.capabilityId,
+    compensationCapabilityId: context.contract.compensationCapabilityId,
     requestedByRoleId: context.intent.requestedByRoleId,
     requestedByUserId: context.intent.requestedByUserId,
-    idempotencyKey: `compensation:${id}`,
-    goal: 'Compensate a completed Action Fabric workflow',
-    target: context.payload.target,
-    input: { originalWorkflowId: id, originalExecutionReference: context.executeToken },
-    constraints: { compensationForWorkflowId: id },
-    rationale: reason,
-  }
+    workflowId: id, executeToken: context.executeToken,
+    target: context.payload.target, input: context.payload.actionInput,
+    executionOutput: context.executeOutput, executorEnvironment: context.executorEnvironment,
+    shadow: context.shadow, rationale: reason,
+  })
+  if (!compensationInput) throw new Error('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
   const prepared = prepareFabricCompensation(compensationInput)
   return withFabricAuditedTransaction(db => {
     const compensation = createFabricCompensationChildInDb(db, prepared)
@@ -351,7 +352,54 @@ export function prepareFabricCompensation(input: FabricActionIntentInput): Prepa
   validatePersistedMetadata(input)
   const payload = actionPayload(input)
   prepareFabricPolicyEvaluation(input)
+  if (input.capabilityId === 'health.plan.restore') authorizeTrustedPlanRestoreCompensation(input)
   return { input, payload }
+}
+
+export function buildFabricCompensationInput(input: {
+  originalCapabilityId: string
+  compensationCapabilityId: string
+  requestedByRoleId: string
+  requestedByUserId: string
+  workflowId: string
+  executeToken: string
+  target: FabricJsonObject
+  input: FabricJsonObject
+  executionOutput?: FabricJsonObject
+  executorEnvironment: string
+  shadow: boolean
+  rationale: string
+}): FabricActionIntentInput | null {
+  if (input.shadow || input.executorEnvironment === 'sandbox') return null
+  const common = {
+    capabilityId: input.compensationCapabilityId,
+    requestedByRoleId: input.requestedByRoleId,
+    requestedByUserId: input.requestedByUserId,
+    idempotencyKey: `compensation:${input.workflowId}`,
+    goal: 'Compensate a completed Action Fabric workflow',
+    constraints: { compensationForWorkflowId: input.workflowId },
+    rationale: input.rationale,
+  }
+  if (input.originalCapabilityId === 'health.plan.adjust'
+    && input.compensationCapabilityId === 'health.plan.restore') {
+    const output = input.executionOutput
+    if (!output || typeof input.input.planId !== 'string' || output.planId !== input.input.planId
+      || !Number.isSafeInteger(output.newVersion) || !Number.isSafeInteger(output.previousVersion)
+      || typeof output.previousDigest !== 'string' || !/^[a-f0-9]{64}$/.test(output.previousDigest)) return null
+    return {
+      ...common,
+      target: { kind: 'health_plan', planId: input.input.planId },
+      input: { schemaVersion: 1, planId: input.input.planId,
+        expectedCurrentVersion: output.newVersion, restoreVersion: output.previousVersion,
+        restoreDigest: output.previousDigest },
+      environments: ['internal'],
+    }
+  }
+  return {
+    ...common,
+    target: input.target,
+    input: { originalWorkflowId: input.workflowId, originalExecutionReference: input.executeToken },
+  }
 }
 
 /** Must be called from the transaction used to link the parent workflow. */
@@ -663,13 +711,17 @@ function compensationContext(db: DatabaseSync, id: string): {
   payload: ActionPayload
   contract: CapturedContract
   executeToken: string
+  executeOutput?: FabricJsonObject
+  executorEnvironment: string
+  shadow: boolean
 } {
   const workflow = requireWorkflow(db, id)
   const intent = requireIntent(db, workflow.intent_id)
   const prepare = db.prepare(`SELECT input_json FROM fabric_steps
     WHERE workflow_id=? AND ordinal=0 AND kind='prepare'`).get(id) as { input_json: string } | undefined
-  const execute = db.prepare(`SELECT execution_token FROM fabric_steps
-    WHERE workflow_id=? AND ordinal=1 AND kind='execute'`).get(id) as { execution_token: string } | undefined
+  const execute = db.prepare(`SELECT execution_token,output_json FROM fabric_steps
+    WHERE workflow_id=? AND ordinal=1 AND kind='execute'`).get(id) as
+    { execution_token: string; output_json: string | null } | undefined
   if (!prepare || !execute) throw new Error('FABRIC_WORKFLOW_CONTRACT_UNAVAILABLE')
   const stored = parseObject(prepare.input_json) as Record<string, unknown>
   const contract = stored.contract as Partial<CapturedContract> | undefined
@@ -682,8 +734,24 @@ function compensationContext(db: DatabaseSync, id: string): {
     || !isJsonObject(payload.actionInput) || !isJsonObject(payload.target) || !isJsonObject(payload.constraints)) {
     throw new Error('FABRIC_WORKFLOW_CONTRACT_UNAVAILABLE')
   }
+  const executor = workflow.executor_id === null ? undefined : db.prepare(`SELECT environment,configuration_json
+    FROM fabric_executors WHERE id=?`).get(workflow.executor_id) as
+    { environment: string; configuration_json: string } | undefined
+  if (!executor) throw new Error('FABRIC_WORKFLOW_CONTRACT_UNAVAILABLE')
+  const configuration = parseObject(executor.configuration_json)
+  const decision = workflow.policy_decision_id === null ? undefined : db.prepare(`SELECT policy_snapshot_json
+    FROM fabric_policy_decisions WHERE id=?`).get(workflow.policy_decision_id) as
+    { policy_snapshot_json: string } | undefined
+  const snapshot = decision ? parseObject(decision.policy_snapshot_json) : {}
+  const capturedEnvironments = Array.isArray(snapshot.environments) ? snapshot.environments : []
+  const capturedEnvironment = typeof snapshot.resolvedEnvironment === 'string' ? snapshot.resolvedEnvironment
+    : capturedEnvironments.length === 1 && typeof capturedEnvironments[0] === 'string'
+      ? capturedEnvironments[0] : executor.environment
+  const executeOutput = execute.output_json === null ? undefined : parseObject(execute.output_json)
   return { workflow, intent, payload: payload as ActionPayload, contract: contract as CapturedContract,
-    executeToken: execute.execution_token }
+    executeToken: execute.execution_token, ...(executeOutput ? { executeOutput } : {}),
+    executorEnvironment: capturedEnvironment,
+    shadow: capturedEnvironment === 'sandbox' || workflow.executor_id === 'health-shadow' || configuration.shadow === true }
 }
 
 function createWorkflowInDb(
@@ -798,6 +866,7 @@ function availableWorkflowActionsInDb(db: DatabaseSync, workflow: WorkflowRow): 
     try {
       const context = compensationContext(db, workflow.id)
       compensate = context.contract.reversible && context.contract.compensationCapabilityId !== null
+        && !context.shadow && context.executorEnvironment !== 'sandbox'
         && hasCurrentCapturedContract(db, workflow)
     } catch { compensate = false }
   }

@@ -12,6 +12,14 @@ import {
   withFabricAuditedTransaction,
 } from './audit'
 import { getFabricControlStateInDb } from './control'
+import {
+  effectiveCapabilityRisk,
+  hasStandingHealthAuthorization,
+  healthTargetAtoms,
+  isHealthCapability,
+  validateFabricSchema,
+  validateHealthSemantics,
+} from './contracts'
 import { ensureBuiltInFabricRegistry, resolveFabricExecutorInDb } from './registry'
 import type {
   FabricBudgetReservation,
@@ -24,6 +32,7 @@ import type {
 } from './types'
 
 const POLICY_VERSION = 1
+const trustedPlanRestoreCompensations = new WeakSet<object>()
 const RISK_ORDER: Record<AssistantRoleRisk, number> = { none: 0, low: 1, medium: 2, high: 3, critical: 4 }
 type ReasonCode =
   | 'role_missing' | 'role_disabled' | 'capability_not_allowed' | 'capability_denied'
@@ -57,6 +66,13 @@ export function prepareFabricPolicyEvaluation(input: FabricPolicyInput): void {
   migrateAssistantRoleCapabilityEnforcement()
 }
 
+/** Marks a server-built plan restore; HTTP/user input never receives this authority. */
+export function authorizeTrustedPlanRestoreCompensation(input: FabricPolicyInput): void {
+  if (input.capabilityId !== 'health.plan.restore' || input.environments?.length !== 1
+    || input.environments[0] !== 'internal') throw new Error('FABRIC_COMPENSATION_INVALID')
+  trustedPlanRestoreCompensations.add(input)
+}
+
 /** Must only be called from an existing `withFabricAuditedTransaction` callback. */
 export function evaluateFabricPolicyInDb(
   db: DatabaseSync,
@@ -65,10 +81,23 @@ export function evaluateFabricPolicyInDb(
 ): FabricPolicyDecision {
   assertFabricAuditedTransaction(db)
   validateInput(input)
-  const environments = input.environments ?? ['simulator', 'internal']
+  const environments = input.environments ?? (isHealthCapability(input.capabilityId) ? ['sandbox'] : ['simulator', 'internal'])
+  const resolution = resolveFabricExecutorInDb(db, input.capabilityId, { environments })
+  if (resolution && (!validateFabricSchema(input.input, resolution.capability.inputSchema)
+    || !validateHealthSemantics(input.capabilityId, input.input))) {
+    throw new Error('FABRIC_CAPABILITY_INPUT_INVALID')
+  }
+  const effectiveRisk = resolution ? effectiveCapabilityRisk(resolution.capability, input.input) : null
+  const standingAuthorization = resolution
+    ? hasStandingHealthAuthorization(resolution.capability, effectiveRisk ?? resolution.capability.risk) : false
+  const authorizationMode = trustedPlanRestoreCompensations.has(input) ? 'trusted_compensation'
+    : standingAuthorization ? 'standing' : 'per_action'
+  const targetAtoms = resolution && isHealthCapability(input.capabilityId)
+    ? healthTargetAtoms(input.capabilityId, input.target, input.input) : null
   const materialInputDigest = digest({
     capabilityId: input.capabilityId, target: input.target, input: input.input,
     constraints: input.constraints, expectedCost: input.expectedCost ?? null,
+    environments, capabilityRisk: resolution?.capability.risk ?? null, effectiveRisk, authorizationMode,
   })
   const sanitizedSummary = summarize(input)
 
@@ -76,7 +105,6 @@ export function evaluateFabricPolicyInDb(
     const now = instant.toISOString()
     const ledgerDate = utcDate(instant)
     const role = getAssistantRole(input.requestedByRoleId)
-    const resolution = resolveFabricExecutorInDb(db, input.capabilityId, { environments })
     const control = getFabricControlStateInDb(db)
     const effective = effectiveCost(resolution, input.expectedCost)
     const snapshot = {
@@ -84,7 +112,9 @@ export function evaluateFabricPolicyInDb(
       ...(resolution === null ? {} : { registryPolicyRevision: resolution.policyRevision,
         registryPolicyEvaluationToken: resolution.policyEvaluationToken }),
       controlVersion: control.version, controlLevel: control.level, phase: input.phase ?? 'intent',
-      environments: [...environments].sort(), ledgerDate, effectiveCost: effective.money,
+      environments: [...environments], ledgerDate, effectiveCost: effective.money,
+      resolvedEnvironment: resolution?.executor.environment ?? null,
+      capabilityRisk: resolution?.capability.risk ?? null, effectiveRisk, targetAtoms, authorizationMode,
     }
     const existing = db.prepare(`SELECT id, material_input_digest FROM fabric_action_intents
       WHERE requested_by_user_id=? AND requested_by_role_id=? AND idempotency_key=?`).get(
@@ -138,20 +168,23 @@ export function evaluateFabricPolicyInDb(
     else if (emergencyBlocks(control.level, input.phase ?? 'intent')) reasons.push('emergency_stop')
     else if (input.expectedMaterialInputDigest !== undefined && input.expectedMaterialInputDigest !== materialInputDigest) {
       reasons.push('material_input_changed')
-    } else if (!targetAllowed(role, resolution, input.target)) reasons.push('target_not_allowed')
+    } else if (!targetAllowed(role, resolution, input.target, input.input)) reasons.push('target_not_allowed')
     else if (effective.currencyMismatch) reasons.push('currency_mismatch')
     else {
-      const risk = RISK_ORDER[resolution.capability.risk]
+      const risk = RISK_ORDER[effectiveRisk ?? resolution.capability.risk]
       if (risk > RISK_ORDER[role.decisionAuthority.maxRisk]) {
         reasons.push('risk_requires_approval')
         outcome = 'deny'
       } else {
-        if (role.decisionAuthority.requireApprovalAbove !== undefined
+        if (!trustedPlanRestoreCompensations.has(input)
+          && role.decisionAuthority.requireApprovalAbove !== undefined
           && risk > RISK_ORDER[role.decisionAuthority.requireApprovalAbove]) {
           reasons.push('risk_requires_approval')
           outcome = 'waiting_user'
         }
-        if (resolution.capability.sideEffect && !resolution.capability.reversible) {
+        if (resolution.capability.sideEffect && !resolution.capability.reversible
+          && !standingAuthorization
+          && !trustedPlanRestoreCompensations.has(input)) {
           reasons.push('irreversible_requires_approval')
           outcome = 'waiting_user'
         }
@@ -324,7 +357,18 @@ function validSemanticList(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(item => typeof item === 'string' && /^[a-z][a-z0-9]*(?:[._:-][a-z0-9][a-z0-9-]*)*$/.test(item))
 }
 
-function targetAllowed(role: AssistantRole, resolution: ResolvedFabricExecutor, target: Record<string, unknown>): boolean {
+function targetAllowed(
+  role: AssistantRole,
+  resolution: ResolvedFabricExecutor,
+  target: Record<string, unknown>,
+  input: Record<string, unknown>,
+): boolean {
+  if (isHealthCapability(resolution.capability.id)) {
+    const atoms = healthTargetAtoms(resolution.capability.id, target, input)
+    if (!atoms || atoms.length === 0) return false
+    const roleTargets = role.decisionAuthority.allowedTargets
+    return !!roleTargets && atoms.every(atom => roleTargets.includes(atom))
+  }
   const id = normalizedLiteralTarget(target)
   if (id === false) return false
   const roleTargets = role.decisionAuthority.allowedTargets

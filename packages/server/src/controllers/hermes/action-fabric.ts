@@ -59,6 +59,7 @@ const AGGREGATE_TYPES = new Set<FabricAuditAggregateType>([
 const INTENT_FIELDS = new Set([
   'capabilityId', 'requestedByRoleId', 'idempotencyKey', 'goal', 'target', 'input',
   'constraints', 'rationale', 'expectedCost',
+  'environments',
 ])
 const SENSITIVE_KEY = /(?:secret|token|password|credential|cookie|authorization|configuration|path|directory|raw.?error|sql|jwt|api.?key|dsn|file|home|uri|url)/i
 
@@ -87,7 +88,7 @@ export async function executors(ctx: Context): Promise<void> {
   respond(ctx, () => {
     validateQuery(ctx, new Set(['type', 'environment', 'health', 'enabled', 'limit']))
     const limit = queryLimit(ctx)
-    const type = queryEnum(ctx, 'type', ['simulator', 'internal'] as const)
+    const type = queryEnum(ctx, 'type', ['simulator', 'internal', 'connector'] as const)
     const environment = queryEnum(ctx, 'environment', ['simulator', 'internal', 'sandbox', 'production'] as const)
     const health = queryEnum(ctx, 'health', ['unknown', 'healthy', 'degraded', 'unhealthy'] as const)
     const enabled = queryBoolean(ctx, 'enabled')
@@ -113,6 +114,7 @@ export async function createIntent(ctx: Context): Promise<void> {
       throw publicError('FABRIC_ROLE_UNAVAILABLE')
     }
     const expectedCost = parseMoney(body.expectedCost)
+    const environments = optionalEnvironments(body.environments)
     const input: FabricActionIntentInput = {
       capabilityId: requiredIdentifier(body, 'capabilityId', 200),
       requestedByRoleId,
@@ -124,11 +126,28 @@ export async function createIntent(ctx: Context): Promise<void> {
       constraints: requiredJsonObject(body, 'constraints'),
       rationale: requiredText(body, 'rationale', 2_000),
       ...(expectedCost === undefined ? {} : { expectedCost }),
+      ...(environments === undefined ? {} : { environments }),
     }
     const result = createFabricIntent(input)
     ctx.status = 200
     return publicIntentResult(result)
   })
+}
+
+function optionalEnvironments(value: unknown): FabricActionIntentInput['environments'] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value) || value.length === 0 || value.length > 4) throw new FabricRequestError('Invalid environments')
+  const allowed = new Set(['simulator', 'internal', 'sandbox', 'production'])
+  const result: NonNullable<FabricActionIntentInput['environments']> = []
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+    if (!descriptor || !('value' in descriptor) || typeof descriptor.value !== 'string'
+      || !allowed.has(descriptor.value) || result.includes(descriptor.value as never)) {
+      throw new FabricRequestError('Invalid environments')
+    }
+    result.push(descriptor.value as never)
+  }
+  return result
 }
 
 /** @openapi-response ActionWorkflowListResponse */

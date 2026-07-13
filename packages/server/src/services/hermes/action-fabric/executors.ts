@@ -2,6 +2,7 @@ import { isProxy } from 'node:util/types'
 import type { FabricEvidence, FabricExecutorType, FabricJsonObject } from './types'
 import { resolveFabricExecutor } from './registry'
 import { isFabricSensitiveString } from './audit'
+import { validateFabricSchema, validateHealthOutputSemantics } from './contracts'
 
 export type FabricExecutorPhase = 'prepare' | 'execute' | 'verify' | 'interrupt' | 'compensate'
 
@@ -124,12 +125,9 @@ export async function invokeFabricExecutor(
 export async function invokeFabricExecutor(
   phase: FabricExecutorPhase, context: FabricExecutionContext,
 ): Promise<FabricExecutorResult> {
-  const environments = context.executorType === 'simulator' ? ['simulator'] as const
-    : context.executorType === 'internal' ? ['internal'] as const
-      : ['sandbox', 'production'] as const
-  const resolved = environments
-    .map(environment => resolveFabricExecutor(context.capabilityId, { environments: [environment] }))
-    .find(candidate => candidate?.executor.id === context.executorId) ?? null
+  const resolved = resolveFabricExecutor(context.capabilityId, {
+    environments: ['simulator', 'internal', 'sandbox', 'production'], executorId: context.executorId,
+  })
   if (!resolved
     || resolved.executor.id !== context.executorId
     || resolved.executor.type !== context.executorType
@@ -155,7 +153,13 @@ export async function invokeFabricExecutor(
     return exceptionResult(phase, context.now)
   }
   try {
-    return sanitizeResult(phase, raw, context.now)
+    const result = sanitizeResult(phase, raw, context.now)
+    if (phase === 'execute' && result.outcome === 'succeeded'
+      && (!validateFabricSchema(result.output, resolved.capability.outputSchema)
+        || !validateHealthOutputSemantics(context.capabilityId, context.input, result.output))) {
+      return contractViolationResult(phase, context.now)
+    }
+    return result
   } catch {
     return contractViolationResult(phase, context.now)
   }

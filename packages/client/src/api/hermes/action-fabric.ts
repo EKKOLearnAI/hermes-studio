@@ -5,7 +5,7 @@ export type ActionRisk = 'none' | 'low' | 'medium' | 'high' | 'critical'
 export type ActionWorkflowState = 'draft' | 'policy_check' | 'preparing' | 'executing' | 'verifying'
   | 'waiting_user' | 'retrying' | 'compensating' | 'succeeded' | 'denied' | 'cancelled'
   | 'failed' | 'dead_letter' | 'compensated'
-export type ActionExecutorType = 'simulator' | 'internal'
+export type ActionExecutorType = 'simulator' | 'internal' | 'connector'
 export type ActionExecutorEnvironment = 'simulator' | 'internal' | 'sandbox' | 'production'
 export type ActionExecutorHealth = 'unknown' | 'healthy' | 'degraded' | 'unhealthy'
 export type ActionAuditAggregateType = 'capability' | 'executor' | 'intent' | 'workflow' | 'control' | 'system'
@@ -76,6 +76,7 @@ export interface CreateActionIntentInput {
   capabilityId: string; requestedByRoleId: string; idempotencyKey: string; goal: string
   target: ActionJsonObject; input: ActionJsonObject; constraints: ActionJsonObject; rationale: string
   expectedCost?: { currency: string; amountMinor: number }
+  environments?: ActionExecutorEnvironment[]
 }
 export interface ActionIntentResultDto {
   intent: ActionIntentDto; policyDecision: ActionPolicyDecisionDto; workflow: ActionWorkflowDetailDto

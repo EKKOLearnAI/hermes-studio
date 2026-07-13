@@ -367,7 +367,7 @@ describe('action fabric registry', () => {
     expect(createFabricCapability(input).contractDigest).toBe(expected)
   })
 
-  it('validates, bounds, deduplicates, and deterministically orders resolve environments', () => {
+  it('validates, bounds, deduplicates, and preserves caller environment priority', () => {
     ensureBuiltInFabricRegistry()
     expect(() => resolveFabricExecutor('simulator.echo', { environments: [] })).toThrow(/environment.*empty|at least one/i)
     expect(() => resolveFabricExecutor('simulator.echo', { environments: 'simulator' } as never)).toThrow(/environment.*array/i)
@@ -375,9 +375,12 @@ describe('action fabric registry', () => {
       .toThrow(/environment.*four|too many/i)
     expect(() => resolveFabricExecutor('simulator.echo', { environments: ['invalid'] as never })).toThrow(/invalid.*environment/i)
 
-    const ordered = resolveFabricExecutor('simulator.echo', { environments: ['internal', 'simulator'] })!
-    const reversedAndDuplicated = resolveFabricExecutor('simulator.echo', { environments: ['simulator', 'internal', 'simulator'] })!
-    expect(reversedAndDuplicated).toEqual(ordered)
+    const echo = getFabricCapability('simulator.echo')!
+    bindFabricExecutorCapability('internal-twin', echo.id, echo.version, echo.contractDigest)
+    const internalFirst = resolveFabricExecutor('simulator.echo', { environments: ['internal', 'simulator'] })!
+    const simulatorFirst = resolveFabricExecutor('simulator.echo', { environments: ['simulator', 'internal', 'simulator'] })!
+    expect(internalFirst.executor.id).toBe('internal-twin')
+    expect(simulatorFirst.executor.id).toBe('simulator-main')
   })
 
   it('reads the complete resolution and policy revision from one atomic registry statement', () => {

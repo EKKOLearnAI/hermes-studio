@@ -12,6 +12,7 @@ import {
   processActionFabricOnce,
   retryFabricWorkflow,
   registerFabricExecutorAdapter,
+  requestFabricCompensation,
   resolveFabricExecutor,
   setFabricEmergencyStop,
   startActionFabricWorker,
@@ -357,6 +358,72 @@ describe('Action Fabric durable worker', () => {
       .filter(event => event.eventType === 'budget.released')).toHaveLength(released)
   })
 
+  it('never creates a restore compensation for a sandbox shadow mismatch', async () => {
+    configureHealthPlanRole()
+    registerFabricExecutorAdapter(adapter({
+      id: 'health-shadow', type: 'connector',
+      execute: async () => success('succeeded', { executionOutput: {
+        schemaVersion: 1, planId: 'daily-plan', previousVersion: 3, newVersion: 4,
+        previousDigest: 'a'.repeat(64), planDigest: 'b'.repeat(64),
+      } } as never),
+      verify: async () => failure('mismatch', 'VERIFY_MISMATCH'),
+    }))
+    const workflow = createHealthPlan('shadow-mismatch', ['sandbox']).workflow
+    await runCycles(3)
+
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({ compensationIntentId: null })
+    expect(getFabricWorkflow(workflow.id)?.state).not.toBe('compensating')
+    expect(withActionFabricDb(db => (db.prepare(`SELECT COUNT(*) count FROM fabric_action_intents
+      WHERE idempotency_key=?`).get(`compensation:${workflow.id}`) as { count: number }).count)).toBe(0)
+  })
+
+  it('does not advertise or accept manual compensation after a successful sandbox shadow run', async () => {
+    configureHealthPlanRole()
+    registerFabricExecutorAdapter(adapter({
+      id: 'health-shadow', type: 'connector',
+      execute: async () => success('succeeded', { executionOutput: {
+        schemaVersion: 1, planId: 'daily-plan', previousVersion: 3, newVersion: 4,
+        previousDigest: 'a'.repeat(64), planDigest: 'b'.repeat(64),
+      } } as never),
+    }))
+    const workflow = createHealthPlan('shadow-success', ['sandbox']).workflow
+    await runCycles(3)
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'succeeded',
+      availableActions: { compensate: false } })
+    expect(() => requestFabricCompensation(workflow.id, 'user-1', 'manual restore'))
+      .toThrow('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
+  })
+
+  it('builds a live plan mismatch restore exclusively from original input and successful output', async () => {
+    configureHealthPlanRole()
+    let originalWorkflowId = ''
+    registerFabricExecutorAdapter(adapter({
+      id: 'health-plan', type: 'internal',
+      execute: async context => context.capabilityId === 'health.plan.adjust'
+        ? success('succeeded', { executionOutput: {
+          schemaVersion: 1, planId: 'daily-plan', previousVersion: 3, newVersion: 4,
+          previousDigest: 'a'.repeat(64), planDigest: 'b'.repeat(64),
+        } } as never) : success('succeeded', context),
+      verify: async context => context.workflowId === originalWorkflowId
+        ? failure('mismatch', 'VERIFY_MISMATCH') : success('verified', context),
+    }))
+    const workflow = createHealthPlan('live-mismatch', ['internal']).workflow
+    originalWorkflowId = workflow.id
+    await runCycles(3)
+
+    const parent = getFabricWorkflow(workflow.id)!
+    expect(parent).toMatchObject({ state: 'compensating', compensationIntentId: expect.stringMatching(/^intent-/) })
+    const child = withActionFabricDb(db => db.prepare('SELECT id FROM fabric_workflows WHERE intent_id=?')
+      .get(parent.compensationIntentId!) as { id: string })
+    expect(getFabricWorkflow(child.id)?.steps[0].input).toMatchObject({
+      target: { kind: 'health_plan', planId: 'daily-plan' },
+      actionInput: {
+        schemaVersion: 1, planId: 'daily-plan', expectedCurrentVersion: 4,
+        restoreVersion: 3, restoreDigest: 'a'.repeat(64),
+      },
+    })
+  })
+
   it.each([
     ['deny', 'failed', 'denied'],
     ['waiting', 'waiting_user', 'waiting_user'],
@@ -519,7 +586,7 @@ describe('Action Fabric durable worker', () => {
       enabled: true,
       capabilityScope: { allow: ['health.plan.adjust'], deny: [], enforcement: 'action_fabric_v1' },
       decisionAuthority: {
-        maxRisk: 'critical', requireApprovalAbove: 'critical', allowedTargets: ['plan:exact_id'],
+        maxRisk: 'critical', requireApprovalAbove: 'critical', allowedTargets: ['health:plan:daily-plan'],
       },
       spendingLimits: { currency: null, perAction: 0, daily: 0 },
     })
@@ -531,9 +598,9 @@ describe('Action Fabric durable worker', () => {
     const request = {
       capabilityId: 'health.plan.adjust', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
       idempotencyKey: 'connector-interrupt', goal: 'shadow a health plan adjustment safely',
-      target: { id: 'plan:exact_id' },
+      target: { kind: 'health_plan', planId: 'daily-plan' },
       input: { schemaVersion: 1, planId: 'daily-plan', expectedVersion: 1,
-        patch: { trainingIntensity: 'light' }, reasonCode: 'recovery-low' },
+        operation: 'reduce_training_intensity', maximumIntensity: 'low', reasonCode: 'low_recovery_score' },
       constraints: {}, rationale: 'test', environments: ['sandbox'],
     }
     const workflow = createFabricIntent(request).workflow
@@ -698,6 +765,26 @@ function createInternal(idempotencyKey: string) {
     capabilityId: 'internal.twin.preference.set', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
     idempotencyKey, goal: 'set safely', target: { id: 'personal-twin' },
     input: { domain: 'preferences', key: 'theme', value: 'dark' }, constraints: {}, rationale: 'test',
+  })
+}
+
+function createHealthPlan(idempotencyKey: string, environments: Array<'sandbox' | 'internal'>) {
+  return createFabricIntent({
+    capabilityId: 'health.plan.adjust', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
+    idempotencyKey, goal: 'adjust plan safely', target: { kind: 'health_plan', planId: 'daily-plan' },
+    input: { schemaVersion: 1, planId: 'daily-plan', expectedVersion: 3,
+      operation: 'reduce_training_intensity', maximumIntensity: 'low', reasonCode: 'low_recovery_score' },
+    constraints: {}, rationale: 'test', environments,
+  })
+}
+
+function configureHealthPlanRole(): void {
+  updateAssistantRole('health-manager', {
+    enabled: true,
+    capabilityScope: { allow: ['health.plan.adjust', 'health.plan.restore'], deny: [], enforcement: 'action_fabric_v1' },
+    decisionAuthority: { maxRisk: 'critical', requireApprovalAbove: 'critical',
+      allowedTargets: ['health:plan:daily-plan'] },
+    spendingLimits: { currency: null, perAction: 0, daily: 0 },
   })
 }
 

@@ -161,6 +161,29 @@ describe('action fabric controller', () => {
     expect(replay.body).toMatchObject({ workflow: { id: 'wf-1', state: 'succeeded' } })
   })
 
+  it('accepts connector discovery filters and explicit ordered intent environments', async () => {
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    const discovery = context({ query: { type: 'connector' } })
+    await ctrl.executors(discovery)
+    expect(discovery.status ?? 200).toBe(200)
+
+    const ctx = context({ body: { ...validIntent, environments: ['production', 'internal'] } })
+    await ctrl.createIntent(ctx)
+    expect(fabric.createFabricIntent).toHaveBeenCalledWith({
+      ...validIntent, environments: ['production', 'internal'], requestedByUserId: '42',
+    })
+  })
+
+  it.each([
+    'production', [], ['invalid'], ['production', 'production'],
+  ])('rejects invalid intent environments before invoking the service: %j', async environments => {
+    const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
+    const ctx = context({ body: { ...validIntent, environments } })
+    await ctrl.createIntent(ctx)
+    expect(ctx.status).toBe(400)
+    expect(fabric.createFabricIntent).not.toHaveBeenCalled()
+  })
+
   it.each(credentialValues)('rejects credential-shaped required text without invoking services: %s', async credential => {
     const ctrl = await import('../../packages/server/src/controllers/hermes/action-fabric')
     for (const body of [

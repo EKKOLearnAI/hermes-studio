@@ -11,6 +11,7 @@ import {
 } from './executors'
 import type { FabricEvidence, FabricExecutorType, FabricJsonObject, FabricWorkflowState } from './types'
 import {
+  buildFabricCompensationInput,
   createFabricCompensationChildInDb,
   isFabricWorkflowWorkerState,
   prepareFabricCompensation,
@@ -74,6 +75,8 @@ interface WorkflowClaim {
   idempotency: 'required' | 'supported' | 'none'
   verificationStrategy: string
   interruptible: boolean
+  executorEnvironment: string
+  shadow: boolean
 }
 
 interface CandidateRow {
@@ -89,6 +92,7 @@ interface CandidateRow {
   capability_version: number
   executor_id: string
   executor_type: FabricExecutorType
+  executor_environment: string
   executor_configuration_json: string
   policy_snapshot_json: string
   step_id: string
@@ -155,15 +159,24 @@ async function processActionFabricCycle(
   if (claim.phase === 'verify' && result.outcome === 'mismatch' && claim.reversible
     && claim.verificationStrategy !== 'none') {
     try {
-      compensation = claim.compensationCapabilityId === null ? null : prepareFabricCompensation({
-        capabilityId: claim.compensationCapabilityId,
-        requestedByRoleId: claim.requestedByRoleId,
-        requestedByUserId: claim.actorUserId,
-        idempotencyKey: `compensation:${claim.workflowId}`,
-        goal: 'Compensate a verification mismatch', target: claim.target,
-        input: { originalWorkflowId: claim.workflowId, originalExecutionReference: claim.executeToken },
-        constraints: { compensationForWorkflowId: claim.workflowId }, rationale: 'Verification mismatch recovery',
-      })
+      if (claim.compensationCapabilityId === null) compensation = null
+      else {
+        const request = buildFabricCompensationInput({
+          originalCapabilityId: claim.capabilityId,
+          compensationCapabilityId: claim.compensationCapabilityId,
+          requestedByRoleId: claim.requestedByRoleId,
+          requestedByUserId: claim.actorUserId,
+          workflowId: claim.workflowId,
+          executeToken: claim.executeToken,
+          target: claim.target,
+          input: claim.input,
+          executionOutput: claim.executionOutput,
+          executorEnvironment: claim.executorEnvironment,
+          shadow: claim.shadow,
+          rationale: 'Verification mismatch recovery',
+        })
+        compensation = request ? prepareFabricCompensation(request) : null
+      }
     } catch {
       compensation = null
     }
@@ -382,7 +395,7 @@ function recoverNonIdempotentExecution(
 function candidateSelect(): string {
   return `SELECT w.id workflow_id,w.version workflow_version,w.state workflow_state,w.lease_owner,w.lease_expires_at,
     i.id intent_id,i.requested_by_user_id,i.requested_by_role_id,i.capability_id,i.capability_version,
-    e.id executor_id,e.type executor_type,e.configuration_json executor_configuration_json,
+    e.id executor_id,e.type executor_type,e.environment executor_environment,e.configuration_json executor_configuration_json,
     p.policy_snapshot_json,s.id step_id,s.ordinal step_ordinal,s.kind step_kind,s.state step_state,
     s.attempt step_attempt,s.execution_token,s.input_json
     FROM fabric_workflows w JOIN fabric_action_intents i ON i.id=w.intent_id
@@ -410,6 +423,10 @@ function buildClaim(
   const token = snapshot.registryPolicyEvaluationToken
   if (typeof token !== 'string') throw new Error('FABRIC_WORKER_POLICY_TOKEN_MISSING')
   const controlVersion = snapshot.controlVersion
+  const capturedEnvironments = Array.isArray(snapshot.environments) ? snapshot.environments : []
+  const capturedEnvironment = typeof snapshot.resolvedEnvironment === 'string' ? snapshot.resolvedEnvironment
+    : capturedEnvironments.length === 1 && typeof capturedEnvironments[0] === 'string'
+      ? capturedEnvironments[0] : row.executor_environment
   if (!Number.isSafeInteger(controlVersion) || (controlVersion as number) < 0) {
     throw new Error('FABRIC_WORKER_CONTROL_VERSION_MISSING')
   }
@@ -432,7 +449,14 @@ function buildClaim(
     reversible: contract.reversible, compensationCapabilityId: contract.compensationCapabilityId,
     idempotency: contract.idempotency as WorkflowClaim['idempotency'],
     verificationStrategy: contract.verificationStrategy, interruptible: isInterruptible(row),
+    executorEnvironment: capturedEnvironment,
+    shadow: capturedEnvironment === 'sandbox' || row.executor_id === 'health-shadow'
+      || executorConfiguration(row).shadow === true,
   }
+}
+
+function executorConfiguration(row: CandidateRow): FabricJsonObject {
+  return parseObject(row.executor_configuration_json)
 }
 
 function commitClaim(

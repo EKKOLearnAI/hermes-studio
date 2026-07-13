@@ -3508,7 +3508,8 @@
               "type": "string",
               "enum": [
                 "simulator",
-                "internal"
+                "internal",
+                "connector"
               ]
             }
           }
@@ -3633,6 +3634,10 @@
                   "constraints": {
                     "type": "object",
                     "additionalProperties": true
+                  },
+                  "environments": {
+                    "type": "array",
+                    "items": {}
                   },
                   "expectedCost": {
                     "type": "object",
@@ -14868,7 +14873,8 @@
         "type": "string",
         "enum": [
           "simulator",
-          "internal"
+          "internal",
+          "connector"
         ]
       },
       "ActionExecutorEnvironment": {
@@ -15867,6 +15873,12 @@
               "amountMinor"
             ],
             "additionalProperties": false
+          },
+          "environments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionExecutorEnvironment"
+            }
           }
         },
         "required": [

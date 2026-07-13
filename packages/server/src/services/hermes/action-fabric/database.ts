@@ -28,6 +28,14 @@ interface RequiredIndexSignature {
   partial: boolean
 }
 
+interface RequiredForeignKeySignature {
+  table: string
+  from: string
+  targetTable: string
+  to: string
+  onDelete: 'NO ACTION' | 'CASCADE'
+}
+
 interface JsonColumnConstraint {
   column: string
   type: 'object' | 'array'
@@ -88,6 +96,22 @@ const REQUIRED_INDEX_SIGNATURES: RequiredIndexSignature[] = [
 const REQUIRED_COLUMNS = [{
   table: 'fabric_outbox', column: 'claim_token', type: 'TEXT', notnull: 0, defaultValue: null, pk: 0,
 }]
+const REQUIRED_FOREIGN_KEYS: RequiredForeignKeySignature[] = [
+  { table: 'fabric_capabilities', from: 'compensation_capability_id', targetTable: 'fabric_capabilities', to: 'id', onDelete: 'NO ACTION' },
+  { table: 'fabric_executor_capabilities', from: 'executor_id', targetTable: 'fabric_executors', to: 'id', onDelete: 'CASCADE' },
+  { table: 'fabric_executor_capabilities', from: 'capability_id', targetTable: 'fabric_capabilities', to: 'id', onDelete: 'CASCADE' },
+  { table: 'fabric_action_intents', from: 'capability_id', targetTable: 'fabric_capabilities', to: 'id', onDelete: 'NO ACTION' },
+  { table: 'fabric_policy_decisions', from: 'intent_id', targetTable: 'fabric_action_intents', to: 'id', onDelete: 'CASCADE' },
+  { table: 'fabric_policy_decisions', from: 'executor_id', targetTable: 'fabric_executors', to: 'id', onDelete: 'NO ACTION' },
+  { table: 'fabric_workflows', from: 'intent_id', targetTable: 'fabric_action_intents', to: 'id', onDelete: 'CASCADE' },
+  { table: 'fabric_workflows', from: 'executor_id', targetTable: 'fabric_executors', to: 'id', onDelete: 'NO ACTION' },
+  { table: 'fabric_workflows', from: 'policy_decision_id', targetTable: 'fabric_policy_decisions', to: 'id', onDelete: 'NO ACTION' },
+  { table: 'fabric_workflows', from: 'compensation_intent_id', targetTable: 'fabric_action_intents', to: 'id', onDelete: 'NO ACTION' },
+  { table: 'fabric_steps', from: 'workflow_id', targetTable: 'fabric_workflows', to: 'id', onDelete: 'CASCADE' },
+  { table: 'fabric_steps', from: 'executor_id', targetTable: 'fabric_executors', to: 'id', onDelete: 'NO ACTION' },
+  { table: 'fabric_budget_ledger', from: 'decision_id', targetTable: 'fabric_policy_decisions', to: 'id', onDelete: 'NO ACTION' },
+  { table: 'fabric_budget_ledger', from: 'workflow_id', targetTable: 'fabric_workflows', to: 'id', onDelete: 'NO ACTION' },
+]
 
 type SynchronousResult<T> = T & (T extends PromiseLike<unknown> ? never : unknown)
 
@@ -230,6 +254,23 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
     }
   }
   assertExecutorTypeConstraint(db)
+  assertForeignKeySignatures(db)
+  const violations = db.prepare('PRAGMA foreign_key_check').all()
+  if (violations.length > 0) throw new Error('Action Fabric schema foreign key integrity check failed')
+}
+
+function assertForeignKeySignatures(db: DatabaseSync): void {
+  const grouped = new Map<string, RequiredForeignKeySignature[]>()
+  for (const expected of REQUIRED_FOREIGN_KEYS) grouped.set(expected.table, [...(grouped.get(expected.table) ?? []), expected])
+  for (const [table, expected] of grouped) {
+    const actual = db.prepare(`PRAGMA foreign_key_list("${table}")`).all() as Array<{
+      table: string; from: string; to: string; on_update: string; on_delete: string; match: string
+    }>
+    const matches = actual.length === expected.length && expected.every(item => actual.some(row =>
+      row.from === item.from && row.table === item.targetTable && row.to === item.to
+      && row.on_update === 'NO ACTION' && row.on_delete === item.onDelete && row.match === 'NONE'))
+    if (!matches) throw new Error(`Action Fabric schema foreign key signature mismatch: ${table}`)
+  }
 }
 
 function assertExecutorTypeConstraint(db: DatabaseSync): void {
