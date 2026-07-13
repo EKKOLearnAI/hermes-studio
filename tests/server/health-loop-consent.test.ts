@@ -23,7 +23,9 @@ describe('health remote-processing consent broker', () => {
   async function fixture() {
     const { createHealthArtifactVault } = await import('../../packages/server/src/services/hermes/health-loop/artifacts')
     const { createHealthConsentBroker } = await import('../../packages/server/src/services/hermes/health-loop/consent')
-    const artifact = await createHealthArtifactVault().store({
+    const artifact = await createHealthArtifactVault({
+      accessController: { secureDirectory: async () => undefined, secureFile: async () => undefined },
+    }).store({
       content: Buffer.from('%PDF-1.7\nsynthetic'), declaredMediaType: 'application/pdf',
       source: 'health-report', sourceId: 'report-1', metadata: {},
     })
@@ -178,5 +180,49 @@ describe('health remote-processing consent broker', () => {
     await expect(broker.consume(grant.token, manifest)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_INVALID' })
     expect(withPersonalTwinDb(db => db.prepare('SELECT consumed_at FROM twin_artifact_consents WHERE manifest_digest=?').get(grant.consentId)))
       .toEqual({ consumed_at: null })
+  })
+
+  it('cryptographically binds processor and grant lifetime against database tampering', async () => {
+    const { broker, manifest } = await fixture()
+    const grant = await broker.issue(manifest, { ttlMs: 60_000 })
+    const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
+    const original = withPersonalTwinDb(db => db.prepare('SELECT * FROM twin_artifact_consents WHERE manifest_digest=?')
+      .get(grant.consentId)) as Record<string, unknown>
+    const restore = () => withPersonalTwinDb(db => db.prepare(`UPDATE twin_artifact_consents
+      SET processor=?,scope_json=?,issued_at=?,expires_at=?,consumed_at=?,revoked_at=? WHERE manifest_digest=?`).run(
+      original.processor, original.scope_json, original.issued_at, original.expires_at, original.consumed_at, original.revoked_at, grant.consentId,
+    ))
+
+    withPersonalTwinDb(db => db.prepare('UPDATE twin_artifact_consents SET expires_at=? WHERE manifest_digest=?')
+      .run('2026-07-13T12:10:00.000Z', grant.consentId))
+    await expect(broker.consume(grant.token, manifest)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_INVALID' })
+    restore()
+
+    withPersonalTwinDb(db => {
+      const scope = JSON.parse(String(original.scope_json))
+      scope.expiresAt = '2026-07-13T12:10:00.000Z'
+      scope.ttlMs = 600_000
+      db.prepare('UPDATE twin_artifact_consents SET expires_at=?,scope_json=? WHERE manifest_digest=?')
+        .run(scope.expiresAt, JSON.stringify(scope), grant.consentId)
+    })
+    await expect(broker.consume(grant.token, manifest)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_INVALID' })
+    restore()
+
+    withPersonalTwinDb(db => db.prepare('UPDATE twin_artifact_consents SET processor=? WHERE manifest_digest=?')
+      .run('processor:tampered', grant.consentId))
+    await expect(broker.consume(grant.token, manifest)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_INVALID' })
+    restore()
+
+    withPersonalTwinDb(db => {
+      const scope = JSON.parse(String(original.scope_json))
+      scope.issuedAt = '2026-07-13T11:59:00.000Z'
+      scope.ttlMs = 120_000
+      db.prepare('UPDATE twin_artifact_consents SET issued_at=?,scope_json=? WHERE manifest_digest=?')
+        .run(scope.issuedAt, JSON.stringify(scope), grant.consentId)
+    })
+    await expect(broker.consume(grant.token, manifest)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_INVALID' })
+    restore()
+
+    await expect(broker.consume(grant.token, manifest)).resolves.toMatchObject({ consentId: grant.consentId })
   })
 })

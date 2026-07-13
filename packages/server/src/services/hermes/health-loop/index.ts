@@ -1,3 +1,5 @@
 export * from './types'
 export * from './normalizers'
 export * from './ingestion'
+export * from './artifacts'
+export * from './consent'

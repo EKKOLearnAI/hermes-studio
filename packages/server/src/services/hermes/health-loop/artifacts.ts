@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'crypto'
+import { execFile } from 'child_process'
 import { constants as fsConstants } from 'fs'
 import {
   chmod, link, lstat, mkdir, open, realpath, unlink,
@@ -28,6 +29,7 @@ export type HealthArtifactVaultErrorCode =
   | 'HEALTH_ARTIFACT_MEDIA_MISMATCH'
   | 'HEALTH_ARTIFACT_INVALID_INPUT'
   | 'HEALTH_ARTIFACT_UNSAFE_PATH'
+  | 'HEALTH_ARTIFACT_ACCESS_DENIED'
   | 'HEALTH_ARTIFACT_WRITE_FAILED'
   | 'HEALTH_ARTIFACT_NOT_FOUND'
   | 'HEALTH_ARTIFACT_INTEGRITY_FAILED'
@@ -61,6 +63,12 @@ export interface ReadHealthArtifactResult {
 export interface HealthArtifactVaultOptions {
   maxTotalBytes?: number
   mediaTypeLimits?: Readonly<Record<string, number>>
+  accessController?: HealthArtifactAccessController
+}
+
+export interface HealthArtifactAccessController {
+  secureDirectory(path: string): Promise<void>
+  secureFile(path: string): Promise<void>
 }
 
 export interface HealthArtifactVault {
@@ -128,7 +136,89 @@ async function createDirectoryIfMissing(path: string): Promise<void> {
   }
 }
 
-async function prepareVaultRoot(base: string, root: string): Promise<string> {
+const WINDOWS_ACL_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$target = $env:HERMES_ARTIFACT_PATH
+$kind = $env:HERMES_ARTIFACT_KIND
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+if ([string]::IsNullOrWhiteSpace($target) -or ($kind -ne 'directory' -and $kind -ne 'file')) { exit 10 }
+if ($kind -eq 'directory') {
+  $acl = New-Object System.Security.AccessControl.DirectorySecurity
+  $acl.SetAccessRuleProtection($true, $false)
+  $acl.SetOwner($sid)
+  $inheritance = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+  $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', $inheritance, 'None', 'Allow')
+  [void]$acl.AddAccessRule($rule)
+  [System.IO.Directory]::SetAccessControl($target, $acl)
+} else {
+  $acl = New-Object System.Security.AccessControl.FileSecurity
+  $acl.SetAccessRuleProtection($true, $false)
+  $acl.SetOwner($sid)
+  $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'Allow')
+  [void]$acl.AddAccessRule($rule)
+  [System.IO.File]::SetAccessControl($target, $acl)
+}
+$actual = Get-Acl -LiteralPath $target
+if (-not $actual.AreAccessRulesProtected) { exit 20 }
+$ownerRef = New-Object System.Security.Principal.NTAccount($actual.Owner)
+$ownerSid = $ownerRef.Translate([System.Security.Principal.SecurityIdentifier]).Value
+if ($ownerSid -ne $sid.Value) { exit 24 }
+$ownAllow = $false
+foreach ($entry in @($actual.Access)) {
+  if ($entry.IsInherited) { exit 21 }
+  if ($entry.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow) {
+    $entrySid = $entry.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+    if ($entrySid -ne $sid.Value) { exit 22 }
+    if (($entry.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl) {
+      $ownAllow = $true
+    }
+  }
+}
+if (-not $ownAllow) { exit 23 }
+`
+
+function execWindowsAcl(path: string, kind: 'directory' | 'file'): Promise<void> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    execFile('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', WINDOWS_ACL_SCRIPT], {
+      windowsHide: true,
+      env: { ...process.env, HERMES_ARTIFACT_PATH: path, HERMES_ARTIFACT_KIND: kind },
+      timeout: 15_000,
+      maxBuffer: 64 * 1024,
+    }, error => error ? rejectPromise(error) : resolvePromise())
+  })
+}
+
+function createDefaultAccessController(): HealthArtifactAccessController {
+  if (process.platform === 'win32') {
+    return {
+      secureDirectory: path => execWindowsAcl(path, 'directory'),
+      secureFile: path => execWindowsAcl(path, 'file'),
+    }
+  }
+  const secure = async (path: string, directory: boolean): Promise<void> => {
+    const mode = directory ? 0o700 : 0o600
+    await chmod(path, mode)
+    const stat = await lstat(path)
+    if ((directory ? !stat.isDirectory() : !stat.isFile()) || stat.isSymbolicLink() || (stat.mode & 0o777) !== mode) {
+      throw new Error('private mode verification failed')
+    }
+    if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) throw new Error('private owner verification failed')
+  }
+  return {
+    secureDirectory: path => secure(path, true),
+    secureFile: path => secure(path, false),
+  }
+}
+
+async function secureAccess(operation: () => Promise<void>): Promise<void> {
+  try {
+    await operation()
+  } catch {
+    throw new HealthArtifactVaultError('HEALTH_ARTIFACT_ACCESS_DENIED')
+  }
+}
+
+async function prepareVaultRoot(base: string, root: string, accessController: HealthArtifactAccessController): Promise<string> {
   try {
     assertLocalPath(base)
     assertLocalPath(root)
@@ -141,9 +231,9 @@ async function prepareVaultRoot(base: string, root: string): Promise<string> {
     const rootStat = await optionalLstat(root)
     if (!rootStat) await createDirectoryIfMissing(root)
     await assertSafeDirectory(root)
+    await secureAccess(() => accessController.secureDirectory(root))
     const [baseReal, rootReal] = await Promise.all([realpath(base), realpath(root)])
     if (!isPathInside(baseReal, rootReal)) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
-    await chmod(root, 0o700).catch(() => undefined)
     return rootReal
   } catch (error) {
     if (error instanceof HealthArtifactVaultError) throw error
@@ -190,12 +280,21 @@ function validateMedia(content: Buffer, declaredMediaType: unknown, limits: { to
   return declaredMediaType
 }
 
-async function verifyStoredFile(path: string, expectedHash: string, expectedSize: number, expectedMediaType: string, rootReal: string): Promise<Buffer> {
+async function verifyStoredFile(
+  path: string,
+  expectedHash: string,
+  expectedSize: number,
+  expectedMediaType: string,
+  rootReal: string,
+  accessController: HealthArtifactAccessController,
+): Promise<Buffer> {
   try {
     const parent = dirname(path)
     await assertSafeDirectory(parent)
+    await secureAccess(() => accessController.secureDirectory(parent))
     const pathStat = await lstat(path)
     if (!pathStat.isFile() || pathStat.isSymbolicLink()) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
+    await secureAccess(() => accessController.secureFile(path))
     const resolved = await realpath(path)
     if (!isPathInside(rootReal, resolved) || basename(resolved) !== expectedHash) {
       throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
@@ -225,6 +324,7 @@ async function verifyStoredFile(path: string, expectedHash: string, expectedSize
 
 export function createHealthArtifactVault(options: HealthArtifactVaultOptions = {}): HealthArtifactVault {
   const limits = normalizeLimits(options)
+  const accessController = options.accessController ?? createDefaultAccessController()
   const base = resolve(getHermesBaseDir())
   const root = resolve(base, 'personal', 'artifacts')
 
@@ -236,12 +336,13 @@ export function createHealthArtifactVault(options: HealthArtifactVaultOptions = 
       const content = Buffer.from(input.content)
       const mediaType = validateMedia(content, input.declaredMediaType, limits)
       const contentHash = createHash('sha256').update(content).digest('hex')
-      const rootReal = await prepareVaultRoot(base, root)
+      const rootReal = await prepareVaultRoot(base, root, accessController)
       const shard = resolve(root, contentHash.slice(0, 2))
       try {
         const shardStat = await optionalLstat(shard)
         if (!shardStat) await createDirectoryIfMissing(shard)
         await assertSafeDirectory(shard)
+        await secureAccess(() => accessController.secureDirectory(shard))
         const shardReal = await realpath(shard)
         if (!isPathInside(rootReal, shardReal)) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
       } catch (error) {
@@ -256,6 +357,7 @@ export function createHealthArtifactVault(options: HealthArtifactVaultOptions = 
         const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0)
         const handle = await open(tempPath, flags, 0o600)
         try {
+          await secureAccess(() => accessController.secureFile(tempPath))
           await handle.writeFile(content)
           await handle.sync()
         } finally {
@@ -264,11 +366,12 @@ export function createHealthArtifactVault(options: HealthArtifactVaultOptions = 
         try {
           await link(tempPath, finalPath)
           createdFinal = true
-          await chmod(finalPath, 0o600).catch(() => undefined)
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
         }
+        await secureAccess(() => accessController.secureFile(finalPath))
       } catch (error) {
+        if (createdFinal) await unlink(finalPath).catch(() => undefined)
         if (error instanceof HealthArtifactVaultError) throw error
         throw new HealthArtifactVaultError('HEALTH_ARTIFACT_WRITE_FAILED')
       } finally {
@@ -276,7 +379,7 @@ export function createHealthArtifactVault(options: HealthArtifactVaultOptions = 
       }
 
       try {
-        await verifyStoredFile(finalPath, contentHash, content.length, mediaType, rootReal)
+        await verifyStoredFile(finalPath, contentHash, content.length, mediaType, rootReal, accessController)
       } catch (error) {
         if (createdFinal) await unlink(finalPath).catch(() => undefined)
         throw error
@@ -315,10 +418,10 @@ export function createHealthArtifactVault(options: HealthArtifactVaultOptions = 
       }
       const expectedRelativePath = `${artifact.contentHash.slice(0, 2)}/${artifact.contentHash}`
       if (artifact.relativePath !== expectedRelativePath) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
-      const rootReal = await prepareVaultRoot(base, root)
+      const rootReal = await prepareVaultRoot(base, root, accessController)
       const path = resolve(root, ...artifact.relativePath.split('/'))
       if (!isPathInside(root, path)) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
-      const content = await verifyStoredFile(path, artifact.contentHash, artifact.sizeBytes, artifact.mediaType, rootReal)
+      const content = await verifyStoredFile(path, artifact.contentHash, artifact.sizeBytes, artifact.mediaType, rootReal, accessController)
       return { artifact, content }
     },
   }

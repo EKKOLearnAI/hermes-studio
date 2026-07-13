@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'crypto'
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { getTwinArtifact, withPersonalTwinDb } from '../personal-twin'
 
@@ -86,6 +86,15 @@ interface ConsentRow {
   expires_at: string
   consumed_at: string | null
   revoked_at: string | null
+}
+
+interface GrantEnvelope {
+  manifestDigest: string
+  manifest: HealthProcessingManifest
+  processor: string
+  issuedAt: string
+  expiresAt: string
+  ttlMs: number
 }
 
 function utf8Compare(left: string, right: string): number {
@@ -198,6 +207,27 @@ function tokenDigest(token: string): Buffer {
   return createHash('sha256').update(token).digest()
 }
 
+function grantEnvelope(
+  manifest: HealthProcessingManifest,
+  digest: string,
+  issuedAt: string,
+  expiresAt: string,
+  ttlMs: number,
+): GrantEnvelope {
+  return { manifestDigest: digest, manifest, processor: manifest.processor, issuedAt, expiresAt, ttlMs }
+}
+
+function grantBinding(token: string, envelope: GrantEnvelope): Buffer {
+  return createHmac('sha256', Buffer.from(token, 'hex')).update(JSON.stringify(envelope)).digest()
+}
+
+function strictUtcMillis(value: unknown): number | null {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return null
+  const milliseconds = Date.parse(value)
+  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== value) return null
+  return milliseconds
+}
+
 function safeNow(clock: () => Date): { date: Date; iso: string } {
   try {
     const date = clock()
@@ -222,16 +252,31 @@ function transaction<T>(callback: (db: DatabaseSync) => T): T {
   })
 }
 
-function storedTokenDigest(row: ConsentRow, allowedProcessors: ReadonlySet<string>): Buffer | null {
+function storedGrant(
+  row: ConsentRow,
+  allowedProcessors: ReadonlySet<string>,
+  maxTtlMs: number,
+): { tokenDigest: Buffer; grantBinding: Buffer; envelope: GrantEnvelope } | null {
   try {
     if (Buffer.byteLength(row.scope_json, 'utf8') > MAX_SCOPE_BYTES) return null
     const scope = JSON.parse(row.scope_json) as Record<string, unknown>
     if (!scope || typeof scope !== 'object' || Array.isArray(scope)
-      || Object.getOwnPropertyNames(scope).sort(utf8Compare).join(',') !== 'manifest,tokenDigest') return null
+      || Object.getOwnPropertyNames(scope).sort(utf8Compare).join(',') !== 'expiresAt,grantBinding,issuedAt,manifest,tokenDigest,ttlMs') return null
     const storedManifest = canonicalManifest(scope.manifest as HealthProcessingManifest, allowedProcessors, false)
     if (manifestDigest(storedManifest) !== row.manifest_digest || storedManifest.processor !== row.processor
-      || typeof scope.tokenDigest !== 'string' || !DIGEST.test(scope.tokenDigest)) return null
-    return Buffer.from(scope.tokenDigest, 'hex')
+      || typeof scope.tokenDigest !== 'string' || !DIGEST.test(scope.tokenDigest)
+      || typeof scope.grantBinding !== 'string' || !DIGEST.test(scope.grantBinding)
+      || scope.issuedAt !== row.issued_at || scope.expiresAt !== row.expires_at
+      || !Number.isSafeInteger(scope.ttlMs) || (scope.ttlMs as number) < 1 || (scope.ttlMs as number) > maxTtlMs) return null
+    const issued = strictUtcMillis(scope.issuedAt)
+    const expires = strictUtcMillis(scope.expiresAt)
+    if (issued === null || expires === null || issued > expires || expires - issued !== scope.ttlMs) return null
+    const envelope = grantEnvelope(storedManifest, row.manifest_digest, row.issued_at, row.expires_at, scope.ttlMs as number)
+    return {
+      tokenDigest: Buffer.from(scope.tokenDigest, 'hex'),
+      grantBinding: Buffer.from(scope.grantBinding, 'hex'),
+      envelope,
+    }
   } catch {
     return null
   }
@@ -272,7 +317,9 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
       const expiresAt = new Date(date.getTime() + ttlMs).toISOString()
       const token = randomBytes(32).toString('hex')
       const digestHex = tokenDigest(token).toString('hex')
-      const scopeJson = JSON.stringify({ manifest, tokenDigest: digestHex })
+      const bindingHex = grantBinding(token, grantEnvelope(manifest, digest, issuedAt, expiresAt, ttlMs)).toString('hex')
+      const scopeJson = JSON.stringify({ manifest, issuedAt, expiresAt, ttlMs, tokenDigest: digestHex, grantBinding: bindingHex })
+      if (Buffer.byteLength(scopeJson, 'utf8') > MAX_SCOPE_BYTES) throw new HealthConsentError('HEALTH_CONSENT_MANIFEST_INVALID')
 
       runStorage(() => transaction(db => {
         const existing = db.prepare('SELECT * FROM twin_artifact_consents WHERE manifest_digest=?').get(digest) as unknown as ConsentRow | undefined
@@ -300,10 +347,16 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
       const suppliedDigest = tokenValid ? tokenDigest(token) : tokenDigest('invalid')
       return runStorage(() => transaction(db => {
         const row = db.prepare('SELECT * FROM twin_artifact_consents WHERE manifest_digest=?').get(digest) as unknown as ConsentRow | undefined
-        const expectedDigest = row ? storedTokenDigest(row, allowedProcessors) : null
-        const comparable = expectedDigest ?? Buffer.alloc(32)
-        const authenticated = comparable.length === suppliedDigest.length && timingSafeEqual(comparable, suppliedDigest)
-        if (!row || !expectedDigest || !tokenValid || !authenticated) throw new HealthConsentError('HEALTH_CONSENT_INVALID')
+        const stored = row ? storedGrant(row, allowedProcessors, maxTtlMs) : null
+        const comparableDigest = stored?.tokenDigest ?? Buffer.alloc(32)
+        const suppliedBinding = grantBinding(tokenValid ? token : '0'.repeat(64), stored?.envelope
+          ?? grantEnvelope(manifest, digest, consumedAt, consumedAt, 1))
+        const comparableBinding = stored?.grantBinding ?? Buffer.alloc(32)
+        const digestAuthenticated = timingSafeEqual(comparableDigest, suppliedDigest)
+        const bindingAuthenticated = timingSafeEqual(comparableBinding, suppliedBinding)
+        if (!row || !stored || !tokenValid || !digestAuthenticated || !bindingAuthenticated) {
+          throw new HealthConsentError('HEALTH_CONSENT_INVALID')
+        }
         if (row.revoked_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REVOKED')
         if (row.consumed_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REPLAYED')
         if (row.expires_at <= consumedAt) throw new HealthConsentError('HEALTH_CONSENT_EXPIRED')
