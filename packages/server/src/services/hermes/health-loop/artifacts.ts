@@ -412,6 +412,28 @@ function assertSamePublishedIdentity(temp: VerifiedArtifactFile, final: Verified
   }
 }
 
+async function cleanupOwnedPublishedArtifact(
+  path: string,
+  contentHash: string,
+  identity: VerifiedArtifactFile['identity'],
+): Promise<void> {
+  let registered: TwinArtifact | null
+  try {
+    registered = getTwinArtifact(contentHash)
+  } catch {
+    return
+  }
+  if (registered) return
+  try {
+    const stat = await lstat(path, { bigint: true })
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n
+      || stat.dev !== identity.dev || stat.ino === 0n || stat.ino !== identity.ino) return
+    await unlink(path)
+  } catch {
+    // Cleanup is conservative: lookup, identity, and unlink failures leave the final in place.
+  }
+}
+
 async function withProcessLocalVaultQueue<T>(key: string, operation: () => Promise<T>): Promise<T> {
   const previous = vaultLockQueues.get(key)?.tail ?? Promise.resolve()
   let release!: () => void
@@ -531,6 +553,7 @@ export function createHealthArtifactVault(options: HealthArtifactVaultOptions = 
 
         const tempPath = resolve(shard, `.${contentHash}.tmp-${randomBytes(16).toString('hex')}`)
         let publishedByRequest = false
+        let publishedIdentity: VerifiedArtifactFile['identity'] | null = null
         try {
           const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0)
           const handle = await open(tempPath, flags, 0o600)
@@ -547,6 +570,7 @@ export function createHealthArtifactVault(options: HealthArtifactVaultOptions = 
           try {
             await link(tempPath, finalPath)
             publishedByRequest = true
+            publishedIdentity = verifiedTemp.identity
             await unlink(tempPath)
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
@@ -555,29 +579,22 @@ export function createHealthArtifactVault(options: HealthArtifactVaultOptions = 
             finalPath, contentHash, content.length, mediaType, rootReal, accessController, contentHash,
           )
           if (publishedByRequest) assertSamePublishedIdentity(verifiedTemp, verifiedFinal)
+          try {
+            return upsertTwinArtifact(registryInput)
+          } catch (error) {
+            if (error instanceof TwinImmutableRecordConflictError) {
+              throw new HealthArtifactVaultError('HEALTH_ARTIFACT_REGISTRY_CONFLICT')
+            }
+            throw new HealthArtifactVaultError('HEALTH_ARTIFACT_REGISTRY_FAILED')
+          }
         } catch (error) {
+          if (publishedByRequest && publishedIdentity) {
+            await cleanupOwnedPublishedArtifact(finalPath, contentHash, publishedIdentity)
+          }
           if (error instanceof HealthArtifactVaultError) throw error
           throw new HealthArtifactVaultError('HEALTH_ARTIFACT_WRITE_FAILED')
         } finally {
           await unlink(tempPath).catch(() => undefined)
-        }
-
-        try {
-          return upsertTwinArtifact(registryInput)
-        } catch (error) {
-          if (publishedByRequest) {
-            let registered: TwinArtifact | null = null
-            let registryChecked = false
-            try {
-              registered = getTwinArtifact(contentHash)
-              registryChecked = true
-            } catch { /* fail closed and preserve the file */ }
-            if (registryChecked && !registered) await unlink(finalPath).catch(() => undefined)
-          }
-          if (error instanceof TwinImmutableRecordConflictError) {
-            throw new HealthArtifactVaultError('HEALTH_ARTIFACT_REGISTRY_CONFLICT')
-          }
-          throw new HealthArtifactVaultError('HEALTH_ARTIFACT_REGISTRY_FAILED')
         }
       })
     },

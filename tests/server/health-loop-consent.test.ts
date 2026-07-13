@@ -80,6 +80,29 @@ describe('health remote-processing consent broker', () => {
     await expect(broker.consume(grant.token, manifest)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_REPLAYED' })
   })
 
+  it('rejects consume and revoke when the clock moves before issuance without changing grant state', async () => {
+    const { broker, manifest } = await fixture()
+    const grant = await broker.issue(manifest)
+    const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
+    const state = (consentId: string) => withPersonalTwinDb(db => db.prepare(
+      'SELECT consumed_at,revoked_at FROM twin_artifact_consents WHERE consent_id=?',
+    ).get(consentId))
+
+    now = new Date('2026-07-13T11:59:00.000Z')
+    await expect(broker.consume(grant.token, manifest)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_INVALID' })
+    await expect(broker.revoke(grant.consentId)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_INVALID' })
+    expect(state(grant.consentId)).toEqual({ consumed_at: null, revoked_at: null })
+
+    now = new Date('2026-07-13T12:00:00.000Z')
+    await expect(broker.consume(grant.token, manifest)).resolves.toMatchObject({ consentId: grant.consentId })
+    const reissued = await broker.issue(manifest)
+    now = new Date('2026-07-13T11:59:00.000Z')
+    await expect(broker.revoke(reissued.consentId)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_INVALID' })
+    expect(state(reissued.consentId)).toEqual({ consumed_at: null, revoked_at: null })
+    now = new Date('2026-07-13T12:00:00.000Z')
+    await expect(broker.revoke(reissued.consentId)).resolves.toMatchObject({ consentId: reissued.consentId })
+  })
+
   it('allows exactly one concurrent consume and does not consume after failed authentication', async () => {
     const { broker, manifest } = await fixture()
     const grant = await broker.issue(manifest)

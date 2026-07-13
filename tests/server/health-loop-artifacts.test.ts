@@ -245,7 +245,7 @@ describe('health artifact vault', () => {
     }
   })
 
-  it('serializes reuse behind publication and preserves a final after post-publish verification fails', async () => {
+  it('cleans its orphan before releasing the publication lock so a queued request can republish', async () => {
     const { createHealthArtifactVault } = await import('../../packages/server/src/services/hermes/health-loop/artifacts')
     const content = png()
     const digest = createHash('sha256').update(content).digest('hex')
@@ -253,6 +253,10 @@ describe('health artifact vault', () => {
     let releaseFailure!: () => void
     const published = new Promise<void>(resolve => { announcePublished = resolve })
     const mayFail = new Promise<void>(resolve => { releaseFailure = resolve })
+    let announceBTemp!: () => void
+    let releaseBTemp!: () => void
+    const bTempReached = new Promise<void>(resolve => { announceBTemp = resolve })
+    const bMayPublish = new Promise<void>(resolve => { releaseBTemp = resolve })
     let finalReached = false
     const requestA = createHealthArtifactVault({
       accessController: {
@@ -267,7 +271,17 @@ describe('health artifact vault', () => {
         },
       },
     })
-    const requestB = createHealthArtifactVault({ accessController: allowAccess() })
+    const requestB = createHealthArtifactVault({
+      accessController: {
+        secureDirectory: async () => undefined,
+        secureFile: async (path: string) => {
+          if (path.includes('.tmp-')) {
+            announceBTemp()
+            await bMayPublish
+          }
+        },
+      },
+    })
     const input = {
       content, declaredMediaType: 'image/png', source: 'health-capture', sourceId: 'publish-race', metadata: {},
     }
@@ -275,6 +289,8 @@ describe('health artifact vault', () => {
     const aResult = requestA.store(input).catch(error => error)
     await published
     const { getTwinArtifact } = await import('../../packages/server/src/services/hermes/personal-twin')
+    const finalPath = join(hermesHome, 'personal', 'artifacts', digest.slice(0, 2), digest)
+    expect(existsSync(finalPath)).toBe(true)
     expect(getTwinArtifact(digest)).toBeNull()
     let requestBSettled = false
     const bResult = requestB.store(input).finally(() => { requestBSettled = true })
@@ -282,11 +298,15 @@ describe('health artifact vault', () => {
     expect(requestBSettled).toBe(false)
     releaseFailure()
     const failure = await aResult
+    await bTempReached
+
+    expect(failure).toMatchObject({ code: 'HEALTH_ARTIFACT_ACCESS_DENIED' })
+    expect(existsSync(finalPath)).toBe(false)
+    expect(getTwinArtifact(digest)).toBeNull()
+    releaseBTemp()
     const registered = await bResult
 
     expect(finalReached).toBe(true)
-    expect(failure).toMatchObject({ code: 'HEALTH_ARTIFACT_ACCESS_DENIED' })
-    const finalPath = join(hermesHome, 'personal', 'artifacts', registered.relativePath)
     expect(readFileSync(finalPath)).toEqual(content)
     await expect(requestB.read(registered.id)).resolves.toMatchObject({ artifact: { id: registered.id }, content })
     expect(getTwinArtifact(digest)).toMatchObject({ id: registered.id })

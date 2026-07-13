@@ -395,12 +395,18 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
           throw new HealthConsentError('HEALTH_CONSENT_INVALID')
         }
         const row = matches[0].row
+        const issuedMillis = strictUtcMillis(row.issued_at)
+        const consumedMillis = strictUtcMillis(consumedAt)
+        if (issuedMillis === null || consumedMillis === null || consumedMillis < issuedMillis) {
+          throw new HealthConsentError('HEALTH_CONSENT_INVALID')
+        }
         if (row.revoked_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REVOKED')
         if (row.consumed_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REPLAYED')
         if (row.expires_at <= consumedAt) throw new HealthConsentError('HEALTH_CONSENT_EXPIRED')
         const result = db.prepare(`UPDATE twin_artifact_consents SET consumed_at=?
-          WHERE consent_id=? AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>?`)
-          .run(consumedAt, row.consent_id, consumedAt)
+          WHERE consent_id=? AND issued_at=? AND issued_at<=?
+            AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>?`)
+          .run(consumedAt, row.consent_id, row.issued_at, consumedAt, consumedAt)
         if (result.changes !== 1) throw new HealthConsentError('HEALTH_CONSENT_INVALID')
         return { consentId: row.consent_id, manifestDigest: digest, consumedAt }
       }))
@@ -415,10 +421,16 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
         if (!validateStoredConsentCausality(row) || !storedGrant(row, allowedProcessors, maxTtlMs)) {
           throw new HealthConsentError('HEALTH_CONSENT_STORAGE_FAILED')
         }
+        const issuedMillis = strictUtcMillis(row.issued_at)
+        const revokedMillis = strictUtcMillis(revokedAt)
+        if (issuedMillis === null || revokedMillis === null || revokedMillis < issuedMillis) {
+          throw new HealthConsentError('HEALTH_CONSENT_INVALID')
+        }
         if (row.consumed_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REPLAYED')
         if (row.revoked_at !== null) return { consentId, revokedAt: row.revoked_at }
-        const result = db.prepare('UPDATE twin_artifact_consents SET revoked_at=? WHERE consent_id=? AND consumed_at IS NULL AND revoked_at IS NULL')
-          .run(revokedAt, consentId)
+        const result = db.prepare(`UPDATE twin_artifact_consents SET revoked_at=?
+          WHERE consent_id=? AND issued_at=? AND issued_at<=? AND consumed_at IS NULL AND revoked_at IS NULL`)
+          .run(revokedAt, consentId, row.issued_at, revokedAt)
         if (result.changes !== 1) throw new HealthConsentError('HEALTH_CONSENT_INVALID')
         return { consentId, revokedAt }
       }))
