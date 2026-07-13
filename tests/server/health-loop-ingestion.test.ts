@@ -158,8 +158,8 @@ describe('health-loop ingestion', () => {
         { ...fixtures[2], sourceId: 'posture-set', payload: { ...fixtures[2].payload, findings: [findingB, findingA], landmarks: [landmarkB, landmarkA] } }],
       [{ ...fixtures[3], sourceId: 'skin-set', payload: { ...fixtures[3].payload, appearances: [appearanceA, appearanceB, appearanceA] } },
         { ...fixtures[3], sourceId: 'skin-set', payload: { ...fixtures[3].payload, appearances: [appearanceB, appearanceA] } }],
-      [{ ...fixtures[4], sourceId: 'diet-set', payload: { ...fixtures[4].payload, foods: [foodA, foodB, foodA], supplements: [supplementA, supplementB, supplementA] } },
-        { ...fixtures[4], sourceId: 'diet-set', payload: { ...fixtures[4].payload, foods: [foodB, foodA], supplements: [supplementB, supplementA] } }],
+      [{ ...fixtures[4], sourceId: 'diet-set', payload: { ...fixtures[4].payload, foods: [foodA, foodA, foodB], supplements: [supplementA, supplementA, supplementB] } },
+        { ...fixtures[4], sourceId: 'diet-set', payload: { ...fixtures[4].payload, foods: [foodB, foodA, foodA], supplements: [supplementB, supplementA, supplementA] } }],
       [{ ...fixtures[7], sourceId: 'marker-set', payload: { ...fixtures[7].payload, markers: [markerA, markerB, markerA] } },
         { ...fixtures[7], sourceId: 'marker-set', payload: { ...fixtures[7].payload, markers: [markerB, markerA] } }],
     ]
@@ -169,11 +169,20 @@ describe('health-loop ingestion', () => {
       expect(replay.event.id).toBe(inserted.event.id)
       expect(replay.observations.map(item => item.id)).toEqual(inserted.observations.map(item => item.id))
     }
+    const diet = normalizeHealthIngestionEnvelope(cases[2][0])
+    expect(diet.observations.find(item => item.metric === 'health.diet.foods')?.value).toEqual([foodB, foodA, foodA])
+    expect(diet.observations.find(item => item.metric === 'health.diet.supplements')?.value).toEqual([supplementB, supplementA, supplementA])
 
     const ordered = fixtures[5]
     const reversedExercises = { ...ordered, payload: { ...ordered.payload, exercises: [...(ordered.payload.exercises as unknown[])].reverse() } }
     expect(normalizeHealthIngestionEnvelope(reversedExercises).materialDigest)
       .not.toBe(normalizeHealthIngestionEnvelope(ordered).materialDigest)
+    const exercises = ordered.payload.exercises as Array<Record<string, unknown>>
+    const orderedSets = [{ reps: 8, loadKg: 80, completed: true }, { reps: 6, loadKg: 85, completed: true }]
+    const workoutWithDistinctSets = { ...ordered, sourceId: 'ordered-sets', payload: { ...ordered.payload, exercises: [{ ...exercises[0], sets: orderedSets }, exercises[1]] } }
+    const reversedSets = { ...workoutWithDistinctSets, payload: { ...workoutWithDistinctSets.payload, exercises: [{ ...exercises[0], sets: [...orderedSets].reverse() }, exercises[1]] } }
+    expect(normalizeHealthIngestionEnvelope(reversedSets).materialDigest)
+      .not.toBe(normalizeHealthIngestionEnvelope(workoutWithDistinctSets).materialDigest)
   })
 
   it('rejects invalid newly approved fields in every domain with sanitized errors', async () => {

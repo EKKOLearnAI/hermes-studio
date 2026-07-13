@@ -146,6 +146,11 @@ function unorderedUnique<T>(values: T[]): T[] {
   return [...byCanonical.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, value]) => value)
 }
 
+function unorderedBag<T>(values: T[]): T[] {
+  return values.map(value => ({ canonical: canonicalSafeJson(value), value }))
+    .sort((left, right) => left.canonical.localeCompare(right.canonical)).map(item => item.value)
+}
+
 function normalizeBody(record: Record<string, unknown>): NormalizedHealthObservation[] {
   const output: NormalizedHealthObservation[] = []
   const fields: Array<[string[], string, string | null, number, number]> = [
@@ -259,14 +264,14 @@ function normalizeDiet(record: Record<string, unknown>): NormalizedHealthObserva
   const output: NormalizedHealthObservation[] = []
   if (record.foods !== undefined) {
     if (!Array.isArray(record.foods) || record.foods.length > 64) fail('HEALTH_INGESTION_INVALID_PAYLOAD', 'foods is invalid')
-    add(output, 'health.diet.foods', unorderedUnique(record.foods.map((item, index) => {
+    add(output, 'health.diet.foods', unorderedBag(record.foods.map((item, index) => {
       const food = plainRecord(item, `foods[${index}]`)
       return { name: text(food.name, 'food.name', 100), portionGrams: number(food.portionGrams, 'food.portionGrams', 0.1, 10_000) }
     })))
   }
   if (record.supplements !== undefined) {
     if (!Array.isArray(record.supplements) || record.supplements.length > 32) fail('HEALTH_INGESTION_INVALID_PAYLOAD', 'supplements is invalid')
-    add(output, 'health.diet.supplements', unorderedUnique(record.supplements.map((item, index) => {
+    add(output, 'health.diet.supplements', unorderedBag(record.supplements.map((item, index) => {
       const supplement = plainRecord(item, `supplements[${index}]`)
       return {
         name: text(supplement.name, 'supplement.name', 100), amount: number(supplement.amount, 'supplement.amount', 0.0001, 100_000),
