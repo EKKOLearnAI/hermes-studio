@@ -58,7 +58,7 @@ describe('health-loop deterministic projectors', () => {
         'schemaVersion', 'ruleVersion', 'state', 'inputRecordIds', 'effectiveAt', 'computedAt',
         'freshness', 'confidence', 'conflicts', 'missing', 'rationale',
       ])
-      expect(first[key]).toMatchObject({ schemaVersion: 1, ruleVersion: 'health-rules-fixture-v7', computedAt })
+      expect(first[key]).toMatchObject({ schemaVersion: 1, ruleVersion: 'health-rules-fixture-v7', computedAt: '2026-07-14T12:00:00Z' })
       expect(first[key].rationale.every(item => !/diagnos/i.test(item.message))).toBe(true)
     }
     expect(first['health.body_composition_state'].state).toMatchObject({ current: { weight_kg: { value: 82, unit: 'kg' } } })
@@ -66,7 +66,36 @@ describe('health-loop deterministic projectors', () => {
     expect(Object.keys(first['health.readiness_state'].state.dependencies)).toEqual([
       'bodyComposition', 'internal', 'nutrition', 'posture', 'recovery', 'skin', 'training',
     ])
+    expect(first['health.readiness_state'].state.dependencies).toMatchObject({
+      bodyComposition: { criticality: 'advisory' }, recovery: { criticality: 'critical' },
+      nutrition: { criticality: 'critical' }, training: { criticality: 'critical' },
+    })
+    expect(first['health.readiness_state'].state).toMatchObject({ status: 'caution' })
+    expect(first['health.readiness_state'].freshness.status).not.toBe('fresh')
+    expect(first['health.readiness_state'].missing).toEqual(expect.arrayContaining([
+      'internal:missing', 'posture:missing', 'skin:missing',
+    ]))
     expect(JSON.stringify(first)).not.toContain('artifact-')
+  })
+
+  it('blocks weight current and trends when canonical and incompatible units coexist', async () => {
+    const { computeHealthProjections } = await import('../../packages/server/src/services/hermes/health-loop')
+    const result = computeHealthProjections([
+      observation({ id: 'weight-old-a', metric: 'health.body_composition.weight_kg', value: 83, unit: 'kg', observedAt: '2026-07-07T08:00:00Z' }),
+      observation({ id: 'weight-old-b', metric: 'health.body_composition.weight_kg', value: 82.5, unit: 'kg', observedAt: '2026-07-08T08:00:00Z' }),
+      observation({ id: 'weight-latest-kg', metric: 'health.body_composition.weight_kg', value: 82, unit: 'kg' }),
+      observation({ id: 'weight-latest-lb', metric: 'health.body_composition.weight_kg', value: 181, unit: 'lb' }),
+    ], { computedAt })
+
+    expect(result['health.body_composition_state'].state.current).not.toHaveProperty('weight_kg')
+    expect(result['health.body_composition_state'].conflicts).toContainEqual(expect.objectContaining({
+      code: 'UNIT_CONFLICT', recordIds: ['weight-latest-lb'],
+    }))
+    expect(result['health.fat_loss_state'].state).toMatchObject({ weightKg: null, weightVelocityKgPerWeek: null })
+    expect(result['health.fat_loss_state'].inputRecordIds).toEqual([
+      'weight-latest-kg', 'weight-latest-lb', 'weight-old-a', 'weight-old-b',
+    ])
+    expect(result['health.readiness_state'].conflicts).toContainEqual(expect.objectContaining({ code: 'UNIT_CONFLICT' }))
   })
 
   it('uses source identity tie-breaks and keeps skin reports beside vision estimates', async () => {
@@ -134,6 +163,9 @@ describe('health-loop deterministic projectors', () => {
     expect(body.conflicts.map(item => item.code)).toEqual(expect.arrayContaining(['SOURCE_CONFLICT', 'UNIT_CONFLICT', 'VALUE_CONFLICT']))
     expect(body.conflicts.flatMap(item => item.recordIds)).toEqual(expect.arrayContaining(['weight-a', 'weight-b', 'weight-c']))
     expect(body.inputRecordIds).toEqual(['weight-a', 'weight-b', 'weight-c'])
+    expect(result['health.fat_loss_state'].state).toMatchObject({ weightKg: null, weightVelocityKgPerWeek: null })
+    expect(result['health.fat_loss_state'].missing).toEqual(expect.arrayContaining(['weight_kg', 'weight_trend']))
+    expect(result['health.readiness_state'].state).not.toMatchObject({ status: 'ready' })
   })
 
   it('uses versioned freshness thresholds with deterministic inclusive boundaries and rejects future/corrupt facts', async () => {
@@ -158,6 +190,24 @@ describe('health-loop deterministic projectors', () => {
     expect(unsafe.state.current).not.toHaveProperty('stages')
     expect(unsafe.state.current).not.toHaveProperty('recovery_score')
     expect(unsafe.inputRecordIds).toEqual(['bad-time', 'bad-value', 'foreign-record', 'future-sleep', 'poison-value'])
+  })
+
+  it('uses strict canonical nanosecond timestamps and rejects impossible or forward cutoffs', async () => {
+    const { canonicalizeHealthTimestamp, computeHealthProjections } = await import('../../packages/server/src/services/hermes/health-loop')
+    expect(canonicalizeHealthTimestamp('2026-07-14T20:00:00.000000001+08:00')).toBe('2026-07-14T12:00:00.000000001Z')
+    expect(() => canonicalizeHealthTimestamp('2026-02-31T00:00:00Z')).toThrow(/timestamp/i)
+    expect(() => computeHealthProjections([], { computedAt: '2026-02-31T00:00:00Z' })).toThrow('HEALTH_PROJECTION_INVALID_COMPUTED_AT')
+    expect(() => computeHealthProjections([], {
+      computedAt: '2026-07-14T12:00:00.000000001Z', cutoffAt: '2026-07-14T12:00:00.000000002Z',
+    })).toThrow('HEALTH_PROJECTION_CUTOFF_AFTER_COMPUTED_AT')
+
+    const projection = computeHealthProjections([
+      observation({ id: 'at-cutoff', metric: 'health.sleep.duration_minutes', value: 420, unit: 'min', observedAt: '2026-07-14T12:00:00.000000001Z' }),
+      observation({ id: 'after-cutoff', metric: 'health.sleep.recovery_score', value: 90, observedAt: '2026-07-14T12:00:00.000000002Z' }),
+    ], { computedAt: '2026-07-14T12:00:00.000000003Z', cutoffAt: '2026-07-14T12:00:00.000000001Z' })['health.recovery_state']
+    expect(projection.state.current).toMatchObject({ duration_minutes: { recordId: 'at-cutoff' } })
+    expect(projection.state.current).not.toHaveProperty('recovery_score')
+    expect(projection.conflicts).toContainEqual(expect.objectContaining({ code: 'FUTURE_RECORD', recordIds: ['after-cutoff'] }))
   })
 
   it('keeps first internal reports pending and out of confirmed current state', async () => {
@@ -194,7 +244,7 @@ describe('health-loop deterministic projectors', () => {
     expect(empty['health.nutrition_state'].state).toMatchObject({ totals: null })
     expect(empty['health.training_state'].state).toMatchObject({ load7d: null })
     expect(empty['health.recovery_state'].state).toMatchObject({ current: {} })
-    expect(empty['health.readiness_state'].state).toMatchObject({ status: 'insufficient', score: null })
+    expect(empty['health.readiness_state'].state).toMatchObject({ status: 'insufficient_data', score: null })
     expect(empty['health.readiness_state'].missing.length).toBeGreaterThan(0)
   })
 
@@ -222,17 +272,29 @@ describe('health-loop deterministic projectors', () => {
     expect(health.HEALTH_PROJECTION_KEYS.map(key => twin.getTwinProjection(key, 'person:self')?.version)).toEqual(Array(9).fill(1))
   })
 
-  it('fails closed above the explicit immutable input bound', async () => {
+  it('computes the 4096-record audit bound without truncation and fails closed at 4097', async () => {
     const health = await import('../../packages/server/src/services/hermes/health-loop')
     const twin = await import('../../packages/server/src/services/hermes/personal-twin')
     const { computeHealthProjections, MAX_HEALTH_PROJECTION_INPUTS } = health
-    const records = Array.from({ length: MAX_HEALTH_PROJECTION_INPUTS + 1 }, (_, index) => observation({
-      id: `weight-${index}`, metric: 'health.body_composition.weight_kg', value: 82, unit: 'kg',
-    }))
+    expect(MAX_HEALTH_PROJECTION_INPUTS).toBe(4096)
+    const domainMetrics = [
+      ['health.body_composition.weight_kg', 82, 'kg'], ['health.diet.protein_g', 30, 'g'],
+      ['health.fitness.training_load', 200, null], ['health.sleep.duration_minutes', 450, 'min'],
+      ['health.posture.findings', [{ code: 'stable', severity: 0.1, confidence: 0.9 }], null],
+      ['health.skin.appearances', [{ type: 'stable', severity: 0.1 }], null],
+      ['health.internal_health.markers', [{ key: 'marker', value: 1, unit: 'unit' }], null],
+      ['health.measurements.waist_cm', 88, 'cm'],
+    ] as const
+    const records = Array.from({ length: MAX_HEALTH_PROJECTION_INPUTS + 1 }, (_, index) => {
+      const [metric, value, unit] = domainMetrics[index % domainMetrics.length]
+      return observation({ id: `record-${String(index).padStart(4, '0')}`, metric, value, unit })
+    })
+    const atLimit = computeHealthProjections(records.slice(0, MAX_HEALTH_PROJECTION_INPUTS), { computedAt })
+    expect(atLimit['health.readiness_state'].inputRecordIds).toHaveLength(MAX_HEALTH_PROJECTION_INPUTS)
     expect(() => computeHealthProjections(records, { computedAt })).toThrow('HEALTH_PROJECTION_INPUT_LIMIT')
 
     twin.upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
-    const bounded = computeHealthProjections(records.slice(0, MAX_HEALTH_PROJECTION_INPUTS), { computedAt })
+    const bounded = computeHealthProjections(records.slice(0, 100), { computedAt })
     expect(() => health.persistHealthProjections(bounded)).not.toThrow()
   })
 })

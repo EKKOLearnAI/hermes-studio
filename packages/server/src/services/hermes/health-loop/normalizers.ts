@@ -153,7 +153,7 @@ function daysInGregorianMonth(year: number, month: number): number {
   return [4, 6, 9, 11].includes(month) ? 30 : 31
 }
 
-function strictTimestamp(value: unknown, field: string): string {
+function parseHealthTimestamp(value: unknown, field: string): { canonical: string; epochNanoseconds: bigint } {
   if (typeof value !== 'string') fail('HEALTH_INGESTION_INVALID_TIMESTAMP', `${field} must be RFC3339`)
   const match = RFC3339.exec(value)
   if (!match) fail('HEALTH_INGESTION_INVALID_TIMESTAMP', `${field} must be RFC3339`)
@@ -174,7 +174,28 @@ function strictTimestamp(value: unknown, field: string): string {
   }
   const nanoseconds = (match[7] ?? '').padEnd(9, '0')
   const canonicalFraction = nanoseconds.replace(/0+$/, '')
-  return `${utc.slice(0, 19)}${canonicalFraction ? `.${canonicalFraction}` : ''}Z`
+  return {
+    canonical: `${utc.slice(0, 19)}${canonicalFraction ? `.${canonicalFraction}` : ''}Z`,
+    epochNanoseconds: BigInt(epochSeconds) * 1_000_000_000n + BigInt(nanoseconds || '0'),
+  }
+}
+
+function strictTimestamp(value: unknown, field: string): string {
+  return parseHealthTimestamp(value, field).canonical
+}
+
+export function canonicalizeHealthTimestamp(value: unknown, field = 'timestamp'): string {
+  return parseHealthTimestamp(value, field).canonical
+}
+
+export function healthTimestampEpochNanoseconds(value: unknown, field = 'timestamp'): bigint {
+  return parseHealthTimestamp(value, field).epochNanoseconds
+}
+
+export function compareHealthTimestamps(left: unknown, right: unknown): number {
+  const leftNs = healthTimestampEpochNanoseconds(left, 'left timestamp')
+  const rightNs = healthTimestampEpochNanoseconds(right, 'right timestamp')
+  return leftNs < rightNs ? -1 : leftNs > rightNs ? 1 : 0
 }
 
 function dateOnly(value: unknown, field: string): string {
