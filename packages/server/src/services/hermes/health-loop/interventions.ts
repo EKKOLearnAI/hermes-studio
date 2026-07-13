@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import { types as utilTypes } from 'util'
 import type { TwinProjection } from '../personal-twin'
 import { canonicalizeHealthTimestamp, healthTimestampEpochNanoseconds } from './normalizers'
 import {
@@ -8,12 +9,14 @@ import {
 } from './projectors'
 import {
   evaluateHealthInterventionRules,
+  HEALTH_ACTION_SAFETY_CATALOG,
   HEALTH_INTERVENTION_RULE_VERSION,
   type HealthInterventionAuthority,
   type HealthInterventionCategory,
   type HealthInterventionPlan,
   type HealthInterventionRisk,
   type HealthRuleCandidate,
+  type HealthRuleGatePolicy,
   type HealthRuleProjection,
 } from './rules/intervention-rules'
 
@@ -35,6 +38,8 @@ export interface HealthActiveAction {
   candidateId: string
   priority: number
   supersedable: boolean
+  risk: HealthInterventionRisk
+  authority: HealthInterventionAuthority
 }
 
 export interface DecideHealthInterventionsInput {
@@ -44,6 +49,7 @@ export interface DecideHealthInterventionsInput {
   quietHours?: HealthInterventionQuietHours
   recentActions?: readonly HealthRecentAction[]
   activeActions?: readonly HealthActiveAction[]
+  effectiveDate?: string
 }
 
 export interface HealthActionCandidate {
@@ -60,6 +66,7 @@ export interface HealthActionCandidate {
   rationale: string
   idempotencyKey: string
   supersedes: string[]
+  effectiveDate: string
 }
 
 export interface HealthInterventionDecision {
@@ -77,6 +84,59 @@ const FRESHNESS = new Set(['fresh', 'stale', 'missing', 'conflict'])
 const CATEGORIES = new Set<HealthInterventionCategory>(['training', 'recovery', 'nutrition', 'posture', 'skin', 'internal_health'])
 const PLAN_KEYS = new Set(['trainingIntensity', 'resistanceTrainingToday', 'proteinTargetG', 'trainingChains'])
 const MAX_HISTORY_ITEMS = 256
+const MAX_FRESHNESS_AGE_MS = 10 * 366 * 86_400_000
+const MAX_COOLDOWN_MS = 366 * 86_400_000
+const MAX_BOUNDARY_DEPTH = 32
+const MAX_BOUNDARY_NODES = 200_000
+const MAX_BOUNDARY_BYTES = 16 * 1024 * 1024
+const POISON_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+const INPUT_KEYS = new Set(['projections', 'now', 'plan', 'quietHours', 'recentActions', 'activeActions', 'effectiveDate'])
+const AUTHORITY_ORDER: Record<HealthInterventionAuthority, number> = { auto: 0, approval: 1, inform_only: 2 }
+
+function assertSafeBoundary(root: unknown): void {
+  const seen = new WeakSet<object>()
+  let nodes = 0
+  let bytes = 0
+  const addBytes = (value: string): void => {
+    bytes += Buffer.byteLength(value, 'utf8')
+    if (bytes > MAX_BOUNDARY_BYTES) throw new Error('boundary bytes')
+  }
+  const visit = (value: unknown, depth: number): void => {
+    nodes += 1
+    if (nodes > MAX_BOUNDARY_NODES || depth > MAX_BOUNDARY_DEPTH) throw new Error('boundary size')
+    if (value === null || typeof value === 'boolean') return
+    if (typeof value === 'string') { addBytes(value); return }
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value)) throw new Error('boundary number')
+      return
+    }
+    if (typeof value !== 'object' || utilTypes.isProxy(value)) throw new Error('boundary type')
+    if (seen.has(value)) throw new Error('boundary cycle')
+    seen.add(value)
+    if (Array.isArray(value)) {
+      if (Object.getPrototypeOf(value) !== Array.prototype) throw new Error('boundary array')
+      const keys = Reflect.ownKeys(value)
+      if (keys.some(key => typeof key !== 'string' || (key !== 'length' && !/^(?:0|[1-9]\d*)$/.test(key)))) throw new Error('boundary array key')
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+        if (!descriptor?.enumerable || !('value' in descriptor)) throw new Error('boundary array hole')
+        visit(descriptor.value, depth + 1)
+      }
+      if (keys.length !== value.length + 1) throw new Error('boundary array extra')
+      return
+    }
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) throw new Error('boundary object')
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== 'string' || POISON_KEYS.has(key)) throw new Error('boundary key')
+      addBytes(key)
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor?.enumerable || !('value' in descriptor)) throw new Error('boundary accessor')
+      visit(descriptor.value, depth + 1)
+    }
+  }
+  try { visit(root, 0) } catch { throw new Error('HEALTH_INTERVENTION_INVALID_INPUT') }
+}
 
 function plain(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
@@ -99,20 +159,42 @@ function assertBoundedIdentifier(value: unknown, code: string, maximum = 200): a
 }
 
 function validateEnvelope(value: unknown): HealthProjectionEnvelope {
-  if (!plain(value) || value.schemaVersion !== 1 || typeof value.ruleVersion !== 'string' || !value.ruleVersion
+  const envelopeKeys = ['schemaVersion', 'ruleVersion', 'state', 'inputRecordIds', 'effectiveAt', 'computedAt',
+    'freshness', 'confidence', 'conflicts', 'conflictCount', 'conflictOmittedCount', 'missing', 'rationale'].sort().join(',')
+  const freshnessKeys = ['policyVersion', 'status', 'thresholdMs', 'ageMs'].sort().join(',')
+  if (!plain(value) || Object.keys(value).sort().join(',') !== envelopeKeys
+    || value.schemaVersion !== 1 || typeof value.ruleVersion !== 'string' || !value.ruleVersion
     || !plain(value.state) || !Array.isArray(value.inputRecordIds) || typeof value.computedAt !== 'string'
-    || !plain(value.freshness) || !FRESHNESS.has(String(value.freshness.status))
+    || !plain(value.freshness) || Object.keys(value.freshness).sort().join(',') !== freshnessKeys
+    || !FRESHNESS.has(String(value.freshness.status))
     || typeof value.freshness.thresholdMs !== 'number' || !Number.isSafeInteger(value.freshness.thresholdMs) || value.freshness.thresholdMs < 0
-    || (value.freshness.ageMs !== null && (typeof value.freshness.ageMs !== 'number' || !Number.isFinite(value.freshness.ageMs) || value.freshness.ageMs < 0))
+    || (value.freshness.ageMs !== null && (typeof value.freshness.ageMs !== 'number' || !Number.isFinite(value.freshness.ageMs)
+      || value.freshness.ageMs < 0 || value.freshness.ageMs > MAX_FRESHNESS_AGE_MS))
     || typeof value.confidence !== 'number' || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1
-    || !Array.isArray(value.conflicts) || !Number.isSafeInteger(value.conflictCount) || (value.conflictCount as number) < 0
-    || !Number.isSafeInteger(value.conflictOmittedCount) || (value.conflictOmittedCount as number) < 0
+    || !Array.isArray(value.conflicts) || typeof value.conflictCount !== 'number'
+    || !Number.isSafeInteger(value.conflictCount) || value.conflictCount < 0
+    || typeof value.conflictOmittedCount !== 'number'
+    || !Number.isSafeInteger(value.conflictOmittedCount) || value.conflictOmittedCount < 0
     || !Array.isArray(value.missing) || !Array.isArray(value.rationale)) throw new Error('HEALTH_INTERVENTION_INVALID_PROJECTION')
   canonicalTimestamp(value.computedAt, 'HEALTH_INTERVENTION_INVALID_PROJECTION')
   if (value.effectiveAt !== null) canonicalTimestamp(value.effectiveAt, 'HEALTH_INTERVENTION_INVALID_PROJECTION')
   if (value.inputRecordIds.length > 4_096 || value.inputRecordIds.some(item => typeof item !== 'string' || !item || item.length > 200)
+    || new Set(value.inputRecordIds).size !== value.inputRecordIds.length
     || value.missing.length > 256 || value.missing.some(item => typeof item !== 'string' || !item || item.length > 200)
-    || value.conflicts.length > 32 || value.rationale.length > 64) throw new Error('HEALTH_INTERVENTION_INVALID_PROJECTION')
+    || new Set(value.missing).size !== value.missing.length || value.conflicts.length > 32 || value.rationale.length > 64
+    || typeof value.freshness.policyVersion !== 'string' || !value.freshness.policyVersion
+    || value.conflictCount < value.conflicts.length || value.conflictOmittedCount !== value.conflictCount - value.conflicts.length
+    || value.rationale.some(item => !plain(item) || Object.keys(item).sort().join(',') !== 'code,message'
+      || typeof item.code !== 'string' || !item.code || item.code.length > 100
+      || typeof item.message !== 'string' || !item.message || item.message.length > 1_000)
+    || value.conflicts.some(item => !plain(item) || Object.keys(item).sort().join(',') !== 'code,message,metric,omittedRecordCount,recordCount,recordIds'
+      || !['FUTURE_RECORD', 'INVALID_RECORD', 'UNIT_CONFLICT', 'VALUE_CONFLICT', 'SOURCE_CONFLICT'].includes(String(item.code))
+      || typeof item.metric !== 'string' || !item.metric || item.metric.length > 200
+      || !Array.isArray(item.recordIds) || item.recordIds.some(id => typeof id !== 'string' || !id || id.length > 200)
+      || typeof item.recordCount !== 'number' || !Number.isSafeInteger(item.recordCount) || item.recordCount < item.recordIds.length
+      || typeof item.omittedRecordCount !== 'number' || !Number.isSafeInteger(item.omittedRecordCount)
+      || item.omittedRecordCount !== item.recordCount - item.recordIds.length
+      || typeof item.message !== 'string' || !item.message || item.message.length > 1_000)) throw new Error('HEALTH_INTERVENTION_INVALID_PROJECTION')
   return value as unknown as HealthProjectionEnvelope
 }
 
@@ -120,20 +202,25 @@ function normalizeProjections(values: readonly TwinProjection[]): {
   projections: Map<HealthProjectionKey, HealthRuleProjection>
   versions: Record<string, number>
 } {
-  if (!Array.isArray(values) || values.length > HEALTH_PROJECTION_KEYS.length) throw new Error('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
+  if (!Array.isArray(values) || values.length !== HEALTH_PROJECTION_KEYS.length) throw new Error('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
   const projections = new Map<HealthProjectionKey, HealthRuleProjection>()
   for (const value of values) {
-    if (!value || typeof value !== 'object' || !PROJECTION_KEY_SET.has(value.key) || value.subjectId !== 'person:self'
+    if (!value || typeof value !== 'object' || Object.keys(value).sort().join(',') !== 'key,sourceRecordId,subjectId,updatedAt,value,version'
+      || !PROJECTION_KEY_SET.has(value.key) || value.subjectId !== 'person:self'
+      || typeof value.sourceRecordId !== 'string' || !value.sourceRecordId || value.sourceRecordId.length > 256
+      || typeof value.updatedAt !== 'string'
       || !Number.isSafeInteger(value.version) || value.version < 1 || projections.has(value.key as HealthProjectionKey)) {
       throw new Error('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
     }
+    canonicalTimestamp(value.updatedAt, 'HEALTH_INTERVENTION_INVALID_PROJECTIONS')
     const key = value.key as HealthProjectionKey
     projections.set(key, { key, version: value.version, envelope: validateEnvelope(value.value) })
   }
   const versions: Record<string, number> = {}
   for (const key of HEALTH_PROJECTION_KEYS) {
     const item = projections.get(key)
-    if (item) versions[key] = item.version
+    if (!item) throw new Error('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
+    versions[key] = item.version
   }
   return { projections, versions }
 }
@@ -187,7 +274,15 @@ function isQuietTime(nowNs: bigint, quiet: HealthInterventionQuietHours | null):
   return start < end ? current >= start && current < end : current >= start || current < end
 }
 
-function normalizeRecentActions(values: readonly HealthRecentAction[] | undefined): Array<HealthRecentAction & { actedNs: bigint; cooldownNs: bigint | null }> {
+function normalizeEffectiveDate(value: string | undefined, canonicalNow: string): string {
+  const date = value ?? canonicalNow.slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('HEALTH_INTERVENTION_INVALID_EFFECTIVE_DATE')
+  const parsed = canonicalTimestamp(`${date}T00:00:00Z`, 'HEALTH_INTERVENTION_INVALID_EFFECTIVE_DATE')
+  if (parsed.canonical.slice(0, 10) !== date) throw new Error('HEALTH_INTERVENTION_INVALID_EFFECTIVE_DATE')
+  return date
+}
+
+function normalizeRecentActions(values: readonly HealthRecentAction[] | undefined, nowNs: bigint): Array<HealthRecentAction & { actedNs: bigint; cooldownNs: bigint | null }> {
   if (values === undefined) return []
   if (!Array.isArray(values) || values.length > MAX_HISTORY_ITEMS) throw new Error('HEALTH_INTERVENTION_INVALID_HISTORY')
   return values.map(value => {
@@ -199,7 +294,8 @@ function normalizeRecentActions(values: readonly HealthRecentAction[] | undefine
     if (!CATEGORIES.has(recent.category)) throw new Error('HEALTH_INTERVENTION_INVALID_HISTORY')
     const acted = canonicalTimestamp(recent.actedAt, 'HEALTH_INTERVENTION_INVALID_HISTORY')
     const cooldown = recent.cooldownUntil === undefined ? null : canonicalTimestamp(recent.cooldownUntil, 'HEALTH_INTERVENTION_INVALID_HISTORY')
-    if (cooldown && cooldown.nanoseconds < acted.nanoseconds) throw new Error('HEALTH_INTERVENTION_INVALID_HISTORY')
+    if (acted.nanoseconds > nowNs || (cooldown && (cooldown.nanoseconds < acted.nanoseconds
+      || cooldown.nanoseconds - acted.nanoseconds > BigInt(MAX_COOLDOWN_MS) * 1_000_000n))) throw new Error('HEALTH_INTERVENTION_INVALID_HISTORY')
     return {
       candidateId: recent.candidateId, category: recent.category, actedAt: acted.canonical,
       ...(cooldown ? { cooldownUntil: cooldown.canonical } : {}), actedNs: acted.nanoseconds, cooldownNs: cooldown?.nanoseconds ?? null,
@@ -207,47 +303,167 @@ function normalizeRecentActions(values: readonly HealthRecentAction[] | undefine
   }).sort((left, right) => compareUtf8(left.candidateId, right.candidateId) || compareBigInt(left.actedNs, right.actedNs))
 }
 
-function normalizeActiveActions(values: readonly HealthActiveAction[] | undefined): HealthActiveAction[] {
+interface NormalizedActiveAction extends HealthActiveAction { knownSafety: boolean }
+
+function normalizeActiveActions(values: readonly HealthActiveAction[] | undefined): NormalizedActiveAction[] {
   if (values === undefined) return []
   if (!Array.isArray(values) || values.length > MAX_HISTORY_ITEMS) throw new Error('HEALTH_INTERVENTION_INVALID_ACTIVE_ACTIONS')
   const seen = new Set<string>()
   const result = values.map(value => {
-    if (!plain(value) || Object.keys(value).sort().join(',') !== 'candidateId,id,priority,supersedable') {
+    if (!plain(value) || Object.keys(value).sort().join(',') !== 'authority,candidateId,id,priority,risk,supersedable') {
       throw new Error('HEALTH_INTERVENTION_INVALID_ACTIVE_ACTIONS')
     }
     const active = value as unknown as HealthActiveAction
     assertBoundedIdentifier(active.id, 'HEALTH_INTERVENTION_INVALID_ACTIVE_ACTIONS')
     assertBoundedIdentifier(active.candidateId, 'HEALTH_INTERVENTION_INVALID_ACTIVE_ACTIONS')
     if (seen.has(active.id) || !Number.isSafeInteger(active.priority) || active.priority < 0 || active.priority > 100
-      || typeof active.supersedable !== 'boolean') throw new Error('HEALTH_INTERVENTION_INVALID_ACTIVE_ACTIONS')
+      || typeof active.supersedable !== 'boolean' || !Object.prototype.hasOwnProperty.call(RISK_ORDER, active.risk)
+      || !Object.prototype.hasOwnProperty.call(AUTHORITY_ORDER, active.authority)) throw new Error('HEALTH_INTERVENTION_INVALID_ACTIVE_ACTIONS')
+    try { assertRiskAuthorityPair(active.risk, active.authority, active.authority === 'inform_only' ? null : 'active') } catch {
+      throw new Error('HEALTH_INTERVENTION_INVALID_ACTIVE_ACTIONS')
+    }
+    const catalog = HEALTH_ACTION_SAFETY_CATALOG[active.candidateId]
+    if (catalog && (catalog.risk !== active.risk || catalog.authority !== active.authority)) {
+      throw new Error('HEALTH_INTERVENTION_INVALID_ACTIVE_ACTIONS')
+    }
     seen.add(active.id)
-    return { id: active.id, candidateId: active.candidateId, priority: active.priority, supersedable: active.supersedable }
+    return { id: active.id, candidateId: active.candidateId, priority: active.priority,
+      supersedable: catalog ? active.supersedable : false, risk: active.risk, authority: active.authority, knownSafety: !!catalog }
   })
   return result.sort((left, right) => compareUtf8(left.id, right.id))
 }
 
-function projectionGate(item: HealthRuleProjection | undefined, nowNs: bigint): string | null {
-  if (!item) return 'source_missing'
-  const value = item.envelope
-  if (value.freshness.status === 'conflict' || value.conflictCount > 0 || value.conflicts.length > 0) return 'source_conflict'
-  if (value.freshness.status === 'missing' || value.missing.length > 0) return 'source_missing'
-  if (value.freshness.status === 'stale') return 'source_stale'
-  if (value.freshness.status !== 'fresh') return 'source_unavailable'
-  if (value.confidence < 0.6) return 'source_low_confidence'
-  const computed = canonicalTimestamp(value.computedAt, 'HEALTH_INTERVENTION_INVALID_PROJECTION')
-  if (computed.nanoseconds > nowNs) return 'source_future'
-  const ageAtComputation = value.freshness.ageMs
-  if (ageAtComputation === null) return 'source_missing'
-  const elapsedNs = nowNs - computed.nanoseconds
-  const effectiveAgeNs = BigInt(Math.ceil(ageAtComputation * 1_000_000)) + elapsedNs
-  if (effectiveAgeNs > BigInt(value.freshness.thresholdMs) * 1_000_000n) return 'source_stale'
-  return null
+function millisecondsToNanoseconds(value: number): bigint {
+  const whole = Math.trunc(value)
+  const fractional = Math.ceil((value - whole) * 1_000_000)
+  return BigInt(whole) * 1_000_000n + BigInt(fractional)
+}
+
+function pathValue(root: Record<string, unknown>, path: string): unknown {
+  let value: unknown = root
+  const segments = path.split('.')
+  for (let index = 0; index < segments.length; index += 1) {
+    if (!plain(value)) return undefined
+    const remainder = segments.slice(index).join('.')
+    if (Object.prototype.hasOwnProperty.call(value, remainder)) return value[remainder]
+    const segment = segments[index]
+    if (!Object.prototype.hasOwnProperty.call(value, segment)) return undefined
+    value = value[segment]
+  }
+  return value
+}
+
+function presentSignal(value: unknown): boolean {
+  if (value === undefined || value === null) return false
+  if (Array.isArray(value)) return value.length > 0
+  return true
+}
+
+interface SignalMetadata {
+  recordIds: Set<string>
+  observed: bigint[]
+  confidences: number[]
+}
+
+function collectMetadata(value: unknown, output: SignalMetadata): void {
+  if (Array.isArray(value)) {
+    for (const item of value) collectMetadata(item, output)
+    return
+  }
+  if (!plain(value)) return
+  if (typeof value.recordId === 'string') output.recordIds.add(value.recordId)
+  if (typeof value.observedAt === 'string') output.observed.push(
+    canonicalTimestamp(value.observedAt, 'HEALTH_INTERVENTION_INVALID_PROJECTION').nanoseconds,
+  )
+  if (typeof value.confidence === 'number' && Number.isFinite(value.confidence)) output.confidences.push(value.confidence)
+  for (const [key, item] of Object.entries(value)) {
+    if (!['recordId', 'observedAt', 'confidence'].includes(key)) collectMetadata(item, output)
+  }
+}
+
+function collectMetadataForRecords(value: unknown, expected: ReadonlySet<string>, output: SignalMetadata): void {
+  if (Array.isArray(value)) { for (const item of value) collectMetadataForRecords(item, expected, output); return }
+  if (!plain(value)) return
+  if (typeof value.recordId === 'string' && expected.has(value.recordId)) {
+    output.recordIds.add(value.recordId)
+    if (typeof value.observedAt === 'string') output.observed.push(
+      canonicalTimestamp(value.observedAt, 'HEALTH_INTERVENTION_INVALID_PROJECTION').nanoseconds,
+    )
+    if (typeof value.confidence === 'number' && Number.isFinite(value.confidence)) output.confidences.push(value.confidence)
+  }
+  for (const item of Object.values(value)) collectMetadataForRecords(item, expected, output)
+}
+
+function signalMetadata(policy: HealthRuleGatePolicy, projections: ReadonlyMap<HealthProjectionKey, HealthRuleProjection>): SignalMetadata | null {
+  const combined: SignalMetadata = { recordIds: new Set(), observed: [], confidences: [] }
+  for (const requirement of policy.signals) {
+    const projection = projections.get(requirement.projectionKey)
+    if (!projection) return null
+    const values = requirement.statePaths.map(path => pathValue(projection.envelope.state, path))
+    const present = values.map(presentSignal)
+    if (requirement.match === 'all' ? present.some(item => !item) : present.every(item => !item)) return null
+    let local: SignalMetadata = { recordIds: new Set(), observed: [], confidences: [] }
+    for (let index = 0; index < values.length; index += 1) if (present[index]) collectMetadata(values[index], local)
+    if (requirement.recordIds?.length) {
+      const expected = new Set(requirement.recordIds)
+      const selected: SignalMetadata = { recordIds: new Set(), observed: [], confidences: [] }
+      for (let index = 0; index < values.length; index += 1) if (present[index]) collectMetadataForRecords(values[index], expected, selected)
+      if (requirement.recordIds.some(id => !selected.recordIds.has(id))) return null
+      local = selected
+    }
+    const evidence = pathValue(projection.envelope.state, 'evidence')
+    if (evidence !== undefined) {
+      if (local.recordIds.size > 0) {
+        const matchingEvidence = Array.isArray(evidence) ? evidence : Object.values(evidence as Record<string, unknown>)
+        const visitEvidence = (value: unknown): void => {
+          if (Array.isArray(value)) { for (const item of value) visitEvidence(item); return }
+          if (!plain(value)) return
+          if (typeof value.recordId === 'string' && local.recordIds.has(value.recordId)
+            && typeof value.confidence === 'number' && Number.isFinite(value.confidence)) local.confidences.push(value.confidence)
+          for (const item of Object.values(value)) visitEvidence(item)
+        }
+        visitEvidence(matchingEvidence)
+      }
+    }
+    for (const id of local.recordIds) combined.recordIds.add(id)
+    combined.observed.push(...local.observed)
+    combined.confidences.push(...local.confidences)
+  }
+  return combined
 }
 
 function ruleGate(candidate: HealthRuleCandidate, projections: ReadonlyMap<HealthProjectionKey, HealthRuleProjection>, nowNs: bigint): string | null {
-  for (const key of candidate.requiredProjectionKeys) {
-    const reason = projectionGate(projections.get(key), nowNs)
-    if (reason) return reason
+  const policy = candidate.gatePolicy
+  const signals = signalMetadata(policy, projections)
+  if (!signals) return 'source_missing'
+  const envelopes = policy.signals.map(item => projections.get(item.projectionKey)!.envelope)
+  if (policy.conflicts === 'projection' && envelopes.some(item => item.conflictCount > 0 || item.conflicts.length > 0)) return 'source_conflict'
+  if (policy.conflicts === 'signal') {
+    const signalMetrics = new Set(policy.signals.flatMap(item => item.metrics))
+    const related = envelopes.some(item => item.conflicts.some(conflict => !Array.isArray(conflict.recordIds)
+      || conflict.recordIds.some(id => signals.recordIds.has(id)) || signalMetrics.has(conflict.metric)))
+    if (related || (signals.recordIds.size === 0 && envelopes.some(item => item.conflicts.length > 0))) return 'source_conflict'
+  }
+  if (policy.freshness === 'projection') {
+    for (const value of envelopes) {
+      if (value.freshness.status === 'missing' || value.missing.length > 0 || value.freshness.ageMs === null) return 'source_missing'
+      if (value.freshness.status === 'stale') return 'source_stale'
+      if (value.freshness.status !== 'fresh') return 'source_unavailable'
+      const computed = canonicalTimestamp(value.computedAt, 'HEALTH_INTERVENTION_INVALID_PROJECTION')
+      if (computed.nanoseconds > nowNs) return 'source_future'
+      const effectiveAgeNs = millisecondsToNanoseconds(value.freshness.ageMs) + nowNs - computed.nanoseconds
+      if (effectiveAgeNs > BigInt(value.freshness.thresholdMs) * 1_000_000n) return 'source_stale'
+    }
+  } else if (policy.freshness === 'signal') {
+    if (!signals.observed.length) return 'source_missing'
+    const freshest = signals.observed.reduce((latest, item) => item > latest ? item : latest)
+    if (freshest > nowNs) return 'source_future'
+    const threshold = Math.min(...envelopes.map(item => item.freshness.thresholdMs))
+    if (nowNs - freshest > BigInt(threshold) * 1_000_000n) return 'source_stale'
+  }
+  if (policy.confidence === 'projection' && envelopes.some(item => item.confidence < policy.minimumConfidence)) return 'source_low_confidence'
+  if (policy.confidence === 'signal') {
+    if (!signals.confidences.length || Math.min(...signals.confidences) < policy.minimumConfidence) return 'source_low_confidence'
   }
   return null
 }
@@ -261,13 +477,21 @@ function cooldownActive(candidate: HealthRuleCandidate,
   })
 }
 
-function assertRiskAuthority(candidate: HealthRuleCandidate): void {
-  if (candidate.authority === 'auto' && RISK_ORDER[candidate.risk] > RISK_ORDER.low) throw new Error('HEALTH_INTERVENTION_UNSAFE_RULE')
-  if (candidate.authority === 'approval' && RISK_ORDER[candidate.risk] < RISK_ORDER.medium) throw new Error('HEALTH_INTERVENTION_UNSAFE_RULE')
-  if (RISK_ORDER[candidate.risk] >= RISK_ORDER.high && (candidate.authority !== 'inform_only' || candidate.capabilityId !== null)) {
+function assertRiskAuthorityPair(risk: HealthInterventionRisk, authority: HealthInterventionAuthority, capabilityId: string | null): void {
+  if (authority === 'auto' && RISK_ORDER[risk] > RISK_ORDER.low) throw new Error('HEALTH_INTERVENTION_UNSAFE_RULE')
+  if (authority === 'approval' && RISK_ORDER[risk] < RISK_ORDER.medium) throw new Error('HEALTH_INTERVENTION_UNSAFE_RULE')
+  if (RISK_ORDER[risk] >= RISK_ORDER.high && (authority !== 'inform_only' || capabilityId !== null)) {
     throw new Error('HEALTH_INTERVENTION_UNSAFE_RULE')
   }
-  if (candidate.authority === 'inform_only' && candidate.capabilityId !== null) throw new Error('HEALTH_INTERVENTION_UNSAFE_RULE')
+  if (authority === 'inform_only' && capabilityId !== null) throw new Error('HEALTH_INTERVENTION_UNSAFE_RULE')
+}
+
+function assertRiskAuthority(candidate: HealthRuleCandidate): void {
+  assertRiskAuthorityPair(candidate.risk, candidate.authority, candidate.capabilityId)
+  const catalog = HEALTH_ACTION_SAFETY_CATALOG[candidate.id]
+  if (!catalog || catalog.risk !== candidate.risk || catalog.authority !== candidate.authority) {
+    throw new Error('HEALTH_INTERVENTION_UNSAFE_RULE')
+  }
 }
 
 function candidateConfidence(candidate: HealthRuleCandidate, projections: ReadonlyMap<HealthProjectionKey, HealthRuleProjection>): number {
@@ -302,30 +526,52 @@ function stableJson(value: unknown): string {
 }
 
 function publicCandidate(candidate: HealthRuleCandidate, projections: ReadonlyMap<HealthProjectionKey, HealthRuleProjection>,
-  versions: Record<string, number>): HealthActionCandidate {
+  versions: Record<string, number>, effectiveDate: string): HealthActionCandidate {
   assertRiskAuthority(candidate)
   const confidence = Math.round(candidateConfidence(candidate, projections) * 100)
   const scoreTuple: HealthActionCandidate['scoreTuple'] = [candidate.priority, candidate.urgency, candidate.expectedBenefit,
     confidence, candidate.goalRelevance, 100 - candidate.executionBurden, candidate.timing]
-  const digest = createHash('sha256').update(`${HEALTH_INTERVENTION_RULE_VERSION}\0${candidate.id}\0${stableVersionMaterial(versions)}\0${stableJson(candidate.parameters)}`).digest('hex')
+  const digest = createHash('sha256').update(`${HEALTH_INTERVENTION_RULE_VERSION}\0${effectiveDate}\0${candidate.id}\0${stableVersionMaterial(versions)}\0${stableJson(candidate.parameters)}`).digest('hex')
   return {
     id: candidate.id, ruleId: candidate.ruleId, category: candidate.category, capabilityId: candidate.capabilityId,
     risk: candidate.risk, authority: candidate.authority, priority: candidate.priority, scoreTuple,
     sourceProjectionKeys: [...candidate.requiredProjectionKeys], parameters: candidate.parameters,
-    rationale: candidate.rationale, idempotencyKey: `health-intervention-${digest}`, supersedes: [],
+    rationale: candidate.rationale, idempotencyKey: `health-intervention-${digest}`, supersedes: [], effectiveDate,
   }
 }
 
+function activeDisposition(candidate: HealthActionCandidate, activeActions: readonly NormalizedActiveAction[]): {
+  reason: string | null
+  supersedes: string[]
+} {
+  if (candidate.authority === 'inform_only') return { reason: null, supersedes: [] }
+  const supersedes: string[] = []
+  for (const active of activeActions) {
+    if (active.candidateId === candidate.id) return { reason: `duplicate_active_action:${active.id}`, supersedes: [] }
+    if (!active.knownSafety) return { reason: `active_action_unknown_safety:${active.id}`, supersedes: [] }
+    if (!active.supersedable) return { reason: `active_action_not_supersedable:${active.id}`, supersedes: [] }
+    if (RISK_ORDER[candidate.risk] < RISK_ORDER[active.risk]) return { reason: `active_action_higher_risk:${active.id}`, supersedes: [] }
+    if (AUTHORITY_ORDER[candidate.authority] < AUTHORITY_ORDER[active.authority]) {
+      return { reason: `active_action_stronger_authority:${active.id}`, supersedes: [] }
+    }
+    if (candidate.priority <= active.priority) return { reason: `active_action_priority_not_higher:${active.id}`, supersedes: [] }
+    supersedes.push(active.id)
+  }
+  return { reason: null, supersedes }
+}
+
 export function decideHealthInterventions(input: DecideHealthInterventionsInput): HealthInterventionDecision {
-  if (!plain(input)) throw new Error('HEALTH_INTERVENTION_INVALID_INPUT')
+  assertSafeBoundary(input)
+  if (!plain(input) || Object.keys(input).some(key => !INPUT_KEYS.has(key))) throw new Error('HEALTH_INTERVENTION_INVALID_INPUT')
   const now = canonicalTimestamp(input.now, 'HEALTH_INTERVENTION_INVALID_NOW')
+  const effectiveDate = normalizeEffectiveDate(input.effectiveDate, now.canonical)
   const { projections, versions } = normalizeProjections(input.projections)
   const plan = normalizePlan(input.plan)
   const quietHours = normalizeQuietHours(input.quietHours)
-  const recentActions = normalizeRecentActions(input.recentActions)
+  const recentActions = normalizeRecentActions(input.recentActions, now.nanoseconds)
   const activeActions = normalizeActiveActions(input.activeActions)
   const considered: HealthInterventionDecision['considered'] = []
-  const accepted: HealthActionCandidate[] = []
+  const eligible: HealthActionCandidate[] = []
 
   for (const candidate of evaluateHealthInterventionRules({ projections, plan })) {
     assertRiskAuthority(candidate)
@@ -342,17 +588,22 @@ export function decideHealthInterventions(input: DecideHealthInterventionsInput)
       considered.push({ id: candidate.id, accepted: false, reason: 'cooldown_active' })
       continue
     }
-    accepted.push(publicCandidate(candidate, projections, versions))
-    considered.push({ id: candidate.id, accepted: true, reason: 'ranked' })
+    eligible.push(publicCandidate(candidate, projections, versions, effectiveDate))
   }
 
-  accepted.sort(compareScore)
-  let primary = accepted[0] ?? null
-  if (primary) {
-    const supersedes = activeActions.filter(item => item.supersedable && primary!.priority > item.priority).map(item => item.id)
-    if (supersedes.length) primary = { ...primary, supersedes }
-    for (const id of supersedes) considered.push({ id, accepted: false, reason: `superseded_by:${primary.id}` })
+  eligible.sort(compareScore)
+  const accepted: HealthActionCandidate[] = []
+  for (const candidate of eligible) {
+    const disposition = activeDisposition(candidate, activeActions)
+    if (disposition.reason) {
+      considered.push({ id: candidate.id, accepted: false, reason: disposition.reason })
+      continue
+    }
+    accepted.push(disposition.supersedes.length ? { ...candidate, supersedes: disposition.supersedes } : candidate)
+    considered.push({ id: candidate.id, accepted: true, reason: 'ranked' })
   }
+  const primary = accepted[0] ?? null
+  if (primary) for (const id of primary.supersedes) considered.push({ id, accepted: false, reason: `superseded_by:${primary.id}` })
   considered.sort((left, right) => compareUtf8(left.id, right.id))
   return {
     primary,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { TwinProjection } from '../../packages/server/src/services/hermes/personal-twin'
+import type { TwinObservation, TwinProjection } from '../../packages/server/src/services/hermes/personal-twin'
 import type { HealthProjectionKey } from '../../packages/server/src/services/hermes/health-loop'
 
 const now = '2026-07-14T12:00:00Z'
@@ -12,6 +12,24 @@ function projection(key: HealthProjectionKey, state: Record<string, unknown>, ov
   version?: number
 } = {}): TwinProjection {
   const conflicts = overrides.conflicts ?? []
+  const current = state.current && typeof state.current === 'object' && !Array.isArray(state.current)
+    ? state.current as Record<string, unknown> : null
+  if (key === 'health.nutrition_state' && !current && state.totals && typeof state.totals === 'object') {
+    const protein = (state.totals as Record<string, unknown>).protein_g
+    if (typeof protein === 'number') state.current = { protein_g: { value: protein, unit: 'g' } }
+  }
+  const normalizedCurrent = state.current && typeof state.current === 'object' && !Array.isArray(state.current)
+    ? state.current as Record<string, unknown> : null
+  const evidence: Array<Record<string, unknown>> = []
+  if (normalizedCurrent) for (const [field, raw] of Object.entries(normalizedCurrent)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const entry = raw as Record<string, unknown>
+    entry.recordId ??= `record-${key}-${field}`
+    entry.observedAt ??= overrides.freshness === 'stale' ? '2026-07-10T08:00:00Z' : '2026-07-14T08:00:00Z'
+    entry.evidenceClass ??= 'measured'
+    evidence.push({ recordId: entry.recordId, confidence: overrides.confidence ?? 0.9 })
+  }
+  if (evidence.length && state.evidence === undefined) state.evidence = { measured: evidence, reported: [], inferred: [], derived: [] }
   return {
     key,
     subjectId: 'person:self',
@@ -28,7 +46,7 @@ function projection(key: HealthProjectionKey, state: Record<string, unknown>, ov
       freshness: {
         policyVersion: 'health-freshness-v1',
         status: overrides.freshness ?? 'fresh',
-        thresholdMs: 86_400_000,
+        thresholdMs: key === 'health.internal_state' ? 180 * 86_400_000 : 86_400_000,
         ageMs: 14_400_000,
       },
       confidence: overrides.confidence ?? 0.9,
@@ -59,7 +77,76 @@ function replace(values: TwinProjection[], next: TwinProjection): TwinProjection
   return values.map(item => item.key === next.key ? next : item)
 }
 
+function observation(overrides: Partial<TwinObservation> & Pick<TwinObservation, 'id' | 'metric' | 'value'>): TwinObservation {
+  return {
+    entityId: 'person:self', unit: null, observedAt: '2026-07-14T08:00:00Z', ingestedAt: '2026-07-14T08:00:01Z',
+    provenance: { source: 'fixture', sourceId: overrides.id, actor: 'fixture', confidence: 0.9,
+      confirmationState: 'observed', evidence: [{ evidenceClass: 'measured' }], schemaVersion: 1 },
+    ...overrides,
+  }
+}
+
+async function realProjections(records: TwinObservation[], computedAt = now): Promise<TwinProjection[]> {
+  const { computeHealthProjections, HEALTH_PROJECTION_KEYS } = await import('../../packages/server/src/services/hermes/health-loop')
+  const computed = computeHealthProjections(records, { computedAt })
+  return HEALTH_PROJECTION_KEYS.map((key, index) => ({
+    key, subjectId: 'person:self', version: index + 1, sourceRecordId: `real-${key}`, updatedAt: computedAt,
+    value: computed[key] as unknown as Record<string, unknown>,
+  }))
+}
+
 describe('health-loop cross-domain intervention engine', () => {
+  it('uses candidate-specific evidence gates with real Task 8 projections', async () => {
+    const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
+
+    const severePain = await realProjections([observation({ id: 'pain-9', metric: 'health.fitness.pain', value: 9 })])
+    expect(decideHealthInterventions({ projections: severePain, now }).primary).toMatchObject({
+      id: 'health.safety.severe_pain_notice', authority: 'inform_only', capabilityId: null,
+    })
+
+    const materialPain = await realProjections([observation({ id: 'pain-5', metric: 'health.fitness.pain', value: 5 })])
+    const painDecision = decideHealthInterventions({ projections: materialPain, now, plan: { trainingIntensity: 'high' } })
+    expect([painDecision.primary, ...painDecision.alternatives]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'health.safety.pain_followup', authority: 'approval' }),
+      expect.objectContaining({ id: 'health.training.reduce_after_pain', authority: 'approval', capabilityId: 'health.plan.adjust' }),
+    ]))
+    expect(painDecision.primary?.id).toBe('health.training.reduce_after_pain')
+
+    const lowRecovery = await realProjections([observation({ id: 'recovery-35', metric: 'health.sleep.recovery_score', value: 35 })])
+    expect(decideHealthInterventions({ projections: lowRecovery, now, plan: { trainingIntensity: 'high' } }).primary).toMatchObject({
+      id: 'health.training.reduce_after_low_recovery', risk: 'low', authority: 'auto',
+    })
+
+    const pendingLab = await realProjections([observation({
+      id: 'pending-lab', metric: 'health.internal_health.markers',
+      value: [{ key: 'marker_a', value: 4.2, unit: 'u/L' }],
+      provenance: { source: 'fixture', sourceId: 'pending-lab', actor: 'fixture', confidence: 0.7,
+        confirmationState: 'inferred', evidence: [{ evidenceClass: 'measured' }], schemaVersion: 1 },
+    })])
+    expect(decideHealthInterventions({ projections: pendingLab, now }).primary).toMatchObject({
+      id: 'health.internal.request_marker_metadata', capabilityId: 'health.checkin.request',
+    })
+
+    const oldCriticalLab = await realProjections([observation({
+      id: 'critical-lab', metric: 'health.internal_health.markers', observedAt: '2025-01-01T08:00:00Z',
+      value: [{ key: 'marker_b', value: 20, unit: 'u/L', referenceInterval: { low: 1, high: 10 },
+        measuredAt: '2025-01-01T08:00:00Z', providerFlag: 'critical' }],
+      provenance: { source: 'fixture', sourceId: 'critical-lab', actor: 'fixture', confidence: 0.2,
+        confirmationState: 'confirmed', evidence: [{ evidenceClass: 'measured' }], schemaVersion: 1 },
+    })])
+    expect(decideHealthInterventions({ projections: oldCriticalLab, now }).primary).toMatchObject({
+      id: 'health.internal.critical_provider_flag_notice', risk: 'critical', authority: 'inform_only', capabilityId: null,
+    })
+
+    const lowQualitySkin = await realProjections([observation({
+      id: 'skin-quality', metric: 'health.skin.capture_quality', value: 0.3,
+      provenance: { source: 'fixture', sourceId: 'skin-quality', actor: 'fixture', confidence: 0.4,
+        confirmationState: 'inferred', evidence: [{ evidenceClass: 'inferred' }], schemaVersion: 1 },
+    })])
+    expect(decideHealthInterventions({ projections: lowQualitySkin, now }).primary).toMatchObject({
+      id: 'health.skin.request_recapture', capabilityId: 'health.checkin.request',
+    })
+  })
   it('lets low sleep override hard training with one low-risk automatic plan action', async () => {
     const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
     const values = replace(projections(), projection('health.recovery_state', {
@@ -202,8 +289,10 @@ describe('health-loop cross-domain intervention engine', () => {
 
   it.each([
     ['stale', { freshness: 'stale' as const }],
-    ['conflict', { freshness: 'conflict' as const, conflicts: [{ code: 'VALUE_CONFLICT' }] }],
-    ['missing', { freshness: 'missing' as const, missing: ['duration_minutes'] }],
+    ['conflict', { freshness: 'conflict' as const,
+      conflicts: [{ code: 'VALUE_CONFLICT', metric: 'health.sleep.duration_minutes',
+        recordIds: ['record-health.recovery_state-duration_minutes'], recordCount: 1, omittedRecordCount: 0,
+        message: 'fixture conflict' }] }],
   ])('blocks rules backed by a %s projection', async (_name, gate) => {
     const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
     const values = replace(projections(), projection('health.recovery_state', {
@@ -287,12 +376,65 @@ describe('health-loop cross-domain intervention engine', () => {
     }))
     const result = decideHealthInterventions({ projections: values, now, activeActions: [{
       id: 'active-skin-1', candidateId: 'health.skin.request_recapture', priority: 20, supersedable: true,
+      risk: 'low', authority: 'auto',
     }] })
     expect(result.primary).toMatchObject({
       id: 'health.safety.pain_followup', supersedes: ['active-skin-1'],
     })
-    expect(result.alternatives.map(item => item.id)).toEqual(['health.skin.request_recapture'])
+    expect(result.alternatives).toEqual([])
+    expect(result.considered).toContainEqual({
+      id: 'health.skin.request_recapture', accepted: false, reason: 'duplicate_active_action:active-skin-1',
+    })
     expect(result.considered).toContainEqual({ id: 'active-skin-1', accepted: false, reason: 'superseded_by:health.safety.pain_followup' })
+  })
+
+  it('uses risk and authority when resolving active-action supersession', async () => {
+    const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
+    const skin = replace(projections(), projection('health.skin_state', {
+      current: { capture_quality: { value: 0.3 }, appearances: { value: [] } },
+    }))
+    const forgedCritical = decideHealthInterventions({ projections: skin, now, activeActions: [{
+      id: 'active-critical', candidateId: 'health.internal.critical_provider_flag_notice', priority: 1, supersedable: true,
+      risk: 'critical', authority: 'inform_only',
+    }] })
+    expect(forgedCritical.primary).toBeNull()
+    expect(forgedCritical.considered).toContainEqual({
+      id: 'health.skin.request_recapture', accepted: false, reason: 'active_action_higher_risk:active-critical',
+    })
+
+    for (const active of [
+      { id: 'active-duplicate', candidateId: 'health.skin.request_recapture', priority: 1, supersedable: true,
+        risk: 'low' as const, authority: 'auto' as const, reason: 'duplicate_active_action:active-duplicate' },
+      { id: 'active-higher', candidateId: 'health.training.reduce_after_low_sleep', priority: 40, supersedable: true,
+        risk: 'low' as const, authority: 'auto' as const, reason: 'active_action_priority_not_higher:active-higher' },
+      { id: 'active-fixed', candidateId: 'health.training.reduce_after_low_sleep', priority: 1, supersedable: false,
+        risk: 'low' as const, authority: 'auto' as const, reason: 'active_action_not_supersedable:active-fixed' },
+    ]) {
+      const { reason, ...input } = active
+      const decision = decideHealthInterventions({ projections: skin, now, activeActions: [input] })
+      expect(decision.primary).toBeNull()
+      expect(decision.considered).toContainEqual({ id: 'health.skin.request_recapture', accepted: false, reason })
+    }
+
+    const severe = replace(projections(), projection('health.recovery_state', {
+      current: { duration_minutes: { value: 420 }, 'fitness.pain': { value: 9 } },
+    }))
+    expect(decideHealthInterventions({ projections: severe, now, activeActions: [{
+      id: 'active-fixed', candidateId: 'health.internal.critical_provider_flag_notice', priority: 100, supersedable: false,
+      risk: 'critical', authority: 'inform_only',
+    }] }).primary?.id).toBe('health.safety.severe_pain_notice')
+
+    expect(() => decideHealthInterventions({ projections: skin, now, activeActions: [{
+      id: 'active-forged-known', candidateId: 'health.internal.critical_provider_flag_notice', priority: 1,
+      supersedable: true, risk: 'low', authority: 'auto',
+    }] })).toThrow('HEALTH_INTERVENTION_INVALID_ACTIVE_ACTIONS')
+    const unknown = decideHealthInterventions({ projections: skin, now, activeActions: [{
+      id: 'active-unknown', candidateId: 'health.unknown', priority: 1, supersedable: true, risk: 'low', authority: 'auto',
+    }] })
+    expect(unknown.primary).toBeNull()
+    expect(unknown.considered).toContainEqual({
+      id: 'health.skin.request_recapture', accepted: false, reason: 'active_action_unknown_safety:active-unknown',
+    })
   })
 
   it('uses stable score tuples and ordering under projection permutation', async () => {
@@ -331,6 +473,69 @@ describe('health-loop cross-domain intervention engine', () => {
     expect(target120).toMatchObject({ parameters: { targetG: 120 } })
     expect(target140).toMatchObject({ parameters: { targetG: 140 } })
     expect(target120?.idempotencyKey).not.toBe(target140?.idempotencyKey)
+
+    const sameUtcDay = decideHealthInterventions({
+      projections: values, now: '2026-07-14T23:59:59Z', plan: { resistanceTrainingToday: true, proteinTargetG: 120 },
+    }).primary
+    const nextUtcDay = decideHealthInterventions({
+      projections: values, now: '2026-07-15T00:00:00Z', plan: { resistanceTrainingToday: true, proteinTargetG: 120 },
+    }).primary
+    expect(target120?.idempotencyKey).toBe(sameUtcDay?.idempotencyKey)
+    expect(target120?.idempotencyKey).not.toBe(nextUtcDay?.idempotencyKey)
+    expect(decideHealthInterventions({
+      projections: values, now, effectiveDate: '2026-07-20',
+      plan: { resistanceTrainingToday: true, proteinTargetG: 120 },
+    }).primary?.idempotencyKey).not.toBe(target120?.idempotencyKey)
+  })
+
+  it('requires a complete unique nine-projection snapshot but remains reorder-stable', async () => {
+    const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
+    expect(() => decideHealthInterventions({ projections: projections().slice(0, 8), now })).toThrow('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
+    expect(() => decideHealthInterventions({ projections: [...projections(), projections()[0]], now })).toThrow('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
+    expect(decideHealthInterventions({ projections: projections(), now })).toEqual(
+      decideHealthInterventions({ projections: projections().reverse(), now }),
+    )
+  })
+
+  it('rejects unsafe freshness ages, future history, and unbounded cooldown windows with defined errors', async () => {
+    const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
+    const unsafeAge = projections()
+    ;((unsafeAge.find(item => item.key === 'health.recovery_state')!.value.freshness as Record<string, unknown>).ageMs) = Number.MAX_VALUE
+    expect(() => decideHealthInterventions({ projections: unsafeAge, now, plan: { trainingIntensity: 'high' } }))
+      .toThrow('HEALTH_INTERVENTION_INVALID_PROJECTION')
+    expect(() => decideHealthInterventions({ projections: projections(), now, recentActions: [{
+      candidateId: 'health.skin.request_recapture', category: 'skin', actedAt: '2026-07-15T00:00:00Z',
+    }] })).toThrow('HEALTH_INTERVENTION_INVALID_HISTORY')
+    expect(() => decideHealthInterventions({ projections: projections(), now, recentActions: [{
+      candidateId: 'health.skin.request_recapture', category: 'skin', actedAt: '2026-07-14T08:00:00Z',
+      cooldownUntil: '2027-07-16T08:00:00Z',
+    }] })).toThrow('HEALTH_INTERVENTION_INVALID_HISTORY')
+  })
+
+  it('rejects hostile or structurally ambiguous public inputs without invoking accessors', async () => {
+    const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
+    let accessed = false
+    const accessor: Record<string, unknown> = { projections: projections() }
+    Object.defineProperty(accessor, 'now', { enumerable: true, get: () => { accessed = true; return now } })
+    expect(() => decideHealthInterventions(accessor as never)).toThrow('HEALTH_INTERVENTION_INVALID_INPUT')
+    expect(accessed).toBe(false)
+
+    const cycle: Record<string, unknown> = { projections: projections(), now }
+    cycle.extra = cycle
+    expect(() => decideHealthInterventions(cycle as never)).toThrow('HEALTH_INTERVENTION_INVALID_INPUT')
+    expect(() => decideHealthInterventions({ projections: projections(), now, extra: true } as never)).toThrow('HEALTH_INTERVENTION_INVALID_INPUT')
+    expect(() => decideHealthInterventions(new Proxy({ projections: projections(), now }, {}) as never)).toThrow('HEALTH_INTERVENTION_INVALID_INPUT')
+    expect(() => decideHealthInterventions({ projections: projections(), now,
+      plan: Object.create({ trainingIntensity: 'high' }) } as never)).toThrow('HEALTH_INTERVENTION_INVALID_INPUT')
+    expect(() => decideHealthInterventions(JSON.parse(`{"projections":[],"now":"${now}","__proto__":{}}`) as never))
+      .toThrow('HEALTH_INTERVENTION_INVALID_INPUT')
+
+    const holey = projections()
+    delete holey[3]
+    expect(() => decideHealthInterventions({ projections: holey, now })).toThrow('HEALTH_INTERVENTION_INVALID_INPUT')
+    const extraArray = projections() as TwinProjection[] & { extra?: boolean }
+    extraArray.extra = true
+    expect(() => decideHealthInterventions({ projections: extraArray, now })).toThrow('HEALTH_INTERVENTION_INVALID_INPUT')
   })
 
   it('requires a canonical explicit now and fail-closes the risk-authority matrix', async () => {
