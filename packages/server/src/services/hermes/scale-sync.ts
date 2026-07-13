@@ -1,9 +1,8 @@
 import { execFile, execFileSync } from 'child_process'
 import { existsSync } from 'fs'
-import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'fs/promises'
+import { chmod, lstat, mkdir, readFile, realpath, rm, stat, writeFile } from 'fs/promises'
 import { promisify } from 'util'
 import { basename, join, resolve } from 'path'
-import { tmpdir } from 'os'
 import { getProfileDir } from './hermes-profile'
 import { detectHermesRootHome, isPathWithin } from './hermes-path'
 import { saveEnvValueForProfile } from '../config-helpers'
@@ -25,6 +24,7 @@ const DEFAULT_SOURCE = 'xiaomihome'
 const DEFAULT_REGION = 'cn'
 const DEFAULT_SCALE_MODEL = 'yunmai.scales.ms103'
 const SCALECONNECT_EXECUTABLE = process.platform === 'win32' ? 'scaleconnect.exe' : 'scaleconnect'
+const scaleSyncLocks = new Map<string, Promise<void>>()
 
 export type ScaleSyncSource = 'mifitness' | 'xiaomihome'
 export type ScaleSyncStatus = 'synced' | 'skipped' | 'failed'
@@ -120,40 +120,105 @@ export async function runScaleSync(profile = 'default', actor = 'system'): Promi
   const config = buildSmartScaleConnectConfig(settings, password)
   const configContent = JSON.stringify(config)
   const command = executablePath
-  let workingDir = ''
+  let workingDir: string
   try {
-    workingDir = await mkdtemp(join(tmpdir(), 'hermes-scale-sync-'))
-    await writeFile(join(workingDir, 'scaleconnect.yaml'), configContent, {
-      encoding: 'utf-8',
-      mode: 0o600,
-      flag: 'wx',
-    })
-    const { stdout, stderr } = await execFileAsync(executablePath, [], {
-      cwd: workingDir,
-      env: buildScaleconnectEnv(),
-      timeout: 60000,
-      maxBuffer: 1024 * 1024 * 4,
-      windowsHide: true,
-    })
-    const payloads = parseScaleConnectOutput(stdout)
-    const readings = payloads.map(payload => createHealthScaleReading(payload, actor, profile))
-    const stderrText = sanitizeEvidence(stderr, [password, jsonEscaped(password), workingDir, configContent])
-    const classified = classifyScaleconnectStderr(stderrText)
-    if (classified) {
-      return { status: 'failed', command, importedCount: readings.length, readings, stderr: stderrText, ...classified }
-    }
-    return { status: 'synced', command, importedCount: readings.length, readings, stderr: stderrText }
-  } catch (err: any) {
+    workingDir = await prepareScaleconnectWorkingDir(profile)
+  } catch {
     return {
       status: 'failed',
-      reason: err?.code === 'ENOENT' ? 'scaleconnect_not_found' : 'scaleconnect_failed',
+      reason: 'untrusted_scaleconnect_state_path',
       command,
       importedCount: 0,
       readings: [],
-      stderr: sanitizeEvidence(err?.stderr || err?.message || '', [password, jsonEscaped(password), workingDir, configContent]),
     }
+  }
+
+  return withScaleSyncLock(workingDir, async () => {
+    const configPath = join(workingDir, 'scaleconnect.yaml')
+    try {
+      await rm(configPath, { force: true })
+      await writeFile(configPath, configContent, {
+        encoding: 'utf-8',
+        mode: 0o600,
+        flag: 'wx',
+      })
+      const { stdout, stderr } = await execFileAsync(executablePath, [], {
+        cwd: workingDir,
+        env: buildScaleconnectEnv(),
+        timeout: 60000,
+        maxBuffer: 1024 * 1024 * 4,
+        windowsHide: true,
+      })
+      const payloads = parseScaleConnectOutput(stdout)
+      const readings = payloads.map(payload => createHealthScaleReading(payload, actor, profile))
+      const stderrText = sanitizeEvidence(stderr, [password, jsonEscaped(password), workingDir, configContent])
+      const classified = classifyScaleconnectStderr(stderrText)
+      if (classified) {
+        return { status: 'failed', command, importedCount: readings.length, readings, stderr: stderrText, ...classified }
+      }
+      return { status: 'synced', command, importedCount: readings.length, readings, stderr: stderrText }
+    } catch (err: any) {
+      return {
+        status: 'failed',
+        reason: err?.code === 'ENOENT' ? 'scaleconnect_not_found' : 'scaleconnect_failed',
+        command,
+        importedCount: 0,
+        readings: [],
+        stderr: sanitizeEvidence(err?.stderr || err?.message || '', [password, jsonEscaped(password), workingDir, configContent]),
+      }
+    } finally {
+      await rm(configPath, { force: true })
+      await tightenTokenCachePermissions(workingDir)
+    }
+  })
+}
+
+async function prepareScaleconnectWorkingDir(profile: string): Promise<string> {
+  const hermesRoot = await realpath(detectHermesRootHome())
+  const profileDir = await realpath(getProfileDir(profile))
+  if (!isPathWithin(profileDir, hermesRoot)) {
+    throw new Error('ScaleConnect profile directory must stay within the Hermes state root')
+  }
+
+  const normalizedProfile = profile.trim() || 'default'
+  if (normalizedProfile !== 'default' && !isPathWithin(profileDir, resolve(hermesRoot, 'profiles'))) {
+    throw new Error('ScaleConnect named profile directory must stay within the Hermes profiles root')
+  }
+
+  const requestedWorkingDir = join(profileDir, '.scaleconnect')
+  await mkdir(requestedWorkingDir, { recursive: true, mode: 0o700 })
+  const workingDir = await realpath(requestedWorkingDir)
+  if (!isPathWithin(workingDir, profileDir) || !(await stat(workingDir)).isDirectory()) {
+    throw new Error('ScaleConnect working directory must stay within its profile directory')
+  }
+  await chmod(workingDir, 0o700)
+  return workingDir
+}
+
+async function tightenTokenCachePermissions(workingDir: string): Promise<void> {
+  const tokenPath = join(workingDir, 'scaleconnect.json')
+  try {
+    const tokenStat = await lstat(tokenPath)
+    if (!tokenStat.isFile()) return
+    await chmod(tokenPath, 0o600)
+  } catch (err: any) {
+    if (err?.code !== 'ENOENT') throw err
+  }
+}
+
+async function withScaleSyncLock<T>(workingDir: string, operation: () => Promise<T>): Promise<T> {
+  const key = process.platform === 'win32' ? workingDir.toLowerCase() : workingDir
+  const previous = scaleSyncLocks.get(key) || Promise.resolve()
+  let release!: () => void
+  const current = new Promise<void>(resolveCurrent => { release = resolveCurrent })
+  const tail = previous.then(() => current)
+  scaleSyncLocks.set(key, tail)
+  await previous
+  try {
+    return await operation()
   } finally {
-    if (workingDir) await rm(workingDir, { recursive: true, force: true })
+    release()
+    if (scaleSyncLocks.get(key) === tail) scaleSyncLocks.delete(key)
   }
 }
 

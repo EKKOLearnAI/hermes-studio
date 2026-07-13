@@ -144,9 +144,92 @@ describe('scale sync service', () => {
     expect(execFileAsyncMock).toHaveBeenCalledWith(
       executorPath,
       [],
-      expect.objectContaining({ cwd: expect.not.stringContaining(toolsRoot()) }),
+      expect.objectContaining({ cwd: expect.stringContaining(hermesHome) }),
     )
-    await expect(access(executionCwd)).rejects.toThrow()
+    await expect(access(executionCwd)).resolves.toBeUndefined()
+    await expect(access(join(executionCwd, 'scaleconnect.yaml'))).rejects.toThrow()
+  })
+
+  it('preserves the profile token cache across runs while deleting each secret config', async () => {
+    const executorPath = join(toolsRoot(), executableName)
+    await mkdir(toolsRoot(), { recursive: true })
+    await writeFile(executorPath, '', 'utf-8')
+    const workingDirs: string[] = []
+    execFileAsyncMock.mockImplementation(async (_file: string, args: string[], options: { cwd: string }) => {
+      expect(args).toEqual([])
+      workingDirs.push(options.cwd)
+      await expect(access(join(options.cwd, 'scaleconnect.yaml'))).resolves.toBeUndefined()
+      if (workingDirs.length === 1) {
+        await writeFile(join(options.cwd, 'scaleconnect.json'), '{"token":"cached-token"}', 'utf-8')
+      } else {
+        await expect(readFile(join(options.cwd, 'scaleconnect.json'), 'utf-8')).resolves.toContain('cached-token')
+      }
+      return { stdout: '[]', stderr: '' }
+    })
+    const { runScaleSync, updateScaleSyncSettings } = await importService()
+    await updateScaleSyncSettings({
+      enabled: true,
+      username: 'user@example.com',
+      password: 'secret-password',
+      scaleconnectPath: executorPath,
+    }, 'default')
+
+    await expect(runScaleSync('default', 'tester')).resolves.toMatchObject({ status: 'synced' })
+    await expect(access(join(workingDirs[0], 'scaleconnect.yaml'))).rejects.toThrow()
+    await expect(runScaleSync('default', 'tester')).resolves.toMatchObject({ status: 'synced' })
+
+    expect(workingDirs[1]).toBe(workingDirs[0])
+    await expect(readFile(join(workingDirs[0], 'scaleconnect.json'), 'utf-8')).resolves.toContain('cached-token')
+    await expect(access(join(workingDirs[0], 'scaleconnect.yaml'))).rejects.toThrow()
+    if (process.platform !== 'win32') {
+      expect((await stat(join(workingDirs[0], 'scaleconnect.json'))).mode & 0o777).toBe(0o600)
+    }
+  })
+
+  it('serializes same-profile runs so their secret configs cannot overlap', async () => {
+    const executorPath = join(toolsRoot(), executableName)
+    await mkdir(toolsRoot(), { recursive: true })
+    await writeFile(executorPath, '', 'utf-8')
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>(resolve => { releaseFirst = resolve })
+    let firstStarted!: () => void
+    const firstStartedPromise = new Promise<void>(resolve => { firstStarted = resolve })
+    let active = 0
+    let maxActive = 0
+    execFileAsyncMock.mockImplementation(async (_file: string, args: string[], options: { cwd: string }) => {
+      expect(args).toEqual([])
+      await expect(access(join(options.cwd, 'scaleconnect.yaml'))).resolves.toBeUndefined()
+      active += 1
+      maxActive = Math.max(maxActive, active)
+      if (execFileAsyncMock.mock.calls.length === 1) {
+        firstStarted()
+        await firstGate
+      }
+      active -= 1
+      return { stdout: '[]', stderr: '' }
+    })
+    const { runScaleSync, updateScaleSyncSettings } = await importService()
+    await updateScaleSyncSettings({
+      enabled: true,
+      username: 'user@example.com',
+      password: 'secret-password',
+      scaleconnectPath: executorPath,
+    }, 'default')
+
+    const firstRun = runScaleSync('default', 'tester')
+    await firstStartedPromise
+    const secondRun = runScaleSync('default', 'tester')
+    await new Promise(resolve => setTimeout(resolve, 20))
+
+    expect(execFileAsyncMock).toHaveBeenCalledTimes(1)
+    expect(maxActive).toBe(1)
+    releaseFirst()
+    await expect(Promise.all([firstRun, secondRun])).resolves.toEqual([
+      expect.objectContaining({ status: 'synced' }),
+      expect.objectContaining({ status: 'synced' }),
+    ])
+    expect(execFileAsyncMock).toHaveBeenCalledTimes(2)
+    expect(maxActive).toBe(1)
   })
 
   it('rejects an executor outside the trusted Hermes tools root', async () => {
@@ -209,6 +292,7 @@ describe('scale sync service', () => {
     execFileAsyncMock.mockImplementation(async (_file: string, args: string[], options: { cwd: string }) => {
       executionCwd = options.cwd
       expect(args).toEqual([])
+      await writeFile(join(options.cwd, 'scaleconnect.json'), '{"token":"timeout-token"}', 'utf-8')
       throw Object.assign(new Error(`timed out in ${options.cwd} with ${escapedPassword}`), {
         code: 'ETIMEDOUT',
         stderr: `config ${join(options.cwd, 'scaleconnect.yaml')} ${escapedPassword}`,
@@ -228,6 +312,8 @@ describe('scale sync service', () => {
     expect(JSON.stringify(result)).not.toContain('secret-')
     expect(JSON.stringify(result)).not.toContain(executionCwd)
     expect(JSON.stringify(result)).not.toContain('scaleconnect.yaml')
-    await expect(access(executionCwd)).rejects.toThrow()
+    await expect(access(executionCwd)).resolves.toBeUndefined()
+    await expect(access(join(executionCwd, 'scaleconnect.yaml'))).rejects.toThrow()
+    await expect(readFile(join(executionCwd, 'scaleconnect.json'), 'utf-8')).resolves.toContain('timeout-token')
   })
 })
