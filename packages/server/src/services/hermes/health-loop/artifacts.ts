@@ -60,6 +60,11 @@ export interface ReadHealthArtifactResult {
   content: Buffer
 }
 
+interface VerifiedArtifactFile {
+  content: Buffer
+  identity: { dev: bigint; ino: bigint }
+}
+
 export interface HealthArtifactVaultOptions {
   maxTotalBytes?: number
   mediaTypeLimits?: Readonly<Record<string, number>>
@@ -280,14 +285,15 @@ function validateMedia(content: Buffer, declaredMediaType: unknown, limits: { to
   return declaredMediaType
 }
 
-async function verifyStoredFile(
+async function verifyArtifactFile(
   path: string,
   expectedHash: string,
   expectedSize: number,
   expectedMediaType: string,
   rootReal: string,
   accessController: HealthArtifactAccessController,
-): Promise<Buffer> {
+  expectedBasename: string,
+): Promise<VerifiedArtifactFile> {
   try {
     const parent = dirname(path)
     await assertSafeDirectory(parent)
@@ -296,28 +302,35 @@ async function verifyStoredFile(
     if (!pathStat.isFile() || pathStat.isSymbolicLink()) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
     await secureAccess(() => accessController.secureFile(path))
     const resolved = await realpath(path)
-    if (!isPathInside(rootReal, resolved) || basename(resolved) !== expectedHash) {
+    if (!isPathInside(rootReal, resolved) || basename(resolved) !== expectedBasename) {
       throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
     }
     const flags = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0)
     const handle = await open(path, flags)
     try {
-      const before = await handle.stat()
-      if (!before.isFile() || before.size !== expectedSize) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_INTEGRITY_FAILED')
+      const before = await handle.stat({ bigint: true })
+      if (!before.isFile() || before.size !== BigInt(expectedSize)) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_INTEGRITY_FAILED')
       const content = await handle.readFile()
-      const after = await handle.stat()
-      if (after.size !== before.size || after.mtimeMs !== before.mtimeMs
+      const after = await handle.stat({ bigint: true })
+      if (after.size !== before.size || after.dev !== before.dev || after.ino !== before.ino || after.mtimeNs !== before.mtimeNs
         || createHash('sha256').update(content).digest('hex') !== expectedHash
         || sniffMediaType(content) !== expectedMediaType) {
         throw new HealthArtifactVaultError('HEALTH_ARTIFACT_INTEGRITY_FAILED')
       }
-      return content
+      return { content, identity: { dev: before.dev, ino: before.ino } }
     } finally {
       await handle.close()
     }
   } catch (error) {
     if (error instanceof HealthArtifactVaultError) throw error
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new HealthArtifactVaultError('HEALTH_ARTIFACT_NOT_FOUND')
+    throw new HealthArtifactVaultError('HEALTH_ARTIFACT_INTEGRITY_FAILED')
+  }
+}
+
+function assertSamePublishedIdentity(temp: VerifiedArtifactFile, final: VerifiedArtifactFile): void {
+  if (temp.identity.ino === 0n || final.identity.ino === 0n
+    || temp.identity.dev !== final.identity.dev || temp.identity.ino !== final.identity.ino) {
     throw new HealthArtifactVaultError('HEALTH_ARTIFACT_INTEGRITY_FAILED')
   }
 }
@@ -352,7 +365,6 @@ export function createHealthArtifactVault(options: HealthArtifactVaultOptions = 
       const finalPath = resolve(shard, contentHash)
       if (!isPathInside(root, finalPath)) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
       const tempPath = resolve(shard, `.${contentHash}.tmp-${randomBytes(16).toString('hex')}`)
-      let createdFinal = false
       try {
         const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0)
         const handle = await open(tempPath, flags, 0o600)
@@ -363,26 +375,25 @@ export function createHealthArtifactVault(options: HealthArtifactVaultOptions = 
         } finally {
           await handle.close()
         }
+        const verifiedTemp = await verifyArtifactFile(
+          tempPath, contentHash, content.length, mediaType, rootReal, accessController, basename(tempPath),
+        )
+        let publishedByRequest = false
         try {
           await link(tempPath, finalPath)
-          createdFinal = true
+          publishedByRequest = true
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
         }
-        await secureAccess(() => accessController.secureFile(finalPath))
+        const verifiedFinal = await verifyArtifactFile(
+          finalPath, contentHash, content.length, mediaType, rootReal, accessController, contentHash,
+        )
+        if (publishedByRequest) assertSamePublishedIdentity(verifiedTemp, verifiedFinal)
       } catch (error) {
-        if (createdFinal) await unlink(finalPath).catch(() => undefined)
         if (error instanceof HealthArtifactVaultError) throw error
         throw new HealthArtifactVaultError('HEALTH_ARTIFACT_WRITE_FAILED')
       } finally {
         await unlink(tempPath).catch(() => undefined)
-      }
-
-      try {
-        await verifyStoredFile(finalPath, contentHash, content.length, mediaType, rootReal, accessController)
-      } catch (error) {
-        if (createdFinal) await unlink(finalPath).catch(() => undefined)
-        throw error
       }
 
       try {
@@ -421,8 +432,10 @@ export function createHealthArtifactVault(options: HealthArtifactVaultOptions = 
       const rootReal = await prepareVaultRoot(base, root, accessController)
       const path = resolve(root, ...artifact.relativePath.split('/'))
       if (!isPathInside(root, path)) throw new HealthArtifactVaultError('HEALTH_ARTIFACT_UNSAFE_PATH')
-      const content = await verifyStoredFile(path, artifact.contentHash, artifact.sizeBytes, artifact.mediaType, rootReal, accessController)
-      return { artifact, content }
+      const verified = await verifyArtifactFile(
+        path, artifact.contentHash, artifact.sizeBytes, artifact.mediaType, rootReal, accessController, artifact.contentHash,
+      )
+      return { artifact, content: verified.content }
     },
   }
 }

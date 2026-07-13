@@ -183,6 +183,8 @@ describe('health artifact vault', () => {
         ? readdirSync(root, { recursive: true, withFileTypes: true }).filter(entry => entry.isFile()).map(entry => entry.name)
         : []
       expect(remaining).toEqual([])
+      const { getTwinArtifact } = await import('../../packages/server/src/services/hermes/personal-twin')
+      expect(getTwinArtifact(createHash('sha256').update(png()).digest('hex'))).toBeNull()
     } finally {
       process.env.HERMES_HOME = hermesHome
       rmSync(failHome, { recursive: true, force: true })
@@ -206,5 +208,51 @@ describe('health artifact vault', () => {
       process.env.HERMES_HOME = hermesHome
       rmSync(verifyFailHome, { recursive: true, force: true })
     }
+  })
+
+  it('never deletes a published final when another request reuses and registers it', async () => {
+    const { createHealthArtifactVault } = await import('../../packages/server/src/services/hermes/health-loop/artifacts')
+    const content = png()
+    const digest = createHash('sha256').update(content).digest('hex')
+    let announcePublished!: () => void
+    let releaseFailure!: () => void
+    const published = new Promise<void>(resolve => { announcePublished = resolve })
+    const mayFail = new Promise<void>(resolve => { releaseFailure = resolve })
+    let finalReached = false
+    const requestA = createHealthArtifactVault({
+      accessController: {
+        secureDirectory: async () => undefined,
+        secureFile: async (path: string) => {
+          if (!path.includes('.tmp-') && path.endsWith(digest)) {
+            finalReached = true
+            announcePublished()
+            await mayFail
+            throw new Error('injected post-publish verification failure')
+          }
+        },
+      },
+    })
+    const requestB = createHealthArtifactVault({ accessController: allowAccess() })
+    const input = {
+      content, declaredMediaType: 'image/png', source: 'health-capture', sourceId: 'publish-race', metadata: {},
+    }
+
+    const aResult = requestA.store(input).catch(error => error)
+    await published
+    const { getTwinArtifact } = await import('../../packages/server/src/services/hermes/personal-twin')
+    expect(getTwinArtifact(digest)).toBeNull()
+    const registered = await requestB.store(input)
+    releaseFailure()
+    const failure = await aResult
+
+    expect(finalReached).toBe(true)
+    expect(failure).toMatchObject({ code: 'HEALTH_ARTIFACT_ACCESS_DENIED' })
+    const finalPath = join(hermesHome, 'personal', 'artifacts', registered.relativePath)
+    expect(readFileSync(finalPath)).toEqual(content)
+    await expect(requestB.read(registered.id)).resolves.toMatchObject({ artifact: { id: registered.id }, content })
+    expect(getTwinArtifact(digest)).toMatchObject({ id: registered.id })
+    const files = readdirSync(join(hermesHome, 'personal', 'artifacts'), { recursive: true, withFileTypes: true })
+      .filter(entry => entry.isFile()).map(entry => entry.name)
+    expect(files).toEqual([digest])
   })
 })
