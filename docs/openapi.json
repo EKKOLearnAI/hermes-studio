@@ -3637,7 +3637,15 @@
                   },
                   "environments": {
                     "type": "array",
-                    "items": {}
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "simulator",
+                        "internal",
+                        "sandbox",
+                        "production"
+                      ]
+                    }
                   },
                   "expectedCost": {
                     "type": "object",

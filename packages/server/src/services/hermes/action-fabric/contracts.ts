@@ -62,7 +62,10 @@ export function effectiveCapabilityRisk(capability: FabricCapability, input: Fab
   return RISK_ORDER[semantic] > RISK_ORDER[capability.risk] ? semantic : capability.risk
 }
 
-export function hasStandingHealthAuthorization(capability: FabricCapability, effectiveRisk: FabricRisk): boolean {
+export function healthStandingAuthorizationRequirements(
+  capability: FabricCapability,
+  effectiveRisk: FabricRisk,
+): string[] | null {
   const requiredAuthentication: Record<string, string[]> = {
     'health.source.sync': ['connector_credential:configured'],
     'health.artifact.analyze.local': ['artifact:local_read'],
@@ -72,7 +75,7 @@ export function hasStandingHealthAuthorization(capability: FabricCapability, eff
   const expected = requiredAuthentication[capability.id]
   return effectiveRisk === 'low' && expected !== undefined
     && capability.idempotency === 'required'
-    && sameStringSet(capability.authentication, expected)
+    && sameStringSet(capability.authentication, expected) ? [...expected] : null
 }
 
 function sameStringSet(actual: string[], expected: string[]): boolean {
@@ -115,6 +118,16 @@ export function validateHealthOutputSemantics(
   if (capabilityId === 'health.artifact.analyze.remote' && output.consentId !== input.consentId) return false
   if ((capabilityId === 'health.plan.adjust' || capabilityId === 'health.plan.restore')
     && output.planId !== input.planId) return false
+  if (capabilityId === 'health.plan.adjust') {
+    if (!Number.isSafeInteger(input.expectedVersion) || output.previousVersion !== input.expectedVersion
+      || output.newVersion !== Number(input.expectedVersion) + 1
+      || typeof output.previousDigest !== 'string' || !/^[a-f0-9]{64}$/.test(output.previousDigest)
+      || typeof output.planDigest !== 'string' || !/^[a-f0-9]{64}$/.test(output.planDigest)) return false
+  }
+  if (capabilityId === 'health.plan.restore') {
+    if (output.status !== 'restored' || output.restoredVersion !== input.restoreVersion
+      || output.planDigest !== input.restoreDigest) return false
+  }
   if (capabilityId === 'health.followup.schedule' && output.followupId !== input.followupId) return false
   const ids = capabilityId === 'health.source.sync' ? output.recordIds
     : capabilityId.startsWith('health.artifact.analyze.') ? output.observationIds : undefined

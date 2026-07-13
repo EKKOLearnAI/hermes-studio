@@ -23,6 +23,10 @@ import {
   type FabricExecutionContext,
   type FabricExecutorAdapter,
 } from '../../packages/server/src/services/hermes/action-fabric'
+import {
+  clearFabricAuthorizationProvider,
+  registerFabricAuthorizationProvider,
+} from '../../packages/server/src/services/hermes/action-fabric/authorization'
 import { ensureBuiltInAssistantRoles, updateAssistantRole } from '../../packages/server/src/services/hermes/personal-twin'
 import { logger } from '../../packages/server/src/services/logger'
 
@@ -52,6 +56,7 @@ describe('Action Fabric durable worker', () => {
     unregisterFabricExecutorAdapter('internal-twin')
     unregisterFabricExecutorAdapter('health-source')
     unregisterFabricExecutorAdapter('health-shadow')
+    clearFabricAuthorizationProvider()
   })
 
   afterEach(async () => {
@@ -60,6 +65,7 @@ describe('Action Fabric durable worker', () => {
     unregisterFabricExecutorAdapter('internal-twin')
     unregisterFabricExecutorAdapter('health-source')
     unregisterFabricExecutorAdapter('health-shadow')
+    clearFabricAuthorizationProvider()
     vi.useRealTimers()
     if (originalHome === undefined) delete process.env.HERMES_HOME
     else process.env.HERMES_HOME = originalHome
@@ -81,6 +87,38 @@ describe('Action Fabric durable worker', () => {
     await expect(processActionFabricOnce({ workerId: 'worker-a', now: plus(2) })).resolves.toMatchObject({ phase: 'verify' })
     expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'succeeded', completedAt: plus(2).toISOString() })
     expect(getFabricWorkflow(workflow.id)!.steps.map(step => step.state)).toEqual(['succeeded', 'succeeded', 'succeeded'])
+  })
+
+  it('revalidates live standing authorization before leasing execution', async () => {
+    updateAssistantRole('health-manager', {
+      enabled: true,
+      capabilityScope: { allow: ['health.source.sync'], deny: [], enforcement: 'action_fabric_v1' },
+      decisionAuthority: { maxRisk: 'critical', requireApprovalAbove: 'critical',
+        allowedTargets: ['health:connector:s400'] },
+      spendingLimits: { currency: null, perAction: 0, daily: 0 },
+    })
+    registerFabricAuthorizationProvider({
+      id: 'worker-live-authorization', version: 1,
+      authorize: request => ({ authorizationVersion: 2, expiresAt: '2099-01-01T00:00:00.000Z',
+        grantedRequirements: [...request.requirements] }),
+    })
+    let prepared = 0
+    registerFabricExecutorAdapter(adapter({
+      id: 'health-source', type: 'connector',
+      prepare: async context => { prepared += 1; return success('prepared', context) },
+    }))
+    const workflow = createFabricIntent({
+      capabilityId: 'health.source.sync', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
+      idempotencyKey: 'live-auth-revalidation', goal: 'sync source', environments: ['production'],
+      target: { kind: 'health_connector', connectorId: 's400' }, constraints: {}, rationale: 'test',
+      input: { schemaVersion: 1, connectorId: 's400', requestedAt: '2026-07-12T01:00:00.000Z' },
+    }).workflow
+    clearFabricAuthorizationProvider()
+
+    await processActionFabricOnce({ now: base })
+    expect(prepared).toBe(0)
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'waiting_user',
+      lastErrorCode: expect.stringMatching(/AUTHORIZATION/) })
   })
 
   it('uses an exclusive live lease and recovers only after expiry', async () => {

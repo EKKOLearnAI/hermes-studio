@@ -12,9 +12,11 @@ import {
   withFabricAuditedTransaction,
 } from './audit'
 import { getFabricControlStateInDb } from './control'
+import { resolveFabricAuthorization, type FabricAuthorizationEvidence } from './authorization'
+import { verifyTrustedPlanRestoreInDb } from './compensation-internal'
 import {
   effectiveCapabilityRisk,
-  hasStandingHealthAuthorization,
+  healthStandingAuthorizationRequirements,
   healthTargetAtoms,
   isHealthCapability,
   validateFabricSchema,
@@ -32,7 +34,6 @@ import type {
 } from './types'
 
 const POLICY_VERSION = 1
-const trustedPlanRestoreCompensations = new WeakSet<object>()
 const RISK_ORDER: Record<AssistantRoleRisk, number> = { none: 0, low: 1, medium: 2, high: 3, critical: 4 }
 type ReasonCode =
   | 'role_missing' | 'role_disabled' | 'capability_not_allowed' | 'capability_denied'
@@ -66,13 +67,6 @@ export function prepareFabricPolicyEvaluation(input: FabricPolicyInput): void {
   migrateAssistantRoleCapabilityEnforcement()
 }
 
-/** Marks a server-built plan restore; HTTP/user input never receives this authority. */
-export function authorizeTrustedPlanRestoreCompensation(input: FabricPolicyInput): void {
-  if (input.capabilityId !== 'health.plan.restore' || input.environments?.length !== 1
-    || input.environments[0] !== 'internal') throw new Error('FABRIC_COMPENSATION_INVALID')
-  trustedPlanRestoreCompensations.add(input)
-}
-
 /** Must only be called from an existing `withFabricAuditedTransaction` callback. */
 export function evaluateFabricPolicyInDb(
   db: DatabaseSync,
@@ -81,6 +75,9 @@ export function evaluateFabricPolicyInDb(
 ): FabricPolicyDecision {
   assertFabricAuditedTransaction(db)
   validateInput(input)
+  const instant = evaluationInstant(options)
+  const now = instant.toISOString()
+  const ledgerDate = utcDate(instant)
   const environments = input.environments ?? (isHealthCapability(input.capabilityId) ? ['sandbox'] : ['simulator', 'internal'])
   const resolution = resolveFabricExecutorInDb(db, input.capabilityId, { environments })
   if (resolution && (!validateFabricSchema(input.input, resolution.capability.inputSchema)
@@ -88,22 +85,32 @@ export function evaluateFabricPolicyInDb(
     throw new Error('FABRIC_CAPABILITY_INPUT_INVALID')
   }
   const effectiveRisk = resolution ? effectiveCapabilityRisk(resolution.capability, input.input) : null
-  const standingAuthorization = resolution
-    ? hasStandingHealthAuthorization(resolution.capability, effectiveRisk ?? resolution.capability.risk) : false
-  const authorizationMode = trustedPlanRestoreCompensations.has(input) ? 'trusted_compensation'
-    : standingAuthorization ? 'standing' : 'per_action'
   const targetAtoms = resolution && isHealthCapability(input.capabilityId)
     ? healthTargetAtoms(input.capabilityId, input.target, input.input) : null
+  const authorizationRequirements = resolution
+    ? healthStandingAuthorizationRequirements(resolution.capability, effectiveRisk ?? resolution.capability.risk) : null
+  const sandboxStanding = !!resolution && !!authorizationRequirements && resolution.executor.id === 'health-shadow'
+    && resolution.executor.environment === 'sandbox' && resolution.executor.configuration.shadow === true
+    && resolution.executor.configuration.externalWrite === false
+  const authorizationEvidence = resolution && authorizationRequirements && targetAtoms && !sandboxStanding
+    ? resolveFabricAuthorization({
+      capabilityId: input.capabilityId, requestedByUserId: input.requestedByUserId, targetAtoms,
+      executorId: resolution.executor.id, environment: resolution.executor.environment,
+      input: input.input, requirements: authorizationRequirements,
+    }, now) : null
+  const standingAuthorization = sandboxStanding || authorizationEvidence !== null
+  const trustedPlanRestore = input.capabilityId === 'health.plan.restore'
+    && verifyTrustedPlanRestoreInDb(db, input)
+  const authorizationMode = trustedPlanRestore ? 'trusted_compensation'
+    : sandboxStanding ? 'standing_sandbox' : authorizationEvidence ? 'standing_provider' : 'per_action'
   const materialInputDigest = digest({
     capabilityId: input.capabilityId, target: input.target, input: input.input,
     constraints: input.constraints, expectedCost: input.expectedCost ?? null,
     environments, capabilityRisk: resolution?.capability.risk ?? null, effectiveRisk, authorizationMode,
+    authorizationEvidence,
   })
   const sanitizedSummary = summarize(input)
 
-  const instant = evaluationInstant(options)
-    const now = instant.toISOString()
-    const ledgerDate = utcDate(instant)
     const role = getAssistantRole(input.requestedByRoleId)
     const control = getFabricControlStateInDb(db)
     const effective = effectiveCost(resolution, input.expectedCost)
@@ -115,6 +122,7 @@ export function evaluateFabricPolicyInDb(
       environments: [...environments], ledgerDate, effectiveCost: effective.money,
       resolvedEnvironment: resolution?.executor.environment ?? null,
       capabilityRisk: resolution?.capability.risk ?? null, effectiveRisk, targetAtoms, authorizationMode,
+      authorizationEvidence,
     }
     const existing = db.prepare(`SELECT id, material_input_digest FROM fabric_action_intents
       WHERE requested_by_user_id=? AND requested_by_role_id=? AND idempotency_key=?`).get(
@@ -168,7 +176,7 @@ export function evaluateFabricPolicyInDb(
     else if (emergencyBlocks(control.level, input.phase ?? 'intent')) reasons.push('emergency_stop')
     else if (input.expectedMaterialInputDigest !== undefined && input.expectedMaterialInputDigest !== materialInputDigest) {
       reasons.push('material_input_changed')
-    } else if (!targetAllowed(role, resolution, input.target, input.input)) reasons.push('target_not_allowed')
+    } else if (!targetAllowed(role, resolution, input.target, input.input, input.requestedByUserId)) reasons.push('target_not_allowed')
     else if (effective.currencyMismatch) reasons.push('currency_mismatch')
     else {
       const risk = RISK_ORDER[effectiveRisk ?? resolution.capability.risk]
@@ -176,7 +184,11 @@ export function evaluateFabricPolicyInDb(
         reasons.push('risk_requires_approval')
         outcome = 'deny'
       } else {
-        if (!trustedPlanRestoreCompensations.has(input)
+        if (!trustedPlanRestore && isHealthCapability(resolution.capability.id)
+          && risk >= RISK_ORDER.medium) {
+          reasons.push('risk_requires_approval')
+          outcome = 'waiting_user'
+        } else if (!trustedPlanRestore
           && role.decisionAuthority.requireApprovalAbove !== undefined
           && risk > RISK_ORDER[role.decisionAuthority.requireApprovalAbove]) {
           reasons.push('risk_requires_approval')
@@ -184,7 +196,7 @@ export function evaluateFabricPolicyInDb(
         }
         if (resolution.capability.sideEffect && !resolution.capability.reversible
           && !standingAuthorization
-          && !trustedPlanRestoreCompensations.has(input)) {
+          && !trustedPlanRestore) {
           reasons.push('irreversible_requires_approval')
           outcome = 'waiting_user'
         }
@@ -263,6 +275,22 @@ export function revalidateFabricDecisionInDb(db: DatabaseSync, decisionId: strin
   const intent = requireIntentIdentity(db, decision.intent_id)
   revalidateSnapshot(db, decision, intent.requested_by_role_id)
   return parseDecision(decision)
+}
+
+/** Rechecks only standing authorization immediately before adapter execution. */
+export function revalidateFabricAuthorizationInDb(db: DatabaseSync, decisionId: string): void {
+  const decision = db.prepare('SELECT * FROM fabric_policy_decisions WHERE id=?').get(decisionId) as DecisionRow | undefined
+  if (!decision) throw new Error('FABRIC_POLICY_DECISION_NOT_FOUND')
+  const snapshot = JSON.parse(decision.policy_snapshot_json) as Record<string, unknown>
+  if (!['standing_provider', 'standing_sandbox'].includes(String(snapshot.authorizationMode))) return
+  const environments = snapshot.environments as FabricEnvironment[]
+  const capabilityId = (JSON.parse(decision.sanitized_summary_json) as { capabilityId?: unknown }).capabilityId
+  if (typeof capabilityId !== 'string' || !Array.isArray(environments)) {
+    throw new Error('FABRIC_POLICY_STALE_AUTHORIZATION')
+  }
+  const resolution = resolveFabricExecutorInDb(db, capabilityId, { environments })
+  if (!resolution) throw new Error('FABRIC_POLICY_STALE_AUTHORIZATION')
+  revalidateAuthorization(db, decision, snapshot, resolution)
 }
 
 export function commitFabricBudget(workflowId: string, actual?: FabricMoney): void {
@@ -362,8 +390,11 @@ function targetAllowed(
   resolution: ResolvedFabricExecutor,
   target: Record<string, unknown>,
   input: Record<string, unknown>,
+  requestedByUserId: string,
 ): boolean {
   if (isHealthCapability(resolution.capability.id)) {
+    if (resolution.capability.id === 'health.followup.schedule'
+      && (input.ownerUserId !== requestedByUserId || target.ownerUserId !== requestedByUserId)) return false
     const atoms = healthTargetAtoms(resolution.capability.id, target, input)
     if (!atoms || atoms.length === 0) return false
     const roleTargets = role.decisionAuthority.allowedTargets
@@ -552,9 +583,54 @@ function revalidateSnapshot(db: DatabaseSync, decision: DecisionRow, roleId: str
     { environments })
   if (!resolution || resolution.policyRevision !== snapshot.registryPolicyRevision
     || resolution.policyEvaluationToken !== snapshot.registryPolicyEvaluationToken) throw new Error('FABRIC_POLICY_STALE_REGISTRY')
+  revalidateAuthorization(db, decision, snapshot, resolution)
   const control = getFabricControlStateInDb(db)
   if (control.version !== snapshot.controlVersion || emergencyBlocks(control.level, snapshot.phase as 'intent' | 'execution')) {
     throw new Error('FABRIC_POLICY_STALE_CONTROL')
+  }
+}
+
+function revalidateAuthorization(
+  db: DatabaseSync,
+  decision: DecisionRow,
+  snapshot: Record<string, unknown>,
+  resolution: ResolvedFabricExecutor,
+): void {
+  if (snapshot.authorizationMode === 'standing_sandbox') {
+    if (resolution.executor.id !== 'health-shadow' || resolution.executor.environment !== 'sandbox'
+      || resolution.executor.configuration.shadow !== true || resolution.executor.configuration.externalWrite !== false) {
+      throw new Error('FABRIC_POLICY_STALE_AUTHORIZATION')
+    }
+    return
+  }
+  if (snapshot.authorizationMode !== 'standing_provider') return
+  const intent = db.prepare(`SELECT i.requested_by_user_id,s.input_json
+    FROM fabric_action_intents i
+    JOIN fabric_workflows w ON w.intent_id=i.id
+    JOIN fabric_steps s ON s.workflow_id=w.id AND s.ordinal=0 AND s.kind='prepare'
+    WHERE i.id=?`).get(decision.intent_id) as { requested_by_user_id: string; input_json: string } | undefined
+  if (!intent) throw new Error('FABRIC_POLICY_STALE_AUTHORIZATION')
+  const summary = JSON.parse(decision.sanitized_summary_json) as { capabilityId?: unknown }
+  const stepInput = JSON.parse(intent.input_json) as Record<string, unknown>
+  const target = stepInput.target as FabricPolicyInput['target']
+  const actionInput = stepInput.actionInput as FabricPolicyInput['input']
+  if (typeof summary.capabilityId !== 'string' || !target || Array.isArray(target) || typeof target !== 'object'
+    || !actionInput || Array.isArray(actionInput) || typeof actionInput !== 'object') {
+    throw new Error('FABRIC_POLICY_STALE_AUTHORIZATION')
+  }
+  const atoms = healthTargetAtoms(summary.capabilityId, target, actionInput)
+  const requirements = healthStandingAuthorizationRequirements(
+    resolution.capability,
+    effectiveCapabilityRisk(resolution.capability, actionInput),
+  )
+  const evidence = snapshot.authorizationEvidence as FabricAuthorizationEvidence | null
+  const current = atoms && requirements ? resolveFabricAuthorization({
+    capabilityId: summary.capabilityId, requestedByUserId: intent.requested_by_user_id, targetAtoms: atoms,
+    executorId: resolution.executor.id, environment: resolution.executor.environment,
+    input: actionInput, requirements,
+  }, new Date().toISOString()) : null
+  if (!evidence || !current || stableStringify(evidence) !== stableStringify(current)) {
+    throw new Error('FABRIC_POLICY_STALE_AUTHORIZATION')
   }
 }
 

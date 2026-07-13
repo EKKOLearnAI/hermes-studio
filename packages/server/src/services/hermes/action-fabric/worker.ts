@@ -3,6 +3,8 @@ import type { DatabaseSync } from 'node:sqlite'
 import { logger } from '../../logger'
 import { appendFabricAuditEvent, appendFabricOutbox, withFabricAuditedTransaction } from './audit'
 import { getFabricControlState, getFabricControlStateInDb } from './control'
+import { buildGenericCompensationInput, prepareTrustedPlanRestoreInDb } from './compensation-internal'
+import { revalidateFabricAuthorizationInDb } from './policy'
 import {
   invokeFabricExecutor,
   type FabricExecutionContext,
@@ -11,7 +13,6 @@ import {
 } from './executors'
 import type { FabricEvidence, FabricExecutorType, FabricJsonObject, FabricWorkflowState } from './types'
 import {
-  buildFabricCompensationInput,
   createFabricCompensationChildInDb,
   isFabricWorkflowWorkerState,
   prepareFabricCompensation,
@@ -95,6 +96,7 @@ interface CandidateRow {
   executor_environment: string
   executor_configuration_json: string
   policy_snapshot_json: string
+  policy_decision_id: string
   step_id: string
   step_ordinal: number
   step_kind: string
@@ -160,8 +162,10 @@ async function processActionFabricCycle(
     && claim.verificationStrategy !== 'none') {
     try {
       if (claim.compensationCapabilityId === null) compensation = null
+      else if (claim.capabilityId === 'health.plan.adjust'
+        && claim.compensationCapabilityId === 'health.plan.restore') compensation = undefined
       else {
-        const request = buildFabricCompensationInput({
+        const request = buildGenericCompensationInput({
           originalCapabilityId: claim.capabilityId,
           compensationCapabilityId: claim.compensationCapabilityId,
           requestedByRoleId: claim.requestedByRoleId,
@@ -169,8 +173,6 @@ async function processActionFabricCycle(
           workflowId: claim.workflowId,
           executeToken: claim.executeToken,
           target: claim.target,
-          input: claim.input,
-          executionOutput: claim.executionOutput,
           executorEnvironment: claim.executorEnvironment,
           shadow: claim.shadow,
           rationale: 'Verification mismatch recovery',
@@ -318,6 +320,13 @@ function claimNextWorkflow(workerId: string, now: Date, emergencyOnly = false): 
     if (claim.controlVersion !== control.version) {
       return moveControlChangedToWaitingUser(db, row, nowIso, control.version)
     }
+    if (phase !== 'interrupt') {
+      try {
+        revalidateFabricAuthorizationInDb(db, row.policy_decision_id)
+      } catch (error) {
+        return moveInvalidContractToWaitingUser(db, row, nowIso, stableErrorClass(error))
+      }
+    }
     const recovered = row.lease_owner !== null && row.lease_expires_at !== null && row.lease_expires_at <= nowIso
     if (recovered && phase === 'execute' && row.step_state === 'running' && claim.idempotency === 'none') {
       return recoverNonIdempotentExecution(db, row, claim, nowIso)
@@ -396,7 +405,7 @@ function candidateSelect(): string {
   return `SELECT w.id workflow_id,w.version workflow_version,w.state workflow_state,w.lease_owner,w.lease_expires_at,
     i.id intent_id,i.requested_by_user_id,i.requested_by_role_id,i.capability_id,i.capability_version,
     e.id executor_id,e.type executor_type,e.environment executor_environment,e.configuration_json executor_configuration_json,
-    p.policy_snapshot_json,s.id step_id,s.ordinal step_ordinal,s.kind step_kind,s.state step_state,
+    p.id policy_decision_id,p.policy_snapshot_json,s.id step_id,s.ordinal step_ordinal,s.kind step_kind,s.state step_state,
     s.attempt step_attempt,s.execution_token,s.input_json
     FROM fabric_workflows w JOIN fabric_action_intents i ON i.id=w.intent_id
     JOIN fabric_policy_decisions p ON p.id=w.policy_decision_id
@@ -491,10 +500,14 @@ function commitClaim(
     let compensationOutcome: string | null = null
     if (!emergencyUncertain && claim.phase === 'verify' && result.outcome === 'mismatch' && claim.reversible
       && claim.verificationStrategy !== 'none') {
-      if (!preparedCompensation) {
+      const effectiveCompensation = claim.capabilityId === 'health.plan.adjust'
+        && claim.compensationCapabilityId === 'health.plan.restore'
+        ? prepareTrustedPlanRestoreInDb(db, claim.workflowId, 'Verification mismatch recovery')
+        : preparedCompensation
+      if (!effectiveCompensation) {
         transition = compensationWaiting('FABRIC_COMPENSATION_POLICY_UNAVAILABLE', current.attempt)
       } else {
-        const child = createFabricCompensationChildInDb(db, preparedCompensation)
+        const child = createFabricCompensationChildInDb(db, effectiveCompensation)
         compensationIntentId = child.intent.id
         compensationWorkflowId = child.workflow.id
         compensationOutcome = child.policyDecision.outcome

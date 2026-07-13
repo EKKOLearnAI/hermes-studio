@@ -106,6 +106,9 @@ export async function executors(ctx: Context): Promise<void> {
 /** @openapi-response ActionIntentResultDto */
 export async function createIntent(ctx: Context): Promise<void> {
   respond(ctx, () => {
+    void (ctx.request.body as {
+      environments?: Array<'simulator' | 'internal' | 'sandbox' | 'production'>
+    })
     const body = requestBody(ctx, INTENT_FIELDS)
     const requestedByRoleId = requiredIdentifier(body, 'requestedByRoleId', 200)
     const role = listAssistantRolesWithMappings().find(item => item.id === requestedByRoleId)

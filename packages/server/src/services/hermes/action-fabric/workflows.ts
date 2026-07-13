@@ -4,8 +4,8 @@ import { getAssistantRole } from '../personal-twin'
 import { appendFabricAuditEvent, appendFabricOutbox, withFabricAuditedTransaction } from './audit'
 import { withActionFabricDb } from './database'
 import { getFabricControlStateInDb } from './control'
+import { buildGenericCompensationInput, prepareTrustedPlanRestoreInDb } from './compensation-internal'
 import {
-  authorizeTrustedPlanRestoreCompensation,
   evaluateFabricPolicyInDb,
   prepareFabricPolicyEvaluation,
   revalidateFabricDecisionInDb,
@@ -198,6 +198,9 @@ export function approveFabricWorkflow(id: string, actorUserId: string): FabricWo
     constraints: context.payload.constraints,
     rationale: 'User approval',
     ...(context.intent.expectedCost === undefined ? {} : { expectedCost: context.intent.expectedCost }),
+    ...(Array.isArray(context.decision.policySnapshot.environments)
+      ? { environments: context.decision.policySnapshot.environments as FabricActionIntentInput['environments'] }
+      : {}),
   }
   prepareFabricPolicyEvaluation(request)
   return withFabricAuditedTransaction(db => {
@@ -302,21 +305,17 @@ export function requestFabricCompensation(id: string, actorUserId: string, reaso
   if (!context.contract.reversible || context.contract.compensationCapabilityId === null) {
     throw new Error('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
   }
-  const compensationInput = buildFabricCompensationInput({
+  const genericInput = context.intent.capabilityId === 'health.plan.adjust' ? null : buildGenericCompensationInput({
     originalCapabilityId: context.intent.capabilityId,
     compensationCapabilityId: context.contract.compensationCapabilityId,
     requestedByRoleId: context.intent.requestedByRoleId,
     requestedByUserId: context.intent.requestedByUserId,
     workflowId: id, executeToken: context.executeToken,
-    target: context.payload.target, input: context.payload.actionInput,
-    executionOutput: context.executeOutput, executorEnvironment: context.executorEnvironment,
+    target: context.payload.target, executorEnvironment: context.executorEnvironment,
     shadow: context.shadow, rationale: reason,
   })
-  if (!compensationInput) throw new Error('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
-  const prepared = prepareFabricCompensation(compensationInput)
+  const genericPrepared = genericInput ? prepareFabricCompensation(genericInput) : null
   return withFabricAuditedTransaction(db => {
-    const compensation = createFabricCompensationChildInDb(db, prepared)
-    const compensationDecision = compensation.policyDecision
     const current = requireWorkflow(db, id)
     if (current.compensation_intent_id !== null) return detailForWorkflow(db, current)
     if (current.state !== 'succeeded') throw new Error('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
@@ -326,6 +325,16 @@ export function requestFabricCompensation(id: string, actorUserId: string, reaso
       || verified.contract.compensationCapabilityId !== context.contract.compensationCapabilityId) {
       throw new Error('FABRIC_WORKFLOW_CONTRACT_STALE')
     }
+    const prepared = context.intent.capabilityId === 'health.plan.adjust'
+      ? (() => {
+          const trusted = prepareTrustedPlanRestoreInDb(db, id, reason)
+          if (!trusted) throw new Error('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
+          return trusted
+        })()
+      : genericPrepared
+    if (!prepared) throw new Error('FABRIC_WORKFLOW_NOT_COMPENSATABLE')
+    const compensation = createFabricCompensationChildInDb(db, prepared)
+    const compensationDecision = compensation.policyDecision
     const destination = compensationDecision.outcome === 'deny' ? current.state : 'compensating'
     const now = new Date().toISOString()
     const result = db.prepare(`UPDATE fabric_workflows SET compensation_intent_id=?,state=?,version=version+1,
@@ -352,54 +361,7 @@ export function prepareFabricCompensation(input: FabricActionIntentInput): Prepa
   validatePersistedMetadata(input)
   const payload = actionPayload(input)
   prepareFabricPolicyEvaluation(input)
-  if (input.capabilityId === 'health.plan.restore') authorizeTrustedPlanRestoreCompensation(input)
   return { input, payload }
-}
-
-export function buildFabricCompensationInput(input: {
-  originalCapabilityId: string
-  compensationCapabilityId: string
-  requestedByRoleId: string
-  requestedByUserId: string
-  workflowId: string
-  executeToken: string
-  target: FabricJsonObject
-  input: FabricJsonObject
-  executionOutput?: FabricJsonObject
-  executorEnvironment: string
-  shadow: boolean
-  rationale: string
-}): FabricActionIntentInput | null {
-  if (input.shadow || input.executorEnvironment === 'sandbox') return null
-  const common = {
-    capabilityId: input.compensationCapabilityId,
-    requestedByRoleId: input.requestedByRoleId,
-    requestedByUserId: input.requestedByUserId,
-    idempotencyKey: `compensation:${input.workflowId}`,
-    goal: 'Compensate a completed Action Fabric workflow',
-    constraints: { compensationForWorkflowId: input.workflowId },
-    rationale: input.rationale,
-  }
-  if (input.originalCapabilityId === 'health.plan.adjust'
-    && input.compensationCapabilityId === 'health.plan.restore') {
-    const output = input.executionOutput
-    if (!output || typeof input.input.planId !== 'string' || output.planId !== input.input.planId
-      || !Number.isSafeInteger(output.newVersion) || !Number.isSafeInteger(output.previousVersion)
-      || typeof output.previousDigest !== 'string' || !/^[a-f0-9]{64}$/.test(output.previousDigest)) return null
-    return {
-      ...common,
-      target: { kind: 'health_plan', planId: input.input.planId },
-      input: { schemaVersion: 1, planId: input.input.planId,
-        expectedCurrentVersion: output.newVersion, restoreVersion: output.previousVersion,
-        restoreDigest: output.previousDigest },
-      environments: ['internal'],
-    }
-  }
-  return {
-    ...common,
-    target: input.target,
-    input: { originalWorkflowId: input.workflowId, originalExecutionReference: input.executeToken },
-  }
 }
 
 /** Must be called from the transaction used to link the parent workflow. */
