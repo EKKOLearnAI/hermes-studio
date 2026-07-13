@@ -58,11 +58,15 @@ vi.mock('naive-ui', () => ({
   }),
 }))
 
-vi.mock('@/api/hermes/download', () => ({
-  downloadFile: downloadApiMock.downloadFile,
-  fetchFileText: downloadApiMock.fetchFileText,
-  getDownloadUrl: downloadApiMock.getDownloadUrl,
-}))
+vi.mock('@/api/hermes/download', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/hermes/download')>()
+  return {
+    ...actual,
+    downloadFile: downloadApiMock.downloadFile,
+    fetchFileText: downloadApiMock.fetchFileText,
+    getDownloadUrl: downloadApiMock.getDownloadUrl,
+  }
+})
 
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 
@@ -317,6 +321,20 @@ describe('MarkdownRenderer', () => {
     expect(downloadApiMock.downloadFile).toHaveBeenCalledWith('/tmp/notes.txt', 'notes.txt')
     expect(downloadApiMock.fetchFileText).not.toHaveBeenCalled()
     expect(wrapper.find('.n-drawer-stub').exists()).toBe(false)
+  })
+
+  it('preserves the target extension when a local file link label has no suffix', async () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[下载报告](/tmp/report.md)',
+      },
+    })
+
+    await wrapper.find('.att-download-btn').trigger('click')
+    await Promise.resolve()
+
+    expect(downloadApiMock.downloadFile).toHaveBeenCalledTimes(1)
+    expect(downloadApiMock.downloadFile).toHaveBeenCalledWith('/tmp/report.md', 'report.md')
   })
 
   it('opens text previews in a responsive drawer with a close control', async () => {

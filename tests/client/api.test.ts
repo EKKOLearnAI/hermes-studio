@@ -13,7 +13,7 @@ vi.mock('@/router', () => ({
 }))
 
 import { getApiKey, setApiKey, clearApiKey, hasApiKey, getStoredUserRole, isStoredSuperAdmin, request } from '../../packages/client/src/api/client'
-import { getDownloadUrl } from '../../packages/client/src/api/hermes/download'
+import { downloadFile, getDownloadUrl } from '../../packages/client/src/api/hermes/download'
 import { uploadFiles } from '../../packages/client/src/api/hermes/files'
 import { importSkill } from '../../packages/client/src/api/hermes/skills'
 import { archiveSession, batchDeleteSessions, exportSession, importHermesSession, unarchiveSession } from '../../packages/client/src/api/hermes/sessions'
@@ -223,6 +223,54 @@ describe('API Client', () => {
       expect(url.pathname).toBe('/api/hermes/download')
       expect(url.searchParams.get('path')).toBe('/tmp/100% ready.txt')
       expect(url.searchParams.get('name')).toBe('100% ready.txt')
+    })
+
+    it('uses the target basename when a supplied download label has no extension', () => {
+      const url = new URL(getDownloadUrl('/tmp/report.md', '下载报告'), 'http://localhost')
+
+      expect(url.pathname).toBe('/api/hermes/download')
+      expect(url.searchParams.get('path')).toBe('/tmp/report.md')
+      expect(url.searchParams.get('name')).toBe('report.md')
+    })
+
+    it('preserves explicit custom download names that already include an extension', () => {
+      const url = new URL(getDownloadUrl('/tmp/report.md', 'custom-name.md'), 'http://localhost')
+
+      expect(url.searchParams.get('path')).toBe('/tmp/report.md')
+      expect(url.searchParams.get('name')).toBe('custom-name.md')
+    })
+
+    it('sets the browser download name from the path when the label has no extension', async () => {
+      const blob = new Blob(['report'])
+      mockFetch.mockResolvedValue({
+        ok: true,
+        blob: () => Promise.resolve(blob),
+      })
+      const createObjectUrl = vi.fn(() => 'blob:download')
+      const revokeObjectUrl = vi.fn()
+      const OriginalUrl = URL
+      class DownloadUrl extends OriginalUrl {}
+      Object.defineProperties(DownloadUrl, {
+        createObjectURL: { value: createObjectUrl },
+        revokeObjectURL: { value: revokeObjectUrl },
+      })
+      vi.stubGlobal('URL', DownloadUrl)
+      const originalCreateElement = document.createElement.bind(document)
+      const downloadAnchor = originalCreateElement('a') as HTMLAnchorElement
+      vi.spyOn(downloadAnchor, 'click').mockImplementation(() => undefined)
+      const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+        return tagName.toLowerCase() === 'a' ? downloadAnchor : originalCreateElement(tagName)
+      })
+
+      try {
+        await expect(downloadFile('/tmp/report.md', '下载报告')).resolves.toBeUndefined()
+        expect(downloadAnchor.download).toBe('report.md')
+        expect(revokeObjectUrl).toHaveBeenCalledWith('blob:download')
+      } finally {
+        createElementSpy.mockRestore()
+        vi.unstubAllGlobals()
+        vi.stubGlobal('fetch', mockFetch)
+      }
     })
 
     it('exports sessions when the response filename contains a raw percent sign', async () => {

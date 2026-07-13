@@ -13,6 +13,38 @@ function normalizeProfile(profile?: string | null): string | null {
   return value || null
 }
 
+function hasConventionalExtension(value: string): boolean {
+  return /\.[A-Za-z0-9]{1,12}$/.test(value.trim())
+}
+
+function extractDownloadPath(filePath: string): string {
+  if (filePath.startsWith('/api/hermes/download?')) {
+    try {
+      const parsed = new URL(filePath, 'http://localhost')
+      return parsed.searchParams.get('path') || filePath
+    } catch {
+      return filePath
+    }
+  }
+
+  return filePath.split('?')[0].split('#')[0]
+}
+
+function getPathBasename(filePath: string): string {
+  const decodedPath = safeDecodeURIComponent(extractDownloadPath(filePath))
+  return decodedPath.split(/[\\/]/).pop()?.trim() || ''
+}
+
+export function inferDownloadFileName(filePath: string, fileName?: string): string {
+  const decodedName = fileName ? safeDecodeURIComponent(fileName).trim() : ''
+  if (decodedName && hasConventionalExtension(decodedName)) return decodedName
+
+  const basename = getPathBasename(filePath)
+  if (basename && hasConventionalExtension(basename)) return basename
+
+  return decodedName || basename || 'download'
+}
+
 /**
  * Construct a download URL with auth token as query parameter.
  * Token is passed via query param because <a> tags cannot set headers.
@@ -37,7 +69,7 @@ export function getDownloadUrl(filePath: string, fileName?: string, profile?: st
   const decodedPath = safeDecodeURIComponent(filePath)
   const params = new URLSearchParams({ path: decodedPath })
   if (fileName) {
-    const decodedName = safeDecodeURIComponent(fileName)
+    const decodedName = inferDownloadFileName(decodedPath, fileName)
     params.set('name', decodedName)
   }
   const explicitProfile = normalizeProfile(profile)
@@ -63,7 +95,7 @@ export async function downloadFile(filePath: string, fileName?: string, profile?
   const blobUrl = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = blobUrl
-  a.download = fileName || filePath.split('/').pop() || 'download'
+  a.download = inferDownloadFileName(filePath, fileName)
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
