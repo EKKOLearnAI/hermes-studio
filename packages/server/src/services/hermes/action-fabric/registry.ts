@@ -18,7 +18,7 @@ const SEMANTIC_ID = /^[a-z][a-z0-9]*(?:[._:-][a-z0-9][a-z0-9-]*)+$/
 const EXECUTOR_ID = /^[a-z][a-z0-9]*(?:[.-][a-z0-9][a-z0-9-]*)*$/
 const RISKS = new Set<FabricRisk>(['none', 'low', 'medium', 'high', 'critical'])
 const IDEMPOTENCY = new Set<FabricIdempotency>(['required', 'supported', 'none'])
-const EXECUTOR_TYPES = new Set<FabricExecutorType>(['simulator', 'internal'])
+const EXECUTOR_TYPES = new Set<FabricExecutorType>(['simulator', 'internal', 'connector'])
 const ENVIRONMENTS = new Set<FabricEnvironment>(['simulator', 'internal', 'sandbox', 'production'])
 const HEALTH = new Set<FabricExecutorHealth>(['unknown', 'healthy', 'degraded', 'unhealthy'])
 const MAX_DESCRIPTION = 2_000
@@ -51,6 +51,73 @@ export interface FabricExecutorInput {
   environment: FabricEnvironment
   configuration: FabricJsonObject
   enabled: boolean
+}
+
+function objectSchema(
+  properties: Record<string, unknown>,
+  required: string[],
+  minProperties?: number,
+): FabricJsonObject {
+  return {
+    type: 'object', additionalProperties: false, properties, required,
+    ...(minProperties === undefined ? {} : { minProperties }),
+  }
+}
+
+function boundedIdSchema(): FabricJsonObject {
+  return { type: 'string', minLength: 1, maxLength: 160, pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$' }
+}
+
+function positiveIntegerSchema(): FabricJsonObject {
+  return { type: 'integer', minimum: 1 }
+}
+
+function digestSchema(): FabricJsonObject {
+  return { type: 'string', pattern: '^[a-f0-9]{64}$' }
+}
+
+function timestampSchema(): FabricJsonObject {
+  return { type: 'string', format: 'date-time', maxLength: 64 }
+}
+
+function idArraySchema(): FabricJsonObject {
+  return { type: 'array', maxItems: 4096, items: boundedIdSchema() }
+}
+
+function artifactAnalysisInputSchema(remote: boolean): FabricJsonObject {
+  const properties: Record<string, unknown> = {
+    schemaVersion: { const: 1 }, artifactId: boundedIdSchema(), manifestDigest: digestSchema(),
+    requestedAt: timestampSchema(),
+  }
+  const required = ['schemaVersion', 'artifactId', 'manifestDigest', 'requestedAt']
+  if (remote) {
+    properties.processorId = boundedIdSchema()
+    properties.consentId = boundedIdSchema()
+    required.push('processorId', 'consentId')
+  }
+  return objectSchema(properties, required)
+}
+
+function artifactAnalysisOutputSchema(remote: boolean): FabricJsonObject {
+  const properties: Record<string, unknown> = {
+    schemaVersion: { const: 1 }, artifactId: boundedIdSchema(), analysisId: boundedIdSchema(),
+    status: { enum: ['succeeded', 'needs_review', 'failed'] }, observationIds: idArraySchema(),
+  }
+  const required = ['schemaVersion', 'artifactId', 'analysisId', 'status', 'observationIds']
+  if (remote) {
+    properties.processorReceiptId = boundedIdSchema()
+    properties.consentId = boundedIdSchema()
+    required.push('processorReceiptId', 'consentId')
+  }
+  return objectSchema(properties, required)
+}
+
+function messageOutputSchema(): FabricJsonObject {
+  return objectSchema({
+    schemaVersion: { const: 1 }, deliveryId: boundedIdSchema(),
+    providerMessageId: { type: ['string', 'null'], minLength: 1, maxLength: 256 },
+    status: { enum: ['delivered', 'accepted', 'unknown', 'shadowed'] },
+  }, ['schemaVersion', 'deliveryId', 'providerMessageId', 'status'])
 }
 
 type CapabilityRow = {
@@ -113,17 +180,142 @@ const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
     verificationStrategy: 'read_after_write', authentication: [], targetRestrictions: ['personal-twin'],
     cost: { currency: null, estimatedMinor: 0 }, enabled: true,
   },
+  {
+    id: 'health.plan.restore', version: 1, description: 'Restore an earlier health plan version with compare-and-set protection',
+    inputSchema: objectSchema({
+      schemaVersion: { const: 1 }, planId: boundedIdSchema(), expectedCurrentVersion: positiveIntegerSchema(),
+      restoreVersion: positiveIntegerSchema(), restoreDigest: digestSchema(),
+    }, ['schemaVersion', 'planId', 'expectedCurrentVersion', 'restoreVersion', 'restoreDigest']),
+    outputSchema: objectSchema({
+      schemaVersion: { const: 1 }, planId: boundedIdSchema(), restoredVersion: positiveIntegerSchema(),
+      planDigest: digestSchema(), status: { enum: ['restored', 'cas_conflict'] },
+    }, ['schemaVersion', 'planId', 'restoredVersion', 'planDigest', 'status']),
+    risk: 'low', sideEffect: true, idempotency: 'required', reversible: false, compensationCapabilityId: null,
+    verificationStrategy: 'plan_version_compare_and_set', authentication: ['health_plan:write'],
+    targetRestrictions: ['plan:exact_id'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+  },
+  {
+    id: 'health.plan.adjust', version: 1, description: 'Apply a bounded reversible adjustment to an exact health plan version',
+    inputSchema: objectSchema({
+      schemaVersion: { const: 1 }, planId: boundedIdSchema(), expectedVersion: positiveIntegerSchema(),
+      patch: objectSchema({
+        dailyCalories: { type: 'integer', minimum: 800, maximum: 6000 },
+        trainingIntensity: { enum: ['rest', 'recovery', 'light', 'moderate', 'hard'] },
+        recoveryMinutes: { type: 'integer', minimum: 0, maximum: 240 },
+        reminderEnabled: { type: 'boolean' },
+      }, [], 1), reasonCode: boundedIdSchema(),
+    }, ['schemaVersion', 'planId', 'expectedVersion', 'patch', 'reasonCode']),
+    outputSchema: objectSchema({
+      schemaVersion: { const: 1 }, planId: boundedIdSchema(), previousVersion: positiveIntegerSchema(),
+      newVersion: positiveIntegerSchema(), previousDigest: digestSchema(), planDigest: digestSchema(),
+    }, ['schemaVersion', 'planId', 'previousVersion', 'newVersion', 'previousDigest', 'planDigest']),
+    risk: 'low', sideEffect: true, idempotency: 'required', reversible: true,
+    compensationCapabilityId: 'health.plan.restore', verificationStrategy: 'plan_version_read_after_write',
+    authentication: ['health_plan:write'], targetRestrictions: ['plan:exact_id'],
+    cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+  },
+  {
+    id: 'health.source.sync', version: 1, description: 'Synchronize an exact configured health source into canonical observations',
+    inputSchema: objectSchema({
+      schemaVersion: { const: 1 }, connectorId: boundedIdSchema(), requestedAt: timestampSchema(),
+      cursor: { type: ['string', 'null'], maxLength: 2048 },
+    }, ['schemaVersion', 'connectorId', 'requestedAt']),
+    outputSchema: objectSchema({
+      schemaVersion: { const: 1 }, connectorId: boundedIdSchema(), syncId: boundedIdSchema(),
+      status: { enum: ['succeeded', 'partial', 'failed'] }, recordIds: idArraySchema(),
+    }, ['schemaVersion', 'connectorId', 'syncId', 'status', 'recordIds']),
+    risk: 'low', sideEffect: true, idempotency: 'required', reversible: false, compensationCapabilityId: null,
+    verificationStrategy: 'connector_cursor_and_record_ids', authentication: ['connector_credential:configured'],
+    targetRestrictions: ['connector:exact_configured_id'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+  },
+  {
+    id: 'health.artifact.analyze.local', version: 1, description: 'Analyze an exact health artifact locally without outbound disclosure',
+    inputSchema: artifactAnalysisInputSchema(false),
+    outputSchema: artifactAnalysisOutputSchema(false),
+    risk: 'low', sideEffect: true, idempotency: 'required', reversible: false, compensationCapabilityId: null,
+    verificationStrategy: 'artifact_analysis_receipt', authentication: ['artifact:local_read'],
+    targetRestrictions: ['artifact:exact_manifest'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+  },
+  {
+    id: 'health.artifact.analyze.remote', version: 1, description: 'Analyze an exact health artifact with an authorized remote processor',
+    inputSchema: artifactAnalysisInputSchema(true),
+    outputSchema: artifactAnalysisOutputSchema(true),
+    risk: 'medium', sideEffect: true, idempotency: 'required', reversible: false, compensationCapabilityId: null,
+    verificationStrategy: 'processor_receipt_and_consumed_consent',
+    authentication: ['one_time_consent:exact_artifact_manifest', 'processor:exact_id'],
+    targetRestrictions: ['artifact:exact_manifest', 'processor:exact_id'],
+    cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+  },
+  {
+    id: 'health.reminder.send', version: 1, description: 'Send one minimized health reminder to the configured self-recipient',
+    inputSchema: objectSchema({
+      schemaVersion: { const: 1 }, actionId: boundedIdSchema(), recipient: { const: 'configured-self' },
+      messageCode: boundedIdSchema(), messageText: { type: 'string', minLength: 1, maxLength: 1000 },
+    }, ['schemaVersion', 'actionId', 'recipient', 'messageCode', 'messageText']),
+    outputSchema: messageOutputSchema(), risk: 'low', sideEffect: true, idempotency: 'required', reversible: false,
+    compensationCapabilityId: null, verificationStrategy: 'provider_receipt_or_identity_lookup',
+    authentication: ['live_mode:enabled', 'recipient:configured_self'], targetRestrictions: ['recipient:configured_self'],
+    cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+  },
+  {
+    id: 'health.checkin.request', version: 1, description: 'Request one structured health check-in from the configured self-recipient',
+    inputSchema: objectSchema({
+      schemaVersion: { const: 1 }, checkinId: boundedIdSchema(), recipient: { const: 'configured-self' },
+      promptCode: boundedIdSchema(), expiresAt: timestampSchema(),
+    }, ['schemaVersion', 'checkinId', 'recipient', 'promptCode', 'expiresAt']),
+    outputSchema: messageOutputSchema(), risk: 'low', sideEffect: true, idempotency: 'required', reversible: false,
+    compensationCapabilityId: null, verificationStrategy: 'provider_receipt_or_identity_lookup',
+    authentication: ['live_mode:enabled', 'recipient:configured_self'], targetRestrictions: ['recipient:configured_self'],
+    cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+  },
+  {
+    id: 'health.followup.schedule', version: 1, description: 'Schedule an exact bounded health follow-up for the requesting user',
+    inputSchema: objectSchema({
+      schemaVersion: { const: 1 }, followupId: boundedIdSchema(), ownerUserId: boundedIdSchema(),
+      category: { enum: ['measurement', 'capture', 'recovery', 'nutrition', 'training', 'medical_review'] },
+      dueAt: timestampSchema(),
+    }, ['schemaVersion', 'followupId', 'ownerUserId', 'category', 'dueAt']),
+    outputSchema: objectSchema({
+      schemaVersion: { const: 1 }, followupId: boundedIdSchema(), scheduledAt: timestampSchema(),
+      status: { enum: ['scheduled', 'superseded'] },
+    }, ['schemaVersion', 'followupId', 'scheduledAt', 'status']),
+    risk: 'low', sideEffect: true, idempotency: 'required', reversible: false, compensationCapabilityId: null,
+    verificationStrategy: 'schedule_read_after_write', authentication: ['health_schedule:write'],
+    targetRestrictions: ['owner:requesting_user'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+  },
 ]
 
 const BUILT_IN_EXECUTORS: FabricExecutorInput[] = [
   { id: 'simulator-main', type: 'simulator', name: 'Phase 3 Simulator', environment: 'simulator', configuration: { externalWrite: false }, enabled: true },
   { id: 'internal-twin', type: 'internal', name: 'Personal Twin Internal Executor', environment: 'internal', configuration: { externalWrite: false }, enabled: true },
+  { id: 'health-local-analysis', type: 'internal', name: 'Local Health Artifact Analyzer', environment: 'internal', configuration: { externalWrite: false, interruptible: true }, enabled: true },
+  { id: 'health-plan', type: 'internal', name: 'Health Plan Executor', environment: 'internal', configuration: { externalWrite: false, interruptible: true }, enabled: true },
+  { id: 'health-remote-analysis', type: 'connector', name: 'Authorized Remote Health Analyzer', environment: 'production', configuration: { externalWrite: true, interruptible: true }, enabled: true },
+  { id: 'health-shadow', type: 'connector', name: 'Health Shadow Executor', environment: 'sandbox', configuration: { externalWrite: false, interruptible: true, shadow: true }, enabled: true },
+  { id: 'health-source', type: 'connector', name: 'Health Source Connector', environment: 'production', configuration: { externalWrite: false, interruptible: true }, enabled: true },
+  { id: 'health-weixin', type: 'connector', name: 'Weixin Self Reminder Executor', environment: 'production', configuration: { externalWrite: true, interruptible: false, recipientRestriction: 'configured-self' }, enabled: true },
 ]
 
 const BUILT_IN_BINDINGS = [
   ['simulator-main', 'simulator.echo'],
   ['simulator-main', 'simulator.counter.increment'],
   ['internal-twin', 'internal.twin.preference.set'],
+  ['health-shadow', 'health.source.sync'],
+  ['health-shadow', 'health.artifact.analyze.local'],
+  ['health-shadow', 'health.artifact.analyze.remote'],
+  ['health-shadow', 'health.plan.adjust'],
+  ['health-shadow', 'health.plan.restore'],
+  ['health-shadow', 'health.reminder.send'],
+  ['health-shadow', 'health.checkin.request'],
+  ['health-shadow', 'health.followup.schedule'],
+  ['health-source', 'health.source.sync'],
+  ['health-local-analysis', 'health.artifact.analyze.local'],
+  ['health-remote-analysis', 'health.artifact.analyze.remote'],
+  ['health-plan', 'health.plan.adjust'],
+  ['health-plan', 'health.plan.restore'],
+  ['health-plan', 'health.followup.schedule'],
+  ['health-weixin', 'health.reminder.send'],
+  ['health-weixin', 'health.checkin.request'],
 ] as const
 
 export function ensureBuiltInFabricRegistry(): void {
@@ -384,9 +576,10 @@ function hasCompleteBuiltInRegistry(db: DatabaseSync): boolean {
     WHERE id IN (${BUILT_IN_CAPABILITIES.map(() => '?').join(',')})`).get(...BUILT_IN_CAPABILITIES.map(item => item.id)) as { count: number }
   const executors = db.prepare(`SELECT COUNT(*) AS count FROM fabric_executors
     WHERE id IN (${BUILT_IN_EXECUTORS.map(() => '?').join(',')})`).get(...BUILT_IN_EXECUTORS.map(item => item.id)) as { count: number }
-  const bindings = db.prepare(`SELECT COUNT(*) AS count FROM fabric_executor_capabilities b WHERE
-    (b.executor_id='simulator-main' AND b.capability_id IN ('simulator.echo','simulator.counter.increment')) OR
-    (b.executor_id='internal-twin' AND b.capability_id='internal.twin.preference.set')`).get() as { count: number }
+  const bindingPredicates = BUILT_IN_BINDINGS.map(() => '(b.executor_id=? AND b.capability_id=?)').join(' OR ')
+  const bindingParameters = BUILT_IN_BINDINGS.flatMap(([executorId, capabilityId]) => [executorId, capabilityId])
+  const bindings = db.prepare(`SELECT COUNT(*) AS count FROM fabric_executor_capabilities b
+    WHERE ${bindingPredicates}`).get(...bindingParameters) as { count: number }
   const hasPolicyRevision = db.prepare("SELECT 1 AS present FROM fabric_meta WHERE key='registry_policy_revision'").get() !== undefined
   return capabilities.count === BUILT_IN_CAPABILITIES.length
     && executors.count === BUILT_IN_EXECUTORS.length
@@ -454,11 +647,14 @@ function validateCapability(input: FabricCapabilityInput): FabricCapabilityInput
 }
 
 function validateExecutor(input: FabricExecutorInput): FabricExecutorInput {
-  if (!EXECUTOR_TYPES.has(input.type)) throw new Error(`Unsupported executor type in Phase 3: ${String(input.type)}`)
+  if (!EXECUTOR_TYPES.has(input.type)) throw new Error(`Unsupported executor type: ${String(input.type)}`)
   if (!EXECUTOR_ID.test(input.id) || input.id.length > 160) throw new Error('Invalid executor ID')
   if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 256) throw new Error('Invalid executor name')
   if (!ENVIRONMENTS.has(input.environment)) throw new Error(`Invalid executor environment: ${String(input.environment)}`)
   assertJsonObject(input.configuration, 'executor configuration'); assertJsonBound(input.configuration, 'executor configuration')
+  if (input.type === 'connector' && typeof input.configuration.externalWrite !== 'boolean') {
+    throw new Error('Connector executor must explicitly classify externalWrite')
+  }
   if (typeof input.enabled !== 'boolean') throw new Error('Executor enabled must be boolean')
   return { ...input, configuration: { ...input.configuration,
     externalWrite: normalizeExternalWrite(input.type, input.id, input.configuration.externalWrite) } }

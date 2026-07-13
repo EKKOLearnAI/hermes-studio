@@ -78,14 +78,15 @@ describe('Action Fabric runtime lifecycle', () => {
     process.env.HERMES_HOME = home
 
     await startActionFabricRuntime()
-    expect(listFabricExecutors()).toHaveLength(2)
+    expect(listFabricExecutors().filter(executor => !executor.id.startsWith('health-'))).toHaveLength(2)
     await Promise.all([stopActionFabricRuntime(), stopActionFabricRuntime()])
   })
 
   it('bootstraps registry and role policy before polling and repeated starts are idempotent', async () => {
     await Promise.all([startActionFabricRuntime(), startActionFabricRuntime(), startActionFabricRuntime()])
 
-    expect(listFabricExecutors().map(executor => executor.id)).toEqual(['internal-twin', 'simulator-main'])
+    expect(listFabricExecutors().filter(executor => !executor.id.startsWith('health-')).map(executor => executor.id))
+      .toEqual(['internal-twin', 'simulator-main'])
     expect(withActionFabricDb(db => db.prepare("SELECT value FROM fabric_meta WHERE key='registry_policy_revision'").get()))
       .toBeTruthy()
     expect(updateAssistantRole('health-manager', {}).capabilityScope.enforcement).toBe('action_fabric_v1')
@@ -215,7 +216,8 @@ describe('Action Fabric runtime lifecycle', () => {
     })
     await vi.advanceTimersByTimeAsync(300)
 
-    const enabled = withActionFabricDb(db => db.prepare('SELECT id,enabled FROM fabric_executors ORDER BY id').all())
+    const enabled = withActionFabricDb(db => db.prepare(`SELECT id,enabled FROM fabric_executors
+      WHERE id IN ('future-browser','internal-twin','simulator-main') ORDER BY id`).all())
     expect(enabled).toEqual([
       expect.objectContaining({ id: 'future-browser', enabled: 0 }),
       expect.objectContaining({ id: 'internal-twin', enabled: 1 }),
@@ -223,6 +225,23 @@ describe('Action Fabric runtime lifecycle', () => {
     ])
     expect(listFabricAuditEvents({ aggregateId: 'future-browser' }).some(event =>
       event.eventType === 'executor.external_write.disabled')).toBe(true)
+  })
+
+  it('level 3 honors explicit connector external-write classifications', async () => {
+    ensureBuiltInFabricRegistry()
+    await startActionFabricRuntime()
+    setFabricEmergencyStop(3, 'admin', 'disable connector writes')
+    await vi.advanceTimersByTimeAsync(300)
+
+    expect(withActionFabricDb(db => db.prepare(`SELECT id,enabled FROM fabric_executors
+      WHERE id LIKE 'health-%' ORDER BY id`).all())).toEqual([
+      { id: 'health-local-analysis', enabled: 1 },
+      { id: 'health-plan', enabled: 1 },
+      { id: 'health-remote-analysis', enabled: 0 },
+      { id: 'health-shadow', enabled: 1 },
+      { id: 'health-source', enabled: 1 },
+      { id: 'health-weixin', enabled: 0 },
+    ])
   })
 
   it('disables explicit internal external writes once without penalizing a valid local contract', async () => {

@@ -20,7 +20,7 @@ export type FabricWorkflowState =
   | 'compensated'
 
 export type FabricIdempotency = 'required' | 'supported' | 'none'
-export type FabricExecutorType = 'simulator' | 'internal'
+export type FabricExecutorType = 'simulator' | 'internal' | 'connector'
 export type FabricExecutorHealth = 'unknown' | 'healthy' | 'degraded' | 'unhealthy'
 export type FabricStepState = 'pending' | 'running' | 'waiting_user' | 'succeeded' | 'failed' | 'cancelled' | 'compensated'
 export type FabricOutboxStatus = 'pending' | 'published' | 'failed'

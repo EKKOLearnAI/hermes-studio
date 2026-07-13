@@ -55,7 +55,7 @@ export type FabricExecutorResult = FabricPrepareResult | FabricExecuteResult | F
 
 export interface FabricExecutorAdapter {
   readonly id: string
-  readonly type: 'simulator' | 'internal'
+  readonly type: FabricExecutorType
   prepare(context: FabricExecutionContext): Promise<FabricPrepareResult>
   execute(context: FabricExecutionContext): Promise<FabricExecuteResult>
   verify(context: FabricExecutionContext): Promise<FabricVerifyResult>
@@ -89,7 +89,7 @@ interface SanitizationBudget {
 
 export function registerFabricExecutorAdapter(adapter: FabricExecutorAdapter): void {
   if (adapter === null || typeof adapter !== 'object'
-    || (adapter.type !== 'simulator' && adapter.type !== 'internal')) {
+    || (adapter.type !== 'simulator' && adapter.type !== 'internal' && adapter.type !== 'connector')) {
     throw new Error('FABRIC_EXECUTOR_TYPE_UNSUPPORTED')
   }
   if (typeof adapter.id !== 'string' || !adapter.id || adapter.id.length > 160) {
@@ -124,7 +124,12 @@ export async function invokeFabricExecutor(
 export async function invokeFabricExecutor(
   phase: FabricExecutorPhase, context: FabricExecutionContext,
 ): Promise<FabricExecutorResult> {
-  const resolved = resolveFabricExecutor(context.capabilityId, { environments: ['simulator', 'internal'] })
+  const environments = context.executorType === 'simulator' ? ['simulator'] as const
+    : context.executorType === 'internal' ? ['internal'] as const
+      : ['sandbox', 'production'] as const
+  const resolved = environments
+    .map(environment => resolveFabricExecutor(context.capabilityId, { environments: [environment] }))
+    .find(candidate => candidate?.executor.id === context.executorId) ?? null
   if (!resolved
     || resolved.executor.id !== context.executorId
     || resolved.executor.type !== context.executorType

@@ -3,7 +3,7 @@ import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
 const REGISTRY_JSON_MAX_BYTES = 131_072
 const PAYLOAD_JSON_MAX_BYTES = 32_768
 const REQUIRED_TABLES = [
@@ -122,8 +122,12 @@ export function initActionFabricSchema(db: DatabaseSync): void {
     if (currentVersion === SCHEMA_VERSION && isSchemaComplete(db)) return
   }
 
-  db.exec('BEGIN IMMEDIATE')
+  const rebuildExecutors = currentVersion !== null && currentVersion > 0 && currentVersion < 4
+  if (rebuildExecutors) db.exec('PRAGMA foreign_keys = OFF')
+  let transactionStarted = false
   try {
+    db.exec('BEGIN IMMEDIATE')
+    transactionStarted = true
     db.exec('CREATE TABLE IF NOT EXISTS fabric_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
     const row = db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get() as { value: string } | undefined
     const version = parseSchemaVersion(row?.value)
@@ -144,11 +148,17 @@ export function initActionFabricSchema(db: DatabaseSync): void {
     } else {
       createSchemaV3Triggers(db)
     }
+    if (version < 4) {
+      migrateSchemaV4(db)
+      setSchemaVersion(db, 4)
+    }
     assertSchemaComplete(db, SCHEMA_VERSION)
     db.exec('COMMIT')
   } catch (error) {
-    db.exec('ROLLBACK')
+    if (transactionStarted) db.exec('ROLLBACK')
     throw error
+  } finally {
+    if (rebuildExecutors) db.exec('PRAGMA foreign_keys = ON')
   }
 }
 
@@ -218,6 +228,16 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
       || column.dflt_value !== required.defaultValue || column.pk !== required.pk) {
       throw new Error(`Action Fabric schema version ${version} is incomplete: missing ${required.table}.${required.column}`)
     }
+  }
+  assertExecutorTypeConstraint(db)
+}
+
+function assertExecutorTypeConstraint(db: DatabaseSync): void {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='fabric_executors'").get() as
+    { sql: string | null } | undefined
+  const sql = row?.sql?.replace(/\s+/g, ' ').toLowerCase() ?? ''
+  if (!/type\s+text\s+not\s+null\s+check\s*\(\s*type\s+in\s*\(\s*'simulator'\s*,\s*'internal'\s*,\s*'connector'\s*\)\s*\)/.test(sql)) {
+    throw new Error('Action Fabric schema executor type signature mismatch')
   }
 }
 
@@ -302,7 +322,7 @@ function createSchemaV1(db: DatabaseSync): void {
 
     CREATE TABLE IF NOT EXISTS fabric_executors (
       id TEXT PRIMARY KEY,
-      type TEXT NOT NULL CHECK(type IN ('simulator','internal')),
+      type TEXT NOT NULL CHECK(type IN ('simulator','internal','connector')),
       name TEXT NOT NULL,
       environment TEXT NOT NULL CHECK(environment IN ('simulator','internal','sandbox','production')),
       health TEXT NOT NULL CHECK(health IN ('unknown','healthy','degraded','unhealthy')),
@@ -497,6 +517,31 @@ function migrateSchemaV2(db: DatabaseSync): void {
 
 function migrateSchemaV3(db: DatabaseSync): void {
   assertLegacyJsonRows(db)
+  createSchemaV3Triggers(db)
+}
+
+function migrateSchemaV4(db: DatabaseSync): void {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='fabric_executors'").get() as
+    { sql: string | null } | undefined
+  if (row?.sql?.toLowerCase().includes("'connector'")) return
+  db.exec(`
+    CREATE TABLE fabric_executors_v4 (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL CHECK(type IN ('simulator','internal','connector')),
+      name TEXT NOT NULL,
+      environment TEXT NOT NULL CHECK(environment IN ('simulator','internal','sandbox','production')),
+      health TEXT NOT NULL CHECK(health IN ('unknown','healthy','degraded','unhealthy')),
+      health_details_json TEXT NOT NULL DEFAULT '{}',
+      configuration_json TEXT NOT NULL DEFAULT '{}',
+      enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+      policy_version INTEGER NOT NULL DEFAULT 1 CHECK(policy_version > 0),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    INSERT INTO fabric_executors_v4 SELECT * FROM fabric_executors;
+    DROP TABLE fabric_executors;
+    ALTER TABLE fabric_executors_v4 RENAME TO fabric_executors;
+  `)
   createSchemaV3Triggers(db)
 }
 

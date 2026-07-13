@@ -49,12 +49,16 @@ describe('Action Fabric durable worker', () => {
     })
     unregisterFabricExecutorAdapter('simulator-main')
     unregisterFabricExecutorAdapter('internal-twin')
+    unregisterFabricExecutorAdapter('health-source')
+    unregisterFabricExecutorAdapter('health-shadow')
   })
 
   afterEach(async () => {
     await stopActionFabricWorker()
     unregisterFabricExecutorAdapter('simulator-main')
     unregisterFabricExecutorAdapter('internal-twin')
+    unregisterFabricExecutorAdapter('health-source')
+    unregisterFabricExecutorAdapter('health-shadow')
     vi.useRealTimers()
     if (originalHome === undefined) delete process.env.HERMES_HOME
     else process.env.HERMES_HOME = originalHome
@@ -506,6 +510,41 @@ describe('Action Fabric durable worker', () => {
     expect({ interrupted, executed }).toEqual({ interrupted: 1, executed: 0 })
     expect(getFabricWorkflow(workflow.id)?.state).toBe('cancelled')
     expect(getFabricWorkflow(workflow.id)?.steps.every(step => step.state === 'cancelled' || step.state === 'succeeded')).toBe(true)
+  })
+
+  it('applies the same level 2 interrupt checkpoint to an interruptible connector executor', async () => {
+    let interrupted = 0
+    let executed = 0
+    updateAssistantRole('health-manager', {
+      enabled: true,
+      capabilityScope: { allow: ['health.plan.adjust'], deny: [], enforcement: 'action_fabric_v1' },
+      decisionAuthority: {
+        maxRisk: 'critical', requireApprovalAbove: 'critical', allowedTargets: ['plan:exact_id'],
+      },
+      spendingLimits: { currency: null, perAction: 0, daily: 0 },
+    })
+    registerFabricExecutorAdapter(adapter({
+      id: 'health-shadow', type: 'connector',
+      execute: async context => { executed += 1; return success('succeeded', context) },
+      interrupt: async context => { interrupted += 1; return success('interrupted', context) },
+    }))
+    const request = {
+      capabilityId: 'health.plan.adjust', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
+      idempotencyKey: 'connector-interrupt', goal: 'shadow a health plan adjustment safely',
+      target: { id: 'plan:exact_id' },
+      input: { schemaVersion: 1, planId: 'daily-plan', expectedVersion: 1,
+        patch: { trainingIntensity: 'light' }, reasonCode: 'recovery-low' },
+      constraints: {}, rationale: 'test', environments: ['sandbox'],
+    }
+    const workflow = createFabricIntent(request).workflow
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'preparing', executorId: 'health-shadow' })
+    await processActionFabricOnce({ now: base })
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('executing')
+    setFabricEmergencyStop(2, 'admin-1', 'stop connector')
+    await processActionFabricOnce({ now: plus(1) })
+
+    expect({ interrupted, executed }).toEqual({ interrupted: 1, executed: 0 })
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('cancelled')
   })
 
   it('level 2 stop supersedes a live lease and rejects the stale execute commit', async () => {
