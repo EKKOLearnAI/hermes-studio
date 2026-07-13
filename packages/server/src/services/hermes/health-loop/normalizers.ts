@@ -487,6 +487,7 @@ function normalizeSleep(record: Record<string, unknown>): NormalizedHealthObserv
     if (Object.keys(normalized).length) add(output, 'health.sleep.stages', normalized, 'min')
   }
   add(output, 'health.sleep.resting_heart_rate_bpm', optionalNumber(record, 'restingHeartRateBpm', 20, 250), 'bpm')
+  add(output, 'health.sleep.hrv_ms', optionalNumber(record, 'hrvMs', 0, 10_000), 'ms')
   add(output, 'health.sleep.resting_respiratory_rate_brpm', optionalNumber(record, 'restingRespiratoryRateBrpm', 1, 100), 'breath/min')
   add(output, 'health.sleep.resting_spo2_percent', optionalNumber(record, 'restingSpo2Percent', 0, 100), '%')
   add(output, 'health.sleep.freshness_minutes', optionalNumber(record, 'freshnessMinutes', 0, 525_600), 'min')

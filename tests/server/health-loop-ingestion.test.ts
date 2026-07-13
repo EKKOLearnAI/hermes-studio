@@ -141,6 +141,12 @@ describe('health-loop ingestion', () => {
     })])
   })
 
+  it('normalizes measured sleep HRV in milliseconds', async () => {
+    const { normalizeHealthIngestionEnvelope } = await import('../../packages/server/src/services/hermes/health-loop')
+    const normalized = normalizeHealthIngestionEnvelope({ ...fixtures[6], sourceId: 'sleep-hrv', payload: { ...fixtures[6].payload, hrvMs: 52 } })
+    expect(normalized.observations).toContainEqual({ metric: 'health.sleep.hrv_ms', value: 52, unit: 'ms' })
+  })
+
   it('normalizes legacy reported posture and skin fields without inventing severity', async () => {
     const { normalizeHealthIngestionEnvelope } = await import('../../packages/server/src/services/hermes/health-loop')
     const posture: HealthIngestionEnvelope = {

@@ -51,7 +51,7 @@ describe('health loop legacy migration', () => {
     expect(result.status).toBe('completed')
     expect(result.version).toMatch(/^health-migration-v\d+$/)
     expect(result.domainCounts).toEqual({ body_composition: 2, measurements: 1, posture: 1, skin: 1, diet: 1, fitness: 1, sleep: 1, internal_health: 1 })
-    expect(result.counts).toMatchObject({ read: 8, ingested: 9, replayed: 0, skipped: 0, conflicts: 0, errors: 0 })
+    expect(result.counts).toMatchObject({ read: 9, ingested: 9, replayed: 0, skipped: 1, conflicts: 0, errors: 0 })
     expect(result).not.toHaveProperty('sources')
     expect(fileHash(sourcePath)).toBe(sourceHash)
     expect(health.getHealthOverview({ profile: 'default', includeRecords: true }).records).toHaveLength(sourceCount)
@@ -59,12 +59,12 @@ describe('health loop legacy migration', () => {
     const events = twin.listTwinEvents({ eventType: 'health.ingestion.recorded', limit: 100 })
     expect(events).toHaveLength(9)
     expect(events.map(event => Date.parse(event.occurredAt))).toEqual(expect.arrayContaining(Object.values(times).map(value => Date.parse(value))))
-    const scaleEvent = events.find(event => event.provenance.sourceId.startsWith(String(scale.id)))
+    const scaleEvent = events.find(event => event.provenance.sourceId.includes(`records:scale-reading:${String(scale.id)}`))
     expect(scaleEvent?.provenance.evidence).toContainEqual(expect.objectContaining({ evidenceClass: 'measured' }))
     expect(events.find(event => event.payload.domain === 'posture')?.provenance.evidence).toContainEqual(expect.objectContaining({ evidenceClass: 'inferred' }))
     expect(events.find(event => event.payload.domain === 'skin')?.provenance.evidence).toContainEqual(expect.objectContaining({ evidenceClass: 'reported' }))
     expect(events.find(event => event.payload.domain === 'internal_health')).toMatchObject({
-      provenance: { confirmationState: 'inferred', evidence: [expect.objectContaining({ evidenceClass: 'reported' })] },
+      provenance: { confirmationState: 'inferred', evidence: [expect.objectContaining({ evidenceClass: 'measured' })] },
       payload: { pendingConfirmation: true },
     })
     expect(twin.listTwinObservations({ entityId: 'person:self', metric: 'health.measurements.waist_cm' })[0]?.value).toBe(88)
@@ -127,5 +127,106 @@ describe('health loop legacy migration', () => {
     health.createHealthRecord({ id: 'bad-measurement', kind: 'body_measurement', valueJson: { measurements: { waistCm: 90 } }, recordedAt: '2026-07-05T12:00:00+08:00', source: 'manual-secret' }, 'user', 'default')
     const corrected = migration.syncLegacyHealthTwinSources({ profiles: ['default'] })
     expect(corrected.counts).toMatchObject({ read: 1, ingested: 1, errors: 0, conflicts: 0 })
+  })
+
+  it('names source identities by collection and keeps identical legacy ids collision-free', async () => {
+    const health = await import('../../packages/server/src/services/hermes/health-state')
+    const migration = await import('../../packages/server/src/services/hermes/health-loop/migration')
+    const twin = await import('../../packages/server/src/services/hermes/personal-twin')
+    const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin/database')
+    const shared = 'same-id'
+    health.createHealthRecord({ id: shared, kind: 'body_measurement', valueJson: { measurements: { waist_cm: 88 }, weight_kg: 82 }, recordedAt: '2026-07-01T08:00:00Z', source: 'manual' }, 'user', 'default')
+    health.createHealthFoodLog({ id: shared, nutrition: { caloriesKcal: 500 }, loggedAt: '2026-07-02T08:00:00Z' }, 'user', 'default')
+    health.createHealthWorkout({ id: shared, title: 'Walk', durationMinutes: 30, startedAt: '2026-07-03T08:00:00Z' }, 'user', 'default')
+    health.createHealthCheckIn({ id: shared, checkinDate: '2026-07-04', sleep: { ended_at: '2026-07-04T08:00:00Z', duration_minutes: 450 } }, 'user', 'default')
+
+    const first = migration.syncLegacyHealthTwinSources({ profiles: ['default'] })
+    const events = twin.listTwinEvents({ eventType: 'health.ingestion.recorded', limit: 100 })
+    expect(first.counts).toMatchObject({ read: 4, ingested: 5, replayed: 0 })
+    expect(new Set(events.map(event => event.provenance.sourceId)).size).toBe(5)
+    expect(events.map(event => event.provenance.sourceId)).toEqual(expect.arrayContaining([
+      expect.stringContaining('body-profile:measurements:same-id:measurements'),
+      expect.stringContaining('body-profile:measurements:same-id:body-composition'),
+      expect.stringContaining('food-logs:same-id'), expect.stringContaining('workouts:same-id'), expect.stringContaining('daily-checkins:same-id'),
+    ]))
+    const outbox = withPersonalTwinDb(db => Number((db.prepare('SELECT COUNT(*) AS n FROM twin_outbox').get() as { n: number }).n))
+    expect(migration.syncLegacyHealthTwinSources({ profiles: ['default'] })).toEqual(first)
+    expect(withPersonalTwinDb(db => Number((db.prepare('SELECT COUNT(*) AS n FROM twin_outbox').get() as { n: number }).n))).toBe(outbox)
+  })
+
+  it('canonicalizes supported body and sleep aliases and rejects unequal dual aliases', async () => {
+    const health = await import('../../packages/server/src/services/hermes/health-state')
+    const migration = await import('../../packages/server/src/services/hermes/health-loop/migration')
+    const twin = await import('../../packages/server/src/services/hermes/personal-twin')
+    health.createHealthRecord({ id: 'alias-body', kind: 'body_measurement', valueJson: { measurements: { waistCm: 88, waist_cm: 88 }, weightKg: 82, weight_kg: 82, bodyFatPercent: 21, body_fat_percent: 21 }, recordedAt: '2026-07-01T08:00:00Z', source: 'manual' }, 'user', 'default')
+    health.createHealthCheckIn({ id: 'alias-sleep', checkinDate: '2026-07-02', sleep: {
+      endedAt: '2026-07-02T08:00:00Z', ended_at: '2026-07-02T08:00:00Z', durationMinutes: 450, duration_minutes: 450,
+      subjectiveRecovery: 7, subjective_recovery: 7, restingHeartRate: 58, resting_heart_rate: 58, hrvMs: 52, hrv_ms: 52,
+    } }, 'user', 'default')
+    migration.syncLegacyHealthTwinSources({ profiles: ['default'] })
+    expect(twin.listTwinObservations({ metric: 'health.body_composition.weight_kg' })[0]?.value).toBe(82)
+    expect(twin.listTwinObservations({ metric: 'health.sleep.duration_minutes' })[0]?.value).toBe(450)
+    expect(twin.listTwinObservations({ metric: 'health.sleep.subjective_recovery' })[0]?.value).toBe(7)
+    expect(twin.listTwinObservations({ metric: 'health.sleep.resting_heart_rate_bpm' })[0]?.value).toBe(58)
+    expect(twin.listTwinObservations({ metric: 'health.sleep.hrv_ms' })[0]?.value).toBe(52)
+    expect(twin.listTwinObservations({ metric: 'health.sleep.ended_at' })[0]?.value).toBe('2026-07-02T08:00:00Z')
+
+    health.createHealthRecord({ id: 'alias-conflict', kind: 'body_measurement', valueJson: { measurements: { waistCm: 88, waist_cm: 89 } }, recordedAt: '2026-07-03T08:00:00Z', source: 'manual' }, 'user', 'default')
+    expect(() => migration.syncLegacyHealthTwinSources({ profiles: ['default'] })).toThrowError(/HEALTH_MIGRATION_INVALID_SOURCE/)
+    expect(twin.listTwinEvents({ eventType: 'health.ingestion.recorded', limit: 100 }).some(event => event.provenance.sourceId.includes('alias-conflict'))).toBe(false)
+  })
+
+  it('classifies reliable internal measurements conservatively while keeping confirmation pending', async () => {
+    const health = await import('../../packages/server/src/services/hermes/health-state')
+    const migration = await import('../../packages/server/src/services/hermes/health-loop/migration')
+    const twin = await import('../../packages/server/src/services/hermes/personal-twin')
+    const marker = { marker: 'glucose', value: 5.2, unit: 'mmol/L' }
+    health.createHealthRecord({ id: 'lab-measured', kind: 'lab_result', valueJson: marker, unit: 'mmol/L', recordedAt: '2026-07-01T08:00:00Z', source: 'laboratory_device' }, 'user', 'default')
+    health.createHealthRecord({ id: 'lab-manual', kind: 'lab_result', valueJson: marker, unit: 'mmol/L', recordedAt: '2026-07-02T08:00:00Z', source: 'manual' }, 'user', 'default')
+    health.createHealthRecord({ id: 'hospital-structured', kind: 'lab', valueJson: marker, unit: 'mmol/L', recordedAt: '2026-07-03T08:00:00Z', source: 'hospital_report' }, 'user', 'default')
+    migration.syncLegacyHealthTwinSources({ profiles: ['default'] })
+    const events = twin.listTwinEvents({ eventType: 'health.ingestion.recorded', limit: 100 })
+    const evidence = (id: string) => events.find(event => event.provenance.sourceId.includes(id))
+    expect(evidence('lab-measured')).toMatchObject({ provenance: { confirmationState: 'inferred', evidence: [expect.objectContaining({ evidenceClass: 'measured' })] }, payload: { pendingConfirmation: true } })
+    expect(evidence('lab-manual')?.provenance.evidence).toContainEqual(expect.objectContaining({ evidenceClass: 'reported' }))
+    expect(evidence('hospital-structured')?.provenance.evidence).toContainEqual(expect.objectContaining({ evidenceClass: 'measured' }))
+  })
+
+  it('rejects unequal dual sleep aliases without writing the logical record', async () => {
+    const health = await import('../../packages/server/src/services/hermes/health-state')
+    const migration = await import('../../packages/server/src/services/hermes/health-loop/migration')
+    const twin = await import('../../packages/server/src/services/hermes/personal-twin')
+    health.createHealthCheckIn({ id: 'sleep-alias-conflict', checkinDate: '2026-07-02', sleep: {
+      endedAt: '2026-07-02T08:00:00Z', ended_at: '2026-07-02T08:00:00Z', durationMinutes: 450, duration_minutes: 451,
+    } }, 'user', 'default')
+    expect(() => migration.syncLegacyHealthTwinSources({ profiles: ['default'] })).toThrowError(/HEALTH_MIGRATION_INVALID_SOURCE/)
+    expect(twin.listTwinEvents({ eventType: 'health.ingestion.recorded' })).toHaveLength(0)
+  })
+
+  it('fingerprints skipped source outcomes and rejects corrupt completed count schemas', async () => {
+    const health = await import('../../packages/server/src/services/hermes/health-state')
+    const migration = await import('../../packages/server/src/services/hermes/health-loop/migration')
+    const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin/database')
+    health.createHealthRecord({ id: 'unsupported-1', kind: 'unknown_kind', valueJson: { stable: 1 }, recordedAt: '2026-07-01T08:00:00Z', source: 'legacy' }, 'user', 'default')
+    const sourcePath = health.getHealthStateDbPath('default'); const before = fileHash(sourcePath)
+    const first = migration.syncLegacyHealthTwinSources({ profiles: ['default'] })
+    expect(first.counts).toMatchObject({ read: 1, skipped: 1, ingested: 0, replayed: 0 })
+    health.createHealthRecord({ id: 'unsupported-1', kind: 'unknown_kind', valueJson: { stable: 2 }, recordedAt: '2026-07-01T08:00:00Z', source: 'legacy' }, 'user', 'default')
+    const changed = migration.syncLegacyHealthTwinSources({ profiles: ['default'] })
+    expect(changed.runId).not.toBe(first.runId)
+    expect(changed.fingerprint).not.toBe(first.fingerprint)
+    expect(fileHash(sourcePath)).not.toBe(before)
+    const stableHash = fileHash(sourcePath)
+    expect(migration.syncLegacyHealthTwinSources({ profiles: ['default'] })).toEqual(changed)
+    expect(fileHash(sourcePath)).toBe(stableHash)
+
+    withPersonalTwinDb(db => {
+      const row = db.prepare('SELECT counts_json FROM twin_import_runs WHERE id = ?').get(changed.runId) as { counts_json: string }
+      const counts = JSON.parse(row.counts_json) as Record<string, unknown>
+      delete counts.domainSleep
+      counts.unexpected = 1
+      db.prepare('UPDATE twin_import_runs SET counts_json = ? WHERE id = ?').run(JSON.stringify(counts), changed.runId)
+    })
+    expect(() => migration.syncLegacyHealthTwinSources({ profiles: ['default'] })).toThrowError(/HEALTH_MIGRATION_RUN_CORRUPT/)
   })
 })
