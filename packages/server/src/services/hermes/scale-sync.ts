@@ -1,9 +1,11 @@
 import { execFile, execFileSync } from 'child_process'
 import { existsSync } from 'fs'
-import { readFile } from 'fs/promises'
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'fs/promises'
 import { promisify } from 'util'
-import { dirname, join } from 'path'
+import { basename, join, resolve } from 'path'
+import { tmpdir } from 'os'
 import { getProfileDir } from './hermes-profile'
+import { detectHermesRootHome, isPathWithin } from './hermes-path'
 import { saveEnvValueForProfile } from '../config-helpers'
 import { createHealthScaleReading } from './health-state'
 
@@ -22,6 +24,7 @@ const ENV_KEYS = {
 const DEFAULT_SOURCE = 'xiaomihome'
 const DEFAULT_REGION = 'cn'
 const DEFAULT_SCALE_MODEL = 'yunmai.scales.ms103'
+const SCALECONNECT_EXECUTABLE = process.platform === 'win32' ? 'scaleconnect.exe' : 'scaleconnect'
 
 export type ScaleSyncSource = 'mifitness' | 'xiaomihome'
 export type ScaleSyncStatus = 'synced' | 'skipped' | 'failed'
@@ -73,7 +76,12 @@ export async function updateScaleSyncSettings(input: ScaleSyncSettingsInput, pro
   if (typeof input.username !== 'undefined') updates[ENV_KEYS.username] = singleLine(input.username)
   if (typeof input.region !== 'undefined') updates[ENV_KEYS.region] = singleLine(input.region) || DEFAULT_REGION
   if (typeof input.scaleModel !== 'undefined') updates[ENV_KEYS.scaleModel] = singleLine(input.scaleModel) || DEFAULT_SCALE_MODEL
-  if (typeof input.scaleconnectPath !== 'undefined') updates[ENV_KEYS.scaleconnectPath] = singleLine(input.scaleconnectPath)
+  if (typeof input.scaleconnectPath !== 'undefined') {
+    const requestedPath = singleLine(input.scaleconnectPath)
+    updates[ENV_KEYS.scaleconnectPath] = requestedPath
+      ? await resolveTrustedScaleconnectPath(requestedPath)
+      : ''
+  }
 
   const password = typeof input.password === 'string' ? singleLine(input.password) : ''
   if (password) {
@@ -96,11 +104,32 @@ export async function runScaleSync(profile = 'default', actor = 'system'): Promi
   if (!settings.username || !env[ENV_KEYS.password]) return skipped('missing_xiaomi_credentials', settings)
   if (!settings.scaleconnectPath) return skipped('missing_scaleconnect_path', settings)
 
-  const config = buildSmartScaleConnectConfig(settings, env[ENV_KEYS.password])
-  const command = `${settings.scaleconnectPath} -c <redacted-json>`
+  const password = env[ENV_KEYS.password]
+  let executablePath: string
   try {
-    const { stdout, stderr } = await execFileAsync(settings.scaleconnectPath, ['-c', JSON.stringify(config)], {
-      cwd: dirname(settings.scaleconnectPath),
+    executablePath = await resolveTrustedScaleconnectPath(settings.scaleconnectPath)
+  } catch {
+    return {
+      status: 'failed',
+      reason: 'untrusted_scaleconnect_path',
+      importedCount: 0,
+      readings: [],
+    }
+  }
+
+  const config = buildSmartScaleConnectConfig(settings, password)
+  const configContent = JSON.stringify(config)
+  const command = executablePath
+  let workingDir = ''
+  try {
+    workingDir = await mkdtemp(join(tmpdir(), 'hermes-scale-sync-'))
+    await writeFile(join(workingDir, 'scaleconnect.yaml'), configContent, {
+      encoding: 'utf-8',
+      mode: 0o600,
+      flag: 'wx',
+    })
+    const { stdout, stderr } = await execFileAsync(executablePath, [], {
+      cwd: workingDir,
       env: buildScaleconnectEnv(),
       timeout: 60000,
       maxBuffer: 1024 * 1024 * 4,
@@ -108,12 +137,12 @@ export async function runScaleSync(profile = 'default', actor = 'system'): Promi
     })
     const payloads = parseScaleConnectOutput(stdout)
     const readings = payloads.map(payload => createHealthScaleReading(payload, actor, profile))
-    const stderrText = trimOrUndefined(stderr)
+    const stderrText = sanitizeEvidence(stderr, [password, jsonEscaped(password), workingDir, configContent])
     const classified = classifyScaleconnectStderr(stderrText)
     if (classified) {
       return { status: 'failed', command, importedCount: readings.length, readings, stderr: stderrText, ...classified }
     }
-    return { status: 'synced', command, importedCount: readings.length, readings, stderr: trimOrUndefined(stderr) }
+    return { status: 'synced', command, importedCount: readings.length, readings, stderr: stderrText }
   } catch (err: any) {
     return {
       status: 'failed',
@@ -121,8 +150,10 @@ export async function runScaleSync(profile = 'default', actor = 'system'): Promi
       command,
       importedCount: 0,
       readings: [],
-      stderr: trimOrUndefined(String(err?.stderr || err?.message || '')),
+      stderr: sanitizeEvidence(err?.stderr || err?.message || '', [password, jsonEscaped(password), workingDir, configContent]),
     }
+  } finally {
+    if (workingDir) await rm(workingDir, { recursive: true, force: true })
   }
 }
 
@@ -147,10 +178,49 @@ function settingsFromEnv(env: Record<string, string>): ScaleSyncSettings {
 }
 
 function defaultScaleconnectPath(): string {
-  const localAppData = process.env.LOCALAPPDATA || ''
-  if (!localAppData) return ''
-  const candidate = join(localAppData, 'hermes', 'tools', process.platform === 'win32' ? 'scaleconnect.exe' : 'scaleconnect')
+  const candidate = join(trustedHermesToolsRoot(), SCALECONNECT_EXECUTABLE)
   return existsSync(candidate) ? candidate : ''
+}
+
+function trustedHermesToolsRoot(): string {
+  const localAppData = process.env.LOCALAPPDATA?.trim()
+  if (process.platform === 'win32' && localAppData) {
+    return resolve(localAppData, 'hermes', 'tools')
+  }
+  return resolve(detectHermesRootHome(), 'tools')
+}
+
+async function resolveTrustedScaleconnectPath(inputPath: string): Promise<string> {
+  const requestedPath = resolve(inputPath)
+  if (!sameExecutableName(basename(requestedPath), SCALECONNECT_EXECUTABLE)) {
+    throw new Error(`ScaleConnect executable must be named ${SCALECONNECT_EXECUTABLE}`)
+  }
+
+  let toolsRoot: string
+  let executablePath: string
+  try {
+    toolsRoot = await realpath(trustedHermesToolsRoot())
+    executablePath = await realpath(requestedPath)
+  } catch {
+    throw new Error('ScaleConnect executable must exist within the trusted Hermes tools root')
+  }
+
+  if (!isPathWithin(executablePath, toolsRoot)) {
+    throw new Error('ScaleConnect executable must be within the trusted Hermes tools root')
+  }
+  if (!sameExecutableName(basename(executablePath), SCALECONNECT_EXECUTABLE)) {
+    throw new Error(`ScaleConnect executable must be named ${SCALECONNECT_EXECUTABLE}`)
+  }
+  if (!(await stat(executablePath)).isFile()) {
+    throw new Error('ScaleConnect executable must be a regular file within the trusted Hermes tools root')
+  }
+  return executablePath
+}
+
+function sameExecutableName(actual: string, expected: string): boolean {
+  return process.platform === 'win32'
+    ? actual.toLowerCase() === expected.toLowerCase()
+    : actual === expected
 }
 
 function buildSmartScaleConnectConfig(settings: ScaleSyncSettings, password: string): Record<string, unknown> {
@@ -283,6 +353,19 @@ function trimOrUndefined(value: string): string | undefined {
   return trimmed || undefined
 }
 
+function sanitizeEvidence(value: unknown, sensitiveValues: string[]): string | undefined {
+  let sanitized = String(value ?? '')
+  for (const sensitive of sensitiveValues) {
+    if (sensitive) sanitized = sanitized.replaceAll(sensitive, '<redacted>')
+  }
+  sanitized = sanitized.replace(/scaleconnect\.ya?ml/gi, '<redacted-config>')
+  return trimOrUndefined(sanitized)
+}
+
+function jsonEscaped(value: string): string {
+  return JSON.stringify(value).slice(1, -1)
+}
+
 function classifyScaleconnectStderr(stderr: string | undefined): { reason: string; verificationUrl?: string } | null {
   if (!stderr || !/load data error/i.test(stderr)) return null
   const notification = stderr.match(/notification=(https?:\/\/\S+)/)
@@ -296,7 +379,7 @@ function skipped(reason: string, settings: ScaleSyncSettings): ScaleSyncResult {
   return {
     status: 'skipped',
     reason,
-    command: settings.scaleconnectPath ? `${settings.scaleconnectPath} -c <redacted-json>` : undefined,
+    command: settings.scaleconnectPath || undefined,
     importedCount: 0,
     readings: [],
   }

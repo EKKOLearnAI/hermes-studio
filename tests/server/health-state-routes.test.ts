@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const requireSuperAdmin = vi.hoisted(() => vi.fn(async (_ctx: any, next: () => Promise<void>) => { await next() }))
+
 const handlers = {
   overview: vi.fn(async (ctx: any) => { ctx.body = { overview: {} } }),
   getProfile: vi.fn(async (ctx: any) => { ctx.body = { profile: {} } }),
@@ -23,11 +25,13 @@ const handlers = {
 }
 
 vi.mock('../../packages/server/src/controllers/hermes/health-state', () => handlers)
+vi.mock('../../packages/server/src/middleware/user-auth', () => ({ requireSuperAdmin }))
 
 describe('health state routes', () => {
   beforeEach(() => {
     vi.resetModules()
     Object.values(handlers).forEach(fn => fn.mockClear())
+    requireSuperAdmin.mockClear()
   })
 
   it('registers Health State routes', async () => {
@@ -88,9 +92,27 @@ describe('health state routes', () => {
     const layer = healthStateRoutes.stack.find((entry: any) => entry.path === '/api/hermes/health/scale-sync/run' && entry.methods.includes('POST'))
     const ctx: any = { params: {}, request: { body: {} }, query: {}, body: null }
 
-    await layer.stack[0](ctx)
+    await layer.stack.at(-1)(ctx)
 
     expect(handlers.runScaleSyncNow).toHaveBeenCalledWith(ctx)
     expect(ctx.body).toEqual({ result: {} })
+  })
+
+  it.each([
+    ['PUT', '/api/hermes/health/scale-sync'],
+    ['POST', '/api/hermes/health/scale-sync/run'],
+  ])('requires super admin before %s %s', async (method, path) => {
+    const { healthStateRoutes } = await import('../../packages/server/src/routes/hermes/health-state')
+    const layer = healthStateRoutes.stack.find((entry: any) => entry.path === path && entry.methods.includes(method))
+
+    expect(layer.stack).toContain(requireSuperAdmin)
+    expect(layer.stack.indexOf(requireSuperAdmin)).toBeLessThan(layer.stack.length - 1)
+  })
+
+  it('keeps scale sync settings readable without the super-admin mutation guard', async () => {
+    const { healthStateRoutes } = await import('../../packages/server/src/routes/hermes/health-state')
+    const layer = healthStateRoutes.stack.find((entry: any) => entry.path === '/api/hermes/health/scale-sync' && entry.methods.includes('GET'))
+
+    expect(layer.stack).not.toContain(requireSuperAdmin)
   })
 })
