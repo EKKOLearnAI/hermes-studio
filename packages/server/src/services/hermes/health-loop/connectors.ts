@@ -13,14 +13,30 @@ const MAX_STATE_BYTES = 65_536
 const connectorLocks = new Map<string, Promise<void>>()
 
 export type HealthConnectorHealth = 'healthy' | 'degraded' | 'unhealthy' | 'unavailable'
+export type HealthConnectorConfigurationState = 'configured' | 'not_configured' | 'invalid'
+export type HealthConnectorAuthorizationState = 'authorized' | 'not_required' | 'required' | 'expired' | 'unknown'
+
+export interface HealthConnectorCapabilities {
+  read: HealthDomain[]
+  write: HealthDomain[]
+}
+
+export interface HealthConnectorAccessState {
+  configurationState: HealthConnectorConfigurationState
+  authorizationState: HealthConnectorAuthorizationState
+}
 
 export interface HealthConnectorStatus {
   configured: boolean
+  configurationState: HealthConnectorConfigurationState
+  authorizationState: HealthConnectorAuthorizationState
   health: HealthConnectorHealth
   lastAttemptAt?: string
   lastSuccessAt?: string
   cursor?: string
   domains: HealthDomain[]
+  freshnessByDomain: Partial<Record<HealthDomain, string>>
+  capabilities: HealthConnectorCapabilities
   errorCode?: string
 }
 
@@ -45,6 +61,7 @@ interface PersistedConnectorState {
   lastSuccessAt?: string
   cursor?: string
   health: HealthConnectorHealth
+  freshnessByDomain?: Partial<Record<HealthDomain, string>>
   errorCode?: string
 }
 
@@ -133,8 +150,9 @@ export function defaultHealthConnectorStateStore(profile = 'default'): FileHealt
 export interface ManagedConnectorSource {
   id: string
   domains: HealthDomain[]
-  configured(): Promise<boolean>
-  load(input: { cursor?: string; now: string }): Promise<{ envelopes: HealthIngestionEnvelope[]; cursor?: string }>
+  access(): Promise<HealthConnectorAccessState>
+  capabilities: HealthConnectorCapabilities
+  load(input: { cursor?: string; now: string }): Promise<{ envelopes: HealthIngestionEnvelope[]; cursor?: string; health?: HealthConnectorHealth }>
 }
 
 export function createManagedHealthConnector(options: {
@@ -145,25 +163,32 @@ export function createManagedHealthConnector(options: {
   const { source, stateStore, ingest } = options
   validateConnectorId(source.id)
   validateDomains(source.domains)
+  validateCapabilities(source.capabilities, source.domains)
 
   const status = async (): Promise<HealthConnectorStatus> => {
-    let configured = false
+    let access: HealthConnectorAccessState
     try {
-      configured = await source.configured()
+      access = await source.access()
+      validateAccess(access)
     } catch {
-      return { configured: false, health: 'unavailable', domains: [...source.domains], errorCode: 'CONNECTOR_STATUS_FAILED' }
+      return statusBase(source, { configurationState: 'invalid', authorizationState: 'unknown' }, 'unavailable', 'CONNECTOR_STATUS_FAILED')
     }
     try {
       const state = await stateStore.read(source.id)
+      validateStateForSource(state, source)
+      const effectiveAccess = state?.errorCode === 'CONNECTOR_AUTHORIZATION_REQUIRED'
+        ? { ...access, authorizationState: 'required' as const }
+        : access
       return {
-        configured, health: state?.health ?? 'unavailable',
+        ...statusBase(source, effectiveAccess, state?.health ?? 'unavailable'),
         ...(state?.lastAttemptAt ? { lastAttemptAt: state.lastAttemptAt } : {}),
         ...(state?.lastSuccessAt ? { lastSuccessAt: state.lastSuccessAt } : {}),
-        ...(state?.cursor ? { cursor: state.cursor } : {}), domains: [...source.domains],
+        ...(state?.cursor ? { cursor: state.cursor } : {}),
+        freshnessByDomain: { ...(state?.freshnessByDomain ?? {}) },
         ...(state?.errorCode ? { errorCode: state.errorCode } : {}),
       }
     } catch {
-      return { configured, health: 'unavailable', domains: [...source.domains], errorCode: 'CONNECTOR_STATE_CORRUPT' }
+      return statusBase(source, access, 'unavailable', 'CONNECTOR_STATE_CORRUPT')
     }
   }
 
@@ -174,42 +199,61 @@ export function createManagedHealthConnector(options: {
       let previous: PersistedConnectorState | undefined
       try {
         previous = await stateStore.read(source.id)
+        validateStateForSource(previous, source)
       } catch {
         throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
       }
-      if (input.cursor !== undefined && previous?.cursor !== undefined && input.cursor !== previous.cursor) {
+      if (input.cursor !== undefined && previous?.cursor !== undefined && compareCursorValues(input.cursor, previous.cursor) < 0) {
         throw new HealthConnectorError('CONNECTOR_CURSOR_CONFLICT')
       }
-      const cursor = input.cursor ?? previous?.cursor
+      const cursor = maxCursor(input.cursor, previous?.cursor)
+      if (cursor && compareTimestampInstants(cursorTimestamp(cursor), now) > 0) {
+        throw new HealthConnectorError('CONNECTOR_CURSOR_CONFLICT')
+      }
+      let freshnessByDomain = { ...(previous?.freshnessByDomain ?? {}) }
       const attempted: PersistedConnectorState = {
         ...(previous ?? { health: 'unavailable' as const }),
         lastAttemptAt: now,
       }
       await stateStore.write(source.id, attempted)
       try {
-        if (!(await source.configured())) throw new HealthConnectorError('CONNECTOR_NOT_CONFIGURED')
+        const access = await source.access()
+        validateAccess(access)
+        if (access.configurationState !== 'configured') throw new HealthConnectorError('CONNECTOR_NOT_CONFIGURED')
+        if (access.authorizationState !== 'authorized' && access.authorizationState !== 'not_required') {
+          throw new HealthConnectorError('CONNECTOR_AUTHORIZATION_REQUIRED')
+        }
         const loaded = await source.load({ cursor, now })
+        if (loaded.health !== undefined && !['healthy', 'degraded', 'unhealthy', 'unavailable'].includes(loaded.health)) {
+          throw new HealthConnectorError('CONNECTOR_INVALID_HEALTH')
+        }
         if (loaded.cursor !== undefined) validateCursor(loaded.cursor)
         if (loaded.envelopes.length > 1_000) throw new HealthConnectorError('CONNECTOR_IMPORT_LIMIT')
         let ingestedCount = 0
         for (const envelope of loaded.envelopes) {
+          if (!source.domains.includes(envelope.domain)) throw new HealthConnectorError('CONNECTOR_INVALID_DOMAINS')
+          validateTimestamp(envelope.observedAt, 'CONNECTOR_INVALID_IMPORT')
           ingest(envelope)
           ingestedCount += 1
+          const current = freshnessByDomain[envelope.domain]
+          if (!current || compareTimestampInstants(envelope.observedAt, current) > 0) freshnessByDomain[envelope.domain] = envelope.observedAt
         }
-        const nextCursor = loaded.cursor ?? cursor
+        const nextCursor = maxCursor(cursor, loaded.cursor)
         const successful: PersistedConnectorState = {
-          health: 'healthy', lastAttemptAt: now, lastSuccessAt: now,
+          health: loaded.health ?? 'healthy', lastAttemptAt: now, lastSuccessAt: now,
           ...(nextCursor ? { cursor: nextCursor } : {}),
+          ...(Object.keys(freshnessByDomain).length ? { freshnessByDomain } : {}),
         }
         await stateStore.write(source.id, successful)
         return { connectorId: source.id, cursor: nextCursor, attemptedCount: loaded.envelopes.length, ingestedCount }
       } catch (error) {
         const code = sanitizedErrorCode(error)
         await stateStore.write(source.id, {
-          health: code === 'CONNECTOR_NOT_CONFIGURED' ? 'unavailable' : 'degraded',
+          health: code === 'CONNECTOR_NOT_CONFIGURED' || code === 'CONNECTOR_AUTHORIZATION_REQUIRED' ? 'unavailable' : 'degraded',
           lastAttemptAt: now,
           ...(previous?.lastSuccessAt ? { lastSuccessAt: previous.lastSuccessAt } : {}),
           ...(previous?.cursor ? { cursor: previous.cursor } : {}),
+          ...(Object.keys(freshnessByDomain).length ? { freshnessByDomain } : {}),
           errorCode: code,
         })
         if (error instanceof HealthConnectorError) throw error
@@ -259,19 +303,52 @@ export function validateConnectorTimestamp(value: string): string {
   return validateTimestamp(value)
 }
 
+function statusBase(
+  source: ManagedConnectorSource,
+  access: HealthConnectorAccessState,
+  health: HealthConnectorHealth,
+  errorCode?: string,
+): HealthConnectorStatus {
+  return {
+    configured: access.configurationState === 'configured',
+    configurationState: access.configurationState,
+    authorizationState: access.authorizationState,
+    health,
+    domains: [...source.domains],
+    freshnessByDomain: {},
+    capabilities: { read: [...source.capabilities.read], write: [...source.capabilities.write] },
+    ...(errorCode ? { errorCode } : {}),
+  }
+}
+
 function validateState(value: unknown): asserts value is PersistedConnectorState {
   if (!isPlainObject(value) || !['healthy', 'degraded', 'unhealthy', 'unavailable'].includes(String(value.health))) {
     throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
   }
   const keys = Object.keys(value)
-  if (keys.some(key => !['lastAttemptAt', 'lastSuccessAt', 'cursor', 'health', 'errorCode'].includes(key))) {
+  if (keys.some(key => !['lastAttemptAt', 'lastSuccessAt', 'cursor', 'health', 'freshnessByDomain', 'errorCode'].includes(key))) {
     throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
   }
   for (const key of ['lastAttemptAt', 'lastSuccessAt'] as const) {
     if (value[key] !== undefined) validateTimestamp(String(value[key]), 'CONNECTOR_STATE_CORRUPT')
   }
   if (value.cursor !== undefined) validateCursor(String(value.cursor), 'CONNECTOR_STATE_CORRUPT')
+  if (value.freshnessByDomain !== undefined) {
+    if (!isPlainObject(value.freshnessByDomain)) throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
+    const allowed = new Set<HealthDomain>(['body_composition', 'measurements', 'posture', 'skin', 'diet', 'fitness', 'sleep', 'internal_health'])
+    for (const [domain, timestamp] of Object.entries(value.freshnessByDomain)) {
+      if (!allowed.has(domain as HealthDomain) || typeof timestamp !== 'string') throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
+      validateTimestamp(timestamp, 'CONNECTOR_STATE_CORRUPT')
+    }
+  }
   if (value.errorCode !== undefined && (typeof value.errorCode !== 'string' || !ERROR_CODE.test(value.errorCode))) {
+    throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
+  }
+}
+
+function validateStateForSource(state: PersistedConnectorState | undefined, source: ManagedConnectorSource): void {
+  if (!state?.freshnessByDomain) return
+  if (Object.keys(state.freshnessByDomain).some(domain => !source.domains.includes(domain as HealthDomain))) {
     throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
   }
 }
@@ -284,6 +361,24 @@ function validateDomains(domains: HealthDomain[]): void {
   const allowed = new Set(['body_composition', 'measurements', 'posture', 'skin', 'diet', 'fitness', 'sleep', 'internal_health'])
   if (!Array.isArray(domains) || domains.length === 0 || new Set(domains).size !== domains.length || domains.some(domain => !allowed.has(domain))) {
     throw new HealthConnectorError('CONNECTOR_INVALID_DOMAINS')
+  }
+}
+
+function validateCapabilities(capabilities: HealthConnectorCapabilities, domains: HealthDomain[]): void {
+  if (!isPlainObject(capabilities) || !Array.isArray(capabilities.read) || !Array.isArray(capabilities.write)) {
+    throw new HealthConnectorError('CONNECTOR_INVALID_CAPABILITIES')
+  }
+  const supported = new Set(domains)
+  for (const list of [capabilities.read, capabilities.write]) {
+    if (new Set(list).size !== list.length || list.some(domain => !supported.has(domain))) throw new HealthConnectorError('CONNECTOR_INVALID_CAPABILITIES')
+  }
+}
+
+function validateAccess(access: HealthConnectorAccessState): void {
+  if (!isPlainObject(access)
+    || !['configured', 'not_configured', 'invalid'].includes(String(access.configurationState))
+    || !['authorized', 'not_required', 'required', 'expired', 'unknown'].includes(String(access.authorizationState))) {
+    throw new HealthConnectorError('CONNECTOR_STATUS_FAILED')
   }
 }
 
@@ -312,7 +407,8 @@ function validateTimestamp(value: string, errorCode = 'CONNECTOR_INVALID_TIMESTA
   const offsetHour = Number(match[9] ?? 0); const offsetMinute = Number(match[10] ?? 0)
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
   const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-  if (month < 1 || month > 12 || day < 1 || day > days[month - 1] || hour > 23 || minute > 59 || second > 59 || offsetHour > 23 || offsetMinute > 59) {
+  if (month < 1 || month > 12 || day < 1 || day > days[month - 1] || hour > 23 || minute > 59 || second > 59
+    || offsetHour > 14 || offsetMinute > 59 || (offsetHour === 14 && offsetMinute !== 0)) {
     throw new HealthConnectorError(errorCode)
   }
   if (Number.isNaN(Date.parse(value)) && year !== 0) throw new HealthConnectorError(errorCode)
@@ -323,6 +419,30 @@ function compareTimestampInstants(left: string, right: string): number {
   const leftValue = timestampNanoseconds(left)
   const rightValue = timestampNanoseconds(right)
   return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0
+}
+
+function maxCursor(left: string | undefined, right: string | undefined): string | undefined {
+  if (!left) return right
+  if (!right) return left
+  validateCursor(left); validateCursor(right)
+  return compareCursorValues(left, right) >= 0 ? left : right
+}
+
+function compareCursorValues(left: string, right: string): number {
+  const decode = (value: string): [string, string] => {
+    const decoded = Buffer.from(value, 'base64url').toString('utf8')
+    const separator = decoded.indexOf('\0')
+    return [decoded.slice(0, separator), decoded.slice(separator + 1)]
+  }
+  const [leftTime, leftSource] = decode(left); const [rightTime, rightSource] = decode(right)
+  return compareTimestampInstants(leftTime, rightTime)
+    || Buffer.compare(Buffer.from(leftSource, 'utf8'), Buffer.from(rightSource, 'utf8'))
+}
+
+function cursorTimestamp(cursor: string): string {
+  validateCursor(cursor)
+  const decoded = Buffer.from(cursor, 'base64url').toString('utf8')
+  return decoded.slice(0, decoded.indexOf('\0'))
 }
 
 function timestampNanoseconds(value: string): bigint {

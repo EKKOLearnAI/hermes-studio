@@ -28,14 +28,18 @@ export function createHealthStateConnector(options: {
     source: {
       id: 'health-state',
       domains: ['diet', 'fitness', 'sleep'],
-      configured: async () => true,
+      capabilities: { read: ['diet', 'fitness', 'sleep'], write: [] },
+      access: async () => ({ configurationState: 'configured', authorizationState: 'not_required' }),
       load: async ({ cursor, now }) => {
         const source = reader(profile)
         const foodNames = new Map((source.foodItems ?? []).map(item => [String(item.id ?? ''), String(item.name ?? '')]))
         const envelopes = [
           ...(source.foodLogs ?? []).map(item => dietEnvelope(item, foodNames)),
           ...(source.workouts ?? []).map(fitnessEnvelope),
-          ...(source.dailyCheckins ?? []).map(sleepEnvelope),
+          ...(source.dailyCheckins ?? []).flatMap(item => {
+            const envelope = sleepEnvelope(item)
+            return envelope ? [envelope] : []
+          }),
         ].sort(compareHealthEnvelopeOrder).filter(envelope => compareHealthEnvelopeOrder(envelope, { ...envelope, observedAt: now }) <= 0)
           .filter(envelope => !cursor || compareEnvelopeCursor(envelope, cursor) > 0)
         const last = envelopes.at(-1)
@@ -83,9 +87,18 @@ function fitnessEnvelope(record: Record<string, unknown>): HealthIngestionEnvelo
   return { domain: 'fitness', source: 'health-state', sourceId: `workout:${id}`, observedAt, evidenceClass: 'reported', confidence: 1, payload }
 }
 
-function sleepEnvelope(record: Record<string, unknown>): HealthIngestionEnvelope {
+function sleepEnvelope(record: Record<string, unknown>): HealthIngestionEnvelope | null {
   const id = identifier(record.id)
   const sleep = recordValue(record.sleep ?? parseJsonField(record.sleep_json))
+  const allowed = new Set([
+    'startedAt', 'started_at', 'endedAt', 'ended_at', 'durationMinutes', 'duration_minutes', 'interruptions', 'stages',
+    'restingHeartRateBpm', 'resting_heart_rate_bpm', 'restingRespiratoryRateBrpm', 'resting_respiratory_rate_brpm',
+    'restingSpo2Percent', 'resting_spo2_percent', 'freshnessMinutes', 'freshness_minutes',
+    'subjectiveRecovery', 'subjective_recovery', 'recoveryScore', 'recovery_score',
+  ])
+  const keys = Object.keys(sleep)
+  if (keys.length === 0) return null
+  if (keys.some(key => !allowed.has(key))) throw new HealthConnectorError('CONNECTOR_INVALID_IMPORT')
   const observedAt = timestamp(sleep.endedAt ?? sleep.ended_at ?? record.createdAt ?? record.created_at ?? dateAtMidnight(record.checkinDate ?? record.checkin_date))
   const payload: Record<string, unknown> = {}
   copyString(sleep, payload, ['startedAt', 'started_at'], 'startedAt')

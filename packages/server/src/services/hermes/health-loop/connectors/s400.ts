@@ -2,12 +2,15 @@ import { getScaleSyncSettings, runScaleSync } from '../../scale-sync'
 import { ingestHealthEnvelope } from '../ingestion'
 import type { HealthIngestionEnvelope } from '../types'
 import {
-  compareHealthEnvelopeOrder, createConnectorCursor, createManagedHealthConnector, defaultHealthConnectorStateStore, HealthConnectorError,
+  compareEnvelopeCursor, compareHealthEnvelopeOrder, createConnectorCursor, createManagedHealthConnector,
+  defaultHealthConnectorStateStore, HealthConnectorError,
   type HealthConnector, type HealthConnectorStateStore, type HealthEnvelopeIngestor,
 } from '../connectors'
 
 interface S400Settings {
   configured: boolean
+  username?: string
+  hasPassword?: boolean
 }
 
 interface S400SyncResult {
@@ -32,14 +35,23 @@ export function createS400HealthConnector(options: {
     source: {
       id: 's400',
       domains: ['body_composition'],
-      configured: async () => Boolean((await settingsReader(profile)).configured),
-      load: async () => {
+      capabilities: { read: ['body_composition'], write: [] },
+      access: async () => {
+        const settings = await settingsReader(profile)
+        return {
+          configurationState: settings.configured ? 'configured' : 'not_configured',
+          authorizationState: settings.configured || (settings.hasPassword && settings.username) ? 'authorized' : 'required',
+        }
+      },
+      load: async ({ cursor, now }) => {
         const result = await syncRunner(profile, 'health-connector')
         if (result.status !== 'synced') throw new HealthConnectorError(scaleErrorCode(result.reason))
         const envelopes = result.readings.map(readingToEnvelope)
           .sort(compareHealthEnvelopeOrder)
+          .filter(envelope => !cursor || compareEnvelopeCursor(envelope, cursor) > 0)
+          .filter(envelope => compareHealthEnvelopeOrder(envelope, { ...envelope, observedAt: now }) <= 0)
         const last = envelopes.at(-1)
-        return { envelopes, ...(last ? { cursor: createConnectorCursor(last.observedAt, last.sourceId) } : {}) }
+        return { envelopes, ...(last ? { cursor: createConnectorCursor(last.observedAt, last.sourceId) } : { cursor }) }
       },
     },
   })

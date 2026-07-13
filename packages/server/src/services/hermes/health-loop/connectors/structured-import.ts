@@ -11,7 +11,7 @@ const MAX_ROWS = 1_000
 const MAX_COLUMNS = 64
 const COMMON_JSON_FIELDS = new Set(['domain', 'sourceId', 'observedAt', 'evidenceClass', 'confidence', 'payload', 'artifactIds', 'parserVersion'])
 const DOMAIN_FIELDS: Record<'diet' | 'fitness' | 'sleep', Set<string>> = {
-  diet: new Set(['foods', 'supplements', 'mealTime', 'caloriesKcal', 'proteinG', 'carbsG', 'fatG', 'waterMl', 'micros', 'parserConfidence', 'portionConfirmed', 'confirmationStatus']),
+  diet: new Set(['foods', 'supplements', 'mealTime', 'caloriesKcal', 'proteinG', 'carbsG', 'fatG', 'waterMl', 'macros', 'micros', 'parserConfidence', 'portionConfirmed', 'confirmationStatus']),
   fitness: new Set(['exercise', 'exercises', 'sets', 'reps', 'loadKg', 'durationMinutes', 'pain', 'rpe', 'trainingLoad', 'intensity', 'muscles', 'completed']),
   sleep: new Set(['startedAt', 'endedAt', 'durationMinutes', 'interruptions', 'stages', 'restingHeartRateBpm', 'restingRespiratoryRateBrpm', 'restingSpo2Percent', 'freshnessMinutes', 'subjectiveRecovery', 'recoveryScore']),
 }
@@ -37,7 +37,8 @@ export function createStructuredImportConnector(options: {
     source: {
       id: options.id,
       domains: ['diet', 'fitness', 'sleep'],
-      configured: async () => true,
+      capabilities: { read: ['diet', 'fitness', 'sleep'], write: [] },
+      access: async () => ({ configurationState: 'configured', authorizationState: 'not_required' }),
       load: async ({ cursor, now }) => {
         const parsed = parseImport(options.format, options.content, options.id)
           .sort(compareHealthEnvelopeOrder)
@@ -65,8 +66,7 @@ function parseJson(content: string, source: string): HealthIngestionEnvelope[] {
     const record = plainRecord(item)
     rejectUnknown(record, COMMON_JSON_FIELDS)
     const domain = healthDomain(record.domain)
-    const payload = plainRecord(record.payload)
-    rejectUnknown(payload, DOMAIN_FIELDS[domain])
+    const payload = validateStructuredPayload(domain, plainRecord(record.payload))
     const envelope: HealthIngestionEnvelope = {
       domain, source, sourceId: string(record.sourceId), observedAt: string(record.observedAt),
       evidenceClass: evidenceClass(record.evidenceClass), confidence: finiteNumber(record.confidence), payload,
@@ -76,6 +76,82 @@ function parseJson(content: string, source: string): HealthIngestionEnvelope[] {
     validateEnvelope(envelope)
     return envelope
   })
+}
+
+function validateStructuredPayload(domain: 'diet' | 'fitness' | 'sleep', input: Record<string, unknown>): Record<string, unknown> {
+  rejectUnknown(input, DOMAIN_FIELDS[domain])
+  const payload = { ...input }
+  if (domain === 'diet') {
+    validateOptionalArray(payload.foods, item => validateExactObject(item, new Set(['name', 'portionGrams']), { name: 'string', portionGrams: 'number' }))
+    validateOptionalArray(payload.supplements, item => validateExactObject(item, new Set(['name', 'amount', 'unit']), { name: 'string', amount: 'number', unit: 'string' }))
+    validateOptionalType(payload.mealTime, 'string'); validateOptionalType(payload.confirmationStatus, 'string')
+    validateOptionalType(payload.portionConfirmed, 'boolean')
+    for (const key of ['caloriesKcal', 'proteinG', 'carbsG', 'fatG', 'waterMl', 'parserConfidence']) validateOptionalType(payload[key], 'number')
+    if (payload.macros !== undefined) {
+      const macros = validateExactObject(payload.macros, new Set(['caloriesKcal', 'proteinG', 'carbsG', 'fatG']), {}, 'number')
+      for (const [key, value] of Object.entries(macros)) {
+        if (payload[key] !== undefined && payload[key] !== value) fail('CONNECTOR_INVALID_IMPORT')
+        payload[key] = value
+      }
+      delete payload.macros
+    }
+    if (payload.micros !== undefined) {
+      validateExactObject(payload.micros, new Set(['fiberG', 'sodiumMg', 'potassiumMg', 'calciumMg', 'ironMg']), {}, 'number')
+    }
+  } else if (domain === 'fitness') {
+    validateOptionalType(payload.exercise, 'string'); validateOptionalType(payload.intensity, 'string'); validateOptionalType(payload.completed, 'boolean')
+    for (const key of ['sets', 'reps', 'loadKg', 'durationMinutes', 'pain', 'rpe', 'trainingLoad']) validateOptionalType(payload[key], 'number')
+    validateOptionalStringArray(payload.muscles)
+    validateOptionalArray(payload.exercises, item => {
+      const exercise = validateExactObject(item, new Set(['name', 'sets', 'durationMinutes', 'intensity', 'muscles', 'pain', 'rpe', 'completed']), { name: 'string' })
+      validateOptionalType(exercise.durationMinutes, 'number'); validateOptionalType(exercise.intensity, 'string')
+      validateOptionalType(exercise.pain, 'number'); validateOptionalType(exercise.rpe, 'number'); validateOptionalType(exercise.completed, 'boolean')
+      validateOptionalStringArray(exercise.muscles)
+      validateOptionalArray(exercise.sets, set => {
+        const value = validateExactObject(set, new Set(['reps', 'loadKg', 'durationSeconds', 'rpe', 'completed']))
+        for (const key of ['reps', 'loadKg', 'durationSeconds', 'rpe']) validateOptionalType(value[key], 'number')
+        validateOptionalType(value.completed, 'boolean')
+      })
+    })
+  } else {
+    validateOptionalType(payload.startedAt, 'string'); validateOptionalType(payload.endedAt, 'string')
+    for (const key of ['durationMinutes', 'interruptions', 'restingHeartRateBpm', 'restingRespiratoryRateBrpm', 'restingSpo2Percent', 'freshnessMinutes', 'subjectiveRecovery', 'recoveryScore']) {
+      validateOptionalType(payload[key], 'number')
+    }
+    if (payload.stages !== undefined) validateExactObject(payload.stages, new Set(['deepMinutes', 'remMinutes', 'lightMinutes', 'awakeMinutes']), {}, 'number')
+  }
+  return payload
+}
+
+function validateExactObject(
+  value: unknown,
+  allowed: Set<string>,
+  required: Record<string, 'string' | 'number' | 'boolean'> = {},
+  allValues?: 'string' | 'number' | 'boolean',
+): Record<string, unknown> {
+  const record = plainRecord(value)
+  rejectUnknown(record, allowed)
+  for (const [key, type] of Object.entries(required)) {
+    if (record[key] === undefined) fail('CONNECTOR_INVALID_IMPORT')
+    validateOptionalType(record[key], type)
+  }
+  if (allValues) for (const item of Object.values(record)) validateOptionalType(item, allValues)
+  return record
+}
+
+function validateOptionalArray(value: unknown, validate: (item: unknown) => void): void {
+  if (value === undefined) return
+  if (!Array.isArray(value)) fail('CONNECTOR_INVALID_IMPORT')
+  for (const item of value) validate(item)
+}
+
+function validateOptionalStringArray(value: unknown): void {
+  validateOptionalArray(value, item => validateOptionalType(item, 'string'))
+}
+
+function validateOptionalType(value: unknown, type: 'string' | 'number' | 'boolean'): void {
+  if (value === undefined) return
+  if (typeof value !== type || (type === 'number' && !Number.isFinite(value))) fail('CONNECTOR_INVALID_IMPORT')
 }
 
 function parseCsvImport(content: string, source: string): HealthIngestionEnvelope[] {

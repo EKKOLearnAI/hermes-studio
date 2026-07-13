@@ -36,6 +36,22 @@ describe('health-loop connectors', () => {
     expect(() => createHealthConnectorRegistry([connector('../bad')])).toThrow(/CONNECTOR_INVALID_ID/)
   })
 
+  it('keeps a successful sync distinct from a degraded connector health report', async () => {
+    const { FileHealthConnectorStateStore, createManagedHealthConnector } = await import('../../packages/server/src/services/hermes/health-loop/connectors')
+    const connector = createManagedHealthConnector({
+      stateStore: new FileHealthConnectorStateStore(join(root, 'degraded.json')),
+      ingest: () => ({} as never),
+      source: {
+        id: 'degraded-source', domains: ['diet'], capabilities: { read: ['diet'], write: [] },
+        access: async () => ({ configurationState: 'configured', authorizationState: 'not_required' }),
+        load: async () => ({ envelopes: [], health: 'degraded' }),
+      },
+    })
+
+    await expect(connector.sync({ now: '2026-07-13T01:00:00Z' })).resolves.toMatchObject({ ingestedCount: 0 })
+    expect(await connector.status()).toMatchObject({ health: 'degraded', lastSuccessAt: '2026-07-13T01:00:00Z', freshnessByDomain: {} })
+  })
+
   it('maps S400 readings through ingestion once and never exposes provider secrets', async () => {
     const { FileHealthConnectorStateStore } = await import('../../packages/server/src/services/hermes/health-loop/connectors')
     const { createS400HealthConnector } = await import('../../packages/server/src/services/hermes/health-loop/connectors/s400')
@@ -61,15 +77,17 @@ describe('health-loop connectors', () => {
 
     expect(first).toMatchObject({ connectorId: 's400', attemptedCount: 1, ingestedCount: 1 })
     expect(second.cursor).toBe(first.cursor)
-    expect(ingested).toHaveLength(2)
+    expect(ingested).toHaveLength(1)
     expect(ingested[0]).toMatchObject({
       domain: 'body_composition', source: 's400', sourceId: 'health-scale-reading-abc',
       observedAt: '2026-07-13T00:00:00.000Z', evidenceClass: 'measured', confidence: 1,
       payload: { weightKg: 82.4, bodyFatPercent: 20.1, deviceModel: 'ms103' },
     })
     expect(status).toMatchObject({
-      configured: true, health: 'healthy', domains: ['body_composition'],
+      configured: true, configurationState: 'configured', authorizationState: 'authorized', health: 'healthy', domains: ['body_composition'],
       lastAttemptAt: '2026-07-13T02:00:00Z', lastSuccessAt: '2026-07-13T02:00:00Z', cursor: first.cursor,
+      freshnessByDomain: { body_composition: '2026-07-13T00:00:00.000Z' },
+      capabilities: { read: ['body_composition'], write: [] },
     })
     expect(JSON.stringify(status)).not.toMatch(/secret@example|scaleconnect|password|username/i)
     expect(await readFile(join(root, 'connectors.json'), 'utf8')).not.toMatch(/secret@example|scaleconnect|password|username/i)
@@ -124,6 +142,52 @@ describe('health-loop connectors', () => {
     expect(JSON.stringify(envelopes)).not.toContain('9999')
   })
 
+  it('skips a real mood-only check-in but fails closed on non-empty invalid sleep data', async () => {
+    const { createHealthCheckIn } = await import('../../packages/server/src/services/hermes/health-state')
+    const { FileHealthConnectorStateStore } = await import('../../packages/server/src/services/hermes/health-loop/connectors')
+    const { createHealthStateConnector } = await import('../../packages/server/src/services/hermes/health-loop/connectors/health-state')
+    createHealthCheckIn({ id: 'mood-only', checkinDate: '2026-07-13', mood: 'good', energy: 8 }, 'tester', 'default')
+    const connector = createHealthStateConnector({
+      stateStore: new FileHealthConnectorStateStore(join(root, 'real-health-state.json')),
+      ingest: () => ({} as never),
+    })
+
+    await expect(connector.sync({ now: '2026-07-13T23:00:00Z' })).resolves.toMatchObject({ attemptedCount: 0 })
+    createHealthCheckIn({ id: 'bad-sleep', checkinDate: '2026-07-14', sleep: { mysteryStage: 30 } }, 'tester', 'default')
+    await expect(connector.sync({ now: '2026-07-14T23:00:00Z' })).rejects.toThrow(/CONNECTOR_INVALID_IMPORT/)
+  })
+
+  it('treats the S400 cursor as a monotonic (cursor, now] watermark', async () => {
+    const { FileHealthConnectorStateStore, createConnectorCursor } = await import('../../packages/server/src/services/hermes/health-loop/connectors')
+    const { createS400HealthConnector } = await import('../../packages/server/src/services/hermes/health-loop/connectors/s400')
+    const imported: string[] = []
+    const reading = (id: string, measuredAt: string) => ({ id, kind: 'scale_reading', recordedAt: measuredAt,
+      value: { measuredAt, sourceDevice: 'S400', sourceModel: 'ms103', weightKg: 82.4 } })
+    const batches = [
+      [reading('reading-old', '2026-07-13T00:00:00Z'), reading('reading-m', '2026-07-13T01:00:00Z'), reading('reading-future', '2026-07-13T04:00:00Z')],
+      [reading('reading-old', '2026-07-13T00:00:00Z'), reading('reading-m', '2026-07-13T01:00:00Z')],
+      [reading('reading-m', '2026-07-13T01:00:00Z'), reading('reading-z', '2026-07-13T01:00:00Z')],
+    ]
+    let run = 0
+    const connector = createS400HealthConnector({
+      stateStore: new FileHealthConnectorStateStore(join(root, 's400-watermark.json')),
+      getSettings: async () => ({ configured: true }),
+      runSync: async () => ({ status: 'synced', importedCount: batches[run].length, readings: batches[run++] }),
+      ingest: envelope => { imported.push(envelope.sourceId); return {} as never },
+    })
+    const seed = createConnectorCursor('2026-07-13T00:30:00Z', 'seed')
+
+    const first = await connector.sync({ cursor: seed, now: '2026-07-13T02:00:00Z' })
+    expect(imported).toEqual(['reading-m'])
+    const second = await connector.sync({ now: '2026-07-13T03:00:00Z' })
+    expect(second.cursor).toBe(first.cursor)
+    expect(imported).toEqual(['reading-m'])
+    const third = await connector.sync({ now: '2026-07-13T03:00:00Z' })
+    expect(imported).toEqual(['reading-m', 'reading-z'])
+    expect(third.cursor).not.toBe(first.cursor)
+    await expect(connector.sync({ cursor: seed, now: '2026-07-13T03:00:00Z' })).rejects.toThrow(/CONNECTOR_CURSOR_CONFLICT/)
+  })
+
   it('accepts strict structured JSON and CSV for diet, fitness, and sleep', async () => {
     const { FileHealthConnectorStateStore } = await import('../../packages/server/src/services/hermes/health-loop/connectors')
     const { createStructuredImportConnector } = await import('../../packages/server/src/services/hermes/health-loop/connectors/structured-import')
@@ -162,6 +226,9 @@ describe('health-loop connectors', () => {
     const cases = [
       make('bad-json', 'json', '[{"domain":"diet"}'),
       make('unknown-json', 'json', JSON.stringify([{ domain: 'diet', sourceId: 'd', observedAt: '2026-07-13T00:00:00Z', evidenceClass: 'reported', confidence: 1, payload: { caloriesKcal: 1 }, token: 'secret' }])),
+      make('nested-food-secret', 'json', JSON.stringify([{ domain: 'diet', sourceId: 'd2', observedAt: '2026-07-13T00:00:00Z', evidenceClass: 'reported', confidence: 1, payload: { foods: [{ name: 'rice', portionGrams: 100, token: 'secret' }] } }])),
+      make('nested-set-secret', 'json', JSON.stringify([{ domain: 'fitness', sourceId: 'f2', observedAt: '2026-07-13T00:00:00Z', evidenceClass: 'reported', confidence: 1, payload: { exercises: [{ name: 'squat', sets: [{ reps: 5, token: 'secret' }] }] } }])),
+      make('nested-stage-secret', 'json', JSON.stringify([{ domain: 'sleep', sourceId: 's2', observedAt: '2026-07-13T00:00:00Z', evidenceClass: 'measured', confidence: 1, payload: { stages: { deepMinutes: 60, token: 1 } } }])),
       make('bad-domain', 'csv', 'domain,sourceId,observedAt,evidenceClass,confidence,exercise\nposture,p1,2026-07-13T00:00:00Z,reported,1,test'),
       make('csv-injection', 'csv', 'domain,sourceId,observedAt,evidenceClass,confidence,exercise\nfitness,f1,2026-07-13T00:00:00Z,reported,1,=CMD()'),
       make('too-large', 'json', `[]${'x'.repeat(1_048_577)}`),
@@ -169,6 +236,22 @@ describe('health-loop connectors', () => {
     for (const connector of cases) {
       await expect(connector.sync({ now: '2026-07-13T01:00:00Z' })).rejects.toThrow(/CONNECTOR_(INVALID_IMPORT|IMPORT_LIMIT)/)
     }
+  })
+
+  it('validates and flattens a strict structured diet macros object', async () => {
+    const { FileHealthConnectorStateStore } = await import('../../packages/server/src/services/hermes/health-loop/connectors')
+    const { createStructuredImportConnector } = await import('../../packages/server/src/services/hermes/health-loop/connectors/structured-import')
+    const envelopes: HealthIngestionEnvelope[] = []
+    const connector = createStructuredImportConnector({
+      id: 'strict-macros', format: 'json', stateStore: new FileHealthConnectorStateStore(join(root, 'macros.json')),
+      content: JSON.stringify([{ domain: 'diet', sourceId: 'macro-1', observedAt: '2026-07-13T01:00:00Z', evidenceClass: 'reported', confidence: 1,
+        payload: { macros: { caloriesKcal: 500, proteinG: 30, carbsG: 60, fatG: 12 }, micros: { fiberG: 8, sodiumMg: 500 } } }]),
+      ingest: envelope => { envelopes.push(envelope); return {} as never },
+    })
+
+    await connector.sync({ now: '2026-07-13T02:00:00Z' })
+    expect(envelopes[0].payload).toMatchObject({ caloriesKcal: 500, proteinG: 30, carbsG: 60, fatG: 12, micros: { fiberG: 8, sodiumMg: 500 } })
+    expect(envelopes[0].payload).not.toHaveProperty('macros')
   })
 
   it('advances the cursor only after the entire batch commits and replays a committed prefix safely', async () => {
@@ -194,6 +277,7 @@ describe('health-loop connectors', () => {
     const failedStatus = await connector.status()
     expect(failedStatus).toMatchObject({ health: 'degraded', errorCode: 'CONNECTOR_SYNC_FAILED' })
     expect(failedStatus.cursor).toBeUndefined()
+    expect(failedStatus.freshnessByDomain).toEqual({ diet: '2026-07-13T01:00:00Z' })
     expect(JSON.stringify(failedStatus)).not.toMatch(/private|token|secret/i)
 
     failSecond = false
@@ -208,7 +292,7 @@ describe('health-loop connectors', () => {
   })
 
   it('validates now/cursor, handles empty batches, and fails closed on corrupt persisted state', async () => {
-    const { FileHealthConnectorStateStore } = await import('../../packages/server/src/services/hermes/health-loop/connectors')
+    const { FileHealthConnectorStateStore, createConnectorCursor } = await import('../../packages/server/src/services/hermes/health-loop/connectors')
     const { createStructuredImportConnector } = await import('../../packages/server/src/services/hermes/health-loop/connectors/structured-import')
     const path = join(root, 'state.json')
     const connector = createStructuredImportConnector({
@@ -216,13 +300,37 @@ describe('health-loop connectors', () => {
     })
 
     await expect(connector.sync({ now: 'not-a-time' })).rejects.toThrow(/CONNECTOR_INVALID_TIMESTAMP/)
+    await expect(connector.sync({ now: '2026-07-13T01:00:00+14:00' })).resolves.toMatchObject({ attemptedCount: 0 })
+    await expect(connector.sync({ now: '2026-07-13T01:00:00+14:01' })).rejects.toThrow(/CONNECTOR_INVALID_TIMESTAMP/)
+    await expect(connector.sync({ now: '2026-07-13T01:00:00+23:59' })).rejects.toThrow(/CONNECTOR_INVALID_TIMESTAMP/)
     await expect(connector.sync({ now: '2026-02-30T01:00:00Z' })).rejects.toThrow(/CONNECTOR_INVALID_TIMESTAMP/)
     await expect(connector.sync({ cursor: '../bad', now: '2026-07-13T01:00:00Z' })).rejects.toThrow(/CONNECTOR_INVALID_CURSOR/)
     await expect(connector.sync({ cursor: 'stale', now: '2026-07-13T01:00:00Z' })).rejects.toThrow(/CONNECTOR_INVALID_CURSOR/)
+    await expect(connector.sync({ cursor: createConnectorCursor('2026-07-14T00:00:00Z', 'future'), now: '2026-07-13T01:00:00Z' }))
+      .rejects.toThrow(/CONNECTOR_CURSOR_CONFLICT/)
     await expect(connector.sync({ now: '2026-07-13T01:00:00Z' })).resolves.toMatchObject({ attemptedCount: 0, ingestedCount: 0 })
     await writeFile(path, '{"empty-source":{"cursor":"../../escape"}}', 'utf8')
     expect(await connector.status()).toMatchObject({ configured: true, health: 'unavailable', errorCode: 'CONNECTOR_STATE_CORRUPT' })
     await expect(connector.sync({ now: '2026-07-13T02:00:00Z' })).rejects.toThrow(/CONNECTOR_STATE_CORRUPT/)
+  })
+
+  it('reads legacy connector state compatibly and supplies new status defaults', async () => {
+    const { FileHealthConnectorStateStore, createConnectorCursor } = await import('../../packages/server/src/services/hermes/health-loop/connectors')
+    const { createStructuredImportConnector } = await import('../../packages/server/src/services/hermes/health-loop/connectors/structured-import')
+    const path = join(root, 'legacy-state.json')
+    const cursor = createConnectorCursor('2026-07-12T00:00:00Z', 'legacy')
+    await writeFile(path, JSON.stringify({ version: 1, connectors: { legacy: {
+      health: 'healthy', lastAttemptAt: '2026-07-12T01:00:00Z', lastSuccessAt: '2026-07-12T01:00:00Z', cursor,
+    } } }), 'utf8')
+    const connector = createStructuredImportConnector({ id: 'legacy', format: 'json', content: '[]', stateStore: new FileHealthConnectorStateStore(path), ingest: () => ({} as never) })
+
+    expect(await connector.status()).toMatchObject({
+      configured: true, configurationState: 'configured', authorizationState: 'not_required', health: 'healthy', cursor,
+      freshnessByDomain: {}, capabilities: { read: ['diet', 'fitness', 'sleep'], write: [] },
+    })
+    const forward = createConnectorCursor('2026-07-13T00:00:00Z', 'forward')
+    await expect(connector.sync({ cursor: forward, now: '2026-07-13T01:00:00Z' })).resolves.toMatchObject({ cursor: forward })
+    expect((await connector.status()).cursor).toBe(forward)
   })
 
   it('distinguishes provider status failure from corrupt local state without leaking details', async () => {
