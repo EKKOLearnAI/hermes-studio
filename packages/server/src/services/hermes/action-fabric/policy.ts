@@ -104,19 +104,10 @@ export function evaluateFabricPolicyInDb(
   const trustedPlanRestore = input.capabilityId === 'health.plan.restore'
     && verifyTrustedPlanRestoreInDb(db, input)
   const role = getAssistantRole(input.requestedByRoleId)
-  const risk = resolution ? RISK_ORDER[effectiveRisk ?? resolution.capability.risk] : null
   const authorizationMode = trustedPlanRestore ? 'trusted_compensation'
     : sandboxStanding ? 'standing_sandbox' : authorizationEvidence ? 'standing_provider'
       : standingAuthorizationRequired ? 'standing_required' : 'per_action'
   const standingAuthorizationMode = authorizationMode === 'per_action' ? 'not_required' : authorizationMode
-  const irreversibleApprovalRequired = !trustedPlanRestore && !!resolution && resolution.capability.sideEffect
-    && !resolution.capability.reversible && !standingAuthorization
-    && !(standingAuthorizationRequired && authorizationEvidence === null)
-  const approvalMode = !trustedPlanRestore && resolution && risk !== null
-    && ((isHealthCapability(resolution.capability.id) && risk >= RISK_ORDER.medium)
-      || (role?.decisionAuthority.requireApprovalAbove !== undefined
-        && risk > RISK_ORDER[role.decisionAuthority.requireApprovalAbove])
-      || irreversibleApprovalRequired) ? 'per_action' : 'none'
   const materialInputDigest = digest({
     capabilityId: input.capabilityId, target: input.target, input: input.input,
     constraints: input.constraints, expectedCost: input.expectedCost ?? null,
@@ -135,7 +126,8 @@ export function evaluateFabricPolicyInDb(
       environments: [...environments], ledgerDate, effectiveCost: effective.money,
       resolvedEnvironment: resolution?.executor.environment ?? null,
       capabilityRisk: resolution?.capability.risk ?? null, effectiveRisk, targetAtoms, authorizationMode,
-      standingAuthorizationMode, authorizationEvidence, standingAuthorizationRequired, approvalMode,
+      standingAuthorizationMode, authorizationEvidence, standingAuthorizationRequired,
+      approvalMode: 'none' as 'none' | 'per_action',
     }
     const existing = db.prepare(`SELECT id, material_input_digest FROM fabric_action_intents
       WHERE requested_by_user_id=? AND requested_by_role_id=? AND idempotency_key=?`).get(
@@ -143,6 +135,7 @@ export function evaluateFabricPolicyInDb(
     ) as { id: string; material_input_digest: string } | undefined
     const intentId = existing?.id ?? `intent-${randomUUID()}`
     const previous = existing ? latestDecisionForIntent(db, intentId) : undefined
+    snapshot.approvalMode = previous?.outcome === 'waiting_user' ? 'per_action' : 'none'
     const poison = existing ? materialConflictForIntent(db, intentId) : undefined
     if (poison) return parseDecision(poison)
     if (existing?.material_input_digest !== undefined && existing.material_input_digest !== materialInputDigest) {
@@ -157,6 +150,7 @@ export function evaluateFabricPolicyInDb(
         appendFabricOutbox(db, 'fabric.budget.authorization.invalidated', intentId,
           { releasedReservations: invalidated, reason: 'material_input_changed' })
       }
+      snapshot.approvalMode = 'none'
       return persistDenyDecision(db, { intentId, executorId: resolution?.executor.id ?? null,
         reason: 'material_input_changed', materialInputDigest, snapshot, sanitizedSummary,
         actorUserId: input.requestedByUserId, now })
@@ -165,6 +159,7 @@ export function evaluateFabricPolicyInDb(
       if (previous.outcome === 'allow' && (previous.budget_amount_minor ?? 0) > 0) {
         const ledger = selectLedgerByDecision(db, previous.id)
         if (!ledger || ledger.status === 'released') {
+          snapshot.approvalMode = 'none'
           return persistDenyDecision(db, { intentId, executorId: previous.executor_id,
             reason: 'authorization_expired', materialInputDigest, snapshot, sanitizedSummary,
             actorUserId: input.requestedByUserId, now })
@@ -245,6 +240,7 @@ export function evaluateFabricPolicyInDb(
       outcome = 'deny'
       budget = null
     }
+    snapshot.approvalMode = outcome === 'waiting_user' ? 'per_action' : 'none'
     db.prepare(`INSERT INTO fabric_policy_decisions(
       id,intent_id,executor_id,outcome,reason_codes_json,policy_version,material_input_digest,
       policy_snapshot_json,sanitized_summary_json,budget_currency,budget_amount_minor,created_at)
@@ -569,11 +565,7 @@ function normalizePolicySnapshot(snapshot: Record<string, unknown>, decision?: D
         .includes(String(normalized.standingAuthorizationMode))
   }
   if (!Object.prototype.hasOwnProperty.call(normalized, 'approvalMode')) {
-    let reasons: unknown = []
-    try { reasons = decision ? JSON.parse(decision.reason_codes_json) : [] } catch { reasons = [] }
-    normalized.approvalMode = decision?.outcome === 'waiting_user' && Array.isArray(reasons)
-      && reasons.some(reason => reason === 'risk_requires_approval' || reason === 'irreversible_requires_approval')
-      ? 'per_action' : 'none'
+    normalized.approvalMode = decision?.outcome === 'waiting_user' ? 'per_action' : 'none'
   }
   return normalized
 }

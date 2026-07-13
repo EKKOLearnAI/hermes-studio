@@ -230,6 +230,46 @@ describe('health Action Fabric closed contracts', () => {
       policySnapshot: { capabilityRisk: 'medium', effectiveRisk: 'medium' } })
   })
 
+  it('derives approval mode from the final deny outcome and replays only compatible legacy snapshots', () => {
+    updateAssistantRole('health-manager', {
+      enabled: true,
+      capabilityScope: { allow: ['health.followup.schedule'], deny: [], enforcement: 'action_fabric_v1' },
+      decisionAuthority: { maxRisk: 'low', requireApprovalAbove: 'none', allowedTargets: ['health:owner:user-1'] },
+      spendingLimits: { currency: null, perAction: 0, daily: 0 },
+    })
+    const followup = {
+      capabilityId: 'health.followup.schedule', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
+      idempotencyKey: 'legacy-max-risk-deny', goal: 'schedule provider review', environments: ['internal'] as Array<'internal'>,
+      target: { kind: 'health_followup', ownerUserId: 'user-1' }, constraints: {}, rationale: 'rule',
+      input: { schemaVersion: 1, followupId: 'followup-denied', ownerUserId: 'user-1', category: 'measurement',
+        operation: 'schedule_provider_flag_review', reasonCode: 'source_reported_marker_flag',
+        dueAt: '2026-07-15T00:00:00.000Z' },
+    }
+    const denied = createFabricIntent(followup)
+    expect(denied.policyDecision).toMatchObject({ outcome: 'deny', reasonCodes: ['risk_requires_approval'],
+      policySnapshot: { approvalMode: 'none' } })
+    withActionFabricDb(db => {
+      const row = db.prepare('SELECT policy_snapshot_json FROM fabric_policy_decisions WHERE id=?')
+        .get(denied.policyDecision.id) as { policy_snapshot_json: string }
+      const snapshot = JSON.parse(row.policy_snapshot_json) as Record<string, unknown>
+      delete snapshot.standingAuthorizationRequired
+      delete snapshot.standingAuthorizationMode
+      delete snapshot.approvalMode
+      db.prepare('UPDATE fabric_policy_decisions SET policy_snapshot_json=? WHERE id=?')
+        .run(JSON.stringify(snapshot), denied.policyDecision.id)
+    })
+    expect(createFabricIntent(followup).policyDecision.id).toBe(denied.policyDecision.id)
+    withActionFabricDb(db => {
+      const row = db.prepare('SELECT policy_snapshot_json FROM fabric_policy_decisions WHERE id=?')
+        .get(denied.policyDecision.id) as { policy_snapshot_json: string }
+      const snapshot = JSON.parse(row.policy_snapshot_json) as Record<string, unknown>
+      snapshot.approvalMode = 'per_action'
+      db.prepare('UPDATE fabric_policy_decisions SET policy_snapshot_json=? WHERE id=?')
+        .run(JSON.stringify(snapshot), denied.policyDecision.id)
+    })
+    expect(() => createFabricIntent(followup)).toThrow(/FABRIC_WORKFLOW_POLICY_CONFLICT/)
+  })
+
   it('rejects a follow-up whose exact owner differs from the requesting user even when the role allows its atom', () => {
     updateAssistantRole('health-manager', {
       enabled: true,
