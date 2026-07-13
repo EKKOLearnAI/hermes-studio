@@ -14,10 +14,6 @@ function projection(key: HealthProjectionKey, state: Record<string, unknown>, ov
   const conflicts = overrides.conflicts ?? []
   const current = state.current && typeof state.current === 'object' && !Array.isArray(state.current)
     ? state.current as Record<string, unknown> : null
-  if (key === 'health.nutrition_state' && !current && state.totals && typeof state.totals === 'object') {
-    const protein = (state.totals as Record<string, unknown>).protein_g
-    if (typeof protein === 'number') state.current = { protein_g: { value: protein, unit: 'g' } }
-  }
   const normalizedCurrent = state.current && typeof state.current === 'object' && !Array.isArray(state.current)
     ? state.current as Record<string, unknown> : null
   const evidence: Array<Record<string, unknown>> = []
@@ -145,6 +141,83 @@ describe('health-loop cross-domain intervention engine', () => {
     })])
     expect(decideHealthInterventions({ projections: lowQualitySkin, now }).primary).toMatchObject({
       id: 'health.skin.request_recapture', capabilityId: 'health.checkin.request',
+    })
+  })
+
+  it('uses the real Task 8 nutrition totals shape for protein shortage', async () => {
+    const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
+    const values = await realProjections([
+      observation({ id: 'calories', metric: 'health.diet.calories_kcal', value: 1_800, unit: 'kcal' }),
+      observation({ id: 'protein', metric: 'health.diet.protein_g', value: 50, unit: 'g' }),
+    ])
+    const nutrition = values.find(item => item.key === 'health.nutrition_state')!.value.state as Record<string, unknown>
+    expect(nutrition).toMatchObject({ totals: { calories_kcal: 1_800, protein_g: 50 } })
+    expect(nutrition).not.toHaveProperty('current')
+    expect(decideHealthInterventions({ projections: values, now,
+      plan: { resistanceTrainingToday: true, proteinTargetG: 120 } }).primary).toMatchObject({
+      id: 'health.nutrition.close_protein_gap', risk: 'low', authority: 'auto',
+    })
+  })
+
+  it('accepts safely representable old projection ages and still emits an informational safety notice', async () => {
+    const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
+    const old = await realProjections([observation({
+      id: 'old-critical-lab', metric: 'health.internal_health.markers', observedAt: '2010-01-01T08:00:00Z',
+      value: [{ key: 'marker_old', value: 20, unit: 'u/L', referenceInterval: { low: 1, high: 10 },
+        measuredAt: '2010-01-01T08:00:00Z', providerFlag: 'critical' }],
+      provenance: { source: 'fixture', sourceId: 'old-critical-lab', actor: 'fixture', confidence: 0.2,
+        confirmationState: 'confirmed', evidence: [{ evidenceClass: 'measured' }], schemaVersion: 1 },
+    })])
+    expect(decideHealthInterventions({ projections: old, now }).primary).toMatchObject({
+      id: 'health.internal.critical_provider_flag_notice', authority: 'inform_only',
+    })
+  })
+
+  it('ranks critical informational safety above high risk regardless of confidence', async () => {
+    const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
+    const values = await realProjections([
+      observation({ id: 'sleep-for-confidence', metric: 'health.sleep.duration_minutes', value: 420, unit: 'min',
+        provenance: { source: 'fixture', sourceId: 'sleep-for-confidence', actor: 'fixture', confidence: 0.99,
+          confirmationState: 'observed', evidence: [{ evidenceClass: 'measured' }], schemaVersion: 1 } }),
+      observation({ id: 'pain-high-confidence', metric: 'health.fitness.pain', value: 9,
+        provenance: { source: 'fixture', sourceId: 'pain-high-confidence', actor: 'fixture', confidence: 0.99,
+          confirmationState: 'reported', evidence: [{ evidenceClass: 'reported' }], schemaVersion: 1 } }),
+      observation({ id: 'critical-low-confidence', metric: 'health.internal_health.markers',
+        value: [{ key: 'marker_critical', value: 20, unit: 'u/L', referenceInterval: { low: 1, high: 10 },
+          measuredAt: '2026-07-14T08:00:00Z', providerFlag: 'critical' }],
+        provenance: { source: 'fixture', sourceId: 'critical-low-confidence', actor: 'fixture', confidence: 0.1,
+          confirmationState: 'confirmed', evidence: [{ evidenceClass: 'measured' }], schemaVersion: 1 } }),
+    ])
+    const result = decideHealthInterventions({ projections: values, now })
+    expect(result.primary?.id).toBe('health.internal.critical_provider_flag_notice')
+    expect(result.alternatives[0]?.id).toBe('health.safety.severe_pain_notice')
+  })
+
+  it('rejects projection snapshots computed or updated after decision now', async () => {
+    const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
+    const future = await realProjections([
+      observation({ id: 'future-sleep-input', metric: 'health.sleep.duration_minutes', value: 300, unit: 'min' }),
+    ], '2026-07-15T12:00:00Z')
+    expect(() => decideHealthInterventions({ projections: future, now, plan: { trainingIntensity: 'high' } }))
+      .toThrow('HEALTH_INTERVENTION_FUTURE_SNAPSHOT')
+  })
+
+  it('uses the oldest contributing signal for multi-signal freshness', async () => {
+    const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
+    const values = await realProjections([
+      observation({ id: 'old-posture', metric: 'health.posture.findings', observedAt: '2026-05-01T08:00:00Z',
+        value: [{ code: 'right_shoulder', severity: 0.7, confidence: 0.8 }],
+        provenance: { source: 'fixture', sourceId: 'old-posture', actor: 'fixture', confidence: 0.8,
+          confirmationState: 'inferred', evidence: [{ evidenceClass: 'inferred' }], schemaVersion: 1 } }),
+      observation({ id: 'new-chain', metric: 'health.posture.reported_compensation_chain',
+        value: ['right_shoulder'], provenance: { source: 'fixture', sourceId: 'new-chain', actor: 'fixture', confidence: 0.9,
+          confirmationState: 'reported', evidence: [{ evidenceClass: 'reported' }], schemaVersion: 1 } }),
+    ])
+    const result = decideHealthInterventions({ projections: values, now,
+      plan: { trainingIntensity: 'high', trainingChains: ['right_shoulder'] } })
+    expect(result.primary).toBeNull()
+    expect(result.considered).toContainEqual({
+      id: 'health.posture.reduce_chain_overload', accepted: false, reason: 'source_stale',
     })
   })
   it('lets low sleep override hard training with one low-risk automatic plan action', async () => {
@@ -435,6 +508,47 @@ describe('health-loop cross-domain intervention engine', () => {
     expect(unknown.considered).toContainEqual({
       id: 'health.skin.request_recapture', accepted: false, reason: 'active_action_unknown_safety:active-unknown',
     })
+  })
+
+  it('deduplicates the exact active informational safety signal but allows a different one', async () => {
+    const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
+    const severe = replace(projections(), projection('health.recovery_state', {
+      current: { duration_minutes: { value: 420 }, 'fitness.pain': { value: 9 } },
+    }))
+    const duplicate = decideHealthInterventions({ projections: severe, now, activeActions: [{
+      id: 'active-severe', candidateId: 'health.safety.severe_pain_notice', priority: 100, supersedable: false,
+      risk: 'high', authority: 'inform_only',
+    }] })
+    expect(duplicate.primary).toBeNull()
+    expect(duplicate.considered).toContainEqual({
+      id: 'health.safety.severe_pain_notice', accepted: false, reason: 'duplicate_active_action:active-severe',
+    })
+
+    const different = decideHealthInterventions({ projections: severe, now, activeActions: [{
+      id: 'active-critical', candidateId: 'health.internal.critical_provider_flag_notice', priority: 100,
+      supersedable: false, risk: 'critical', authority: 'inform_only',
+    }] })
+    expect(different.primary?.id).toBe('health.safety.severe_pain_notice')
+  })
+
+  it('attaches supersession only to the selected primary, never alternatives', async () => {
+    const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
+    let values = replace(projections(), projection('health.fat_loss_state', {
+      weightKg: 80, weightVelocityKgPerWeek: -1.1, sampleCount: 8,
+    }))
+    values = replace(values, projection('health.nutrition_state', {
+      totals: { calories_kcal: 1_800, protein_g: 50 }, windowHours: 24,
+    }))
+    const result = decideHealthInterventions({ projections: values, now,
+      plan: { resistanceTrainingToday: true, proteinTargetG: 120 }, activeActions: [{
+        id: 'active-low-sleep', candidateId: 'health.training.reduce_after_low_sleep', priority: 10,
+        supersedable: true, risk: 'low', authority: 'auto',
+      }] })
+    expect(result.primary).toMatchObject({
+      id: 'health.nutrition.review_unsafe_weight_loss', supersedes: ['active-low-sleep'],
+    })
+    expect(result.alternatives.map(item => item.id)).toContain('health.nutrition.close_protein_gap')
+    expect(result.alternatives.every(item => item.supersedes.length === 0)).toBe(true)
   })
 
   it('uses stable score tuples and ordering under projection permutation', async () => {

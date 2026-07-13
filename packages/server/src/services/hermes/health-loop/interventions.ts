@@ -84,7 +84,7 @@ const FRESHNESS = new Set(['fresh', 'stale', 'missing', 'conflict'])
 const CATEGORIES = new Set<HealthInterventionCategory>(['training', 'recovery', 'nutrition', 'posture', 'skin', 'internal_health'])
 const PLAN_KEYS = new Set(['trainingIntensity', 'resistanceTrainingToday', 'proteinTargetG', 'trainingChains'])
 const MAX_HISTORY_ITEMS = 256
-const MAX_FRESHNESS_AGE_MS = 10 * 366 * 86_400_000
+const MAX_FRESHNESS_AGE_MS = Number.MAX_SAFE_INTEGER
 const MAX_COOLDOWN_MS = 366 * 86_400_000
 const MAX_BOUNDARY_DEPTH = 32
 const MAX_BOUNDARY_NODES = 200_000
@@ -198,12 +198,13 @@ function validateEnvelope(value: unknown): HealthProjectionEnvelope {
   return value as unknown as HealthProjectionEnvelope
 }
 
-function normalizeProjections(values: readonly TwinProjection[]): {
+function normalizeProjections(values: readonly TwinProjection[], nowNs: bigint): {
   projections: Map<HealthProjectionKey, HealthRuleProjection>
   versions: Record<string, number>
 } {
   if (!Array.isArray(values) || values.length !== HEALTH_PROJECTION_KEYS.length) throw new Error('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
   const projections = new Map<HealthProjectionKey, HealthRuleProjection>()
+  let snapshotNs: bigint | null = null
   for (const value of values) {
     if (!value || typeof value !== 'object' || Object.keys(value).sort().join(',') !== 'key,sourceRecordId,subjectId,updatedAt,value,version'
       || !PROJECTION_KEY_SET.has(value.key) || value.subjectId !== 'person:self'
@@ -212,9 +213,16 @@ function normalizeProjections(values: readonly TwinProjection[]): {
       || !Number.isSafeInteger(value.version) || value.version < 1 || projections.has(value.key as HealthProjectionKey)) {
       throw new Error('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
     }
-    canonicalTimestamp(value.updatedAt, 'HEALTH_INTERVENTION_INVALID_PROJECTIONS')
+    const updated = canonicalTimestamp(value.updatedAt, 'HEALTH_INTERVENTION_INVALID_PROJECTIONS')
     const key = value.key as HealthProjectionKey
-    projections.set(key, { key, version: value.version, envelope: validateEnvelope(value.value) })
+    const envelope = validateEnvelope(value.value)
+    const computed = canonicalTimestamp(envelope.computedAt, 'HEALTH_INTERVENTION_INVALID_PROJECTION')
+    if (computed.nanoseconds > nowNs || updated.nanoseconds > nowNs) throw new Error('HEALTH_INTERVENTION_FUTURE_SNAPSHOT')
+    if (computed.nanoseconds !== updated.nanoseconds || (snapshotNs !== null && snapshotNs !== computed.nanoseconds)) {
+      throw new Error('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
+    }
+    snapshotNs = computed.nanoseconds
+    projections.set(key, { key, version: value.version, envelope })
   }
   const versions: Record<string, number> = {}
   for (const key of HEALTH_PROJECTION_KEYS) {
@@ -456,10 +464,10 @@ function ruleGate(candidate: HealthRuleCandidate, projections: ReadonlyMap<Healt
     }
   } else if (policy.freshness === 'signal') {
     if (!signals.observed.length) return 'source_missing'
-    const freshest = signals.observed.reduce((latest, item) => item > latest ? item : latest)
-    if (freshest > nowNs) return 'source_future'
+    if (signals.observed.some(item => item > nowNs)) return 'source_future'
+    const oldest = signals.observed.reduce((earliest, item) => item < earliest ? item : earliest)
     const threshold = Math.min(...envelopes.map(item => item.freshness.thresholdMs))
-    if (nowNs - freshest > BigInt(threshold) * 1_000_000n) return 'source_stale'
+    if (nowNs - oldest > BigInt(threshold) * 1_000_000n) return 'source_stale'
   }
   if (policy.confidence === 'projection' && envelopes.some(item => item.confidence < policy.minimumConfidence)) return 'source_low_confidence'
   if (policy.confidence === 'signal') {
@@ -529,8 +537,9 @@ function publicCandidate(candidate: HealthRuleCandidate, projections: ReadonlyMa
   versions: Record<string, number>, effectiveDate: string): HealthActionCandidate {
   assertRiskAuthority(candidate)
   const confidence = Math.round(candidateConfidence(candidate, projections) * 100)
-  const scoreTuple: HealthActionCandidate['scoreTuple'] = [candidate.priority, candidate.urgency, candidate.expectedBenefit,
-    confidence, candidate.goalRelevance, 100 - candidate.executionBurden, candidate.timing]
+  const safetyLayer = candidate.risk === 'critical' ? 2 : candidate.risk === 'high' ? 1 : 0
+  const scoreTuple: HealthActionCandidate['scoreTuple'] = [safetyLayer, candidate.priority, candidate.urgency,
+    candidate.expectedBenefit, confidence, candidate.goalRelevance, candidate.timing - candidate.executionBurden]
   const digest = createHash('sha256').update(`${HEALTH_INTERVENTION_RULE_VERSION}\0${effectiveDate}\0${candidate.id}\0${stableVersionMaterial(versions)}\0${stableJson(candidate.parameters)}`).digest('hex')
   return {
     id: candidate.id, ruleId: candidate.ruleId, category: candidate.category, capabilityId: candidate.capabilityId,
@@ -544,10 +553,11 @@ function activeDisposition(candidate: HealthActionCandidate, activeActions: read
   reason: string | null
   supersedes: string[]
 } {
+  const duplicate = activeActions.find(active => active.candidateId === candidate.id)
+  if (duplicate) return { reason: `duplicate_active_action:${duplicate.id}`, supersedes: [] }
   if (candidate.authority === 'inform_only') return { reason: null, supersedes: [] }
   const supersedes: string[] = []
   for (const active of activeActions) {
-    if (active.candidateId === candidate.id) return { reason: `duplicate_active_action:${active.id}`, supersedes: [] }
     if (!active.knownSafety) return { reason: `active_action_unknown_safety:${active.id}`, supersedes: [] }
     if (!active.supersedable) return { reason: `active_action_not_supersedable:${active.id}`, supersedes: [] }
     if (RISK_ORDER[candidate.risk] < RISK_ORDER[active.risk]) return { reason: `active_action_higher_risk:${active.id}`, supersedes: [] }
@@ -565,7 +575,7 @@ export function decideHealthInterventions(input: DecideHealthInterventionsInput)
   if (!plain(input) || Object.keys(input).some(key => !INPUT_KEYS.has(key))) throw new Error('HEALTH_INTERVENTION_INVALID_INPUT')
   const now = canonicalTimestamp(input.now, 'HEALTH_INTERVENTION_INVALID_NOW')
   const effectiveDate = normalizeEffectiveDate(input.effectiveDate, now.canonical)
-  const { projections, versions } = normalizeProjections(input.projections)
+  const { projections, versions } = normalizeProjections(input.projections, now.nanoseconds)
   const plan = normalizePlan(input.plan)
   const quietHours = normalizeQuietHours(input.quietHours)
   const recentActions = normalizeRecentActions(input.recentActions, now.nanoseconds)
@@ -593,16 +603,20 @@ export function decideHealthInterventions(input: DecideHealthInterventionsInput)
 
   eligible.sort(compareScore)
   const accepted: HealthActionCandidate[] = []
+  const supersedesByCandidate = new Map<string, string[]>()
   for (const candidate of eligible) {
     const disposition = activeDisposition(candidate, activeActions)
     if (disposition.reason) {
       considered.push({ id: candidate.id, accepted: false, reason: disposition.reason })
       continue
     }
-    accepted.push(disposition.supersedes.length ? { ...candidate, supersedes: disposition.supersedes } : candidate)
+    accepted.push(candidate)
+    supersedesByCandidate.set(candidate.id, disposition.supersedes)
     considered.push({ id: candidate.id, accepted: true, reason: 'ranked' })
   }
-  const primary = accepted[0] ?? null
+  const selected = accepted[0] ?? null
+  const primarySupersedes = selected ? supersedesByCandidate.get(selected.id) ?? [] : []
+  const primary = selected && primarySupersedes.length ? { ...selected, supersedes: primarySupersedes } : selected
   if (primary) for (const id of primary.supersedes) considered.push({ id, accepted: false, reason: `superseded_by:${primary.id}` })
   considered.sort((left, right) => compareUtf8(left.id, right.id))
   return {

@@ -1,6 +1,6 @@
 import type { HealthProjectionEnvelope, HealthProjectionKey } from '../projectors'
 
-export const HEALTH_INTERVENTION_RULE_VERSION = 'health-interventions-v2'
+export const HEALTH_INTERVENTION_RULE_VERSION = 'health-interventions-v3'
 
 export type HealthInterventionRisk = 'none' | 'low' | 'medium' | 'high' | 'critical'
 export type HealthInterventionAuthority = 'auto' | 'approval' | 'inform_only'
@@ -85,6 +85,7 @@ function gate(projectionKey: HealthProjectionKey, statePaths: string[],
     'current.recovery_score': 'health.sleep.recovery_score',
     'current.fitness.pain': 'health.fitness.pain',
     'current.protein_g': 'health.diet.protein_g',
+    'totals.protein_g': 'health.diet.protein_g',
     'current.findings': 'health.posture.findings',
     'current.reported_compensation_chain': 'health.posture.reported_compensation_chain',
     'current.capture_quality': 'health.skin.capture_quality',
@@ -221,7 +222,9 @@ function proteinShortage(context: HealthRuleContext): HealthRuleCandidate | null
     goalRelevance: 90, executionBurden: 25, timing: 85, cooldownMs: 12 * 3_600_000,
     parameters: { operation: 'prioritize_food_protein', targetG: target, reasonCode: 'resistance_day_protein_gap' },
     rationale: 'Protein intake is below eighty percent of the configured target on a resistance-training day.',
-    gatePolicy: gate('health.nutrition_state', ['current.protein_g']),
+    gatePolicy: gate('health.nutrition_state', ['totals.protein_g'], {
+      freshness: 'projection', confidence: 'projection', conflicts: 'projection',
+    }),
   }
 }
 
