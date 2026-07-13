@@ -5,9 +5,9 @@ import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 import { TWIN_DOMAINS } from './types'
 
-const SCHEMA_VERSION = 4
+const SCHEMA_VERSION = 5
 const REQUIRED_TWIN_TABLES = [
-  'twin_artifacts', 'twin_assistant_roles', 'twin_constraints', 'twin_context_recipes',
+  'twin_artifacts', 'twin_artifact_consents', 'twin_assistant_roles', 'twin_constraints', 'twin_context_recipes',
   'twin_entities', 'twin_events', 'twin_goals', 'twin_import_runs', 'twin_meta',
   'twin_observations', 'twin_outbox', 'twin_preference_operations', 'twin_preferences', 'twin_projections',
   'twin_relations', 'twin_role_profile_mappings',
@@ -64,6 +64,10 @@ export function initPersonalTwinSchema(db: DatabaseSync): void {
       }
       setSchemaVersion(db, 4)
     }
+    if (version < 5) {
+      createSchemaV5(db)
+      setSchemaVersion(db, 5)
+    }
     assertSchemaComplete(db, SCHEMA_VERSION)
     db.exec('COMMIT')
   } catch (error) {
@@ -103,6 +107,70 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
   if (!addressIndex || addressIndex.unique !== 1 || addressIndex.partial !== 0
     || addressColumns.length !== 2 || addressColumns[0] !== 'subject_id' || addressColumns[1] !== 'key') {
     throw new Error(`Personal Twin schema version ${version} is incomplete: unique preference address index signature is invalid`)
+  }
+  const artifactColumns = db.prepare("PRAGMA table_info('twin_artifacts')").all() as unknown as ColumnInfo[]
+  const expectedArtifactColumns: ColumnSignature[] = [
+    ['id', 'TEXT', 0, 1, null], ['media_type', 'TEXT', 1, 0, null], ['content_hash', 'TEXT', 1, 0, null],
+    ['relative_path', 'TEXT', 1, 0, null], ['size_bytes', 'INTEGER', 1, 0, null], ['source', 'TEXT', 1, 0, null],
+    ['source_id', 'TEXT', 1, 0, null], ['created_at', 'TEXT', 1, 0, null],
+    ['sensitivity', 'TEXT', 1, 0, "'general'"], ['metadata_json', 'TEXT', 1, 0, "'{}'"],
+  ]
+  if (!columnsMatch(artifactColumns, expectedArtifactColumns)) {
+    throw new Error(`Personal Twin schema version ${version} is incomplete: twin_artifacts column signature is invalid`)
+  }
+  assertIndexSignature(db, version, 'twin_artifacts', 'idx_twin_artifacts_source_identity', ['source', 'source_id'], true)
+  const contentHashIndexes = db.prepare("PRAGMA index_list('twin_artifacts')").all() as Array<{
+    name: string; unique: number; partial: number
+  }>
+  const hasUniqueContentHash = contentHashIndexes.some(index => index.unique === 1 && index.partial === 0
+    && indexColumns(db, index.name).length === 1 && indexColumns(db, index.name)[0] === 'content_hash')
+  if (!hasUniqueContentHash) {
+    throw new Error(`Personal Twin schema version ${version} is incomplete: unique artifact content hash index signature is invalid`)
+  }
+  const consentColumns = db.prepare("PRAGMA table_info('twin_artifact_consents')").all() as unknown as ColumnInfo[]
+  const expectedConsentColumns: ColumnSignature[] = [
+    ['manifest_digest', 'TEXT', 0, 1, null], ['processor', 'TEXT', 1, 0, null],
+    ['scope_json', 'TEXT', 1, 0, null], ['issued_at', 'TEXT', 1, 0, null], ['expires_at', 'TEXT', 1, 0, null],
+    ['consumed_at', 'TEXT', 0, 0, null], ['revoked_at', 'TEXT', 0, 0, null],
+  ]
+  if (!columnsMatch(consentColumns, expectedConsentColumns)) {
+    throw new Error(`Personal Twin schema version ${version} is incomplete: twin_artifact_consents signature is invalid`)
+  }
+  assertIndexSignature(db, version, 'twin_artifact_consents', 'idx_twin_artifact_consents_status',
+    ['processor', 'expires_at', 'consumed_at', 'revoked_at'], false)
+}
+
+interface ColumnInfo { name: string; type: string; notnull: number; pk: number; dflt_value: string | null }
+type ColumnSignature = [name: string, type: string, notnull: number, pk: number, defaultValue: string | null]
+
+function columnsMatch(actual: ColumnInfo[], expected: ColumnSignature[]): boolean {
+  return actual.length === expected.length && actual.every((column, index) => {
+    const signature = expected[index]
+    return column.name === signature[0] && column.type.toUpperCase() === signature[1]
+      && column.notnull === signature[2] && column.pk === signature[3] && column.dflt_value === signature[4]
+  })
+}
+
+function indexColumns(db: DatabaseSync, indexName: string): string[] {
+  return (db.prepare(`PRAGMA index_info('${indexName.replace(/'/g, "''")}')`).all() as Array<{ seqno: number; name: string }>)
+    .sort((left, right) => left.seqno - right.seqno).map(column => column.name)
+}
+
+function assertIndexSignature(
+  db: DatabaseSync,
+  version: number,
+  table: string,
+  indexName: string,
+  columns: string[],
+  unique: boolean,
+): void {
+  const index = (db.prepare(`PRAGMA index_list('${table.replace(/'/g, "''")}')`).all() as Array<{
+    name: string; unique: number; partial: number
+  }>).find(candidate => candidate.name === indexName)
+  const actualColumns = index ? indexColumns(db, indexName) : []
+  if (!index || index.unique !== Number(unique) || index.partial !== 0
+    || actualColumns.length !== columns.length || actualColumns.some((column, position) => column !== columns[position])) {
+    throw new Error(`Personal Twin schema version ${version} is incomplete: ${table} index signature is invalid`)
   }
 }
 
@@ -325,4 +393,29 @@ function createSchemaV4(db: DatabaseSync): void {
     if (row.key !== row.canonicalKey) update.run(row.canonicalKey, row.id)
   }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_twin_preferences_address ON twin_preferences(subject_id,key)')
+}
+
+function createSchemaV5(db: DatabaseSync): void {
+  const artifactColumns = new Set((db.prepare("PRAGMA table_info('twin_artifacts')").all() as Array<{ name: string }>).map(row => row.name))
+  if (!artifactColumns.has('sensitivity')) {
+    db.exec("ALTER TABLE twin_artifacts ADD COLUMN sensitivity TEXT NOT NULL DEFAULT 'general' CHECK(sensitivity IN ('health','general'))")
+  }
+  if (!artifactColumns.has('metadata_json')) {
+    db.exec("ALTER TABLE twin_artifacts ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json) AND length(CAST(metadata_json AS BLOB)) <= 8192)")
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_twin_artifacts_source_identity
+      ON twin_artifacts(source, source_id);
+    CREATE TABLE IF NOT EXISTS twin_artifact_consents (
+      manifest_digest TEXT PRIMARY KEY CHECK(length(manifest_digest) = 64 AND manifest_digest NOT GLOB '*[^0-9a-f]*'),
+      processor TEXT NOT NULL,
+      scope_json TEXT NOT NULL CHECK(json_valid(scope_json) AND length(CAST(scope_json AS BLOB)) <= 8192),
+      issued_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      consumed_at TEXT,
+      revoked_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_twin_artifact_consents_status
+      ON twin_artifact_consents(processor, expires_at, consumed_at, revoked_at);
+  `)
 }

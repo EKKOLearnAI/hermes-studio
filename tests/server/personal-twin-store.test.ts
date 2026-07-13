@@ -81,6 +81,61 @@ describe('personal twin store', () => {
     expect(listTwinEntities({ limit: 999 })).toHaveLength(200)
   })
 
+  it('upserts and looks up content-addressed artifacts idempotently', async () => {
+    const { getTwinArtifact, upsertTwinArtifact } = await import('../../packages/server/src/services/hermes/personal-twin')
+    const input = {
+      mediaType: 'application/pdf', contentHash: 'a'.repeat(64), relativePath: 'health/reports/checkup-2026.pdf',
+      sizeBytes: 12_345, sensitivity: 'health' as const,
+      metadata: { capturedAt: '2026-07-01T08:00:00.000Z', pages: 3 }, source: 'health-import', sourceId: 'report-2026',
+    }
+
+    const first = upsertTwinArtifact(input)
+    const replay = upsertTwinArtifact({ ...input, metadata: { pages: 3, capturedAt: '2026-07-01T08:00:00.000Z' } })
+
+    expect(replay).toEqual(first)
+    expect(first).toEqual({
+      id: `artifact-${input.contentHash}`, ...input,
+      metadata: { capturedAt: '2026-07-01T08:00:00.000Z', pages: 3 }, createdAt: expect.any(String),
+    })
+    expect(getTwinArtifact(input.contentHash)).toEqual(first)
+    expect(getTwinArtifact('b'.repeat(64))).toBeNull()
+    expect(first).not.toHaveProperty('metadataJson')
+  })
+
+  it('fails closed on artifact identity conflicts and unsafe material', async () => {
+    const {
+      TwinImmutableRecordConflictError, getTwinArtifact, upsertTwinArtifact, withPersonalTwinDb,
+    } = await import('../../packages/server/src/services/hermes/personal-twin')
+    const valid = {
+      mediaType: 'image/jpeg', contentHash: 'c'.repeat(64), relativePath: 'health/posture/front.jpg', sizeBytes: 2048,
+      sensitivity: 'health' as const, metadata: { view: 'front' }, source: 'posture-capture', sourceId: 'capture-1',
+    }
+    upsertTwinArtifact(valid)
+
+    expect(() => upsertTwinArtifact({ ...valid, relativePath: 'health/posture/back.jpg' }))
+      .toThrow(TwinImmutableRecordConflictError)
+    expect(() => upsertTwinArtifact({ ...valid, contentHash: 'd'.repeat(64) }))
+      .toThrow(TwinImmutableRecordConflictError)
+    expect(() => upsertTwinArtifact({ ...valid, sourceId: 'capture-2' }))
+      .toThrow(TwinImmutableRecordConflictError)
+    expect(getTwinArtifact(valid.contentHash)).toMatchObject({ relativePath: valid.relativePath, sourceId: valid.sourceId })
+
+    expect(() => upsertTwinArtifact({ ...valid, contentHash: 'not-sha256', sourceId: 'bad-hash' })).toThrow(/hash/i)
+    expect(() => getTwinArtifact('NOT-A-HASH')).toThrow(/hash/i)
+    expect(() => upsertTwinArtifact({ ...valid, contentHash: 'e'.repeat(64), sourceId: 'bad-media', mediaType: 'text/plain\r\nX-Evil: yes' })).toThrow(/media type/i)
+    expect(() => upsertTwinArtifact({ ...valid, contentHash: 'e'.repeat(64), sourceId: 'bad-size', sizeBytes: -1 })).toThrow(/size/i)
+    expect(() => upsertTwinArtifact({ ...valid, contentHash: 'e'.repeat(64), sourceId: 'bad-path', relativePath: '../outside.jpg' })).toThrow(/path/i)
+    expect(() => upsertTwinArtifact({ ...valid, contentHash: 'e'.repeat(64), sourceId: 'bad-sensitive', metadata: { apiToken: 'secret' } })).toThrow(/metadata/i)
+    expect(() => upsertTwinArtifact({ ...valid, contentHash: 'e'.repeat(64), sourceId: 'bad-json', metadata: { value: Number.NaN } })).toThrow(/metadata/i)
+    let nested: Record<string, unknown> = {}
+    for (let index = 0; index < 8; index += 1) nested = { nested }
+    expect(() => upsertTwinArtifact({ ...valid, contentHash: 'e'.repeat(64), sourceId: 'too-deep', metadata: nested })).toThrow(/metadata/i)
+
+    withPersonalTwinDb(db => db.prepare("UPDATE twin_artifacts SET relative_path='../outside.jpg' WHERE content_hash=?")
+      .run(valid.contentHash))
+    expect(() => getTwinArtifact(valid.contentHash)).toThrow(/path/i)
+  })
+
   it('records observations and events idempotently with transactional outbox entries', async () => {
     const {
       listTwinEvents,

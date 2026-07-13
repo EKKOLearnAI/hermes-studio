@@ -66,6 +66,84 @@ describe('personal twin projectors and context', () => {
     expect(withPersonalTwinDb(db => db.prepare("SELECT COUNT(*) AS count FROM twin_outbox WHERE aggregate_id LIKE 'observation-%'").get())).toEqual({ count: 1 })
   })
 
+  it('writes custom projections with atomic compare-and-set versioning', async () => {
+    const {
+      getTwinProjection, upsertTwinEntity, writeTwinProjection,
+    } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    const base = {
+      key: 'health:readiness.daily', subjectId: 'person:self', sourceRecordId: 'evaluation-2026-07-13',
+      updatedAt: '2026-07-13T08:00:00.000Z',
+    }
+
+    const first = writeTwinProjection({ ...base, value: { score: 72, state: 'recover' }, expectedVersion: 0 })
+    expect(first).toMatchObject({ ...base, value: { score: 72, state: 'recover' }, version: 1 })
+    expect(() => writeTwinProjection({ ...base, value: { score: 90 }, expectedVersion: 0 }))
+      .toThrow('TWIN_PROJECTION_CONFLICT')
+    const second = writeTwinProjection({ ...base, value: { state: 'train', score: 81 }, expectedVersion: 1,
+      sourceRecordId: 'evaluation-2026-07-13-refresh', updatedAt: '2026-07-13T08:05:00.000Z' })
+    expect(second).toMatchObject({ value: { score: 81, state: 'train' }, version: 2 })
+    expect(() => writeTwinProjection({ ...base, value: { score: 65 }, expectedVersion: 1 }))
+      .toThrow('TWIN_PROJECTION_CONFLICT')
+    expect(getTwinProjection(base.key, base.subjectId)).toEqual(second)
+
+    const contenders = await Promise.allSettled([82, 83].map((score, index) => Promise.resolve().then(() => writeTwinProjection({
+      ...base, value: { score }, expectedVersion: 2, sourceRecordId: `race-${index}`,
+      updatedAt: `2026-07-13T08:06:0${index}.000Z`,
+    }))))
+    expect(contenders.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+    expect(contenders.filter(result => result.status === 'rejected')).toHaveLength(1)
+    expect(getTwinProjection(base.key, base.subjectId)?.version).toBe(3)
+  })
+
+  it('lists custom projections by literal semantic prefix in deterministic key order', async () => {
+    const {
+      listTwinProjections, upsertTwinEntity, writeTwinProjection,
+    } = await import('../../packages/server/src/services/hermes/personal-twin')
+    upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    upsertTwinEntity({ id: 'person:other', type: 'person', label: 'Other', source: 'system', sourceId: 'other' })
+    const write = (key: string, subjectId = 'person:self') => writeTwinProjection({
+      key, subjectId, value: { key }, sourceRecordId: `source-${key}`, updatedAt: '2026-07-13T08:00:00.000Z',
+    })
+    write('health:recovery.daily')
+    write('health:readiness.daily')
+    write('health:readiness.weekly')
+    write('healthx:readiness.daily')
+    write('health.body_composition_state')
+    write('fixture:readiness_daily')
+    write('fixture:readinessxdaily')
+    write('health:readiness.daily', 'person:other')
+
+    expect(listTwinProjections('health:readiness.', 'person:self').map(projection => projection.key)).toEqual([
+      'health:readiness.daily', 'health:readiness.weekly',
+    ])
+    expect(listTwinProjections('health:', 'person:self').map(projection => projection.key)).toEqual([
+      'health:readiness.daily', 'health:readiness.weekly', 'health:recovery.daily',
+    ])
+    expect(listTwinProjections('fixture:readiness_', 'person:self').map(projection => projection.key)).toEqual([
+      'fixture:readiness_daily',
+    ])
+    expect(listTwinProjections('health.', 'person:self').map(projection => projection.key)).toEqual([
+      'health.body_composition_state',
+    ])
+    expect(() => listTwinProjections('health%', 'person:self')).toThrow(/prefix/i)
+    expect(() => writeTwinProjection({
+      key: '_internal', subjectId: 'person:self', value: {}, sourceRecordId: 'bad-key', updatedAt: '2026-07-13T08:00:00.000Z',
+    })).toThrow(/key/i)
+    expect(() => writeTwinProjection({
+      key: 'Health:bad', subjectId: 'person:self', value: {}, sourceRecordId: 'bad-case', updatedAt: '2026-07-13T08:00:00.000Z',
+    })).toThrow(/key/i)
+    expect(() => writeTwinProjection({
+      key: 'health:bad', subjectId: 'person:self', value: {}, sourceRecordId: 'bad-time', updatedAt: '2026',
+    })).toThrow(/updatedAt/i)
+    expect(() => writeTwinProjection({
+      key: 'health:bad', subjectId: 'person:missing', value: {}, sourceRecordId: 'missing', updatedAt: '2026-07-13T08:00:00.000Z',
+    })).toThrow(/not found/i)
+    expect(() => writeTwinProjection({
+      key: 'health:bad', subjectId: 'person:self', value: { score: Number.NaN }, sourceRecordId: 'bad-json', updatedAt: '2026-07-13T08:00:00.000Z',
+    })).toThrow(/value/i)
+  })
+
   it('preserves canonical subject attributes while serving overview and context', async () => {
     const {
       getPersonalTwinContext,

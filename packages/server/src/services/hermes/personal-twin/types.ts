@@ -237,6 +237,31 @@ export interface TwinProjection {
   updatedAt: string
 }
 
+export interface TwinProjectionWrite {
+  key: string
+  subjectId: string
+  value: Record<string, unknown>
+  sourceRecordId: string
+  expectedVersion?: number
+  updatedAt: string
+}
+
+export interface TwinArtifactInput {
+  mediaType: string
+  contentHash: string
+  relativePath: string
+  sizeBytes: number
+  sensitivity: 'health' | 'general'
+  metadata: Record<string, unknown>
+  source: string
+  sourceId: string
+}
+
+export interface TwinArtifact extends TwinArtifactInput {
+  id: string
+  createdAt: string
+}
+
 export interface TwinGoal {
   id: string
   subjectId: string

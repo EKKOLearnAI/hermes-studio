@@ -35,6 +35,7 @@ describe('personal twin database', () => {
       ).all() as Array<{ name: string }>).map(row => row.name)
 
       expect(names).toEqual([
+        'twin_artifact_consents',
         'twin_artifacts',
         'twin_assistant_roles',
         'twin_constraints',
@@ -52,7 +53,15 @@ describe('personal twin database', () => {
         'twin_relations',
         'twin_role_profile_mappings',
       ])
-      expect(db.prepare("SELECT value FROM twin_meta WHERE key = 'schema_version'").get()).toEqual({ value: '4' })
+      expect(db.prepare("SELECT value FROM twin_meta WHERE key = 'schema_version'").get()).toEqual({ value: '5' })
+      expect((db.prepare("PRAGMA table_info('twin_artifacts')").all() as Array<{ name: string }>).map(row => row.name))
+        .toEqual(['id', 'media_type', 'content_hash', 'relative_path', 'size_bytes', 'source', 'source_id', 'created_at', 'sensitivity', 'metadata_json'])
+      expect((db.prepare("PRAGMA table_info('twin_artifact_consents')").all() as Array<{ name: string }>).map(row => row.name))
+        .toEqual(['manifest_digest', 'processor', 'scope_json', 'issued_at', 'expires_at', 'consumed_at', 'revoked_at'])
+      expect(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_twin_artifacts_source_identity'").get())
+        .toEqual({ name: 'idx_twin_artifacts_source_identity' })
+      expect(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_twin_artifact_consents_status'").get())
+        .toEqual({ name: 'idx_twin_artifact_consents_status' })
       expect((db.prepare("PRAGMA table_info('twin_preferences')").all() as Array<{ name: string }>).map(row => row.name))
         .toEqual(expect.arrayContaining(['actor', 'version']))
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_twin_preference_operations_no_delete'").get())
@@ -81,7 +90,7 @@ describe('personal twin database', () => {
 
     const upgraded = new DatabaseSync(path, { readOnly: true })
     try {
-      expect(upgraded.prepare("SELECT value FROM twin_meta WHERE key = 'schema_version'").get()).toEqual({ value: '4' })
+      expect(upgraded.prepare("SELECT value FROM twin_meta WHERE key = 'schema_version'").get()).toEqual({ value: '5' })
       expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'twin_entities'").get()).toEqual({ name: 'twin_entities' })
     } finally {
       upgraded.close()
@@ -120,7 +129,7 @@ describe('personal twin database', () => {
     initPersonalTwinSchema(db)
 
     try {
-      expect(db.prepare("SELECT value FROM twin_meta WHERE key = 'schema_version'").get()).toEqual({ value: '4' })
+      expect(db.prepare("SELECT value FROM twin_meta WHERE key = 'schema_version'").get()).toEqual({ value: '5' })
       expect(db.prepare("SELECT id FROM twin_entities WHERE id = 'person:self'").get()).toEqual({ id: 'person:self' })
       const names = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(row => row.name))
       expect(names.has('twin_assistant_roles')).toBe(true)
@@ -159,7 +168,7 @@ describe('personal twin database', () => {
       .toEqual({ id: 'preference-legacy', key: 'life:calendar.view', actor: 'legacy-source', version: 1,
         value_json: '"agenda"', confidence: 0.7, source: 'legacy-source', source_id: 'legacy-id',
         created_at: '2026-07-01T00:00:00.000Z', updated_at: '2026-07-02T00:00:00.000Z' })
-    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '4' })
+    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '5' })
     expect(() => initPersonalTwinSchema(db)).not.toThrow()
     db.close()
   })
@@ -341,6 +350,86 @@ describe('personal twin database', () => {
     db.close()
   })
 
+  it('migrates v4 artifacts to v5 metadata and consent schema without data loss', async () => {
+    const { getPersonalTwinDbPath, initPersonalTwinSchema } = await import(
+      '../../packages/server/src/services/hermes/personal-twin'
+    )
+    mkdirSync(join(hermesHome, 'personal'), { recursive: true })
+    const db = new DatabaseSync(getPersonalTwinDbPath())
+    initPersonalTwinSchema(db)
+    db.exec(`
+      DROP TABLE twin_artifact_consents;
+      DROP INDEX idx_twin_artifacts_source_identity;
+      ALTER TABLE twin_artifacts RENAME TO twin_artifacts_v5;
+      CREATE TABLE twin_artifacts (
+        id TEXT PRIMARY KEY, media_type TEXT NOT NULL, content_hash TEXT NOT NULL UNIQUE, relative_path TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL, source TEXT NOT NULL, source_id TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+      INSERT INTO twin_artifacts(id,media_type,content_hash,relative_path,size_bytes,source,source_id,created_at)
+        SELECT id,media_type,content_hash,relative_path,size_bytes,source,source_id,created_at FROM twin_artifacts_v5;
+      DROP TABLE twin_artifacts_v5;
+      UPDATE twin_meta SET value='4' WHERE key='schema_version';
+    `)
+    db.prepare(`INSERT INTO twin_artifacts VALUES(?,?,?,?,?,?,?,?)`).run(
+      'artifact-legacy', 'application/pdf', 'a'.repeat(64), 'health/reports/legacy.pdf', 42,
+      'legacy-import', 'report-1', '2026-07-01T00:00:00.000Z',
+    )
+
+    initPersonalTwinSchema(db)
+
+    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '5' })
+    expect(db.prepare(`SELECT id,media_type,content_hash,relative_path,size_bytes,source,source_id,created_at,
+      sensitivity,metadata_json FROM twin_artifacts WHERE id='artifact-legacy'`).get()).toEqual({
+      id: 'artifact-legacy', media_type: 'application/pdf', content_hash: 'a'.repeat(64),
+      relative_path: 'health/reports/legacy.pdf', size_bytes: 42, source: 'legacy-import', source_id: 'report-1',
+      created_at: '2026-07-01T00:00:00.000Z', sensitivity: 'general', metadata_json: '{}',
+    })
+    expect(() => db.prepare(`INSERT INTO twin_artifacts
+      (id,media_type,content_hash,relative_path,size_bytes,source,source_id,created_at,sensitivity,metadata_json)
+      VALUES('artifact-other','application/pdf',?,'other.pdf',42,'legacy-import','report-1','2026-07-02','general','{}')`).run('b'.repeat(64)))
+      .toThrow(/unique/i)
+    expect((db.prepare("PRAGMA index_info('idx_twin_artifact_consents_status')").all() as Array<{ seqno: number; name: string }>)
+      .sort((left, right) => left.seqno - right.seqno).map(column => column.name))
+      .toEqual(['processor', 'expires_at', 'consumed_at', 'revoked_at'])
+    db.close()
+  })
+
+  it('fails closed when an asserted v5 artifact index signature is incomplete', async () => {
+    const { getPersonalTwinDbPath, initPersonalTwinSchema } = await import(
+      '../../packages/server/src/services/hermes/personal-twin'
+    )
+    mkdirSync(join(hermesHome, 'personal'), { recursive: true })
+    const db = new DatabaseSync(getPersonalTwinDbPath())
+    initPersonalTwinSchema(db)
+    db.exec(`DROP INDEX idx_twin_artifacts_source_identity;
+      CREATE INDEX idx_twin_artifacts_source_identity ON twin_artifacts(source)`)
+
+    expect(() => initPersonalTwinSchema(db)).toThrow(/artifact.*index.*signature|index.*signature.*artifact/i)
+    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '5' })
+    db.close()
+  })
+
+  it('fails closed when asserted v5 consent column constraints are incomplete', async () => {
+    const { getPersonalTwinDbPath, initPersonalTwinSchema } = await import(
+      '../../packages/server/src/services/hermes/personal-twin'
+    )
+    mkdirSync(join(hermesHome, 'personal'), { recursive: true })
+    const db = new DatabaseSync(getPersonalTwinDbPath())
+    initPersonalTwinSchema(db)
+    db.exec(`
+      DROP TABLE twin_artifact_consents;
+      CREATE TABLE twin_artifact_consents (
+        manifest_digest TEXT PRIMARY KEY, processor TEXT, scope_json TEXT NOT NULL,
+        issued_at TEXT NOT NULL, expires_at TEXT NOT NULL, consumed_at TEXT, revoked_at TEXT
+      );
+      CREATE INDEX idx_twin_artifact_consents_status
+        ON twin_artifact_consents(processor, expires_at, consumed_at, revoked_at);
+    `)
+
+    expect(() => initPersonalTwinSchema(db)).toThrow(/artifact_consents.*signature|consent.*signature/i)
+    db.close()
+  })
+
   it('rejects a database created by a future schema version', async () => {
     const { getPersonalTwinDbPath, withPersonalTwinDb } = await import(
       '../../packages/server/src/services/hermes/personal-twin'
@@ -349,7 +438,7 @@ describe('personal twin database', () => {
     mkdirSync(join(hermesHome, 'personal'), { recursive: true })
     const db = new DatabaseSync(path)
     db.exec('CREATE TABLE twin_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
-    db.prepare('INSERT INTO twin_meta(key, value) VALUES (?, ?)').run('schema_version', '5')
+    db.prepare('INSERT INTO twin_meta(key, value) VALUES (?, ?)').run('schema_version', '6')
     db.close()
 
     expect(() => withPersonalTwinDb(current => current.prepare('SELECT 1').get())).toThrow(/newer than supported version/i)

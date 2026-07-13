@@ -12,6 +12,7 @@ import {
   TwinEvent, TwinEventInput, TwinObservation, TwinObservationInput,
   TwinImmutableRecordConflictError, TwinProvenance, TwinDomain, TWIN_DOMAINS,
   TwinPreference, TwinPreferenceDeleteOperation, TwinPreferenceExpectation, TwinPreferenceInput,
+  TwinArtifact, TwinArtifactInput,
 } from './types'
 
 type StablePart = string | number | boolean | null | undefined
@@ -24,6 +25,7 @@ interface ObservationRow { id: string; entity_id: string; metric: string; value_
 interface EventRow { id: string; event_type: string; subject_id: string | null; payload_json: string; occurred_at: string; ingested_at: string; source: string; source_id: string; actor: string; confidence: number; confirmation_state: TwinProvenance['confirmationState']; evidence_json: string; schema_version: number }
 interface PreferenceRow { id: string; subject_id: string; key: string; value_json: string; confidence: number; source: string; source_id: string; actor: string; version: number; created_at: string; updated_at: string }
 interface PreferenceOperationRow { operation_id: string; material_digest: string; kind: 'set' | 'delete'; subject_id: string; domain: string; key: string; result_snapshot_json: string; result_digest: string; status: 'applied'; created_at: string; updated_at: string }
+interface ArtifactRow { id: string; media_type: string; content_hash: string; relative_path: string; size_bytes: number; sensitivity: 'health' | 'general'; metadata_json: string; source: string; source_id: string; created_at: string }
 
 export function stableTwinId(prefix: string, parts: StablePart[]): string {
   const encoded = parts.map(part => {
@@ -90,6 +92,36 @@ function goalFromRow(row: GoalRow): TwinGoal {
 }
 function constraintFromRow(row: ConstraintRow): TwinConstraint {
   return { id: row.id, subjectId: row.subject_id, domain: row.domain, key: row.key, value: parseJson(row.value_json, null), enforcement: row.enforcement, source: row.source, sourceId: row.source_id, createdAt: row.created_at, updatedAt: row.updated_at }
+}
+
+function canonicalArtifactMetadataJson(metadata: Record<string, unknown>): string {
+  try {
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new Error('invalid')
+    return canonicalPreferenceJson(metadata)
+  } catch {
+    throw new Error('Twin artifact metadata is invalid or exceeds structural bounds')
+  }
+}
+
+function artifactFromRow(row: ArtifactRow): TwinArtifact {
+  const metadata = parseJson<unknown>(row.metadata_json, null)
+  const material: TwinArtifactInput = {
+    mediaType: row.media_type,
+    contentHash: row.content_hash,
+    relativePath: row.relative_path,
+    sizeBytes: row.size_bytes,
+    sensitivity: row.sensitivity,
+    metadata: metadata as Record<string, unknown>,
+    source: row.source,
+    sourceId: row.source_id,
+  }
+  const safeMetadataJson = validateArtifactInput(material).metadataJson
+  return {
+    id: row.id,
+    ...material,
+    metadata: JSON.parse(safeMetadataJson) as Record<string, unknown>,
+    createdAt: row.created_at,
+  }
 }
 
 function preferenceStorageKey(domain: TwinDomain, key: string): string { return `${domain}:${key}` }
@@ -370,6 +402,86 @@ export function deleteTwinPreference(
       timestamp, timestamp,
     )
   }))
+}
+
+function validateArtifactInput(input: TwinArtifactInput): { contentHash: string; metadataJson: string } {
+  if (typeof input.contentHash !== 'string' || !/^[0-9a-f]{64}$/.test(input.contentHash)) {
+    throw new Error('Twin artifact content hash must be a lowercase SHA-256 digest')
+  }
+  if (typeof input.mediaType !== 'string' || input.mediaType.length > 129
+    || !/^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}$/.test(input.mediaType)) {
+    throw new Error('Twin artifact media type is invalid')
+  }
+  if (!Number.isSafeInteger(input.sizeBytes) || input.sizeBytes < 0 || input.sizeBytes > 10 * 1024 * 1024 * 1024) {
+    throw new Error('Twin artifact size is invalid')
+  }
+  if (typeof input.relativePath !== 'string' || input.relativePath.length < 1
+    || Buffer.byteLength(input.relativePath, 'utf8') > 512 || input.relativePath.includes('\\')
+    || input.relativePath.startsWith('/') || input.relativePath.includes('//')) {
+    throw new Error('Twin artifact relative path is invalid')
+  }
+  const pathSegments = input.relativePath.split('/')
+  if (pathSegments.some(segment => segment === '.' || segment === '..' || segment.length > 128
+    || !/^[a-z0-9][a-z0-9._-]*$/i.test(segment))) {
+    throw new Error('Twin artifact relative path is invalid')
+  }
+  if (input.sensitivity !== 'health' && input.sensitivity !== 'general') {
+    throw new Error('Twin artifact sensitivity is invalid')
+  }
+  if (typeof input.source !== 'string' || !/^[a-z][a-z0-9._:-]{0,159}$/i.test(input.source)) {
+    throw new Error('Twin artifact source is invalid')
+  }
+  if (typeof input.sourceId !== 'string' || input.sourceId.length < 1 || input.sourceId.length > 500
+    || !/^[a-z0-9][a-z0-9._:/-]*$/i.test(input.sourceId) || isSensitivePreferenceText(input.sourceId)) {
+    throw new Error('Twin artifact sourceId is invalid')
+  }
+  return { contentHash: input.contentHash, metadataJson: canonicalArtifactMetadataJson(input.metadata) }
+}
+
+function artifactMatches(row: ArtifactRow, input: TwinArtifactInput, metadataJson: string): boolean {
+  return row.media_type === input.mediaType
+    && row.content_hash === input.contentHash
+    && row.relative_path === input.relativePath
+    && row.size_bytes === input.sizeBytes
+    && row.sensitivity === input.sensitivity
+    && row.metadata_json === metadataJson
+    && row.source === input.source
+    && row.source_id === input.sourceId
+}
+
+export function upsertTwinArtifact(input: TwinArtifactInput): TwinArtifact {
+  const { contentHash, metadataJson } = validateArtifactInput(input)
+  return withPersonalTwinDb(db => commitOrRollback(db, () => {
+    const byHash = db.prepare('SELECT * FROM twin_artifacts WHERE content_hash = ?').get(contentHash) as unknown as ArtifactRow | undefined
+    const bySource = db.prepare('SELECT * FROM twin_artifacts WHERE source = ? AND source_id = ?')
+      .get(input.source, input.sourceId) as unknown as ArtifactRow | undefined
+    const existing = byHash ?? bySource
+    if (existing) {
+      if ((byHash && bySource && byHash.id !== bySource.id) || !artifactMatches(existing, input, metadataJson)) {
+        throw new TwinImmutableRecordConflictError('Twin artifact identity already contains different material')
+      }
+      return artifactFromRow(existing)
+    }
+    const id = `artifact-${contentHash}`
+    const createdAt = nowIso()
+    db.prepare(`
+      INSERT INTO twin_artifacts
+        (id,media_type,content_hash,relative_path,size_bytes,source,source_id,created_at,sensitivity,metadata_json)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
+    `).run(id, input.mediaType, contentHash, input.relativePath, input.sizeBytes, input.source, input.sourceId,
+      createdAt, input.sensitivity, metadataJson)
+    return artifactFromRow(db.prepare('SELECT * FROM twin_artifacts WHERE id = ?').get(id) as unknown as ArtifactRow)
+  }))
+}
+
+export function getTwinArtifact(contentHash: string): TwinArtifact | null {
+  if (typeof contentHash !== 'string' || !/^[0-9a-f]{64}$/.test(contentHash)) {
+    throw new Error('Twin artifact content hash must be a lowercase SHA-256 digest')
+  }
+  return withPersonalTwinDb(db => {
+    const row = db.prepare('SELECT * FROM twin_artifacts WHERE content_hash = ?').get(contentHash) as unknown as ArtifactRow | undefined
+    return row ? artifactFromRow(row) : null
+  })
 }
 
 export function upsertTwinEntity(input: TwinEntityInput): TwinEntity {
