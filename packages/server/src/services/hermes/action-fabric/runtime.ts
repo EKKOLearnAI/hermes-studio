@@ -14,6 +14,8 @@ import {
 import { startActionFabricWorker, stopActionFabricWorker } from './worker'
 import type { FabricControlState } from './types'
 import { createSerializedFabricLifecycle } from './runtime-lifecycle'
+import type { FabricExecutorAdapter } from './executors'
+import { createConfiguredHealthFabricExecutorAdapters } from '../health-loop/executors/configuration'
 
 const CONTROL_POLL_MS = 100
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on'])
@@ -76,6 +78,7 @@ async function bootstrapRuntime(): Promise<void> {
     migrateAssistantRoleCapabilityEnforcement()
     registerOwnedAdapter(createSimulatorExecutorAdapter(), ownedAdapters)
     registerOwnedAdapter(createInternalPreferenceExecutorAdapter(), ownedAdapters)
+    for (const adapter of createConfiguredHealthFabricExecutorAdapters()) registerOwnedAdapter(adapter, ownedAdapters)
     const initialControl = getFabricControlState()
     const initialEnforcement = await enforceControlState(initialControl.version)
     startActionFabricWorker()
@@ -97,7 +100,7 @@ async function bootstrapRuntime(): Promise<void> {
 }
 
 function registerOwnedAdapter(
-  adapter: ReturnType<typeof createSimulatorExecutorAdapter> | ReturnType<typeof createInternalPreferenceExecutorAdapter>,
+  adapter: FabricExecutorAdapter,
   owned: string[],
 ): void {
   try {

@@ -88,4 +88,47 @@ describe('weixin reminder sender', () => {
 
     expect(mockPost.mock.calls[0][0]).toBe('https://ilinkai.weixin.qq.com/ilink/bot/sendmessage')
   })
+
+  it('returns stable provider identity and supports lookup by delivery id', async () => {
+    writeFileSync(join(hermesHome, '.env'), [
+      'WEIXIN_ACCOUNT_ID=acct-1', 'WEIXIN_TOKEN=token-1', 'WEIXIN_HOME_CHANNEL=wxid_user_1', '',
+    ].join('\n'), 'utf-8')
+    mockPost.mockResolvedValueOnce({ data: { ret: 0, msgid: 'provider-message-1' } })
+    const { createWeixinReceiptSender } = await loadSender()
+    const sender = createWeixinReceiptSender('default')
+
+    const sent = await sender.send({ deliveryId: 'delivery-1', recipient: 'configured-self', message: '安全提醒' })
+    expect(sent).toEqual({ status: 'accepted', providerMessageId: 'provider-message-1' })
+    expect(await sender.lookup('delivery-1')).toEqual(sent)
+    expect(JSON.parse(mockPost.mock.calls[0][1]).msg.client_id).toBe('delivery-1')
+
+    const afterRestart = createWeixinReceiptSender('default')
+    expect(await afterRestart.lookup('delivery-1')).toEqual(sent)
+    expect(await afterRestart.send({ deliveryId: 'delivery-1', recipient: 'configured-self', message: '不应重发' })).toEqual(sent)
+    expect(mockPost).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks an accepted response without a provider identity as explicitly unverifiable', async () => {
+    writeFileSync(join(hermesHome, '.env'), [
+      'WEIXIN_ACCOUNT_ID=acct-1', 'WEIXIN_TOKEN=token-1', 'WEIXIN_HOME_CHANNEL=wxid_user_1', '',
+    ].join('\n'), 'utf-8')
+    mockPost.mockResolvedValueOnce({ data: { ret: 0 } })
+    const { createWeixinReceiptSender } = await loadSender()
+    const sender = createWeixinReceiptSender('default')
+    expect(await sender.send({ deliveryId: 'delivery-unverified', recipient: 'configured-self', message: '提醒' }))
+      .toEqual({ status: 'unknown', providerMessageId: null })
+    expect(await sender.lookup('delivery-unverified')).toEqual({ status: 'unknown', providerMessageId: null })
+  })
+
+  it('fails closed instead of resending when the durable attempt journal is corrupt', async () => {
+    writeFileSync(join(hermesHome, '.env'), [
+      'WEIXIN_ACCOUNT_ID=acct-1', 'WEIXIN_TOKEN=token-1', 'WEIXIN_HOME_CHANNEL=wxid_user_1', '',
+    ].join('\n'), 'utf-8')
+    writeFileSync(join(hermesHome, 'weixin-delivery-attempts.jsonl'), '{corrupt', 'utf-8')
+    const { createWeixinReceiptSender } = await loadSender()
+    const sender = createWeixinReceiptSender('default')
+    expect(await sender.send({ deliveryId: 'delivery-maybe-sent', recipient: 'configured-self', message: '不应重发' }))
+      .toEqual({ status: 'unknown', providerMessageId: null })
+    expect(mockPost).not.toHaveBeenCalled()
+  })
 })
