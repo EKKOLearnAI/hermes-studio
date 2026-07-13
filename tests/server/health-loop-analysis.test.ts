@@ -202,7 +202,7 @@ describe('health artifact analysis', () => {
     const analyzer = createAuxiliaryVisionAnalyzer({ resolver, client, vault: vault as any, consentBroker: broker as any, maxResponseBytes: 8192 })
     const manifest = { artifactIds: [artifactId], processor: 'remote:test', purpose: 'measurement' as const, selectedRegions: ['subject'], requestedFields: ['waistCm'], retention: 'no_retention' as const }
     const request = { schemaVersion: 'health-analysis-request/v1' as const, profile: 'default', purpose: 'measurement' as const, sourceId: 'remote-1', observedAt,
-      artifactIds: [artifactId], selectedRegions: ['subject'], requestedFields: ['waistCm'], manifest, consentToken: 'token' }
+      artifactIds: [artifactId], selectedRegions: ['subject'], requestedFields: ['waistCm'], manifest, consentToken: '0'.repeat(64) }
     await expect(analyzer.analyze(request)).resolves.toMatchObject({ status: 'completed' })
     expect(order).toEqual(['consume', 'read', 'client'])
     broker.consume.mockRejectedValueOnce(Object.assign(new Error('replayed token secret'), { code: 'HEALTH_CONSENT_REPLAYED' }))
@@ -221,7 +221,7 @@ describe('health artifact analysis', () => {
       vault: vault as any, consentBroker: { consume: vi.fn(async () => { throw new Error('db corrupt path C:\\secret') }) } as any })
     const request = { schemaVersion: 'health-analysis-request/v1' as const, profile: 'default', purpose: 'skin' as const, sourceId: 'skin-1', observedAt,
       artifactIds: [artifactId], selectedRegions: ['face'], requestedFields: ['appearances'],
-      manifest: { artifactIds: [artifactId], processor: 'remote:test', purpose: 'skin' as const, selectedRegions: ['face'], requestedFields: ['appearances'], retention: 'no_retention' as const }, consentToken: 'token' }
+      manifest: { artifactIds: [artifactId], processor: 'remote:test', purpose: 'skin' as const, selectedRegions: ['face'], requestedFields: ['appearances'], retention: 'no_retention' as const }, consentToken: '0'.repeat(64) }
     await expect(denied.analyze(request)).rejects.toMatchObject({ code: 'HEALTH_ANALYSIS_CONSENT_DENIED' })
     expect(vault.read).not.toHaveBeenCalled(); expect(client.analyze).not.toHaveBeenCalled()
 
@@ -229,6 +229,91 @@ describe('health artifact analysis', () => {
     const { manifest: _manifest, consentToken: _consentToken, ...localRequest } = request
     await expect(local.analyze(localRequest)).resolves.toMatchObject({ status: 'completed' })
     expect(client.analyze).toHaveBeenCalledTimes(1)
+
+    for (const candidate of [
+      { ...localRequest, manifest: undefined },
+      { ...localRequest, consentToken: undefined },
+      { ...localRequest, manifest: request.manifest },
+      { ...localRequest, manifest: 'malicious-manifest' },
+      { ...localRequest, consentToken: 'must-not-be-accepted-locally' },
+      { ...localRequest, consentToken: { value: 'malicious-token' } },
+      { ...localRequest, manifest: request.manifest, consentToken: 'must-not-be-accepted-locally' },
+    ]) {
+      await expect(local.analyze(candidate as any)).rejects.toMatchObject({ code: 'HEALTH_ANALYSIS_INVALID_REQUEST' })
+    }
+    expect(client.analyze).toHaveBeenCalledTimes(1)
+  })
+
+  it('requires both exact remote authorization fields before consent, vault access, or dispatch', async () => {
+    const { createAuxiliaryVisionAnalyzer } = await import('../../packages/server/src/services/hermes/health-loop/analyzers/auxiliary-vision')
+    const artifactId = `artifact-${'5'.repeat(64)}`
+    const consume = vi.fn(async () => ({ consentId: 'consent-1', manifestDigest: 'a'.repeat(64), consumedAt: observedAt }))
+    const vault = { read: vi.fn(async () => { throw new Error('must not read') }) }
+    const client = { analyze: vi.fn(async () => '{}') }
+    const analyzer = createAuxiliaryVisionAnalyzer({
+      resolver: async () => ({ provider: 'remote:test', model: 'vision-1', locality: 'remote', timeoutMs: 100 }),
+      consentBroker: { consume } as any, vault: vault as any, client,
+    })
+    const base = { schemaVersion: 'health-analysis-request/v1' as const, profile: 'default', purpose: 'measurement' as const, sourceId: 'remote-required', observedAt,
+      artifactIds: [artifactId], selectedRegions: ['subject'], requestedFields: ['waistCm'] }
+    const manifest = { artifactIds: [artifactId], processor: 'remote:test', purpose: 'measurement' as const, selectedRegions: ['subject'], requestedFields: ['waistCm'], retention: 'session' as const }
+    for (const candidate of [{ ...base, consentToken: '0'.repeat(64) }, { ...base, manifest }, { ...base, manifest, consentToken: 'short-token' }]) {
+      await expect(analyzer.analyze(candidate as any)).rejects.toMatchObject({ code: 'HEALTH_ANALYSIS_INVALID_REQUEST' })
+    }
+    expect(consume).not.toHaveBeenCalled(); expect(vault.read).not.toHaveBeenCalled(); expect(client.analyze).not.toHaveBeenCalled()
+  })
+
+  it('fails closed on hostile top-level request shape and non-dense request arrays', async () => {
+    const { createAuxiliaryVisionAnalyzer } = await import('../../packages/server/src/services/hermes/health-loop/analyzers/auxiliary-vision')
+    const artifactId = `artifact-${'6'.repeat(64)}`
+    const resolver = vi.fn(async () => ({ provider: 'local:test', model: 'vision-1', locality: 'local' as const, timeoutMs: 100 }))
+    const vault = { read: vi.fn() }; const client = { analyze: vi.fn() }
+    const analyzer = createAuxiliaryVisionAnalyzer({ resolver, vault: vault as any, client: client as any })
+    const base = { schemaVersion: 'health-analysis-request/v1' as const, profile: 'default', purpose: 'measurement' as const, sourceId: 'hostile-request', observedAt,
+      artifactIds: [artifactId], selectedRegions: ['subject'], requestedFields: ['waistCm'] }
+    const hidden = { ...base }; Object.defineProperty(hidden, 'hidden', { value: 'secret', enumerable: false })
+    const accessor = { ...base }; Object.defineProperty(accessor, 'manifest', { enumerable: true, get: () => ({}) })
+    const sparse = { ...base, artifactIds: Array(2) }; sparse.artifactIds[0] = artifactId
+    const customArray = [...base.requestedFields] as string[] & { secret?: string }; customArray.secret = 'secret'
+    const proxy = new Proxy({ ...base }, { ownKeys: () => { throw new Error(`secret ${hermesHome}`) } })
+    for (const candidate of [{ ...base, callbackUrl: 'https://attacker.test' }, hidden, accessor, sparse, { ...base, requestedFields: customArray }, proxy]) {
+      const error = await analyzer.analyze(candidate as any).catch(value => value)
+      expect(error).toMatchObject({ code: 'HEALTH_ANALYSIS_INVALID_REQUEST' })
+      expect(error.message).not.toContain(hermesHome)
+    }
+    expect(resolver).not.toHaveBeenCalled(); expect(vault.read).not.toHaveBeenCalled(); expect(client.analyze).not.toHaveBeenCalled()
+  })
+
+  it('uses the real one-time broker for approved camelCase fields and every Task5 retention', async () => {
+    const { createAuxiliaryVisionAnalyzer } = await import('../../packages/server/src/services/hermes/health-loop/analyzers/auxiliary-vision')
+    const { createHealthArtifactVault } = await import('../../packages/server/src/services/hermes/health-loop/artifacts')
+    const { createHealthConsentBroker, HEALTH_PROCESSING_RETENTIONS } = await import('../../packages/server/src/services/hermes/health-loop/consent')
+    const vault = createHealthArtifactVault({ accessController: { secureDirectory: async () => undefined, secureFile: async () => undefined } })
+    const artifact = await vault.store({
+      content: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]), declaredMediaType: 'image/png',
+      source: 'health-analysis-test', sourceId: 'real-consent', metadata: {},
+    })
+    const broker = createHealthConsentBroker({ allowedProcessors: ['remote:test'] })
+    const cases = [
+      { purpose: 'measurement' as const, field: 'waistCm', value: 88, retention: HEALTH_PROCESSING_RETENTIONS[0] },
+      { purpose: 'skin' as const, field: 'lightingProfile', value: 'standardized_neutral', retention: HEALTH_PROCESSING_RETENTIONS[1] },
+      { purpose: 'diet' as const, field: 'mealTime', value: observedAt, retention: HEALTH_PROCESSING_RETENTIONS[2] },
+      { purpose: 'internal_health' as const, field: 'reportDate', value: '2026-07-13', retention: HEALTH_PROCESSING_RETENTIONS[0] },
+    ]
+    const client = { analyze: vi.fn(async (input: any) => {
+      const current = cases.find(item => item.field === input.requestedFields[0])!
+      return JSON.stringify({ schemaVersion: 'health-analyzer-output/v1', modelVersion: 'vision-1', parserVersion: 'vision-json-v1', overallConfidence: 0.9,
+        captureQuality: { score: 0.9, reasons: [] }, fields: [{ field: current.field, value: current.value, confidence: 0.9, evidence: { artifactId: artifact.id, region: 'subject' } }] })
+    }) }
+    const analyzer = createAuxiliaryVisionAnalyzer({ resolver: async () => ({ provider: 'remote:test', model: 'vision-1', locality: 'remote', timeoutMs: 1000 }), client, vault, consentBroker: broker })
+    for (const [index, current] of cases.entries()) {
+      const manifest = { artifactIds: [artifact.id], processor: 'remote:test', purpose: current.purpose, selectedRegions: ['subject'], requestedFields: [current.field], retention: current.retention }
+      const grant = await broker.issue(manifest)
+      const request = { schemaVersion: 'health-analysis-request/v1' as const, profile: 'default', purpose: current.purpose, sourceId: `real-consent-${index}`, observedAt,
+        artifactIds: [artifact.id], selectedRegions: ['subject'], requestedFields: [current.field], manifest, consentToken: grant.token }
+      await expect(analyzer.analyze(request)).resolves.toMatchObject({ status: current.purpose === 'internal_health' ? 'pending_confirmation' : 'completed' })
+    }
+    expect(client.analyze).toHaveBeenCalledTimes(4)
   })
 
   it('rejects changed remote scope and secret-shaped resolver output before artifact access', async () => {
@@ -238,7 +323,7 @@ describe('health artifact analysis', () => {
     const client = { analyze: vi.fn(async () => '{}') }
     const consume = vi.fn(async () => ({ consentId: 'consent-1', manifestDigest: 'a'.repeat(64), consumedAt: observedAt }))
     const request = { schemaVersion: 'health-analysis-request/v1' as const, profile: 'default', purpose: 'measurement' as const, sourceId: 'scope-1', observedAt,
-      artifactIds: [artifactId], selectedRegions: ['subject'], requestedFields: ['waistCm'], consentToken: 'token',
+      artifactIds: [artifactId], selectedRegions: ['subject'], requestedFields: ['waistCm'], consentToken: '0'.repeat(64),
       manifest: { artifactIds: [artifactId], processor: 'remote:other', purpose: 'measurement' as const, selectedRegions: ['subject'], requestedFields: ['waistCm'], retention: 'no_retention' as const } }
     const analyzer = createAuxiliaryVisionAnalyzer({ resolver: async () => ({ provider: 'remote:test', model: 'vision-1', locality: 'remote', timeoutMs: 100 }), client, vault: vault as any,
       consentBroker: { consume } as any })

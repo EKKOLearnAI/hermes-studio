@@ -7,7 +7,8 @@ const DIGEST = /^[0-9a-f]{64}$/
 const TOKEN = /^[0-9a-f]{64}$/
 const CONSENT_ID = /^(?:[0-9a-f]{64}|consent-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/
 const PURPOSES = ['measurement', 'posture', 'skin', 'diet', 'internal_health'] as const
-const RETENTIONS = ['no_retention', 'session', '24_hours'] as const
+export const HEALTH_PROCESSING_RETENTIONS = ['no_retention', 'session', '24_hours'] as const
+export type HealthProcessingRetention = typeof HEALTH_PROCESSING_RETENTIONS[number]
 const MANIFEST_KEYS = ['artifactIds', 'processor', 'purpose', 'selectedRegions', 'requestedFields', 'retention'] as const
 const POISON_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 const DEFAULT_TTL_MS = 5 * 60 * 1000
@@ -21,7 +22,7 @@ export interface HealthProcessingManifest {
   purpose: typeof PURPOSES[number]
   selectedRegions: string[]
   requestedFields: string[]
-  retention: typeof RETENTIONS[number]
+  retention: HealthProcessingRetention
 }
 
 export type HealthConsentErrorCode =
@@ -177,14 +178,15 @@ function canonicalManifest(input: HealthProcessingManifest, allowedProcessors: R
       throw new HealthConsentError('HEALTH_CONSENT_MANIFEST_INVALID')
     }
     const selectedRegions = canonicalSet(ownData(record, 'selectedRegions'), /^[\p{L}\p{N}._:/-]+$/u, 160, 64, true)
-    const requestedFields = canonicalSet(ownData(record, 'requestedFields'), /^[a-z][a-z0-9._:-]*$/, 100, 128, false)
+    const requestedFields = canonicalSet(ownData(record, 'requestedFields'), /^[a-z][A-Za-z0-9._:-]*$/, 100, 128, false)
+    if (requestedFields.some(field => POISON_KEYS.has(field))) throw new HealthConsentError('HEALTH_CONSENT_MANIFEST_INVALID')
     const retention = ownData(record, 'retention')
-    if (typeof retention !== 'string' || !(RETENTIONS as readonly string[]).includes(retention)) {
+    if (typeof retention !== 'string' || !(HEALTH_PROCESSING_RETENTIONS as readonly string[]).includes(retention)) {
       throw new HealthConsentError('HEALTH_CONSENT_MANIFEST_INVALID')
     }
     const normalized: HealthProcessingManifest = {
       artifactIds, processor, purpose: purpose as HealthProcessingManifest['purpose'], selectedRegions, requestedFields,
-      retention: retention as HealthProcessingManifest['retention'],
+      retention: retention as HealthProcessingRetention,
     }
     if (Buffer.byteLength(JSON.stringify(normalized), 'utf8') > MAX_MANIFEST_BYTES) {
       throw new HealthConsentError('HEALTH_CONSENT_MANIFEST_INVALID')

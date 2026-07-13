@@ -3,7 +3,9 @@ import {
   finalizeHealthAnalysis, HealthAnalysisError, HealthAnalysisRequest, HealthAnalysisResult, validateHealthAnalysisRequest,
 } from '../analysis'
 import type { HealthArtifactVault } from '../artifacts'
-import type { HealthConsentBroker, HealthProcessingManifest } from '../consent'
+import {
+  HEALTH_PROCESSING_RETENTIONS, type HealthConsentBroker, type HealthProcessingManifest,
+} from '../consent'
 
 export interface ResolvedAuxiliaryVisionConfig {
   provider: string
@@ -48,7 +50,6 @@ export interface AuxiliaryVisionAnalyzer {
 
 const SEMANTIC = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/
 const MANIFEST_KEYS = ['artifactIds', 'processor', 'purpose', 'selectedRegions', 'requestedFields', 'retention'] as const
-const RETENTIONS = new Set(['no_retention', 'provider_zero_retention'])
 const POISON_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
 
 function fail(code: ConstructorParameters<typeof HealthAnalysisError>[0]): never { throw new HealthAnalysisError(code) }
@@ -96,7 +97,8 @@ function validateRemoteManifest(value: unknown, request: HealthAnalysisRequest, 
     if (!Array.isArray(manifest.artifactIds) || !manifest.artifactIds.every(item => typeof item === 'string')
       || !Array.isArray(manifest.selectedRegions) || !manifest.selectedRegions.every(item => typeof item === 'string')
       || !Array.isArray(manifest.requestedFields) || !manifest.requestedFields.every(item => typeof item === 'string')
-      || manifest.processor !== provider || manifest.purpose !== request.purpose || !RETENTIONS.has(manifest.retention)
+      || manifest.processor !== provider || manifest.purpose !== request.purpose
+      || !(HEALTH_PROCESSING_RETENTIONS as readonly unknown[]).includes(manifest.retention)
       || !sameSet(manifest.artifactIds, request.artifactIds)
       || !sameSet(manifest.selectedRegions, request.selectedRegions)
       || !sameSet(manifest.requestedFields, request.requestedFields)) fail('HEALTH_ANALYSIS_CONSENT_DENIED')
@@ -158,10 +160,11 @@ export function createAuxiliaryVisionAnalyzer(dependencies: AuxiliaryVisionAnaly
 
   return {
     async analyze(inputRequest): Promise<HealthAnalysisResult> {
-      const request = validateHealthAnalysisRequest(inputRequest)
+      let request = validateHealthAnalysisRequest(inputRequest)
       let config: ResolvedAuxiliaryVisionConfig
       try { config = safeConfig(await dependencies.resolver(request.profile)) }
       catch { throw new HealthAnalysisError('HEALTH_ANALYSIS_PROCESSOR_FAILED') }
+      request = validateHealthAnalysisRequest(inputRequest, config.locality)
 
       if (config.locality === 'remote') {
         const manifest = validateRemoteManifest(request.manifest, request, config.provider)

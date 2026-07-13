@@ -41,6 +41,35 @@ describe('health remote-processing consent broker', () => {
     return { artifact, broker, manifest }
   }
 
+  it('exports one retention contract and accepts every supported value through issue and consume', async () => {
+    const { HEALTH_PROCESSING_RETENTIONS } = await import('../../packages/server/src/services/hermes/health-loop/consent')
+    expect(HEALTH_PROCESSING_RETENTIONS).toEqual(['no_retention', 'session', '24_hours'])
+    for (const retention of HEALTH_PROCESSING_RETENTIONS) {
+      const { broker, manifest } = await fixture()
+      const scoped = { ...manifest, retention }
+      const grant = await broker.issue(scoped)
+      await expect(broker.consume(grant.token, scoped)).resolves.toMatchObject({ consentId: grant.consentId })
+    }
+    const { broker, manifest } = await fixture()
+    await expect(broker.issue({ ...manifest, retention: 'provider_zero_retention' as 'no_retention' }))
+      .rejects.toMatchObject({ code: 'HEALTH_CONSENT_MANIFEST_INVALID' })
+  })
+
+  it('accepts approved camelCase requested fields while preserving exact semantic-name restrictions', async () => {
+    const { broker, manifest } = await fixture()
+    const camelCase = { ...manifest, requestedFields: ['waistCm', 'lightingProfile', 'mealTime', 'reportDate'] }
+    const grant = await broker.issue(camelCase)
+    expect(grant.manifest.requestedFields).toEqual(['lightingProfile', 'mealTime', 'reportDate', 'waistCm'])
+    await expect(broker.consume(grant.token, { ...camelCase, requestedFields: ['waistcm', 'lightingProfile', 'mealTime', 'reportDate'] }))
+      .rejects.toMatchObject({ code: 'HEALTH_CONSENT_INVALID' })
+    await expect(broker.consume(grant.token, camelCase)).resolves.toMatchObject({ consentId: grant.consentId })
+
+    for (const field of ['has space', 'has/slash', 'UppercaseStart', '__proto__', 'constructor', 'prototype']) {
+      await expect(broker.issue({ ...manifest, requestedFields: [field] }))
+        .rejects.toMatchObject({ code: 'HEALTH_CONSENT_MANIFEST_INVALID' })
+    }
+  })
+
   it('canonicalizes set-like scope and returns a random 256-bit bearer only once', async () => {
     const { broker, manifest, artifact } = await fixture()
     const first = await broker.issue({

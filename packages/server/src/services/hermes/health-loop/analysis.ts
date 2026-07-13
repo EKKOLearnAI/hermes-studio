@@ -76,6 +76,7 @@ export interface HealthAnalysisProcessorIdentity {
 
 const POISON_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
 const ARTIFACT_ID = /^artifact-[0-9a-f]{64}$/
+const CONSENT_TOKEN = /^[0-9a-f]{64}$/
 const SEMANTIC_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/
 const REGION = /^[\p{L}\p{N}._:/-]+$/u
 const QUALITY_REASONS = new Set(['blur', 'glare', 'low_light', 'framing', 'missing_view', 'distance', 'scale_reference', 'region_mismatch'])
@@ -197,7 +198,10 @@ function strictObservedAt(value: unknown, code: HealthAnalysisErrorCode): string
   } catch { return fail(code) }
 }
 
-export function validateHealthAnalysisRequest(input: HealthAnalysisRequest): HealthAnalysisRequest {
+export function validateHealthAnalysisRequest(
+  input: HealthAnalysisRequest,
+  locality?: HealthAnalysisProcessorIdentity['locality'],
+): HealthAnalysisRequest {
   assertSafeGraph(input, 'HEALTH_ANALYSIS_INVALID_REQUEST')
   const record = exactRecord(input,
     ['schemaVersion', 'profile', 'purpose', 'sourceId', 'observedAt', 'artifactIds', 'selectedRegions', 'requestedFields'],
@@ -211,6 +215,13 @@ export function validateHealthAnalysisRequest(input: HealthAnalysisRequest): Hea
   const requestedFields = canonicalSet(record.requestedFields, SEMANTIC_ID, 64, 'HEALTH_ANALYSIS_INVALID_REQUEST')
   if (requestedFields.some(field => !REQUESTED_FIELDS[purpose].includes(field))) fail('HEALTH_ANALYSIS_INVALID_REQUEST')
   if (record.consentToken !== undefined && typeof record.consentToken !== 'string') fail('HEALTH_ANALYSIS_INVALID_REQUEST')
+  const hasManifest = Object.hasOwn(record, 'manifest')
+  const hasConsentToken = Object.hasOwn(record, 'consentToken')
+  if (locality === 'local' && (hasManifest || hasConsentToken)) fail('HEALTH_ANALYSIS_INVALID_REQUEST')
+  if (locality === 'remote' && (!hasManifest || !hasConsentToken)) fail('HEALTH_ANALYSIS_INVALID_REQUEST')
+  if (locality === 'remote' && (typeof record.consentToken !== 'string' || !CONSENT_TOKEN.test(record.consentToken))) {
+    fail('HEALTH_ANALYSIS_INVALID_REQUEST')
+  }
   return {
     schemaVersion: 'health-analysis-request/v1', profile, purpose, sourceId,
     observedAt: strictObservedAt(record.observedAt, 'HEALTH_ANALYSIS_INVALID_REQUEST'), artifactIds, selectedRegions, requestedFields,
@@ -288,11 +299,12 @@ export function finalizeHealthAnalysis(
   inputOutput: unknown,
   identity: HealthAnalysisProcessorIdentity,
 ): HealthAnalysisResult {
-  const request = validateHealthAnalysisRequest(inputRequest)
+  if (!identity || !['local', 'remote'].includes(identity.locality)) fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+  const request = validateHealthAnalysisRequest(inputRequest, identity.locality)
   assertSafeGraph(inputOutput, 'HEALTH_ANALYSIS_INVALID_OUTPUT')
   const output = exactRecord(inputOutput,
     ['schemaVersion', 'modelVersion', 'parserVersion', 'overallConfidence', 'captureQuality', 'fields'], [], 'HEALTH_ANALYSIS_INVALID_OUTPUT')
-  if (output.schemaVersion !== 'health-analyzer-output/v1' || !identity || !['local', 'remote'].includes(identity.locality)) fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+  if (output.schemaVersion !== 'health-analyzer-output/v1') fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
   semantic(identity.processor, 80, 'HEALTH_ANALYSIS_INVALID_OUTPUT')
   const modelVersion = semantic(output.modelVersion, 64, 'HEALTH_ANALYSIS_INVALID_OUTPUT')
   const parserVersion = semantic(output.parserVersion, 64, 'HEALTH_ANALYSIS_INVALID_OUTPUT')
