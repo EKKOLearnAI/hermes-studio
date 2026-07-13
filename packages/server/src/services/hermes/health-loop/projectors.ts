@@ -138,6 +138,10 @@ function stableJson(value: unknown): string {
   return `{${keys.map(key => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`
 }
 
+export function healthProjectionSourceRecordId(values: HealthProjectionSet): string {
+  return `health-projection-${createHash('sha256').update(stableJson(values)).digest('hex')}`
+}
+
 function timestamp(value: string, field: string): { canonical: string; nanoseconds: bigint; milliseconds: number } {
   try {
     const canonical = canonicalizeHealthTimestamp(value, field)
@@ -416,7 +420,7 @@ function nutritionResult(records: readonly TwinObservation[], cutoffNs: bigint):
     const total = rollingSum(samples, cutoffMs, 24 * 3_600_000)
     if (total !== null) totals[name] = total
   }
-  return withState(base, { totals: Object.keys(totals).length ? totals : null, windowHours: 24 })
+  return withState(base, { ...base.state, totals: Object.keys(totals).length ? totals : null, windowHours: 24 })
 }
 
 function trainingResult(records: readonly TwinObservation[], cutoffNs: bigint): DomainResult {
@@ -579,8 +583,7 @@ export interface PersistHealthProjectionOptions {
 export function persistHealthProjections(values: HealthProjectionSet, options: PersistHealthProjectionOptions = {}): TwinProjection[] {
   const subjectId = options.subjectId ?? 'person:self'
   const current = new Map(listTwinProjections('health.', subjectId).map(item => [item.key, item]))
-  const materialDigest = createHash('sha256').update(stableJson(values)).digest('hex')
-  const sourceRecordId = `health-projection-${materialDigest}`
+  const sourceRecordId = healthProjectionSourceRecordId(values)
   const replay = HEALTH_PROJECTION_KEYS.map(key => current.get(key))
   if (replay.every((item, index): item is TwinProjection => item !== undefined
     && item.sourceRecordId === sourceRecordId && stableJson(item.value) === stableJson(values[HEALTH_PROJECTION_KEYS[index]]))) {

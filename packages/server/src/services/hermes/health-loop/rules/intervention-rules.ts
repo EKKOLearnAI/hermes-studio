@@ -1,6 +1,6 @@
 import type { HealthProjectionEnvelope, HealthProjectionKey } from '../projectors'
 
-export const HEALTH_INTERVENTION_RULE_VERSION = 'health-interventions-v3'
+export const HEALTH_INTERVENTION_RULE_VERSION = 'health-interventions-v4'
 
 export type HealthInterventionRisk = 'none' | 'low' | 'medium' | 'high' | 'critical'
 export type HealthInterventionAuthority = 'auto' | 'approval' | 'inform_only'
@@ -222,9 +222,7 @@ function proteinShortage(context: HealthRuleContext): HealthRuleCandidate | null
     goalRelevance: 90, executionBurden: 25, timing: 85, cooldownMs: 12 * 3_600_000,
     parameters: { operation: 'prioritize_food_protein', targetG: target, reasonCode: 'resistance_day_protein_gap' },
     rationale: 'Protein intake is below eighty percent of the configured target on a resistance-training day.',
-    gatePolicy: gate('health.nutrition_state', ['totals.protein_g'], {
-      freshness: 'projection', confidence: 'projection', conflicts: 'projection',
-    }),
+    gatePolicy: gate('health.nutrition_state', ['current.protein_g']),
   }
 }
 

@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import type { TwinObservation, TwinProjection } from '../../packages/server/src/services/hermes/personal-twin'
-import type { HealthProjectionKey } from '../../packages/server/src/services/hermes/health-loop'
+import {
+  HEALTH_PROJECTION_KEYS,
+  healthProjectionSourceRecordId,
+  type HealthProjectionKey,
+  type HealthProjectionSet,
+} from '../../packages/server/src/services/hermes/health-loop'
 
 const now = '2026-07-14T12:00:00Z'
+
+function signProjections(values: TwinProjection[]): TwinProjection[] {
+  const envelopes = Object.fromEntries(HEALTH_PROJECTION_KEYS.map(key => [
+    key, values.find(item => item.key === key)!.value,
+  ])) as unknown as HealthProjectionSet
+  const sourceRecordId = healthProjectionSourceRecordId(envelopes)
+  return values.map(item => ({ ...item, sourceRecordId }))
+}
 
 function projection(key: HealthProjectionKey, state: Record<string, unknown>, overrides: {
   freshness?: 'fresh' | 'stale' | 'missing' | 'conflict'
@@ -11,6 +24,10 @@ function projection(key: HealthProjectionKey, state: Record<string, unknown>, ov
   confidence?: number
   version?: number
 } = {}): TwinProjection {
+  if (key === 'health.nutrition_state' && !state.current) {
+    const totals = state.totals as Record<string, unknown> | undefined
+    if (typeof totals?.protein_g === 'number') state.current = { protein_g: { value: totals.protein_g, unit: 'g' } }
+  }
   const conflicts = overrides.conflicts ?? []
   const current = state.current && typeof state.current === 'object' && !Array.isArray(state.current)
     ? state.current as Record<string, unknown> : null
@@ -30,7 +47,7 @@ function projection(key: HealthProjectionKey, state: Record<string, unknown>, ov
     key,
     subjectId: 'person:self',
     version: overrides.version ?? 3,
-    sourceRecordId: `source-${key}`,
+    sourceRecordId: 'unsigned',
     updatedAt: now,
     value: {
       schemaVersion: 1,
@@ -56,7 +73,7 @@ function projection(key: HealthProjectionKey, state: Record<string, unknown>, ov
 }
 
 function projections(): TwinProjection[] {
-  return [
+  return signProjections([
     projection('health.body_composition_state', { current: { weight_kg: { value: 80, unit: 'kg' } } }, { version: 1 }),
     projection('health.fat_loss_state', { weightKg: 80, weightVelocityKgPerWeek: -0.2, sampleCount: 7 }, { version: 2 }),
     projection('health.nutrition_state', { totals: { calories_kcal: 1900, protein_g: 130 }, windowHours: 24 }, { version: 3 }),
@@ -66,11 +83,11 @@ function projections(): TwinProjection[] {
     projection('health.skin_state', { current: { capture_quality: { value: 0.9 }, appearances: { value: [] } } }, { version: 7 }),
     projection('health.internal_state', { confirmed: [], pending: [], confirmedCount: 0, pendingCount: 0 }, { version: 8 }),
     projection('health.readiness_state', { status: 'ready', score: 82, dependencies: {} }, { version: 9 }),
-  ]
+  ])
 }
 
 function replace(values: TwinProjection[], next: TwinProjection): TwinProjection[] {
-  return values.map(item => item.key === next.key ? next : item)
+  return signProjections(values.map(item => item.key === next.key ? next : item))
 }
 
 function observation(overrides: Partial<TwinObservation> & Pick<TwinObservation, 'id' | 'metric' | 'value'>): TwinObservation {
@@ -83,12 +100,12 @@ function observation(overrides: Partial<TwinObservation> & Pick<TwinObservation,
 }
 
 async function realProjections(records: TwinObservation[], computedAt = now): Promise<TwinProjection[]> {
-  const { computeHealthProjections, HEALTH_PROJECTION_KEYS } = await import('../../packages/server/src/services/hermes/health-loop')
+  const { computeHealthProjections } = await import('../../packages/server/src/services/hermes/health-loop')
   const computed = computeHealthProjections(records, { computedAt })
-  return HEALTH_PROJECTION_KEYS.map((key, index) => ({
-    key, subjectId: 'person:self', version: index + 1, sourceRecordId: `real-${key}`, updatedAt: computedAt,
+  return signProjections(HEALTH_PROJECTION_KEYS.map((key, index) => ({
+    key, subjectId: 'person:self', version: index + 1, sourceRecordId: 'unsigned', updatedAt: computedAt,
     value: computed[key] as unknown as Record<string, unknown>,
-  }))
+  })))
 }
 
 describe('health-loop cross-domain intervention engine', () => {
@@ -144,18 +161,59 @@ describe('health-loop cross-domain intervention engine', () => {
     })
   })
 
-  it('uses the real Task 8 nutrition totals shape for protein shortage', async () => {
+  it('uses a protein-only real Task 8 observation for shortage and gates on that signal', async () => {
     const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
     const values = await realProjections([
-      observation({ id: 'calories', metric: 'health.diet.calories_kcal', value: 1_800, unit: 'kcal' }),
       observation({ id: 'protein', metric: 'health.diet.protein_g', value: 50, unit: 'g' }),
     ])
     const nutrition = values.find(item => item.key === 'health.nutrition_state')!.value.state as Record<string, unknown>
-    expect(nutrition).toMatchObject({ totals: { calories_kcal: 1_800, protein_g: 50 } })
-    expect(nutrition).not.toHaveProperty('current')
+    expect(nutrition).toMatchObject({
+      current: { protein_g: { value: 50, recordId: 'protein', observedAt: '2026-07-14T08:00:00Z' } },
+      totals: { protein_g: 50 },
+      evidence: { measured: [expect.objectContaining({ recordId: 'protein', confidence: 0.9 })] },
+    })
     expect(decideHealthInterventions({ projections: values, now,
       plan: { resistanceTrainingToday: true, proteinTargetG: 120 } }).primary).toMatchObject({
       id: 'health.nutrition.close_protein_gap', risk: 'low', authority: 'auto',
+    })
+
+    const stale = await realProjections([
+      observation({ id: 'protein-stale', metric: 'health.diet.protein_g', value: 50, unit: 'g' }),
+    ])
+    expect(decideHealthInterventions({ projections: stale, now: '2026-07-16T00:00:01Z',
+      plan: { resistanceTrainingToday: true, proteinTargetG: 120 } }).considered).toContainEqual({
+      id: 'health.nutrition.close_protein_gap', accepted: false, reason: 'source_stale',
+    })
+
+    const lowConfidence = await realProjections([observation({
+      id: 'protein-low-confidence', metric: 'health.diet.protein_g', value: 50, unit: 'g',
+      provenance: { source: 'fixture', sourceId: 'protein-low-confidence', actor: 'fixture', confidence: 0.2,
+        confirmationState: 'observed', evidence: [{ evidenceClass: 'measured' }], schemaVersion: 1 },
+    })])
+    expect(decideHealthInterventions({ projections: lowConfidence, now,
+      plan: { resistanceTrainingToday: true, proteinTargetG: 120 } }).considered).toContainEqual({
+      id: 'health.nutrition.close_protein_gap', accepted: false, reason: 'source_low_confidence',
+    })
+
+    const conflict = await realProjections([
+      observation({ id: 'protein-a', metric: 'health.diet.protein_g', value: 50, unit: 'g' }),
+      observation({ id: 'protein-b', metric: 'health.diet.protein_g', value: 60, unit: 'g' }),
+    ])
+    expect(decideHealthInterventions({ projections: conflict, now,
+      plan: { resistanceTrainingToday: true, proteinTargetG: 120 } }).primary).toBeNull()
+    expect((conflict.find(item => item.key === 'health.nutrition_state')!.value.conflicts as Array<{ metric: string }>))
+      .toContainEqual(expect.objectContaining({ metric: 'health.diet.protein_g' }))
+
+    const conflictGate = replace(projections(), projection('health.nutrition_state', {
+      current: { protein_g: { value: 50, unit: 'g' } }, totals: { protein_g: 50 }, windowHours: 24,
+    }, { freshness: 'conflict', conflicts: [{
+      code: 'VALUE_CONFLICT', metric: 'health.diet.protein_g',
+      recordIds: ['record-health.nutrition_state-protein_g'], recordCount: 1, omittedRecordCount: 0,
+      message: 'fixture protein conflict',
+    }] }))
+    expect(decideHealthInterventions({ projections: conflictGate, now,
+      plan: { resistanceTrainingToday: true, proteinTargetG: 120 } }).considered).toContainEqual({
+      id: 'health.nutrition.close_protein_gap', accepted: false, reason: 'source_conflict',
     })
   })
 
@@ -606,9 +664,33 @@ describe('health-loop cross-domain intervention engine', () => {
     const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
     expect(() => decideHealthInterventions({ projections: projections().slice(0, 8), now })).toThrow('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
     expect(() => decideHealthInterventions({ projections: [...projections(), projections()[0]], now })).toThrow('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
+    expect(() => decideHealthInterventions({ projections: projections().map(item => ({
+      ...item, sourceRecordId: 'health-projection-not-a-sha256',
+    })), now })).toThrow('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
     expect(decideHealthInterventions({ projections: projections(), now })).toEqual(
       decideHealthInterventions({ projections: projections().reverse(), now }),
     )
+  })
+
+  it('rejects cross-batch projection splices and mixed projector rule versions', async () => {
+    const { decideHealthInterventions } = await import('../../packages/server/src/services/hermes/health-loop')
+    const batchA = await realProjections([
+      observation({ id: 'protein-a', metric: 'health.diet.protein_g', value: 50, unit: 'g' }),
+    ])
+    const batchB = await realProjections([
+      observation({ id: 'protein-b', metric: 'health.diet.protein_g', value: 70, unit: 'g' }),
+    ])
+    const bNutrition = batchB.find(item => item.key === 'health.nutrition_state')!
+    const spliced = batchA.map(item => item.key === bNutrition.key ? bNutrition : item)
+    expect(() => decideHealthInterventions({ projections: spliced, now })).toThrow('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
+
+    const forgedCommonSource = spliced.map(item => ({ ...item, sourceRecordId: batchA[0].sourceRecordId }))
+    expect(() => decideHealthInterventions({ projections: forgedCommonSource, now })).toThrow('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
+
+    const mixedRules = batchA.map(item => ({ ...item, value: { ...item.value } }))
+    mixedRules.find(item => item.key === 'health.nutrition_state')!.value.ruleVersion = 'health-rules-fixture-v99'
+    expect(() => decideHealthInterventions({ projections: signProjections(mixedRules), now }))
+      .toThrow('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
   })
 
   it('rejects unsafe freshness ages, future history, and unbounded cooldown windows with defined errors', async () => {

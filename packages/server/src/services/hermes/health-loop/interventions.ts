@@ -4,8 +4,10 @@ import type { TwinProjection } from '../personal-twin'
 import { canonicalizeHealthTimestamp, healthTimestampEpochNanoseconds } from './normalizers'
 import {
   HEALTH_PROJECTION_KEYS,
+  healthProjectionSourceRecordId,
   type HealthProjectionEnvelope,
   type HealthProjectionKey,
+  type HealthProjectionSet,
 } from './projectors'
 import {
   evaluateHealthInterventionRules,
@@ -205,10 +207,12 @@ function normalizeProjections(values: readonly TwinProjection[], nowNs: bigint):
   if (!Array.isArray(values) || values.length !== HEALTH_PROJECTION_KEYS.length) throw new Error('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
   const projections = new Map<HealthProjectionKey, HealthRuleProjection>()
   let snapshotNs: bigint | null = null
+  let sourceRecordId: string | null = null
+  let projectorRuleVersion: string | null = null
   for (const value of values) {
     if (!value || typeof value !== 'object' || Object.keys(value).sort().join(',') !== 'key,sourceRecordId,subjectId,updatedAt,value,version'
       || !PROJECTION_KEY_SET.has(value.key) || value.subjectId !== 'person:self'
-      || typeof value.sourceRecordId !== 'string' || !value.sourceRecordId || value.sourceRecordId.length > 256
+      || typeof value.sourceRecordId !== 'string' || !/^health-projection-[a-f0-9]{64}$/.test(value.sourceRecordId)
       || typeof value.updatedAt !== 'string'
       || !Number.isSafeInteger(value.version) || value.version < 1 || projections.has(value.key as HealthProjectionKey)) {
       throw new Error('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
@@ -216,6 +220,12 @@ function normalizeProjections(values: readonly TwinProjection[], nowNs: bigint):
     const updated = canonicalTimestamp(value.updatedAt, 'HEALTH_INTERVENTION_INVALID_PROJECTIONS')
     const key = value.key as HealthProjectionKey
     const envelope = validateEnvelope(value.value)
+    if ((sourceRecordId !== null && sourceRecordId !== value.sourceRecordId)
+      || (projectorRuleVersion !== null && projectorRuleVersion !== envelope.ruleVersion)) {
+      throw new Error('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
+    }
+    sourceRecordId = value.sourceRecordId
+    projectorRuleVersion = envelope.ruleVersion
     const computed = canonicalTimestamp(envelope.computedAt, 'HEALTH_INTERVENTION_INVALID_PROJECTION')
     if (computed.nanoseconds > nowNs || updated.nanoseconds > nowNs) throw new Error('HEALTH_INTERVENTION_FUTURE_SNAPSHOT')
     if (computed.nanoseconds !== updated.nanoseconds || (snapshotNs !== null && snapshotNs !== computed.nanoseconds)) {
@@ -230,6 +240,8 @@ function normalizeProjections(values: readonly TwinProjection[], nowNs: bigint):
     if (!item) throw new Error('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
     versions[key] = item.version
   }
+  const projectionSet = Object.fromEntries(HEALTH_PROJECTION_KEYS.map(key => [key, projections.get(key)!.envelope])) as HealthProjectionSet
+  if (sourceRecordId !== healthProjectionSourceRecordId(projectionSet)) throw new Error('HEALTH_INTERVENTION_INVALID_PROJECTIONS')
   return { projections, versions }
 }
 

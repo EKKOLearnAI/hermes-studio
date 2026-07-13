@@ -359,6 +359,29 @@ describe('health-loop deterministic projectors', () => {
     expect(empty['health.readiness_state'].missing.length).toBeGreaterThan(0)
   })
 
+  it('persists and decides from a protein-only batch while preserving signal evidence', async () => {
+    const health = await import('../../packages/server/src/services/hermes/health-loop')
+    const twin = await import('../../packages/server/src/services/hermes/personal-twin')
+    twin.upsertTwinEntity({ id: 'person:self', type: 'person', label: 'Self', source: 'system', sourceId: 'self' })
+    const values = health.computeHealthProjections([
+      observation({ id: 'protein-only', metric: 'health.diet.protein_g', value: 50, unit: 'g' }),
+    ], { computedAt })
+    expect(values['health.nutrition_state'].state).toMatchObject({
+      current: { protein_g: { value: 50, recordId: 'protein-only', observedAt: '2026-07-14T08:00:00Z' } },
+      totals: { protein_g: 50 },
+      evidence: { measured: [expect.objectContaining({ recordId: 'protein-only', confidence: 0.9 })] },
+    })
+
+    const persisted = health.persistHealthProjections(values)
+    expect(new Set(persisted.map(item => item.sourceRecordId))).toEqual(new Set([
+      health.healthProjectionSourceRecordId(values),
+    ]))
+    expect(health.decideHealthInterventions({
+      projections: [...persisted].reverse(), now: computedAt,
+      plan: { resistanceTrainingToday: true, proteinTargetG: 120 },
+    }).primary).toMatchObject({ id: 'health.nutrition.close_protein_gap', authority: 'auto' })
+  })
+
   it('atomically CAS-persists nine live projections, rolls back conflicts, and skips historical replay writes', async () => {
     const health = await import('../../packages/server/src/services/hermes/health-loop')
     const twin = await import('../../packages/server/src/services/hermes/personal-twin')
