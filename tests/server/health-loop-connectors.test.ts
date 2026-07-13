@@ -371,6 +371,16 @@ describe('health-loop connectors', () => {
     })
     expect(await opaque.status()).toMatchObject({ health: 'healthy', cursor: 'vendor/page+7==' })
 
+    const rfcOpaquePath = join(root, 'rfc-opaque-state.json')
+    const rfcLookingToken = '2026-07-14T00:00:00Z'
+    await writeFile(rfcOpaquePath, JSON.stringify({ version: 1, connectors: { 'rfc-opaque': {
+      health: 'healthy', lastAttemptAt: '2026-07-13T01:00:00Z', cursor: rfcLookingToken,
+    } } }), 'utf8')
+    const rfcOpaque = createManagedHealthConnector({
+      stateStore: new FileHealthConnectorStateStore(rfcOpaquePath), ingest: () => ({} as never), source: { id: 'rfc-opaque', ...sourceBase },
+    })
+    expect(await rfcOpaque.status()).toMatchObject({ health: 'healthy', cursor: rfcLookingToken })
+
     const timestampPath = join(root, 'timestamp-state.json')
     await writeFile(timestampPath, JSON.stringify({ version: 1, connectors: { timestamp: {
       health: 'healthy', lastAttemptAt: '2026-07-13T01:00:00Z', cursor: createConnectorCursor('2026-07-13T02:00:00Z', 'future'),
@@ -380,6 +390,16 @@ describe('health-loop connectors', () => {
       source: { id: 'timestamp', cursorKind: 'timestamp', ...sourceBase },
     })
     expect(await timestamp.status()).toMatchObject({ health: 'unavailable', errorCode: 'CONNECTOR_STATE_CORRUPT' })
+
+    const rawTimestampPath = join(root, 'raw-timestamp-state.json')
+    await writeFile(rawTimestampPath, JSON.stringify({ version: 1, connectors: { 'raw-timestamp': {
+      health: 'healthy', lastAttemptAt: '2026-07-13T01:00:00Z', cursor: rfcLookingToken,
+    } } }), 'utf8')
+    const rawTimestamp = createManagedHealthConnector({
+      stateStore: new FileHealthConnectorStateStore(rawTimestampPath), ingest: () => ({} as never),
+      source: { id: 'raw-timestamp', cursorKind: 'timestamp', ...sourceBase },
+    })
+    expect(await rawTimestamp.status()).toMatchObject({ health: 'unavailable', errorCode: 'CONNECTOR_STATE_CORRUPT' })
   })
 
   it('distinguishes provider status failure from corrupt local state without leaking details', async () => {

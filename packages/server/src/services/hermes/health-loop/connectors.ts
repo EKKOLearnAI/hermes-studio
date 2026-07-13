@@ -294,7 +294,7 @@ export function createConnectorCursor(observedAt: string, sourceId: string): str
 export function compareEnvelopeCursor(envelope: HealthIngestionEnvelope, cursor: string): number {
   const [cursorTime, cursorSource] = decodeTimestampCursor(cursor)
   const timeOrder = compareTimestampInstants(validateTimestamp(envelope.observedAt), cursorTime)
-  return timeOrder || Buffer.compare(Buffer.from(envelope.sourceId, 'utf8'), Buffer.from(cursorSource, 'utf8'))
+  return timeOrder || (cursorSource ? Buffer.compare(Buffer.from(envelope.sourceId, 'utf8'), Buffer.from(cursorSource, 'utf8')) : 0)
 }
 
 export function compareHealthEnvelopeOrder(left: HealthIngestionEnvelope, right: HealthIngestionEnvelope): number {
@@ -350,10 +350,6 @@ function validateState(value: unknown): asserts value is PersistedConnectorState
   if (!attempt && (success || freshness.length > 0)) throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
   if (attempt && success && compareTimestampInstants(success, attempt) > 0) throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
   if (attempt && freshness.some(timestamp => compareTimestampInstants(timestamp, attempt) > 0)) throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
-  if (attempt && typeof value.cursor === 'string' && RFC3339.test(value.cursor)) {
-    validateTimestamp(value.cursor, 'CONNECTOR_STATE_CORRUPT')
-    if (compareTimestampInstants(value.cursor, attempt) > 0) throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
-  }
   if (value.errorCode !== undefined && (typeof value.errorCode !== 'string' || !ERROR_CODE.test(value.errorCode))) {
     throw new HealthConnectorError('CONNECTOR_STATE_CORRUPT')
   }
@@ -407,6 +403,7 @@ function validateCursor(cursor: string, errorCode = 'CONNECTOR_INVALID_CURSOR'):
 
 function decodeTimestampCursor(cursor: string, errorCode = 'CONNECTOR_INVALID_CURSOR'): [string, string] {
   validateCursor(cursor, errorCode)
+  if (RFC3339.test(cursor)) return [validateTimestamp(cursor, errorCode), '']
   try {
     const decodedBuffer = Buffer.from(cursor, 'base64url')
     if (decodedBuffer.toString('base64url') !== cursor) throw new Error('non-canonical cursor')
@@ -465,8 +462,7 @@ function cursorTimestamp(cursor: string): string {
 
 function comparableCursorTimestamp(cursor: string, kind: ManagedConnectorSource['cursorKind']): string | undefined {
   if (kind === 'timestamp') return cursorTimestamp(cursor)
-  if (!RFC3339.test(cursor)) return undefined
-  return validateTimestamp(cursor)
+  return undefined
 }
 
 function timestampNanoseconds(value: string): bigint {
