@@ -9,7 +9,8 @@ const api = vi.hoisted(() => ({
   submitHealthInterventionFeedback: vi.fn(), updateHealthLoopSettings: vi.fn(),
 }))
 vi.mock('@/api/hermes/health-loop', () => api)
-import { issueHealthConsent, requestHealthArtifactAnalysis, useHealthLoopStore } from '@/stores/hermes/health-loop'
+import { issueHealthConsent, requestHealthArtifactAnalysis, uploadHealthArtifact,
+  useHealthLoopStore } from '@/stores/hermes/health-loop'
 
 function deferred<T>() { let resolve!: (value:T)=>void; let reject!: (reason:unknown)=>void
   const promise = new Promise<T>((yes,no)=>{resolve=yes;reject=no}); return { promise, resolve, reject } }
@@ -100,6 +101,25 @@ describe('health loop store', () => {
     expect(api.fetchHealthLoopSettings).toHaveBeenCalledTimes(1)
     expect(api.fetchHealthLoopOverview).toHaveBeenCalledTimes(2)
     expect(api.fetchHealthInterventions).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps raw health files and metadata outside the Pinia action surface and state', async () => {
+    const artifact = { id: `artifact-${'a'.repeat(64)}`, manifestDigest: 'b'.repeat(64) }
+    api.createHealthArtifact.mockResolvedValue(artifact)
+    const store = useHealthLoopStore()
+    const file = new File(['private-health-content'], 'private-report.pdf', { type: 'application/pdf' })
+    const input = { file, filename: 'private-report.pdf', sourceId: 'manual-upload',
+      metadata: { notes: ['private-health-note'] } }
+
+    expect('createArtifact' in store).toBe(false)
+    await expect(uploadHealthArtifact(input)).resolves.toEqual(artifact)
+
+    expect(api.createHealthArtifact).toHaveBeenCalledWith(input)
+    expect(Object.keys(store)).not.toContain('createArtifact')
+    const state = JSON.stringify(store.$state)
+    expect(state).not.toContain('private-health-content')
+    expect(state).not.toContain('private-report.pdf')
+    expect(state).not.toContain('private-health-note')
   })
 
   it('reloads authoritative views after feedback, revoke, and settings writes and returns own payload', async () => {

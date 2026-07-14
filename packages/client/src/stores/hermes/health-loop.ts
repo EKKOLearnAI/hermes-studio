@@ -2,7 +2,7 @@ import { computed, onScopeDispose, ref } from 'vue'
 import { defineStore } from 'pinia'
 import * as api from '@/api/hermes/health-loop'
 import type { AnalyzeHealthArtifactInput, CreateHealthArtifactInput, CreateHealthConsentInput,
-  HealthActionResponseDto, HealthConnectorDto, HealthConsentGrantDto, HealthFeedbackInput,
+  HealthActionResponseDto, HealthArtifactDto, HealthConnectorDto, HealthConsentGrantDto, HealthFeedbackInput,
   HealthInterventionDto, HealthInterventionQuery,
   HealthLoopOverviewDto, HealthSettingsDto, SyncHealthConnectorInput,
   UpdateHealthLoopSettingsInput } from '@/api/hermes/health-loop'
@@ -29,6 +29,10 @@ export async function requestHealthArtifactAnalysis(store:HealthLoopSecretReload
   return result
 }
 
+export function uploadHealthArtifact(input:CreateHealthArtifactInput):Promise<HealthArtifactDto>{
+  return api.createHealthArtifact(input)
+}
+
 export const useHealthLoopStore=defineStore('health-loop',()=>{
   const overview=ref<HealthLoopOverviewDto|null>(null)
   const connectors=ref<HealthConnectorDto[]>([])
@@ -44,7 +48,7 @@ export const useHealthLoopStore=defineStore('health-loop',()=>{
   const error=computed(()=>resourceErrors.value.overview??resourceErrors.value.connectors??
     resourceErrors.value.interventions??resourceErrors.value.settings??mutationError.value)
   const loading=computed(()=>activeLoads.value>0), saving=computed(()=>activeSaves.value>0)
-  let generation=0, mutationErrorSequence=0, selectionGeneration=0, independentMutationSequence=0
+  let generation=0, mutationErrorSequence=0, selectionGeneration=0
   const sequences={overview:0,connectors:0,interventions:0,settings:0}
   const queues=new Map<string,Promise<unknown>>()
 
@@ -69,7 +73,6 @@ export const useHealthLoopStore=defineStore('health-loop',()=>{
   }
 
   function syncConnector(id:string,input:SyncHealthConnectorInput){return mutate(`sync:${id}`,()=>api.syncHealthConnector(id,input),async()=>refresh([loadConnectors(),loadOverview()]))}
-  function createArtifact(input:CreateHealthArtifactInput){return mutate(`artifact-upload:${++independentMutationSequence}`,()=>api.createHealthArtifact(input),async()=>undefined)}
   function revokeConsent(id:string){return mutate(`consent:${id}`,()=>api.revokeHealthConsent(id),async()=>refresh([loadSettings(),loadOverview()]))}
   function submitFeedback(id:string,input:HealthFeedbackInput){return mutate(`feedback:${id}`,()=>api.submitHealthInterventionFeedback(id,input),async()=>refresh([loadInterventions(),loadOverview()]))}
   function updateSettings(input:UpdateHealthLoopSettingsInput){return mutate('settings',()=>api.updateHealthLoopSettings(input),async()=>refresh([loadSettings(),loadOverview(),loadConnectors()]))}
@@ -77,6 +80,6 @@ export const useHealthLoopStore=defineStore('health-loop',()=>{
   function reset(){generation++;mutationErrorSequence++;selectionGeneration++;for(const key of Object.keys(sequences) as Array<keyof typeof sequences>)sequences[key]++;overview.value=null;connectors.value=[];interventions.value=[];settings.value=null;selectedInterventionId.value=null;activeLoads.value=0;activeSaves.value=0;resourceErrors.value={overview:null,connectors:null,interventions:null,settings:null};mutationError.value=null;queues.clear()}
   onScopeDispose(()=>{generation++;mutationErrorSequence++;selectionGeneration++;for(const key of Object.keys(sequences) as Array<keyof typeof sequences>)sequences[key]++;queues.clear()})
   return {overview,connectors,interventions,settings,selectedInterventionId,selectedIntervention,loading,saving,error,resourceErrors,
-    loadOverview,loadConnectors,loadInterventions,loadSettings,selectIntervention,syncConnector,createArtifact,
+    loadOverview,loadConnectors,loadInterventions,loadSettings,selectIntervention,syncConnector,
     revokeConsent,submitFeedback,updateSettings,$reset:reset}
 })
