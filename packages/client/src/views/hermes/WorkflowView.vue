@@ -2263,7 +2263,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
           <input ref="workflowImportInputRef" class="workflow-import-input" type="file" accept="application/json,.json" @change="handleWorkflowImport" />
           <NTooltip v-if="!selectedWorkflowRunId" trigger="hover">
             <template #trigger>
-              <NButton quaternary size="small" circle :disabled="!activeWorkflowId" :aria-label="t('workflow.actions.exportWorkflow')" @click="exportActiveWorkflow">
+              <NButton quaternary size="small" circle :aria-label="t('workflow.actions.importWorkflow')" @click="openWorkflowImport">
                 <template #icon>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M12 16V5" />
@@ -2273,11 +2273,11 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
                 </template>
               </NButton>
             </template>
-            {{ t('workflow.actions.exportWorkflow') }}
+            {{ t('workflow.actions.importWorkflow') }}
           </NTooltip>
           <NTooltip v-if="!selectedWorkflowRunId" trigger="hover">
             <template #trigger>
-              <NButton quaternary size="small" circle :aria-label="t('workflow.actions.importWorkflow')" @click="openWorkflowImport">
+              <NButton quaternary size="small" circle :disabled="!activeWorkflowId" :aria-label="t('workflow.actions.exportWorkflow')" @click="exportActiveWorkflow">
                 <template #icon>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M12 3v11" />
@@ -2287,7 +2287,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
                 </template>
               </NButton>
             </template>
-            {{ t('workflow.actions.importWorkflow') }}
+            {{ t('workflow.actions.exportWorkflow') }}
           </NTooltip>
           <NTooltip v-if="!selectedWorkflowRunId" trigger="hover">
             <template #trigger>
