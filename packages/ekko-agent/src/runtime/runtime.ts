@@ -284,13 +284,20 @@ export class AgentRuntime {
     const normalized = normalizeAgentMessages(input.messages)
     const userSystemMessages = normalized.filter(message => message.role === 'system').map(message => message.content)
     const nonSystemMessages = normalized.filter(message => message.role !== 'system')
+    const modelClient = this.modelClientFor(input)
+    const toolContext = input.toolContext ?? this.toolContext
     const systemPrompt = buildSystemPrompt({
       basePrompt: input.systemPrompt ?? this.systemPrompt,
       runtimeInstructions: this.runtimeInstructions,
       userSystemMessages,
       skills,
       memoryContext,
-      context: input.toolContext ?? this.toolContext,
+      context: {
+        provider: modelClient.provider,
+        model: input.model ?? input.modelDefaults?.model ?? this.modelDefaults?.model,
+        cwd: toolContext?.cwd,
+        workspaceRoot: toolContext?.workspaceRoot,
+      },
     })
 
     return [
