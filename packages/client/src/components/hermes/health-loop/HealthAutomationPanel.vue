@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { HealthSettingsDto } from '@/api/hermes/health-loop'
 
-const props = defineProps<{ settings: HealthSettingsDto | null }>()
+const props = withDefaults(defineProps<{ settings: HealthSettingsDto | null; busy?: boolean }>(), { busy: false })
 const emit = defineEmits<{ 'set-live': [enabled: boolean] }>()
 const { t } = useI18n()
 const confirmation = ref('')
@@ -30,13 +30,14 @@ watch(live, () => { confirmation.value = '' })
         v-model="confirmation"
         data-test="live-confirmation-input"
         autocomplete="off"
+        :disabled="busy"
         :placeholder="LIVE_CONFIRMATION"
       >
-      <button type="button" data-test="enable-live-weixin" :disabled="!confirmed" @click="emit('set-live', true)">
+      <button type="button" data-test="enable-live-weixin" :disabled="busy || !confirmed" @click="emit('set-live', true)">
         {{ t('health.loop.automation.liveWeixin') }}
       </button>
     </template>
-    <button v-else type="button" class="secondary" data-test="disable-live-weixin" @click="emit('set-live', false)">
+    <button v-else type="button" class="secondary" data-test="disable-live-weixin" :disabled="busy" @click="emit('set-live', false)">
       {{ t('health.loop.automation.returnShadow') }}
     </button>
   </section>

@@ -8,10 +8,11 @@ export type HealthCommandAction =
   | { kind: 'capture' }
   | { kind: 'review' }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   connectors: HealthConnectorDto[]
   activeInterventionCount: number
-}>()
+  busy?: boolean
+}>(), { busy: false })
 const emit = defineEmits<{ action: [action: HealthCommandAction] }>()
 const { t } = useI18n()
 
@@ -67,6 +68,7 @@ function actionLabel(action: HealthCommandAction): string {
       class="primary"
       type="button"
       data-test="primary-health-action"
+      :disabled="busy"
       :aria-label="actionLabel(primaryAction)"
       @click="emit('action', primaryAction)"
     >
@@ -79,6 +81,7 @@ function actionLabel(action: HealthCommandAction): string {
         :key="actionKey(action)"
         type="button"
         data-test="alternative-health-action"
+        :disabled="busy"
         @click="emit('action', action)"
       >
         {{ actionLabel(action) }}

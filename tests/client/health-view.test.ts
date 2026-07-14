@@ -3,6 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
+}
+
 const healthOverview = vi.hoisted(() => ({
   generatedAt: '2026-06-21T16:00:00Z',
   profile: 'default',
@@ -143,10 +150,11 @@ const healthLoopStore = vi.hoisted(() => ({
   settings: { subjectId: 'self', liveDeliveryEnabled: false, profile: 'default', recipient: 'configured-self', configuredConnectors: ['xiaomi-s400'], configuredProcessors: ['health-parser'], version: 1, updatedAt: '2026-07-14T08:00:00Z' },
   loading: false, saving: false, error: null,
   loadOverview: vi.fn(), loadConnectors: vi.fn(), loadInterventions: vi.fn(), loadSettings: vi.fn(),
-  syncConnector: vi.fn(), createArtifact: vi.fn(), submitFeedback: vi.fn(), updateSettings: vi.fn(),
+  syncConnector: vi.fn(), submitFeedback: vi.fn(), updateSettings: vi.fn(),
 }))
 const issueHealthConsent = vi.hoisted(() => vi.fn())
 const requestHealthArtifactAnalysis = vi.hoisted(() => vi.fn())
+const uploadHealthArtifact = vi.hoisted(() => vi.fn())
 const actionFabricApi = vi.hoisted(() => ({
   fetchActionWorkflow: vi.fn(), approveActionWorkflow: vi.fn(), rejectActionWorkflow: vi.fn(),
   cancelActionWorkflow: vi.fn(), retryActionWorkflow: vi.fn(), compensateActionWorkflow: vi.fn(),
@@ -160,6 +168,7 @@ vi.mock('@/stores/hermes/health-loop', () => ({
   useHealthLoopStore: () => healthLoopStore,
   issueHealthConsent,
   requestHealthArtifactAnalysis,
+  uploadHealthArtifact,
 }))
 
 vi.mock('@/api/hermes/action-fabric', () => actionFabricApi)
@@ -220,7 +229,10 @@ describe('HealthView', () => {
     healthLoopStore.loadConnectors.mockResolvedValue(healthLoopStore.connectors)
     healthLoopStore.loadInterventions.mockResolvedValue(healthLoopStore.interventions)
     healthLoopStore.loadSettings.mockResolvedValue(healthLoopStore.settings)
-    healthLoopStore.createArtifact.mockResolvedValue({ id: 'artifact-1', manifestDigest: 'digest-1' })
+    uploadHealthArtifact.mockResolvedValue({ id: 'artifact-1', manifestDigest: 'digest-1' })
+    healthLoopStore.syncConnector.mockResolvedValue({ workflow: { id: 'sync-wf', state: 'executing', version: 1, availableActions: { approve: false, reject: false, cancel: true, retry: false, compensate: false } } })
+    healthLoopStore.submitFeedback.mockResolvedValue({ feedbackId: 'feedback-1' })
+    healthLoopStore.updateSettings.mockResolvedValue({ ...healthLoopStore.settings, version: 2 })
     actionFabricApi.fetchActionWorkflow.mockResolvedValue({
       id: 'wf1', state: 'waiting_user', version: 2,
       availableActions: { approve: true, reject: true, cancel: false, retry: false, compensate: false },
@@ -353,9 +365,10 @@ describe('HealthView', () => {
     await wrapper.find('[data-test="capture-submit"]').trigger('click')
     await flushPromises()
 
-    expect(healthLoopStore.createArtifact).toHaveBeenCalledWith(expect.objectContaining({
+    expect(uploadHealthArtifact).toHaveBeenCalledWith(expect.objectContaining({
       metadata: { healthAnalysis: expect.objectContaining({ requestedFields: ['weightKg', 'bodyFatPercent'] }) },
     }))
+    expect('createArtifact' in healthLoopStore).toBe(false)
     const dialog = wrapper.find('[data-test="health-consent-dialog"]')
     expect(dialog.text()).toContain('weightKg')
     expect(dialog.text()).toContain('bodyFatPercent')
@@ -364,6 +377,60 @@ describe('HealthView', () => {
     expect(issueHealthConsent).toHaveBeenCalledWith(healthLoopStore, {
       manifest: expect.objectContaining({ requestedFields: ['weightKg', 'bodyFatPercent'] }),
     })
+  })
+
+  it('single-flights conflicting side effects and disables every action until each request settles', async () => {
+    const upload = deferred<any>()
+    uploadHealthArtifact.mockReturnValueOnce(upload.promise)
+    const wrapper = mount(HealthView)
+    await flushPromises()
+
+    const fileInput = wrapper.find<HTMLInputElement>('[data-test="capture-file-input"]')
+    Object.defineProperty(fileInput.element, 'files', {
+      configurable: true,
+      value: [new File(['report'], 'health-report.txt', { type: 'text/plain' })],
+    })
+    await fileInput.trigger('change')
+    await wrapper.find('[data-test="extracted-value-weightKg"]').setValue('82.4 kg')
+    await wrapper.find('[data-test="live-confirmation-input"]').setValue('LIVE WEIXIN')
+
+    const capture = wrapper.find('[data-test="capture-submit"]')
+    const feedback = wrapper.find('[data-test="feedback-completed"]')
+    const approve = wrapper.find('[data-test="workflow-action-approve"]')
+    await Promise.all([capture.trigger('click'), capture.trigger('click'), feedback.trigger('click'), approve.trigger('click')])
+    expect(uploadHealthArtifact).toHaveBeenCalledTimes(1)
+    expect(healthLoopStore.submitFeedback).not.toHaveBeenCalled()
+    expect(actionFabricApi.approveActionWorkflow).not.toHaveBeenCalled()
+
+    const actionSelectors = [
+      '[data-test="primary-health-action"]', '[data-test="alternative-health-action"]',
+      '[data-test="enable-live-weixin"]', '[data-test^="workflow-action-"]',
+      '[data-test^="feedback-"]', '[data-test="capture-submit"]',
+    ]
+    for (const selector of actionSelectors) {
+      for (const button of wrapper.findAll<HTMLButtonElement>(selector)) expect(button.element.disabled).toBe(true)
+    }
+
+    upload.resolve({ id: 'artifact-1', manifestDigest: 'digest-1' })
+    await flushPromises()
+    const consentRequest = deferred<any>()
+    issueHealthConsent.mockReturnValueOnce(consentRequest.promise)
+    const confirm = wrapper.find('[data-test="consent-confirm"]')
+    await Promise.all([confirm.trigger('click'), confirm.trigger('click'), feedback.trigger('click')])
+    expect(issueHealthConsent).toHaveBeenCalledTimes(1)
+    expect(healthLoopStore.submitFeedback).not.toHaveBeenCalled()
+    expect(wrapper.find<HTMLButtonElement>('[data-test="consent-confirm"]').element.disabled).toBe(true)
+    expect(wrapper.find<HTMLButtonElement>('[data-test="consent-cancel"]').element.disabled).toBe(true)
+    for (const selector of actionSelectors) {
+      for (const button of wrapper.findAll<HTMLButtonElement>(selector)) expect(button.element.disabled).toBe(true)
+    }
+
+    consentRequest.resolve({ consentId: 'consent-1', token: 'secret-token' })
+    await flushPromises()
+    expect(requestHealthArtifactAnalysis).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-test="health-consent-dialog"]').exists()).toBe(false)
+    expect(wrapper.find<HTMLButtonElement>('[data-test="primary-health-action"]').element.disabled).toBe(false)
+    expect(wrapper.find<HTMLButtonElement>('[data-test="enable-live-weixin"]').element.disabled).toBe(false)
   })
 
   it('falls back to default profile when profile refresh fails', async () => {

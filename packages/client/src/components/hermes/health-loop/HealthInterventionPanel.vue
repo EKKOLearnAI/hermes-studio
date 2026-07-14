@@ -3,10 +3,11 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { HealthActionResponseDto, HealthFeedbackOutcome, HealthInterventionDto } from '@/api/hermes/health-loop'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   interventions: HealthInterventionDto[]
   workflow?: HealthActionResponseDto['workflow'] | null
-}>()
+  busy?: boolean
+}>(), { workflow: null, busy: false })
 const emit = defineEmits<{
   feedback: [payload: { interventionId: string; outcome: HealthFeedbackOutcome }]
   'workflow-action': [action: keyof HealthActionResponseDto['workflow']['availableActions']]
@@ -40,6 +41,7 @@ const feedbackActions: HealthFeedbackOutcome[] = ['completed', 'partial', 'defer
           type="button"
           :data-test="`workflow-action-${action}`"
           :aria-label="t(`health.loop.workflow.actions.${action}`)"
+          :disabled="busy"
           @click="emit('workflow-action', action)"
         >
           {{ t(`health.loop.workflow.actions.${action}`) }}
@@ -59,6 +61,7 @@ const feedbackActions: HealthFeedbackOutcome[] = ['completed', 'partial', 'defer
           :key="outcome"
           type="button"
           :data-test="`feedback-${outcome}`"
+          :disabled="busy"
           @click="emit('feedback', { interventionId: item.interventionId, outcome })"
         >
           {{ t(`health.loop.feedback.${outcome}`) }}

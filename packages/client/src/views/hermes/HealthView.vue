@@ -15,6 +15,7 @@ import { useProfilesStore } from '@/stores/hermes/profiles'
 import {
   issueHealthConsent,
   requestHealthArtifactAnalysis,
+  uploadHealthArtifact,
   useHealthLoopStore,
 } from '@/stores/hermes/health-loop'
 import type {
@@ -256,6 +257,7 @@ function toHealthWorkflow(workflow: HealthActionResponseDto['workflow']): Health
 }
 
 async function handleHealthCommand(action: HealthCommandAction) {
+  if (loopActionBusy.value) return
   if (action.kind === 'capture') {
     document.querySelector<HTMLInputElement>('[data-test="capture-file-input"]')?.focus()
     return
@@ -272,12 +274,13 @@ async function handleHealthCommand(action: HealthCommandAction) {
 }
 
 async function handleCapture(payload: { file: File; sourceId: string; processorId: string; extractedValues: Record<string, string | number> }) {
+  if (loopActionBusy.value) return
   const fields = Object.entries(payload.extractedValues)
     .filter(([, value]) => typeof value === 'number' || value.trim().length > 0)
     .map(([field]) => field)
   if (!fields.length) return
   await runLoopAction(async () => {
-    const artifact = await healthLoopStore.createArtifact({
+    const artifact = await uploadHealthArtifact({
       file: payload.file,
       filename: payload.file.name,
       sourceId: payload.sourceId,
@@ -297,6 +300,7 @@ async function handleCapture(payload: { file: File; sourceId: string; processorI
 }
 
 async function confirmAnalysis(manifest: HealthConsentManifestDto) {
+  if (loopActionBusy.value) return
   const pending = pendingAnalysis.value
   if (!pending) return
   workflowRecoverySequence += 1
@@ -317,6 +321,7 @@ async function confirmAnalysis(manifest: HealthConsentManifestDto) {
 }
 
 async function submitInterventionFeedback(payload: { interventionId: string; outcome: HealthFeedbackOutcome }) {
+  if (loopActionBusy.value) return
   await runLoopAction(() => healthLoopStore.submitFeedback(payload.interventionId, {
     feedbackId: `health-ui-${Date.now()}`,
     outcome: payload.outcome,
@@ -325,6 +330,7 @@ async function submitInterventionFeedback(payload: { interventionId: string; out
 }
 
 async function setLiveDelivery(enabled: boolean) {
+  if (loopActionBusy.value) return
   const settings = healthLoopStore.settings
   if (!settings) return
   await runLoopAction(() => healthLoopStore.updateSettings({
@@ -335,6 +341,7 @@ async function setLiveDelivery(enabled: boolean) {
 }
 
 async function runWorkflowAction(action: ActionWorkflowAction) {
+  if (loopActionBusy.value) return
   const workflow = latestHealthWorkflow.value
   if (!workflow?.availableActions?.[action]) return
   workflowRecoverySequence += 1
@@ -349,6 +356,7 @@ async function runWorkflowAction(action: ActionWorkflowAction) {
 }
 
 async function runLoopAction(action: () => Promise<unknown>) {
+  if (loopActionBusy.value) return
   loopActionBusy.value = true
   try {
     await action()
@@ -523,16 +531,19 @@ function percentText(value: unknown): string {
         <HealthReadinessPanel
           :connectors="healthLoopStore.connectors"
           :active-intervention-count="activeInterventionCount"
+          :busy="loopActionBusy"
           @action="handleHealthCommand"
         />
         <HealthAutomationPanel
           :settings="healthLoopStore.settings"
+          :busy="loopActionBusy"
           @set-live="setLiveDelivery"
         />
         <HealthDomainStatusGrid :connectors="healthLoopStore.connectors" />
         <HealthInterventionPanel
           :interventions="healthLoopStore.interventions"
           :workflow="latestHealthWorkflow"
+          :busy="loopActionBusy"
           @feedback="submitInterventionFeedback"
           @workflow-action="runWorkflowAction"
         />

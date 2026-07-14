@@ -55,12 +55,13 @@ function submit() {
         data-test="capture-file-input"
         :aria-label="t('health.loop.capture.fileLabel')"
         accept=".json,.csv,.txt,.pdf,image/*"
+        :disabled="busy"
         @change="selectFile"
       >
     </label>
     <label>
       <span>{{ t('health.loop.capture.processorLabel') }}</span>
-      <select v-model="processorId" data-test="capture-processor">
+      <select v-model="processorId" data-test="capture-processor" :disabled="busy">
         <option value="" disabled>{{ t('health.loop.capture.selectProcessor') }}</option>
         <option v-for="processor in processors" :key="processor" :value="processor">{{ processor }}</option>
       </select>
@@ -76,6 +77,7 @@ function submit() {
               v-model="editableValues[key]"
               :data-test="`extracted-value-${key}`"
               :aria-label="String(key)"
+              :disabled="busy"
             >
           </dd>
         </template>
