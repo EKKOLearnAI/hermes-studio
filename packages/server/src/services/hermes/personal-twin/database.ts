@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 import { TWIN_DOMAINS } from './types'
 
-const SCHEMA_VERSION = 7
+const SCHEMA_VERSION = 8
 const RESERVATION_TABLE_SQL = `CREATE TABLE twin_artifact_consent_reservations (
   reservation_id TEXT PRIMARY KEY
     CHECK(length(reservation_id) BETWEEN 48 AND 64 AND reservation_id GLOB 'reservation-*'
@@ -26,6 +26,8 @@ const REQUIRED_TWIN_TABLES = [
   'twin_entities', 'twin_events', 'twin_goals', 'twin_import_runs', 'twin_meta',
   'twin_observations', 'twin_outbox', 'twin_preference_operations', 'twin_preferences', 'twin_projections',
   'twin_relations', 'twin_role_profile_mappings',
+  'twin_health_actions', 'twin_health_automation_settings', 'twin_health_executor_ledger',
+  'twin_health_followups', 'twin_health_outbox_deliveries', 'twin_health_plans',
 ]
 
 export function getPersonalTwinDbPath(): string {
@@ -90,6 +92,10 @@ export function initPersonalTwinSchema(db: DatabaseSync): void {
     if (version < 7) {
       createSchemaV7(db)
       setSchemaVersion(db, 7)
+    }
+    if (version < 8) {
+      createSchemaV8(db)
+      setSchemaVersion(db, 8)
     }
     normalizeLegacyArtifactSourceIndex(db)
     assertSchemaComplete(db, SCHEMA_VERSION)
@@ -190,6 +196,7 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
     || reservationForeignKeys[0].match !== 'NONE') {
     throw new Error(`Personal Twin schema version ${version} is incomplete: consent reservation foreign key signature is invalid`)
   }
+  assertHealthRuntimeSchema(db, version)
 }
 
 interface ColumnInfo { name: string; type: string; notnull: number; pk: number; dflt_value: string | null }
@@ -540,6 +547,217 @@ function createSchemaV7(db: DatabaseSync): void {
       ON twin_artifact_consent_reservations(processor,expires_at,consumed_at);
   `)
   probeReservationChecks(db)
+}
+
+function createSchemaV8(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS twin_health_automation_settings (
+      subject_id TEXT PRIMARY KEY REFERENCES twin_entities(id),
+      live_delivery_enabled INTEGER NOT NULL DEFAULT 0 CHECK(live_delivery_enabled IN (0,1)),
+      profile TEXT NOT NULL CHECK(length(profile) BETWEEN 1 AND 100),
+      recipient TEXT NOT NULL CHECK(recipient='configured-self'),
+      configured_connectors_json TEXT NOT NULL DEFAULT '[]'
+        CHECK(json_valid(configured_connectors_json) AND json_type(configured_connectors_json)='array'
+          AND length(CAST(configured_connectors_json AS BLOB)) <= 4096),
+      configured_processors_json TEXT NOT NULL DEFAULT '[]'
+        CHECK(json_valid(configured_processors_json) AND json_type(configured_processors_json)='array'
+          AND length(CAST(configured_processors_json AS BLOB)) <= 4096),
+      version INTEGER NOT NULL CHECK(version >= 1),
+      actor_user_id TEXT NOT NULL CHECK(length(actor_user_id) BETWEEN 1 AND 160),
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS twin_health_outbox_deliveries (
+      consumer_id TEXT NOT NULL CHECK(length(consumer_id) BETWEEN 1 AND 100),
+      outbox_id TEXT NOT NULL REFERENCES twin_outbox(id),
+      status TEXT NOT NULL CHECK(status IN ('leased','completed','dead_letter')),
+      attempts INTEGER NOT NULL CHECK(attempts BETWEEN 1 AND 16),
+      lease_owner TEXT CHECK(lease_owner IS NULL OR length(lease_owner) BETWEEN 1 AND 100),
+      lease_until TEXT,
+      last_error_code TEXT CHECK(last_error_code IS NULL OR (length(last_error_code) BETWEEN 2 AND 128
+        AND last_error_code NOT GLOB '*[^A-Z0-9_]*')),
+      intent_id TEXT,
+      workflow_id TEXT,
+      completed_at TEXT,
+      PRIMARY KEY(consumer_id,outbox_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_twin_health_outbox_delivery_claim
+      ON twin_health_outbox_deliveries(consumer_id,status,lease_until);
+    CREATE TABLE IF NOT EXISTS twin_health_actions (
+      action_id TEXT PRIMARY KEY CHECK(length(action_id) BETWEEN 1 AND 160),
+      intervention_id TEXT NOT NULL CHECK(length(intervention_id) BETWEEN 1 AND 160),
+      workflow_id TEXT NOT NULL UNIQUE CHECK(length(workflow_id) BETWEEN 1 AND 200),
+      user_id TEXT NOT NULL CHECK(length(user_id) BETWEEN 1 AND 160),
+      capability_id TEXT NOT NULL CHECK(length(capability_id) BETWEEN 1 AND 160),
+      category TEXT NOT NULL CHECK(category IN ('training','recovery','nutrition','posture','skin','internal_health')),
+      priority INTEGER NOT NULL CHECK(priority BETWEEN 0 AND 10000),
+      supersedable INTEGER NOT NULL CHECK(supersedable IN (0,1)),
+      risk TEXT NOT NULL CHECK(risk IN ('none','low','medium','high','critical')),
+      authority TEXT NOT NULL CHECK(authority IN ('auto','approval','inform_only')),
+      source_outbox_id TEXT NOT NULL REFERENCES twin_outbox(id),
+      effective_date TEXT NOT NULL CHECK(length(effective_date)=10),
+      status TEXT NOT NULL CHECK(status IN ('active','superseded','completed')),
+      created_at TEXT NOT NULL,
+      superseded_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_twin_health_actions_active
+      ON twin_health_actions(user_id,status,priority DESC,created_at);
+    CREATE TABLE IF NOT EXISTS twin_health_plans (
+      plan_id TEXT PRIMARY KEY CHECK(length(plan_id) BETWEEN 1 AND 160),
+      version INTEGER NOT NULL CHECK(version >= 1),
+      digest TEXT NOT NULL CHECK(length(digest)=64 AND digest NOT GLOB '*[^a-f0-9]*'),
+      state_json TEXT NOT NULL CHECK(json_valid(state_json) AND json_type(state_json)='object'
+        AND length(CAST(state_json AS BLOB)) <= 65536),
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS twin_health_followups (
+      followup_id TEXT PRIMARY KEY CHECK(length(followup_id) BETWEEN 1 AND 160),
+      owner_user_id TEXT NOT NULL CHECK(length(owner_user_id) BETWEEN 1 AND 160),
+      category TEXT NOT NULL CHECK(length(category) BETWEEN 1 AND 80),
+      operation TEXT NOT NULL CHECK(length(operation) BETWEEN 1 AND 100),
+      reason_code TEXT NOT NULL CHECK(length(reason_code) BETWEEN 1 AND 100),
+      due_at TEXT NOT NULL,
+      scheduled_at TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('scheduled','superseded'))
+    );
+    CREATE TABLE IF NOT EXISTS twin_health_executor_ledger (
+      execution_token TEXT PRIMARY KEY CHECK(length(execution_token) BETWEEN 1 AND 200),
+      material_digest TEXT NOT NULL CHECK(length(material_digest)=64 AND material_digest NOT GLOB '*[^a-f0-9]*'),
+      kind TEXT NOT NULL CHECK(kind IN ('source','plan','followup','analysis')),
+      result_json TEXT NOT NULL CHECK(json_valid(result_json) AND json_type(result_json)='object'
+        AND length(CAST(result_json AS BLOB)) <= 524288),
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_twin_health_executor_ledger_kind ON twin_health_executor_ledger(kind,created_at);
+    CREATE TRIGGER IF NOT EXISTS twin_health_delivery_terminal_immutable
+      BEFORE UPDATE ON twin_health_outbox_deliveries
+      WHEN OLD.status IN ('completed','dead_letter') BEGIN SELECT RAISE(ABORT,'HEALTH_DELIVERY_TERMINAL'); END;
+    CREATE TRIGGER IF NOT EXISTS twin_health_delivery_no_delete
+      BEFORE DELETE ON twin_health_outbox_deliveries BEGIN SELECT RAISE(ABORT,'HEALTH_DELIVERY_IMMUTABLE'); END;
+    CREATE TRIGGER IF NOT EXISTS twin_health_ledger_no_update
+      BEFORE UPDATE ON twin_health_executor_ledger BEGIN SELECT RAISE(ABORT,'HEALTH_LEDGER_IMMUTABLE'); END;
+    CREATE TRIGGER IF NOT EXISTS twin_health_ledger_no_delete
+      BEFORE DELETE ON twin_health_executor_ledger BEGIN SELECT RAISE(ABORT,'HEALTH_LEDGER_IMMUTABLE'); END;
+    CREATE TRIGGER IF NOT EXISTS twin_health_action_identity_immutable
+      BEFORE UPDATE ON twin_health_actions WHEN NEW.action_id != OLD.action_id OR NEW.intervention_id != OLD.intervention_id
+        OR NEW.workflow_id != OLD.workflow_id OR NEW.user_id != OLD.user_id OR NEW.capability_id != OLD.capability_id
+        OR NEW.category != OLD.category OR NEW.supersedable != OLD.supersedable
+        OR NEW.source_outbox_id != OLD.source_outbox_id OR NEW.effective_date != OLD.effective_date
+      BEGIN SELECT RAISE(ABORT,'HEALTH_ACTION_IDENTITY_IMMUTABLE'); END;
+    CREATE TRIGGER IF NOT EXISTS twin_health_action_no_delete
+      BEFORE DELETE ON twin_health_actions BEGIN SELECT RAISE(ABORT,'HEALTH_ACTION_IMMUTABLE'); END;
+  `)
+}
+
+function assertHealthRuntimeSchema(db: DatabaseSync, version: number): void {
+  const expected: Array<[string, ColumnSignature[]]> = [
+    ['twin_health_automation_settings', [
+      ['subject_id','TEXT',0,1,null], ['live_delivery_enabled','INTEGER',1,0,'0'], ['profile','TEXT',1,0,null],
+      ['recipient','TEXT',1,0,null], ['configured_connectors_json','TEXT',1,0,"'[]'"],
+      ['configured_processors_json','TEXT',1,0,"'[]'"], ['version','INTEGER',1,0,null],
+      ['actor_user_id','TEXT',1,0,null], ['updated_at','TEXT',1,0,null],
+    ]],
+    ['twin_health_outbox_deliveries', [
+      ['consumer_id','TEXT',1,1,null], ['outbox_id','TEXT',1,2,null], ['status','TEXT',1,0,null],
+      ['attempts','INTEGER',1,0,null], ['lease_owner','TEXT',0,0,null], ['lease_until','TEXT',0,0,null],
+      ['last_error_code','TEXT',0,0,null], ['intent_id','TEXT',0,0,null], ['workflow_id','TEXT',0,0,null],
+      ['completed_at','TEXT',0,0,null],
+    ]],
+    ['twin_health_actions', [
+      ['action_id','TEXT',0,1,null], ['intervention_id','TEXT',1,0,null], ['workflow_id','TEXT',1,0,null],
+      ['user_id','TEXT',1,0,null], ['capability_id','TEXT',1,0,null], ['category','TEXT',1,0,null],
+      ['priority','INTEGER',1,0,null], ['supersedable','INTEGER',1,0,null],
+      ['risk','TEXT',1,0,null], ['authority','TEXT',1,0,null], ['source_outbox_id','TEXT',1,0,null],
+      ['effective_date','TEXT',1,0,null], ['status','TEXT',1,0,null], ['created_at','TEXT',1,0,null],
+      ['superseded_at','TEXT',0,0,null],
+    ]],
+    ['twin_health_plans', [
+      ['plan_id','TEXT',0,1,null], ['version','INTEGER',1,0,null], ['digest','TEXT',1,0,null],
+      ['state_json','TEXT',1,0,null], ['updated_at','TEXT',1,0,null],
+    ]],
+    ['twin_health_followups', [
+      ['followup_id','TEXT',0,1,null], ['owner_user_id','TEXT',1,0,null], ['category','TEXT',1,0,null],
+      ['operation','TEXT',1,0,null], ['reason_code','TEXT',1,0,null], ['due_at','TEXT',1,0,null],
+      ['scheduled_at','TEXT',1,0,null], ['status','TEXT',1,0,null],
+    ]],
+    ['twin_health_executor_ledger', [
+      ['execution_token','TEXT',0,1,null], ['material_digest','TEXT',1,0,null], ['kind','TEXT',1,0,null],
+      ['result_json','TEXT',1,0,null], ['created_at','TEXT',1,0,null],
+    ]],
+  ]
+  for (const [table, columns] of expected) {
+    const actual = db.prepare(`PRAGMA table_info('${table}')`).all() as unknown as ColumnInfo[]
+    if (!columnsMatch(actual, columns)) throw new Error(`Personal Twin schema version ${version} is incomplete: ${table} signature is invalid`)
+  }
+  const requiredSql:Record<string,string[]>={
+    twin_health_automation_settings:["check(live_delivery_enabled in (0,1))","check(recipient='configured-self')",
+      "check(json_valid(configured_connectors_json) and json_type(configured_connectors_json)='array' and length(cast(configured_connectors_json as blob)) <= 4096)",
+      "check(json_valid(configured_processors_json) and json_type(configured_processors_json)='array' and length(cast(configured_processors_json as blob)) <= 4096)",
+      'check(version >= 1)'],
+    twin_health_outbox_deliveries:["check(status in ('leased','completed','dead_letter'))",
+      'check(attempts between 1 and 16)',"last_error_code not glob '*[^a-z0-9_]*'"],
+    twin_health_actions:["check(category in ('training','recovery','nutrition','posture','skin','internal_health'))",
+      'check(priority between 0 and 10000)','check(supersedable in (0,1))',
+      "check(risk in ('none','low','medium','high','critical'))","check(authority in ('auto','approval','inform_only'))",
+      "check(status in ('active','superseded','completed'))"],
+    twin_health_plans:['check(version >= 1)',"check(length(digest)=64 and digest not glob '*[^a-f0-9]*')",
+      "check(json_valid(state_json) and json_type(state_json)='object' and length(cast(state_json as blob)) <= 65536)"],
+    twin_health_followups:["check(status in ('scheduled','superseded'))"],
+    twin_health_executor_ledger:["check(kind in ('source','plan','followup','analysis'))",
+      "check(json_valid(result_json) and json_type(result_json)='object' and length(cast(result_json as blob)) <= 524288)"],
+  }
+  for(const [table,fragments] of Object.entries(requiredSql)){
+    const row=db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(table) as {sql:string}|undefined
+    const sql=canonicalSql(row?.sql??'')
+    if(fragments.some(fragment=>!sql.includes(canonicalSql(fragment)))) {
+      throw new Error(`Personal Twin schema version ${version} is incomplete: ${table} CHECK signature is invalid`)
+    }
+  }
+  assertIndexSignature(db, version, 'twin_health_outbox_deliveries', 'idx_twin_health_outbox_delivery_claim',
+    ['consumer_id','status','lease_until'], false)
+  assertIndexSignature(db, version, 'twin_health_actions', 'idx_twin_health_actions_active',
+    ['user_id','status','priority','created_at'], false)
+  assertIndexSignature(db, version, 'twin_health_executor_ledger', 'idx_twin_health_executor_ledger_kind',
+    ['kind','created_at'], false)
+  const foreignKeys = db.prepare("PRAGMA foreign_key_list('twin_health_outbox_deliveries')").all() as Array<{
+    table:string; from:string; to:string; on_update:string; on_delete:string
+  }>
+  if (foreignKeys.length !== 1 || foreignKeys[0].table !== 'twin_outbox' || foreignKeys[0].from !== 'outbox_id'
+    || foreignKeys[0].to !== 'id' || foreignKeys[0].on_update !== 'NO ACTION' || foreignKeys[0].on_delete !== 'NO ACTION') {
+    throw new Error(`Personal Twin schema version ${version} is incomplete: health delivery foreign key is invalid`)
+  }
+  const actionForeignKeys=db.prepare("PRAGMA foreign_key_list('twin_health_actions')").all() as Array<{
+    table:string;from:string;to:string;on_update:string;on_delete:string}>
+  const settingsForeignKeys=db.prepare("PRAGMA foreign_key_list('twin_health_automation_settings')").all() as Array<{
+    table:string;from:string;to:string;on_update:string;on_delete:string}>
+  if(actionForeignKeys.length!==1||actionForeignKeys[0].table!=='twin_outbox'||actionForeignKeys[0].from!=='source_outbox_id'
+    ||actionForeignKeys[0].to!=='id'||actionForeignKeys[0].on_update!=='NO ACTION'||actionForeignKeys[0].on_delete!=='NO ACTION'
+    ||settingsForeignKeys.length!==1||settingsForeignKeys[0].table!=='twin_entities'||settingsForeignKeys[0].from!=='subject_id'
+    ||settingsForeignKeys[0].to!=='id'||settingsForeignKeys[0].on_update!=='NO ACTION'||settingsForeignKeys[0].on_delete!=='NO ACTION') {
+    throw new Error(`Personal Twin schema version ${version} is incomplete: health runtime foreign key signature is invalid`)
+  }
+  const requiredTriggers = ['twin_health_action_identity_immutable','twin_health_action_no_delete',
+    'twin_health_delivery_no_delete','twin_health_delivery_terminal_immutable',
+    'twin_health_ledger_no_delete','twin_health_ledger_no_update']
+  const triggers = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type='trigger'").all() as Array<{name:string}>).map(row => row.name))
+  if (requiredTriggers.some(name => !triggers.has(name))) {
+    throw new Error(`Personal Twin schema version ${version} is incomplete: health runtime triggers are invalid`)
+  }
+  const triggerFragments:Record<string,string[]>={
+    twin_health_delivery_terminal_immutable:["old.status in ('completed','dead_letter')","raise(abort,'health_delivery_terminal')"],
+    twin_health_delivery_no_delete:["before delete on twin_health_outbox_deliveries","raise(abort,'health_delivery_immutable')"],
+    twin_health_ledger_no_update:["before update on twin_health_executor_ledger","raise(abort,'health_ledger_immutable')"],
+    twin_health_ledger_no_delete:["before delete on twin_health_executor_ledger","raise(abort,'health_ledger_immutable')"],
+    twin_health_action_identity_immutable:['new.category != old.category','new.supersedable != old.supersedable',
+      "raise(abort,'health_action_identity_immutable')"],
+    twin_health_action_no_delete:["before delete on twin_health_actions","raise(abort,'health_action_immutable')"],
+  }
+  for(const [name,fragments] of Object.entries(triggerFragments)){
+    const row=db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?").get(name) as {sql:string}|undefined
+    const sql=canonicalSql(row?.sql??'')
+    if(fragments.some(fragment=>!sql.includes(canonicalSql(fragment)))) {
+      throw new Error(`Personal Twin schema version ${version} is incomplete: health runtime trigger signature is invalid`)
+    }
+  }
 }
 
 function probeReservationChecks(db: DatabaseSync): void {

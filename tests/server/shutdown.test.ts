@@ -85,8 +85,8 @@ describe('shutdown ordering', () => {
     const events: string[] = []
     let release!: () => void
     const stopped = new Promise<void>(resolve => { release = resolve })
-    vi.doMock('../../packages/server/src/services/hermes/action-fabric/runtime', () => ({
-      stopActionFabricRuntime: vi.fn(async () => { events.push('fabric-stop-start'); await stopped; events.push('fabric-stop-end') }),
+    vi.doMock('../../packages/server/src/services/hermes/health-loop/runtime', () => ({
+      stopHealthLoopRuntime: vi.fn(async () => { events.push('fabric-stop-start'); await stopped; events.push('fabric-stop-end') }),
     }))
     vi.doMock('../../packages/server/src/db', () => ({ closeDb: vi.fn(() => events.push('db-close')) }))
     vi.doMock('../../packages/server/src/controllers/update', () => ({ stopPreviewRuntime: vi.fn(async () => {}) }))
@@ -106,7 +106,7 @@ describe('shutdown ordering', () => {
 
     expect(events).toEqual(['fabric-stop-start', 'fabric-stop-end', 'db-close'])
     exit.mockRestore()
-    vi.doUnmock('../../packages/server/src/services/hermes/action-fabric/runtime')
+    vi.doUnmock('../../packages/server/src/services/hermes/health-loop/runtime')
     vi.doUnmock('../../packages/server/src/db')
     vi.resetModules()
   })
@@ -121,7 +121,7 @@ describe('shutdown ordering', () => {
       return undefined
     }) as never)
     vi.resetModules()
-    vi.doMock('../../packages/server/src/services/hermes/action-fabric/runtime', () => ({ stopActionFabricRuntime: vi.fn() }))
+    vi.doMock('../../packages/server/src/services/hermes/health-loop/runtime', () => ({ stopHealthLoopRuntime: vi.fn() }))
     vi.doMock('../../packages/server/src/db', () => ({ closeDb: vi.fn(() => events.push('db-close')) }))
     vi.doMock('../../packages/server/src/controllers/update', () => ({ stopPreviewRuntime: vi.fn() }))
     vi.doMock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
@@ -148,7 +148,7 @@ describe('shutdown ordering', () => {
 
   it('returns one shared promise to concurrent and repeated shutdown callers', async () => {
     vi.resetModules()
-    vi.doMock('../../packages/server/src/services/hermes/action-fabric/runtime', () => ({ stopActionFabricRuntime: vi.fn() }))
+    vi.doMock('../../packages/server/src/services/hermes/health-loop/runtime', () => ({ stopHealthLoopRuntime: vi.fn() }))
     vi.doMock('../../packages/server/src/db', () => ({ closeDb: vi.fn() }))
     vi.doMock('../../packages/server/src/controllers/update', () => ({ stopPreviewRuntime: vi.fn() }))
     vi.doMock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({

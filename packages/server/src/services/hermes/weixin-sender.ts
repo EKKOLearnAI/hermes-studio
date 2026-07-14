@@ -103,6 +103,12 @@ export function createWeixinReceiptSender(profile: string): WeixinReceiptSender 
   }
 }
 
+/** Server-only proof surface for standing authorization; never exposes credential material. */
+export function getWeixinCredentialFingerprint(profile: string): string | null {
+  const credentials = resolveWeixinCredentials(profile)
+  return credentials ? accountFingerprint(credentials) : null
+}
+
 interface DeliveryRow { material_digest: string; status: string; provider_message_id: string | null }
 
 function withDeliveryDb<T>(profile: string, callback: (db: DatabaseSync) => T): T {

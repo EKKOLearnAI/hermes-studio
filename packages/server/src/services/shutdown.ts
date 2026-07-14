@@ -4,7 +4,7 @@ import { stopPreviewRuntime } from '../controllers/update'
 import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
 import { shutdownManagedGateways } from './hermes/gateway-runner'
 import { stopOutboundRelayClient } from './global-agent/outbound-relay-client'
-import { stopActionFabricRuntime } from './hermes/action-fabric/runtime'
+import { stopHealthLoopRuntime } from './hermes/health-loop/runtime'
 
 const DEFAULT_SHUTDOWN_FORCE_EXIT_MS = 15_000
 const DEFAULT_DESKTOP_SHUTDOWN_FORCE_EXIT_MS = 15_000
@@ -76,8 +76,8 @@ export function createShutdownHandler(
 
     try {
       try {
-        await stopActionFabricRuntime()
-        logger.info('Action Fabric runtime stopped')
+        await stopHealthLoopRuntime()
+        logger.info('Health loop and Action Fabric runtimes stopped')
       } catch (err) {
         logger.warn(err, 'Failed to stop Action Fabric runtime (non-fatal)')
       }

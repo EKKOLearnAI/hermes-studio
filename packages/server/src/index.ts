@@ -32,7 +32,7 @@ import { createStaticCompressionMiddleware } from './middleware/static-compressi
 import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
 import { createCorsOriginResolver, securityHeaders } from './security'
 import type { ShutdownHandler } from './services/shutdown'
-import { startActionFabricRuntime, stopActionFabricRuntime } from './services/hermes/action-fabric/runtime'
+import { startHealthLoopRuntime, stopHealthLoopRuntime } from './services/hermes/health-loop/runtime'
 import { runServerMain } from './services/server-main'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
@@ -286,8 +286,8 @@ export async function bootstrap() {
   initAllStores()
   console.log('[bootstrap] all stores initialized')
 
-  await startActionFabricRuntime()
-  console.log('[bootstrap] action fabric runtime ready')
+  await startHealthLoopRuntime()
+  console.log('[bootstrap] health loop and action fabric runtimes ready')
 
   app.use(securityHeaders())
   app.use(cors({ origin: createCorsOriginResolver(config.corsOrigins) }))
@@ -399,7 +399,7 @@ export async function bootstrap() {
 
 void runServerMain({
   bootstrap,
-  stopActionFabricRuntime,
+  stopActionFabricRuntime: stopHealthLoopRuntime,
   reportFatal(error) {
     console.error('FATAL: Failed to start Hermes Web UI')
     console.error(error)
