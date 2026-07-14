@@ -45,6 +45,7 @@ describe('personal twin database', () => {
         'twin_events',
         'twin_goals',
         'twin_health_actions',
+        'twin_health_authorization_grants',
         'twin_health_automation_settings',
         'twin_health_executor_ledger',
         'twin_health_followups',
@@ -60,7 +61,7 @@ describe('personal twin database', () => {
         'twin_relations',
         'twin_role_profile_mappings',
       ])
-      expect(db.prepare("SELECT value FROM twin_meta WHERE key = 'schema_version'").get()).toEqual({ value: '8' })
+      expect(db.prepare("SELECT value FROM twin_meta WHERE key = 'schema_version'").get()).toEqual({ value: '9' })
       expect((db.prepare("PRAGMA table_info('twin_artifacts')").all() as Array<{ name: string }>).map(row => row.name))
         .toEqual(['id', 'media_type', 'content_hash', 'relative_path', 'size_bytes', 'source', 'source_id', 'created_at', 'sensitivity', 'metadata_json'])
       expect((db.prepare("PRAGMA table_info('twin_artifact_consents')").all() as Array<{ name: string }>).map(row => row.name))
@@ -107,7 +108,7 @@ describe('personal twin database', () => {
 
     const upgraded = new DatabaseSync(path, { readOnly: true })
     try {
-      expect(upgraded.prepare("SELECT value FROM twin_meta WHERE key = 'schema_version'").get()).toEqual({ value: '8' })
+      expect(upgraded.prepare("SELECT value FROM twin_meta WHERE key = 'schema_version'").get()).toEqual({ value: '9' })
       expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'twin_entities'").get()).toEqual({ name: 'twin_entities' })
     } finally {
       upgraded.close()
@@ -146,7 +147,7 @@ describe('personal twin database', () => {
     initPersonalTwinSchema(db)
 
     try {
-      expect(db.prepare("SELECT value FROM twin_meta WHERE key = 'schema_version'").get()).toEqual({ value: '8' })
+      expect(db.prepare("SELECT value FROM twin_meta WHERE key = 'schema_version'").get()).toEqual({ value: '9' })
       expect(db.prepare("SELECT id FROM twin_entities WHERE id = 'person:self'").get()).toEqual({ id: 'person:self' })
       const names = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(row => row.name))
       expect(names.has('twin_assistant_roles')).toBe(true)
@@ -185,7 +186,7 @@ describe('personal twin database', () => {
       .toEqual({ id: 'preference-legacy', key: 'life:calendar.view', actor: 'legacy-source', version: 1,
         value_json: '"agenda"', confidence: 0.7, source: 'legacy-source', source_id: 'legacy-id',
         created_at: '2026-07-01T00:00:00.000Z', updated_at: '2026-07-02T00:00:00.000Z' })
-    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '8' })
+    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '9' })
     expect(() => initPersonalTwinSchema(db)).not.toThrow()
     db.close()
   })
@@ -398,7 +399,7 @@ describe('personal twin database', () => {
 
     initPersonalTwinSchema(db)
 
-    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '8' })
+    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '9' })
     expect(db.prepare(`SELECT id,media_type,content_hash,relative_path,size_bytes,source,source_id,created_at,
       sensitivity,metadata_json FROM twin_artifacts WHERE id='artifact-legacy'`).get()).toEqual({
       id: 'artifact-legacy', media_type: 'application/pdf', content_hash: 'a'.repeat(64),
@@ -431,7 +432,7 @@ describe('personal twin database', () => {
       CREATE INDEX idx_twin_artifacts_source_identity ON twin_artifacts(source)`)
 
     expect(() => initPersonalTwinSchema(db)).toThrow(/artifact.*index.*signature|index.*signature.*artifact/i)
-    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '8' })
+    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '9' })
     db.close()
   })
 
@@ -504,7 +505,7 @@ describe('personal twin database', () => {
 
     initPersonalTwinSchema(db)
 
-    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '8' })
+    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '9' })
     expect(db.prepare(`SELECT consent_id,manifest_digest,processor,scope_json,issued_at,expires_at,consumed_at,revoked_at
       FROM twin_artifact_consents`).get()).toEqual({
       consent_id: digest, manifest_digest: digest, processor: 'processor:test', scope_json: '{"legacy":true}',
@@ -550,7 +551,7 @@ describe('personal twin database', () => {
     mkdirSync(join(hermesHome, 'personal'), { recursive: true })
     const db = new DatabaseSync(path)
     db.exec('CREATE TABLE twin_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
-    db.prepare('INSERT INTO twin_meta(key, value) VALUES (?, ?)').run('schema_version', '9')
+    db.prepare('INSERT INTO twin_meta(key, value) VALUES (?, ?)').run('schema_version', '10')
     db.close()
 
     expect(() => withPersonalTwinDb(current => current.prepare('SELECT 1').get())).toThrow(/newer than supported version/i)
@@ -568,7 +569,7 @@ describe('personal twin database', () => {
       '2026-07-14T01:00:00.000Z', '2026-07-14T01:05:00.000Z')).toThrow()
     db.exec('DROP INDEX idx_twin_artifact_consent_reservations_status')
     expect(() => initPersonalTwinSchema(db)).toThrow(/consent.reservation.*index signature|index signature.*reservation/i)
-    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '8' })
+    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '9' })
     db.close()
   })
 
@@ -590,7 +591,7 @@ describe('personal twin database', () => {
       DROP TABLE reservations_valid;
       PRAGMA foreign_keys=ON;`)
     expect(() => initPersonalTwinSchema(db)).toThrow(/consent reservation.*(?:foreign key|create sql)|(?:foreign key|create sql).*reservation/i)
-    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '8' })
+    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '9' })
     db.close()
   })
 
@@ -613,7 +614,7 @@ describe('personal twin database', () => {
       PRAGMA foreign_keys=ON;`)
 
     expect(() => initPersonalTwinSchema(db)).toThrow(/reservation.*create sql|create sql.*reservation|check/i)
-    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '8' })
+    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '9' })
     db.close()
   })
 
@@ -622,7 +623,8 @@ describe('personal twin database', () => {
     const db = new DatabaseSync(':memory:')
     db.exec('PRAGMA foreign_keys=ON')
     initPersonalTwinSchema(db)
-    db.exec(`DROP TABLE twin_health_outbox_deliveries;
+    db.exec(`DROP TABLE twin_health_authorization_grants;
+      DROP TABLE twin_health_outbox_deliveries;
       DROP TABLE twin_health_actions;
       DROP TABLE twin_health_automation_settings;
       DROP TABLE twin_health_executor_ledger;
@@ -654,20 +656,33 @@ describe('personal twin database', () => {
         reason_code TEXT NOT NULL, due_at TEXT NOT NULL, scheduled_at TEXT NOT NULL, status TEXT NOT NULL);
       DROP TABLE health_followups_checked; PRAGMA foreign_keys=ON;`)
     expect(()=>initPersonalTwinSchema(checkDb)).toThrow(/followups.*check signature/i)
-    expect(checkDb.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({value:'8'})
+    expect(checkDb.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({value:'9'})
     checkDb.close()
 
     const indexDb=create()
     indexDb.exec('DROP INDEX idx_twin_health_actions_active; CREATE INDEX idx_twin_health_actions_active ON twin_health_actions(status,user_id)')
     expect(()=>initPersonalTwinSchema(indexDb)).toThrow(/health_actions.*index signature/i)
-    expect(indexDb.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({value:'8'})
+    expect(indexDb.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({value:'9'})
     indexDb.close()
 
     const triggerDb=create()
     triggerDb.exec(`DROP TRIGGER twin_health_action_no_delete;
       CREATE TRIGGER twin_health_action_no_delete BEFORE DELETE ON twin_health_actions BEGIN SELECT 1; END;`)
     expect(()=>initPersonalTwinSchema(triggerDb)).toThrow(/runtime trigger signature/i)
-    expect(triggerDb.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({value:'8'})
+    expect(triggerDb.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({value:'9'})
     triggerDb.close()
+  })
+
+  it('rolls back v9 authorization-grant migration on a corrupt known v8 transition', async () => {
+    const {initPersonalTwinSchema}=await import('../../packages/server/src/services/hermes/personal-twin')
+    const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');initPersonalTwinSchema(db)
+    db.exec(`DROP TABLE twin_health_authorization_grants;
+      CREATE TABLE twin_health_authorization_grants (request_digest TEXT PRIMARY KEY, grant_json TEXT);
+      UPDATE twin_meta SET value='8' WHERE key='schema_version';`)
+    expect(()=>initPersonalTwinSchema(db)).toThrow(/authorization_grants.*signature/i)
+    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({value:'8'})
+    expect((db.prepare("PRAGMA table_info('twin_health_authorization_grants')").all() as Array<{name:string}>).map(row=>row.name))
+      .toEqual(['request_digest','grant_json'])
+    db.close()
   })
 })

@@ -23,9 +23,28 @@ export function createHealthRuntimeAuthorizationProvider(profile='default',avail
   return {id:'health-runtime-standing',version:1,authorize(request){
     if(request.environment!=='production'||EXECUTORS[request.capabilityId]!==request.executorId)return null
     const settings=getHealthAutomationSettings()
-    if(settings.profile!==profile||!requirementsSatisfied(request,settings,new Date(),connectors,remoteProcessors))return null
-    return {authorizationVersion:settings.version,expiresAt:new Date(Date.now()+30_000).toISOString(),
-      grantedRequirements:[...request.requirements]}
+    const now=new Date()
+    if(settings.profile!==profile||!requirementsSatisfied(request,settings,now,connectors,remoteProcessors))return null
+    const requestDigest=hash(request)
+    const evidenceDigest=hash({settings,connectors:[...connectors].sort(),remoteProcessors:[...remoteProcessors].sort(),
+      credentialFingerprint:request.capabilityId==='health.reminder.send'||request.capabilityId==='health.checkin.request'
+        ?getWeixinCredentialFingerprint(settings.profile):null,resource:authorizationResourceMaterial(request)})
+    return withPersonalTwinDb(db=>{
+      const row=db.prepare(`SELECT evidence_digest,settings_version,grant_json,expires_at
+        FROM twin_health_authorization_grants WHERE request_digest=?`).get(requestDigest) as
+        {evidence_digest:string;settings_version:number;grant_json:string;expires_at:string}|undefined
+      if(row){
+        if(row.evidence_digest!==evidenceDigest||row.settings_version!==settings.version||Date.parse(row.expires_at)<=now.getTime())return null
+        return parseStoredGrant(row.grant_json,row.settings_version,row.expires_at,request.requirements)
+      }
+      const resourceExpiry=request.capabilityId==='health.artifact.analyze.remote'?reservationExpiry(request.input.consentId):null
+      const expiresAt=new Date(Math.min(now.getTime()+30_000,resourceExpiry??Number.POSITIVE_INFINITY)).toISOString()
+      const grant={authorizationVersion:settings.version,expiresAt,grantedRequirements:[...request.requirements]}
+      db.prepare(`INSERT INTO twin_health_authorization_grants
+        (request_digest,evidence_digest,settings_version,grant_json,issued_at,expires_at) VALUES(?,?,?,?,?,?)`).run(
+        requestDigest,evidenceDigest,settings.version,stable(grant),now.toISOString(),expiresAt)
+      return grant
+    })
   }}
 }
 
@@ -79,6 +98,35 @@ function reservationMatches(id:unknown,artifactId:unknown,digest:unknown,process
       processor:string;expires_at:string;consumed_at:string|null}|undefined
     return !!row&&row.artifact_id===artifactId&&row.artifact_manifest_digest===digest&&row.processor===processor
       &&row.consumed_at===null&&Date.parse(row.expires_at)>now.getTime()})
+}
+function reservationExpiry(id:unknown):number|null{
+  if(typeof id!=='string')return null
+  return withPersonalTwinDb(db=>{const row=db.prepare('SELECT expires_at FROM twin_artifact_consent_reservations WHERE reservation_id=?')
+    .get(id) as {expires_at:string}|undefined;const value=Date.parse(row?.expires_at??'');return Number.isFinite(value)?value:null})
+}
+function authorizationResourceMaterial(request:Readonly<FabricAuthorizationRequest>):unknown{
+  const input=request.input
+  return withPersonalTwinDb(db=>{
+    if(request.capabilityId==='health.artifact.analyze.remote'&&typeof input.consentId==='string')return db.prepare(`SELECT
+      reservation_id,consent_id,artifact_id,artifact_manifest_digest,processor,expires_at,consumed_at
+      FROM twin_artifact_consent_reservations WHERE reservation_id=?`).get(input.consentId)??null
+    if((request.capabilityId==='health.plan.adjust'||request.capabilityId==='health.plan.restore')&&typeof input.planId==='string')return db.prepare(
+      'SELECT plan_id,version,digest FROM twin_health_plans WHERE plan_id=?').get(input.planId)??null
+    if((request.capabilityId==='health.artifact.analyze.local'||request.capabilityId==='health.artifact.analyze.remote')
+      &&typeof input.artifactId==='string')return db.prepare(`SELECT id,media_type,content_hash,relative_path,size_bytes,sensitivity
+        FROM twin_artifacts WHERE id=?`).get(input.artifactId)??null
+    return null
+  })
+}
+function parseStoredGrant(json:string,version:number,expiresAt:string,requirements:readonly string[]):{
+  authorizationVersion:number;expiresAt:string;grantedRequirements:string[]}|null{
+  let value:unknown;try{value=JSON.parse(json)}catch{return null}
+  if(!value||typeof value!=='object'||Array.isArray(value))return null
+  const grant=value as Record<string,unknown>
+  if(Object.keys(grant).sort().join(',')!=='authorizationVersion,expiresAt,grantedRequirements'
+    ||grant.authorizationVersion!==version||grant.expiresAt!==expiresAt||!Array.isArray(grant.grantedRequirements)
+    ||!same(grant.grantedRequirements as string[],requirements))return null
+  return {authorizationVersion:version,expiresAt,grantedRequirements:[...(grant.grantedRequirements as string[])]}
 }
 function same(left:readonly string[],right:readonly string[]):boolean{return left.length===right.length&&right.every(item=>left.includes(item))}
 function hash(value:unknown):string{return createHash('sha256').update(stable(value)).digest('hex')}

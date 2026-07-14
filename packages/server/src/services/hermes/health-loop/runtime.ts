@@ -12,7 +12,7 @@ import { mapHealthActionCandidateToFabric } from './fabric-intents'
 import { getHealthAutomationSettings } from './settings'
 import { registerHealthRuntimeAction } from './outcomes'
 import { claimHealthOutboxDelivery, completeHealthOutboxDelivery, failHealthOutboxDelivery,
-  type HealthOutboxClaim } from './runtime-store'
+  prepareHealthOutboxDelivery,type HealthOutboxClaim } from './runtime-store'
 import { configureHealthFabricExecutorDependencies } from './executors/configuration'
 import { createDurableHealthAnalysisServices, createDurableHealthPlanRepository,
   createDurableHealthSourceService } from './runtime-dependencies'
@@ -36,7 +36,10 @@ export function createHealthLoopLifecycle(hooks:HealthLoopLifecycleHooks):Health
     start:()=>queue(async()=>{if(active)return;let prepared=false;let fabric=false
       try {await hooks.prepare();prepared=true;await hooks.startFabric();fabric=true;await hooks.startConsumer();active=true}
       catch(error){if(fabric||prepared)await hooks.stopFabric();throw error}}),
-    stop:()=>queue(async()=>{if(!active)return;await hooks.stopConsumer();try{await hooks.stopFabric()}finally{active=false}}),
+    stop:()=>queue(async()=>{if(!active)return;let failure:unknown=null
+      try{await hooks.stopConsumer()}catch(error){failure=error}
+      try{await hooks.stopFabric()}catch(error){if(failure===null)failure=error}finally{active=false}
+      if(failure!==null)throw failure}),
   }
 }
 
@@ -95,35 +98,16 @@ export function createHealthOutboxProcessor(options:HealthOutboxProcessorOptions
     if(!claim)return {processed:false,outcome:'idle',outboxId:null}
     try {
       validateOutboxPayload(claim)
-      ensureDefaultPlan(now)
-      const snapshot=loadTrustedSnapshot(now)
-      const plan=loadPlan()
-      const decision=decideHealthInterventions({projections:snapshot.projections,now,
-        plan:plan.state,effectiveDate:now.slice(0,10),activeActions:snapshot.activeActions,
-        recentActions:snapshot.recentActions})
-      if(!decision.primary?.capabilityId){completeHealthOutboxDelivery(claim,{intentId:null,workflowId:null},now)
+      const prepared=claim.preparedJson===null?prepareRuntimeMaterial(claim,now,owner):parsePreparedMaterial(claim)
+      if(!prepared.fabricIntent||!prepared.action){completeHealthOutboxDelivery(claim,{intentId:null,workflowId:null},now)
         return {processed:true,outcome:'completed',outboxId:claim.outboxId}}
-      const candidate=withRuntimeIdempotency(decision.primary,decision.ruleVersion,snapshot.digest)
-      const mapped=mapHealthActionCandidateToFabric(candidate,{planId:plan.planId,expectedPlanVersion:plan.version,
-        ownerUserId:owner,dueAt:new Date(Date.parse(now)+86_400_000).toISOString(),
-        expiresAt:new Date(Date.parse(now)+86_400_000).toISOString()})
-      const settings=getHealthAutomationSettings()
-      const input:FabricActionIntentInput={capabilityId:mapped.capabilityId,requestedByRoleId:'health-manager',
-        requestedByUserId:owner,idempotencyKey:candidate.idempotencyKey,
-        goal:'Apply the selected bounded health intervention',target:mapped.target,input:mapped.input,
-        constraints:{healthRuleVersion:decision.ruleVersion,projectionDigest:snapshot.digest,effectiveDate:candidate.effectiveDate},
-        rationale:candidate.rationale,environments:[settings.liveDeliveryEnabled?'production':'sandbox']}
-      const effect=createIntentEffect(input)
+      const effect=createIntentEffect(prepared.fabricIntent)
       if(options.afterIntent)await options.afterIntent()
-      const actionId=`health-action-${candidate.idempotencyKey.slice('health-intervention-'.length)}`
+      const actionId=prepared.action.actionId
       const existing=withPersonalTwinDb(db=>db.prepare('SELECT workflow_id FROM twin_health_actions WHERE action_id=?')
         .get(actionId) as {workflow_id:string}|undefined)
       if(existing&&existing.workflow_id!==effect.workflowId)throw new Error('HEALTH_ACTION_MATERIAL_CONFLICT')
-      if(!existing)registerHealthRuntimeAction({actionId,interventionId:candidate.id,workflowId:effect.workflowId,userId:owner,
-        capabilityId:mapped.capabilityId,category:candidate.category,priority:candidate.priority,
-        supersedable:candidate.risk==='none'||candidate.risk==='low',risk:candidate.risk,authority:candidate.authority,
-        supersedes:candidate.supersedes,
-        sourceOutboxId:claim.outboxId,effectiveDate:candidate.effectiveDate,createdAt:now})
+      if(!existing)registerHealthRuntimeAction({...prepared.action,workflowId:effect.workflowId})
       completeHealthOutboxDelivery(claim,{intentId:effect.intentId,workflowId:effect.workflowId},now)
       return {processed:true,outcome:'completed',outboxId:claim.outboxId}
     } catch(error) {
@@ -132,6 +116,75 @@ export function createHealthOutboxProcessor(options:HealthOutboxProcessorOptions
       return {processed:true,outcome:'failed',outboxId:claim.outboxId}
     }
   } }
+}
+
+interface PreparedHealthRuntimeMaterial {
+  schemaVersion:'health-runtime-prepared/v1';evaluationAt:string;effectiveDate:string
+  projection:{digest:string;versions:Record<string,number>};activeActions:HealthActiveAction[];recentActions:HealthRecentAction[]
+  plan:{planId:string;version:number;digest:string};decision:{ruleVersion:string;primary:HealthActionCandidate|null}
+  fabricIntent:FabricActionIntentInput|null
+  action:(Omit<Parameters<typeof registerHealthRuntimeAction>[0],'workflowId'>)|null
+}
+
+function prepareRuntimeMaterial(claim:HealthOutboxClaim,now:string,owner:string):PreparedHealthRuntimeMaterial {
+  ensureDefaultPlan(now)
+  const snapshot=loadTrustedSnapshot(now)
+  const plan=loadPlan()
+  const decision=decideHealthInterventions({projections:snapshot.projections,now,plan:plan.state,
+    effectiveDate:now.slice(0,10),activeActions:snapshot.activeActions,recentActions:snapshot.recentActions})
+  const candidate=decision.primary?.capabilityId?withRuntimeIdempotency(decision.primary,decision.ruleVersion,snapshot.digest):null
+  const mapped=candidate?mapHealthActionCandidateToFabric(candidate,{planId:plan.planId,expectedPlanVersion:plan.version,
+    ownerUserId:owner,dueAt:new Date(Date.parse(now)+86_400_000).toISOString(),
+    expiresAt:new Date(Date.parse(now)+86_400_000).toISOString()}):null
+  const settings=getHealthAutomationSettings()
+  const fabricIntent:FabricActionIntentInput|null=candidate&&mapped?{capabilityId:mapped.capabilityId,
+    requestedByRoleId:'health-manager',requestedByUserId:owner,idempotencyKey:candidate.idempotencyKey,
+    goal:'Apply the selected bounded health intervention',target:mapped.target,input:mapped.input,
+    constraints:{healthRuleVersion:decision.ruleVersion,projectionDigest:snapshot.digest,effectiveDate:candidate.effectiveDate},
+    rationale:candidate.rationale,environments:[settings.liveDeliveryEnabled?'production':'sandbox']}:null
+  const action=candidate&&mapped?{actionId:`health-action-${candidate.idempotencyKey.slice('health-intervention-'.length)}`,
+    interventionId:candidate.id,userId:owner,capabilityId:mapped.capabilityId,category:candidate.category,
+    priority:candidate.priority,supersedable:candidate.risk==='none'||candidate.risk==='low',risk:candidate.risk,
+    authority:candidate.authority,supersedes:candidate.supersedes,sourceOutboxId:claim.outboxId,
+    effectiveDate:candidate.effectiveDate,createdAt:now}:null
+  const material:PreparedHealthRuntimeMaterial={schemaVersion:'health-runtime-prepared/v1',evaluationAt:now,
+    effectiveDate:now.slice(0,10),projection:{digest:snapshot.digest,versions:Object.fromEntries(snapshot.projections.map(p=>[p.key,p.version]))},
+    activeActions:snapshot.activeActions,recentActions:snapshot.recentActions,
+    plan:{planId:plan.planId,version:plan.version,digest:plan.digest},decision:{ruleVersion:decision.ruleVersion,primary:candidate},
+    fabricIntent,action}
+  const json=stable(material);const digest=hash(material)
+  prepareHealthOutboxDelivery(claim,{json,digest},now)
+  return material
+}
+
+function parsePreparedMaterial(claim:HealthOutboxClaim):PreparedHealthRuntimeMaterial {
+  if(claim.preparedJson===null||claim.preparedDigest===null||claim.preparedAt===null
+    ||Buffer.byteLength(claim.preparedJson,'utf8')>1_048_576)throw new Error('HEALTH_RUNTIME_PREPARED_INVALID')
+  let value:unknown;try{value=JSON.parse(claim.preparedJson)}catch{throw new Error('HEALTH_RUNTIME_PREPARED_INVALID')}
+  assertPreparedBoundary(value)
+  if(hash(value)!==claim.preparedDigest)throw new Error('HEALTH_RUNTIME_PREPARED_TAMPERED')
+  return value as PreparedHealthRuntimeMaterial
+}
+
+function assertPreparedBoundary(value:unknown):asserts value is PreparedHealthRuntimeMaterial {
+  if(!plain(value)||Object.keys(value).sort().join(',')!==
+    'action,activeActions,decision,effectiveDate,evaluationAt,fabricIntent,plan,projection,recentActions,schemaVersion'
+    ||value.schemaVersion!=='health-runtime-prepared/v1'||typeof value.evaluationAt!=='string'
+    ||typeof value.effectiveDate!=='string'||!plain(value.projection)||!plain(value.plan)||!plain(value.decision)
+    ||!Array.isArray(value.activeActions)||!Array.isArray(value.recentActions)
+    ||(value.fabricIntent!==null&&!plain(value.fabricIntent))||(value.action!==null&&!plain(value.action))) {
+    throw new Error('HEALTH_RUNTIME_PREPARED_INVALID')
+  }
+  assertSafeJson(value,0,new Set<object>())
+}
+
+function assertSafeJson(value:unknown,depth:number,seen:Set<object>):void {
+  if(depth>32)throw new Error('HEALTH_RUNTIME_PREPARED_INVALID')
+  if(value===null||typeof value==='string'||typeof value==='boolean'||(typeof value==='number'&&Number.isFinite(value)))return
+  if(!value||typeof value!=='object'||seen.has(value))throw new Error('HEALTH_RUNTIME_PREPARED_INVALID')
+  seen.add(value)
+  for(const key of Object.keys(value)){if(['__proto__','constructor','prototype'].includes(key))throw new Error('HEALTH_RUNTIME_PREPARED_INVALID')
+    assertSafeJson((value as Record<string,unknown>)[key],depth+1,seen)}
 }
 
 function validateOutboxPayload(claim:HealthOutboxClaim):void {

@@ -11,6 +11,9 @@ export interface HealthOutboxClaim {
   payloadJson: string
   attempt: number
   leaseUntil: string
+  preparedJson: string | null
+  preparedDigest: string | null
+  preparedAt: string | null
 }
 
 interface ClaimOptions {
@@ -33,7 +36,7 @@ export function claimHealthOutboxDelivery(options: ClaimOptions): HealthOutboxCl
     db.exec('BEGIN IMMEDIATE')
     try {
       const row = db.prepare(`SELECT o.id,o.topic,o.aggregate_id,o.payload_json,
-        d.status,d.attempts,d.lease_until
+        d.status,d.attempts,d.lease_until,d.prepared_json,d.prepared_digest,d.prepared_at
         FROM twin_outbox o LEFT JOIN twin_health_outbox_deliveries d
           ON d.consumer_id=? AND d.outbox_id=o.id
         WHERE o.topic IN (?,?) AND o.available_at<=?
@@ -41,7 +44,8 @@ export function claimHealthOutboxDelivery(options: ClaimOptions): HealthOutboxCl
         ORDER BY o.available_at,o.created_at,o.id LIMIT 1`).get(
         options.consumerId, TOPICS[0], TOPICS[1], now, now, options.maxAttempts,
       ) as { id:string; topic:typeof TOPICS[number]; aggregate_id:string; payload_json:string;
-        status:string|null; attempts:number|null; lease_until:string|null } | undefined
+        status:string|null; attempts:number|null; lease_until:string|null;prepared_json:string|null;
+        prepared_digest:string|null;prepared_at:string|null } | undefined
       if (!row) { db.exec('COMMIT'); return null }
       const attempt = (row.attempts ?? 0) + 1
       const leaseUntil = new Date(Date.parse(now) + options.leaseMs).toISOString()
@@ -61,8 +65,22 @@ export function claimHealthOutboxDelivery(options: ClaimOptions): HealthOutboxCl
       }
       db.exec('COMMIT')
       return { consumerId: options.consumerId, workerId: options.workerId, outboxId: row.id,
-        topic: row.topic, aggregateId: row.aggregate_id, payloadJson: row.payload_json, attempt, leaseUntil }
+        topic: row.topic, aggregateId: row.aggregate_id, payloadJson: row.payload_json, attempt, leaseUntil,
+        preparedJson:row.prepared_json??null,preparedDigest:row.prepared_digest??null,preparedAt:row.prepared_at??null }
     } catch (error) { db.exec('ROLLBACK'); throw error }
+  })
+}
+
+export function prepareHealthOutboxDelivery(claim:HealthOutboxClaim,material:{json:string;digest:string},preparedAt:string):void {
+  validateClaim(claim)
+  const at=timestamp(preparedAt)
+  if(typeof material.json!=='string'||Buffer.byteLength(material.json,'utf8')>1_048_576
+    ||!/^[a-f0-9]{64}$/.test(material.digest))throw new Error('HEALTH_RUNTIME_PREPARED_INVALID')
+  withPersonalTwinDb(db=>{
+    const changed=db.prepare(`UPDATE twin_health_outbox_deliveries SET prepared_json=?,prepared_digest=?,prepared_at=?
+      WHERE consumer_id=? AND outbox_id=? AND status='leased' AND lease_owner=? AND attempts=? AND prepared_json IS NULL`).run(
+      material.json,material.digest,at,claim.consumerId,claim.outboxId,claim.workerId,claim.attempt)
+    if(changed.changes!==1)throw new Error('HEALTH_RUNTIME_LEASE_LOST')
   })
 }
 

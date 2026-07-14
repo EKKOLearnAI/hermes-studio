@@ -37,6 +37,17 @@ describe('health-loop runtime', () => {
     expect(events).toEqual(['prepare', 'fabric:start', 'consumer:start', 'consumer:stop', 'fabric:stop'])
   })
 
+  it('always stops Fabric and preserves the consumer error when consumer teardown rejects', async () => {
+    const {createHealthLoopLifecycle}=await import('../../packages/server/src/services/hermes/health-loop/runtime')
+    const events:string[]=[]
+    const lifecycle=createHealthLoopLifecycle({async prepare(){},async startFabric(){},async startConsumer(){},
+      async stopConsumer(){events.push('consumer');throw new Error('CONSUMER_STOP_FAILED')},
+      async stopFabric(){events.push('fabric');throw new Error('FABRIC_STOP_FAILED')}})
+    await lifecycle.start()
+    await expect(lifecycle.stop()).rejects.toThrow('CONSUMER_STOP_FAILED')
+    expect(events).toEqual(['consumer','fabric'])
+  })
+
   it('leases one immutable Twin outbox id to one runtime, reclaims stale leases, and deduplicates receipts', async () => {
     const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
     const store = await import('../../packages/server/src/services/hermes/health-loop/runtime-store')
@@ -110,21 +121,47 @@ describe('health-loop runtime', () => {
         return { intentId: 'intent-stable', workflowId: 'workflow-stable' }
       }, afterIntent() { if (crash) { crash = false; throw new Error('HEALTH_RUNTIME_SIMULATED_CRASH') } } })
     await expect(make('worker-a').processOnce()).rejects.toThrow('HEALTH_RUNTIME_SIMULATED_CRASH')
+    const originalPrepared=twin.withPersonalTwinDb(db=>(db.prepare('SELECT prepared_json FROM twin_health_outbox_deliveries').get() as
+      {prepared_json:string}).prepared_json)
+    expect(()=>twin.withPersonalTwinDb(db=>db.prepare(`UPDATE twin_health_outbox_deliveries
+      SET prepared_json=NULL,prepared_digest=NULL,prepared_at=NULL`).run())).toThrow('HEALTH_PREPARED_IMMUTABLE')
+    const replacePrepared=(value:string)=>twin.withPersonalTwinDb(db=>{db.exec('DROP TRIGGER twin_health_delivery_prepared_immutable')
+      db.prepare('UPDATE twin_health_outbox_deliveries SET prepared_json=?').run(value)
+      db.exec(`CREATE TRIGGER twin_health_delivery_prepared_immutable BEFORE UPDATE ON twin_health_outbox_deliveries
+        WHEN OLD.prepared_json IS NOT NULL AND (NEW.prepared_json IS NOT OLD.prepared_json OR
+          NEW.prepared_digest IS NOT OLD.prepared_digest OR NEW.prepared_at IS NOT OLD.prepared_at)
+        BEGIN SELECT RAISE(ABORT,'HEALTH_PREPARED_IMMUTABLE'); END;`)})
+    replacePrepared(originalPrepared.replace('health-runtime-prepared/v1','health-runtime-prepared/v2'))
+    await expect(make('worker-tamper').processOnce({now:'2026-07-14T08:05:32.000Z'})).resolves.toMatchObject({outcome:'failed'})
+    expect(calls).toHaveLength(1)
+    expect(twin.withPersonalTwinDb(db=>db.prepare('SELECT last_error_code FROM twin_health_outbox_deliveries').get()))
+      .toEqual({last_error_code:'HEALTH_RUNTIME_PREPARED_INVALID'})
+    replacePrepared(originalPrepared)
+    const settings=(await import('../../packages/server/src/services/hermes/health-loop/settings'))
+    settings.updateHealthAutomationSettings({expectedVersion:1,liveDeliveryEnabled:true,actorUserId:'admin-1',
+      profile:'default',recipient:'configured-self',updatedAt:'2026-07-15T00:00:00.000Z'})
+    twin.withPersonalTwinDb(db=>db.prepare(`UPDATE twin_health_plans SET version=2,state_json='{"trainingIntensity":"low"}',
+      digest=?,updated_at=? WHERE plan_id='health-plan-default'`).run(
+        createHash('sha256').update('{"trainingIntensity":"low"}').digest('hex'),'2026-07-15T00:00:00.000Z'))
+    health.ingestHealthEnvelope({domain:'sleep',source:'runtime-fixture',sourceId:'sleep-changed',
+      observedAt:'2026-07-15T08:00:00.000Z',evidenceClass:'measured',confidence:0.95,
+      payload:{startedAt:'2026-07-15T00:00:00.000Z',endedAt:'2026-07-15T08:00:00.000Z',durationMinutes:480,interruptions:0}})
+    health.projectHealthState(twin.listTwinObservations({entityId:'person:self'}),{computedAt:'2026-07-15T08:05:00.000Z'})
     const restarted = make('worker-b')
-    await expect(restarted.processOnce({ now: '2026-07-14T08:05:32.000Z' })).resolves.toMatchObject({ processed: true })
+    await expect(restarted.processOnce({ now: '2026-07-15T08:05:32.000Z' })).resolves.toMatchObject({ processed: true })
     expect(calls).toHaveLength(2)
     expect(calls[0]).toEqual(calls[1])
     expect(calls[0].environments).toEqual(['sandbox'])
     expect(calls[0].idempotencyKey).toMatch(/^health-intervention-[a-f0-9]{64}$/)
     expect(twin.withPersonalTwinDb(db => db.prepare('SELECT COUNT(*) AS n FROM twin_health_actions').get()))
       .toEqual({ n: 1 })
-    await expect(restarted.processOnce({now:'2026-07-14T08:05:33.000Z'})).resolves.toMatchObject({processed:true})
+    await expect(restarted.processOnce({now:'2026-07-15T08:05:33.000Z'})).resolves.toMatchObject({processed:true})
     expect(calls).toHaveLength(2)
     const {recordHealthOutcome}=await import('../../packages/server/src/services/hermes/health-loop/outcomes')
     recordHealthOutcome({feedbackId:'feedback-runtime',outcome:'completed',actionId:`health-action-${calls[0].idempotencyKey.slice('health-intervention-'.length)}`,
       interventionId:'health.training.reduce_after_low_sleep',workflowId:'workflow-stable',userId:'user-self',
-      occurredAt:'2026-07-14T08:05:34.000Z'})
-    await expect(restarted.processOnce({now:'2026-07-14T08:05:35.000Z'})).resolves.toMatchObject({processed:true})
+      occurredAt:'2026-07-15T08:05:34.000Z'})
+    await expect(restarted.processOnce({now:'2026-07-15T08:05:35.000Z'})).resolves.toMatchObject({processed:true})
     expect(calls).toHaveLength(2)
   })
 
@@ -253,8 +290,11 @@ describe('health-loop runtime', () => {
         environment:'production' as const,input:{planId:'plan-auth',expectedVersion:1},requirements:['health_plan:write']},
       {capabilityId:'health.followup.schedule',requestedByUserId:'user-1',targetAtoms:['health:owner:user-1'],executorId:'health-plan',
         environment:'production' as const,input:{ownerUserId:'user-1'},requirements:['health_schedule:write']},]
-    expect(requests.map(request=>provider.authorize(request))).toEqual(requests.map(()=>expect.objectContaining({authorizationVersion:2,
+    const firstGrants=requests.map(request=>provider.authorize(request))
+    expect(firstGrants).toEqual(requests.map(()=>expect.objectContaining({authorizationVersion:2,
       expiresAt:'2026-07-14T01:00:30.000Z'})))
+    vi.setSystemTime(new Date('2026-07-14T01:00:10.000Z'))
+    expect(requests.map(request=>provider.authorize(request))).toEqual(firstGrants)
     const unavailable=createHealthRuntimeAuthorizationProvider('default')
     expect(unavailable.authorize(requests[1])).toBeNull()
     expect(unavailable.authorize(requests[3])).toBeNull()

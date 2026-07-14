@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 import { TWIN_DOMAINS } from './types'
 
-const SCHEMA_VERSION = 8
+const SCHEMA_VERSION = 9
 const RESERVATION_TABLE_SQL = `CREATE TABLE twin_artifact_consent_reservations (
   reservation_id TEXT PRIMARY KEY
     CHECK(length(reservation_id) BETWEEN 48 AND 64 AND reservation_id GLOB 'reservation-*'
@@ -28,6 +28,7 @@ const REQUIRED_TWIN_TABLES = [
   'twin_relations', 'twin_role_profile_mappings',
   'twin_health_actions', 'twin_health_automation_settings', 'twin_health_executor_ledger',
   'twin_health_followups', 'twin_health_outbox_deliveries', 'twin_health_plans',
+  'twin_health_authorization_grants',
 ]
 
 export function getPersonalTwinDbPath(): string {
@@ -96,6 +97,10 @@ export function initPersonalTwinSchema(db: DatabaseSync): void {
     if (version < 8) {
       createSchemaV8(db)
       setSchemaVersion(db, 8)
+    }
+    if (version < 9) {
+      createSchemaV9(db)
+      setSchemaVersion(db, 9)
     }
     normalizeLegacyArtifactSourceIndex(db)
     assertSchemaComplete(db, SCHEMA_VERSION)
@@ -648,6 +653,44 @@ function createSchemaV8(db: DatabaseSync): void {
   `)
 }
 
+function createSchemaV9(db:DatabaseSync):void {
+  addColumnIfMissing(db,'twin_health_outbox_deliveries','prepared_json',`TEXT CHECK(prepared_json IS NULL OR
+    (json_valid(prepared_json) AND json_type(prepared_json)='object' AND length(CAST(prepared_json AS BLOB)) <= 1048576))`)
+  addColumnIfMissing(db,'twin_health_outbox_deliveries','prepared_digest',`TEXT CHECK(prepared_digest IS NULL OR
+    (length(prepared_digest)=64 AND prepared_digest NOT GLOB '*[^a-f0-9]*'))`)
+  addColumnIfMissing(db,'twin_health_outbox_deliveries','prepared_at','TEXT')
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS twin_health_authorization_grants (
+      request_digest TEXT PRIMARY KEY CHECK(length(request_digest)=64 AND request_digest NOT GLOB '*[^a-f0-9]*'),
+      evidence_digest TEXT NOT NULL CHECK(length(evidence_digest)=64 AND evidence_digest NOT GLOB '*[^a-f0-9]*'),
+      settings_version INTEGER NOT NULL CHECK(settings_version >= 1),
+      grant_json TEXT NOT NULL CHECK(json_valid(grant_json) AND json_type(grant_json)='object'
+        AND length(CAST(grant_json AS BLOB)) <= 8192),
+      issued_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+    CREATE TRIGGER IF NOT EXISTS twin_health_delivery_prepared_shape
+      BEFORE UPDATE ON twin_health_outbox_deliveries WHEN
+        (NEW.prepared_json IS NULL) != (NEW.prepared_digest IS NULL)
+        OR (NEW.prepared_json IS NULL) != (NEW.prepared_at IS NULL)
+      BEGIN SELECT RAISE(ABORT,'HEALTH_PREPARED_SHAPE'); END;
+    CREATE TRIGGER IF NOT EXISTS twin_health_delivery_prepared_immutable
+      BEFORE UPDATE ON twin_health_outbox_deliveries WHEN OLD.prepared_json IS NOT NULL AND
+        (NEW.prepared_json IS NOT OLD.prepared_json OR NEW.prepared_digest IS NOT OLD.prepared_digest
+          OR NEW.prepared_at IS NOT OLD.prepared_at)
+      BEGIN SELECT RAISE(ABORT,'HEALTH_PREPARED_IMMUTABLE'); END;
+    CREATE TRIGGER IF NOT EXISTS twin_health_auth_grant_no_update
+      BEFORE UPDATE ON twin_health_authorization_grants BEGIN SELECT RAISE(ABORT,'HEALTH_AUTH_GRANT_IMMUTABLE'); END;
+    CREATE TRIGGER IF NOT EXISTS twin_health_auth_grant_no_delete
+      BEFORE DELETE ON twin_health_authorization_grants BEGIN SELECT RAISE(ABORT,'HEALTH_AUTH_GRANT_IMMUTABLE'); END;
+  `)
+}
+
+function addColumnIfMissing(db:DatabaseSync,table:string,column:string,declaration:string):void {
+  const columns=db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{name:string}>
+  if(!columns.some(item=>item.name===column))db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${declaration}`)
+}
+
 function assertHealthRuntimeSchema(db: DatabaseSync, version: number): void {
   const expected: Array<[string, ColumnSignature[]]> = [
     ['twin_health_automation_settings', [
@@ -661,6 +704,7 @@ function assertHealthRuntimeSchema(db: DatabaseSync, version: number): void {
       ['attempts','INTEGER',1,0,null], ['lease_owner','TEXT',0,0,null], ['lease_until','TEXT',0,0,null],
       ['last_error_code','TEXT',0,0,null], ['intent_id','TEXT',0,0,null], ['workflow_id','TEXT',0,0,null],
       ['completed_at','TEXT',0,0,null],
+      ['prepared_json','TEXT',0,0,null], ['prepared_digest','TEXT',0,0,null], ['prepared_at','TEXT',0,0,null],
     ]],
     ['twin_health_actions', [
       ['action_id','TEXT',0,1,null], ['intervention_id','TEXT',1,0,null], ['workflow_id','TEXT',1,0,null],
@@ -683,6 +727,11 @@ function assertHealthRuntimeSchema(db: DatabaseSync, version: number): void {
       ['execution_token','TEXT',0,1,null], ['material_digest','TEXT',1,0,null], ['kind','TEXT',1,0,null],
       ['result_json','TEXT',1,0,null], ['created_at','TEXT',1,0,null],
     ]],
+    ['twin_health_authorization_grants', [
+      ['request_digest','TEXT',0,1,null], ['evidence_digest','TEXT',1,0,null],
+      ['settings_version','INTEGER',1,0,null], ['grant_json','TEXT',1,0,null],
+      ['issued_at','TEXT',1,0,null], ['expires_at','TEXT',1,0,null],
+    ]],
   ]
   for (const [table, columns] of expected) {
     const actual = db.prepare(`PRAGMA table_info('${table}')`).all() as unknown as ColumnInfo[]
@@ -694,7 +743,8 @@ function assertHealthRuntimeSchema(db: DatabaseSync, version: number): void {
       "check(json_valid(configured_processors_json) and json_type(configured_processors_json)='array' and length(cast(configured_processors_json as blob)) <= 4096)",
       'check(version >= 1)'],
     twin_health_outbox_deliveries:["check(status in ('leased','completed','dead_letter'))",
-      'check(attempts between 1 and 16)',"last_error_code not glob '*[^a-z0-9_]*'"],
+      'check(attempts between 1 and 16)',"last_error_code not glob '*[^a-z0-9_]*'",
+      "json_valid(prepared_json)","length(cast(prepared_json as blob)) <= 1048576"],
     twin_health_actions:["check(category in ('training','recovery','nutrition','posture','skin','internal_health'))",
       'check(priority between 0 and 10000)','check(supersedable in (0,1))',
       "check(risk in ('none','low','medium','high','critical'))","check(authority in ('auto','approval','inform_only'))",
@@ -704,6 +754,8 @@ function assertHealthRuntimeSchema(db: DatabaseSync, version: number): void {
     twin_health_followups:["check(status in ('scheduled','superseded'))"],
     twin_health_executor_ledger:["check(kind in ('source','plan','followup','analysis'))",
       "check(json_valid(result_json) and json_type(result_json)='object' and length(cast(result_json as blob)) <= 524288)"],
+    twin_health_authorization_grants:["check(length(request_digest)=64 and request_digest not glob '*[^a-f0-9]*')",
+      'check(settings_version >= 1)',"check(json_valid(grant_json) and json_type(grant_json)='object' and length(cast(grant_json as blob)) <= 8192)"],
   }
   for(const [table,fragments] of Object.entries(requiredSql)){
     const row=db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(table) as {sql:string}|undefined
@@ -737,7 +789,8 @@ function assertHealthRuntimeSchema(db: DatabaseSync, version: number): void {
   }
   const requiredTriggers = ['twin_health_action_identity_immutable','twin_health_action_no_delete',
     'twin_health_delivery_no_delete','twin_health_delivery_terminal_immutable',
-    'twin_health_ledger_no_delete','twin_health_ledger_no_update']
+    'twin_health_ledger_no_delete','twin_health_ledger_no_update','twin_health_delivery_prepared_shape',
+    'twin_health_delivery_prepared_immutable','twin_health_auth_grant_no_update','twin_health_auth_grant_no_delete']
   const triggers = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type='trigger'").all() as Array<{name:string}>).map(row => row.name))
   if (requiredTriggers.some(name => !triggers.has(name))) {
     throw new Error(`Personal Twin schema version ${version} is incomplete: health runtime triggers are invalid`)
@@ -750,6 +803,10 @@ function assertHealthRuntimeSchema(db: DatabaseSync, version: number): void {
     twin_health_action_identity_immutable:['new.category != old.category','new.supersedable != old.supersedable',
       "raise(abort,'health_action_identity_immutable')"],
     twin_health_action_no_delete:["before delete on twin_health_actions","raise(abort,'health_action_immutable')"],
+    twin_health_delivery_prepared_shape:['new.prepared_json is null','new.prepared_digest is null',"raise(abort,'health_prepared_shape')"],
+    twin_health_delivery_prepared_immutable:['old.prepared_json is not null',"raise(abort,'health_prepared_immutable')"],
+    twin_health_auth_grant_no_update:['before update on twin_health_authorization_grants',"raise(abort,'health_auth_grant_immutable')"],
+    twin_health_auth_grant_no_delete:['before delete on twin_health_authorization_grants',"raise(abort,'health_auth_grant_immutable')"],
   }
   for(const [name,fragments] of Object.entries(triggerFragments)){
     const row=db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?").get(name) as {sql:string}|undefined

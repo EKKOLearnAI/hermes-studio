@@ -78,7 +78,8 @@ export function recordHealthOutcome(input: RecordHealthOutcomeInput): RecordedHe
       }
       const superseded = input.outcome === 'adverse_feedback'
         ? (db.prepare(`SELECT action_id FROM twin_health_actions WHERE user_id=? AND status='active'
-            AND action_id<>? AND priority<? AND risk IN ('none','low') AND authority<>'inform_only' ORDER BY action_id`)
+            AND action_id<>? AND priority<? AND supersedable=1 AND risk IN ('none','low') AND authority<>'inform_only'
+            AND capability_id IN ('health.followup.schedule','health.checkin.request','health.plan.adjust') ORDER BY action_id`)
           .all(input.userId,input.actionId,action.priority) as Array<{action_id:string}>)
           .map(row => row.action_id)
         : []

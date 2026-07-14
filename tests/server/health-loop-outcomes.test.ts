@@ -20,6 +20,7 @@ describe('health-loop outcomes', () => {
         VALUES(?,'twin.observation.recorded',?,'{}','pending',0,?,?)`)
       insert.run('outbox-1','observation-1','2026-07-14T00:00:00.000Z','2026-07-14T00:00:00.000Z')
       insert.run('outbox-2','observation-2','2026-07-14T00:00:00.000Z','2026-07-14T00:00:00.000Z')
+      insert.run('outbox-3','observation-3','2026-07-14T00:00:00.000Z','2026-07-14T00:00:00.000Z')
     })
     const { registerHealthRuntimeAction } = await import('../../packages/server/src/services/hermes/health-loop/outcomes')
     registerHealthRuntimeAction({ actionId: 'action-1', interventionId: 'health.training.reduce_after_low_sleep',
@@ -28,6 +29,9 @@ describe('health-loop outcomes', () => {
     registerHealthRuntimeAction({ actionId: 'action-normal', interventionId: 'health.nutrition.close_protein_gap',
       workflowId: 'workflow-normal', userId: 'user-1', capabilityId: 'health.plan.adjust', category:'nutrition',priority: 20,
       supersedable:true,supersedes:[],risk: 'low', authority: 'auto', sourceOutboxId: 'outbox-2', effectiveDate: '2026-07-14' })
+    registerHealthRuntimeAction({actionId:'action-fixed',interventionId:'health.posture.reduce_chain_overload',
+      workflowId:'workflow-fixed',userId:'user-1',capabilityId:'health.followup.schedule',category:'posture',priority:10,
+      supersedable:false,supersedes:[],risk:'low',authority:'auto',sourceOutboxId:'outbox-3',effectiveDate:'2026-07-14'})
   })
 
   afterEach(() => {
@@ -63,6 +67,8 @@ describe('health-loop outcomes', () => {
     expect(JSON.stringify(events)).not.toMatch(/diagnos|treatment|emergency.disposition|medication|medical.action/i)
     expect(withPersonalTwinDb(db => db.prepare("SELECT status FROM twin_health_actions WHERE action_id='action-normal'").get()))
       .toEqual({ status: 'superseded' })
+    expect(withPersonalTwinDb(db => db.prepare("SELECT status FROM twin_health_actions WHERE action_id='action-fixed'").get()))
+      .toEqual({ status: 'active' })
   })
 
   it('records correction review without rewriting source observations', async () => {
