@@ -15,7 +15,7 @@ describe('health loop OpenAPI',()=>{
     expect(ctx.body.paths['/api/hermes/health-loop/interventions'].get.parameters[1].schema.enum).toEqual(['active','completed','superseded'])
     expect(ctx.body.paths['/api/hermes/health-loop/artifacts/{id}/analyze'].post.requestBody.content['application/json'].schema.properties.mode.enum).toEqual(['local','remote'])
     expect(ctx.body.paths['/api/hermes/health-loop/interventions/{id}/feedback'].post.requestBody.content['application/json'].schema.properties.outcome.enum).toEqual(['completed','partial','skipped','deferred','adverse_feedback','unsuitable','data_incorrect','expired'])
-    expect(ctx.body.paths['/api/hermes/health-loop/settings'].put.requestBody.content['application/json'].schema).toEqual(expect.objectContaining({additionalProperties:false,required:['expectedVersion','liveDeliveryEnabled','profile','recipient']}))
+    expect(ctx.body.paths['/api/hermes/health-loop/settings'].put.requestBody.content['application/json'].schema).toEqual(expect.objectContaining({additionalProperties:false,required:['expectedVersion','liveDeliveryEnabled','recipient'],properties:expect.not.objectContaining({profile:expect.anything()})}))
     expect(ctx.body.paths['/api/hermes/health-loop/artifacts'].post.requestBody.content['multipart/form-data'].schema.properties.file).toEqual({type:'string',format:'binary'})
     expect(ctx.body.paths['/api/hermes/health-loop/connectors/{id}/sync'].post.responses['202']).toBeTruthy()
     expect(ctx.body.paths['/api/hermes/health-loop/consents'].post.responses['201']).toBeTruthy()

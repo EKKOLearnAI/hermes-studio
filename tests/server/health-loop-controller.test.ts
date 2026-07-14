@@ -60,7 +60,8 @@ describe('health loop controller',()=>{
     const revoke=ctx(undefined,{id:'consent-1'});await ctrl.revokeConsent(revoke);expect(JSON.stringify(revoke.body)).not.toMatch(/token/i)})
 
   it('binds feedback and settings actors to authenticated/server state and gates live enablement',async()=>{const ctrl=await import('../../packages/server/src/controllers/hermes/health-loop');const feedback=ctx({feedbackId:'feedback-1',outcome:'completed',occurredAt:'2026-07-14T00:02:00Z'},{id:'intervention-1'});await ctrl.interventionFeedback(feedback);expect(outcomes.recordHealthOutcome).toHaveBeenCalledWith(expect.objectContaining({userId:'user-self',workflowId:'wf-1'}))
-    const update={expectedVersion:1,liveDeliveryEnabled:false,profile:'default',recipient:'configured-self'};const safe=ctx(update,{role:'member'});await ctrl.updateSettings(safe);expect(settings.updateHealthAutomationSettings).toHaveBeenCalledWith(expect.objectContaining({actorUserId:'42'}))
+    const update={expectedVersion:1,liveDeliveryEnabled:false,recipient:'configured-self'};const safe=ctx(update,{role:'member'});safe.state.profile={name:'research'};await ctrl.updateSettings(safe);expect(settings.updateHealthAutomationSettings).toHaveBeenCalledWith(expect.objectContaining({actorUserId:'42',profile:'research'}))
+    const spoof=ctx({...update,profile:'forged'},{role:'member'});await ctrl.updateSettings(spoof);expect(spoof.status).toBe(400)
     const live=ctx({...update,liveDeliveryEnabled:true},{role:'member'});await ctrl.updateSettings(live);expect(live.status).toBe(403)})
 
   it('rejects oversize upload preflight and sanitizes raw provider/path errors',async()=>{const ctrl=await import('../../packages/server/src/controllers/hermes/health-loop');const large=ctx();large.get=vi.fn((name:string)=>name==='content-type'?'multipart/form-data; boundary=x':String(300*1024*1024));await ctrl.createArtifact(large);expect(large.status).toBe(413)

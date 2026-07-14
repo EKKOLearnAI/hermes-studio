@@ -195,12 +195,15 @@ export async function settings(ctx: Context): Promise<void> {
 /** @openapi-response HealthSettingsResponse */
 export async function updateSettings(ctx: Context): Promise<void> {
   await respond(ctx, async () => {
-    const body = exactBody(ctx, new Set(['expectedVersion', 'liveDeliveryEnabled', 'profile', 'recipient',
+    const body = exactBody(ctx, new Set(['expectedVersion', 'liveDeliveryEnabled', 'recipient',
       'configuredConnectors', 'configuredProcessors']))
     if (typeof body.liveDeliveryEnabled !== 'boolean') throw new HealthLoopRequestError('Invalid liveDeliveryEnabled')
     if (body.liveDeliveryEnabled && ctx.state.user?.role !== 'super_admin') throw forbidden()
+    const current = getHealthAutomationSettings()
+    const authenticatedProfile = ctx.state.profile?.name
+    const profile = authenticatedProfile === undefined ? current.profile : requiredProfile(authenticatedProfile)
     const updated = updateHealthAutomationSettings({ expectedVersion: requiredInteger(body.expectedVersion, 1, Number.MAX_SAFE_INTEGER),
-      liveDeliveryEnabled: body.liveDeliveryEnabled, actorUserId: actorUserId(ctx), profile: requiredProfile(body.profile),
+      liveDeliveryEnabled: body.liveDeliveryEnabled, actorUserId: actorUserId(ctx), profile,
       recipient: requiredEnum(body.recipient, ['configured-self'] as const),
       ...(body.configuredConnectors === undefined ? {} : { configuredConnectors: idArray(body.configuredConnectors, 32) }),
       ...(body.configuredProcessors === undefined ? {} : { configuredProcessors: idArray(body.configuredProcessors, 32) }) })

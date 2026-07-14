@@ -16390,10 +16390,6 @@
                   "liveDeliveryEnabled": {
                     "type": "boolean"
                   },
-                  "profile": {
-                    "type": "string",
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
-                  },
                   "recipient": {
                     "type": "string",
                     "enum": [
@@ -16420,7 +16416,6 @@
                 "required": [
                   "expectedVersion",
                   "liveDeliveryEnabled",
-                  "profile",
                   "recipient"
                 ],
                 "additionalProperties": false
