@@ -259,6 +259,32 @@ describe('workflow manager', () => {
     } finally { await manager.delete(partial.id); await manager.delete(invalidApiMode.id) }
   })
 
+  it('defers portable skill validation until runNow and fails closed before persisting a run', async () => {
+    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { listWorkflowRuns } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    initAllStores()
+    chatRunMock.runAndWait.mockReset()
+    const manager = new WorkflowManager()
+    const missingSkill = `missing-portable-skill-${Date.now()}`
+    const workflow = manager.create({
+      name: `Missing portable skill ${Date.now()}`,
+      profile: 'default',
+      nodes: [{ id: 'agent', type: 'agent', data: {
+        title: 'Agent', agent: 'hermes', input: 'work', skills: [missingSkill],
+      } }],
+      edges: [],
+    })
+    try {
+      await expect(manager.runNow(workflow.id)).rejects.toMatchObject({
+        message: `workflow node agent requires unavailable skill: ${missingSkill}`,
+        status: 409,
+      })
+      expect(listWorkflowRuns(workflow.id)).toEqual([])
+      expect(chatRunMock.runAndWait).not.toHaveBeenCalled()
+    } finally { await manager.delete(workflow.id) }
+  })
+
   it('distinguishes pending, ready, and skipped joins without treating unresolved edges as not taken', async () => {
     const { evaluateWorkflowNodeJoin } = await import('../../packages/server/src/services/workflow-manager')
     const taken = { status: 'taken', routeMatched: true } as const
@@ -807,6 +833,112 @@ describe('workflow manager', () => {
         ['header-optional', 'success', 'not_taken'],
         ['optional-latch', 'skipped', 'not_taken'],
       ])
+    } finally { await manager.delete(workflow.id) }
+  })
+
+  it('retries an iteration when an earlier loop node fails and the failure feedback source is skipped', async () => {
+    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { listWorkflowRunEdgeEvaluations } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    initAllStores()
+    const manager = new WorkflowManager()
+    chatRunMock.runAndWait.mockReset()
+      .mockResolvedValueOnce({ ok: false, error: 'header retryable failure' })
+      .mockResolvedValueOnce({ ok: true, output: 'header recovered' })
+      .mockResolvedValueOnce({ ok: true, output: 'latch recovered' })
+    const workflow = manager.create({
+      name: `Early failure feedback recovery ${Date.now()}`, profile: 'default',
+      nodes: [
+        { id: 'header', type: 'agent', data: { title: 'Header', agent: 'hermes', input: 'header' } },
+        { id: 'latch', type: 'agent', data: { title: 'Latch', agent: 'hermes', input: 'latch' } },
+      ], edges: [
+        { id: 'forward', source: 'header', target: 'latch' },
+        { id: 'retry', source: 'latch', target: 'header', data: { orchestration: { route: 'failure', feedback: { maxIterations: 2 } } } },
+      ],
+    })
+    try {
+      const result = await manager.runNow(workflow.id)
+      expect(result.run.status).toBe('completed')
+      expect(result.nodeSessions.map(session => [session.execution_id, session.status])).toEqual([
+        ['header@loop:retry:0', 'failed'],
+        ['header@loop:retry:1', 'completed'],
+        ['latch@loop:retry:1', 'completed'],
+      ])
+      expect(listWorkflowRunEdgeEvaluations(result.run.id).filter(item => item.edge_id === 'retry').map(item => [item.source_outcome, item.status])).toEqual([
+        ['failure', 'taken'], ['success', 'not_taken'],
+      ])
+    } finally { await manager.delete(workflow.id) }
+  })
+
+  it.each(['failure', 'always'] as const)('retries a failed loop iteration through a %s feedback route and completes after recovery', async (route) => {
+    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { listWorkflowRunEdgeEvaluations, listWorkflowRunLoopEpochs } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    initAllStores()
+    const manager = new WorkflowManager()
+    chatRunMock.runAndWait.mockReset()
+      .mockResolvedValueOnce({ ok: true, output: 'header first' })
+      .mockResolvedValueOnce({ ok: false, error: 'retryable failure' })
+      .mockResolvedValueOnce({ ok: true, output: 'header recovered' })
+      .mockResolvedValueOnce({ ok: true, output: 'latch recovered' })
+    const workflow = manager.create({
+      name: `${route} feedback recovery ${Date.now()}`, profile: 'default',
+      nodes: [
+        { id: 'header', type: 'agent', data: { title: 'Header', agent: 'hermes', input: 'header' } },
+        { id: 'latch', type: 'agent', data: { title: 'Latch', agent: 'hermes', input: 'latch' } },
+      ], edges: [
+        { id: 'forward', source: 'header', target: 'latch' },
+        { id: 'retry', source: 'latch', target: 'header', data: { orchestration: { route, feedback: { maxIterations: 2 } } } },
+      ],
+    })
+    try {
+      const result = await manager.runNow(workflow.id)
+      expect({ status: result.run.status, error: result.run.error }).toEqual({ status: 'completed', error: null })
+      expect(chatRunMock.runAndWait).toHaveBeenCalledTimes(4)
+      expect(result.nodeSessions.map(session => [session.execution_id, session.status])).toEqual([
+        ['header@loop:retry:0', 'completed'],
+        ['latch@loop:retry:0', 'failed'],
+        ['header@loop:retry:1', 'completed'],
+        ['latch@loop:retry:1', 'completed'],
+      ])
+      expect(listWorkflowRunEdgeEvaluations(result.run.id).filter(item => item.edge_id === 'retry').map(item => ({
+        outcome: item.source_outcome, status: item.status, reason: item.reason,
+      }))).toEqual([
+        { outcome: 'failure', status: 'taken', reason: null },
+        { outcome: 'success', status: 'not_taken', reason: route === 'always' ? 'iteration_limit_reached' : 'route_not_matched' },
+      ])
+      expect(listWorkflowRunLoopEpochs(result.run.id).map(epoch => [epoch.status, epoch.exit_reason])).toEqual([
+        ['failed', 'retryable failure'],
+        ['completed', route === 'always' ? 'iteration_limit_reached' : 'route_not_matched'],
+      ])
+    } finally { await manager.delete(workflow.id) }
+  })
+
+  it.each(['hermes', 'claude-code'] as const)('persists a resolvable Session before a failing %s workflow node can leave evidence', async (agent) => {
+    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { getDb } = await import('../../packages/server/src/db')
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    initAllStores()
+    const manager = new WorkflowManager()
+    chatRunMock.runAndWait.mockReset().mockResolvedValue({ ok: false, error: 'runner failed before session creation' })
+    const workflow = manager.create({
+      name: `Resolvable ${agent} session ${Date.now()}`, profile: 'default', workspace: '/workspace',
+      nodes: [{ id: 'node', type: 'agent', data: {
+        title: 'Node', agent, provider: 'custom:test', model: 'model-a', apiMode: 'chat_completions', input: 'work',
+      } }], edges: [],
+    })
+    try {
+      const result = await manager.runNow(workflow.id)
+      expect(result.run.status).toBe('failed')
+      const nodeSession = result.nodeSessions[0]
+      expect(nodeSession.status).toBe('failed')
+      expect(getDb()!.prepare(`SELECT id, profile, source, agent, workspace FROM sessions WHERE id = ?`).get(nodeSession.session_id)).toEqual({
+        id: nodeSession.session_id,
+        profile: 'default',
+        source: 'workflow',
+        agent: agent === 'hermes' ? 'hermes' : 'claude',
+        workspace: '/workspace',
+      })
     } finally { await manager.delete(workflow.id) }
   })
 
@@ -2071,6 +2203,38 @@ describe('workflow manager', () => {
     }
   })
 
+  it('keeps a DAG approval wait canceled when stopRun resolves the pending approval', async () => {
+    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { listWorkflowRunNodeSessions } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    initAllStores()
+    const manager = new WorkflowManager()
+    chatRunMock.runAndWait.mockReset().mockResolvedValue({ ok: true, output: 'needs approval' })
+    chatRunMock.abortSession.mockReset().mockResolvedValue(undefined)
+    const workflow = manager.create({
+      name: `Canceled DAG approval ${Date.now()}`, profile: 'default',
+      nodes: [{ id: 'review', type: 'agent', data: {
+        title: 'Review', agent: 'hermes', input: 'review', approvalRequired: true,
+      } }], edges: [],
+    })
+    try {
+      const runPromise = manager.runNow(workflow.id)
+      await vi.waitFor(() => expect(manager.getRuntimeStatus(workflow.id).nodeStatuses.review).toBe('pending_approval'))
+      const runId = manager.getRuntimeStatus(workflow.id).runId!
+      await manager.stopRun(workflow.id, runId, 'canceled during approval')
+      const result = await runPromise
+      expect({ status: result.run.status, error: result.run.error }).toEqual({
+        status: 'canceled', error: 'canceled during approval',
+      })
+      expect(listWorkflowRunNodeSessions(runId).map(session => [session.status, session.error])).toEqual([
+        ['canceled', 'canceled during approval'],
+      ])
+      expect(manager.getRuntimeStatus(workflow.id)).toMatchObject({
+        status: 'canceled', error: 'canceled during approval', nodeStatuses: { review: 'canceled' },
+      })
+    } finally { await manager.delete(workflow.id) }
+  })
+
   it('keeps parallel pending approvals open after one node is rejected', async () => {
     const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
     const manager = new WorkflowManager()
@@ -2237,6 +2401,48 @@ describe('workflow manager', () => {
       await expect(manager.rerunFromNode(workflow.id, run.id, 'a')).rejects.toThrow('workflow edge bad references missing node')
       expect(getWorkflowRun(run.id)?.status).toBe('canceled')
       expect(listWorkflowRunNodeSessions(run.id).map(item => item.session_id)).toEqual(['existing-a'])
+      expect(chatRunMock.runAndWait).not.toHaveBeenCalled()
+    } finally { await manager.delete(workflow.id) }
+  })
+
+  it('revalidates portable skills on rerun and fails closed before mutating the run', async () => {
+    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    const {
+      createWorkflowRun, createWorkflowRunNodeSession, getWorkflowRun,
+      listWorkflowRunNodeSessions, updateWorkflowRun,
+    } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    initAllStores()
+    const manager = new WorkflowManager()
+    chatRunMock.runAndWait.mockReset()
+    const missingSkill = `missing-rerun-skill-${Date.now()}`
+    const nodes = [{ id: 'agent', type: 'agent', data: {
+      title: 'Agent', agent: 'hermes', input: 'work', skills: [missingSkill],
+    } }]
+    const workflow = manager.create({
+      name: `Missing rerun skill ${Date.now()}`,
+      profile: 'default',
+      nodes,
+      edges: [],
+    })
+    const run = createWorkflowRun({
+      workflow_id: workflow.id, profile: 'default', status: 'running',
+      snapshot_nodes: nodes, snapshot_edges: [], start_node_ids: ['agent'],
+      started_at: 1000, finished_at: 1100,
+    })
+    createWorkflowRunNodeSession({
+      run_id: run.id, workflow_id: workflow.id, node_id: 'agent',
+      session_id: 'existing-agent', status: 'canceled',
+    })
+    updateWorkflowRun(run.id, { status: 'canceled', finished_at: 1100 })
+    const beforeRun = getWorkflowRun(run.id)
+    try {
+      await expect(manager.rerunFromNode(workflow.id, run.id, 'agent')).rejects.toMatchObject({
+        message: `workflow node agent requires unavailable skill: ${missingSkill}`,
+        status: 409,
+      })
+      expect(getWorkflowRun(run.id)).toEqual(beforeRun)
+      expect(listWorkflowRunNodeSessions(run.id).map(item => item.session_id)).toEqual(['existing-agent'])
       expect(chatRunMock.runAndWait).not.toHaveBeenCalled()
     } finally { await manager.delete(workflow.id) }
   })

@@ -121,24 +121,40 @@ describe('workflow controller', () => {
   })
 
 
-  it('returns 409 and creates nothing when import capability validation fails at confirmation', async () => {
-    const source = {
-      id: 'workflow-1', name: 'Unavailable target', profile: 'default', workspace: null,
-      nodes: [{ id: 'n1', type: 'agent', position: { x: 0, y: 0 }, data: { title: 'One', agent: 'hermes', provider: 'missing', model: 'missing-model', apiMode: 'chat_completions' } }],
-      edges: [], viewport: null, created_at: 1, updated_at: 2,
+  it('imports legacy v1 workflows without source-environment capability or skill validation', async () => {
+    const legacy = {
+      format: 'hermes-studio.workflow', version: 1, definition: {
+        name: 'Cross environment',
+        nodes: [{ id: 'n1', type: 'agent', position: { x: 0, y: 0 }, data: {
+          title: 'One', agent: 'hermes', provider: 'custom:source-only', model: 'source-model',
+          apiMode: 'chat_completions', reasoningEffort: 'max', input: 'go', skills: ['source-only-skill'],
+        } }],
+        edges: [], viewport: null,
+      },
     }
-    managerMock.get.mockReturnValue(source)
-    const mod = await import('../../packages/server/src/controllers/hermes/workflows')
-    const exportCtx = ctx({ params: { id: 'workflow-1' }, state: { user: { id: 'u1', role: 'super_admin' } } })
-    await mod.exportDefinition(exportCtx)
-    const previewCtx = ctx({ request: { body: { document: JSON.stringify(exportCtx.body), profile: 'default' } }, state: { user: { id: 'u1', role: 'super_admin' } } })
-    await mod.previewImport(previewCtx)
+    managerMock.create.mockImplementation((input: any) => ({ id: 'workflow-copy', workspace: null, created_at: 3, updated_at: 3, ...input }))
     assertImportCapabilitiesMock.mockImplementation(() => { throw Object.assign(new Error('target capability is unavailable'), { status: 409 }) })
-    const confirmCtx = ctx({ request: { body: { token: previewCtx.body.preview.token, profile: 'default' } }, state: { user: { id: 'u1', role: 'super_admin' } } })
+    skillDependenciesMock.mockRejectedValue(Object.assign(new Error('skill unavailable'), { status: 409 }))
+    const mod = await import('../../packages/server/src/controllers/hermes/workflows')
+    const previewCtx = ctx({ request: { body: { document: JSON.stringify(legacy), profile: 'target' } }, state: { user: { id: 'u1', role: 'super_admin' } } })
+    await mod.previewImport(previewCtx)
+    expect(previewCtx.status).toBe(200)
+    expect(previewCtx.body).toMatchObject({ ok: true, preview: { summary: { name: 'Cross environment' } } })
+
+    const confirmCtx = ctx({ request: { body: { token: previewCtx.body.preview.token, profile: 'target' } }, state: { user: { id: 'u1', role: 'super_admin' } } })
     await mod.confirmImport(confirmCtx)
-    expect(confirmCtx.status).toBe(409)
-    expect(confirmCtx.body).toMatchObject({ error: expect.stringContaining('unavailable') })
-    expect(managerMock.create).not.toHaveBeenCalled()
+    expect(confirmCtx.status).toBe(201)
+    expect(managerMock.create).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Cross environment', profile: 'target',
+      nodes: [expect.objectContaining({ data: expect.objectContaining({ skills: ['source-only-skill'] }) })],
+    }))
+    const importedData = managerMock.create.mock.calls[0][0].nodes[0].data
+    expect(importedData).not.toHaveProperty('provider')
+    expect(importedData).not.toHaveProperty('model')
+    expect(importedData).not.toHaveProperty('apiMode')
+    expect(importedData).not.toHaveProperty('reasoningEffort')
+    expect(assertImportCapabilitiesMock).not.toHaveBeenCalled()
+    expect(skillDependenciesMock).not.toHaveBeenCalled()
   })
 
   it('lists run records for a workflow', async () => {

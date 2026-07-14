@@ -32,7 +32,7 @@ import {
   type WorkflowRunNodeStatus,
   type WorkflowRunRecord,
 } from '../db/hermes/workflow-run-store'
-import { deleteSession, getSession, getSessionDetail } from '../db/hermes/session-store'
+import { createSession, deleteSession, getSession, getSessionDetail } from '../db/hermes/session-store'
 import { getChatRunServer } from '../routes/hermes/chat-run'
 import type { ContentBlock } from './hermes/run-chat'
 import type { AuthenticatedUser } from '../middleware/user-auth'
@@ -1147,6 +1147,28 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     }
   }
 
+  private ensureWorkflowNodeSession(args: {
+    sessionId: string
+    profile: string
+    workspace: string | null
+    node: WorkflowNodeSnapshot
+    target: WorkflowNodeRunTarget
+  }): void {
+    if (getSession(args.sessionId)) return
+    createSession({
+      id: args.sessionId,
+      profile: args.profile,
+      source: 'workflow',
+      agent: args.target.agent,
+      agent_mode: args.node.data.agent === 'hermes' ? '' : 'scoped',
+      model: args.node.data.model,
+      provider: args.node.data.provider,
+      ...(args.node.data.agent === 'hermes' ? {} : { api_mode: args.node.data.apiMode }),
+      title: args.node.data.title,
+      workspace: args.workspace || undefined,
+    })
+  }
+
   private async executeRecursiveCompiledWorkflowRun(args: {
     workflowId: string
     workspace: string | null
@@ -1269,6 +1291,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       const sessionId = randomUUID()
       const executionId = pathExecutionId(node.id, path)
       const target = resolveWorkflowNodeRunTarget(node.data.agent)
+      this.ensureWorkflowNodeSession({ sessionId, profile, workspace, node, target })
       const consumedIncoming = promptEdges.filter(edge => !ignoreHistoricalIncoming(edge) && edge.target === node.id && (
         (!activeIds.has(edge.source) && outputs.has(edge.source) && Boolean(evidenceForEdge(edge)))
         || latestEdgeDecisions.get(edge)?.status === 'taken'
@@ -1309,7 +1332,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
           }
           updateWorkflowRunNodeSession(nodeSession.id, { status: 'failed', finished_at: Date.now(), error: rawError })
           nodeStatuses[node.id] = 'failed'
-          firstNodeFailure.value ||= { node, error: rawError }
+          if (path.length === 0) firstNodeFailure.value ||= { node, error: rawError }
           recordNodeFailureForPath(path, rawError)
           for (const edge of forwardEdges.filter(item => activeIds.has(item.target) && item.source === node.id)) {
             const decision = evaluateWorkflowEdgeRoute(edge.orchestration, 'failure', { error: rawError })
@@ -1493,12 +1516,18 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
           const pathFailure = nodeFailuresByPath.get(currentPathKey)
           const iterationFailed = (pathFailure?.count || 0) > failuresBeforeIteration
           const latchSkipped = nodeStatuses[loop.latchNodeId] === 'skipped'
-          const decision: WorkflowEdgeDecision = iterationFailed || latchSkipped
-            ? { status: 'not_taken', routeMatched: false, reason: 'route_not_matched' }
-            : iteration + 1 < loop.maxIterations
-              ? evaluateWorkflowEdgeRoute(feedback.orchestration, 'success', { output: outputs.get(loop.latchNodeId) || '' })
-              : { status: 'not_taken', routeMatched: true, reason: 'iteration_limit_reached' }
-          persistDecision(feedback, latchSkipped ? 'skipped' : iterationFailed ? 'failure' : 'success', decision, path)
+          const sourceOutcome = iterationFailed ? 'failure' : latchSkipped ? 'skipped' : 'success'
+          const routeDecision = sourceOutcome === 'skipped'
+            ? { status: 'not_taken', routeMatched: false, reason: 'route_not_matched' } as WorkflowEdgeDecision
+            : evaluateWorkflowEdgeRoute(
+                feedback.orchestration,
+                sourceOutcome,
+                iterationFailed ? { error: pathFailure?.lastError || 'loop iteration failed' } : { output: outputs.get(loop.latchNodeId) || '' },
+              )
+          const decision: WorkflowEdgeDecision = routeDecision.status === 'taken' && iteration + 1 >= loop.maxIterations
+            ? { status: 'not_taken', routeMatched: true, reason: 'iteration_limit_reached' }
+            : routeDecision
+          persistDecision(feedback, sourceOutcome, decision, path)
           feedbackCarry = decision.status === 'taken'
             ? new Map([[loop.latchNodeId, outputs.get(loop.latchNodeId) || '']])
             : new Map()
@@ -1508,7 +1537,20 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             exit_reason: iterationFailed ? pathFailure?.lastError || 'loop iteration failed' : decision.status === 'taken' ? 'feedback_taken' : decision.reason,
             sequence: historySequence++, started_at: epochStartedAt, finished_at: Date.now(),
           })
-          if (iterationFailed || decision.status !== 'taken') break
+          if (iterationFailed && decision.status === 'taken') {
+            const resolvedFailures = (pathFailure?.count || 0) - failuresBeforeIteration
+            for (let depth = 1; depth <= path.length && resolvedFailures > 0; depth += 1) {
+              const key = pathKey(path.slice(0, depth))
+              const previous = nodeFailuresByPath.get(key)
+              if (!previous) continue
+              const remaining = previous.count - resolvedFailures
+              if (remaining > 0) nodeFailuresByPath.set(key, { ...previous, count: remaining })
+              else nodeFailuresByPath.delete(key)
+            }
+          } else if (iterationFailed && parentPath.length === 0) {
+            firstNodeFailure.value ||= { node: nodeById.get(loop.latchNodeId)!, error: pathFailure?.lastError || 'loop iteration failed' }
+          }
+          if (decision.status !== 'taken') break
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
           const canceled = isCanceled()
@@ -1731,6 +1773,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
           const nodeSessionId = randomUUID()
           runningOrDone.add(node.id)
           const target = resolveWorkflowNodeRunTarget(node.data.agent)
+          this.ensureWorkflowNodeSession({ sessionId: nodeSessionId, profile, workspace, node, target })
           const consumedIncoming = edges.filter(edge => edge.target === node.id && (
             (!activeIds.has(edge.source) && outputs.has(edge.source) && Boolean(evidenceForEdge(edge)))
             || edgeDecisions.get(edge)?.status === 'taken'
@@ -1832,6 +1875,11 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             updateWorkflowRunNodeSession(nodeSession.id, { status: 'failed', finished_at: Date.now(), error })
             nodeStatuses[node.id] = 'failed'
             return { node, ok: false, deadlineExceeded: error === runTimeoutMessage, error }
+          }
+          if (this.canceledRunIds.has(run.id) || getWorkflowRun(run.id)?.status === 'canceled') {
+            const error = getWorkflowRun(run.id)?.error || 'Workflow run canceled'
+            nodeStatuses[node.id] = 'canceled'
+            return { node, ok: false, canceled: true, error }
           }
           if (!approved) {
             const error = 'Workflow node approval rejected'

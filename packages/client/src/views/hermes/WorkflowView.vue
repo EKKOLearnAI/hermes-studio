@@ -1428,6 +1428,9 @@ async function confirmPendingWorkflowImport() {
     workflowImportConfirmVisible.value = false
     workflowImportPreview.value = null
     await applyWorkflow(imported, true)
+    void subscribeWorkflowStatuses(imported.id).then(applyWorkflowRuntimeStatuses).catch((err) => {
+      console.error('Failed to subscribe imported workflow status:', err)
+    })
     message.success(t('workflow.actions.imported'))
   } catch (err: any) {
     workflowImportConfirmVisible.value = false
@@ -2938,12 +2941,12 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
   overflow: auto;
 }
 .workflow-evidence-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
-.workflow-evidence-list { display: flex; flex-direction: column; gap: 8px; }
-.workflow-evidence-row { display: flex; flex-direction: column; gap: 3px; padding: 8px; border-radius: 6px; background: rgba(var(--accent-primary-rgb), 0.05); font-size: 11px; color: var(--text-muted); }
+.workflow-evidence-list { display: flex; flex-direction: column; gap: 4px; }
+.workflow-evidence-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 6px 8px; border-radius: 6px; background: rgba(var(--accent-primary-rgb), 0.05); font-size: 11px; color: var(--text-muted); }
+.workflow-evidence-row strong, .workflow-evidence-row > span, .workflow-evidence-row code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workflow-evidence-row strong { color: var(--text-primary); font-size: 12px; }
-.workflow-evidence-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workflow-evidence-row code { white-space: normal; word-break: break-all; color: var(--accent-primary); }
-.workflow-evidence-topline { display: flex; justify-content: space-between; gap: 8px; }
+.workflow-evidence-row code { color: var(--accent-primary); }
+.workflow-evidence-topline { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .workflow-evidence-kind { text-transform: uppercase; font-weight: 600; }
 
 .workflow-create-form {

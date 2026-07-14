@@ -733,6 +733,9 @@ function syncWorkflowRunEdgeEvaluations(
       `ALTER TABLE ${quoteIdentifier(WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE)} ` +
       `RENAME TO ${quoteIdentifier(archiveTable)}`
     )
+    for (const indexName of Object.keys(WORKFLOW_RUN_EDGE_EVALUATIONS_INDEXES)) {
+      db.exec(`DROP INDEX IF EXISTS ${quoteIdentifier(indexName)}`)
+    }
     syncTable(WORKFLOW_RUN_EDGE_EVALUATIONS_TABLE, WORKFLOW_RUN_EDGE_EVALUATIONS_SCHEMA, {
       indexes: WORKFLOW_RUN_EDGE_EVALUATIONS_INDEXES,
     })

@@ -4,8 +4,8 @@ import { listUserProfiles } from '../../db/hermes/users-store'
 import { getWorkflowRunWithEvidence, listWorkflowRunsWithEvidence } from '../../db/hermes/workflow-run-store'
 import { logger } from '../../services/logger'
 import { compileWorkflowGraphPreflight } from '../../services/workflow-manager'
-import { cancelWorkflowImport, consumeWorkflowImportPreview, exportWorkflowDefinition, finalizeConsumedWorkflowImport, inspectWorkflowImportDocument, previewWorkflowImport } from '../../services/workflow-portability'
-import { assertWorkflowImportCapabilities, workflowImportEnvironmentRevision } from '../../services/workflow-import-capabilities'
+import { cancelWorkflowImport, consumeWorkflowImportPreview, exportWorkflowDefinition, finalizeConsumedWorkflowImport, previewWorkflowImport } from '../../services/workflow-portability'
+import { assertWorkflowImportCapabilities } from '../../services/workflow-import-capabilities'
 import { getAvailableModelGroupsForProfile } from './models'
 
 const MAX_BATCH_DELETE = 200
@@ -124,17 +124,9 @@ function importOwnerId(ctx: Context): string {
   return String(ctx.state?.user?.id || 'anonymous')
 }
 
-async function workflowImportCapabilityContext(profile: string) {
-  const capabilityGroups = await getAvailableModelGroupsForProfile(profile)
-  return {
-    capabilityGroups,
-    revision: workflowImportEnvironmentRevision(capabilityGroups),
-  }
-}
-
 async function assertWorkflowExecutionCapabilities(profile: string, nodes: unknown[]): Promise<void> {
-  const capabilities = await workflowImportCapabilityContext(profile)
-  assertWorkflowImportCapabilities(nodes, capabilities.capabilityGroups)
+  const capabilityGroups = await getAvailableModelGroupsForProfile(profile)
+  assertWorkflowImportCapabilities(nodes, capabilityGroups)
 }
 
 function validateWorkflowDefinitionMutation(nodes: unknown[], edges: unknown[]): void {
@@ -160,18 +152,9 @@ export async function previewImport(ctx: Context) {
   if (denyProfileAccess(ctx, profile)) return
   if (typeof body.document !== 'string') { ctx.status = 400; ctx.body = { error: 'document must be a JSON string' }; return }
   try {
-    const inspectGraph = (nodes: unknown[], edges: unknown[], starts?: string[]) => compileWorkflowGraphPreflight(nodes, edges, starts)
-    const inspected = inspectWorkflowImportDocument(body.document, inspectGraph)
-    const capabilities = await workflowImportCapabilityContext(profile)
-    const validateGraph = (nodes: unknown[], edges: unknown[], starts?: string[]) => {
-      const compiled = compileWorkflowGraphPreflight(nodes, edges, starts)
-      assertWorkflowImportCapabilities(compiled.nodes, capabilities.capabilityGroups)
-      return compiled
-    }
-    validateGraph(inspected.nodes, inspected.edges)
-    await assertWorkflowNodeSkillDependencies(inspected.nodes as any, profile)
+    const validateGraph = (nodes: unknown[], edges: unknown[], starts?: string[]) => compileWorkflowGraphPreflight(nodes, edges, starts)
     const preview = previewWorkflowImport(body.document, {
-      ownerId: importOwnerId(ctx), profile, environmentRevision: capabilities.revision, validateGraph,
+      ownerId: importOwnerId(ctx), profile, validateGraph,
     })
     ctx.body = { ok: true, preview }
   } catch (err: any) { ctx.status = err?.status === 409 ? 409 : 400; ctx.body = { error: err?.message || 'invalid workflow import' } }
@@ -193,16 +176,10 @@ export async function confirmImport(ctx: Context) {
   if (typeof body.token !== 'string' || !body.token.trim()) { ctx.status = 400; ctx.body = { error: 'token is required' }; return }
   try {
     const consumed = consumeWorkflowImportPreview(body.token.trim(), importOwnerId(ctx), profile)
-    const capabilities = await workflowImportCapabilityContext(profile)
-    const validateGraph = (nodes: unknown[], edges: unknown[], starts?: string[]) => {
-      const compiled = compileWorkflowGraphPreflight(nodes, edges, starts)
-      assertWorkflowImportCapabilities(compiled.nodes, capabilities.capabilityGroups)
-      return compiled
-    }
+    const validateGraph = (nodes: unknown[], edges: unknown[], starts?: string[]) => compileWorkflowGraphPreflight(nodes, edges, starts)
     const input = finalizeConsumedWorkflowImport(consumed, {
-      ownerId: importOwnerId(ctx), profile, environmentRevision: capabilities.revision, validateGraph,
+      ownerId: importOwnerId(ctx), profile, validateGraph,
     })
-    await assertWorkflowNodeSkillDependencies(input.nodes as any, profile)
     const workflow = getWorkflowManager().create(input)
     ctx.status = 201
     ctx.body = { ok: true, workflow }

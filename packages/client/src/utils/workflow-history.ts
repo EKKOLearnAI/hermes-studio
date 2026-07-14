@@ -36,10 +36,14 @@ export function latestWorkflowNodeSession(
 
 export function buildWorkflowEvidenceRows(run: Pick<WorkflowRunRecord, 'node_sessions' | 'edge_evaluations' | 'loop_epochs'>): WorkflowEvidenceRow[] {
   const rows: WorkflowEvidenceRow[] = []
-  for (const node of run.node_sessions || []) rows.push({
-    kind: 'node', sequence: node.sequence, title: node.execution_id, status: node.status,
-    detail: [node.error || node.node_id, node.consumed_edge_evaluation_ids?.length ? `consumed: ${node.consumed_edge_evaluation_ids.join(', ')}` : ''].filter(Boolean).join(' · '), iterationPath: formatIterationPath(node.iteration_path),
-  })
+  const exceptionalNodeStatuses = new Set(['failed', 'blocked', 'approval_rejected', 'canceled'])
+  for (const node of run.node_sessions || []) {
+    if (!exceptionalNodeStatuses.has(node.status)) continue
+    rows.push({
+      kind: 'node', sequence: node.sequence, title: node.execution_id, status: node.status,
+      detail: [node.error || node.node_id, node.consumed_edge_evaluation_ids?.length ? `consumed: ${node.consumed_edge_evaluation_ids.join(', ')}` : ''].filter(Boolean).join(' · '), iterationPath: formatIterationPath(node.iteration_path),
+    })
+  }
   for (const edge of run.edge_evaluations || []) rows.push({
     kind: 'edge', sequence: edge.sequence, title: edge.edge_id, status: edge.status,
     detail: `${edge.source_execution_id} → ${edge.target_node_id} · ${edge.route}${edge.reason ? ` · ${edge.reason}` : ''}`,

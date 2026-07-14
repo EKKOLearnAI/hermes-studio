@@ -13,7 +13,7 @@ const workflow = {
 const options = (ownerId = 'u1', profile = 'default', now = () => 1000) => ({ ownerId, profile, now, validateGraph: compileWorkflowGraphPreflight })
 
 describe('workflow portability', () => {
-  it('round-trips execution identity while excluding credential and runtime state', () => {
+  it('exports portable workflow logic without source-environment runtime bindings', () => {
     const exported = exportWorkflowDefinition({
       id: 'wf', name: 'Portable identity', profile: 'private', workspace: '/private/path',
       nodes: [{ id: 'n', type: 'agent', position: { x: 0, y: 0 }, data: {
@@ -22,13 +22,35 @@ describe('workflow portability', () => {
         token: 'secret', session_id: 'runtime',
       } }], edges: [], viewport: null,
     } as any)
-    expect(exported.definition.nodes[0].data).toEqual({
-      title: 'N', agent: 'hermes', provider: 'custom:test', model: 'model-a', apiMode: 'chat_completions',
-      reasoningEffort: 'high',
-    })
+    expect(exported.definition.nodes[0].data).toEqual({ title: 'N', agent: 'hermes' })
+    expect(exported.definition.nodes[0].data).not.toHaveProperty('provider')
+    expect(exported.definition.nodes[0].data).not.toHaveProperty('model')
+    expect(exported.definition.nodes[0].data).not.toHaveProperty('apiMode')
+    expect(exported.definition.nodes[0].data).not.toHaveProperty('reasoningEffort')
     expect(exported.definition.nodes[0].data).not.toHaveProperty('executionPolicy')
     expect(JSON.stringify(exported)).not.toContain('secret')
     expect(JSON.stringify(exported)).not.toContain('/private/path')
+    expect(JSON.stringify(exported)).not.toContain('custom:test')
+  })
+
+  it('sanitizes source-environment bindings from legacy v1 documents before import', () => {
+    const legacy = {
+      format: 'hermes-studio.workflow', version: 1, definition: {
+        name: 'Cross environment',
+        nodes: [{ id: 'agent-1', type: 'agent', position: { x: 0, y: 0 }, data: {
+          title: 'Portable node', agent: 'hermes', provider: 'custom:source-only', model: 'source-model',
+          apiMode: 'chat_completions', reasoningEffort: 'max', input: 'work', skills: ['portable-skill'],
+          approvalRequired: false, orchestration: { join: 'all' },
+        } }],
+        edges: [], viewport: { x: 0, y: 0, zoom: 1 },
+      },
+    }
+    const preview = previewWorkflowImport(JSON.stringify(legacy), options('cross-owner', 'target-profile'))
+    const imported = confirmWorkflowImport(preview.token, options('cross-owner', 'target-profile'))
+    expect(imported.nodes[0].data).toEqual({
+      title: 'Portable node', agent: 'hermes', input: 'work', skills: ['portable-skill'],
+      approvalRequired: false, orchestration: { join: 'all' },
+    })
   })
 
   it('accepts legacy imports with removed execution-policy fields and strips them from the imported definition', () => {
@@ -45,7 +67,7 @@ describe('workflow portability', () => {
     const envelope = exportWorkflowDefinition(workflow as any)
     expect(envelope).toEqual({ format: 'hermes-studio.workflow', version: 1, definition: {
       name: 'Portable flow', nodes: [
-        { id: 'source', type: 'agent', position: { x: 10, y: 20 }, data: { title: 'Source', agent: 'hermes', input: 'go', provider: 'openai', model: 'gpt-test', apiMode: 'chat_completions' } },
+        { id: 'source', type: 'agent', position: { x: 10, y: 20 }, data: { title: 'Source', agent: 'hermes', input: 'go' } },
         { id: 'target', type: 'agent', position: { x: 30, y: 40 }, data: { title: 'Target', agent: 'hermes', input: 'finish' } },
       ], edges: [{ id: 'edge-1', source: 'source', target: 'target', data: { orchestration: { route: 'success' } } }], viewport: { x: 1, y: 2, zoom: 1 },
     } })
