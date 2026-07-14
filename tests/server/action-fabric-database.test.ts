@@ -653,6 +653,10 @@ describe('action fabric database', () => {
         .toEqual({ name: 'fabric_capability_contract_history_no_update' })
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name='fabric_capability_contract_history_no_delete'").get())
         .toEqual({ name: 'fabric_capability_contract_history_no_delete' })
+      expect(db.prepare(`SELECT COUNT(*) count FROM fabric_capabilities
+        WHERE id='__schema_constraint_probe__'`).get()).toEqual({ count: 0 })
+      expect(db.prepare(`SELECT COUNT(*) count FROM fabric_capability_contract_history
+        WHERE capability_id='__schema_constraint_probe__'`).get()).toEqual({ count: 0 })
     })
   })
 
@@ -663,6 +667,28 @@ describe('action fabric database', () => {
         ON fabric_capability_contract_history(version);`))
     expect(() => withActionFabricDb(db => db.prepare('SELECT 1').get()))
       .toThrow(/index signature mismatch.*capability_contract_history/i)
+  })
+
+  it('fails closed when capability history CHECK constraints are relaxed behind exact structural signatures', async () => {
+    const { withActionFabricDb } = await import('../../packages/server/src/services/hermes/action-fabric')
+    withActionFabricDb(db => {
+      const dependents = db.prepare(`SELECT sql FROM sqlite_master
+        WHERE tbl_name='fabric_capability_contract_history' AND type IN ('index','trigger') AND sql IS NOT NULL
+        ORDER BY type,name`).all() as Array<{ sql: string }>
+      db.exec(`DROP TABLE fabric_capability_contract_history;
+        CREATE TABLE fabric_capability_contract_history (
+          capability_id TEXT NOT NULL,
+          version INTEGER NOT NULL CHECK(version >= 0),
+          contract_json TEXT NOT NULL,
+          contract_digest TEXT NOT NULL CHECK(length(contract_digest) >= 1),
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(capability_id,version),
+          FOREIGN KEY(capability_id) REFERENCES fabric_capabilities(id) ON DELETE CASCADE
+        );`)
+      for (const dependent of dependents) db.exec(dependent.sql)
+    })
+    expect(() => withActionFabricDb(db => db.prepare('SELECT 1').get()))
+      .toThrow(/capability contract history constraint signature mismatch/i)
   })
 
   it('rejects half-specified currency and amount pairs', async () => {

@@ -6,7 +6,7 @@ import type {
 import type { FabricJsonObject } from '../../action-fabric/types'
 import { isFabricSensitiveString } from '../../action-fabric/audit'
 import type { HealthConsentBroker } from '../consent'
-import type { HealthAnalysisResult } from '../analysis'
+import { validateHealthAnalysisResult, type HealthAnalysisResult } from '../analysis'
 import type { AuxiliaryVisionAnalyzer } from '../analyzers/auxiliary-vision'
 import {
   AUTHORIZED_AUXILIARY_ANALYZE, consumeHealthReservation, readHealthReservationAuthorization,
@@ -239,16 +239,9 @@ function persistedOutput(locality: 'local' | 'remote', context: FabricExecutionC
 }
 
 function canonicalAnalysisResult(value: unknown): HealthAnalysisResult {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid')
-  const candidate = value as Partial<HealthAnalysisResult>
-  if (candidate.schemaVersion !== 'health-analysis-result/v1'
-    || !['measurement', 'posture', 'skin', 'diet', 'internal_health'].includes(String(candidate.purpose))
-    || !['completed', 'recapture_required', 'pending_confirmation'].includes(String(candidate.status))
-    || !semanticId(candidate.modelVersion) || !semanticId(candidate.parserVersion)
-    || !Array.isArray(candidate.fields) || candidate.fields.length > 128) throw new Error('invalid')
-  const serialized = stableStringify(value)
-  if (Buffer.byteLength(serialized, 'utf8') > MAX_RESULT_BYTES) throw new Error('invalid')
-  return JSON.parse(serialized) as HealthAnalysisResult
+  const result = validateHealthAnalysisResult(value)
+  if (Buffer.byteLength(stableStringify(result), 'utf8') > MAX_RESULT_BYTES) throw new Error('invalid')
+  return result
 }
 
 function fallbackProcessorReceipt(result: HealthAnalysisResult, binding: {

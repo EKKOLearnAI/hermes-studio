@@ -81,6 +81,7 @@ export interface HealthAnalysisFieldSpec {
 }
 
 const POISON_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
+const SENSITIVE_RESULT_KEY = /(?:authorization|cookie|credential|password|secret|token|api[_-]?key|raw[_-]?provider[_-]?output)/i
 const ARTIFACT_ID = /^artifact-[0-9a-f]{64}$/
 const CONSENT_TOKEN = /^[0-9a-f]{64}$/
 const SEMANTIC_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/
@@ -304,6 +305,101 @@ function cloneValue(value: unknown): unknown {
   const result: Record<string, unknown> = {}
   for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) result[key] = cloneValue(descriptor.value)
   return result
+}
+
+function assertNoSensitiveResultKeys(value: unknown): void {
+  if (!value || typeof value !== 'object') return
+  const prototype = Object.getPrototypeOf(value)
+  if (Array.isArray(value) ? prototype !== Array.prototype : prototype !== Object.prototype) {
+    fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  for (const key of Reflect.ownKeys(descriptors)) {
+    if (typeof key !== 'string' || SENSITIVE_RESULT_KEY.test(key)) fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+    if (key !== 'length') assertNoSensitiveResultKeys((descriptors[key] as PropertyDescriptor).value)
+  }
+}
+
+/** Strictly validates and reconstructs the durable, provider-independent result surface. */
+export function validateHealthAnalysisResult(input: unknown): HealthAnalysisResult {
+  assertSafeGraph(input, 'HEALTH_ANALYSIS_INVALID_OUTPUT')
+  assertNoSensitiveResultKeys(input)
+  const record = exactRecord(input,
+    ['schemaVersion', 'purpose', 'status', 'modelVersion', 'parserVersion', 'overallConfidence', 'captureQuality', 'fields'],
+    ['recaptureGuidance', 'envelope'], 'HEALTH_ANALYSIS_INVALID_OUTPUT')
+  if (record.schemaVersion !== 'health-analysis-result/v1'
+    || !Object.hasOwn(REQUESTED_FIELDS, record.purpose as PropertyKey)
+    || !['completed', 'recapture_required', 'pending_confirmation'].includes(String(record.status))) {
+    fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+  }
+  const purpose = record.purpose as HealthCapturePurpose
+  const quality = exactRecord(record.captureQuality, ['score', 'reasons'], [], 'HEALTH_ANALYSIS_INVALID_OUTPUT')
+  const score = confidence(quality.score, 'HEALTH_ANALYSIS_INVALID_OUTPUT')
+  if (!Array.isArray(quality.reasons) || quality.reasons.length > 8) fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+  const reasons = quality.reasons.map(reason => {
+    if (typeof reason !== 'string' || !QUALITY_REASONS.has(reason)) fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+    return reason
+  })
+  if (new Set(reasons).size !== reasons.length || !Array.isArray(record.fields) || record.fields.length > 128) {
+    fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+  }
+  const seen = new Set<string>()
+  const fields: HealthAnalysisField[] = record.fields.map(item => {
+    const field = exactRecord(item, ['field', 'value', 'confidence', 'evidence'], ['unit'], 'HEALTH_ANALYSIS_INVALID_OUTPUT')
+    const name = semantic(field.field, 100, 'HEALTH_ANALYSIS_INVALID_OUTPUT')
+    if (seen.has(name)) fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+    seen.add(name)
+    validateFieldSemantics(purpose, field)
+    const evidence = exactRecord(field.evidence, ['artifactId'], ['region', 'page'], 'HEALTH_ANALYSIS_INVALID_OUTPUT')
+    const artifactId = boundedString(evidence.artifactId, 180, ARTIFACT_ID, 'HEALTH_ANALYSIS_INVALID_OUTPUT')
+    const region = evidence.region === undefined ? undefined
+      : boundedString(evidence.region, 180, REGION, 'HEALTH_ANALYSIS_INVALID_OUTPUT')
+    const page = evidence.page
+    if (page !== undefined && (!Number.isSafeInteger(page) || (page as number) < 1 || (page as number) > 10_000)) {
+      fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+    }
+    if (field.unit !== undefined && (typeof field.unit !== 'string' || field.unit.length < 1 || field.unit.length > 40)) {
+      fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+    }
+    return { field: name, value: cloneValue(field.value),
+      ...(field.unit === undefined ? {} : { unit: field.unit as string }),
+      confidence: confidence(field.confidence, 'HEALTH_ANALYSIS_INVALID_OUTPUT'),
+      evidence: { artifactId, ...(region === undefined ? {} : { region }),
+        ...(page === undefined ? {} : { page: page as number }) } }
+  })
+  assertPayloadShape(purpose, Object.fromEntries(fields.map(field => [field.field, field.value])))
+  let guidance: string[] | undefined
+  if (record.recaptureGuidance !== undefined) {
+    if (!Array.isArray(record.recaptureGuidance) || record.recaptureGuidance.length > 8) fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+    guidance = record.recaptureGuidance.map(item => {
+      if (typeof item !== 'string' || item.length < 1 || item.length > 500) fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
+      return item
+    })
+  }
+  let envelope: HealthIngestionEnvelope | undefined
+  if (record.envelope !== undefined) {
+    const raw = exactRecord(record.envelope,
+      ['domain', 'source', 'sourceId', 'observedAt', 'evidenceClass', 'confidence', 'payload'],
+      ['artifactIds', 'parserVersion'], 'HEALTH_ANALYSIS_INVALID_OUTPUT')
+    const candidate = {
+      domain: raw.domain, source: raw.source, sourceId: raw.sourceId, observedAt: raw.observedAt,
+      evidenceClass: raw.evidenceClass, confidence: raw.confidence, payload: cloneValue(raw.payload),
+      ...(raw.artifactIds === undefined ? {} : { artifactIds: cloneValue(raw.artifactIds) }),
+      ...(raw.parserVersion === undefined ? {} : { parserVersion: raw.parserVersion }),
+    } as HealthIngestionEnvelope
+    try { normalizeHealthIngestionEnvelope(candidate); envelope = candidate }
+    catch { fail('HEALTH_ANALYSIS_INVALID_OUTPUT') }
+  }
+  return {
+    schemaVersion: 'health-analysis-result/v1', purpose,
+    status: record.status as HealthAnalysisResult['status'],
+    modelVersion: semantic(record.modelVersion, 64, 'HEALTH_ANALYSIS_INVALID_OUTPUT'),
+    parserVersion: semantic(record.parserVersion, 64, 'HEALTH_ANALYSIS_INVALID_OUTPUT'),
+    overallConfidence: confidence(record.overallConfidence, 'HEALTH_ANALYSIS_INVALID_OUTPUT'),
+    captureQuality: { score, reasons }, fields,
+    ...(guidance === undefined ? {} : { recaptureGuidance: guidance }),
+    ...(envelope === undefined ? {} : { envelope }),
+  }
 }
 
 function validateFieldSemantics(purpose: HealthCapturePurpose, field: Record<string, unknown>): void {

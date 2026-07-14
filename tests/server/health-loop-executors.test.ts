@@ -171,6 +171,59 @@ describe('health Action Fabric executors', () => {
     expect(analyze.mock.calls[0][0]).not.toHaveProperty('processorId')
   })
 
+  it.each([
+    ['extra provider output', () => ({ ...finalizedResult(), rawProviderOutput: 'secret-provider-payload' })],
+    ['accessor', () => Object.defineProperty({ ...finalizedResult() }, 'rawProviderOutput', {
+      enumerable: true, get: () => 'secret-provider-payload',
+    })],
+    ['symbol key', () => Object.defineProperty({ ...finalizedResult() }, Symbol('provider-secret'), {
+      enumerable: true, value: 'secret-provider-payload',
+    })],
+    ['nested secret-shaped key', () => ({ ...finalizedResult(), fields: [{ field: 'appearances',
+      value: [{ apiKey: 'secret-provider-payload' }], confidence: 0.9,
+      evidence: { artifactId: `artifact-${'a'.repeat(64)}` } }] })],
+    ['extra nested result key', () => ({ ...finalizedResult(), fields: [{ field: 'appearances',
+      value: [{ type: 'rash', severity: 'low', rawConfidence: 0.9 }], confidence: 0.9,
+      evidence: { artifactId: `artifact-${'a'.repeat(64)}` } }] })],
+    ['proxy', () => new Proxy({ ...finalizedResult() }, {})],
+    ['non-plain object', () => Object.assign(Object.create(null), finalizedResult())],
+    ['cycle', () => { const value = { ...finalizedResult(), cycle: null as unknown }; value.cycle = value; return value }],
+    ['oversize graph', () => ({ ...finalizedResult(), fields: [{ raw: 'x'.repeat(600_000) }] })],
+  ])('rejects unsafe analyzer result form %s before the durable writer', async (_name, unsafeResult) => {
+    const writer = analysisWriter({ analysisId: 'analysis-unsafe', status: 'succeeded', observationIds: [] })
+    const adapter = createHealthAnalysisExecutorAdapter({ locality: 'local',
+      artifactResolver: { resolve: async () => ({ artifactId: 'artifact-1', manifestDigest: digest('artifact') }) },
+      analyzer: { analyze: async () => ({ result: unsafeResult() as never }) }, resultWriter: writer })
+    const ctx = context('health.artifact.analyze.local', { schemaVersion: 1, artifactId: 'artifact-1',
+      manifestDigest: digest('artifact'), requestedAt: '2026-07-14T01:00:00.000Z' },
+    { executorId: 'health-local-analysis', executorType: 'internal' })
+    const prepared = await adapter.prepare(ctx)
+
+    expect(await adapter.execute({ ...ctx, preparedOutput: prepared.output }))
+      .toMatchObject({ outcome: 'permanent_failure', errorCode: 'HEALTH_ANALYSIS_RESULT_INVALID' })
+    expect(writer.write).not.toHaveBeenCalled()
+  })
+
+  it('rejects analyzer result accessors without invoking their getters', async () => {
+    let reads = 0
+    const unsafe = Object.defineProperty({ ...finalizedResult() }, 'rawProviderOutput', {
+      enumerable: true, get: () => { reads += 1; return 'secret-provider-payload' },
+    })
+    const writer = analysisWriter({ analysisId: 'analysis-accessor', status: 'succeeded', observationIds: [] })
+    const adapter = createHealthAnalysisExecutorAdapter({ locality: 'local',
+      artifactResolver: { resolve: async () => ({ artifactId: 'artifact-1', manifestDigest: digest('artifact') }) },
+      analyzer: { analyze: async () => ({ result: unsafe as never }) }, resultWriter: writer })
+    const ctx = context('health.artifact.analyze.local', { schemaVersion: 1, artifactId: 'artifact-1',
+      manifestDigest: digest('artifact'), requestedAt: '2026-07-14T01:00:00.000Z' },
+    { executorId: 'health-local-analysis', executorType: 'internal' })
+    const prepared = await adapter.prepare(ctx)
+
+    expect(await adapter.execute({ ...ctx, preparedOutput: prepared.output }))
+      .toMatchObject({ outcome: 'permanent_failure', errorCode: 'HEALTH_ANALYSIS_RESULT_INVALID' })
+    expect(reads).toBe(0)
+    expect(writer.write).not.toHaveBeenCalled()
+  })
+
   it('binds consent to the exact artifact/manifest/processor and rejects replay across execution tokens', async () => {
     let consumed = false
     const consume = vi.fn(async request => {
@@ -410,14 +463,16 @@ describe('health Action Fabric executors', () => {
   })
 
   it('persists canonical analysis results through a durable writer and replays committed IDs after restart', async () => {
+    const evidenceArtifactId = `artifact-${'a'.repeat(64)}`
     const canonicalResult = {
       schemaVersion: 'health-analysis-result/v1' as const, purpose: 'skin' as const, status: 'completed' as const,
       modelVersion: 'vision-1', parserVersion: 'vision-json-v1', overallConfidence: 0.9,
       captureQuality: { score: 0.9, reasons: [] },
-      fields: [{ field: 'appearances', value: [], confidence: 0.9, evidence: { artifactId: 'artifact-1', region: 'face' } }],
+      fields: [{ field: 'appearances', value: [], confidence: 0.9,
+        evidence: { artifactId: evidenceArtifactId, region: 'face' } }],
       envelope: { domain: 'skin' as const, source: 'analysis.remote', sourceId: 'analysis-source',
         observedAt: '2026-07-14T01:00:00.000Z', evidenceClass: 'inferred' as const, confidence: 0.9,
-        payload: { appearances: [], captureQuality: 0.9 }, artifactIds: ['artifact-1'], parserVersion: 'vision-json-v1' },
+        payload: { appearances: [], captureQuality: 0.9 }, artifactIds: [evidenceArtifactId], parserVersion: 'vision-json-v1' },
     }
     type Stored = { executionToken: string; materialDigest: string; analysisId: string; status: 'succeeded';
       observationIds: string[]; processorReceiptId: string }

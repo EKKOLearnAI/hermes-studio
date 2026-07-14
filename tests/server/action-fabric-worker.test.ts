@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   approveFabricWorkflow,
+  bindFabricExecutorCapability,
   createFabricIntent,
   createSimulatorExecutorAdapter,
   ensureBuiltInFabricRegistry,
@@ -19,6 +20,7 @@ import {
   startActionFabricWorker,
   stopActionFabricWorker,
   unregisterFabricExecutorAdapter,
+  updateFabricCapability,
   updateFabricExecutorHealth,
   withActionFabricDb,
   type FabricExecutionContext,
@@ -820,6 +822,40 @@ describe('Action Fabric durable worker', () => {
     release()
     await expect(executing).resolves.toMatchObject({ stale: true })
     expect(interrupted).toBe(1)
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('cancelled')
+  })
+
+  it('interrupts a live leased adapter after a registry upgrade without routing it to stale review', async () => {
+    let releaseExecute!: () => void
+    let releaseInterrupt!: () => void
+    const executeGate = new Promise<void>(resolve => { releaseExecute = resolve })
+    const interruptGate = new Promise<void>(resolve => { releaseInterrupt = resolve })
+    let interrupted = 0
+    registerFabricExecutorAdapter(adapter({
+      execute: async context => { await executeGate; return success('succeeded', context) },
+      interrupt: async context => { interrupted += 1; await interruptGate; return success('interrupted', context) },
+    }))
+    const workflow = create('active-upgraded-interrupt').workflow
+    await processActionFabricOnce({ workerId: 'worker-a', now: base })
+    const executing = processActionFabricOnce({ workerId: 'worker-a', now: plus(1) })
+    await vi.waitFor(() => expect(getFabricWorkflow(workflow.id)?.steps[1].state).toBe('running'))
+    const current = resolveFabricExecutor('simulator.echo', { environments: ['simulator'] })!.capability
+    const upgraded = updateFabricCapability('simulator.echo', {
+      version: current.version + 1, description: `${current.description} upgraded`,
+    })
+    bindFabricExecutorCapability('simulator-main', upgraded.id, upgraded.version, upgraded.contractDigest)
+    setFabricEmergencyStop(2, 'admin-1', 'stop upgraded active work')
+
+    const interrupting = processActionFabricOnce({ workerId: 'worker-b', now: plus(2) })
+    await vi.waitFor(() => expect(interrupted).toBe(1))
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'executing', leaseOwner: 'worker-b' })
+    expect(listFabricAuditEvents({ aggregateId: workflow.id })
+      .some(event => event.eventType === 'workflow.contract_review_required')).toBe(false)
+    releaseInterrupt()
+    await expect(interrupting).resolves.toMatchObject({ processed: true, phase: 'interrupt', outcome: 'interrupted' })
+    expect(getFabricWorkflow(workflow.id)?.state).toBe('cancelled')
+    releaseExecute()
+    await expect(executing).resolves.toMatchObject({ stale: true })
     expect(getFabricWorkflow(workflow.id)?.state).toBe('cancelled')
   })
 

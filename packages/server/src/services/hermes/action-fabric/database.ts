@@ -188,7 +188,7 @@ export function initActionFabricSchema(db: DatabaseSync): void {
     } else {
       createSchemaV5(db)
     }
-    assertSchemaComplete(db, SCHEMA_VERSION)
+    assertSchemaComplete(db, SCHEMA_VERSION, true)
     db.exec('COMMIT')
   } catch (error) {
     if (transactionStarted) db.exec('ROLLBACK')
@@ -237,7 +237,7 @@ function setSchemaVersion(db: DatabaseSync, version: number): void {
   `).run(String(version))
 }
 
-function assertSchemaComplete(db: DatabaseSync, version: number): void {
+function assertSchemaComplete(db: DatabaseSync, version: number, proveConstraints = false): void {
   const tables = new Set((db.prepare(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'fabric_%'",
   ).all() as Array<{ name: string }>).map(row => row.name))
@@ -266,7 +266,7 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
     }
   }
   assertExecutorTypeConstraint(db)
-  assertCapabilityHistorySignature(db)
+  assertCapabilityHistorySignature(db, proveConstraints)
   assertImmutableHistoryTrigger(db, 'fabric_capability_contract_history_no_update', 'UPDATE')
   assertImmutableHistoryTrigger(db, 'fabric_capability_contract_history_no_delete', 'DELETE')
   assertForeignKeySignatures(db)
@@ -274,7 +274,7 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
   if (violations.length > 0) throw new Error('Action Fabric schema foreign key integrity check failed')
 }
 
-function assertCapabilityHistorySignature(db: DatabaseSync): void {
+function assertCapabilityHistorySignature(db: DatabaseSync, proveConstraints: boolean): void {
   const columns = db.prepare("PRAGMA table_info('fabric_capability_contract_history')").all() as Array<{
     name: string; type: string; notnull: number; dflt_value: string | null; pk: number
   }>
@@ -289,6 +289,40 @@ function assertCapabilityHistorySignature(db: DatabaseSync): void {
       && column.dflt_value === item[3] && column.pk === item[4]
   })
   if (!matches) throw new Error('Action Fabric schema capability contract history signature mismatch')
+  const table = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='fabric_capability_contract_history'")
+    .get() as { sql: string | null } | undefined
+  if (table?.sql === null || table?.sql === undefined
+    || normalizeSchemaSql(table.sql) !== normalizeSchemaSql(capabilityHistoryTableSql())) {
+    throw new Error('Action Fabric schema capability contract history constraint signature mismatch')
+  }
+  if (proveConstraints) assertCapabilityHistoryConstraintProof(db)
+}
+
+function normalizeSchemaSql(sql: string): string {
+  return sql.replace(/\bIF\s+NOT\s+EXISTS\b/gi, '').replace(/\s+/g, ' ').replace(/\s*([(),])\s*/g, '$1')
+    .trim().toLowerCase()
+}
+
+function assertCapabilityHistoryConstraintProof(db: DatabaseSync): void {
+  const id = '__schema_constraint_probe__'
+  db.exec('SAVEPOINT fabric_history_constraint_probe')
+  try {
+    db.prepare(`INSERT INTO fabric_capabilities(id,version,domain,verb,description,input_schema_json,output_schema_json,
+      risk,side_effect,idempotency,reversible,verification_strategy,authentication_json,target_restrictions_json,
+      contract_digest,enabled,created_at,updated_at) VALUES(?,1,'schema','probe','Schema probe','{}','{}','none',
+      0,'supported',0,'result_match','[]','[]',?,0,'now','now')`).run(id, 'a'.repeat(64))
+    for (const [version, digest] of [[0, 'a'.repeat(64)], [1, 'A'.repeat(64)], [1, 'a'.repeat(63)]]) {
+      let rejected = false
+      try {
+        db.prepare(`INSERT INTO fabric_capability_contract_history
+          (capability_id,version,contract_json,contract_digest,created_at) VALUES(?,?, '{}',?,'now')`)
+          .run(id, version, digest)
+      } catch { rejected = true }
+      if (!rejected) throw new Error('Action Fabric schema capability contract history constraint proof failed')
+    }
+  } finally {
+    db.exec('ROLLBACK TO fabric_history_constraint_probe; RELEASE fabric_history_constraint_probe')
+  }
 }
 
 function assertImmutableHistoryTrigger(db: DatabaseSync, name: string, operation: 'UPDATE' | 'DELETE'): void {
@@ -655,16 +689,7 @@ function migrateSchemaV5(db: DatabaseSync): void {
 
 function createSchemaV5(db: DatabaseSync): void {
   db.exec(`
-    CREATE TABLE IF NOT EXISTS fabric_capability_contract_history (
-      capability_id TEXT NOT NULL,
-      version INTEGER NOT NULL CHECK(version > 0),
-      contract_json TEXT NOT NULL,
-      contract_digest TEXT NOT NULL
-        CHECK(length(contract_digest)=64 AND contract_digest NOT GLOB '*[^a-f0-9]*'),
-      created_at TEXT NOT NULL,
-      PRIMARY KEY(capability_id,version),
-      FOREIGN KEY(capability_id) REFERENCES fabric_capabilities(id) ON DELETE CASCADE
-    );
+    ${capabilityHistoryTableSql()};
     CREATE INDEX IF NOT EXISTS idx_fabric_capability_contract_history_digest
       ON fabric_capability_contract_history(capability_id,contract_digest);
     ${immutableHistoryTriggerSql('fabric_capability_contract_history_no_update', 'UPDATE')};
@@ -672,6 +697,19 @@ function createSchemaV5(db: DatabaseSync): void {
   `)
   db.exec(jsonTriggerSql(JSON_TABLE_CONSTRAINTS[0], 'INSERT'))
   db.exec(jsonTriggerSql(JSON_TABLE_CONSTRAINTS[0], 'UPDATE'))
+}
+
+function capabilityHistoryTableSql(): string {
+  return `CREATE TABLE IF NOT EXISTS fabric_capability_contract_history (
+    capability_id TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK(version > 0),
+    contract_json TEXT NOT NULL,
+    contract_digest TEXT NOT NULL
+      CHECK(length(contract_digest)=64 AND contract_digest NOT GLOB '*[^a-f0-9]*'),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(capability_id,version),
+    FOREIGN KEY(capability_id) REFERENCES fabric_capabilities(id) ON DELETE CASCADE
+  )`
 }
 
 function immutableHistoryTriggerSql(name: string, operation: 'UPDATE' | 'DELETE'): string {

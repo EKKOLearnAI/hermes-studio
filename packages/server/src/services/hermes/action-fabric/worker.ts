@@ -6,6 +6,7 @@ import { getFabricControlState, getFabricControlStateInDb } from './control'
 import { buildGenericCompensationInput, prepareTrustedPlanRestoreInDb } from './compensation-internal'
 import { revalidateFabricAuthorizationInDb } from './policy'
 import {
+  invokeCapturedFabricInterrupt,
   invokeFabricExecutor,
   type FabricExecutionContext,
   type FabricExecutorPhase,
@@ -153,7 +154,9 @@ async function processActionFabricCycle(
   let result: FabricExecutorResult
   try {
     // invokeFabricExecutor re-resolves the durable binding immediately before every adapter call.
-    result = await invokeFabricExecutor(claim.phase as never, context) as FabricExecutorResult
+    result = claim.phase === 'interrupt'
+      ? await invokeCapturedFabricInterrupt(context)
+      : await invokeFabricExecutor(claim.phase as never, context) as FabricExecutorResult
   } catch (error) {
     result = invocationFailure(claim.phase, error)
   }
@@ -314,10 +317,12 @@ function claimNextWorkflow(workerId: string, now: Date, emergencyOnly = false): 
     } catch (error) {
       return moveInvalidContractToWaitingUser(db, row, nowIso, stableErrorClass(error))
     }
-    try {
-      assertCapturedContractCurrent(db, claim)
-    } catch (error) {
-      return moveInvalidContractToWaitingUser(db, row, nowIso, stableErrorClass(error))
+    if (phase !== 'interrupt') {
+      try {
+        assertCapturedContractCurrent(db, claim)
+      } catch (error) {
+        return moveInvalidContractToWaitingUser(db, row, nowIso, stableErrorClass(error))
+      }
     }
     // Emergency interruption is authorized by the current control state, not by
     // the now-stale policy snapshot that originally authorized the side effect.

@@ -165,6 +165,25 @@ export async function invokeFabricExecutor(
   }
 }
 
+/**
+ * Emergency interruption is bound to the adapter and contract captured by the
+ * active workflow lease. A later registry promotion must not make an already
+ * running side effect impossible to stop.
+ */
+export async function invokeCapturedFabricInterrupt(
+  context: FabricExecutionContext,
+): Promise<FabricInterruptResult> {
+  const adapter = adapters.get(context.executorId)
+  if (!adapter || adapter.id !== context.executorId || adapter.type !== context.executorType) {
+    throw new Error('FABRIC_EXECUTOR_ADAPTER_UNAVAILABLE')
+  }
+  let raw: unknown
+  try { raw = await adapter.interrupt(context) }
+  catch { return exceptionResult('interrupt', context.now) as FabricInterruptResult }
+  try { return sanitizeResult('interrupt', raw, context.now) as FabricInterruptResult }
+  catch { return contractViolationResult('interrupt', context.now) as FabricInterruptResult }
+}
+
 function sanitizeResult(phase: FabricExecutorPhase, raw: unknown, now?: string): FabricExecutorResult {
   if (!isPlainRecord(raw)) throw new Error('invalid result')
   const outcome = dataProperty(raw, 'outcome')
