@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
@@ -17,6 +17,11 @@ async function loadSender() {
   vi.resetModules()
   process.env.HERMES_HOME = hermesHome
   return import('../../packages/server/src/services/hermes/weixin-sender')
+}
+
+function boundRequest(sender: { identity?(): { accountFingerprint: string } | null }, deliveryId: string, message: string) {
+  return { deliveryId, recipient: 'configured-self' as const, message,
+    expectedAccountFingerprint: sender.identity?.()?.accountFingerprint ?? '0'.repeat(64) }
 }
 
 describe('weixin reminder sender', () => {
@@ -48,7 +53,7 @@ describe('weixin reminder sender', () => {
     const sender = createWeixinReceiptSender('missing-profile')
 
     expect(sender.identity?.()).toBeNull()
-    expect(await sender.send({ deliveryId: 'missing-profile-delivery', recipient: 'configured-self', message: '提醒' }))
+    expect(await sender.send(boundRequest(sender, 'missing-profile-delivery', '提醒')))
       .toEqual({ status: 'unknown', providerMessageId: null })
     expect(mockPost).not.toHaveBeenCalled()
   })
@@ -111,14 +116,14 @@ describe('weixin reminder sender', () => {
     const { createWeixinReceiptSender } = await loadSender()
     const sender = createWeixinReceiptSender('default')
 
-    const sent = await sender.send({ deliveryId: 'delivery-1', recipient: 'configured-self', message: '安全提醒' })
+    const sent = await sender.send(boundRequest(sender, 'delivery-1', '安全提醒'))
     expect(sent).toEqual({ status: 'accepted', providerMessageId: 'provider-message-1' })
     expect(await sender.lookup('delivery-1')).toEqual(sent)
     expect(JSON.parse(mockPost.mock.calls[0][1]).msg.client_id).toBe('delivery-1')
 
     const afterRestart = createWeixinReceiptSender('default')
     expect(await afterRestart.lookup('delivery-1')).toEqual(sent)
-    expect(await afterRestart.send({ deliveryId: 'delivery-1', recipient: 'configured-self', message: '安全提醒' })).toEqual(sent)
+    expect(await afterRestart.send(boundRequest(afterRestart, 'delivery-1', '安全提醒'))).toEqual(sent)
     expect(mockPost).toHaveBeenCalledTimes(1)
   })
 
@@ -129,11 +134,11 @@ describe('weixin reminder sender', () => {
     mockPost.mockResolvedValueOnce({ data: { ret: 0 } })
     const { createWeixinReceiptSender } = await loadSender()
     const sender = createWeixinReceiptSender('default')
-    expect(await sender.send({ deliveryId: 'delivery-unverified', recipient: 'configured-self', message: '提醒' }))
+    expect(await sender.send(boundRequest(sender, 'delivery-unverified', '提醒')))
       .toEqual({ status: 'unknown', providerMessageId: null })
     expect(await sender.lookup('delivery-unverified')).toEqual({ status: 'unknown', providerMessageId: null })
     const afterCrash = createWeixinReceiptSender('default')
-    expect(await afterCrash.send({ deliveryId: 'delivery-unverified', recipient: 'configured-self', message: '提醒' }))
+    expect(await afterCrash.send(boundRequest(afterCrash, 'delivery-unverified', '提醒')))
       .toEqual({ status: 'unknown', providerMessageId: null })
     expect(mockPost).toHaveBeenCalledTimes(1)
   })
@@ -145,7 +150,7 @@ describe('weixin reminder sender', () => {
     writeFileSync(join(hermesHome, 'weixin-deliveries.sqlite'), '{corrupt', 'utf-8')
     const { createWeixinReceiptSender } = await loadSender()
     const sender = createWeixinReceiptSender('default')
-    expect(await sender.send({ deliveryId: 'delivery-maybe-sent', recipient: 'configured-self', message: '不应重发' }))
+    expect(await sender.send(boundRequest(sender, 'delivery-maybe-sent', '不应重发')))
       .toEqual({ status: 'unknown', providerMessageId: null })
     expect(mockPost).not.toHaveBeenCalled()
   })
@@ -160,8 +165,8 @@ describe('weixin reminder sender', () => {
     const { createWeixinReceiptSender } = await loadSender()
     const left = createWeixinReceiptSender('default')
     const right = createWeixinReceiptSender('default')
-    const first = left.send({ deliveryId: 'delivery-atomic', recipient: 'configured-self', message: '提醒' })
-    const second = right.send({ deliveryId: 'delivery-atomic', recipient: 'configured-self', message: '提醒' })
+    const first = left.send(boundRequest(left, 'delivery-atomic', '提醒'))
+    const second = right.send(boundRequest(right, 'delivery-atomic', '提醒'))
     await vi.waitFor(() => expect(mockPost).toHaveBeenCalled())
     release(); await Promise.all([first, second])
     expect(mockPost).toHaveBeenCalledTimes(1)
@@ -174,7 +179,7 @@ describe('weixin reminder sender', () => {
     mockPost.mockResolvedValueOnce({ data: { ret: 0, msgid: 'Authorization: Bearer unsafe-secret-value' } })
     const { createWeixinReceiptSender } = await loadSender()
     const sender = createWeixinReceiptSender('default')
-    expect(await sender.send({ deliveryId: 'delivery-unsafe-id', recipient: 'configured-self', message: '提醒' }))
+    expect(await sender.send(boundRequest(sender, 'delivery-unsafe-id', '提醒')))
       .toEqual({ status: 'unknown', providerMessageId: null })
   })
 
@@ -186,12 +191,68 @@ describe('weixin reminder sender', () => {
       .mockResolvedValueOnce({ data: { ret: 0, msgid: 'provider-after-retry' } })
     const { createWeixinReceiptSender } = await loadSender()
     const sender = createWeixinReceiptSender('default')
-    const request = { deliveryId: 'delivery-rejected', recipient: 'configured-self' as const, message: '提醒' }
+    const request = boundRequest(sender, 'delivery-rejected', '提醒')
 
     expect(await sender.send(request)).toEqual({ status: 'not_sent', providerMessageId: null })
     expect(await sender.send(request)).toEqual({ status: 'accepted', providerMessageId: 'provider-after-retry' })
     expect(mockPost).toHaveBeenCalledTimes(2)
     expect(sender.diagnostics?.().claimCount).toBe(1)
+  })
+
+  it('rejects an identity change after lookup before network and accepts the unchanged bound identity', async () => {
+    const envPath = join(hermesHome, '.env')
+    writeFileSync(envPath, [
+      'WEIXIN_ACCOUNT_ID=acct-1', 'WEIXIN_TOKEN=token-1', 'WEIXIN_HOME_CHANNEL=wxid_user_1', '',
+    ].join('\n'), 'utf-8')
+    mockPost.mockResolvedValue({ data: { ret: 0, msgid: 'provider-bound' } })
+    const { createWeixinReceiptSender } = await loadSender()
+    const sender = createWeixinReceiptSender('default')
+    const captured = sender.identity?.()
+    expect(captured).not.toBeNull()
+    expect(await sender.lookup('identity-bound')).toEqual({ status: 'not_found', providerMessageId: null })
+    writeFileSync(envPath, [
+      'WEIXIN_ACCOUNT_ID=acct-2', 'WEIXIN_TOKEN=token-2', 'WEIXIN_HOME_CHANNEL=wxid_user_2', '',
+    ].join('\n'), 'utf-8')
+
+    expect(await sender.send({ deliveryId: 'identity-bound', recipient: 'configured-self', message: '提醒',
+      expectedAccountFingerprint: captured!.accountFingerprint }))
+      .toEqual({ status: 'identity_mismatch', providerMessageId: null })
+    expect(mockPost).not.toHaveBeenCalled()
+
+    const current = sender.identity?.()
+    expect(await sender.send({ deliveryId: 'identity-current', recipient: 'configured-self', message: '提醒',
+      expectedAccountFingerprint: current!.accountFingerprint }))
+      .toEqual({ status: 'accepted', providerMessageId: 'provider-bound' })
+    expect(mockPost).toHaveBeenCalledTimes(1)
+    expect(mockPost.mock.calls[0][2].headers.Authorization).toBe('Bearer token-2')
+    expect(readFileSync(join(hermesHome, 'weixin-deliveries.sqlite'), 'latin1')).not.toContain('token-2')
+  })
+
+  it('allows exactly one concurrent transport for a durable not-sent retry', async () => {
+    writeFileSync(join(hermesHome, '.env'), [
+      'WEIXIN_ACCOUNT_ID=acct-1', 'WEIXIN_TOKEN=token-1', 'WEIXIN_HOME_CHANNEL=wxid_user_1', '',
+    ].join('\n'), 'utf-8')
+    mockPost.mockResolvedValueOnce({ data: { ret: -1, errmsg: 'rejected' } })
+    const { createWeixinReceiptSender } = await loadSender()
+    const seed = createWeixinReceiptSender('default')
+    const expectedAccountFingerprint = seed.identity?.()!.accountFingerprint
+    const request = { deliveryId: 'delivery-concurrent-retry', recipient: 'configured-self' as const,
+      message: '提醒', expectedAccountFingerprint }
+    expect(await seed.send(request)).toEqual({ status: 'not_sent', providerMessageId: null })
+
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    mockPost.mockImplementationOnce(async () => { await gate; return { data: { ret: 0, msgid: 'provider-one-retry' } } })
+    const left = createWeixinReceiptSender('default')
+    const right = createWeixinReceiptSender('default')
+    const pending = [left.send(request), right.send(request)]
+    await vi.waitFor(() => expect(mockPost).toHaveBeenCalledTimes(2))
+    release()
+    await Promise.all(pending)
+
+    expect(await seed.lookup(request.deliveryId)).toEqual({ status: 'accepted', providerMessageId: 'provider-one-retry' })
+    expect(await seed.send(request)).toEqual({ status: 'accepted', providerMessageId: 'provider-one-retry' })
+    expect(mockPost).toHaveBeenCalledTimes(2)
   })
 
   it('keeps durable dedupe identities beyond the former page cap and reports capacity', async () => {

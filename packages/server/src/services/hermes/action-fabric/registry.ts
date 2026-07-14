@@ -801,7 +801,7 @@ function replaceCapabilityContract(db: DatabaseSync, input: FabricCapabilityInpu
     json(normalized.authentication), json(normalized.targetRestrictions), normalized.cost.currency,
     normalized.cost.estimatedMinor, contractDigest, now, normalized.id,
   )
-  if (changed.changes !== 1) throw new Error('Health reminder contract migration failed')
+  if (changed.changes !== 1) throw new Error(`Built-in capability contract migration failed: ${normalized.id}`)
   insertCapabilityHistory(db, normalized, contractDigest, now)
 }
 

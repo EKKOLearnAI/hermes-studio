@@ -35,19 +35,21 @@ export function createHealthWeixinExecutorAdapter(options: HealthWeixinExecutorO
     execute(context): Promise<FabricExecuteResult> {
       let deliveryId: string
       let message: string
+      let accountFingerprint: string
       try {
         const identity = executorIdentity(options)
         deliveryId = stableDeliveryId(context, identity); message = minimizedMessage(context)
+        accountFingerprint = identity.accountFingerprint
         if (!context.preparedOutput || context.preparedOutput.deliveryId !== deliveryId
           || context.preparedOutput.profile !== identity.profile
           || context.preparedOutput.accountFingerprint !== identity.accountFingerprint
           || context.preparedOutput.messageDigest !== createHash('sha256').update(message).digest('hex')) throw new Error('invalid')
       } catch { return Promise.resolve(failure('permanent_failure', 'HEALTH_WEIXIN_PREPARATION_INVALID')) }
-      const materialDigest = createHash('sha256').update(JSON.stringify({ deliveryId, message })).digest('hex')
+      const materialDigest = createHash('sha256').update(JSON.stringify({ deliveryId, message, accountFingerprint })).digest('hex')
       const existing = executions.get(context.executionToken)
       if (existing) return existing.materialDigest === materialDigest ? existing.promise
         : Promise.resolve(failure('permanent_failure', 'HEALTH_WEIXIN_EXECUTION_TOKEN_CONFLICT'))
-      const promise = executeDelivery(options.sender, context, deliveryId, message)
+      const promise = executeDelivery(options.sender, context, deliveryId, message, accountFingerprint)
       executions.set(context.executionToken, { materialDigest, promise })
       promise.then(() => {
         if (executions.get(context.executionToken)?.promise === promise) executions.delete(context.executionToken)
@@ -92,6 +94,8 @@ function deliveryResult(context: FabricExecutionContext, deliveryId: string, res
   if (result.status === 'not_sent') return { outcome: 'temporary_failure', output,
     evidence: evidence(context, 'Provider definitively rejected before sending'),
     errorCode: 'HEALTH_WEIXIN_NOT_SENT', safeToRetry: true }
+  if (result.status === 'identity_mismatch') return { outcome: 'permanent_failure', output: {}, evidence: [],
+    errorCode: 'HEALTH_WEIXIN_IDENTITY_CHANGED', safeToRetry: false }
   return !verified
     ? { outcome: 'unknown', output, evidence: evidence(context, 'Delivery status is explicitly uncertain'),
       errorCode: 'HEALTH_WEIXIN_DELIVERY_UNCERTAIN', safeToRetry: false }
@@ -120,14 +124,17 @@ function minimizedMessage(context: FabricExecutionContext): string {
 }
 
 async function executeDelivery(sender: WeixinReceiptSender, context: FabricExecutionContext,
-  deliveryId: string, message: string): Promise<FabricExecuteResult> {
+  deliveryId: string, message: string, accountFingerprint: string): Promise<FabricExecuteResult> {
   try {
     const persisted = await sender.lookup(deliveryId)
-    if (persisted.status !== 'not_found') return deliveryResult(context, deliveryId, persisted)
+    if (persisted.status !== 'not_found' && persisted.status !== 'not_sent') {
+      return deliveryResult(context, deliveryId, persisted)
+    }
   } catch { return failure('unknown', 'HEALTH_WEIXIN_DELIVERY_UNVERIFIABLE') }
   try {
     return deliveryResult(context, deliveryId,
-      await sender.send({ deliveryId, recipient: 'configured-self', message }))
+      await sender.send({ deliveryId, recipient: 'configured-self', message,
+        expectedAccountFingerprint: accountFingerprint }))
   } catch { return failure('unknown', 'HEALTH_WEIXIN_DELIVERY_UNCERTAIN') }
 }
 

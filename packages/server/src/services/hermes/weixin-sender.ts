@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'crypto'
+import { createHash, randomUUID, timingSafeEqual } from 'crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
@@ -12,13 +12,14 @@ export interface WeixinSendResult {
 }
 
 export interface WeixinProviderDelivery {
-  status: 'accepted' | 'delivered' | 'unknown' | 'not_sent'
+  status: 'accepted' | 'delivered' | 'unknown' | 'not_sent' | 'identity_mismatch'
   providerMessageId: string | null
 }
 export type WeixinDeliveryLookup = WeixinProviderDelivery | { status: 'not_found'; providerMessageId: null }
 
 export interface WeixinReceiptSender {
-  send(request: { deliveryId: string; recipient: 'configured-self'; message: string }): Promise<WeixinProviderDelivery>
+  send(request: { deliveryId: string; recipient: 'configured-self'; message: string;
+    expectedAccountFingerprint: string }): Promise<WeixinProviderDelivery>
   lookup(deliveryId: string): Promise<WeixinDeliveryLookup>
   identity?(): { profile: string; accountFingerprint: string } | null
   diagnostics?(): { claimCount: number; pageCount: number; pageSize: number }
@@ -60,8 +61,7 @@ export function createWeixinReceiptSender(profile: string): WeixinReceiptSender 
   return {
     identity() {
       const credentials = resolveWeixinCredentials(canonicalProfile)
-      return credentials ? { profile: canonicalProfile, accountFingerprint: createHash('sha256')
-        .update(`${credentials.accountId}\0${credentials.homeChannel}`).digest('hex') } : null
+      return credentials ? { profile: canonicalProfile, accountFingerprint: accountFingerprint(credentials) } : null
     },
     diagnostics() {
       return withDeliveryDb(canonicalProfile, db => ({
@@ -77,8 +77,12 @@ export function createWeixinReceiptSender(profile: string): WeixinReceiptSender 
       const credentials = resolveWeixinCredentials(canonicalProfile)
       const message = request.message.trim()
       if (!credentials || !message) return { status: 'unknown', providerMessageId: null }
+      if (!sameAccountFingerprint(accountFingerprint(credentials), request.expectedAccountFingerprint)) {
+        return { status: 'identity_mismatch', providerMessageId: null }
+      }
       const materialDigest = createHash('sha256').update(JSON.stringify({
         deliveryId: request.deliveryId, recipient: request.recipient, message,
+        accountFingerprint: request.expectedAccountFingerprint,
       })).digest('hex')
       const claim = claimDelivery(canonicalProfile, request.deliveryId, materialDigest)
       if (!claim.reliable || !claim.claimed) return claim.delivery
@@ -223,6 +227,15 @@ function rowDelivery(row: DeliveryRow): WeixinProviderDelivery {
   }
   return row.status === 'not_sent' ? { status: 'not_sent', providerMessageId: null }
     : { status: 'unknown', providerMessageId: null }
+}
+
+function accountFingerprint(credentials: WeixinCredentials): string {
+  return createHash('sha256').update(`${credentials.accountId}\0${credentials.homeChannel}`).digest('hex')
+}
+
+function sameAccountFingerprint(actual: string, expected: string): boolean {
+  if (!/^[a-f0-9]{64}$/.test(expected)) return false
+  return timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'))
 }
 
 async function postWeixinText(credentials: WeixinCredentials, text: string, clientId: string): Promise<{

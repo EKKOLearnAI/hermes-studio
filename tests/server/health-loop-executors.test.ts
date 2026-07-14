@@ -107,6 +107,26 @@ describe('health Action Fabric executors', () => {
     expect(await adapter.compensate(ctx)).toMatchObject({ outcome: 'compensated' })
   })
 
+  it('never invents a provider receipt for a remote v2 shadow analysis', async () => {
+    const adapter = createHealthShadowExecutorAdapter()
+    const ctx = context('health.artifact.analyze.remote', {
+      schemaVersion: 1, artifactId: 'artifact-1', manifestDigest: digest('artifact'),
+      requestedAt: canonicalObservedAt, processorId: 'processor-1', consentId: 'consent-1',
+    }, { capabilityVersion: 2, executionToken: 'remote-shadow-v2', target: {
+      kind: 'health_remote_artifact', artifactId: 'artifact-1', manifestDigest: digest('artifact'), processorId: 'processor-1',
+    } })
+    const prepared = await adapter.prepare(ctx)
+    const executed = await adapter.execute({ ...ctx, preparedOutput: prepared.output })
+
+    expect(executed).toMatchObject({ outcome: 'succeeded', output: {
+      artifactId: 'artifact-1', status: 'needs_review', processorReceiptId: null,
+      verificationStatus: 'unverifiable', consentId: 'consent-1',
+    } })
+    expect(JSON.stringify(executed.output)).not.toContain('shadow-receipt')
+    expect(await adapter.verify({ ...ctx, preparedOutput: prepared.output, executionOutput: executed.output }))
+      .toMatchObject({ outcome: 'verified' })
+  })
+
   it('applies plan changes with CAS and refuses compensation after an intervening edit', async () => {
     let current = { planId: 'plan-1', version: 3, digest: digest('v3') }
     const repository: HealthPlanRepository = {
@@ -464,6 +484,24 @@ describe('health Action Fabric executors', () => {
     expect(send.mock.calls[0][0].message.length).toBeLessThanOrEqual(500)
     expect(send.mock.calls[0][0].message).toContain('action-1')
     expect(send.mock.calls[0][0].message).toContain('/complete')
+  })
+
+  it('lets the durable sender exclusively claim a definitive not-sent retry', async () => {
+    const accountFingerprint = 'a'.repeat(64)
+    const send = vi.fn(async () => ({ status: 'accepted' as const, providerMessageId: 'provider-after-retry' }))
+    const lookup = vi.fn(async () => ({ status: 'not_sent' as const, providerMessageId: null }))
+    const adapter = createHealthWeixinExecutorAdapter({ profile: 'default', sender: {
+      identity: () => ({ profile: 'default', accountFingerprint }), send, lookup,
+    } })
+    const ctx = context('health.reminder.send', { schemaVersion: 2, actionId: 'retry-action',
+      recipient: 'configured-self', messageCode: 'meal_due' }, { executorId: 'health-weixin' })
+    const prepared = await adapter.prepare(ctx)
+
+    expect(await adapter.execute({ ...ctx, preparedOutput: prepared.output })).toMatchObject({
+      outcome: 'succeeded', output: { status: 'accepted', providerMessageId: 'provider-after-retry' },
+    })
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ expectedAccountFingerprint: accountFingerprint }))
   })
 
   it('rejects recipient mismatches and sensitive reminder content before transport', async () => {

@@ -16,6 +16,8 @@ import {
   withActionFabricDb,
   type FabricExecutorAdapter,
 } from '../../packages/server/src/services/hermes/action-fabric'
+import { validateFabricSchema, validateHealthOutputSemantics }
+  from '../../packages/server/src/services/hermes/action-fabric/contracts'
 
 const HEALTH_CAPABILITIES = [
   'health.artifact.analyze.local',
@@ -81,6 +83,14 @@ describe('health Action Fabric registry', () => {
     expect(remote.outputSchema).toMatchObject({ properties: {
       processorReceiptId: { type: ['string', 'null'] }, verificationStatus: { enum: ['verified', 'unverifiable'] },
     } })
+    const remoteShadowOutput = { schemaVersion: 1, artifactId: 'artifact-1', analysisId: 'shadow-analysis',
+      status: 'needs_review', observationIds: [], totalCount: 0, omittedCount: 0, continuationCursor: null,
+      processorReceiptId: null, verificationStatus: 'unverifiable', consentId: 'consent-1' }
+    const remoteInput = { artifactId: 'artifact-1', consentId: 'consent-1' }
+    expect(validateFabricSchema(remoteShadowOutput, remote.outputSchema)).toBe(true)
+    expect(validateHealthOutputSemantics(remote.id, remoteInput, remoteShadowOutput)).toBe(true)
+    expect(validateHealthOutputSemantics(remote.id, remoteInput,
+      { ...remoteShadowOutput, processorReceiptId: 'shadow-receipt' })).toBe(false)
     expect(remote.inputSchema).toMatchObject({
       properties: expect.objectContaining({ consentId: expect.any(Object), manifestDigest: expect.any(Object), processorId: expect.any(Object) }),
       required: expect.arrayContaining(['consentId', 'manifestDigest', 'processorId']),
