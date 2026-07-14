@@ -343,6 +343,7 @@ const BUILT_IN_EXECUTORS: FabricExecutorInput[] = [
   { id: 'health-shadow', type: 'connector', name: 'Health Shadow Executor', environment: 'sandbox', configuration: { externalWrite: false, interruptible: true, shadow: true }, enabled: true },
   { id: 'health-source', type: 'connector', name: 'Health Source Connector', environment: 'production', configuration: { externalWrite: false, interruptible: false }, enabled: true },
   { id: 'health-weixin', type: 'connector', name: 'Weixin Self Reminder Executor', environment: 'production', configuration: { externalWrite: true, interruptible: false, recipientRestriction: 'configured-self' }, enabled: true },
+  { id: 'home-assistant', type: 'connector', name: 'Home Assistant Executor', environment: 'production', configuration: { externalWrite: true, interruptible: false, managedAvailability: 'home-assistant' }, enabled: false },
 ]
 
 const BUILT_IN_BINDINGS = [
@@ -365,6 +366,11 @@ const BUILT_IN_BINDINGS = [
   ['health-plan', 'health.followup.schedule'],
   ['health-weixin', 'health.reminder.send'],
   ['health-weixin', 'health.checkin.request'],
+  ['home-assistant', 'home.device.refresh'],
+  ['home-assistant', 'home.device.set_level'],
+  ['home-assistant', 'home.device.set_power'],
+  ['home-assistant', 'home.device.set_temperature'],
+  ['home-assistant', 'home.scene.activate.safe'],
 ] as const
 
 export function ensureBuiltInFabricRegistry(): void {
@@ -379,7 +385,7 @@ export function ensureBuiltInFabricRegistry(): void {
       }
       for (const input of BUILT_IN_EXECUTORS) {
         insertExecutorIfMissing(db, input)
-        if (['health-local-analysis', 'health-remote-analysis', 'health-plan', 'health-source'].includes(input.id)) {
+        if (['health-local-analysis', 'health-remote-analysis', 'health-plan', 'health-source', 'home-assistant'].includes(input.id)) {
           ensureKnownExecutorConfiguration(db, input)
         }
       }

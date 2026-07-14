@@ -16,6 +16,7 @@ import type { FabricControlState } from './types'
 import { createSerializedFabricLifecycle } from './runtime-lifecycle'
 import type { FabricExecutorAdapter } from './executors'
 import { createConfiguredHealthFabricExecutorAdapters } from '../health-loop/executors/configuration'
+import { startHomeProductionRuntime, stopHomeProductionRuntime } from '../home/production-runtime'
 
 const CONTROL_POLL_MS = 100
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on'])
@@ -26,6 +27,7 @@ interface RunningRuntime {
   ownedAdapters: string[]
   appliedControlVersion: number
   controlPoll: Promise<void> | null
+  homeStarted: boolean
 }
 
 let running: RunningRuntime | null = null
@@ -63,15 +65,23 @@ async function teardownRuntime(): Promise<void> {
   const state = running
   if (!state) return
   clearInterval(state.controlTimer)
-  if (state.controlPoll) await state.controlPoll
-  await stopActionFabricWorker()
+  let failure: unknown = null
+  if (state.controlPoll) {
+    try { await state.controlPoll } catch (error) { failure = error }
+  }
+  try { await stopActionFabricWorker() } catch (error) { if (failure === null) failure = error }
+  if (state.homeStarted) {
+    try { await stopHomeProductionRuntime() } catch (error) { if (failure === null) failure = error }
+  }
   for (const id of [...state.ownedAdapters].reverse()) unregisterFabricExecutorAdapter(id)
   if (running === state) running = null
+  if (failure !== null) throw failure
 }
 
 async function bootstrapRuntime(): Promise<void> {
   const ownedAdapters: string[] = []
   let workerStarted = false
+  let homeStarted = false
   try {
     // These migrations are deliberately complete before a worker can claim a lease.
     ensureBuiltInFabricRegistry()
@@ -79,6 +89,9 @@ async function bootstrapRuntime(): Promise<void> {
     registerOwnedAdapter(createSimulatorExecutorAdapter(), ownedAdapters)
     registerOwnedAdapter(createInternalPreferenceExecutorAdapter(), ownedAdapters)
     for (const adapter of createConfiguredHealthFabricExecutorAdapters()) registerOwnedAdapter(adapter, ownedAdapters)
+    const homeAdapter = await startHomeProductionRuntime()
+    homeStarted = true
+    registerOwnedAdapter(homeAdapter, ownedAdapters)
     const initialControl = getFabricControlState()
     const initialEnforcement = await enforceControlState(initialControl.version)
     startActionFabricWorker()
@@ -88,12 +101,14 @@ async function bootstrapRuntime(): Promise<void> {
       ownedAdapters,
       appliedControlVersion: Math.max(initialControl.version, initialEnforcement.version),
       controlPoll: null,
+      homeStarted,
     }
     state.controlTimer = setInterval(() => pollControl(state), CONTROL_POLL_MS)
     state.controlTimer.unref?.()
     running = state
   } catch (error) {
-    if (workerStarted) await stopActionFabricWorker()
+    if (workerStarted) { try { await stopActionFabricWorker() } catch { /* preserve the startup failure */ } }
+    if (homeStarted) { try { await stopHomeProductionRuntime() } catch { /* preserve the startup failure */ } }
     for (const id of ownedAdapters.reverse()) unregisterFabricExecutorAdapter(id)
     throw error
   }

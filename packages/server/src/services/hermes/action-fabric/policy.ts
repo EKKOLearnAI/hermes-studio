@@ -22,6 +22,7 @@ import {
   validateFabricSchema,
   validateHealthSemantics,
 } from './contracts'
+import { homeTargetAtoms, isHomeCapability } from '../home/fabric-contracts'
 import { ensureBuiltInFabricRegistry, resolveFabricExecutorInDb } from './registry'
 import type {
   FabricBudgetReservation,
@@ -78,7 +79,8 @@ export function evaluateFabricPolicyInDb(
   const instant = evaluationInstant(options)
   const now = instant.toISOString()
   const ledgerDate = utcDate(instant)
-  const environments = input.environments ?? (isHealthCapability(input.capabilityId) ? ['sandbox'] : ['simulator', 'internal'])
+  const environments = input.environments ?? (isHealthCapability(input.capabilityId) ? ['sandbox']
+    : isHomeCapability(input.capabilityId) ? ['production'] : ['simulator', 'internal'])
   const resolution = resolveFabricExecutorInDb(db, input.capabilityId, { environments })
   if (resolution && (!validateFabricSchema(input.input, resolution.capability.inputSchema)
     || !validateHealthSemantics(input.capabilityId, input.input))) {
@@ -86,7 +88,9 @@ export function evaluateFabricPolicyInDb(
   }
   const effectiveRisk = resolution ? effectiveCapabilityRisk(resolution.capability, input.input) : null
   const targetAtoms = resolution && isHealthCapability(input.capabilityId)
-    ? healthTargetAtoms(input.capabilityId, input.target, input.input) : null
+    ? healthTargetAtoms(input.capabilityId, input.target, input.input)
+    : resolution && isHomeCapability(input.capabilityId)
+      ? homeTargetAtoms(input.capabilityId, input.target, input.input) : null
   const authorizationRequirements = resolution && isHealthCapability(input.capabilityId)
     ? healthStandingAuthorizationRequirements(resolution.capability) : null
   const standingAuthorizationRequired = !!resolution && isHealthCapability(input.capabilityId)
@@ -208,7 +212,7 @@ export function evaluateFabricPolicyInDb(
         }
         if (resolution.capability.sideEffect && !resolution.capability.reversible
           && !standingAuthorization
-          && !trustedPlanRestore) {
+          && !trustedPlanRestore && resolution.capability.id !== 'home.device.refresh') {
           reasons.push('irreversible_requires_approval')
           outcome = 'waiting_user'
         }
@@ -419,6 +423,12 @@ function targetAllowed(
     if (resolution.capability.id === 'health.followup.schedule'
       && (input.ownerUserId !== requestedByUserId || target.ownerUserId !== requestedByUserId)) return false
     const atoms = healthTargetAtoms(resolution.capability.id, target, input)
+    if (!atoms || atoms.length === 0) return false
+    const roleTargets = role.decisionAuthority.allowedTargets
+    return !!roleTargets && atoms.every(atom => roleTargets.includes(atom))
+  }
+  if (isHomeCapability(resolution.capability.id)) {
+    const atoms = homeTargetAtoms(resolution.capability.id, target, input)
     if (!atoms || atoms.length === 0) return false
     const roleTargets = role.decisionAuthority.allowedTargets
     return !!roleTargets && atoms.every(atom => roleTargets.includes(atom))

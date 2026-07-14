@@ -78,14 +78,16 @@ describe('Action Fabric runtime lifecycle', () => {
     process.env.HERMES_HOME = home
 
     await startActionFabricRuntime()
-    expect(listFabricExecutors().filter(executor => !executor.id.startsWith('health-'))).toHaveLength(2)
+    expect(listFabricExecutors().filter(executor => !executor.id.startsWith('health-')
+      && !executor.id.startsWith('home-'))).toHaveLength(2)
     await Promise.all([stopActionFabricRuntime(), stopActionFabricRuntime()])
   })
 
   it('bootstraps registry and role policy before polling and repeated starts are idempotent', async () => {
     await Promise.all([startActionFabricRuntime(), startActionFabricRuntime(), startActionFabricRuntime()])
 
-    expect(listFabricExecutors().filter(executor => !executor.id.startsWith('health-')).map(executor => executor.id))
+    expect(listFabricExecutors().filter(executor => !executor.id.startsWith('health-')
+      && !executor.id.startsWith('home-')).map(executor => executor.id))
       .toEqual(['internal-twin', 'simulator-main'])
     expect(withActionFabricDb(db => db.prepare("SELECT value FROM fabric_meta WHERE key='registry_policy_revision'").get()))
       .toBeTruthy()
