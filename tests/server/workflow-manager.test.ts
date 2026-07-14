@@ -921,8 +921,9 @@ describe('workflow manager', () => {
     initAllStores()
     const manager = new WorkflowManager()
     chatRunMock.runAndWait.mockReset().mockResolvedValue({ ok: false, error: 'runner failed before session creation' })
+    const workspace = join(workflowManagerTestDbDir, `workflow-session-${agent}`)
     const workflow = manager.create({
-      name: `Resolvable ${agent} session ${Date.now()}`, profile: 'default', workspace: '/workspace',
+      name: `Resolvable ${agent} session ${Date.now()}`, profile: 'default', workspace,
       nodes: [{ id: 'node', type: 'agent', data: {
         title: 'Node', agent, provider: 'custom:test', model: 'model-a', apiMode: 'chat_completions', input: 'work',
       } }], edges: [],
@@ -937,7 +938,7 @@ describe('workflow manager', () => {
         profile: 'default',
         source: 'workflow',
         agent: agent === 'hermes' ? 'hermes' : 'claude',
-        workspace: '/workspace',
+        workspace,
       })
     } finally { await manager.delete(workflow.id) }
   })
