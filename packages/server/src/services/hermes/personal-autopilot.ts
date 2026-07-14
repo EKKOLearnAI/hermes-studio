@@ -9,6 +9,7 @@ import { getPersonalStateOverview, type PersonalStateOverview } from './personal
 
 export type AutopilotMode = 'silent' | 'nudge' | 'correct' | 'takeover' | 'upgrade'
 export type AutopilotDomain = 'body' | 'diet' | 'skin' | 'recovery' | 'order' | 'planning'
+export type HealthReminderMessageCode = 'meal_due' | 'recovery_check' | 'training_adjustment'
 
 export interface PersonalAutopilotQuickLogInput {
   text: string
@@ -112,6 +113,13 @@ export function classifyQuickLog(text: string, explicitKind?: AutopilotDomain | 
 
   const normalizedText = text.toLowerCase()
   return DOMAIN_KEYWORDS.find(entry => entry.keywords.some(keyword => normalizedText.includes(keyword.toLowerCase())))?.domain || 'planning'
+}
+
+/** Maps legacy action domains onto the fixed, minimized v2 reminder templates. */
+export function reminderMessageCodeForAction(action: { domain?: AutopilotDomain | string }): HealthReminderMessageCode {
+  if (action.domain === 'diet') return 'meal_due'
+  if (action.domain === 'body') return 'training_adjustment'
+  return 'recovery_check'
 }
 
 export function createPersonalAutopilotQuickLog(

@@ -1,10 +1,10 @@
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { mkdirSync } from 'fs'
 import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { getProfileDir } from './hermes-profile'
-import { getPersonalAutopilotOverview, type AutopilotMode } from './personal-autopilot'
-import { sendWeixinTextReminder } from './weixin-sender'
+import { getPersonalAutopilotOverview, reminderMessageCodeForAction, type AutopilotMode } from './personal-autopilot'
+import { createFabricIntent } from './action-fabric/workflows'
 
 export type ReminderChannel = 'weixin'
 export type ReminderDeliveryStatus = 'sent' | 'skipped' | 'failed'
@@ -249,12 +249,14 @@ export function recordReminderDelivery(
     createdAt,
   }
   const db = openAutopilotReminderDb(name)
+  let persisted: ReminderDeliveryRow | undefined
   try {
     db.prepare(`
       INSERT INTO autopilot_reminder_deliveries (
         id, profile, channel, mode, action_id, action_title, message, status, error, sent_at, created_at
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO NOTHING
     `).run(
       row.id,
       row.profile,
@@ -268,10 +270,13 @@ export function recordReminderDelivery(
       row.sentAt,
       row.createdAt,
     )
+    persisted = db.prepare('SELECT * FROM autopilot_reminder_deliveries WHERE id = ? AND profile = ?')
+      .get(row.id, name) as ReminderDeliveryRow | undefined
   } finally {
     db.close()
   }
-  return row
+  if (!persisted) throw new Error('AUTOPILOT_REMINDER_DELIVERY_ID_CONFLICT')
+  return deliveryFromRow(persisted)
 }
 
 export async function dispatchAutopilotReminder(options: {
@@ -305,10 +310,30 @@ export async function dispatchAutopilotReminder(options: {
     return { status: 'skipped', reason: decision.reason, delivery }
   }
 
-  const sendResult = await sendWeixinTextReminder(profile, message)
-  if (!sendResult.ok) {
-    const reason = sendResult.error || 'weixin_send_failed'
+  const messageCode = reminderMessageCodeForAction(action)
+  const identity = reminderIdentity(profile, action.id, messageCode, now)
+  let fabricOutcome: 'allow' | 'waiting_user' | 'deny'
+  try {
+    const result = createFabricIntent({
+      capabilityId: 'health.reminder.send',
+      requestedByRoleId: 'health-manager',
+      requestedByUserId: 'user-self',
+      idempotencyKey: identity.idempotencyKey,
+      goal: 'Queue a bounded legacy health reminder in shadow mode',
+      target: { kind: 'health_recipient', recipient: 'configured-self' },
+      input: { schemaVersion: 2, actionId: boundedActionId(action.id), recipient: 'configured-self', messageCode },
+      constraints: { migration: 'legacy_autopilot_reminder_v1', legacyReminderDeliveryId: identity.deliveryId },
+      rationale: 'Preserve the legacy reminder decision while Action Fabric owns all effects',
+      environments: ['sandbox'],
+    })
+    fabricOutcome = result.policyDecision.outcome
+  } catch {
+    fabricOutcome = 'deny'
+  }
+  if (fabricOutcome !== 'allow') {
+    const reason = fabricOutcome === 'waiting_user' ? 'fabric_waiting_user' : 'fabric_denied'
     const delivery = recordReminderDelivery(profile, {
+      id: identity.deliveryId,
       channel: settings.channel,
       mode: autopilot.mode,
       actionId: action.id,
@@ -322,6 +347,7 @@ export async function dispatchAutopilotReminder(options: {
   }
 
   const delivery = recordReminderDelivery(profile, {
+    id: identity.deliveryId,
     channel: settings.channel,
     mode: autopilot.mode,
     actionId: action.id,
@@ -331,6 +357,27 @@ export async function dispatchAutopilotReminder(options: {
     sentAt: now.toISOString(),
   })
   return { status: 'sent', reason: decision.reason, delivery }
+}
+
+/** Scheduler-facing name: this queues a Fabric workflow; it never owns outbound delivery. */
+export const enqueueAutopilotReminder = dispatchAutopilotReminder
+
+function reminderIdentity(profile: string, actionId: string, messageCode: string, now: Date): {
+  deliveryId: string
+  idempotencyKey: string
+} {
+  const localDate = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0')].join('-')
+  const digest = createHash('sha256').update(JSON.stringify([profile, localDate, actionId, messageCode])).digest('hex')
+  return {
+    deliveryId: `autopilot-reminder-${digest.slice(0, 32)}`,
+    idempotencyKey: `legacy-health-reminder-${digest}`,
+  }
+}
+
+function boundedActionId(value: string): string {
+  if (/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(value)) return value
+  return `legacy-action-${createHash('sha256').update(value).digest('hex')}`
 }
 
 export function evaluateReminderPolicy(input: {

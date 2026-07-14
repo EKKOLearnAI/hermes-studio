@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listProfileNamesFromDisk = vi.hoisted(() => vi.fn())
 const getReminderSettings = vi.hoisted(() => vi.fn())
-const dispatchAutopilotReminder = vi.hoisted(() => vi.fn())
+const enqueueAutopilotReminder = vi.hoisted(() => vi.fn())
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   listProfileNamesFromDisk,
@@ -12,7 +12,7 @@ vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
 vi.mock('../../packages/server/src/services/hermes/autopilot-reminders', async (importOriginal) => ({
   ...await importOriginal<any>(),
   getReminderSettings,
-  dispatchAutopilotReminder,
+  enqueueAutopilotReminder,
 }))
 
 describe('autopilot reminder scheduler', () => {
@@ -22,7 +22,7 @@ describe('autopilot reminder scheduler', () => {
     vi.stubEnv('HERMES_AUTOPILOT_REMINDER_INTERVAL_MS', '1000')
     listProfileNamesFromDisk.mockReturnValue(['default', 'research'])
     getReminderSettings.mockImplementation((profile: string) => ({ profile, enabled: profile === 'research' }))
-    dispatchAutopilotReminder.mockResolvedValue({ status: 'sent' })
+    enqueueAutopilotReminder.mockResolvedValue({ status: 'sent' })
   })
 
   afterEach(() => {
@@ -39,7 +39,7 @@ describe('autopilot reminder scheduler', () => {
     await vi.advanceTimersByTimeAsync(2000)
 
     expect(scheduler.stop).toEqual(expect.any(Function))
-    expect(dispatchAutopilotReminder).not.toHaveBeenCalled()
+    expect(enqueueAutopilotReminder).not.toHaveBeenCalled()
   })
 
   it('dispatches enabled profiles on interval', async () => {
@@ -51,8 +51,8 @@ describe('autopilot reminder scheduler', () => {
 
     expect(getReminderSettings).toHaveBeenCalledWith('default')
     expect(getReminderSettings).toHaveBeenCalledWith('research')
-    expect(dispatchAutopilotReminder).toHaveBeenCalledWith({ profile: 'research' })
-    expect(dispatchAutopilotReminder).not.toHaveBeenCalledWith({ profile: 'default' })
+    expect(enqueueAutopilotReminder).toHaveBeenCalledWith({ profile: 'research' })
+    expect(enqueueAutopilotReminder).not.toHaveBeenCalledWith({ profile: 'default' })
   })
 
   it('can be stopped cleanly', async () => {
@@ -62,6 +62,6 @@ describe('autopilot reminder scheduler', () => {
     scheduler.stop()
     await vi.advanceTimersByTimeAsync(2000)
 
-    expect(dispatchAutopilotReminder).not.toHaveBeenCalled()
+    expect(enqueueAutopilotReminder).not.toHaveBeenCalled()
   })
 })

@@ -1,5 +1,5 @@
 import { listProfileNamesFromDisk } from './hermes-profile'
-import { dispatchAutopilotReminder, getReminderSettings } from './autopilot-reminders'
+import { enqueueAutopilotReminder, getReminderSettings } from './autopilot-reminders'
 import { logger } from '../logger'
 
 const DEFAULT_INTERVAL_MS = 10 * 60 * 1000
@@ -27,7 +27,7 @@ async function dispatchEnabledProfiles(): Promise<void> {
   for (const profile of listProfileNamesFromDisk()) {
     try {
       if (!getReminderSettings(profile).enabled) continue
-      await dispatchAutopilotReminder({ profile })
+      await enqueueAutopilotReminder({ profile })
     } catch (err) {
       logger.warn(err, '[autopilot-reminders] dispatch failed profile=%s', profile)
     }

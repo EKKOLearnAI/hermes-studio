@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPersonalAutopilotSnapshot, classifyQuickLog } from '../../packages/server/src/services/hermes/personal-autopilot'
+import { buildPersonalAutopilotSnapshot, classifyQuickLog, reminderMessageCodeForAction } from '../../packages/server/src/services/hermes/personal-autopilot'
 
 describe('personal autopilot service', () => {
   it('selects the next scheduled task as the next best action', () => {
@@ -156,5 +156,12 @@ describe('personal autopilot service', () => {
     expect(classifyQuickLog('脸出油，鼻翼有点红')).toBe('skin')
     expect(classifyQuickLog('胸肩练了40分钟')).toBe('body')
     expect(classifyQuickLog('今天状态崩了，想早点睡')).toBe('recovery')
+  })
+
+  it('maps action domains to the bounded health reminder template vocabulary', () => {
+    expect(reminderMessageCodeForAction({ domain: 'diet' })).toBe('meal_due')
+    expect(reminderMessageCodeForAction({ domain: 'body' })).toBe('training_adjustment')
+    expect(reminderMessageCodeForAction({ domain: 'recovery' })).toBe('recovery_check')
+    expect(reminderMessageCodeForAction({ domain: 'planning' })).toBe('recovery_check')
   })
 })
