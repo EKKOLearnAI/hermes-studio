@@ -60,8 +60,8 @@ test('drives the health command center with mocked APIs and no real Weixin side 
 
   await expect(page.locator('[data-test="active-health-workflow"]')).toBeVisible()
   await expect(page.locator('[data-test="workflow-action-approve"]')).toBeVisible()
-  const analysis = healthApi.requests.find(request => request.pathname.endsWith('/artifacts/artifact-e2e/analyze'))
-  expect(analysis?.postData).toContain('one-time-secret-e2e')
+  await expect.poll(() => healthApi.requests.find(request =>
+    request.pathname.endsWith('/artifacts/artifact-e2e/analyze'))?.postData).toContain('one-time-secret-e2e')
   await expect(page.locator('body')).not.toContainText('one-time-secret-e2e')
 
   const liveButton = page.locator('[data-test="enable-live-weixin"]')
