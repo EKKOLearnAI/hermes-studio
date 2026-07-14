@@ -26,6 +26,7 @@ import {
   approveActionWorkflow,
   cancelActionWorkflow,
   compensateActionWorkflow,
+  fetchActionWorkflow,
   rejectActionWorkflow,
   retryActionWorkflow,
   type ActionWorkflowAction,
@@ -70,6 +71,8 @@ const captureRequirements = [
   'health.loop.capture.requirementPrivacy',
   'health.loop.capture.requirementReview',
 ]
+const captureExtractedValues = { weightKg: '', bodyFatPercent: '' }
+let workflowRecoverySequence = 0
 const healthProfile = computed(() => overview.value?.healthProfile ?? null)
 const weightSummary = computed(() => overview.value?.weightSummary ?? {})
 const nutritionSummary = computed(() => overview.value?.nutritionSummary ?? null)
@@ -217,12 +220,39 @@ onMounted(async () => {
 })
 
 async function loadHealthLoop() {
-  await Promise.allSettled([
+  const sequence = ++workflowRecoverySequence
+  const results = await Promise.allSettled([
     healthLoopStore.loadOverview(),
     healthLoopStore.loadConnectors(),
     healthLoopStore.loadInterventions({ status: 'active' }),
     healthLoopStore.loadSettings(),
   ])
+  if (sequence !== workflowRecoverySequence) return
+  const interventionsResult = results[2]
+  if (interventionsResult.status !== 'fulfilled') {
+    latestHealthWorkflow.value = null
+    return
+  }
+  const workflowId = interventionsResult.value.find(item => item.status === 'active')?.workflowId
+  if (!workflowId) {
+    latestHealthWorkflow.value = null
+    return
+  }
+  latestHealthWorkflow.value = null
+  try {
+    const workflow = await fetchActionWorkflow(workflowId)
+    if (sequence === workflowRecoverySequence) latestHealthWorkflow.value = toHealthWorkflow(workflow)
+  } catch {
+    // Keep action controls fail-closed without hiding the other health resources.
+  }
+}
+
+async function refreshHealth() {
+  await Promise.allSettled([loadOverview(), loadHealthLoop()])
+}
+
+function toHealthWorkflow(workflow: HealthActionResponseDto['workflow']): HealthActionResponseDto['workflow'] {
+  return { id: workflow.id, state: workflow.state, version: workflow.version, availableActions: workflow.availableActions }
 }
 
 async function handleHealthCommand(action: HealthCommandAction) {
@@ -234,6 +264,7 @@ async function handleHealthCommand(action: HealthCommandAction) {
     document.querySelector<HTMLElement>('[data-test="health-intervention-panel"]')?.scrollIntoView({ block: 'start' })
     return
   }
+  workflowRecoverySequence += 1
   await runLoopAction(async () => {
     const result = await healthLoopStore.syncConnector(action.connectorId, {})
     latestHealthWorkflow.value = result.workflow
@@ -241,8 +272,11 @@ async function handleHealthCommand(action: HealthCommandAction) {
 }
 
 async function handleCapture(payload: { file: File; sourceId: string; processorId: string; extractedValues: Record<string, string | number> }) {
+  const fields = Object.entries(payload.extractedValues)
+    .filter(([, value]) => typeof value === 'number' || value.trim().length > 0)
+    .map(([field]) => field)
+  if (!fields.length) return
   await runLoopAction(async () => {
-    const fields = Object.keys(payload.extractedValues)
     const artifact = await healthLoopStore.createArtifact({
       file: payload.file,
       filename: payload.file.name,
@@ -265,6 +299,7 @@ async function handleCapture(payload: { file: File; sourceId: string; processorI
 async function confirmAnalysis(manifest: HealthConsentManifestDto) {
   const pending = pendingAnalysis.value
   if (!pending) return
+  workflowRecoverySequence += 1
   await runLoopAction(async () => {
     const grant = await issueHealthConsent(healthLoopStore, { manifest })
     const result = await requestHealthArtifactAnalysis(healthLoopStore, pending.artifactId, {
@@ -302,18 +337,14 @@ async function setLiveDelivery(enabled: boolean) {
 async function runWorkflowAction(action: ActionWorkflowAction) {
   const workflow = latestHealthWorkflow.value
   if (!workflow?.availableActions?.[action]) return
+  workflowRecoverySequence += 1
   await runLoopAction(async () => {
     const result = action === 'approve' ? await approveActionWorkflow(workflow.id)
       : action === 'reject' ? await rejectActionWorkflow(workflow.id, 'health-command-center')
         : action === 'cancel' ? await cancelActionWorkflow(workflow.id, 'health-command-center')
           : action === 'retry' ? await retryActionWorkflow(workflow.id)
             : await compensateActionWorkflow(workflow.id, 'health-command-center')
-    latestHealthWorkflow.value = {
-      id: result.id,
-      state: result.state,
-      version: result.version,
-      availableActions: result.availableActions,
-    }
+    latestHealthWorkflow.value = toHealthWorkflow(result)
   })
 }
 
@@ -482,7 +513,7 @@ function percentText(value: unknown): string {
         <h2 class="header-title">{{ t('health.title') }}</h2>
         <p class="header-subtitle">{{ t('health.subtitle') }}</p>
       </div>
-      <NButton size="small" quaternary :loading="loading" @click="loadOverview">
+      <NButton data-test="health-refresh" size="small" quaternary :loading="loading || healthLoopStore.loading" @click="refreshHealth">
         {{ t('common.retry') }}
       </NButton>
     </header>
@@ -507,6 +538,7 @@ function percentText(value: unknown): string {
         />
         <HealthCaptureWizard
           :requirements="captureRequirements"
+          :extracted-values="captureExtractedValues"
           :processors="healthProcessors"
           :busy="loopActionBusy"
           @submit="handleCapture"

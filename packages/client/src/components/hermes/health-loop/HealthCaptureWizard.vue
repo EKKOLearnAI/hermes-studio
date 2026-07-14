@@ -15,11 +15,16 @@ const { t } = useI18n()
 const file = ref<File | null>(null)
 const sourceId = ref('manual-capture')
 const processorId = ref(props.processors[0] ?? '')
-const canSubmit = computed(() => Boolean(file.value && processorId.value && !props.busy))
+const editableValues = ref<Record<string, string | number>>({ ...props.extractedValues })
+const reviewedValues = computed(() => Object.fromEntries(Object.entries(editableValues.value).filter(([, value]) =>
+  typeof value === 'number' || value.trim().length > 0,
+)))
+const canSubmit = computed(() => Boolean(file.value && processorId.value && Object.keys(reviewedValues.value).length && !props.busy))
 
 watch(() => props.processors, processors => {
   if (!processors.includes(processorId.value)) processorId.value = processors[0] ?? ''
 })
+watch(() => props.extractedValues, values => { editableValues.value = { ...values } }, { deep: true })
 
 function selectFile(event: Event) {
   const input = event.target as HTMLInputElement
@@ -28,7 +33,7 @@ function selectFile(event: Event) {
 
 function submit() {
   if (!file.value || !canSubmit.value) return
-  emit('submit', { file: file.value, sourceId: sourceId.value, processorId: processorId.value, extractedValues: props.extractedValues })
+  emit('submit', { file: file.value, sourceId: sourceId.value, processorId: processorId.value, extractedValues: reviewedValues.value })
 }
 </script>
 
@@ -62,9 +67,17 @@ function submit() {
     </label>
     <div class="review" data-test="extracted-value-review">
       <strong>{{ t('health.loop.capture.extractedValues') }}</strong>
-      <dl v-if="Object.keys(extractedValues).length">
-        <template v-for="(value, key) in extractedValues" :key="key">
-          <dt>{{ key }}</dt><dd>{{ value }}</dd>
+      <dl v-if="Object.keys(editableValues).length">
+        <template v-for="(_, key) in editableValues" :key="key">
+          <dt><label :for="`health-extracted-${key}`">{{ key }}</label></dt>
+          <dd>
+            <input
+              :id="`health-extracted-${key}`"
+              v-model="editableValues[key]"
+              :data-test="`extracted-value-${key}`"
+              :aria-label="String(key)"
+            >
+          </dd>
         </template>
       </dl>
       <p v-else>{{ t('health.loop.capture.noExtractedValues') }}</p>
@@ -87,6 +100,7 @@ input, select { min-width: 0; border: 1px solid var(--border-color); border-radi
 dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 12px; margin: 8px 0 0; }
 dt { color: var(--text-color-2); }
 dd { margin: 0; font-weight: 600; }
+dd input { width: 100%; box-sizing: border-box; }
 button { border: 0; border-radius: 8px; background: var(--primary-color); color: white; cursor: pointer; font: inherit; padding: 9px 12px; }
 button:disabled { cursor: not-allowed; opacity: .5; }
 </style>

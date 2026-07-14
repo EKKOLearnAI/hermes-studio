@@ -21,7 +21,7 @@ describe('health capture and consent', () => {
 
     expect(wrapper.find('[data-test="capture-file-input"]').attributes('aria-label')).toBe('health.loop.capture.fileLabel')
     expect(wrapper.findAll('[data-test="capture-requirement"]')).toHaveLength(2)
-    expect(wrapper.find('[data-test="extracted-value-review"]').text()).toContain('82.4 kg')
+    expect(wrapper.find<HTMLInputElement>('[data-test="extracted-value-weightKg"]').element.value).toBe('82.4 kg')
     expect(wrapper.text()).not.toContain('C:\\Users\\me\\private-report.pdf')
     expect(wrapper.text()).not.toContain('RAW REPORT BODY')
 
@@ -48,5 +48,17 @@ describe('health capture and consent', () => {
     expect(wrapper.emitted('confirm')?.[0]).toEqual([manifest])
     await wrapper.find('[data-test="consent-cancel"]').trigger('click')
     expect(wrapper.emitted('cancel')).toBeTruthy()
+  })
+
+  it('closes the one-time consent dialog with Escape', async () => {
+    const wrapper = mount(HealthConsentDialog, {
+      props: {
+        open: true,
+        manifest: { artifactIds: ['artifact-1'], processor: 'local', purpose: 'measurement', selectedRegions: [], requestedFields: ['weightKg'], retention: 'no_retention' },
+      },
+    })
+
+    await wrapper.trigger('keydown', { key: 'Escape' })
+    expect(wrapper.emitted('cancel')).toHaveLength(1)
   })
 })

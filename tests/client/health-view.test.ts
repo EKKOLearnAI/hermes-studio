@@ -147,6 +147,10 @@ const healthLoopStore = vi.hoisted(() => ({
 }))
 const issueHealthConsent = vi.hoisted(() => vi.fn())
 const requestHealthArtifactAnalysis = vi.hoisted(() => vi.fn())
+const actionFabricApi = vi.hoisted(() => ({
+  fetchActionWorkflow: vi.fn(), approveActionWorkflow: vi.fn(), rejectActionWorkflow: vi.fn(),
+  cancelActionWorkflow: vi.fn(), retryActionWorkflow: vi.fn(), compensateActionWorkflow: vi.fn(),
+}))
 
 vi.mock('@/stores/hermes/profiles', () => ({
   useProfilesStore: () => profilesStore,
@@ -157,6 +161,8 @@ vi.mock('@/stores/hermes/health-loop', () => ({
   issueHealthConsent,
   requestHealthArtifactAnalysis,
 }))
+
+vi.mock('@/api/hermes/action-fabric', () => actionFabricApi)
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
@@ -214,6 +220,15 @@ describe('HealthView', () => {
     healthLoopStore.loadConnectors.mockResolvedValue(healthLoopStore.connectors)
     healthLoopStore.loadInterventions.mockResolvedValue(healthLoopStore.interventions)
     healthLoopStore.loadSettings.mockResolvedValue(healthLoopStore.settings)
+    healthLoopStore.createArtifact.mockResolvedValue({ id: 'artifact-1', manifestDigest: 'digest-1' })
+    actionFabricApi.fetchActionWorkflow.mockResolvedValue({
+      id: 'wf1', state: 'waiting_user', version: 2,
+      availableActions: { approve: true, reject: true, cancel: false, retry: false, compensate: false },
+    })
+    issueHealthConsent.mockResolvedValue({ consentId: 'consent-1', token: 'secret-token' })
+    requestHealthArtifactAnalysis.mockResolvedValue({
+      workflow: { id: 'analysis-wf', state: 'executing', version: 1, availableActions: { approve: false, reject: false, cancel: true, retry: false, compensate: false } },
+    })
   })
 
   it('renders the health cockpit from the migrated health overview', async () => {
@@ -288,6 +303,7 @@ describe('HealthView', () => {
     expect(healthLoopStore.loadConnectors).toHaveBeenCalled()
     expect(healthLoopStore.loadInterventions).toHaveBeenCalledWith({ status: 'active' })
     expect(healthLoopStore.loadSettings).toHaveBeenCalled()
+    expect(actionFabricApi.fetchActionWorkflow).toHaveBeenCalledWith('wf1')
     const commandCenter = wrapper.find('[data-test="health-loop-command-center"]')
     const bodyTwin = wrapper.find('[data-test="body-digital-twin-panel"]')
     expect(commandCenter.exists()).toBe(true)
@@ -298,6 +314,56 @@ describe('HealthView', () => {
     expect(wrapper.find('[data-test="health-automation-panel"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="body-digital-twin-panel"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="health-system-tabs"]').text()).toContain('health.tabs.internal')
+  })
+
+  it('recovers the active workflow on refresh and ignores an older workflow response', async () => {
+    let resolveOld!: (value: any) => void
+    const old = new Promise(resolve => { resolveOld = resolve })
+    const newest = {
+      id: 'wf1', state: 'waiting_user', version: 4,
+      availableActions: { approve: false, reject: true, cancel: false, retry: false, compensate: false },
+    }
+    actionFabricApi.fetchActionWorkflow.mockImplementationOnce(() => old).mockResolvedValueOnce(newest)
+
+    const wrapper = mount(HealthView)
+    await vi.waitFor(() => expect(actionFabricApi.fetchActionWorkflow).toHaveBeenCalledTimes(1))
+    await wrapper.find('[data-test="health-refresh"]').trigger('click')
+    await flushPromises()
+
+    expect(actionFabricApi.fetchActionWorkflow).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[data-test="workflow-action-reject"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="workflow-action-approve"]').exists()).toBe(false)
+    resolveOld({ ...newest, version: 1, availableActions: { ...newest.availableActions, approve: true, reject: false } })
+    await flushPromises()
+    expect(wrapper.find('[data-test="workflow-action-reject"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="workflow-action-approve"]').exists()).toBe(false)
+  })
+
+  it('uses user-reviewed extracted values to create a non-empty consent manifest', async () => {
+    const wrapper = mount(HealthView)
+    await flushPromises()
+    const fileInput = wrapper.find<HTMLInputElement>('[data-test="capture-file-input"]')
+    Object.defineProperty(fileInput.element, 'files', {
+      configurable: true,
+      value: [new File(['report'], 'health-report.txt', { type: 'text/plain' })],
+    })
+    await fileInput.trigger('change')
+    await wrapper.find('[data-test="extracted-value-weightKg"]').setValue('82.4 kg')
+    await wrapper.find('[data-test="extracted-value-bodyFatPercent"]').setValue('22.1%')
+    await wrapper.find('[data-test="capture-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(healthLoopStore.createArtifact).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: { healthAnalysis: expect.objectContaining({ requestedFields: ['weightKg', 'bodyFatPercent'] }) },
+    }))
+    const dialog = wrapper.find('[data-test="health-consent-dialog"]')
+    expect(dialog.text()).toContain('weightKg')
+    expect(dialog.text()).toContain('bodyFatPercent')
+    await dialog.find('[data-test="consent-confirm"]').trigger('click')
+    await flushPromises()
+    expect(issueHealthConsent).toHaveBeenCalledWith(healthLoopStore, {
+      manifest: expect.objectContaining({ requestedFields: ['weightKg', 'bodyFatPercent'] }),
+    })
   })
 
   it('falls back to default profile when profile refresh fails', async () => {

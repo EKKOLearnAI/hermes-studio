@@ -15,6 +15,8 @@ const { t } = useI18n()
     aria-modal="true"
     aria-labelledby="health-consent-title"
     data-test="health-consent-dialog"
+    tabindex="-1"
+    @keydown.esc.stop.prevent="emit('cancel')"
   >
     <div class="card">
       <span class="eyebrow">{{ t('health.loop.consent.oneTime') }}</span>
