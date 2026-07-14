@@ -2051,7 +2051,16 @@ jobTriggered: 'Job ejecutado',
   workflow: {
     actions: { importWorkflow: 'Importar Workflow', exportWorkflow: 'Exportar Workflow', imported: 'Workflow importado', exported: 'Workflow exportado', importFailed: 'Error al importar el Workflow', exportFailed: 'Error al exportar el Workflow' },
     stats: { nodes: 'nodos', edges: 'conexiones' },
-    evidence: { title: 'Evidencia de ejecución', empty: 'No hay evidencia registrada', loadFailed: 'No se pudo cargar la evidencia de ejecución persistida', node: 'Nodo', edge: 'Conexión', loop: 'Bucle' },
+    evidence: {
+      ariaLabel: 'Detalles de ejecución del Workflow', title: 'Detalles de ejecución', count: '{count} elementos',
+      intro: 'Muestra las decisiones de ruta, las iteraciones de bucle y los nodos excepcionales de esta ejecución.', empty: 'Sin detalles de ejecución', loadFailed: 'No se pudieron cargar los detalles de ejecución guardados',
+      node: 'Nodo excepcional', edge: 'Ruta', loop: 'Bucle', pathTitle: '{source} → {target}', loopPass: 'Iteración {count} del bucle', exceptionalNode: 'Este nodo no terminó con normalidad.',
+      technical: 'Información técnica', recordId: 'ID de registro', sequence: 'Secuencia', rawStatus: 'Estado original', rawRoute: 'Ruta', rawReason: 'Motivo', iterationPath: 'Ruta de iteración',
+      statuses: { taken: 'Utilizada', notTaken: 'No utilizada', evaluationFailed: 'Error de evaluación', timedOut: 'Tiempo agotado', blocked: 'Bloqueado' },
+      routes: { success: 'Continuó tras el éxito', failure: 'Continuó tras el fallo', always: 'Continuó con cualquier resultado' },
+      reasons: { evaluationFailed: 'Falló la evaluación de la ruta', conditionNotMatched: 'La condición no coincidió', iterationLimitReached: 'Se alcanzó el máximo de iteraciones', routeNotMatched: 'La ruta no coincidió' },
+      loopOutcomes: { continued: 'La condición coincidió; continúa la siguiente iteración', iterationLimitReached: 'Se detuvo en el máximo de iteraciones', conditionNotMatched: 'Se detuvo porque la condición no coincidió', finished: 'Bucle finalizado' },
+    },
     edgeEditor: {
       title: 'Editar conexión', guideIntro: 'Una conexión se toma solo cuando coinciden su ruta y la condición opcional. Elige “Solo ruta” si no necesitas comprobar contenido.',
       route: 'Ruta', routes: { success: 'Solo éxito (success)', failure: 'Solo fallo (failure)', always: 'Siempre (always)' },

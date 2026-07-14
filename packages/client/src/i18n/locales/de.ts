@@ -2051,7 +2051,16 @@ jobTriggered: 'Job ausgelost',
   workflow: {
     actions: { importWorkflow: 'Workflow importieren', exportWorkflow: 'Workflow exportieren', imported: 'Workflow importiert', exported: 'Workflow exportiert', importFailed: 'Workflow-Import fehlgeschlagen', exportFailed: 'Workflow-Export fehlgeschlagen' },
     stats: { nodes: 'Knoten', edges: 'Verbindungen' },
-    evidence: { title: 'Ausführungsnachweise', empty: 'Keine Nachweise aufgezeichnet', loadFailed: 'Persistierte Ausführungsnachweise konnten nicht geladen werden', node: 'Knoten', edge: 'Verbindung', loop: 'Schleife' },
+    evidence: {
+      ariaLabel: 'Workflow-Ausführungsdetails', title: 'Ausführungsdetails', count: '{count} Einträge',
+      intro: 'Zeigt Pfadentscheidungen, Schleifendurchläufe und außergewöhnliche Knoten dieses Laufs.', empty: 'Keine Ausführungsdetails', loadFailed: 'Gespeicherte Ausführungsdetails konnten nicht geladen werden',
+      node: 'Außergewöhnlicher Knoten', edge: 'Pfad', loop: 'Schleife', pathTitle: '{source} → {target}', loopPass: 'Schleifendurchlauf {count}', exceptionalNode: 'Dieser Knoten wurde nicht normal abgeschlossen.',
+      technical: 'Technische Informationen', recordId: 'Datensatz-ID', sequence: 'Reihenfolge', rawStatus: 'Rohstatus', rawRoute: 'Route', rawReason: 'Grund', iterationPath: 'Iterationspfad',
+      statuses: { taken: 'Verwendet', notTaken: 'Nicht verwendet', evaluationFailed: 'Auswertung fehlgeschlagen', timedOut: 'Zeitüberschreitung', blocked: 'Blockiert' },
+      routes: { success: 'Nach Erfolg fortgesetzt', failure: 'Nach Fehler fortgesetzt', always: 'Unabhängig vom Ergebnis fortgesetzt' },
+      reasons: { evaluationFailed: 'Routenauswertung fehlgeschlagen', conditionNotMatched: 'Bedingung traf nicht zu', iterationLimitReached: 'Maximale Durchlaufzahl erreicht', routeNotMatched: 'Route traf nicht zu' },
+      loopOutcomes: { continued: 'Bedingung erfüllt; nächster Durchlauf', iterationLimitReached: 'Bei maximaler Durchlaufzahl beendet', conditionNotMatched: 'Wegen nicht erfüllter Bedingung beendet', finished: 'Schleife beendet' },
+    },
     edgeEditor: {
       title: 'Verbindung bearbeiten', guideIntro: 'Eine Verbindung wird nur verwendet, wenn Route und optionale Bedingung passen. Ohne Inhaltsprüfung wählen Sie „Nur Route“.',
       route: 'Route', routes: { success: 'Nur bei Erfolg (success)', failure: 'Nur bei Fehler (failure)', always: 'Immer (always)' },

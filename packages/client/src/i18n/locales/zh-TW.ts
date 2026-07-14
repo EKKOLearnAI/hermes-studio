@@ -781,7 +781,16 @@ export default {
       importFailed: 'Workflow 匯入失敗',
       exportFailed: 'Workflow 匯出失敗',
     },
-    evidence: { title: '執行證據', empty: '暫無執行證據', loadFailed: '讀取持久化執行證據失敗', node: '節點', edge: '連線', loop: '循環' },
+    evidence: {
+      ariaLabel: 'Workflow 執行詳情', title: '執行詳情', count: '{count} 條',
+      intro: '顯示本次執行的路徑選擇、循環輪次和異常節點。', empty: '暫無執行詳情', loadFailed: '讀取持久化執行詳情失敗',
+      node: '異常節點', edge: '執行路徑', loop: '循環', pathTitle: '{source} → {target}', loopPass: '循環第 {count} 輪', exceptionalNode: '此節點未正常完成。',
+      technical: '技術資訊', recordId: '記錄 ID', sequence: '執行順序', rawStatus: '原始狀態', rawRoute: '路由', rawReason: '原因', iterationPath: '循環路徑',
+      statuses: { taken: '已採用', notTaken: '未採用', evaluationFailed: '判斷失敗', timedOut: '已逾時', blocked: '已阻擋' },
+      routes: { success: '成功後繼續', failure: '失敗後進入處理', always: '無論成功或失敗均繼續' },
+      reasons: { evaluationFailed: '路徑判斷失敗', conditionNotMatched: '條件不符合', iterationLimitReached: '已達最大循環輪次', routeNotMatched: '目前結果不符合此路徑' },
+      loopOutcomes: { continued: '條件符合，繼續下一輪', iterationLimitReached: '達到最大輪次後停止', conditionNotMatched: '條件不符合，循環結束', finished: '循環已結束' },
+    },
     edgeEditor: {
       title: '編輯連接線', guideIntro: '連接線只有在「路由」符合，而且可選的「條件」也符合時才會生效。不需要檢查內容時，選擇「只判斷路由」。',
       route: '路由', routes: { success: '成功時（success）', failure: '失敗時（failure）', always: '無論成功失敗（always）' },

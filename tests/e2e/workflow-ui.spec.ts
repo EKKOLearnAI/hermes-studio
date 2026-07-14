@@ -16,8 +16,8 @@ test('workflow canvas exposes orchestration editing and portability controls', a
     id: 'run-1', workflow_id: 'wf-1', profile: 'research', workspace: null, start_node_ids: [], status: 'completed',
     snapshot_nodes: nodes, snapshot_edges: edges, compiled_loops: [], started_at: 1, finished_at: 2, created_at: 1, error: null,
     node_sessions: [{ id: 'node-1', run_id: 'run-1', workflow_id: 'wf-1', node_id: 'a', execution_id: 'rerun:2:a', iteration_path: [{ executionScope: 'rerun:2', loopId: 'loop:a', iteration: 1 }], consumed_edge_evaluation_ids: [], session_id: 'session-a', profile: 'research', agent: 'hermes', agent_mode: '', status: 'completed', sequence: 3, started_at: 1, finished_at: 2, created_at: 1, updated_at: 2, error: null }],
-    edge_evaluations: [{ id: 'edge-1', run_id: 'run-1', workflow_id: 'wf-1', edge_id: 'a-b', source_node_id: 'a', source_execution_id: 'rerun:2:a', iteration_path: [{ executionScope: 'rerun:2', loopId: 'loop:a', iteration: 1 }], target_node_id: 'b', source_outcome: 'success', status: 'taken', route: 'success', reason: null, sequence: 4, orchestration: { route: 'success' }, condition_evaluation: null, evaluated_at: 2 }],
-    loop_epochs: [{ id: 'loop-1', run_id: 'run-1', workflow_id: 'wf-1', loop_id: 'loop:a', iteration: 1, iteration_path: [{ executionScope: 'rerun:2', loopId: 'loop:a', iteration: 1 }], status: 'completed', exit_reason: 'feedback_not_taken', sequence: 5, started_at: 1, finished_at: 2 }],
+    edge_evaluations: Array.from({ length: 18 }, (_, index) => ({ id: `edge-${index + 1}`, run_id: 'run-1', workflow_id: 'wf-1', edge_id: 'a-b', source_node_id: 'a', source_execution_id: `rerun:2:a:${index + 1}`, iteration_path: [{ executionScope: 'rerun:2', loopId: 'loop:a', iteration: index + 1 }], target_node_id: 'b', source_outcome: 'success', status: 'taken', route: 'success', reason: null, sequence: 4 + index, orchestration: { route: 'success' }, condition_evaluation: null, evaluated_at: 2 })),
+    loop_epochs: [{ id: 'loop-1', run_id: 'run-1', workflow_id: 'wf-1', loop_id: 'loop:a', iteration: 18, iteration_path: [{ executionScope: 'rerun:2', loopId: 'loop:a', iteration: 18 }], status: 'completed', exit_reason: 'feedback_not_taken', sequence: 30, started_at: 1, finished_at: 2 }],
   }] })
   await page.goto('/#/hermes/workflow')
   await expect(page.locator('.header-workflow-title')).toHaveText('Loop workflow')
@@ -65,11 +65,24 @@ test('workflow canvas exposes orchestration editing and portability controls', a
   await page.locator('.workflow-list-item').filter({ hasText: 'Loop workflow' }).click()
   await expect(page.locator('.header-workflow-title')).toHaveText('Loop workflow')
   await page.locator('.workflow-run-item').click()
-  const evidence = page.getByLabel('Workflow execution evidence')
-  await expect(evidence.getByText('rerun:2:a', { exact: true })).toHaveCount(0)
-  await expect(evidence.getByText('a-b', { exact: true })).toBeVisible()
-  await expect(evidence.getByText('loop:a', { exact: true })).toBeVisible()
-  await expect(evidence.getByText('rerun:2 · loop:a#2', { exact: true })).toHaveCount(2)
+  const evidence = page.getByLabel('Workflow execution details')
+  const evidenceToggle = evidence.getByRole('button', { name: /Execution details/ })
+  await expect(evidenceToggle).toContainText('19 items')
+  await expect(evidenceToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(evidence.getByText('Agent A → Agent B', { exact: true })).toHaveCount(0)
+  await expect(evidence.getByText('a-b', { exact: true })).toHaveCount(0)
+  await evidenceToggle.click()
+  await expect(evidenceToggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(evidence.getByText('Shows path decisions, loop passes, and exceptional nodes for this run.', { exact: true })).toBeVisible()
+  await expect(evidence.getByText('Agent A → Agent B', { exact: true }).first()).toBeVisible()
+  await expect(evidence.getByText('Continued after success', { exact: true }).first()).toBeVisible()
+  await expect(evidence.getByText('Loop pass 19', { exact: true })).toBeVisible()
+  await expect(evidence.getByText('a-b', { exact: true }).first()).toBeHidden()
+  const evidenceList = evidence.locator('.workflow-evidence-list')
+  await expect(evidenceList).toHaveCSS('overflow-y', 'auto')
+  expect(await evidenceList.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+  await evidence.getByText('Technical information', { exact: true }).first().click()
+  await expect(evidence.getByText('a-b', { exact: true }).first()).toBeVisible()
   await page.locator('.workflow-run-item').click()
   const joinHelpIcons = page.getByTestId('workflow-node-join-help')
   const joinHelp = page.getByText('All incoming routes must be taken; if one does not match, this node is skipped. Example: wait for both parallel checks.', { exact: true })

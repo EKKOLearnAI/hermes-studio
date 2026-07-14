@@ -2051,7 +2051,16 @@ jobTriggered: 'Job declenche',
   workflow: {
     actions: { importWorkflow: 'Importer le Workflow', exportWorkflow: 'Exporter le Workflow', imported: 'Workflow importé', exported: 'Workflow exporté', importFailed: 'Échec de l’import du Workflow', exportFailed: 'Échec de l’export du Workflow' },
     stats: { nodes: 'nœuds', edges: 'connexions' },
-    evidence: { title: 'Preuves d’exécution', empty: 'Aucune preuve enregistrée', loadFailed: 'Échec du chargement des preuves d’exécution persistées', node: 'Nœud', edge: 'Connexion', loop: 'Boucle' },
+    evidence: {
+      ariaLabel: 'Détails d’exécution du Workflow', title: 'Détails d’exécution', count: '{count} éléments',
+      intro: 'Affiche les décisions de chemin, les passages de boucle et les nœuds exceptionnels de cette exécution.', empty: 'Aucun détail d’exécution', loadFailed: 'Impossible de charger les détails d’exécution enregistrés',
+      node: 'Nœud exceptionnel', edge: 'Chemin', loop: 'Boucle', pathTitle: '{source} → {target}', loopPass: 'Passage de boucle {count}', exceptionalNode: 'Ce nœud ne s’est pas terminé normalement.',
+      technical: 'Informations techniques', recordId: 'ID d’enregistrement', sequence: 'Séquence', rawStatus: 'Statut brut', rawRoute: 'Route', rawReason: 'Raison', iterationPath: 'Chemin d’itération',
+      statuses: { taken: 'Utilisé', notTaken: 'Non utilisé', evaluationFailed: 'Échec de l’évaluation', timedOut: 'Délai dépassé', blocked: 'Bloqué' },
+      routes: { success: 'Poursuite après succès', failure: 'Poursuite après échec', always: 'Poursuite quel que soit le résultat' },
+      reasons: { evaluationFailed: 'Échec de l’évaluation du chemin', conditionNotMatched: 'La condition ne correspond pas', iterationLimitReached: 'Nombre maximal de passages atteint', routeNotMatched: 'La route ne correspond pas' },
+      loopOutcomes: { continued: 'Condition satisfaite ; passage suivant', iterationLimitReached: 'Arrêt au nombre maximal de passages', conditionNotMatched: 'Arrêt car la condition ne correspond pas', finished: 'Boucle terminée' },
+    },
     edgeEditor: {
       title: 'Modifier la connexion', guideIntro: 'Une connexion est prise seulement si sa route et sa condition facultative correspondent. Choisissez « Route seule » sans contrôle du contenu.',
       route: 'Route', routes: { success: 'Succès uniquement (success)', failure: 'Échec uniquement (failure)', always: 'Toujours (always)' },

@@ -2050,7 +2050,16 @@ export default {
   workflow: {
     actions: { importWorkflow: 'Workflow 가져오기', exportWorkflow: 'Workflow 내보내기', imported: 'Workflow를 가져왔습니다', exported: 'Workflow를 내보냈습니다', importFailed: 'Workflow 가져오기에 실패했습니다', exportFailed: 'Workflow 내보내기에 실패했습니다' },
     stats: { nodes: '노드', edges: '연결' },
-    evidence: { title: '실행 증거', empty: '기록된 실행 증거가 없습니다', loadFailed: '저장된 실행 증거를 불러오지 못했습니다', node: '노드', edge: '연결', loop: '루프' },
+    evidence: {
+      ariaLabel: 'Workflow 실행 세부 정보', title: '실행 세부 정보', count: '{count}개',
+      intro: '이번 실행의 경로 결정, 반복 횟수, 예외 노드를 표시합니다.', empty: '실행 세부 정보 없음', loadFailed: '저장된 실행 세부 정보를 불러오지 못했습니다',
+      node: '예외 노드', edge: '경로', loop: '루프', pathTitle: '{source} → {target}', loopPass: '루프 {count}회차', exceptionalNode: '이 노드는 정상적으로 완료되지 않았습니다.',
+      technical: '기술 정보', recordId: '기록 ID', sequence: '순서', rawStatus: '원시 상태', rawRoute: '경로', rawReason: '사유', iterationPath: '반복 경로',
+      statuses: { taken: '사용됨', notTaken: '사용 안 됨', evaluationFailed: '판단 실패', timedOut: '시간 초과', blocked: '차단됨' },
+      routes: { success: '성공 후 계속', failure: '실패 후 계속', always: '결과와 관계없이 계속' },
+      reasons: { evaluationFailed: '경로 판단 실패', conditionNotMatched: '조건이 일치하지 않음', iterationLimitReached: '최대 반복 횟수 도달', routeNotMatched: '경로가 일치하지 않음' },
+      loopOutcomes: { continued: '조건 일치; 다음 회차로 계속', iterationLimitReached: '최대 횟수에서 중지', conditionNotMatched: '조건 불일치로 종료', finished: '루프 종료' },
+    },
     edgeEditor: {
       title: '연결 편집', guideIntro: '경로와 선택 조건이 모두 일치할 때만 연결을 사용합니다. 내용 검사가 필요 없으면 “경로만”을 선택하세요.',
       route: '경로', routes: { success: '성공 시만 (success)', failure: '실패 시만 (failure)', always: '항상 (always)' },

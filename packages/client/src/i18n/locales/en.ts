@@ -781,7 +781,16 @@ export default {
       importFailed: 'Workflow import failed',
       exportFailed: 'Workflow export failed',
     },
-    evidence: { title: 'Execution evidence', empty: 'No evidence recorded', loadFailed: 'Failed to load persisted execution evidence', node: 'Node', edge: 'Edge', loop: 'Loop' },
+    evidence: {
+      ariaLabel: 'Workflow execution details', title: 'Execution details', count: '{count} items',
+      intro: 'Shows path decisions, loop passes, and exceptional nodes for this run.', empty: 'No execution details', loadFailed: 'Failed to load persisted execution details',
+      node: 'Exceptional node', edge: 'Path', loop: 'Loop', pathTitle: '{source} → {target}', loopPass: 'Loop pass {count}', exceptionalNode: 'This node did not complete normally.',
+      technical: 'Technical information', recordId: 'Record ID', sequence: 'Sequence', rawStatus: 'Raw status', rawRoute: 'Route', rawReason: 'Reason', iterationPath: 'Iteration path',
+      statuses: { taken: 'Used', notTaken: 'Not used', evaluationFailed: 'Evaluation failed', timedOut: 'Timed out', blocked: 'Blocked' },
+      routes: { success: 'Continued after success', failure: 'Continued after failure', always: 'Continued regardless of outcome' },
+      reasons: { evaluationFailed: 'Route evaluation failed', conditionNotMatched: 'Condition did not match', iterationLimitReached: 'Maximum loop passes reached', routeNotMatched: 'Route did not match' },
+      loopOutcomes: { continued: 'Condition matched; continued to the next pass', iterationLimitReached: 'Stopped at the maximum pass count', conditionNotMatched: 'Stopped because the condition did not match', finished: 'Loop finished' },
+    },
     edgeEditor: {
       title: 'Edit connection', guideIntro: 'A connection is taken only when its route and optional condition both match. Choose Route only when no content check is needed.',
       route: 'Route', routes: { success: 'Success only (success)', failure: 'Failure only (failure)', always: 'Always (always)' },

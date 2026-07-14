@@ -2050,7 +2050,16 @@ export default {
   workflow: {
     actions: { importWorkflow: 'Workflow をインポート', exportWorkflow: 'Workflow をエクスポート', imported: 'Workflow をインポートしました', exported: 'Workflow をエクスポートしました', importFailed: 'Workflow のインポートに失敗しました', exportFailed: 'Workflow のエクスポートに失敗しました' },
     stats: { nodes: 'ノード', edges: '接続' },
-    evidence: { title: '実行証跡', empty: '実行証跡はありません', loadFailed: '保存済み実行証跡の読み込みに失敗しました', node: 'ノード', edge: '接続', loop: 'ループ' },
+    evidence: {
+      ariaLabel: 'Workflow 実行詳細', title: '実行詳細', count: '{count} 件',
+      intro: 'この実行の経路判定、ループ回数、異常ノードを表示します。', empty: '実行詳細はありません', loadFailed: '保存済みの実行詳細を読み込めませんでした',
+      node: '異常ノード', edge: '経路', loop: 'ループ', pathTitle: '{source} → {target}', loopPass: 'ループ {count} 回目', exceptionalNode: 'このノードは正常に完了しませんでした。',
+      technical: '技術情報', recordId: '記録 ID', sequence: '順序', rawStatus: '元の状態', rawRoute: '経路', rawReason: '理由', iterationPath: '反復経路',
+      statuses: { taken: '使用', notTaken: '未使用', evaluationFailed: '判定失敗', timedOut: 'タイムアウト', blocked: 'ブロック済み' },
+      routes: { success: '成功後に続行', failure: '失敗後に続行', always: '結果にかかわらず続行' },
+      reasons: { evaluationFailed: '経路判定に失敗しました', conditionNotMatched: '条件が一致しませんでした', iterationLimitReached: '最大ループ回数に到達しました', routeNotMatched: '経路が一致しませんでした' },
+      loopOutcomes: { continued: '条件一致、次の回へ続行', iterationLimitReached: '最大回数で停止', conditionNotMatched: '条件不一致で終了', finished: 'ループ終了' },
+    },
     edgeEditor: {
       title: '接続を編集', guideIntro: '接続はルートと任意の条件が両方一致したときだけ使われます。内容を判定しない場合は「ルートのみ」を選びます。',
       route: 'ルート', routes: { success: '成功時のみ（success）', failure: '失敗時のみ（failure）', always: '常に（always）' },

@@ -661,7 +661,16 @@ export default {
       importFailed: 'Ошибка импорта Workflow',
       exportFailed: 'Ошибка экспорта Workflow',
     },
-    evidence: { title: 'Доказательства выполнения', empty: 'Нет записей', loadFailed: 'Не удалось загрузить сохранённые доказательства выполнения', node: 'Узел', edge: 'Ребро', loop: 'Цикл' },
+    evidence: {
+      ariaLabel: 'Подробности выполнения Workflow', title: 'Подробности выполнения', count: '{count} записей',
+      intro: 'Показывает решения по маршрутам, проходы циклов и аварийные узлы этого запуска.', empty: 'Нет подробностей выполнения', loadFailed: 'Не удалось загрузить сохранённые подробности выполнения',
+      node: 'Аварийный узел', edge: 'Путь', loop: 'Цикл', pathTitle: '{source} → {target}', loopPass: 'Проход цикла {count}', exceptionalNode: 'Этот узел не завершился штатно.',
+      technical: 'Техническая информация', recordId: 'ID записи', sequence: 'Порядок', rawStatus: 'Исходный статус', rawRoute: 'Маршрут', rawReason: 'Причина', iterationPath: 'Путь итерации',
+      statuses: { taken: 'Выбран', notTaken: 'Не выбран', evaluationFailed: 'Ошибка проверки', timedOut: 'Превышено время', blocked: 'Заблокирован' },
+      routes: { success: 'Продолжено после успеха', failure: 'Продолжено после ошибки', always: 'Продолжено при любом результате' },
+      reasons: { evaluationFailed: 'Ошибка проверки маршрута', conditionNotMatched: 'Условие не совпало', iterationLimitReached: 'Достигнут предел проходов', routeNotMatched: 'Маршрут не совпал' },
+      loopOutcomes: { continued: 'Условие совпало; начат следующий проход', iterationLimitReached: 'Остановлено на пределе проходов', conditionNotMatched: 'Остановлено из-за несовпадения условия', finished: 'Цикл завершён' },
+    },
     edgeEditor: {
       title: 'Изменить соединение', guideIntro: 'Соединение используется, только когда совпадают маршрут и необязательное условие. Выберите «Только маршрут», если проверка текста не нужна.',
       route: 'Маршрут', routes: { success: 'Только успех (success)', failure: 'Только ошибка (failure)', always: 'Всегда (always)' },

@@ -781,7 +781,16 @@ export default {
       importFailed: 'Workflow 导入失败',
       exportFailed: 'Workflow 导出失败',
     },
-    evidence: { title: '执行证据', empty: '暂无执行证据', loadFailed: '读取持久化执行证据失败', node: '节点', edge: '连线', loop: '循环' },
+    evidence: {
+      ariaLabel: 'Workflow 执行详情', title: '执行详情', count: '{count} 条',
+      intro: '展示本次执行的路径选择、循环轮次和异常节点。', empty: '暂无执行详情', loadFailed: '读取持久化执行详情失败',
+      node: '异常节点', edge: '执行路径', loop: '循环', pathTitle: '{source} → {target}', loopPass: '循环第 {count} 轮', exceptionalNode: '该节点未正常完成。',
+      technical: '技术信息', recordId: '记录 ID', sequence: '执行顺序', rawStatus: '原始状态', rawRoute: '路由', rawReason: '原因', iterationPath: '循环路径',
+      statuses: { taken: '已采用', notTaken: '未采用', evaluationFailed: '判断失败', timedOut: '已超时', blocked: '已阻塞' },
+      routes: { success: '成功后继续', failure: '失败后进入处理', always: '无论成功或失败均继续' },
+      reasons: { evaluationFailed: '路径判断失败', conditionNotMatched: '条件不满足', iterationLimitReached: '已达到最大循环轮次', routeNotMatched: '当前结果不匹配此路径' },
+      loopOutcomes: { continued: '条件满足，继续下一轮', iterationLimitReached: '达到最大轮次后停止', conditionNotMatched: '条件不满足，循环结束', finished: '循环已结束' },
+    },
     edgeEditor: {
       title: '编辑连接线', guideIntro: '连接线只有在“路由”匹配，并且可选的“条件”也匹配时才会生效。不需要检查内容时，选择“只判断路由”。',
       route: '路由', routes: { success: '成功时（success）', failure: '失败时（failure）', always: '无论成功失败（always）' },

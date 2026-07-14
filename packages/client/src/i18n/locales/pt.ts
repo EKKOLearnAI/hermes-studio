@@ -2051,7 +2051,16 @@ jobTriggered: 'Job acionado',
   workflow: {
     actions: { importWorkflow: 'Importar Workflow', exportWorkflow: 'Exportar Workflow', imported: 'Workflow importado', exported: 'Workflow exportado', importFailed: 'Falha ao importar o Workflow', exportFailed: 'Falha ao exportar o Workflow' },
     stats: { nodes: 'nós', edges: 'conexões' },
-    evidence: { title: 'Evidências de execução', empty: 'Nenhuma evidência registrada', loadFailed: 'Falha ao carregar as evidências de execução persistidas', node: 'Nó', edge: 'Conexão', loop: 'Loop' },
+    evidence: {
+      ariaLabel: 'Detalhes de execução do Workflow', title: 'Detalhes de execução', count: '{count} itens',
+      intro: 'Mostra as decisões de caminho, as iterações de loop e os nós excepcionais desta execução.', empty: 'Sem detalhes de execução', loadFailed: 'Não foi possível carregar os detalhes de execução salvos',
+      node: 'Nó excepcional', edge: 'Caminho', loop: 'Loop', pathTitle: '{source} → {target}', loopPass: 'Iteração {count} do loop', exceptionalNode: 'Este nó não terminou normalmente.',
+      technical: 'Informações técnicas', recordId: 'ID do registro', sequence: 'Sequência', rawStatus: 'Status original', rawRoute: 'Rota', rawReason: 'Motivo', iterationPath: 'Caminho da iteração',
+      statuses: { taken: 'Usado', notTaken: 'Não usado', evaluationFailed: 'Falha na avaliação', timedOut: 'Tempo esgotado', blocked: 'Bloqueado' },
+      routes: { success: 'Continuou após sucesso', failure: 'Continuou após falha', always: 'Continuou independentemente do resultado' },
+      reasons: { evaluationFailed: 'Falha na avaliação do caminho', conditionNotMatched: 'A condição não correspondeu', iterationLimitReached: 'Limite máximo de iterações atingido', routeNotMatched: 'A rota não correspondeu' },
+      loopOutcomes: { continued: 'Condição atendida; próxima iteração', iterationLimitReached: 'Parou no máximo de iterações', conditionNotMatched: 'Parou porque a condição não correspondeu', finished: 'Loop concluído' },
+    },
     edgeEditor: {
       title: 'Editar conexão', guideIntro: 'Uma conexão só é usada quando a rota e a condição opcional correspondem. Escolha “Somente rota” se não precisar verificar conteúdo.',
       route: 'Rota', routes: { success: 'Somente sucesso (success)', failure: 'Somente falha (failure)', always: 'Sempre (always)' },
