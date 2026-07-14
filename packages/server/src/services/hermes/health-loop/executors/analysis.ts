@@ -192,7 +192,9 @@ async function executeOnce(options: HealthAnalysisExecutorOptions, context: Fabr
   let result: HealthAnalysisResult
   let processorReceiptId: string | null = null
   try {
-    result = canonicalAnalysisResult(analyzed?.result)
+    result = canonicalAnalysisResult(analyzed?.result, {
+      locality: options.locality, artifactId: identity.artifactId, requestedAt: String(context.input.requestedAt),
+    })
     if (options.locality === 'remote') {
       if (analyzed.providerReceiptId !== undefined && !semanticId(analyzed.providerReceiptId)) throw new Error('invalid')
       processorReceiptId = analyzed.providerReceiptId ?? fallbackProcessorReceipt(result, {
@@ -238,8 +240,10 @@ function persistedOutput(locality: 'local' | 'remote', context: FabricExecutionC
       consentId: context.input.consentId } : {}) })
 }
 
-function canonicalAnalysisResult(value: unknown): HealthAnalysisResult {
-  const result = validateHealthAnalysisResult(value)
+function canonicalAnalysisResult(value: unknown, binding: {
+  locality: 'local' | 'remote'; artifactId: string; requestedAt: string
+}): HealthAnalysisResult {
+  const result = validateHealthAnalysisResult(value, binding)
   if (Buffer.byteLength(stableStringify(result), 'utf8') > MAX_RESULT_BYTES) throw new Error('invalid')
   return result
 }

@@ -8,13 +8,57 @@ import { createHealthWeixinExecutorAdapter } from '../../packages/server/src/ser
 import { createConfiguredHealthFabricExecutorAdapters } from '../../packages/server/src/services/hermes/health-loop/executors/configuration'
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex')
+const canonicalArtifactId = `artifact-${'a'.repeat(64)}`
+const secondCanonicalArtifactId = `artifact-${'b'.repeat(64)}`
+const canonicalObservedAt = '2026-07-14T01:00:00Z'
 
-const finalizedResult = (status: 'completed' | 'recapture_required' = 'completed') => ({
+const finalizedResult = (status: 'completed' | 'recapture_required' = 'recapture_required') => ({
   schemaVersion: 'health-analysis-result/v1' as const, purpose: 'skin' as const, status,
   modelVersion: 'vision-1', parserVersion: 'vision-json-v1', overallConfidence: 0.9,
   captureQuality: { score: status === 'completed' ? 0.9 : 0.4, reasons: status === 'completed' ? [] : ['blur'] },
   fields: [], ...(status === 'recapture_required' ? { recaptureGuidance: ['recapture'] } : {}),
 })
+
+function canonicalCompletedResult(purpose: 'measurement' | 'posture' | 'skin' | 'diet' | 'internal_health'):
+Record<string, unknown> {
+  const evidence = { artifactId: canonicalArtifactId, region: purpose === 'internal_health' ? 'page:2/lab' : 'front' }
+  let fields: Array<Record<string, unknown>>
+  let payload: Record<string, unknown>
+  if (purpose === 'measurement') {
+    fields = [{ field: 'captureConditions', value: { lightingProfile: 'even' }, confidence: 0.9, evidence }]
+    payload = { captureConditions: { lightingProfile: 'even' }, modelVersion: 'vision-1', modelConfidence: 0.9 }
+  } else if (purpose === 'posture') {
+    fields = [{ field: 'angles', value: { headForwardDeg: 8 }, unit: 'degree', confidence: 0.9, evidence }]
+    payload = { angles: { headForwardDeg: 8 }, modelVersion: 'vision-1', modelConfidence: 0.9 }
+  } else if (purpose === 'skin') {
+    fields = [{ field: 'appearances', value: [{ type: 'redness', severity: 0.4 }], confidence: 0.9, evidence }]
+    payload = { appearances: [{ type: 'redness', severity: 0.4 }], captureQuality: 0.9 }
+  } else if (purpose === 'diet') {
+    fields = [{ field: 'foods', value: [{ name: 'rice', portionGrams: 180 }], confidence: 0.9, evidence }]
+    payload = { foods: [{ name: 'rice', portionGrams: 180 }], parserConfidence: 0.9 }
+  } else {
+    fields = [{ field: 'markers', value: [{ key: 'fasting_glucose', value: 5.2, unit: 'mmol/L',
+      evidence: { page: 2, region: 'page:2/lab' } }], confidence: 0.9, evidence }]
+    payload = { markers: [{ key: 'fasting_glucose', value: 5.2, unit: 'mmol/L',
+      evidence: { page: 2, region: 'page:2/lab' } }] }
+  }
+  return {
+    schemaVersion: 'health-analysis-result/v1', purpose,
+    status: purpose === 'internal_health' ? 'pending_confirmation' : 'completed',
+    modelVersion: 'vision-1', parserVersion: 'vision-json-v1', overallConfidence: 0.9,
+    captureQuality: { score: 0.9, reasons: [] }, fields,
+    envelope: { domain: purpose === 'measurement' ? 'measurements' : purpose, source: 'analysis.local',
+      sourceId: 'analysis-source', observedAt: canonicalObservedAt, evidenceClass: 'inferred', confidence: 0.9,
+      payload, artifactIds: [canonicalArtifactId], parserVersion: 'vision-json-v1' },
+  }
+}
+
+function mutateEnvelopeResult(purpose: Parameters<typeof canonicalCompletedResult>[0],
+  mutate: (envelope: Record<string, unknown>) => void): Record<string, unknown> {
+  const result = canonicalCompletedResult(purpose)
+  mutate(result.envelope as Record<string, unknown>)
+  return result
+}
 
 function analysisWriter(record: { analysisId: string; status: 'succeeded' | 'needs_review' | 'failed'; observationIds: string[] }) {
   return { lookup: vi.fn(async () => null), write: vi.fn(async (request: { executionToken: string; materialDigest: string;
@@ -223,6 +267,87 @@ describe('health Action Fabric executors', () => {
     expect(reads).toBe(0)
     expect(writer.write).not.toHaveBeenCalled()
   })
+
+  it.each([
+    ['skin rawOutput', () => mutateEnvelopeResult('skin', envelope => {
+      Object.assign(envelope.payload as Record<string, unknown>, { rawOutput: 'provider-payload' })
+    })],
+    ['skin rawResponse', () => mutateEnvelopeResult('skin', envelope => {
+      const appearances = (envelope.payload as Record<string, unknown>).appearances as Array<Record<string, unknown>>
+      appearances[0].rawResponse = 'provider-payload'
+    })],
+    ['noncanonical timezone', () => mutateEnvelopeResult('skin', envelope => {
+      envelope.observedAt = '2026-07-14T09:00:00+08:00'
+    })],
+    ['different canonical timestamp', () => mutateEnvelopeResult('skin', envelope => {
+      envelope.observedAt = '2026-07-14T01:01:00Z'
+    })],
+    ['different locality source', () => mutateEnvelopeResult('skin', envelope => {
+      envelope.source = 'analysis.remote'
+    })],
+    ['duplicate artifact IDs', () => mutateEnvelopeResult('skin', envelope => {
+      envelope.artifactIds = [canonicalArtifactId, canonicalArtifactId]
+    })],
+    ['unsorted artifact IDs', () => mutateEnvelopeResult('skin', envelope => {
+      envelope.artifactIds = [secondCanonicalArtifactId, canonicalArtifactId]
+    })],
+    ['measurement nested unknown', () => mutateEnvelopeResult('measurement', envelope => {
+      const payload = envelope.payload as Record<string, Record<string, unknown>>
+      payload.captureConditions.unexpected = true
+    })],
+    ['posture nested unknown', () => mutateEnvelopeResult('posture', envelope => {
+      const payload = envelope.payload as Record<string, Record<string, unknown>>
+      payload.angles.unexpected = true
+    })],
+    ['diet nested unknown', () => mutateEnvelopeResult('diet', envelope => {
+      const foods = (envelope.payload as Record<string, unknown>).foods as Array<Record<string, unknown>>
+      foods[0].unexpected = true
+    })],
+    ['internal nested unknown', () => mutateEnvelopeResult('internal_health', envelope => {
+      const markers = (envelope.payload as Record<string, unknown>).markers as Array<Record<string, unknown>>
+      markers[0].unexpected = true
+    })],
+    ['payload differs from validated fields', () => mutateEnvelopeResult('skin', envelope => {
+      const appearances = (envelope.payload as Record<string, unknown>).appearances as Array<Record<string, unknown>>
+      appearances[0].severity = 0.5
+    })],
+    ['field evidence differs from execution artifact', () => {
+      const result = canonicalCompletedResult('skin')
+      const fields = result.fields as Array<Record<string, unknown>>
+      fields[0].evidence = { artifactId: secondCanonicalArtifactId, region: 'front' }
+      return result
+    }],
+  ])('rejects noncanonical or unbound envelope form %s before the durable writer', async (_name, result) => {
+    const writer = analysisWriter({ analysisId: 'analysis-envelope', status: 'succeeded', observationIds: [] })
+    const adapter = createHealthAnalysisExecutorAdapter({ locality: 'local',
+      artifactResolver: { resolve: async () => ({ artifactId: canonicalArtifactId, manifestDigest: digest('artifact') }) },
+      analyzer: { analyze: async () => ({ result: result() as never }) }, resultWriter: writer })
+    const ctx = context('health.artifact.analyze.local', { schemaVersion: 1, artifactId: canonicalArtifactId,
+      manifestDigest: digest('artifact'), requestedAt: canonicalObservedAt },
+    { executorId: 'health-local-analysis', executorType: 'internal' })
+    const prepared = await adapter.prepare(ctx)
+
+    expect(await adapter.execute({ ...ctx, preparedOutput: prepared.output }))
+      .toMatchObject({ outcome: 'permanent_failure', errorCode: 'HEALTH_ANALYSIS_RESULT_INVALID' })
+    expect(writer.write).not.toHaveBeenCalled()
+  })
+
+  it.each(['measurement', 'posture', 'skin', 'diet', 'internal_health'] as const)(
+    'persists a canonical %s envelope reconstructed from validated fields', async purpose => {
+      const writer = analysisWriter({ analysisId: `analysis-${purpose}`, status: 'succeeded', observationIds: [] })
+      const result = canonicalCompletedResult(purpose)
+      const adapter = createHealthAnalysisExecutorAdapter({ locality: 'local',
+        artifactResolver: { resolve: async () => ({ artifactId: canonicalArtifactId, manifestDigest: digest('artifact') }) },
+        analyzer: { analyze: async () => ({ result: result as never }) }, resultWriter: writer })
+      const ctx = context('health.artifact.analyze.local', { schemaVersion: 1, artifactId: canonicalArtifactId,
+        manifestDigest: digest('artifact'), requestedAt: canonicalObservedAt },
+      { executorId: 'health-local-analysis', executorType: 'internal', executionToken: `canonical-${purpose}` })
+      const prepared = await adapter.prepare(ctx)
+
+      expect((await adapter.execute({ ...ctx, preparedOutput: prepared.output })).outcome).toBe('succeeded')
+      expect(writer.write).toHaveBeenCalledWith(expect.objectContaining({ result }))
+    },
+  )
 
   it('binds consent to the exact artifact/manifest/processor and rejects replay across execution tokens', async () => {
     let consumed = false
@@ -471,7 +596,7 @@ describe('health Action Fabric executors', () => {
       fields: [{ field: 'appearances', value: [], confidence: 0.9,
         evidence: { artifactId: evidenceArtifactId, region: 'face' } }],
       envelope: { domain: 'skin' as const, source: 'analysis.remote', sourceId: 'analysis-source',
-        observedAt: '2026-07-14T01:00:00.000Z', evidenceClass: 'inferred' as const, confidence: 0.9,
+        observedAt: '2026-07-14T01:00:00Z', evidenceClass: 'inferred' as const, confidence: 0.9,
         payload: { appearances: [], captureQuality: 0.9 }, artifactIds: [evidenceArtifactId], parserVersion: 'vision-json-v1' },
     }
     type Stored = { executionToken: string; materialDigest: string; analysisId: string; status: 'succeeded';
@@ -500,8 +625,8 @@ describe('health Action Fabric executors', () => {
       authorization: {} as never }))
     const analyze = vi.fn(async () => ({ result: canonicalResult }))
     const options = { locality: 'remote' as const, consentConsumer: { consume }, analyzer: { analyze }, resultWriter: writer,
-      artifactResolver: { resolve: async () => ({ artifactId: 'artifact-1', manifestDigest: digest('artifact') }) } }
-    const ctx = context('health.artifact.analyze.remote', { schemaVersion: 1, artifactId: 'artifact-1',
+      artifactResolver: { resolve: async () => ({ artifactId: evidenceArtifactId, manifestDigest: digest('artifact') }) } }
+    const ctx = context('health.artifact.analyze.remote', { schemaVersion: 1, artifactId: evidenceArtifactId,
       manifestDigest: digest('artifact'), requestedAt: '2026-07-14T01:00:00.000Z', processorId: 'processor-1',
       consentId: 'reservation-1' }, { executorId: 'health-remote-analysis' })
     const first = createHealthAnalysisExecutorAdapter(options)
