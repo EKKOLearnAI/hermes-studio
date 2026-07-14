@@ -5,6 +5,7 @@ import { appendFabricAuditEvent, appendFabricOutbox, withFabricAuditedTransactio
 import { getFabricControlState, getFabricControlStateInDb } from './control'
 import { buildGenericCompensationInput, prepareTrustedPlanRestoreInDb } from './compensation-internal'
 import { revalidateFabricAuthorizationInDb } from './policy'
+import { withActionFabricDb } from './database'
 import {
   invokeCapturedFabricInterrupt,
   invokeFabricExecutor,
@@ -21,6 +22,7 @@ import {
 } from './workflows'
 
 const LEASE_MS = 30_000
+const LEASE_HEARTBEAT_MS = 10_000
 const DEFAULT_INTERVAL_MS = 1_000
 const MAX_INTERVAL_MS = 60_000
 const CIRCUIT_BREAKER_THRESHOLD = 3
@@ -70,6 +72,7 @@ interface WorkflowClaim {
   preparedOutput?: FabricJsonObject
   executionOutput?: FabricJsonObject
   leaseExpiresAt: string
+  leaseState: FabricWorkflowState
   actorUserId: string
   requestedByRoleId: string
   reversible: boolean
@@ -152,6 +155,7 @@ async function processActionFabricCycle(
     now: now.toISOString(),
   }
   let result: FabricExecutorResult
+  const heartbeat = startLeaseHeartbeat(claim)
   try {
     // invokeFabricExecutor re-resolves the durable binding immediately before every adapter call.
     result = claim.phase === 'interrupt'
@@ -159,6 +163,12 @@ async function processActionFabricCycle(
       : await invokeFabricExecutor(claim.phase as never, context) as FabricExecutorResult
   } catch (error) {
     result = invocationFailure(claim.phase, error)
+  } finally {
+    heartbeat.stop()
+  }
+  if (heartbeat.lost) {
+    return { processed: true, workerId, workflowId: claim.workflowId, stepId: claim.stepId,
+      phase: claim.phase, outcome: result.outcome, stale: true }
   }
   let compensation: PreparedFabricCompensation | null | undefined
   if (claim.phase === 'verify' && result.outcome === 'mismatch' && claim.reversible
@@ -195,6 +205,29 @@ async function processActionFabricCycle(
     phase: claim.phase, errorClass: 'STALE_CLAIM' }, '[action-fabric] stale worker result ignored')
   return { processed: true, workerId, workflowId: claim.workflowId, stepId: claim.stepId,
     phase: claim.phase, outcome: result.outcome, ...(committed ? {} : { stale: true }) }
+}
+
+function startLeaseHeartbeat(claim: WorkflowClaim): { readonly lost: boolean; stop(): void } {
+  let lost = false
+  let stopped = false
+  let renewing = false
+  const timer = setInterval(() => {
+    if (stopped || lost || renewing) return
+    renewing = true
+    try {
+      const now = new Date()
+      const nextExpiry = new Date(now.getTime() + LEASE_MS).toISOString()
+      const renewed = withActionFabricDb(db => db.prepare(`UPDATE fabric_workflows
+        SET lease_expires_at=?,updated_at=? WHERE id=? AND version=? AND lease_owner=? AND lease_expires_at=? AND state=?`)
+        .run(nextExpiry, now.toISOString(), claim.workflowId, claim.workflowVersion, claim.workerId,
+          claim.leaseExpiresAt, claim.leaseState))
+      if (renewed.changes !== 1) lost = true
+      else claim.leaseExpiresAt = nextExpiry
+    } catch { lost = true }
+    finally { renewing = false }
+  }, LEASE_HEARTBEAT_MS)
+  timer.unref?.()
+  return { get lost() { return lost }, stop() { stopped = true; clearInterval(timer) } }
 }
 
 export function startActionFabricWorker(options: FabricWorkerOptions = {}): FabricWorkerHandle {
@@ -463,7 +496,7 @@ function buildClaim(
     capabilityId: row.capability_id, capabilityVersion: row.capability_version,
     contractDigest: contract.contractDigest, policyEvaluationToken: token, controlVersion: controlVersion as number,
     input, target, ...(prepared ? { preparedOutput: prepared } : {}),
-    ...(executed ? { executionOutput: executed } : {}), leaseExpiresAt,
+    ...(executed ? { executionOutput: executed } : {}), leaseExpiresAt, leaseState: row.workflow_state,
     actorUserId: row.requested_by_user_id, requestedByRoleId: row.requested_by_role_id,
     reversible: contract.reversible, compensationCapabilityId: contract.compensationCapabilityId,
     idempotency: contract.idempotency as WorkflowClaim['idempotency'],

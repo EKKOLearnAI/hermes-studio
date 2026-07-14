@@ -6,6 +6,21 @@ import { getHermesBaseDir } from '../hermes-profile'
 import { TWIN_DOMAINS } from './types'
 
 const SCHEMA_VERSION = 7
+const RESERVATION_TABLE_SQL = `CREATE TABLE twin_artifact_consent_reservations (
+  reservation_id TEXT PRIMARY KEY
+    CHECK(length(reservation_id) BETWEEN 48 AND 64 AND reservation_id GLOB 'reservation-*'
+      AND reservation_id NOT GLOB '*[^a-zA-Z0-9-]*'),
+  consent_id TEXT NOT NULL REFERENCES twin_artifact_consents(consent_id),
+  artifact_id TEXT NOT NULL
+    CHECK(length(artifact_id)=73 AND artifact_id GLOB 'artifact-*'
+      AND substr(artifact_id,10) NOT GLOB '*[^a-f0-9]*'),
+  artifact_manifest_digest TEXT NOT NULL
+    CHECK(length(artifact_manifest_digest)=64 AND artifact_manifest_digest NOT GLOB '*[^a-f0-9]*'),
+  processor TEXT NOT NULL,
+  reserved_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT
+)`
 const REQUIRED_TWIN_TABLES = [
   'twin_artifacts', 'twin_artifact_consents', 'twin_artifact_consent_reservations', 'twin_assistant_roles', 'twin_constraints', 'twin_context_recipes',
   'twin_entities', 'twin_events', 'twin_goals', 'twin_import_runs', 'twin_meta',
@@ -159,6 +174,11 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
   if (!columnsMatch(reservationColumns, expectedReservationColumns)) {
     throw new Error(`Personal Twin schema version ${version} is incomplete: consent reservation signature is invalid`)
   }
+  const reservationSql = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table'
+    AND name='twin_artifact_consent_reservations'`).get() as { sql: string } | undefined
+  if (!reservationSql || canonicalSql(reservationSql.sql) !== canonicalSql(RESERVATION_TABLE_SQL)) {
+    throw new Error(`Personal Twin schema version ${version} is incomplete: consent reservation CREATE SQL signature is invalid`)
+  }
   assertIndexSignature(db, version, 'twin_artifact_consent_reservations',
     'idx_twin_artifact_consent_reservations_status', ['processor', 'expires_at', 'consumed_at'], false)
   const reservationForeignKeys = db.prepare("PRAGMA foreign_key_list('twin_artifact_consent_reservations')").all() as Array<{
@@ -182,6 +202,8 @@ function columnsMatch(actual: ColumnInfo[], expected: ColumnSignature[]): boolea
       && column.notnull === signature[2] && column.pk === signature[3] && column.dflt_value === signature[4]
   })
 }
+
+function canonicalSql(value: string): string { return value.replace(/\s+/g, ' ').trim().toLowerCase() }
 
 function indexColumns(db: DatabaseSync, indexName: string): string[] {
   return (db.prepare(`PRAGMA index_info('${indexName.replace(/'/g, "''")}')`).all() as Array<{ seqno: number; name: string }>)
@@ -513,24 +535,39 @@ function createSchemaV6(db: DatabaseSync): void {
 function createSchemaV7(db: DatabaseSync): void {
   db.exec(`
     DROP TABLE IF EXISTS twin_artifact_consent_reservations;
-    CREATE TABLE IF NOT EXISTS twin_artifact_consent_reservations (
-      reservation_id TEXT PRIMARY KEY
-        CHECK(length(reservation_id) BETWEEN 48 AND 64 AND reservation_id GLOB 'reservation-*'
-          AND reservation_id NOT GLOB '*[^a-zA-Z0-9-]*'),
-      consent_id TEXT NOT NULL REFERENCES twin_artifact_consents(consent_id),
-      artifact_id TEXT NOT NULL
-        CHECK(length(artifact_id)=73 AND artifact_id GLOB 'artifact-*'
-          AND substr(artifact_id,10) NOT GLOB '*[^a-f0-9]*'),
-      artifact_manifest_digest TEXT NOT NULL
-        CHECK(length(artifact_manifest_digest)=64 AND artifact_manifest_digest NOT GLOB '*[^a-f0-9]*'),
-      processor TEXT NOT NULL,
-      reserved_at TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      consumed_at TEXT
-    );
+    ${RESERVATION_TABLE_SQL};
     CREATE INDEX IF NOT EXISTS idx_twin_artifact_consent_reservations_status
       ON twin_artifact_consent_reservations(processor,expires_at,consumed_at);
   `)
+  probeReservationChecks(db)
+}
+
+function probeReservationChecks(db: DatabaseSync): void {
+  const consentId = `probe-consent-${'c'.repeat(32)}`
+  const insert = db.prepare(`INSERT INTO twin_artifact_consent_reservations
+    (reservation_id,consent_id,artifact_id,artifact_manifest_digest,processor,reserved_at,expires_at,consumed_at)
+    VALUES(?,?,?,?,?,?,?,NULL)`)
+  db.exec('SAVEPOINT twin_v7_reservation_probe')
+  try {
+    db.prepare(`INSERT INTO twin_artifact_consents
+      (consent_id,manifest_digest,processor,scope_json,issued_at,expires_at,consumed_at,revoked_at)
+      VALUES(?,?,?,'{}',?,?,NULL,NULL)`).run(
+      consentId, 'c'.repeat(64), 'probe-processor', '2026-01-01T00:00:00Z', '2026-01-01T00:05:00Z')
+    const valid = [`reservation-${'1'.repeat(36)}`, consentId, `artifact-${'a'.repeat(64)}`, 'b'.repeat(64),
+      'probe-processor', '2026-01-01T00:00:00Z', '2026-01-01T00:05:00Z'] as const
+    const invalid = [
+      ['bad-reservation', ...valid.slice(1)],
+      [valid[0], valid[1], 'artifact-bad', ...valid.slice(3)],
+      [...valid.slice(0, 3), 'not-a-digest', ...valid.slice(4)],
+    ]
+    for (const values of invalid) {
+      let rejected = false
+      try { insert.run(...values) } catch { rejected = true }
+      if (!rejected) throw new Error('TWIN_V7_RESERVATION_CHECK_PROBE_FAILED')
+    }
+  } finally {
+    db.exec('ROLLBACK TO twin_v7_reservation_probe; RELEASE twin_v7_reservation_probe')
+  }
 }
 
 function normalizeLegacyArtifactSourceIndex(db: DatabaseSync): void {

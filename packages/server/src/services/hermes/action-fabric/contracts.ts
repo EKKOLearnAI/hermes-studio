@@ -118,6 +118,10 @@ export function validateHealthOutputSemantics(
   if (capabilityId === 'health.source.sync' && output.connectorId !== input.connectorId) return false
   if (capabilityId.startsWith('health.artifact.analyze.') && output.artifactId !== input.artifactId) return false
   if (capabilityId === 'health.artifact.analyze.remote' && output.consentId !== input.consentId) return false
+  if (capabilityId === 'health.artifact.analyze.remote'
+    && ((output.verificationStatus === 'verified' && typeof output.processorReceiptId !== 'string')
+      || (output.verificationStatus === 'unverifiable'
+        && (output.processorReceiptId !== null || output.status !== 'needs_review')))) return false
   if ((capabilityId === 'health.plan.adjust' || capabilityId === 'health.plan.restore')
     && output.planId !== input.planId) return false
   if (capabilityId === 'health.plan.adjust') {

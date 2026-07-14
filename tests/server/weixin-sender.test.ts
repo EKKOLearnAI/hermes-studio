@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { DatabaseSync } from 'node:sqlite'
 
 const mockPost = vi.hoisted(() => vi.fn())
 
@@ -36,6 +37,19 @@ describe('weixin reminder sender', () => {
     const result = await sendWeixinTextReminder('default', 'hello')
 
     expect(result).toEqual({ ok: false, error: 'missing_weixin_credentials' })
+    expect(mockPost).not.toHaveBeenCalled()
+  })
+
+  it('never falls a missing named profile back to default credentials', async () => {
+    writeFileSync(join(hermesHome, '.env'), [
+      'WEIXIN_ACCOUNT_ID=default-account', 'WEIXIN_TOKEN=default-token', 'WEIXIN_HOME_CHANNEL=default-home', '',
+    ].join('\n'), 'utf-8')
+    const { createWeixinReceiptSender } = await loadSender()
+    const sender = createWeixinReceiptSender('missing-profile')
+
+    expect(sender.identity?.()).toBeNull()
+    expect(await sender.send({ deliveryId: 'missing-profile-delivery', recipient: 'configured-self', message: '提醒' }))
+      .toEqual({ status: 'unknown', providerMessageId: null })
     expect(mockPost).not.toHaveBeenCalled()
   })
 
@@ -162,5 +176,40 @@ describe('weixin reminder sender', () => {
     const sender = createWeixinReceiptSender('default')
     expect(await sender.send({ deliveryId: 'delivery-unsafe-id', recipient: 'configured-self', message: '提醒' }))
       .toEqual({ status: 'unknown', providerMessageId: null })
+  })
+
+  it('retries only a provider response that definitively proves not sent', async () => {
+    writeFileSync(join(hermesHome, '.env'), [
+      'WEIXIN_ACCOUNT_ID=acct-1', 'WEIXIN_TOKEN=token-1', 'WEIXIN_HOME_CHANNEL=wxid_user_1', '',
+    ].join('\n'), 'utf-8')
+    mockPost.mockResolvedValueOnce({ data: { ret: -1, errmsg: 'rejected' } })
+      .mockResolvedValueOnce({ data: { ret: 0, msgid: 'provider-after-retry' } })
+    const { createWeixinReceiptSender } = await loadSender()
+    const sender = createWeixinReceiptSender('default')
+    const request = { deliveryId: 'delivery-rejected', recipient: 'configured-self' as const, message: '提醒' }
+
+    expect(await sender.send(request)).toEqual({ status: 'not_sent', providerMessageId: null })
+    expect(await sender.send(request)).toEqual({ status: 'accepted', providerMessageId: 'provider-after-retry' })
+    expect(mockPost).toHaveBeenCalledTimes(2)
+    expect(sender.diagnostics?.().claimCount).toBe(1)
+  })
+
+  it('keeps durable dedupe identities beyond the former page cap and reports capacity', async () => {
+    writeFileSync(join(hermesHome, '.env'), [
+      'WEIXIN_ACCOUNT_ID=acct-1', 'WEIXIN_TOKEN=token-never-persisted', 'WEIXIN_HOME_CHANNEL=wxid_user_1', '',
+    ].join('\n'), 'utf-8')
+    const { createWeixinReceiptSender } = await loadSender()
+    const sender = createWeixinReceiptSender('default')
+    expect(await sender.lookup('capacity-seed')).toEqual({ status: 'not_found', providerMessageId: null })
+    const db = new DatabaseSync(join(hermesHome, 'weixin-deliveries.sqlite'))
+    db.exec(`WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<20000)
+      INSERT INTO weixin_delivery_claims(delivery_id,material_digest,status,provider_message_id,claimed_at,updated_at)
+      SELECT 'capacity-'||i, lower(hex(randomblob(32))), 'unknown', NULL,
+        '2026-07-14T00:00:00Z','2026-07-14T00:00:00Z' FROM n;`)
+    db.close()
+
+    expect(sender.diagnostics?.().claimCount).toBe(20_000)
+    expect(await sender.lookup('capacity-20000')).toEqual({ status: 'unknown', providerMessageId: null })
+    expect(mockPost).not.toHaveBeenCalled()
   })
 })

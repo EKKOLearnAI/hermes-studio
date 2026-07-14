@@ -61,7 +61,7 @@ function shadowOutput(context: FabricExecutionContext): FabricJsonObject | null 
 function analysisOutput(input: FabricJsonObject, id: string, remote: boolean): FabricJsonObject {
   return { schemaVersion: 1, artifactId: input.artifactId, analysisId: `shadow-${id}`, status: 'needs_review',
     observationIds: [], totalCount: 0, omittedCount: 0, continuationCursor: null,
-    ...(remote ? { processorReceiptId: `shadow-receipt-${id}`, consentId: input.consentId } : {}) }
+    ...(remote ? { processorReceiptId: `shadow-receipt-${id}`, verificationStatus: 'verified', consentId: input.consentId } : {}) }
 }
 
 function materialDigest(context: FabricExecutionContext): string {

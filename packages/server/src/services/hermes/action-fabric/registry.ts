@@ -105,7 +105,7 @@ function artifactAnalysisInputSchema(remote: boolean): FabricJsonObject {
   return objectSchema(properties, required)
 }
 
-function artifactAnalysisOutputSchema(remote: boolean): FabricJsonObject {
+function artifactAnalysisOutputSchema(remote: boolean, explicitVerification = false): FabricJsonObject {
   const properties: Record<string, unknown> = {
     schemaVersion: { const: 1 }, artifactId: boundedIdSchema(), analysisId: boundedIdSchema(),
     status: { enum: ['succeeded', 'needs_review', 'failed'] }, observationIds: idArraySchema(),
@@ -114,9 +114,15 @@ function artifactAnalysisOutputSchema(remote: boolean): FabricJsonObject {
   const required = ['schemaVersion', 'artifactId', 'analysisId', 'status', 'observationIds',
     'totalCount', 'omittedCount', 'continuationCursor']
   if (remote) {
-    properties.processorReceiptId = boundedIdSchema()
+    properties.processorReceiptId = explicitVerification
+      ? { type: ['string', 'null'], minLength: 1, maxLength: 160, pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$' }
+      : boundedIdSchema()
     properties.consentId = boundedIdSchema()
     required.push('processorReceiptId', 'consentId')
+    if (explicitVerification) {
+      properties.verificationStatus = { enum: ['verified', 'unverifiable'] }
+      required.push('verificationStatus')
+    }
   }
   return objectSchema(properties, required)
 }
@@ -194,6 +200,23 @@ const HEALTH_REMINDER_V2: FabricCapabilityInput = {
     schemaVersion: { const: 2 }, actionId: boundedIdSchema(), recipient: { const: 'configured-self' },
     messageCode: boundedIdSchema(),
   }, ['schemaVersion', 'actionId', 'recipient', 'messageCode']),
+}
+
+const REMOTE_ANALYSIS_V1: FabricCapabilityInput = {
+  id: 'health.artifact.analyze.remote', version: 1,
+  description: 'Analyze an exact health artifact with an authorized remote processor',
+  inputSchema: artifactAnalysisInputSchema(true), outputSchema: artifactAnalysisOutputSchema(true),
+  risk: 'medium', sideEffect: true, idempotency: 'required', reversible: false, compensationCapabilityId: null,
+  verificationStrategy: 'processor_receipt_and_consumed_consent',
+  authentication: ['one_time_consent:exact_artifact_manifest', 'processor:exact_id'],
+  targetRestrictions: ['health:artifact', 'health:processor'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+}
+
+const REMOTE_ANALYSIS_V2: FabricCapabilityInput = {
+  ...REMOTE_ANALYSIS_V1, version: 2,
+  description: 'Analyze an exact health artifact remotely with explicit provider receipt verification',
+  outputSchema: artifactAnalysisOutputSchema(true, true),
+  verificationStrategy: 'durable_analysis_and_explicit_provider_receipt',
 }
 
 const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
@@ -276,16 +299,7 @@ const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
     verificationStrategy: 'artifact_analysis_receipt', authentication: ['artifact:local_read'],
     targetRestrictions: ['health:artifact'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
   },
-  {
-    id: 'health.artifact.analyze.remote', version: 1, description: 'Analyze an exact health artifact with an authorized remote processor',
-    inputSchema: artifactAnalysisInputSchema(true),
-    outputSchema: artifactAnalysisOutputSchema(true),
-    risk: 'medium', sideEffect: true, idempotency: 'required', reversible: false, compensationCapabilityId: null,
-    verificationStrategy: 'processor_receipt_and_consumed_consent',
-    authentication: ['one_time_consent:exact_artifact_manifest', 'processor:exact_id'],
-    targetRestrictions: ['health:artifact', 'health:processor'],
-    cost: { currency: null, estimatedMinor: 0 }, enabled: true,
-  },
+  REMOTE_ANALYSIS_V2,
   HEALTH_REMINDER_V2,
   {
     id: 'health.checkin.request', version: 1, description: 'Request one structured health check-in from the configured self-recipient',
@@ -322,10 +336,10 @@ const BUILT_IN_EXECUTORS: FabricExecutorInput[] = [
   { id: 'simulator-main', type: 'simulator', name: 'Phase 3 Simulator', environment: 'simulator', configuration: { externalWrite: false }, enabled: true },
   { id: 'internal-twin', type: 'internal', name: 'Personal Twin Internal Executor', environment: 'internal', configuration: { externalWrite: false }, enabled: true },
   { id: 'health-local-analysis', type: 'internal', name: 'Local Health Artifact Analyzer', environment: 'internal', configuration: { externalWrite: false, interruptible: false }, enabled: true },
-  { id: 'health-plan', type: 'internal', name: 'Health Plan Executor', environment: 'internal', configuration: { externalWrite: false, interruptible: true }, enabled: true },
+  { id: 'health-plan', type: 'internal', name: 'Health Plan Executor', environment: 'internal', configuration: { externalWrite: false, interruptible: false }, enabled: true },
   { id: 'health-remote-analysis', type: 'connector', name: 'Authorized Remote Health Analyzer', environment: 'production', configuration: { externalWrite: true, interruptible: false }, enabled: true },
   { id: 'health-shadow', type: 'connector', name: 'Health Shadow Executor', environment: 'sandbox', configuration: { externalWrite: false, interruptible: true, shadow: true }, enabled: true },
-  { id: 'health-source', type: 'connector', name: 'Health Source Connector', environment: 'production', configuration: { externalWrite: false, interruptible: true }, enabled: true },
+  { id: 'health-source', type: 'connector', name: 'Health Source Connector', environment: 'production', configuration: { externalWrite: false, interruptible: false }, enabled: true },
   { id: 'health-weixin', type: 'connector', name: 'Weixin Self Reminder Executor', environment: 'production', configuration: { externalWrite: true, interruptible: false, recipientRestriction: 'configured-self' }, enabled: true },
 ]
 
@@ -358,18 +372,19 @@ export function ensureBuiltInFabricRegistry(): void {
       const wasComplete = hasCompleteBuiltInRegistry(db)
       for (const input of BUILT_IN_CAPABILITIES) {
         if (input.id === HEALTH_REMINDER_V2.id) ensureReminderCapability(db)
+        else if (input.id === REMOTE_ANALYSIS_V2.id) ensureRemoteAnalysisCapability(db)
         else insertCapabilityIfMissing(db, input)
       }
       for (const input of BUILT_IN_EXECUTORS) {
         insertExecutorIfMissing(db, input)
-        if (input.id === 'health-local-analysis' || input.id === 'health-remote-analysis') {
-          ensureAnalysisExecutorConfiguration(db, input)
+        if (['health-local-analysis', 'health-remote-analysis', 'health-plan', 'health-source'].includes(input.id)) {
+          ensureKnownExecutorConfiguration(db, input)
         }
       }
       for (const [executorId, capabilityId] of BUILT_IN_BINDINGS) {
         const capability = selectCapability(db, capabilityId)
         if (!capability) throw new Error(`Built-in capability is missing: ${capabilityId}`)
-        if (capabilityId === HEALTH_REMINDER_V2.id) upsertBinding(db, executorId, capability)
+        if (capabilityId === HEALTH_REMINDER_V2.id || capabilityId === REMOTE_ANALYSIS_V2.id) upsertBinding(db, executorId, capability)
         else insertBindingIfMissing(db, executorId, capability)
       }
       const backfilled = backfillExternalWriteClassification(db)
@@ -623,7 +638,7 @@ function hasCompleteBuiltInRegistry(db: DatabaseSync): boolean {
     const current = selectCapability(db, input.id)
     return current?.version === input.version && current.contractDigest === capabilityDigest(input)
       && hasCapabilityHistory(db, input)
-  }) && hasCapabilityHistory(db, HEALTH_REMINDER_V1)
+  }) && hasCapabilityHistory(db, HEALTH_REMINDER_V1) && hasCapabilityHistory(db, REMOTE_ANALYSIS_V1)
   const executors = BUILT_IN_EXECUTORS.every(input => {
     const current = selectExecutor(db, input.id)
     const normalized = validateExecutor(input)
@@ -749,6 +764,28 @@ function ensureReminderCapability(db: DatabaseSync): void {
   insertCapabilityHistory(db, HEALTH_REMINDER_V2, current.contractDigest, current.createdAt)
 }
 
+function ensureRemoteAnalysisCapability(db: DatabaseSync): void {
+  const current = selectCapability(db, REMOTE_ANALYSIS_V2.id)
+  const now = new Date().toISOString()
+  if (!current) {
+    insertCapability(db, validateCapability(REMOTE_ANALYSIS_V2), capabilityDigest(REMOTE_ANALYSIS_V2))
+    insertCapabilityHistory(db, REMOTE_ANALYSIS_V1, capabilityDigest(REMOTE_ANALYSIS_V1), now)
+    return
+  }
+  insertCapabilityHistory(db, REMOTE_ANALYSIS_V1, capabilityDigest(REMOTE_ANALYSIS_V1), now)
+  const actualDigest = capabilityDigest(capabilityInput(current))
+  if (actualDigest !== current.contractDigest) throw new Error('Remote analysis contract digest is unknown')
+  if (current.version === 1) {
+    if (current.contractDigest !== capabilityDigest(REMOTE_ANALYSIS_V1)) throw new Error('Remote analysis contract digest is unknown')
+    replaceCapabilityContract(db, REMOTE_ANALYSIS_V2)
+    return
+  }
+  if (current.version !== 2 || current.contractDigest !== capabilityDigest(REMOTE_ANALYSIS_V2)) {
+    throw new Error('Remote analysis contract digest is unknown')
+  }
+  insertCapabilityHistory(db, REMOTE_ANALYSIS_V2, current.contractDigest, current.createdAt)
+}
+
 function replaceCapabilityContract(db: DatabaseSync, input: FabricCapabilityInput): void {
   const normalized = validateCapability(input)
   const contractDigest = capabilityDigest(normalized)
@@ -768,16 +805,16 @@ function replaceCapabilityContract(db: DatabaseSync, input: FabricCapabilityInpu
   insertCapabilityHistory(db, normalized, contractDigest, now)
 }
 
-function ensureAnalysisExecutorConfiguration(db: DatabaseSync, input: FabricExecutorInput): void {
+function ensureKnownExecutorConfiguration(db: DatabaseSync, input: FabricExecutorInput): void {
   const current = selectExecutor(db, input.id)
   const expected = validateExecutor(input)
   if (!current || current.type !== expected.type || current.name !== expected.name || current.environment !== expected.environment) {
-    throw new Error(`Built-in analysis executor metadata mismatch: ${input.id}`)
+    throw new Error(`Built-in executor metadata mismatch: ${input.id}`)
   }
   if (stableStringify(current.configuration) === stableStringify(expected.configuration)) return
   const legacy = { ...expected.configuration, interruptible: true }
   if (stableStringify(current.configuration) !== stableStringify(legacy)) {
-    throw new Error(`Built-in analysis executor configuration mismatch: ${input.id}`)
+    throw new Error(`Built-in executor configuration mismatch: ${input.id}`)
   }
   db.prepare(`UPDATE fabric_executors SET configuration_json=?,policy_version=policy_version+1,updated_at=? WHERE id=?`)
     .run(json(expected.configuration), new Date().toISOString(), input.id)

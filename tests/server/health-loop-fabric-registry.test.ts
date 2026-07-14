@@ -52,15 +52,16 @@ describe('health Action Fabric registry', () => {
     const capabilities = listFabricCapabilities().filter(item => item.domain === 'health')
     expect(capabilities.map(item => item.id)).toEqual(HEALTH_CAPABILITIES)
     for (const capability of capabilities) {
-      const expectedVersion = capability.id === 'health.reminder.send' ? 2 : 1
+      const expectedVersion = ['health.reminder.send', 'health.artifact.analyze.remote'].includes(capability.id) ? 2 : 1
       expect(capability.version).toBe(expectedVersion)
       expect(capability.idempotency).toBe('required')
       expect(capability.targetRestrictions.length).toBeGreaterThan(0)
+      const payloadSchemaVersion = capability.id === 'health.reminder.send' ? 2 : 1
       expect(capability.inputSchema).toMatchObject({
         type: 'object',
         additionalProperties: false,
         required: expect.arrayContaining(['schemaVersion']),
-        properties: expect.objectContaining({ schemaVersion: { const: expectedVersion } }),
+        properties: expect.objectContaining({ schemaVersion: { const: payloadSchemaVersion } }),
       })
       expect(capability.outputSchema).toMatchObject({
         type: 'object',
@@ -77,6 +78,9 @@ describe('health Action Fabric registry', () => {
       authentication: ['one_time_consent:exact_artifact_manifest', 'processor:exact_id'],
       targetRestrictions: ['health:artifact', 'health:processor'],
     })
+    expect(remote.outputSchema).toMatchObject({ properties: {
+      processorReceiptId: { type: ['string', 'null'] }, verificationStatus: { enum: ['verified', 'unverifiable'] },
+    } })
     expect(remote.inputSchema).toMatchObject({
       properties: expect.objectContaining({ consentId: expect.any(Object), manifestDigest: expect.any(Object), processorId: expect.any(Object) }),
       required: expect.arrayContaining(['consentId', 'manifestDigest', 'processorId']),
@@ -129,6 +133,10 @@ describe('health Action Fabric registry', () => {
       ['health-shadow', 'connector', 'sandbox', false],
       ['health-source', 'connector', 'production', false],
       ['health-weixin', 'connector', 'production', true],
+    ])
+    expect(executors.filter(item => ['health-plan', 'health-source'].includes(item.id))
+      .map(item => [item.id, item.configuration.interruptible])).toEqual([
+      ['health-plan', false], ['health-source', false],
     ])
     expect(resolveFabricExecutor('health.plan.adjust', { environments: ['internal'] })?.executor.id).toBe('health-plan')
     expect(resolveFabricExecutor('health.plan.adjust', { environments: ['sandbox'] })?.executor.id).toBe('health-shadow')

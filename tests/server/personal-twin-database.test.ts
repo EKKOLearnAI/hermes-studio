@@ -583,7 +583,30 @@ describe('personal twin database', () => {
         ON twin_artifact_consent_reservations(processor,expires_at,consumed_at);
       DROP TABLE reservations_valid;
       PRAGMA foreign_keys=ON;`)
-    expect(() => initPersonalTwinSchema(db)).toThrow(/consent reservation.*foreign key|foreign key.*reservation/i)
+    expect(() => initPersonalTwinSchema(db)).toThrow(/consent reservation.*(?:foreign key|create sql)|(?:foreign key|create sql).*reservation/i)
+    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '7' })
+    db.close()
+  })
+
+  it('fails closed when any v7 reservation CHECK constraint is removed', async () => {
+    const { initPersonalTwinSchema } = await import('../../packages/server/src/services/hermes/personal-twin')
+    const db = new DatabaseSync(':memory:')
+    db.exec('PRAGMA foreign_keys=ON')
+    initPersonalTwinSchema(db)
+    db.exec(`PRAGMA foreign_keys=OFF;
+      DROP INDEX idx_twin_artifact_consent_reservations_status;
+      ALTER TABLE twin_artifact_consent_reservations RENAME TO reservations_checked;
+      CREATE TABLE twin_artifact_consent_reservations (
+        reservation_id TEXT PRIMARY KEY, consent_id TEXT NOT NULL REFERENCES twin_artifact_consents(consent_id),
+        artifact_id TEXT NOT NULL, artifact_manifest_digest TEXT NOT NULL, processor TEXT NOT NULL,
+        reserved_at TEXT NOT NULL, expires_at TEXT NOT NULL, consumed_at TEXT
+      );
+      CREATE INDEX idx_twin_artifact_consent_reservations_status
+        ON twin_artifact_consent_reservations(processor,expires_at,consumed_at);
+      DROP TABLE reservations_checked;
+      PRAGMA foreign_keys=ON;`)
+
+    expect(() => initPersonalTwinSchema(db)).toThrow(/reservation.*create sql|create sql.*reservation|check/i)
     expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '7' })
     db.close()
   })

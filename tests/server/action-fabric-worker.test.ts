@@ -886,6 +886,28 @@ describe('Action Fabric durable worker', () => {
     })
   })
 
+  it('renews an awaited adapter lease so a second worker cannot reclaim or duplicate it', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let executions = 0
+    registerFabricExecutorAdapter(adapter({ execute: async context => {
+      executions += 1
+      if (executions === 1) await gate
+      return success('succeeded', context)
+    } }))
+    const workflow = create('heartbeat-long-phase').workflow
+    await processActionFabricOnce({ workerId: 'worker-a', now: base })
+    const executing = processActionFabricOnce({ workerId: 'worker-a', clock: () => new Date() })
+    await vi.waitFor(() => expect(getFabricWorkflow(workflow.id)?.steps[1].state).toBe('running'))
+
+    await vi.advanceTimersByTimeAsync(31_000)
+    await expect(processActionFabricOnce({ workerId: 'worker-b', clock: () => new Date() }))
+      .resolves.toMatchObject({ processed: false })
+    expect(executions).toBe(1)
+    release()
+    await expect(executing).resolves.not.toMatchObject({ stale: true })
+  })
+
   it('managed worker interrupts its own long-running interruptible adapter at level 2', async () => {
     let release!: () => void
     const gate = new Promise<void>(resolve => { release = resolve })

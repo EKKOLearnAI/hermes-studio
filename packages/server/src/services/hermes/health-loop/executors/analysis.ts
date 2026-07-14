@@ -38,10 +38,16 @@ export interface HealthExecutorAnalyzer {
 export interface PersistedHealthAnalysisResult {
   executionToken: string
   materialDigest: string
+  artifactId: string
+  manifestDigest: string
+  processorId: string | null
+  reservationId: string | null
+  requestedAt: string
   analysisId: string
   status: 'succeeded' | 'needs_review' | 'failed'
   observationIds: string[]
-  processorReceiptId?: string
+  processorReceiptId: string | null
+  verificationStatus: 'verified' | 'unverifiable'
 }
 export interface HealthAnalysisResultWriteRequest extends HealthAnalysisArtifactIdentity {
   executionToken: string
@@ -54,7 +60,7 @@ export interface HealthAnalysisResultWriteRequest extends HealthAnalysisArtifact
 }
 export interface HealthAnalysisResultWriter {
   /** Durable lookup by execution token. The returned material digest is checked by the adapter. */
-  lookup(executionToken: string): Promise<PersistedHealthAnalysisResult | null>
+  lookup(executionToken: string, materialDigest: string): Promise<PersistedHealthAnalysisResult | null>
   /** Atomically persist or replay the exact token + material result. */
   write(request: HealthAnalysisResultWriteRequest): Promise<PersistedHealthAnalysisResult>
 }
@@ -125,17 +131,24 @@ export function createHealthAnalysisExecutorAdapter(options: HealthAnalysisExecu
         : Promise.resolve(failure('permanent_failure', 'HEALTH_ANALYSIS_EXECUTION_TOKEN_CONFLICT'))
       const promise = executeOnce(options, context, materialDigest)
       executions.set(context.executionToken, { materialDigest, promise })
+      promise.then(() => {
+        if (executions.get(context.executionToken)?.promise === promise) executions.delete(context.executionToken)
+      }, () => {
+        if (executions.get(context.executionToken)?.promise === promise) executions.delete(context.executionToken)
+      })
       return promise
     },
     async verify(context): Promise<FabricVerifyResult> {
-      const output = context.executionOutput
-      if (!output || output.artifactId !== context.input.artifactId || !semanticId(output.analysisId)) {
-        return failure('mismatch', 'HEALTH_ANALYSIS_VERIFICATION_MISMATCH')
+      let identity: HealthAnalysisArtifactIdentity
+      try { identity = inputIdentity(context.input) } catch { return failure('mismatch', 'HEALTH_ANALYSIS_VERIFICATION_MISMATCH') }
+      const digest = executionMaterial(context)
+      const stored = await lookupPersisted(options, context.executionToken, digest)
+      if (!stored || stored === 'unavailable' || !validPersistedResult(stored, options.locality, context, identity, digest)
+        || !analysisOutputMatches(context.executionOutput, stored, options.locality, context)) {
+        return failure('unknown', 'HEALTH_ANALYSIS_VERIFICATION_UNAVAILABLE')
       }
-      if (options.locality === 'remote' && (output.consentId !== context.input.consentId
-        || !semanticId(output.processorReceiptId))) return failure('mismatch', 'HEALTH_ANALYSIS_VERIFICATION_MISMATCH')
-      return success('verified', context, { analysisId: output.analysisId,
-        ...(output.processorReceiptId ? { processorReceiptId: output.processorReceiptId } : {}) })
+      if (stored.verificationStatus !== 'verified') return failure('unknown', 'HEALTH_ANALYSIS_PROVIDER_UNVERIFIABLE')
+      return success('verified', context, { analysisId: stored.analysisId, processorReceiptId: stored.processorReceiptId })
     },
     async interrupt(): Promise<FabricInterruptResult> {
       return failure('unsupported', 'HEALTH_ANALYSIS_INTERRUPT_UNSUPPORTED')
@@ -156,10 +169,10 @@ async function executeOnce(options: HealthAnalysisExecutorOptions, context: Fabr
       || context.preparedOutput.manifestDigest !== identity.manifestDigest) throw new Error('invalid')
   } catch { return failure('permanent_failure', 'HEALTH_ANALYSIS_PREPARATION_INVALID') }
 
-  const prior = await lookupPersisted(options, context.executionToken)
+  const prior = await lookupPersisted(options, context.executionToken, materialDigest)
   if (prior === 'unavailable') return failure('unknown', 'HEALTH_ANALYSIS_RESULT_STORE_UNAVAILABLE')
   if (prior) return prior.materialDigest === materialDigest
-    ? persistedOutput(options.locality, context, identity, prior)
+    ? persistedOutput(options.locality, context, identity, prior, materialDigest)
     : failure('permanent_failure', 'HEALTH_ANALYSIS_EXECUTION_TOKEN_CONFLICT')
 
   let consentId: string | undefined
@@ -197,10 +210,7 @@ async function executeOnce(options: HealthAnalysisExecutorOptions, context: Fabr
     })
     if (options.locality === 'remote') {
       if (analyzed.providerReceiptId !== undefined && !semanticId(analyzed.providerReceiptId)) throw new Error('invalid')
-      processorReceiptId = analyzed.providerReceiptId ?? fallbackProcessorReceipt(result, {
-        artifactId: identity.artifactId, manifestDigest: identity.manifestDigest,
-        processorId: String(context.input.processorId), reservationId: String(consentId),
-      })
+      processorReceiptId = analyzed.providerReceiptId ?? null
     }
   } catch { return failure('permanent_failure', 'HEALTH_ANALYSIS_RESULT_INVALID') }
 
@@ -209,35 +219,38 @@ async function executeOnce(options: HealthAnalysisExecutorOptions, context: Fabr
       processorId: options.locality === 'remote' ? String(context.input.processorId) : null,
       reservationId: consentId ?? null, requestedAt: String(context.input.requestedAt), result, processorReceiptId })
     return stored.materialDigest === materialDigest
-      ? persistedOutput(options.locality, context, identity, stored)
+      ? persistedOutput(options.locality, context, identity, stored, materialDigest)
       : failure('permanent_failure', 'HEALTH_ANALYSIS_EXECUTION_TOKEN_CONFLICT')
   } catch {
-    const recovered = await lookupPersisted(options, context.executionToken)
+    const recovered = await lookupPersisted(options, context.executionToken, materialDigest)
     if (recovered && recovered !== 'unavailable') return recovered.materialDigest === materialDigest
-      ? persistedOutput(options.locality, context, identity, recovered)
+      ? persistedOutput(options.locality, context, identity, recovered, materialDigest)
       : failure('permanent_failure', 'HEALTH_ANALYSIS_EXECUTION_TOKEN_CONFLICT')
     return failure('unknown', 'HEALTH_ANALYSIS_RESULT_STORE_UNAVAILABLE')
   }
 }
 
-async function lookupPersisted(options: HealthAnalysisExecutorOptions, executionToken: string):
+async function lookupPersisted(options: HealthAnalysisExecutorOptions, executionToken: string, materialDigest: string):
 Promise<PersistedHealthAnalysisResult | 'unavailable' | null> {
-  try { return await options.resultWriter!.lookup(executionToken) }
+  try { return await options.resultWriter!.lookup(executionToken, materialDigest) }
   catch { return 'unavailable' }
 }
 
 function persistedOutput(locality: 'local' | 'remote', context: FabricExecutionContext,
-  identity: HealthAnalysisArtifactIdentity, result: PersistedHealthAnalysisResult): FabricExecuteResult {
-  if (!validPersistedResult(result, locality, context.executionToken)) {
+  identity: HealthAnalysisArtifactIdentity, result: PersistedHealthAnalysisResult, materialDigest: string): FabricExecuteResult {
+  if (!validPersistedResult(result, locality, context, identity, materialDigest)) {
     return failure('permanent_failure', 'HEALTH_ANALYSIS_RESULT_INVALID')
   }
   const ids = result.observationIds.slice(0, 64)
-  return success('succeeded', context, { schemaVersion: 1, artifactId: identity.artifactId,
+  const output = { schemaVersion: 1, artifactId: identity.artifactId,
     analysisId: result.analysisId, status: result.status, observationIds: ids,
     totalCount: result.observationIds.length, omittedCount: result.observationIds.length - ids.length,
     continuationCursor: result.observationIds.length > ids.length ? `analysis:${result.analysisId}:64` : null,
     ...(locality === 'remote' ? { processorReceiptId: result.processorReceiptId,
-      consentId: context.input.consentId } : {}) })
+      verificationStatus: result.verificationStatus, consentId: context.input.consentId } : {}) } as FabricJsonObject
+  return locality === 'remote' && result.verificationStatus === 'unverifiable'
+    ? { outcome: 'unknown', output, evidence: [], errorCode: 'HEALTH_ANALYSIS_PROVIDER_UNVERIFIABLE', safeToRetry: false }
+    : success('succeeded', context, output)
 }
 
 function canonicalAnalysisResult(value: unknown, binding: {
@@ -246,13 +259,6 @@ function canonicalAnalysisResult(value: unknown, binding: {
   const result = validateHealthAnalysisResult(value, binding)
   if (Buffer.byteLength(stableStringify(result), 'utf8') > MAX_RESULT_BYTES) throw new Error('invalid')
   return result
-}
-
-function fallbackProcessorReceipt(result: HealthAnalysisResult, binding: {
-  artifactId: string; manifestDigest: string; processorId: string; reservationId: string
-}): string {
-  const value = createHash('sha256').update(stableStringify({ result, ...binding })).digest('hex')
-  return `processor-receipt-${value.slice(0, 40)}`
 }
 
 function executionMaterial(context: FabricExecutionContext): string {
@@ -284,11 +290,31 @@ function inputIdentity(input: FabricJsonObject): HealthAnalysisArtifactIdentity 
 function matchesCapability(locality: 'local' | 'remote', id: string): boolean {
   return id === `health.artifact.analyze.${locality}`
 }
-function validPersistedResult(value: PersistedHealthAnalysisResult, locality: 'local' | 'remote', executionToken: string): boolean {
-  return !!value && value.executionToken === executionToken && DIGEST.test(value.materialDigest) && semanticId(value.analysisId)
+function validPersistedResult(value: PersistedHealthAnalysisResult, locality: 'local' | 'remote', context: FabricExecutionContext,
+  identity: HealthAnalysisArtifactIdentity, materialDigest: string): boolean {
+  return !!value && value.executionToken === context.executionToken && value.materialDigest === materialDigest
+    && value.artifactId === identity.artifactId && value.manifestDigest === identity.manifestDigest
+    && value.requestedAt === context.input.requestedAt && semanticId(value.analysisId)
     && ['succeeded', 'needs_review', 'failed'].includes(value.status) && Array.isArray(value.observationIds)
     && value.observationIds.length <= 4096 && value.observationIds.every(semanticId)
-    && (locality === 'local' || semanticId(value.processorReceiptId))
+    && ['verified', 'unverifiable'].includes(value.verificationStatus)
+    && (locality === 'local'
+      ? value.processorId === null && value.reservationId === null && value.processorReceiptId === null
+      : value.processorId === context.input.processorId && value.reservationId === context.input.consentId
+        && ((value.verificationStatus === 'verified' && semanticId(value.processorReceiptId))
+          || (value.verificationStatus === 'unverifiable' && value.processorReceiptId === null && value.status === 'needs_review')))
+}
+
+function analysisOutputMatches(output: FabricJsonObject | undefined, result: PersistedHealthAnalysisResult,
+  locality: 'local' | 'remote', context: FabricExecutionContext): boolean {
+  if (!output) return false
+  const ids = result.observationIds.slice(0, 64)
+  return output.artifactId === result.artifactId && output.analysisId === result.analysisId && output.status === result.status
+    && stableStringify(output.observationIds) === stableStringify(ids)
+    && output.totalCount === result.observationIds.length && output.omittedCount === result.observationIds.length - ids.length
+    && output.continuationCursor === (result.observationIds.length > ids.length ? `analysis:${result.analysisId}:64` : null)
+    && (locality === 'local' || (output.consentId === context.input.consentId
+      && output.processorReceiptId === result.processorReceiptId && output.verificationStatus === result.verificationStatus))
 }
 function semanticId(value: unknown): value is string {
   return typeof value === 'string' && value.length >= 1 && value.length <= 160
