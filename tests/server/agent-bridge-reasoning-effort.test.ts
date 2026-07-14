@@ -126,10 +126,10 @@ describe('AgentBridgeClient.chat reasoning_effort forwarding', () => {
       workspace: 'C:\\Users\\tester\\workspace',
     }))
   })
-  it('falls back to the profile default when the Python runtime cannot apply the requested reasoning effort', () => {
+  it('fails closed when the Python runtime cannot apply the requested reasoning effort', () => {
     const source = readFileSync('packages/server/src/services/hermes/agent-bridge/python/bridge_pool.py', 'utf8')
-    expect(source).not.toContain('raise ValueError(f"reasoning effort is unavailable: {reasoning_effort}")')
-    expect(source).toContain('Non-fatal: fall through to default reasoning_config')
+    expect(source).toContain('raise ValueError(f"reasoning effort is unavailable: {reasoning_effort}")')
+    expect(source).not.toContain('Non-fatal: fall through to default reasoning_config')
   })
 
   it('preserves reasoning and api mode across the run queue', () => {
