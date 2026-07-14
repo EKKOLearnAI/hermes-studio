@@ -161,11 +161,38 @@ export interface HomeDeviceBindingInput {
   expectedVersion: number
 }
 
+export interface HomeInventoryItemInput {
+  id: string
+  name: string
+  unit: string
+  initialQuantity?: number
+  lowStockThreshold?: number | null
+  attributes?: Record<string, unknown>
+  expectedVersion: number
+}
+
+export interface HomeInventoryAdjustmentInput {
+  id: string
+  itemId: string
+  delta: number
+  reason: string
+  source: string
+  sourceId: string
+  occurredAt: string
+}
+
+export interface HomeInventoryAdjustmentResult {
+  disposition: 'applied' | 'duplicate'
+  item: HomeInventoryItem
+  entry: HomeInventoryLedgerEntry
+}
+
 export interface HomeSpaceListOptions { parentSpaceId?: string | null; kind?: HomeSpaceKind; limit?: number }
 export interface HomeObjectListOptions { spaceId?: string | null; kind?: string; limit?: number }
 export interface HomeDeviceListOptions { spaceId?: string | null; deviceClass?: string; limit?: number }
 export interface HomeDeviceBindingListOptions { deviceId?: string; provider?: string; limit?: number }
 export interface HomeDeviceStateListOptions { deviceId?: string; key?: string; limit?: number }
+export interface HomeInventoryItemListOptions { lowStockOnly?: boolean; limit?: number }
 
 export interface HomeDeviceStateEventInput {
   event: {

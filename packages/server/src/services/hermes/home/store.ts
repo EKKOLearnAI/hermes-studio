@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
+import { createHash } from 'node:crypto'
 import { isProxy } from 'node:util/types'
 import { withPersonalTwinDb } from '../personal-twin/database'
 import {
@@ -15,6 +16,12 @@ import {
   HomeDeviceStateEventResult,
   HomeDeviceStateListOptions,
   HomeIdentityConflictError,
+  HomeInventoryAdjustmentInput,
+  HomeInventoryAdjustmentResult,
+  HomeInventoryItem,
+  HomeInventoryItemInput,
+  HomeInventoryItemListOptions,
+  HomeInventoryLedgerEntry,
   HomeObject,
   HomeObjectInput,
   HomeObjectListOptions,
@@ -52,10 +59,19 @@ interface ProviderEventRow {
   occurred_at: string; received_at: string; payload_json: string
   status: HomeProviderEvent['status']; error_code: string | null
 }
+interface InventoryItemRow {
+  item_id: string; name: string; unit: string; quantity: number; low_stock_threshold: number | null
+  attributes_json: string; version: number; created_at: string; updated_at: string
+}
+interface InventoryLedgerRow {
+  entry_id: string; item_id: string; delta: number; resulting_quantity: number; reason: string
+  source: string; source_id: string; created_at: string
+}
 
 const SEMANTIC_ID = /^[a-z][a-z0-9-]{0,31}:[a-zA-Z0-9][a-zA-Z0-9:._-]{0,127}$/
 const SEMANTIC_KEY = /^[a-z0-9][a-z0-9._-]{0,99}$/
 const PROVIDER_ID = /^[a-z0-9][a-z0-9-]{0,79}$/
+const INVENTORY_UNIT = /^[a-zA-Z0-9._/-]{1,40}$/
 const SENSITIVE_KEY = /(?:password|passwd|secret|token|api.?key|credential|authorization|cookie|session|private.?key)/i
 
 function nowIso(): string { return new Date().toISOString() }
@@ -138,6 +154,138 @@ function canonicalJson(value: unknown, shape: 'object' | 'array' | 'any', maxByt
 }
 
 function parseJson<T>(value: string): T { return JSON.parse(value) as T }
+
+function stableId(prefix: string, parts: string[]): string {
+  return `${prefix}-${createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 24)}`
+}
+
+function mirrorTwinEntity(
+  db: DatabaseSync,
+  input: { id: string; label: string; sourceId: string; attributes: Record<string, unknown> },
+): void {
+  const source = 'home-twin'
+  const byId = db.prepare('SELECT source,source_id FROM twin_entities WHERE id=?').get(input.id) as {
+    source: string; source_id: string
+  } | undefined
+  if (byId && (byId.source !== source || byId.source_id !== input.sourceId)) {
+    throw new HomeIdentityConflictError(`Generic Twin entity ${input.id} belongs to another source`)
+  }
+  const bySource = db.prepare('SELECT id FROM twin_entities WHERE source=? AND source_id=?').get(source, input.sourceId) as {
+    id: string
+  } | undefined
+  if (bySource && bySource.id !== input.id) {
+    throw new HomeIdentityConflictError(`Generic Twin provenance ${input.sourceId} belongs to ${bySource.id}`)
+  }
+  const attributesJson = canonicalJson(input.attributes, 'object', 131_072)
+  const now = nowIso()
+  db.prepare(`INSERT INTO twin_entities
+    (id,type,label,attributes_json,source,source_id,created_at,updated_at)
+    VALUES(?,'home',?,?,?,?,?,?)
+    ON CONFLICT(source,source_id) DO UPDATE SET
+      type=excluded.type,label=excluded.label,attributes_json=excluded.attributes_json,updated_at=excluded.updated_at`)
+    .run(input.id, input.label, attributesJson, source, input.sourceId, now, now)
+}
+
+function mirrorTwinEvent(db: DatabaseSync, input: {
+  eventType: string
+  subjectId: string | null
+  payload: Record<string, unknown>
+  occurredAt: string
+  source: string
+  sourceId: string
+  actor: string
+}): void {
+  if (input.subjectId !== null && !db.prepare('SELECT 1 FROM twin_entities WHERE id=?').get(input.subjectId)) {
+    throw new HomeRecordNotFoundError(`Generic Twin subject not found: ${input.subjectId}`)
+  }
+  const payloadJson = canonicalJson(input.payload, 'object', 524_288)
+  const id = stableId('event', [input.source, input.sourceId, input.eventType])
+  const existing = db.prepare(`SELECT id,subject_id,payload_json,occurred_at,actor FROM twin_events
+    WHERE source=? AND source_id=? AND event_type=?`).get(input.source, input.sourceId, input.eventType) as {
+    id: string; subject_id: string | null; payload_json: string; occurred_at: string; actor: string
+  } | undefined
+  if (existing) {
+    if (existing.id !== id || existing.subject_id !== input.subjectId || existing.payload_json !== payloadJson
+      || existing.occurred_at !== input.occurredAt || existing.actor !== input.actor) {
+      throw new HomeIdentityConflictError(`Generic Twin event ${input.source}/${input.sourceId} changed material`)
+    }
+    return
+  }
+  const ingestedAt = nowIso()
+  db.prepare(`INSERT INTO twin_events
+    (id,event_type,subject_id,payload_json,occurred_at,ingested_at,source,source_id,actor,
+     confidence,confirmation_state,evidence_json,schema_version)
+    VALUES(?,?,?,?,?,?,?,?,?,1,'observed','[]',1)`)
+    .run(id, input.eventType, input.subjectId, payloadJson, input.occurredAt, ingestedAt, input.source, input.sourceId, input.actor)
+  const outboxPayload = canonicalJson({
+    recordId: id, eventType: input.eventType, source: input.source, sourceId: input.sourceId,
+  }, 'object', 8192)
+  db.prepare(`INSERT INTO twin_outbox
+    (id,topic,aggregate_id,payload_json,status,available_at,created_at)
+    VALUES(?,'twin.event.recorded',?,?,'pending',?,?)`)
+    .run(stableId('outbox', ['twin.event.recorded', id]), id, outboxPayload, ingestedAt, ingestedAt)
+}
+
+function mirrorPlacement(
+  db: DatabaseSync,
+  input: { subjectId: string; spaceId: string | null; subjectKind: 'object' | 'device'; version: number; occurredAt: string },
+): void {
+  const source = 'home-twin'
+  const sourceId = `placement:${input.subjectId}`
+  const existing = db.prepare('SELECT id,object_id,valid_to FROM twin_relations WHERE source=? AND source_id=?')
+    .get(source, sourceId) as { id: string; object_id: string; valid_to: string | null } | undefined
+  if (input.spaceId === null) {
+    if (existing?.valid_to === null) {
+      db.prepare('UPDATE twin_relations SET valid_to=?,updated_at=? WHERE id=?')
+        .run(input.occurredAt, input.occurredAt, existing.id)
+    }
+  } else {
+    if (!db.prepare('SELECT 1 FROM twin_entities WHERE id=?').get(input.subjectId)
+      || !db.prepare('SELECT 1 FROM twin_entities WHERE id=?').get(input.spaceId)) {
+      throw new HomeRecordNotFoundError('Generic Twin placement endpoint is missing')
+    }
+    const id = existing?.id ?? stableId('relation', [source, sourceId])
+    db.prepare(`INSERT INTO twin_relations
+      (id,subject_id,predicate,object_id,attributes_json,valid_from,valid_to,source,source_id,created_at,updated_at)
+      VALUES(?,?,'home.located_in',?,'{}',?,NULL,?,?,?,?)
+      ON CONFLICT(source,source_id) DO UPDATE SET
+        subject_id=excluded.subject_id,predicate=excluded.predicate,object_id=excluded.object_id,
+        valid_from=excluded.valid_from,valid_to=NULL,updated_at=excluded.updated_at`)
+      .run(id, input.subjectId, input.spaceId, input.occurredAt, source, sourceId, input.occurredAt, input.occurredAt)
+  }
+  mirrorTwinEvent(db, {
+    eventType: 'home.placement.changed', subjectId: input.subjectId,
+    payload: { subjectId: input.subjectId, subjectKind: input.subjectKind, spaceId: input.spaceId, version: input.version },
+    occurredAt: input.occurredAt, source, sourceId: `${sourceId}:v${input.version}`, actor: source,
+  })
+}
+
+function mirrorInventoryProjection(db: DatabaseSync, item: HomeInventoryItem, sourceRecordId: string): void {
+  const valueJson = canonicalJson({
+    isLowStock: item.lowStockThreshold !== null && item.quantity <= item.lowStockThreshold,
+    quantity: item.quantity,
+    threshold: item.lowStockThreshold,
+    unit: item.unit,
+  }, 'object', 8192)
+  db.prepare(`INSERT INTO twin_projections
+    (projection_key,subject_id,value_json,source_record_id,version,updated_at)
+    VALUES('home.inventory.low_stock',?,?,?,?,?)
+    ON CONFLICT(projection_key,subject_id) DO UPDATE SET
+      value_json=excluded.value_json,source_record_id=excluded.source_record_id,
+      version=excluded.version,updated_at=excluded.updated_at`)
+    .run(item.id, valueJson, sourceRecordId, item.version, item.updatedAt)
+}
+
+function mirrorInventoryItem(db: DatabaseSync, item: HomeInventoryItem, sourceRecordId: string): void {
+  mirrorTwinEntity(db, {
+    id: item.id, label: item.name, sourceId: `inventory:${item.id}`,
+    attributes: {
+      recordKind: 'inventory-item', unit: item.unit, quantity: item.quantity,
+      lowStockThreshold: item.lowStockThreshold, attributes: item.attributes, version: item.version,
+    },
+  })
+  mirrorInventoryProjection(db, item, sourceRecordId)
+}
 
 function semanticId(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.length > 160 || !SEMANTIC_ID.test(value)) {
@@ -224,6 +372,21 @@ function eventFromRow(row: ProviderEventRow): HomeProviderEvent {
   }
 }
 
+function inventoryItemFromRow(row: InventoryItemRow): HomeInventoryItem {
+  return {
+    id: row.item_id, name: row.name, unit: row.unit, quantity: row.quantity,
+    lowStockThreshold: row.low_stock_threshold, attributes: parseJson(row.attributes_json),
+    version: row.version, createdAt: row.created_at, updatedAt: row.updated_at,
+  }
+}
+
+function inventoryEntryFromRow(row: InventoryLedgerRow): HomeInventoryLedgerEntry {
+  return {
+    id: row.entry_id, itemId: row.item_id, delta: row.delta, resultingQuantity: row.resulting_quantity,
+    reason: row.reason, source: row.source, sourceId: row.source_id, createdAt: row.created_at,
+  }
+}
+
 function requireSpace(db: DatabaseSync, id: string | null): void {
   if (id !== null && !db.prepare('SELECT 1 FROM twin_home_spaces WHERE space_id=?').get(id)) {
     throw new HomeRecordNotFoundError(`Home parent or placement space not found: ${id}`)
@@ -286,7 +449,17 @@ export class HomeTwinStore {
           version=version+1,updated_at=? WHERE space_id=? AND version=?`)
           .run(input.kind, name, parentSpaceId, attributesJson, now, id, expected)
       }
-      return spaceFromRow(this.database.prepare('SELECT * FROM twin_home_spaces WHERE space_id=?').get(id) as unknown as SpaceRow)
+      const result = spaceFromRow(
+        this.database.prepare('SELECT * FROM twin_home_spaces WHERE space_id=?').get(id) as unknown as SpaceRow,
+      )
+      mirrorTwinEntity(this.database, {
+        id: result.id, label: result.name, sourceId: `space:${result.id}`,
+        attributes: {
+          recordKind: 'space', spaceKind: result.kind, parentSpaceId: result.parentSpaceId,
+          attributes: result.attributes, version: result.version,
+        },
+      })
+      return result
     })
   }
 
@@ -311,7 +484,20 @@ export class HomeTwinStore {
           version=version+1,updated_at=? WHERE object_id=? AND version=?`)
           .run(kind, name, spaceId, attributesJson, now, id, expected)
       }
-      return objectFromRow(this.database.prepare('SELECT * FROM twin_home_objects WHERE object_id=?').get(id) as unknown as ObjectRow)
+      const result = objectFromRow(
+        this.database.prepare('SELECT * FROM twin_home_objects WHERE object_id=?').get(id) as unknown as ObjectRow,
+      )
+      mirrorTwinEntity(this.database, {
+        id: result.id, label: result.name, sourceId: `object:${result.id}`,
+        attributes: {
+          recordKind: 'object', objectKind: result.kind, spaceId: result.spaceId,
+          attributes: result.attributes, version: result.version,
+        },
+      })
+      mirrorPlacement(this.database, {
+        subjectId: result.id, spaceId: result.spaceId, subjectKind: 'object', version: result.version, occurredAt: now,
+      })
+      return result
     })
   }
 
@@ -337,7 +523,20 @@ export class HomeTwinStore {
           version=version+1,updated_at=? WHERE device_id=? AND version=?`)
           .run(name, deviceClass, spaceId, input.availability, attributesJson, now, id, expected)
       }
-      return deviceFromRow(this.database.prepare('SELECT * FROM twin_home_devices WHERE device_id=?').get(id) as unknown as DeviceRow)
+      const result = deviceFromRow(
+        this.database.prepare('SELECT * FROM twin_home_devices WHERE device_id=?').get(id) as unknown as DeviceRow,
+      )
+      mirrorTwinEntity(this.database, {
+        id: result.id, label: result.name, sourceId: `device:${result.id}`,
+        attributes: {
+          recordKind: 'device', deviceClass: result.deviceClass, spaceId: result.spaceId,
+          availability: result.availability, attributes: result.attributes, version: result.version,
+        },
+      })
+      mirrorPlacement(this.database, {
+        subjectId: result.id, spaceId: result.spaceId, subjectKind: 'device', version: result.version, occurredAt: now,
+      })
+      return result
     })
   }
 
@@ -377,6 +576,108 @@ export class HomeTwinStore {
           .run(capabilitiesJson, metadataJson, now, id, expected)
       }
       return bindingFromRow(this.database.prepare('SELECT * FROM twin_home_device_bindings WHERE binding_id=?').get(id) as unknown as BindingRow)
+    })
+  }
+
+  upsertInventoryItem(input: HomeInventoryItemInput): HomeInventoryItem {
+    const id = semanticId(input.id, 'Home inventory item id')
+    const name = boundedText(input.name, 'Home inventory item name', 200)
+    const unit = boundedText(input.unit, 'Home inventory unit', 40)
+    if (!INVENTORY_UNIT.test(unit)) throw new HomeValidationError('Home inventory unit is invalid')
+    if (input.initialQuantity !== undefined
+      && (!Number.isFinite(input.initialQuantity) || input.initialQuantity < 0)) {
+      throw new HomeValidationError('Home inventory initial quantity is invalid')
+    }
+    if (input.lowStockThreshold !== undefined && input.lowStockThreshold !== null
+      && (!Number.isFinite(input.lowStockThreshold) || input.lowStockThreshold < 0)) {
+      throw new HomeValidationError('Home inventory low-stock threshold is invalid')
+    }
+    const attributesJson = canonicalJson(input.attributes ?? {}, 'object', 65_536)
+    const expected = expectedVersion(input.expectedVersion)
+    return inTransaction(this.database, () => {
+      const existing = this.database.prepare('SELECT * FROM twin_home_inventory_items WHERE item_id=?')
+        .get(id) as InventoryItemRow | undefined
+      assertVersion(existing?.version, expected, 'Home inventory item', id)
+      if (existing && input.initialQuantity !== undefined && input.initialQuantity !== existing.quantity) {
+        throw new HomeValidationError('Home inventory quantity can only change through the ledger')
+      }
+      const quantity = existing?.quantity ?? input.initialQuantity ?? 0
+      const threshold = input.lowStockThreshold === undefined
+        ? (existing?.low_stock_threshold ?? null)
+        : input.lowStockThreshold
+      const now = nowIso()
+      if (!existing) {
+        this.database.prepare(`INSERT INTO twin_home_inventory_items
+          (item_id,name,unit,quantity,low_stock_threshold,attributes_json,version,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,1,?,?)`).run(id, name, unit, quantity, threshold, attributesJson, now, now)
+      } else {
+        this.database.prepare(`UPDATE twin_home_inventory_items SET name=?,unit=?,low_stock_threshold=?,attributes_json=?,
+          version=version+1,updated_at=? WHERE item_id=? AND version=?`)
+          .run(name, unit, threshold, attributesJson, now, id, expected)
+      }
+      const result = inventoryItemFromRow(this.database.prepare(
+        'SELECT * FROM twin_home_inventory_items WHERE item_id=?',
+      ).get(id) as unknown as InventoryItemRow)
+      mirrorInventoryItem(this.database, result, result.id)
+      return result
+    })
+  }
+
+  adjustInventory(input: HomeInventoryAdjustmentInput): HomeInventoryAdjustmentResult {
+    const id = semanticId(input.id, 'Home inventory ledger id')
+    const itemId = semanticId(input.itemId, 'Home inventory item id')
+    if (!Number.isFinite(input.delta) || input.delta === 0) throw new HomeValidationError('Home inventory delta is invalid')
+    const reason = boundedText(input.reason, 'Home inventory adjustment reason', 200)
+    const source = boundedText(input.source, 'Home inventory adjustment source', 100)
+    if (!/^[a-zA-Z0-9:._-]+$/.test(source)) throw new HomeValidationError('Home inventory adjustment source is invalid')
+    const sourceId = boundedText(input.sourceId, 'Home inventory adjustment source id', 255)
+    const occurredAt = timestamp(input.occurredAt, 'Home inventory adjustment occurredAt')
+    return inTransaction(this.database, () => {
+      const existingEntries = this.database.prepare(`SELECT * FROM twin_home_inventory_ledger
+        WHERE entry_id=? OR (source=? AND source_id=?)`).all(id, source, sourceId) as unknown as InventoryLedgerRow[]
+      if (existingEntries.length > 1) throw new HomeIdentityConflictError('Home inventory ledger identities collide')
+      const existingEntry = existingEntries[0]
+      if (existingEntry) {
+        const sameIdentity = existingEntry.entry_id === id && existingEntry.item_id === itemId
+          && existingEntry.delta === input.delta && existingEntry.reason === reason
+          && existingEntry.source === source && existingEntry.source_id === sourceId
+          && existingEntry.created_at === occurredAt
+        if (!sameIdentity) throw new HomeIdentityConflictError(`Home inventory adjustment ${id} changed material`)
+        const currentItem = this.database.prepare('SELECT * FROM twin_home_inventory_items WHERE item_id=?')
+          .get(itemId) as InventoryItemRow | undefined
+        if (!currentItem) throw new HomeRecordNotFoundError(`Home inventory item not found: ${itemId}`)
+        return {
+          disposition: 'duplicate', item: inventoryItemFromRow(currentItem), entry: inventoryEntryFromRow(existingEntry),
+        }
+      }
+
+      const current = this.database.prepare('SELECT * FROM twin_home_inventory_items WHERE item_id=?')
+        .get(itemId) as InventoryItemRow | undefined
+      if (!current) throw new HomeRecordNotFoundError(`Home inventory item not found: ${itemId}`)
+      const resultingQuantity = current.quantity + input.delta
+      if (!Number.isFinite(resultingQuantity) || resultingQuantity < 0) {
+        throw new HomeValidationError('Home inventory adjustment would make quantity negative')
+      }
+      this.database.prepare(`INSERT INTO twin_home_inventory_ledger
+        (entry_id,item_id,delta,resulting_quantity,reason,source,source_id,created_at)
+        VALUES(?,?,?,?,?,?,?,?)`).run(id, itemId, input.delta, resultingQuantity, reason, source, sourceId, occurredAt)
+      const updatedAt = nowIso()
+      this.database.prepare(`UPDATE twin_home_inventory_items SET quantity=?,version=version+1,updated_at=?
+        WHERE item_id=? AND version=?`).run(resultingQuantity, updatedAt, itemId, current.version)
+      const item = inventoryItemFromRow(this.database.prepare('SELECT * FROM twin_home_inventory_items WHERE item_id=?')
+        .get(itemId) as unknown as InventoryItemRow)
+      const entry = inventoryEntryFromRow(this.database.prepare('SELECT * FROM twin_home_inventory_ledger WHERE entry_id=?')
+        .get(id) as unknown as InventoryLedgerRow)
+      mirrorInventoryItem(this.database, item, entry.id)
+      mirrorTwinEvent(this.database, {
+        eventType: 'home.inventory.adjusted', subjectId: item.id,
+        payload: {
+          itemId: item.id, delta: entry.delta, resultingQuantity: entry.resultingQuantity,
+          reason: entry.reason, unit: item.unit, version: item.version,
+        },
+        occurredAt, source, sourceId, actor: source,
+      })
+      return { disposition: 'applied', item, entry }
     })
   }
 
@@ -450,6 +751,15 @@ export class HomeTwinStore {
       .all(...values) as unknown as DeviceStateRow[]).map(stateFromRow)
   }
 
+  listInventoryItems(options: HomeInventoryItemListOptions = {}): HomeInventoryItem[] {
+    const clauses = options.lowStockOnly === true
+      ? ['low_stock_threshold IS NOT NULL', 'quantity <= low_stock_threshold']
+      : []
+    return (this.database.prepare(`SELECT * FROM twin_home_inventory_items
+      ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY name,item_id LIMIT ?`)
+      .all(listLimit(options.limit)) as unknown as InventoryItemRow[]).map(inventoryItemFromRow)
+  }
+
   applyDeviceStateEvent(input: HomeDeviceStateEventInput): HomeDeviceStateEventResult {
     const eventId = semanticId(input.event.id, 'Home provider event id')
     const provider = providerId(input.event.provider)
@@ -519,6 +829,32 @@ export class HomeTwinStore {
       ).get(eventId) as unknown as ProviderEventRow)
       const resultStates = mutations.map(mutation => stateFromRow(this.database.prepare(`SELECT * FROM twin_home_device_states
         WHERE device_id=? AND state_key=?`).get(mutation.deviceId, mutation.key) as unknown as DeviceStateRow))
+      const deviceIds = [...new Set(mutations.map(mutation => mutation.deviceId))]
+      for (const deviceId of deviceIds) {
+        if (!this.database.prepare('SELECT 1 FROM twin_entities WHERE id=?').get(deviceId)) {
+          const device = deviceFromRow(this.database.prepare('SELECT * FROM twin_home_devices WHERE device_id=?')
+            .get(deviceId) as unknown as DeviceRow)
+          mirrorTwinEntity(this.database, {
+            id: device.id, label: device.name, sourceId: `device:${device.id}`,
+            attributes: {
+              recordKind: 'device', deviceClass: device.deviceClass, spaceId: device.spaceId,
+              availability: device.availability, attributes: device.attributes, version: device.version,
+            },
+          })
+        }
+      }
+      mirrorTwinEvent(this.database, {
+        eventType: `home.provider.${eventType}`,
+        subjectId: deviceIds.length === 1 ? deviceIds[0] : null,
+        payload: {
+          providerEventId: eventId, provider, eventId: externalEventId, disposition,
+          states: mutations.map(mutation => ({
+            deviceId: mutation.deviceId, key: mutation.key, observedAt: mutation.observedAt,
+            valueDigest: createHash('sha256').update(mutation.valueJson).digest('hex'),
+          })),
+        },
+        occurredAt, source: `home-provider:${provider}`, sourceId: externalEventId, actor: provider,
+      })
       return { disposition, event, states: resultStates }
     })
   }
