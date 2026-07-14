@@ -290,6 +290,10 @@ export default {
         title: '健康数据',
         summary: 'Body3D、体重、内在指标和身体画像。',
       },
+      home: {
+        title: '家庭系统',
+        summary: '管理设备、空间、库存、连接健康和受治理命令。',
+      },
     },
     memoryContext: '记忆上下文',
     reviewQueue: '审核队列',
@@ -312,6 +316,42 @@ export default {
     reviewFailed: '审核失败',
     taskCheckedIn: '任务已打卡',
     taskCheckInFailed: '任务打卡失败',
+  },
+
+  home: {
+    title: '家庭指挥中心',
+    subtitle: '查看家庭数字孪生，并通过受治理的精确命令控制设备。',
+    refresh: '刷新',
+    readOnly: '你当前只有只读权限；家庭状态变更需要超级管理员执行。',
+    overview: {
+      title: '家庭就绪状态', provider: '连接提供方', connection: '连接状态', configured: '配置状态',
+      executor: '命令执行器', authorizedTargets: '授权目标', devices: '设备', unavailable: '不可用设备',
+      inventory: '库存项目', lowStock: '低库存', workflows: '活跃工作流',
+    },
+    status: {
+      yes: '已配置', no: '未配置', enabled: '已启用', disabled: '未启用', stopped: '已停止',
+      unconfigured: '未配置', disconnected: '未连接', connecting: '连接中', connected: '已连接',
+      degraded: '连接降级', available: '可用', unavailable: '不可用', unknown: '未知',
+    },
+    devices: {
+      title: '设备与场景', empty: '还没有规范化的 Home Assistant 设备。', refresh: '刷新状态',
+      noBinding: '没有命令绑定', lastSeen: '最近观测', current: '当前值', powerOn: '开启', powerOff: '关闭',
+      setLevel: '设置档位', setTemperature: '设置温度', activateScene: '激活场景',
+      confirmTitle: '确认现实世界操作', confirmSummary: 'Hermes 将把这个精确目标和期望值提交给 Action Fabric。',
+      confirm: '提交操作', cancel: '取消', target: '目标', desired: '期望结果', sceneSafety: '服务端只会放行已登记的安全场景。',
+    },
+    freshness: { fresh: '数据新鲜', aging: '数据老化', stale: '数据过期', unknown: '尚无观测' },
+    inventory: {
+      title: '家庭库存', empty: '还没有库存项目。', lowStock: '低库存', useOne: '使用 1 件',
+      addOne: '补充 1 件', adjustmentReason: '指挥中心调整', unit: '单位', quantity: '数量',
+    },
+    workflow: {
+      title: '操作工作流', empty: '本次会话尚未提交家庭操作。', state: '状态', steps: '执行步骤',
+      approve: '批准', reject: '拒绝', rejectionReason: '拒绝原因', rejectionPlaceholder: '说明为什么不应执行此操作',
+      refresh: '刷新工作流', attempt: '尝试次数',
+    },
+    errors: { load: '家庭指挥中心加载失败', command: '家庭操作失败', inventory: '库存更新失败', workflow: '工作流审核失败' },
+    success: { queued: '家庭操作已进入受治理工作流', inventory: '库存已更新', reviewed: '工作流审核已记录' },
   },
 
   health: {

@@ -48,6 +48,7 @@ const systemModules = [
   { key: 'diet', href: '#/hermes/personal-os/health?tab=diet' },
   { key: 'skin', href: '#/hermes/personal-os/health?tab=skin' },
   { key: 'health', href: '#/hermes/personal-os/health' },
+  { key: 'home', href: '#/hermes/personal-os/home' },
 ]
 
 onMounted(loadOverview)

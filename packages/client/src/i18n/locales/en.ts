@@ -290,6 +290,10 @@ export default {
         title: 'Health Data',
         summary: 'Body3D, weight, internal markers, and body profile.',
       },
+      home: {
+        title: 'Home System',
+        summary: 'Devices, rooms, inventory, connection health, and governed commands.',
+      },
     },
     memoryContext: 'Memory Context',
     reviewQueue: 'Review Queue',
@@ -312,6 +316,42 @@ export default {
     reviewFailed: 'Review failed',
     taskCheckedIn: 'Task checked in',
     taskCheckInFailed: 'Task check-in failed',
+  },
+
+  home: {
+    title: 'Home Command Center',
+    subtitle: 'Observe the Home twin and run exact, governed device actions.',
+    refresh: 'Refresh',
+    readOnly: 'You have read-only access. Home changes require a super administrator.',
+    overview: {
+      title: 'Home readiness', provider: 'Provider', connection: 'Connection', configured: 'Configured',
+      executor: 'Command executor', authorizedTargets: 'Authorized targets', devices: 'Devices',
+      unavailable: 'Unavailable', inventory: 'Inventory items', lowStock: 'Low stock', workflows: 'Active workflows',
+    },
+    status: {
+      yes: 'Yes', no: 'No', enabled: 'Enabled', disabled: 'Disabled', stopped: 'Stopped',
+      unconfigured: 'Not configured', disconnected: 'Disconnected', connecting: 'Connecting',
+      connected: 'Connected', degraded: 'Degraded', available: 'Available', unavailable: 'Unavailable', unknown: 'Unknown',
+    },
+    devices: {
+      title: 'Devices and scenes', empty: 'No normalized Home Assistant devices yet.', refresh: 'Refresh state',
+      noBinding: 'No command binding', lastSeen: 'Last seen', current: 'Current', powerOn: 'Turn on', powerOff: 'Turn off',
+      setLevel: 'Set level', setTemperature: 'Set temperature', activateScene: 'Activate scene',
+      confirmTitle: 'Confirm physical-world action', confirmSummary: 'Hermes will submit this exact target and desired value through Action Fabric.',
+      confirm: 'Submit action', cancel: 'Cancel', target: 'Target', desired: 'Desired result', sceneSafety: 'The server will allow only a registered safe scene.',
+    },
+    freshness: { fresh: 'Fresh', aging: 'Aging', stale: 'Stale', unknown: 'No observation' },
+    inventory: {
+      title: 'Inventory', empty: 'No inventory items yet.', lowStock: 'Low stock', useOne: 'Use one',
+      addOne: 'Add one', adjustmentReason: 'Command Center adjustment', unit: 'Unit', quantity: 'Quantity',
+    },
+    workflow: {
+      title: 'Action workflow', empty: 'No Home action has been submitted in this session.', state: 'State',
+      steps: 'Execution steps', approve: 'Approve', reject: 'Reject', rejectionReason: 'Reason for rejection',
+      rejectionPlaceholder: 'Explain why this action should not run', refresh: 'Refresh workflow', attempt: 'Attempt',
+    },
+    errors: { load: 'Failed to load Home Command Center', command: 'Home action failed', inventory: 'Inventory update failed', workflow: 'Workflow review failed' },
+    success: { queued: 'Home action entered the governed workflow', inventory: 'Inventory updated', reviewed: 'Workflow review recorded' },
   },
 
   health: {
