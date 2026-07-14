@@ -161,6 +161,15 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
   }
   assertIndexSignature(db, version, 'twin_artifact_consent_reservations',
     'idx_twin_artifact_consent_reservations_status', ['processor', 'expires_at', 'consumed_at'], false)
+  const reservationForeignKeys = db.prepare("PRAGMA foreign_key_list('twin_artifact_consent_reservations')").all() as Array<{
+    table: string; from: string; to: string; on_update: string; on_delete: string; match: string
+  }>
+  if (reservationForeignKeys.length !== 1 || reservationForeignKeys[0].table !== 'twin_artifact_consents'
+    || reservationForeignKeys[0].from !== 'consent_id' || reservationForeignKeys[0].to !== 'consent_id'
+    || reservationForeignKeys[0].on_update !== 'NO ACTION' || reservationForeignKeys[0].on_delete !== 'NO ACTION'
+    || reservationForeignKeys[0].match !== 'NONE') {
+    throw new Error(`Personal Twin schema version ${version} is incomplete: consent reservation foreign key signature is invalid`)
+  }
 }
 
 interface ColumnInfo { name: string; type: string; notnull: number; pk: number; dflt_value: string | null }
@@ -503,6 +512,7 @@ function createSchemaV6(db: DatabaseSync): void {
 
 function createSchemaV7(db: DatabaseSync): void {
   db.exec(`
+    DROP TABLE IF EXISTS twin_artifact_consent_reservations;
     CREATE TABLE IF NOT EXISTS twin_artifact_consent_reservations (
       reservation_id TEXT PRIMARY KEY
         CHECK(length(reservation_id) BETWEEN 48 AND 64 AND reservation_id GLOB 'reservation-*'

@@ -167,6 +167,35 @@ type ResolutionRow = {
   policy_revision_value: string
 }
 
+const HEALTH_REMINDER_BASE = {
+  id: 'health.reminder.send', description: 'Send one minimized health reminder to the configured self-recipient',
+  outputSchema: messageOutputSchema(), risk: 'low' as const, sideEffect: true, idempotency: 'required' as const,
+  reversible: false, compensationCapabilityId: null, verificationStrategy: 'provider_receipt_or_identity_lookup',
+  authentication: ['live_mode:enabled', 'recipient:configured_self'], targetRestrictions: ['health:recipient'],
+  cost: { currency: null, estimatedMinor: 0 }, enabled: true,
+}
+const HEALTH_REMINDER_V1: FabricCapabilityInput = {
+  ...HEALTH_REMINDER_BASE, version: 1,
+  inputSchema: objectSchema({
+    schemaVersion: { const: 1 }, actionId: boundedIdSchema(), recipient: { const: 'configured-self' },
+    messageCode: boundedIdSchema(), messageText: { type: 'string', minLength: 1, maxLength: 1000 },
+  }, ['schemaVersion', 'actionId', 'recipient', 'messageCode', 'messageText']),
+}
+const HEALTH_REMINDER_TRANSITIONAL_V1: FabricCapabilityInput = {
+  ...HEALTH_REMINDER_BASE, version: 1,
+  inputSchema: objectSchema({
+    schemaVersion: { const: 1 }, actionId: boundedIdSchema(), recipient: { const: 'configured-self' },
+    messageCode: boundedIdSchema(),
+  }, ['schemaVersion', 'actionId', 'recipient', 'messageCode']),
+}
+const HEALTH_REMINDER_V2: FabricCapabilityInput = {
+  ...HEALTH_REMINDER_BASE, version: 2,
+  inputSchema: objectSchema({
+    schemaVersion: { const: 2 }, actionId: boundedIdSchema(), recipient: { const: 'configured-self' },
+    messageCode: boundedIdSchema(),
+  }, ['schemaVersion', 'actionId', 'recipient', 'messageCode']),
+}
+
 const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
   {
     id: 'simulator.echo', version: 1, description: 'Echo structured input without external side effects',
@@ -257,17 +286,7 @@ const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
     targetRestrictions: ['health:artifact', 'health:processor'],
     cost: { currency: null, estimatedMinor: 0 }, enabled: true,
   },
-  {
-    id: 'health.reminder.send', version: 1, description: 'Send one minimized health reminder to the configured self-recipient',
-    inputSchema: objectSchema({
-      schemaVersion: { const: 1 }, actionId: boundedIdSchema(), recipient: { const: 'configured-self' },
-      messageCode: boundedIdSchema(),
-    }, ['schemaVersion', 'actionId', 'recipient', 'messageCode']),
-    outputSchema: messageOutputSchema(), risk: 'low', sideEffect: true, idempotency: 'required', reversible: false,
-    compensationCapabilityId: null, verificationStrategy: 'provider_receipt_or_identity_lookup',
-    authentication: ['live_mode:enabled', 'recipient:configured_self'], targetRestrictions: ['health:recipient'],
-    cost: { currency: null, estimatedMinor: 0 }, enabled: true,
-  },
+  HEALTH_REMINDER_V2,
   {
     id: 'health.checkin.request', version: 1, description: 'Request one structured health check-in from the configured self-recipient',
     inputSchema: objectSchema({
@@ -337,12 +356,21 @@ export function ensureBuiltInFabricRegistry(): void {
     if (hasCompleteBuiltInRegistry(db) && hasValidExternalWriteClassification(db)) return
     transaction(db, () => {
       const wasComplete = hasCompleteBuiltInRegistry(db)
-      for (const input of BUILT_IN_CAPABILITIES) insertCapabilityIfMissing(db, input)
-      for (const input of BUILT_IN_EXECUTORS) insertExecutorIfMissing(db, input)
+      for (const input of BUILT_IN_CAPABILITIES) {
+        if (input.id === HEALTH_REMINDER_V2.id) ensureReminderCapability(db)
+        else insertCapabilityIfMissing(db, input)
+      }
+      for (const input of BUILT_IN_EXECUTORS) {
+        insertExecutorIfMissing(db, input)
+        if (input.id === 'health-local-analysis' || input.id === 'health-remote-analysis') {
+          ensureAnalysisExecutorConfiguration(db, input)
+        }
+      }
       for (const [executorId, capabilityId] of BUILT_IN_BINDINGS) {
         const capability = selectCapability(db, capabilityId)
         if (!capability) throw new Error(`Built-in capability is missing: ${capabilityId}`)
-        insertBindingIfMissing(db, executorId, capability)
+        if (capabilityId === HEALTH_REMINDER_V2.id) upsertBinding(db, executorId, capability)
+        else insertBindingIfMissing(db, executorId, capability)
       }
       const backfilled = backfillExternalWriteClassification(db)
       if (!wasComplete || backfilled) bumpRegistryPolicyRevision(db)
@@ -418,6 +446,7 @@ export function updateFabricCapability(
       json(input.authentication), json(input.targetRestrictions), input.cost.currency, input.cost.estimatedMinor,
       digest, Number(input.enabled), now, id,
     )
+    insertCapabilityHistory(db, input, digest, now)
     bumpRegistryPolicyRevision(db)
     return selectCapability(db, id)!
   }))
@@ -590,19 +619,26 @@ export function resolveFabricExecutorInDb(
 }
 
 function hasCompleteBuiltInRegistry(db: DatabaseSync): boolean {
-  const capabilities = db.prepare(`SELECT COUNT(*) AS count FROM fabric_capabilities
-    WHERE id IN (${BUILT_IN_CAPABILITIES.map(() => '?').join(',')})`).get(...BUILT_IN_CAPABILITIES.map(item => item.id)) as { count: number }
-  const executors = db.prepare(`SELECT COUNT(*) AS count FROM fabric_executors
-    WHERE id IN (${BUILT_IN_EXECUTORS.map(() => '?').join(',')})`).get(...BUILT_IN_EXECUTORS.map(item => item.id)) as { count: number }
-  const bindingPredicates = BUILT_IN_BINDINGS.map(() => '(b.executor_id=? AND b.capability_id=?)').join(' OR ')
-  const bindingParameters = BUILT_IN_BINDINGS.flatMap(([executorId, capabilityId]) => [executorId, capabilityId])
-  const bindings = db.prepare(`SELECT COUNT(*) AS count FROM fabric_executor_capabilities b
-    WHERE ${bindingPredicates}`).get(...bindingParameters) as { count: number }
+  const capabilities = BUILT_IN_CAPABILITIES.every(input => {
+    const current = selectCapability(db, input.id)
+    return current?.version === input.version && current.contractDigest === capabilityDigest(input)
+      && hasCapabilityHistory(db, input)
+  }) && hasCapabilityHistory(db, HEALTH_REMINDER_V1)
+  const executors = BUILT_IN_EXECUTORS.every(input => {
+    const current = selectExecutor(db, input.id)
+    const normalized = validateExecutor(input)
+    return current?.type === normalized.type && current.name === normalized.name && current.environment === normalized.environment
+      && stableStringify(current.configuration) === stableStringify(normalized.configuration)
+  })
+  const bindings = BUILT_IN_BINDINGS.every(([executorId, capabilityId]) => {
+    const expected = BUILT_IN_CAPABILITIES.find(item => item.id === capabilityId)
+    const row = db.prepare(`SELECT capability_version,contract_digest FROM fabric_executor_capabilities
+      WHERE executor_id=? AND capability_id=?`).get(executorId, capabilityId) as
+      { capability_version: number; contract_digest: string } | undefined
+    return !!expected && row?.capability_version === expected.version && row.contract_digest === capabilityDigest(expected)
+  })
   const hasPolicyRevision = db.prepare("SELECT 1 AS present FROM fabric_meta WHERE key='registry_policy_revision'").get() !== undefined
-  return capabilities.count === BUILT_IN_CAPABILITIES.length
-    && executors.count === BUILT_IN_EXECUTORS.length
-    && bindings.count === BUILT_IN_BINDINGS.length
-    && hasPolicyRevision
+  return capabilities && executors && bindings && hasPolicyRevision
 }
 
 function hasValidExternalWriteClassification(db: DatabaseSync): boolean {
@@ -690,6 +726,103 @@ function insertCapabilityIfMissing(db: DatabaseSync, input: FabricCapabilityInpu
   insertCapability(db, normalized, capabilityDigest(normalized))
 }
 
+function ensureReminderCapability(db: DatabaseSync): void {
+  const current = selectCapability(db, HEALTH_REMINDER_V2.id)
+  if (!current) {
+    insertCapability(db, validateCapability(HEALTH_REMINDER_V2), capabilityDigest(HEALTH_REMINDER_V2))
+    insertCapabilityHistory(db, HEALTH_REMINDER_V1, capabilityDigest(HEALTH_REMINDER_V1), new Date().toISOString())
+    return
+  }
+  insertCapabilityHistory(db, HEALTH_REMINDER_V1, capabilityDigest(HEALTH_REMINDER_V1), new Date().toISOString())
+  const actualDigest = capabilityDigest(capabilityInput(current))
+  if (actualDigest !== current.contractDigest) throw new Error('Health reminder contract digest is unknown')
+  if (current.version === 1) {
+    const permitted = new Set([capabilityDigest(HEALTH_REMINDER_V1), capabilityDigest(HEALTH_REMINDER_TRANSITIONAL_V1)])
+    if (!permitted.has(current.contractDigest)) throw new Error('Health reminder contract digest is unknown')
+    replaceCapabilityContract(db, HEALTH_REMINDER_V2)
+    return
+  }
+  if (current.version !== HEALTH_REMINDER_V2.version
+    || current.contractDigest !== capabilityDigest(HEALTH_REMINDER_V2)) {
+    throw new Error('Health reminder contract digest is unknown')
+  }
+  insertCapabilityHistory(db, HEALTH_REMINDER_V2, current.contractDigest, current.createdAt)
+}
+
+function replaceCapabilityContract(db: DatabaseSync, input: FabricCapabilityInput): void {
+  const normalized = validateCapability(input)
+  const contractDigest = capabilityDigest(normalized)
+  const [domain, ...verbParts] = normalized.id.split(/[._:-]/)
+  const now = new Date().toISOString()
+  const changed = db.prepare(`UPDATE fabric_capabilities SET version=?,domain=?,verb=?,description=?,input_schema_json=?,
+    output_schema_json=?,risk=?,side_effect=?,idempotency=?,reversible=?,compensation_capability_id=?,
+    verification_strategy=?,authentication_json=?,target_restrictions_json=?,cost_currency=?,cost_estimated_minor=?,
+    contract_digest=?,updated_at=? WHERE id=?`).run(
+    normalized.version, domain, verbParts.join('.'), normalized.description, json(normalized.inputSchema),
+    json(normalized.outputSchema), normalized.risk, Number(normalized.sideEffect), normalized.idempotency,
+    Number(normalized.reversible), normalized.compensationCapabilityId, normalized.verificationStrategy,
+    json(normalized.authentication), json(normalized.targetRestrictions), normalized.cost.currency,
+    normalized.cost.estimatedMinor, contractDigest, now, normalized.id,
+  )
+  if (changed.changes !== 1) throw new Error('Health reminder contract migration failed')
+  insertCapabilityHistory(db, normalized, contractDigest, now)
+}
+
+function ensureAnalysisExecutorConfiguration(db: DatabaseSync, input: FabricExecutorInput): void {
+  const current = selectExecutor(db, input.id)
+  const expected = validateExecutor(input)
+  if (!current || current.type !== expected.type || current.name !== expected.name || current.environment !== expected.environment) {
+    throw new Error(`Built-in analysis executor metadata mismatch: ${input.id}`)
+  }
+  if (stableStringify(current.configuration) === stableStringify(expected.configuration)) return
+  const legacy = { ...expected.configuration, interruptible: true }
+  if (stableStringify(current.configuration) !== stableStringify(legacy)) {
+    throw new Error(`Built-in analysis executor configuration mismatch: ${input.id}`)
+  }
+  db.prepare(`UPDATE fabric_executors SET configuration_json=?,policy_version=policy_version+1,updated_at=? WHERE id=?`)
+    .run(json(expected.configuration), new Date().toISOString(), input.id)
+}
+
+function insertCapabilityHistory(db: DatabaseSync, input: FabricCapabilityInput, contractDigest: string, createdAt: string): void {
+  const contract = capabilityContract(input)
+  const existing = db.prepare(`SELECT contract_json,contract_digest FROM fabric_capability_contract_history
+    WHERE capability_id=? AND version=?`).get(input.id, input.version) as
+    { contract_json: string; contract_digest: string } | undefined
+  if (existing) {
+    let stored: unknown
+    try { stored = JSON.parse(existing.contract_json) } catch { throw new Error('Capability contract history is corrupt') }
+    if (existing.contract_digest !== contractDigest || stableStringify(stored) !== stableStringify(contract)) {
+      throw new Error(`Capability contract history conflict: ${input.id}@${input.version}`)
+    }
+    return
+  }
+  db.prepare(`INSERT INTO fabric_capability_contract_history
+    (capability_id,version,contract_json,contract_digest,created_at) VALUES(?,?,?,?,?)`)
+    .run(input.id, input.version, json(contract), contractDigest, createdAt)
+}
+
+function hasCapabilityHistory(db: DatabaseSync, input: FabricCapabilityInput): boolean {
+  const row = db.prepare(`SELECT contract_json,contract_digest FROM fabric_capability_contract_history
+    WHERE capability_id=? AND version=?`).get(input.id, input.version) as
+    { contract_json: string; contract_digest: string } | undefined
+  if (!row || row.contract_digest !== capabilityDigest(input)) return false
+  try { return stableStringify(JSON.parse(row.contract_json)) === stableStringify(capabilityContract(input)) }
+  catch { return false }
+}
+
+function capabilityContract(input: FabricCapabilityInput): Omit<FabricCapabilityInput, 'enabled'> {
+  const { enabled: _enabled, ...contract } = input
+  return contract
+}
+
+function capabilityInput(value: FabricCapability): FabricCapabilityInput {
+  return { id: value.id, version: value.version, description: value.description, inputSchema: value.inputSchema,
+    outputSchema: value.outputSchema, risk: value.risk, sideEffect: value.sideEffect, idempotency: value.idempotency,
+    reversible: value.reversible, compensationCapabilityId: value.compensationCapabilityId,
+    verificationStrategy: value.verificationStrategy, authentication: value.authentication,
+    targetRestrictions: value.targetRestrictions, cost: value.cost, enabled: value.enabled }
+}
+
 function insertCapability(db: DatabaseSync, input: FabricCapabilityInput, contractDigest: string): void {
   const [domain, ...verbParts] = input.id.split(/[._:-]/)
   const now = new Date().toISOString()
@@ -704,6 +837,7 @@ function insertCapability(db: DatabaseSync, input: FabricCapabilityInput, contra
     json(input.targetRestrictions), input.cost.currency, input.cost.estimatedMinor, contractDigest,
     Number(input.enabled), now, now,
   )
+  insertCapabilityHistory(db, input, contractDigest, now)
 }
 
 function insertExecutorIfMissing(db: DatabaseSync, input: FabricExecutorInput): void {

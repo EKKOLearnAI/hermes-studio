@@ -644,6 +644,61 @@ describe('Action Fabric durable worker', () => {
     expect(getFabricWorkflow(workflow.id)).toMatchObject({ state: 'waiting_user', lastErrorCode: 'FABRIC_WORKER_CONTRACT_MISSING' })
   })
 
+  it('routes a captured reminder v1 to deliberate review before adapter I/O after v2 promotion', async () => {
+    updateAssistantRole('health-manager', {
+      enabled: true,
+      capabilityScope: { allow: ['health.reminder.send'], deny: [], enforcement: 'action_fabric_v1' },
+      decisionAuthority: { maxRisk: 'critical', requireApprovalAbove: 'critical',
+        allowedTargets: ['health:recipient:configured-self'] },
+      spendingLimits: { currency: null, perAction: 0, daily: 0 },
+    })
+    let calls = 0
+    registerFabricExecutorAdapter(adapter({ id: 'health-shadow', type: 'connector',
+      prepare: async context => { calls += 1; return success('prepared', context) } }))
+    const workflow = createFabricIntent({
+      capabilityId: 'health.reminder.send', requestedByRoleId: 'health-manager', requestedByUserId: 'user-1',
+      idempotencyKey: 'captured-reminder-v1', goal: 'send a reminder safely', environments: ['sandbox'],
+      target: { kind: 'health_recipient', recipient: 'configured-self' }, constraints: {}, rationale: 'test',
+      input: { schemaVersion: 2, actionId: 'reminder-action', recipient: 'configured-self', messageCode: 'recovery' },
+    }).workflow
+    withActionFabricDb(db => {
+      const history = db.prepare(`SELECT contract_digest FROM fabric_capability_contract_history
+        WHERE capability_id='health.reminder.send' AND version=1`).get() as { contract_digest: string }
+      db.prepare('UPDATE fabric_action_intents SET capability_version=1 WHERE id=?').run(workflow.intentId)
+      const steps = db.prepare('SELECT id,input_json FROM fabric_steps WHERE workflow_id=?').all(workflow.id) as
+        Array<{ id: string; input_json: string }>
+      for (const step of steps) {
+        const captured = JSON.parse(step.input_json) as {
+          contract: Record<string, unknown>
+          actionInput: Record<string, unknown>
+        }
+        captured.contract.capabilityVersion = 1
+        captured.contract.contractDigest = history.contract_digest
+        captured.actionInput.schemaVersion = 1
+        captured.actionInput.messageText = 'legacy free-form reminder text'
+        db.prepare('UPDATE fabric_steps SET input_json=? WHERE id=?').run(JSON.stringify(captured), step.id)
+      }
+    })
+
+    await expect(processActionFabricOnce({ workerId: 'worker-v1-review', now: base }))
+      .resolves.toMatchObject({ processed: false })
+    expect(calls).toBe(0)
+    expect(getFabricWorkflow(workflow.id)).toMatchObject({
+      state: 'waiting_user', leaseOwner: null, leaseExpiresAt: null,
+      lastErrorCode: 'FABRIC_CAPABILITY_VERSION_STALE',
+    })
+    expect(getFabricWorkflow(workflow.id)!.steps.every(step => step.state === 'waiting_user')).toBe(true)
+    expect(listFabricAuditEvents({ aggregateId: workflow.id })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ eventType: 'workflow.contract_review_required',
+        payload: expect.objectContaining({ reason: 'capability_version_stale' }) }),
+    ]))
+    expect(withActionFabricDb(db => db.prepare(`SELECT topic,payload_json FROM fabric_outbox
+      WHERE aggregate_id=? AND topic='fabric.workflow.contract_review_required'`).get(workflow.id)))
+      .toEqual({ topic: 'fabric.workflow.contract_review_required',
+        payload_json: JSON.stringify({ from: 'preparing', reason: 'capability_version_stale',
+          to: 'waiting_user' }) })
+  })
+
   it('retries only verification when the captured contract forbids execution replay', async () => {
     let executes = 0
     registerFabricExecutorAdapter(adapter({

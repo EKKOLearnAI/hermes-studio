@@ -88,11 +88,13 @@ function minimizedMessage(context: FabricExecutionContext): string {
   if (typeof actionId !== 'string' || actionId.length < 1 || actionId.length > 200) throw new Error('invalid')
   let body: string
   if (context.capabilityId === 'health.reminder.send') {
+    if (context.input.schemaVersion !== 2) throw new Error('invalid')
     const code = context.input.messageCode
     if (typeof code !== 'string' || !Object.hasOwn(REMINDER_TEMPLATES, code)) throw new Error('invalid')
     if (context.input.messageText !== undefined) throw new Error('invalid')
     body = REMINDER_TEMPLATES[code]!
   } else {
+    if (context.input.schemaVersion !== 1) throw new Error('invalid')
     const operation = context.input.operation
     body = operation === 'request_skin_recapture' ? '请在方便时补充一次标准化皮肤复拍。'
       : operation === 'request_marker_metadata' ? '请在方便时补充缺失的报告信息。' : ''

@@ -443,6 +443,7 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
     async reserve(token: string, input: HealthProcessingManifest,
       inputBinding: HealthConsentReservationBinding): Promise<HealthConsentReservation> {
       const manifest = canonicalManifest(input, allowedProcessors, true)
+      if (manifest.artifactIds.length !== 1) throw new HealthConsentError('HEALTH_CONSENT_INVALID')
       const binding = reservationBinding(inputBinding, manifest)
       const digest = manifestDigest(manifest)
       const { iso: reservedAt } = safeNow(clock)
@@ -466,6 +467,7 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
           throw new HealthConsentError('HEALTH_CONSENT_INVALID')
         }
         const row = matches[0].row
+        if (!validateStoredConsentCausality(row)) throw new HealthConsentError('HEALTH_CONSENT_STORAGE_FAILED')
         if (row.revoked_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REVOKED')
         if (row.consumed_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REPLAYED')
         if (row.expires_at <= reservedAt) throw new HealthConsentError('HEALTH_CONSENT_EXPIRED')
@@ -473,6 +475,12 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
           WHERE consent_id=? AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>?`)
           .run(reservedAt, row.consent_id, reservedAt)
         if (consumed.changes !== 1) throw new HealthConsentError('HEALTH_CONSENT_REPLAYED')
+        const parent = db.prepare('SELECT * FROM twin_artifact_consents WHERE consent_id=?')
+          .get(row.consent_id) as unknown as ConsentRow | undefined
+        const parentStored = parent ? storedGrant(parent, allowedProcessors, maxTtlMs) : null
+        if (!parent || !parentStored || !reservationParentMatches(parent, parentStored.envelope.manifest, {
+          artifactId: binding.artifactId, processor: binding.processorId, reservedAt, expiresAt: row.expires_at,
+        })) throw new HealthConsentError('HEALTH_CONSENT_STORAGE_FAILED')
         db.prepare(`INSERT INTO twin_artifact_consent_reservations
           (reservation_id,consent_id,artifact_id,artifact_manifest_digest,processor,reserved_at,expires_at,consumed_at)
           VALUES(?,?,?,?,?,?,?,NULL)`).run(reservationId, row.consent_id, binding.artifactId,
@@ -498,13 +506,17 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
         const binding = reservationBinding(inputBinding, stored.envelope.manifest)
         if (row.artifact_id !== binding.artifactId || row.artifact_manifest_digest !== binding.artifactManifestDigest
           || row.processor !== binding.processorId) throw new HealthConsentError('HEALTH_CONSENT_INVALID')
+        if (!reservationParentMatches(consent, stored.envelope.manifest, {
+          artifactId: row.artifact_id, processor: row.processor, reservedAt: row.reserved_at, expiresAt: row.expires_at,
+        })) throw new HealthConsentError('HEALTH_CONSENT_STORAGE_FAILED')
         if (row.consumed_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REPLAYED')
         if (row.expires_at <= consumedAt) throw new HealthConsentError('HEALTH_CONSENT_EXPIRED')
         const changed = db.prepare(`UPDATE twin_artifact_consent_reservations SET consumed_at=?
           WHERE reservation_id=? AND consumed_at IS NULL AND expires_at>?`).run(consumedAt, reservationId, consumedAt)
         if (changed.changes !== 1) throw new HealthConsentError('HEALTH_CONSENT_REPLAYED')
         return { reservationId, ...binding, consumedAt,
-          authorization: mintHealthReservationAuthorization({ reservationId, ...binding, manifest: stored.envelope.manifest }) }
+          authorization: mintHealthReservationAuthorization({ reservationId, ...binding,
+            manifest: { ...stored.envelope.manifest, artifactIds: [binding.artifactId] } }) }
       }))
     },
 
@@ -540,6 +552,21 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
   return internalBroker
 }
 
+function reservationParentMatches(parent: ConsentRow, manifest: HealthProcessingManifest, reservation: {
+  artifactId: string; processor: string; reservedAt: string; expiresAt: string
+}): boolean {
+  const issued = strictUtcMillis(parent.issued_at)
+  const reserved = strictUtcMillis(reservation.reservedAt)
+  const expires = strictUtcMillis(parent.expires_at)
+  return validateStoredConsentCausality(parent) && parent.revoked_at === null
+    && parent.consumed_at === reservation.reservedAt
+    && parent.processor === reservation.processor && manifest.processor === reservation.processor
+    && parent.manifest_digest === manifestDigest(manifest)
+    && manifest.artifactIds.length === 1 && manifest.artifactIds[0] === reservation.artifactId
+    && reservation.expiresAt === parent.expires_at
+    && issued !== null && reserved !== null && expires !== null && issued <= reserved && reserved < expires
+}
+
 function reservationBinding(input: HealthConsentReservationBinding,
   manifest: HealthProcessingManifest): HealthConsentReservationBinding {
   assertSafeGraph(input)
@@ -548,7 +575,9 @@ function reservationBinding(input: HealthConsentReservationBinding,
     || typeof input.artifactId !== 'string' || !ARTIFACT_ID.test(input.artifactId)
     || typeof input.artifactManifestDigest !== 'string' || !DIGEST.test(input.artifactManifestDigest)
     || typeof input.processorId !== 'string' || input.processorId !== manifest.processor
-    || !manifest.artifactIds.includes(input.artifactId)) throw new HealthConsentError('HEALTH_CONSENT_INVALID')
+    || manifest.artifactIds.length !== 1 || manifest.artifactIds[0] !== input.artifactId) {
+    throw new HealthConsentError('HEALTH_CONSENT_INVALID')
+  }
   return { artifactId: input.artifactId, artifactManifestDigest: input.artifactManifestDigest,
     processorId: input.processorId }
 }

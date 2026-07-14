@@ -3,12 +3,13 @@ import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 
-const SCHEMA_VERSION = 4
+const SCHEMA_VERSION = 5
 const REGISTRY_JSON_MAX_BYTES = 131_072
 const PAYLOAD_JSON_MAX_BYTES = 32_768
 const REQUIRED_TABLES = [
   'fabric_meta',
   'fabric_capabilities',
+  'fabric_capability_contract_history',
   'fabric_executors',
   'fabric_executor_capabilities',
   'fabric_action_intents',
@@ -49,6 +50,9 @@ interface JsonTableConstraint {
 }
 
 const JSON_TABLE_CONSTRAINTS: JsonTableConstraint[] = [
+  { table: 'fabric_capability_contract_history', columns: [
+    { column: 'contract_json', type: 'object', maxBytes: REGISTRY_JSON_MAX_BYTES },
+  ] },
   { table: 'fabric_capabilities', columns: [
     { column: 'input_schema_json', type: 'object', maxBytes: REGISTRY_JSON_MAX_BYTES },
     { column: 'output_schema_json', type: 'object', maxBytes: REGISTRY_JSON_MAX_BYTES },
@@ -85,6 +89,7 @@ const JSON_TABLE_CONSTRAINTS: JsonTableConstraint[] = [
 
 const REQUIRED_INDEX_SIGNATURES: RequiredIndexSignature[] = [
   { name: 'idx_fabric_audit_sequence', table: 'fabric_audit_events', unique: true, columns: ['sequence'], partial: false },
+  { name: 'idx_fabric_capability_contract_history_digest', table: 'fabric_capability_contract_history', unique: false, columns: ['capability_id', 'contract_digest'], partial: false },
   { name: 'idx_fabric_budget_daily', table: 'fabric_budget_ledger', unique: false, columns: ['requested_by_user_id', 'requested_by_role_id', 'ledger_date', 'currency', 'status'], partial: false },
   { name: 'idx_fabric_executor_capability', table: 'fabric_executor_capabilities', unique: false, columns: ['capability_id', 'capability_version', 'executor_id'], partial: false },
   { name: 'idx_fabric_intent_idempotency', table: 'fabric_action_intents', unique: true, columns: ['requested_by_user_id', 'requested_by_role_id', 'idempotency_key'], partial: false },
@@ -98,6 +103,7 @@ const REQUIRED_COLUMNS = [{
 }]
 const REQUIRED_FOREIGN_KEYS: RequiredForeignKeySignature[] = [
   { table: 'fabric_capabilities', from: 'compensation_capability_id', targetTable: 'fabric_capabilities', to: 'id', onDelete: 'NO ACTION' },
+  { table: 'fabric_capability_contract_history', from: 'capability_id', targetTable: 'fabric_capabilities', to: 'id', onDelete: 'CASCADE' },
   { table: 'fabric_executor_capabilities', from: 'executor_id', targetTable: 'fabric_executors', to: 'id', onDelete: 'CASCADE' },
   { table: 'fabric_executor_capabilities', from: 'capability_id', targetTable: 'fabric_capabilities', to: 'id', onDelete: 'CASCADE' },
   { table: 'fabric_action_intents', from: 'capability_id', targetTable: 'fabric_capabilities', to: 'id', onDelete: 'NO ACTION' },
@@ -175,6 +181,12 @@ export function initActionFabricSchema(db: DatabaseSync): void {
     if (version < 4) {
       migrateSchemaV4(db)
       setSchemaVersion(db, 4)
+    }
+    if (version < 5) {
+      migrateSchemaV5(db)
+      setSchemaVersion(db, 5)
+    } else {
+      createSchemaV5(db)
     }
     assertSchemaComplete(db, SCHEMA_VERSION)
     db.exec('COMMIT')
@@ -254,9 +266,37 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
     }
   }
   assertExecutorTypeConstraint(db)
+  assertCapabilityHistorySignature(db)
+  assertImmutableHistoryTrigger(db, 'fabric_capability_contract_history_no_update', 'UPDATE')
+  assertImmutableHistoryTrigger(db, 'fabric_capability_contract_history_no_delete', 'DELETE')
   assertForeignKeySignatures(db)
   const violations = db.prepare('PRAGMA foreign_key_check').all()
   if (violations.length > 0) throw new Error('Action Fabric schema foreign key integrity check failed')
+}
+
+function assertCapabilityHistorySignature(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info('fabric_capability_contract_history')").all() as Array<{
+    name: string; type: string; notnull: number; dflt_value: string | null; pk: number
+  }>
+  const expected = [
+    ['capability_id', 'TEXT', 1, null, 1], ['version', 'INTEGER', 1, null, 2],
+    ['contract_json', 'TEXT', 1, null, 0], ['contract_digest', 'TEXT', 1, null, 0],
+    ['created_at', 'TEXT', 1, null, 0],
+  ] as const
+  const matches = columns.length === expected.length && columns.every((column, index) => {
+    const item = expected[index]
+    return column.name === item[0] && column.type.toUpperCase() === item[1] && column.notnull === item[2]
+      && column.dflt_value === item[3] && column.pk === item[4]
+  })
+  if (!matches) throw new Error('Action Fabric schema capability contract history signature mismatch')
+}
+
+function assertImmutableHistoryTrigger(db: DatabaseSync, name: string, operation: 'UPDATE' | 'DELETE'): void {
+  const row = db.prepare("SELECT tbl_name,sql FROM sqlite_master WHERE type='trigger' AND name=?").get(name) as
+    { tbl_name: string; sql: string | null } | undefined
+  const expected = normalizeTriggerSql(immutableHistoryTriggerSql(name, operation))
+  if (row?.tbl_name !== 'fabric_capability_contract_history' || row.sql === null
+    || normalizeTriggerSql(row.sql) !== expected) throw new Error(`Action Fabric schema immutable history trigger mismatch: ${name}`)
 }
 
 function assertForeignKeySignatures(db: DatabaseSync): void {
@@ -586,8 +626,88 @@ function migrateSchemaV4(db: DatabaseSync): void {
   createSchemaV3Triggers(db)
 }
 
+function migrateSchemaV5(db: DatabaseSync): void {
+  createSchemaV5(db)
+  const rows = db.prepare('SELECT * FROM fabric_capabilities ORDER BY id').all() as Array<Record<string, unknown>>
+  const select = db.prepare(`SELECT contract_json,contract_digest
+    FROM fabric_capability_contract_history WHERE capability_id=? AND version=?`)
+  const insert = db.prepare(`INSERT INTO fabric_capability_contract_history
+    (capability_id,version,contract_json,contract_digest,created_at) VALUES(?,?,?,?,?)`)
+  for (const row of rows) {
+    if (row.id === 'health.reminder.send' && row.version === 1) continue
+    const capabilityId = String(row.id)
+    const version = Number(row.version)
+    const contractDigest = String(row.contract_digest)
+    const createdAt = String(row.created_at)
+    const expectedContractJson = legacyCapabilityContractJson(row)
+    const existing = select.get(capabilityId, version) as
+      { contract_json: string, contract_digest: string } | undefined
+    if (existing) {
+      if (existing.contract_digest !== contractDigest
+        || stableJson(existing.contract_json) !== stableJson(expectedContractJson)) {
+        throw new Error(`Action Fabric capability history mismatch: ${capabilityId}@${version}`)
+      }
+      continue
+    }
+    insert.run(capabilityId, version, expectedContractJson, contractDigest, createdAt)
+  }
+}
+
+function createSchemaV5(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS fabric_capability_contract_history (
+      capability_id TEXT NOT NULL,
+      version INTEGER NOT NULL CHECK(version > 0),
+      contract_json TEXT NOT NULL,
+      contract_digest TEXT NOT NULL
+        CHECK(length(contract_digest)=64 AND contract_digest NOT GLOB '*[^a-f0-9]*'),
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(capability_id,version),
+      FOREIGN KEY(capability_id) REFERENCES fabric_capabilities(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_fabric_capability_contract_history_digest
+      ON fabric_capability_contract_history(capability_id,contract_digest);
+    ${immutableHistoryTriggerSql('fabric_capability_contract_history_no_update', 'UPDATE')};
+    ${immutableHistoryTriggerSql('fabric_capability_contract_history_no_delete', 'DELETE')};
+  `)
+  db.exec(jsonTriggerSql(JSON_TABLE_CONSTRAINTS[0], 'INSERT'))
+  db.exec(jsonTriggerSql(JSON_TABLE_CONSTRAINTS[0], 'UPDATE'))
+}
+
+function immutableHistoryTriggerSql(name: string, operation: 'UPDATE' | 'DELETE'): string {
+  return `CREATE TRIGGER IF NOT EXISTS ${name} BEFORE ${operation} ON fabric_capability_contract_history
+    BEGIN SELECT RAISE(ABORT, 'Action Fabric capability contract history is immutable'); END`
+}
+
+function legacyCapabilityContractJson(row: Record<string, unknown>): string {
+  return JSON.stringify({
+    id: row.id, version: row.version, description: row.description,
+    inputSchema: JSON.parse(String(row.input_schema_json)), outputSchema: JSON.parse(String(row.output_schema_json)),
+    risk: row.risk, sideEffect: row.side_effect === 1, idempotency: row.idempotency,
+    reversible: row.reversible === 1, compensationCapabilityId: row.compensation_capability_id,
+    verificationStrategy: row.verification_strategy, authentication: JSON.parse(String(row.authentication_json)),
+    targetRestrictions: JSON.parse(String(row.target_restrictions_json)),
+    cost: { currency: row.cost_currency, estimatedMinor: row.cost_estimated_minor },
+  })
+}
+
+function stableJson(value: string): string {
+  return stableStringify(JSON.parse(value))
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
 function assertLegacyJsonRows(db: DatabaseSync): void {
   for (const table of JSON_TABLE_CONSTRAINTS) {
+    if (!schemaTableExists(db, table.table)) continue
     for (const column of table.columns) {
       const invalid = db.prepare(
         `SELECT rowid FROM "${table.table}" WHERE ${jsonColumnInvalidExpression(column, column.column)} LIMIT 1`,
@@ -601,9 +721,14 @@ function assertLegacyJsonRows(db: DatabaseSync): void {
 
 function createSchemaV3Triggers(db: DatabaseSync): void {
   for (const constraint of JSON_TABLE_CONSTRAINTS) {
+    if (!schemaTableExists(db, constraint.table)) continue
     db.exec(jsonTriggerSql(constraint, 'INSERT'))
     db.exec(jsonTriggerSql(constraint, 'UPDATE'))
   }
+}
+
+function schemaTableExists(db: DatabaseSync, name: string): boolean {
+  return db.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name=?").get(name) !== undefined
 }
 
 function jsonTriggerName(table: string, operation: 'INSERT' | 'UPDATE'): string {

@@ -1,16 +1,19 @@
+import { createHash } from 'crypto'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   ensureBuiltInFabricRegistry,
+  getFabricCapability,
   invokeFabricExecutor,
   listFabricCapabilities,
   listFabricExecutors,
   registerFabricExecutorAdapter,
   resolveFabricExecutor,
   unregisterFabricExecutorAdapter,
+  withActionFabricDb,
   type FabricExecutorAdapter,
 } from '../../packages/server/src/services/hermes/action-fabric'
 
@@ -49,14 +52,15 @@ describe('health Action Fabric registry', () => {
     const capabilities = listFabricCapabilities().filter(item => item.domain === 'health')
     expect(capabilities.map(item => item.id)).toEqual(HEALTH_CAPABILITIES)
     for (const capability of capabilities) {
-      expect(capability.version).toBe(1)
+      const expectedVersion = capability.id === 'health.reminder.send' ? 2 : 1
+      expect(capability.version).toBe(expectedVersion)
       expect(capability.idempotency).toBe('required')
       expect(capability.targetRestrictions.length).toBeGreaterThan(0)
       expect(capability.inputSchema).toMatchObject({
         type: 'object',
         additionalProperties: false,
         required: expect.arrayContaining(['schemaVersion']),
-        properties: expect.objectContaining({ schemaVersion: { const: 1 } }),
+        properties: expect.objectContaining({ schemaVersion: { const: expectedVersion } }),
       })
       expect(capability.outputSchema).toMatchObject({
         type: 'object',
@@ -79,11 +83,23 @@ describe('health Action Fabric registry', () => {
     })
     expect((remote.inputSchema.properties as Record<string, unknown>).oneTimeConsentToken).toBeUndefined()
     expect(capabilities.find(item => item.id === 'health.reminder.send')).toMatchObject({
+      version: 2,
       risk: 'low',
       sideEffect: true,
       authentication: ['live_mode:enabled', 'recipient:configured_self'],
       targetRestrictions: ['health:recipient'],
     })
+    const reminderProperties = (capabilities.find(item => item.id === 'health.reminder.send')!.inputSchema.properties
+      ?? {}) as Record<string, unknown>
+    expect(reminderProperties.messageText).toBeUndefined()
+    expect(withActionFabricDb(db => db.prepare(`SELECT version,contract_json,contract_digest
+      FROM fabric_capability_contract_history WHERE capability_id='health.reminder.send' ORDER BY version`).all()))
+      .toEqual([
+        expect.objectContaining({ version: 1, contract_json: expect.stringContaining('messageText'),
+          contract_digest: expect.stringMatching(/^[a-f0-9]{64}$/) }),
+        expect.objectContaining({ version: 2, contract_json: expect.not.stringContaining('messageText'),
+          contract_digest: capabilities.find(item => item.id === 'health.reminder.send')!.contractDigest }),
+      ])
     expect(capabilities.find(item => item.id === 'health.plan.adjust')).toMatchObject({
       risk: 'low', reversible: true, compensationCapabilityId: 'health.plan.restore',
       verificationStrategy: 'plan_version_read_after_write',
@@ -145,4 +161,91 @@ describe('health Action Fabric registry', () => {
       target: { connectorId: 's400' }, now: '2026-07-14T00:00:00.000Z',
     })).resolves.toMatchObject({ outcome: 'prepared', output: { schemaVersion: 1 } })
   })
+
+  it('migrates the known transitional reminder v1 to v2 while preserving canonical Task10 v1 history', () => {
+    ensureBuiltInFabricRegistry()
+    const current = getFabricCapability('health.reminder.send')!
+    const transitionalInput = structuredClone(current.inputSchema) as { properties: Record<string, { const?: number }> }
+    transitionalInput.properties.schemaVersion = { const: 1 }
+    const transitional = capabilityContract(current, 1, transitionalInput)
+    const transitionalDigest = contractDigest(transitional)
+    withActionFabricDb(db => {
+      db.exec(`DROP TABLE fabric_capability_contract_history;
+        UPDATE fabric_meta SET value='4' WHERE key='schema_version';`)
+      db.prepare(`UPDATE fabric_capabilities SET version=1,input_schema_json=?,contract_digest=?
+        WHERE id='health.reminder.send'`).run(JSON.stringify(transitionalInput), transitionalDigest)
+      db.prepare(`UPDATE fabric_executor_capabilities SET capability_version=1,contract_digest=?
+        WHERE capability_id='health.reminder.send'`).run(transitionalDigest)
+    })
+
+    expect(() => ensureBuiltInFabricRegistry()).not.toThrow()
+    expect(getFabricCapability('health.reminder.send')).toMatchObject({ version: 2 })
+    const history = withActionFabricDb(db => db.prepare(`SELECT version,contract_json,contract_digest
+      FROM fabric_capability_contract_history WHERE capability_id='health.reminder.send' ORDER BY version`).all()) as Array<{
+        version: number; contract_json: string; contract_digest: string
+      }>
+    expect(history.map(item => item.version)).toEqual([1, 2])
+    const v1 = JSON.parse(history[0].contract_json) as { inputSchema: { required: string[]; properties: Record<string, unknown> } }
+    expect(v1.inputSchema.required).toContain('messageText')
+    expect(v1.inputSchema.properties).toHaveProperty('messageText')
+    expect(history[1].contract_digest).toBe(getFabricCapability('health.reminder.send')!.contractDigest)
+  })
+
+  it('fails closed instead of promoting an unknown same-version reminder digest', () => {
+    ensureBuiltInFabricRegistry()
+    withActionFabricDb(db => {
+      db.exec(`DROP TABLE fabric_capability_contract_history;
+        UPDATE fabric_meta SET value='4' WHERE key='schema_version';`)
+      db.prepare(`UPDATE fabric_capabilities SET version=1,contract_digest=?
+        WHERE id='health.reminder.send'`).run('f'.repeat(64))
+      db.prepare(`UPDATE fabric_executor_capabilities SET capability_version=1,contract_digest=?
+        WHERE capability_id='health.reminder.send'`).run('f'.repeat(64))
+    })
+    expect(() => ensureBuiltInFabricRegistry()).toThrow(/reminder.*digest|contract.*unknown/i)
+    const row = withActionFabricDb(db => db.prepare(
+      "SELECT version,contract_digest FROM fabric_capabilities WHERE id='health.reminder.send'",
+    ).get())
+    expect(row).toEqual({ version: 1, contract_digest: 'f'.repeat(64) })
+  })
+
+  it('stops a captured reminder v1 at the stale-contract boundary before transport', async () => {
+    ensureBuiltInFabricRegistry()
+    const v1 = withActionFabricDb(db => db.prepare(`SELECT contract_digest FROM fabric_capability_contract_history
+      WHERE capability_id='health.reminder.send' AND version=1`).get()) as { contract_digest: string }
+    const execute = vi.fn()
+    const unsupported = vi.fn(async () => ({ outcome: 'unsupported' as const, output: {}, evidence: [],
+      errorCode: 'unsupported', safeToRetry: false }))
+    registerFabricExecutorAdapter({ id: 'health-weixin', type: 'connector', prepare: unsupported, execute,
+      verify: unsupported, interrupt: unsupported, compensate: unsupported } as unknown as FabricExecutorAdapter)
+    const resolved = resolveFabricExecutor('health.reminder.send', { environments: ['production'] })!
+    await expect(invokeFabricExecutor('execute', {
+      intentId: 'intent-v1', workflowId: 'workflow-v1', stepId: 'step-v1', executorId: 'health-weixin',
+      executorType: 'connector', capabilityId: 'health.reminder.send', capabilityVersion: 1,
+      contractDigest: v1.contract_digest, policyEvaluationToken: resolved.policyEvaluationToken,
+      executionToken: 'execution-v1', input: { schemaVersion: 1, actionId: 'legacy-action',
+        recipient: 'configured-self', messageCode: 'legacy', messageText: 'arbitrary legacy text' },
+      target: { kind: 'health_recipient', recipient: 'configured-self' }, now: '2026-07-14T00:00:00.000Z',
+    })).rejects.toThrow('FABRIC_EXECUTOR_BINDING_INVALID')
+    expect(execute).not.toHaveBeenCalled()
+  })
 })
+
+function capabilityContract(current: NonNullable<ReturnType<typeof getFabricCapability>>,
+  version: number, inputSchema: Record<string, unknown>) {
+  return { id: current.id, version, description: current.description, inputSchema, outputSchema: current.outputSchema,
+    risk: current.risk, sideEffect: current.sideEffect, idempotency: current.idempotency, reversible: current.reversible,
+    compensationCapabilityId: current.compensationCapabilityId, verificationStrategy: current.verificationStrategy,
+    authentication: current.authentication, targetRestrictions: current.targetRestrictions, cost: current.cost }
+}
+
+function contractDigest(input: object): string {
+  return createHash('sha256').update(stableStringify(input)).digest('hex')
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+  if (value !== null && typeof value === 'object') return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(',')}}`
+  return JSON.stringify(value)
+}

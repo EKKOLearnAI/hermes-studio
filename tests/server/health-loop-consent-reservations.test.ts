@@ -67,10 +67,78 @@ describe('health consent reservations', () => {
     const authorized = createAuthorizedAuxiliaryVisionExecutorAnalyzer(auxiliary)
     await expect(authorized.analyze({ artifactId, manifestDigest: binding.artifactManifestDigest,
       processorId: binding.processorId, requestedAt: '2026-07-14T01:00:00.000Z', signal: new AbortController().signal,
-      authorization: authorizedConsumption.authorization })).resolves.toMatchObject({ processorReceiptId: expect.any(String) })
+      authorization: authorizedConsumption.authorization })).resolves.toMatchObject({ result: { status: 'completed' } })
     expect(duplicateConsume).not.toHaveBeenCalled()
     await expect(auxiliary.analyze({ schemaVersion: 'health-analysis-request/v1', profile: 'default', purpose: 'skin',
       sourceId: 'ordinary-call', observedAt: '2026-07-14T01:00:00.000Z', artifactIds: [artifactId],
       selectedRegions: ['face'], requestedFields: ['appearances'] })).rejects.toMatchObject({ code: 'HEALTH_ANALYSIS_INVALID_REQUEST' })
+  })
+
+  it('rejects multi-artifact disclosure before the remote vault or processor can be reached', async () => {
+    const { createHealthConsentBroker } = await import('../../packages/server/src/services/hermes/health-loop/consent')
+    const { createHealthArtifactVault } = await import('../../packages/server/src/services/hermes/health-loop/artifacts')
+    const { createAuxiliaryVisionAnalyzer } = await import('../../packages/server/src/services/hermes/health-loop/analyzers/auxiliary-vision')
+    const { createAuthorizedAuxiliaryVisionExecutorAnalyzer } = await import('../../packages/server/src/services/hermes/health-loop/executors/analysis')
+    const vault = createHealthArtifactVault({ accessController: {
+      secureDirectory: async () => undefined, secureFile: async () => undefined,
+    } })
+    const first = await vault.store({ content: Buffer.from('%PDF-1.7\nfirst-health-artifact'), declaredMediaType: 'application/pdf',
+      source: 'reservation-test', sourceId: 'multi-1', metadata: {} })
+    const second = await vault.store({ content: Buffer.from('%PDF-1.7\nsecond-health-artifact'), declaredMediaType: 'application/pdf',
+      source: 'reservation-test', sourceId: 'multi-2', metadata: {} })
+    const manifest = { artifactIds: [first.id, second.id], processor: 'processor:test', purpose: 'skin' as const,
+      selectedRegions: ['face'], requestedFields: ['appearances'], retention: 'no_retention' as const }
+    const broker = createHealthConsentBroker({ allowedProcessors: ['processor:test'] })
+    const grant = await broker.issue(manifest)
+    await expect(broker.reserve(grant.token, manifest, { artifactId: first.id,
+      artifactManifestDigest: 'c'.repeat(64), processorId: 'processor:test' }))
+      .rejects.toThrow('HEALTH_CONSENT_INVALID')
+
+    const read = vi.fn()
+    const client = { analyze: vi.fn() }
+    const auxiliary = createAuxiliaryVisionAnalyzer({ resolver: async () => ({ provider: 'processor:test', model: 'vision-1',
+      locality: 'remote', timeoutMs: 1000 }), client, vault: { read } })
+    const authorized = createAuthorizedAuxiliaryVisionExecutorAnalyzer(auxiliary)
+    await expect(authorized.analyze({ artifactId: first.id, manifestDigest: 'c'.repeat(64), processorId: 'processor:test',
+      requestedAt: '2026-07-14T01:00:00.000Z', signal: new AbortController().signal }))
+      .rejects.toThrow('HEALTH_ANALYSIS_CONSENT_DENIED')
+    expect(read).not.toHaveBeenCalled()
+    expect(client.analyze).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when reservation or parent grant causality is tampered after reserve', async () => {
+    const { createHealthConsentBroker } = await import('../../packages/server/src/services/hermes/health-loop/consent')
+    const { createHealthConsentReservationConsumer } = await import('../../packages/server/src/services/hermes/health-loop/executors/analysis')
+    const { createHealthArtifactVault } = await import('../../packages/server/src/services/hermes/health-loop/artifacts')
+    const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
+    const vault = createHealthArtifactVault({ accessController: {
+      secureDirectory: async () => undefined, secureFile: async () => undefined,
+    } })
+    const artifact = await vault.store({ content: Buffer.from('%PDF-1.7\ntamper-artifact'), declaredMediaType: 'application/pdf',
+      source: 'reservation-test', sourceId: 'tamper-1', metadata: {} })
+    const manifest = { artifactIds: [artifact.id], processor: 'processor:test', purpose: 'skin' as const,
+      selectedRegions: ['face'], requestedFields: ['appearances'], retention: 'no_retention' as const }
+    const binding = { artifactId: artifact.id, artifactManifestDigest: 'd'.repeat(64), processorId: 'processor:test' }
+    const broker = createHealthConsentBroker({ allowedProcessors: ['processor:test'],
+      clock: () => new Date('2026-07-14T01:00:00.000Z') })
+    const consumer = createHealthConsentReservationConsumer(broker)
+    const mutations = [
+      (consentId: string, _reservationId: string) => withPersonalTwinDb(db =>
+        db.prepare("UPDATE twin_artifact_consents SET revoked_at='2026-07-14T01:00:01.000Z' WHERE consent_id=?").run(consentId)),
+      (consentId: string, _reservationId: string) => withPersonalTwinDb(db =>
+        db.prepare("UPDATE twin_artifact_consents SET consumed_at='2026-07-14T01:00:02.000Z' WHERE consent_id=?").run(consentId)),
+      (_consentId: string, reservationId: string) => withPersonalTwinDb(db =>
+        db.prepare("UPDATE twin_artifact_consent_reservations SET expires_at='2026-07-14T01:01:00.000Z' WHERE reservation_id=?").run(reservationId)),
+      (consentId: string, _reservationId: string) => withPersonalTwinDb(db =>
+        db.prepare("UPDATE twin_artifact_consents SET processor='processor:tampered' WHERE consent_id=?").run(consentId)),
+    ]
+    for (const [index, mutate] of mutations.entries()) {
+      const caseManifest = { ...manifest, selectedRegions: [`face-${index}`] }
+      const grant = await broker.issue(caseManifest)
+      const reservation = await broker.reserve(grant.token, caseManifest, binding)
+      mutate(reservation.consentId, reservation.reservationId)
+      await expect(consumer.consume({ consentId: reservation.reservationId, artifactId: artifact.id,
+        manifestDigest: binding.artifactManifestDigest, processorId: binding.processorId })).rejects.toThrow()
+    }
   })
 })

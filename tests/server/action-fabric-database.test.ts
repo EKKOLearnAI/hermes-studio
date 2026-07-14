@@ -9,6 +9,7 @@ const REQUIRED_TABLES = [
   'fabric_audit_events',
   'fabric_budget_ledger',
   'fabric_capabilities',
+  'fabric_capability_contract_history',
   'fabric_control_state',
   'fabric_executor_capabilities',
   'fabric_executors',
@@ -21,6 +22,7 @@ const REQUIRED_TABLES = [
 
 const REQUIRED_INDEX_SIGNATURES = [
   { name: 'idx_fabric_audit_sequence', table: 'fabric_audit_events', unique: 1, columns: ['sequence'], partial: 0 },
+  { name: 'idx_fabric_capability_contract_history_digest', table: 'fabric_capability_contract_history', unique: 0, columns: ['capability_id', 'contract_digest'], partial: 0 },
   { name: 'idx_fabric_budget_daily', table: 'fabric_budget_ledger', unique: 0, columns: ['requested_by_user_id', 'requested_by_role_id', 'ledger_date', 'currency', 'status'], partial: 0 },
   { name: 'idx_fabric_executor_capability', table: 'fabric_executor_capabilities', unique: 0, columns: ['capability_id', 'capability_version', 'executor_id'], partial: 0 },
   { name: 'idx_fabric_intent_idempotency', table: 'fabric_action_intents', unique: 1, columns: ['requested_by_user_id', 'requested_by_role_id', 'idempotency_key'], partial: 0 },
@@ -31,6 +33,8 @@ const REQUIRED_INDEX_SIGNATURES = [
 ]
 
 const REQUIRED_JSON_TRIGGERS = [
+  'fabric_capability_contract_history_json_insert',
+  'fabric_capability_contract_history_json_update',
   'fabric_capabilities_json_insert',
   'fabric_capabilities_json_update',
   'fabric_executors_json_insert',
@@ -54,7 +58,7 @@ function seedJsonConstrainedRows(db: DatabaseSync): void {
       side_effect, idempotency, reversible, verification_strategy, authentication_json,
       target_restrictions_json, contract_digest, enabled, created_at, updated_at
     ) VALUES ('json.capability', 1, 'test', 'json', 'JSON fixture', '{}', '{}', 'none',
-      0, 'supported', 0, 'result_match', '[]', '[]', 'digest', 1, 'now', 'now');
+      0, 'supported', 0, 'result_match', '[]', '[]', 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', 1, 'now', 'now');
     INSERT INTO fabric_executors(
       id, type, name, environment, health, health_details_json, configuration_json,
       enabled, policy_version, created_at, updated_at
@@ -62,7 +66,7 @@ function seedJsonConstrainedRows(db: DatabaseSync): void {
       1, 1, 'now', 'now');
     INSERT INTO fabric_executor_capabilities(
       executor_id, capability_id, capability_version, contract_digest, created_at
-    ) VALUES ('json-executor', 'json.capability', 1, 'digest', 'now');
+    ) VALUES ('json-executor', 'json.capability', 1, 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', 'now');
     INSERT INTO fabric_action_intents(
       id, capability_id, capability_version, requested_by_role_id, requested_by_user_id,
       idempotency_key, goal, target_json, input_json, constraints_json, rationale,
@@ -107,7 +111,7 @@ describe('action fabric database', () => {
     if (hermesHome) rmSync(hermesHome, { recursive: true, force: true })
   })
 
-  it('creates one global database below Hermes home with schema version four', async () => {
+  it('creates one global database below Hermes home with schema version five', async () => {
     const { getActionFabricDbPath, withActionFabricDb } = await import(
       '../../packages/server/src/services/hermes/action-fabric'
     )
@@ -144,7 +148,7 @@ describe('action fabric database', () => {
         expect(index).toMatchObject({ unique: signature.unique, partial: signature.partial })
         expect(columns).toEqual(signature.columns)
       }
-      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '4' })
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '5' })
       expect((db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='fabric_executors'").get() as { sql: string }).sql)
         .toContain("'connector'")
       expect((db.prepare('PRAGMA table_info(fabric_outbox)').all() as Array<{
@@ -174,7 +178,7 @@ describe('action fabric database', () => {
     initActionFabricSchema(db)
 
     try {
-      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '4' })
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '5' })
       expect(db.prepare('SELECT COUNT(*) AS count FROM fabric_control_state').get()).toEqual({ count: 1 })
       expect((db.prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'fabric_%'",
@@ -210,7 +214,7 @@ describe('action fabric database', () => {
     initActionFabricSchema(db)
 
     try {
-      expect(db.prepare("SELECT value FROM fabric_meta WHERE key='schema_version'").get()).toEqual({ value: '4' })
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key='schema_version'").get()).toEqual({ value: '5' })
       expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
       expect(() => db.prepare(`INSERT INTO fabric_executors(
         id,type,name,environment,health,health_details_json,configuration_json,enabled,policy_version,created_at,updated_at
@@ -272,7 +276,7 @@ describe('action fabric database', () => {
     ) VALUES ('outbox-existing', 'fabric.test', 'aggregate', '{}', 'pending', 0, '2026-07-12T00:00:00.000Z', '2026-07-12T00:00:00.000Z')`).run()
 
     initActionFabricSchema(db)
-    expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '4' })
+    expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '5' })
     expect(db.prepare('SELECT id, claim_token FROM fabric_outbox').all()).toEqual([
       { id: 'outbox-existing', claim_token: null },
     ])
@@ -291,7 +295,7 @@ describe('action fabric database', () => {
     initActionFabricSchema(db)
 
     try {
-      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '4' })
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '5' })
       expect(db.prepare("SELECT payload_json FROM fabric_outbox WHERE id = 'json-outbox'").get()).toEqual({ payload_json: '{}' })
       expect(db.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'fabric_%_json_%'").get())
         .toEqual({ count: REQUIRED_JSON_TRIGGERS.length })
@@ -438,7 +442,7 @@ describe('action fabric database', () => {
     mkdirSync(join(hermesHome, 'personal'), { recursive: true })
     const db = new DatabaseSync(getActionFabricDbPath())
     db.exec('CREATE TABLE fabric_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
-    db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run('schema_version', '5')
+    db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run('schema_version', '6')
     db.close()
 
     expect(() => withActionFabricDb(current => current.prepare('SELECT 1').get())).toThrow(
@@ -496,7 +500,7 @@ describe('action fabric database', () => {
 
     try {
       expect(withActionFabricDb(db => db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()))
-        .toEqual({ value: '4' })
+        .toEqual({ value: '5' })
     } finally {
       writer.exec('ROLLBACK')
       writer.close()
@@ -617,7 +621,8 @@ describe('action fabric database', () => {
           side_effect, idempotency, reversible, verification_strategy, authentication_json,
           target_restrictions_json, contract_digest, enabled, created_at, updated_at
         ) VALUES ('simulator.echo', 1, 'simulator', 'echo', 'Echo', '{}', '{}', 'none',
-          0, 'supported', 0, 'result_match', '[]', '[]', 'digest', 1, 'now', 'now')
+          0, 'supported', 0, 'result_match', '[]', '[]',
+          'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', 1, 'now', 'now')
       `).run()
       db.prepare(`
         INSERT INTO fabric_action_intents(
@@ -633,6 +638,33 @@ describe('action fabric database', () => {
     })
   })
 
+  it('asserts immutable capability contract history columns, FK, index, and triggers', async () => {
+    const { withActionFabricDb } = await import('../../packages/server/src/services/hermes/action-fabric')
+    withActionFabricDb(db => {
+      expect((db.prepare("PRAGMA table_info('fabric_capability_contract_history')").all() as Array<{ name: string }>).map(row => row.name))
+        .toEqual(['capability_id', 'version', 'contract_json', 'contract_digest', 'created_at'])
+      expect(db.prepare("PRAGMA foreign_key_list('fabric_capability_contract_history')").all()).toEqual([
+        expect.objectContaining({ table: 'fabric_capabilities', from: 'capability_id', to: 'id',
+          on_update: 'NO ACTION', on_delete: 'CASCADE', match: 'NONE' }),
+      ])
+      expect((db.prepare("PRAGMA index_info('idx_fabric_capability_contract_history_digest')").all() as Array<{ name: string }>).map(row => row.name))
+        .toEqual(['capability_id', 'contract_digest'])
+      expect(db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name='fabric_capability_contract_history_no_update'").get())
+        .toEqual({ name: 'fabric_capability_contract_history_no_update' })
+      expect(db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name='fabric_capability_contract_history_no_delete'").get())
+        .toEqual({ name: 'fabric_capability_contract_history_no_delete' })
+    })
+  })
+
+  it('fails closed when the capability history index signature is corrupt', async () => {
+    const { withActionFabricDb } = await import('../../packages/server/src/services/hermes/action-fabric')
+    withActionFabricDb(db => db.exec(`DROP INDEX idx_fabric_capability_contract_history_digest;
+      CREATE INDEX idx_fabric_capability_contract_history_digest
+        ON fabric_capability_contract_history(version);`))
+    expect(() => withActionFabricDb(db => db.prepare('SELECT 1').get()))
+      .toThrow(/index signature mismatch.*capability_contract_history/i)
+  })
+
   it('rejects half-specified currency and amount pairs', async () => {
     const { withActionFabricDb } = await import('../../packages/server/src/services/hermes/action-fabric')
 
@@ -644,7 +676,8 @@ describe('action fabric database', () => {
           target_restrictions_json, cost_currency, cost_estimated_minor, contract_digest, enabled,
           created_at, updated_at
         ) VALUES (?, 1, 'simulator', 'echo', 'Echo', '{}', '{}', 'none', 0, 'supported', 0,
-          'result_match', '[]', '[]', ?, ?, 'digest', 1, 'now', 'now')
+          'result_match', '[]', '[]', ?, ?,
+          'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', 1, 'now', 'now')
       `)
       expect(() => insertCapability.run('simulator.paid', null, 1)).toThrow(/check constraint/i)
       insertCapability.run('simulator.echo', null, 0)

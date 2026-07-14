@@ -61,6 +61,10 @@ describe('personal twin database', () => {
         .toEqual(['consent_id', 'manifest_digest', 'processor', 'scope_json', 'issued_at', 'expires_at', 'consumed_at', 'revoked_at'])
       expect((db.prepare("PRAGMA table_info('twin_artifact_consent_reservations')").all() as Array<{ name: string }>).map(row => row.name))
         .toEqual(['reservation_id', 'consent_id', 'artifact_id', 'artifact_manifest_digest', 'processor', 'reserved_at', 'expires_at', 'consumed_at'])
+      expect(db.prepare("PRAGMA foreign_key_list('twin_artifact_consent_reservations')").all()).toEqual([
+        expect.objectContaining({ table: 'twin_artifact_consents', from: 'consent_id', to: 'consent_id',
+          on_update: 'NO ACTION', on_delete: 'NO ACTION', match: 'NONE' }),
+      ])
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_twin_artifacts_source_identity'").get())
         .toEqual({ name: 'idx_twin_artifacts_source_identity' })
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_twin_artifact_consents_status'").get())
@@ -558,6 +562,28 @@ describe('personal twin database', () => {
       '2026-07-14T01:00:00.000Z', '2026-07-14T01:05:00.000Z')).toThrow()
     db.exec('DROP INDEX idx_twin_artifact_consent_reservations_status')
     expect(() => initPersonalTwinSchema(db)).toThrow(/consent.reservation.*index signature|index signature.*reservation/i)
+    expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '7' })
+    db.close()
+  })
+
+  it('fails closed when the v7 reservation foreign-key signature is replaced', async () => {
+    const { initPersonalTwinSchema } = await import('../../packages/server/src/services/hermes/personal-twin')
+    const db = new DatabaseSync(':memory:')
+    initPersonalTwinSchema(db)
+    db.exec(`PRAGMA foreign_keys=OFF;
+      DROP INDEX idx_twin_artifact_consent_reservations_status;
+      ALTER TABLE twin_artifact_consent_reservations RENAME TO reservations_valid;
+      CREATE TABLE twin_artifact_consent_reservations (
+        reservation_id TEXT PRIMARY KEY, consent_id TEXT NOT NULL, artifact_id TEXT NOT NULL,
+        artifact_manifest_digest TEXT NOT NULL, processor TEXT NOT NULL, reserved_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL, consumed_at TEXT,
+        FOREIGN KEY(consent_id) REFERENCES twin_artifact_consents(consent_id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_twin_artifact_consent_reservations_status
+        ON twin_artifact_consent_reservations(processor,expires_at,consumed_at);
+      DROP TABLE reservations_valid;
+      PRAGMA foreign_keys=ON;`)
+    expect(() => initPersonalTwinSchema(db)).toThrow(/consent reservation.*foreign key|foreign key.*reservation/i)
     expect(db.prepare("SELECT value FROM twin_meta WHERE key='schema_version'").get()).toEqual({ value: '7' })
     db.close()
   })

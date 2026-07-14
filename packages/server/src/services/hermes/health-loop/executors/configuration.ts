@@ -8,6 +8,7 @@ import { createHealthSourceExecutorAdapter, type HealthSourceService } from './s
 import type { HealthPlanRepository } from './plan'
 import type {
   HealthAnalysisArtifactResolver, HealthAnalysisConsentConsumer, HealthExecutorAnalyzer,
+  HealthAnalysisResultWriter,
 } from './analysis'
 import type { WeixinReceiptSender } from '../../weixin-sender'
 
@@ -16,9 +17,11 @@ export interface HealthFabricExecutorDependencies {
   planRepository?: HealthPlanRepository
   localAnalyzer?: HealthExecutorAnalyzer
   localArtifactResolver?: HealthAnalysisArtifactResolver
+  localResultWriter?: HealthAnalysisResultWriter
   remoteAnalyzer?: HealthExecutorAnalyzer
   remoteArtifactResolver?: HealthAnalysisArtifactResolver
   remoteConsentConsumer?: HealthAnalysisConsentConsumer
+  remoteResultWriter?: HealthAnalysisResultWriter
   weixinSender?: WeixinReceiptSender
   profile?: string
 }
@@ -36,9 +39,10 @@ export function createConfiguredHealthFabricExecutorAdapters(): readonly FabricE
     createHealthSourceExecutorAdapter(dependencies.sourceService),
     createHealthPlanExecutorAdapter({ repository: dependencies.planRepository }),
     createHealthAnalysisExecutorAdapter({ locality: 'local', analyzer: dependencies.localAnalyzer,
-      artifactResolver: dependencies.localArtifactResolver }),
+      artifactResolver: dependencies.localArtifactResolver, resultWriter: dependencies.localResultWriter }),
     createHealthAnalysisExecutorAdapter({ locality: 'remote', analyzer: dependencies.remoteAnalyzer,
-      artifactResolver: dependencies.remoteArtifactResolver, consentConsumer: dependencies.remoteConsentConsumer }),
+      artifactResolver: dependencies.remoteArtifactResolver, consentConsumer: dependencies.remoteConsentConsumer,
+      resultWriter: dependencies.remoteResultWriter }),
     createHealthWeixinExecutorAdapter({ profile,
       sender: dependencies.weixinSender ?? createWeixinReceiptSender(profile) }),
   ]

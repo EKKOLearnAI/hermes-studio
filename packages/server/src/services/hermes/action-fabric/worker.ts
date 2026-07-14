@@ -314,6 +314,11 @@ function claimNextWorkflow(workerId: string, now: Date, emergencyOnly = false): 
     } catch (error) {
       return moveInvalidContractToWaitingUser(db, row, nowIso, stableErrorClass(error))
     }
+    try {
+      assertCapturedContractCurrent(db, claim)
+    } catch (error) {
+      return moveInvalidContractToWaitingUser(db, row, nowIso, stableErrorClass(error))
+    }
     // Emergency interruption is authorized by the current control state, not by
     // the now-stale policy snapshot that originally authorized the side effect.
     if (phase === 'interrupt') claim.controlVersion = control.version
@@ -466,6 +471,26 @@ function buildClaim(
 
 function executorConfiguration(row: CandidateRow): FabricJsonObject {
   return parseObject(row.executor_configuration_json)
+}
+
+function assertCapturedContractCurrent(db: DatabaseSync, claim: WorkflowClaim): void {
+  const current = db.prepare(`SELECT c.version capability_version,c.contract_digest capability_digest,
+      b.capability_version binding_version,b.contract_digest binding_digest
+    FROM fabric_capabilities c
+    LEFT JOIN fabric_executor_capabilities b ON b.capability_id=c.id AND b.executor_id=?
+    WHERE c.id=?`).get(claim.executorId, claim.capabilityId) as {
+      capability_version: number
+      capability_digest: string
+      binding_version: number | null
+      binding_digest: string | null
+    } | undefined
+  if (!current || current.capability_version !== claim.capabilityVersion
+    || current.binding_version !== claim.capabilityVersion) {
+    throw new Error('FABRIC_CAPABILITY_VERSION_STALE')
+  }
+  if (current.capability_digest !== claim.contractDigest || current.binding_digest !== claim.contractDigest) {
+    throw new Error('FABRIC_CAPABILITY_CONTRACT_STALE')
+  }
 }
 
 function commitClaim(
@@ -744,8 +769,19 @@ function moveInvalidContractToWaitingUser(db: DatabaseSync, row: CandidateRow, n
     db.prepare(`UPDATE fabric_steps SET state='waiting_user',last_error_code=?,updated_at=?
       WHERE workflow_id=? AND state IN ('pending','running')`).run(errorCode, now, row.workflow_id)
     auditTransition(db, row, row.workflow_state, 'waiting_user', 'captured_contract_invalid', now)
+    const payload = { from: row.workflow_state, to: 'waiting_user', reason: contractReviewReason(errorCode) }
+    appendFabricAuditEvent(db, { eventType: 'workflow.contract_review_required',
+      actorUserId: row.requested_by_user_id, aggregateType: 'workflow', aggregateId: row.workflow_id,
+      payload, occurredAt: now })
+    appendFabricOutbox(db, 'fabric.workflow.contract_review_required', row.workflow_id, payload)
   }
   return null
+}
+
+function contractReviewReason(errorCode: string): string {
+  if (errorCode === 'FABRIC_CAPABILITY_VERSION_STALE') return 'capability_version_stale'
+  if (errorCode === 'FABRIC_CAPABILITY_CONTRACT_STALE') return 'capability_contract_stale'
+  return 'captured_contract_invalid'
 }
 
 function moveControlChangedToWaitingUser(
