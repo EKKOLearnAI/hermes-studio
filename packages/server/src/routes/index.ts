@@ -51,6 +51,7 @@ import { autopilotReminderRoutes } from './hermes/autopilot-reminders'
 import { personalTwinRoutes } from './hermes/personal-twin'
 import { assistantRoleRoutes } from './hermes/assistant-roles'
 import { actionFabricRoutes } from './hermes/action-fabric'
+import { healthLoopRoutes } from './hermes/health-loop'
 
 /**
  * Register all routes on the Koa app.
@@ -115,4 +116,5 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(personalTwinRoutes.routes())          // Global Personal Twin
   app.use(assistantRoleRoutes.routes())         // Assistant role registry and context preview
   app.use(actionFabricRoutes.routes())          // Action Fabric capability, workflow, audit, and control API
+  app.use(healthLoopRoutes.routes())             // Health closed loop API
 }

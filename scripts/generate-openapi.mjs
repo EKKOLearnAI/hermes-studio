@@ -82,6 +82,7 @@ const tagMappings = {
   'routes/hermes/personal-twin.ts': { name: 'Personal Twin', description: 'Global personal digital twin state and legacy synchronization' },
   'routes/hermes/assistant-roles.ts': { name: 'Assistant Roles', description: 'Assistant role registry, profile mappings, scoped context previews, and context recipes' },
   'routes/hermes/action-fabric.ts': { name: 'Action Fabric', description: 'Governed capability discovery, durable action workflows, audit, and emergency controls' },
+  'routes/hermes/health-loop.ts': { name: 'Health Loop', description: 'Protected health ingestion, artifact consent, intervention feedback, and automation settings' },
   'routes/hermes/performance-monitor.ts': { name: 'Performance', description: 'Runtime performance monitoring' },
   'routes/hermes/terminal.ts': { name: 'Terminal', description: 'WebSocket terminal' },
   'routes/health.ts': { name: 'Health', description: 'Health check' },
@@ -1574,6 +1575,53 @@ openapi.paths['/api/hermes/terminal'] = {
 // Add Terminal tag
 if (!openapi.tags.find(t => t.name === 'Terminal')) {
   openapi.tags.push({ name: 'Terminal', description: 'WebSocket terminal access' })
+}
+
+// Health Loop uses strict DTOs and multipart upload; keep these contracts explicit instead of
+// relying on the generic body-field inference used by legacy controllers.
+const healthId = { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$' }
+const healthDigest = { type: 'string', pattern: '^[a-f0-9]{64}$' }
+const healthTimestamp = { type: 'string', format: 'date-time', maxLength: 64 }
+const exactObject = (properties, required = []) => ({ type: 'object', properties, ...(required.length ? { required } : {}), additionalProperties: false })
+const healthManifest = exactObject({
+  artifactIds: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'string', pattern: '^artifact-[a-f0-9]{64}$' } },
+  processor: healthId,
+  purpose: { type: 'string', enum: ['measurement', 'posture', 'skin', 'diet', 'internal_health'] },
+  selectedRegions: { type: 'array', maxItems: 64, items: { type: 'string', maxLength: 160 } },
+  requestedFields: { type: 'array', minItems: 1, maxItems: 128, items: { type: 'string', maxLength: 100 } },
+  retention: { type: 'string', enum: ['no_retention', 'session', '24_hours'] },
+}, ['artifactIds', 'processor', 'purpose', 'selectedRegions', 'requestedFields', 'retention'])
+Object.assign(openapi.components.schemas, {
+  HealthLoopError: exactObject({ error: { type: 'string' }, code: { type: 'string', pattern: '^HEALTH_[A-Z0-9_]+$' } }, ['error', 'code']),
+  HealthLoopOverviewResponse: { type: 'object', additionalProperties: false, properties: { settings: { type: 'object' }, connectors: { type: 'array', items: { type: 'object' } }, summary: { type: 'object' } }, required: ['settings', 'connectors', 'summary'] },
+  HealthConnectorListResponse: { type: 'object', additionalProperties: false, properties: { connectors: { type: 'array', items: { type: 'object' } } }, required: ['connectors'] },
+  HealthActionResponse: { type: 'object', additionalProperties: false, properties: { intent: { type: 'object' }, policyDecision: { type: 'object' }, workflow: { type: 'object' } }, required: ['intent', 'policyDecision', 'workflow'] },
+  HealthArtifactResponse: { type: 'object', additionalProperties: false, properties: { artifact: { type: 'object' } }, required: ['artifact'] },
+  HealthConsentGrantResponse: { type: 'object', additionalProperties: false, properties: { consent: { type: 'object' } }, required: ['consent'] },
+  HealthConsentRevocationResponse: { type: 'object', additionalProperties: false, properties: { consent: { type: 'object' } }, required: ['consent'] },
+  HealthInterventionListResponse: { type: 'object', additionalProperties: false, properties: { interventions: { type: 'array', items: { type: 'object' } } }, required: ['interventions'] },
+  HealthFeedbackResponse: { type: 'object', additionalProperties: false, properties: { feedback: { type: 'object' } }, required: ['feedback'] },
+  HealthSettingsResponse: { type: 'object', additionalProperties: false, properties: { settings: { type: 'object' } }, required: ['settings'] },
+})
+const healthJsonBody = (path, method, schema) => {
+  openapi.paths[path][method].requestBody = { required: true, content: { 'application/json': { schema } } }
+}
+healthJsonBody('/api/hermes/health-loop/connectors/{id}/sync', 'post', exactObject({ cursor: { type: 'string', maxLength: 2048 }, requestedAt: healthTimestamp, idempotencyKey: healthId }))
+openapi.paths['/api/hermes/health-loop/artifacts'].post.requestBody = { required: true, content: { 'multipart/form-data': { schema: exactObject({ file: { type: 'string', format: 'binary' }, sourceId: healthId, metadata: { type: 'object', additionalProperties: true } }, ['file', 'sourceId']) } } }
+healthJsonBody('/api/hermes/health-loop/artifacts/{id}/analyze', 'post', exactObject({ mode: { type: 'string', enum: ['local', 'remote'] }, manifestDigest: healthDigest, processorId: healthId, consentToken: { type: 'string', pattern: '^[a-f0-9]{64}$', writeOnly: true }, manifest: healthManifest, idempotencyKey: healthId, requestedAt: healthTimestamp }, ['mode', 'manifestDigest']))
+healthJsonBody('/api/hermes/health-loop/consents', 'post', exactObject({ manifest: healthManifest, ttlMs: { type: 'integer', minimum: 1, maximum: 900000 } }, ['manifest']))
+healthJsonBody('/api/hermes/health-loop/consents/{id}/revoke', 'post', exactObject({}))
+healthJsonBody('/api/hermes/health-loop/interventions/{id}/feedback', 'post', exactObject({ feedbackId: healthId, outcome: { type: 'string', enum: ['completed', 'partial', 'skipped', 'deferred', 'adverse_feedback', 'unsuitable', 'data_incorrect', 'expired'] }, occurredAt: healthTimestamp }, ['feedbackId', 'outcome', 'occurredAt']))
+healthJsonBody('/api/hermes/health-loop/settings', 'put', exactObject({ expectedVersion: { type: 'integer', minimum: 1 }, liveDeliveryEnabled: { type: 'boolean' }, profile: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$' }, recipient: { type: 'string', enum: ['configured-self'] }, configuredConnectors: { type: 'array', maxItems: 32, items: healthId }, configuredProcessors: { type: 'array', maxItems: 32, items: healthId } }, ['expectedVersion', 'liveDeliveryEnabled', 'profile', 'recipient']))
+for (const [path, method, status] of [
+  ['/api/hermes/health-loop/connectors/{id}/sync', 'post', '202'],
+  ['/api/hermes/health-loop/artifacts/{id}/analyze', 'post', '202'],
+  ['/api/hermes/health-loop/artifacts', 'post', '201'],
+  ['/api/hermes/health-loop/consents', 'post', '201'],
+]) {
+  const responses = openapi.paths[path][method].responses
+  responses[status] = responses['200']
+  delete responses['200']
 }
 
 // Write output

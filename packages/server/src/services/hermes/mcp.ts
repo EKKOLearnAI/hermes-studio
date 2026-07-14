@@ -5,6 +5,16 @@ export type { McpServerEntry, McpActionResponse } from './mcp-types'
 
 let bridgeClient: AgentBridgeClient | null = null
 
+/** Bounded health-loop discovery metadata. Execution remains behind HTTP auth and Action Fabric approval. */
+export const HEALTH_LOOP_MCP_CAPABILITIES = Object.freeze([
+  { kind: 'read', method: 'GET', path: '/api/hermes/health-loop/overview' },
+  { kind: 'read', method: 'GET', path: '/api/hermes/health-loop/connectors' },
+  { kind: 'read', method: 'GET', path: '/api/hermes/health-loop/interventions' },
+  { kind: 'read', method: 'GET', path: '/api/hermes/health-loop/settings' },
+  { kind: 'action', method: 'POST', path: '/api/hermes/health-loop/connectors/{id}/sync', authorization: 'super_admin', approval: 'action_fabric' },
+  { kind: 'action', method: 'POST', path: '/api/hermes/health-loop/artifacts/{id}/analyze', authorization: 'super_admin', approval: 'action_fabric' },
+] as const)
+
 export function getBridgeClient(): AgentBridgeClient {
   if (!bridgeClient) {
     bridgeClient = new AgentBridgeClient()

@@ -366,6 +366,10 @@ const moduleHints = {
     purpose: 'Governed action capability discovery, intent creation, workflow review, audit inspection, and emergency stop. Phase 3 supports simulator and reversible internal executors only. No real MCP, browser, payment, device, Home Assistant, desktop, or Android execution is available.',
     keywords: ['action fabric', 'capability discovery', 'intent creation', 'workflow review', 'audit inspection', 'emergency stop'],
   },
+  'Health Loop': {
+    purpose: 'Read bounded health-loop status and request governed health actions. Authentication, super-admin checks, one-time consent, and Action Fabric approval remain enforced by the HTTP API.',
+    keywords: ['health', 'connector', 'artifact', 'consent', 'intervention'],
+  },
   'API Docs': {
     purpose: 'Discover the Web UI API catalog and generated OpenAPI metadata.',
     keywords: ['操作手册', '接口文档', 'API 文档', 'openapi', 'route catalog'],

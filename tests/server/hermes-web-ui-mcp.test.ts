@@ -1,6 +1,6 @@
 import { createServer } from 'http'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -290,5 +290,16 @@ describe('hermes-web-ui MCP server', () => {
 
     expect(code).toBe(0)
     expect(stdout.trim()).toBe(`hermes-web-ui-mcp v${pkg.version}`)
+  })
+
+  it('advertises bounded health-loop discovery without weakening HTTP authorization or exposing secrets', () => {
+    const source = readFileSync('bin/hermes-web-ui-mcp.mjs', 'utf8')
+    expect(source).toContain("'Health Loop':")
+    expect(source).toContain('Authentication, super-admin checks, one-time consent, and Action Fabric approval remain enforced')
+    const service = readFileSync('packages/server/src/services/hermes/mcp.ts', 'utf8')
+    expect(service).toContain('HEALTH_LOOP_MCP_CAPABILITIES')
+    expect(service).toContain("approval: 'action_fabric'")
+    expect(service).not.toContain('consentToken')
+    expect(service).not.toContain('relativePath')
   })
 })
