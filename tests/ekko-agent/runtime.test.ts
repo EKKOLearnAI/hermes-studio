@@ -470,12 +470,14 @@ describe('ekko-agent runtime', () => {
         { role: 'system', content: 'User system.' },
         { role: 'user', content: 'Go' },
       ],
+      model: 'test-model',
     })
 
     expect(requests[0].messages[0].content).toContain('Base prompt.')
     expect(requests[0].messages[0].content).toContain('Use tools carefully.')
     expect(requests[0].messages[0].content).toContain('Review for correctness.')
     expect(requests[0].messages[0].content).toContain('User system.')
+    expect(requests[0].messages[0].content).toContain('## Runtime Context\nprovider: test\nmodel: test-model')
     expect(requests[0].messages.filter(message => message.role === 'system')).toHaveLength(1)
   })
 
@@ -541,5 +543,23 @@ describe('ekko-agent runtime', () => {
     expect(prompt).toContain('Base')
     expect(prompt).not.toContain('Available Tools')
     expect(prompt).not.toContain('read_file')
+  })
+
+  it('buildSystemPrompt includes provider and model in runtime context', () => {
+    const prompt = buildSystemPrompt({
+      basePrompt: 'Base',
+      context: {
+        provider: 'openrouter',
+        model: 'anthropic/claude-sonnet-4',
+        workspaceRoot: '/tmp/workspace',
+      },
+    })
+
+    expect(prompt).toContain([
+      '## Runtime Context',
+      'provider: openrouter',
+      'model: anthropic/claude-sonnet-4',
+      'workspaceRoot: /tmp/workspace',
+    ].join('\n'))
   })
 })
