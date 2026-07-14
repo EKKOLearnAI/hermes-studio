@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 import { TWIN_DOMAINS } from './types'
 
-const SCHEMA_VERSION = 10
+const SCHEMA_VERSION = 11
 const RESERVATION_TABLE_SQL = `CREATE TABLE twin_artifact_consent_reservations (
   reservation_id TEXT PRIMARY KEY
     CHECK(length(reservation_id) BETWEEN 48 AND 64 AND reservation_id GLOB 'reservation-*'
@@ -30,6 +30,9 @@ const REQUIRED_TWIN_TABLES = [
   'twin_health_followups', 'twin_health_outbox_deliveries', 'twin_health_plans',
   'twin_health_authorization_grants',
   'twin_health_action_reservations',
+  'twin_home_spaces', 'twin_home_objects', 'twin_home_inventory_items', 'twin_home_inventory_ledger',
+  'twin_home_devices', 'twin_home_device_bindings', 'twin_home_device_states',
+  'twin_home_provider_events', 'twin_home_provider_cursors', 'twin_home_command_receipts',
 ]
 
 export function getPersonalTwinDbPath(): string {
@@ -103,7 +106,14 @@ export function initPersonalTwinSchema(db: DatabaseSync): void {
       createSchemaV9(db)
       setSchemaVersion(db, 9)
     }
-    if(version<10){createSchemaV10(db);setSchemaVersion(db,10)}
+    if (version < 10) {
+      createSchemaV10(db)
+      setSchemaVersion(db, 10)
+    }
+    if (version < 11) {
+      createSchemaV11(db)
+      setSchemaVersion(db, 11)
+    }
     normalizeLegacyArtifactSourceIndex(db)
     assertSchemaComplete(db, SCHEMA_VERSION)
     db.exec('COMMIT')
@@ -204,6 +214,7 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
     throw new Error(`Personal Twin schema version ${version} is incomplete: consent reservation foreign key signature is invalid`)
   }
   assertHealthRuntimeSchema(db, version)
+  assertHomeSchema(db, version)
 }
 
 interface ColumnInfo { name: string; type: string; notnull: number; pk: number; dflt_value: string | null }
@@ -730,6 +741,197 @@ function createSchemaV10(db:DatabaseSync):void {
     ON twin_health_action_reservations BEGIN SELECT RAISE(ABORT,'HEALTH_ACTION_RESERVATION_IMMUTABLE'); END;`)
 }
 
+function createSchemaV11(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS twin_home_spaces (
+      space_id TEXT PRIMARY KEY CHECK(length(space_id) BETWEEN 1 AND 160
+        AND space_id NOT GLOB '*[^a-zA-Z0-9:._-]*'),
+      kind TEXT NOT NULL CHECK(kind IN ('home','floor','room','zone','furniture','compartment','surface')),
+      name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 200),
+      parent_space_id TEXT REFERENCES twin_home_spaces(space_id),
+      attributes_json TEXT NOT NULL DEFAULT '{}'
+        CHECK(json_valid(attributes_json) AND json_type(attributes_json)='object'
+          AND length(CAST(attributes_json AS BLOB)) <= 65536),
+      version INTEGER NOT NULL CHECK(version >= 1),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      CHECK(parent_space_id IS NULL OR parent_space_id != space_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_twin_home_spaces_parent ON twin_home_spaces(parent_space_id,kind,name);
+
+    CREATE TABLE IF NOT EXISTS twin_home_objects (
+      object_id TEXT PRIMARY KEY CHECK(length(object_id) BETWEEN 1 AND 160
+        AND object_id NOT GLOB '*[^a-zA-Z0-9:._-]*'),
+      kind TEXT NOT NULL CHECK(length(kind) BETWEEN 1 AND 80 AND kind NOT GLOB '*[^a-z0-9._-]*'),
+      name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 200),
+      space_id TEXT REFERENCES twin_home_spaces(space_id),
+      attributes_json TEXT NOT NULL DEFAULT '{}'
+        CHECK(json_valid(attributes_json) AND json_type(attributes_json)='object'
+          AND length(CAST(attributes_json AS BLOB)) <= 65536),
+      version INTEGER NOT NULL CHECK(version >= 1),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_twin_home_objects_space ON twin_home_objects(space_id,kind,name);
+
+    CREATE TABLE IF NOT EXISTS twin_home_inventory_items (
+      item_id TEXT PRIMARY KEY CHECK(length(item_id) BETWEEN 1 AND 160
+        AND item_id NOT GLOB '*[^a-zA-Z0-9:._-]*'),
+      name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 200),
+      unit TEXT NOT NULL CHECK(length(unit) BETWEEN 1 AND 40 AND unit NOT GLOB '*[^a-zA-Z0-9._/-]*'),
+      quantity REAL NOT NULL CHECK(quantity >= 0),
+      low_stock_threshold REAL CHECK(low_stock_threshold IS NULL OR low_stock_threshold >= 0),
+      attributes_json TEXT NOT NULL DEFAULT '{}'
+        CHECK(json_valid(attributes_json) AND json_type(attributes_json)='object'
+          AND length(CAST(attributes_json AS BLOB)) <= 65536),
+      version INTEGER NOT NULL CHECK(version >= 1),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS twin_home_inventory_ledger (
+      entry_id TEXT PRIMARY KEY CHECK(length(entry_id) BETWEEN 1 AND 160
+        AND entry_id NOT GLOB '*[^a-zA-Z0-9:._-]*'),
+      item_id TEXT NOT NULL REFERENCES twin_home_inventory_items(item_id),
+      delta REAL NOT NULL CHECK(delta != 0),
+      resulting_quantity REAL NOT NULL CHECK(resulting_quantity >= 0),
+      reason TEXT NOT NULL CHECK(length(reason) BETWEEN 1 AND 200),
+      source TEXT NOT NULL CHECK(length(source) BETWEEN 1 AND 100 AND source NOT GLOB '*[^a-zA-Z0-9:._-]*'),
+      source_id TEXT NOT NULL CHECK(length(source_id) BETWEEN 1 AND 255),
+      created_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_twin_home_inventory_ledger_source
+      ON twin_home_inventory_ledger(source,source_id);
+    CREATE INDEX IF NOT EXISTS idx_twin_home_inventory_ledger_item
+      ON twin_home_inventory_ledger(item_id,created_at);
+
+    CREATE TABLE IF NOT EXISTS twin_home_devices (
+      device_id TEXT PRIMARY KEY CHECK(length(device_id) BETWEEN 1 AND 160
+        AND device_id NOT GLOB '*[^a-zA-Z0-9:._-]*'),
+      name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 200),
+      device_class TEXT NOT NULL CHECK(length(device_class) BETWEEN 1 AND 80
+        AND device_class NOT GLOB '*[^a-z0-9._-]*'),
+      space_id TEXT REFERENCES twin_home_spaces(space_id),
+      availability TEXT NOT NULL CHECK(availability IN ('available','unavailable','unknown')),
+      attributes_json TEXT NOT NULL DEFAULT '{}'
+        CHECK(json_valid(attributes_json) AND json_type(attributes_json)='object'
+          AND length(CAST(attributes_json AS BLOB)) <= 65536),
+      version INTEGER NOT NULL CHECK(version >= 1),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_twin_home_devices_space ON twin_home_devices(space_id,device_class,name);
+
+    CREATE TABLE IF NOT EXISTS twin_home_device_bindings (
+      binding_id TEXT PRIMARY KEY CHECK(length(binding_id) BETWEEN 1 AND 160
+        AND binding_id NOT GLOB '*[^a-zA-Z0-9:._-]*'),
+      device_id TEXT NOT NULL REFERENCES twin_home_devices(device_id),
+      provider TEXT NOT NULL CHECK(length(provider) BETWEEN 1 AND 80 AND provider NOT GLOB '*[^a-z0-9-]*'),
+      external_id TEXT NOT NULL CHECK(length(external_id) BETWEEN 1 AND 255),
+      capabilities_json TEXT NOT NULL DEFAULT '[]'
+        CHECK(json_valid(capabilities_json) AND json_type(capabilities_json)='array'
+          AND length(CAST(capabilities_json AS BLOB)) <= 16384),
+      metadata_json TEXT NOT NULL DEFAULT '{}'
+        CHECK(json_valid(metadata_json) AND json_type(metadata_json)='object'
+          AND length(CAST(metadata_json AS BLOB)) <= 65536),
+      version INTEGER NOT NULL CHECK(version >= 1),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_twin_home_binding_provider_identity
+      ON twin_home_device_bindings(provider,external_id);
+    CREATE INDEX IF NOT EXISTS idx_twin_home_bindings_device
+      ON twin_home_device_bindings(device_id,provider);
+
+    CREATE TABLE IF NOT EXISTS twin_home_provider_events (
+      provider_event_id TEXT PRIMARY KEY CHECK(length(provider_event_id) BETWEEN 1 AND 200
+        AND provider_event_id NOT GLOB '*[^a-zA-Z0-9:._-]*'),
+      provider TEXT NOT NULL CHECK(length(provider) BETWEEN 1 AND 80 AND provider NOT GLOB '*[^a-z0-9-]*'),
+      event_id TEXT NOT NULL CHECK(length(event_id) BETWEEN 1 AND 255),
+      event_type TEXT NOT NULL CHECK(length(event_type) BETWEEN 1 AND 100
+        AND event_type NOT GLOB '*[^a-z0-9._-]*'),
+      occurred_at TEXT NOT NULL,
+      received_at TEXT NOT NULL,
+      payload_json TEXT NOT NULL CHECK(json_valid(payload_json) AND json_type(payload_json)='object'
+        AND length(CAST(payload_json AS BLOB)) <= 524288),
+      status TEXT NOT NULL CHECK(status IN ('received','applied','ignored','rejected')),
+      error_code TEXT CHECK(error_code IS NULL OR (length(error_code) BETWEEN 2 AND 128
+        AND error_code NOT GLOB '*[^A-Z0-9_]*'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_twin_home_provider_event_identity
+      ON twin_home_provider_events(provider,event_id);
+    CREATE INDEX IF NOT EXISTS idx_twin_home_provider_events_occurred
+      ON twin_home_provider_events(provider,occurred_at,provider_event_id);
+
+    CREATE TABLE IF NOT EXISTS twin_home_device_states (
+      device_id TEXT NOT NULL REFERENCES twin_home_devices(device_id),
+      state_key TEXT NOT NULL CHECK(length(state_key) BETWEEN 1 AND 100
+        AND state_key NOT GLOB '*[^a-z0-9._-]*'),
+      value_json TEXT NOT NULL CHECK(json_valid(value_json)
+        AND length(CAST(value_json AS BLOB)) <= 65536),
+      source_event_id TEXT NOT NULL REFERENCES twin_home_provider_events(provider_event_id),
+      observed_at TEXT NOT NULL,
+      received_at TEXT NOT NULL,
+      version INTEGER NOT NULL CHECK(version >= 1),
+      PRIMARY KEY(device_id,state_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_twin_home_device_states_observed
+      ON twin_home_device_states(observed_at,device_id);
+
+    CREATE TABLE IF NOT EXISTS twin_home_provider_cursors (
+      provider TEXT PRIMARY KEY CHECK(length(provider) BETWEEN 1 AND 80 AND provider NOT GLOB '*[^a-z0-9-]*'),
+      cursor_json TEXT NOT NULL DEFAULT '{}'
+        CHECK(json_valid(cursor_json) AND json_type(cursor_json)='object'
+          AND length(CAST(cursor_json AS BLOB)) <= 16384),
+      connection_status TEXT NOT NULL CHECK(connection_status IN ('disconnected','connecting','connected','degraded')),
+      last_event_at TEXT,
+      version INTEGER NOT NULL CHECK(version >= 1),
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS twin_home_command_receipts (
+      execution_token TEXT PRIMARY KEY CHECK(length(execution_token) BETWEEN 1 AND 200),
+      material_digest TEXT NOT NULL CHECK(length(material_digest)=64 AND material_digest NOT GLOB '*[^a-f0-9]*'),
+      provider TEXT NOT NULL CHECK(length(provider) BETWEEN 1 AND 80 AND provider NOT GLOB '*[^a-z0-9-]*'),
+      external_id TEXT NOT NULL CHECK(length(external_id) BETWEEN 1 AND 255),
+      operation TEXT NOT NULL CHECK(length(operation) BETWEEN 1 AND 100 AND operation NOT GLOB '*[^a-z0-9._-]*'),
+      request_json TEXT NOT NULL CHECK(json_valid(request_json) AND json_type(request_json)='object'
+        AND length(CAST(request_json AS BLOB)) <= 65536),
+      expected_state_json TEXT NOT NULL CHECK(json_valid(expected_state_json) AND json_type(expected_state_json)='object'
+        AND length(CAST(expected_state_json AS BLOB)) <= 65536),
+      provider_request_id TEXT CHECK(provider_request_id IS NULL OR length(provider_request_id) BETWEEN 1 AND 255),
+      status TEXT NOT NULL CHECK(status IN ('prepared','sent','verified','unknown','failed')),
+      observed_event_id TEXT REFERENCES twin_home_provider_events(provider_event_id),
+      result_json TEXT CHECK(result_json IS NULL OR (json_valid(result_json) AND json_type(result_json)='object'
+        AND length(CAST(result_json AS BLOB)) <= 65536)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      verified_at TEXT,
+      CHECK(status != 'verified' OR (observed_event_id IS NOT NULL AND verified_at IS NOT NULL))
+    );
+    CREATE INDEX IF NOT EXISTS idx_twin_home_command_receipts_status
+      ON twin_home_command_receipts(provider,status,updated_at);
+
+    CREATE TRIGGER IF NOT EXISTS twin_home_inventory_ledger_no_update BEFORE UPDATE
+      ON twin_home_inventory_ledger BEGIN SELECT RAISE(ABORT,'HOME_INVENTORY_LEDGER_IMMUTABLE'); END;
+    CREATE TRIGGER IF NOT EXISTS twin_home_inventory_ledger_no_delete BEFORE DELETE
+      ON twin_home_inventory_ledger BEGIN SELECT RAISE(ABORT,'HOME_INVENTORY_LEDGER_IMMUTABLE'); END;
+    CREATE TRIGGER IF NOT EXISTS twin_home_provider_event_no_update BEFORE UPDATE
+      ON twin_home_provider_events BEGIN SELECT RAISE(ABORT,'HOME_PROVIDER_EVENT_IMMUTABLE'); END;
+    CREATE TRIGGER IF NOT EXISTS twin_home_provider_event_no_delete BEFORE DELETE
+      ON twin_home_provider_events BEGIN SELECT RAISE(ABORT,'HOME_PROVIDER_EVENT_IMMUTABLE'); END;
+    CREATE TRIGGER IF NOT EXISTS twin_home_command_receipt_identity_immutable BEFORE UPDATE
+      ON twin_home_command_receipts WHEN NEW.execution_token IS NOT OLD.execution_token
+        OR NEW.material_digest IS NOT OLD.material_digest OR NEW.provider IS NOT OLD.provider
+        OR NEW.external_id IS NOT OLD.external_id OR NEW.operation IS NOT OLD.operation
+        OR NEW.request_json IS NOT OLD.request_json OR NEW.expected_state_json IS NOT OLD.expected_state_json
+        OR NEW.created_at IS NOT OLD.created_at
+      BEGIN SELECT RAISE(ABORT,'HOME_COMMAND_RECEIPT_IDENTITY_IMMUTABLE'); END;
+    CREATE TRIGGER IF NOT EXISTS twin_home_command_receipt_no_delete BEFORE DELETE
+      ON twin_home_command_receipts BEGIN SELECT RAISE(ABORT,'HOME_COMMAND_RECEIPT_IMMUTABLE'); END;
+  `)
+}
+
 function assertHealthRuntimeSchema(db: DatabaseSync, version: number): void {
   const expected: Array<[string, ColumnSignature[]]> = [
     ['twin_health_automation_settings', [
@@ -868,6 +1070,160 @@ function assertHealthRuntimeSchema(db: DatabaseSync, version: number): void {
     const sql=canonicalSql(row?.sql??'')
     if(fragments.some(fragment=>!sql.includes(canonicalSql(fragment)))) {
       throw new Error(`Personal Twin schema version ${version} is incomplete: health runtime trigger signature is invalid`)
+    }
+  }
+}
+
+function assertHomeSchema(db: DatabaseSync, version: number): void {
+  const expected: Array<[string, ColumnSignature[]]> = [
+    ['twin_home_spaces', [
+      ['space_id','TEXT',0,1,null], ['kind','TEXT',1,0,null], ['name','TEXT',1,0,null],
+      ['parent_space_id','TEXT',0,0,null], ['attributes_json','TEXT',1,0,"'{}'"], ['version','INTEGER',1,0,null],
+      ['created_at','TEXT',1,0,null], ['updated_at','TEXT',1,0,null],
+    ]],
+    ['twin_home_objects', [
+      ['object_id','TEXT',0,1,null], ['kind','TEXT',1,0,null], ['name','TEXT',1,0,null],
+      ['space_id','TEXT',0,0,null], ['attributes_json','TEXT',1,0,"'{}'"], ['version','INTEGER',1,0,null],
+      ['created_at','TEXT',1,0,null], ['updated_at','TEXT',1,0,null],
+    ]],
+    ['twin_home_inventory_items', [
+      ['item_id','TEXT',0,1,null], ['name','TEXT',1,0,null], ['unit','TEXT',1,0,null], ['quantity','REAL',1,0,null],
+      ['low_stock_threshold','REAL',0,0,null], ['attributes_json','TEXT',1,0,"'{}'"], ['version','INTEGER',1,0,null],
+      ['created_at','TEXT',1,0,null], ['updated_at','TEXT',1,0,null],
+    ]],
+    ['twin_home_inventory_ledger', [
+      ['entry_id','TEXT',0,1,null], ['item_id','TEXT',1,0,null], ['delta','REAL',1,0,null],
+      ['resulting_quantity','REAL',1,0,null], ['reason','TEXT',1,0,null], ['source','TEXT',1,0,null],
+      ['source_id','TEXT',1,0,null], ['created_at','TEXT',1,0,null],
+    ]],
+    ['twin_home_devices', [
+      ['device_id','TEXT',0,1,null], ['name','TEXT',1,0,null], ['device_class','TEXT',1,0,null],
+      ['space_id','TEXT',0,0,null], ['availability','TEXT',1,0,null], ['attributes_json','TEXT',1,0,"'{}'"],
+      ['version','INTEGER',1,0,null], ['created_at','TEXT',1,0,null], ['updated_at','TEXT',1,0,null],
+    ]],
+    ['twin_home_device_bindings', [
+      ['binding_id','TEXT',0,1,null], ['device_id','TEXT',1,0,null], ['provider','TEXT',1,0,null],
+      ['external_id','TEXT',1,0,null], ['capabilities_json','TEXT',1,0,"'[]'"], ['metadata_json','TEXT',1,0,"'{}'"],
+      ['version','INTEGER',1,0,null], ['created_at','TEXT',1,0,null], ['updated_at','TEXT',1,0,null],
+    ]],
+    ['twin_home_provider_events', [
+      ['provider_event_id','TEXT',0,1,null], ['provider','TEXT',1,0,null], ['event_id','TEXT',1,0,null],
+      ['event_type','TEXT',1,0,null], ['occurred_at','TEXT',1,0,null], ['received_at','TEXT',1,0,null],
+      ['payload_json','TEXT',1,0,null], ['status','TEXT',1,0,null], ['error_code','TEXT',0,0,null],
+    ]],
+    ['twin_home_device_states', [
+      ['device_id','TEXT',1,1,null], ['state_key','TEXT',1,2,null], ['value_json','TEXT',1,0,null],
+      ['source_event_id','TEXT',1,0,null], ['observed_at','TEXT',1,0,null], ['received_at','TEXT',1,0,null],
+      ['version','INTEGER',1,0,null],
+    ]],
+    ['twin_home_provider_cursors', [
+      ['provider','TEXT',0,1,null], ['cursor_json','TEXT',1,0,"'{}'"], ['connection_status','TEXT',1,0,null],
+      ['last_event_at','TEXT',0,0,null], ['version','INTEGER',1,0,null], ['updated_at','TEXT',1,0,null],
+    ]],
+    ['twin_home_command_receipts', [
+      ['execution_token','TEXT',0,1,null], ['material_digest','TEXT',1,0,null], ['provider','TEXT',1,0,null],
+      ['external_id','TEXT',1,0,null], ['operation','TEXT',1,0,null], ['request_json','TEXT',1,0,null],
+      ['expected_state_json','TEXT',1,0,null], ['provider_request_id','TEXT',0,0,null], ['status','TEXT',1,0,null],
+      ['observed_event_id','TEXT',0,0,null], ['result_json','TEXT',0,0,null], ['created_at','TEXT',1,0,null],
+      ['updated_at','TEXT',1,0,null], ['verified_at','TEXT',0,0,null],
+    ]],
+  ]
+  for (const [table, columns] of expected) {
+    const actual = db.prepare(`PRAGMA table_info('${table}')`).all() as unknown as ColumnInfo[]
+    if (!columnsMatch(actual, columns)) {
+      throw new Error(`Personal Twin schema version ${version} is incomplete: ${table} signature is invalid`)
+    }
+  }
+
+  const requiredSql: Record<string, string[]> = {
+    twin_home_spaces: ["check(kind in ('home','floor','room','zone','furniture','compartment','surface'))",
+      "json_type(attributes_json)='object'", 'length(cast(attributes_json as blob)) <= 65536',
+      'check(version >= 1)', 'check(parent_space_id is null or parent_space_id != space_id)'],
+    twin_home_objects: ["kind not glob '*[^a-z0-9._-]*'", "json_type(attributes_json)='object'", 'check(version >= 1)'],
+    twin_home_inventory_items: ['check(quantity >= 0)', 'check(low_stock_threshold is null or low_stock_threshold >= 0)',
+      "json_type(attributes_json)='object'", 'check(version >= 1)'],
+    twin_home_inventory_ledger: ['check(delta != 0)', 'check(resulting_quantity >= 0)',
+      "source not glob '*[^a-za-z0-9:._-]*'"],
+    twin_home_devices: ["check(availability in ('available','unavailable','unknown'))",
+      "device_class not glob '*[^a-z0-9._-]*'", "json_type(attributes_json)='object'", 'check(version >= 1)'],
+    twin_home_device_bindings: ["provider not glob '*[^a-z0-9-]*'", "json_type(capabilities_json)='array'",
+      'length(cast(capabilities_json as blob)) <= 16384', "json_type(metadata_json)='object'", 'check(version >= 1)'],
+    twin_home_provider_events: ["provider not glob '*[^a-z0-9-]*'", "event_type not glob '*[^a-z0-9._-]*'",
+      "json_type(payload_json)='object'", 'length(cast(payload_json as blob)) <= 524288',
+      "check(status in ('received','applied','ignored','rejected'))", "error_code not glob '*[^a-z0-9_]*'"],
+    twin_home_device_states: ["state_key not glob '*[^a-z0-9._-]*'", 'check(json_valid(value_json)',
+      'length(cast(value_json as blob)) <= 65536', 'check(version >= 1)'],
+    twin_home_provider_cursors: ["provider not glob '*[^a-z0-9-]*'", "json_type(cursor_json)='object'",
+      'length(cast(cursor_json as blob)) <= 16384',
+      "check(connection_status in ('disconnected','connecting','connected','degraded'))", 'check(version >= 1)'],
+    twin_home_command_receipts: ["check(length(material_digest)=64 and material_digest not glob '*[^a-f0-9]*')",
+      "provider not glob '*[^a-z0-9-]*'", "operation not glob '*[^a-z0-9._-]*'", "json_type(request_json)='object'",
+      "json_type(expected_state_json)='object'", "check(status in ('prepared','sent','verified','unknown','failed'))",
+      "check(status != 'verified' or (observed_event_id is not null and verified_at is not null))"],
+  }
+  for (const [table, fragments] of Object.entries(requiredSql)) {
+    const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(table) as { sql: string } | undefined
+    const sql = canonicalSql(row?.sql ?? '')
+    if (fragments.some(fragment => !sql.includes(canonicalSql(fragment)))) {
+      throw new Error(`Personal Twin schema version ${version} is incomplete: ${table} CHECK signature is invalid`)
+    }
+  }
+
+  assertIndexSignature(db, version, 'twin_home_spaces', 'idx_twin_home_spaces_parent', ['parent_space_id','kind','name'], false)
+  assertIndexSignature(db, version, 'twin_home_objects', 'idx_twin_home_objects_space', ['space_id','kind','name'], false)
+  assertIndexSignature(db, version, 'twin_home_inventory_ledger', 'idx_twin_home_inventory_ledger_source', ['source','source_id'], true)
+  assertIndexSignature(db, version, 'twin_home_inventory_ledger', 'idx_twin_home_inventory_ledger_item', ['item_id','created_at'], false)
+  assertIndexSignature(db, version, 'twin_home_devices', 'idx_twin_home_devices_space', ['space_id','device_class','name'], false)
+  assertIndexSignature(db, version, 'twin_home_device_bindings', 'idx_twin_home_binding_provider_identity', ['provider','external_id'], true)
+  assertIndexSignature(db, version, 'twin_home_device_bindings', 'idx_twin_home_bindings_device', ['device_id','provider'], false)
+  assertIndexSignature(db, version, 'twin_home_provider_events', 'idx_twin_home_provider_event_identity', ['provider','event_id'], true)
+  assertIndexSignature(db, version, 'twin_home_provider_events', 'idx_twin_home_provider_events_occurred',
+    ['provider','occurred_at','provider_event_id'], false)
+  assertIndexSignature(db, version, 'twin_home_device_states', 'idx_twin_home_device_states_observed', ['observed_at','device_id'], false)
+  assertIndexSignature(db, version, 'twin_home_command_receipts', 'idx_twin_home_command_receipts_status',
+    ['provider','status','updated_at'], false)
+
+  const expectedForeignKeys: Record<string, Array<[string, string, string]>> = {
+    twin_home_spaces: [['parent_space_id','twin_home_spaces','space_id']],
+    twin_home_objects: [['space_id','twin_home_spaces','space_id']],
+    twin_home_inventory_ledger: [['item_id','twin_home_inventory_items','item_id']],
+    twin_home_devices: [['space_id','twin_home_spaces','space_id']],
+    twin_home_device_bindings: [['device_id','twin_home_devices','device_id']],
+    twin_home_device_states: [
+      ['device_id','twin_home_devices','device_id'], ['source_event_id','twin_home_provider_events','provider_event_id'],
+    ],
+    twin_home_command_receipts: [['observed_event_id','twin_home_provider_events','provider_event_id']],
+  }
+  for (const [table, expectedKeys] of Object.entries(expectedForeignKeys)) {
+    const actualKeys = (db.prepare(`PRAGMA foreign_key_list('${table}')`).all() as Array<{
+      from: string; table: string; to: string; on_update: string; on_delete: string
+    }>).map(key => [key.from, key.table, key.to, key.on_update, key.on_delete].join('|')).sort()
+    const expectedKeysWithActions = expectedKeys.map(key => [...key, 'NO ACTION', 'NO ACTION'].join('|')).sort()
+    if (actualKeys.length !== expectedKeysWithActions.length
+      || actualKeys.some((key, index) => key !== expectedKeysWithActions[index])) {
+      throw new Error(`Personal Twin schema version ${version} is incomplete: ${table} foreign key signature is invalid`)
+    }
+  }
+
+  const triggerFragments: Record<string, string[]> = {
+    twin_home_inventory_ledger_no_update: ['before update on twin_home_inventory_ledger',
+      "raise(abort,'home_inventory_ledger_immutable')"],
+    twin_home_inventory_ledger_no_delete: ['before delete on twin_home_inventory_ledger',
+      "raise(abort,'home_inventory_ledger_immutable')"],
+    twin_home_provider_event_no_update: ['before update on twin_home_provider_events',
+      "raise(abort,'home_provider_event_immutable')"],
+    twin_home_provider_event_no_delete: ['before delete on twin_home_provider_events',
+      "raise(abort,'home_provider_event_immutable')"],
+    twin_home_command_receipt_identity_immutable: ['new.material_digest is not old.material_digest',
+      "raise(abort,'home_command_receipt_identity_immutable')"],
+    twin_home_command_receipt_no_delete: ['before delete on twin_home_command_receipts',
+      "raise(abort,'home_command_receipt_immutable')"],
+  }
+  for (const [name, fragments] of Object.entries(triggerFragments)) {
+    const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?").get(name) as { sql: string } | undefined
+    const sql = canonicalSql(row?.sql ?? '')
+    if (fragments.some(fragment => !sql.includes(canonicalSql(fragment)))) {
+      throw new Error(`Personal Twin schema version ${version} is incomplete: home runtime trigger signature is invalid`)
     }
   }
 }
