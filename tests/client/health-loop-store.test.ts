@@ -9,7 +9,7 @@ const api = vi.hoisted(() => ({
   submitHealthInterventionFeedback: vi.fn(), updateHealthLoopSettings: vi.fn(),
 }))
 vi.mock('@/api/hermes/health-loop', () => api)
-import { useHealthLoopStore } from '@/stores/hermes/health-loop'
+import { issueHealthConsent, requestHealthArtifactAnalysis, useHealthLoopStore } from '@/stores/hermes/health-loop'
 
 function deferred<T>() { let resolve!: (value:T)=>void; let reject!: (reason:unknown)=>void
   const promise = new Promise<T>((yes,no)=>{resolve=yes;reject=no}); return { promise, resolve, reject } }
@@ -78,11 +78,28 @@ describe('health loop store', () => {
     expect(api.fetchHealthConnectors).toHaveBeenCalledTimes(3); expect(api.fetchHealthLoopOverview).toHaveBeenCalledTimes(3)
   })
 
-  it('returns consent tokens only to the caller and never stores them', async () => {
+  it('keeps secret-bearing consent and analysis operations outside the Pinia action surface', async () => {
     const grant = { consentId: 'c1', token: 'secret-token' }; api.createHealthConsent.mockResolvedValue(grant)
-    const store = useHealthLoopStore(); await expect(store.createConsent({ manifest: {} } as never)).resolves.toEqual(grant)
+    const analysis = { workflow: { id: 'w1' } }; api.analyzeHealthArtifact.mockResolvedValue(analysis)
+    const store = useHealthLoopStore()
+    expect('createConsent' in store).toBe(false)
+    expect('analyzeArtifact' in store).toBe(false)
+
+    await expect(issueHealthConsent(store, { manifest: {} } as never)).resolves.toEqual(grant)
+    await expect(requestHealthArtifactAnalysis(store, 'artifact-1', {
+      mode: 'remote', manifestDigest: 'a'.repeat(64), processorId: 'processor-1',
+      consentToken: 'analysis-secret-token', manifest: {} as never, idempotencyKey: 'request-1',
+    })).resolves.toEqual(analysis)
+
     expect(JSON.stringify(store.$state)).not.toContain('secret-token')
-    expect(api.fetchHealthLoopSettings).toHaveBeenCalled(); expect(api.fetchHealthLoopOverview).toHaveBeenCalled()
+    expect(Object.keys(store)).not.toEqual(expect.arrayContaining(['createConsent', 'analyzeArtifact']))
+    expect(api.createHealthConsent).toHaveBeenCalledWith({ manifest: {} })
+    expect(api.analyzeHealthArtifact).toHaveBeenCalledWith('artifact-1', expect.objectContaining({
+      consentToken: 'analysis-secret-token',
+    }))
+    expect(api.fetchHealthLoopSettings).toHaveBeenCalledTimes(1)
+    expect(api.fetchHealthLoopOverview).toHaveBeenCalledTimes(2)
+    expect(api.fetchHealthInterventions).toHaveBeenCalledTimes(1)
   })
 
   it('reloads authoritative views after feedback, revoke, and settings writes and returns own payload', async () => {
