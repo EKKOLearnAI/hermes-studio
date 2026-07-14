@@ -94,8 +94,12 @@ describe('home twin store', () => {
     expect(applied.states[0]).toMatchObject({ value: 'on', version: 1, sourceEventId: 'event:ha:101' })
     const outboxBeforeReplay = db.prepare('SELECT COUNT(*) AS count FROM twin_outbox').get()
 
-    const replay = store.applyDeviceStateEvent(input)
+    const replay = store.applyDeviceStateEvent({
+      ...input,
+      event: { ...input.event, receivedAt: '2026-07-14T12:05:00.000Z' },
+    })
     expect(replay.disposition).toBe('duplicate')
+    expect(replay.event.receivedAt).toBe(input.event.receivedAt)
     expect(replay.states[0].version).toBe(1)
     expect(db.prepare('SELECT COUNT(*) AS count FROM twin_home_provider_events').get()).toEqual({ count: 1 })
     expect(db.prepare('SELECT COUNT(*) AS count FROM twin_outbox').get()).toEqual(outboxBeforeReplay)

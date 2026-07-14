@@ -788,7 +788,7 @@ export class HomeTwinStore {
       if (existingEvent) {
         const sameIdentity = existingEvent.provider_event_id === eventId && existingEvent.provider === provider
           && existingEvent.event_id === externalEventId && existingEvent.event_type === eventType
-          && existingEvent.occurred_at === occurredAt && existingEvent.received_at === receivedAt
+          && existingEvent.occurred_at === occurredAt
           && existingEvent.payload_json === payloadJson
         if (!sameIdentity) throw new HomeIdentityConflictError(`Home provider event ${eventId} replay changed material`)
         const currentStates = states.map(state => {
