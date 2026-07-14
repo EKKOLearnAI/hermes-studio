@@ -140,11 +140,7 @@ const DEFAULT_SKIPPED_FILE_EXTENSIONS = new Set([
   '.7z',
   '.rar',
   '.sqlite',
-  '.sqlite-shm',
-  '.sqlite-wal',
   '.db',
-  '.db-shm',
-  '.db-wal',
   '.pdf',
   '.docx',
   '.xlsx',
@@ -544,8 +540,8 @@ function compareSnapshots(before: SnapshotFile | undefined, after: SnapshotFile,
     deletions = counts.deletions
   } else {
     truncated = !binary
-    if (changeType === 'added') additions = after.content ? after.content.toString('utf8').split('\n').length : 0
-    if (changeType === 'deleted') deletions = safeBefore.content ? safeBefore.content.toString('utf8').split('\n').length : 0
+    if (!binary && changeType === 'added') additions = after.content ? after.content.toString('utf8').split('\n').length : 0
+    if (!binary && changeType === 'deleted') deletions = safeBefore.content ? safeBefore.content.toString('utf8').split('\n').length : 0
   }
 
   return {
