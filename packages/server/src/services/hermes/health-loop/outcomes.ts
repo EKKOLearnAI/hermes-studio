@@ -12,6 +12,8 @@ export interface HealthRuntimeActionInput {
   priority:number; risk:'none'|'low'|'medium'|'high'|'critical'; authority:'auto'|'approval'|'inform_only'
   sourceOutboxId:string; effectiveDate:string; supersedes:readonly string[]; createdAt?:string
 }
+export interface HealthRuntimeActionReservationInput extends Omit<HealthRuntimeActionInput,'workflowId'> {materialDigest:string}
+export interface HealthRuntimeActionLease {consumerId:string;workerId:string;attempt:number;now:string}
 export interface RecordHealthOutcomeInput {
   feedbackId:string; outcome:HealthOutcome; actionId:string; interventionId:string
   workflowId:string; userId:string; occurredAt:string
@@ -56,6 +58,68 @@ export function registerHealthRuntimeAction(input: HealthRuntimeActionInput): vo
     db.exec('COMMIT')
     } catch(error) { db.exec('ROLLBACK'); throw error }
   })
+}
+
+export function reserveHealthRuntimeAction(input:HealthRuntimeActionReservationInput,lease:HealthRuntimeActionLease):{status:'reserved'|'finalized'} {
+  validateAction({...input,workflowId:'reserved-placeholder'})
+  if(!/^[a-f0-9]{64}$/.test(input.materialDigest))throw new Error('HEALTH_ACTION_INVALID')
+  validateId(lease.consumerId,100);validateId(lease.workerId,100)
+  if(!Number.isSafeInteger(lease.attempt)||lease.attempt<1)throw new Error('HEALTH_ACTION_RESERVATION_INVALID')
+  const leaseNow=timestamp(lease.now)
+  const createdAt=timestamp(input.createdAt??new Date().toISOString());const supersedesJson=JSON.stringify([...input.supersedes].sort())
+  return withPersonalTwinDb(db=>{db.exec('BEGIN IMMEDIATE');try{
+    const delivery=db.prepare(`SELECT prepared_digest FROM twin_health_outbox_deliveries WHERE consumer_id=? AND outbox_id=?
+      AND status='leased' AND lease_owner=? AND attempts=? AND lease_until>?`).get(
+        lease.consumerId,input.sourceOutboxId,lease.workerId,lease.attempt,leaseNow) as {prepared_digest:string|null}|undefined
+    if(!delivery||delivery.prepared_digest!==input.materialDigest)throw new Error('HEALTH_ACTION_RESERVATION_INVALID')
+    const inserted=db.prepare(`INSERT INTO twin_health_action_reservations
+      (action_id,material_digest,intervention_id,user_id,capability_id,category,priority,supersedable,risk,authority,
+       supersedes_json,source_outbox_id,effective_date,created_at,status,intent_id,workflow_id,finalized_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'reserved',NULL,NULL,NULL) ON CONFLICT(action_id) DO NOTHING`).run(
+      input.actionId,input.materialDigest,input.interventionId,input.userId,input.capabilityId,input.category,input.priority,
+      input.supersedable?1:0,input.risk,input.authority,supersedesJson,input.sourceOutboxId,input.effectiveDate,createdAt)
+    const row=db.prepare('SELECT * FROM twin_health_action_reservations WHERE action_id=?').get(input.actionId) as ReservationRow|undefined
+    if(!row||row.material_digest!==input.materialDigest||row.intervention_id!==input.interventionId||row.user_id!==input.userId
+      ||row.capability_id!==input.capabilityId||row.category!==input.category||row.priority!==input.priority
+      ||row.supersedable!==(input.supersedable?1:0)||row.risk!==input.risk||row.authority!==input.authority
+      ||row.supersedes_json!==supersedesJson||row.source_outbox_id!==input.sourceOutboxId
+      ||row.effective_date!==input.effectiveDate||row.created_at!==createdAt)throw new Error('HEALTH_ACTION_MATERIAL_CONFLICT')
+    if(inserted.changes===1&&input.supersedes.length){
+      const ids=[...input.supersedes].sort();const placeholders=ids.map(()=>'?').join(',')
+      const targets=db.prepare(`SELECT action_id FROM twin_health_actions WHERE status='active' AND supersedable=1
+        AND user_id=? AND priority<? AND risk IN ('none','low') AND authority<>'inform_only'
+        AND capability_id IN ('health.followup.schedule','health.checkin.request','health.plan.adjust')
+        AND action_id IN (${placeholders}) ORDER BY action_id`).all(input.userId,input.priority,...ids) as Array<{action_id:string}>
+      if(targets.map(item=>item.action_id).join('\0')!==ids.join('\0'))throw new Error('HEALTH_ACTION_SUPERSESSION_CONFLICT')
+      db.prepare(`UPDATE twin_health_actions SET status='superseded',superseded_at=? WHERE status='active'
+        AND action_id IN (${placeholders})`).run(createdAt,...ids)
+    }
+    db.exec('COMMIT');return {status:row.status}
+  }catch(error){db.exec('ROLLBACK');throw error}})
+}
+
+export function finalizeHealthRuntimeActionReservation(actionId:string,materialDigest:string,intentId:string,workflowId:string,
+  finalizedAt:string):{status:'finalized'} {
+  validateId(actionId,160);validateId(intentId,200);validateId(workflowId,200)
+  if(!/^[a-f0-9]{64}$/.test(materialDigest))throw new Error('HEALTH_ACTION_INVALID')
+  const at=timestamp(finalizedAt)
+  return withPersonalTwinDb(db=>{db.exec('BEGIN IMMEDIATE');try{
+    const row=db.prepare('SELECT * FROM twin_health_action_reservations WHERE action_id=?').get(actionId) as ReservationRow|undefined
+    if(!row||row.material_digest!==materialDigest)throw new Error('HEALTH_ACTION_MATERIAL_CONFLICT')
+    if(row.status==='finalized'){
+      if(row.intent_id!==intentId||row.workflow_id!==workflowId)throw new Error('HEALTH_ACTION_MATERIAL_CONFLICT')
+      db.exec('COMMIT');return {status:'finalized'}
+    }
+    db.prepare(`INSERT INTO twin_health_actions
+      (action_id,intervention_id,workflow_id,user_id,capability_id,category,priority,supersedable,risk,authority,
+       source_outbox_id,effective_date,status,created_at,superseded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?, 'active',?,NULL)`).run(
+      row.action_id,row.intervention_id,workflowId,row.user_id,row.capability_id,row.category,row.priority,row.supersedable,
+      row.risk,row.authority,row.source_outbox_id,row.effective_date,row.created_at)
+    const changed=db.prepare(`UPDATE twin_health_action_reservations SET status='finalized',intent_id=?,workflow_id=?,finalized_at=?
+      WHERE action_id=? AND status='reserved' AND material_digest=?`).run(intentId,workflowId,at,actionId,materialDigest)
+    if(changed.changes!==1)throw new Error('HEALTH_ACTION_MATERIAL_CONFLICT')
+    db.exec('COMMIT');return {status:'finalized'}
+  }catch(error){db.exec('ROLLBACK');throw error}})
 }
 
 export function recordHealthOutcome(input: RecordHealthOutcomeInput): RecordedHealthOutcome {
@@ -155,6 +219,10 @@ function sameOutcome(left:RecordedHealthOutcome,right:RecordHealthOutcomeInput):
 
 interface ActionRow { action_id:string;intervention_id:string;workflow_id:string;user_id:string;capability_id:string;
   category:string;priority:number;supersedable:number;risk:string;authority:string;source_outbox_id:string;effective_date:string }
+interface ReservationRow {action_id:string;material_digest:string;intervention_id:string;user_id:string;capability_id:string;
+  category:HealthRuntimeActionInput['category'];priority:number;supersedable:number;risk:HealthRuntimeActionInput['risk'];
+  authority:HealthRuntimeActionInput['authority'];supersedes_json:string;source_outbox_id:string;effective_date:string;
+  created_at:string;status:'reserved'|'finalized';intent_id:string|null;workflow_id:string|null}
 function validateAction(input:HealthRuntimeActionInput):void {
   validateId(input.actionId,160);validateId(input.interventionId,160);validateId(input.workflowId,200)
   validateId(input.userId,160);validateId(input.capabilityId,160);validateId(input.sourceOutboxId,200)

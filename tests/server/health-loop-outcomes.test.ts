@@ -81,4 +81,30 @@ describe('health-loop outcomes', () => {
     expect(withPersonalTwinDb(db => Number((db.prepare('SELECT COUNT(*) AS n FROM twin_observations').get() as { n: number }).n))).toBe(before)
     expect(listTwinEvents({ eventType: 'health.correction.requested' })).toHaveLength(1)
   })
+
+  it('reserves before effect and finalizes exact Fabric identity idempotently', async () => {
+    const api=await import('../../packages/server/src/services/hermes/health-loop/outcomes')
+    const {withPersonalTwinDb}=await import('../../packages/server/src/services/hermes/personal-twin')
+    const digest='d'.repeat(64)
+    withPersonalTwinDb(db=>db.prepare(`INSERT INTO twin_health_outbox_deliveries
+      (consumer_id,outbox_id,status,attempts,lease_owner,lease_until,prepared_json,prepared_digest,prepared_at)
+      VALUES('health-loop-v1','outbox-3','leased',1,'worker-1','2026-07-14T13:00:00.000Z','{}',?,'2026-07-14T12:00:00.000Z')`).run(digest))
+    const reservation={actionId:'action-reserved',interventionId:'health.posture.reduce_chain_overload',userId:'user-1',
+      capabilityId:'health.followup.schedule',category:'posture' as const,priority:10,supersedable:true,risk:'low' as const,
+      authority:'auto' as const,supersedes:[],sourceOutboxId:'outbox-3',effectiveDate:'2026-07-14',
+      createdAt:'2026-07-14T12:00:00.000Z',materialDigest:digest}
+    const lease={consumerId:'health-loop-v1',workerId:'worker-1',attempt:1,now:'2026-07-14T12:00:01.000Z'}
+    expect(api.reserveHealthRuntimeAction(reservation,lease)).toMatchObject({status:'reserved'})
+    expect(api.reserveHealthRuntimeAction(reservation,lease)).toMatchObject({status:'reserved'})
+    expect(()=>api.reserveHealthRuntimeAction({...reservation,priority:11},lease)).toThrow('HEALTH_ACTION_MATERIAL_CONFLICT')
+    expect(()=>api.recordHealthOutcome({feedbackId:'reserved-feedback',outcome:'completed',actionId:'action-reserved',
+      interventionId:reservation.interventionId,workflowId:'workflow-reserved',userId:'user-1',
+      occurredAt:'2026-07-14T12:01:00.000Z'})).toThrow('HEALTH_OUTCOME_BINDING_MISMATCH')
+    expect(api.finalizeHealthRuntimeActionReservation('action-reserved',digest,'intent-reserved','workflow-reserved',
+      '2026-07-14T12:01:00.000Z')).toMatchObject({status:'finalized'})
+    expect(api.finalizeHealthRuntimeActionReservation('action-reserved',digest,'intent-reserved','workflow-reserved',
+      '2026-07-14T12:01:01.000Z')).toMatchObject({status:'finalized'})
+    expect(()=>api.finalizeHealthRuntimeActionReservation('action-reserved',digest,'intent-other','workflow-other',
+      '2026-07-14T12:01:02.000Z')).toThrow('HEALTH_ACTION_MATERIAL_CONFLICT')
+  })
 })

@@ -10,7 +10,7 @@ import { decideHealthInterventions, type HealthActionCandidate, type HealthActiv
   type HealthRecentAction } from './interventions'
 import { mapHealthActionCandidateToFabric } from './fabric-intents'
 import { getHealthAutomationSettings } from './settings'
-import { registerHealthRuntimeAction } from './outcomes'
+import { finalizeHealthRuntimeActionReservation, registerHealthRuntimeAction, reserveHealthRuntimeAction } from './outcomes'
 import { claimHealthOutboxDelivery, completeHealthOutboxDelivery, failHealthOutboxDelivery,
   prepareHealthOutboxDelivery,type HealthOutboxClaim } from './runtime-store'
 import { configureHealthFabricExecutorDependencies } from './executors/configuration'
@@ -33,9 +33,10 @@ export function createHealthLoopLifecycle(hooks:HealthLoopLifecycleHooks):Health
   let tail=Promise.resolve();let active=false
   const queue=(operation:()=>Promise<void>)=>{const result=tail.then(operation);tail=result.catch(()=>undefined);return result}
   return {
-    start:()=>queue(async()=>{if(active)return;let prepared=false;let fabric=false
-      try {await hooks.prepare();prepared=true;await hooks.startFabric();fabric=true;await hooks.startConsumer();active=true}
-      catch(error){if(fabric||prepared)await hooks.stopFabric();throw error}}),
+    start:()=>queue(async()=>{if(active)return;let consumerBegun=false
+      try {await hooks.prepare();await hooks.startFabric();consumerBegun=true;await hooks.startConsumer();active=true}
+      catch(error){if(consumerBegun){try{await hooks.stopConsumer()}catch{}}
+        try{await hooks.stopFabric()}catch{}throw error}}),
     stop:()=>queue(async()=>{if(!active)return;let failure:unknown=null
       try{await hooks.stopConsumer()}catch(error){failure=error}
       try{await hooks.stopFabric()}catch(error){if(failure===null)failure=error}finally{active=false}
@@ -82,6 +83,8 @@ export interface HealthOutboxProcessorOptions {
   createIntent?:(input:FabricActionIntentInput)=>{intentId:string;workflowId:string}
   /** Injection seam for crash recovery tests; production never supplies it. */
   afterIntent?:()=>void|Promise<void>
+  /** Injection seam after durable reservation and before Fabric effect. */
+  beforeIntent?:()=>void|Promise<void>
   ownerUserId?:string
 }
 
@@ -94,25 +97,25 @@ export function createHealthOutboxProcessor(options:HealthOutboxProcessorOptions
   return { async processOnce(override={}) {
     const now=timestamp(override.now??options.now?.()??new Date().toISOString())
     const claim=claimHealthOutboxDelivery({consumerId:options.consumerId,workerId:options.workerId,
-      now,leaseMs:30_000,maxAttempts:3})
+      now,leaseMs:30_000,maxAttempts:5})
     if(!claim)return {processed:false,outcome:'idle',outboxId:null}
     try {
       validateOutboxPayload(claim)
       const prepared=claim.preparedJson===null?prepareRuntimeMaterial(claim,now,owner):parsePreparedMaterial(claim)
       if(!prepared.fabricIntent||!prepared.action){completeHealthOutboxDelivery(claim,{intentId:null,workflowId:null},now)
         return {processed:true,outcome:'completed',outboxId:claim.outboxId}}
+      const materialDigest=hash(prepared)
+      reserveHealthRuntimeAction({...prepared.action,materialDigest},{consumerId:claim.consumerId,workerId:claim.workerId,
+        attempt:claim.attempt,now})
+      if(options.beforeIntent)await options.beforeIntent()
       const effect=createIntentEffect(prepared.fabricIntent)
       if(options.afterIntent)await options.afterIntent()
-      const actionId=prepared.action.actionId
-      const existing=withPersonalTwinDb(db=>db.prepare('SELECT workflow_id FROM twin_health_actions WHERE action_id=?')
-        .get(actionId) as {workflow_id:string}|undefined)
-      if(existing&&existing.workflow_id!==effect.workflowId)throw new Error('HEALTH_ACTION_MATERIAL_CONFLICT')
-      if(!existing)registerHealthRuntimeAction({...prepared.action,workflowId:effect.workflowId})
+      finalizeHealthRuntimeActionReservation(prepared.action.actionId,materialDigest,effect.intentId,effect.workflowId,now)
       completeHealthOutboxDelivery(claim,{intentId:effect.intentId,workflowId:effect.workflowId},now)
       return {processed:true,outcome:'completed',outboxId:claim.outboxId}
     } catch(error) {
       if(error instanceof Error&&error.message==='HEALTH_RUNTIME_SIMULATED_CRASH')throw error
-      failHealthOutboxDelivery(claim,error,now,3)
+      failHealthOutboxDelivery(claim,error,now,5)
       return {processed:true,outcome:'failed',outboxId:claim.outboxId}
     }
   } }
@@ -221,7 +224,10 @@ function loadTrustedSnapshot(now:string):{projections:TwinProjection[];digest:st
         category:HealthRecentAction['category'];priority:number;supersedable:number;risk:HealthActiveAction['risk'];
         authority:HealthActiveAction['authority'];status:string}>
       if(actionRows.length>256)throw new Error('HEALTH_RUNTIME_ACTION_HISTORY_INVALID')
-      const activeActions=actionRows.filter(row=>row.status==='active').map(row=>({id:row.action_id,
+      const reservedRows=db.prepare(`SELECT action_id,intervention_id,category,priority,supersedable,risk,authority,'active' AS status
+        FROM twin_health_action_reservations WHERE status='reserved' ORDER BY action_id LIMIT 257`).all() as typeof actionRows
+      if(actionRows.length+reservedRows.length>256)throw new Error('HEALTH_RUNTIME_ACTION_HISTORY_INVALID')
+      const activeActions=[...actionRows,...reservedRows].filter(row=>row.status==='active').map(row=>({id:row.action_id,
         candidateId:row.intervention_id,priority:row.priority,supersedable:row.supersedable===1,
         risk:row.risk,authority:row.authority}))
       const actionById=new Map(actionRows.map(row=>[row.action_id,row]))

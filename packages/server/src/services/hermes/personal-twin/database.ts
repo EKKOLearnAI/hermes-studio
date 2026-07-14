@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 import { TWIN_DOMAINS } from './types'
 
-const SCHEMA_VERSION = 9
+const SCHEMA_VERSION = 10
 const RESERVATION_TABLE_SQL = `CREATE TABLE twin_artifact_consent_reservations (
   reservation_id TEXT PRIMARY KEY
     CHECK(length(reservation_id) BETWEEN 48 AND 64 AND reservation_id GLOB 'reservation-*'
@@ -29,6 +29,7 @@ const REQUIRED_TWIN_TABLES = [
   'twin_health_actions', 'twin_health_automation_settings', 'twin_health_executor_ledger',
   'twin_health_followups', 'twin_health_outbox_deliveries', 'twin_health_plans',
   'twin_health_authorization_grants',
+  'twin_health_action_reservations',
 ]
 
 export function getPersonalTwinDbPath(): string {
@@ -102,6 +103,7 @@ export function initPersonalTwinSchema(db: DatabaseSync): void {
       createSchemaV9(db)
       setSchemaVersion(db, 9)
     }
+    if(version<10){createSchemaV10(db);setSchemaVersion(db,10)}
     normalizeLegacyArtifactSourceIndex(db)
     assertSchemaComplete(db, SCHEMA_VERSION)
     db.exec('COMMIT')
@@ -691,6 +693,43 @@ function addColumnIfMissing(db:DatabaseSync,table:string,column:string,declarati
   if(!columns.some(item=>item.name===column))db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${declaration}`)
 }
 
+function createSchemaV10(db:DatabaseSync):void {
+  db.exec(`CREATE TABLE IF NOT EXISTS twin_health_action_reservations (
+    action_id TEXT PRIMARY KEY CHECK(length(action_id) BETWEEN 1 AND 160),
+    material_digest TEXT NOT NULL CHECK(length(material_digest)=64 AND material_digest NOT GLOB '*[^a-f0-9]*'),
+    intervention_id TEXT NOT NULL CHECK(length(intervention_id) BETWEEN 1 AND 160),
+    user_id TEXT NOT NULL CHECK(length(user_id) BETWEEN 1 AND 160),
+    capability_id TEXT NOT NULL CHECK(length(capability_id) BETWEEN 1 AND 160),
+    category TEXT NOT NULL CHECK(category IN ('training','recovery','nutrition','posture','skin','internal_health')),
+    priority INTEGER NOT NULL CHECK(priority BETWEEN 0 AND 10000),
+    supersedable INTEGER NOT NULL CHECK(supersedable IN (0,1)),
+    risk TEXT NOT NULL CHECK(risk IN ('none','low','medium','high','critical')),
+    authority TEXT NOT NULL CHECK(authority IN ('auto','approval','inform_only')),
+    supersedes_json TEXT NOT NULL CHECK(json_valid(supersedes_json) AND json_type(supersedes_json)='array'
+      AND length(CAST(supersedes_json AS BLOB)) <= 65536),
+    source_outbox_id TEXT NOT NULL REFERENCES twin_outbox(id),
+    effective_date TEXT NOT NULL CHECK(length(effective_date)=10),
+    created_at TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('reserved','finalized')),
+    intent_id TEXT,
+    workflow_id TEXT UNIQUE,
+    finalized_at TEXT,
+    CHECK((status='reserved' AND intent_id IS NULL AND workflow_id IS NULL AND finalized_at IS NULL)
+      OR (status='finalized' AND intent_id IS NOT NULL AND workflow_id IS NOT NULL AND finalized_at IS NOT NULL))
+  );
+  CREATE TRIGGER IF NOT EXISTS twin_health_action_reservation_material_immutable BEFORE UPDATE
+    ON twin_health_action_reservations WHEN NEW.action_id IS NOT OLD.action_id
+      OR NEW.material_digest IS NOT OLD.material_digest OR NEW.intervention_id IS NOT OLD.intervention_id
+      OR NEW.user_id IS NOT OLD.user_id OR NEW.capability_id IS NOT OLD.capability_id
+      OR NEW.category IS NOT OLD.category OR NEW.priority IS NOT OLD.priority
+      OR NEW.supersedable IS NOT OLD.supersedable OR NEW.risk IS NOT OLD.risk OR NEW.authority IS NOT OLD.authority
+      OR NEW.supersedes_json IS NOT OLD.supersedes_json OR NEW.source_outbox_id IS NOT OLD.source_outbox_id
+      OR NEW.effective_date IS NOT OLD.effective_date OR NEW.created_at IS NOT OLD.created_at
+    BEGIN SELECT RAISE(ABORT,'HEALTH_ACTION_RESERVATION_IMMUTABLE'); END;
+  CREATE TRIGGER IF NOT EXISTS twin_health_action_reservation_no_delete BEFORE DELETE
+    ON twin_health_action_reservations BEGIN SELECT RAISE(ABORT,'HEALTH_ACTION_RESERVATION_IMMUTABLE'); END;`)
+}
+
 function assertHealthRuntimeSchema(db: DatabaseSync, version: number): void {
   const expected: Array<[string, ColumnSignature[]]> = [
     ['twin_health_automation_settings', [
@@ -732,6 +771,14 @@ function assertHealthRuntimeSchema(db: DatabaseSync, version: number): void {
       ['settings_version','INTEGER',1,0,null], ['grant_json','TEXT',1,0,null],
       ['issued_at','TEXT',1,0,null], ['expires_at','TEXT',1,0,null],
     ]],
+    ['twin_health_action_reservations', [
+      ['action_id','TEXT',0,1,null], ['material_digest','TEXT',1,0,null], ['intervention_id','TEXT',1,0,null],
+      ['user_id','TEXT',1,0,null], ['capability_id','TEXT',1,0,null], ['category','TEXT',1,0,null],
+      ['priority','INTEGER',1,0,null], ['supersedable','INTEGER',1,0,null], ['risk','TEXT',1,0,null],
+      ['authority','TEXT',1,0,null], ['supersedes_json','TEXT',1,0,null], ['source_outbox_id','TEXT',1,0,null],
+      ['effective_date','TEXT',1,0,null], ['created_at','TEXT',1,0,null], ['status','TEXT',1,0,null],
+      ['intent_id','TEXT',0,0,null], ['workflow_id','TEXT',0,0,null], ['finalized_at','TEXT',0,0,null],
+    ]],
   ]
   for (const [table, columns] of expected) {
     const actual = db.prepare(`PRAGMA table_info('${table}')`).all() as unknown as ColumnInfo[]
@@ -756,6 +803,9 @@ function assertHealthRuntimeSchema(db: DatabaseSync, version: number): void {
       "check(json_valid(result_json) and json_type(result_json)='object' and length(cast(result_json as blob)) <= 524288)"],
     twin_health_authorization_grants:["check(length(request_digest)=64 and request_digest not glob '*[^a-f0-9]*')",
       'check(settings_version >= 1)',"check(json_valid(grant_json) and json_type(grant_json)='object' and length(cast(grant_json as blob)) <= 8192)"],
+    twin_health_action_reservations:["check(status in ('reserved','finalized'))",
+      "check((status='reserved' and intent_id is null and workflow_id is null and finalized_at is null) or (status='finalized' and intent_id is not null and workflow_id is not null and finalized_at is not null))",
+      "check(json_valid(supersedes_json) and json_type(supersedes_json)='array' and length(cast(supersedes_json as blob)) <= 65536)"],
   }
   for(const [table,fragments] of Object.entries(requiredSql)){
     const row=db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(table) as {sql:string}|undefined
@@ -791,6 +841,7 @@ function assertHealthRuntimeSchema(db: DatabaseSync, version: number): void {
     'twin_health_delivery_no_delete','twin_health_delivery_terminal_immutable',
     'twin_health_ledger_no_delete','twin_health_ledger_no_update','twin_health_delivery_prepared_shape',
     'twin_health_delivery_prepared_immutable','twin_health_auth_grant_no_update','twin_health_auth_grant_no_delete']
+  requiredTriggers.push('twin_health_action_reservation_material_immutable','twin_health_action_reservation_no_delete')
   const triggers = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type='trigger'").all() as Array<{name:string}>).map(row => row.name))
   if (requiredTriggers.some(name => !triggers.has(name))) {
     throw new Error(`Personal Twin schema version ${version} is incomplete: health runtime triggers are invalid`)
@@ -807,6 +858,10 @@ function assertHealthRuntimeSchema(db: DatabaseSync, version: number): void {
     twin_health_delivery_prepared_immutable:['old.prepared_json is not null',"raise(abort,'health_prepared_immutable')"],
     twin_health_auth_grant_no_update:['before update on twin_health_authorization_grants',"raise(abort,'health_auth_grant_immutable')"],
     twin_health_auth_grant_no_delete:['before delete on twin_health_authorization_grants',"raise(abort,'health_auth_grant_immutable')"],
+    twin_health_action_reservation_material_immutable:['new.material_digest is not old.material_digest',
+      "raise(abort,'health_action_reservation_immutable')"],
+    twin_health_action_reservation_no_delete:['before delete on twin_health_action_reservations',
+      "raise(abort,'health_action_reservation_immutable')"],
   }
   for(const [name,fragments] of Object.entries(triggerFragments)){
     const row=db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?").get(name) as {sql:string}|undefined

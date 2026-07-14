@@ -48,6 +48,19 @@ describe('health-loop runtime', () => {
     expect(events).toEqual(['consumer','fabric'])
   })
 
+  it('cleans partial prepare state before restart and preserves the prepare error', async () => {
+    const {createHealthLoopLifecycle}=await import('../../packages/server/src/services/hermes/health-loop/runtime')
+    const events:string[]=[];let configured=false;let first=true
+    const lifecycle=createHealthLoopLifecycle({async prepare(){events.push('prepare');if(configured)throw new Error('PROVIDER_EXISTS')
+      configured=true;if(first){first=false;throw new Error('PREPARE_FAILED')}},async startFabric(){events.push('fabric:start')},
+      async startConsumer(){events.push('consumer:start')},async stopConsumer(){events.push('consumer:stop')},
+      async stopFabric(){events.push('fabric:stop');configured=false}})
+    await expect(lifecycle.start()).rejects.toThrow('PREPARE_FAILED')
+    await expect(lifecycle.start()).resolves.toBeUndefined()
+    await lifecycle.stop()
+    expect(events).toEqual(['prepare','fabric:stop','prepare','fabric:start','consumer:start','consumer:stop','fabric:stop'])
+  })
+
   it('leases one immutable Twin outbox id to one runtime, reclaims stale leases, and deduplicates receipts', async () => {
     const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
     const store = await import('../../packages/server/src/services/hermes/health-loop/runtime-store')
@@ -115,12 +128,17 @@ describe('health-loop runtime', () => {
     })
     const calls: Array<{ idempotencyKey:string; environments?:string[] }> = []
     let crash = true
+    let beforeCrash = true
     const make = (workerId:string) => createHealthOutboxProcessor({ consumerId: 'health-loop-v1', workerId,
       now: () => '2026-07-14T08:05:01.000Z', createIntent(input) {
         calls.push({ idempotencyKey: input.idempotencyKey, environments: input.environments })
         return { intentId: 'intent-stable', workflowId: 'workflow-stable' }
       }, afterIntent() { if (crash) { crash = false; throw new Error('HEALTH_RUNTIME_SIMULATED_CRASH') } } })
-    await expect(make('worker-a').processOnce()).rejects.toThrow('HEALTH_RUNTIME_SIMULATED_CRASH')
+    const firstProcessor=createHealthOutboxProcessor({consumerId:'health-loop-v1',workerId:'worker-a',
+      now:()=> '2026-07-14T08:05:01.000Z',createIntent(input){calls.push({idempotencyKey:input.idempotencyKey,environments:input.environments})
+        return {intentId:'intent-stable',workflowId:'workflow-stable'}},beforeIntent(){if(beforeCrash){beforeCrash=false;throw new Error('HEALTH_RUNTIME_SIMULATED_CRASH')}}})
+    await expect(firstProcessor.processOnce()).rejects.toThrow('HEALTH_RUNTIME_SIMULATED_CRASH')
+    expect(calls).toHaveLength(0)
     const originalPrepared=twin.withPersonalTwinDb(db=>(db.prepare('SELECT prepared_json FROM twin_health_outbox_deliveries').get() as
       {prepared_json:string}).prepared_json)
     expect(()=>twin.withPersonalTwinDb(db=>db.prepare(`UPDATE twin_health_outbox_deliveries
@@ -133,7 +151,7 @@ describe('health-loop runtime', () => {
         BEGIN SELECT RAISE(ABORT,'HEALTH_PREPARED_IMMUTABLE'); END;`)})
     replacePrepared(originalPrepared.replace('health-runtime-prepared/v1','health-runtime-prepared/v2'))
     await expect(make('worker-tamper').processOnce({now:'2026-07-14T08:05:32.000Z'})).resolves.toMatchObject({outcome:'failed'})
-    expect(calls).toHaveLength(1)
+    expect(calls).toHaveLength(0)
     expect(twin.withPersonalTwinDb(db=>db.prepare('SELECT last_error_code FROM twin_health_outbox_deliveries').get()))
       .toEqual({last_error_code:'HEALTH_RUNTIME_PREPARED_INVALID'})
     replacePrepared(originalPrepared)
@@ -148,20 +166,23 @@ describe('health-loop runtime', () => {
       payload:{startedAt:'2026-07-15T00:00:00.000Z',endedAt:'2026-07-15T08:00:00.000Z',durationMinutes:480,interruptions:0}})
     health.projectHealthState(twin.listTwinObservations({entityId:'person:self'}),{computedAt:'2026-07-15T08:05:00.000Z'})
     const restarted = make('worker-b')
-    await expect(restarted.processOnce({ now: '2026-07-15T08:05:32.000Z' })).resolves.toMatchObject({ processed: true })
+    await expect(restarted.processOnce({ now: '2026-07-15T08:05:32.000Z' })).rejects.toThrow('HEALTH_RUNTIME_SIMULATED_CRASH')
+    expect(calls).toHaveLength(1)
+    const finalized=make('worker-c')
+    await expect(finalized.processOnce({now:'2026-07-15T08:06:03.000Z'})).resolves.toMatchObject({processed:true})
     expect(calls).toHaveLength(2)
     expect(calls[0]).toEqual(calls[1])
     expect(calls[0].environments).toEqual(['sandbox'])
     expect(calls[0].idempotencyKey).toMatch(/^health-intervention-[a-f0-9]{64}$/)
     expect(twin.withPersonalTwinDb(db => db.prepare('SELECT COUNT(*) AS n FROM twin_health_actions').get()))
       .toEqual({ n: 1 })
-    await expect(restarted.processOnce({now:'2026-07-15T08:05:33.000Z'})).resolves.toMatchObject({processed:true})
+    await expect(finalized.processOnce({now:'2026-07-15T08:06:04.000Z'})).resolves.toMatchObject({processed:true})
     expect(calls).toHaveLength(2)
     const {recordHealthOutcome}=await import('../../packages/server/src/services/hermes/health-loop/outcomes')
     recordHealthOutcome({feedbackId:'feedback-runtime',outcome:'completed',actionId:`health-action-${calls[0].idempotencyKey.slice('health-intervention-'.length)}`,
       interventionId:'health.training.reduce_after_low_sleep',workflowId:'workflow-stable',userId:'user-self',
       occurredAt:'2026-07-15T08:05:34.000Z'})
-    await expect(restarted.processOnce({now:'2026-07-15T08:05:35.000Z'})).resolves.toMatchObject({processed:true})
+    await expect(finalized.processOnce({now:'2026-07-15T08:06:05.000Z'})).resolves.toMatchObject({processed:true})
     expect(calls).toHaveLength(2)
   })
 
