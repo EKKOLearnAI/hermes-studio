@@ -69,7 +69,8 @@ describe('action fabric registry', () => {
   it('preserves the Phase 3 capability contract digests while extending the built-in registry', () => {
     ensureBuiltInFabricRegistry()
 
-    expect(listFabricCapabilities().filter(item => !item.id.startsWith('health.')).map(item => [item.id, item.contractDigest])).toEqual([
+    expect(listFabricCapabilities().filter(item => !item.id.startsWith('health.') && !item.id.startsWith('home.'))
+      .map(item => [item.id, item.contractDigest])).toEqual([
       ['internal.twin.preference.set', 'dbdbf09d1e81e330cd0381e0ec5a12a4d56dd2d0b290c1fe65383af9e794ab09'],
       ['simulator.counter.increment', '3146a84ee07c62677ee6e608668c0c71f8b99b1cbecd81d546437f188f71a50e'],
       ['simulator.echo', '1f74a0c7fc1a997a22425d365107379fb88effdc49cc91c68fd34a174082ff79'],

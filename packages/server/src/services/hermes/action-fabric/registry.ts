@@ -1,5 +1,6 @@
 import { createHash } from 'crypto'
 import type { DatabaseSync } from 'node:sqlite'
+import { HOME_FABRIC_CAPABILITIES } from '../home/fabric-contracts'
 import { withActionFabricDb } from './database'
 import type {
   FabricCapability,
@@ -330,6 +331,7 @@ const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
     verificationStrategy: 'schedule_read_after_write', authentication: ['health_schedule:write'],
     targetRestrictions: ['health:owner'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
   },
+  ...HOME_FABRIC_CAPABILITIES,
 ]
 
 const BUILT_IN_EXECUTORS: FabricExecutorInput[] = [
