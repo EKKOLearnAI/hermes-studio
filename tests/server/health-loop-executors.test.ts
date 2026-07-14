@@ -5,6 +5,7 @@ import { createHealthShadowExecutorAdapter } from '../../packages/server/src/ser
 import { createHealthPlanExecutorAdapter, type HealthPlanRepository } from '../../packages/server/src/services/hermes/health-loop/executors/plan'
 import { createHealthAnalysisExecutorAdapter } from '../../packages/server/src/services/hermes/health-loop/executors/analysis'
 import { createHealthWeixinExecutorAdapter } from '../../packages/server/src/services/hermes/health-loop/executors/weixin'
+import { createConfiguredHealthFabricExecutorAdapters } from '../../packages/server/src/services/hermes/health-loop/executors/configuration'
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex')
 
@@ -22,7 +23,7 @@ describe('health Action Fabric executors', () => {
   it('proves shadow execution is deterministic and invokes no live dependency', async () => {
     const adapter = createHealthShadowExecutorAdapter()
     const ctx = context('health.reminder.send', {
-      schemaVersion: 1, actionId: 'action-1', recipient: 'configured-self', messageCode: 'eat', messageText: '吃午饭',
+      schemaVersion: 1, actionId: 'action-1', recipient: 'configured-self', messageCode: 'eat',
     })
     const prepared = await adapter.prepare(ctx)
     const executed = await adapter.execute({ ...ctx, preparedOutput: prepared.output })
@@ -119,7 +120,7 @@ describe('health Action Fabric executors', () => {
   })
 
   it('consumes exact remote consent once before analysis and persists receipt identity', async () => {
-    const consume = vi.fn(async () => ({ consentId: 'consent-1', consumedAt: '2026-07-14T01:00:00.000Z' }))
+    const consume = vi.fn(async () => ({ consentId: 'consent-1', consumedAt: '2026-07-14T01:00:00.000Z', authorization: {} as never }))
     const analyze = vi.fn(async () => ({ analysisId: 'analysis-1', status: 'succeeded' as const,
       observationIds: ['observation-1'], processorReceiptId: 'receipt-1' }))
     const adapter = createHealthAnalysisExecutorAdapter({
@@ -163,7 +164,7 @@ describe('health Action Fabric executors', () => {
         processorId: 'processor-1', consentId: 'consent-1' })
       if (consumed) throw new Error('replayed')
       consumed = true
-      return { consentId: request.consentId, consumedAt: '2026-07-14T01:00:00.000Z' }
+      return { consentId: request.consentId, consumedAt: '2026-07-14T01:00:00.000Z', authorization: {} as never }
     })
     const analyze = vi.fn(async () => ({ analysisId: 'analysis-1', status: 'succeeded' as const,
       observationIds: [], processorReceiptId: 'receipt-1' }))
@@ -194,8 +195,8 @@ describe('health Action Fabric executors', () => {
     const prepared = await adapter.prepare(ctx)
     const pending = adapter.execute({ ...ctx, preparedOutput: prepared.output })
     await vi.waitFor(() => expect(signal).toBeDefined())
-    expect(await adapter.interrupt(ctx)).toMatchObject({ outcome: 'interrupted' })
-    expect(signal.aborted).toBe(true)
+    expect(await adapter.interrupt(ctx)).toMatchObject({ outcome: 'unsupported' })
+    expect(signal.aborted).toBe(false)
     release()
     await pending
     expect(await adapter.compensate(ctx)).toMatchObject({ outcome: 'unsupported' })
@@ -220,14 +221,14 @@ describe('health Action Fabric executors', () => {
       .mockResolvedValue({ status: 'unknown' as const, providerMessageId: null })
     const adapter = createHealthWeixinExecutorAdapter({ profile: 'default', sender: { send, lookup } })
     const ctx = context('health.reminder.send', { schemaVersion: 1, actionId: 'action-1', recipient: 'configured-self',
-      messageCode: 'meal', messageText: `现在最该做：吃午饭 ${'详情'.repeat(300)}` }, { executorId: 'health-weixin' })
+      messageCode: 'meal' }, { executorId: 'health-weixin' })
     const prepared = await adapter.prepare(ctx)
     const first = await adapter.execute({ ...ctx, preparedOutput: prepared.output })
     const second = await adapter.execute({ ...ctx, preparedOutput: prepared.output })
     expect(first).toMatchObject({ outcome: 'unknown', errorCode: 'HEALTH_WEIXIN_DELIVERY_UNCERTAIN' })
     expect(second).toMatchObject({ outcome: 'unknown' })
     expect(send).toHaveBeenCalledTimes(1)
-    expect(lookup).toHaveBeenCalledTimes(2)
+    expect(lookup).toHaveBeenCalledTimes(1)
     expect(send.mock.calls[0][0]).toMatchObject({ recipient: 'configured-self', deliveryId: expect.any(String) })
     expect(send.mock.calls[0][0].message.length).toBeLessThanOrEqual(500)
     expect(send.mock.calls[0][0].message).toContain('action-1')
@@ -238,10 +239,10 @@ describe('health Action Fabric executors', () => {
     const sender = { send: vi.fn(), lookup: vi.fn() }
     const adapter = createHealthWeixinExecutorAdapter({ profile: 'default', sender })
     const mismatch = context('health.reminder.send', { schemaVersion: 1, actionId: 'action-1', recipient: 'someone-else',
-      messageCode: 'meal', messageText: '吃饭' }, { executorId: 'health-weixin' })
+      messageCode: 'meal' }, { executorId: 'health-weixin' })
     expect(await adapter.prepare(mismatch)).toMatchObject({ outcome: 'failed', errorCode: 'HEALTH_WEIXIN_REQUEST_INVALID' })
     const secret = context('health.reminder.send', { schemaVersion: 1, actionId: 'action-1', recipient: 'configured-self',
-      messageCode: 'meal', messageText: 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz' }, { executorId: 'health-weixin' })
+      messageCode: 'meal', messageText: 'raw input is forbidden' }, { executorId: 'health-weixin' })
     expect(await adapter.prepare(secret)).toMatchObject({ outcome: 'failed' })
     expect(sender.send).not.toHaveBeenCalled()
   })
@@ -253,13 +254,14 @@ describe('health Action Fabric executors', () => {
       .mockResolvedValue({ status: 'delivered' as const, providerMessageId: 'message-1' })
     const adapter = createHealthWeixinExecutorAdapter({ profile: 'default', sender: { send, lookup } })
     const ctx = context('health.reminder.send', { schemaVersion: 1, actionId: 'action-2', recipient: 'configured-self',
-      messageCode: 'meal', messageText: '吃饭' }, { executorId: 'health-weixin' })
+      messageCode: 'meal' }, { executorId: 'health-weixin' })
     const prepared = await adapter.prepare(ctx)
     expect((await adapter.execute({ ...ctx, preparedOutput: prepared.output })).outcome).toBe('unknown')
     const resolved = await adapter.execute({ ...ctx, preparedOutput: prepared.output })
-    expect(resolved).toMatchObject({ outcome: 'succeeded', output: { status: 'delivered', providerMessageId: 'message-1' } })
+    expect(resolved).toMatchObject({ outcome: 'unknown' })
     expect(send).toHaveBeenCalledTimes(1)
-    expect(await adapter.verify({ ...ctx, preparedOutput: prepared.output, executionOutput: resolved.output }))
+    expect(await adapter.verify({ ...ctx, preparedOutput: prepared.output,
+      executionOutput: { ...resolved.output, status: 'unknown', providerMessageId: null } }))
       .toMatchObject({ outcome: 'verified' })
     expect(await adapter.interrupt(ctx)).toMatchObject({ outcome: 'unsupported' })
     expect(await adapter.compensate(ctx)).toMatchObject({ outcome: 'unsupported' })
@@ -270,9 +272,122 @@ describe('health Action Fabric executors', () => {
       send: vi.fn(), lookup: vi.fn(async () => { throw new Error('unavailable') }),
     } })
     const ctx = context('health.reminder.send', { schemaVersion: 1, actionId: 'action-3', recipient: 'configured-self',
-      messageCode: 'meal', messageText: '吃饭' }, { executorId: 'health-weixin' })
+      messageCode: 'meal' }, { executorId: 'health-weixin' })
     const prepared = await adapter.prepare(ctx)
     expect(await adapter.execute({ ...ctx, preparedOutput: prepared.output }))
       .toMatchObject({ outcome: 'unknown', errorCode: 'HEALTH_WEIXIN_DELIVERY_UNVERIFIABLE', safeToRetry: false })
+  })
+
+  it('registers every exact runtime binding including health source', () => {
+    expect(createConfiguredHealthFabricExecutorAdapters().map(adapter => adapter.id).sort()).toEqual([
+      'health-local-analysis', 'health-plan', 'health-remote-analysis', 'health-shadow', 'health-source', 'health-weixin',
+    ])
+  })
+
+  it('does not claim interruption when an analyzer ignores abort', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const adapter = createHealthAnalysisExecutorAdapter({ locality: 'local',
+      artifactResolver: { resolve: async () => ({ artifactId: 'artifact-1', manifestDigest: digest('artifact') }) },
+      analyzer: { analyze: async () => { await gate; return { analysisId: 'analysis-1', status: 'succeeded', observationIds: [] } } } })
+    const ctx = context('health.artifact.analyze.local', { schemaVersion: 1, artifactId: 'artifact-1',
+      manifestDigest: digest('artifact'), requestedAt: '2026-07-14T01:00:00.000Z' }, { executorId: 'health-local-analysis', executorType: 'internal' })
+    const prepared = await adapter.prepare(ctx)
+    const pending = adapter.execute({ ...ctx, preparedOutput: prepared.output })
+    await Promise.resolve()
+    expect(await adapter.interrupt(ctx)).toMatchObject({ outcome: 'unsupported' })
+    release(); await pending
+  })
+
+  it('rejects analyzer identifiers that would violate Task10 semantic output contracts', async () => {
+    const adapter = createHealthAnalysisExecutorAdapter({ locality: 'local',
+      artifactResolver: { resolve: async () => ({ artifactId: 'artifact-1', manifestDigest: digest('artifact') }) },
+      analyzer: { analyze: async () => ({ analysisId: 'not allowed whitespace', status: 'succeeded', observationIds: ['also invalid'] }) } })
+    const ctx = context('health.artifact.analyze.local', { schemaVersion: 1, artifactId: 'artifact-1',
+      manifestDigest: digest('artifact'), requestedAt: '2026-07-14T01:00:00.000Z' }, { executorId: 'health-local-analysis', executorType: 'internal' })
+    const prepared = await adapter.prepare(ctx)
+    expect(await adapter.execute({ ...ctx, preparedOutput: prepared.output }))
+      .toMatchObject({ outcome: 'permanent_failure', errorCode: 'HEALTH_ANALYSIS_RESULT_INVALID' })
+  })
+
+  it('passes execution token and material digest into durable plan/followup repository operations', async () => {
+    const scheduleFollowup = vi.fn(async () => ({ followupId: 'followup-1', scheduledAt: '2026-07-15T01:00:00.000Z', status: 'scheduled' as const }))
+    const repository = {
+      read: vi.fn(), adjust: vi.fn(), restore: vi.fn(), scheduleFollowup,
+      readFollowup: vi.fn(async () => ({ followupId: 'followup-1', scheduledAt: '2026-07-15T01:00:00.000Z', status: 'scheduled' as const })),
+    } as unknown as HealthPlanRepository
+    const adapter = createHealthPlanExecutorAdapter({ repository })
+    const ctx = context('health.followup.schedule', { schemaVersion: 1, followupId: 'followup-1', ownerUserId: 'user-1',
+      category: 'recovery', operation: 'schedule_pain_followup', reasonCode: 'pain', dueAt: '2026-07-15T01:00:00.000Z' },
+    { executorId: 'health-plan', executorType: 'internal', target: { kind: 'health_followup', ownerUserId: 'user-1' } })
+    const prepared = await adapter.prepare(ctx)
+    const executed = await adapter.execute({ ...ctx, preparedOutput: prepared.output })
+    expect(executed.outcome).toBe('succeeded')
+    expect(scheduleFollowup).toHaveBeenCalledWith(expect.objectContaining({ executionToken: 'execution-1', materialDigest: expect.stringMatching(/^[a-f0-9]{64}$/) }))
+  })
+
+  it('recovers a committed plan write in a new adapter through the durable execution ledger', async () => {
+    let current = { planId: 'plan-1', version: 3, digest: digest('v3') }
+    const ledger = new Map<string, { material: string; result: { previous: typeof current; current: typeof current } }>()
+    const repository: HealthPlanRepository = {
+      read: async () => ({ ...current }), restore: async () => null,
+      adjust: async request => {
+        const prior = ledger.get(request.executionToken)
+        if (prior) return prior.material === request.materialDigest ? prior.result : null
+        if (current.version !== request.expectedVersion || current.digest !== request.expectedDigest) return null
+        const previous = { ...current }; current = { planId: 'plan-1', version: 4, digest: digest('v4') }
+        const result = { previous, current: { ...current } }
+        ledger.set(request.executionToken, { material: request.materialDigest, result })
+        return result
+      },
+    }
+    const ctx = context('health.plan.adjust', { schemaVersion: 1, planId: 'plan-1', expectedVersion: 3,
+      operation: 'reduce_training_intensity', maximumIntensity: 'low', reasonCode: 'recovery' },
+    { executorId: 'health-plan', executorType: 'internal', target: { kind: 'health_plan', planId: 'plan-1' } })
+    const first = createHealthPlanExecutorAdapter({ repository })
+    const prepared = await first.prepare(ctx)
+    expect((await first.execute({ ...ctx, preparedOutput: prepared.output })).outcome).toBe('succeeded')
+    const afterCrash = createHealthPlanExecutorAdapter({ repository })
+    expect(await afterCrash.execute({ ...ctx, preparedOutput: prepared.output })).toMatchObject({ outcome: 'succeeded', output: { newVersion: 4 } })
+    const changedMaterial = { ...ctx, input: { ...ctx.input, reasonCode: 'different' } }
+    expect(await afterCrash.execute({ ...changedMaterial, preparedOutput: prepared.output }))
+      .toMatchObject({ outcome: 'permanent_failure', errorCode: 'HEALTH_PLAN_CAS_CONFLICT' })
+  })
+
+  it('coalesces concurrent same-token Weixin execute calls before the first await', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const send = vi.fn(async () => { await gate; return { status: 'accepted' as const, providerMessageId: 'message-1' } })
+    const adapter = createHealthWeixinExecutorAdapter({ profile: 'default', sender: {
+      send, lookup: vi.fn(async () => ({ status: 'not_found' as const, providerMessageId: null })),
+    } })
+    const ctx = context('health.reminder.send', { schemaVersion: 1, actionId: 'action-4', recipient: 'configured-self',
+      messageCode: 'meal_due' }, { executorId: 'health-weixin' })
+    const prepared = await adapter.prepare(ctx)
+    const first = adapter.execute({ ...ctx, preparedOutput: prepared.output })
+    const second = adapter.execute({ ...ctx, preparedOutput: prepared.output })
+    await vi.waitFor(() => expect(send).toHaveBeenCalled())
+    release(); await Promise.all([first, second])
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses allowlisted reminder templates and rejects unknown message codes', async () => {
+    const sender = { send: vi.fn(), lookup: vi.fn() }
+    const adapter = createHealthWeixinExecutorAdapter({ profile: 'default', sender })
+    const unknown = context('health.reminder.send', { schemaVersion: 1, actionId: 'action-5', recipient: 'configured-self',
+      messageCode: 'unknown-code' }, { executorId: 'health-weixin' })
+    expect(await adapter.prepare(unknown)).toMatchObject({ outcome: 'failed' })
+  })
+
+  it('never verifies accepted delivery without an identity bound to the stable delivery id', async () => {
+    const adapter = createHealthWeixinExecutorAdapter({ profile: 'default', sender: {
+      send: vi.fn(), lookup: vi.fn(async () => ({ status: 'accepted' as const, providerMessageId: null })),
+    } })
+    const ctx = context('health.reminder.send', { schemaVersion: 1, actionId: 'action-6', recipient: 'configured-self',
+      messageCode: 'meal_due' }, { executorId: 'health-weixin' })
+    const prepared = await adapter.prepare(ctx)
+    expect(await adapter.verify({ ...ctx, preparedOutput: prepared.output, executionOutput: {
+      schemaVersion: 1, deliveryId: prepared.output.deliveryId, status: 'accepted', providerMessageId: null,
+    } })).toMatchObject({ outcome: 'failed', errorCode: 'HEALTH_WEIXIN_VERIFICATION_INVALID' })
   })
 })

@@ -1,11 +1,16 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { getTwinArtifact, withPersonalTwinDb } from '../personal-twin'
+import {
+  mintHealthReservationAuthorization, type HealthReservationAuthorization,
+  registerHealthReservationConsumer,
+} from './executors/reservation-internal'
 
 const ARTIFACT_ID = /^artifact-([0-9a-f]{64})$/
 const DIGEST = /^[0-9a-f]{64}$/
 const TOKEN = /^[0-9a-f]{64}$/
 const CONSENT_ID = /^(?:[0-9a-f]{64}|consent-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/
+const RESERVATION_ID = /^reservation-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const PURPOSES = ['measurement', 'posture', 'skin', 'diet', 'internal_health'] as const
 export const HEALTH_PROCESSING_RETENTIONS = ['no_retention', 'session', '24_hours'] as const
 export type HealthProcessingRetention = typeof HEALTH_PROCESSING_RETENTIONS[number]
@@ -66,6 +71,21 @@ export interface HealthConsentRevocation {
   consentId: string
   revokedAt: string
 }
+export interface HealthConsentReservationBinding {
+  artifactId: string
+  artifactManifestDigest: string
+  processorId: string
+}
+export interface HealthConsentReservation extends HealthConsentReservationBinding {
+  reservationId: string
+  consentId: string
+  expiresAt: string
+}
+interface HealthConsentReservationConsumption extends HealthConsentReservationBinding {
+  reservationId: string
+  consumedAt: string
+  authorization: HealthReservationAuthorization
+}
 
 export interface HealthConsentBrokerOptions {
   allowedProcessors: readonly string[]
@@ -77,6 +97,8 @@ export interface HealthConsentBrokerOptions {
 export interface HealthConsentBroker {
   issue(manifest: HealthProcessingManifest, options?: { ttlMs?: number }): Promise<HealthConsentGrant>
   consume(token: string, manifest: HealthProcessingManifest): Promise<HealthConsentConsumption>
+  reserve(token: string, manifest: HealthProcessingManifest,
+    binding: HealthConsentReservationBinding): Promise<HealthConsentReservation>
   revoke(consentId: string): Promise<HealthConsentRevocation>
 }
 
@@ -89,6 +111,10 @@ interface ConsentRow {
   expires_at: string
   consumed_at: string | null
   revoked_at: string | null
+}
+interface ReservationRow {
+  reservation_id: string; consent_id: string; artifact_id: string; artifact_manifest_digest: string
+  processor: string; reserved_at: string; expires_at: string; consumed_at: string | null
 }
 
 interface GrantEnvelope {
@@ -335,8 +361,8 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
     throw new HealthConsentError('HEALTH_CONSENT_TTL_INVALID')
   }
 
-  return {
-    async issue(input, issueOptions = {}): Promise<HealthConsentGrant> {
+  const internalBroker = {
+    async issue(input: HealthProcessingManifest, issueOptions: { ttlMs?: number } = {}): Promise<HealthConsentGrant> {
       const manifest = canonicalManifest(input, allowedProcessors, true)
       const digest = manifestDigest(manifest)
       const ttlMs = issueOptions.ttlMs ?? defaultTtlMs
@@ -368,7 +394,7 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
       return { consentId, manifestDigest: digest, token, manifest, issuedAt, expiresAt }
     },
 
-    async consume(token, input): Promise<HealthConsentConsumption> {
+    async consume(token: string, input: HealthProcessingManifest): Promise<HealthConsentConsumption> {
       const manifest = canonicalManifest(input, allowedProcessors, false)
       const digest = manifestDigest(manifest)
       const { iso: consumedAt } = safeNow(clock)
@@ -414,7 +440,75 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
       }))
     },
 
-    async revoke(consentId): Promise<HealthConsentRevocation> {
+    async reserve(token: string, input: HealthProcessingManifest,
+      inputBinding: HealthConsentReservationBinding): Promise<HealthConsentReservation> {
+      const manifest = canonicalManifest(input, allowedProcessors, true)
+      const binding = reservationBinding(inputBinding, manifest)
+      const digest = manifestDigest(manifest)
+      const { iso: reservedAt } = safeNow(clock)
+      const reservationId = `reservation-${randomUUID()}`
+      const tokenValid = typeof token === 'string' && TOKEN.test(token)
+      const suppliedDigest = tokenValid ? tokenDigest(token) : tokenDigest('invalid')
+      return runStorage(() => transaction(db => {
+        const rows = db.prepare('SELECT * FROM twin_artifact_consents WHERE manifest_digest=? ORDER BY issued_at,consent_id')
+          .all(digest) as unknown as ConsentRow[]
+        const matches: Array<{ row: ConsentRow; stored: NonNullable<ReturnType<typeof storedGrant>> }> = []
+        for (const row of rows) {
+          const stored = storedGrant(row, allowedProcessors, maxTtlMs)
+          const comparableDigest = stored?.tokenDigest ?? Buffer.alloc(32)
+          const suppliedBinding = grantBinding(tokenValid ? token : '0'.repeat(64), stored?.envelope
+            ?? grantEnvelope(`consent-${'0'.repeat(36)}`, manifest, digest, reservedAt, reservedAt, 1))
+          const comparableBinding = stored?.grantBinding ?? Buffer.alloc(32)
+          if (stored && timingSafeEqual(comparableDigest, suppliedDigest)
+            && timingSafeEqual(comparableBinding, suppliedBinding)) matches.push({ row, stored })
+        }
+        if (!tokenValid || matches.length !== 1 || rows.some(row => !storedGrant(row, allowedProcessors, maxTtlMs))) {
+          throw new HealthConsentError('HEALTH_CONSENT_INVALID')
+        }
+        const row = matches[0].row
+        if (row.revoked_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REVOKED')
+        if (row.consumed_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REPLAYED')
+        if (row.expires_at <= reservedAt) throw new HealthConsentError('HEALTH_CONSENT_EXPIRED')
+        const consumed = db.prepare(`UPDATE twin_artifact_consents SET consumed_at=?
+          WHERE consent_id=? AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>?`)
+          .run(reservedAt, row.consent_id, reservedAt)
+        if (consumed.changes !== 1) throw new HealthConsentError('HEALTH_CONSENT_REPLAYED')
+        db.prepare(`INSERT INTO twin_artifact_consent_reservations
+          (reservation_id,consent_id,artifact_id,artifact_manifest_digest,processor,reserved_at,expires_at,consumed_at)
+          VALUES(?,?,?,?,?,?,?,NULL)`).run(reservationId, row.consent_id, binding.artifactId,
+          binding.artifactManifestDigest, binding.processorId, reservedAt, row.expires_at)
+        return { reservationId, consentId: row.consent_id, ...binding, expiresAt: row.expires_at }
+      }))
+    },
+
+    async consumeReservationInternal(reservationId: string,
+      inputBinding: HealthConsentReservationBinding): Promise<HealthConsentReservationConsumption> {
+      if (typeof reservationId !== 'string' || !RESERVATION_ID.test(reservationId)) {
+        throw new HealthConsentError('HEALTH_CONSENT_NOT_FOUND')
+      }
+      const { iso: consumedAt } = safeNow(clock)
+      return runStorage(() => transaction(db => {
+        const row = db.prepare('SELECT * FROM twin_artifact_consent_reservations WHERE reservation_id=?')
+          .get(reservationId) as unknown as ReservationRow | undefined
+        if (!row) throw new HealthConsentError('HEALTH_CONSENT_NOT_FOUND')
+        const consent = db.prepare('SELECT * FROM twin_artifact_consents WHERE consent_id=?')
+          .get(row.consent_id) as unknown as ConsentRow | undefined
+        const stored = consent ? storedGrant(consent, allowedProcessors, maxTtlMs) : null
+        if (!consent || !stored) throw new HealthConsentError('HEALTH_CONSENT_STORAGE_FAILED')
+        const binding = reservationBinding(inputBinding, stored.envelope.manifest)
+        if (row.artifact_id !== binding.artifactId || row.artifact_manifest_digest !== binding.artifactManifestDigest
+          || row.processor !== binding.processorId) throw new HealthConsentError('HEALTH_CONSENT_INVALID')
+        if (row.consumed_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REPLAYED')
+        if (row.expires_at <= consumedAt) throw new HealthConsentError('HEALTH_CONSENT_EXPIRED')
+        const changed = db.prepare(`UPDATE twin_artifact_consent_reservations SET consumed_at=?
+          WHERE reservation_id=? AND consumed_at IS NULL AND expires_at>?`).run(consumedAt, reservationId, consumedAt)
+        if (changed.changes !== 1) throw new HealthConsentError('HEALTH_CONSENT_REPLAYED')
+        return { reservationId, ...binding, consumedAt,
+          authorization: mintHealthReservationAuthorization({ reservationId, ...binding, manifest: stored.envelope.manifest }) }
+      }))
+    },
+
+    async revoke(consentId: string): Promise<HealthConsentRevocation> {
       if (typeof consentId !== 'string' || !CONSENT_ID.test(consentId)) throw new HealthConsentError('HEALTH_CONSENT_NOT_FOUND')
       const { iso: revokedAt } = safeNow(clock)
       return runStorage(() => transaction(db => {
@@ -437,5 +531,24 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
         return { consentId, revokedAt }
       }))
     },
-  }
+  } as unknown as HealthConsentBroker & { consumeReservationInternal: (
+    reservationId: string, binding: HealthConsentReservationBinding,
+  ) => Promise<HealthConsentReservationConsumption> }
+  const internalConsume = internalBroker.consumeReservationInternal.bind(internalBroker)
+  delete (internalBroker as unknown as { consumeReservationInternal?: unknown }).consumeReservationInternal
+  registerHealthReservationConsumer(internalBroker, internalConsume)
+  return internalBroker
+}
+
+function reservationBinding(input: HealthConsentReservationBinding,
+  manifest: HealthProcessingManifest): HealthConsentReservationBinding {
+  assertSafeGraph(input)
+  if (!input || typeof input !== 'object' || Array.isArray(input)
+    || Object.keys(input).sort().join(',') !== 'artifactId,artifactManifestDigest,processorId'
+    || typeof input.artifactId !== 'string' || !ARTIFACT_ID.test(input.artifactId)
+    || typeof input.artifactManifestDigest !== 'string' || !DIGEST.test(input.artifactManifestDigest)
+    || typeof input.processorId !== 'string' || input.processorId !== manifest.processor
+    || !manifest.artifactIds.includes(input.artifactId)) throw new HealthConsentError('HEALTH_CONSENT_INVALID')
+  return { artifactId: input.artifactId, artifactManifestDigest: input.artifactManifestDigest,
+    processorId: input.processorId }
 }

@@ -1,8 +1,10 @@
-import { randomUUID } from 'crypto'
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'fs'
+import { createHash, randomUUID } from 'crypto'
+import { chmodSync, existsSync, mkdirSync, readFileSync } from 'fs'
 import { dirname, join } from 'path'
+import { DatabaseSync } from 'node:sqlite'
 import axios from 'axios'
 import { getProfileDir } from './hermes-profile'
+import { isFabricSensitiveString } from './action-fabric/audit'
 
 export interface WeixinSendResult {
   ok: boolean
@@ -52,63 +54,114 @@ export async function sendWeixinTextReminder(profile: string, message: string): 
  * written before network I/O; the stable provider client id is defense in depth.
  */
 export function createWeixinReceiptSender(profile: string): WeixinReceiptSender {
-  const journalPath = join(getProfileDir(profile || 'default'), 'weixin-delivery-attempts.jsonl')
-  const journal = readReceiptJournal(journalPath)
-  const receipts = journal.receipts
   return {
     async send(request) {
       if (request.recipient !== 'configured-self' || !validDeliveryId(request.deliveryId)) {
         return { status: 'unknown', providerMessageId: null }
       }
-      if (!journal.reliable) return { status: 'unknown', providerMessageId: null }
-      const existing = receipts.get(request.deliveryId)
-      if (existing) return existing
       const credentials = resolveWeixinCredentials(profile)
       const message = request.message.trim()
       if (!credentials || !message) return { status: 'unknown', providerMessageId: null }
-      // Persist an unknown tombstone before crossing the network. A restart will
-      // query this state and refuse to resend blindly.
-      persistReceipt(journalPath, request.deliveryId, { status: 'unknown', providerMessageId: null })
-      receipts.set(request.deliveryId, { status: 'unknown', providerMessageId: null })
+      const materialDigest = createHash('sha256').update(JSON.stringify({
+        deliveryId: request.deliveryId, recipient: request.recipient, message,
+      })).digest('hex')
+      const claim = claimDelivery(profile, request.deliveryId, materialDigest)
+      if (!claim.reliable || !claim.claimed) return claim.delivery
       const posted = await postWeixinText(credentials, message, request.deliveryId)
-      const delivery: WeixinProviderDelivery = posted.status === 'accepted' && posted.providerMessageId !== null
-        ? { status: 'accepted', providerMessageId: posted.providerMessageId }
+      const safeIdentity = validProviderMessageId(posted.providerMessageId) ? posted.providerMessageId : null
+      const delivery: WeixinProviderDelivery = posted.status === 'accepted' && safeIdentity !== null
+        ? { status: 'accepted', providerMessageId: safeIdentity }
         : { status: 'unknown', providerMessageId: null }
-      receipts.set(request.deliveryId, delivery)
-      persistReceipt(journalPath, request.deliveryId, delivery)
-      return delivery
+      return delivery.status === 'accepted'
+        ? completeDelivery(profile, request.deliveryId, materialDigest, delivery)
+        : delivery
     },
     async lookup(deliveryId) {
-      if (!journal.reliable) return { status: 'unknown', providerMessageId: null }
-      return receipts.get(deliveryId) ?? { status: 'not_found', providerMessageId: null }
+      if (!validDeliveryId(deliveryId)) return { status: 'unknown', providerMessageId: null }
+      return lookupDelivery(profile, deliveryId)
     },
   }
 }
 
-function readReceiptJournal(path: string): { receipts: Map<string, WeixinProviderDelivery>; reliable: boolean } {
-  const result = new Map<string, WeixinProviderDelivery>()
-  if (!existsSync(path)) return { receipts: result, reliable: true }
+interface DeliveryRow { material_digest: string; status: string; provider_message_id: string | null }
+
+function withDeliveryDb<T>(profile: string, callback: (db: DatabaseSync) => T): T {
+  const path = join(getProfileDir(profile || 'default'), 'weixin-deliveries.sqlite')
+  mkdirSync(dirname(path), { recursive: true })
+  const existed = existsSync(path)
+  const db = new DatabaseSync(path)
   try {
-    const content = readFileSync(path, 'utf8')
-    if (Buffer.byteLength(content, 'utf8') > 4 * 1024 * 1024) return { receipts: result, reliable: false }
-    for (const line of content.split(/\r?\n/)) {
-      if (!line) continue
-      const item = JSON.parse(line) as { deliveryId?: unknown; status?: unknown; providerMessageId?: unknown }
-      if (typeof item.deliveryId !== 'string' || !validDeliveryId(item.deliveryId)
-        || !['accepted', 'delivered', 'unknown'].includes(String(item.status))
-        || !(item.providerMessageId === null || typeof item.providerMessageId === 'string')) {
-        return { receipts: new Map(), reliable: false }
-      }
-      result.set(item.deliveryId, { status: item.status as WeixinProviderDelivery['status'],
-        providerMessageId: item.providerMessageId as string | null })
-    }
-  } catch { return { receipts: new Map(), reliable: false } }
-  return { receipts: result, reliable: true }
+    db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; PRAGMA max_page_count=1024;')
+    db.exec(`CREATE TABLE IF NOT EXISTS weixin_delivery_claims (
+      delivery_id TEXT PRIMARY KEY,
+      material_digest TEXT NOT NULL CHECK(length(material_digest)=64 AND material_digest NOT GLOB '*[^0-9a-f]*'),
+      status TEXT NOT NULL CHECK(status IN ('unknown','accepted','delivered')),
+      provider_message_id TEXT,
+      claimed_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT`)
+    if (!existed) { try { chmodSync(path, 0o600) } catch { /* profile ACL remains authoritative */ } }
+    return callback(db)
+  } finally { db.close() }
 }
 
-function persistReceipt(path: string, deliveryId: string, delivery: WeixinProviderDelivery): void {
-  mkdirSync(dirname(path), { recursive: true })
-  appendFileSync(path, `${JSON.stringify({ deliveryId, ...delivery })}\n`, { encoding: 'utf8', mode: 0o600, flush: true })
+function claimDelivery(profile: string, deliveryId: string, materialDigest: string): {
+  reliable: boolean; claimed: boolean; delivery: WeixinProviderDelivery
+} {
+  try {
+    return withDeliveryDb(profile, db => {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        const existing = db.prepare(`SELECT material_digest,status,provider_message_id
+          FROM weixin_delivery_claims WHERE delivery_id=?`).get(deliveryId) as unknown as DeliveryRow | undefined
+        if (existing) {
+          db.exec('COMMIT')
+          if (existing.material_digest !== materialDigest) return { reliable: true, claimed: false,
+            delivery: { status: 'unknown', providerMessageId: null } as WeixinProviderDelivery }
+          return { reliable: true, claimed: false, delivery: rowDelivery(existing) }
+        }
+        const now = new Date().toISOString()
+        db.prepare(`INSERT INTO weixin_delivery_claims
+          (delivery_id,material_digest,status,provider_message_id,claimed_at,updated_at)
+          VALUES(?,?,'unknown',NULL,?,?)`).run(deliveryId, materialDigest, now, now)
+        db.exec('COMMIT')
+        return { reliable: true, claimed: true,
+          delivery: { status: 'unknown', providerMessageId: null } as WeixinProviderDelivery }
+      } catch (error) { if (db.isTransaction) db.exec('ROLLBACK'); throw error }
+    })
+  } catch { return { reliable: false, claimed: false, delivery: { status: 'unknown', providerMessageId: null } } }
+}
+
+function completeDelivery(profile: string, deliveryId: string, materialDigest: string,
+  delivery: WeixinProviderDelivery): WeixinProviderDelivery {
+  if (delivery.status !== 'accepted' || !validProviderMessageId(delivery.providerMessageId)) {
+    return { status: 'unknown', providerMessageId: null }
+  }
+  try {
+    return withDeliveryDb(profile, db => {
+      const changed = db.prepare(`UPDATE weixin_delivery_claims SET status='accepted',provider_message_id=?,updated_at=?
+        WHERE delivery_id=? AND material_digest=? AND status='unknown' AND provider_message_id IS NULL`)
+        .run(delivery.providerMessageId, new Date().toISOString(), deliveryId, materialDigest)
+      return changed.changes === 1 ? delivery : { status: 'unknown', providerMessageId: null }
+    })
+  } catch { return { status: 'unknown', providerMessageId: null } }
+}
+
+function lookupDelivery(profile: string, deliveryId: string): WeixinDeliveryLookup {
+  try {
+    return withDeliveryDb(profile, db => {
+      const row = db.prepare(`SELECT material_digest,status,provider_message_id FROM weixin_delivery_claims
+        WHERE delivery_id=?`).get(deliveryId) as unknown as DeliveryRow | undefined
+      return row ? rowDelivery(row) : { status: 'not_found', providerMessageId: null }
+    })
+  } catch { return { status: 'unknown', providerMessageId: null } }
+}
+
+function rowDelivery(row: DeliveryRow): WeixinProviderDelivery {
+  if ((row.status === 'accepted' || row.status === 'delivered') && validProviderMessageId(row.provider_message_id)) {
+    return { status: row.status, providerMessageId: row.provider_message_id }
+  }
+  return { status: 'unknown', providerMessageId: null }
 }
 
 async function postWeixinText(credentials: WeixinCredentials, text: string, clientId: string): Promise<{
@@ -153,13 +206,19 @@ async function postWeixinText(credentials: WeixinCredentials, text: string, clie
     const providerMessageId = typeof data.msgid === 'string' && data.msgid.trim()
       ? data.msgid.trim().slice(0, 256) : null
     return { status: 'accepted', providerMessageId }
-  } catch (err: any) {
-    return { status: 'unknown', providerMessageId: null, error: err.message || 'weixin_send_failed' }
+  } catch (error: unknown) {
+    return { status: 'unknown', providerMessageId: null,
+      error: error instanceof Error ? error.message : 'weixin_send_failed' }
   }
 }
 
 function validDeliveryId(value: string): boolean {
   return typeof value === 'string' && value.length >= 1 && value.length <= 200 && /^[A-Za-z0-9._:-]+$/.test(value)
+}
+
+function validProviderMessageId(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 1 && value.length <= 160
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value) && !isFabricSensitiveString(value)
 }
 
 function resolveWeixinCredentials(profile: string): WeixinCredentials | null {

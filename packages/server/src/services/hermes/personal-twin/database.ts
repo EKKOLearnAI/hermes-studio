@@ -5,9 +5,9 @@ import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 import { TWIN_DOMAINS } from './types'
 
-const SCHEMA_VERSION = 6
+const SCHEMA_VERSION = 7
 const REQUIRED_TWIN_TABLES = [
-  'twin_artifacts', 'twin_artifact_consents', 'twin_assistant_roles', 'twin_constraints', 'twin_context_recipes',
+  'twin_artifacts', 'twin_artifact_consents', 'twin_artifact_consent_reservations', 'twin_assistant_roles', 'twin_constraints', 'twin_context_recipes',
   'twin_entities', 'twin_events', 'twin_goals', 'twin_import_runs', 'twin_meta',
   'twin_observations', 'twin_outbox', 'twin_preference_operations', 'twin_preferences', 'twin_projections',
   'twin_relations', 'twin_role_profile_mappings',
@@ -71,6 +71,10 @@ export function initPersonalTwinSchema(db: DatabaseSync): void {
     if (version < 6) {
       createSchemaV6(db)
       setSchemaVersion(db, 6)
+    }
+    if (version < 7) {
+      createSchemaV7(db)
+      setSchemaVersion(db, 7)
     }
     normalizeLegacyArtifactSourceIndex(db)
     assertSchemaComplete(db, SCHEMA_VERSION)
@@ -145,6 +149,18 @@ function assertSchemaComplete(db: DatabaseSync, version: number): void {
     ['processor', 'expires_at', 'consumed_at', 'revoked_at'], false)
   assertIndexSignature(db, version, 'twin_artifact_consents', 'idx_twin_artifact_consents_manifest_digest',
     ['manifest_digest'], false)
+  const reservationColumns = db.prepare("PRAGMA table_info('twin_artifact_consent_reservations')").all() as unknown as ColumnInfo[]
+  const expectedReservationColumns: ColumnSignature[] = [
+    ['reservation_id', 'TEXT', 0, 1, null], ['consent_id', 'TEXT', 1, 0, null],
+    ['artifact_id', 'TEXT', 1, 0, null], ['artifact_manifest_digest', 'TEXT', 1, 0, null],
+    ['processor', 'TEXT', 1, 0, null], ['reserved_at', 'TEXT', 1, 0, null],
+    ['expires_at', 'TEXT', 1, 0, null], ['consumed_at', 'TEXT', 0, 0, null],
+  ]
+  if (!columnsMatch(reservationColumns, expectedReservationColumns)) {
+    throw new Error(`Personal Twin schema version ${version} is incomplete: consent reservation signature is invalid`)
+  }
+  assertIndexSignature(db, version, 'twin_artifact_consent_reservations',
+    'idx_twin_artifact_consent_reservations_status', ['processor', 'expires_at', 'consumed_at'], false)
 }
 
 interface ColumnInfo { name: string; type: string; notnull: number; pk: number; dflt_value: string | null }
@@ -482,6 +498,28 @@ function createSchemaV6(db: DatabaseSync): void {
       ON twin_artifact_consents(processor, expires_at, consumed_at, revoked_at);
     CREATE INDEX idx_twin_artifact_consents_manifest_digest
       ON twin_artifact_consents(manifest_digest);
+  `)
+}
+
+function createSchemaV7(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS twin_artifact_consent_reservations (
+      reservation_id TEXT PRIMARY KEY
+        CHECK(length(reservation_id) BETWEEN 48 AND 64 AND reservation_id GLOB 'reservation-*'
+          AND reservation_id NOT GLOB '*[^a-zA-Z0-9-]*'),
+      consent_id TEXT NOT NULL REFERENCES twin_artifact_consents(consent_id),
+      artifact_id TEXT NOT NULL
+        CHECK(length(artifact_id)=73 AND artifact_id GLOB 'artifact-*'
+          AND substr(artifact_id,10) NOT GLOB '*[^a-f0-9]*'),
+      artifact_manifest_digest TEXT NOT NULL
+        CHECK(length(artifact_manifest_digest)=64 AND artifact_manifest_digest NOT GLOB '*[^a-f0-9]*'),
+      processor TEXT NOT NULL,
+      reserved_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      consumed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_twin_artifact_consent_reservations_status
+      ON twin_artifact_consent_reservations(processor,expires_at,consumed_at);
   `)
 }
 

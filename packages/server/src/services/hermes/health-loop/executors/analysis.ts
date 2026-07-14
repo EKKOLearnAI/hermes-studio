@@ -1,9 +1,16 @@
+import { createHash } from 'crypto'
 import type {
   FabricCompensateResult, FabricExecutionContext, FabricExecutorAdapter, FabricInterruptResult,
   FabricPrepareResult, FabricExecuteResult, FabricVerifyResult,
 } from '../../action-fabric/executors'
 import type { FabricJsonObject } from '../../action-fabric/types'
 import { isFabricSensitiveString } from '../../action-fabric/audit'
+import type { HealthConsentBroker } from '../consent'
+import type { AuxiliaryVisionAnalyzer } from '../analyzers/auxiliary-vision'
+import {
+  AUTHORIZED_AUXILIARY_ANALYZE, consumeHealthReservation, readHealthReservationAuthorization,
+  type HealthReservationAuthorization,
+} from './reservation-internal'
 
 const DIGEST = /^[a-f0-9]{64}$/
 
@@ -13,7 +20,9 @@ export interface HealthAnalysisArtifactResolver {
 }
 export interface HealthAnalysisConsentRequest extends HealthAnalysisArtifactIdentity { consentId: string; processorId: string }
 export interface HealthAnalysisConsentConsumer {
-  consume(request: HealthAnalysisConsentRequest): Promise<{ consentId: string; consumedAt: string }>
+  consume(request: HealthAnalysisConsentRequest): Promise<{
+    consentId: string; consumedAt: string; authorization: HealthReservationAuthorization
+  }>
 }
 export interface HealthExecutorAnalysisResult {
   analysisId: string
@@ -22,8 +31,45 @@ export interface HealthExecutorAnalysisResult {
   processorReceiptId?: string
 }
 export interface HealthExecutorAnalyzer {
-  analyze(request: HealthAnalysisArtifactIdentity & { processorId?: string; requestedAt: string; signal: AbortSignal }):
+  analyze(request: HealthAnalysisArtifactIdentity & { processorId?: string; requestedAt: string; signal: AbortSignal;
+    authorization?: HealthReservationAuthorization }):
     Promise<HealthExecutorAnalysisResult>
+}
+
+export function createHealthConsentReservationConsumer(
+  broker: HealthConsentBroker,
+): HealthAnalysisConsentConsumer {
+  return { consume: async request => {
+    const consumed = await consumeHealthReservation(broker, request.consentId, {
+      artifactId: request.artifactId, artifactManifestDigest: request.manifestDigest, processorId: request.processorId,
+    })
+    return { consentId: consumed.reservationId, consumedAt: consumed.consumedAt, authorization: consumed.authorization }
+  } }
+}
+
+export function createAuthorizedAuxiliaryVisionExecutorAnalyzer(
+  analyzer: AuxiliaryVisionAnalyzer,
+  profile = 'default',
+): HealthExecutorAnalyzer {
+  return { async analyze(request) {
+    const reserved = readHealthReservationAuthorization((request as { authorization?: unknown }).authorization)
+    const authorized = (analyzer as unknown as Record<PropertyKey, unknown>)[AUTHORIZED_AUXILIARY_ANALYZE]
+    if (!reserved || typeof authorized !== 'function' || reserved.artifactId !== request.artifactId
+      || reserved.artifactManifestDigest !== request.manifestDigest || reserved.processorId !== request.processorId) {
+      throw new Error('HEALTH_ANALYSIS_CONSENT_DENIED')
+    }
+    const result = await (authorized as (input: object, authorization: HealthReservationAuthorization) => Promise<{
+      status: string; modelVersion: string; parserVersion: string
+    }>)({ schemaVersion: 'health-analysis-request/v1', profile, purpose: reserved.manifest.purpose,
+      sourceId: `fabric.${reserved.processorId}`, observedAt: request.requestedAt,
+      artifactIds: [...reserved.manifest.artifactIds], selectedRegions: [...reserved.manifest.selectedRegions],
+      requestedFields: [...reserved.manifest.requestedFields] }, (request as { authorization: HealthReservationAuthorization }).authorization)
+    const receiptDigest = createHash('sha256').update(JSON.stringify({ reservationId: reserved.reservationId,
+      modelVersion: result.modelVersion, parserVersion: result.parserVersion, status: result.status })).digest('hex')
+    return { analysisId: `analysis-${receiptDigest.slice(0, 40)}`,
+      status: result.status === 'completed' ? 'succeeded' : 'needs_review', observationIds: [],
+      processorReceiptId: `processor-receipt-${receiptDigest.slice(0, 40)}` }
+  } }
 }
 export interface HealthAnalysisExecutorOptions {
   locality: 'local' | 'remote'
@@ -34,7 +80,6 @@ export interface HealthAnalysisExecutorOptions {
 
 export function createHealthAnalysisExecutorAdapter(options: HealthAnalysisExecutorOptions): FabricExecutorAdapter {
   const executions = new Map<string, Promise<FabricExecuteResult>>()
-  const controllers = new Map<string, AbortController>()
   const id = options.locality === 'local' ? 'health-local-analysis' : 'health-remote-analysis'
   return {
     id, type: options.locality === 'local' ? 'internal' : 'connector',
@@ -53,7 +98,7 @@ export function createHealthAnalysisExecutorAdapter(options: HealthAnalysisExecu
     execute(context): Promise<FabricExecuteResult> {
       const existing = executions.get(context.executionToken)
       if (existing) return existing
-      const pending = executeOnce(options, context, controllers)
+      const pending = executeOnce(options, context)
       executions.set(context.executionToken, pending)
       return pending
     },
@@ -70,10 +115,7 @@ export function createHealthAnalysisExecutorAdapter(options: HealthAnalysisExecu
         ...(output.processorReceiptId ? { processorReceiptId: output.processorReceiptId } : {}) })
     },
     async interrupt(context): Promise<FabricInterruptResult> {
-      const controller = controllers.get(context.executionToken)
-      if (!controller) return failure('unsupported', 'HEALTH_ANALYSIS_INTERRUPT_NOT_RUNNING')
-      controller.abort()
-      return success('interrupted', context, {})
+      return failure('unsupported', 'HEALTH_ANALYSIS_INTERRUPT_UNSUPPORTED')
     },
     async compensate(): Promise<FabricCompensateResult> {
       return failure('unsupported', 'HEALTH_ANALYSIS_COMPENSATION_UNSUPPORTED')
@@ -81,8 +123,7 @@ export function createHealthAnalysisExecutorAdapter(options: HealthAnalysisExecu
   }
 }
 
-async function executeOnce(options: HealthAnalysisExecutorOptions, context: FabricExecutionContext,
-  controllers: Map<string, AbortController>): Promise<FabricExecuteResult> {
+async function executeOnce(options: HealthAnalysisExecutorOptions, context: FabricExecutionContext): Promise<FabricExecuteResult> {
   if (!options.analyzer) return failure('permanent_failure', 'HEALTH_ANALYSIS_DEPENDENCY_UNAVAILABLE')
   let identity: HealthAnalysisArtifactIdentity
   try {
@@ -91,6 +132,7 @@ async function executeOnce(options: HealthAnalysisExecutorOptions, context: Fabr
       || context.preparedOutput.manifestDigest !== identity.manifestDigest) throw new Error('invalid')
   } catch { return failure('permanent_failure', 'HEALTH_ANALYSIS_PREPARATION_INVALID') }
   let consentId: string | undefined
+  let authorization: HealthReservationAuthorization | undefined
   if (options.locality === 'remote') {
     const processorId = context.input.processorId
     const suppliedConsentId = context.input.consentId
@@ -101,14 +143,15 @@ async function executeOnce(options: HealthAnalysisExecutorOptions, context: Fabr
       const consumed = await options.consentConsumer.consume({ ...identity, processorId, consentId: suppliedConsentId })
       if (consumed.consentId !== suppliedConsentId) return failure('permanent_failure', 'HEALTH_ANALYSIS_CONSENT_MISMATCH')
       consentId = consumed.consentId
+      authorization = consumed.authorization
     } catch { return failure('permanent_failure', 'HEALTH_ANALYSIS_CONSENT_DENIED') }
   }
   const controller = new AbortController()
-  controllers.set(context.executionToken, controller)
   try {
     const result = await options.analyzer.analyze({ ...identity,
       ...(options.locality === 'remote' ? { processorId: context.input.processorId as string } : {}),
-      requestedAt: String(context.input.requestedAt), signal: controller.signal })
+      requestedAt: String(context.input.requestedAt), signal: controller.signal,
+      ...(authorization ? { authorization } : {}) })
     if (!validResult(result, options.locality)) return failure('permanent_failure', 'HEALTH_ANALYSIS_RESULT_INVALID')
     const ids = result.observationIds.slice(0, 64)
     return success('succeeded', context, { schemaVersion: 1, artifactId: identity.artifactId,
@@ -120,7 +163,7 @@ async function executeOnce(options: HealthAnalysisExecutorOptions, context: Fabr
     // Consent may already be consumed and the remote processor may already have acted. Never mark this retry-safe.
     return failure('unknown', options.locality === 'remote'
       ? 'HEALTH_ANALYSIS_REMOTE_RESULT_UNCERTAIN' : 'HEALTH_ANALYSIS_LOCAL_FAILED')
-  } finally { controllers.delete(context.executionToken) }
+  }
 }
 
 function inputIdentity(input: FabricJsonObject): HealthAnalysisArtifactIdentity {
@@ -132,13 +175,15 @@ function matchesCapability(locality: 'local' | 'remote', id: string): boolean {
   return id === `health.artifact.analyze.${locality}`
 }
 function validResult(value: HealthExecutorAnalysisResult, locality: 'local' | 'remote'): boolean {
-  return !!value && typeof value.analysisId === 'string' && value.analysisId.length > 0 && value.analysisId.length <= 200
-    && !isFabricSensitiveString(value.analysisId)
+  return !!value && semanticId(value.analysisId)
     && ['succeeded', 'needs_review', 'failed'].includes(value.status) && Array.isArray(value.observationIds)
     && value.observationIds.length <= 4096
-    && value.observationIds.every(id => typeof id === 'string' && id.length > 0 && id.length <= 200 && !isFabricSensitiveString(id))
-    && (locality === 'local' || (typeof value.processorReceiptId === 'string' && value.processorReceiptId.length > 0
-      && value.processorReceiptId.length <= 256 && !isFabricSensitiveString(value.processorReceiptId)))
+    && value.observationIds.every(semanticId)
+    && (locality === 'local' || semanticId(value.processorReceiptId))
+}
+function semanticId(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 1 && value.length <= 160
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value) && !isFabricSensitiveString(value)
 }
 function success<T extends string>(outcome: T, context: FabricExecutionContext, output: FabricJsonObject) {
   return { outcome, output, evidence: [{ kind: 'health_analysis', summary: outcome,

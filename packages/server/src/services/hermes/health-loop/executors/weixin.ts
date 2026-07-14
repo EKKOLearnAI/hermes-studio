@@ -9,8 +9,16 @@ import type { WeixinReceiptSender, WeixinProviderDelivery } from '../../weixin-s
 
 export interface HealthWeixinExecutorOptions { profile: string; sender: WeixinReceiptSender }
 
+const REMINDER_TEMPLATES: Readonly<Record<string, string>> = Object.freeze({
+  eat: '现在最该做：按计划完成这一餐。',
+  meal: '现在最该做：按计划完成这一餐。',
+  meal_due: '现在最该做：按计划完成这一餐。',
+  recovery_check: '现在最该做：完成一次简短恢复检查。',
+  training_adjustment: '训练计划已有一项安全调整，请查看并确认。',
+})
+
 export function createHealthWeixinExecutorAdapter(options: HealthWeixinExecutorOptions): FabricExecutorAdapter {
-  const attempts = new Map<string, { deliveryId: string; result: WeixinProviderDelivery }>()
+  const executions = new Map<string, { materialDigest: string; promise: Promise<FabricExecuteResult> }>()
   return {
     id: 'health-weixin', type: 'connector',
     async prepare(context): Promise<FabricPrepareResult> {
@@ -22,48 +30,36 @@ export function createHealthWeixinExecutorAdapter(options: HealthWeixinExecutorO
         return success('prepared', context, { deliveryId, messageDigest: createHash('sha256').update(message).digest('hex') })
       } catch { return failure('failed', 'HEALTH_WEIXIN_REQUEST_INVALID') }
     },
-    async execute(context): Promise<FabricExecuteResult> {
+    execute(context): Promise<FabricExecuteResult> {
       let deliveryId: string
       let message: string
       try {
         deliveryId = stableDeliveryId(context); message = minimizedMessage(context)
         if (!context.preparedOutput || context.preparedOutput.deliveryId !== deliveryId
           || context.preparedOutput.messageDigest !== createHash('sha256').update(message).digest('hex')) throw new Error('invalid')
-      } catch { return failure('permanent_failure', 'HEALTH_WEIXIN_PREPARATION_INVALID') }
-      const prior = attempts.get(context.executionToken)
-      if (prior) {
-        let queried: WeixinProviderDelivery
-        try {
-          const lookup = await options.sender.lookup(prior.deliveryId)
-          queried = lookup.status === 'not_found' ? prior.result : lookup
-        } catch { queried = prior.result }
-        attempts.set(context.executionToken, { deliveryId, result: queried })
-        return deliveryResult(context, deliveryId, queried)
-      }
-      try {
-        const persisted = await options.sender.lookup(deliveryId)
-        if (persisted.status !== 'not_found') {
-          attempts.set(context.executionToken, { deliveryId, result: persisted })
-          return deliveryResult(context, deliveryId, persisted)
-        }
-      } catch {
-        return failure('unknown', 'HEALTH_WEIXIN_DELIVERY_UNVERIFIABLE')
-      }
-      let result: WeixinProviderDelivery
-      try {
-        result = await options.sender.send({ deliveryId, recipient: 'configured-self', message })
-      } catch { result = { status: 'unknown', providerMessageId: null } }
-      attempts.set(context.executionToken, { deliveryId, result })
-      return deliveryResult(context, deliveryId, result)
+      } catch { return Promise.resolve(failure('permanent_failure', 'HEALTH_WEIXIN_PREPARATION_INVALID')) }
+      const materialDigest = createHash('sha256').update(JSON.stringify({ deliveryId, message })).digest('hex')
+      const existing = executions.get(context.executionToken)
+      if (existing) return existing.materialDigest === materialDigest ? existing.promise
+        : Promise.resolve(failure('permanent_failure', 'HEALTH_WEIXIN_EXECUTION_TOKEN_CONFLICT'))
+      const promise = executeDelivery(options.sender, context, deliveryId, message)
+      executions.set(context.executionToken, { materialDigest, promise })
+      return promise
     },
     async verify(context): Promise<FabricVerifyResult> {
       const deliveryId = context.executionOutput?.deliveryId
-      if (typeof deliveryId !== 'string') return failure('failed', 'HEALTH_WEIXIN_VERIFICATION_INVALID')
+      const executionOutput = context.executionOutput
+      if (typeof deliveryId !== 'string' || deliveryId !== stableDeliveryId(context)
+        || !executionOutput
+        || ((executionOutput.status === 'accepted' || executionOutput.status === 'delivered')
+          && !validProviderIdentity(executionOutput.providerMessageId))) {
+        return failure('failed', 'HEALTH_WEIXIN_VERIFICATION_INVALID')
+      }
       let status: Awaited<ReturnType<WeixinReceiptSender['lookup']>>
       try { status = await options.sender.lookup(deliveryId) } catch {
         return failure('unknown', 'HEALTH_WEIXIN_DELIVERY_UNVERIFIABLE')
       }
-      return status.status === 'accepted' || status.status === 'delivered'
+      return (status.status === 'accepted' || status.status === 'delivered') && validProviderIdentity(status.providerMessageId)
         ? success('verified', context, { deliveryId, providerMessageId: status.providerMessageId })
         : failure('unknown', 'HEALTH_WEIXIN_DELIVERY_UNVERIFIABLE')
     },
@@ -77,9 +73,10 @@ export function createHealthWeixinExecutorAdapter(options: HealthWeixinExecutorO
 }
 
 function deliveryResult(context: FabricExecutionContext, deliveryId: string, result: WeixinProviderDelivery): FabricExecuteResult {
-  const output = { schemaVersion: 1, deliveryId, providerMessageId: result.providerMessageId,
-    status: result.status } as FabricJsonObject
-  return result.status === 'unknown'
+  const verified = (result.status === 'accepted' || result.status === 'delivered') && validProviderIdentity(result.providerMessageId)
+  const output = { schemaVersion: 1, deliveryId, providerMessageId: verified ? result.providerMessageId : null,
+    status: verified ? result.status : 'unknown' } as FabricJsonObject
+  return !verified
     ? { outcome: 'unknown', output, evidence: evidence(context, 'Delivery status is explicitly uncertain'),
       errorCode: 'HEALTH_WEIXIN_DELIVERY_UNCERTAIN', safeToRetry: false }
     : { outcome: 'succeeded', output, evidence: evidence(context, 'Provider delivery identity captured'),
@@ -91,8 +88,10 @@ function minimizedMessage(context: FabricExecutionContext): string {
   if (typeof actionId !== 'string' || actionId.length < 1 || actionId.length > 200) throw new Error('invalid')
   let body: string
   if (context.capabilityId === 'health.reminder.send') {
-    if (typeof context.input.messageText !== 'string' || isFabricSensitiveString(context.input.messageText)) throw new Error('invalid')
-    body = context.input.messageText.replace(/\s+/g, ' ').trim().slice(0, 240)
+    const code = context.input.messageCode
+    if (typeof code !== 'string' || !Object.hasOwn(REMINDER_TEMPLATES, code)) throw new Error('invalid')
+    if (context.input.messageText !== undefined) throw new Error('invalid')
+    body = REMINDER_TEMPLATES[code]!
   } else {
     const operation = context.input.operation
     body = operation === 'request_skin_recapture' ? '请在方便时补充一次标准化皮肤复拍。'
@@ -100,6 +99,23 @@ function minimizedMessage(context: FabricExecutionContext): string {
   }
   if (!body) throw new Error('invalid')
   return `${body}\n操作ID：${actionId}\n完成：hermes://health/actions/${encodeURIComponent(actionId)}/complete`
+}
+
+async function executeDelivery(sender: WeixinReceiptSender, context: FabricExecutionContext,
+  deliveryId: string, message: string): Promise<FabricExecuteResult> {
+  try {
+    const persisted = await sender.lookup(deliveryId)
+    if (persisted.status !== 'not_found') return deliveryResult(context, deliveryId, persisted)
+  } catch { return failure('unknown', 'HEALTH_WEIXIN_DELIVERY_UNVERIFIABLE') }
+  try {
+    return deliveryResult(context, deliveryId,
+      await sender.send({ deliveryId, recipient: 'configured-self', message }))
+  } catch { return failure('unknown', 'HEALTH_WEIXIN_DELIVERY_UNCERTAIN') }
+}
+
+function validProviderIdentity(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 1 && value.length <= 160
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value) && !isFabricSensitiveString(value)
 }
 function stableDeliveryId(context: FabricExecutionContext): string {
   const actionId = context.capabilityId === 'health.reminder.send' ? context.input.actionId : context.input.checkinId

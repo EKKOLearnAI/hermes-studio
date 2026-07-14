@@ -7,6 +7,9 @@ import {
   HEALTH_PROCESSING_RETENTIONS, type HealthConsentBroker, type HealthProcessingManifest,
 } from '../consent'
 import { getTwinArtifact } from '../../personal-twin'
+import {
+  AUTHORIZED_AUXILIARY_ANALYZE, readHealthReservationAuthorization, type HealthReservationAuthorization,
+} from '../executors/reservation-internal'
 
 export interface ResolvedAuxiliaryVisionConfig {
   provider: string
@@ -216,21 +219,38 @@ export function createAuxiliaryVisionAnalyzer(dependencies: AuxiliaryVisionAnaly
   const metadataResolver = dependencies.artifactMetadataResolver ?? defaultArtifactMetadataResolver
   if (typeof metadataResolver !== 'function') fail('HEALTH_ANALYSIS_PROCESSOR_FAILED')
 
-  return {
-    async analyze(inputRequest): Promise<HealthAnalysisResult> {
+  const analyzeRequest = async (inputRequest: HealthAnalysisRequest,
+    authorization?: HealthReservationAuthorization): Promise<HealthAnalysisResult> => {
       let request = validateHealthAnalysisRequest(inputRequest)
       let config: ResolvedAuxiliaryVisionConfig
       try { config = safeConfig(await dependencies.resolver(request.profile)) }
       catch { throw new HealthAnalysisError('HEALTH_ANALYSIS_PROCESSOR_FAILED') }
-      request = validateHealthAnalysisRequest(inputRequest, config.locality)
+      request = authorization ? validateHealthAnalysisRequest(inputRequest) : validateHealthAnalysisRequest(inputRequest, config.locality)
 
       if (config.locality === 'remote') {
-        const manifest = validateRemoteManifest(request.manifest, request, config.provider)
-        if (!dependencies.consentBroker || typeof dependencies.consentBroker.consume !== 'function'
-          || typeof request.consentToken !== 'string') fail('HEALTH_ANALYSIS_CONSENT_DENIED')
-        try {
-          await dependencies.consentBroker.consume(request.consentToken, manifest)
-        } catch { throw new HealthAnalysisError('HEALTH_ANALYSIS_CONSENT_DENIED') }
+        if (authorization) {
+          const reserved = readHealthReservationAuthorization(authorization)
+          if (!reserved || reserved.processorId !== config.provider
+            || JSON.stringify(reserved.manifest.artifactIds) !== JSON.stringify(request.artifactIds)
+            || reserved.manifest.purpose !== request.purpose
+            || JSON.stringify(reserved.manifest.selectedRegions) !== JSON.stringify(request.selectedRegions)
+            || JSON.stringify(reserved.manifest.requestedFields) !== JSON.stringify(request.requestedFields)) {
+            fail('HEALTH_ANALYSIS_CONSENT_DENIED')
+          }
+          // The opaque authorization has already consumed the durable reservation.
+          // This non-secret placeholder satisfies the shared result validator only;
+          // it is never accepted by or sent to the consent broker/provider.
+          request = { ...request, manifest: reserved.manifest, consentToken: '0'.repeat(64) }
+        } else {
+          const manifest = validateRemoteManifest(request.manifest, request, config.provider)
+          if (!dependencies.consentBroker || typeof dependencies.consentBroker.consume !== 'function'
+            || typeof request.consentToken !== 'string') fail('HEALTH_ANALYSIS_CONSENT_DENIED')
+          try {
+            await dependencies.consentBroker.consume(request.consentToken, manifest)
+          } catch { throw new HealthAnalysisError('HEALTH_ANALYSIS_CONSENT_DENIED') }
+        }
+      } else if (authorization) {
+        fail('HEALTH_ANALYSIS_CONSENT_DENIED')
       }
 
       if (request.artifactIds.length > artifactLimits.maxArtifactCount) fail('HEALTH_ANALYSIS_ARTIFACT_DENIED')
@@ -274,6 +294,10 @@ export function createAuxiliaryVisionAnalyzer(dependencies: AuxiliaryVisionAnaly
       const output = strictResponse(response, maxResponseBytes) as Record<string, unknown>
       if (output.modelVersion !== config.model || output.parserVersion !== 'vision-json-v1') fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
       return finalizeHealthAnalysis(request, output, { processor: config.provider, locality: config.locality })
-    },
   }
+  return {
+    analyze: (input: HealthAnalysisRequest) => analyzeRequest(input),
+    [AUTHORIZED_AUXILIARY_ANALYZE]: (input: HealthAnalysisRequest, authorization: HealthReservationAuthorization) =>
+      analyzeRequest(input, authorization),
+  } as unknown as AuxiliaryVisionAnalyzer
 }

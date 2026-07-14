@@ -261,8 +261,8 @@ const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
     id: 'health.reminder.send', version: 1, description: 'Send one minimized health reminder to the configured self-recipient',
     inputSchema: objectSchema({
       schemaVersion: { const: 1 }, actionId: boundedIdSchema(), recipient: { const: 'configured-self' },
-      messageCode: boundedIdSchema(), messageText: { type: 'string', minLength: 1, maxLength: 1000 },
-    }, ['schemaVersion', 'actionId', 'recipient', 'messageCode', 'messageText']),
+      messageCode: boundedIdSchema(),
+    }, ['schemaVersion', 'actionId', 'recipient', 'messageCode']),
     outputSchema: messageOutputSchema(), risk: 'low', sideEffect: true, idempotency: 'required', reversible: false,
     compensationCapabilityId: null, verificationStrategy: 'provider_receipt_or_identity_lookup',
     authentication: ['live_mode:enabled', 'recipient:configured_self'], targetRestrictions: ['health:recipient'],
@@ -302,9 +302,9 @@ const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
 const BUILT_IN_EXECUTORS: FabricExecutorInput[] = [
   { id: 'simulator-main', type: 'simulator', name: 'Phase 3 Simulator', environment: 'simulator', configuration: { externalWrite: false }, enabled: true },
   { id: 'internal-twin', type: 'internal', name: 'Personal Twin Internal Executor', environment: 'internal', configuration: { externalWrite: false }, enabled: true },
-  { id: 'health-local-analysis', type: 'internal', name: 'Local Health Artifact Analyzer', environment: 'internal', configuration: { externalWrite: false, interruptible: true }, enabled: true },
+  { id: 'health-local-analysis', type: 'internal', name: 'Local Health Artifact Analyzer', environment: 'internal', configuration: { externalWrite: false, interruptible: false }, enabled: true },
   { id: 'health-plan', type: 'internal', name: 'Health Plan Executor', environment: 'internal', configuration: { externalWrite: false, interruptible: true }, enabled: true },
-  { id: 'health-remote-analysis', type: 'connector', name: 'Authorized Remote Health Analyzer', environment: 'production', configuration: { externalWrite: true, interruptible: true }, enabled: true },
+  { id: 'health-remote-analysis', type: 'connector', name: 'Authorized Remote Health Analyzer', environment: 'production', configuration: { externalWrite: true, interruptible: false }, enabled: true },
   { id: 'health-shadow', type: 'connector', name: 'Health Shadow Executor', environment: 'sandbox', configuration: { externalWrite: false, interruptible: true, shadow: true }, enabled: true },
   { id: 'health-source', type: 'connector', name: 'Health Source Connector', environment: 'production', configuration: { externalWrite: false, interruptible: true }, enabled: true },
   { id: 'health-weixin', type: 'connector', name: 'Weixin Self Reminder Executor', environment: 'production', configuration: { externalWrite: true, interruptible: false, recipientRestriction: 'configured-self' }, enabled: true },
