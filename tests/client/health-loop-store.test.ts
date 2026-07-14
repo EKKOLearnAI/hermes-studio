@@ -32,6 +32,36 @@ describe('health loop store', () => {
     expect(store.connectors).toEqual([{ id: 'new' }]); expect(store.error).toBeNull()
   })
 
+  it('keeps a newest resource failure visible while an unrelated resource completes later', async () => {
+    const failedConnectors = deferred<any[]>(); const laterOverview = deferred<any>()
+    api.fetchHealthConnectors.mockImplementationOnce(() => failedConnectors.promise)
+    api.fetchHealthLoopOverview.mockImplementationOnce(() => laterOverview.promise)
+    const store = useHealthLoopStore()
+    const connectorLoad = store.loadConnectors()
+    const overviewLoad = store.loadOverview()
+    failedConnectors.reject(new Error('connectors unavailable'))
+    await expect(connectorLoad).rejects.toThrow('connectors unavailable')
+    laterOverview.resolve(overview)
+    await overviewLoad
+    expect(store.resourceErrors).toEqual({ overview: null, connectors: 'connectors unavailable',
+      interventions: null, settings: null })
+    expect(store.error).toBe('connectors unavailable')
+  })
+
+  it('discards an old failure after a newer request for the same resource succeeds', async () => {
+    const staleSettings = deferred<any>()
+    api.fetchHealthLoopSettings.mockImplementationOnce(() => staleSettings.promise)
+      .mockResolvedValueOnce({ ...settings, version: 2 })
+    const store = useHealthLoopStore()
+    const staleLoad = store.loadSettings()
+    await store.loadSettings()
+    staleSettings.reject(new Error('stale settings failure'))
+    await expect(staleLoad).rejects.toThrow('stale settings failure')
+    expect(store.settings?.version).toBe(2)
+    expect(store.resourceErrors.settings).toBeNull()
+    expect(store.error).toBeNull()
+  })
+
   it('does not let a stale list response overwrite a newer selection', async () => {
     const old = deferred<any[]>(); api.fetchHealthInterventions.mockImplementationOnce(()=>old.promise)
     const store = useHealthLoopStore(); const load = store.loadInterventions(); store.selectIntervention('i2')

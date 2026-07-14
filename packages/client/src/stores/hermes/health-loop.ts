@@ -16,16 +16,22 @@ export const useHealthLoopStore=defineStore('health-loop',()=>{
   const settings=ref<HealthSettingsDto|null>(null)
   const selectedInterventionId=ref<string|null>(null)
   const selectedIntervention=computed(()=>interventions.value.find(item=>item.interventionId===selectedInterventionId.value)??null)
-  const activeLoads=ref(0), activeSaves=ref(0), error=ref<string|null>(null)
+  const activeLoads=ref(0), activeSaves=ref(0)
+  const resourceErrors=ref<Record<'overview'|'connectors'|'interventions'|'settings',string|null>>({
+    overview:null,connectors:null,interventions:null,settings:null,
+  })
+  const mutationError=ref<string|null>(null)
+  const error=computed(()=>resourceErrors.value.overview??resourceErrors.value.connectors??
+    resourceErrors.value.interventions??resourceErrors.value.settings??mutationError.value)
   const loading=computed(()=>activeLoads.value>0), saving=computed(()=>activeSaves.value>0)
-  let generation=0, errorSequence=0, selectionGeneration=0, independentMutationSequence=0
+  let generation=0, mutationErrorSequence=0, selectionGeneration=0, independentMutationSequence=0
   const sequences={overview:0,connectors:0,interventions:0,settings:0}
   const queues=new Map<string,Promise<unknown>>()
 
-  function beginLoad(resource:keyof typeof sequences){const current={generation,resource,sequence:++sequences[resource],error:++errorSequence};activeLoads.value++;error.value=null;return current}
+  function beginLoad(resource:keyof typeof sequences){const current={generation,resource,sequence:++sequences[resource]};activeLoads.value++;resourceErrors.value[resource]=null;return current}
   function current(op:ReturnType<typeof beginLoad>){return op.generation===generation&&op.sequence===sequences[op.resource]}
   function finish(op:ReturnType<typeof beginLoad>){if(op.generation===generation)activeLoads.value=Math.max(0,activeLoads.value-1)}
-  function fail(op:ReturnType<typeof beginLoad>,cause:unknown){if(current(op)&&op.error===errorSequence)error.value=message(cause)}
+  function fail(op:ReturnType<typeof beginLoad>,cause:unknown){if(current(op))resourceErrors.value[op.resource]=message(cause)}
 
   async function loadOverview(){const op=beginLoad('overview');try{const value=await api.fetchHealthLoopOverview();if(current(op))overview.value=value;return value}catch(cause){fail(op,cause);throw cause}finally{finish(op)}}
   async function loadConnectors(){const op=beginLoad('connectors');try{const value=await api.fetchHealthConnectors();if(current(op))connectors.value=value.slice();return value}catch(cause){fail(op,cause);throw cause}finally{finish(op)}}
@@ -35,8 +41,8 @@ export const useHealthLoopStore=defineStore('health-loop',()=>{
 
   async function refresh(tasks:Promise<unknown>[]){if((await Promise.allSettled(tasks)).some(result=>result.status==='rejected'))throw new Error(REFRESH_FAILED)}
   function mutate<T>(key:string,write:()=>Promise<T>,reload:(value:T)=>Promise<void>):Promise<T>{
-    const callGeneration=generation, callError=++errorSequence;activeSaves.value++;error.value=null
-    const run=async()=>{try{const value=await write();if(callGeneration===generation){try{await reload(value)}catch(cause){if(callError===errorSequence)error.value=message(cause)}}return value}catch(cause){if(callGeneration===generation&&callError===errorSequence)error.value=message(cause);throw cause}finally{if(callGeneration===generation)activeSaves.value=Math.max(0,activeSaves.value-1)}}
+    const callGeneration=generation, callError=++mutationErrorSequence;activeSaves.value++;mutationError.value=null
+    const run=async()=>{try{const value=await write();if(callGeneration===generation){try{await reload(value)}catch{}}return value}catch(cause){if(callGeneration===generation&&callError===mutationErrorSequence)mutationError.value=message(cause);throw cause}finally{if(callGeneration===generation)activeSaves.value=Math.max(0,activeSaves.value-1)}}
     const prior=queues.get(key)
     const task=prior?prior.catch(()=>undefined).then(run):run()
     queues.set(key,task);void task.finally(()=>{if(queues.get(key)===task)queues.delete(key)}).catch(()=>undefined);return task
@@ -50,9 +56,9 @@ export const useHealthLoopStore=defineStore('health-loop',()=>{
   function submitFeedback(id:string,input:HealthFeedbackInput){return mutate(`feedback:${id}`,()=>api.submitHealthInterventionFeedback(id,input),async()=>refresh([loadInterventions(),loadOverview()]))}
   function updateSettings(input:UpdateHealthLoopSettingsInput){return mutate('settings',()=>api.updateHealthLoopSettings(input),async()=>refresh([loadSettings(),loadOverview(),loadConnectors()]))}
 
-  function reset(){generation++;errorSequence++;selectionGeneration++;for(const key of Object.keys(sequences) as Array<keyof typeof sequences>)sequences[key]++;overview.value=null;connectors.value=[];interventions.value=[];settings.value=null;selectedInterventionId.value=null;activeLoads.value=0;activeSaves.value=0;error.value=null;queues.clear()}
-  onScopeDispose(()=>{generation++;errorSequence++;selectionGeneration++;for(const key of Object.keys(sequences) as Array<keyof typeof sequences>)sequences[key]++;queues.clear()})
-  return {overview,connectors,interventions,settings,selectedInterventionId,selectedIntervention,loading,saving,error,
+  function reset(){generation++;mutationErrorSequence++;selectionGeneration++;for(const key of Object.keys(sequences) as Array<keyof typeof sequences>)sequences[key]++;overview.value=null;connectors.value=[];interventions.value=[];settings.value=null;selectedInterventionId.value=null;activeLoads.value=0;activeSaves.value=0;resourceErrors.value={overview:null,connectors:null,interventions:null,settings:null};mutationError.value=null;queues.clear()}
+  onScopeDispose(()=>{generation++;mutationErrorSequence++;selectionGeneration++;for(const key of Object.keys(sequences) as Array<keyof typeof sequences>)sequences[key]++;queues.clear()})
+  return {overview,connectors,interventions,settings,selectedInterventionId,selectedIntervention,loading,saving,error,resourceErrors,
     loadOverview,loadConnectors,loadInterventions,loadSettings,selectIntervention,syncConnector,createArtifact,
     analyzeArtifact,createConsent,revokeConsent,submitFeedback,updateSettings,$reset:reset}
 })
