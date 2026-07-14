@@ -139,6 +139,29 @@ describe('home twin store', () => {
       ])
   })
 
+  it('persists sanitized provider health with optimistic cursor versions', () => {
+    const created = store.upsertProviderCursor({
+      provider: 'home-assistant', cursor: { profile: 'default', reconnectAttempt: 0 },
+      connectionStatus: 'connecting', expectedVersion: 0,
+    })
+    expect(created).toMatchObject({
+      provider: 'home-assistant', connectionStatus: 'connecting', lastEventAt: null, version: 1,
+    })
+    const updated = store.upsertProviderCursor({
+      provider: 'home-assistant', cursor: { profile: 'default', reconnectAttempt: 1 },
+      connectionStatus: 'degraded', lastEventAt: '2026-07-15T01:00:00Z', expectedVersion: 1,
+    })
+    expect(store.getProviderCursor('home-assistant')).toEqual(updated)
+    expect(updated).toMatchObject({ connectionStatus: 'degraded', version: 2, lastEventAt: '2026-07-15T01:00:00.000Z' })
+    expect(() => store.upsertProviderCursor({
+      provider: 'home-assistant', cursor: { accessToken: 'must-not-persist' },
+      connectionStatus: 'connected', expectedVersion: 2,
+    })).toThrow(HomeValidationError)
+    expect(() => store.upsertProviderCursor({
+      provider: 'home-assistant', cursor: {}, connectionStatus: 'connected', expectedVersion: 1,
+    })).toThrow(HomeVersionConflictError)
+  })
+
   it('maintains an idempotent inventory ledger and low-stock projection', () => {
     const item = store.upsertInventoryItem({
       id: 'inventory:coffee', name: 'Coffee Beans', unit: 'g', initialQuantity: 500,

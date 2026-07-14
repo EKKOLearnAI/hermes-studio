@@ -218,6 +218,14 @@ export interface HomeDeviceStateEventResult {
   states: HomeDeviceState[]
 }
 
+export interface HomeProviderCursorInput {
+  provider: string
+  cursor?: Record<string, unknown>
+  connectionStatus: HomeProviderConnectionStatus
+  lastEventAt?: string | null
+  expectedVersion: number
+}
+
 export class HomeValidationError extends Error {
   constructor(message: string) {
     super(message)

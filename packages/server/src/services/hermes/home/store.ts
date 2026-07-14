@@ -4,6 +4,7 @@ import { isProxy } from 'node:util/types'
 import { withPersonalTwinDb } from '../personal-twin/database'
 import {
   HOME_DEVICE_AVAILABILITY,
+  HOME_PROVIDER_CONNECTION_STATUSES,
   HOME_SPACE_KINDS,
   HomeDevice,
   HomeDeviceBinding,
@@ -26,6 +27,8 @@ import {
   HomeObjectInput,
   HomeObjectListOptions,
   HomeProviderEvent,
+  HomeProviderCursor,
+  HomeProviderCursorInput,
   HomeRecordNotFoundError,
   HomeSpace,
   HomeSpaceInput,
@@ -58,6 +61,10 @@ interface ProviderEventRow {
   provider_event_id: string; provider: string; event_id: string; event_type: string
   occurred_at: string; received_at: string; payload_json: string
   status: HomeProviderEvent['status']; error_code: string | null
+}
+interface ProviderCursorRow {
+  provider: string; cursor_json: string; connection_status: HomeProviderCursor['connectionStatus']
+  last_event_at: string | null; version: number; updated_at: string
 }
 interface InventoryItemRow {
   item_id: string; name: string; unit: string; quantity: number; low_stock_threshold: number | null
@@ -372,6 +379,13 @@ function eventFromRow(row: ProviderEventRow): HomeProviderEvent {
   }
 }
 
+function cursorFromRow(row: ProviderCursorRow): HomeProviderCursor {
+  return {
+    provider: row.provider, cursor: parseJson(row.cursor_json), connectionStatus: row.connection_status,
+    lastEventAt: row.last_event_at, version: row.version, updatedAt: row.updated_at,
+  }
+}
+
 function inventoryItemFromRow(row: InventoryItemRow): HomeInventoryItem {
   return {
     id: row.item_id, name: row.name, unit: row.unit, quantity: row.quantity,
@@ -425,6 +439,63 @@ function assertVersion(current: number | undefined, expected: number, kind: stri
 
 export class HomeTwinStore {
   constructor(readonly database: DatabaseSync) {}
+
+  getSpace(id: string): HomeSpace | null {
+    const row = this.database.prepare('SELECT * FROM twin_home_spaces WHERE space_id=?')
+      .get(semanticId(id, 'Home space id')) as SpaceRow | undefined
+    return row ? spaceFromRow(row) : null
+  }
+
+  getDevice(id: string): HomeDevice | null {
+    const row = this.database.prepare('SELECT * FROM twin_home_devices WHERE device_id=?')
+      .get(semanticId(id, 'Home device id')) as DeviceRow | undefined
+    return row ? deviceFromRow(row) : null
+  }
+
+  getBinding(id: string): HomeDeviceBinding | null {
+    const row = this.database.prepare('SELECT * FROM twin_home_device_bindings WHERE binding_id=?')
+      .get(semanticId(id, 'Home binding id')) as BindingRow | undefined
+    return row ? bindingFromRow(row) : null
+  }
+
+  getProviderEvent(provider: string, eventId: string): HomeProviderEvent | null {
+    const row = this.database.prepare('SELECT * FROM twin_home_provider_events WHERE provider=? AND event_id=?')
+      .get(providerId(provider), boundedText(eventId, 'Home provider external event id', 255)) as ProviderEventRow | undefined
+    return row ? eventFromRow(row) : null
+  }
+
+  getProviderCursor(provider: string): HomeProviderCursor | null {
+    const row = this.database.prepare('SELECT * FROM twin_home_provider_cursors WHERE provider=?')
+      .get(providerId(provider)) as ProviderCursorRow | undefined
+    return row ? cursorFromRow(row) : null
+  }
+
+  upsertProviderCursor(input: HomeProviderCursorInput): HomeProviderCursor {
+    const provider = providerId(input.provider)
+    if (!HOME_PROVIDER_CONNECTION_STATUSES.includes(input.connectionStatus)) {
+      throw new HomeValidationError('Home provider connection status is invalid')
+    }
+    const cursorJson = canonicalJson(input.cursor ?? {}, 'object', 16_384)
+    const lastEventAt = input.lastEventAt == null ? null : timestamp(input.lastEventAt, 'Home provider lastEventAt')
+    const expected = expectedVersion(input.expectedVersion)
+    return inTransaction(this.database, () => {
+      const existing = this.database.prepare('SELECT * FROM twin_home_provider_cursors WHERE provider=?')
+        .get(provider) as ProviderCursorRow | undefined
+      assertVersion(existing?.version, expected, 'Home provider cursor', provider)
+      const now = nowIso()
+      if (!existing) {
+        this.database.prepare(`INSERT INTO twin_home_provider_cursors
+          (provider,cursor_json,connection_status,last_event_at,version,updated_at)
+          VALUES(?,?,?,?,1,?)`).run(provider, cursorJson, input.connectionStatus, lastEventAt, now)
+      } else {
+        this.database.prepare(`UPDATE twin_home_provider_cursors SET cursor_json=?,connection_status=?,last_event_at=?,
+          version=version+1,updated_at=? WHERE provider=? AND version=?`)
+          .run(cursorJson, input.connectionStatus, lastEventAt, now, provider, expected)
+      }
+      return cursorFromRow(this.database.prepare('SELECT * FROM twin_home_provider_cursors WHERE provider=?')
+        .get(provider) as unknown as ProviderCursorRow)
+    })
+  }
 
   upsertSpace(input: HomeSpaceInput): HomeSpace {
     const id = semanticId(input.id, 'Home space id')
