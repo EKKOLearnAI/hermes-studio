@@ -43,6 +43,8 @@ const dingtalkPatchCandidates = [
 const dtPath = dingtalkPatchCandidates.find(path => existsSync(path))
 const browserToolPath = join(sitePkgs, 'tools', 'browser_tool.py')
 const sitecustomizePath = join(sitePkgs, 'sitecustomize.py')
+const localEnvironmentPath = join(sitePkgs, 'tools', 'environments', 'local.py')
+const baseEnvironmentPath = join(sitePkgs, 'tools', 'environments', 'base.py')
 if (!dtPath) {
   console.error(
     `DingTalk adapter not found. Checked:\n${dingtalkPatchCandidates.map(path => `  - ${path}`).join('\n')}`,
@@ -109,6 +111,23 @@ function validateSitecustomizePatches(text) {
     && !text.includes('_hermes_apply_hidden_process_options')
   ) {
     failPatchValidation('sitecustomize hidden subprocess patch marker exists but hook implementation is missing')
+  }
+}
+
+function validateParentPathPatches(localText, baseText) {
+  const localMarker = localText.includes('# patch:local-parent-path-preserve')
+  const baseMarker = baseText.includes('# patch:base-merge-parent-path')
+  if (localMarker !== baseMarker) {
+    failPatchValidation('parent PATH snapshot patches are incomplete: local and base patches must be applied together')
+  }
+  if (localMarker && !localText.includes('run_env["HERMES_INIT_PARENT_PATH"]')) {
+    failPatchValidation('local parent PATH patch marker exists but PATH capture is missing')
+  }
+  if (baseMarker && (
+    !baseText.includes('for __hermes_path_entry')
+    || !baseText.includes('unset HERMES_INIT_PARENT_PATH')
+  )) {
+    failPatchValidation('base parent PATH patch marker exists but merge or cleanup logic is missing')
   }
 }
 
@@ -401,9 +420,81 @@ function appendSitecustomizePatch(id, marker, body) {
 appendSitecustomizePatch('brotlicffi-error-compat', brotlicffiCompatMarker, brotlicffiCompat)
 appendSitecustomizePatch('desktop-hidden-subprocess-defaults', desktopHiddenSubprocessMarker, desktopHiddenSubprocessDefaults)
 
+let localEnvironmentSource = existsSync(localEnvironmentPath) ? readFileSync(localEnvironmentPath, 'utf-8') : ''
+let baseEnvironmentSource = existsSync(baseEnvironmentPath) ? readFileSync(baseEnvironmentPath, 'utf-8') : ''
+if (!localEnvironmentSource || !baseEnvironmentSource) {
+  failPatchValidation('parent PATH snapshot patch requires both local.py and base.py')
+}
+{
+  const localEnvironmentBefore = localEnvironmentSource
+  localEnvironmentSource = patchText(
+    localEnvironmentSource,
+    'local-parent-path-preserve',
+    '# patch:local-parent-path-preserve',
+    `        run_env = _make_run_env(self.env)
+
+        # Recover when the cwd has been deleted`,
+    `        run_env = _make_run_env(self.env)
+
+` +
+      `        # patch:local-parent-path-preserve — carry parent PATH through bash -l
+` +
+      `        if login:
+` +
+      `            _path_key = _path_env_key(run_env)
+` +
+      `            if _path_key is not None and _path_key in run_env:
+` +
+      `                run_env["HERMES_INIT_PARENT_PATH"] = run_env[_path_key]
+
+` +
+      `        # Recover when the cwd has been deleted`,
+  )
+  const baseEnvironmentBefore = baseEnvironmentSource
+  baseEnvironmentSource = patchText(
+    baseEnvironmentSource,
+    'base-merge-parent-path',
+    '# patch:base-merge-parent-path',
+    [
+      '        bootstrap = (',
+      '            f"export -p > {_snap_tmp}\\n"',
+    ].join('\n'),
+    [
+      '        bootstrap = (',
+      '            # patch:base-merge-parent-path — retain profile PATH and append missing parent entries',
+      "            f'if [ -n \"${{HERMES_INIT_PARENT_PATH:-}}\" ]; then\\n'",
+      "            f'  __hermes_saved_ifs=\"$IFS\"\\n'",
+      "            f'  __hermes_saved_flags=\"$-\"\\n'",
+      "            f'  IFS=:\\n'",
+      "            f'  set -f\\n'",
+      "            f'  for __hermes_path_entry in $HERMES_INIT_PARENT_PATH; do\\n'",
+      "            f'    [ -n \"$__hermes_path_entry\" ] || continue\\n'",
+      "            f'    case \":$PATH:\" in\\n'",
+      "            f'      *\":$__hermes_path_entry:\"*) ;;\\n'",
+      "            f'      *) PATH=\"${{PATH:+$PATH:}}$__hermes_path_entry\" ;;\\n'",
+      "            f'    esac\\n'",
+      "            f'  done\\n'",
+      "            f'  IFS=\"$__hermes_saved_ifs\"\\n'",
+      "            f'  case \"$__hermes_saved_flags\" in *f*) ;; *) set +f ;; esac\\n'",
+      "            f'  export PATH\\n'",
+      "            f'fi\\n'",
+      "            f'unset HERMES_INIT_PARENT_PATH __hermes_path_entry __hermes_saved_ifs __hermes_saved_flags\\n'",
+      '            f"export -p > {_snap_tmp}\\n"',
+    ].join('\n'),
+  )
+  validateParentPathPatches(localEnvironmentSource, baseEnvironmentSource)
+
+  if (localEnvironmentSource !== localEnvironmentBefore) {
+    writeFileSync(localEnvironmentPath, localEnvironmentSource)
+  }
+  if (baseEnvironmentSource !== baseEnvironmentBefore) {
+    writeFileSync(baseEnvironmentPath, baseEnvironmentSource)
+  }
+}
+
 if (existsSync(sitecustomizePath)) {
   validateSitecustomizePatches(readFileSync(sitecustomizePath, 'utf-8'))
 }
-compilePatchedPython([dtPath, browserToolPath, sitecustomizePath])
+compilePatchedPython([dtPath, browserToolPath, sitecustomizePath, localEnvironmentPath, baseEnvironmentPath])
 
 console.log(`Done. Applied ${applied}, skipped ${skipped}.`)
