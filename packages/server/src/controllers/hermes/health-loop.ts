@@ -22,7 +22,7 @@ const MAX_UPLOAD_BYTES = 250 * 1024 * 1024 + 64 * 1024
 const MAX_JSON_BYTES = 16_384
 const POISON_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 const SENSITIVE_KEY = /(?:token|password|secret|credential|authorization|cookie|api.?key|private.?key|path|directory|sqlite|dsn)/i
-const SENSITIVE_VALUE = /(?:Bearer\s+[A-Za-z0-9._~-]+|sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|xox[baprs]-|AKIA[0-9A-Z]{12,}|[A-Za-z]:\\|(?:^|\s)\\\\)/i
+const SENSITIVE_VALUE = /(?:Bearer\s+[A-Za-z0-9._~-]+|(?:token|password|secret|credential|api.?key)\s*[:=]\s*\S+|sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|xox[baprs]-|AKIA[0-9A-Z]{12,}|^[A-Za-z]:[\\/]|^\\\\|^\/|(?:^|[\\/])(?:profiles?|credentials?|\.hermes|\.ssh)(?:[\\/]|$)|(?:^|[\\/])[^\\/]+\.(?:db|sqlite|sqlite3)$)/i
 
 /** @openapi-default-errors 400:HealthLoopError,401:AuthError,403:AuthError,404:HealthLoopError,409:HealthLoopError,413:HealthLoopError,500:HealthLoopError,503:HealthLoopError */
 
@@ -232,12 +232,25 @@ function publicAction(result:any):Record<string,unknown> { return { intent:{id:S
   policyDecision:{id:String(result.policyDecision.id),outcome:String(result.policyDecision.outcome),reasonCodes:[...(result.policyDecision.reasonCodes??[])]},
   workflow:{id:String(result.workflow.id),state:String(result.workflow.state),version:Number(result.workflow.version),
     availableActions:{...(result.workflow.availableActions??{})}} } }
-function publicMetadata(value:unknown):Record<string,unknown> { return sanitizeMetadata(value,0) as Record<string,unknown> }
+function publicMetadata(value:unknown):Record<string,unknown> {
+  const sanitized=sanitizeMetadata(value,0)
+  if(!isPlain(sanitized))throw new HealthLoopRequestError('Invalid metadata')
+  const output:Record<string,unknown>={}
+  if(Object.prototype.hasOwnProperty.call(sanitized,'healthAnalysis')&&isPlain(sanitized.healthAnalysis)) {
+    const analysis:Record<string,unknown>={}
+    for(const key of ['purpose','selectedRegions','requestedFields','format'])if(Object.prototype.hasOwnProperty.call(sanitized.healthAnalysis,key))analysis[key]=sanitized.healthAnalysis[key]
+    output.healthAnalysis=analysis
+  }
+  if(Array.isArray(sanitized.notes))output.notes=sanitized.notes
+  return output
+}
 function sanitizeMetadata(value:unknown,depth:number):unknown {
   if(depth>5)throw new HealthLoopRequestError('Invalid metadata')
-  if(value===null||typeof value==='boolean'||typeof value==='string'||(typeof value==='number'&&Number.isFinite(value)))return value
-  if(Array.isArray(value))return value.slice(0,64).map(item=>sanitizeMetadata(item,depth+1))
+  if(value===null||typeof value==='boolean'||(typeof value==='number'&&Number.isFinite(value)))return value
+  if(typeof value==='string')return Buffer.byteLength(value,'utf8')>1_024||/[\u0000-\u001f\u007f-\u009f]/u.test(value)||SENSITIVE_VALUE.test(value)?'[redacted]':value
+  if(Array.isArray(value)){if(value.length>64)throw new HealthLoopRequestError('Invalid metadata');return value.map(item=>sanitizeMetadata(item,depth+1))}
   if(!isPlain(value))throw new HealthLoopRequestError('Invalid metadata')
+  if(Object.keys(value).length>64)throw new HealthLoopRequestError('Invalid metadata')
   const out:Record<string,unknown>={}
   for(const [key,item] of Object.entries(value)){if(!SENSITIVE_KEY.test(key))out[key]=sanitizeMetadata(item,depth+1)}return out
 }

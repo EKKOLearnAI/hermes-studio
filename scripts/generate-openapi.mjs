@@ -1583,6 +1583,8 @@ const healthId = { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$
 const healthDigest = { type: 'string', pattern: '^[a-f0-9]{64}$' }
 const healthTimestamp = { type: 'string', format: 'date-time', maxLength: 64 }
 const exactObject = (properties, required = []) => ({ type: 'object', properties, ...(required.length ? { required } : {}), additionalProperties: false })
+const schemaRef = name => ({ $ref: `#/components/schemas/${name}` })
+const healthDomains = ['body_composition', 'measurements', 'posture', 'skin', 'diet', 'fitness', 'sleep', 'internal_health']
 const healthManifest = exactObject({
   artifactIds: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'string', pattern: '^artifact-[a-f0-9]{64}$' } },
   processor: healthId,
@@ -1593,22 +1595,42 @@ const healthManifest = exactObject({
 }, ['artifactIds', 'processor', 'purpose', 'selectedRegions', 'requestedFields', 'retention'])
 Object.assign(openapi.components.schemas, {
   HealthLoopError: exactObject({ error: { type: 'string' }, code: { type: 'string', pattern: '^HEALTH_[A-Z0-9_]+$' } }, ['error', 'code']),
-  HealthLoopOverviewResponse: { type: 'object', additionalProperties: false, properties: { settings: { type: 'object' }, connectors: { type: 'array', items: { type: 'object' } }, summary: { type: 'object' } }, required: ['settings', 'connectors', 'summary'] },
-  HealthConnectorListResponse: { type: 'object', additionalProperties: false, properties: { connectors: { type: 'array', items: { type: 'object' } } }, required: ['connectors'] },
-  HealthActionResponse: { type: 'object', additionalProperties: false, properties: { intent: { type: 'object' }, policyDecision: { type: 'object' }, workflow: { type: 'object' } }, required: ['intent', 'policyDecision', 'workflow'] },
-  HealthArtifactResponse: { type: 'object', additionalProperties: false, properties: { artifact: { type: 'object' } }, required: ['artifact'] },
-  HealthConsentGrantResponse: { type: 'object', additionalProperties: false, properties: { consent: { type: 'object' } }, required: ['consent'] },
-  HealthConsentRevocationResponse: { type: 'object', additionalProperties: false, properties: { consent: { type: 'object' } }, required: ['consent'] },
-  HealthInterventionListResponse: { type: 'object', additionalProperties: false, properties: { interventions: { type: 'array', items: { type: 'object' } } }, required: ['interventions'] },
-  HealthFeedbackResponse: { type: 'object', additionalProperties: false, properties: { feedback: { type: 'object' } }, required: ['feedback'] },
-  HealthSettingsResponse: { type: 'object', additionalProperties: false, properties: { settings: { type: 'object' } }, required: ['settings'] },
+  HealthSettingsDto: exactObject({ subjectId: healthId, liveDeliveryEnabled: { type: 'boolean' }, profile: { type: 'string', maxLength: 100 }, recipient: { type: 'string', enum: ['configured-self'] }, configuredConnectors: { type: 'array', maxItems: 32, items: healthId }, configuredProcessors: { type: 'array', maxItems: 32, items: healthId }, version: { type: 'integer', minimum: 1 }, updatedAt: healthTimestamp }, ['subjectId', 'liveDeliveryEnabled', 'profile', 'recipient', 'configuredConnectors', 'configuredProcessors', 'version', 'updatedAt']),
+  HealthConnectorCapabilitiesDto: exactObject({ read: { type: 'array', uniqueItems: true, items: { type: 'string', enum: healthDomains } }, write: { type: 'array', uniqueItems: true, items: { type: 'string', enum: healthDomains } } }, ['read', 'write']),
+  HealthFreshnessDto: exactObject(Object.fromEntries(healthDomains.map(domain => [domain, healthTimestamp]))),
+  HealthConnectorDto: exactObject({ id: healthId, configured: { type: 'boolean' }, configurationState: { type: 'string', enum: ['configured', 'not_configured', 'invalid'] }, authorizationState: { type: 'string', enum: ['authorized', 'not_required', 'required', 'expired', 'unknown'] }, health: { type: 'string', enum: ['healthy', 'degraded', 'unhealthy', 'unavailable'] }, lastAttemptAt: healthTimestamp, lastSuccessAt: healthTimestamp, domains: { type: 'array', uniqueItems: true, items: { type: 'string', enum: healthDomains } }, freshnessByDomain: schemaRef('HealthFreshnessDto'), capabilities: schemaRef('HealthConnectorCapabilitiesDto'), errorCode: { type: 'string', pattern: '^CONNECTOR_[A-Z0-9_]+$' } }, ['id', 'configured', 'configurationState', 'authorizationState', 'health', 'domains', 'freshnessByDomain', 'capabilities']),
+  HealthOverviewSummaryDto: exactObject({ interventionCount: { type: 'integer', minimum: 0 }, activeInterventionCount: { type: 'integer', minimum: 0 }, projectionCount: { type: 'integer', minimum: 0 } }, ['interventionCount', 'activeInterventionCount', 'projectionCount']),
+  HealthActionIntentDto: exactObject({ id: healthId, capabilityId: healthId }, ['id', 'capabilityId']),
+  HealthPolicyDecisionDto: exactObject({ id: healthId, outcome: { type: 'string', enum: ['allow', 'deny', 'waiting_user'] }, reasonCodes: { type: 'array', maxItems: 64, items: healthId } }, ['id', 'outcome', 'reasonCodes']),
+  HealthAvailableActionsDto: exactObject({ approve: { type: 'boolean' }, reject: { type: 'boolean' }, cancel: { type: 'boolean' }, retry: { type: 'boolean' }, compensate: { type: 'boolean' } }, ['approve', 'reject', 'cancel', 'retry', 'compensate']),
+  HealthWorkflowDto: exactObject({ id: healthId, state: { type: 'string', enum: ['draft', 'policy_check', 'preparing', 'executing', 'verifying', 'waiting_user', 'retrying', 'compensating', 'succeeded', 'denied', 'cancelled', 'failed', 'dead_letter', 'compensated'] }, version: { type: 'integer', minimum: 1 }, availableActions: schemaRef('HealthAvailableActionsDto') }, ['id', 'state', 'version', 'availableActions']),
+  HealthAnalysisMetadataDto: exactObject({ purpose: { type: 'string', enum: ['measurement', 'posture', 'skin', 'diet', 'internal_health'] }, selectedRegions: { type: 'array', maxItems: 64, items: { type: 'string', maxLength: 160 } }, requestedFields: { type: 'array', maxItems: 128, items: { type: 'string', maxLength: 100 } }, format: { type: 'string', enum: ['json', 'csv', 'report_text'] } }),
+  HealthPublicMetadataDto: exactObject({ healthAnalysis: schemaRef('HealthAnalysisMetadataDto'), notes: { type: 'array', maxItems: 64, items: { type: 'string', maxLength: 1024 } } }),
+  HealthArtifactDto: exactObject({ id: { type: 'string', pattern: '^artifact-[a-f0-9]{64}$' }, mediaType: { type: 'string', maxLength: 160 }, sizeBytes: { type: 'integer', minimum: 1, maximum: 262144000 }, manifestDigest: healthDigest, metadata: schemaRef('HealthPublicMetadataDto'), createdAt: healthTimestamp }, ['id', 'mediaType', 'sizeBytes', 'manifestDigest', 'metadata', 'createdAt']),
+  HealthConsentManifestDto: healthManifest,
+  HealthConsentGrantDto: exactObject({ consentId: healthId, manifestDigest: healthDigest, manifest: schemaRef('HealthConsentManifestDto'), issuedAt: healthTimestamp, expiresAt: healthTimestamp, token: { type: 'string', pattern: '^[a-f0-9]{64}$', writeOnly: true } }, ['consentId', 'manifestDigest', 'manifest', 'issuedAt', 'expiresAt', 'token']),
+  HealthConsentRevocationDto: exactObject({ consentId: healthId, revokedAt: healthTimestamp }, ['consentId', 'revokedAt']),
+  HealthInterventionDto: exactObject({ actionId: healthId, interventionId: healthId, workflowId: healthId, capabilityId: healthId, category: { type: 'string', enum: ['training', 'recovery', 'nutrition', 'posture', 'skin', 'internal_health'] }, priority: { type: 'integer', minimum: 0, maximum: 10000 }, risk: { type: 'string', enum: ['none', 'low', 'medium', 'high', 'critical'] }, authority: { type: 'string', enum: ['auto', 'approval', 'inform_only'] }, status: { type: 'string', enum: ['active', 'completed', 'superseded'] }, effectiveDate: { type: 'string', format: 'date' }, createdAt: healthTimestamp, supersededAt: { ...healthTimestamp, nullable: true } }, ['actionId', 'interventionId', 'workflowId', 'capabilityId', 'category', 'priority', 'risk', 'authority', 'status', 'effectiveDate', 'createdAt', 'supersededAt']),
+  HealthFeedbackDto: exactObject({ feedbackId: healthId, outcome: { type: 'string', enum: ['completed', 'partial', 'skipped', 'deferred', 'adverse_feedback', 'unsuitable', 'data_incorrect', 'expired'] }, actionId: healthId, interventionId: healthId, occurredAt: healthTimestamp, reviewRequired: { type: 'boolean' }, supersededActionIds: { type: 'array', maxItems: 256, items: healthId } }, ['feedbackId', 'outcome', 'actionId', 'interventionId', 'occurredAt', 'reviewRequired', 'supersededActionIds']),
+  HealthLoopOverviewResponse: exactObject({ settings: schemaRef('HealthSettingsDto'), connectors: { type: 'array', items: schemaRef('HealthConnectorDto') }, summary: schemaRef('HealthOverviewSummaryDto') }, ['settings', 'connectors', 'summary']),
+  HealthConnectorListResponse: exactObject({ connectors: { type: 'array', items: schemaRef('HealthConnectorDto') } }, ['connectors']),
+  HealthActionResponse: exactObject({ intent: schemaRef('HealthActionIntentDto'), policyDecision: schemaRef('HealthPolicyDecisionDto'), workflow: schemaRef('HealthWorkflowDto') }, ['intent', 'policyDecision', 'workflow']),
+  HealthArtifactResponse: exactObject({ artifact: schemaRef('HealthArtifactDto') }, ['artifact']),
+  HealthConsentGrantResponse: exactObject({ consent: schemaRef('HealthConsentGrantDto') }, ['consent']),
+  HealthConsentRevocationResponse: exactObject({ consent: schemaRef('HealthConsentRevocationDto') }, ['consent']),
+  HealthInterventionListResponse: exactObject({ interventions: { type: 'array', maxItems: 200, items: schemaRef('HealthInterventionDto') } }, ['interventions']),
+  HealthFeedbackResponse: exactObject({ feedback: schemaRef('HealthFeedbackDto') }, ['feedback']),
+  HealthSettingsResponse: exactObject({ settings: schemaRef('HealthSettingsDto') }, ['settings']),
 })
 const healthJsonBody = (path, method, schema) => {
   openapi.paths[path][method].requestBody = { required: true, content: { 'application/json': { schema } } }
 }
 healthJsonBody('/api/hermes/health-loop/connectors/{id}/sync', 'post', exactObject({ cursor: { type: 'string', maxLength: 2048 }, requestedAt: healthTimestamp, idempotencyKey: healthId }))
 openapi.paths['/api/hermes/health-loop/artifacts'].post.requestBody = { required: true, content: { 'multipart/form-data': { schema: exactObject({ file: { type: 'string', format: 'binary' }, sourceId: healthId, metadata: { type: 'object', additionalProperties: true } }, ['file', 'sourceId']) } } }
-healthJsonBody('/api/hermes/health-loop/artifacts/{id}/analyze', 'post', exactObject({ mode: { type: 'string', enum: ['local', 'remote'] }, manifestDigest: healthDigest, processorId: healthId, consentToken: { type: 'string', pattern: '^[a-f0-9]{64}$', writeOnly: true }, manifest: healthManifest, idempotencyKey: healthId, requestedAt: healthTimestamp }, ['mode', 'manifestDigest']))
+healthJsonBody('/api/hermes/health-loop/artifacts/{id}/analyze', 'post', { oneOf: [
+  exactObject({ mode: { type: 'string', enum: ['local'] }, manifestDigest: healthDigest, idempotencyKey: healthId, requestedAt: healthTimestamp }, ['mode', 'manifestDigest']),
+  exactObject({ mode: { type: 'string', enum: ['remote'] }, manifestDigest: healthDigest, processorId: healthId, consentToken: { type: 'string', pattern: '^[a-f0-9]{64}$', writeOnly: true }, manifest: schemaRef('HealthConsentManifestDto'), idempotencyKey: healthId, requestedAt: healthTimestamp }, ['mode', 'manifestDigest', 'processorId', 'consentToken', 'manifest']),
+] })
 healthJsonBody('/api/hermes/health-loop/consents', 'post', exactObject({ manifest: healthManifest, ttlMs: { type: 'integer', minimum: 1, maximum: 900000 } }, ['manifest']))
 healthJsonBody('/api/hermes/health-loop/consents/{id}/revoke', 'post', exactObject({}))
 healthJsonBody('/api/hermes/health-loop/interventions/{id}/feedback', 'post', exactObject({ feedbackId: healthId, outcome: { type: 'string', enum: ['completed', 'partial', 'skipped', 'deferred', 'adverse_feedback', 'unsuitable', 'data_incorrect', 'expired'] }, occurredAt: healthTimestamp }, ['feedbackId', 'outcome', 'occurredAt']))
