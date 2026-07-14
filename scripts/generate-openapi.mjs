@@ -83,6 +83,7 @@ const tagMappings = {
   'routes/hermes/assistant-roles.ts': { name: 'Assistant Roles', description: 'Assistant role registry, profile mappings, scoped context previews, and context recipes' },
   'routes/hermes/action-fabric.ts': { name: 'Action Fabric', description: 'Governed capability discovery, durable action workflows, audit, and emergency controls' },
   'routes/hermes/health-loop.ts': { name: 'Health Loop', description: 'Protected health ingestion, artifact consent, intervention feedback, and automation settings' },
+  'routes/hermes/home.ts': { name: 'Home', description: 'Personal Twin home state, inventory, governed Home Assistant commands, and workflow review' },
   'routes/hermes/performance-monitor.ts': { name: 'Performance', description: 'Runtime performance monitoring' },
   'routes/hermes/terminal.ts': { name: 'Terminal', description: 'WebSocket terminal' },
   'routes/health.ts': { name: 'Health', description: 'Health check' },
@@ -1640,6 +1641,133 @@ for (const [path, method, status] of [
   ['/api/hermes/health-loop/artifacts/{id}/analyze', 'post', '202'],
   ['/api/hermes/health-loop/artifacts', 'post', '201'],
   ['/api/hermes/health-loop/consents', 'post', '201'],
+]) {
+  const responses = openapi.paths[path][method].responses
+  responses[status] = responses['200']
+  delete responses['200']
+}
+
+// Home exposes only normalized Twin records and governed semantic commands. Provider service names,
+// credentials, and arbitrary service payloads are intentionally absent from these schemas.
+const homeId = { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$' }
+const homeExternalId = { type: 'string', pattern: '^[a-z0-9_]{1,64}\\.[a-z0-9_]{1,190}$' }
+const homeTimestamp = { type: 'string', format: 'date-time', maxLength: 64 }
+const homeJson = { type: 'object', additionalProperties: true }
+const homeAvailableActions = exactObject({ approve: { type: 'boolean' }, reject: { type: 'boolean' },
+  cancel: { type: 'boolean' }, retry: { type: 'boolean' }, compensate: { type: 'boolean' } },
+['approve', 'reject', 'cancel', 'retry', 'compensate'])
+const homeWorkflowStates = ['draft', 'policy_check', 'preparing', 'executing', 'verifying', 'waiting_user',
+  'retrying', 'compensating', 'succeeded', 'denied', 'cancelled', 'failed', 'dead_letter', 'compensated']
+const homeWorkflowSummaryProperties = { id: homeId, state: { type: 'string', enum: homeWorkflowStates },
+  version: { type: 'integer', minimum: 1 }, attempt: { type: 'integer', minimum: 0 },
+  lastErrorCode: { type: 'string', nullable: true, maxLength: 160 }, availableActions: homeAvailableActions,
+  createdAt: homeTimestamp, updatedAt: homeTimestamp, completedAt: { ...homeTimestamp, nullable: true } }
+const homeWorkflowSummaryRequired = ['id', 'state', 'version', 'attempt', 'lastErrorCode', 'availableActions',
+  'createdAt', 'updatedAt', 'completedAt']
+Object.assign(openapi.components.schemas, {
+  HomeApiError: exactObject({ error: { type: 'string' }, code: { type: 'string', pattern: '^HOME_[A-Z0-9_]+$' } }, ['error', 'code']),
+  HomeProviderDto: exactObject({ provider: { type: 'string', enum: ['home-assistant'] }, profile: { type: 'string', maxLength: 100 },
+    active: { type: 'boolean' }, configured: { type: 'boolean' },
+    connectionStatus: { type: 'string', enum: ['stopped', 'unconfigured', 'disconnected', 'connecting', 'connected', 'degraded'] },
+    executorEnabled: { type: 'boolean' }, authorizedTargetCount: { type: 'integer', minimum: 0, maximum: 64 },
+    lastErrorCode: { type: 'string', nullable: true, pattern: '^HOME_[A-Z0-9_]+$' } },
+  ['provider', 'profile', 'active', 'configured', 'connectionStatus', 'executorEnabled', 'authorizedTargetCount', 'lastErrorCode']),
+  HomeOverviewSummaryDto: exactObject({ spaceCount: { type: 'integer', minimum: 0 }, deviceCount: { type: 'integer', minimum: 0 },
+    unavailableDeviceCount: { type: 'integer', minimum: 0 }, inventoryItemCount: { type: 'integer', minimum: 0 },
+    lowStockItemCount: { type: 'integer', minimum: 0 }, activeWorkflowCount: { type: 'integer', minimum: 0 } },
+  ['spaceCount', 'deviceCount', 'unavailableDeviceCount', 'inventoryItemCount', 'lowStockItemCount', 'activeWorkflowCount']),
+  HomeSpaceDto: exactObject({ id: homeId, kind: { type: 'string', enum: ['home', 'floor', 'room', 'zone', 'furniture', 'compartment', 'surface'] },
+    name: { type: 'string', minLength: 1, maxLength: 200 }, parentSpaceId: { ...homeId, nullable: true }, attributes: homeJson,
+    version: { type: 'integer', minimum: 1 }, createdAt: homeTimestamp, updatedAt: homeTimestamp },
+  ['id', 'kind', 'name', 'parentSpaceId', 'attributes', 'version', 'createdAt', 'updatedAt']),
+  HomeInventoryItemDto: exactObject({ id: homeId, name: { type: 'string', minLength: 1, maxLength: 200 },
+    unit: { type: 'string', minLength: 1, maxLength: 40 }, quantity: { type: 'number', minimum: 0 },
+    lowStockThreshold: { type: 'number', minimum: 0, nullable: true }, attributes: homeJson,
+    version: { type: 'integer', minimum: 1 }, createdAt: homeTimestamp, updatedAt: homeTimestamp },
+  ['id', 'name', 'unit', 'quantity', 'lowStockThreshold', 'attributes', 'version', 'createdAt', 'updatedAt']),
+  HomeInventoryLedgerDto: exactObject({ id: homeId, itemId: homeId, delta: { type: 'number', not: { enum: [0] } },
+    resultingQuantity: { type: 'number', minimum: 0 }, reason: { type: 'string', minLength: 1, maxLength: 200 },
+    source: { type: 'string', enum: ['home-api'] }, sourceId: homeId, createdAt: homeTimestamp },
+  ['id', 'itemId', 'delta', 'resultingQuantity', 'reason', 'source', 'sourceId', 'createdAt']),
+  HomeBindingDto: exactObject({ id: homeId, deviceId: homeId, provider: { type: 'string', enum: ['home-assistant'] },
+    externalId: homeExternalId, capabilities: { type: 'array', uniqueItems: true, maxItems: 64, items: homeId },
+    version: { type: 'integer', minimum: 1 }, createdAt: homeTimestamp, updatedAt: homeTimestamp },
+  ['id', 'deviceId', 'provider', 'externalId', 'capabilities', 'version', 'createdAt', 'updatedAt']),
+  HomeDeviceStateDto: exactObject({ deviceId: homeId, key: homeId, value: {}, sourceEventId: homeId,
+    observedAt: homeTimestamp, receivedAt: homeTimestamp, version: { type: 'integer', minimum: 1 } },
+  ['deviceId', 'key', 'value', 'sourceEventId', 'observedAt', 'receivedAt', 'version']),
+  HomeDeviceDto: exactObject({ id: homeId, name: { type: 'string', minLength: 1, maxLength: 200 },
+    deviceClass: homeId, spaceId: { ...homeId, nullable: true }, availability: { type: 'string', enum: ['available', 'unavailable', 'unknown'] },
+    attributes: homeJson, version: { type: 'integer', minimum: 1 }, createdAt: homeTimestamp, updatedAt: homeTimestamp,
+    bindings: { type: 'array', maxItems: 50, items: schemaRef('HomeBindingDto') },
+    states: { type: 'array', maxItems: 100, items: schemaRef('HomeDeviceStateDto') } },
+  ['id', 'name', 'deviceClass', 'spaceId', 'availability', 'attributes', 'version', 'createdAt', 'updatedAt', 'bindings', 'states']),
+  HomePolicyDecisionDto: exactObject({ id: homeId, outcome: { type: 'string', enum: ['allow', 'deny', 'waiting_user'] },
+    reasonCodes: { type: 'array', maxItems: 64, items: homeId } }, ['id', 'outcome', 'reasonCodes']),
+  HomeWorkflowSummaryDto: exactObject(homeWorkflowSummaryProperties, homeWorkflowSummaryRequired),
+  HomeWorkflowStepDto: exactObject({ kind: homeId, state: { type: 'string' }, attempt: { type: 'integer', minimum: 0 },
+    lastErrorCode: { type: 'string', nullable: true, maxLength: 160 }, output: { type: 'object', nullable: true }, updatedAt: homeTimestamp },
+  ['kind', 'state', 'attempt', 'lastErrorCode', 'output', 'updatedAt']),
+  HomeWorkflowDetailDto: exactObject({ ...homeWorkflowSummaryProperties,
+    capabilityId: homeId, policyDecision: { ...schemaRef('HomePolicyDecisionDto'), nullable: true },
+    steps: { type: 'array', maxItems: 16, items: schemaRef('HomeWorkflowStepDto') } },
+  [...homeWorkflowSummaryRequired, 'capabilityId', 'policyDecision', 'steps']),
+  HomeOverviewResponse: exactObject({ provider: schemaRef('HomeProviderDto'), summary: schemaRef('HomeOverviewSummaryDto') }, ['provider', 'summary']),
+  HomeProviderResponse: exactObject({ provider: schemaRef('HomeProviderDto') }, ['provider']),
+  HomeSpaceListResponse: exactObject({ spaces: { type: 'array', maxItems: 200, items: schemaRef('HomeSpaceDto') } }, ['spaces']),
+  HomeSpaceResponse: exactObject({ space: schemaRef('HomeSpaceDto') }, ['space']),
+  HomeInventoryListResponse: exactObject({ items: { type: 'array', maxItems: 200, items: schemaRef('HomeInventoryItemDto') } }, ['items']),
+  HomeInventoryResponse: exactObject({ item: schemaRef('HomeInventoryItemDto') }, ['item']),
+  HomeInventoryAdjustmentResponse: exactObject({ disposition: { type: 'string', enum: ['applied', 'duplicate'] },
+    item: schemaRef('HomeInventoryItemDto'), entry: schemaRef('HomeInventoryLedgerDto') }, ['disposition', 'item', 'entry']),
+  HomeDeviceListResponse: exactObject({ devices: { type: 'array', maxItems: 200, items: schemaRef('HomeDeviceDto') } }, ['devices']),
+  HomeBindingListResponse: exactObject({ bindings: { type: 'array', maxItems: 200, items: schemaRef('HomeBindingDto') } }, ['bindings']),
+  HomeActionResponse: exactObject({ intent: schemaRef('HealthActionIntentDto'), policyDecision: schemaRef('HomePolicyDecisionDto'),
+    workflow: schemaRef('HomeWorkflowSummaryDto') }, ['intent', 'policyDecision', 'workflow']),
+  HomeWorkflowResponse: exactObject({ workflow: schemaRef('HomeWorkflowDetailDto') }, ['workflow']),
+})
+const homeJsonBody = (path, method, schema) => {
+  openapi.paths[path][method].requestBody = { required: true, content: { 'application/json': { schema } } }
+}
+homeJsonBody('/api/hermes/home/spaces', 'post', exactObject({ id: homeId,
+  kind: { type: 'string', enum: ['home', 'floor', 'room', 'zone', 'furniture', 'compartment', 'surface'] },
+  name: { type: 'string', minLength: 1, maxLength: 200 }, parentSpaceId: { ...homeId, nullable: true },
+  attributes: homeJson, expectedVersion: { type: 'integer', minimum: 0 } }, ['id', 'kind', 'name', 'expectedVersion']))
+homeJsonBody('/api/hermes/home/inventory/{id}', 'put', exactObject({ name: { type: 'string', minLength: 1, maxLength: 200 },
+  unit: { type: 'string', minLength: 1, maxLength: 40 }, initialQuantity: { type: 'number', minimum: 0 },
+  lowStockThreshold: { type: 'number', minimum: 0, nullable: true }, attributes: homeJson,
+  expectedVersion: { type: 'integer', minimum: 0 } }, ['name', 'unit', 'expectedVersion']))
+homeJsonBody('/api/hermes/home/inventory/{id}/adjust', 'post', exactObject({ delta: { type: 'number', not: { enum: [0] } },
+  reason: { type: 'string', minLength: 1, maxLength: 200 }, occurredAt: homeTimestamp, idempotencyKey: homeId },
+['delta', 'reason', 'occurredAt', 'idempotencyKey']))
+homeJsonBody('/api/hermes/home/devices/{id}/refresh', 'post', exactObject({ bindingId: homeId, externalId: homeExternalId,
+  requestedAt: homeTimestamp, idempotencyKey: homeId }, ['bindingId', 'externalId', 'requestedAt', 'idempotencyKey']))
+const commandBaseProperties = { bindingId: homeId, externalId: homeExternalId,
+  expectedStateVersion: { type: 'integer', minimum: 0 }, verificationTimeoutMs: { type: 'integer', minimum: 1000, maximum: 120000 },
+  idempotencyKey: homeId }
+const commandRequired = ['command', 'bindingId', 'externalId', 'expectedStateVersion', 'verificationTimeoutMs', 'idempotencyKey']
+homeJsonBody('/api/hermes/home/devices/{id}/commands', 'post', { oneOf: [
+  exactObject({ command: { type: 'string', enum: ['set_power'] }, ...commandBaseProperties, desiredPower: { type: 'boolean' } },
+    [...commandRequired, 'desiredPower']),
+  exactObject({ command: { type: 'string', enum: ['set_level'] }, ...commandBaseProperties,
+    desiredLevel: { type: 'number', minimum: 0, maximum: 100 } }, [...commandRequired, 'desiredLevel']),
+  exactObject({ command: { type: 'string', enum: ['set_temperature'] }, ...commandBaseProperties,
+    desiredTemperatureC: { type: 'number', minimum: 5, maximum: 35 } }, [...commandRequired, 'desiredTemperatureC']),
+] })
+homeJsonBody('/api/hermes/home/scenes/{id}/activate', 'post', exactObject({ bindingId: homeId, externalId: homeExternalId,
+  verificationTimeoutMs: { type: 'integer', minimum: 1000, maximum: 120000 }, idempotencyKey: homeId },
+['bindingId', 'externalId', 'verificationTimeoutMs', 'idempotencyKey']))
+homeJsonBody('/api/hermes/home/workflows/{id}/review', 'post', { oneOf: [
+  exactObject({ action: { type: 'string', enum: ['approve'] } }, ['action']),
+  exactObject({ action: { type: 'string', enum: ['reject'] }, reason: { type: 'string', minLength: 1, maxLength: 2000 } }, ['action', 'reason']),
+] })
+for (const [path, method, status] of [
+  ['/api/hermes/home/spaces', 'post', '201'],
+  ['/api/hermes/home/inventory/{id}', 'put', '201'],
+  ['/api/hermes/home/inventory/{id}/adjust', 'post', '201'],
+  ['/api/hermes/home/devices/{id}/refresh', 'post', '202'],
+  ['/api/hermes/home/devices/{id}/commands', 'post', '202'],
+  ['/api/hermes/home/scenes/{id}/activate', 'post', '202'],
 ]) {
   const responses = openapi.paths[path][method].responses
   responses[status] = responses['200']
