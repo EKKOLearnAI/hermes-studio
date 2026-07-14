@@ -131,6 +131,20 @@ const APPROVAL_AND_WRITE_GATE_LOCALIZED_KEYS = [
   'settings.session.skillsWriteApproval',
 ]
 
+const HEALTH_LOOP_LOCALIZED_KEYS = [
+  'health.loop.readiness.title',
+  'health.loop.readiness.primary',
+  'health.loop.domains.title',
+  'health.loop.interventions.title',
+  'health.loop.capture.title',
+  'health.loop.capture.extractedValues',
+  'health.loop.consent.title',
+  'health.loop.consent.oneTime',
+  'health.loop.automation.title',
+  'health.loop.automation.liveWeixin',
+  'health.loop.feedback.completed',
+]
+
 const PLATFORM_SETTINGS_LOCALE_SPECIFIC_LOCALIZED_KEYS: Record<string, string[]> = {
   de: ['platform.qqAppId', 'platform.qqAppSecret'],
   ja: ['platform.homeserver', 'platform.accountId'],
@@ -270,6 +284,18 @@ describe('i18n locale coverage', () => {
     })
 
     expect(untranslated).toEqual([])
+  })
+
+  it('provides distinct English and Chinese copy for the health closed loop', () => {
+    const missingOrEnglish = HEALTH_LOOP_LOCALIZED_KEYS.flatMap((key) => {
+      const english = getPath(en, key)
+      const chinese = getPath(zh, key)
+      if (typeof english === 'undefined') return [`en: ${key} missing`]
+      if (typeof chinese === 'undefined') return [`zh: ${key} missing`]
+      return english === chinese ? [`zh: ${key} is not localized`] : []
+    })
+
+    expect(missingOrEnglish).toEqual([])
   })
 
   it('localizes platform settings copy in every raw non-English locale instead of falling back to English', () => {

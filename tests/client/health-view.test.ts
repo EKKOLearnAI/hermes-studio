@@ -133,9 +133,29 @@ vi.mock('@/api/hermes/health-state', () => ({
   updateScaleSyncSettings,
   runScaleSync,
 }))
+const healthLoopStore = vi.hoisted(() => ({
+  overview: {
+    settings: { subjectId: 'self', liveDeliveryEnabled: false, profile: 'default', recipient: 'configured-self', configuredConnectors: ['xiaomi-s400'], configuredProcessors: ['health-parser'], version: 1, updatedAt: '2026-07-14T08:00:00Z' },
+    connectors: [], summary: { interventionCount: 1, activeInterventionCount: 1, projectionCount: 0 },
+  },
+  connectors: [{ id: 'xiaomi-s400', configured: true, configurationState: 'configured', authorizationState: 'authorized', health: 'healthy', domains: ['body_composition'], freshnessByDomain: { body_composition: '2026-07-14T08:00:00Z' }, capabilities: { read: [], write: [] } }],
+  interventions: [{ actionId: 'a1', interventionId: 'i1', workflowId: 'wf1', capabilityId: 'health.plan', category: 'recovery', priority: 1, risk: 'low', authority: 'inform_only', status: 'active', effectiveDate: '2026-07-14', createdAt: '2026-07-14T08:00:00Z', supersededAt: null }],
+  settings: { subjectId: 'self', liveDeliveryEnabled: false, profile: 'default', recipient: 'configured-self', configuredConnectors: ['xiaomi-s400'], configuredProcessors: ['health-parser'], version: 1, updatedAt: '2026-07-14T08:00:00Z' },
+  loading: false, saving: false, error: null,
+  loadOverview: vi.fn(), loadConnectors: vi.fn(), loadInterventions: vi.fn(), loadSettings: vi.fn(),
+  syncConnector: vi.fn(), createArtifact: vi.fn(), submitFeedback: vi.fn(), updateSettings: vi.fn(),
+}))
+const issueHealthConsent = vi.hoisted(() => vi.fn())
+const requestHealthArtifactAnalysis = vi.hoisted(() => vi.fn())
 
 vi.mock('@/stores/hermes/profiles', () => ({
   useProfilesStore: () => profilesStore,
+}))
+
+vi.mock('@/stores/hermes/health-loop', () => ({
+  useHealthLoopStore: () => healthLoopStore,
+  issueHealthConsent,
+  requestHealthArtifactAnalysis,
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -190,6 +210,10 @@ describe('HealthView', () => {
     profilesStore.activeProfileName = 'default'
     profilesStore.profiles = [{ name: 'default' }]
     profilesStore.fetchProfiles.mockResolvedValue(undefined)
+    healthLoopStore.loadOverview.mockResolvedValue(healthLoopStore.overview)
+    healthLoopStore.loadConnectors.mockResolvedValue(healthLoopStore.connectors)
+    healthLoopStore.loadInterventions.mockResolvedValue(healthLoopStore.interventions)
+    healthLoopStore.loadSettings.mockResolvedValue(healthLoopStore.settings)
   })
 
   it('renders the health cockpit from the migrated health overview', async () => {
@@ -254,6 +278,26 @@ describe('HealthView', () => {
     expect(tabs.text()).toContain('health.tabs.fitness')
     expect(tabs.text()).toContain('health.tabs.skin')
     expect(tabs.text()).toContain('health.tabs.internal')
+  })
+
+  it('puts the closed-loop command center before retained health drill-downs', async () => {
+    const wrapper = mount(HealthView)
+    await flushPromises()
+
+    expect(healthLoopStore.loadOverview).toHaveBeenCalled()
+    expect(healthLoopStore.loadConnectors).toHaveBeenCalled()
+    expect(healthLoopStore.loadInterventions).toHaveBeenCalledWith({ status: 'active' })
+    expect(healthLoopStore.loadSettings).toHaveBeenCalled()
+    const commandCenter = wrapper.find('[data-test="health-loop-command-center"]')
+    const bodyTwin = wrapper.find('[data-test="body-digital-twin-panel"]')
+    expect(commandCenter.exists()).toBe(true)
+    expect(commandCenter.element.compareDocumentPosition(bodyTwin.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(wrapper.find('[data-test="health-readiness-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="health-domain-status-grid"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="health-intervention-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="health-automation-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="body-digital-twin-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="health-system-tabs"]').text()).toContain('health.tabs.internal')
   })
 
   it('falls back to default profile when profile refresh fails', async () => {

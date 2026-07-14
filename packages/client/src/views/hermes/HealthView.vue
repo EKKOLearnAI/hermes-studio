@@ -12,12 +12,37 @@ import {
   type ScaleSyncSettings,
 } from '@/api/hermes/health-state'
 import { useProfilesStore } from '@/stores/hermes/profiles'
+import {
+  issueHealthConsent,
+  requestHealthArtifactAnalysis,
+  useHealthLoopStore,
+} from '@/stores/hermes/health-loop'
+import type {
+  HealthActionResponseDto,
+  HealthConsentManifestDto,
+  HealthFeedbackOutcome,
+} from '@/api/hermes/health-loop'
+import {
+  approveActionWorkflow,
+  cancelActionWorkflow,
+  compensateActionWorkflow,
+  rejectActionWorkflow,
+  retryActionWorkflow,
+  type ActionWorkflowAction,
+} from '@/api/hermes/action-fabric'
+import HealthAutomationPanel from '@/components/hermes/health-loop/HealthAutomationPanel.vue'
+import HealthCaptureWizard from '@/components/hermes/health-loop/HealthCaptureWizard.vue'
+import HealthConsentDialog from '@/components/hermes/health-loop/HealthConsentDialog.vue'
+import HealthDomainStatusGrid from '@/components/hermes/health-loop/HealthDomainStatusGrid.vue'
+import HealthInterventionPanel from '@/components/hermes/health-loop/HealthInterventionPanel.vue'
+import HealthReadinessPanel, { type HealthCommandAction } from '@/components/hermes/health-loop/HealthReadinessPanel.vue'
 import HealthBody3DViewer from './health/HealthBody3DViewer.vue'
 import type { BodyRegionId, HealthBodyMap, HealthWorkoutLike } from './health/body-visualization'
 
 const { t } = useI18n()
 const message = useMessage()
 const profilesStore = useProfilesStore()
+const healthLoopStore = useHealthLoopStore()
 
 const loading = ref(false)
 const scaleSyncLoading = ref(false)
@@ -26,9 +51,25 @@ const scaleSyncSettings = ref<ScaleSyncSettings | null>(null)
 const lastScaleSyncResult = ref<ScaleSyncResult | null>(null)
 const selectedRegion = ref<BodyRegionId>('chest')
 const activeTab = ref('overview')
+const latestHealthWorkflow = ref<HealthActionResponseDto['workflow'] | null>(null)
+const pendingAnalysis = ref<{
+  artifactId: string
+  manifestDigest: string
+  manifest: HealthConsentManifestDto
+} | null>(null)
+const consentOpen = ref(false)
+const loopActionBusy = ref(false)
 
 const healthTabs = ['overview', 'body3d', 'diet', 'fitness', 'skin', 'internal']
 const activeProfile = computed(() => profilesStore.activeProfileName || 'default')
+const activeInterventionCount = computed(() => healthLoopStore.overview?.summary.activeInterventionCount
+  ?? healthLoopStore.interventions.filter(item => item.status === 'active').length)
+const healthProcessors = computed(() => healthLoopStore.settings?.configuredProcessors ?? [])
+const captureRequirements = [
+  'health.loop.capture.requirementFormat',
+  'health.loop.capture.requirementPrivacy',
+  'health.loop.capture.requirementReview',
+]
 const healthProfile = computed(() => overview.value?.healthProfile ?? null)
 const weightSummary = computed(() => overview.value?.weightSummary ?? {})
 const nutritionSummary = computed(() => overview.value?.nutritionSummary ?? null)
@@ -172,9 +213,121 @@ const weightCurrent = computed(() => numberOrNull(weightSummary.value.currentKg)
 const weightTarget = computed(() => numberOrNull(weightSummary.value.targetKg) ?? healthProfile.value?.weightTargetKg ?? null)
 
 onMounted(async () => {
-  await loadOverview()
-  await loadScaleSyncSettings()
+  await Promise.allSettled([loadOverview(), loadScaleSyncSettings(), loadHealthLoop()])
 })
+
+async function loadHealthLoop() {
+  await Promise.allSettled([
+    healthLoopStore.loadOverview(),
+    healthLoopStore.loadConnectors(),
+    healthLoopStore.loadInterventions({ status: 'active' }),
+    healthLoopStore.loadSettings(),
+  ])
+}
+
+async function handleHealthCommand(action: HealthCommandAction) {
+  if (action.kind === 'capture') {
+    document.querySelector<HTMLInputElement>('[data-test="capture-file-input"]')?.focus()
+    return
+  }
+  if (action.kind === 'review') {
+    document.querySelector<HTMLElement>('[data-test="health-intervention-panel"]')?.scrollIntoView({ block: 'start' })
+    return
+  }
+  await runLoopAction(async () => {
+    const result = await healthLoopStore.syncConnector(action.connectorId, {})
+    latestHealthWorkflow.value = result.workflow
+  })
+}
+
+async function handleCapture(payload: { file: File; sourceId: string; processorId: string; extractedValues: Record<string, string | number> }) {
+  await runLoopAction(async () => {
+    const fields = Object.keys(payload.extractedValues)
+    const artifact = await healthLoopStore.createArtifact({
+      file: payload.file,
+      filename: payload.file.name,
+      sourceId: payload.sourceId,
+      metadata: { healthAnalysis: { purpose: 'measurement', requestedFields: fields, format: 'report_text' } },
+    })
+    const manifest: HealthConsentManifestDto = {
+      artifactIds: [artifact.id],
+      processor: payload.processorId,
+      purpose: 'measurement',
+      selectedRegions: ['whole_body'],
+      requestedFields: fields,
+      retention: 'no_retention',
+    }
+    pendingAnalysis.value = { artifactId: artifact.id, manifestDigest: artifact.manifestDigest, manifest }
+    consentOpen.value = true
+  })
+}
+
+async function confirmAnalysis(manifest: HealthConsentManifestDto) {
+  const pending = pendingAnalysis.value
+  if (!pending) return
+  await runLoopAction(async () => {
+    const grant = await issueHealthConsent(healthLoopStore, { manifest })
+    const result = await requestHealthArtifactAnalysis(healthLoopStore, pending.artifactId, {
+      mode: 'remote',
+      manifestDigest: pending.manifestDigest,
+      processorId: manifest.processor,
+      consentToken: grant.token,
+      manifest,
+      idempotencyKey: `${pending.artifactId}:${grant.consentId}`,
+    })
+    latestHealthWorkflow.value = result.workflow
+    consentOpen.value = false
+    pendingAnalysis.value = null
+  })
+}
+
+async function submitInterventionFeedback(payload: { interventionId: string; outcome: HealthFeedbackOutcome }) {
+  await runLoopAction(() => healthLoopStore.submitFeedback(payload.interventionId, {
+    feedbackId: `health-ui-${Date.now()}`,
+    outcome: payload.outcome,
+    occurredAt: new Date().toISOString(),
+  }))
+}
+
+async function setLiveDelivery(enabled: boolean) {
+  const settings = healthLoopStore.settings
+  if (!settings) return
+  await runLoopAction(() => healthLoopStore.updateSettings({
+    expectedVersion: settings.version,
+    liveDeliveryEnabled: enabled,
+    recipient: 'configured-self',
+  }))
+}
+
+async function runWorkflowAction(action: ActionWorkflowAction) {
+  const workflow = latestHealthWorkflow.value
+  if (!workflow?.availableActions?.[action]) return
+  await runLoopAction(async () => {
+    const result = action === 'approve' ? await approveActionWorkflow(workflow.id)
+      : action === 'reject' ? await rejectActionWorkflow(workflow.id, 'health-command-center')
+        : action === 'cancel' ? await cancelActionWorkflow(workflow.id, 'health-command-center')
+          : action === 'retry' ? await retryActionWorkflow(workflow.id)
+            : await compensateActionWorkflow(workflow.id, 'health-command-center')
+    latestHealthWorkflow.value = {
+      id: result.id,
+      state: result.state,
+      version: result.version,
+      availableActions: result.availableActions,
+    }
+  })
+}
+
+async function runLoopAction(action: () => Promise<unknown>) {
+  loopActionBusy.value = true
+  try {
+    await action()
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    message.error(`${t('health.loop.errors.actionFailed')}: ${detail}`)
+  } finally {
+    loopActionBusy.value = false
+  }
+}
 
 async function ensureProfiles() {
   if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
@@ -335,6 +488,40 @@ function percentText(value: unknown): string {
     </header>
 
     <NSpin :show="loading && !overview">
+      <section class="health-loop-command-center" data-test="health-loop-command-center">
+        <HealthReadinessPanel
+          :connectors="healthLoopStore.connectors"
+          :active-intervention-count="activeInterventionCount"
+          @action="handleHealthCommand"
+        />
+        <HealthAutomationPanel
+          :settings="healthLoopStore.settings"
+          @set-live="setLiveDelivery"
+        />
+        <HealthDomainStatusGrid :connectors="healthLoopStore.connectors" />
+        <HealthInterventionPanel
+          :interventions="healthLoopStore.interventions"
+          :workflow="latestHealthWorkflow"
+          @feedback="submitInterventionFeedback"
+          @workflow-action="runWorkflowAction"
+        />
+        <HealthCaptureWizard
+          :requirements="captureRequirements"
+          :processors="healthProcessors"
+          :busy="loopActionBusy"
+          @submit="handleCapture"
+        />
+      </section>
+
+      <HealthConsentDialog
+        v-if="pendingAnalysis"
+        :open="consentOpen"
+        :manifest="pendingAnalysis.manifest"
+        :busy="loopActionBusy"
+        @confirm="confirmAnalysis"
+        @cancel="consentOpen = false"
+      />
+
       <section class="health-hero body-digital-twin-panel" data-test="body-digital-twin-panel">
         <div class="twin-identity">
           <span class="panel-kicker">{{ activeProfile }}</span>
@@ -534,6 +721,17 @@ function percentText(value: unknown): string {
 .health-hero p,
 .muted {
   color: var(--text-color-2);
+}
+
+.health-loop-command-center {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, .75fr);
+  gap: 12px;
+  margin-bottom: 16px;
+
+  > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
 }
 
 .health-hero,
@@ -890,9 +1088,14 @@ function percentText(value: unknown): string {
 }
 
 @media (max-width: 1180px) {
+  .health-loop-command-center,
   .health-layout,
   .health-hero {
     grid-template-columns: 1fr;
+  }
+
+  .health-loop-command-center > :nth-child(3) {
+    grid-column: auto;
   }
 
   .metric-row,
