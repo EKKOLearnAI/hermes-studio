@@ -103,7 +103,7 @@ function activeHealthWorkflowTargets():string[] {
       FROM fabric_workflows w JOIN fabric_action_intents i ON i.id=w.intent_id
       JOIN fabric_steps s ON s.workflow_id=w.id AND s.ordinal=0 AND s.kind='prepare'
       WHERE i.requested_by_role_id='health-manager' AND i.capability_id LIKE 'health.%'
-        AND w.state NOT IN ('succeeded','denied','cancelled','compensated')
+        AND w.state NOT IN ('succeeded','denied','cancelled','dead_letter','compensated')
       ORDER BY w.created_at,w.rowid`).iterate() as IterableIterator<{
         capability_id:string;input_json:string}>
     const targets=new Set<string>()

@@ -409,6 +409,18 @@ describe('health-loop runtime', () => {
       expect(withPersonalTwinDb(db => JSON.parse((db.prepare(
         "SELECT result_json FROM twin_health_executor_ledger WHERE kind='analysis'").get() as {result_json:string}).result_json)))
         .toMatchObject({processorReceiptId:'resp-fixture-1',verificationStatus:'verified'})
+      const { withActionFabricDb } = await import('../../packages/server/src/services/hermes/action-fabric/database')
+      withActionFabricDb(db=>{
+        db.prepare(`UPDATE fabric_workflows SET state='cancelled' WHERE intent_id IN
+          (SELECT id FROM fabric_action_intents WHERE requested_by_role_id='health-manager')`).run()
+        db.prepare("UPDATE fabric_workflows SET state='dead_letter' WHERE id=?").run(remote.body.workflow.id)
+      })
+      const boundaryTargets=Array.from({length:59},(_,index)=>
+        `health:artifact:terminal-bound-${index}:${'f'.repeat(64)}`)
+      expect(()=>runtime.refreshHealthRuntimeAuthorization(boundaryTargets)).not.toThrow()
+      const { getAssistantRole } = await import('../../packages/server/src/services/hermes/personal-twin')
+      expect(getAssistantRole('health-manager')?.decisionAuthority.allowedTargets).not.toContain(
+        `health:artifact:${artifact.id}:${identity!.manifestDigest}`)
     } finally {
       await (await import('../../packages/server/src/services/hermes/health-loop/runtime')).stopHealthLoopRuntime()
       if (originalDisabled === undefined) delete process.env.HERMES_ACTION_FABRIC_DISABLED
