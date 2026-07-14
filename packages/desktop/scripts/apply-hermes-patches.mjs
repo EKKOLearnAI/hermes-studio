@@ -439,7 +439,7 @@ if (!localEnvironmentSource || !baseEnvironmentSource) {
 ` +
       `        # patch:local-parent-path-preserve — carry parent PATH through bash -l
 ` +
-      `        if login:
+      `        if login and not _IS_WINDOWS:
 ` +
       `            _path_key = _path_env_key(run_env)
 ` +

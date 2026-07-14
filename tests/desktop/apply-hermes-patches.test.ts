@@ -69,7 +69,7 @@ describe('desktop Hermes parent PATH patch', () => {
     const local = readFileSync(join(sitePackages, 'tools', 'environments', 'local.py'), 'utf8')
     const base = readFileSync(join(sitePackages, 'tools', 'environments', 'base.py'), 'utf8')
     expect(local).toContain('# patch:local-parent-path-preserve')
-    expect(local).toContain('if login:')
+    expect(local).toContain('if login and not _IS_WINDOWS:')
     expect(local).toContain('run_env["HERMES_INIT_PARENT_PATH"]')
     expect(base).toContain('# patch:base-merge-parent-path')
     expect(base).toContain('if [ -n "${{HERMES_INIT_PARENT_PATH:-}}" ]')
