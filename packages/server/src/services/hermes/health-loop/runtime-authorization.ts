@@ -21,7 +21,8 @@ export function createHealthRuntimeAuthorizationProvider(profile='default',avail
   const connectors=new Set(availability.connectors??[])
   const remoteProcessors=new Set(availability.remoteProcessors??[])
   return {id:'health-runtime-standing',version:1,authorize(request){
-    if(request.environment!=='production'||EXECUTORS[request.capabilityId]!==request.executorId)return null
+    const expectedEnvironment=request.capabilityId==='health.artifact.analyze.local'?'internal':'production'
+    if(request.environment!==expectedEnvironment||EXECUTORS[request.capabilityId]!==request.executorId)return null
     const settings=getHealthAutomationSettings()
     const now=new Date()
     if(settings.profile!==profile||!requirementsSatisfied(request,settings,now,connectors,remoteProcessors))return null
@@ -97,7 +98,19 @@ function reservationMatches(id:unknown,artifactId:unknown,digest:unknown,process
     FROM twin_artifact_consent_reservations WHERE reservation_id=?`).get(id) as {artifact_id:string;artifact_manifest_digest:string;
       processor:string;expires_at:string;consumed_at:string|null}|undefined
     return !!row&&row.artifact_id===artifactId&&row.artifact_manifest_digest===digest&&row.processor===processor
-      &&row.consumed_at===null&&Date.parse(row.expires_at)>now.getTime()})
+      &&Date.parse(row.expires_at)>now.getTime()&&(row.consumed_at===null||completedReservationMatches(db,id,artifactId,digest,processor))})
+}
+function completedReservationMatches(db:import('node:sqlite').DatabaseSync,reservationId:string,artifactId:unknown,
+  manifestDigest:unknown,processorId:unknown):boolean {
+  if(typeof artifactId!=='string'||typeof manifestDigest!=='string'||typeof processorId!=='string')return false
+  const rows=db.prepare(`SELECT 1 AS present FROM twin_health_executor_ledger
+    WHERE kind='analysis' AND json_valid(result_json)
+      AND json_extract(result_json,'$.reservationId')=? AND json_extract(result_json,'$.artifactId')=?
+      AND json_extract(result_json,'$.manifestDigest')=? AND json_extract(result_json,'$.processorId')=?
+      AND json_extract(result_json,'$.verificationStatus')='verified'
+      AND json_type(result_json,'$.processorReceiptId')='text' LIMIT 2`)
+    .all(reservationId,artifactId,manifestDigest,processorId)
+  return rows.length===1
 }
 function reservationExpiry(id:unknown):number|null{
   if(typeof id!=='string')return null
@@ -107,9 +120,14 @@ function reservationExpiry(id:unknown):number|null{
 function authorizationResourceMaterial(request:Readonly<FabricAuthorizationRequest>):unknown{
   const input=request.input
   return withPersonalTwinDb(db=>{
-    if(request.capabilityId==='health.artifact.analyze.remote'&&typeof input.consentId==='string')return db.prepare(`SELECT
-      reservation_id,consent_id,artifact_id,artifact_manifest_digest,processor,expires_at,consumed_at
-      FROM twin_artifact_consent_reservations WHERE reservation_id=?`).get(input.consentId)??null
+    if(request.capabilityId==='health.artifact.analyze.remote'&&typeof input.consentId==='string'){
+      const row=db.prepare(`SELECT reservation_id,consent_id,artifact_id,artifact_manifest_digest,processor,expires_at,consumed_at
+        FROM twin_artifact_consent_reservations WHERE reservation_id=?`).get(input.consentId) as Record<string,unknown>|undefined
+      if(row?.consumed_at!==null&&completedReservationMatches(db,input.consentId,input.artifactId,input.manifestDigest,input.processorId)){
+        return {...row,consumed_at:null}
+      }
+      return row??null
+    }
     if((request.capabilityId==='health.plan.adjust'||request.capabilityId==='health.plan.restore')&&typeof input.planId==='string')return db.prepare(
       'SELECT plan_id,version,digest FROM twin_health_plans WHERE plan_id=?').get(input.planId)??null
     if((request.capabilityId==='health.artifact.analyze.local'||request.capabilityId==='health.artifact.analyze.remote')

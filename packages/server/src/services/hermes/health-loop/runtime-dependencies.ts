@@ -120,6 +120,11 @@ export function createDurableHealthAnalysisServices(profile='default'):{artifact
     return {result:await structured.analyze({request:analysisRequest,format:spec.format,content:read.content})}}}
   const resultWriter:HealthAnalysisResultWriter={
     async lookup(token,digest){return readLedger<PersistedHealthAnalysisResult>(token,digest,'analysis')},
+    async lookupByAnalysisId(analysisId){return withPersonalTwinDb(db=>{const rows=db.prepare(`SELECT result_json
+      FROM twin_health_executor_ledger WHERE kind='analysis' AND json_valid(result_json)
+      AND json_extract(result_json,'$.analysisId')=? LIMIT 2`).all(analysisId) as Array<{result_json:string}>
+      if(rows.length!==1)return null
+      try{return JSON.parse(rows[0].result_json) as PersistedHealthAnalysisResult}catch{return null}})},
     async write(request){const prior=readLedger<PersistedHealthAnalysisResult>(request.executionToken,request.materialDigest,'analysis')
       if(prior)return prior
       const observationIds=request.result.envelope?[...ingestHealthEnvelope(request.result.envelope).observations.map(item=>item.id)]:[]

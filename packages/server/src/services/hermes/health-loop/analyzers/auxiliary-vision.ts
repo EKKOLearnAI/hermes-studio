@@ -53,7 +53,9 @@ export interface AuxiliaryVisionClientInput {
 }
 
 export interface AuxiliaryVisionClient {
-  analyze(input: AuxiliaryVisionClientInput, options: { signal: AbortSignal }): Promise<string | Uint8Array>
+  analyze(input: AuxiliaryVisionClientInput, options: { signal: AbortSignal }): Promise<string | Uint8Array | {
+    output: string | Uint8Array; providerReceiptId: string
+  }>
 }
 
 export interface AuxiliaryVisionAnalyzerDependencies {
@@ -182,7 +184,7 @@ async function dispatchWithTimeout(
   client: AuxiliaryVisionClient,
   input: AuxiliaryVisionClientInput,
   timeoutMs: number,
-): Promise<string | Uint8Array> {
+): ReturnType<AuxiliaryVisionClient['analyze']> {
   const controller = new AbortController()
   let timer: NodeJS.Timeout | undefined
   const timeout = new Promise<never>((_, reject) => {
@@ -220,7 +222,9 @@ export function createAuxiliaryVisionAnalyzer(dependencies: AuxiliaryVisionAnaly
   if (typeof metadataResolver !== 'function') fail('HEALTH_ANALYSIS_PROCESSOR_FAILED')
 
   const analyzeRequest = async (inputRequest: HealthAnalysisRequest,
-    authorization?: HealthReservationAuthorization): Promise<HealthAnalysisResult> => {
+    authorization?: HealthReservationAuthorization): Promise<HealthAnalysisResult | {
+      result:HealthAnalysisResult;providerReceiptId?:string
+    }> => {
       let request = validateHealthAnalysisRequest(inputRequest)
       let config: ResolvedAuxiliaryVisionConfig
       try { config = safeConfig(await dependencies.resolver(request.profile)) }
@@ -287,16 +291,21 @@ export function createAuxiliaryVisionAnalyzer(dependencies: AuxiliaryVisionAnaly
       }
       if (actualTotalBytes !== declaredTotalBytes) fail('HEALTH_ANALYSIS_ARTIFACT_DENIED')
 
-      const response = await dispatchWithTimeout(dependencies.client, {
+      const dispatched = await dispatchWithTimeout(dependencies.client, {
         schemaVersion: 'health-vision-client-request/v1', provider: config.provider, model: config.model,
         purpose: request.purpose, requestedFields: [...request.requestedFields], selectedRegions: [...request.selectedRegions], artifacts,
       }, config.timeoutMs)
+      const response = typeof dispatched === 'object' && !(dispatched instanceof Uint8Array)
+        ? dispatched.output : dispatched
+      const providerReceiptId = typeof dispatched === 'object' && !(dispatched instanceof Uint8Array)
+        ? dispatched.providerReceiptId : undefined
       const output = strictResponse(response, maxResponseBytes) as Record<string, unknown>
       if (output.modelVersion !== config.model || output.parserVersion !== 'vision-json-v1') fail('HEALTH_ANALYSIS_INVALID_OUTPUT')
-      return finalizeHealthAnalysis(request, output, { processor: config.provider, locality: config.locality })
+      const result = finalizeHealthAnalysis(request, output, { processor: config.provider, locality: config.locality })
+      return authorization ? { result, ...(providerReceiptId ? { providerReceiptId } : {}) } : result
   }
   return {
-    analyze: (input: HealthAnalysisRequest) => analyzeRequest(input),
+    analyze: async (input: HealthAnalysisRequest) => await analyzeRequest(input) as HealthAnalysisResult,
     [AUTHORIZED_AUXILIARY_ANALYZE]: (input: HealthAnalysisRequest, authorization: HealthReservationAuthorization) =>
       analyzeRequest(input, authorization),
   } as unknown as AuxiliaryVisionAnalyzer

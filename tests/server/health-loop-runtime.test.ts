@@ -308,7 +308,7 @@ describe('health-loop runtime', () => {
       {capabilityId:'health.source.sync',requestedByUserId:'user-1',targetAtoms:['health:connector:fixture'],executorId:'health-source',
         environment:'production' as const,input:{connectorId:'fixture'},requirements:['connector_credential:configured']},
       {capabilityId:'health.artifact.analyze.local',requestedByUserId:'user-1',targetAtoms:[`health:artifact:${artifactId}:${manifest}`],executorId:'health-local-analysis',
-        environment:'production' as const,input:{artifactId,manifestDigest:manifest},requirements:['artifact:local_read']},
+        environment:'internal' as const,input:{artifactId,manifestDigest:manifest},requirements:['artifact:local_read']},
       {capabilityId:'health.artifact.analyze.remote',requestedByUserId:'user-1',targetAtoms:[`health:artifact:${artifactId}:${manifest}`,'health:processor:processor-1'],executorId:'health-remote-analysis',
         environment:'production' as const,input:{artifactId,manifestDigest:manifest,processorId:'processor-1',consentId:`reservation-${'1'.repeat(36)}`},requirements:['one_time_consent:exact_artifact_manifest','processor:exact_id']},
       {capabilityId:'health.plan.adjust',requestedByUserId:'user-1',targetAtoms:['health:plan:plan-auth'],executorId:'health-plan',
@@ -320,6 +320,9 @@ describe('health-loop runtime', () => {
       expiresAt:'2026-07-14T01:00:30.000Z'})))
     vi.setSystemTime(new Date('2026-07-14T01:00:10.000Z'))
     expect(requests.map(request=>provider.authorize(request))).toEqual(firstGrants)
+    withPersonalTwinDb(db=>db.prepare(`UPDATE twin_artifact_consent_reservations SET consumed_at=?
+      WHERE reservation_id=?`).run('2026-07-14T01:00:10.000Z',`reservation-${'1'.repeat(36)}`))
+    expect(provider.authorize(requests[3])).toBeNull()
     const unavailable=createHealthRuntimeAuthorizationProvider('default')
     expect(unavailable.authorize(requests[1])).toBeNull()
     expect(unavailable.authorize(requests[3])).toBeNull()
@@ -330,4 +333,84 @@ describe('health-loop runtime', () => {
     expect(provider.authorize(requests[3])).toBeNull()
     vi.useRealTimers()
   })
+
+  it('refreshes exact controller targets and production analysis dependencies across settings and artifacts', async () => {
+    const originalDisabled = process.env.HERMES_ACTION_FABRIC_DISABLED
+    process.env.HERMES_ACTION_FABRIC_DISABLED = '0'
+    writeFileSync(join(home, 'config.yaml'), `auxiliary:\n  vision:\n    provider: vision-fixture\n    model: vision-model-1\n    base_url: https://vision.invalid/v1\n    api_key: fixture-key\n    timeout: 10\n`)
+    try {
+      const provider = vi.fn()
+      vi.stubGlobal('fetch', provider)
+      const runtime = await import('../../packages/server/src/services/hermes/health-loop/runtime')
+      const controller = await import('../../packages/server/src/controllers/hermes/health-loop')
+      const { createHealthArtifactVault } = await import('../../packages/server/src/services/hermes/health-loop/artifacts')
+      await runtime.startHealthLoopRuntime()
+
+      const context = (body: Record<string, unknown>, id?: string) => ({
+        request: { body }, params: id === undefined ? {} : { id }, query: {}, status: 200, body: undefined,
+        state: { user: { id: 'user-1', role: 'super_admin' }, profile: { name: 'default' } },
+      }) as any
+      const settings = context({ expectedVersion: 1, liveDeliveryEnabled: false, recipient: 'configured-self',
+        configuredConnectors: ['health-state'], configuredProcessors: ['vision-fixture'] })
+      await controller.updateSettings(settings)
+      expect(settings.status).toBe(200)
+
+      const artifact = await createHealthArtifactVault().store({
+        content: Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),
+        declaredMediaType: 'image/png', source: 'runtime-test', sourceId: 'artifact-1' })
+      provider.mockResolvedValue(new Response(JSON.stringify({ id: 'resp-fixture-1', output_text: JSON.stringify({
+        schemaVersion: 'health-analyzer-output/v1', modelVersion: 'vision-model-1', parserVersion: 'vision-json-v1',
+        overallConfidence: 0.9, captureQuality: { score: 0.9, reasons: [] }, fields: [{ field: 'waistCm',
+          value: 70, unit: 'cm', confidence: 0.9, evidence: { artifactId: artifact.id, region: 'subject' } }],
+      }) }), { status: 200 }))
+      const identity = await (await import('../../packages/server/src/services/hermes/health-loop/runtime-dependencies'))
+        .createDurableHealthAnalysisServices().artifactResolver.resolve(artifact.id)
+      expect(identity).not.toBeNull()
+
+      const source = context({ idempotencyKey: 'sync-controller-1' }, 'health-state')
+      await controller.syncConnector(source)
+      expect(source.body.policyDecision.outcome).toBe('allow')
+
+      const local = context({ mode: 'local', manifestDigest: identity!.manifestDigest,
+        idempotencyKey: 'local-controller-1' }, artifact.id)
+      await controller.analyzeArtifact(local)
+      expect(local.body.policyDecision).toMatchObject({ outcome: 'waiting_user',
+        reasonCodes: ['irreversible_requires_approval'] })
+
+      const manifest = { artifactIds: [artifact.id], processor: 'vision-fixture', purpose: 'measurement',
+        selectedRegions: ['subject'], requestedFields: ['waistCm'], retention: 'no_retention' }
+      const consent = context({ manifest })
+      await controller.createConsent(consent)
+      expect(consent.status).toBe(201)
+      const remote = context({ mode: 'remote', manifestDigest: identity!.manifestDigest,
+        processorId: 'vision-fixture', consentToken: consent.body.consent.token, manifest,
+        idempotencyKey: 'remote-controller-1' }, artifact.id)
+      await controller.analyzeArtifact(remote)
+      expect(remote.body.policyDecision.outcome).toBe('waiting_user')
+      const workflows = await import('../../packages/server/src/services/hermes/action-fabric/workflows')
+      const worker = await import('../../packages/server/src/services/hermes/action-fabric/worker')
+      workflows.approveFabricWorkflow(remote.body.workflow.id, 'user-1')
+      for (let cycle = 0; cycle < 32; cycle += 1) {
+        await worker.processActionFabricOnce({ workerId: `runtime-test-${cycle}` })
+        const current = workflows.getFabricWorkflow(remote.body.workflow.id)
+        if (current && ['succeeded','failed','dead_letter','denied','cancelled'].includes(current.state)) break
+      }
+      const finished = workflows.getFabricWorkflow(remote.body.workflow.id)
+      expect(provider).toHaveBeenCalledOnce()
+      if (finished?.state !== 'succeeded') throw new Error(JSON.stringify({ state: finished?.state,
+        lastErrorCode: finished?.lastErrorCode, steps: finished?.steps }))
+      const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
+      const reservationId = withPersonalTwinDb(db => (db.prepare(
+        'SELECT reservation_id,consumed_at FROM twin_artifact_consent_reservations').get() as any))
+      expect(reservationId).toMatchObject({ reservation_id: expect.any(String), consumed_at: expect.any(String) })
+      expect(withPersonalTwinDb(db => JSON.parse((db.prepare(
+        "SELECT result_json FROM twin_health_executor_ledger WHERE kind='analysis'").get() as {result_json:string}).result_json)))
+        .toMatchObject({processorReceiptId:'resp-fixture-1',verificationStatus:'verified'})
+    } finally {
+      await (await import('../../packages/server/src/services/hermes/health-loop/runtime')).stopHealthLoopRuntime()
+      if (originalDisabled === undefined) delete process.env.HERMES_ACTION_FABRIC_DISABLED
+      else process.env.HERMES_ACTION_FABRIC_DISABLED = originalDisabled
+      vi.unstubAllGlobals()
+    }
+  }, 40_000)
 })

@@ -61,6 +61,7 @@ export interface HealthAnalysisResultWriteRequest extends HealthAnalysisArtifact
 export interface HealthAnalysisResultWriter {
   /** Durable lookup by execution token. The returned material digest is checked by the adapter. */
   lookup(executionToken: string, materialDigest: string): Promise<PersistedHealthAnalysisResult | null>
+  lookupByAnalysisId?(analysisId: string): Promise<PersistedHealthAnalysisResult | null>
   /** Atomically persist or replay the exact token + material result. */
   write(request: HealthAnalysisResultWriteRequest): Promise<PersistedHealthAnalysisResult>
 }
@@ -86,14 +87,18 @@ export function createAuthorizedAuxiliaryVisionExecutorAnalyzer(
       || reserved.manifest.artifactIds.length !== 1 || reserved.manifest.artifactIds[0] !== reserved.artifactId) {
       throw new Error('HEALTH_ANALYSIS_CONSENT_DENIED')
     }
-    const result = await (authorized as (input: object, authorization: HealthReservationAuthorization) => Promise<HealthAnalysisResult>)(
+    const analyzed = await (authorized as (input: object, authorization: HealthReservationAuthorization) => Promise<
+      HealthAnalysisResult | { result: HealthAnalysisResult; providerReceiptId?: string }
+    >)(
       { schemaVersion: 'health-analysis-request/v1', profile, purpose: reserved.manifest.purpose,
         sourceId: `fabric.${reserved.processorId}`, observedAt: request.requestedAt,
         artifactIds: [reserved.artifactId], selectedRegions: [...reserved.manifest.selectedRegions],
         requestedFields: [...reserved.manifest.requestedFields] },
       (request as { authorization: HealthReservationAuthorization }).authorization,
     )
-    return { result }
+    return analyzed && typeof analyzed === 'object' && 'result' in analyzed
+      ? { result: analyzed.result, ...(analyzed.providerReceiptId ? { providerReceiptId: analyzed.providerReceiptId } : {}) }
+      : { result: analyzed as HealthAnalysisResult }
   } }
 }
 
@@ -143,7 +148,9 @@ export function createHealthAnalysisExecutorAdapter(options: HealthAnalysisExecu
       try { identity = inputIdentity(context.input) } catch { return failure('mismatch', 'HEALTH_ANALYSIS_VERIFICATION_MISMATCH') }
       const digest = executionMaterial(context)
       const stored = await lookupPersisted(options, context.executionToken, digest)
-      if (!stored || stored === 'unavailable' || !validPersistedResult(stored, options.locality, context, identity, digest)
+        ?? (typeof context.executionOutput?.analysisId==='string'&&options.resultWriter?.lookupByAnalysisId
+          ? await options.resultWriter.lookupByAnalysisId(context.executionOutput.analysisId) : null)
+      if (!stored || stored === 'unavailable' || !validPersistedResult(stored, options.locality, context, identity, digest, false)
         || !analysisOutputMatches(context.executionOutput, stored, options.locality, context)) {
         return failure('unknown', 'HEALTH_ANALYSIS_VERIFICATION_UNAVAILABLE')
       }
@@ -291,8 +298,8 @@ function matchesCapability(locality: 'local' | 'remote', id: string): boolean {
   return id === `health.artifact.analyze.${locality}`
 }
 function validPersistedResult(value: PersistedHealthAnalysisResult, locality: 'local' | 'remote', context: FabricExecutionContext,
-  identity: HealthAnalysisArtifactIdentity, materialDigest: string): boolean {
-  return !!value && value.executionToken === context.executionToken && value.materialDigest === materialDigest
+  identity: HealthAnalysisArtifactIdentity, materialDigest: string, requireExecutionToken=true): boolean {
+  return !!value && (!requireExecutionToken || value.executionToken === context.executionToken) && value.materialDigest === materialDigest
     && value.artifactId === identity.artifactId && value.manifestDigest === identity.manifestDigest
     && value.requestedAt === context.input.requestedAt && semanticId(value.analysisId)
     && ['succeeded', 'needs_review', 'failed'].includes(value.status) && Array.isArray(value.observationIds)

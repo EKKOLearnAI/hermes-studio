@@ -11,6 +11,7 @@ import { createHealthStateConnector } from '../../services/hermes/health-loop/co
 import { createS400HealthConnector } from '../../services/hermes/health-loop/connectors/s400'
 import { recordHealthOutcome, HEALTH_OUTCOMES } from '../../services/hermes/health-loop/outcomes'
 import { createDurableHealthAnalysisServices } from '../../services/hermes/health-loop/runtime-dependencies'
+import { refreshHealthRuntimeAuthorization } from '../../services/hermes/health-loop/runtime'
 import { getHealthAutomationSettings, updateHealthAutomationSettings } from '../../services/hermes/health-loop/settings'
 import { withPersonalTwinDb } from '../../services/hermes/personal-twin/database'
 
@@ -58,6 +59,7 @@ export async function syncConnector(ctx: Context): Promise<void> {
     if (!registry.get(connectorId)) throw coded('HEALTH_CONNECTOR_NOT_FOUND')
     const requestedAt = optionalTimestamp(body.requestedAt) ?? new Date().toISOString()
     const cursor = optionalText(body.cursor, 2048)
+    refreshHealthRuntimeAuthorization([`health:connector:${connectorId}`])
     const result = createFabricIntent({
       capabilityId: 'health.source.sync', requestedByRoleId: 'health-manager', requestedByUserId: actorUserId(ctx),
       idempotencyKey: optionalId(body.idempotencyKey) ?? `health-sync-${randomUUID()}`,
@@ -80,6 +82,7 @@ export async function createArtifact(ctx: Context): Promise<void> {
       ...(upload.metadata ? { metadata: upload.metadata } : {}) })
     const identity = await createDurableHealthAnalysisServices().artifactResolver.resolve(artifact.id)
     if (!identity) throw coded('HEALTH_ARTIFACT_REGISTRY_FAILED')
+    refreshHealthRuntimeAuthorization([`health:artifact:${artifact.id}:${identity.manifestDigest}`])
     ctx.status = 201
     return { artifact: { id: artifact.id, mediaType: artifact.mediaType, sizeBytes: artifact.sizeBytes,
       manifestDigest: identity.manifestDigest, metadata: publicMetadata(artifact.metadata), createdAt: artifact.createdAt } }
@@ -123,10 +126,13 @@ export async function analyzeArtifact(ctx: Context): Promise<void> {
         requestedAt: requestedAt ?? reservation.reservedAt }
       target = { kind: 'health_remote_artifact', artifactId, manifestDigest, processorId }
     }
+    refreshHealthRuntimeAuthorization([`health:artifact:${artifactId}:${manifestDigest}`,
+      ...(mode === 'remote' ? [`health:processor:${String(input.processorId)}`] : [])])
     const result = createFabricIntent({ capabilityId, requestedByRoleId: 'health-manager', requestedByUserId: actor,
       idempotencyKey: requestedIdempotencyKey ?? `health-analysis-${randomUUID()}`,
       goal: 'Analyze one exact health artifact', target, input, constraints: {},
-      rationale: 'Explicit authenticated artifact analysis request', environments: ['production'] })
+      rationale: 'Explicit authenticated artifact analysis request',
+      environments: [capabilityId === 'health.artifact.analyze.local' ? 'internal' : 'production'] })
     ctx.status = 202
     return publicAction(result)
   })
@@ -213,6 +219,7 @@ export async function updateSettings(ctx: Context): Promise<void> {
       recipient: requiredEnum(body.recipient, ['configured-self'] as const),
       ...(body.configuredConnectors === undefined ? {} : { configuredConnectors: idArray(body.configuredConnectors, 32) }),
       ...(body.configuredProcessors === undefined ? {} : { configuredProcessors: idArray(body.configuredProcessors, 32) }) })
+    refreshHealthRuntimeAuthorization()
     return { settings: publicSettings(updated) }
   })
 }

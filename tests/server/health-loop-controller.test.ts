@@ -15,6 +15,7 @@ const database=vi.hoisted(()=>({withPersonalTwinDb:vi.fn()}))
 const status=vi.hoisted(()=>vi.fn())
 
 vi.mock('../../packages/server/src/services/hermes/action-fabric',()=>fabric)
+vi.mock('../../packages/server/src/services/hermes/health-loop/runtime',()=>({refreshHealthRuntimeAuthorization:vi.fn()}))
 vi.mock('../../packages/server/src/services/hermes/health-loop/artifacts',()=>({createHealthArtifactVault:()=>vault}))
 vi.mock('../../packages/server/src/services/hermes/health-loop/consent',()=>({createHealthConsentBroker:()=>broker,HEALTH_PROCESSING_RETENTIONS:['no_retention','session','24_hours']}))
 vi.mock('../../packages/server/src/services/hermes/health-loop/settings',()=>settings)

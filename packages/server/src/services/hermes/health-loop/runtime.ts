@@ -19,6 +19,9 @@ import { createDurableHealthAnalysisServices, createDurableHealthPlanRepository,
 import { createWeixinReceiptSender } from '../weixin-sender'
 import { registerHealthRuntimeAuthorization, clearHealthRuntimeAuthorization } from './runtime-authorization'
 import { ensureBuiltInAssistantRoles, updateAssistantRole } from '../personal-twin/assistant-roles'
+import { createProductionVisionAdapter } from './production-vision'
+import { createHealthConsentBroker } from './consent'
+import { createAuthorizedAuxiliaryVisionExecutorAnalyzer, createHealthConsentReservationConsumer } from './executors/analysis'
 
 export interface HealthLoopLifecycleHooks {
   prepare(): Promise<void>
@@ -48,20 +51,24 @@ const workerId=`health-runtime-${randomUUID()}`
 let timer:ReturnType<typeof setInterval>|null=null
 let poll:Promise<void>|null=null
 let productionProcessor:ReturnType<typeof createHealthOutboxProcessor>|null=null
+let remoteProcessorIds:string[]=[]
 
 const lifecycle=createHealthLoopLifecycle({
   async prepare(){
     const settings=getHealthAutomationSettings()
-    const availableConnectors=['health-state','s400'].filter(id=>settings.configuredConnectors.includes(id))
     ensureDefaultPlan(new Date().toISOString())
-    ensureHealthRuntimeRole(availableConnectors)
     const analysis=createDurableHealthAnalysisServices(settings.profile)
+    const remoteVision=await createProductionVisionAdapter(settings.profile)
+    remoteProcessorIds=remoteVision?[remoteVision.processorId]:[]
     configureHealthFabricExecutorDependencies({profile:settings.profile,
       sourceService:createDurableHealthSourceService(settings.profile),planRepository:createDurableHealthPlanRepository(),
       localAnalyzer:analysis.localAnalyzer,localArtifactResolver:analysis.artifactResolver,
       localResultWriter:analysis.resultWriter,remoteArtifactResolver:analysis.artifactResolver,
-      remoteResultWriter:analysis.resultWriter,weixinSender:createWeixinReceiptSender(settings.profile)})
-    registerHealthRuntimeAuthorization(settings.profile,{connectors:availableConnectors,remoteProcessors:[]})
+      remoteResultWriter:analysis.resultWriter,
+      ...(remoteVision?{remoteAnalyzer:createAuthorizedAuxiliaryVisionExecutorAnalyzer(remoteVision.analyzer,settings.profile),
+        remoteConsentConsumer:createHealthConsentReservationConsumer(createHealthConsentBroker({allowedProcessors:remoteProcessorIds}))}:{}),
+      weixinSender:createWeixinReceiptSender(settings.profile)})
+    refreshHealthRuntimeAuthorization()
     productionProcessor=createHealthOutboxProcessor({consumerId:'health-loop-v1',workerId})
   },
   startFabric:startActionFabricRuntime,
@@ -70,11 +77,21 @@ const lifecycle=createHealthLoopLifecycle({
   },
   async stopConsumer(){if(timer){clearInterval(timer);timer=null}if(poll)await poll;productionProcessor=null},
   async stopFabric(){try{await stopActionFabricRuntime()}finally{
-    clearHealthRuntimeAuthorization();configureHealthFabricExecutorDependencies(null)}},
+    clearHealthRuntimeAuthorization();configureHealthFabricExecutorDependencies(null);remoteProcessorIds=[]}},
 })
 
 export function startHealthLoopRuntime():Promise<void>{return lifecycle.start()}
 export function stopHealthLoopRuntime():Promise<void>{return lifecycle.stop()}
+
+/** Refresh immediately before creating an intent so dynamic literal targets cannot race policy evaluation. */
+export function refreshHealthRuntimeAuthorization(exactTargets:readonly string[]=[]):void {
+  const settings=getHealthAutomationSettings()
+  const connectors=['health-state','s400'].filter(id=>settings.configuredConnectors.includes(id))
+  const processors=remoteProcessorIds.filter(id=>settings.configuredProcessors.includes(id))
+  ensureHealthRuntimeRole(connectors,processors,exactTargets)
+  clearHealthRuntimeAuthorization()
+  registerHealthRuntimeAuthorization(settings.profile,{connectors,remoteProcessors:processors})
+}
 
 export interface HealthOutboxProcessorOptions {
   consumerId:string
@@ -293,10 +310,12 @@ function stableError(error:unknown):string {
   return error instanceof Error&&/^[A-Z][A-Z0-9_]{1,127}$/.test(error.message)?error.message:'HEALTH_RUNTIME_PROCESSING_FAILED'
 }
 
-function ensureHealthRuntimeRole(connectors:string[]):void {
+function ensureHealthRuntimeRole(connectors:string[],processors:string[],exactTargets:readonly string[]):void {
   ensureBuiltInAssistantRoles()
   updateAssistantRole('health-manager',{capabilityScope:{allow:['health.plan.adjust','health.checkin.request',
-    'health.followup.schedule','health.reminder.send'],deny:[],enforcement:'action_fabric_v1'},decisionAuthority:{maxRisk:'medium',
+    'health.followup.schedule','health.reminder.send','health.source.sync','health.artifact.analyze.local',
+    'health.artifact.analyze.remote'],deny:[],enforcement:'action_fabric_v1'},decisionAuthority:{maxRisk:'medium',
     requireApprovalAbove:'low',allowedTargets:['health:plan:health-plan-default','health:recipient:configured-self',
-      'health:owner:user-self',...connectors.map(id=>`health:connector:${id}`)]}})
+      'health:owner:user-self',...connectors.map(id=>`health:connector:${id}`),
+      ...processors.map(id=>`health:processor:${id}`),...exactTargets].filter((value,index,array)=>array.indexOf(value)===index)}})
 }
