@@ -22,6 +22,9 @@ import { ensureBuiltInAssistantRoles, updateAssistantRole } from '../personal-tw
 import { createProductionVisionAdapter } from './production-vision'
 import { createHealthConsentBroker } from './consent'
 import { createAuthorizedAuxiliaryVisionExecutorAnalyzer, createHealthConsentReservationConsumer } from './executors/analysis'
+import { withActionFabricDb } from '../action-fabric/database'
+import { healthTargetAtoms } from '../action-fabric/contracts'
+import type { FabricJsonObject } from '../action-fabric/types'
 
 export interface HealthLoopLifecycleHooks {
   prepare(): Promise<void>
@@ -88,9 +91,41 @@ export function refreshHealthRuntimeAuthorization(exactTargets:readonly string[]
   const settings=getHealthAutomationSettings()
   const connectors=['health-state','s400'].filter(id=>settings.configuredConnectors.includes(id))
   const processors=remoteProcessorIds.filter(id=>settings.configuredProcessors.includes(id))
-  ensureHealthRuntimeRole(connectors,processors,exactTargets)
+  const retainedTargets=activeHealthWorkflowTargets()
+  ensureHealthRuntimeRole(connectors,processors,[...retainedTargets,...exactTargets])
   clearHealthRuntimeAuthorization()
   registerHealthRuntimeAuthorization(settings.profile,{connectors,remoteProcessors:processors})
+}
+
+function activeHealthWorkflowTargets():string[] {
+  return withActionFabricDb(db=>{
+    const rows=db.prepare(`SELECT i.capability_id,s.input_json
+      FROM fabric_workflows w JOIN fabric_action_intents i ON i.id=w.intent_id
+      JOIN fabric_steps s ON s.workflow_id=w.id AND s.ordinal=0 AND s.kind='prepare'
+      WHERE i.requested_by_role_id='health-manager' AND i.capability_id LIKE 'health.%'
+        AND w.state NOT IN ('succeeded','denied','cancelled','compensated')
+      ORDER BY w.created_at,w.rowid`).iterate() as IterableIterator<{
+        capability_id:string;input_json:string}>
+    const targets=new Set<string>()
+    for(const row of rows){
+      const captured=parseFabricObject(row.input_json)
+      const target=captured.target
+      const input=captured.actionInput
+      if(!plain(target)||!plain(input))throw new Error('HEALTH_RUNTIME_AUTHORIZATION_TARGET_INVALID')
+      const atoms=healthTargetAtoms(row.capability_id,target,input)
+      if(!atoms)throw new Error('HEALTH_RUNTIME_AUTHORIZATION_TARGET_INVALID')
+      for(const atom of atoms){targets.add(atom)
+        if(targets.size>64)throw new Error('HEALTH_RUNTIME_AUTHORIZATION_TARGET_LIMIT')}
+    }
+    return [...targets]
+  })
+}
+
+function parseFabricObject(value:string):FabricJsonObject {
+  let parsed:unknown
+  try{parsed=JSON.parse(value)}catch{throw new Error('HEALTH_RUNTIME_AUTHORIZATION_TARGET_INVALID')}
+  if(!plain(parsed))throw new Error('HEALTH_RUNTIME_AUTHORIZATION_TARGET_INVALID')
+  return parsed
 }
 
 export interface HealthOutboxProcessorOptions {
@@ -312,10 +347,13 @@ function stableError(error:unknown):string {
 
 function ensureHealthRuntimeRole(connectors:string[],processors:string[],exactTargets:readonly string[]):void {
   ensureBuiltInAssistantRoles()
+  const allowedTargets=['health:plan:health-plan-default','health:recipient:configured-self',
+    'health:owner:user-self',...connectors.map(id=>`health:connector:${id}`),
+    ...processors.map(id=>`health:processor:${id}`),...exactTargets]
+    .filter((value,index,array)=>array.indexOf(value)===index)
+  if(allowedTargets.length>64)throw new Error('HEALTH_RUNTIME_AUTHORIZATION_TARGET_LIMIT')
   updateAssistantRole('health-manager',{capabilityScope:{allow:['health.plan.adjust','health.checkin.request',
     'health.followup.schedule','health.reminder.send','health.source.sync','health.artifact.analyze.local',
     'health.artifact.analyze.remote'],deny:[],enforcement:'action_fabric_v1'},decisionAuthority:{maxRisk:'medium',
-    requireApprovalAbove:'low',allowedTargets:['health:plan:health-plan-default','health:recipient:configured-self',
-      'health:owner:user-self',...connectors.map(id=>`health:connector:${id}`),
-      ...processors.map(id=>`health:processor:${id}`),...exactTargets].filter((value,index,array)=>array.indexOf(value)===index)}})
+    requireApprovalAbove:'low',allowedTargets}})
 }
