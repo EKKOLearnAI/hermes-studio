@@ -79,7 +79,12 @@ export interface HealthConsentReservationBinding {
 export interface HealthConsentReservation extends HealthConsentReservationBinding {
   reservationId: string
   consentId: string
+  reservedAt: string
   expiresAt: string
+}
+export interface HealthConsentReservationContext {
+  actorUserId: string
+  idempotencyKey: string
 }
 interface HealthConsentReservationConsumption extends HealthConsentReservationBinding {
   reservationId: string
@@ -99,6 +104,9 @@ export interface HealthConsentBroker {
   consume(token: string, manifest: HealthProcessingManifest): Promise<HealthConsentConsumption>
   reserve(token: string, manifest: HealthProcessingManifest,
     binding: HealthConsentReservationBinding): Promise<HealthConsentReservation>
+  reserveIdempotent(token: string, manifest: HealthProcessingManifest,
+    binding: HealthConsentReservationBinding,
+    context: HealthConsentReservationContext): Promise<HealthConsentReservation>
   revoke(consentId: string): Promise<HealthConsentRevocation>
 }
 
@@ -485,7 +493,74 @@ export function createHealthConsentBroker(options: HealthConsentBrokerOptions): 
           (reservation_id,consent_id,artifact_id,artifact_manifest_digest,processor,reserved_at,expires_at,consumed_at)
           VALUES(?,?,?,?,?,?,?,NULL)`).run(reservationId, row.consent_id, binding.artifactId,
           binding.artifactManifestDigest, binding.processorId, reservedAt, row.expires_at)
-        return { reservationId, consentId: row.consent_id, ...binding, expiresAt: row.expires_at }
+        return { reservationId, consentId: row.consent_id, ...binding, reservedAt, expiresAt: row.expires_at }
+      }))
+    },
+
+    async reserveIdempotent(token: string, input: HealthProcessingManifest,
+      inputBinding: HealthConsentReservationBinding,
+      inputContext: HealthConsentReservationContext): Promise<HealthConsentReservation> {
+      const manifest = canonicalManifest(input, allowedProcessors, true)
+      if (manifest.artifactIds.length !== 1) throw new HealthConsentError('HEALTH_CONSENT_INVALID')
+      const binding = reservationBinding(inputBinding, manifest)
+      const context = reservationContext(inputContext)
+      const digest = manifestDigest(manifest)
+      const reservationId = deterministicReservationId(context, digest, binding)
+      const { iso: reservedAt } = safeNow(clock)
+      const tokenValid = typeof token === 'string' && TOKEN.test(token)
+      const suppliedDigest = tokenValid ? tokenDigest(token) : tokenDigest('invalid')
+      return runStorage(() => transaction(db => {
+        const rows = db.prepare('SELECT * FROM twin_artifact_consents WHERE manifest_digest=? ORDER BY issued_at,consent_id')
+          .all(digest) as unknown as ConsentRow[]
+        const matches: Array<{ row: ConsentRow; stored: NonNullable<ReturnType<typeof storedGrant>> }> = []
+        for (const row of rows) {
+          const stored = storedGrant(row, allowedProcessors, maxTtlMs)
+          const comparableDigest = stored?.tokenDigest ?? Buffer.alloc(32)
+          const suppliedBinding = grantBinding(tokenValid ? token : '0'.repeat(64), stored?.envelope
+            ?? grantEnvelope(`consent-${'0'.repeat(36)}`, manifest, digest, reservedAt, reservedAt, 1))
+          const comparableBinding = stored?.grantBinding ?? Buffer.alloc(32)
+          if (stored && timingSafeEqual(comparableDigest, suppliedDigest)
+            && timingSafeEqual(comparableBinding, suppliedBinding)) matches.push({ row, stored })
+        }
+        if (!tokenValid || matches.length !== 1 || rows.some(row => !storedGrant(row, allowedProcessors, maxTtlMs))) {
+          throw new HealthConsentError('HEALTH_CONSENT_INVALID')
+        }
+        const row = matches[0].row
+        if (!validateStoredConsentCausality(row)) throw new HealthConsentError('HEALTH_CONSENT_STORAGE_FAILED')
+        if (row.revoked_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REVOKED')
+
+        const existing = db.prepare('SELECT * FROM twin_artifact_consent_reservations WHERE reservation_id=?')
+          .get(reservationId) as unknown as ReservationRow | undefined
+        if (existing) {
+          if (existing.consent_id !== row.consent_id || existing.artifact_id !== binding.artifactId
+            || existing.artifact_manifest_digest !== binding.artifactManifestDigest
+            || existing.processor !== binding.processorId || existing.expires_at !== row.expires_at
+            || !reservationParentMatches(row, matches[0].stored.envelope.manifest, {
+              artifactId: existing.artifact_id, processor: existing.processor,
+              reservedAt: existing.reserved_at, expiresAt: existing.expires_at,
+            })) throw new HealthConsentError('HEALTH_CONSENT_STORAGE_FAILED')
+          if (existing.expires_at <= reservedAt) throw new HealthConsentError('HEALTH_CONSENT_EXPIRED')
+          return { reservationId, consentId: row.consent_id, ...binding,
+            reservedAt: existing.reserved_at, expiresAt: row.expires_at }
+        }
+
+        if (row.consumed_at !== null) throw new HealthConsentError('HEALTH_CONSENT_REPLAYED')
+        if (row.expires_at <= reservedAt) throw new HealthConsentError('HEALTH_CONSENT_EXPIRED')
+        const consumed = db.prepare(`UPDATE twin_artifact_consents SET consumed_at=?
+          WHERE consent_id=? AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>?`)
+          .run(reservedAt, row.consent_id, reservedAt)
+        if (consumed.changes !== 1) throw new HealthConsentError('HEALTH_CONSENT_REPLAYED')
+        const parent = db.prepare('SELECT * FROM twin_artifact_consents WHERE consent_id=?')
+          .get(row.consent_id) as unknown as ConsentRow | undefined
+        const parentStored = parent ? storedGrant(parent, allowedProcessors, maxTtlMs) : null
+        if (!parent || !parentStored || !reservationParentMatches(parent, parentStored.envelope.manifest, {
+          artifactId: binding.artifactId, processor: binding.processorId, reservedAt, expiresAt: row.expires_at,
+        })) throw new HealthConsentError('HEALTH_CONSENT_STORAGE_FAILED')
+        db.prepare(`INSERT INTO twin_artifact_consent_reservations
+          (reservation_id,consent_id,artifact_id,artifact_manifest_digest,processor,reserved_at,expires_at,consumed_at)
+          VALUES(?,?,?,?,?,?,?,NULL)`).run(reservationId, row.consent_id, binding.artifactId,
+          binding.artifactManifestDigest, binding.processorId, reservedAt, row.expires_at)
+        return { reservationId, consentId: row.consent_id, ...binding, reservedAt, expiresAt: row.expires_at }
       }))
     },
 
@@ -580,4 +655,26 @@ function reservationBinding(input: HealthConsentReservationBinding,
   }
   return { artifactId: input.artifactId, artifactManifestDigest: input.artifactManifestDigest,
     processorId: input.processorId }
+}
+
+function reservationContext(input: HealthConsentReservationContext): HealthConsentReservationContext {
+  assertSafeGraph(input)
+  const value = input as unknown as Record<string, unknown>
+  const identifier = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/
+  if (!input || typeof input !== 'object' || Array.isArray(input)
+    || Object.keys(input).sort().join(',') !== 'actorUserId,idempotencyKey'
+    || typeof value.actorUserId !== 'string' || !identifier.test(value.actorUserId)
+    || typeof value.idempotencyKey !== 'string' || !identifier.test(value.idempotencyKey)) {
+    throw new HealthConsentError('HEALTH_CONSENT_INVALID')
+  }
+  return { actorUserId: value.actorUserId, idempotencyKey: value.idempotencyKey }
+}
+
+function deterministicReservationId(context: HealthConsentReservationContext, digest: string,
+  binding: HealthConsentReservationBinding): string {
+  const hex = createHash('sha256').update(JSON.stringify([
+    'health-consent-reservation-v1', context.actorUserId, context.idempotencyKey, digest,
+    binding.artifactId, binding.artifactManifestDigest, binding.processorId,
+  ])).digest('hex')
+  return `reservation-${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`
 }

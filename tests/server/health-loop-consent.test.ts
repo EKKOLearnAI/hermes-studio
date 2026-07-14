@@ -109,6 +109,32 @@ describe('health remote-processing consent broker', () => {
     await expect(broker.consume(grant.token, manifest)).rejects.toMatchObject({ code: 'HEALTH_CONSENT_REPLAYED' })
   })
 
+  it('idempotently reserves one consent for the exact actor, request key, and material without storing the token', async () => {
+    const { broker, manifest, artifact } = await fixture()
+    const grant = await broker.issue(manifest)
+    const binding = { artifactId: artifact.id, artifactManifestDigest: 'd'.repeat(64), processorId: manifest.processor }
+    const context = { actorUserId: '42', idempotencyKey: 'analyze-request-1' }
+    const first = await broker.reserveIdempotent(grant.token, manifest, binding, context)
+    const replay = await broker.reserveIdempotent(grant.token, manifest, binding, context)
+    expect(replay).toEqual(first)
+    expect(first.reservationId).toMatch(/^reservation-[0-9a-f-]{36}$/)
+
+    for (const [changedBinding, changedContext] of [
+      [binding, { ...context, actorUserId: '43' }],
+      [binding, { ...context, idempotencyKey: 'analyze-request-2' }],
+      [{ ...binding, artifactManifestDigest: 'e'.repeat(64) }, context],
+    ] as const) {
+      await expect(broker.reserveIdempotent(grant.token, manifest, changedBinding, changedContext))
+        .rejects.toMatchObject({ code: expect.stringMatching(/^HEALTH_CONSENT_/) })
+    }
+    const { withPersonalTwinDb } = await import('../../packages/server/src/services/hermes/personal-twin')
+    const rows = withPersonalTwinDb(db => db.prepare('SELECT * FROM twin_artifact_consent_reservations').all()) as Array<Record<string, unknown>>
+    expect(rows).toHaveLength(1)
+    expect(JSON.stringify(rows)).not.toContain(grant.token)
+    const scope = withPersonalTwinDb(db => db.prepare('SELECT scope_json FROM twin_artifact_consents WHERE consent_id=?').get(grant.consentId))
+    expect(JSON.stringify(scope)).not.toContain(grant.token)
+  })
+
   it('rejects consume and revoke when the clock moves before issuance without changing grant state', async () => {
     const { broker, manifest } = await fixture()
     const grant = await broker.issue(manifest)

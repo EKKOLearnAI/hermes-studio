@@ -27,7 +27,7 @@ describe('health loop OpenAPI',()=>{
     const schema=ctx.body.paths['/api/hermes/health-loop/artifacts/{id}/analyze'].post.requestBody.content['application/json'].schema
     expect(schema).toEqual({oneOf:[
       expect.objectContaining({additionalProperties:false,required:['mode','manifestDigest'],properties:expect.objectContaining({mode:{type:'string',enum:['local']},manifestDigest:expect.any(Object)})}),
-      expect.objectContaining({additionalProperties:false,required:['mode','manifestDigest','processorId','consentToken','manifest'],properties:expect.objectContaining({mode:{type:'string',enum:['remote']},processorId:expect.any(Object),consentToken:expect.objectContaining({writeOnly:true}),manifest:expect.any(Object)})}),
+      expect.objectContaining({additionalProperties:false,required:['mode','manifestDigest','processorId','consentToken','manifest','idempotencyKey'],properties:expect.objectContaining({mode:{type:'string',enum:['remote']},processorId:expect.any(Object),consentToken:expect.objectContaining({writeOnly:true}),manifest:expect.any(Object),idempotencyKey:expect.any(Object)})}),
     ]})
     const responseNames=['HealthLoopOverviewResponse','HealthConnectorListResponse','HealthActionResponse','HealthArtifactResponse',
       'HealthConsentGrantResponse','HealthConsentRevocationResponse','HealthInterventionListResponse','HealthFeedbackResponse','HealthSettingsResponse']

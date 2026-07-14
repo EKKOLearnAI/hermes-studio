@@ -15168,7 +15168,8 @@
                       "manifestDigest",
                       "processorId",
                       "consentToken",
-                      "manifest"
+                      "manifest",
+                      "idempotencyKey"
                     ],
                     "additionalProperties": false
                   }

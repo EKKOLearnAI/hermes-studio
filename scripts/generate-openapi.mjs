@@ -1629,7 +1629,7 @@ healthJsonBody('/api/hermes/health-loop/connectors/{id}/sync', 'post', exactObje
 openapi.paths['/api/hermes/health-loop/artifacts'].post.requestBody = { required: true, content: { 'multipart/form-data': { schema: exactObject({ file: { type: 'string', format: 'binary' }, sourceId: healthId, metadata: { type: 'object', additionalProperties: true } }, ['file', 'sourceId']) } } }
 healthJsonBody('/api/hermes/health-loop/artifacts/{id}/analyze', 'post', { oneOf: [
   exactObject({ mode: { type: 'string', enum: ['local'] }, manifestDigest: healthDigest, idempotencyKey: healthId, requestedAt: healthTimestamp }, ['mode', 'manifestDigest']),
-  exactObject({ mode: { type: 'string', enum: ['remote'] }, manifestDigest: healthDigest, processorId: healthId, consentToken: { type: 'string', pattern: '^[a-f0-9]{64}$', writeOnly: true }, manifest: schemaRef('HealthConsentManifestDto'), idempotencyKey: healthId, requestedAt: healthTimestamp }, ['mode', 'manifestDigest', 'processorId', 'consentToken', 'manifest']),
+  exactObject({ mode: { type: 'string', enum: ['remote'] }, manifestDigest: healthDigest, processorId: healthId, consentToken: { type: 'string', pattern: '^[a-f0-9]{64}$', writeOnly: true }, manifest: schemaRef('HealthConsentManifestDto'), idempotencyKey: healthId, requestedAt: healthTimestamp }, ['mode', 'manifestDigest', 'processorId', 'consentToken', 'manifest', 'idempotencyKey']),
 ] })
 healthJsonBody('/api/hermes/health-loop/consents', 'post', exactObject({ manifest: healthManifest, ttlMs: { type: 'integer', minimum: 1, maximum: 900000 } }, ['manifest']))
 healthJsonBody('/api/hermes/health-loop/consents/{id}/revoke', 'post', exactObject({}))

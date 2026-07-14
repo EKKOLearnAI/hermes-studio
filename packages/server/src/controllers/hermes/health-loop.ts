@@ -93,7 +93,9 @@ export async function analyzeArtifact(ctx: Context): Promise<void> {
     const body = exactBody(ctx, new Set(['mode', 'manifestDigest', 'processorId', 'consentToken', 'manifest', 'idempotencyKey', 'requestedAt']))
     const mode = requiredEnum(body.mode, ['local', 'remote'] as const)
     const manifestDigest = requiredDigest(body.manifestDigest)
-    const requestedAt = optionalTimestamp(body.requestedAt) ?? new Date().toISOString()
+    const requestedAt = optionalTimestamp(body.requestedAt)
+    const actor = actorUserId(ctx)
+    const requestedIdempotencyKey = optionalId(body.idempotencyKey)
     const identity = await createDurableHealthAnalysisServices().artifactResolver.resolve(artifactId)
     if (!identity || identity.manifestDigest !== manifestDigest) throw coded('HEALTH_ARTIFACT_NOT_FOUND')
     let capabilityId: 'health.artifact.analyze.local' | 'health.artifact.analyze.remote'
@@ -102,23 +104,27 @@ export async function analyzeArtifact(ctx: Context): Promise<void> {
     if (mode === 'local') {
       if (body.processorId !== undefined || body.consentToken !== undefined || body.manifest !== undefined) throw new HealthLoopRequestError('Invalid local analysis request')
       capabilityId = 'health.artifact.analyze.local'
-      input = { schemaVersion: 1, artifactId, manifestDigest, requestedAt }
+      input = { schemaVersion: 1, artifactId, manifestDigest, requestedAt: requestedAt ?? new Date().toISOString() }
       target = { kind: 'health_artifact', artifactId, manifestDigest }
     } else {
       const processorId = requiredId(body.processorId)
       const consentToken = requiredToken(body.consentToken)
+      const idempotencyKey = requiredId(requestedIdempotencyKey)
       const manifest = processingManifest(body.manifest)
       const settings = getHealthAutomationSettings()
       if (!settings.configuredProcessors.includes(processorId) || manifest.processor !== processorId
         || manifest.artifactIds.length !== 1 || manifest.artifactIds[0] !== artifactId) throw coded('HEALTH_PROCESSOR_NOT_CONFIGURED')
       const broker = createHealthConsentBroker({ allowedProcessors: settings.configuredProcessors })
-      const reservation = await broker.reserve(consentToken, manifest, { artifactId, artifactManifestDigest: manifestDigest, processorId })
+      const reservation = await broker.reserveIdempotent(consentToken, manifest,
+        { artifactId, artifactManifestDigest: manifestDigest, processorId },
+        { actorUserId: actor, idempotencyKey })
       capabilityId = 'health.artifact.analyze.remote'
-      input = { schemaVersion: 1, artifactId, manifestDigest, processorId, consentId: reservation.reservationId, requestedAt }
+      input = { schemaVersion: 1, artifactId, manifestDigest, processorId, consentId: reservation.reservationId,
+        requestedAt: requestedAt ?? reservation.reservedAt }
       target = { kind: 'health_remote_artifact', artifactId, manifestDigest, processorId }
     }
-    const result = createFabricIntent({ capabilityId, requestedByRoleId: 'health-manager', requestedByUserId: actorUserId(ctx),
-      idempotencyKey: optionalId(body.idempotencyKey) ?? `health-analysis-${randomUUID()}`,
+    const result = createFabricIntent({ capabilityId, requestedByRoleId: 'health-manager', requestedByUserId: actor,
+      idempotencyKey: requestedIdempotencyKey ?? `health-analysis-${randomUUID()}`,
       goal: 'Analyze one exact health artifact', target, input, constraints: {},
       rationale: 'Explicit authenticated artifact analysis request', environments: ['production'] })
     ctx.status = 202
