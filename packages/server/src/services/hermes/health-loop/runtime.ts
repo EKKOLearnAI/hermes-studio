@@ -296,7 +296,7 @@ function stableError(error:unknown):string {
 function ensureHealthRuntimeRole(connectors:string[]):void {
   ensureBuiltInAssistantRoles()
   updateAssistantRole('health-manager',{capabilityScope:{allow:['health.plan.adjust','health.checkin.request',
-    'health.followup.schedule'],deny:[],enforcement:'action_fabric_v1'},decisionAuthority:{maxRisk:'medium',
+    'health.followup.schedule','health.reminder.send'],deny:[],enforcement:'action_fabric_v1'},decisionAuthority:{maxRisk:'medium',
     requireApprovalAbove:'low',allowedTargets:['health:plan:health-plan-default','health:recipient:configured-self',
       'health:owner:user-self',...connectors.map(id=>`health:connector:${id}`)]}})
 }
