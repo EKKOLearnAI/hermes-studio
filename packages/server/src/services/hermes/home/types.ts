@@ -226,6 +226,25 @@ export interface HomeProviderCursorInput {
   expectedVersion: number
 }
 
+export interface HomeCommandReceiptPrepareInput {
+  executionToken: string
+  materialDigest: string
+  provider: string
+  externalId: string
+  operation: string
+  request: Record<string, unknown>
+  expectedState: Record<string, unknown>
+}
+
+export interface HomeCommandReceiptUpdateInput {
+  executionToken: string
+  materialDigest: string
+  status: Exclude<HomeCommandReceiptStatus, 'prepared'>
+  providerRequestId?: string | null
+  observedEventId?: string | null
+  result?: Record<string, unknown> | null
+}
+
 export class HomeValidationError extends Error {
   constructor(message: string) {
     super(message)

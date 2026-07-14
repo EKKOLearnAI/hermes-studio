@@ -4,6 +4,7 @@ import { isProxy } from 'node:util/types'
 import { withPersonalTwinDb } from '../personal-twin/database'
 import {
   HOME_DEVICE_AVAILABILITY,
+  HOME_COMMAND_RECEIPT_STATUSES,
   HOME_PROVIDER_CONNECTION_STATUSES,
   HOME_SPACE_KINDS,
   HomeDevice,
@@ -16,6 +17,9 @@ import {
   HomeDeviceStateEventInput,
   HomeDeviceStateEventResult,
   HomeDeviceStateListOptions,
+  HomeCommandReceipt,
+  HomeCommandReceiptPrepareInput,
+  HomeCommandReceiptUpdateInput,
   HomeIdentityConflictError,
   HomeInventoryAdjustmentInput,
   HomeInventoryAdjustmentResult,
@@ -65,6 +69,12 @@ interface ProviderEventRow {
 interface ProviderCursorRow {
   provider: string; cursor_json: string; connection_status: HomeProviderCursor['connectionStatus']
   last_event_at: string | null; version: number; updated_at: string
+}
+interface CommandReceiptRow {
+  execution_token: string; material_digest: string; provider: string; external_id: string; operation: string
+  request_json: string; expected_state_json: string; provider_request_id: string | null
+  status: HomeCommandReceipt['status']; observed_event_id: string | null; result_json: string | null
+  created_at: string; updated_at: string; verified_at: string | null
 }
 interface InventoryItemRow {
   item_id: string; name: string; unit: string; quantity: number; low_stock_threshold: number | null
@@ -323,6 +333,25 @@ function expectedVersion(value: unknown): number {
   return value as number
 }
 
+function digestValue(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) throw new HomeValidationError(`${field} is invalid`)
+  return value
+}
+
+function assertCommandTransition(
+  current: HomeCommandReceipt['status'],
+  next: HomeCommandReceipt['status'],
+): void {
+  const allowed: Record<HomeCommandReceipt['status'], readonly HomeCommandReceipt['status'][]> = {
+    prepared: ['sent', 'unknown', 'failed'],
+    sent: ['sent', 'verified', 'unknown', 'failed'],
+    unknown: ['unknown', 'verified'],
+    failed: ['failed'],
+    verified: ['verified'],
+  }
+  if (!allowed[current].includes(next)) throw new HomeValidationError(`Home command transition ${current} -> ${next} is invalid`)
+}
+
 function timestamp(value: unknown, field: string): string {
   if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) throw new HomeValidationError(`${field} is invalid`)
   return new Date(value).toISOString()
@@ -383,6 +412,17 @@ function cursorFromRow(row: ProviderCursorRow): HomeProviderCursor {
   return {
     provider: row.provider, cursor: parseJson(row.cursor_json), connectionStatus: row.connection_status,
     lastEventAt: row.last_event_at, version: row.version, updatedAt: row.updated_at,
+  }
+}
+
+function commandReceiptFromRow(row: CommandReceiptRow): HomeCommandReceipt {
+  return {
+    executionToken: row.execution_token, materialDigest: row.material_digest, provider: row.provider,
+    externalId: row.external_id, operation: row.operation, request: parseJson(row.request_json),
+    expectedState: parseJson(row.expected_state_json), providerRequestId: row.provider_request_id,
+    status: row.status, observedEventId: row.observed_event_id,
+    result: row.result_json === null ? null : parseJson(row.result_json), createdAt: row.created_at,
+    updatedAt: row.updated_at, verifiedAt: row.verified_at,
   }
 }
 
@@ -464,6 +504,12 @@ export class HomeTwinStore {
     return row ? eventFromRow(row) : null
   }
 
+  getProviderEventById(id: string): HomeProviderEvent | null {
+    const row = this.database.prepare('SELECT * FROM twin_home_provider_events WHERE provider_event_id=?')
+      .get(semanticId(id, 'Home provider event id')) as ProviderEventRow | undefined
+    return row ? eventFromRow(row) : null
+  }
+
   getProviderCursor(provider: string): HomeProviderCursor | null {
     const row = this.database.prepare('SELECT * FROM twin_home_provider_cursors WHERE provider=?')
       .get(providerId(provider)) as ProviderCursorRow | undefined
@@ -494,6 +540,87 @@ export class HomeTwinStore {
       }
       return cursorFromRow(this.database.prepare('SELECT * FROM twin_home_provider_cursors WHERE provider=?')
         .get(provider) as unknown as ProviderCursorRow)
+    })
+  }
+
+  getCommandReceipt(executionToken: string): HomeCommandReceipt | null {
+    const token = boundedText(executionToken, 'Home command execution token', 200)
+    const row = this.database.prepare('SELECT * FROM twin_home_command_receipts WHERE execution_token=?')
+      .get(token) as CommandReceiptRow | undefined
+    return row ? commandReceiptFromRow(row) : null
+  }
+
+  prepareCommandReceipt(input: HomeCommandReceiptPrepareInput): HomeCommandReceipt {
+    const executionToken = boundedText(input.executionToken, 'Home command execution token', 200)
+    const materialDigest = digestValue(input.materialDigest, 'Home command material digest')
+    const provider = providerId(input.provider)
+    const externalId = boundedText(input.externalId, 'Home command external id', 255)
+    const operation = semanticKey(input.operation, 'Home command operation')
+    const requestJson = canonicalJson(input.request, 'object', 65_536)
+    const expectedStateJson = canonicalJson(input.expectedState, 'object', 65_536)
+    return inTransaction(this.database, () => {
+      const existing = this.database.prepare('SELECT * FROM twin_home_command_receipts WHERE execution_token=?')
+        .get(executionToken) as CommandReceiptRow | undefined
+      if (existing) {
+        const same = existing.material_digest === materialDigest && existing.provider === provider
+          && existing.external_id === externalId && existing.operation === operation
+          && existing.request_json === requestJson && existing.expected_state_json === expectedStateJson
+        if (!same) throw new HomeIdentityConflictError('Home command execution token changed material')
+        return commandReceiptFromRow(existing)
+      }
+      const now = nowIso()
+      this.database.prepare(`INSERT INTO twin_home_command_receipts
+        (execution_token,material_digest,provider,external_id,operation,request_json,expected_state_json,
+        provider_request_id,status,observed_event_id,result_json,created_at,updated_at,verified_at)
+        VALUES(?,?,?,?,?,?,?,NULL,'prepared',NULL,NULL,?,?,NULL)`).run(
+        executionToken, materialDigest, provider, externalId, operation, requestJson, expectedStateJson, now, now,
+      )
+      return commandReceiptFromRow(this.database.prepare('SELECT * FROM twin_home_command_receipts WHERE execution_token=?')
+        .get(executionToken) as unknown as CommandReceiptRow)
+    })
+  }
+
+  updateCommandReceipt(input: HomeCommandReceiptUpdateInput): HomeCommandReceipt {
+    const executionToken = boundedText(input.executionToken, 'Home command execution token', 200)
+    const materialDigest = digestValue(input.materialDigest, 'Home command material digest')
+    if (!HOME_COMMAND_RECEIPT_STATUSES.includes(input.status)) {
+      throw new HomeValidationError('Home command receipt status is invalid')
+    }
+    const providerRequestId = input.providerRequestId == null ? null
+      : boundedText(input.providerRequestId, 'Home command provider request id', 255)
+    const observedEventId = input.observedEventId == null ? null
+      : semanticId(input.observedEventId, 'Home command observed event id')
+    const resultJson = input.result == null ? null : canonicalJson(input.result, 'object', 65_536)
+    return inTransaction(this.database, () => {
+      const existing = this.database.prepare('SELECT * FROM twin_home_command_receipts WHERE execution_token=?')
+        .get(executionToken) as CommandReceiptRow | undefined
+      if (!existing) throw new HomeRecordNotFoundError(`Home command receipt not found: ${executionToken}`)
+      if (existing.material_digest !== materialDigest) throw new HomeIdentityConflictError('Home command material digest changed')
+      assertCommandTransition(existing.status, input.status)
+      if (existing.provider_request_id !== null && providerRequestId !== null
+        && existing.provider_request_id !== providerRequestId) {
+        throw new HomeIdentityConflictError('Home command provider request identity changed')
+      }
+      if (input.status === 'verified') {
+        if (observedEventId === null) throw new HomeValidationError('Verified home command requires an observed event')
+        const event = this.database.prepare('SELECT provider FROM twin_home_provider_events WHERE provider_event_id=?')
+          .get(observedEventId) as { provider: string } | undefined
+        if (!event || event.provider !== existing.provider) {
+          throw new HomeValidationError('Verified home command observed event is invalid')
+        }
+      } else if (observedEventId !== null) {
+        throw new HomeValidationError('Unverified home command cannot bind an observed event')
+      }
+      const finalProviderRequestId = existing.provider_request_id ?? providerRequestId
+      const finalResultJson = resultJson ?? existing.result_json
+      const now = nowIso()
+      const verifiedAt = input.status === 'verified' ? (existing.verified_at ?? now) : null
+      this.database.prepare(`UPDATE twin_home_command_receipts SET provider_request_id=?,status=?,observed_event_id=?,
+        result_json=?,updated_at=?,verified_at=? WHERE execution_token=?`).run(
+        finalProviderRequestId, input.status, observedEventId, finalResultJson, now, verifiedAt, executionToken,
+      )
+      return commandReceiptFromRow(this.database.prepare('SELECT * FROM twin_home_command_receipts WHERE execution_token=?')
+        .get(executionToken) as unknown as CommandReceiptRow)
     })
   }
 

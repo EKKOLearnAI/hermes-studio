@@ -34,6 +34,13 @@ const commandOutput = objectSchema({
   observedEventId: { type: ['string', 'null'], minLength: 1, maxLength: 160 },
   finalState: { type: 'object' },
 }, ['schemaVersion', 'receiptId', 'deviceId', 'bindingId', 'status', 'providerRequestId', 'observedEventId', 'finalState'])
+const sceneOutput = objectSchema({
+  schemaVersion: { const: 1 }, receiptId: semanticId, sceneId: semanticId, bindingId: semanticId,
+  status: { enum: ['verified', 'unknown', 'failed'] },
+  providerRequestId: { type: ['string', 'null'], minLength: 1, maxLength: 255 },
+  observedEventId: { type: ['string', 'null'], minLength: 1, maxLength: 160 },
+  finalState: { type: 'object' },
+}, ['schemaVersion', 'receiptId', 'sceneId', 'bindingId', 'status', 'providerRequestId', 'observedEventId', 'finalState'])
 const governedWrite = {
   version: 1, outputSchema: commandOutput, sideEffect: true, idempotency: 'required' as const,
   reversible: false, compensationCapabilityId: null,
@@ -91,6 +98,7 @@ export const HOME_FABRIC_CAPABILITIES: FabricCapabilityInput[] = [
       verificationTimeoutMs: { type: 'integer', minimum: 1_000, maximum: 120_000 },
     }, ['schemaVersion', 'provider', 'sceneId', 'bindingId', 'externalId', 'safeScene', 'verificationTimeoutMs']),
     risk: 'low', targetRestrictions: ['home:binding', 'home:provider', 'home:scene'],
+    outputSchema: sceneOutput,
     verificationStrategy: 'bounded_scene_state_readback',
   },
 ]
@@ -142,6 +150,23 @@ export function homeTargetAtoms(
       `home:binding:${HOME_PROVIDER}:${input.externalId}`]
   }
   return null
+}
+
+export function validateHomeOutputSemantics(
+  capabilityId: string,
+  input: FabricJsonObject,
+  output: FabricJsonObject,
+): boolean {
+  if (!isHomeCapability(capabilityId)) return true
+  if (output.bindingId !== input.bindingId) return false
+  if (capabilityId === 'home.device.refresh') {
+    return output.deviceId === input.deviceId && Array.isArray(output.observedEventIds)
+  }
+  if (capabilityId === 'home.scene.activate.safe') {
+    if (output.sceneId !== input.sceneId) return false
+  } else if (output.deviceId !== input.deviceId) return false
+  if (output.status === 'verified') return typeof output.observedEventId === 'string'
+  return output.observedEventId === null
 }
 
 function exact(actual: FabricJsonObject, expected: FabricJsonObject): boolean {

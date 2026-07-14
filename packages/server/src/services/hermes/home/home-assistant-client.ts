@@ -6,6 +6,9 @@ export type HomeAssistantClientErrorCode =
   | 'HOME_ASSISTANT_TIMEOUT'
   | 'HOME_ASSISTANT_REST_FAILED'
   | 'HOME_ASSISTANT_REST_AUTH_FAILED'
+  | 'HOME_ASSISTANT_STATE_NOT_FOUND'
+  | 'HOME_ASSISTANT_SERVICE_DENIED'
+  | 'HOME_ASSISTANT_SERVICE_FAILED'
   | 'HOME_ASSISTANT_RESPONSE_TOO_LARGE'
   | 'HOME_ASSISTANT_RESPONSE_INVALID'
   | 'HOME_ASSISTANT_WS_CONNECT_FAILED'
@@ -49,22 +52,71 @@ export class HomeAssistantClient {
   constructor(private readonly config: ResolvedHomeAssistantConfig) {}
 
   async fetchStates(signal?: AbortSignal): Promise<unknown[]> {
+    const value = await this.requestJson(this.config.restStatesUrl, { method: 'GET' }, signal, 'HOME_ASSISTANT_REST_FAILED')
+    if (!Array.isArray(value)) throw new HomeAssistantClientError('HOME_ASSISTANT_RESPONSE_INVALID')
+    return value
+  }
+
+  async fetchState(entityId: string, signal?: AbortSignal): Promise<unknown> {
+    if (!/^[a-z0-9_]{1,64}\.[a-z0-9_]{1,190}$/.test(entityId)) {
+      throw new HomeAssistantClientError('HOME_ASSISTANT_RESPONSE_INVALID')
+    }
+    return this.requestJson(`${this.config.baseUrl}/api/states/${encodeURIComponent(entityId)}`, { method: 'GET' }, signal,
+      'HOME_ASSISTANT_REST_FAILED', 'HOME_ASSISTANT_STATE_NOT_FOUND')
+  }
+
+  async callService(
+    domain: string,
+    service: string,
+    data: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<unknown[]> {
+    const allowed: Record<string, readonly string[]> = {
+      climate: ['set_temperature'], fan: ['set_percentage', 'turn_off', 'turn_on'],
+      humidifier: ['set_humidity', 'turn_off', 'turn_on'], light: ['turn_off', 'turn_on'],
+      scene: ['turn_on'], switch: ['turn_off', 'turn_on'],
+    }
+    if (!allowed[domain]?.includes(service) || !plain(data)) {
+      throw new HomeAssistantClientError('HOME_ASSISTANT_SERVICE_DENIED')
+    }
+    validateJsonValue(data, 6, 64)
+    const body = JSON.stringify(data)
+    if (Buffer.byteLength(body, 'utf8') > 16_384) throw new HomeAssistantClientError('HOME_ASSISTANT_RESPONSE_TOO_LARGE')
+    const value = await this.requestJson(`${this.config.baseUrl}/api/services/${domain}/${service}`, {
+      method: 'POST', body,
+    }, signal, 'HOME_ASSISTANT_SERVICE_FAILED')
+    if (!Array.isArray(value)) throw new HomeAssistantClientError('HOME_ASSISTANT_RESPONSE_INVALID')
+    return value
+  }
+
+  private async requestJson(
+    url: string,
+    init: { method: 'GET' | 'POST'; body?: string },
+    signal: AbortSignal | undefined,
+    failureCode: 'HOME_ASSISTANT_REST_FAILED' | 'HOME_ASSISTANT_SERVICE_FAILED',
+    notFoundCode?: 'HOME_ASSISTANT_STATE_NOT_FOUND',
+  ): Promise<unknown> {
     const operation = operationSignal(signal, this.config.requestTimeoutMs)
     try {
       let response: Response
       try {
-        response = await fetch(this.config.restStatesUrl, {
-          method: 'GET',
-          headers: { authorization: `Bearer ${this.config.token}`, accept: 'application/json' },
+        response = await fetch(url, {
+          method: init.method,
+          headers: {
+            authorization: `Bearer ${this.config.token}`, accept: 'application/json',
+            ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
+          },
+          ...(init.body === undefined ? {} : { body: init.body }),
           signal: operation.signal,
         })
       } catch {
-        throw operation.error() ?? new HomeAssistantClientError('HOME_ASSISTANT_REST_FAILED')
+        throw operation.error() ?? new HomeAssistantClientError(failureCode)
       }
       if (response.status === 401 || response.status === 403) {
         throw new HomeAssistantClientError('HOME_ASSISTANT_REST_AUTH_FAILED')
       }
-      if (!response.ok) throw new HomeAssistantClientError('HOME_ASSISTANT_REST_FAILED')
+      if (response.status === 404 && notFoundCode) throw new HomeAssistantClientError(notFoundCode)
+      if (!response.ok) throw new HomeAssistantClientError(failureCode)
       const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
       if (!contentType.includes('application/json')) {
         throw new HomeAssistantClientError('HOME_ASSISTANT_RESPONSE_INVALID')
@@ -72,12 +124,11 @@ export class HomeAssistantClient {
       let body: string
       try { body = await boundedResponseText(response, this.config.maxRestResponseBytes) } catch (error) {
         if (error instanceof HomeAssistantClientError) throw error
-        throw operation.error() ?? new HomeAssistantClientError('HOME_ASSISTANT_REST_FAILED')
+        throw operation.error() ?? new HomeAssistantClientError(failureCode)
       }
       let value: unknown
       try { value = JSON.parse(body) } catch { throw new HomeAssistantClientError('HOME_ASSISTANT_RESPONSE_INVALID') }
       validateJsonValue(value, 16, 16_384)
-      if (!Array.isArray(value)) throw new HomeAssistantClientError('HOME_ASSISTANT_RESPONSE_INVALID')
       return value
     } finally {
       operation.dispose()

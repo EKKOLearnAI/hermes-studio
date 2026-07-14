@@ -13,6 +13,7 @@ interface Harness {
   sockets: WebSocketServer
   baseUrl: string
   commands: Array<Record<string, unknown>>
+  requests: Array<{ method: string; url: string; body: unknown }>
   close(): Promise<void>
 }
 
@@ -70,6 +71,22 @@ describe('home assistant protocol client', () => {
     await expect(client.fetchStates()).rejects.toMatchObject({ code: 'HOME_ASSISTANT_RESPONSE_TOO_LARGE' })
   })
 
+  it('reads one exact state and calls only an allowlisted service with bounded JSON', async () => {
+    const harness = await createHarness()
+    harnesses.push(harness)
+    const client = new HomeAssistantClient(config(harness.baseUrl))
+
+    await expect(client.fetchState('light.office')).resolves.toMatchObject({ entity_id: 'light.office', state: 'off' })
+    await expect(client.callService('light', 'turn_on', { entity_id: 'light.office' })).resolves.toEqual([
+      expect.objectContaining({ entity_id: 'light.office', state: 'on' }),
+    ])
+    expect(harness.requests).toContainEqual({
+      method: 'POST', url: '/api/services/light/turn_on', body: { entity_id: 'light.office' },
+    })
+    await expect(client.callService('lock', 'unlock', { entity_id: 'lock.front' }))
+      .rejects.toMatchObject({ code: 'HOME_ASSISTANT_SERVICE_DENIED' })
+  })
+
   it('closes a subscribed socket on malformed protocol JSON without leaking raw material', async () => {
     const harness = await createHarness({ malformedEvent: true })
     harnesses.push(harness)
@@ -112,12 +129,35 @@ async function createHarness(options: {
   malformedEvent?: boolean
 } = {}): Promise<Harness> {
   const commands: Array<Record<string, unknown>> = []
-  const server = createServer((request, response) => {
-    if (request.url !== '/api/states' || request.headers.authorization !== 'Bearer test-home-assistant-access-token') {
+  const requests: Array<{ method: string; url: string; body: unknown }> = []
+  const server = createServer(async (request, response) => {
+    if (request.headers.authorization !== 'Bearer test-home-assistant-access-token') {
       response.writeHead(401).end('{}')
       return
     }
     response.setHeader('content-type', 'application/json')
+    if (request.method === 'GET' && request.url === '/api/states/light.office') {
+      response.end(JSON.stringify({
+        entity_id: 'light.office', state: 'off', attributes: { friendly_name: 'Office' },
+        last_changed: '2026-07-15T00:00:00.000Z', last_updated: '2026-07-15T00:00:00.000Z',
+      }))
+      return
+    }
+    if (request.method === 'POST' && request.url === '/api/services/light/turn_on') {
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+      requests.push({ method: request.method, url: request.url, body })
+      response.end(JSON.stringify([{
+        entity_id: 'light.office', state: 'on', attributes: { friendly_name: 'Office' },
+        last_changed: '2026-07-15T00:00:01.000Z', last_updated: '2026-07-15T00:00:01.000Z',
+      }]))
+      return
+    }
+    if (request.url !== '/api/states') {
+      response.writeHead(404).end('{}')
+      return
+    }
     if (options.oversizedRest) {
       response.end(JSON.stringify([{ entity_id: 'sensor.large', state: 'x'.repeat(70_000), attributes: {} }]))
       return
@@ -169,6 +209,7 @@ async function createHarness(options: {
     sockets,
     baseUrl: `http://127.0.0.1:${port}`,
     commands,
+    requests,
     close: async () => {
       for (const socket of sockets.clients) socket.terminate()
       await new Promise<void>(resolve => sockets.close(() => resolve()))
