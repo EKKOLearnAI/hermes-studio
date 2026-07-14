@@ -19,6 +19,7 @@ describe('health-loop runtime', () => {
     if (originalHome === undefined) delete process.env.HERMES_HOME
     else process.env.HERMES_HOME = originalHome
     rmSync(home, { recursive: true, force: true })
+    vi.useRealTimers()
     vi.restoreAllMocks()
   })
 
@@ -116,6 +117,8 @@ describe('health-loop runtime', () => {
   })
 
   it('loads the exact trusted nine-projection snapshot and replays the same Fabric key after effect-before-ack crash', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime('2026-07-14T08:00:00.000Z')
     const health = await import('../../packages/server/src/services/hermes/health-loop')
     const twin = await import('../../packages/server/src/services/hermes/personal-twin')
     const { createHealthOutboxProcessor } = await import('../../packages/server/src/services/hermes/health-loop/runtime')
@@ -161,6 +164,7 @@ describe('health-loop runtime', () => {
     twin.withPersonalTwinDb(db=>db.prepare(`UPDATE twin_health_plans SET version=2,state_json='{"trainingIntensity":"low"}',
       digest=?,updated_at=? WHERE plan_id='health-plan-default'`).run(
         createHash('sha256').update('{"trainingIntensity":"low"}').digest('hex'),'2026-07-15T00:00:00.000Z'))
+    vi.setSystemTime('2026-07-15T08:00:00.000Z')
     health.ingestHealthEnvelope({domain:'sleep',source:'runtime-fixture',sourceId:'sleep-changed',
       observedAt:'2026-07-15T08:00:00.000Z',evidenceClass:'measured',confidence:0.95,
       payload:{startedAt:'2026-07-15T00:00:00.000Z',endedAt:'2026-07-15T08:00:00.000Z',durationMinutes:480,interruptions:0}})
