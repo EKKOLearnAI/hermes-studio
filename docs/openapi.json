@@ -18003,18 +18003,24 @@
           },
           "selectedRegions": {
             "type": "array",
+            "uniqueItems": true,
             "maxItems": 64,
             "items": {
               "type": "string",
-              "maxLength": 160
+              "minLength": 1,
+              "maxLength": 160,
+              "pattern": "^[\\p{L}\\p{N}._:/-]+$"
             }
           },
           "requestedFields": {
             "type": "array",
+            "uniqueItems": true,
             "maxItems": 128,
             "items": {
               "type": "string",
-              "maxLength": 100
+              "minLength": 1,
+              "maxLength": 100,
+              "pattern": "^[a-z][A-Za-z0-9._:-]*$"
             }
           },
           "format": {

@@ -35,5 +35,7 @@ describe('health loop OpenAPI',()=>{
     for(const name of responseNames)assertExact(ctx.body.components.schemas[name])
     expect(ctx.body.components.schemas.HealthConsentGrantDto.properties).toHaveProperty('token')
     for(const name of responseNames.filter(name=>name!=='HealthConsentGrantResponse'))expect(JSON.stringify(ctx.body.components.schemas[name])).not.toMatch(/token/i)
+    expect(ctx.body.components.schemas.HealthPublicMetadataDto).toEqual(expect.objectContaining({additionalProperties:false,properties:{healthAnalysis:{$ref:'#/components/schemas/HealthAnalysisMetadataDto'},notes:{type:'array',maxItems:64,items:{type:'string',maxLength:1024}}}}))
+    expect(ctx.body.components.schemas.HealthAnalysisMetadataDto.properties).toEqual(expect.objectContaining({purpose:{type:'string',enum:['measurement','posture','skin','diet','internal_health']},format:{type:'string',enum:['json','csv','report_text']},selectedRegions:expect.objectContaining({uniqueItems:true,maxItems:64}),requestedFields:expect.objectContaining({uniqueItems:true,maxItems:128})}))
   })
 })

@@ -233,17 +233,27 @@ function publicAction(result:any):Record<string,unknown> { return { intent:{id:S
   workflow:{id:String(result.workflow.id),state:String(result.workflow.state),version:Number(result.workflow.version),
     availableActions:{...(result.workflow.availableActions??{})}} } }
 function publicMetadata(value:unknown):Record<string,unknown> {
+  assertSafeGraph(value)
   const sanitized=sanitizeMetadata(value,0)
   if(!isPlain(sanitized))throw new HealthLoopRequestError('Invalid metadata')
   const output:Record<string,unknown>={}
-  if(Object.prototype.hasOwnProperty.call(sanitized,'healthAnalysis')&&isPlain(sanitized.healthAnalysis)) {
+  if(Object.prototype.hasOwnProperty.call(sanitized,'healthAnalysis')) {
+    if(!isPlain(sanitized.healthAnalysis))throw new HealthLoopRequestError('Invalid metadata')
     const analysis:Record<string,unknown>={}
-    for(const key of ['purpose','selectedRegions','requestedFields','format'])if(Object.prototype.hasOwnProperty.call(sanitized.healthAnalysis,key))analysis[key]=sanitized.healthAnalysis[key]
+    if(Object.prototype.hasOwnProperty.call(sanitized.healthAnalysis,'purpose'))analysis.purpose=metadataEnum(sanitized.healthAnalysis.purpose,['measurement','posture','skin','diet','internal_health'])
+    if(Object.prototype.hasOwnProperty.call(sanitized.healthAnalysis,'format'))analysis.format=metadataEnum(sanitized.healthAnalysis.format,['json','csv','report_text'])
+    if(Object.prototype.hasOwnProperty.call(sanitized.healthAnalysis,'selectedRegions'))analysis.selectedRegions=metadataStrings(sanitized.healthAnalysis.selectedRegions,64,160,/^[\p{L}\p{N}._:/-]+$/u)
+    if(Object.prototype.hasOwnProperty.call(sanitized.healthAnalysis,'requestedFields'))analysis.requestedFields=metadataStrings(sanitized.healthAnalysis.requestedFields,128,100,/^[a-z][A-Za-z0-9._:-]*$/)
     output.healthAnalysis=analysis
   }
-  if(Array.isArray(sanitized.notes))output.notes=sanitized.notes
+  if(Object.prototype.hasOwnProperty.call(sanitized,'notes')) {
+    if(!Array.isArray(sanitized.notes)||sanitized.notes.length>64||sanitized.notes.some(item=>typeof item!=='string'||Buffer.byteLength(item,'utf8')>1_024))throw new HealthLoopRequestError('Invalid metadata')
+    output.notes=[...sanitized.notes]
+  }
   return output
 }
+function metadataEnum<T extends string>(value:unknown,allowed:readonly T[]):T {if(typeof value!=='string'||!allowed.includes(value as T))throw new HealthLoopRequestError('Invalid metadata');return value as T}
+function metadataStrings(value:unknown,maxItems:number,maxLength:number,pattern:RegExp):string[]{if(!Array.isArray(value)||value.length>maxItems||new Set(value).size!==value.length||value.some(item=>typeof item!=='string'||item.length<1||item.length>maxLength||item==='[redacted]'||!pattern.test(item)))throw new HealthLoopRequestError('Invalid metadata');return [...value] as string[]}
 function sanitizeMetadata(value:unknown,depth:number):unknown {
   if(depth>5)throw new HealthLoopRequestError('Invalid metadata')
   if(value===null||typeof value==='boolean'||(typeof value==='number'&&Number.isFinite(value)))return value
