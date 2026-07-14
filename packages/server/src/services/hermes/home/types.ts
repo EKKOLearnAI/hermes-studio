@@ -122,3 +122,99 @@ export interface HomeCommandReceipt {
   updatedAt: string
   verifiedAt: string | null
 }
+
+export interface HomeSpaceInput {
+  id: string
+  kind: HomeSpaceKind
+  name: string
+  parentSpaceId?: string | null
+  attributes?: Record<string, unknown>
+  expectedVersion: number
+}
+
+export interface HomeObjectInput {
+  id: string
+  kind: string
+  name: string
+  spaceId?: string | null
+  attributes?: Record<string, unknown>
+  expectedVersion: number
+}
+
+export interface HomeDeviceInput {
+  id: string
+  name: string
+  deviceClass: string
+  spaceId?: string | null
+  availability: HomeDeviceAvailability
+  attributes?: Record<string, unknown>
+  expectedVersion: number
+}
+
+export interface HomeDeviceBindingInput {
+  id: string
+  deviceId: string
+  provider: string
+  externalId: string
+  capabilities?: string[]
+  metadata?: Record<string, unknown>
+  expectedVersion: number
+}
+
+export interface HomeSpaceListOptions { parentSpaceId?: string | null; kind?: HomeSpaceKind; limit?: number }
+export interface HomeObjectListOptions { spaceId?: string | null; kind?: string; limit?: number }
+export interface HomeDeviceListOptions { spaceId?: string | null; deviceClass?: string; limit?: number }
+export interface HomeDeviceBindingListOptions { deviceId?: string; provider?: string; limit?: number }
+export interface HomeDeviceStateListOptions { deviceId?: string; key?: string; limit?: number }
+
+export interface HomeDeviceStateEventInput {
+  event: {
+    id: string
+    provider: string
+    eventId: string
+    eventType: string
+    occurredAt: string
+    receivedAt: string
+    payload: Record<string, unknown>
+  }
+  states: Array<{
+    deviceId: string
+    key: string
+    value: unknown
+    observedAt: string
+  }>
+}
+
+export interface HomeDeviceStateEventResult {
+  disposition: 'applied' | 'duplicate' | 'ignored'
+  event: HomeProviderEvent
+  states: HomeDeviceState[]
+}
+
+export class HomeValidationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'HomeValidationError'
+  }
+}
+
+export class HomeRecordNotFoundError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'HomeRecordNotFoundError'
+  }
+}
+
+export class HomeIdentityConflictError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'HomeIdentityConflictError'
+  }
+}
+
+export class HomeVersionConflictError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'HomeVersionConflictError'
+  }
+}
