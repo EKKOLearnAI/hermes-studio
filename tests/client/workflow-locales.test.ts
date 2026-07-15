@@ -5,7 +5,7 @@ const locales = ['en', 'zh', 'zh-TW', 'ru', 'ja', 'ko', 'fr', 'es', 'de', 'pt']
 const required = [
   'importWorkflow', 'exportWorkflow', 'importFailed', 'exportFailed',
   'conditionValuePlaceholder', 'invalidConditionValue', 'loopIdPlaceholder',
-  'loadFailed',
+  'loadFailed', 'expectedValue', 'actualValue', 'businessBlocked', 'businessBlockedWithCondition',
 ]
 
 describe('Workflow locale coverage', () => {

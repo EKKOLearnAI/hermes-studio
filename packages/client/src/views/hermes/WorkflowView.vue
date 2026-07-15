@@ -942,6 +942,26 @@ function workflowEvidenceDescription(row: WorkflowEvidenceRow): string {
       return t(`workflow.evidence.routes.${route}`)
     }
     if (row.status === 'error') return t('workflow.evidence.reasons.evaluationFailed')
+    if (row.reason === 'condition_not_matched' && row.businessReason) {
+      const values = {
+        source: row.sourceTitle || row.technicalId,
+        decision: row.businessDecision || row.actualValue || workflowEvidenceStatusLabel(row),
+        reason: row.businessReason.replace(/[.!?。！？;；:：]+$/u, ''),
+        expected: row.expectedValue || '',
+        actual: row.actualValue || row.businessDecision || '',
+        target: row.targetTitle || row.technicalId,
+      }
+      return row.expectedValue && row.actualValue
+        ? t('workflow.evidence.reasons.businessBlockedWithCondition', values)
+        : t('workflow.evidence.reasons.businessBlocked', values)
+    }
+    if (row.reason === 'condition_not_matched' && row.expectedValue && row.actualValue) {
+      return t('workflow.evidence.reasons.conditionMismatchDetail', {
+        expected: row.expectedValue,
+        actual: row.actualValue,
+        target: row.targetTitle || row.technicalId,
+      })
+    }
     const reason = row.reason === 'condition_not_matched'
       ? 'conditionNotMatched'
       : row.reason === 'iteration_limit_reached'
@@ -962,6 +982,27 @@ function workflowEvidenceDescription(row: WorkflowEvidenceRow): string {
     return exit ? t(`workflow.evidence.loopOutcomes.${exit}`) : row.exitReason || workflowEvidenceStatusLabel(row)
   }
   return row.error || t('workflow.evidence.exceptionalNode')
+}
+
+function workflowEvidenceRawStatus(row: WorkflowEvidenceRow): string {
+  return `${workflowEvidenceStatusLabel(row)} (${row.status})`
+}
+
+function workflowEvidenceRawRoute(row: WorkflowEvidenceRow): string {
+  const route = row.route === 'failure' ? 'failure' : row.route === 'always' ? 'always' : 'success'
+  return `${t(`workflow.evidence.routes.${route}`)} (${row.route})`
+}
+
+function workflowEvidenceRawReason(row: WorkflowEvidenceRow): string {
+  const raw = row.reason || row.exitReason || ''
+  const key = raw === 'condition_not_matched'
+    ? 'conditionNotMatched'
+    : raw === 'iteration_limit_reached'
+      ? 'iterationLimitReached'
+      : raw === 'route_not_matched' || raw === 'feedback_not_taken'
+        ? 'routeNotMatched'
+        : null
+  return key ? `${t(`workflow.evidence.reasons.${key}`)} (${raw})` : raw
 }
 
 function formatWorkflowRunTime(timestamp: number | null): string {
@@ -2626,12 +2667,18 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
                   <dl>
                     <dt>{{ t('workflow.evidence.recordId') }}</dt><dd><code>{{ row.technicalId }}</code></dd>
                     <dt>{{ t('workflow.evidence.sequence') }}</dt><dd>#{{ row.sequence }}</dd>
-                    <dt>{{ t('workflow.evidence.rawStatus') }}</dt><dd><code>{{ row.status }}</code></dd>
+                    <dt>{{ t('workflow.evidence.rawStatus') }}</dt><dd>{{ workflowEvidenceRawStatus(row) }}</dd>
                     <template v-if="row.route">
-                      <dt>{{ t('workflow.evidence.rawRoute') }}</dt><dd><code>{{ row.route }}</code></dd>
+                      <dt>{{ t('workflow.evidence.rawRoute') }}</dt><dd>{{ workflowEvidenceRawRoute(row) }}</dd>
                     </template>
                     <template v-if="row.reason || row.exitReason">
-                      <dt>{{ t('workflow.evidence.rawReason') }}</dt><dd><code>{{ row.reason || row.exitReason }}</code></dd>
+                      <dt>{{ t('workflow.evidence.rawReason') }}</dt><dd>{{ workflowEvidenceRawReason(row) }}</dd>
+                    </template>
+                    <template v-if="row.expectedValue">
+                      <dt>{{ t('workflow.evidence.expectedValue') }}</dt><dd><code>{{ row.expectedValue }}</code></dd>
+                    </template>
+                    <template v-if="row.actualValue">
+                      <dt>{{ t('workflow.evidence.actualValue') }}</dt><dd><code>{{ row.actualValue }}</code></dd>
                     </template>
                     <template v-if="row.iterationPath !== '—'">
                       <dt>{{ t('workflow.evidence.iterationPath') }}</dt><dd><code>{{ row.iterationPath }}</code></dd>

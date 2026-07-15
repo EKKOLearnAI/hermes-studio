@@ -55,6 +55,10 @@ vi.mock('@/components/auth/DefaultCredentialPrompt.vue', () => ({
   default: { name: 'DefaultCredentialPrompt', template: '<div />' },
 }))
 
+vi.mock('@/components/hermes/models/ProviderConfigurationPrompt.vue', () => ({
+  default: { name: 'ProviderConfigurationPrompt', template: '<div />' },
+}))
+
 vi.mock('@/components/hermes/chat/SessionSearchModal.vue', () => ({
   default: { name: 'SessionSearchModal', template: '<div />' },
 }))

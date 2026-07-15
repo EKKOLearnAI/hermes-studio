@@ -669,10 +669,10 @@ export default {
       ariaLabel: 'Подробности выполнения Workflow', title: 'Подробности выполнения', count: '{count} записей',
       intro: 'Показывает решения по маршрутам, проходы циклов и аварийные узлы этого запуска.', empty: 'Нет подробностей выполнения', loadFailed: 'Не удалось загрузить сохранённые подробности выполнения',
       node: 'Аварийный узел', edge: 'Путь', loop: 'Цикл', pathTitle: '{source} → {target}', loopPass: 'Проход цикла {count}', exceptionalNode: 'Этот узел не завершился штатно.',
-      technical: 'Техническая информация', recordId: 'ID записи', sequence: 'Порядок', rawStatus: 'Исходный статус', rawRoute: 'Маршрут', rawReason: 'Причина', iterationPath: 'Путь итерации',
+      technical: 'Техническая информация', recordId: 'ID записи', sequence: 'Порядок', rawStatus: 'Исходный статус', rawRoute: 'Маршрут', rawReason: 'Причина', iterationPath: 'Путь итерации', expectedValue: 'Ожидаемый результат', actualValue: 'Фактический результат предыдущего шага',
       statuses: { taken: 'Выбран', notTaken: 'Не выбран', evaluationFailed: 'Ошибка проверки', timedOut: 'Превышено время', blocked: 'Заблокирован' },
       routes: { success: 'Продолжено после успеха', failure: 'Продолжено после ошибки', always: 'Продолжено при любом результате' },
-      reasons: { evaluationFailed: 'Ошибка проверки маршрута', conditionNotMatched: 'Условие не совпало', iterationLimitReached: 'Достигнут предел проходов', routeNotMatched: 'Маршрут не совпал' },
+      reasons: { evaluationFailed: 'Ошибка проверки маршрута', conditionNotMatched: 'Условие не совпало', iterationLimitReached: 'Достигнут предел проходов', routeNotMatched: 'Маршрут не совпал', businessBlocked: '«{source}» остановил выполнение ({decision}): {reason}. Поэтому «{target}» не был запущен.', businessBlockedWithCondition: '«{source}» остановил выполнение ({decision}): {reason}. Для продолжения требовалось «{expected}», но предыдущий результат — «{actual}». Поэтому «{target}» не был запущен.', conditionMismatchDetail: 'Для продолжения требовалось «{expected}», но предыдущий результат — «{actual}». Поэтому «{target}» не был запущен.' },
       loopOutcomes: { continued: 'Условие совпало; начат следующий проход', iterationLimitReached: 'Остановлено на пределе проходов', conditionNotMatched: 'Остановлено из-за несовпадения условия', finished: 'Цикл завершён' },
     },
     edgeEditor: {

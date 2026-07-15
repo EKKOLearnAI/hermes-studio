@@ -790,10 +790,10 @@ export default {
       ariaLabel: 'Workflow execution details', title: 'Execution details', count: '{count} items',
       intro: 'Shows path decisions, loop passes, and exceptional nodes for this run.', empty: 'No execution details', loadFailed: 'Failed to load persisted execution details',
       node: 'Exceptional node', edge: 'Path', loop: 'Loop', pathTitle: '{source} → {target}', loopPass: 'Loop pass {count}', exceptionalNode: 'This node did not complete normally.',
-      technical: 'Technical information', recordId: 'Record ID', sequence: 'Sequence', rawStatus: 'Raw status', rawRoute: 'Route', rawReason: 'Reason', iterationPath: 'Iteration path',
+      technical: 'Technical information', recordId: 'Record ID', sequence: 'Sequence', rawStatus: 'Raw status', rawRoute: 'Route', rawReason: 'Reason', iterationPath: 'Iteration path', expectedValue: 'Expected result', actualValue: 'Actual upstream result',
       statuses: { taken: 'Used', notTaken: 'Not used', evaluationFailed: 'Evaluation failed', timedOut: 'Timed out', blocked: 'Blocked' },
       routes: { success: 'Continued after success', failure: 'Continued after failure', always: 'Continued regardless of outcome' },
-      reasons: { evaluationFailed: 'Route evaluation failed', conditionNotMatched: 'Condition did not match', iterationLimitReached: 'Maximum loop passes reached', routeNotMatched: 'Route did not match' },
+      reasons: { evaluationFailed: 'Route evaluation failed', conditionNotMatched: 'Condition did not match', iterationLimitReached: 'Maximum loop passes reached', routeNotMatched: 'Route did not match', businessBlocked: '{source} stopped the workflow ({decision}): {reason}. Therefore, “{target}” was not run.', businessBlockedWithCondition: '{source} stopped the workflow ({decision}): {reason}. Continuing required “{expected}”, but the upstream result was “{actual}”, so “{target}” was not run.', conditionMismatchDetail: 'Continuing required “{expected}”, but the upstream result was “{actual}”, so “{target}” was not run.' },
       loopOutcomes: { continued: 'Condition matched; continued to the next pass', iterationLimitReached: 'Stopped at the maximum pass count', conditionNotMatched: 'Stopped because the condition did not match', finished: 'Loop finished' },
     },
     edgeEditor: {
