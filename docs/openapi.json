@@ -9699,6 +9699,14 @@
         },
         "parameters": [
           {
+            "name": "deviceClass",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -10109,6 +10117,128 @@
         }
       }
     },
+    "/api/hermes/home/imports/legacy": {
+      "post": {
+        "tags": [
+          "Home"
+        ],
+        "summary": "Create legacy",
+        "description": "POST /api/hermes/home/imports/legacy",
+        "operationId": "importLegacy",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeLegacyImportResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "profiles": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 50,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/home/inventory": {
       "get": {
         "tags": [
@@ -10219,6 +10349,14 @@
             "required": false,
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ]
@@ -10524,6 +10662,220 @@
         }
       }
     },
+    "/api/hermes/home/layout": {
+      "get": {
+        "tags": [
+          "Home"
+        ],
+        "summary": "Get layout",
+        "description": "GET /api/hermes/home/layout",
+        "operationId": "legacyLayout",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeLegacyLayoutResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/home/map": {
+      "get": {
+        "tags": [
+          "Home"
+        ],
+        "summary": "Get map",
+        "description": "GET /api/hermes/home/map",
+        "operationId": "legacyMap",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeLegacyMapResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/home/overview": {
       "get": {
         "tags": [
@@ -10618,7 +10970,17 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/hermes/home/provider": {
@@ -21149,6 +21511,878 @@
         ],
         "additionalProperties": false
       },
+      "HomeLegacyOverviewDto": {
+        "type": "object",
+        "properties": {
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "profile": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
+          },
+          "rooms": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "floorName": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "x": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "y": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "w": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "h": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "color": {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "floorName",
+                "x",
+                "y",
+                "w",
+                "h",
+                "color",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "furniture": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "roomId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "furnitureType": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "x": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "y": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "w": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "h": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "id",
+                "roomId",
+                "name",
+                "furnitureType",
+                "x",
+                "y",
+                "w",
+                "h",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "compartments": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "furnitureId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "id",
+                "furnitureId",
+                "name",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "placements": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "targetType": {
+                  "type": "string",
+                  "enum": [
+                    "object",
+                    "inventory_batch",
+                    "asset",
+                    "device"
+                  ]
+                },
+                "targetId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "roomId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "nullable": true
+                },
+                "furnitureId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "nullable": true
+                },
+                "compartmentId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "nullable": true
+                },
+                "x": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "y": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "z": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "id",
+                "targetType",
+                "targetId",
+                "roomId",
+                "furnitureId",
+                "compartmentId",
+                "x",
+                "y",
+                "z",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "devices": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "externalId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 255
+                },
+                "provider": {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "roomId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "nullable": true
+                },
+                "capabilities": {
+                  "type": "array",
+                  "maxItems": 64,
+                  "items": {
+                    "type": "string",
+                    "maxLength": 100
+                  }
+                },
+                "state": {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "id",
+                "externalId",
+                "provider",
+                "name",
+                "roomId",
+                "capabilities",
+                "state",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "inventory": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "quantity": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "unit": {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                "expiryDate": {
+                  "type": "string",
+                  "nullable": true,
+                  "maxLength": 80
+                },
+                "notes": {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "quantity",
+                "unit",
+                "expiryDate",
+                "notes",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "generatedAt",
+          "profile",
+          "rooms",
+          "furniture",
+          "compartments",
+          "placements",
+          "devices",
+          "inventory"
+        ],
+        "additionalProperties": false
+      },
+      "HomeLegacyMapDto": {
+        "type": "object",
+        "properties": {
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "profile": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
+          },
+          "rooms": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "floorName": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "x": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "y": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "w": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "h": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "color": {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "floorName",
+                "x",
+                "y",
+                "w",
+                "h",
+                "color",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "furniture": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "roomId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "furnitureType": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "x": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "y": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "w": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "h": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "id",
+                "roomId",
+                "name",
+                "furnitureType",
+                "x",
+                "y",
+                "w",
+                "h",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "compartments": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "furnitureId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "id",
+                "furnitureId",
+                "name",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "placements": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "targetType": {
+                  "type": "string",
+                  "enum": [
+                    "object",
+                    "inventory_batch",
+                    "asset",
+                    "device"
+                  ]
+                },
+                "targetId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "roomId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "nullable": true
+                },
+                "furnitureId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "nullable": true
+                },
+                "compartmentId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "nullable": true
+                },
+                "x": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "y": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "z": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "id",
+                "targetType",
+                "targetId",
+                "roomId",
+                "furnitureId",
+                "compartmentId",
+                "x",
+                "y",
+                "z",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "devices": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "externalId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 255
+                },
+                "provider": {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "roomId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "nullable": true
+                },
+                "capabilities": {
+                  "type": "array",
+                  "maxItems": 64,
+                  "items": {
+                    "type": "string",
+                    "maxLength": 100
+                  }
+                },
+                "state": {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "id",
+                "externalId",
+                "provider",
+                "name",
+                "roomId",
+                "capabilities",
+                "state",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "generatedAt",
+          "profile",
+          "rooms",
+          "furniture",
+          "compartments",
+          "placements",
+          "devices"
+        ],
+        "additionalProperties": false
+      },
+      "HomeMigrationCountsDto": {
+        "type": "object",
+        "properties": {
+          "profiles": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "layouts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "spaces": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "objects": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "inventory": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ledger": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "devices": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bindings": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stateEvents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "placements": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "profiles",
+          "layouts",
+          "spaces",
+          "objects",
+          "inventory",
+          "ledger",
+          "devices",
+          "bindings",
+          "stateEvents",
+          "placements",
+          "skipped"
+        ],
+        "additionalProperties": false
+      },
+      "HomeLegacyImportDto": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed"
+            ]
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^home-migration-v[0-9]+$"
+          },
+          "profiles": {
+            "type": "array",
+            "maxItems": 50,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
+            }
+          },
+          "counts": {
+            "$ref": "#/components/schemas/HomeMigrationCountsDto"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "runId",
+          "status",
+          "fingerprint",
+          "version",
+          "profiles",
+          "counts",
+          "startedAt",
+          "completedAt"
+        ],
+        "additionalProperties": false
+      },
       "HomeOverviewResponse": {
         "type": "object",
         "properties": {
@@ -21157,11 +22391,52 @@
           },
           "summary": {
             "$ref": "#/components/schemas/HomeOverviewSummaryDto"
+          },
+          "overview": {
+            "$ref": "#/components/schemas/HomeLegacyOverviewDto"
           }
         },
         "required": [
           "provider",
-          "summary"
+          "summary",
+          "overview"
+        ],
+        "additionalProperties": false
+      },
+      "HomeLegacyMapResponse": {
+        "type": "object",
+        "properties": {
+          "map": {
+            "$ref": "#/components/schemas/HomeLegacyMapDto"
+          }
+        },
+        "required": [
+          "map"
+        ],
+        "additionalProperties": false
+      },
+      "HomeLegacyLayoutResponse": {
+        "type": "object",
+        "properties": {
+          "layout": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "layout"
+        ],
+        "additionalProperties": false
+      },
+      "HomeLegacyImportResponse": {
+        "type": "object",
+        "properties": {
+          "import": {
+            "$ref": "#/components/schemas/HomeLegacyImportDto"
+          }
+        },
+        "required": [
+          "import"
         ],
         "additionalProperties": false
       },
@@ -21214,10 +22489,67 @@
             "items": {
               "$ref": "#/components/schemas/HomeInventoryItemDto"
             }
+          },
+          "inventory": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "quantity": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "unit": {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                "expiryDate": {
+                  "type": "string",
+                  "nullable": true,
+                  "maxLength": 80
+                },
+                "notes": {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "quantity",
+                "unit",
+                "expiryDate",
+                "notes",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
-          "items"
+          "items",
+          "inventory"
         ],
         "additionalProperties": false
       },

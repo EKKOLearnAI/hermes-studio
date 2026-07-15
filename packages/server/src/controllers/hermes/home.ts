@@ -11,6 +11,9 @@ import {
 } from '../../services/hermes/action-fabric'
 import {
   assertHomeCapabilityBindingAllowed,
+  getLegacyHomeLayout,
+  getLegacyHomeMap,
+  getLegacyHomeOverview,
   getHomeProductionRuntimeStatus,
   HomeIdentityConflictError,
   HomeRecordNotFoundError,
@@ -19,6 +22,7 @@ import {
   HomeVersionConflictError,
   reconcileHomeProductionRuntime,
   refreshHomeManagerAuthorization,
+  syncLegacyHomeTwinSources,
 } from '../../services/hermes/home'
 import { withPersonalTwinDb } from '../../services/hermes/personal-twin/database'
 
@@ -35,7 +39,8 @@ const SENSITIVE_KEY = /(?:token|password|secret|credential|authorization|cookie|
 /** @openapi-response HomeOverviewResponse */
 export async function overview(ctx: Context): Promise<void> {
   await respond(ctx, async () => {
-    noQuery(ctx)
+    queryKeys(ctx, new Set(['profile']))
+    const profile = queryProfile(ctx, 'profile')
     const data = withStore(store => {
       const spaces = store.listSpaces({ limit: 200 })
       const devices = store.listDevices({ limit: 200 })
@@ -52,7 +57,24 @@ export async function overview(ctx: Context): Promise<void> {
     const activeWorkflowCount = listFabricWorkflows({ requestedByRoleId: 'home-manager', limit: 200 })
       .filter(workflow => !['succeeded', 'denied', 'cancelled', 'failed', 'dead_letter', 'compensated']
         .includes(workflow.state)).length
-    return { provider: publicProviderStatus(), summary: { ...data, activeWorkflowCount } }
+    return { provider: publicProviderStatus(), summary: { ...data, activeWorkflowCount },
+      overview: getLegacyHomeOverview(profile) }
+  })
+}
+
+/** @openapi-response HomeLegacyMapResponse */
+export async function legacyMap(ctx: Context): Promise<void> {
+  await respond(ctx, async () => {
+    queryKeys(ctx, new Set(['profile']))
+    return { map: getLegacyHomeMap(queryProfile(ctx, 'profile')) }
+  })
+}
+
+/** @openapi-response HomeLegacyLayoutResponse */
+export async function legacyLayout(ctx: Context): Promise<void> {
+  await respond(ctx, async () => {
+    queryKeys(ctx, new Set(['profile']))
+    return { layout: getLegacyHomeLayout(queryProfile(ctx, 'profile')) }
   })
 }
 
@@ -91,13 +113,25 @@ export async function upsertSpace(ctx: Context): Promise<void> {
 /** @openapi-response HomeInventoryListResponse */
 export async function inventory(ctx: Context): Promise<void> {
   await respond(ctx, async () => {
-    queryKeys(ctx, new Set(['lowStockOnly', 'limit']))
+    queryKeys(ctx, new Set(['lowStockOnly', 'limit', 'profile']))
     const lowStockOnly = queryBoolean(ctx, 'lowStockOnly')
     const limit = queryInteger(ctx, 'limit', 1, 200)
+    const profile = queryProfile(ctx, 'profile')
     return { items: withStore(store => store.listInventoryItems({
       ...(lowStockOnly === undefined ? {} : { lowStockOnly }),
       ...(limit === undefined ? {} : { limit }),
-    })).map(item => ({ ...item, attributes: publicJsonObject(item.attributes) })) }
+    })).map(item => ({ ...item, attributes: publicJsonObject(item.attributes) })),
+    inventory: getLegacyHomeOverview(profile).inventory }
+  })
+}
+
+/** @openapi-response HomeLegacyImportResponse */
+export async function importLegacy(ctx: Context): Promise<void> {
+  await respond(ctx, async () => {
+    noQuery(ctx)
+    const body = exactBody(ctx, new Set(['profiles']))
+    const profiles = optionalProfiles(body.profiles)
+    return { import: syncLegacyHomeTwinSources(profiles ? { profiles } : {}) }
   })
 }
 
@@ -532,6 +566,25 @@ function queryId(ctx: Context, key: string): string | undefined {
 function queryText(ctx: Context, key: string, maximum: number): string | undefined {
   const value = ctx.query[key]
   return value === undefined ? undefined : requiredText(value, maximum)
+}
+
+function queryProfile(ctx: Context, key: 'profile'): string {
+  const profile = queryText(ctx, key, 100) ?? 'default'
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(profile)) throw new HomeRequestError('Invalid profile')
+  return profile
+}
+
+function optionalProfiles(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value) || value.length < 1 || value.length > 50) throw new HomeRequestError('Invalid profiles')
+  const profiles = value.map(item => {
+    if (typeof item !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(item)) {
+      throw new HomeRequestError('Invalid profile')
+    }
+    return item
+  })
+  if (new Set(profiles).size !== profiles.length) throw new HomeRequestError('Duplicate profiles')
+  return profiles
 }
 
 function queryEnum<T extends string>(ctx: Context, key: string, allowed: readonly T[]): T | undefined {

@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const handlers = vi.hoisted(() => ({ overview: vi.fn(), spaces: vi.fn(), upsertSpace: vi.fn(), inventory: vi.fn(),
+const handlers = vi.hoisted(() => ({ overview: vi.fn(), legacyMap: vi.fn(), legacyLayout: vi.fn(),
+  spaces: vi.fn(), upsertSpace: vi.fn(), inventory: vi.fn(), importLegacy: vi.fn(),
   upsertInventoryItem: vi.fn(), adjustInventory: vi.fn(), devices: vi.fn(), bindings: vi.fn(),
   providerHealth: vi.fn(), refreshDevice: vi.fn(), commandDevice: vi.fn(), activateScene: vi.fn(),
   workflow: vi.fn(), reviewWorkflow: vi.fn() }))
@@ -16,11 +17,14 @@ describe('home routes', () => {
     const { homeRoutes } = await import('../../packages/server/src/routes/hermes/home')
     expect(homeRoutes.stack.map((layer: any) => `${layer.methods.join(',')}:${layer.path}`)).toEqual([
       'HEAD,GET:/api/hermes/home/overview',
+      'HEAD,GET:/api/hermes/home/map',
+      'HEAD,GET:/api/hermes/home/layout',
       'HEAD,GET:/api/hermes/home/spaces',
       'POST:/api/hermes/home/spaces',
       'HEAD,GET:/api/hermes/home/inventory',
       'PUT:/api/hermes/home/inventory/:id',
       'POST:/api/hermes/home/inventory/:id/adjust',
+      'POST:/api/hermes/home/imports/legacy',
       'HEAD,GET:/api/hermes/home/devices',
       'HEAD,GET:/api/hermes/home/bindings',
       'HEAD,GET:/api/hermes/home/provider',

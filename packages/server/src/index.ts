@@ -34,6 +34,7 @@ import { createCorsOriginResolver, securityHeaders } from './security'
 import type { ShutdownHandler } from './services/shutdown'
 import { startHealthLoopRuntime, stopHealthLoopRuntime } from './services/hermes/health-loop/runtime'
 import { runServerMain } from './services/server-main'
+import { runLegacyHomeBootstrapMigration } from './services/hermes/home/bootstrap-migration'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -285,6 +286,14 @@ export async function bootstrap() {
   const { initAllStores } = await import('./db/hermes/init')
   initAllStores()
   console.log('[bootstrap] all stores initialized')
+
+  const homeMigration = runLegacyHomeBootstrapMigration()
+  if (homeMigration.status === 'completed') {
+    logger.info({ profileCount: homeMigration.profileCount, counts: homeMigration.counts },
+      '[bootstrap] legacy Home state imported')
+  } else if (homeMigration.status === 'failed') {
+    logger.warn({ code: homeMigration.code }, '[bootstrap] legacy Home import skipped after failure')
+  }
 
   await startHealthLoopRuntime()
   console.log('[bootstrap] health loop and action fabric runtimes ready')

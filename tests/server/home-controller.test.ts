@@ -47,10 +47,32 @@ describe('home controller', () => {
     const overview = context()
     await ctrl.overview(overview)
     expect(overview.body).toMatchObject({ provider: { configured: true, executorEnabled: true },
-      summary: { spaceCount: 0, deviceCount: 0, activeWorkflowCount: 0 } })
+      summary: { spaceCount: 0, deviceCount: 0, activeWorkflowCount: 0 },
+      overview: { profile: 'default', rooms: [], inventory: [], devices: [] } })
+    const map = context(undefined, { query: { profile: 'default' } })
+    await ctrl.legacyMap(map)
+    expect(map.body).toMatchObject({ map: { profile: 'default', rooms: [], devices: [] } })
+    const layout = context(undefined, { query: { profile: 'default' } })
+    await ctrl.legacyLayout(layout)
+    expect(layout.body.layout).toMatchObject({ version: 1, unit: 'cm' })
     const provider = context()
     await ctrl.providerHealth(provider)
     expect(JSON.stringify([overview.body, provider.body])).not.toMatch(/fingerprint|token|credential/i)
+  })
+
+  it('runs bounded explicit legacy imports and rejects malformed profile selection', async () => {
+    const ctrl = await import('../../packages/server/src/controllers/hermes/home')
+    const imported = context({ profiles: ['default'] })
+    await ctrl.importLegacy(imported)
+    expect(imported.body).toMatchObject({ import: { status: 'completed', profiles: [], counts: { profiles: 0 } } })
+
+    const duplicate = context({ profiles: ['default', 'default'] })
+    await ctrl.importLegacy(duplicate)
+    expect(duplicate).toMatchObject({ status: 400, body: { code: 'HOME_REQUEST_INVALID' } })
+
+    const injected = context({ profiles: ['../private'] })
+    await ctrl.importLegacy(injected)
+    expect(injected).toMatchObject({ status: 400, body: { code: 'HOME_REQUEST_INVALID' } })
   })
 
   it('upserts spaces and inventory and keeps quantity changes on the idempotent ledger', async () => {

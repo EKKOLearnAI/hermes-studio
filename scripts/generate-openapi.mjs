@@ -312,7 +312,7 @@ function extractQueryParamNames(source) {
   collectMatches(source, /ctx\.query\??\.(\w+)/g, names)
   collectMatches(source, /ctx\.query\[['"]([^'"]+)['"]\]/g, names)
   collectMatches(source, /(?:stringQuery|integerQuery)\(\s*ctx\s*,\s*['"]([^'"]+)['"]\s*\)/g, names)
-  collectMatches(source, /(?:queryIdentifier|queryEnum|queryBoolean|queryInteger)\(\s*ctx\s*,\s*['"]([^'"]+)['"]/g, names)
+  collectMatches(source, /(?:queryIdentifier|queryEnum|queryBoolean|queryInteger|queryProfile|queryText)\(\s*ctx\s*,\s*['"]([^'"]+)['"]/g, names)
   if (/\bqueryLimit\(\s*ctx\s*\)/.test(source)) names.add('limit')
 
   for (const match of source.matchAll(/const\s+\{([^}]+)\}\s*=\s*ctx\.query/g)) {
@@ -1653,6 +1653,40 @@ const homeId = { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$' 
 const homeExternalId = { type: 'string', pattern: '^[a-z0-9_]{1,64}\\.[a-z0-9_]{1,190}$' }
 const homeTimestamp = { type: 'string', format: 'date-time', maxLength: 64 }
 const homeJson = { type: 'object', additionalProperties: true }
+const homeLegacyProfile = { type: 'string', minLength: 1, maxLength: 100, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$' }
+const homeLegacyId = { type: 'string', minLength: 1, maxLength: 160 }
+const homeNullableNumber = { type: 'number', nullable: true }
+const homeLegacyRoom = exactObject({ id: homeLegacyId, name: { type: 'string', maxLength: 200 }, floorName: { type: 'string', maxLength: 100 },
+  x: homeNullableNumber, y: homeNullableNumber, w: homeNullableNumber, h: homeNullableNumber,
+  color: { type: 'string', maxLength: 40 }, createdAt: homeTimestamp, updatedAt: homeTimestamp },
+['id', 'name', 'floorName', 'x', 'y', 'w', 'h', 'color', 'createdAt', 'updatedAt'])
+const homeLegacyFurniture = exactObject({ id: homeLegacyId, roomId: homeLegacyId, name: { type: 'string', maxLength: 200 },
+  furnitureType: { type: 'string', maxLength: 100 }, x: homeNullableNumber, y: homeNullableNumber,
+  w: homeNullableNumber, h: homeNullableNumber, createdAt: homeTimestamp, updatedAt: homeTimestamp },
+['id', 'roomId', 'name', 'furnitureType', 'x', 'y', 'w', 'h', 'createdAt', 'updatedAt'])
+const homeLegacyCompartment = exactObject({ id: homeLegacyId, furnitureId: homeLegacyId, name: { type: 'string', maxLength: 200 },
+  createdAt: homeTimestamp, updatedAt: homeTimestamp }, ['id', 'furnitureId', 'name', 'createdAt', 'updatedAt'])
+const homeLegacyInventory = exactObject({ id: homeLegacyId, name: { type: 'string', maxLength: 200 }, quantity: { type: 'number', minimum: 0 },
+  unit: { type: 'string', maxLength: 40 }, expiryDate: { type: 'string', nullable: true, maxLength: 80 },
+  notes: { type: 'string', maxLength: 2000 }, createdAt: homeTimestamp, updatedAt: homeTimestamp },
+['id', 'name', 'quantity', 'unit', 'expiryDate', 'notes', 'createdAt', 'updatedAt'])
+const homeLegacyPlacement = exactObject({ id: homeLegacyId, targetType: { type: 'string', enum: ['object', 'inventory_batch', 'asset', 'device'] },
+  targetId: homeLegacyId, roomId: { ...homeLegacyId, nullable: true }, furnitureId: { ...homeLegacyId, nullable: true },
+  compartmentId: { ...homeLegacyId, nullable: true }, x: homeNullableNumber, y: homeNullableNumber, z: homeNullableNumber,
+  createdAt: homeTimestamp, updatedAt: homeTimestamp },
+['id', 'targetType', 'targetId', 'roomId', 'furnitureId', 'compartmentId', 'x', 'y', 'z', 'createdAt', 'updatedAt'])
+const homeLegacyDevice = exactObject({ id: homeLegacyId, externalId: { type: 'string', minLength: 1, maxLength: 255 }, provider: { type: 'string', maxLength: 80 },
+  name: { type: 'string', maxLength: 200 }, roomId: { ...homeLegacyId, nullable: true },
+  capabilities: { type: 'array', maxItems: 64, items: { type: 'string', maxLength: 100 } }, state: homeJson,
+  createdAt: homeTimestamp, updatedAt: homeTimestamp },
+['id', 'externalId', 'provider', 'name', 'roomId', 'capabilities', 'state', 'createdAt', 'updatedAt'])
+const homeLegacyOverviewProperties = { generatedAt: homeTimestamp, profile: homeLegacyProfile,
+  rooms: { type: 'array', maxItems: 200, items: homeLegacyRoom },
+  furniture: { type: 'array', maxItems: 200, items: homeLegacyFurniture },
+  compartments: { type: 'array', maxItems: 200, items: homeLegacyCompartment },
+  placements: { type: 'array', maxItems: 200, items: homeLegacyPlacement },
+  devices: { type: 'array', maxItems: 200, items: homeLegacyDevice } }
+const homeLegacyOverviewRequired = ['generatedAt', 'profile', 'rooms', 'furniture', 'compartments', 'placements', 'devices']
 const homeAvailableActions = exactObject({ approve: { type: 'boolean' }, reject: { type: 'boolean' },
   cancel: { type: 'boolean' }, retry: { type: 'boolean' }, compensate: { type: 'boolean' } },
 ['approve', 'reject', 'cancel', 'retry', 'compensate'])
@@ -1712,11 +1746,27 @@ Object.assign(openapi.components.schemas, {
     capabilityId: homeId, policyDecision: { ...schemaRef('HomePolicyDecisionDto'), nullable: true },
     steps: { type: 'array', maxItems: 16, items: schemaRef('HomeWorkflowStepDto') } },
   [...homeWorkflowSummaryRequired, 'capabilityId', 'policyDecision', 'steps']),
-  HomeOverviewResponse: exactObject({ provider: schemaRef('HomeProviderDto'), summary: schemaRef('HomeOverviewSummaryDto') }, ['provider', 'summary']),
+  HomeLegacyOverviewDto: exactObject({ ...homeLegacyOverviewProperties,
+    inventory: { type: 'array', maxItems: 200, items: homeLegacyInventory } }, [...homeLegacyOverviewRequired, 'inventory']),
+  HomeLegacyMapDto: exactObject(homeLegacyOverviewProperties, homeLegacyOverviewRequired),
+  HomeMigrationCountsDto: exactObject(Object.fromEntries(['profiles', 'layouts', 'spaces', 'objects', 'inventory',
+    'ledger', 'devices', 'bindings', 'stateEvents', 'placements', 'skipped'].map(key => [key, { type: 'integer', minimum: 0 }])),
+  ['profiles', 'layouts', 'spaces', 'objects', 'inventory', 'ledger', 'devices', 'bindings', 'stateEvents', 'placements', 'skipped']),
+  HomeLegacyImportDto: exactObject({ runId: homeId, status: { type: 'string', enum: ['completed'] },
+    fingerprint: { type: 'string', pattern: '^[a-f0-9]{64}$' }, version: { type: 'string', pattern: '^home-migration-v[0-9]+$' },
+    profiles: { type: 'array', maxItems: 50, uniqueItems: true, items: homeLegacyProfile }, counts: schemaRef('HomeMigrationCountsDto'),
+    startedAt: homeTimestamp, completedAt: homeTimestamp },
+  ['runId', 'status', 'fingerprint', 'version', 'profiles', 'counts', 'startedAt', 'completedAt']),
+  HomeOverviewResponse: exactObject({ provider: schemaRef('HomeProviderDto'), summary: schemaRef('HomeOverviewSummaryDto'),
+    overview: schemaRef('HomeLegacyOverviewDto') }, ['provider', 'summary', 'overview']),
+  HomeLegacyMapResponse: exactObject({ map: schemaRef('HomeLegacyMapDto') }, ['map']),
+  HomeLegacyLayoutResponse: exactObject({ layout: homeJson }, ['layout']),
+  HomeLegacyImportResponse: exactObject({ import: schemaRef('HomeLegacyImportDto') }, ['import']),
   HomeProviderResponse: exactObject({ provider: schemaRef('HomeProviderDto') }, ['provider']),
   HomeSpaceListResponse: exactObject({ spaces: { type: 'array', maxItems: 200, items: schemaRef('HomeSpaceDto') } }, ['spaces']),
   HomeSpaceResponse: exactObject({ space: schemaRef('HomeSpaceDto') }, ['space']),
-  HomeInventoryListResponse: exactObject({ items: { type: 'array', maxItems: 200, items: schemaRef('HomeInventoryItemDto') } }, ['items']),
+  HomeInventoryListResponse: exactObject({ items: { type: 'array', maxItems: 200, items: schemaRef('HomeInventoryItemDto') },
+    inventory: { type: 'array', maxItems: 200, items: homeLegacyInventory } }, ['items', 'inventory']),
   HomeInventoryResponse: exactObject({ item: schemaRef('HomeInventoryItemDto') }, ['item']),
   HomeInventoryAdjustmentResponse: exactObject({ disposition: { type: 'string', enum: ['applied', 'duplicate'] },
     item: schemaRef('HomeInventoryItemDto'), entry: schemaRef('HomeInventoryLedgerDto') }, ['disposition', 'item', 'entry']),
@@ -1740,6 +1790,9 @@ homeJsonBody('/api/hermes/home/inventory/{id}', 'put', exactObject({ name: { typ
 homeJsonBody('/api/hermes/home/inventory/{id}/adjust', 'post', exactObject({ delta: { type: 'number', not: { enum: [0] } },
   reason: { type: 'string', minLength: 1, maxLength: 200 }, occurredAt: homeTimestamp, idempotencyKey: homeId },
 ['delta', 'reason', 'occurredAt', 'idempotencyKey']))
+homeJsonBody('/api/hermes/home/imports/legacy', 'post', exactObject({
+  profiles: { type: 'array', minItems: 1, maxItems: 50, uniqueItems: true, items: homeLegacyProfile },
+}))
 homeJsonBody('/api/hermes/home/devices/{id}/refresh', 'post', exactObject({ bindingId: homeId, externalId: homeExternalId,
   requestedAt: homeTimestamp, idempotencyKey: homeId }, ['bindingId', 'externalId', 'requestedAt', 'idempotencyKey']))
 const commandBaseProperties = { bindingId: homeId, externalId: homeExternalId,

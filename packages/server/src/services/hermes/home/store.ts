@@ -94,6 +94,7 @@ const SENSITIVE_KEY = /(?:password|passwd|secret|token|api.?key|credential|autho
 function nowIso(): string { return new Date().toISOString() }
 
 function inTransaction<T>(db: DatabaseSync, operation: () => T): T {
+  if (db.isTransaction) return operation()
   db.exec('BEGIN IMMEDIATE')
   try {
     const result = operation()
@@ -480,10 +481,26 @@ function assertVersion(current: number | undefined, expected: number, kind: stri
 export class HomeTwinStore {
   constructor(readonly database: DatabaseSync) {}
 
+  transaction<T>(operation: () => T): T {
+    return inTransaction(this.database, operation)
+  }
+
   getSpace(id: string): HomeSpace | null {
     const row = this.database.prepare('SELECT * FROM twin_home_spaces WHERE space_id=?')
       .get(semanticId(id, 'Home space id')) as SpaceRow | undefined
     return row ? spaceFromRow(row) : null
+  }
+
+  getObject(id: string): HomeObject | null {
+    const row = this.database.prepare('SELECT * FROM twin_home_objects WHERE object_id=?')
+      .get(semanticId(id, 'Home object id')) as ObjectRow | undefined
+    return row ? objectFromRow(row) : null
+  }
+
+  getInventoryItem(id: string): HomeInventoryItem | null {
+    const row = this.database.prepare('SELECT * FROM twin_home_inventory_items WHERE item_id=?')
+      .get(semanticId(id, 'Home inventory item id')) as InventoryItemRow | undefined
+    return row ? inventoryItemFromRow(row) : null
   }
 
   getDevice(id: string): HomeDevice | null {
