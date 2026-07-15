@@ -23,6 +23,11 @@ import {
   validateHealthSemantics,
 } from './contracts'
 import { homeTargetAtoms, isHomeCapability } from '../home/fabric-contracts'
+import {
+  internetTargetAtoms,
+  isInternetCapability,
+  validateInternetSemantics,
+} from '../internet-execution/fabric-contracts'
 import { ensureBuiltInFabricRegistry, resolveFabricExecutorInDb } from './registry'
 import type {
   FabricBudgetReservation,
@@ -82,7 +87,9 @@ export function evaluateFabricPolicyInDb(
   const environments = input.environments ?? (isHealthCapability(input.capabilityId) ? ['sandbox']
     : isHomeCapability(input.capabilityId) ? ['production'] : ['simulator', 'internal'])
   const resolution = resolveFabricExecutorInDb(db, input.capabilityId, { environments })
-  if (resolution && (!validateFabricSchema(input.input, resolution.capability.inputSchema)
+  if (resolution && ((isInternetCapability(input.capabilityId)
+    && !validateInternetSemantics(input.capabilityId, input.input))
+    || !validateFabricSchema(input.input, resolution.capability.inputSchema)
     || !validateHealthSemantics(input.capabilityId, input.input))) {
     throw new Error('FABRIC_CAPABILITY_INPUT_INVALID')
   }
@@ -90,7 +97,9 @@ export function evaluateFabricPolicyInDb(
   const targetAtoms = resolution && isHealthCapability(input.capabilityId)
     ? healthTargetAtoms(input.capabilityId, input.target, input.input)
     : resolution && isHomeCapability(input.capabilityId)
-      ? homeTargetAtoms(input.capabilityId, input.target, input.input) : null
+      ? homeTargetAtoms(input.capabilityId, input.target, input.input)
+      : resolution && isInternetCapability(input.capabilityId)
+        ? internetTargetAtoms(input.capabilityId, input.target, input.input) : null
   const authorizationRequirements = resolution && isHealthCapability(input.capabilityId)
     ? healthStandingAuthorizationRequirements(resolution.capability) : null
   const standingAuthorizationRequired = !!resolution && isHealthCapability(input.capabilityId)
@@ -429,6 +438,12 @@ function targetAllowed(
   }
   if (isHomeCapability(resolution.capability.id)) {
     const atoms = homeTargetAtoms(resolution.capability.id, target, input)
+    if (!atoms || atoms.length === 0) return false
+    const roleTargets = role.decisionAuthority.allowedTargets
+    return !!roleTargets && atoms.every(atom => roleTargets.includes(atom))
+  }
+  if (isInternetCapability(resolution.capability.id)) {
+    const atoms = internetTargetAtoms(resolution.capability.id, target, input)
     if (!atoms || atoms.length === 0) return false
     const roleTargets = role.decisionAuthority.allowedTargets
     return !!roleTargets && atoms.every(atom => roleTargets.includes(atom))

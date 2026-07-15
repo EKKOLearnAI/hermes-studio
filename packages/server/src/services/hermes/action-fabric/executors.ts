@@ -4,6 +4,7 @@ import { resolveFabricExecutor } from './registry'
 import { isFabricSensitiveString } from './audit'
 import { validateFabricSchema, validateHealthOutputSemantics } from './contracts'
 import { validateHomeOutputSemantics } from '../home/fabric-contracts'
+import { validateInternetOutputSemantics } from '../internet-execution/fabric-contracts'
 
 export type FabricExecutorPhase = 'prepare' | 'execute' | 'verify' | 'interrupt' | 'compensate'
 
@@ -158,7 +159,8 @@ export async function invokeFabricExecutor(
     if (phase === 'execute' && result.outcome === 'succeeded'
       && (!validateFabricSchema(result.output, resolved.capability.outputSchema)
         || !validateHealthOutputSemantics(context.capabilityId, context.input, result.output)
-        || !validateHomeOutputSemantics(context.capabilityId, context.input, result.output))) {
+        || !validateHomeOutputSemantics(context.capabilityId, context.input, result.output)
+        || !validateInternetOutputSemantics(context.capabilityId, context.input, result.output))) {
       return contractViolationResult(phase, context.now)
     }
     return result
