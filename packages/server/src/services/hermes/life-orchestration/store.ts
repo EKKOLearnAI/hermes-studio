@@ -696,7 +696,7 @@ export function createLifeHandoff(input: CreateLifeHandoffInput): LifeHandoff {
       throw new LifeContractError('LIFE_HANDOFF_MATERIAL_MISMATCH')
     }
     const expectedCapability = input.kind === 'commerce' ? 'commerce.product.search'
-      : input.kind === 'internet' ? 'bilibili.video.search' : 'android.app.execute'
+      : input.kind === 'internet' ? 'bilibili.video.search' : 'android.app.launch'
     if (input.targetCapabilityId !== expectedCapability) throw new LifeContractError('LIFE_HANDOFF_TARGET_INVALID')
     const materialDigest = lifeCanonicalDigest({ kind: input.kind, optionId: input.optionId,
       planDigest: plan.planDigest, targetCapabilityId: input.targetCapabilityId })

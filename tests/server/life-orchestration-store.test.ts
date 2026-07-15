@@ -160,11 +160,11 @@ describe('life orchestration durable store', () => {
       .toMatchObject({ state: 'cancelled', version: 4, providerReceiptId: 'provider-receipt-001' })
 
     const handoff = createLifeHandoff({ planRevisionId: plan.id, optionId: game.id, kind: 'android',
-      targetCapabilityId: 'android.app.execute', createdAt: T0 })
+      targetCapabilityId: 'android.app.launch', createdAt: T0 })
     expect(createLifeHandoff({ planRevisionId: plan.id, optionId: game.id, kind: 'android',
-      targetCapabilityId: 'android.app.execute', createdAt: T1 })).toEqual(handoff)
+      targetCapabilityId: 'android.app.launch', createdAt: T1 })).toEqual(handoff)
     expect(() => createLifeHandoff({ planRevisionId: plan.id, optionId: game.id, kind: 'internet',
-      targetCapabilityId: 'android.app.execute', createdAt: T1 })).toThrow('LIFE_HANDOFF_TARGET_INVALID')
+      targetCapabilityId: 'android.app.launch', createdAt: T1 })).toThrow('LIFE_HANDOFF_TARGET_INVALID')
     expect(transitionLifeHandoff({ handoffId: handoff.id, expectedVersion: 1, state: 'accepted', updatedAt: T1 }))
       .toMatchObject({ state: 'accepted', version: 2 })
   })
