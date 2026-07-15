@@ -113,6 +113,7 @@ interface ManagedCodingAgentRun {
   pendingChatCompletionEvent?: 'run.completed' | 'run.failed'
   pendingChatCompletionPayload?: Record<string, unknown>
   memoryExportStarted?: boolean
+  assistantMessageId?: string
 }
 
 interface CodingAgentRunSendOptions {
@@ -550,6 +551,7 @@ export class CodingAgentRunManager {
     if (!text) throw new Error('Input is required')
     const systemPrompt = String(options.systemPrompt || '').trim()
     this.ensureDbSession(run)
+    run.assistantMessageId = undefined
     this.addUserMessage(run, text)
     this.touch(run)
     this.emitTerminalStatus(run, 'Input sent to coding agent.')
@@ -657,7 +659,7 @@ export class CodingAgentRunManager {
       this.emitToChat(run.launch.sessionId, mapped.event, mapped.payload)
     }
     if (isTerminalEvent) {
-      flushResponseRunToDb(run.state, run.launch.sessionId)
+      run.assistantMessageId = flushResponseRunToDb(run.state, run.launch.sessionId)
       run.state.responseRun = undefined
       updateSessionStats(run.launch.sessionId)
       run.terminalUsageRefresh = this.refreshCodingAgentUsage(run)
@@ -1918,6 +1920,7 @@ export class CodingAgentRunManager {
         sessionId: run.launch.sessionId,
         runId: run.id,
         workspace: run.launch.workspaceDir,
+        assistantMessageId: run.assistantMessageId,
       })
       if (!change) return null
       this.emitToChat(run.launch.sessionId, 'workspace.diff.completed', {

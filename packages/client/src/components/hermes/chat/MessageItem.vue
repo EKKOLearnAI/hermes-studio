@@ -22,7 +22,7 @@ import { useGlobalSpeech } from "@/composables/useSpeech";
 import { useVoiceSettings } from "@/composables/useVoiceSettings";
 import { speedToEdgeRate, hzToEdgePitch } from "@/utils/ttsHelpers";
 import { formatChatTimestamp } from "@/utils/chat-timestamp";
-import type { WorkspaceRunChangeFileSummary } from "@/api/hermes/sessions";
+import type { WorkspaceRunChangeFileSummary, WorkspaceRunChangeSummary } from "@/api/hermes/sessions";
 
 const FileEditor = defineAsyncComponent(() => import("@/components/hermes/files/FileEditor.vue"));
 const MarkdownRenderer = defineAsyncComponent(async () => (await import("./MarkdownRenderer.vue")).default);
@@ -183,6 +183,8 @@ function getContentFileUrl(file: DisplayContentFile): string {
 }
 
 const toolExpanded = ref(false);
+const expandedWorkspaceChangeIds = ref(new Set<string>());
+const activeToolChange = ref<WorkspaceRunChangeSummary | null>(null);
 const previewUrl = ref<string | null>(null);
 const selectedToolChangeFileId = ref<number | null>(null);
 const selectedToolChangePatch = ref("");
@@ -553,7 +555,19 @@ const hasAttachments = computed(
 const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs));
 const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult, true));
 const toolChange = computed(() => props.message.toolChange || null);
+const workspaceChanges = computed(() => props.message.workspaceChanges || []);
 const hasToolChange = computed(() => (toolChange.value?.files?.length || 0) > 0);
+
+function isWorkspaceChangeExpanded(changeId: string): boolean {
+  return expandedWorkspaceChangeIds.value.has(changeId);
+}
+
+function toggleWorkspaceChange(changeId: string): void {
+  const next = new Set(expandedWorkspaceChangeIds.value);
+  if (next.has(changeId)) next.delete(changeId);
+  else next.add(changeId);
+  expandedWorkspaceChangeIds.value = next;
+}
 
 const hasToolDetails = computed(
   () => !!(toolArgsPayload.value.full || toolResultPayload.value.full || hasToolChange.value),
@@ -621,14 +635,18 @@ const selectedToolChangeFileName = computed(() =>
 
 const selectedToolChangeAbsolutePath = computed(() => {
   const file = toolChangeDrawerFile.value;
-  const workspace = toolChange.value?.workspace || "";
+  const workspace = activeToolChange.value?.workspace || toolChange.value?.workspace || "";
   if (!file || !workspace) return file?.path || "";
   const separator = workspace.includes("\\") && !workspace.includes("/") ? "\\" : "/";
   const cleanWorkspace = workspace.replace(/[\\/]+$/, "");
   return `${cleanWorkspace}${separator}${file.path}`;
 });
 
-async function openToolChangeFile(file: WorkspaceRunChangeFileSummary): Promise<void> {
+async function openToolChangeFile(
+  file: WorkspaceRunChangeFileSummary,
+  change: WorkspaceRunChangeSummary | null = toolChange.value,
+): Promise<void> {
+  activeToolChange.value = change;
   selectedToolChangeFileId.value = file.id;
   toolChangeDrawerFile.value = file;
   toolChangeDrawerMode.value = "diff";
@@ -649,7 +667,7 @@ async function openToolChangeFile(file: WorkspaceRunChangeFileSummary): Promise<
 
 async function editSelectedToolChangeFile(): Promise<void> {
   const file = toolChangeDrawerFile.value;
-  const sessionId = toolChange.value?.session_id || props.message.toolChange?.session_id || "";
+  const sessionId = activeToolChange.value?.session_id || toolChange.value?.session_id || props.message.toolChange?.session_id || "";
   if (!file || !sessionId) return;
   isLoadingToolChangePatch.value = true;
   try {
@@ -672,6 +690,7 @@ function closeToolChangeDrawer() {
   if (filesStore.editingFile?.path === selectedToolChangeAbsolutePath.value && !filesStore.hasUnsavedChanges) {
     filesStore.closeEditor();
   }
+  activeToolChange.value = null;
 }
 
 function closeToolChangeEditor() {
@@ -1162,6 +1181,57 @@ onBeforeUnmount(() => {
               :heading-id-prefix="effectiveHeadingIdPrefix"
             />
 
+            <div
+              v-for="change in workspaceChanges"
+              :key="change.change_id"
+              class="tool-change-card assistant-workspace-change"
+              @click="handleToolDetailClick"
+            >
+              <button
+                class="tool-change-card-header"
+                type="button"
+                :aria-expanded="isWorkspaceChangeExpanded(change.change_id)"
+                @click.stop="toggleWorkspaceChange(change.change_id)"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  class="tool-change-chevron"
+                  :class="{ rotated: isWorkspaceChangeExpanded(change.change_id) }"
+                >
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+                <span class="tool-change-card-title">{{ t("chat.changesThisTurn") }}</span>
+                <span class="tool-change-card-file-count">{{ t("chat.changedFiles", { files: change.files_changed || 0 }) }}</span>
+                <span class="tool-change-card-stats">
+                  <span class="additions">+{{ change.additions || 0 }}</span>
+                  <span class="deletions">-{{ change.deletions || 0 }}</span>
+                </span>
+              </button>
+              <div v-if="isWorkspaceChangeExpanded(change.change_id)" class="tool-change-files">
+                <button
+                  v-for="file in change.files || []"
+                  :key="file.id"
+                  class="tool-change-file-row"
+                  :class="{ selected: selectedToolChangeFileId === file.id }"
+                  type="button"
+                  @click.stop="openToolChangeFile(file, change)"
+                >
+                  <span class="tool-change-file-main">
+                    <span class="tool-change-file-badge" :class="fileBadgeClass(file.path)">{{ fileExtension(file.path) }}</span>
+                    <span class="tool-change-file-name" :title="file.path">{{ fileNameFromPath(file.path) }}</span>
+                  </span>
+                  <span class="tool-change-file-stats">
+                    <span class="additions">+{{ file.additions }}</span>
+                    <span class="deletions">-{{ file.deletions }}</span>
+                  </span>
+                </button>
+              </div>
+            </div>
             <!-- Render system message content -->
             <MarkdownRenderer
               v-if="message.role === 'system' && message.content && !isCommandMessage"
@@ -1920,6 +1990,16 @@ onBeforeUnmount(() => {
 .tool-change-card-title {
   font-size: 13px;
   font-weight: 700;
+}
+
+.tool-change-card-file-count {
+  color: $text-muted;
+  font-size: 12px;
+}
+
+.assistant-workspace-change {
+  margin-top: 10px;
+  padding: 8px 10px;
 }
 
 .tool-change-card-stats,

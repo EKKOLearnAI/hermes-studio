@@ -633,6 +633,7 @@ export function completeWorkspaceRunCheckpointDraft(args: {
   sessionId: string
   runId?: string | null
   workspace?: string | null
+  assistantMessageId?: string | null
 }): SaveWorkspaceRunChangeInput | null {
   const runId = args.runId || ''
   if (!runId) return null
@@ -699,6 +700,7 @@ export function completeWorkspaceRunCheckpointDraft(args: {
     change_id: checkpoint.changeId,
     session_id: checkpoint.sessionId,
     run_id: runId || checkpoint.runId,
+    assistant_message_id: args.assistantMessageId || '',
     source: 'run',
     workspace: args.workspace || checkpoint.workspace,
     workspace_kind: checkpoint.kind,
@@ -717,6 +719,7 @@ export function completeWorkspaceRunCheckpoint(args: {
   sessionId: string
   runId?: string | null
   workspace?: string | null
+  assistantMessageId?: string | null
 }): WorkspaceRunChangeSummary | null {
   const draft = completeWorkspaceRunCheckpointDraft(args)
   return draft ? saveWorkspaceRunChange(draft) : null

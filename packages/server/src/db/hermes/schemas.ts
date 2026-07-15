@@ -106,6 +106,7 @@ export const WORKSPACE_RUN_CHANGES_SCHEMA: Record<string, string> = {
   change_id: 'TEXT PRIMARY KEY',
   room_id: "TEXT NOT NULL DEFAULT ''",
   message_id: "TEXT NOT NULL DEFAULT ''",
+  assistant_message_id: "TEXT NOT NULL DEFAULT ''",
   session_id: 'TEXT NOT NULL',
   run_id: 'TEXT NOT NULL DEFAULT \'\'',
   source: 'TEXT NOT NULL DEFAULT \'run\'',

@@ -608,6 +608,7 @@ export default {
     result: 'Результат',
     workspaceChanges: 'Изменения workspace',
     changedFiles: 'Изменено файлов: {files}',
+    changesThisTurn: 'Изменения в этом ходе',
     diffUnavailable: 'Diff недоступен',
     binaryFileDiffUnavailable: 'Diff для бинарного файла недоступен',
     truncated: '... (обрезано)',

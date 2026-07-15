@@ -729,6 +729,7 @@ export default {
     result: 'Result',
     workspaceChanges: 'Workspace changes',
     changedFiles: '{files} files changed',
+    changesThisTurn: 'Changes this turn',
     diffUnavailable: 'Diff unavailable',
     binaryFileDiffUnavailable: 'Binary file diff unavailable',
     truncated: '... (truncated)',
