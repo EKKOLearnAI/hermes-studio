@@ -557,8 +557,6 @@ export function createLifeCalendarHold(input: CreateLifeCalendarHoldInput): Life
     const plan = required(planById(db, input.planRevisionId), 'LIFE_PLAN_NOT_FOUND')
     const session = plan.sessions.find(item => item.optionId === input.optionId
       && item.startsAt === window.startsAt && item.endsAt === window.endsAt)
-    if (account.sourceKind !== 'calendar' || account.mode === 'observe' || account.health === 'revoked'
-      || plan.state !== 'proposed' || !session) throw new LifeContractError('LIFE_CALENDAR_HOLD_MATERIAL_MISMATCH')
     const replay = holdByWorkflow(db, input.workflowId)
     if (replay) {
       if (replay.accountId !== account.id || replay.planRevisionId !== plan.id || replay.optionId !== input.optionId
@@ -566,6 +564,10 @@ export function createLifeCalendarHold(input: CreateLifeCalendarHoldInput): Life
         || replay.window.endsAt !== window.endsAt) throw new LifeContractError('LIFE_CALENDAR_HOLD_REPLAY_MISMATCH')
       return replay
     }
+    const requestOwner = holdByProviderRequest(db, account.id, input.providerRequestId)
+    if (requestOwner) throw new LifeContractError('LIFE_PROVIDER_REQUEST_OWNED_BY_OTHER_WORKFLOW')
+    if (account.sourceKind !== 'calendar' || account.mode === 'observe' || account.health === 'revoked'
+      || plan.state !== 'proposed' || !session) throw new LifeContractError('LIFE_CALENDAR_HOLD_MATERIAL_MISMATCH')
     const id = `hold-${stableId({ providerRequestId: input.providerRequestId, workflowId: input.workflowId })}`
     db.prepare(`INSERT INTO life_calendar_holds(id,workflow_id,intent_id,account_id,plan_revision_id,plan_digest,
       option_id,starts_at,ends_at,provider_request_id,provider_hold_id,receipt_digest,state,policy_epoch,version,
@@ -582,6 +584,12 @@ export function getLifeCalendarHold(id: string): LifeCalendarHold | null {
 export function getLifeCalendarHoldByWorkflow(workflowId: string): LifeCalendarHold | null {
   if (!WORKFLOW_ID.test(workflowId)) throw new LifeContractError('LIFE_WORKFLOW_ID_INVALID')
   return withLifeOrchestrationDb(db => holdByWorkflow(db, workflowId))
+}
+export function getLifeCalendarHoldByProviderRequest(accountId: string,
+  providerRequestId: string): LifeCalendarHold | null {
+  validateId(accountId, 'LIFE_ACCOUNT_ID_INVALID')
+  if (!TOKEN.test(providerRequestId)) throw new LifeContractError('LIFE_PROVIDER_REQUEST_ID_INVALID')
+  return withLifeOrchestrationDb(db => holdByProviderRequest(db, accountId, providerRequestId))
 }
 export function transitionLifeCalendarHold(input: TransitionLifeCalendarHoldInput): LifeCalendarHold {
   validateId(input.holdId, 'LIFE_CALENDAR_HOLD_ID_INVALID')
@@ -629,10 +637,6 @@ export function createLifeSubscriptionCancellation(
   return withLifeOrchestrationDb(db => {
     const account = required(accountById(db, input.accountId), 'LIFE_ACCOUNT_NOT_FOUND')
     const subscription = required(subscriptionById(db, input.subscriptionId), 'LIFE_SUBSCRIPTION_NOT_FOUND')
-    if (account.sourceKind !== 'subscriptions' || account.mode === 'observe' || account.health === 'revoked'
-      || subscription.accountId !== account.id || !['active', 'trial', 'paused', 'cancel_pending'].includes(subscription.state)) {
-      throw new LifeContractError('LIFE_SUBSCRIPTION_CANCELLATION_NOT_ELIGIBLE')
-    }
     const replay = cancellationByWorkflow(db, input.workflowId)
     if (replay) {
       if (replay.accountId !== account.id || replay.subscriptionId !== subscription.id
@@ -640,6 +644,12 @@ export function createLifeSubscriptionCancellation(
         throw new LifeContractError('LIFE_SUBSCRIPTION_CANCELLATION_REPLAY_MISMATCH')
       }
       return replay
+    }
+    const requestOwner = cancellationByProviderRequest(db, account.id, input.providerRequestId)
+    if (requestOwner) throw new LifeContractError('LIFE_PROVIDER_REQUEST_OWNED_BY_OTHER_WORKFLOW')
+    if (account.sourceKind !== 'subscriptions' || account.mode === 'observe' || account.health === 'revoked'
+      || subscription.accountId !== account.id || !['active', 'trial', 'paused', 'cancel_pending'].includes(subscription.state)) {
+      throw new LifeContractError('LIFE_SUBSCRIPTION_CANCELLATION_NOT_ELIGIBLE')
     }
     const subscriptionDigest = lifeCanonicalDigest(subscriptionMaterial(subscription))
     const id = `cancellation-${stableId({ providerRequestId: input.providerRequestId,
@@ -656,6 +666,16 @@ export function createLifeSubscriptionCancellation(
 export function getLifeSubscriptionCancellation(id: string): LifeSubscriptionCancellation | null {
   validateId(id, 'LIFE_SUBSCRIPTION_CANCELLATION_ID_INVALID')
   return withLifeOrchestrationDb(db => cancellationById(db, id))
+}
+export function getLifeSubscriptionCancellationByWorkflow(workflowId: string): LifeSubscriptionCancellation | null {
+  if (!WORKFLOW_ID.test(workflowId)) throw new LifeContractError('LIFE_WORKFLOW_ID_INVALID')
+  return withLifeOrchestrationDb(db => cancellationByWorkflow(db, workflowId))
+}
+export function getLifeSubscriptionCancellationByProviderRequest(accountId: string,
+  providerRequestId: string): LifeSubscriptionCancellation | null {
+  validateId(accountId, 'LIFE_ACCOUNT_ID_INVALID')
+  if (!TOKEN.test(providerRequestId)) throw new LifeContractError('LIFE_PROVIDER_REQUEST_ID_INVALID')
+  return withLifeOrchestrationDb(db => cancellationByProviderRequest(db, accountId, providerRequestId))
 }
 export function transitionLifeSubscriptionCancellation(
   input: TransitionLifeSubscriptionCancellationInput,
@@ -976,6 +996,11 @@ function holdByWorkflow(db: DatabaseSync, workflowId: string): LifeCalendarHold 
   const row = db.prepare('SELECT * FROM life_calendar_holds WHERE workflow_id=?').get(workflowId) as HoldRow | undefined
   return row ? holdFromRow(row) : null
 }
+function holdByProviderRequest(db: DatabaseSync, accountId: string, providerRequestId: string): LifeCalendarHold | null {
+  const row = db.prepare('SELECT * FROM life_calendar_holds WHERE account_id=? AND provider_request_id=?')
+    .get(accountId, providerRequestId) as HoldRow | undefined
+  return row ? holdFromRow(row) : null
+}
 function cancellationById(db: DatabaseSync, id: string): LifeSubscriptionCancellation | null {
   const row = db.prepare('SELECT * FROM life_subscription_cancellations WHERE id=?').get(id) as CancellationRow | undefined
   return row ? cancellationFromRow(row) : null
@@ -983,6 +1008,12 @@ function cancellationById(db: DatabaseSync, id: string): LifeSubscriptionCancell
 function cancellationByWorkflow(db: DatabaseSync, workflowId: string): LifeSubscriptionCancellation | null {
   const row = db.prepare('SELECT * FROM life_subscription_cancellations WHERE workflow_id=?')
     .get(workflowId) as CancellationRow | undefined
+  return row ? cancellationFromRow(row) : null
+}
+function cancellationByProviderRequest(db: DatabaseSync, accountId: string,
+  providerRequestId: string): LifeSubscriptionCancellation | null {
+  const row = db.prepare(`SELECT * FROM life_subscription_cancellations
+    WHERE account_id=? AND provider_request_id=?`).get(accountId, providerRequestId) as CancellationRow | undefined
   return row ? cancellationFromRow(row) : null
 }
 function handoffById(db: DatabaseSync, id: string): LifeHandoff | null {

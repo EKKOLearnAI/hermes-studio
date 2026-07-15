@@ -19,6 +19,7 @@ import {
   createLifeExecutorAdapter,
   createLifePlanRevision,
   createLifeSourceAccount,
+  createLifeSubscriptionCancellation,
   getLifeCalendarHold,
   LIFE_CALENDAR_HOLD_CANCEL_CAPABILITY,
   LIFE_CALENDAR_HOLD_CREATE_CAPABILITY,
@@ -29,6 +30,7 @@ import {
   lifeSubscriptionMaterialDigest,
   recordLifeOption,
   recordLifeSubscription,
+  transitionLifePlanRevision,
   VirtualLifeSourceProvider,
   type LifeCalendarAdapter,
   type LifePlanRevision,
@@ -127,6 +129,11 @@ describe('life orchestration Action Fabric executor', () => {
     await expect(invokeFabricExecutor('prepare', forged)).resolves.toMatchObject({
       outcome: 'failed', errorCode: 'LIFE_EXECUTOR_CONTEXT_INVALID',
     })
+    const wrongWindow = calendarCreateContext('wrong-window')
+    wrongWindow.input = { ...wrongWindow.input, endsAt: '2026-07-15T12:01:00.000Z' }
+    await expect(invokeFabricExecutor('prepare', wrongWindow)).resolves.toMatchObject({
+      outcome: 'failed', errorCode: 'LIFE_PLAN_SESSION_MATERIAL_MISMATCH',
+    })
   })
 
   it('creates, verifies, replays, and semantically cancels an exact calendar hold', async () => {
@@ -138,6 +145,14 @@ describe('life orchestration Action Fabric executor', () => {
     expect((await invokeFabricExecutor('execute', executing)).output).toEqual(created.result.output)
     await expect(invokeFabricExecutor('verify', { ...executing, executionOutput: created.result.output }))
       .resolves.toMatchObject({ outcome: 'verified' })
+
+    const reused = { ...calendarCreateContext('calendar'), intentId: 'intent-calendar-owner-conflict',
+      workflowId: 'workflow-calendar-owner-conflict', stepId: 'step-calendar-owner-conflict',
+      executionToken: 'execution-calendar-owner-conflict' }
+    const reusedPrepared = await invokeFabricExecutor('prepare', reused)
+    await expect(invokeFabricExecutor('execute', { ...reused, preparedOutput: reusedPrepared.output }))
+      .resolves.toMatchObject({ outcome: 'permanent_failure',
+        errorCode: 'LIFE_PROVIDER_REQUEST_OWNED_BY_OTHER_WORKFLOW' })
 
     const hold = getLifeCalendarHold(String(created.result.output.holdId))!
     const input = { schemaVersion: 1, accountId: 'calendar-main', planRevisionId: plan.id,
@@ -156,19 +171,6 @@ describe('life orchestration Action Fabric executor', () => {
   })
 
   it('recovers effect-before-timeout by provider lookup and can compensate a confirmed hold', async () => {
-    calendar.injectFault('create_calendar_hold', 'effect_before_timeout')
-    const context = calendarCreateContext('uncertain')
-    const prepared = await invokeFabricExecutor('prepare', context)
-    const executing = { ...context, preparedOutput: prepared.output }
-    await expect(invokeFabricExecutor('execute', executing)).resolves.toMatchObject({
-      outcome: 'unknown', errorCode: 'LIFE_PROVIDER_RESULT_UNKNOWN', safeToRetry: false,
-    })
-    const recovered = await invokeFabricExecutor('execute', executing)
-    expect(recovered).toMatchObject({ outcome: 'succeeded', output: { state: 'confirmed' } })
-    const compensated = await invokeFabricExecutor('compensate', { ...executing, executionOutput: recovered.output })
-    expect(compensated).toMatchObject({ outcome: 'compensated', output: { state: 'cancelled',
-      holdId: recovered.output.holdId, receiptDigest: expect.stringMatching(/^[a-f0-9]{64}$/) } })
-
     calendar.injectFault('create_calendar_hold', 'timeout_before_effect')
     const retryContext = calendarCreateContext('safe-retry')
     const retryPrepared = await invokeFabricExecutor('prepare', retryContext)
@@ -179,6 +181,21 @@ describe('life orchestration Action Fabric executor', () => {
     await expect(invokeFabricExecutor('execute', retryExecuting)).resolves.toMatchObject({
       outcome: 'succeeded', output: { state: 'confirmed' }, safeToRetry: false,
     })
+
+    calendar.injectFault('create_calendar_hold', 'effect_before_timeout')
+    const context = calendarCreateContext('uncertain')
+    const prepared = await invokeFabricExecutor('prepare', context)
+    const executing = { ...context, preparedOutput: prepared.output }
+    await expect(invokeFabricExecutor('execute', executing)).resolves.toMatchObject({
+      outcome: 'unknown', errorCode: 'LIFE_PROVIDER_RESULT_UNKNOWN', safeToRetry: false,
+    })
+    transitionLifePlanRevision({ planId: plan.id, expectedVersion: plan.version, state: 'superseded',
+      updatedAt: '2026-07-15T10:01:00.000Z' })
+    const recovered = await invokeFabricExecutor('execute', executing)
+    expect(recovered).toMatchObject({ outcome: 'succeeded', output: { state: 'confirmed' } })
+    const compensated = await invokeFabricExecutor('compensate', { ...executing, executionOutput: recovered.output })
+    expect(compensated).toMatchObject({ outcome: 'compensated', output: { state: 'cancelled',
+      holdId: recovered.output.holdId, receiptDigest: expect.stringMatching(/^[a-f0-9]{64}$/) } })
   })
 
   it('cancels an exact subscription with durable receipt identity and blocks observe-mode writes', async () => {
@@ -194,6 +211,19 @@ describe('life orchestration Action Fabric executor', () => {
       { kind: 'life_subscription', accountId: 'subscriptions-main', subscriptionId, currency: 'CNY' }, 'subscription')
     const prepared = await invokeFabricExecutor('prepare', context)
     const executing = { ...context, preparedOutput: prepared.output }
+    subscriptions.injectFault('cancel_subscription', 'effect_before_timeout')
+    await expect(invokeFabricExecutor('execute', executing)).resolves.toMatchObject({
+      outcome: 'unknown', errorCode: 'LIFE_PROVIDER_RESULT_UNKNOWN', safeToRetry: false,
+    })
+    expect(() => createLifeSubscriptionCancellation({ workflowId: 'workflow-subscription-other',
+      intentId: 'intent-subscription-other', accountId: 'subscriptions-main', subscriptionId,
+      providerRequestId: input.providerRequestId, reasonCode: input.reasonCode, createdAt: NOW }))
+      .toThrow('LIFE_PROVIDER_REQUEST_OWNED_BY_OTHER_WORKFLOW')
+    recordLifeSubscription({ accountId: 'subscriptions-main',
+      providerSubscriptionId: 'provider-subscription-001', serviceLabel: 'Music service', planLabel: 'Plus',
+      recurringCost: { currency: 'CNY', amountMinor: 1_500 }, renewalAt: TOMORROW,
+      cancellationDeadline: '2026-07-16T09:00:00.000Z', state: 'cancelled',
+      observedAt: '2026-07-15T10:01:00.000Z', sourceDigest: '3'.repeat(64) })
     const result = await invokeFabricExecutor('execute', executing)
     expect(result).toMatchObject({ outcome: 'succeeded', output: { operation: 'subscription_cancel',
       subscriptionId, state: 'cancelled', providerReceiptId: expect.stringMatching(/^vs-/),

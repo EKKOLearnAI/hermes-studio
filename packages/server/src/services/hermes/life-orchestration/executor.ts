@@ -43,6 +43,7 @@ import {
   getLifeSourceAccount,
   getLifeSubscription,
   getLifeSubscriptionCancellation,
+  getLifeSubscriptionCancellationByWorkflow,
   lifeSubscriptionMaterialDigest,
   transitionLifeCalendarHold,
   transitionLifeSubscriptionCancellation,
@@ -407,6 +408,18 @@ function assertBoundMaterial(
   if (context.capabilityId === LIFE_SOURCE_SYNC_CAPABILITY) return
   if (context.capabilityId === LIFE_CALENDAR_HOLD_CREATE_CAPABILITY) {
     const plan = assertCalendarPlanMaterial(context)
+    const takeover = getLifeCalendarHoldByWorkflow(context.workflowId)
+    if (takeover) {
+      if (takeover.accountId !== account.id || takeover.planRevisionId !== plan.id
+        || takeover.planDigest !== plan.planDigest || takeover.optionId !== context.input.optionId
+        || takeover.providerRequestId !== context.input.providerRequestId
+        || takeover.window.startsAt !== context.input.startsAt || takeover.window.endsAt !== context.input.endsAt) {
+        throw new LifeContractError('LIFE_CALENDAR_HOLD_REPLAY_MISMATCH')
+      }
+    } else {
+      const verification = verifyLifePlanRevision({ planId: plan.id, activeAt: executionTime(context) })
+      if (!verification.valid) throw new LifeContractError('LIFE_PLAN_STALE')
+    }
     if (!plan.sessions.some(session => session.optionId === context.input.optionId
       && session.startsAt === context.input.startsAt && session.endsAt === context.input.endsAt)) {
       throw new LifeContractError('LIFE_PLAN_SESSION_MATERIAL_MISMATCH')
@@ -419,6 +432,16 @@ function assertBoundMaterial(
       || hold.providerHoldId !== context.input.providerHoldId
       || preparing && hold.version !== context.input.expectedVersion) {
       throw new LifeContractError('LIFE_CALENDAR_HOLD_MATERIAL_MISMATCH')
+    }
+    return
+  }
+  const takeover = getLifeSubscriptionCancellationByWorkflow(context.workflowId)
+  if (takeover) {
+    if (takeover.accountId !== account.id || takeover.subscriptionId !== context.input.subscriptionId
+      || takeover.subscriptionDigest !== context.input.subscriptionDigest
+      || takeover.providerRequestId !== context.input.providerRequestId
+      || takeover.reasonCode !== context.input.reasonCode) {
+      throw new LifeContractError('LIFE_SUBSCRIPTION_CANCELLATION_REPLAY_MISMATCH')
     }
     return
   }
