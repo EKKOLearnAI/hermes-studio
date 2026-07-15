@@ -168,7 +168,30 @@ describe('generic internet MCP Action Fabric executor', () => {
     expect(callTool).toHaveBeenCalledTimes(2)
   })
 
-  function adapterWith(callTool: ReturnType<typeof vi.fn>) {
+  it('retries Twin outcome projection from a terminal receipt without another provider call', async () => {
+    const callTool = vi.fn()
+      .mockResolvedValueOnce(callResponse(searchPayload(BVID_A, 10)))
+      .mockResolvedValueOnce(callResponse(searchPayload(BVID_A, 11)))
+    const projectOutcome = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('Twin temporarily unavailable') })
+      .mockImplementationOnce(() => undefined)
+    const adapter = adapterWith(callTool, projectOutcome)
+    const context = searchContext('outcome-retry')
+    const prepared = await adapter.prepare(context)
+    const executing = { ...context, preparedOutput: prepared.output }
+    const executed = await adapter.execute(executing)
+
+    expect(await adapter.verify({ ...executing, executionOutput: executed.output })).toMatchObject({
+      outcome: 'unknown', errorCode: 'INTERNET_OUTCOME_PROJECTION_UNAVAILABLE', safeToRetry: true,
+    })
+    expect(readStore(store => store.getReceipt(context.workflowId))).toMatchObject({ status: 'verified' })
+    expect(await adapter.verify({ ...executing, executionOutput: executed.output }))
+      .toMatchObject({ outcome: 'verified' })
+    expect(callTool).toHaveBeenCalledTimes(2)
+    expect(projectOutcome).toHaveBeenCalledTimes(2)
+  })
+
+  function adapterWith(callTool: ReturnType<typeof vi.fn>, projectOutcome = vi.fn()) {
     return createInternetMcpExecutorAdapter({
       id: EXECUTOR_ID,
       environment: 'production',
@@ -176,6 +199,7 @@ describe('generic internet MCP Action Fabric executor', () => {
       resolveBinding: () => binding,
       discoverBinding: async () => discovery,
       callTool,
+      projectOutcome,
     })
   }
 })

@@ -28,6 +28,7 @@ import { navigateProfileBrowser, snapshotProfileBrowser } from './browser-bridge
 import { withInternetExecutionDb } from './database'
 import { InternetExecutionStore } from './store'
 import type { InternetExecutionEnvironment, InternetExecutionReceipt } from './types'
+import { projectVerifiedInternetReceipt } from './outcomes'
 
 const EXECUTOR_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/
 const BVID = /BV[0-9A-Za-z]{10}/g
@@ -55,6 +56,7 @@ export interface InternetBrowserExecutorOptions {
   accessStore?: StoreAccess
   navigate?: BrowserNavigate
   snapshot?: BrowserSnapshot
+  projectOutcome?: (receipt: InternetExecutionReceipt) => unknown
 }
 
 interface PreparedMaterial {
@@ -79,6 +81,7 @@ export function createInternetBrowserExecutorAdapter(options: InternetBrowserExe
   const accessStore = options.accessStore ?? defaultStoreAccess
   const navigate = options.navigate ?? navigateProfileBrowser
   const snapshot = options.snapshot ?? snapshotProfileBrowser
+  const projectOutcome = options.projectOutcome ?? projectVerifiedInternetReceipt
 
   return {
     id: options.id,
@@ -160,7 +163,12 @@ export function createInternetBrowserExecutorAdapter(options: InternetBrowserExe
         prepared = prepareMaterial(context, options)
         if (!matchesPreparedOutput(context.preparedOutput, prepared)) throw new Error('invalid')
         receipt = requiredReceipt(accessStore, context.workflowId, prepared.materialDigest)
-        if (receipt.status === 'verified' && receipt.result) return success('verified', context, receipt.result)
+        if (receipt.status === 'verified' && receipt.result) {
+          try { projectOutcome(receipt) } catch {
+            return failure('unknown', 'INTERNET_OUTCOME_PROJECTION_UNAVAILABLE', true)
+          }
+          return success('verified', context, receipt.result)
+        }
         if (receipt.status === 'mismatch') {
           return failure('mismatch', receipt.errorCode ?? 'INTERNET_BROWSER_VERIFICATION_MISMATCH')
         }
@@ -197,9 +205,10 @@ export function createInternetBrowserExecutorAdapter(options: InternetBrowserExe
       }
 
       const matches = verificationMatches(context.capabilityId, original, captured.output)
+      let completed: InternetExecutionReceipt
       try {
         const current = currentReceipt(accessStore, receipt.workflowId)
-        accessStore(store => store.transitionReceipt({
+        completed = accessStore(store => store.transitionReceipt({
           workflowId: current.workflowId,
           materialDigest: current.materialDigest,
           expectedVersion: current.version,
@@ -210,6 +219,11 @@ export function createInternetBrowserExecutorAdapter(options: InternetBrowserExe
       } catch {
         markUnknown(accessStore, currentReceiptOr(accessStore, receipt), 'INTERNET_BROWSER_VERIFICATION_PERSIST_UNCERTAIN')
         return failure('unknown', 'INTERNET_BROWSER_VERIFICATION_PERSIST_UNCERTAIN')
+      }
+      if (matches) {
+        try { projectOutcome(completed) } catch {
+          return failure('unknown', 'INTERNET_OUTCOME_PROJECTION_UNAVAILABLE', true)
+        }
       }
       return matches
         ? success('verified', context, original)

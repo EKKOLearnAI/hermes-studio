@@ -228,6 +228,28 @@ describe('persistent Bilibili browser Action Fabric executor', () => {
     expect(snapshot).toHaveBeenCalledTimes(2)
   })
 
+  it('retries Twin outcome projection from a terminal receipt without another browser read', async () => {
+    const navigate = vi.fn(async input => navigateResponse(input.workflowId, input.url))
+    const snapshot = vi.fn(async input => snapshotResponse(input.workflowId, searchSnapshot(BVID_A, 'Video A', 'Alice')))
+    const projectOutcome = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('Twin temporarily unavailable') })
+      .mockImplementationOnce(() => undefined)
+    const adapter = adapterWith(navigate, snapshot, projectOutcome)
+    const context = searchContext('outcome-retry')
+    const prepared = await adapter.prepare(context)
+    const executing = { ...context, preparedOutput: prepared.output }
+    const executed = await adapter.execute(executing)
+
+    expect(await adapter.verify({ ...executing, executionOutput: executed.output })).toMatchObject({
+      outcome: 'unknown', errorCode: 'INTERNET_OUTCOME_PROJECTION_UNAVAILABLE', safeToRetry: true,
+    })
+    expect(readStore(store => store.getReceipt(context.workflowId))).toMatchObject({ status: 'verified' })
+    expect(await adapter.verify({ ...executing, executionOutput: executed.output }))
+      .toMatchObject({ outcome: 'verified' })
+    expect(snapshot).toHaveBeenCalledTimes(2)
+    expect(projectOutcome).toHaveBeenCalledTimes(2)
+  })
+
   it('parses exact inspect identity and rejects challenge, sensitive, or oversized snapshots', () => {
     const context = inspectContext('006')
     const url = `https://www.bilibili.com/video/${BVID_A}`
@@ -246,13 +268,18 @@ describe('persistent Bilibili browser Action Fabric executor', () => {
       inspectSnapshot(BVID_B, 'Other', 'Bob'))).toThrow('INTERNET_BROWSER_SNAPSHOT_INVALID')
   })
 
-  function adapterWith(navigate: ReturnType<typeof vi.fn>, snapshot: ReturnType<typeof vi.fn>) {
+  function adapterWith(
+    navigate: ReturnType<typeof vi.fn>,
+    snapshot: ReturnType<typeof vi.fn>,
+    projectOutcome = vi.fn(),
+  ) {
     return createInternetBrowserExecutorAdapter({
       id: EXECUTOR_ID,
       environment: 'production',
       now: () => '2026-07-15T03:00:00.000Z',
       navigate,
       snapshot,
+      projectOutcome,
     })
   }
 })

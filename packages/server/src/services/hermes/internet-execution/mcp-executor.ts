@@ -30,6 +30,7 @@ import {
 import { withInternetExecutionDb } from './database'
 import { InternetExecutionStore } from './store'
 import type { InternetExecutionEnvironment, InternetExecutionReceipt } from './types'
+import { projectVerifiedInternetReceipt } from './outcomes'
 
 const EXECUTOR_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/
 
@@ -53,6 +54,7 @@ export interface InternetMcpExecutorOptions {
   resolveBinding?: BindingResolver
   discoverBinding?: BindingDiscovery
   callTool?: McpCaller
+  projectOutcome?: (receipt: InternetExecutionReceipt) => unknown
 }
 
 export function createInternetMcpExecutorAdapter(options: InternetMcpExecutorOptions): FabricExecutorAdapter {
@@ -65,6 +67,7 @@ export function createInternetMcpExecutorAdapter(options: InternetMcpExecutorOpt
   const resolveBinding = options.resolveBinding ?? resolveBilibiliMcpBinding
   const discoverBinding = options.discoverBinding ?? (profile => discoverBilibiliMcpBinding(profile))
   const callTool = options.callTool ?? callProfileMcpTool
+  const projectOutcome = options.projectOutcome ?? projectVerifiedInternetReceipt
 
   return {
     id: options.id,
@@ -165,7 +168,12 @@ export function createInternetMcpExecutorAdapter(options: InternetMcpExecutorOpt
         prepared = await prepareMaterial(context, options, resolveBinding, discoverBinding)
         if (!matchesPreparedOutput(context.preparedOutput, prepared)) throw new Error('invalid')
         receipt = requiredReceipt(accessStore, context.workflowId, prepared.materialDigest)
-        if (receipt.status === 'verified' && receipt.result) return success('verified', context, receipt.result)
+        if (receipt.status === 'verified' && receipt.result) {
+          try { projectOutcome(receipt) } catch {
+            return failure('unknown', 'INTERNET_OUTCOME_PROJECTION_UNAVAILABLE', true)
+          }
+          return success('verified', context, receipt.result)
+        }
         if (receipt.status === 'mismatch') return failure('mismatch', receipt.errorCode ?? 'INTERNET_MCP_VERIFICATION_MISMATCH')
         if (receipt.status === 'failed' || receipt.status === 'waiting_user') {
           return failure('failed', receipt.errorCode ?? 'INTERNET_MCP_VERIFICATION_FAILED')
@@ -217,9 +225,10 @@ export function createInternetMcpExecutorAdapter(options: InternetMcpExecutorOpt
 
       const original = receipt.result!
       const matches = verificationMatches(context.capabilityId, original, verification)
+      let completed: InternetExecutionReceipt
       try {
         const current = currentReceipt(accessStore, receipt.workflowId)
-        accessStore(store => store.transitionReceipt({
+        completed = accessStore(store => store.transitionReceipt({
           workflowId: current.workflowId,
           materialDigest: current.materialDigest,
           expectedVersion: current.version,
@@ -230,6 +239,11 @@ export function createInternetMcpExecutorAdapter(options: InternetMcpExecutorOpt
       } catch {
         markUnknown(accessStore, currentReceiptOr(accessStore, receipt), 'INTERNET_MCP_VERIFICATION_PERSIST_UNCERTAIN')
         return failure('unknown', 'INTERNET_MCP_VERIFICATION_PERSIST_UNCERTAIN')
+      }
+      if (matches) {
+        try { projectOutcome(completed) } catch {
+          return failure('unknown', 'INTERNET_OUTCOME_PROJECTION_UNAVAILABLE', true)
+        }
       }
       return matches
         ? success('verified', context, original)
