@@ -59,7 +59,9 @@ export async function executeShadowCommerceOrder(input: {
 }): Promise<CommerceOrderExecutionResult> {
   const account = getCommerceAccount(input.accountId)
   const quote = getCommerceQuote(input.quoteId)
-  if (!account || !quote || account.mode !== 'shadow' || input.provider.transport !== 'virtual'
+  if (!account || !quote || account.mode === 'observe'
+    || account.mode === 'shadow' && input.provider.transport !== 'virtual'
+    || account.mode === 'live' && input.provider.transport !== 'external'
     || account.provider !== input.provider.provider || quote.accountId !== account.id
     || quote.quoteDigest !== input.quoteDigest || quote.currency !== account.currency
     || quote.breakdown.totalMinor !== input.amountMinor) {
@@ -68,6 +70,9 @@ export async function executeShadowCommerceOrder(input: {
   let transaction = createCommerceTransaction({ workflowId: input.workflowId, intentId: input.intentId,
     accountId: input.accountId, quoteId: input.quoteId, providerRequestId: input.providerRequestId,
     createdAt: input.now })
+  if (transaction.mode !== account.mode || transaction.policyEpoch !== account.policyEpoch) {
+    throw new CommerceExecutionError('COMMERCE_TRANSACTION_POLICY_STALE', false, false, transaction.id)
+  }
   if (hasOrderEffect(transaction)) return orderExecutionFromTransaction(transaction)
   if (transaction.state === 'proposed') transaction = transitionCommerceTransaction({ transactionId: transaction.id,
     expectedVersion: transaction.version, state: 'quoted', updatedAt: input.now })
@@ -89,9 +94,13 @@ export async function executeShadowCommercePayment(input: {
   now: string
 }): Promise<CommercePaymentExecutionResult> {
   let transaction = getCommerceTransaction(input.transactionId)
-  if (!transaction || !transaction.providerOrderId || transaction.quoteDigest !== input.quoteDigest
+  const account = transaction ? getCommerceAccount(transaction.accountId) : null
+  if (!transaction || !account || !transaction.providerOrderId || transaction.quoteDigest !== input.quoteDigest
     || transaction.expectedAmountMinor !== input.amountMinor || transaction.mode !== 'shadow'
-    || input.provider.transport !== 'virtual' || input.provider.provider !== transaction.provider) {
+      && transaction.mode !== 'live' || account.mode !== transaction.mode || account.policyEpoch !== transaction.policyEpoch
+    || transaction.mode === 'shadow' && input.provider.transport !== 'virtual'
+    || transaction.mode === 'live' && input.provider.transport !== 'external'
+    || input.provider.provider !== transaction.provider) {
     throw new CommerceExecutionError('COMMERCE_PAYMENT_MATERIAL_MISMATCH', false, false, input.transactionId)
   }
   const existingPayment = getCommercePaymentAttemptByTransaction(transaction.id)
@@ -121,6 +130,9 @@ export async function executeShadowCommercePayment(input: {
   }
   return executePaymentWithLookup(transaction, payment, input, input.provider)
 }
+
+export const executeCommerceOrder = executeShadowCommerceOrder
+export const executeCommercePayment = executeShadowCommercePayment
 
 async function executeOrderWithLookup(
   transaction: CommerceTransaction,

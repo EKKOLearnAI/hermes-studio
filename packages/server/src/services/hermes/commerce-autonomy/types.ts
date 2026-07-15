@@ -246,6 +246,18 @@ export interface CommerceRefundRequest {
   completedAt: string | null
 }
 
+export interface CommerceActivationReview {
+  id: string
+  accountId: string
+  fromMode: CommerceExecutionMode
+  toMode: CommerceExecutionMode
+  actorUserId: string
+  shadowEvidenceDigest: string | null
+  limitsDigest: string
+  approved: boolean
+  createdAt: string
+}
+
 export interface CommerceCheckpoint {
   transactionId: string
   ordinal: number

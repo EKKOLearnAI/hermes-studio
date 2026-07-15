@@ -19,27 +19,45 @@ export function refreshCommerceAssistantAuthorization(input: {
   merchantIds?: string[]
   destinationDigests?: string[]
 }): string[] {
-  if (!isCommerceSemanticId(input.accountId) || !isCommerceProviderKind(input.provider) || input.provider === 'virtual'
-    || !isCommerceCurrency(input.currency) || !['observe', 'shadow'].includes(input.mode)) {
+  return refreshCommerceAssistantAuthorizations([input])
+}
+
+export function refreshCommerceAssistantAuthorizations(inputs: Array<{
+  accountId: string
+  provider: CommerceProviderKind
+  currency: string
+  mode: CommerceExecutionMode
+  merchantIds?: string[]
+  destinationDigests?: string[]
+}>): string[] {
+  if (!Array.isArray(inputs) || inputs.length < 1 || inputs.length > 30) {
     throw new CommerceContractError('COMMERCE_AUTHORIZATION_INPUT_INVALID')
   }
-  const merchantIds = uniqueSorted(input.merchantIds ?? [], value => isCommerceSemanticId(value))
-  const destinationDigests = uniqueSorted(input.destinationDigests ?? [], value => isCommerceDigest(value))
-  const allowedTargets = [
-    `commerce:account:${input.accountId}`,
-    `commerce:provider:${input.provider}`,
-    `commerce:currency:${input.currency}`,
-    ...merchantIds.map(id => `commerce:merchant:${id}`),
-    ...destinationDigests.map(digest => `commerce:destination:${digest}`),
-  ].sort(compareCodeUnits)
-  const allow = input.mode === 'observe'
+  const allowed = new Set<string>()
+  let transactional = false
+  for (const input of inputs) {
+    if (!isCommerceSemanticId(input.accountId) || !isCommerceProviderKind(input.provider) || input.provider === 'virtual'
+      || !isCommerceCurrency(input.currency) || !['observe', 'shadow', 'live'].includes(input.mode)) {
+      throw new CommerceContractError('COMMERCE_AUTHORIZATION_INPUT_INVALID')
+    }
+    const merchantIds = uniqueSorted(input.merchantIds ?? [], value => isCommerceSemanticId(value))
+    const destinationDigests = uniqueSorted(input.destinationDigests ?? [], value => isCommerceDigest(value))
+    allowed.add(`commerce:account:${input.accountId}`)
+    allowed.add(`commerce:provider:${input.provider}`)
+    allowed.add(`commerce:currency:${input.currency}`)
+    merchantIds.forEach(id => allowed.add(`commerce:merchant:${id}`))
+    destinationDigests.forEach(item => allowed.add(`commerce:destination:${item}`))
+    if (input.mode !== 'observe') transactional = true
+  }
+  const allowedTargets = [...allowed].sort(compareCodeUnits)
+  const allow = !transactional
     ? [COMMERCE_SEARCH_CAPABILITY, COMMERCE_COMPARE_CAPABILITY, COMMERCE_CART_CAPABILITY].sort(compareCodeUnits)
     : [...COMMERCE_CAPABILITY_IDS].sort(compareCodeUnits)
   ensureBuiltInAssistantRoles()
   const role = getAssistantRole(COMMERCE_ASSISTANT_ROLE_ID)
   if (!role) throw new CommerceContractError('COMMERCE_ASSISTANT_ROLE_MISSING')
   const capabilityScope = { allow, deny: [], enforcement: 'action_fabric_v1' as const }
-  const decisionAuthority = input.mode === 'observe'
+  const decisionAuthority = !transactional
     ? { maxRisk: 'low' as const, requireApprovalAbove: 'low' as const, allowedTargets }
     : { maxRisk: 'critical' as const, requireApprovalAbove: 'low' as const, allowedTargets }
   if (!isDeepStrictEqual(role.capabilityScope, capabilityScope)

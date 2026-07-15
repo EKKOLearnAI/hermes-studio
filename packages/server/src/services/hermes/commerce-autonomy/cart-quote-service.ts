@@ -29,7 +29,7 @@ export interface CommerceQuoteProjection {
   quote: CommerceQuote
   event: TwinEvent
   disposition: TwinFactDisposition
-  mode: 'shadow'
+  mode: 'shadow' | 'live'
   externalWriteInvoked: false
 }
 
@@ -63,6 +63,16 @@ export async function refreshShadowCommerceQuote(input: {
   providerRequestId: string
   adapter: CommerceProviderAdapter
 }): Promise<CommerceQuoteProjection> {
+  const result = await refreshCommerceQuote(input)
+  if (result.mode !== 'shadow') throw new CommerceContractError('COMMERCE_SHADOW_MODE_REQUIRED')
+  return result
+}
+
+export async function refreshCommerceQuote(input: {
+  cartRevisionId: string
+  providerRequestId: string
+  adapter: CommerceProviderAdapter
+}): Promise<CommerceQuoteProjection> {
   const cart = getCommerceCartRevision(input.cartRevisionId)
   if (!cart) throw new CommerceContractError('COMMERCE_CART_NOT_FOUND')
   const account = getCommerceAccount(cart.accountId)
@@ -70,8 +80,12 @@ export async function refreshShadowCommerceQuote(input: {
     throw new CommerceContractError('COMMERCE_QUOTE_ACCOUNT_UNAVAILABLE')
   }
   if (account.mode === 'observe') throw new CommerceContractError('COMMERCE_QUOTE_MODE_FORBIDDEN')
-  if (account.mode === 'live') throw new CommerceContractError('COMMERCE_LIVE_NOT_ACTIVATED')
-  if (input.adapter.transport !== 'virtual') throw new CommerceContractError('COMMERCE_SHADOW_EXTERNAL_TRANSPORT_FORBIDDEN')
+  if (account.mode === 'shadow' && input.adapter.transport !== 'virtual') {
+    throw new CommerceContractError('COMMERCE_SHADOW_EXTERNAL_TRANSPORT_FORBIDDEN')
+  }
+  if (account.mode === 'live' && input.adapter.transport !== 'external') {
+    throw new CommerceContractError('COMMERCE_LIVE_TRANSPORT_REQUIRED')
+  }
   const items = cart.items.map(item => {
     const offer = getCommerceOfferSnapshot(item.offerSnapshotId)
     if (!offer || offer.accountId !== account.id || offer.provider !== account.provider
@@ -102,7 +116,7 @@ export async function refreshShadowCommerceQuote(input: {
     expiresAt: result.expiresAt,
   })
   if (quote.quoteDigest !== result.quoteDigest) throw new CommerceContractError('COMMERCE_PROVIDER_QUOTE_MISMATCH')
-  return { quote, ...projectQuote(quote), mode: 'shadow', externalWriteInvoked: false }
+  return { quote, ...projectQuote(quote, account.mode), mode: account.mode, externalWriteInvoked: false }
 }
 
 function projectCart(cart: CommerceCartRevision): { event: TwinEvent; disposition: TwinFactDisposition } {
@@ -136,7 +150,10 @@ function projectCart(cart: CommerceCartRevision): { event: TwinEvent; dispositio
   return { event, disposition }
 }
 
-function projectQuote(quote: CommerceQuote): { event: TwinEvent; disposition: TwinFactDisposition } {
+function projectQuote(
+  quote: CommerceQuote,
+  mode: CommerceQuoteProjection['mode'],
+): { event: TwinEvent; disposition: TwinFactDisposition } {
   ensurePrimarySubject()
   const batch = recordTwinFactBatchWithDisposition({ ensureCanonicalSelf: true, events: [{
     eventType: 'commerce.quote.refreshed',
@@ -152,7 +169,7 @@ function projectQuote(quote: CommerceQuote): { event: TwinEvent; disposition: Tw
       status: quote.status,
       observedAt: quote.observedAt,
       expiresAt: quote.expiresAt,
-      mode: 'shadow',
+      mode,
       externalWriteInvoked: false,
     },
     occurredAt: quote.observedAt,

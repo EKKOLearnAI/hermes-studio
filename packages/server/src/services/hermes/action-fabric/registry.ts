@@ -3,7 +3,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { HOME_FABRIC_CAPABILITIES } from '../home/fabric-contracts'
 import { INTERNET_FABRIC_CAPABILITIES } from '../internet-execution/fabric-contracts'
 import { ANDROID_FABRIC_CAPABILITIES } from '../android-companion/fabric-contracts'
-import { COMMERCE_FABRIC_CAPABILITIES } from '../commerce-autonomy/fabric-contracts'
+import { COMMERCE_CAPABILITY_IDS, COMMERCE_FABRIC_CAPABILITIES } from '../commerce-autonomy/fabric-contracts'
 import { withActionFabricDb } from './database'
 import type {
   FabricCapability,
@@ -352,6 +352,8 @@ const BUILT_IN_EXECUTORS: FabricExecutorInput[] = [
   { id: 'home-assistant', type: 'connector', name: 'Home Assistant Executor', environment: 'production', configuration: { externalWrite: true, interruptible: false, managedAvailability: 'home-assistant' }, enabled: false },
   { id: 'bilibili-mcp', type: 'mcp', name: 'Bilibili Read-Only MCP Executor', environment: 'production', configuration: { externalWrite: false, interruptible: false, managedAvailability: 'bilibili-mcp', credentialScope: 'profile-runtime' }, enabled: false },
   { id: 'bilibili-browser', type: 'browser', name: 'Bilibili Read-Only Browser Fallback', environment: 'production', configuration: { externalWrite: false, interruptible: false, managedAvailability: 'bilibili-browser', credentialScope: 'profile-runtime', primitives: ['navigate', 'snapshot'] }, enabled: false },
+  { id: 'commerce-shadow', type: 'connector', name: 'Commerce Shadow Executor', environment: 'sandbox', configuration: { externalWrite: false, interruptible: true, managedAvailability: 'commerce-runtime', shadow: true }, enabled: false },
+  { id: 'commerce-live', type: 'connector', name: 'Commerce Live Executor', environment: 'production', configuration: { externalWrite: true, interruptible: true, managedAvailability: 'commerce-runtime', freshPaymentApproval: true }, enabled: false },
 ]
 
 const BUILT_IN_BINDINGS = [
@@ -383,6 +385,10 @@ const BUILT_IN_BINDINGS = [
   ['bilibili-mcp', 'bilibili.video.inspect'],
   ['bilibili-browser', 'bilibili.video.search'],
   ['bilibili-browser', 'bilibili.video.inspect'],
+  ...COMMERCE_CAPABILITY_IDS.flatMap(capabilityId => [
+    ['commerce-shadow', capabilityId] as const,
+    ['commerce-live', capabilityId] as const,
+  ]),
 ] as const
 
 export function ensureBuiltInFabricRegistry(): void {
@@ -397,7 +403,7 @@ export function ensureBuiltInFabricRegistry(): void {
       }
       for (const input of BUILT_IN_EXECUTORS) {
         insertExecutorIfMissing(db, input)
-        if (['health-local-analysis', 'health-remote-analysis', 'health-plan', 'health-source', 'home-assistant', 'bilibili-mcp', 'bilibili-browser'].includes(input.id)) {
+        if (['health-local-analysis', 'health-remote-analysis', 'health-plan', 'health-source', 'home-assistant', 'bilibili-mcp', 'bilibili-browser', 'commerce-shadow', 'commerce-live'].includes(input.id)) {
           ensureKnownExecutorConfiguration(db, input)
         }
       }

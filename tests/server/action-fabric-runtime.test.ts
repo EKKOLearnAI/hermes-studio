@@ -80,7 +80,7 @@ describe('Action Fabric runtime lifecycle', () => {
     await startActionFabricRuntime()
     expect(listFabricExecutors().filter(executor => !executor.id.startsWith('health-')
       && !executor.id.startsWith('home-') && !executor.id.startsWith('bilibili-')
-      && !executor.id.startsWith('android-'))).toHaveLength(2)
+      && !executor.id.startsWith('android-') && !executor.id.startsWith('commerce-'))).toHaveLength(2)
     await Promise.all([stopActionFabricRuntime(), stopActionFabricRuntime()])
   })
 
@@ -89,7 +89,7 @@ describe('Action Fabric runtime lifecycle', () => {
 
     expect(listFabricExecutors().filter(executor => !executor.id.startsWith('health-')
       && !executor.id.startsWith('home-') && !executor.id.startsWith('bilibili-')
-      && !executor.id.startsWith('android-')).map(executor => executor.id))
+      && !executor.id.startsWith('android-') && !executor.id.startsWith('commerce-')).map(executor => executor.id))
       .toEqual(['internal-twin', 'simulator-main'])
     expect(withActionFabricDb(db => db.prepare("SELECT value FROM fabric_meta WHERE key='registry_policy_revision'").get()))
       .toBeTruthy()

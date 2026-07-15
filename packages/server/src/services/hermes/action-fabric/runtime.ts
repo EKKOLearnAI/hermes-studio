@@ -16,6 +16,11 @@ import type { FabricControlState } from './types'
 import { createSerializedFabricLifecycle } from './runtime-lifecycle'
 import type { FabricExecutorAdapter } from './executors'
 import { createConfiguredHealthFabricExecutorAdapters } from '../health-loop/executors/configuration'
+import {
+  createConfiguredCommerceExecutorAdapters,
+  reconcileCommerceRuntime,
+  stopCommerceRuntime,
+} from '../commerce-autonomy/runtime'
 import { startHomeProductionRuntime, stopHomeProductionRuntime } from '../home/production-runtime'
 import {
   reconcileInternetProductionRuntime,
@@ -34,6 +39,7 @@ interface RunningRuntime {
   controlPoll: Promise<void> | null
   homeStarted: boolean
   internetStarted: boolean
+  commerceStarted: boolean
 }
 
 let running: RunningRuntime | null = null
@@ -64,6 +70,7 @@ export async function enforceControlStateOnce(version: number): Promise<{ applie
   if (state && result.applied) {
     state.appliedControlVersion = Math.max(state.appliedControlVersion, result.version)
     if (state.internetStarted) await reconcileInternetProductionRuntime()
+    if (state.commerceStarted) reconcileCommerceRuntime()
   }
   return result
 }
@@ -77,6 +84,9 @@ async function teardownRuntime(): Promise<void> {
     try { await state.controlPoll } catch (error) { failure = error }
   }
   try { await stopActionFabricWorker() } catch (error) { if (failure === null) failure = error }
+  if (state.commerceStarted) {
+    try { stopCommerceRuntime() } catch (error) { if (failure === null) failure = error }
+  }
   if (state.internetStarted) {
     try { await stopInternetProductionRuntime() } catch (error) { if (failure === null) failure = error }
   }
@@ -93,6 +103,7 @@ async function bootstrapRuntime(): Promise<void> {
   let workerStarted = false
   let homeStarted = false
   let internetStarted = false
+  let commerceStarted = false
   try {
     // These migrations are deliberately complete before a worker can claim a lease.
     ensureBuiltInFabricRegistry()
@@ -100,6 +111,9 @@ async function bootstrapRuntime(): Promise<void> {
     registerOwnedAdapter(createSimulatorExecutorAdapter(), ownedAdapters)
     registerOwnedAdapter(createInternalPreferenceExecutorAdapter(), ownedAdapters)
     for (const adapter of createConfiguredHealthFabricExecutorAdapters()) registerOwnedAdapter(adapter, ownedAdapters)
+    for (const adapter of createConfiguredCommerceExecutorAdapters()) registerOwnedAdapter(adapter, ownedAdapters)
+    reconcileCommerceRuntime()
+    commerceStarted = true
     const homeAdapter = await startHomeProductionRuntime()
     homeStarted = true
     registerOwnedAdapter(homeAdapter, ownedAdapters)
@@ -117,6 +131,7 @@ async function bootstrapRuntime(): Promise<void> {
       controlPoll: null,
       homeStarted,
       internetStarted,
+      commerceStarted,
     }
     state.controlTimer = setInterval(() => pollControl(state), CONTROL_POLL_MS)
     state.controlTimer.unref?.()
@@ -124,6 +139,7 @@ async function bootstrapRuntime(): Promise<void> {
   } catch (error) {
     if (workerStarted) { try { await stopActionFabricWorker() } catch { /* preserve the startup failure */ } }
     if (internetStarted) { try { await stopInternetProductionRuntime() } catch { /* preserve the startup failure */ } }
+    if (commerceStarted) { try { stopCommerceRuntime() } catch { /* preserve the startup failure */ } }
     if (homeStarted) { try { await stopHomeProductionRuntime() } catch { /* preserve the startup failure */ } }
     for (const id of ownedAdapters.reverse()) unregisterFabricExecutorAdapter(id)
     throw error
@@ -152,6 +168,7 @@ function pollControl(state: RunningRuntime): void {
     if (result.applied) {
       state.appliedControlVersion = Math.max(state.appliedControlVersion, result.version)
       if (controlChanged && state.internetStarted) await reconcileInternetProductionRuntime()
+      if (controlChanged && state.commerceStarted) reconcileCommerceRuntime()
     }
   })().catch(error => {
     logger.error({ errorClass: stableErrorClass(error) }, '[action-fabric] control enforcement failed')

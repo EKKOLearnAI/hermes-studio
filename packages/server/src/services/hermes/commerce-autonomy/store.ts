@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import {
   assertCommerceSafeData,
   CommerceContractError,
+  isCommerceAccountHealth,
   isCommerceCurrency,
   isCommerceCancellationState,
   isCommerceDeliveryState,
@@ -18,6 +19,7 @@ import {
 import { withCommerceAutonomyDb } from './database'
 import type {
   CommerceCartItem,
+  CommerceActivationReview,
   CommerceCartRevision,
   CommerceCancellationRequest,
   CommerceCheckpoint,
@@ -98,6 +100,11 @@ type RefundRow = {
   expected_amount_minor: number; actual_amount_minor: number | null; eligibility_digest: string
   state: CommerceRefundRequest['state']; provider_receipt_id: string | null; version: number
   created_at: string; updated_at: string; completed_at: string | null
+}
+type ActivationRow = {
+  id: string; account_id: string; from_mode: CommerceActivationReview['fromMode']
+  to_mode: CommerceActivationReview['toMode']; actor_user_id: string; shadow_evidence_digest: string | null
+  limits_digest: string; approved: number; created_at: string
 }
 
 export interface CreateCommerceAccountInput {
@@ -240,6 +247,29 @@ export interface TransitionCommerceRefundInput {
   updatedAt?: string
 }
 
+export interface UpdateCommerceAccountInput {
+  accountId: string
+  expectedVersion: number
+  mode?: CommerceProviderAccount['mode']
+  health?: CommerceProviderAccount['health']
+  enabled?: boolean
+  executorId?: string | null
+  revoke?: boolean
+  activationReviewId?: string
+  updatedAt?: string
+}
+
+export interface RecordCommerceActivationReviewInput {
+  accountId: string
+  fromMode: CommerceActivationReview['fromMode']
+  toMode: CommerceActivationReview['toMode']
+  actorUserId: string
+  shadowEvidenceDigest: string | null
+  limitsDigest: string
+  approved: boolean
+  createdAt?: string
+}
+
 export function commerceCanonicalDigest(value: unknown): string {
   assertCommerceSafeData(value)
   return createHash('sha256').update(canonicalJson(value)).digest('hex')
@@ -256,6 +286,7 @@ export function createCommerceAccount(input: CreateCommerceAccountInput): Commer
         || existing.enabled !== (input.enabled ?? true)) throw new CommerceContractError('COMMERCE_ACCOUNT_REPLAY_MISMATCH')
       return existing
     }
+    if (input.mode === 'live') throw new CommerceContractError('COMMERCE_LIVE_ACTIVATION_REQUIRED')
     db.prepare(`INSERT INTO commerce_accounts(id,provider,mode,currency,executor_id,display_name,health,enabled,
       policy_epoch,version,created_at,updated_at,revoked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL)`).run(
       input.id, input.provider, input.mode, input.currency, input.executorId ?? null, input.displayName,
@@ -275,6 +306,98 @@ export function listCommerceAccounts(limit = 100): CommerceProviderAccount[] {
   return withCommerceAutonomyDb(db => (db.prepare(
     'SELECT * FROM commerce_accounts ORDER BY id LIMIT ?',
   ).all(bounded) as unknown as AccountRow[]).map(accountFromRow))
+}
+
+export function updateCommerceAccount(input: UpdateCommerceAccountInput): CommerceProviderAccount {
+  validateId(input.accountId, 'COMMERCE_ACCOUNT_ID_INVALID')
+  if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1
+    || input.mode !== undefined && !isCommerceExecutionMode(input.mode)
+    || input.health !== undefined && !isCommerceAccountHealth(input.health)
+    || input.enabled !== undefined && typeof input.enabled !== 'boolean'
+    || input.activationReviewId !== undefined && !isCommerceSemanticId(input.activationReviewId)
+    || input.executorId !== undefined && input.executorId !== null && !isCommerceSemanticId(input.executorId)) {
+    throw new CommerceContractError('COMMERCE_ACCOUNT_UPDATE_INVALID')
+  }
+  const updatedAt = normalizedTimestamp(input.updatedAt ?? new Date().toISOString(), 'COMMERCE_TIME_INVALID')
+  return withCommerceAutonomyDb(db => {
+    const current = required(accountById(db, input.accountId), 'COMMERCE_ACCOUNT_NOT_FOUND')
+    if (current.version !== input.expectedVersion) throw new CommerceContractError('COMMERCE_ACCOUNT_VERSION_CONFLICT')
+    if (current.health === 'revoked') throw new CommerceContractError('COMMERCE_ACCOUNT_REVOKED')
+    const mode = input.mode ?? current.mode
+    const health = input.revoke ? 'revoked' : input.health ?? current.health
+    const enabled = input.revoke ? false : input.enabled ?? current.enabled
+    const executorId = input.executorId === undefined ? current.executorId : input.executorId
+    if (mode === 'live' && current.mode !== 'live') {
+      if (!input.activationReviewId) throw new CommerceContractError('COMMERCE_LIVE_ACTIVATION_REQUIRED')
+      const review = activationById(db, input.activationReviewId)
+      if (!review || !review.approved || review.accountId !== current.id || review.fromMode !== current.mode
+        || review.toMode !== 'live') throw new CommerceContractError('COMMERCE_LIVE_ACTIVATION_REQUIRED')
+    }
+    const authorityChanged = mode !== current.mode || enabled !== current.enabled || executorId !== current.executorId
+      || health === 'revoked'
+    const result = db.prepare(`UPDATE commerce_accounts SET mode=?,health=?,enabled=?,executor_id=?,
+      policy_epoch=?,version=version+1,updated_at=?,revoked_at=? WHERE id=? AND version=?`).run(
+      mode, health, enabled ? 1 : 0, executorId, current.policyEpoch + (authorityChanged ? 1 : 0), updatedAt,
+      health === 'revoked' ? updatedAt : current.revokedAt, current.id, current.version,
+    )
+    if (result.changes !== 1) throw new CommerceContractError('COMMERCE_ACCOUNT_VERSION_CONFLICT')
+    return required(accountById(db, current.id), 'COMMERCE_ACCOUNT_UPDATE_FAILED')
+  })
+}
+
+export function recordCommerceActivationReview(
+  input: RecordCommerceActivationReviewInput,
+): CommerceActivationReview {
+  validateId(input.accountId, 'COMMERCE_ACCOUNT_ID_INVALID')
+  if (!isCommerceExecutionMode(input.fromMode) || !isCommerceExecutionMode(input.toMode)
+    || input.fromMode === input.toMode || !cleanText(input.actorUserId, 160)
+    || input.shadowEvidenceDigest !== null && !isCommerceDigest(input.shadowEvidenceDigest)
+    || !isCommerceDigest(input.limitsDigest) || typeof input.approved !== 'boolean') {
+    throw new CommerceContractError('COMMERCE_ACTIVATION_REVIEW_INVALID')
+  }
+  const createdAt = normalizedTimestamp(input.createdAt ?? new Date().toISOString(), 'COMMERCE_TIME_INVALID')
+  return withCommerceAutonomyDb(db => {
+    required(accountById(db, input.accountId), 'COMMERCE_ACCOUNT_NOT_FOUND')
+    const id = `activation-${stableId({ accountId: input.accountId, actorUserId: input.actorUserId,
+      createdAt, fromMode: input.fromMode, toMode: input.toMode })}`
+    db.prepare(`INSERT INTO commerce_activation_reviews(id,account_id,from_mode,to_mode,actor_user_id,
+      shadow_evidence_digest,limits_digest,approved,created_at) VALUES(?,?,?,?,?,?,?,?,?)`).run(
+      id, input.accountId, input.fromMode, input.toMode, input.actorUserId, input.shadowEvidenceDigest,
+      input.limitsDigest, input.approved ? 1 : 0, createdAt,
+    )
+    return required(activationById(db, id), 'COMMERCE_ACTIVATION_REVIEW_CREATE_FAILED')
+  })
+}
+
+export function listCommerceActivationReviews(accountId: string, limit = 100): CommerceActivationReview[] {
+  validateId(accountId, 'COMMERCE_ACCOUNT_ID_INVALID')
+  const bounded = listLimit(limit)
+  return withCommerceAutonomyDb(db => (db.prepare(`SELECT * FROM commerce_activation_reviews
+    WHERE account_id=? ORDER BY created_at DESC,id DESC LIMIT ?`).all(accountId, bounded) as ActivationRow[])
+    .map(activationFromRow))
+}
+
+export function getRecentCommerceShadowEvidence(input: {
+  accountId: string
+  since: string
+}): { transaction: CommerceTransaction; evidenceDigest: string } | null {
+  validateId(input.accountId, 'COMMERCE_ACCOUNT_ID_INVALID')
+  validateTimestamp(input.since, 'COMMERCE_TIME_INVALID')
+  return withCommerceAutonomyDb(db => {
+    const row = db.prepare(`SELECT * FROM commerce_transactions WHERE account_id=? AND mode='shadow'
+      AND state IN ('paid','fulfilling','delivered','cancelled','refunded') AND updated_at>=?
+      ORDER BY updated_at DESC,id DESC LIMIT 1`).get(input.accountId, input.since) as TransactionRow | undefined
+    if (!row) return null
+    const transaction = transactionFromRow(row)
+    const checkpoints = (db.prepare(`SELECT evidence_digest,stage,observed_at FROM commerce_checkpoints
+      WHERE transaction_id=? ORDER BY ordinal`).all(transaction.id) as Array<{
+        evidence_digest: string | null; stage: string; observed_at: string
+      }>).map(item => ({ evidenceDigest: item.evidence_digest, stage: item.stage, observedAt: item.observed_at }))
+    return { transaction, evidenceDigest: commerceCanonicalDigest({ transactionId: transaction.id,
+      quoteDigest: transaction.quoteDigest, providerOrderId: transaction.providerOrderId,
+      state: transaction.state, amountMinor: transaction.actualAmountMinor ?? transaction.expectedAmountMinor,
+      checkpoints }) }
+  })
 }
 
 export function recordCommerceOfferSnapshot(input: RecordCommerceOfferInput): CommerceOfferSnapshot {
@@ -1073,6 +1196,11 @@ function refundByRequest(
   return row ? refundFromRow(row) : null
 }
 
+function activationById(db: DatabaseSync, id: string): CommerceActivationReview | null {
+  const row = db.prepare('SELECT * FROM commerce_activation_reviews WHERE id=?').get(id) as ActivationRow | undefined
+  return row ? activationFromRow(row) : null
+}
+
 function accountFromRow(row: AccountRow): CommerceProviderAccount {
   return { id: row.id, provider: row.provider, mode: row.mode, currency: row.currency, executorId: row.executor_id,
     displayName: row.display_name, health: row.health, enabled: row.enabled === 1, policyEpoch: row.policy_epoch,
@@ -1146,6 +1274,12 @@ function refundFromRow(row: RefundRow): CommerceRefundRequest {
     actualAmountMinor: row.actual_amount_minor, eligibilityDigest: row.eligibility_digest, state: row.state,
     providerReceiptId: row.provider_receipt_id, version: row.version, createdAt: row.created_at,
     updatedAt: row.updated_at, completedAt: row.completed_at }
+}
+
+function activationFromRow(row: ActivationRow): CommerceActivationReview {
+  return { id: row.id, accountId: row.account_id, fromMode: row.from_mode, toMode: row.to_mode,
+    actorUserId: row.actor_user_id, shadowEvidenceDigest: row.shadow_evidence_digest,
+    limitsDigest: row.limits_digest, approved: row.approved === 1, createdAt: row.created_at }
 }
 
 function checkpointFromRow(row: CheckpointRow): CommerceCheckpoint {

@@ -322,13 +322,19 @@ function refundFromRecords(transaction: CommerceTransaction, request: CommerceRe
 function requiredShadowTransaction(transactionId: string, provider: CommerceProviderAdapter): CommerceTransaction {
   const transaction = getCommerceTransaction(transactionId)
   const account = transaction ? getCommerceAccount(transaction.accountId) : null
-  if (!transaction || !account || transaction.mode !== 'shadow' || account.mode !== 'shadow'
+  if (!transaction || !account || transaction.mode === 'observe' || account.mode !== transaction.mode
+    || account.policyEpoch !== transaction.policyEpoch
     || account.health === 'revoked' || !account.enabled || provider.transport !== 'virtual'
+      && transaction.mode === 'shadow' || provider.transport !== 'external' && transaction.mode === 'live'
     || provider.provider !== transaction.provider || provider.provider !== account.provider) {
     throw executionError('COMMERCE_TRANSACTION_MATERIAL_MISMATCH', transactionId)
   }
   return transaction
 }
+
+export const trackCommerceDelivery = trackShadowCommerceDelivery
+export const executeCommerceCancellation = executeShadowCommerceCancellation
+export const executeCommerceRefund = executeShadowCommerceRefund
 
 function projectOutcome(
   transaction: CommerceTransaction,

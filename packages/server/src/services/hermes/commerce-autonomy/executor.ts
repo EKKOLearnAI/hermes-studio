@@ -327,7 +327,6 @@ function assertContext(options: CommerceExecutorOptions, context: FabricExecutio
     || account.executorId !== null && account.executorId !== options.id) {
     throw new CommerceContractError('COMMERCE_ACCOUNT_UNAVAILABLE')
   }
-  if (account.mode === 'live') throw new CommerceContractError('COMMERCE_LIVE_NOT_ACTIVATED')
   if (account.mode === 'observe' && !OBSERVE_CAPABILITIES.has(context.capabilityId)) {
     throw new CommerceContractError('COMMERCE_OBSERVE_MODE_FORBIDDEN')
   }
@@ -371,7 +370,8 @@ function assertBoundMaterial(
     if (context.capabilityId === COMMERCE_ORDER_CAPABILITY) {
       assertTransactionTarget(context, quote.cartRevisionId)
       if (existing && (existing.accountId !== account.id || existing.quoteId !== quote.id
-        || existing.providerRequestId !== context.input.providerRequestId)) {
+        || existing.providerRequestId !== context.input.providerRequestId || existing.mode !== account.mode
+        || existing.policyEpoch !== account.policyEpoch)) {
         throw new CommerceContractError('COMMERCE_TRANSACTION_REPLAY_MISMATCH')
       }
     }
@@ -415,7 +415,8 @@ function requiredProvider(
   account: CommerceProviderAccount,
 ): CommerceProviderAdapter {
   if (!provider || provider.provider !== account.provider
-    || account.mode === 'shadow' && provider.transport !== 'virtual') {
+    || account.mode === 'shadow' && provider.transport !== 'virtual'
+    || account.mode === 'live' && provider.transport !== 'external') {
     throw new CommerceContractError('COMMERCE_PROVIDER_UNAVAILABLE')
   }
   return provider

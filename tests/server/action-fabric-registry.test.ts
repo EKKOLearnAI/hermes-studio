@@ -77,7 +77,8 @@ describe('action fabric registry', () => {
       ['simulator.echo', '1f74a0c7fc1a997a22425d365107379fb88effdc49cc91c68fd34a174082ff79'],
     ])
     expect(listFabricExecutors().filter(item => !item.id.startsWith('health-') && !item.id.startsWith('home-')
-      && !item.id.startsWith('bilibili-') && !item.id.startsWith('android-')).map(item => [item.id, item.type, item.environment, item.configuration.externalWrite])).toEqual([
+      && !item.id.startsWith('bilibili-') && !item.id.startsWith('android-')
+      && !item.id.startsWith('commerce-')).map(item => [item.id, item.type, item.environment, item.configuration.externalWrite])).toEqual([
       ['internal-twin', 'internal', 'internal', false],
       ['simulator-main', 'simulator', 'simulator', false],
     ])
