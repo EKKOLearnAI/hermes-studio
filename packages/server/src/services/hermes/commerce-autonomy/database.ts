@@ -137,6 +137,7 @@ const TABLE_SQL = {
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     completed_at TEXT,
+    UNIQUE(transaction_id),
     UNIQUE(transaction_id,provider_request_id)
   )`,
   commerce_delivery_observations: `CREATE TABLE commerce_delivery_observations (

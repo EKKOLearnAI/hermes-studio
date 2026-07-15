@@ -21,6 +21,7 @@ import type {
   CommerceComparisonCandidate,
   CommerceComparisonRequirement,
   CommerceOfferSnapshot,
+  CommercePaymentAttempt,
   CommerceProviderAccount,
   CommerceQuote,
   CommerceQuoteBreakdown,
@@ -70,6 +71,12 @@ type TransactionRow = {
 type CheckpointRow = {
   transaction_id: string; ordinal: number; stage: string; evidence_digest: string | null; error_code: string | null
   details_json: string; observed_at: string; created_at: string
+}
+type PaymentRow = {
+  id: string; transaction_id: string; provider_request_id: string; approval_id: string | null
+  method_label: string | null; method_fingerprint: string | null; currency: string; amount_minor: number
+  state: CommercePaymentAttempt['state']; provider_receipt_id: string | null; evidence_digest: string | null
+  version: number; created_at: string; updated_at: string; completed_at: string | null
 }
 
 export interface CreateCommerceAccountInput {
@@ -145,6 +152,25 @@ export interface TransitionCommerceTransactionInput {
   state: CommerceTransactionState
   providerOrderId?: string | null
   actualAmountMinor?: number | null
+  completedAt?: string | null
+  updatedAt?: string
+}
+
+export interface CreateCommercePaymentAttemptInput {
+  transactionId: string
+  providerRequestId: string
+  approvalId: string
+  currency: string
+  amountMinor: number
+  createdAt?: string
+}
+
+export interface TransitionCommercePaymentAttemptInput {
+  paymentId: string
+  expectedVersion: number
+  state: CommercePaymentAttempt['state']
+  providerReceiptId?: string | null
+  evidenceDigest?: string | null
   completedAt?: string | null
   updatedAt?: string
 }
@@ -396,6 +422,79 @@ export function getCommerceTransaction(transactionId: string): CommerceTransacti
 export function getCommerceTransactionByWorkflow(workflowId: string): CommerceTransaction | null {
   if (!WORKFLOW_ID.test(workflowId)) throw new CommerceContractError('COMMERCE_WORKFLOW_ID_INVALID')
   return withCommerceAutonomyDb(db => transactionByWorkflow(db, workflowId))
+}
+
+export function createCommercePaymentAttempt(input: CreateCommercePaymentAttemptInput): CommercePaymentAttempt {
+  validateId(input.transactionId, 'COMMERCE_TRANSACTION_ID_INVALID')
+  if (!TOKEN.test(input.providerRequestId) || !TOKEN.test(input.approvalId) || !isCommerceCurrency(input.currency)) {
+    throw new CommerceContractError('COMMERCE_PAYMENT_INPUT_INVALID')
+  }
+  validateMoneyInteger(input.amountMinor)
+  const createdAt = normalizedTimestamp(input.createdAt ?? new Date().toISOString(), 'COMMERCE_TIME_INVALID')
+  return withCommerceAutonomyDb(db => {
+    const transaction = required(transactionById(db, input.transactionId), 'COMMERCE_TRANSACTION_NOT_FOUND')
+    if (transaction.currency !== input.currency || transaction.expectedAmountMinor !== input.amountMinor) {
+      throw new CommerceContractError('COMMERCE_PAYMENT_TRANSACTION_MISMATCH')
+    }
+    const existing = paymentByTransaction(db, input.transactionId)
+    if (existing) {
+      if (existing.providerRequestId !== input.providerRequestId || existing.approvalId !== input.approvalId
+        || existing.currency !== input.currency || existing.amountMinor !== input.amountMinor) {
+        throw new CommerceContractError('COMMERCE_PAYMENT_REPLAY_MISMATCH')
+      }
+      return existing
+    }
+    const id = `payment-${stableId({ providerRequestId: input.providerRequestId, transactionId: input.transactionId })}`
+    db.prepare(`INSERT INTO commerce_payment_attempts(id,transaction_id,provider_request_id,approval_id,
+      method_label,method_fingerprint,currency,amount_minor,state,provider_receipt_id,evidence_digest,
+      version,created_at,updated_at,completed_at) VALUES(?,?,?,?,NULL,NULL,?,?,'approval_required',NULL,NULL,1,?,?,NULL)`).run(
+      id, input.transactionId, input.providerRequestId, input.approvalId, input.currency, input.amountMinor,
+      createdAt, createdAt,
+    )
+    return required(paymentByTransaction(db, input.transactionId), 'COMMERCE_PAYMENT_CREATE_FAILED')
+  })
+}
+
+export function getCommercePaymentAttempt(paymentId: string): CommercePaymentAttempt | null {
+  validateId(paymentId, 'COMMERCE_PAYMENT_ID_INVALID')
+  return withCommerceAutonomyDb(db => paymentById(db, paymentId))
+}
+
+export function getCommercePaymentAttemptByTransaction(transactionId: string): CommercePaymentAttempt | null {
+  validateId(transactionId, 'COMMERCE_TRANSACTION_ID_INVALID')
+  return withCommerceAutonomyDb(db => paymentByTransaction(db, transactionId))
+}
+
+export function transitionCommercePaymentAttempt(input: TransitionCommercePaymentAttemptInput): CommercePaymentAttempt {
+  validateId(input.paymentId, 'COMMERCE_PAYMENT_ID_INVALID')
+  if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1) {
+    throw new CommerceContractError('COMMERCE_PAYMENT_VERSION_INVALID')
+  }
+  if (input.providerReceiptId !== undefined && input.providerReceiptId !== null) {
+    validateId(input.providerReceiptId, 'COMMERCE_PAYMENT_RECEIPT_ID_INVALID')
+  }
+  if (input.evidenceDigest !== undefined && input.evidenceDigest !== null && !isCommerceDigest(input.evidenceDigest)) {
+    throw new CommerceContractError('COMMERCE_DIGEST_INVALID')
+  }
+  const updatedAt = normalizedTimestamp(input.updatedAt ?? new Date().toISOString(), 'COMMERCE_TIME_INVALID')
+  return withCommerceAutonomyDb(db => {
+    const current = required(paymentById(db, input.paymentId), 'COMMERCE_PAYMENT_NOT_FOUND')
+    if (current.version !== input.expectedVersion) throw new CommerceContractError('COMMERCE_PAYMENT_VERSION_CONFLICT')
+    if (current.providerReceiptId && input.providerReceiptId !== undefined
+      && input.providerReceiptId !== current.providerReceiptId) {
+      throw new CommerceContractError('COMMERCE_PAYMENT_RECEIPT_SUBSTITUTION')
+    }
+    const result = db.prepare(`UPDATE commerce_payment_attempts SET state=?,provider_receipt_id=?,evidence_digest=?,
+      version=version+1,updated_at=?,completed_at=? WHERE id=? AND version=?`).run(
+      input.state,
+      input.providerReceiptId === undefined ? current.providerReceiptId : input.providerReceiptId,
+      input.evidenceDigest === undefined ? current.evidenceDigest : input.evidenceDigest,
+      updatedAt, input.completedAt === undefined ? current.completedAt : input.completedAt,
+      current.id, current.version,
+    )
+    if (result.changes !== 1) throw new CommerceContractError('COMMERCE_PAYMENT_VERSION_CONFLICT')
+    return required(paymentById(db, current.id), 'COMMERCE_PAYMENT_UPDATE_FAILED')
+  })
 }
 
 export function transitionCommerceTransaction(input: TransitionCommerceTransactionInput): CommerceTransaction {
@@ -668,6 +767,17 @@ function transactionByWorkflow(db: DatabaseSync, workflowId: string): CommerceTr
   return row ? transactionFromRow(row) : null
 }
 
+function paymentById(db: DatabaseSync, id: string): CommercePaymentAttempt | null {
+  const row = db.prepare('SELECT * FROM commerce_payment_attempts WHERE id=?').get(id) as PaymentRow | undefined
+  return row ? paymentFromRow(row) : null
+}
+
+function paymentByTransaction(db: DatabaseSync, transactionId: string): CommercePaymentAttempt | null {
+  const row = db.prepare('SELECT * FROM commerce_payment_attempts WHERE transaction_id=? ORDER BY created_at,id LIMIT 1')
+    .get(transactionId) as PaymentRow | undefined
+  return row ? paymentFromRow(row) : null
+}
+
 function accountFromRow(row: AccountRow): CommerceProviderAccount {
   return { id: row.id, provider: row.provider, mode: row.mode, currency: row.currency, executorId: row.executor_id,
     displayName: row.display_name, health: row.health, enabled: row.enabled === 1, policyEpoch: row.policy_epoch,
@@ -712,6 +822,14 @@ function transactionFromRow(row: TransactionRow): CommerceTransaction {
     currency: row.currency, expectedAmountMinor: row.expected_amount_minor, actualAmountMinor: row.actual_amount_minor,
     state: row.state, version: row.version, createdAt: row.created_at, updatedAt: row.updated_at,
     completedAt: row.completed_at }
+}
+
+function paymentFromRow(row: PaymentRow): CommercePaymentAttempt {
+  return { id: row.id, transactionId: row.transaction_id, providerRequestId: row.provider_request_id,
+    approvalId: row.approval_id, methodLabel: row.method_label, methodFingerprint: row.method_fingerprint,
+    currency: row.currency, amountMinor: row.amount_minor, state: row.state,
+    providerReceiptId: row.provider_receipt_id, evidenceDigest: row.evidence_digest, version: row.version,
+    createdAt: row.created_at, updatedAt: row.updated_at, completedAt: row.completed_at }
 }
 
 function checkpointFromRow(row: CheckpointRow): CommerceCheckpoint {

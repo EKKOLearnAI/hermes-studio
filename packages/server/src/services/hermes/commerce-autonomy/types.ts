@@ -186,6 +186,24 @@ export interface CommerceTransaction {
   completedAt: string | null
 }
 
+export interface CommercePaymentAttempt {
+  id: string
+  transactionId: string
+  providerRequestId: string
+  approvalId: string | null
+  methodLabel: string | null
+  methodFingerprint: string | null
+  currency: string
+  amountMinor: number
+  state: CommercePaymentState
+  providerReceiptId: string | null
+  evidenceDigest: string | null
+  version: number
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+}
+
 export interface CommerceCheckpoint {
   transactionId: string
   ordinal: number
