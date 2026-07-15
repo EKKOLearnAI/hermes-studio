@@ -14,6 +14,7 @@ import {
   isCommerceProviderKind,
   isCommerceRefundState,
   isCommerceSemanticId,
+  isCommerceTransactionState,
   isLegalCommerceTransactionTransition,
 } from './contracts'
 import { withCommerceAutonomyDb } from './database'
@@ -484,6 +485,21 @@ export function getCommerceComparison(comparisonId: string): CommerceComparison 
   })
 }
 
+export function listCommerceComparisons(options: {
+  accountId?: string; limit?: number
+} = {}): CommerceComparison[] {
+  if (options.accountId !== undefined) validateId(options.accountId, 'COMMERCE_ACCOUNT_ID_INVALID')
+  const limit = listLimit(options.limit ?? 100)
+  return withCommerceAutonomyDb(db => {
+    const rows = options.accountId
+      ? db.prepare(`SELECT * FROM commerce_comparisons WHERE account_id=?
+          ORDER BY created_at DESC,id DESC LIMIT ?`).all(options.accountId, limit)
+      : db.prepare(`SELECT * FROM commerce_comparisons
+          ORDER BY created_at DESC,id DESC LIMIT ?`).all(limit)
+    return (rows as unknown as ComparisonRow[]).map(comparisonFromRow)
+  })
+}
+
 export function createCommerceCartRevision(input: CreateCommerceCartInput): CommerceCartRevision {
   validateId(input.accountId, 'COMMERCE_ACCOUNT_ID_INVALID')
   if (!TOKEN.test(input.destinationToken) || !TOKEN.test(input.recipientToken)
@@ -521,6 +537,21 @@ export function createCommerceCartRevision(input: CreateCommerceCartInput): Comm
 export function getCommerceCartRevision(cartId: string): CommerceCartRevision | null {
   validateId(cartId, 'COMMERCE_CART_ID_INVALID')
   return withCommerceAutonomyDb(db => cartById(db, cartId))
+}
+
+export function listCommerceCartRevisions(options: {
+  accountId?: string; limit?: number
+} = {}): CommerceCartRevision[] {
+  if (options.accountId !== undefined) validateId(options.accountId, 'COMMERCE_ACCOUNT_ID_INVALID')
+  const limit = listLimit(options.limit ?? 100)
+  return withCommerceAutonomyDb(db => {
+    const rows = options.accountId
+      ? db.prepare(`SELECT * FROM commerce_cart_revisions WHERE account_id=?
+          ORDER BY created_at DESC,id DESC LIMIT ?`).all(options.accountId, limit)
+      : db.prepare(`SELECT * FROM commerce_cart_revisions
+          ORDER BY created_at DESC,id DESC LIMIT ?`).all(limit)
+    return (rows as unknown as CartRow[]).map(cartFromRow)
+  })
 }
 
 export function createCommerceQuote(input: CreateCommerceQuoteInput): CommerceQuote {
@@ -563,6 +594,25 @@ export function createCommerceQuote(input: CreateCommerceQuoteInput): CommerceQu
 export function getCommerceQuote(quoteId: string): CommerceQuote | null {
   validateId(quoteId, 'COMMERCE_QUOTE_ID_INVALID')
   return withCommerceAutonomyDb(db => quoteById(db, quoteId))
+}
+
+export function listCommerceQuotes(options: {
+  accountId?: string; status?: CommerceQuote['status']; limit?: number
+} = {}): CommerceQuote[] {
+  if (options.accountId !== undefined) validateId(options.accountId, 'COMMERCE_ACCOUNT_ID_INVALID')
+  if (options.status !== undefined && !['active', 'expired', 'superseded', 'consumed'].includes(options.status)) {
+    throw new CommerceContractError('COMMERCE_QUOTE_STATUS_INVALID')
+  }
+  const limit = listLimit(options.limit ?? 100)
+  return withCommerceAutonomyDb(db => {
+    const clauses: string[] = []; const params: Array<string | number> = []
+    if (options.accountId) { clauses.push('account_id=?'); params.push(options.accountId) }
+    if (options.status) { clauses.push('status=?'); params.push(options.status) }
+    const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : ''
+    const rows = db.prepare(`SELECT * FROM commerce_quotes${where}
+      ORDER BY observed_at DESC,id DESC LIMIT ?`).all(...params, limit)
+    return (rows as unknown as QuoteRow[]).map(quoteFromRow)
+  })
 }
 
 export function expireCommerceQuotes(at = new Date().toISOString()): number {
@@ -610,6 +660,25 @@ export function getCommerceTransaction(transactionId: string): CommerceTransacti
 export function getCommerceTransactionByWorkflow(workflowId: string): CommerceTransaction | null {
   if (!WORKFLOW_ID.test(workflowId)) throw new CommerceContractError('COMMERCE_WORKFLOW_ID_INVALID')
   return withCommerceAutonomyDb(db => transactionByWorkflow(db, workflowId))
+}
+
+export function listCommerceTransactions(options: {
+  accountId?: string; state?: CommerceTransactionState; limit?: number
+} = {}): CommerceTransaction[] {
+  if (options.accountId !== undefined) validateId(options.accountId, 'COMMERCE_ACCOUNT_ID_INVALID')
+  if (options.state !== undefined && !isCommerceTransactionState(options.state)) {
+    throw new CommerceContractError('COMMERCE_TRANSACTION_STATE_INVALID')
+  }
+  const limit = listLimit(options.limit ?? 100)
+  return withCommerceAutonomyDb(db => {
+    const clauses: string[] = []; const params: Array<string | number> = []
+    if (options.accountId) { clauses.push('account_id=?'); params.push(options.accountId) }
+    if (options.state) { clauses.push('state=?'); params.push(options.state) }
+    const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : ''
+    const rows = db.prepare(`SELECT * FROM commerce_transactions${where}
+      ORDER BY updated_at DESC,id DESC LIMIT ?`).all(...params, limit)
+    return (rows as unknown as TransactionRow[]).map(transactionFromRow)
+  })
 }
 
 export function createCommercePaymentAttempt(input: CreateCommercePaymentAttemptInput): CommercePaymentAttempt {
@@ -725,6 +794,14 @@ export function getLatestCommerceDeliveryObservation(transactionId: string): Com
   return withCommerceAutonomyDb(db => latestDelivery(db, transactionId))
 }
 
+export function listCommerceDeliveryObservations(transactionId: string, limit = 100): CommerceDeliveryObservation[] {
+  validateId(transactionId, 'COMMERCE_TRANSACTION_ID_INVALID')
+  const bounded = listLimit(limit)
+  return withCommerceAutonomyDb(db => (db.prepare(`SELECT * FROM commerce_delivery_observations
+    WHERE transaction_id=? ORDER BY observed_at,id LIMIT ?`).all(transactionId, bounded) as unknown as DeliveryRow[])
+    .map(deliveryFromRow))
+}
+
 export function createCommerceCancellationRequest(
   input: CreateCommerceCancellationInput,
 ): CommerceCancellationRequest {
@@ -765,6 +842,14 @@ export function getCommerceCancellationRequest(
   validateId(transactionId, 'COMMERCE_TRANSACTION_ID_INVALID')
   if (!TOKEN.test(providerRequestId)) throw new CommerceContractError('COMMERCE_PROVIDER_REQUEST_ID_INVALID')
   return withCommerceAutonomyDb(db => cancellationByRequest(db, transactionId, providerRequestId))
+}
+
+export function listCommerceCancellationRequests(transactionId: string, limit = 100): CommerceCancellationRequest[] {
+  validateId(transactionId, 'COMMERCE_TRANSACTION_ID_INVALID')
+  const bounded = listLimit(limit)
+  return withCommerceAutonomyDb(db => (db.prepare(`SELECT * FROM commerce_cancellation_requests
+    WHERE transaction_id=? ORDER BY created_at,id LIMIT ?`).all(transactionId, bounded) as unknown as CancellationRow[])
+    .map(cancellationFromRow))
 }
 
 export function transitionCommerceCancellationRequest(
@@ -838,6 +923,14 @@ export function getCommerceRefundRequest(
   validateId(transactionId, 'COMMERCE_TRANSACTION_ID_INVALID')
   if (!TOKEN.test(providerRequestId)) throw new CommerceContractError('COMMERCE_PROVIDER_REQUEST_ID_INVALID')
   return withCommerceAutonomyDb(db => refundByRequest(db, transactionId, providerRequestId))
+}
+
+export function listCommerceRefundRequests(transactionId: string, limit = 100): CommerceRefundRequest[] {
+  validateId(transactionId, 'COMMERCE_TRANSACTION_ID_INVALID')
+  const bounded = listLimit(limit)
+  return withCommerceAutonomyDb(db => (db.prepare(`SELECT * FROM commerce_refund_requests
+    WHERE transaction_id=? ORDER BY created_at,id LIMIT ?`).all(transactionId, bounded) as unknown as RefundRow[])
+    .map(refundFromRow))
 }
 
 export function transitionCommerceRefundRequest(input: TransitionCommerceRefundInput): CommerceRefundRequest {

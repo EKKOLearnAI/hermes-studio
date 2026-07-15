@@ -103,6 +103,12 @@ export function stopCommerceRuntime(): void {
 
 export function getCommerceRuntimeStatus(): CommerceRuntimeStatus { return { ...status } }
 
+/** Server-only lookup for semantic read operations. The adapter, including any credential closure,
+ * must never be serialized or returned by an HTTP controller. */
+export function getConfiguredCommerceProvider(accountId: string): CommerceProviderAdapter | null {
+  return bindings.get(accountId)?.provider ?? null
+}
+
 function setAvailability(
   executorId: string,
   enabled: boolean,

@@ -1,0 +1,31 @@
+import Router from '@koa/router'
+import * as ctrl from '../../controllers/hermes/commerce'
+import { requireSuperAdmin } from '../../middleware/user-auth'
+
+export const commerceRoutes = new Router()
+
+commerceRoutes.get('/api/hermes/commerce/overview', ctrl.overview)
+commerceRoutes.get('/api/hermes/commerce/accounts', ctrl.accounts)
+commerceRoutes.post('/api/hermes/commerce/accounts', requireSuperAdmin, ctrl.createAccount)
+commerceRoutes.put('/api/hermes/commerce/accounts/:id/health', requireSuperAdmin, ctrl.updateAccountHealth)
+commerceRoutes.get('/api/hermes/commerce/accounts/:id/activation-reviews', ctrl.activationReviews)
+commerceRoutes.post('/api/hermes/commerce/accounts/:id/activate', requireSuperAdmin, ctrl.activateAccount)
+commerceRoutes.post('/api/hermes/commerce/accounts/:id/revoke', requireSuperAdmin, ctrl.revokeAccount)
+commerceRoutes.get('/api/hermes/commerce/offers', ctrl.offers)
+commerceRoutes.post('/api/hermes/commerce/offers/search', ctrl.searchOffers)
+commerceRoutes.get('/api/hermes/commerce/comparisons', ctrl.comparisons)
+commerceRoutes.post('/api/hermes/commerce/comparisons', ctrl.createComparison)
+commerceRoutes.get('/api/hermes/commerce/carts', ctrl.carts)
+commerceRoutes.post('/api/hermes/commerce/carts', ctrl.createCart)
+commerceRoutes.get('/api/hermes/commerce/quotes', ctrl.quotes)
+commerceRoutes.post('/api/hermes/commerce/quotes', ctrl.createQuote)
+commerceRoutes.post('/api/hermes/commerce/orders', ctrl.placeOrder)
+commerceRoutes.post('/api/hermes/commerce/payments', ctrl.confirmPayment)
+commerceRoutes.post('/api/hermes/commerce/delivery', ctrl.trackDelivery)
+commerceRoutes.post('/api/hermes/commerce/cancellations', ctrl.cancelOrder)
+commerceRoutes.post('/api/hermes/commerce/refunds', ctrl.requestRefund)
+commerceRoutes.get('/api/hermes/commerce/workflows', ctrl.workflows)
+commerceRoutes.get('/api/hermes/commerce/workflows/:id', ctrl.workflow)
+commerceRoutes.get('/api/hermes/commerce/transactions', ctrl.transactions)
+commerceRoutes.get('/api/hermes/commerce/transactions/:id', ctrl.transaction)
+commerceRoutes.get('/api/hermes/commerce/takeovers', ctrl.takeovers)

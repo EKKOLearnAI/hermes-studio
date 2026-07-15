@@ -387,6 +387,76 @@ describe('api docs controller', () => {
       .toBeLessThan(source.indexOf('discoverTypeScriptSchemas(selectedSchemaRoots)'))
   })
 
+  it('publishes strict minimized Commerce contracts and authority metadata', async () => {
+    const ctx = { set: vi.fn(), status: 200, body: undefined as any }
+    await openapi(ctx as any)
+    const paths = Object.entries(ctx.body.paths)
+      .filter(([path]) => path.startsWith('/api/hermes/commerce')) as Array<[string, any]>
+    const operations = paths.flatMap(([, value]) => Object.values(value) as any[])
+    expect(paths).toHaveLength(21)
+    expect(operations).toHaveLength(25)
+    expect(operations.every(operation => operation.tags[0] === 'Commerce')).toBe(true)
+    expect(ctx.body.tags).toContainEqual(expect.objectContaining({ name: 'Commerce' }))
+
+    const privileged = [
+      ctx.body.paths['/api/hermes/commerce/accounts'].post,
+      ctx.body.paths['/api/hermes/commerce/accounts/{id}/health'].put,
+      ctx.body.paths['/api/hermes/commerce/accounts/{id}/activate'].post,
+      ctx.body.paths['/api/hermes/commerce/accounts/{id}/revoke'].post,
+    ]
+    expect(privileged.every(operation => operation['x-hermes-required-role'] === 'super_admin')).toBe(true)
+    expect(operations.filter(operation => operation['x-hermes-required-role']).length).toBe(4)
+
+    const accountBody = ctx.body.paths['/api/hermes/commerce/accounts'].post.requestBody
+      .content['application/json'].schema
+    expect(accountBody.additionalProperties).toBe(false)
+    expect(accountBody.properties.mode.enum).toEqual(['observe', 'shadow'])
+    expect(ctx.body.paths['/api/hermes/commerce/accounts'].post.responses['201']).toBeTruthy()
+    expect(ctx.body.paths['/api/hermes/commerce/accounts'].post.responses['200']).toBeUndefined()
+
+    const orderBody = ctx.body.paths['/api/hermes/commerce/orders'].post.requestBody
+      .content['application/json'].schema
+    expect(orderBody.required).toEqual(['quoteId', 'providerRequestId', 'idempotencyKey', 'rationale'])
+    expect(orderBody.additionalProperties).toBe(false)
+    expect(orderBody.properties).not.toHaveProperty('merchantId')
+    expect(orderBody.properties).not.toHaveProperty('destinationDigest')
+    expect(ctx.body.paths['/api/hermes/commerce/orders'].post.responses['202'].content
+      ['application/json'].schema).toEqual({ $ref: '#/components/schemas/CommerceActionResponse' })
+    expect(ctx.body.paths['/api/hermes/commerce/orders'].post.responses['200']).toBeUndefined()
+
+    expect(ctx.body.paths['/api/hermes/commerce/offers'].get.parameters).toEqual([
+      expect.objectContaining({ name: 'accountId', required: true }),
+      expect.objectContaining({ name: 'activeAt', required: false }),
+      expect.objectContaining({ name: 'limit', required: false }),
+    ])
+    expect(ctx.body.paths['/api/hermes/commerce/transactions'].get.parameters).toEqual([
+      expect.objectContaining({ name: 'accountId', required: false }),
+      expect.objectContaining({ name: 'state', required: false,
+        schema: expect.objectContaining({ enum: expect.arrayContaining(['paid', 'delivered', 'refunded']) }) }),
+      expect.objectContaining({ name: 'limit', required: false }),
+    ])
+    expect(operations.filter(operation => operation.operationId.startsWith('get')
+      || ['overview', 'accounts', 'activationReviews', 'offers', 'comparisons', 'carts', 'quotes',
+        'workflows', 'workflow', 'transactions', 'transaction', 'takeovers'].includes(operation.operationId))
+      .every(operation => operation.requestBody === undefined)).toBe(true)
+
+    const serializedSchemas = JSON.stringify({
+      account: ctx.body.components.schemas.CommerceAccountDto,
+      offer: ctx.body.components.schemas.CommerceOfferDto,
+      cart: ctx.body.components.schemas.CommerceCartDto,
+      transaction: ctx.body.components.schemas.CommerceTransactionDto,
+    })
+    expect(serializedSchemas).not.toMatch(/providerRequestId|providerOfferId|providerQuoteId|destinationToken|recipientToken|credential|cookie/i)
+    for (const operation of operations) {
+      expect(operation.responses['400'].content['application/json'].schema)
+        .toEqual({ $ref: '#/components/schemas/CommerceApiError' })
+      expect(operation.responses['401'].content['application/json'].schema)
+        .toEqual({ $ref: '#/components/schemas/AuthError' })
+      expect(operation.responses['403'].content['application/json'].schema)
+        .toEqual({ $ref: '#/components/schemas/AuthError' })
+    }
+  })
+
   it('discovers multiple annotated schema sources and rejects conflicts or missing refs', () => {
     const root = mkdtempSync(resolve(tmpdir(), 'openapi-schema-sources-'))
     const script = resolve(process.cwd(), 'scripts/generate-openapi.mjs')

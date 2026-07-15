@@ -82,6 +82,7 @@ const tagMappings = {
   'routes/hermes/personal-twin.ts': { name: 'Personal Twin', description: 'Global personal digital twin state and legacy synchronization' },
   'routes/hermes/assistant-roles.ts': { name: 'Assistant Roles', description: 'Assistant role registry, profile mappings, scoped context previews, and context recipes' },
   'routes/hermes/action-fabric.ts': { name: 'Action Fabric', description: 'Governed capability discovery, durable action workflows, audit, and emergency controls' },
+  'routes/hermes/commerce.ts': { name: 'Commerce', description: 'Governed commerce observation, comparison, transaction, fulfillment, and activation' },
   'routes/hermes/health-loop.ts': { name: 'Health Loop', description: 'Protected health ingestion, artifact consent, intervention feedback, and automation settings' },
   'routes/hermes/home.ts': { name: 'Home', description: 'Personal Twin home state, inventory, governed Home Assistant commands, and workflow review' },
   'routes/hermes/internet-execution.ts': { name: 'Internet Execution', description: 'Governed semantic internet reads, durable receipts, and workflow status' },
@@ -2289,6 +2290,255 @@ for (const [path, status] of [
   const responses = openapi.paths[path].post.responses
   responses[status] = responses['200']
   if (status === '201' && path.endsWith('/offers')) delete responses['200']
+}
+
+// Commerce exposes semantic, minimized DTOs only. Provider credentials, request identities, raw
+// receipts, full address/recipient tokens, and adapter payloads remain server-owned.
+const commerceId = { type: 'string', minLength: 1, maxLength: 200,
+  pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$' }
+const commerceToken = { type: 'string', minLength: 8, maxLength: 200,
+  pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$' }
+const commerceDigest = { type: 'string', minLength: 64, maxLength: 64, pattern: '^[a-f0-9]{64}$' }
+const commerceTimestamp = { type: 'string', format: 'date-time', maxLength: 64 }
+const commerceNullableTimestamp = { ...commerceTimestamp, nullable: true }
+const commerceCurrency = { type: 'string', pattern: '^[A-Z]{3}$', minLength: 3, maxLength: 3 }
+const commerceMoneyMinor = { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
+const commerceModes = ['observe', 'shadow', 'live']
+const commerceProviders = ['food_delivery', 'taobao']
+const commerceWorkflowStates = ['draft', 'policy_check', 'preparing', 'executing', 'verifying',
+  'waiting_user', 'retrying', 'compensating', 'succeeded', 'denied', 'cancelled', 'failed',
+  'dead_letter', 'compensated']
+const commerceTransactionStates = ['proposed', 'quoted', 'waiting_approval', 'submitting_order',
+  'lookup_required', 'order_pending', 'waiting_payment', 'submitting_payment', 'paid', 'fulfilling',
+  'delivered', 'cancelling', 'cancelled', 'refunding', 'refunded', 'waiting_user', 'failed']
+const commerceErrorCode = { type: 'string', pattern: '^COMMERCE_[A-Z0-9_]+$', maxLength: 160 }
+const commerceAvailableActions = exactObject({ approve: { type: 'boolean' }, reject: { type: 'boolean' },
+  cancel: { type: 'boolean' }, retry: { type: 'boolean' }, compensate: { type: 'boolean' } },
+['approve', 'reject', 'cancel', 'retry', 'compensate'])
+const commerceWorkflow = exactObject({ id: commerceId, capabilityId: commerceId,
+  state: { type: 'string', enum: commerceWorkflowStates }, version: { type: 'integer', minimum: 1 },
+  attempt: { type: 'integer', minimum: 0 }, lastErrorCode: { ...commerceErrorCode, nullable: true },
+  createdAt: commerceTimestamp, updatedAt: commerceTimestamp, completedAt: commerceNullableTimestamp,
+  availableActions: commerceAvailableActions },
+['id', 'capabilityId', 'state', 'version', 'attempt', 'lastErrorCode', 'createdAt', 'updatedAt',
+  'completedAt', 'availableActions'])
+const commerceAccount = exactObject({ id: commerceId, provider: { type: 'string', enum: commerceProviders },
+  mode: { type: 'string', enum: commerceModes }, currency: commerceCurrency,
+  executorId: { ...commerceId, nullable: true }, displayName: { type: 'string', minLength: 1, maxLength: 160 },
+  health: { type: 'string', enum: ['unknown', 'healthy', 'degraded', 'unhealthy', 'revoked'] },
+  enabled: { type: 'boolean' }, policyEpoch: { type: 'integer', minimum: 1 },
+  version: { type: 'integer', minimum: 1 }, createdAt: commerceTimestamp, updatedAt: commerceTimestamp,
+  revokedAt: commerceNullableTimestamp }, ['id', 'provider', 'mode', 'currency', 'executorId', 'displayName',
+  'health', 'enabled', 'policyEpoch', 'version', 'createdAt', 'updatedAt', 'revokedAt'])
+const commerceOffer = exactObject({ id: commerceId, accountId: commerceId,
+  provider: { type: 'string', enum: commerceProviders }, productId: commerceId, skuId: commerceId,
+  merchantId: commerceId, merchantName: { type: 'string', maxLength: 200 },
+  title: { type: 'string', maxLength: 500 }, unitLabel: { type: 'string', maxLength: 80 },
+  money: exactObject({ currency: commerceCurrency, amountMinor: commerceMoneyMinor }, ['currency', 'amountMinor']),
+  available: { type: 'boolean' }, maxQuantity: { type: 'integer', minimum: 0, maximum: 9999 },
+  fulfillment: { type: 'string', enum: ['delivery', 'shipping', 'pickup'] },
+  fulfillmentMinutes: { type: 'integer', minimum: 0, maximum: 525600, nullable: true },
+  observedAt: commerceTimestamp, expiresAt: commerceTimestamp }, ['id', 'accountId', 'provider', 'productId',
+  'skuId', 'merchantId', 'merchantName', 'title', 'unitLabel', 'money', 'available', 'maxQuantity',
+  'fulfillment', 'fulfillmentMinutes', 'observedAt', 'expiresAt'])
+const commerceRequirement = exactObject({ query: { type: 'string', minLength: 1, maxLength: 200 },
+  quantity: { type: 'integer', minimum: 1, maximum: 9999 }, maxTotalMinor: { ...commerceMoneyMinor, nullable: true },
+  deliveryBefore: commerceNullableTimestamp, excludedMerchantIds: { type: 'array', maxItems: 30,
+    uniqueItems: true, items: commerceId }, preferenceCodes: { type: 'array', maxItems: 30,
+    uniqueItems: true, items: commerceId } }, ['query', 'quantity', 'maxTotalMinor', 'deliveryBefore',
+  'excludedMerchantIds', 'preferenceCodes'])
+const commerceCandidate = exactObject({ offerSnapshotId: commerceId, eligible: { type: 'boolean' },
+  score: { type: 'integer', minimum: 0, maximum: 1000000, nullable: true }, priceMinor: commerceMoneyMinor,
+  fulfillmentMinutes: { type: 'integer', minimum: 0, nullable: true },
+  exclusionCodes: { type: 'array', maxItems: 64, items: commerceId },
+  rationaleCodes: { type: 'array', maxItems: 64, items: commerceId } }, ['offerSnapshotId', 'eligible',
+  'score', 'priceMinor', 'fulfillmentMinutes', 'exclusionCodes', 'rationaleCodes'])
+const commerceComparison = exactObject({ id: commerceId, accountId: commerceId,
+  requirement: commerceRequirement, candidates: { type: 'array', maxItems: 64, items: commerceCandidate },
+  selectedOfferSnapshotId: { ...commerceId, nullable: true }, inputDigest: commerceDigest,
+  createdAt: commerceTimestamp }, ['id', 'accountId', 'requirement', 'candidates',
+  'selectedOfferSnapshotId', 'inputDigest', 'createdAt'])
+const commerceCart = exactObject({ id: commerceId, accountId: commerceId,
+  revision: { type: 'integer', minimum: 1 }, items: { type: 'array', minItems: 1, maxItems: 64,
+    items: exactObject({ offerSnapshotId: commerceId, quantity: { type: 'integer', minimum: 1, maximum: 9999 } },
+      ['offerSnapshotId', 'quantity']) }, destinationDigest: commerceDigest, recipientDigest: commerceDigest,
+  substitution: { type: 'string', enum: ['deny', 'same_sku_only'] }, contentDigest: commerceDigest,
+  createdAt: commerceTimestamp }, ['id', 'accountId', 'revision', 'items', 'destinationDigest',
+  'recipientDigest', 'substitution', 'contentDigest', 'createdAt'])
+const commerceBreakdown = exactObject({ itemsMinor: commerceMoneyMinor, deliveryMinor: commerceMoneyMinor,
+  serviceMinor: commerceMoneyMinor, taxMinor: commerceMoneyMinor, discountMinor: commerceMoneyMinor,
+  totalMinor: commerceMoneyMinor }, ['itemsMinor', 'deliveryMinor', 'serviceMinor', 'taxMinor',
+  'discountMinor', 'totalMinor'])
+const commerceQuote = exactObject({ id: commerceId, accountId: commerceId, cartRevisionId: commerceId,
+  cartDigest: commerceDigest, currency: commerceCurrency, breakdown: commerceBreakdown,
+  quoteDigest: commerceDigest, observedAt: commerceTimestamp, expiresAt: commerceTimestamp,
+  status: { type: 'string', enum: ['active', 'expired', 'superseded', 'consumed'] } }, ['id', 'accountId',
+  'cartRevisionId', 'cartDigest', 'currency', 'breakdown', 'quoteDigest', 'observedAt', 'expiresAt', 'status'])
+const commerceTransaction = exactObject({ id: commerceId, workflowId: commerceId, accountId: commerceId,
+  provider: { type: 'string', enum: commerceProviders }, mode: { type: 'string', enum: commerceModes },
+  policyEpoch: { type: 'integer', minimum: 1 }, quoteId: commerceId, quoteDigest: commerceDigest,
+  providerOrderId: { ...commerceId, nullable: true }, currency: commerceCurrency,
+  expectedAmountMinor: commerceMoneyMinor, actualAmountMinor: { ...commerceMoneyMinor, nullable: true },
+  state: { type: 'string', enum: commerceTransactionStates }, version: { type: 'integer', minimum: 1 },
+  createdAt: commerceTimestamp, updatedAt: commerceTimestamp, completedAt: commerceNullableTimestamp },
+['id', 'workflowId', 'accountId', 'provider', 'mode', 'policyEpoch', 'quoteId', 'quoteDigest',
+  'providerOrderId', 'currency', 'expectedAmountMinor', 'actualAmountMinor', 'state', 'version',
+  'createdAt', 'updatedAt', 'completedAt'])
+const commerceActivationReview = exactObject({ id: commerceId, accountId: commerceId,
+  fromMode: { type: 'string', enum: commerceModes }, toMode: { type: 'string', enum: commerceModes },
+  actorUserId: commerceId, shadowEvidenceDigest: { ...commerceDigest, nullable: true }, limitsDigest: commerceDigest,
+  approved: { type: 'boolean' }, createdAt: commerceTimestamp }, ['id', 'accountId', 'fromMode', 'toMode',
+  'actorUserId', 'shadowEvidenceDigest', 'limitsDigest', 'approved', 'createdAt'])
+const commerceTakeover = exactObject({ workflowId: commerceId, capabilityId: commerceId,
+  reasonCode: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,159}$' }, state: { type: 'string', enum: ['waiting_user'] },
+  requestedAt: commerceTimestamp }, ['workflowId', 'capabilityId', 'reasonCode', 'state', 'requestedAt'])
+const commerceRuntime = exactObject({ configuredAccountCount: { type: 'integer', minimum: 0 },
+  shadowExecutorEnabled: { type: 'boolean' }, liveExecutorEnabled: { type: 'boolean' },
+  authorizedTargetCount: { type: 'integer', minimum: 0 }, emergencyStopped: { type: 'boolean' } },
+['configuredAccountCount', 'shadowExecutorEnabled', 'liveExecutorEnabled', 'authorizedTargetCount',
+  'emergencyStopped'])
+const arrayResponse = (field, item) => exactObject({ [field]: { type: 'array', maxItems: 200, items: item } }, [field])
+
+Object.assign(openapi.components.schemas, {
+  CommerceApiError: exactObject({ error: { type: 'string', maxLength: 200 }, code: commerceErrorCode },
+    ['error', 'code']),
+  CommerceAccountDto: commerceAccount, CommerceOfferDto: commerceOffer,
+  CommerceComparisonDto: commerceComparison, CommerceCartDto: commerceCart, CommerceQuoteDto: commerceQuote,
+  CommerceTransactionDto: commerceTransaction, CommerceWorkflowDto: commerceWorkflow,
+  CommerceTakeoverDto: commerceTakeover, CommerceActivationReviewDto: commerceActivationReview,
+  CommerceActionResponse: exactObject({ intent: exactObject({ id: commerceId, capabilityId: commerceId },
+    ['id', 'capabilityId']), policyDecision: exactObject({ id: commerceId,
+    outcome: { type: 'string', enum: ['allow', 'deny', 'waiting_user'] }, reasonCodes: { type: 'array',
+      maxItems: 64, items: commerceId } }, ['id', 'outcome', 'reasonCodes']), workflow: commerceWorkflow },
+  ['intent', 'policyDecision', 'workflow']),
+  CommerceAccountListResponse: arrayResponse('accounts', schemaRef('CommerceAccountDto')),
+  CommerceAccountResponse: exactObject({ account: schemaRef('CommerceAccountDto') }, ['account']),
+  CommerceActivationReviewListResponse: arrayResponse('reviews', schemaRef('CommerceActivationReviewDto')),
+  CommerceActivationResponse: exactObject({ account: schemaRef('CommerceAccountDto'),
+    review: schemaRef('CommerceActivationReviewDto') }, ['account', 'review']),
+  CommerceOfferListResponse: arrayResponse('offers', schemaRef('CommerceOfferDto')),
+  CommerceComparisonListResponse: arrayResponse('comparisons', schemaRef('CommerceComparisonDto')),
+  CommerceCartListResponse: arrayResponse('carts', schemaRef('CommerceCartDto')),
+  CommerceQuoteListResponse: arrayResponse('quotes', schemaRef('CommerceQuoteDto')),
+  CommerceWorkflowListResponse: arrayResponse('workflows', schemaRef('CommerceWorkflowDto')),
+  CommerceWorkflowResponse: exactObject({ workflow: { allOf: [schemaRef('CommerceWorkflowDto')],
+    properties: { policyDecision: { type: 'object', nullable: true, additionalProperties: false },
+      steps: { type: 'array', maxItems: 32, items: { type: 'object', additionalProperties: false } } } } },
+  ['workflow']),
+  CommerceTransactionListResponse: arrayResponse('transactions', schemaRef('CommerceTransactionDto')),
+  CommerceTransactionResponse: exactObject({ transaction: schemaRef('CommerceTransactionDto'),
+    payment: { type: 'object', nullable: true, additionalProperties: false },
+    delivery: { type: 'array', maxItems: 200, items: { type: 'object', additionalProperties: false } },
+    cancellations: { type: 'array', maxItems: 200, items: { type: 'object', additionalProperties: false } },
+    refunds: { type: 'array', maxItems: 200, items: { type: 'object', additionalProperties: false } },
+    checkpoints: { type: 'array', maxItems: 200, items: { type: 'object', additionalProperties: false } },
+  }, ['transaction', 'payment', 'delivery', 'cancellations', 'refunds', 'checkpoints']),
+  CommerceTakeoverListResponse: arrayResponse('takeovers', schemaRef('CommerceTakeoverDto')),
+  CommerceOverviewResponse: exactObject({ runtime: commerceRuntime,
+    accounts: { type: 'array', maxItems: 200, items: schemaRef('CommerceAccountDto') },
+    offers: { type: 'array', maxItems: 200, items: schemaRef('CommerceOfferDto') },
+    workflows: { type: 'array', maxItems: 20, items: schemaRef('CommerceWorkflowDto') },
+    transactions: { type: 'array', maxItems: 20, items: schemaRef('CommerceTransactionDto') },
+    takeovers: { type: 'array', maxItems: 200, items: schemaRef('CommerceTakeoverDto') },
+    summary: exactObject({ accountCount: { type: 'integer', minimum: 0 },
+      liveAccountCount: { type: 'integer', minimum: 0 }, activeOfferCount: { type: 'integer', minimum: 0 },
+      activeWorkflowCount: { type: 'integer', minimum: 0 }, activeTransactionCount: { type: 'integer', minimum: 0 },
+      pendingTakeoverCount: { type: 'integer', minimum: 0 } }, ['accountCount', 'liveAccountCount',
+      'activeOfferCount', 'activeWorkflowCount', 'activeTransactionCount', 'pendingTakeoverCount']) },
+  ['runtime', 'accounts', 'offers', 'workflows', 'transactions', 'takeovers', 'summary']),
+})
+
+const commerceJsonBody = (path, schema, method = 'post') => {
+  openapi.paths[path][method].requestBody = { required: true, content: { 'application/json': { schema } } }
+}
+const commerceActionFields = {
+  idempotencyKey: commerceToken,
+  rationale: { type: 'string', minLength: 1, maxLength: 500 },
+}
+commerceJsonBody('/api/hermes/commerce/accounts', exactObject({ id: commerceId,
+  provider: { type: 'string', enum: commerceProviders }, mode: { type: 'string', enum: ['observe', 'shadow'] },
+  currency: commerceCurrency, displayName: { type: 'string', minLength: 1, maxLength: 160 },
+  enabled: { type: 'boolean', default: true } }, ['id', 'provider', 'mode', 'currency', 'displayName']))
+commerceJsonBody('/api/hermes/commerce/accounts/{id}/health', exactObject({
+  health: { type: 'string', enum: ['unknown', 'healthy', 'degraded', 'unhealthy'] },
+  expectedVersion: { type: 'integer', minimum: 1 } }, ['health', 'expectedVersion']), 'put')
+const commerceLimits = exactObject({ currency: commerceCurrency, perActionMinor: commerceMoneyMinor,
+  dailyMinor: commerceMoneyMinor, merchantIds: { type: 'array', maxItems: 30, uniqueItems: true,
+    items: commerceId }, destinationDigests: { type: 'array', maxItems: 30, uniqueItems: true,
+    items: commerceDigest } }, ['currency', 'perActionMinor', 'dailyMinor', 'merchantIds', 'destinationDigests'])
+commerceJsonBody('/api/hermes/commerce/accounts/{id}/activate', exactObject({
+  toMode: { type: 'string', enum: commerceModes }, limits: commerceLimits }, ['toMode', 'limits']))
+commerceJsonBody('/api/hermes/commerce/accounts/{id}/revoke', exactObject({
+  expectedVersion: { type: 'integer', minimum: 1 } }, ['expectedVersion']))
+commerceJsonBody('/api/hermes/commerce/offers/search', exactObject({ ...commerceActionFields,
+  accountId: commerceId, query: { type: 'string', minLength: 1, maxLength: 200 },
+  limit: { type: 'integer', minimum: 1, maximum: 20 } }, ['accountId', 'query', 'limit',
+  'idempotencyKey', 'rationale']))
+commerceJsonBody('/api/hermes/commerce/comparisons', exactObject({ ...commerceActionFields,
+  accountId: commerceId, requirement: commerceRequirement, activeAt: commerceTimestamp },
+['accountId', 'requirement', 'activeAt', 'idempotencyKey', 'rationale']))
+commerceJsonBody('/api/hermes/commerce/carts', exactObject({ ...commerceActionFields,
+  comparisonId: commerceId, destinationToken: commerceToken, recipientToken: commerceToken,
+  substitution: { type: 'string', enum: ['deny', 'same_sku_only'] } }, ['comparisonId', 'destinationToken',
+  'recipientToken', 'substitution', 'idempotencyKey', 'rationale']))
+commerceJsonBody('/api/hermes/commerce/quotes', exactObject({ ...commerceActionFields,
+  cartRevisionId: commerceId, providerRequestId: commerceToken }, ['cartRevisionId', 'providerRequestId',
+  'idempotencyKey', 'rationale']))
+commerceJsonBody('/api/hermes/commerce/orders', exactObject({ ...commerceActionFields,
+  quoteId: commerceId, providerRequestId: commerceToken }, ['quoteId', 'providerRequestId',
+  'idempotencyKey', 'rationale']))
+commerceJsonBody('/api/hermes/commerce/payments', exactObject({ ...commerceActionFields,
+  transactionId: commerceId, approvalId: commerceToken }, ['transactionId', 'approvalId',
+  'idempotencyKey', 'rationale']))
+commerceJsonBody('/api/hermes/commerce/delivery', exactObject({ ...commerceActionFields,
+  transactionId: commerceId }, ['transactionId', 'idempotencyKey', 'rationale']))
+commerceJsonBody('/api/hermes/commerce/cancellations', exactObject({ ...commerceActionFields,
+  transactionId: commerceId, providerRequestId: commerceToken,
+  reasonCode: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,127}$' } }, ['transactionId',
+  'providerRequestId', 'reasonCode', 'idempotencyKey', 'rationale']))
+commerceJsonBody('/api/hermes/commerce/refunds', exactObject({ ...commerceActionFields,
+  transactionId: commerceId, providerRequestId: commerceToken,
+  reasonCode: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,127}$' }, amountMinor: commerceMoneyMinor },
+['transactionId', 'providerRequestId', 'reasonCode', 'amountMinor', 'idempotencyKey', 'rationale']))
+
+const commerceLimitParameter = { name: 'limit', in: 'query', required: false,
+  schema: { type: 'integer', minimum: 1, maximum: 200, default: 100 } }
+const commerceAccountParameter = required => ({ name: 'accountId', in: 'query', required,
+  schema: commerceId })
+openapi.paths['/api/hermes/commerce/accounts'].get.parameters = [commerceLimitParameter]
+openapi.paths['/api/hermes/commerce/accounts/{id}/activation-reviews'].get.parameters = [
+  { name: 'id', in: 'path', required: true, schema: commerceId }, commerceLimitParameter]
+openapi.paths['/api/hermes/commerce/offers'].get.parameters = [commerceAccountParameter(true),
+  { name: 'activeAt', in: 'query', required: false, schema: commerceTimestamp }, commerceLimitParameter]
+for (const path of ['/api/hermes/commerce/comparisons', '/api/hermes/commerce/carts']) {
+  openapi.paths[path].get.parameters = [commerceAccountParameter(false), commerceLimitParameter]
+}
+openapi.paths['/api/hermes/commerce/quotes'].get.parameters = [commerceAccountParameter(false),
+  { name: 'status', in: 'query', required: false,
+    schema: { type: 'string', enum: ['active', 'expired', 'superseded', 'consumed'] } }, commerceLimitParameter]
+openapi.paths['/api/hermes/commerce/workflows'].get.parameters = [
+  { name: 'state', in: 'query', required: false, schema: { type: 'string', enum: commerceWorkflowStates } },
+  commerceLimitParameter]
+openapi.paths['/api/hermes/commerce/transactions'].get.parameters = [commerceAccountParameter(false),
+  { name: 'state', in: 'query', required: false, schema: { type: 'string', enum: commerceTransactionStates } },
+  commerceLimitParameter]
+openapi.paths['/api/hermes/commerce/takeovers'].get.parameters = [commerceLimitParameter]
+for (const [path, method] of [
+  ['/api/hermes/commerce/accounts', 'post'],
+  ['/api/hermes/commerce/accounts/{id}/health', 'put'],
+  ['/api/hermes/commerce/accounts/{id}/activate', 'post'],
+  ['/api/hermes/commerce/accounts/{id}/revoke', 'post'],
+]) openapi.paths[path][method]['x-hermes-required-role'] = 'super_admin'
+for (const path of ['/api/hermes/commerce/accounts']) {
+  const responses = openapi.paths[path].post.responses
+  responses['201'] = responses['200']; delete responses['200']
+}
+for (const path of ['/api/hermes/commerce/offers/search', '/api/hermes/commerce/comparisons',
+  '/api/hermes/commerce/carts', '/api/hermes/commerce/quotes', '/api/hermes/commerce/orders',
+  '/api/hermes/commerce/payments', '/api/hermes/commerce/delivery', '/api/hermes/commerce/cancellations',
+  '/api/hermes/commerce/refunds']) {
+  const responses = openapi.paths[path].post.responses
+  responses['202'] = responses['200']; delete responses['200']
 }
 
 // Write output
