@@ -111,7 +111,7 @@ describe('action fabric database', () => {
     if (hermesHome) rmSync(hermesHome, { recursive: true, force: true })
   })
 
-  it('creates one global database below Hermes home with schema version five', async () => {
+  it('creates one global database below Hermes home with schema version six', async () => {
     const { getActionFabricDbPath, withActionFabricDb } = await import(
       '../../packages/server/src/services/hermes/action-fabric'
     )
@@ -148,9 +148,13 @@ describe('action fabric database', () => {
         expect(index).toMatchObject({ unique: signature.unique, partial: signature.partial })
         expect(columns).toEqual(signature.columns)
       }
-      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '5' })
-      expect((db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='fabric_executors'").get() as { sql: string }).sql)
-        .toContain("'connector'")
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '6' })
+      const executorSql = (db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='fabric_executors'",
+      ).get() as { sql: string }).sql
+      expect(executorSql).toContain("'connector'")
+      expect(executorSql).toContain("'mcp'")
+      expect(executorSql).toContain("'browser'")
       expect((db.prepare('PRAGMA table_info(fabric_outbox)').all() as Array<{
         name: string; type: string; notnull: number; dflt_value: string | null; pk: number
       }>).find(row => row.name === 'claim_token')).toMatchObject({
@@ -178,7 +182,7 @@ describe('action fabric database', () => {
     initActionFabricSchema(db)
 
     try {
-      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '5' })
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '6' })
       expect(db.prepare('SELECT COUNT(*) AS count FROM fabric_control_state').get()).toEqual({ count: 1 })
       expect((db.prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'fabric_%'",
@@ -214,11 +218,53 @@ describe('action fabric database', () => {
     initActionFabricSchema(db)
 
     try {
-      expect(db.prepare("SELECT value FROM fabric_meta WHERE key='schema_version'").get()).toEqual({ value: '5' })
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key='schema_version'").get()).toEqual({ value: '6' })
       expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
       expect(() => db.prepare(`INSERT INTO fabric_executors(
         id,type,name,environment,health,health_details_json,configuration_json,enabled,policy_version,created_at,updated_at
       ) VALUES ('migrated-connector','connector','Connector','production','healthy','{}','{\"externalWrite\":false}',1,1,'now','now')`).run()).not.toThrow()
+    } finally {
+      db.close()
+    }
+  })
+
+  it('migrates version five executors to MCP and browser support without losing references', async () => {
+    const { initActionFabricSchema } = await import('../../packages/server/src/services/hermes/action-fabric')
+    const db = new DatabaseSync(':memory:')
+    initActionFabricSchema(db)
+    seedJsonConstrainedRows(db)
+    db.prepare("UPDATE fabric_meta SET value='5' WHERE key='schema_version'").run()
+    db.exec('PRAGMA foreign_keys=OFF')
+    db.exec(`
+      DROP TRIGGER fabric_executors_json_insert;
+      DROP TRIGGER fabric_executors_json_update;
+      CREATE TABLE fabric_executors_v5 (
+        id TEXT PRIMARY KEY, type TEXT NOT NULL CHECK(type IN ('simulator','internal','connector')), name TEXT NOT NULL,
+        environment TEXT NOT NULL CHECK(environment IN ('simulator','internal','sandbox','production')),
+        health TEXT NOT NULL CHECK(health IN ('unknown','healthy','degraded','unhealthy')),
+        health_details_json TEXT NOT NULL DEFAULT '{}', configuration_json TEXT NOT NULL DEFAULT '{}',
+        enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), policy_version INTEGER NOT NULL DEFAULT 1 CHECK(policy_version > 0),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      INSERT INTO fabric_executors_v5 SELECT * FROM fabric_executors;
+      DROP TABLE fabric_executors;
+      ALTER TABLE fabric_executors_v5 RENAME TO fabric_executors;
+    `)
+    db.exec('PRAGMA foreign_keys=ON')
+
+    initActionFabricSchema(db)
+
+    try {
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key='schema_version'").get()).toEqual({ value: '6' })
+      expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+      for (const type of ['mcp', 'browser']) {
+        expect(() => db.prepare(`INSERT INTO fabric_executors(
+          id,type,name,environment,health,health_details_json,configuration_json,enabled,policy_version,created_at,updated_at
+        ) VALUES (?,?,?,'sandbox','healthy','{}','{"externalWrite":false}',1,1,'now','now')`)
+          .run(`${type}-fixture`, type, type)).not.toThrow()
+      }
+      expect(db.prepare('SELECT COUNT(*) AS count FROM fabric_executor_capabilities').get())
+        .toEqual({ count: 1 })
     } finally {
       db.close()
     }
@@ -276,7 +322,7 @@ describe('action fabric database', () => {
     ) VALUES ('outbox-existing', 'fabric.test', 'aggregate', '{}', 'pending', 0, '2026-07-12T00:00:00.000Z', '2026-07-12T00:00:00.000Z')`).run()
 
     initActionFabricSchema(db)
-    expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '5' })
+    expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '6' })
     expect(db.prepare('SELECT id, claim_token FROM fabric_outbox').all()).toEqual([
       { id: 'outbox-existing', claim_token: null },
     ])
@@ -295,7 +341,7 @@ describe('action fabric database', () => {
     initActionFabricSchema(db)
 
     try {
-      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '5' })
+      expect(db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()).toEqual({ value: '6' })
       expect(db.prepare("SELECT payload_json FROM fabric_outbox WHERE id = 'json-outbox'").get()).toEqual({ payload_json: '{}' })
       expect(db.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'fabric_%_json_%'").get())
         .toEqual({ count: REQUIRED_JSON_TRIGGERS.length })
@@ -442,7 +488,7 @@ describe('action fabric database', () => {
     mkdirSync(join(hermesHome, 'personal'), { recursive: true })
     const db = new DatabaseSync(getActionFabricDbPath())
     db.exec('CREATE TABLE fabric_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
-    db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run('schema_version', '6')
+    db.prepare('INSERT INTO fabric_meta(key, value) VALUES (?, ?)').run('schema_version', '7')
     db.close()
 
     expect(() => withActionFabricDb(current => current.prepare('SELECT 1').get())).toThrow(
@@ -500,7 +546,7 @@ describe('action fabric database', () => {
 
     try {
       expect(withActionFabricDb(db => db.prepare("SELECT value FROM fabric_meta WHERE key = 'schema_version'").get()))
-        .toEqual({ value: '5' })
+        .toEqual({ value: '6' })
     } finally {
       writer.exec('ROLLBACK')
       writer.close()

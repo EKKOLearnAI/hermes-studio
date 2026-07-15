@@ -3517,7 +3517,9 @@
               "enum": [
                 "simulator",
                 "internal",
-                "connector"
+                "connector",
+                "mcp",
+                "browser"
               ]
             }
           }
@@ -18719,7 +18721,9 @@
         "enum": [
           "simulator",
           "internal",
-          "connector"
+          "connector",
+          "mcp",
+          "browser"
         ]
       },
       "ActionExecutorEnvironment": {

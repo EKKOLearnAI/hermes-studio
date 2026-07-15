@@ -19,7 +19,7 @@ const SEMANTIC_ID = /^[a-z][a-z0-9]*(?:[._:-][a-z0-9][a-z0-9-]*)+$/
 const EXECUTOR_ID = /^[a-z][a-z0-9]*(?:[.-][a-z0-9][a-z0-9-]*)*$/
 const RISKS = new Set<FabricRisk>(['none', 'low', 'medium', 'high', 'critical'])
 const IDEMPOTENCY = new Set<FabricIdempotency>(['required', 'supported', 'none'])
-const EXECUTOR_TYPES = new Set<FabricExecutorType>(['simulator', 'internal', 'connector'])
+const EXECUTOR_TYPES = new Set<FabricExecutorType>(['simulator', 'internal', 'connector', 'mcp', 'browser'])
 const ENVIRONMENTS = new Set<FabricEnvironment>(['simulator', 'internal', 'sandbox', 'production'])
 const HEALTH = new Set<FabricExecutorHealth>(['unknown', 'healthy', 'degraded', 'unhealthy'])
 const MAX_DESCRIPTION = 2_000
@@ -729,8 +729,9 @@ function validateExecutor(input: FabricExecutorInput): FabricExecutorInput {
   if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 256) throw new Error('Invalid executor name')
   if (!ENVIRONMENTS.has(input.environment)) throw new Error(`Invalid executor environment: ${String(input.environment)}`)
   assertJsonObject(input.configuration, 'executor configuration'); assertJsonBound(input.configuration, 'executor configuration')
-  if (input.type === 'connector' && typeof input.configuration.externalWrite !== 'boolean') {
-    throw new Error('Connector executor must explicitly classify externalWrite')
+  if (['connector', 'mcp', 'browser'].includes(input.type)
+    && typeof input.configuration.externalWrite !== 'boolean') {
+    throw new Error('External executor must explicitly classify externalWrite')
   }
   if (typeof input.enabled !== 'boolean') throw new Error('Executor enabled must be boolean')
   return { ...input, configuration: { ...input.configuration,

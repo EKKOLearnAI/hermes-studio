@@ -166,7 +166,7 @@ describe('api docs controller', () => {
       { name: 'environment', in: 'query', required: false, schema: { type: 'string', enum: ['simulator', 'internal', 'sandbox', 'production'] } },
       { name: 'health', in: 'query', required: false, schema: { type: 'string', enum: ['unknown', 'healthy', 'degraded', 'unhealthy'] } },
       { name: 'limit', in: 'query', required: false, schema: { type: 'integer' } },
-      { name: 'type', in: 'query', required: false, schema: { type: 'string', enum: ['simulator', 'internal', 'connector'] } },
+      { name: 'type', in: 'query', required: false, schema: { type: 'string', enum: ['simulator', 'internal', 'connector', 'mcp', 'browser'] } },
     ])
     expect(ctx.body.paths['/api/hermes/action-fabric/workflows'].get.parameters).toEqual([
       { name: 'capabilityId', in: 'query', required: false, schema: { type: 'string' } },

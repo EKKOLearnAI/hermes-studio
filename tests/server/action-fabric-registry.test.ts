@@ -128,13 +128,23 @@ describe('action fabric registry', () => {
       WHERE b.capability_id='simulator.echo'`).get())).toEqual({ matches: 0 })
   })
 
-  it.each(['mcp', 'browser'])('rejects unsupported executor type %s from create and update APIs', type => {
+  it.each(['mcp', 'browser'] as const)('accepts governed external executor type %s', type => {
+    const created = createFabricExecutor({
+      id: `${type}-main`, type, name: type, environment: 'sandbox',
+      configuration: { externalWrite: false, interruptible: true }, enabled: true,
+    })
+    expect(created).toMatchObject({ type, configuration: { externalWrite: false, interruptible: true } })
     expect(() => createFabricExecutor({
-      id: `${type}-main`, type, name: type, environment: 'sandbox', configuration: { externalWrite: false }, enabled: true,
-    } as never)).toThrow(/unsupported executor type/i)
+      id: `${type}-unclassified`, type, name: type, environment: 'sandbox', configuration: {}, enabled: true,
+    })).toThrow(/explicitly classify externalWrite/i)
+    expect(updateFabricExecutor(`${type}-main`, { type })).toMatchObject({ type })
+  })
 
-    ensureBuiltInFabricRegistry()
-    expect(() => updateFabricExecutor('simulator-main', { type } as never)).toThrow(/unsupported executor type/i)
+  it('rejects executor types outside the governed set', () => {
+    expect(() => createFabricExecutor({
+      id: 'unknown-main', type: 'unknown', name: 'unknown', environment: 'sandbox',
+      configuration: { externalWrite: false }, enabled: true,
+    } as never)).toThrow(/unsupported executor type/i)
   })
 
   it('accepts connector executors with explicit external-write classification', () => {

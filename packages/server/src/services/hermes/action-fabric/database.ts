@@ -3,7 +3,7 @@ import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 
-const SCHEMA_VERSION = 5
+const SCHEMA_VERSION = 6
 const REGISTRY_JSON_MAX_BYTES = 131_072
 const PAYLOAD_JSON_MAX_BYTES = 32_768
 const REQUIRED_TABLES = [
@@ -152,7 +152,7 @@ export function initActionFabricSchema(db: DatabaseSync): void {
     if (currentVersion === SCHEMA_VERSION && isSchemaComplete(db)) return
   }
 
-  const rebuildExecutors = currentVersion !== null && currentVersion > 0 && currentVersion < 4
+  const rebuildExecutors = currentVersion !== null && currentVersion > 0 && currentVersion < 6
   if (rebuildExecutors) db.exec('PRAGMA foreign_keys = OFF')
   let transactionStarted = false
   try {
@@ -187,6 +187,10 @@ export function initActionFabricSchema(db: DatabaseSync): void {
       setSchemaVersion(db, 5)
     } else {
       createSchemaV5(db)
+    }
+    if (version < 6) {
+      migrateSchemaV6(db)
+      setSchemaVersion(db, 6)
     }
     assertSchemaComplete(db, SCHEMA_VERSION, true)
     db.exec('COMMIT')
@@ -351,7 +355,7 @@ function assertExecutorTypeConstraint(db: DatabaseSync): void {
   const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='fabric_executors'").get() as
     { sql: string | null } | undefined
   const sql = row?.sql?.replace(/\s+/g, ' ').toLowerCase() ?? ''
-  if (!/type\s+text\s+not\s+null\s+check\s*\(\s*type\s+in\s*\(\s*'simulator'\s*,\s*'internal'\s*,\s*'connector'\s*\)\s*\)/.test(sql)) {
+  if (!/type\s+text\s+not\s+null\s+check\s*\(\s*type\s+in\s*\(\s*'simulator'\s*,\s*'internal'\s*,\s*'connector'\s*,\s*'mcp'\s*,\s*'browser'\s*\)\s*\)/.test(sql)) {
     throw new Error('Action Fabric schema executor type signature mismatch')
   }
 }
@@ -437,7 +441,7 @@ function createSchemaV1(db: DatabaseSync): void {
 
     CREATE TABLE IF NOT EXISTS fabric_executors (
       id TEXT PRIMARY KEY,
-      type TEXT NOT NULL CHECK(type IN ('simulator','internal','connector')),
+      type TEXT NOT NULL CHECK(type IN ('simulator','internal','connector','mcp','browser')),
       name TEXT NOT NULL,
       environment TEXT NOT NULL CHECK(environment IN ('simulator','internal','sandbox','production')),
       health TEXT NOT NULL CHECK(health IN ('unknown','healthy','degraded','unhealthy')),
@@ -685,6 +689,32 @@ function migrateSchemaV5(db: DatabaseSync): void {
     }
     insert.run(capabilityId, version, expectedContractJson, contractDigest, createdAt)
   }
+}
+
+function migrateSchemaV6(db: DatabaseSync): void {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='fabric_executors'").get() as
+    { sql: string | null } | undefined
+  const sql = row?.sql?.toLowerCase() ?? ''
+  if (sql.includes("'mcp'") && sql.includes("'browser'")) return
+  db.exec(`
+    CREATE TABLE fabric_executors_v6 (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL CHECK(type IN ('simulator','internal','connector','mcp','browser')),
+      name TEXT NOT NULL,
+      environment TEXT NOT NULL CHECK(environment IN ('simulator','internal','sandbox','production')),
+      health TEXT NOT NULL CHECK(health IN ('unknown','healthy','degraded','unhealthy')),
+      health_details_json TEXT NOT NULL DEFAULT '{}',
+      configuration_json TEXT NOT NULL DEFAULT '{}',
+      enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+      policy_version INTEGER NOT NULL DEFAULT 1 CHECK(policy_version > 0),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    INSERT INTO fabric_executors_v6 SELECT * FROM fabric_executors;
+    DROP TABLE fabric_executors;
+    ALTER TABLE fabric_executors_v6 RENAME TO fabric_executors;
+  `)
+  createSchemaV3Triggers(db)
 }
 
 function createSchemaV5(db: DatabaseSync): void {

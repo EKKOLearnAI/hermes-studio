@@ -88,7 +88,7 @@ export async function executors(ctx: Context): Promise<void> {
   respond(ctx, () => {
     validateQuery(ctx, new Set(['type', 'environment', 'health', 'enabled', 'limit']))
     const limit = queryLimit(ctx)
-    const type = queryEnum(ctx, 'type', ['simulator', 'internal', 'connector'] as const)
+    const type = queryEnum(ctx, 'type', ['simulator', 'internal', 'connector', 'mcp', 'browser'] as const)
     const environment = queryEnum(ctx, 'environment', ['simulator', 'internal', 'sandbox', 'production'] as const)
     const health = queryEnum(ctx, 'health', ['unknown', 'healthy', 'degraded', 'unhealthy'] as const)
     const enabled = queryBoolean(ctx, 'enabled')

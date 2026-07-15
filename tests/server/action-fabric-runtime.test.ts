@@ -246,6 +246,23 @@ describe('Action Fabric runtime lifecycle', () => {
     ])
   })
 
+  it('level 3 keeps read-only MCP active and disables a write-capable browser executor', async () => {
+    ensureBuiltInFabricRegistry()
+    createFabricExecutor({ id: 'mcp-read-only', type: 'mcp', name: 'Read-only MCP', environment: 'production',
+      configuration: { externalWrite: false, interruptible: true }, enabled: true })
+    createFabricExecutor({ id: 'browser-writer', type: 'browser', name: 'Browser writer', environment: 'sandbox',
+      configuration: { externalWrite: true, interruptible: true }, enabled: true })
+    await startActionFabricRuntime()
+    setFabricEmergencyStop(3, 'admin', 'disable internet writes')
+    await vi.advanceTimersByTimeAsync(300)
+
+    expect(withActionFabricDb(db => db.prepare(`SELECT id,enabled FROM fabric_executors
+      WHERE id IN ('mcp-read-only','browser-writer') ORDER BY id`).all())).toEqual([
+      { id: 'browser-writer', enabled: 0 },
+      { id: 'mcp-read-only', enabled: 1 },
+    ])
+  })
+
   it('disables explicit internal external writes once without penalizing a valid local contract', async () => {
     ensureBuiltInFabricRegistry()
     createFabricExecutor({ id: 'internal-external', type: 'internal', name: 'External writer', environment: 'internal',

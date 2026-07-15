@@ -91,7 +91,7 @@ interface SanitizationBudget {
 
 export function registerFabricExecutorAdapter(adapter: FabricExecutorAdapter): void {
   if (adapter === null || typeof adapter !== 'object'
-    || (adapter.type !== 'simulator' && adapter.type !== 'internal' && adapter.type !== 'connector')) {
+    || !['simulator', 'internal', 'connector', 'mcp', 'browser'].includes(adapter.type)) {
     throw new Error('FABRIC_EXECUTOR_TYPE_UNSUPPORTED')
   }
   if (typeof adapter.id !== 'string' || !adapter.id || adapter.id.length > 160) {
