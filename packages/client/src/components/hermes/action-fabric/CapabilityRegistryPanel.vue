@@ -15,7 +15,7 @@ function declaration(role: AssistantRoleSummary, capabilityId: string): 'allow' 
   return 'none'
 }
 function executorTypeLabel(type: ActionExecutorDto['type']): string {
-  return m.value[`${type}Executor` as 'simulatorExecutor' | 'internalExecutor' | 'connectorExecutor' | 'mcpExecutor' | 'browserExecutor']
+  return m.value[`${type}Executor` as 'simulatorExecutor' | 'internalExecutor' | 'connectorExecutor' | 'mcpExecutor' | 'browserExecutor' | 'androidExecutor']
 }
 </script>
 

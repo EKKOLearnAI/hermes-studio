@@ -62,6 +62,7 @@ describe('ActionFabricPanel', () => {
     actionStore.executors = [executor,
       { ...executor, id: 'bilibili-mcp', name: 'Bilibili MCP', type: 'mcp', environment: 'production' },
       { ...executor, id: 'bilibili-browser', name: 'Bilibili Browser', type: 'browser', environment: 'production' },
+      { ...executor, id: 'android-companion', name: 'Android Companion', type: 'android', environment: 'production' },
     ] as any[]
     const wrapper = mount(ActionFabricPanel)
     await flushPromises()
@@ -69,9 +70,10 @@ describe('ActionFabricPanel', () => {
     expect(wrapper.find('[data-test="group-running"]').text()).toContain('running')
     expect(wrapper.find('[data-test="group-reversible"]').text()).toContain('reversible')
     expect(wrapper.text()).toContain('Internal and external executors share one server-owned policy')
-    expect(wrapper.get('[data-test="external-executor-boundary"]').text()).toContain('profile-scoped runtimes')
+    expect(wrapper.get('[data-test="external-executor-boundary"]').text()).toContain('encrypted paired devices')
     expect(wrapper.get('[data-test="executor-type-mcp"]').text()).toContain('MCP · profile runtime')
     expect(wrapper.get('[data-test="executor-type-browser"]').text()).toContain('Browser · governed session')
+    expect(wrapper.get('[data-test="executor-type-android"]').text()).toContain('Android · encrypted companion')
     expect(wrapper.text()).toContain('required')
     expect(wrapper.text()).toContain('internal')
     expect(wrapper.text()).toContain('degraded')

@@ -3523,7 +3523,8 @@
                 "internal",
                 "connector",
                 "mcp",
-                "browser"
+                "browser",
+                "android"
               ]
             }
           }
@@ -19435,7 +19436,8 @@
           "internal",
           "connector",
           "mcp",
-          "browser"
+          "browser",
+          "android"
         ]
       },
       "ActionExecutorEnvironment": {

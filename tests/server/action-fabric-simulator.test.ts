@@ -366,11 +366,12 @@ describe('Action Fabric simulator executors', () => {
     expect(bounded).not.toHaveProperty('hidden')
   })
 
-  it('rejects adapter replacement and accepts governed internet executor types', () => {
+  it('rejects adapter replacement and accepts governed external executor types', () => {
     registerFabricExecutorAdapter(createSimulatorExecutorAdapter())
     expect(() => registerFabricExecutorAdapter(createSimulatorExecutorAdapter())).toThrow('FABRIC_EXECUTOR_ADAPTER_EXISTS')
     registerFabricExecutorAdapter({ ...successfulAdapter({}), id: 'browser-main', type: 'browser' })
     registerFabricExecutorAdapter({ ...successfulAdapter({}), id: 'mcp-main', type: 'mcp' })
+    registerFabricExecutorAdapter({ ...successfulAdapter({}), id: 'android-main', type: 'android' })
     expect(() => registerFabricExecutorAdapter({ ...successfulAdapter({}), id: 'unknown-main', type: 'unknown' as never }))
       .toThrow('FABRIC_EXECUTOR_TYPE_UNSUPPORTED')
   })

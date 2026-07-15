@@ -131,7 +131,7 @@ describe('action fabric registry', () => {
       WHERE b.capability_id='simulator.echo'`).get())).toEqual({ matches: 0 })
   })
 
-  it.each(['mcp', 'browser'] as const)('accepts governed external executor type %s', type => {
+  it.each(['mcp', 'browser', 'android'] as const)('accepts governed external executor type %s', type => {
     const created = createFabricExecutor({
       id: `${type}-main`, type, name: type, environment: 'sandbox',
       configuration: { externalWrite: false, interruptible: true }, enabled: true,

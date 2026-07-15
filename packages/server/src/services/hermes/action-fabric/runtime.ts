@@ -223,12 +223,12 @@ function disableExternalWriteExecutors(db: DatabaseSync, control: FabricControlS
 
 function isInterruptible(type: string, configurationJson: string): boolean {
   if (type === 'simulator') return true
-  if (!['internal', 'connector', 'mcp', 'browser'].includes(type)) return false
+  if (!['internal', 'connector', 'mcp', 'browser', 'android'].includes(type)) return false
   return readBooleanMetadata(configurationJson, 'interruptible') === true
 }
 
 function isExternalWriteExecutor(type: string, configurationJson: string): boolean {
-  if (!['simulator', 'internal', 'connector', 'mcp', 'browser'].includes(type)) return true
+  if (!['simulator', 'internal', 'connector', 'mcp', 'browser', 'android'].includes(type)) return true
   // Known executor classes may remain active only with an explicit validated local-only declaration.
   return readBooleanMetadata(configurationJson, 'externalWrite') !== false
 }
