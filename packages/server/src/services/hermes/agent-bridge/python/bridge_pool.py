@@ -1312,13 +1312,15 @@ class AgentPool:
                     try:
                         from hermes_constants import parse_reasoning_effort
                         override_cfg = parse_reasoning_effort(str(reasoning_effort).strip())
-                    except Exception as exc:
-                        raise ValueError(f"reasoning effort is unavailable: {reasoning_effort}") from exc
-                    if override_cfg is None:
-                        raise ValueError(f"reasoning effort is unavailable: {reasoning_effort}")
-                    _saved_reasoning_config = getattr(session.agent, "reasoning_config", None)
-                    session.agent.reasoning_config = override_cfg
-                    _did_override_reasoning = True
+                        # parse_reasoning_effort returns None for invalid input; only
+                        # override when we got a recognized value.
+                        if override_cfg is not None:
+                            _saved_reasoning_config = getattr(session.agent, "reasoning_config", None)
+                            session.agent.reasoning_config = override_cfg
+                            _did_override_reasoning = True
+                    except Exception:
+                        # Non-fatal: fall through to default reasoning_config
+                        pass
                 try:
                     result = session.agent.run_conversation(
                         agent_message,

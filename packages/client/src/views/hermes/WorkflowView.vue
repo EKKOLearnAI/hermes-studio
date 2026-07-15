@@ -104,6 +104,8 @@ const WORKFLOW_CHAT_PANEL_DEFAULT_WIDTH = 560
 const WORKFLOW_CANVAS_MIN_WIDTH = 360
 const WORKFLOW_RUNS_PANEL_WIDTH = 280
 const WORKFLOW_CHAT_PANEL_STORAGE_KEY = 'hermes.workflow.chatPanelWidth'
+const WORKFLOW_NODE_DEFAULT_WIDTH = 300
+const WORKFLOW_NODE_DEFAULT_HEIGHT = 550
 
 interface WorkflowNode {
   id: string
@@ -469,7 +471,7 @@ function makeNode(
     type: 'agent',
     position,
     dragHandle: '.node-header',
-    style: { width: '280px', height: '420px' },
+    style: { width: `${WORKFLOW_NODE_DEFAULT_WIDTH}px`, height: `${WORKFLOW_NODE_DEFAULT_HEIGHT}px` },
     data: {
       title,
       agent: data.agent || agentOptions.value[0]?.value || 'hermes',
@@ -741,12 +743,13 @@ function currentWorkflowViewport(): WorkflowViewport {
 function normalizeStoredNode(raw: unknown, index: number): WorkflowNode {
   const record = raw && typeof raw === 'object' ? raw as Record<string, any> : {}
   const data = record.data && typeof record.data === 'object' ? record.data as Partial<WorkflowAgentNodeData> : {}
-  const position = record.position && typeof record.position === 'object'
-    ? {
-        x: Number((record.position as any).x || 80 + index * 320),
-        y: Number((record.position as any).y || 120),
-      }
-    : { x: 80 + index * 320, y: 120 }
+  const rawPosition = record.position && typeof record.position === 'object' ? record.position as Record<string, unknown> : {}
+  const rawX = Number(rawPosition.x)
+  const rawY = Number(rawPosition.y)
+  const position = {
+    x: Number.isFinite(rawX) ? rawX : 80 + index * 320,
+    y: Number.isFinite(rawY) ? rawY : 120,
+  }
   const node = makeNode(
     typeof record.id === 'string' && record.id ? record.id : `agent-${index + 1}`,
     typeof data.title === 'string' && data.title ? data.title : t('workflow.newNodeTitle', { count: index + 1 }),
@@ -1104,7 +1107,18 @@ async function loadWorkflowRuns(
 
 async function applyWorkflowRunSnapshot(run: WorkflowRunRecord) {
   applyingWorkflow = true
-  nodes.value = run.snapshot_nodes.map(normalizeStoredNode).map<WorkflowNode>(node => ({
+  const workflow = workflows.value.find(item => item.id === run.workflow_id)
+  const currentNodePositions = new Map((workflow?.nodes || []).map(node => [node.id, { ...node.position }]))
+  nodes.value = run.snapshot_nodes.map((raw, index) => {
+    const record = raw && typeof raw === 'object' ? raw as Record<string, any> : {}
+    const rawPosition = record.position && typeof record.position === 'object' ? record.position as Record<string, unknown> : null
+    const hasSnapshotPosition = rawPosition && Number.isFinite(rawPosition.x) && Number.isFinite(rawPosition.y)
+    const fallbackPosition = typeof record.id === 'string' ? currentNodePositions.get(record.id) : undefined
+    return normalizeStoredNode(
+      !hasSnapshotPosition && fallbackPosition ? { ...record, position: fallbackPosition } : record,
+      index,
+    )
+  }).map<WorkflowNode>(node => ({
     ...node,
     data: withRuntimeNodeData({
       ...node.data,
@@ -1803,9 +1817,9 @@ function updateNodeData(id: string, patch: Partial<WorkflowAgentNodeEditableData
 
 function expandNodeHeightForImages(style: WorkflowNode['style'], imageCount: number): WorkflowNode['style'] {
   if (imageCount <= 0) return style
-  const currentHeight = Number.parseFloat(style.height || '420')
+  const currentHeight = Number.parseFloat(style.height || String(WORKFLOW_NODE_DEFAULT_HEIGHT))
   const previewRows = Math.min(2, Math.ceil(imageCount / 3))
-  const requiredHeight = 420 + previewRows * 68
+  const requiredHeight = WORKFLOW_NODE_DEFAULT_HEIGHT + previewRows * 68
   if (currentHeight >= requiredHeight) return style
   return { ...style, height: `${requiredHeight}px` }
 }
@@ -3643,15 +3657,12 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
   }
 
   .header-workflow-title {
-    flex: 0 1 auto;
-    min-width: 0;
-    max-width: 52%;
-    line-height: 20px;
+    display: none;
   }
 
   .workspace-badge {
-    flex: 0 1 auto;
-    max-width: 42%;
+    flex: 1 1 auto;
+    max-width: none;
     padding: 2px 6px;
   }
 

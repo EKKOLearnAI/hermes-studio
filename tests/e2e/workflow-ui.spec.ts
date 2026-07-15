@@ -5,22 +5,27 @@ import { authenticate, mockHermesApi, TEST_ACCESS_KEY } from './fixtures'
 test('workflow canvas exposes orchestration editing and portability controls', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   const nodes = [
-    { id: 'a', type: 'agent', position: { x: 80, y: 80 }, data: { title: 'Agent A', agent: 'hermes', input: 'Run Agent A', skills: [], images: [], approvalRequired: false } },
+    { id: 'a', type: 'agent', position: { x: 0, y: 80 }, data: { title: 'Agent A', agent: 'hermes', input: 'Run Agent A', skills: [], images: [], approvalRequired: false } },
     { id: 'b', type: 'agent', position: { x: 420, y: 80 }, data: { title: 'Agent B', agent: 'hermes', input: 'Run Agent B', skills: [], images: [], approvalRequired: false } },
   ]
   const edges = [{ id: 'a-b', source: 'a', target: 'b', sourceHandle: 'output', targetHandle: 'input', type: 'smoothstep' }]
+  const legacySnapshotNodes = nodes.map(({ position: _position, ...node }) => node)
   const api = await mockHermesApi(page, { workflows: [{
     id: 'wf-1', name: 'Loop workflow', profile: 'research', workspace: null,
     nodes, edges, viewport: { x: 80, y: 80, zoom: .75 }, created_at: 1, updated_at: 1,
   }], workflowImportDocument: { name: 'Imported flow', nodes: [{ id: 'imported', type: 'agent', position: { x: 0, y: 0 }, data: { title: 'Imported', agent: 'hermes' } }], edges: [], viewport: null }, workflowRuns: [{
     id: 'run-1', workflow_id: 'wf-1', profile: 'research', workspace: null, start_node_ids: [], status: 'completed',
-    snapshot_nodes: nodes, snapshot_edges: edges, compiled_loops: [], started_at: 1, finished_at: 2, created_at: 1, error: null,
+    snapshot_nodes: legacySnapshotNodes, snapshot_edges: edges, compiled_loops: [], started_at: 1, finished_at: 2, created_at: 1, error: null,
     node_sessions: [{ id: 'node-1', run_id: 'run-1', workflow_id: 'wf-1', node_id: 'a', execution_id: 'rerun:2:a', iteration_path: [{ executionScope: 'rerun:2', loopId: 'loop:a', iteration: 1 }], consumed_edge_evaluation_ids: [], session_id: 'session-a', profile: 'research', agent: 'hermes', agent_mode: '', status: 'completed', sequence: 3, started_at: 1, finished_at: 2, created_at: 1, updated_at: 2, error: null }],
     edge_evaluations: Array.from({ length: 18 }, (_, index) => ({ id: `edge-${index + 1}`, run_id: 'run-1', workflow_id: 'wf-1', edge_id: 'a-b', source_node_id: 'a', source_execution_id: `rerun:2:a:${index + 1}`, iteration_path: [{ executionScope: 'rerun:2', loopId: 'loop:a', iteration: index + 1 }], target_node_id: 'b', source_outcome: 'success', status: 'taken', route: 'success', reason: null, sequence: 4 + index, orchestration: { route: 'success' }, condition_evaluation: null, evaluated_at: 2 })),
     loop_epochs: [{ id: 'loop-1', run_id: 'run-1', workflow_id: 'wf-1', loop_id: 'loop:a', iteration: 18, iteration_path: [{ executionScope: 'rerun:2', loopId: 'loop:a', iteration: 18 }], status: 'completed', exit_reason: 'feedback_not_taken', sequence: 30, started_at: 1, finished_at: 2 }],
   }] })
   await page.goto('/#/hermes/workflow')
   await expect(page.locator('.header-workflow-title')).toHaveText('Loop workflow')
+  const firstNode = page.locator('.vue-flow__node[data-id="a"]')
+  await expect(firstNode).toHaveAttribute('style', /translate\(0px,\s*80px\)/)
+  await expect(firstNode).toHaveCSS('width', '300px')
+  await expect(firstNode).toHaveCSS('height', '550px')
   const importButton = page.getByRole('button', { name: 'Import Workflow' })
   await expect(importButton).toBeVisible()
   await expect(importButton).toHaveText('')
@@ -65,6 +70,9 @@ test('workflow canvas exposes orchestration editing and portability controls', a
   await page.locator('.workflow-list-item').filter({ hasText: 'Loop workflow' }).click()
   await expect(page.locator('.header-workflow-title')).toHaveText('Loop workflow')
   await page.locator('.workflow-run-item').click()
+  await expect(firstNode).toHaveAttribute('style', /translate\(0px,\s*80px\)/)
+  await expect(firstNode).toHaveCSS('width', '300px')
+  await expect(firstNode).toHaveCSS('height', '550px')
   const evidence = page.getByLabel('Workflow execution details')
   const evidenceToggle = evidence.getByRole('button', { name: /Execution details/ })
   await expect(evidenceToggle).toContainText('19 items')
@@ -246,4 +254,19 @@ test('workflow import reports an unsupported version without confirming or creat
   await expect(page.getByText(/unsupported workflow import version/)).toBeVisible()
   expect(api.requests.filter(request => request.pathname === '/api/hermes/workflows/import/confirm')).toHaveLength(0)
   expect(api.unexpectedRequests).toEqual([])
+})
+
+test('workflow title is hidden on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await mockHermesApi(page, { workflows: [{
+    id: 'wf-mobile', name: 'Mobile workflow title', profile: 'research', workspace: '/tmp/mobile-workspace',
+    nodes: [], edges: [], viewport: null, created_at: 1, updated_at: 1,
+  }] })
+  await page.goto('/#/hermes/workflow')
+  await expect(page.locator('.header-workflow-title')).toHaveText('Mobile workflow title')
+  await expect(page.locator('.header-workflow-title')).toBeHidden()
+  const workspaceBadge = page.locator('.workspace-badge')
+  await expect(workspaceBadge).toHaveCSS('flex-grow', '1')
+  await expect(workspaceBadge).toHaveCSS('max-width', 'none')
 })

@@ -125,6 +125,7 @@ describe('workflow manager', () => {
     const { normalizeWorkflowNode } = await import('../../packages/server/src/services/workflow-manager')
     expect(normalizeWorkflowNode({ id: 'legacy', type: 'agent', data: {} })?.data.orchestration).toEqual({ join: 'all' })
     expect(normalizeWorkflowNode({ id: 'any', type: 'agent', data: { orchestration: { join: 'any' } } })?.data.orchestration).toEqual({ join: 'any' })
+    expect(normalizeWorkflowNode({ id: 'positioned', type: 'agent', position: { x: -240, y: 360 }, data: {} })?.position).toEqual({ x: -240, y: 360 })
     expect(() => normalizeWorkflowNode({ id: 'bad', type: 'agent', data: { orchestration: { join: 'some' } } })).toThrow('workflow node bad has invalid orchestration join')
   })
 
@@ -192,7 +193,7 @@ describe('workflow manager', () => {
     const manager = new WorkflowManager()
     const workflow = manager.create({
       name: `Exact execution tuple ${Date.now()}`, profile: 'default',
-      nodes: [{ id: 'agent', type: 'agent', data: {
+      nodes: [{ id: 'agent', type: 'agent', position: { x: -240, y: 360 }, data: {
         title: 'Agent', agent: 'hermes', provider: 'custom:test', model: 'model-a',
         apiMode: 'chat_completions', reasoningEffort: 'high', input: 'work',
         executionPolicy: { allowedToolsets: [], allowedTools: ['browser_click'], skipMemory: true, skipContextFiles: true },
@@ -205,6 +206,7 @@ describe('workflow manager', () => {
       expect(result.run.snapshot_nodes[0]).toMatchObject({ data: {
         provider: 'custom:test', model: 'model-a', apiMode: 'chat_completions', reasoningEffort: 'high',
       } })
+      expect(result.run.snapshot_nodes[0]?.position).toEqual({ x: -240, y: 360 })
       expect(result.run.snapshot_nodes[0]?.data).not.toHaveProperty('executionPolicy')
       expect(chatRunMock.runAndWait).toHaveBeenCalledWith(expect.objectContaining({
         provider: 'custom:test', model: 'model-a', one_shot_model: true, reasoning_effort: 'high',

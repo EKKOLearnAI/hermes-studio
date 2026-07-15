@@ -100,6 +100,7 @@ export interface WorkflowRunNowResult {
 export interface WorkflowNodeSnapshot {
   id: string
   type: string
+  position?: { x: number; y: number }
   data: {
     title: string
     agent: string
@@ -242,9 +243,16 @@ export function normalizeWorkflowNode(raw: unknown): WorkflowNodeSnapshot | null
   if (!WORKFLOW_REASONING_EFFORTS.has(reasoningEffort)) {
     throw new Error(`workflow node ${id} has invalid reasoningEffort`)
   }
+  const rawPosition = record.position && typeof record.position === 'object' && !Array.isArray(record.position)
+    ? record.position as Record<string, unknown>
+    : null
+  const position = rawPosition && Number.isFinite(rawPosition.x) && Number.isFinite(rawPosition.y)
+    ? { x: Number(rawPosition.x), y: Number(rawPosition.y) }
+    : undefined
   return {
     id,
     type,
+    ...(position ? { position } : {}),
     data: {
       title: typeof data.title === 'string' && data.title.trim() ? data.title.trim() : id,
       agent,

@@ -1,6 +1,6 @@
 ---
 date: 2026-07-14
-pr: pending
+pr: 2073
 feature: Hermes API mode ownership
 impact: Workflow Hermes runs use the API mode resolved by their provider profile, while coding-agent workflow nodes keep their explicit protocol selection.
 ---
