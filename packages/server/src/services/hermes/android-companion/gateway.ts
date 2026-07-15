@@ -16,6 +16,10 @@ import {
 import { AndroidCompanionStore } from './store'
 import { AndroidCompanionPairingService } from './pairing-service'
 import {
+  AndroidCompanionCapabilityService,
+  type AndroidCapabilityReportPayload,
+} from './capability-service'
+import {
   AndroidCompanionAuthenticationError,
   AndroidCompanionValidationError,
   type AndroidCompanionMessageType,
@@ -307,6 +311,7 @@ type RuntimeSingleton = {
   store: AndroidCompanionStore
   gateway: AndroidCompanionGateway
   pairing: AndroidCompanionPairingService
+  capabilities: AndroidCompanionCapabilityService
 }
 
 let singleton: RuntimeSingleton | null = null
@@ -316,11 +321,40 @@ export function getAndroidCompanionRuntime(): RuntimeSingleton {
   const database = openAndroidCompanionDatabase()
   const store = new AndroidCompanionStore(database.database)
   const studioIdentity = async () => normalizeStudioIdentity(await getDeviceIdentity())
+  const capabilities = new AndroidCompanionCapabilityService({ store })
+  const gateway = new AndroidCompanionGateway({
+    store,
+    studioIdentity,
+    onMessage(message) {
+      if (message.messageType === 'capabilities.report' || message.messageType === 'permissions.report') {
+        const result = capabilities.applyReport(
+          message.deviceId, message.messageType, message.payload as AndroidCapabilityReportPayload,
+        )
+        return {
+          messageType: 'ack',
+          bindingId: message.bindingId,
+          payload: {
+            acknowledgedSequence: message.sequence,
+            capabilitiesRevision: result.device.capabilitiesRevision,
+            capabilitiesDigest: result.device.capabilitiesDigest,
+          },
+        }
+      }
+      if (message.messageType === 'heartbeat') {
+        return {
+          messageType: 'ack', bindingId: message.bindingId,
+          payload: { acknowledgedSequence: message.sequence },
+        }
+      }
+      return undefined
+    },
+  })
   singleton = {
     database,
     store,
-    gateway: new AndroidCompanionGateway({ store, studioIdentity }),
+    gateway,
     pairing: new AndroidCompanionPairingService({ store, studioIdentity }),
+    capabilities,
   }
   return singleton
 }

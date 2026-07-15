@@ -6,6 +6,7 @@ import {
   AndroidCompanionStore,
   AndroidCompanionValidationError,
   AndroidCompanionVersionConflictError,
+  digestAndroidCapabilityReport,
   initAndroidCompanionSchema,
 } from '../../packages/server/src/services/hermes/android-companion'
 import { deviceIdFromPublicKey } from '../../packages/server/src/services/system-info'
@@ -152,6 +153,7 @@ function pairing(overrides: Record<string, unknown> = {}) {
     label: 'Xiaomi Companion',
     androidVersion: '15',
     appVersion: '1.0.0',
+    initialCapabilitiesDigest: digestAndroidCapabilityReport(capabilityReport(1).capabilities),
     pairedAt: '2026-07-15T05:00:00.000Z',
     ...overrides,
   } as any

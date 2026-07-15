@@ -222,6 +222,7 @@ function pair(store: AndroidCompanionStore, companion: AndroidCompanionPrivateId
     label: 'Gateway Pixel',
     androidVersion: '16',
     appVersion: '0.1.0',
+    initialCapabilitiesDigest: 'b'.repeat(64),
     pairedAt: now.toISOString(),
   }).device
 }

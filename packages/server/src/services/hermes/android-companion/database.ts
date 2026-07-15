@@ -235,6 +235,12 @@ const TRIGGERS = {
   android_takeovers_no_delete: `CREATE TRIGGER android_takeovers_no_delete
     BEFORE DELETE ON android_takeovers
     BEGIN SELECT RAISE(ABORT,'Android takeovers are immutable records'); END`,
+  android_pairing_digest_immutable: `CREATE TRIGGER android_pairing_digest_immutable
+    BEFORE UPDATE ON android_companion_meta WHEN OLD.key LIKE 'pairing_capabilities_digest:%'
+    BEGIN SELECT RAISE(ABORT,'Android pairing capability digest is immutable'); END`,
+  android_pairing_digest_no_delete: `CREATE TRIGGER android_pairing_digest_no_delete
+    BEFORE DELETE ON android_companion_meta WHEN OLD.key LIKE 'pairing_capabilities_digest:%'
+    BEGIN SELECT RAISE(ABORT,'Android pairing capability digest is immutable'); END`,
 } as const
 
 type SyncResult<T> = T & (T extends PromiseLike<unknown> ? never : unknown)

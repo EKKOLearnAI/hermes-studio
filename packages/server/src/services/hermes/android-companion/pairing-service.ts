@@ -74,6 +74,7 @@ export class AndroidCompanionPairingService {
       label: transcript.companion.label,
       androidVersion: transcript.companion.androidVersion,
       appVersion: transcript.companion.appVersion,
+      initialCapabilitiesDigest: transcript.initialCapabilitiesDigest,
       pairedAt: now.toISOString(),
     })
   }

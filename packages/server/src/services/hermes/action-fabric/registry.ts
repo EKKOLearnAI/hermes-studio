@@ -2,6 +2,7 @@ import { createHash } from 'crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { HOME_FABRIC_CAPABILITIES } from '../home/fabric-contracts'
 import { INTERNET_FABRIC_CAPABILITIES } from '../internet-execution/fabric-contracts'
+import { ANDROID_FABRIC_CAPABILITIES } from '../android-companion/fabric-contracts'
 import { withActionFabricDb } from './database'
 import type {
   FabricCapability,
@@ -334,6 +335,7 @@ const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
   },
   ...HOME_FABRIC_CAPABILITIES,
   ...INTERNET_FABRIC_CAPABILITIES,
+  ...ANDROID_FABRIC_CAPABILITIES,
 ]
 
 const BUILT_IN_EXECUTORS: FabricExecutorInput[] = [

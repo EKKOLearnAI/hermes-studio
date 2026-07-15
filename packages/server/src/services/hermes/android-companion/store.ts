@@ -29,6 +29,7 @@ export interface PairAndroidDeviceInput {
   label: string
   androidVersion: string
   appVersion: string
+  initialCapabilitiesDigest: string
   pairedAt?: string
 }
 
@@ -153,7 +154,8 @@ export class AndroidCompanionStore {
       ).get(normalized.installationId) as DeviceRow | undefined
       const existing = byId ?? byInstallation
       if (existing) {
-        if (!sameDeviceIdentity(existing, normalized)) {
+        if (!sameDeviceIdentity(existing, normalized)
+          || this.enrollmentCapabilitiesDigest(existing.id) !== normalized.initialCapabilitiesDigest) {
           throw new AndroidCompanionIdentityConflictError('Android companion identity changed')
         }
         if (existing.state === 'revoked') {
@@ -170,6 +172,9 @@ export class AndroidCompanionStore {
         normalized.deviceId, normalized.installationId, normalized.signingPublicKey, normalized.exchangePublicKey,
         normalized.signingFingerprint, normalized.exchangeFingerprint, normalized.label,
         normalized.androidVersion, normalized.appVersion, now, now, now,
+      )
+      this.database.prepare('INSERT INTO android_companion_meta(key,value) VALUES(?,?)').run(
+        enrollmentDigestKey(normalized.deviceId), normalized.initialCapabilitiesDigest,
       )
       return { disposition: 'created', device: this.requiredDevice(normalized.deviceId) }
     })
@@ -214,11 +219,14 @@ export class AndroidCompanionStore {
     const revision = positiveVersion(input.revision)
     const reportedAt = timestamp(input.reportedAt, 'Android capability report time')
     const capabilities = normalizeCapabilities(input.capabilities)
-    const digest = sha256(canonicalValueJson(capabilities, 65_536))
+    const digest = digestAndroidCapabilityReport(capabilities)
     return transaction(this.database, () => {
       const current = this.deviceRow(deviceId)
       if (!current) throw new AndroidCompanionNotFoundError(`Android companion not found: ${deviceId}`)
       if (current.state !== 'paired') throw new AndroidCompanionValidationError('Android companion is revoked')
+      if (current.capabilities_revision === 0 && this.enrollmentCapabilitiesDigest(deviceId) !== digest) {
+        throw new AndroidCompanionIdentityConflictError('Initial Android capability report changed after approval')
+      }
       if (current.capabilities_revision === revision && current.capabilities_digest === digest) {
         return { disposition: 'replayed', device: deviceFromRow(current), capabilities: this.listCapabilities(deviceId) }
       }
@@ -429,6 +437,12 @@ export class AndroidCompanionStore {
       .get(workflowId) as ReceiptRow | undefined ?? null
   }
 
+  private enrollmentCapabilitiesDigest(deviceId: string): string | null {
+    const row = this.database.prepare('SELECT value FROM android_companion_meta WHERE key=?')
+      .get(enrollmentDigestKey(deviceId)) as { value: string } | undefined
+    return row?.value ?? null
+  }
+
   private requiredDevice(id: string): AndroidCompanionDevice {
     const row = this.deviceRow(id)
     if (!row) throw new AndroidCompanionNotFoundError(`Android companion not found: ${id}`)
@@ -463,8 +477,13 @@ function normalizePairing(input: PairAndroidDeviceInput) {
     label: safeText(input.label, 'Android device label', 160),
     androidVersion: safeText(input.androidVersion, 'Android version', 80),
     appVersion: safeText(input.appVersion, 'Android companion version', 80),
+    initialCapabilitiesDigest: digest(input.initialCapabilitiesDigest, 'Initial Android capabilities digest'),
     pairedAt: input.pairedAt == null ? new Date().toISOString() : timestamp(input.pairedAt, 'Android paired time'),
   }
+}
+
+export function digestAndroidCapabilityReport(items: AndroidCapabilityReportItem[]): string {
+  return sha256(canonicalValueJson(normalizeCapabilities(items), 65_536))
 }
 
 function normalizeCapabilities(items: AndroidCapabilityReportItem[]): AndroidCapabilityReportItem[] {
@@ -772,6 +791,10 @@ function listLimit(value: unknown): number {
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex')
+}
+
+function enrollmentDigestKey(deviceId: string): string {
+  return `pairing_capabilities_digest:${deviceId}`
 }
 
 function transaction<T>(database: DatabaseSync, operation: () => T): T {
