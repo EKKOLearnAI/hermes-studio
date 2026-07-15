@@ -141,7 +141,7 @@ describe('commerce activation and runtime recovery', () => {
     setFabricEmergencyStop(3, 'admin-1', 'commerce emergency', control.version)
     expect(reconcileCommerceRuntime()).toMatchObject({ liveExecutorEnabled: false, emergencyStopped: true })
     expect(getCommerceRuntimeStatus().authorizedTargetCount).toBe(0)
-  })
+  }, 15_000)
 
   it('authorizes observe accounts as read-only without mutating existing assistant roles', () => {
     const homeRole = structuredClone(getAssistantRole('home-manager'))

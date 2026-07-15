@@ -75,7 +75,8 @@ describe('commerce Action Fabric executor', () => {
     const prepared = await invokeFabricExecutor('prepare', context)
     expect(prepared).toMatchObject({ outcome: 'prepared', output: { accountId: 'food-account', mode: 'shadow',
       materialDigest: expect.stringMatching(/^[a-f0-9]{64}$/) } })
-    const executing = { ...context, preparedOutput: prepared.output }
+    const executing = { ...context, stepId: 'step-search-execute', executionToken: 'execution-search-execute',
+      preparedOutput: prepared.output }
     const first = await invokeFabricExecutor('execute', executing)
     const replay = await invokeFabricExecutor('execute', executing)
     expect(first).toMatchObject({ outcome: 'succeeded', output: { operation: 'search', totalCount: 1,

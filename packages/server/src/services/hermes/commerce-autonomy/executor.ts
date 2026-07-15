@@ -431,9 +431,9 @@ function matchesPrepared(context: FabricExecutionContext, account: CommerceProvi
 }
 
 function materialDigest(context: FabricExecutionContext): string {
-  return digest(canonical({ workflowId: context.workflowId, intentId: context.intentId, stepId: context.stepId,
+  return digest(canonical({ workflowId: context.workflowId, intentId: context.intentId,
     executorId: context.executorId, capabilityId: context.capabilityId, capabilityVersion: context.capabilityVersion,
-    contractDigest: context.contractDigest, executionToken: context.executionToken,
+    contractDigest: context.contractDigest, policyEvaluationToken: context.policyEvaluationToken,
     input: context.input, target: context.target }))
 }
 
