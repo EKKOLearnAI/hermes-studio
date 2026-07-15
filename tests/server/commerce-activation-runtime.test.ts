@@ -92,6 +92,14 @@ describe('commerce activation and runtime recovery', () => {
     ])
   })
 
+  it('normalizes malformed activation clocks to a stable commerce error', () => {
+    createCommerceAccount({ id: 'food-account', provider: 'food_delivery', mode: 'observe',
+      currency: 'CNY', executorId: null, displayName: 'Food' })
+    expect(() => transitionCommerceAccountMode({ accountId: 'food-account', toMode: 'shadow',
+      actorUserId: 'admin-1', actorIsSuperAdmin: true, limits: limits(), now: 'not-a-timestamp' }))
+      .toThrow('COMMERCE_TIME_INVALID')
+  })
+
   it('invalidates stale transaction policy epochs and makes account revocation permanent', async () => {
     const provider = createProvider()
     let account = createCommerceAccount({ id: 'food-account', provider: 'food_delivery', mode: 'shadow',
@@ -133,6 +141,26 @@ describe('commerce activation and runtime recovery', () => {
     setFabricEmergencyStop(3, 'admin-1', 'commerce emergency', control.version)
     expect(reconcileCommerceRuntime()).toMatchObject({ liveExecutorEnabled: false, emergencyStopped: true })
     expect(getCommerceRuntimeStatus().authorizedTargetCount).toBe(0)
+  })
+
+  it('authorizes observe accounts as read-only without mutating existing assistant roles', () => {
+    const homeRole = structuredClone(getAssistantRole('home-manager'))
+    const entertainmentRole = structuredClone(getAssistantRole('entertainment-assistant'))
+    const provider = createProvider()
+    const account = createCommerceAccount({ id: 'food-account', provider: 'food_delivery', mode: 'observe',
+      currency: 'CNY', executorId: null, displayName: 'Food observer' })
+    configureCommerceRuntimeBindings([{ accountId: account.id, provider,
+      merchantIds: ['merchant-1'], destinationDigests: ['d'.repeat(64)] }])
+
+    expect(reconcileCommerceRuntime()).toMatchObject({ configuredAccountCount: 1,
+      shadowExecutorEnabled: true, liveExecutorEnabled: false, emergencyStopped: false })
+    expect(getAssistantRole('commerce-assistant')).toMatchObject({
+      capabilityScope: { allow: ['commerce.cart.prepare', 'commerce.offer.compare', 'commerce.product.search'],
+        deny: [], enforcement: 'action_fabric_v1' },
+      decisionAuthority: { maxRisk: 'low', requireApprovalAbove: 'low' },
+    })
+    expect(getAssistantRole('home-manager')).toEqual(homeRole)
+    expect(getAssistantRole('entertainment-assistant')).toEqual(entertainmentRole)
   })
 })
 

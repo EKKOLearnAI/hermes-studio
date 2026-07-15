@@ -64,9 +64,10 @@ export function reconcileCommerceRuntime(): CommerceRuntimeStatus {
     const binding = bindings.get(account.id)
     if (!binding || !account.enabled || account.health === 'revoked' || binding.provider.provider !== account.provider) continue
     const expectedExecutor = account.mode === 'live' ? COMMERCE_LIVE_EXECUTOR_ID : COMMERCE_SHADOW_EXECUTOR_ID
+    const executorBound = account.mode === 'observe' ? account.executorId === null : account.executorId === expectedExecutor
     const transportReady = account.mode === 'live' ? binding.provider.transport === 'external'
       : binding.provider.transport === 'virtual' || account.mode === 'observe'
-    if (account.executorId !== expectedExecutor || !transportReady) continue
+    if (!executorBound || !transportReady) continue
     if (account.mode === 'live') {
       if (account.health !== 'healthy' || controlStopped) continue
       liveReady = true

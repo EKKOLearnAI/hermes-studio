@@ -13,7 +13,8 @@ const commerce = vi.hoisted(() => ({
   CommerceContractError: class CommerceContractError extends Error {},
   compareObservedCommerceOffers: vi.fn(), createCommerceAccount: vi.fn(), getCommerceAccount: vi.fn(),
   getCommerceCartRevision: vi.fn(), getCommerceComparison: vi.fn(), getCommercePaymentAttemptByTransaction: vi.fn(),
-  getCommerceQuote: vi.fn(), getCommerceRuntimeStatus: vi.fn(), getCommerceTransaction: vi.fn(),
+  getCommerceOfferSnapshot: vi.fn(), getCommerceQuote: vi.fn(), getCommerceRuntimeStatus: vi.fn(),
+  getCommerceTransaction: vi.fn(),
   getConfiguredCommerceProvider: vi.fn(), listCommerceAccounts: vi.fn(), listCommerceActivationReviews: vi.fn(),
   listCommerceCancellationRequests: vi.fn(), listCommerceCartRevisions: vi.fn(), listCommerceCheckpoints: vi.fn(),
   listCommerceComparisons: vi.fn(), listCommerceDeliveryObservations: vi.fn(), listCommerceOfferSnapshots: vi.fn(),
@@ -71,6 +72,7 @@ describe('commerce controller', () => {
       .forEach((mock: any) => mock.mockReset())
     commerce.getCommerceAccount.mockReturnValue(account)
     commerce.getCommerceCartRevision.mockReturnValue(cart)
+    commerce.getCommerceOfferSnapshot.mockReturnValue(offer)
     commerce.getCommerceQuote.mockReturnValue(quote)
     commerce.getCommerceTransaction.mockReturnValue(transaction)
     commerce.listCommerceAccounts.mockReturnValue([account])
@@ -150,6 +152,16 @@ describe('commerce controller', () => {
     expect(JSON.stringify(input)).not.toContain(cart.recipientToken)
   })
 
+  it('rejects cross-account quote material before creating a Fabric intent', async () => {
+    commerce.getCommerceCartRevision.mockReturnValue({ ...cart, accountId: 'account-other-1' })
+    const ctrl = await import('../../packages/server/src/controllers/hermes/commerce')
+    const context = ctx({ body: { quoteId: quote.id, providerRequestId: 'order-request-123',
+      idempotencyKey: 'order-intent-123', rationale: 'Place exact order' } })
+    await ctrl.placeOrder(context)
+    expect(context).toMatchObject({ status: 400, body: { code: 'COMMERCE_MATERIAL_MISMATCH' } })
+    expect(fabric.createFabricIntent).not.toHaveBeenCalled()
+  })
+
   it('returns transaction detail without provider request or recipient material', async () => {
     const ctrl = await import('../../packages/server/src/controllers/hermes/commerce')
     const context = ctx({ id: transaction.id })
@@ -175,5 +187,21 @@ describe('commerce controller', () => {
     expect(accessor.status).toBe(400)
     expect(accessed).toBe(false)
     expect(fabric.createFabricIntent).not.toHaveBeenCalled()
+  })
+
+  it('rejects credential-shaped action text and redacts provider free text at the API boundary', async () => {
+    const ctrl = await import('../../packages/server/src/controllers/hermes/commerce')
+    const credential = ctx({ body: { accountId: account.id, query: 'Bearer abcdefghijklmnopqrstuvwxyz', limit: 10,
+      idempotencyKey: 'search-request-1', rationale: 'Find lunch' } })
+    await ctrl.searchOffers(credential)
+    expect(credential.status).toBe(400)
+    expect(fabric.createFabricIntent).not.toHaveBeenCalled()
+
+    commerce.listCommerceOfferSnapshots.mockReturnValue([{ ...offer, title: 'Bearer provider-secret-value' }])
+    const projected = ctx({ query: { accountId: account.id } })
+    await ctrl.offers(projected)
+    expect(projected.status).toBe(200)
+    expect(projected.body.offers[0].title).toBe('[REDACTED]')
+    expect(JSON.stringify(projected.body)).not.toContain('provider-secret-value')
   })
 })

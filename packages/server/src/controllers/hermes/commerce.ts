@@ -1,8 +1,10 @@
 import { createHash } from 'crypto'
 import type { Context } from 'koa'
+import { isProxy } from 'node:util/types'
 import { createFabricIntent, getFabricWorkflow, listFabricWorkflows } from '../../services/hermes/action-fabric'
 import type { FabricActionIntentInput, FabricIntentResult, FabricWorkflowDetail,
   FabricWorkflowSummary } from '../../services/hermes/action-fabric'
+import { isFabricSensitiveString } from '../../services/hermes/action-fabric/audit'
 import {
   COMMERCE_ASSISTANT_ROLE_ID,
   COMMERCE_CANCEL_CAPABILITY,
@@ -24,6 +26,7 @@ import {
   getCommerceQuote,
   getCommerceRuntimeStatus,
   getCommercePaymentAttemptByTransaction,
+  getCommerceOfferSnapshot,
   getCommerceTransaction,
   getConfiguredCommerceProvider,
   listCommerceAccounts,
@@ -442,18 +445,25 @@ function commerceWorkflows(limit: number, state?: FabricWorkflowSummary['state']
 }
 
 function materialFromTransaction(transaction: CommerceTransaction) {
-  return materialFromQuote(requiredQuote(transaction.quoteId))
+  const quote = requiredQuote(transaction.quoteId)
+  if (quote.accountId !== transaction.accountId || quote.quoteDigest !== transaction.quoteDigest) {
+    throw coded('COMMERCE_MATERIAL_MISMATCH')
+  }
+  return materialFromQuote(quote)
 }
 
 function materialFromQuote(quote: ReturnType<typeof requiredQuote>) {
   const account = requiredAccount(quote.accountId)
   const cart = requiredCart(quote.cartRevisionId)
   const offers = cart.items.map(item => {
-    const offer = listCommerceOfferSnapshots({ accountId: account.id, limit: MAX_LIST })
-      .find(candidate => candidate.id === item.offerSnapshotId)
+    const offer = getCommerceOfferSnapshot(item.offerSnapshotId)
     if (!offer) throw coded('COMMERCE_OFFER_NOT_FOUND')
     return offer
   })
+  if (cart.accountId !== account.id || cart.contentDigest !== quote.cartDigest || quote.currency !== account.currency
+    || offers.some(item => item.accountId !== account.id || item.provider !== account.provider)) {
+    throw coded('COMMERCE_MATERIAL_MISMATCH')
+  }
   const merchantId = offers[0]?.merchantId
   if (!merchantId || offers.some(item => item.merchantId !== merchantId)) throw coded('COMMERCE_CART_MERCHANT_MISMATCH')
   return { account, cart, merchantId, destinationDigest: digest(cart.destinationToken) }
@@ -494,16 +504,22 @@ function publicWorkflowDetail(item: FabricWorkflowDetail): Record<string, unknow
     lastErrorCode: step.lastErrorCode, updatedAt: step.updatedAt })) }
 }
 
-function publicAccount(item: CommerceProviderAccount) { return { ...item } }
+function publicAccount(item: CommerceProviderAccount) { return { id: item.id, provider: item.provider,
+  mode: item.mode, currency: item.currency, executorId: item.executorId, displayName: publicText(item.displayName),
+  health: item.health, enabled: item.enabled, policyEpoch: item.policyEpoch, version: item.version,
+  createdAt: item.createdAt, updatedAt: item.updatedAt, revokedAt: item.revokedAt } }
 function publicOffer(item: ReturnType<typeof listCommerceOfferSnapshots>[number]) {
   return { id: item.id, accountId: item.accountId, provider: item.provider, productId: item.productId,
-    skuId: item.skuId, merchantId: item.merchantId, merchantName: item.merchantName, title: item.title,
-    unitLabel: item.unitLabel, money: { ...item.money }, available: item.available,
+    skuId: item.skuId, merchantId: item.merchantId, merchantName: publicText(item.merchantName),
+    title: publicText(item.title), unitLabel: publicText(item.unitLabel), money: { ...item.money }, available: item.available,
     maxQuantity: item.maxQuantity, fulfillment: item.fulfillment, fulfillmentMinutes: item.fulfillmentMinutes,
     observedAt: item.observedAt, expiresAt: item.expiresAt }
 }
-function publicComparison(item: ReturnType<typeof listCommerceComparisons>[number]) { return { ...item,
-  requirement: { ...item.requirement, excludedMerchantIds: [...item.requirement.excludedMerchantIds],
+function publicComparison(item: ReturnType<typeof listCommerceComparisons>[number]) { return { id: item.id,
+  accountId: item.accountId, selectedOfferSnapshotId: item.selectedOfferSnapshotId,
+  inputDigest: item.inputDigest, createdAt: item.createdAt,
+  requirement: { ...item.requirement, query: publicText(item.requirement.query),
+    excludedMerchantIds: [...item.requirement.excludedMerchantIds],
     preferenceCodes: [...item.requirement.preferenceCodes] }, candidates: item.candidates.map(value => ({ ...value,
     exclusionCodes: [...value.exclusionCodes], rationaleCodes: [...value.rationaleCodes] })) } }
 function publicCart(item: CommerceCartRevision) { return { id: item.id, accountId: item.accountId,
@@ -566,9 +582,14 @@ function assertJson(value: unknown, depth: number, ancestors: WeakSet<object>): 
   if (typeof value !== 'object' || ancestors.has(value)) throw new CommerceRequestError('Invalid JSON')
   ancestors.add(value)
   try {
-    if (Array.isArray(value)) {
+    if (Array.isArray(value) && !isProxy(value)) {
       if (Object.getPrototypeOf(value) !== Array.prototype || value.length > 64) throw new CommerceRequestError('Invalid array')
-      value.forEach(item => assertJson(item, depth + 1, ancestors)); return
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+        if (!descriptor?.enumerable || !('value' in descriptor)) throw new CommerceRequestError('Accessors forbidden')
+        assertJson(descriptor.value, depth + 1, ancestors)
+      }
+      return
     }
     if (!plainRecord(value) || Reflect.ownKeys(value).some(key => typeof key !== 'string')
       || Object.keys(value).length > 64) throw new CommerceRequestError('Invalid object')
@@ -582,7 +603,7 @@ function assertJson(value: unknown, depth: number, ancestors: WeakSet<object>): 
 }
 
 function plainRecord(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  if (value === null || typeof value !== 'object' || Array.isArray(value) || isProxy(value)) return false
   const prototype = Object.getPrototypeOf(value)
   return prototype === Object.prototype || prototype === null
 }
@@ -609,10 +630,13 @@ function requiredCart(id: string) { const item = getCommerceCartRevision(id); if
 function requiredQuote(id: string) { const item = getCommerceQuote(id); if (!item) throw coded('COMMERCE_QUOTE_NOT_FOUND'); return item }
 function requiredTransaction(id: string) { const item = getCommerceTransaction(id); if (!item) throw coded('COMMERCE_TRANSACTION_NOT_FOUND'); return item }
 function requiredId(value: unknown): string { if (typeof value !== 'string' || !ID.test(value)) throw new CommerceRequestError('Invalid identifier'); return value }
-function requiredToken(value: unknown): string { if (typeof value !== 'string' || !TOKEN.test(value)) throw new CommerceRequestError('Invalid opaque token'); return value }
+function requiredToken(value: unknown): string { if (typeof value !== 'string' || !TOKEN.test(value)
+  || isFabricSensitiveString(value)) throw new CommerceRequestError('Invalid opaque token'); return value }
 function requiredCurrency(value: unknown): string { if (typeof value !== 'string' || !CURRENCY.test(value)) throw new CommerceRequestError('Invalid currency'); return value }
 function requiredErrorCode(value: unknown): string { if (typeof value !== 'string' || !ERROR_CODE.test(value)) throw new CommerceRequestError('Invalid reason code'); return value }
-function requiredText(value: unknown, max: number): string { if (typeof value !== 'string' || value.trim() !== value || value.length < 1 || value.length > max || /[\u0000-\u001f]/.test(value)) throw new CommerceRequestError('Invalid text'); return value }
+function requiredText(value: unknown, max: number): string { if (typeof value !== 'string' || value.trim() !== value
+  || value.length < 1 || value.length > max || /[\u0000-\u001f]/.test(value)
+  || isFabricSensitiveString(value)) throw new CommerceRequestError('Invalid text'); return value }
 function requiredInteger(value: unknown, min: number, max: number): number { if (!Number.isSafeInteger(value) || Number(value) < min || Number(value) > max) throw new CommerceRequestError('Invalid integer'); return Number(value) }
 function optionalBoolean(value: unknown): boolean | undefined { if (value === undefined) return undefined; if (typeof value !== 'boolean') throw new CommerceRequestError('Invalid boolean'); return value }
 function requiredEnum<T extends string>(value: unknown, allowed: readonly T[]): T { if (typeof value !== 'string' || !allowed.includes(value as T)) throw new CommerceRequestError('Invalid enum'); return value as T }
@@ -625,6 +649,7 @@ function uniqueArray(value: unknown, max: number, parse: (item: unknown) => stri
 function exactKeys(value: Record<string, unknown>, expected: string[]): boolean { const keys = Object.keys(value).sort(); const wanted = [...expected].sort(); return keys.length === wanted.length && keys.every((key, index) => key === wanted[index]) }
 function validTimestamp(value: string): boolean { const parsed = Date.parse(value); return Number.isFinite(parsed) && new Date(parsed).toISOString() === value }
 function digest(value: string): string { return createHash('sha256').update(value).digest('hex') }
+function publicText(value: string): string { return isFabricSensitiveString(value) ? '[REDACTED]' : value }
 
 function noQuery(ctx: Context): void { queryKeys(ctx, new Set()) }
 function queryKeys(ctx: Context, allowed: ReadonlySet<string>): void {

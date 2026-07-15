@@ -171,8 +171,9 @@ function finalizeOrder(
   result: CommerceProviderOrderResult,
   now: string,
 ): CommerceOrderExecutionResult {
-  if (!result.providerOrderId || result.currency !== transaction.currency
-    || result.amountMinor === null || result.amountMinor > transaction.expectedAmountMinor || !result.receiptDigest) {
+  if (result.providerRequestId !== transaction.providerRequestId || !result.providerOrderId
+    || result.currency !== transaction.currency || result.amountMinor !== transaction.expectedAmountMinor
+    || !result.receiptDigest) {
     throw new CommerceExecutionError('COMMERCE_PROVIDER_ORDER_RESULT_INVALID', false, true, transaction.id)
   }
   const updated = transitionCommerceTransaction({ transactionId: transaction.id, expectedVersion: transaction.version,
@@ -245,8 +246,9 @@ function finalizePayment(
   result: CommerceProviderPaymentResult,
   now: string,
 ): CommercePaymentExecutionResult {
-  if (!result.providerReceiptId || !result.receiptDigest || result.currency !== transaction.currency
-    || result.amountMinor > transaction.expectedAmountMinor || result.providerOrderId !== transaction.providerOrderId) {
+  if (result.providerRequestId !== payment.providerRequestId || !result.providerReceiptId || !result.receiptDigest
+    || result.currency !== transaction.currency || result.amountMinor !== payment.amountMinor
+    || result.providerOrderId !== transaction.providerOrderId) {
     throw new CommerceExecutionError('COMMERCE_PROVIDER_PAYMENT_RESULT_INVALID', false, true, transaction.id)
   }
   const paid = transitionCommercePaymentAttempt({ paymentId: payment.id, expectedVersion: payment.version,
@@ -308,6 +310,9 @@ function paymentExecutionFromRecords(
 
 function normalizedProviderError(error: unknown): CommerceProviderError {
   if (error instanceof CommerceProviderError) return error
+  if (error instanceof CommerceExecutionError) {
+    return new CommerceProviderError(error.code, error.retryable, error.uncertain, false)
+  }
   if (error instanceof CommerceContractError) {
     return new CommerceProviderError(error.code, false, false, false)
   }

@@ -82,6 +82,15 @@ describe('commerce autonomy contracts', () => {
     expect(() => assertCommerceSafeData(sparse)).toThrow('COMMERCE_DATA_BOUNDS_EXCEEDED')
     const accessor = Object.defineProperty({}, 'quoteId', { enumerable: true, get: () => 'quote-1' })
     expect(() => assertCommerceSafeData(accessor)).toThrow('COMMERCE_DATA_INVALID')
+
+    let arrayGetterInvoked = false
+    const accessorArray = ['safe']
+    Object.defineProperty(accessorArray, '0', { enumerable: true,
+      get: () => { arrayGetterInvoked = true; return 'unsafe' } })
+    expect(() => assertCommerceSafeData(accessorArray)).toThrow('COMMERCE_DATA_BOUNDS_EXCEEDED')
+    expect(arrayGetterInvoked).toBe(false)
+    expect(() => assertCommerceSafeData(new Proxy({ quoteId: 'quote-1' }, {})))
+      .toThrow('COMMERCE_DATA_INVALID')
   })
 
 })

@@ -131,6 +131,9 @@ function validateLimits(input: CommerceActivationLimits, account: CommerceProvid
 
 function validNow(value?: string): string {
   const now = value ?? new Date().toISOString()
-  if (new Date(now).toISOString() !== now) throw new CommerceContractError('COMMERCE_TIME_INVALID')
+  const parsed = Date.parse(now)
+  if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== now) {
+    throw new CommerceContractError('COMMERCE_TIME_INVALID')
+  }
   return now
 }

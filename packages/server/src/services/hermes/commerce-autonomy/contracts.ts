@@ -147,7 +147,9 @@ export function assertCommerceSafeData(value: unknown): void {
       if (candidate.length > MAX_ARRAY_ITEMS || !denseArray(candidate)) {
         throw new CommerceContractError('COMMERCE_DATA_BOUNDS_EXCEEDED')
       }
-      for (const item of candidate) visit(item, depth + 1)
+      for (let index = 0; index < candidate.length; index += 1) {
+        visit(Object.getOwnPropertyDescriptor(candidate, String(index))?.value, depth + 1)
+      }
       return
     }
     if (!plainRecord(candidate)) throw new CommerceContractError('COMMERCE_DATA_INVALID')
@@ -215,4 +217,8 @@ function denseArray(value: unknown[]): boolean {
   return Reflect.ownKeys(value).every(key => typeof key === 'string'
     && (key === 'length' || /^(?:0|[1-9][0-9]*)$/.test(key)))
     && Object.keys(value).length === value.length
+    && Object.keys(value).every(key => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      return !!descriptor?.enumerable && 'value' in descriptor
+    })
 }

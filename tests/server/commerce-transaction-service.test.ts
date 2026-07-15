@@ -15,6 +15,7 @@ import {
   prepareCommerceCartFromComparison,
   refreshShadowCommerceQuote,
   VirtualCommerceProvider,
+  type CommerceProviderAdapter,
 } from '../../packages/server/src/services/hermes/commerce-autonomy'
 
 describe('commerce order and payment transaction service', () => {
@@ -114,6 +115,24 @@ describe('commerce order and payment transaction service', () => {
     expect(resumed.transaction.state).toBe('paid')
     expect(resumed.payment.state).toBe('paid')
   })
+
+  it.each(['request', 'amount'] as const)('rejects substituted order receipt %s material', async field => {
+    const seeded = await seed()
+    const provider = substitutedReceiptProvider(seeded.provider, 'order', field)
+    await expect(executeShadowCommerceOrder({ ...orderInput(seeded), provider })).rejects.toMatchObject({
+      code: 'COMMERCE_PROVIDER_ORDER_RESULT_INVALID', uncertain: true,
+    })
+    expect(getCommerceTransactionBySeed()).toMatchObject({ state: 'lookup_required', providerOrderId: null })
+  })
+
+  it.each(['request', 'amount'] as const)('rejects substituted payment receipt %s material', async field => {
+    const seeded = await seed()
+    const order = await executeShadowCommerceOrder(orderInput(seeded))
+    const provider = substitutedReceiptProvider(seeded.provider, 'payment', field)
+    await expect(executeShadowCommercePayment({ ...paymentInput(seeded, order.transaction.id), provider }))
+      .rejects.toMatchObject({ code: 'COMMERCE_PROVIDER_PAYMENT_RESULT_INVALID', uncertain: true })
+    expect(getCommercePaymentAttemptByTransaction(order.transaction.id)).toMatchObject({ state: 'lookup_required' })
+  })
 })
 
 const NOW = '2026-07-15T10:00:00.000Z'
@@ -151,4 +170,34 @@ function getCommerceTransactionBySeed() {
   const transaction = getCommerceTransactionByWorkflow('workflow-commerce-1')
   if (!transaction) throw new Error('seed transaction missing')
   return transaction
+}
+
+function substitutedReceiptProvider(
+  provider: VirtualCommerceProvider,
+  operation: 'order' | 'payment',
+  field: 'request' | 'amount',
+): CommerceProviderAdapter {
+  return new Proxy(provider, { get(target, property) {
+    if (operation === 'order' && (property === 'placeOrder' || property === 'lookupOrder')) {
+      return async (input: Parameters<CommerceProviderAdapter['placeOrder']>[0]) => {
+        const result = property === 'placeOrder' ? await target.placeOrder(input)
+          : await target.lookupOrder({ providerRequestId: input.providerRequestId })
+        if (result.status === 'not_found') return result
+        return field === 'request' ? { ...result, providerRequestId: 'order-request-substituted' }
+          : { ...result, amountMinor: Math.max(0, (result.amountMinor ?? 0) - 1) }
+      }
+    }
+    if (operation === 'payment' && (property === 'confirmPayment' || property === 'lookupPayment')) {
+      return async (input: Parameters<CommerceProviderAdapter['confirmPayment']>[0]) => {
+        const result = property === 'confirmPayment' ? await target.confirmPayment(input)
+          : await target.lookupPayment({ providerRequestId: input.providerRequestId,
+            providerOrderId: input.providerOrderId })
+        if (result.status === 'not_found') return result
+        return field === 'request' ? { ...result, providerRequestId: 'payment-request-substituted' }
+          : { ...result, amountMinor: Math.max(0, (result.amountMinor ?? 0) - 1) }
+      }
+    }
+    const value = Reflect.get(target, property, target)
+    return typeof value === 'function' ? value.bind(target) : value
+  } }) as CommerceProviderAdapter
 }
