@@ -72,3 +72,9 @@ Harden audit/API redaction, peer-versus-companion authority separation, pairing 
 ### Task 15: End-to-End Closure
 
 Use the virtual companion to prove pairing, encrypted session, capability report, notification projection, semantic launch, fresh verification, restart replay, capture permission, takeover/resume, tamper/replay rejection, revocation, offline recovery, and emergency stop. Run focused suites, browser tests, harness, TypeScript, build, OpenAPI determinism, and final review.
+
+## Completion (2026-07-15)
+
+Tasks 1-15 are complete for the Studio/server scope defined by this plan. Native Android packaging, signing, and distribution remain a separate release concern rather than an authority granted to Studio.
+
+The closure baseline is 21 focused test files with 83 passing tests, clean server and Vue TypeScript checks, deterministic OpenAPI generation (304 endpoints and 45 tags), a successful production build, and a passing repository harness.
