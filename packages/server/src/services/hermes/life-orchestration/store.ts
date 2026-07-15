@@ -180,6 +180,10 @@ export function lifeCanonicalDigest(value: unknown): string {
   return createHash('sha256').update(canonicalJson(value)).digest('hex')
 }
 
+export function lifeSubscriptionMaterialDigest(value: LifeSubscription): string {
+  return lifeCanonicalDigest(subscriptionMaterial(value))
+}
+
 export function createLifeSourceAccount(input: CreateLifeSourceAccountInput): LifeSourceAccount {
   validateId(input.id, 'LIFE_ACCOUNT_ID_INVALID')
   if (!isLifeSourceKind(input.sourceKind) || !isLifeExecutionMode(input.mode) || input.mode === 'live'

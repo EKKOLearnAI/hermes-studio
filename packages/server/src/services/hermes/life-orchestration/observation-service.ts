@@ -66,6 +66,52 @@ export interface LifeSourceSyncResult {
   projections: LifeObservationProjection[]
 }
 
+export interface LifeSourcePageSyncResult {
+  accountId: string
+  sourceKind: LifeSourceKind
+  observedCount: number
+  replayedCount: number
+  nextCursor: string | null
+  projections: LifeObservationProjection[]
+}
+
+export async function syncLifeSourcePage(input: {
+  accountId: string
+  adapter: LifeSourceAdapter
+  cursor: string | null
+  limit: number
+}): Promise<LifeSourcePageSyncResult> {
+  const account = getLifeSourceAccount(input.accountId)
+  if (!account || !account.enabled || account.health === 'revoked' || account.sourceKind !== input.adapter.sourceKind) {
+    throw new LifeContractError('LIFE_OBSERVATION_ACCOUNT_UNAVAILABLE')
+  }
+  if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 20
+    || input.cursor !== null && !/^offset-(0|[1-9][0-9]*)$/.test(input.cursor)) {
+    throw new LifeContractError('LIFE_OBSERVATION_BOUNDS_INVALID')
+  }
+  const page = await input.adapter.listPage({ cursor: input.cursor, limit: input.limit })
+  assertLifeProviderResult(page.operation, page)
+  validatePageForAccount(page, account.sourceKind)
+  const seenRecords = new Map<string, string>()
+  const projections: LifeObservationProjection[] = []
+  let replayedCount = 0
+  for (const providerRecord of page.records) {
+    const identity = providerRecordIdentity(providerRecord)
+    const previousDigest = seenRecords.get(identity)
+    if (previousDigest !== undefined) {
+      if (previousDigest !== providerRecord.sourceDigest) {
+        throw new LifeContractError('LIFE_OBSERVATION_PROVIDER_IDENTITY_CONFLICT')
+      }
+      replayedCount += 1
+      continue
+    }
+    seenRecords.set(identity, providerRecord.sourceDigest)
+    projections.push(projectObservedRecord(normalizeProviderRecord(account.id, providerRecord)))
+  }
+  return { accountId: account.id, sourceKind: account.sourceKind, observedCount: projections.length,
+    replayedCount, nextCursor: page.nextCursor, projections }
+}
+
 export async function syncLifeSource(input: {
   accountId: string
   adapter: LifeSourceAdapter
