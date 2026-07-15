@@ -262,6 +262,14 @@ export function createCommerceComparison(input: CreateCommerceComparisonInput): 
   })
 }
 
+export function getCommerceComparison(comparisonId: string): CommerceComparison | null {
+  validateId(comparisonId, 'COMMERCE_COMPARISON_ID_INVALID')
+  return withCommerceAutonomyDb(db => {
+    const row = db.prepare('SELECT * FROM commerce_comparisons WHERE id=?').get(comparisonId) as ComparisonRow | undefined
+    return row ? comparisonFromRow(row) : null
+  })
+}
+
 export function createCommerceCartRevision(input: CreateCommerceCartInput): CommerceCartRevision {
   validateId(input.accountId, 'COMMERCE_ACCOUNT_ID_INVALID')
   if (!TOKEN.test(input.destinationToken) || !TOKEN.test(input.recipientToken)
@@ -309,9 +317,9 @@ export function createCommerceQuote(input: CreateCommerceQuoteInput): CommerceQu
     if (cart.accountId !== account.id || account.currency !== input.currency) {
       throw new CommerceContractError('COMMERCE_QUOTE_ACCOUNT_MISMATCH')
     }
-    const material = { accountId: input.accountId, breakdown: input.breakdown, cartDigest: cart.contentDigest,
-      cartRevisionId: cart.id, currency: input.currency, expiresAt: input.expiresAt,
-      observedAt: input.observedAt, providerQuoteId: input.providerQuoteId }
+    const material = { breakdown: input.breakdown, cartDigest: cart.contentDigest,
+      currency: input.currency, expiresAt: input.expiresAt, observedAt: input.observedAt,
+      providerQuoteId: input.providerQuoteId }
     const quoteDigest = commerceCanonicalDigest(material)
     const existing = quoteByDigest(db, input.accountId, quoteDigest)
     if (existing) return existing

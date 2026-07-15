@@ -238,7 +238,8 @@ function compareCandidates(left: CommerceComparisonCandidate, right: CommerceCom
 }
 
 function commerceEntityId(offer: CommerceOfferSnapshot): string {
-  const digest = createHash('sha256').update(`${offer.provider}\0${offer.productId}\0${offer.skuId}`).digest('hex').slice(0, 32)
+  const digest = createHash('sha256')
+    .update(`${offer.accountId}\0${offer.provider}\0${offer.productId}\0${offer.skuId}`).digest('hex').slice(0, 32)
   return `commerce:product:${digest}`
 }
 

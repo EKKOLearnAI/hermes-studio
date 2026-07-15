@@ -115,6 +115,7 @@ export class CommerceProviderError extends Error {
 
 export interface CommerceProviderAdapter {
   readonly provider: CommerceProviderKind
+  readonly transport: 'virtual' | 'external'
   searchOffers(input: { query: string; limit: number }): Promise<CommerceProviderOffer[]>
   refreshQuote(input: {
     providerRequestId: string
@@ -163,6 +164,7 @@ interface VirtualAdjustmentRecord { requestDigest: string; result: CommerceProvi
 
 export class VirtualCommerceProvider implements CommerceProviderAdapter {
   readonly provider: CommerceProviderKind
+  readonly transport = 'virtual' as const
   private readonly catalog: VirtualCatalogOffer[]
   private readonly now: () => Date
   private readonly faults = new Map<CommerceProviderOperation, VirtualCommerceFault>()
