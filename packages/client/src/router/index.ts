@@ -118,6 +118,11 @@ const router = createRouter({
       component: () => import('@/views/hermes/InternetExecutionView.vue'),
     },
     {
+      path: '/hermes/personal-os/android-companion',
+      name: 'hermes.androidCompanion',
+      component: () => import('@/views/hermes/AndroidCompanionView.vue'),
+    },
+    {
       path: '/hermes/settings',
       name: 'hermes.settings',
       component: () => import('@/views/hermes/SettingsView.vue'),

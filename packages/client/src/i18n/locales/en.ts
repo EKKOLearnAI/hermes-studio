@@ -1,4 +1,5 @@
 import { internetExecutionMessages, internetSystemMessages } from '../internet-execution'
+import { androidCompanionMessages, androidSystemMessages } from '../android-companion'
 
 export default {
   // Login
@@ -297,6 +298,7 @@ export default {
         summary: 'Devices, rooms, inventory, connection health, and governed commands.',
       },
       internet: internetSystemMessages.en,
+      android: androidSystemMessages.en,
     },
     memoryContext: 'Memory Context',
     reviewQueue: 'Review Queue',
@@ -322,6 +324,7 @@ export default {
   },
 
   internetExecution: internetExecutionMessages.en,
+  androidCompanion: androidCompanionMessages.en,
 
   home: {
     title: 'Home Command Center',

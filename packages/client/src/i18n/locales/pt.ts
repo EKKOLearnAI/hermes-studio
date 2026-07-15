@@ -1,8 +1,10 @@
 import { internetExecutionMessages, internetSystemMessages } from '../internet-execution'
+import { androidCompanionMessages, androidSystemMessages } from '../android-companion'
 
 export default {
-  personalOS: { systems: { internet: internetSystemMessages.pt } },
+  personalOS: { systems: { internet: internetSystemMessages.pt, android: androidSystemMessages.pt } },
   internetExecution: internetExecutionMessages.pt,
+  androidCompanion: androidCompanionMessages.pt,
   // Login
   login: {
     title: 'Hermes Web UI',

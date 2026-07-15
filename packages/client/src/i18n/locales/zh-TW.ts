@@ -1,8 +1,10 @@
 import { internetExecutionMessages, internetSystemMessages } from '../internet-execution'
+import { androidCompanionMessages, androidSystemMessages } from '../android-companion'
 
 export default {
-  personalOS: { systems: { internet: internetSystemMessages['zh-TW'] } },
+  personalOS: { systems: { internet: internetSystemMessages['zh-TW'], android: androidSystemMessages['zh-TW'] } },
   internetExecution: internetExecutionMessages['zh-TW'],
+  androidCompanion: androidCompanionMessages['zh-TW'],
   // 登入
   login: {
     title: 'Hermes Web UI',

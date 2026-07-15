@@ -1,4 +1,5 @@
 import { internetExecutionMessages, internetSystemMessages } from '../internet-execution'
+import { androidCompanionMessages, androidSystemMessages } from '../android-companion'
 
 export default {
   // 登录
@@ -297,6 +298,7 @@ export default {
         summary: '管理设备、空间、库存、连接健康和受治理命令。',
       },
       internet: internetSystemMessages.zh,
+      android: androidSystemMessages.zh,
     },
     memoryContext: '记忆上下文',
     reviewQueue: '审核队列',
@@ -322,6 +324,7 @@ export default {
   },
 
   internetExecution: internetExecutionMessages.zh,
+  androidCompanion: androidCompanionMessages.zh,
 
   home: {
     title: '家庭指挥中心',
