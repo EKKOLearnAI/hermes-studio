@@ -1,5 +1,6 @@
 export * from './contracts'
 export * from './database'
+export * from './observation-service'
 export * from './provider'
 export * from './store'
 export * from './types'
