@@ -182,8 +182,10 @@ describe('PersonalOSView', () => {
     expect(moduleGrid.text()).toContain('personalOS.systems.skin.title')
     expect(moduleGrid.text()).toContain('personalOS.systems.health.title')
     expect(moduleGrid.text()).toContain('personalOS.systems.home.title')
+    expect(moduleGrid.text()).toContain('personalOS.systems.internet.title')
     expect(moduleGrid.html()).toContain('/hermes/personal-os/fitness')
     expect(moduleGrid.html()).toContain('/hermes/personal-os/home')
+    expect(moduleGrid.html()).toContain('/hermes/personal-os/internet-execution')
   })
 
   it('submits one-sentence quick logs from the command center', async () => {

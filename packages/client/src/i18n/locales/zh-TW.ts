@@ -1,4 +1,8 @@
+import { internetExecutionMessages, internetSystemMessages } from '../internet-execution'
+
 export default {
+  personalOS: { systems: { internet: internetSystemMessages['zh-TW'] } },
+  internetExecution: internetExecutionMessages['zh-TW'],
   // 登入
   login: {
     title: 'Hermes Web UI',

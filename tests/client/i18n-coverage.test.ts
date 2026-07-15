@@ -145,6 +145,20 @@ const HEALTH_LOOP_LOCALIZED_KEYS = [
   'health.loop.feedback.completed',
 ]
 
+const INTERNET_EXECUTION_LOCALIZED_KEYS = [
+  'personalOS.systems.internet.title',
+  'personalOS.systems.internet.summary',
+  'internetExecution.title',
+  'internetExecution.subtitle',
+  'internetExecution.refresh',
+  'internetExecution.status.title',
+  'internetExecution.intent.title',
+  'internetExecution.intent.search',
+  'internetExecution.result.title',
+  'internetExecution.workflow.title',
+  'internetExecution.workflow.takeoverTitle',
+]
+
 const PLATFORM_SETTINGS_LOCALE_SPECIFIC_LOCALIZED_KEYS: Record<string, string[]> = {
   de: ['platform.qqAppId', 'platform.qqAppSecret'],
   ja: ['platform.homeserver', 'platform.accountId'],
@@ -296,6 +310,18 @@ describe('i18n locale coverage', () => {
     })
 
     expect(missingOrEnglish).toEqual([])
+  })
+
+  it('localizes Internet Execution core copy in every raw non-English locale', () => {
+    const untranslated = Object.entries(rawMessages).flatMap(([locale, localeMessages]) => {
+      if (locale === 'en') return []
+      return INTERNET_EXECUTION_LOCALIZED_KEYS.flatMap((key) => {
+        const value = getPath(localeMessages, key)
+        if (typeof value === 'undefined') return [`${locale}: ${key} missing`]
+        return value === getPath(en, key) ? [`${locale}: ${key}`] : []
+      })
+    })
+    expect(untranslated).toEqual([])
   })
 
   it('localizes platform settings copy in every raw non-English locale instead of falling back to English', () => {

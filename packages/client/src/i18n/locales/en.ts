@@ -1,3 +1,5 @@
+import { internetExecutionMessages, internetSystemMessages } from '../internet-execution'
+
 export default {
   // Login
   login: {
@@ -294,6 +296,7 @@ export default {
         title: 'Home System',
         summary: 'Devices, rooms, inventory, connection health, and governed commands.',
       },
+      internet: internetSystemMessages.en,
     },
     memoryContext: 'Memory Context',
     reviewQueue: 'Review Queue',
@@ -317,6 +320,8 @@ export default {
     taskCheckedIn: 'Task checked in',
     taskCheckInFailed: 'Task check-in failed',
   },
+
+  internetExecution: internetExecutionMessages.en,
 
   home: {
     title: 'Home Command Center',

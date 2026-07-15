@@ -1,4 +1,8 @@
+import { internetExecutionMessages, internetSystemMessages } from '../internet-execution'
+
 export default {
+  personalOS: { systems: { internet: internetSystemMessages.de } },
+  internetExecution: internetExecutionMessages.de,
   // Login
   login: {
     title: 'Hermes Web UI',

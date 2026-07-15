@@ -1,3 +1,5 @@
+import { internetExecutionMessages, internetSystemMessages } from '../internet-execution'
+
 export default {
   // 登录
   login: {
@@ -294,6 +296,7 @@ export default {
         title: '家庭系统',
         summary: '管理设备、空间、库存、连接健康和受治理命令。',
       },
+      internet: internetSystemMessages.zh,
     },
     memoryContext: '记忆上下文',
     reviewQueue: '审核队列',
@@ -317,6 +320,8 @@ export default {
     taskCheckedIn: '任务已打卡',
     taskCheckInFailed: '任务打卡失败',
   },
+
+  internetExecution: internetExecutionMessages.zh,
 
   home: {
     title: '家庭指挥中心',
