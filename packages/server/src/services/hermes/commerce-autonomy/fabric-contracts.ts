@@ -188,6 +188,9 @@ export function validateCommerceFabricSemantics(capabilityId: string, input: Fab
     if (!isCommerceDigest(value(input, key))) return false
   }
   if (expected.includes('amountMinor') && !safeMoney(value(input, 'amountMinor'))) return false
+  if ((capabilityId === COMMERCE_CANCEL_CAPABILITY || capabilityId === COMMERCE_REFUND_CAPABILITY)
+    && (typeof value(input, 'reasonCode') !== 'string'
+      || !/^[A-Z][A-Z0-9_]{1,127}$/.test(String(value(input, 'reasonCode'))))) return false
   if (capabilityId === COMMERCE_SEARCH_CAPABILITY) {
     const query = value(input, 'query'); const limit = value(input, 'limit')
     return typeof query === 'string' && query.trim() === query && query.length >= 1 && query.length <= 200

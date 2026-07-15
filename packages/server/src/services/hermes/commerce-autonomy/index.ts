@@ -1,4 +1,5 @@
 export * from './contracts'
+export * from './adjustment-service'
 export * from './authorization'
 export * from './cart-quote-service'
 export * from './database'

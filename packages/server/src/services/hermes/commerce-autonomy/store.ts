@@ -4,11 +4,14 @@ import {
   assertCommerceSafeData,
   CommerceContractError,
   isCommerceCurrency,
+  isCommerceCancellationState,
+  isCommerceDeliveryState,
   isCommerceDigest,
   isCommerceErrorCode,
   isCommerceExecutionMode,
   isCommerceFulfillmentKind,
   isCommerceProviderKind,
+  isCommerceRefundState,
   isCommerceSemanticId,
   isLegalCommerceTransactionTransition,
 } from './contracts'
@@ -16,15 +19,18 @@ import { withCommerceAutonomyDb } from './database'
 import type {
   CommerceCartItem,
   CommerceCartRevision,
+  CommerceCancellationRequest,
   CommerceCheckpoint,
   CommerceComparison,
   CommerceComparisonCandidate,
   CommerceComparisonRequirement,
+  CommerceDeliveryObservation,
   CommerceOfferSnapshot,
   CommercePaymentAttempt,
   CommerceProviderAccount,
   CommerceQuote,
   CommerceQuoteBreakdown,
+  CommerceRefundRequest,
   CommerceTransaction,
   CommerceTransactionState,
 } from './types'
@@ -77,6 +83,21 @@ type PaymentRow = {
   method_label: string | null; method_fingerprint: string | null; currency: string; amount_minor: number
   state: CommercePaymentAttempt['state']; provider_receipt_id: string | null; evidence_digest: string | null
   version: number; created_at: string; updated_at: string; completed_at: string | null
+}
+type DeliveryRow = {
+  id: string; transaction_id: string; provider_event_id: string; state: CommerceDeliveryObservation['state']
+  eta_at: string | null; evidence_digest: string; observed_at: string; created_at: string
+}
+type CancellationRow = {
+  id: string; transaction_id: string; provider_request_id: string; reason_code: string; eligibility_digest: string
+  state: CommerceCancellationRequest['state']; provider_receipt_id: string | null; version: number
+  created_at: string; updated_at: string; completed_at: string | null
+}
+type RefundRow = {
+  id: string; transaction_id: string; provider_request_id: string; reason_code: string; currency: string
+  expected_amount_minor: number; actual_amount_minor: number | null; eligibility_digest: string
+  state: CommerceRefundRequest['state']; provider_receipt_id: string | null; version: number
+  created_at: string; updated_at: string; completed_at: string | null
 }
 
 export interface CreateCommerceAccountInput {
@@ -171,6 +192,50 @@ export interface TransitionCommercePaymentAttemptInput {
   state: CommercePaymentAttempt['state']
   providerReceiptId?: string | null
   evidenceDigest?: string | null
+  completedAt?: string | null
+  updatedAt?: string
+}
+
+export interface RecordCommerceDeliveryInput {
+  transactionId: string
+  providerEventId: string
+  state: CommerceDeliveryObservation['state']
+  etaAt: string | null
+  evidenceDigest: string
+  observedAt: string
+}
+
+export interface CreateCommerceCancellationInput {
+  transactionId: string
+  providerRequestId: string
+  reasonCode: string
+  createdAt?: string
+}
+
+export interface TransitionCommerceCancellationInput {
+  requestId: string
+  expectedVersion: number
+  state: CommerceCancellationRequest['state']
+  providerReceiptId?: string | null
+  completedAt?: string | null
+  updatedAt?: string
+}
+
+export interface CreateCommerceRefundInput {
+  transactionId: string
+  providerRequestId: string
+  reasonCode: string
+  currency: string
+  amountMinor: number
+  createdAt?: string
+}
+
+export interface TransitionCommerceRefundInput {
+  requestId: string
+  expectedVersion: number
+  state: CommerceRefundRequest['state']
+  providerReceiptId?: string | null
+  actualAmountMinor?: number | null
   completedAt?: string | null
   updatedAt?: string
 }
@@ -497,6 +562,190 @@ export function transitionCommercePaymentAttempt(input: TransitionCommercePaymen
   })
 }
 
+export function recordCommerceDeliveryObservation(
+  input: RecordCommerceDeliveryInput,
+): CommerceDeliveryObservation {
+  validateId(input.transactionId, 'COMMERCE_TRANSACTION_ID_INVALID')
+  validateId(input.providerEventId, 'COMMERCE_PROVIDER_EVENT_ID_INVALID')
+  if (!isCommerceDeliveryState(input.state)) throw new CommerceContractError('COMMERCE_DELIVERY_STATE_INVALID')
+  if (!isCommerceDigest(input.evidenceDigest)) throw new CommerceContractError('COMMERCE_DIGEST_INVALID')
+  validateTimestamp(input.observedAt, 'COMMERCE_TIME_INVALID')
+  if (input.etaAt !== null) validateTimestamp(input.etaAt, 'COMMERCE_TIME_INVALID')
+  return withCommerceAutonomyDb(db => {
+    const transaction = required(transactionById(db, input.transactionId), 'COMMERCE_TRANSACTION_NOT_FOUND')
+    if (!transaction.providerOrderId) throw new CommerceContractError('COMMERCE_ORDER_ID_MISSING')
+    const existing = deliveryByEvent(db, transaction.id, input.providerEventId)
+    const expected = { evidenceDigest: input.evidenceDigest, etaAt: input.etaAt, observedAt: input.observedAt,
+      providerEventId: input.providerEventId, state: input.state, transactionId: transaction.id }
+    if (existing) {
+      if (commerceCanonicalDigest(existing) !== commerceCanonicalDigest({ ...expected, id: existing.id,
+        createdAt: existing.createdAt })) throw new CommerceContractError('COMMERCE_DELIVERY_EVENT_REPLAY_MISMATCH')
+      return existing
+    }
+    const latest = latestDelivery(db, transaction.id)
+    if (latest && (Date.parse(input.observedAt) < Date.parse(latest.observedAt)
+      || !legalDeliveryProgress(latest.state, input.state))) {
+      throw new CommerceContractError('COMMERCE_DELIVERY_STATE_STALE')
+    }
+    const id = `delivery-${stableId({ providerEventId: input.providerEventId, transactionId: transaction.id })}`
+    db.prepare(`INSERT INTO commerce_delivery_observations(id,transaction_id,provider_event_id,state,eta_at,
+      evidence_digest,observed_at,created_at) VALUES(?,?,?,?,?,?,?,?)`).run(
+      id, transaction.id, input.providerEventId, input.state, input.etaAt,
+      input.evidenceDigest, input.observedAt, input.observedAt,
+    )
+    return required(deliveryByEvent(db, transaction.id, input.providerEventId), 'COMMERCE_DELIVERY_CREATE_FAILED')
+  })
+}
+
+export function getLatestCommerceDeliveryObservation(transactionId: string): CommerceDeliveryObservation | null {
+  validateId(transactionId, 'COMMERCE_TRANSACTION_ID_INVALID')
+  return withCommerceAutonomyDb(db => latestDelivery(db, transactionId))
+}
+
+export function createCommerceCancellationRequest(
+  input: CreateCommerceCancellationInput,
+): CommerceCancellationRequest {
+  validateId(input.transactionId, 'COMMERCE_TRANSACTION_ID_INVALID')
+  if (!TOKEN.test(input.providerRequestId) || !isCommerceErrorCode(input.reasonCode)) {
+    throw new CommerceContractError('COMMERCE_CANCELLATION_INPUT_INVALID')
+  }
+  const createdAt = normalizedTimestamp(input.createdAt ?? new Date().toISOString(), 'COMMERCE_TIME_INVALID')
+  return withCommerceAutonomyDb(db => {
+    const transaction = required(transactionById(db, input.transactionId), 'COMMERCE_TRANSACTION_NOT_FOUND')
+    const existing = cancellationByRequest(db, transaction.id, input.providerRequestId)
+    if (existing) {
+      if (existing.reasonCode !== input.reasonCode) {
+        throw new CommerceContractError('COMMERCE_CANCELLATION_REPLAY_MISMATCH')
+      }
+      return existing
+    }
+    if (!transaction.providerOrderId || !['order_pending', 'waiting_payment', 'paid', 'fulfilling'].includes(transaction.state)) {
+      throw new CommerceContractError('COMMERCE_CANCELLATION_NOT_ELIGIBLE')
+    }
+    const eligibilityDigest = transactionEligibilityDigest(transaction, 'cancel')
+    const id = `cancellation-${stableId({ providerRequestId: input.providerRequestId,
+      transactionId: transaction.id })}`
+    db.prepare(`INSERT INTO commerce_cancellation_requests(id,transaction_id,provider_request_id,reason_code,
+      eligibility_digest,state,provider_receipt_id,version,created_at,updated_at,completed_at)
+      VALUES(?,?,?,?,?,'requested',NULL,1,?,?,NULL)`).run(
+      id, transaction.id, input.providerRequestId, input.reasonCode, eligibilityDigest, createdAt, createdAt,
+    )
+    return required(cancellationByRequest(db, transaction.id, input.providerRequestId),
+      'COMMERCE_CANCELLATION_CREATE_FAILED')
+  })
+}
+
+export function getCommerceCancellationRequest(
+  transactionId: string,
+  providerRequestId: string,
+): CommerceCancellationRequest | null {
+  validateId(transactionId, 'COMMERCE_TRANSACTION_ID_INVALID')
+  if (!TOKEN.test(providerRequestId)) throw new CommerceContractError('COMMERCE_PROVIDER_REQUEST_ID_INVALID')
+  return withCommerceAutonomyDb(db => cancellationByRequest(db, transactionId, providerRequestId))
+}
+
+export function transitionCommerceCancellationRequest(
+  input: TransitionCommerceCancellationInput,
+): CommerceCancellationRequest {
+  validateId(input.requestId, 'COMMERCE_CANCELLATION_ID_INVALID')
+  if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1
+    || !isCommerceCancellationState(input.state)) {
+    throw new CommerceContractError('COMMERCE_CANCELLATION_TRANSITION_INVALID')
+  }
+  if (input.providerReceiptId !== undefined && input.providerReceiptId !== null) {
+    validateId(input.providerReceiptId, 'COMMERCE_RECEIPT_ID_INVALID')
+  }
+  if (input.completedAt !== undefined && input.completedAt !== null) validateTimestamp(input.completedAt, 'COMMERCE_TIME_INVALID')
+  const updatedAt = normalizedTimestamp(input.updatedAt ?? new Date().toISOString(), 'COMMERCE_TIME_INVALID')
+  return withCommerceAutonomyDb(db => {
+    const current = required(cancellationById(db, input.requestId), 'COMMERCE_CANCELLATION_NOT_FOUND')
+    if (current.version !== input.expectedVersion) throw new CommerceContractError('COMMERCE_CANCELLATION_VERSION_CONFLICT')
+    if (current.providerReceiptId && input.providerReceiptId !== undefined
+      && current.providerReceiptId !== input.providerReceiptId) {
+      throw new CommerceContractError('COMMERCE_CANCELLATION_RECEIPT_SUBSTITUTION')
+    }
+    const result = db.prepare(`UPDATE commerce_cancellation_requests SET state=?,provider_receipt_id=?,
+      version=version+1,updated_at=?,completed_at=? WHERE id=? AND version=?`).run(
+      input.state, input.providerReceiptId === undefined ? current.providerReceiptId : input.providerReceiptId,
+      updatedAt, input.completedAt === undefined ? current.completedAt : input.completedAt,
+      current.id, current.version,
+    )
+    if (result.changes !== 1) throw new CommerceContractError('COMMERCE_CANCELLATION_VERSION_CONFLICT')
+    return required(cancellationById(db, current.id), 'COMMERCE_CANCELLATION_UPDATE_FAILED')
+  })
+}
+
+export function createCommerceRefundRequest(input: CreateCommerceRefundInput): CommerceRefundRequest {
+  validateId(input.transactionId, 'COMMERCE_TRANSACTION_ID_INVALID')
+  if (!TOKEN.test(input.providerRequestId) || !isCommerceErrorCode(input.reasonCode)
+    || !isCommerceCurrency(input.currency)) throw new CommerceContractError('COMMERCE_REFUND_INPUT_INVALID')
+  validateMoneyInteger(input.amountMinor)
+  const createdAt = normalizedTimestamp(input.createdAt ?? new Date().toISOString(), 'COMMERCE_TIME_INVALID')
+  return withCommerceAutonomyDb(db => {
+    const transaction = required(transactionById(db, input.transactionId), 'COMMERCE_TRANSACTION_NOT_FOUND')
+    const existing = refundByRequest(db, transaction.id, input.providerRequestId)
+    if (existing) {
+      if (existing.reasonCode !== input.reasonCode || existing.currency !== input.currency
+        || existing.expectedAmountMinor !== input.amountMinor) {
+        throw new CommerceContractError('COMMERCE_REFUND_REPLAY_MISMATCH')
+      }
+      return existing
+    }
+    const charged = transaction.actualAmountMinor ?? transaction.expectedAmountMinor
+    if (!transaction.providerOrderId || !['paid', 'fulfilling', 'delivered', 'cancelled'].includes(transaction.state)
+      || transaction.currency !== input.currency || input.amountMinor > charged) {
+      throw new CommerceContractError('COMMERCE_REFUND_NOT_ELIGIBLE')
+    }
+    const eligibilityDigest = transactionEligibilityDigest(transaction, 'refund')
+    const id = `refund-${stableId({ providerRequestId: input.providerRequestId, transactionId: transaction.id })}`
+    db.prepare(`INSERT INTO commerce_refund_requests(id,transaction_id,provider_request_id,reason_code,currency,
+      expected_amount_minor,actual_amount_minor,eligibility_digest,state,provider_receipt_id,version,
+      created_at,updated_at,completed_at) VALUES(?,?,?,?,?,?,NULL,?,'requested',NULL,1,?,?,NULL)`).run(
+      id, transaction.id, input.providerRequestId, input.reasonCode, input.currency, input.amountMinor,
+      eligibilityDigest, createdAt, createdAt,
+    )
+    return required(refundByRequest(db, transaction.id, input.providerRequestId), 'COMMERCE_REFUND_CREATE_FAILED')
+  })
+}
+
+export function getCommerceRefundRequest(
+  transactionId: string,
+  providerRequestId: string,
+): CommerceRefundRequest | null {
+  validateId(transactionId, 'COMMERCE_TRANSACTION_ID_INVALID')
+  if (!TOKEN.test(providerRequestId)) throw new CommerceContractError('COMMERCE_PROVIDER_REQUEST_ID_INVALID')
+  return withCommerceAutonomyDb(db => refundByRequest(db, transactionId, providerRequestId))
+}
+
+export function transitionCommerceRefundRequest(input: TransitionCommerceRefundInput): CommerceRefundRequest {
+  validateId(input.requestId, 'COMMERCE_REFUND_ID_INVALID')
+  if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1 || !isCommerceRefundState(input.state)) {
+    throw new CommerceContractError('COMMERCE_REFUND_TRANSITION_INVALID')
+  }
+  if (input.providerReceiptId !== undefined && input.providerReceiptId !== null) {
+    validateId(input.providerReceiptId, 'COMMERCE_RECEIPT_ID_INVALID')
+  }
+  if (input.actualAmountMinor !== undefined && input.actualAmountMinor !== null) validateMoneyInteger(input.actualAmountMinor)
+  if (input.completedAt !== undefined && input.completedAt !== null) validateTimestamp(input.completedAt, 'COMMERCE_TIME_INVALID')
+  const updatedAt = normalizedTimestamp(input.updatedAt ?? new Date().toISOString(), 'COMMERCE_TIME_INVALID')
+  return withCommerceAutonomyDb(db => {
+    const current = required(refundById(db, input.requestId), 'COMMERCE_REFUND_NOT_FOUND')
+    if (current.version !== input.expectedVersion) throw new CommerceContractError('COMMERCE_REFUND_VERSION_CONFLICT')
+    const actual = input.actualAmountMinor === undefined ? current.actualAmountMinor : input.actualAmountMinor
+    if (actual !== null && actual > current.expectedAmountMinor) throw new CommerceContractError('COMMERCE_REFUND_AMOUNT_INCREASED')
+    if (current.providerReceiptId && input.providerReceiptId !== undefined
+      && current.providerReceiptId !== input.providerReceiptId) throw new CommerceContractError('COMMERCE_REFUND_RECEIPT_SUBSTITUTION')
+    const result = db.prepare(`UPDATE commerce_refund_requests SET state=?,provider_receipt_id=?,actual_amount_minor=?,
+      version=version+1,updated_at=?,completed_at=? WHERE id=? AND version=?`).run(
+      input.state, input.providerReceiptId === undefined ? current.providerReceiptId : input.providerReceiptId,
+      actual, updatedAt, input.completedAt === undefined ? current.completedAt : input.completedAt,
+      current.id, current.version,
+    )
+    if (result.changes !== 1) throw new CommerceContractError('COMMERCE_REFUND_VERSION_CONFLICT')
+    return required(refundById(db, current.id), 'COMMERCE_REFUND_UPDATE_FAILED')
+  })
+}
+
 export function transitionCommerceTransaction(input: TransitionCommerceTransactionInput): CommerceTransaction {
   validateId(input.transactionId, 'COMMERCE_TRANSACTION_ID_INVALID')
   if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1) {
@@ -778,6 +1027,52 @@ function paymentByTransaction(db: DatabaseSync, transactionId: string): Commerce
   return row ? paymentFromRow(row) : null
 }
 
+function deliveryByEvent(
+  db: DatabaseSync,
+  transactionId: string,
+  providerEventId: string,
+): CommerceDeliveryObservation | null {
+  const row = db.prepare(`SELECT * FROM commerce_delivery_observations
+    WHERE transaction_id=? AND provider_event_id=?`).get(transactionId, providerEventId) as DeliveryRow | undefined
+  return row ? deliveryFromRow(row) : null
+}
+
+function latestDelivery(db: DatabaseSync, transactionId: string): CommerceDeliveryObservation | null {
+  const row = db.prepare(`SELECT * FROM commerce_delivery_observations WHERE transaction_id=?
+    ORDER BY observed_at DESC,id DESC LIMIT 1`).get(transactionId) as DeliveryRow | undefined
+  return row ? deliveryFromRow(row) : null
+}
+
+function cancellationById(db: DatabaseSync, id: string): CommerceCancellationRequest | null {
+  const row = db.prepare('SELECT * FROM commerce_cancellation_requests WHERE id=?').get(id) as CancellationRow | undefined
+  return row ? cancellationFromRow(row) : null
+}
+
+function cancellationByRequest(
+  db: DatabaseSync,
+  transactionId: string,
+  providerRequestId: string,
+): CommerceCancellationRequest | null {
+  const row = db.prepare(`SELECT * FROM commerce_cancellation_requests
+    WHERE transaction_id=? AND provider_request_id=?`).get(transactionId, providerRequestId) as CancellationRow | undefined
+  return row ? cancellationFromRow(row) : null
+}
+
+function refundById(db: DatabaseSync, id: string): CommerceRefundRequest | null {
+  const row = db.prepare('SELECT * FROM commerce_refund_requests WHERE id=?').get(id) as RefundRow | undefined
+  return row ? refundFromRow(row) : null
+}
+
+function refundByRequest(
+  db: DatabaseSync,
+  transactionId: string,
+  providerRequestId: string,
+): CommerceRefundRequest | null {
+  const row = db.prepare(`SELECT * FROM commerce_refund_requests
+    WHERE transaction_id=? AND provider_request_id=?`).get(transactionId, providerRequestId) as RefundRow | undefined
+  return row ? refundFromRow(row) : null
+}
+
 function accountFromRow(row: AccountRow): CommerceProviderAccount {
   return { id: row.id, provider: row.provider, mode: row.mode, currency: row.currency, executorId: row.executor_id,
     displayName: row.display_name, health: row.health, enabled: row.enabled === 1, policyEpoch: row.policy_epoch,
@@ -830,6 +1125,27 @@ function paymentFromRow(row: PaymentRow): CommercePaymentAttempt {
     currency: row.currency, amountMinor: row.amount_minor, state: row.state,
     providerReceiptId: row.provider_receipt_id, evidenceDigest: row.evidence_digest, version: row.version,
     createdAt: row.created_at, updatedAt: row.updated_at, completedAt: row.completed_at }
+}
+
+function deliveryFromRow(row: DeliveryRow): CommerceDeliveryObservation {
+  return { id: row.id, transactionId: row.transaction_id, providerEventId: row.provider_event_id,
+    state: row.state, etaAt: row.eta_at, evidenceDigest: row.evidence_digest,
+    observedAt: row.observed_at, createdAt: row.created_at }
+}
+
+function cancellationFromRow(row: CancellationRow): CommerceCancellationRequest {
+  return { id: row.id, transactionId: row.transaction_id, providerRequestId: row.provider_request_id,
+    reasonCode: row.reason_code, eligibilityDigest: row.eligibility_digest, state: row.state,
+    providerReceiptId: row.provider_receipt_id, version: row.version, createdAt: row.created_at,
+    updatedAt: row.updated_at, completedAt: row.completed_at }
+}
+
+function refundFromRow(row: RefundRow): CommerceRefundRequest {
+  return { id: row.id, transactionId: row.transaction_id, providerRequestId: row.provider_request_id,
+    reasonCode: row.reason_code, currency: row.currency, expectedAmountMinor: row.expected_amount_minor,
+    actualAmountMinor: row.actual_amount_minor, eligibilityDigest: row.eligibility_digest, state: row.state,
+    providerReceiptId: row.provider_receipt_id, version: row.version, createdAt: row.created_at,
+    updatedAt: row.updated_at, completedAt: row.completed_at }
 }
 
 function checkpointFromRow(row: CheckpointRow): CommerceCheckpoint {
@@ -893,6 +1209,23 @@ function canonicalJson(value: unknown): string {
   const record = value as Record<string, unknown>
   return `{${Object.keys(record).sort(compareCodeUnits)
     .map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`
+}
+
+function legalDeliveryProgress(
+  previous: CommerceDeliveryObservation['state'],
+  next: CommerceDeliveryObservation['state'],
+): boolean {
+  if (previous === next) return true
+  const rank: Record<string, number> = { not_started: 0, preparing: 1, ready: 2, in_transit: 3, delivered: 4 }
+  if (previous in rank && next in rank) return rank[next]! > rank[previous]!
+  if (['delivered', 'failed', 'cancelled'].includes(previous)) return false
+  return ['failed', 'cancelled', 'unknown'].includes(next)
+}
+
+function transactionEligibilityDigest(transaction: CommerceTransaction, operation: 'cancel' | 'refund'): string {
+  return commerceCanonicalDigest({ operation, transactionId: transaction.id, providerOrderId: transaction.providerOrderId,
+    state: transaction.state, version: transaction.version, currency: transaction.currency,
+    amountMinor: transaction.actualAmountMinor ?? transaction.expectedAmountMinor })
 }
 
 function compareCodeUnits(left: string, right: string): number { return left < right ? -1 : left > right ? 1 : 0 }

@@ -204,6 +204,48 @@ export interface CommercePaymentAttempt {
   completedAt: string | null
 }
 
+export interface CommerceDeliveryObservation {
+  id: string
+  transactionId: string
+  providerEventId: string
+  state: CommerceDeliveryState
+  etaAt: string | null
+  evidenceDigest: string
+  observedAt: string
+  createdAt: string
+}
+
+export interface CommerceCancellationRequest {
+  id: string
+  transactionId: string
+  providerRequestId: string
+  reasonCode: string
+  eligibilityDigest: string
+  state: CommerceCancellationState
+  providerReceiptId: string | null
+  version: number
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+}
+
+export interface CommerceRefundRequest {
+  id: string
+  transactionId: string
+  providerRequestId: string
+  reasonCode: string
+  currency: string
+  expectedAmountMinor: number
+  actualAmountMinor: number | null
+  eligibilityDigest: string
+  state: CommerceRefundState
+  providerReceiptId: string | null
+  version: number
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+}
+
 export interface CommerceCheckpoint {
   transactionId: string
   ordinal: number

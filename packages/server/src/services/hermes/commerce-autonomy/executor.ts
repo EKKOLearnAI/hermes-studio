@@ -10,6 +10,11 @@ import type {
   FabricVerifyResult,
 } from '../action-fabric/executors'
 import type { FabricEvidence, FabricJsonObject } from '../action-fabric/types'
+import {
+  executeShadowCommerceCancellation,
+  executeShadowCommerceRefund,
+  trackShadowCommerceDelivery,
+} from './adjustment-service'
 import { CommerceContractError } from './contracts'
 import {
   commerceTargetAtoms,
@@ -30,12 +35,15 @@ import { CommerceProviderError, type CommerceProviderAdapter } from './provider'
 import {
   getCommerceAccount,
   getCommerceCartRevision,
+  getCommerceCancellationRequest,
   getCommerceComparison,
   getCommerceOfferSnapshot,
   getCommercePaymentAttemptByTransaction,
   getCommerceQuote,
+  getCommerceRefundRequest,
   getCommerceTransaction,
   getCommerceTransactionByWorkflow,
+  getLatestCommerceDeliveryObservation,
 } from './store'
 import {
   CommerceExecutionError,
@@ -186,10 +194,34 @@ async function executeCapability(
         status: account.mode === 'shadow' ? 'shadowed' : 'paid',
       })
     }
-    case COMMERCE_DELIVERY_CAPABILITY:
-    case COMMERCE_CANCEL_CAPABILITY:
-    case COMMERCE_REFUND_CAPABILITY:
-      throw new CommerceContractError('COMMERCE_CAPABILITY_NOT_IMPLEMENTED')
+    case COMMERCE_DELIVERY_CAPABILITY: {
+      const adapter = requiredProvider(provider, account)
+      const result = await trackShadowCommerceDelivery({ transactionId: String(context.input.transactionId),
+        provider: adapter, now: executionTime(context) })
+      return baseOutput(account, 'delivery_track', { transactionId: result.transaction.id,
+        providerEventId: result.observation.providerEventId, state: result.observation.state,
+        observedAt: result.observation.observedAt })
+    }
+    case COMMERCE_CANCEL_CAPABILITY: {
+      const adapter = requiredProvider(provider, account)
+      const result = await executeShadowCommerceCancellation({ transactionId: String(context.input.transactionId),
+        providerRequestId: String(context.input.providerRequestId), reasonCode: String(context.input.reasonCode),
+        provider: adapter, now: executionTime(context) })
+      return transactionOutput(account, context, 'order_cancel', { transactionId: result.transaction.id,
+        providerReceiptId: result.request.providerReceiptId,
+        status: account.mode === 'shadow' ? 'shadowed' : result.status })
+    }
+    case COMMERCE_REFUND_CAPABILITY: {
+      const adapter = requiredProvider(provider, account)
+      const result = await executeShadowCommerceRefund({ transactionId: String(context.input.transactionId),
+        providerRequestId: String(context.input.providerRequestId), reasonCode: String(context.input.reasonCode),
+        currency: account.currency, amountMinor: Number(context.input.amountMinor),
+        provider: adapter, now: executionTime(context) })
+      return transactionOutput(account, context, 'refund_request', { transactionId: result.transaction.id,
+        providerReceiptId: result.request.providerReceiptId,
+        amountMinor: result.request.actualAmountMinor ?? result.request.expectedAmountMinor,
+        status: account.mode === 'shadow' ? 'shadowed' : result.status })
+    }
     default:
       throw new CommerceContractError('COMMERCE_CAPABILITY_UNSUPPORTED')
   }
@@ -243,6 +275,34 @@ function currentOutput(
         providerReceiptId: payment.providerReceiptId, receiptDigest: payment.evidenceDigest,
         amountMinor: transaction.actualAmountMinor ?? payment.amountMinor,
         status: account.mode === 'shadow' ? 'shadowed' : 'paid' })
+    }
+    case COMMERCE_DELIVERY_CAPABILITY: {
+      const transaction = getCommerceTransaction(String(context.input.transactionId))
+      const observation = transaction ? getLatestCommerceDeliveryObservation(transaction.id) : null
+      if (!transaction || transaction.accountId !== account.id || !observation) return null
+      return baseOutput(account, 'delivery_track', { transactionId: transaction.id,
+        providerEventId: observation.providerEventId, state: observation.state, observedAt: observation.observedAt })
+    }
+    case COMMERCE_CANCEL_CAPABILITY: {
+      const transaction = getCommerceTransaction(String(context.input.transactionId))
+      const request = transaction ? getCommerceCancellationRequest(transaction.id,
+        String(context.input.providerRequestId)) : null
+      if (!transaction || transaction.accountId !== account.id || !request
+        || !['cancelled', 'rejected'].includes(request.state)) return null
+      return transactionOutput(account, context, 'order_cancel', { transactionId: transaction.id,
+        providerReceiptId: request.providerReceiptId,
+        status: account.mode === 'shadow' ? 'shadowed' : request.state })
+    }
+    case COMMERCE_REFUND_CAPABILITY: {
+      const transaction = getCommerceTransaction(String(context.input.transactionId))
+      const request = transaction ? getCommerceRefundRequest(transaction.id,
+        String(context.input.providerRequestId)) : null
+      if (!transaction || transaction.accountId !== account.id || !request
+        || !['processing', 'refunded', 'rejected'].includes(request.state)) return null
+      return transactionOutput(account, context, 'refund_request', { transactionId: transaction.id,
+        providerReceiptId: request.providerReceiptId,
+        amountMinor: request.actualAmountMinor ?? request.expectedAmountMinor,
+        status: account.mode === 'shadow' ? 'shadowed' : request.state })
     }
     default: return null
   }
@@ -326,6 +386,10 @@ function assertBoundMaterial(
   if (context.capabilityId !== COMMERCE_DELIVERY_CAPABILITY) assertTransactionTarget(context, quote.cartRevisionId)
   if (context.capabilityId === COMMERCE_PAYMENT_CAPABILITY && transaction.expectedAmountMinor !== context.input.amountMinor) {
     throw new CommerceContractError('COMMERCE_PAYMENT_MATERIAL_MISMATCH')
+  }
+  if (context.capabilityId === COMMERCE_REFUND_CAPABILITY
+    && Number(context.input.amountMinor) > (transaction.actualAmountMinor ?? transaction.expectedAmountMinor)) {
+    throw new CommerceContractError('COMMERCE_REFUND_AMOUNT_INVALID')
   }
   if (verifying && context.capabilityId === COMMERCE_PAYMENT_CAPABILITY) {
     const payment = getCommercePaymentAttemptByTransaction(transaction.id)

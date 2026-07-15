@@ -2,6 +2,8 @@ import { isProxy } from 'node:util/types'
 import {
   COMMERCE_ACCOUNT_HEALTH,
   COMMERCE_DELIVERY_STATES,
+  COMMERCE_CANCELLATION_STATES,
+  COMMERCE_REFUND_STATES,
   COMMERCE_EXECUTION_MODES,
   COMMERCE_FULFILLMENT_KINDS,
   COMMERCE_PAYMENT_STATES,
@@ -31,13 +33,16 @@ const FULFILLMENT_KINDS = new Set<string>(COMMERCE_FULFILLMENT_KINDS)
 const TRANSACTION_STATES = new Set<string>(COMMERCE_TRANSACTION_STATES)
 const PAYMENT_STATES = new Set<string>(COMMERCE_PAYMENT_STATES)
 const DELIVERY_STATES = new Set<string>(COMMERCE_DELIVERY_STATES)
+const CANCELLATION_STATES = new Set<string>(COMMERCE_CANCELLATION_STATES)
+const REFUND_STATES = new Set<string>(COMMERCE_REFUND_STATES)
 
 const TRANSACTION_TRANSITIONS: Readonly<Record<CommerceTransactionState, readonly CommerceTransactionState[]>> = {
   proposed: ['quoted', 'failed'],
   quoted: ['waiting_approval', 'submitting_order', 'failed'],
   waiting_approval: ['submitting_order', 'waiting_user', 'failed'],
   submitting_order: ['order_pending', 'lookup_required', 'waiting_user', 'failed'],
-  lookup_required: ['order_pending', 'waiting_payment', 'paid', 'waiting_user', 'failed'],
+  lookup_required: ['order_pending', 'waiting_payment', 'paid', 'cancelling', 'cancelled', 'refunding', 'refunded',
+    'waiting_user', 'failed'],
   order_pending: ['waiting_payment', 'paid', 'fulfilling', 'cancelling', 'cancelled', 'failed'],
   waiting_payment: ['submitting_payment', 'cancelling', 'cancelled', 'waiting_user', 'failed'],
   submitting_payment: ['paid', 'lookup_required', 'waiting_user', 'failed'],
@@ -85,6 +90,14 @@ export function isCommercePaymentState(value: unknown): boolean {
 
 export function isCommerceDeliveryState(value: unknown): boolean {
   return typeof value === 'string' && DELIVERY_STATES.has(value)
+}
+
+export function isCommerceCancellationState(value: unknown): boolean {
+  return typeof value === 'string' && CANCELLATION_STATES.has(value)
+}
+
+export function isCommerceRefundState(value: unknown): boolean {
+  return typeof value === 'string' && REFUND_STATES.has(value)
 }
 
 export function isCommerceSemanticId(value: unknown): value is string {

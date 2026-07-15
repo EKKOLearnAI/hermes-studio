@@ -17,12 +17,17 @@ import {
 } from '../../packages/server/src/services/hermes/action-fabric'
 import {
   compareObservedCommerceOffers,
+  COMMERCE_CANCEL_CAPABILITY,
+  COMMERCE_DELIVERY_CAPABILITY,
   COMMERCE_ORDER_CAPABILITY,
   COMMERCE_PAYMENT_CAPABILITY,
   COMMERCE_QUOTE_CAPABILITY,
+  COMMERCE_REFUND_CAPABILITY,
   COMMERCE_SEARCH_CAPABILITY,
   createCommerceAccount,
   createCommerceExecutorAdapter,
+  executeShadowCommerceOrder,
+  executeShadowCommercePayment,
   observeCommerceOffers,
   prepareCommerceCartFromComparison,
   refreshShadowCommerceQuote,
@@ -41,7 +46,8 @@ describe('commerce Action Fabric executor', () => {
     createFabricExecutor({ id: 'commerce-shadow-food', type: 'connector', name: 'Commerce shadow food',
       environment: 'sandbox', configuration: { externalWrite: false, shadow: true, interruptible: true }, enabled: true })
     for (const capabilityId of [COMMERCE_SEARCH_CAPABILITY, COMMERCE_QUOTE_CAPABILITY,
-      COMMERCE_ORDER_CAPABILITY, COMMERCE_PAYMENT_CAPABILITY]) {
+      COMMERCE_ORDER_CAPABILITY, COMMERCE_PAYMENT_CAPABILITY, COMMERCE_DELIVERY_CAPABILITY,
+      COMMERCE_CANCEL_CAPABILITY, COMMERCE_REFUND_CAPABILITY]) {
       const capability = getFabricCapability(capabilityId)!
       bindFabricExecutorCapability('commerce-shadow-food', capability.id, capability.version, capability.contractDigest)
     }
@@ -146,6 +152,46 @@ describe('commerce Action Fabric executor', () => {
     await expect(invokeFabricExecutor('prepare', orderContext)).resolves.toMatchObject({
       outcome: 'failed', errorCode: 'COMMERCE_MERCHANT_MISMATCH',
     })
+  })
+
+  it('normalizes delivery, cancellation, and refund receipts through their semantic capabilities', async () => {
+    const cancelSeed = await seedQuote()
+    const cancelOrder = await executeShadowCommerceOrder({ workflowId: 'workflow-adjustment-cancel',
+      intentId: 'intent-adjustment-cancel', accountId: 'food-account', quoteId: cancelSeed.quote.id,
+      quoteDigest: cancelSeed.quote.quoteDigest, providerRequestId: 'order-adjustment-cancel',
+      amountMinor: 1_600, provider, now: NOW })
+    const cancel = executionContext(COMMERCE_CANCEL_CAPABILITY, { ...base(), merchantId: 'merchant-1',
+      destinationDigest: destinationDigest(), transactionId: cancelOrder.transaction.id,
+      providerRequestId: 'cancel-adjustment-1', reasonCode: 'CUSTOMER_REQUEST' }, transactionTarget(), 'adjustment-cancel')
+    const cancelPrepared = await invokeFabricExecutor('prepare', cancel)
+    const cancelled = await invokeFabricExecutor('execute', { ...cancel, preparedOutput: cancelPrepared.output })
+    expect(cancelled).toMatchObject({ outcome: 'succeeded', output: { operation: 'order_cancel',
+      transactionId: cancelOrder.transaction.id, providerReceiptId: expect.stringMatching(/^vc-/), status: 'shadowed' } })
+
+    const paidSeed = await seedQuote()
+    const paidOrder = await executeShadowCommerceOrder({ workflowId: 'workflow-adjustment-refund',
+      intentId: 'intent-adjustment-refund', accountId: 'food-account', quoteId: paidSeed.quote.id,
+      quoteDigest: paidSeed.quote.quoteDigest, providerRequestId: 'order-adjustment-refund',
+      amountMinor: 1_600, provider, now: NOW })
+    await executeShadowCommercePayment({ transactionId: paidOrder.transaction.id,
+      quoteDigest: paidSeed.quote.quoteDigest, providerRequestId: 'payment-adjustment-refund',
+      approvalId: 'approval-adjustment-refund', amountMinor: 1_600, provider, now: NOW })
+    const delivery = executionContext(COMMERCE_DELIVERY_CAPABILITY,
+      { ...base(), transactionId: paidOrder.transaction.id }, baseTarget(), 'adjustment-delivery')
+    const deliveryPrepared = await invokeFabricExecutor('prepare', delivery)
+    const tracked = await invokeFabricExecutor('execute', { ...delivery, preparedOutput: deliveryPrepared.output })
+    expect(tracked).toMatchObject({ outcome: 'succeeded', output: { operation: 'delivery_track',
+      transactionId: paidOrder.transaction.id, state: 'preparing', providerEventId: 'event-0' } })
+
+    const refund = executionContext(COMMERCE_REFUND_CAPABILITY, { ...base(), merchantId: 'merchant-1',
+      destinationDigest: destinationDigest(), transactionId: paidOrder.transaction.id,
+      providerRequestId: 'refund-adjustment-1', reasonCode: 'CUSTOMER_REQUEST', amountMinor: 1_600 },
+    transactionTarget(), 'adjustment-refund')
+    const refundPrepared = await invokeFabricExecutor('prepare', refund)
+    const refunded = await invokeFabricExecutor('execute', { ...refund, preparedOutput: refundPrepared.output })
+    expect(refunded).toMatchObject({ outcome: 'succeeded', output: { operation: 'refund_request',
+      transactionId: paidOrder.transaction.id, providerReceiptId: expect.stringMatching(/^vr-/),
+      amountMinor: 1_600, status: 'shadowed' } })
   })
 
   async function seedQuote() {

@@ -261,7 +261,8 @@ const TRIGGERS: Record<string, string> = {
       (OLD.state='quoted' AND NEW.state IN ('waiting_approval','submitting_order','failed')) OR
       (OLD.state='waiting_approval' AND NEW.state IN ('submitting_order','waiting_user','failed')) OR
       (OLD.state='submitting_order' AND NEW.state IN ('order_pending','lookup_required','waiting_user','failed')) OR
-      (OLD.state='lookup_required' AND NEW.state IN ('order_pending','waiting_payment','paid','waiting_user','failed')) OR
+      (OLD.state='lookup_required' AND NEW.state IN ('order_pending','waiting_payment','paid','cancelling','cancelled',
+        'refunding','refunded','waiting_user','failed')) OR
       (OLD.state='order_pending' AND NEW.state IN ('waiting_payment','paid','fulfilling','cancelling','cancelled','failed')) OR
       (OLD.state='waiting_payment' AND NEW.state IN ('submitting_payment','cancelling','cancelled','waiting_user','failed')) OR
       (OLD.state='submitting_payment' AND NEW.state IN ('paid','lookup_required','waiting_user','failed')) OR
