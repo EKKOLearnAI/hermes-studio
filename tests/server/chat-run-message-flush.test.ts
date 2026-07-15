@@ -46,6 +46,7 @@ interface SessionMessage {
   session_id: string
   role: string
   content: string
+  display_role?: string | null
   runMarker?: string
   tool_call_id?: string | null
   tool_calls?: any[] | null
@@ -241,6 +242,34 @@ describe('chat-run message flush', () => {
 
     expect(addMessageMock).toHaveBeenCalledTimes(1)
     expect(addMessageMock).not.toHaveBeenCalledWith(expect.objectContaining({ role: 'user' }))
+  })
+
+  it('records MoA display rows without creating model-context tool messages', async () => {
+    const { recordBridgeMoaDisplayTool } = await import('../../packages/server/src/services/hermes/run-chat/bridge-message')
+    const state = createSessionState()
+
+    recordBridgeMoaDisplayTool(
+      state as any,
+      SID,
+      MARKER,
+      'moa_reference',
+      'moa:reference:run-1:1',
+      JSON.stringify({ preview: '1/2 grok', text: 'reference answer' }),
+    )
+
+    expect(state.messages).toEqual([expect.objectContaining({
+      role: 'moa',
+      display_role: 'tool',
+      tool_name: 'moa_reference',
+      tool_call_id: 'moa:reference:run-1:1',
+    })])
+    expect(addMessageMock).toHaveBeenCalledWith(expect.objectContaining({
+      session_id: SID,
+      role: 'moa',
+      display_role: 'tool',
+      tool_name: 'moa_reference',
+      tool_call_id: 'moa:reference:run-1:1',
+    }))
   })
 
   it('does not merge separate assistant messages around tool calls', () => {

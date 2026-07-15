@@ -1,5 +1,6 @@
 import { execFile } from 'child_process'
 import { existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'fs'
+import YAML from 'js-yaml'
 import { join } from 'path'
 import { promisify } from 'util'
 import { readAppConfig, type GatewayAutoStartConfig } from '../app-config'
@@ -11,6 +12,22 @@ import { execHermesWithBin } from './hermes-process'
 
 const execFileAsync = promisify(execFile)
 const GATEWAY_RUNTIME_FILES = ['gateway.pid', 'gateway.lock', 'gateway_state.json'] as const
+
+export type GatewayManagementMode = 'auto' | 'per_profile' | 'unified'
+
+export interface GatewayRuntimeTarget {
+  requestedProfile: string
+  targetProfile: string
+  unified: boolean
+}
+
+export interface GatewayManagementTransitionResult {
+  changed: boolean
+  previousUnified: boolean
+  nextUnified: boolean
+  stoppedProfiles: string[]
+  startedProfiles: string[]
+}
 
 const RESERVED_PROFILE_NAMES = new Set([
   'hermes', 'test', 'tmp', 'root', 'sudo',
@@ -61,6 +78,58 @@ export function selectProfilesForGatewayAutostart(
   return candidates.filter(name => !exclude.has(name))
 }
 
+function configTruthy(value: unknown): boolean {
+  if (value === true) return true
+  const normalized = String(value || '').trim().toLowerCase()
+  return ['1', 'true', 'yes', 'on'].includes(normalized)
+}
+
+export function gatewayMultiplexConfigEnabledForDefaultProfile(defaultProfileDir = getProfileDir('default')): boolean {
+  const configPath = join(defaultProfileDir, 'config.yaml')
+  if (!existsSync(configPath)) return false
+
+  try {
+    const data = YAML.load(readFileSync(configPath, 'utf-8'), { json: true }) as Record<string, any> | null
+    return configTruthy(data?.multiplex_profiles) || configTruthy(data?.gateway?.multiplex_profiles)
+  } catch (err) {
+    logger.warn(err, '[gateway-autostart] failed to read gateway multiplex config from %s', configPath)
+    return false
+  }
+}
+
+export function gatewayAutoStartManagementMode(policy?: GatewayAutoStartConfig): GatewayManagementMode {
+  return policy?.management === 'per_profile' || policy?.management === 'unified' ? policy.management : 'auto'
+}
+
+export function shouldUseUnifiedGatewayManagement(
+  policy?: GatewayAutoStartConfig,
+  defaultProfileDir = getProfileDir('default'),
+): boolean {
+  const mode = gatewayAutoStartManagementMode(policy)
+  if (mode === 'unified') return true
+  if (mode === 'per_profile') return false
+  return gatewayMultiplexConfigEnabledForDefaultProfile(defaultProfileDir)
+}
+
+export function resolveGatewayTargetProfile(profile: string, unified: boolean): GatewayRuntimeTarget {
+  const requestedProfile = String(profile || '').trim() || 'default'
+  return {
+    requestedProfile,
+    targetProfile: unified ? 'default' : requestedProfile,
+    unified,
+  }
+}
+
+export function selectGatewayProfilesForAutostart(
+  profiles: string[],
+  policy?: GatewayAutoStartConfig,
+  unified = false,
+): string[] {
+  const selected = selectProfilesForGatewayAutostart(profiles, policy)
+  if (!unified || selected.length === 0) return selected
+  return profiles.includes('default') ? ['default'] : [selected[0]]
+}
+
 function envFlagDisabled(name: string): boolean {
   const normalized = String(process.env[name] || '').trim().toLowerCase()
   return ['0', 'false', 'no', 'off'].includes(normalized)
@@ -73,6 +142,10 @@ function envValueFlagEnabled(value: unknown): boolean {
 
 function envFlagEnabledIn(env: NodeJS.ProcessEnv, name: string): boolean {
   return envValueFlagEnabled(env[name])
+}
+
+export function gatewayAutostartDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  return envFlagEnabledIn(env, 'HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART')
 }
 
 function envFlagDisabledIn(env: NodeJS.ProcessEnv, name: string): boolean {
@@ -347,7 +420,21 @@ async function waitForGatewayRunning(hermesBin: string, profile: string, profile
   return false
 }
 
-async function stopGatewayForProfile(hermesBin: string, profile: string, profileDir: string): Promise<void> {
+async function stopGatewayForProfile(
+  hermesBin: string,
+  profile: string,
+  profileDir: string,
+  opts: { retireManaged?: boolean } = {},
+): Promise<void> {
+  if (opts.retireManaged) {
+    writeGatewayDesiredStopped(profileDir)
+    try {
+      await retireManagedGatewayForProfile(profileDir, { timeoutMs: 2000 })
+    } catch (err) {
+      logger.warn(err, '[gateway-autostart] failed to retire managed gateway before stop profile=%s home=%s', profile, profileDir)
+    }
+  }
+
   try {
     await execHermesWithBin(hermesBin, ['gateway', 'stop'], {
       timeout: 30000,
@@ -361,6 +448,85 @@ async function stopGatewayForProfile(hermesBin: string, profile: string, profile
   } catch (err) {
     logger.warn(err, '[gateway-autostart] Hermes CLI gateway stop failed before restart profile=%s home=%s', profile, profileDir)
   }
+}
+
+function uniqueProfiles(profiles: string[]): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const profile of profiles) {
+    const name = String(profile || '').trim() || 'default'
+    if (seen.has(name)) continue
+    seen.add(name)
+    result.push(name)
+  }
+  return result
+}
+
+export async function reconcileGatewayManagementTransition(
+  previousPolicy: GatewayAutoStartConfig | undefined,
+  nextPolicy: GatewayAutoStartConfig | undefined,
+  opts: {
+    hermesBin?: string
+    profiles?: string[]
+    stopGateway?: (profile: string, profileDir: string) => Promise<void>
+    startGateway?: (profile: string, profileDir: string) => Promise<void>
+    waitForGateway?: (profile: string, profileDir: string) => Promise<boolean>
+  } = {},
+): Promise<GatewayManagementTransitionResult> {
+  const previousUnified = shouldUseUnifiedGatewayManagement(previousPolicy)
+  const nextUnified = shouldUseUnifiedGatewayManagement(nextPolicy)
+  const result: GatewayManagementTransitionResult = {
+    changed: previousUnified !== nextUnified,
+    previousUnified,
+    nextUnified,
+    stoppedProfiles: [],
+    startedProfiles: [],
+  }
+  if (!result.changed) return result
+
+  const hermesBin = opts.hermesBin || resolveHermesBin()
+  const profiles = opts.profiles || listProfileNamesFromDisk()
+  const stopProfiles = uniqueProfiles(previousUnified ? ['default'] : profiles)
+  const startProfiles = uniqueProfiles(nextUnified
+    ? selectGatewayProfilesForAutostart(profiles, nextPolicy, true)
+    : selectProfilesForGatewayAutostart(profiles, nextPolicy))
+  const stopGateway = opts.stopGateway || ((profile: string, profileDir: string) =>
+    stopGatewayForProfile(hermesBin, profile, profileDir, { retireManaged: true }))
+  const startGateway = opts.startGateway || ((profile: string, profileDir: string) =>
+    startGatewayForProfile(hermesBin, profile, profileDir, { managedRun: shouldUseManagedGatewayRunForAutostart() }))
+  const waitForGateway = opts.waitForGateway || ((profile: string, profileDir: string) =>
+    waitForGatewayRunning(hermesBin, profile, profileDir))
+
+  logger.info(
+    '[gateway-autostart] reconciling gateway management previousUnified=%s nextUnified=%s stopProfiles=%s startProfiles=%s',
+    previousUnified,
+    nextUnified,
+    stopProfiles.join(',') || 'none',
+    startProfiles.join(',') || 'none',
+  )
+
+  for (const profile of stopProfiles) {
+    const profileDir = getProfileDir(profile)
+    await stopGateway(profile, profileDir)
+    result.stoppedProfiles.push(profile)
+  }
+
+  for (const profile of startProfiles) {
+    if (isReservedProfileName(profile)) {
+      logger.warn('[gateway-autostart] skipping reserved profile name during gateway management reconcile profile=%s', profile)
+      continue
+    }
+
+    const profileDir = getProfileDir(profile)
+    await startGateway(profile, profileDir)
+    const ready = await waitForGateway(profile, profileDir)
+    if (!ready) {
+      logger.warn('[gateway-autostart] gateway start completed but did not report running during management reconcile profile=%s home=%s', profile, profileDir)
+    }
+    result.startedProfiles.push(profile)
+  }
+
+  return result
 }
 
 function writeGatewayDesiredStopped(profileDir: string): void {
@@ -457,28 +623,58 @@ export async function startGatewayForProfile(
   }
 }
 
-export async function getGatewayRuntimeStatusForProfile(profile: string): Promise<{ running: boolean; profile: string }> {
+export async function getGatewayRuntimeStatusForProfile(profile: string): Promise<{
+  running: boolean
+  profile: string
+  targetProfile?: string
+  unified?: boolean
+}> {
   const hermesBin = resolveHermesBin()
-  const profileDir = getProfileDir(profile)
+  const { gatewayAutoStart } = await readAppConfig()
+  const target = resolveGatewayTargetProfile(profile, shouldUseUnifiedGatewayManagement(gatewayAutoStart))
+  const profileDir = getProfileDir(target.targetProfile)
   const running = await isGatewayRunningForProfile(hermesBin, profileDir)
-  return { running, profile }
+  return {
+    running,
+    profile: target.requestedProfile,
+    targetProfile: target.targetProfile,
+    unified: target.unified,
+  }
 }
 
-export async function restartGatewayForProfile(profile: string): Promise<{ running: boolean; profile: string }> {
+export async function restartGatewayForProfile(profile: string): Promise<{
+  running: boolean
+  profile: string
+  targetProfile?: string
+  unified?: boolean
+}> {
   const hermesBin = resolveHermesBin()
-  const profileDir = getProfileDir(profile)
-  await stopGatewayForProfile(hermesBin, profile, profileDir)
+  const { gatewayAutoStart } = await readAppConfig()
+  const target = resolveGatewayTargetProfile(profile, shouldUseUnifiedGatewayManagement(gatewayAutoStart))
+  const profileDir = getProfileDir(target.targetProfile)
+  await stopGatewayForProfile(hermesBin, target.targetProfile, profileDir)
 
   try {
-    await startGatewayForProfile(hermesBin, profile, profileDir, { managedRun: shouldUseManagedGatewayRun() })
+    await startGatewayForProfile(hermesBin, target.targetProfile, profileDir, { managedRun: shouldUseManagedGatewayRun() })
   } catch (err) {
-    logger.error(err, '[gateway-autostart] Hermes gateway restart failed profile=%s home=%s', profile, profileDir)
+    logger.error(
+      err,
+      '[gateway-autostart] Hermes gateway restart failed requestedProfile=%s targetProfile=%s home=%s',
+      target.requestedProfile,
+      target.targetProfile,
+      profileDir,
+    )
     throw err
   }
 
-  const running = await waitForGatewayRunning(hermesBin, profile, profileDir)
+  const running = await waitForGatewayRunning(hermesBin, target.targetProfile, profileDir)
   if (!running) throw new Error('Hermes gateway start completed but gateway did not report running within timeout')
-  return { running, profile }
+  return {
+    running,
+    profile: target.requestedProfile,
+    targetProfile: target.targetProfile,
+    unified: target.unified,
+  }
 }
 
 export async function ensureProfileGatewaysRunning(): Promise<void> {
@@ -487,12 +683,14 @@ export async function ensureProfileGatewaysRunning(): Promise<void> {
   const hermesBin = resolveHermesBin()
   const discoveredProfiles = listProfileNamesFromDisk()
   const { gatewayAutoStart } = await readAppConfig()
-  const profiles = selectProfilesForGatewayAutostart(discoveredProfiles, gatewayAutoStart)
+  const unified = shouldUseUnifiedGatewayManagement(gatewayAutoStart)
+  const profiles = selectGatewayProfilesForAutostart(discoveredProfiles, gatewayAutoStart, unified)
   const skippedProfiles = discoveredProfiles.filter(profile => !profiles.includes(profile))
   if (skippedProfiles.length > 0) {
     logger.info(
-      '[gateway-autostart] skipping profiles excluded by gatewayAutoStart policy profiles=%s',
+      '[gateway-autostart] skipping profiles excluded by gatewayAutoStart policy profiles=%s unified=%s',
       skippedProfiles.join(','),
+      unified,
     )
   }
   let gatewayStatuses: Map<string, string> | undefined

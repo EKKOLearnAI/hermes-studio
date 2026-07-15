@@ -3,6 +3,7 @@ import {
   createReadStream,
   createWriteStream,
   existsSync,
+  mkdtempSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -12,6 +13,7 @@ import {
 } from 'node:fs'
 import { get as httpGet } from 'node:http'
 import { get as httpsGet } from 'node:https'
+import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative } from 'node:path'
 import { app } from 'electron'
 import {
@@ -84,7 +86,7 @@ function requiredRuntimeFiles(root: string): string[] {
     ? join(root, 'python', 'python.exe')
     : join(root, 'python', 'bin', 'python3')
   const hermesBin = process.platform === 'win32'
-    ? join(root, 'python', 'Scripts', 'hermes.exe')
+    ? join(root, 'python', 'Scripts', 'hermes.cmd')
     : join(root, 'python', 'bin', 'hermes')
   const nodeBin = process.platform === 'win32'
     ? join(root, 'node', 'node.exe')
@@ -105,7 +107,7 @@ function runtimeReady(): boolean {
 function rootRuntimeReady(root: string): boolean {
   const gitPath = process.platform === 'win32' ? join(root, 'git', 'cmd', 'git.exe') : null
   return existsSync(process.platform === 'win32' ? join(root, 'python', 'python.exe') : join(root, 'python', 'bin', 'python3'))
-    && existsSync(process.platform === 'win32' ? join(root, 'python', 'Scripts', 'hermes.exe') : join(root, 'python', 'bin', 'hermes'))
+    && existsSync(process.platform === 'win32' ? join(root, 'python', 'Scripts', 'hermes.cmd') : join(root, 'python', 'bin', 'hermes'))
     && existsSync(process.platform === 'win32' ? join(root, 'node', 'node.exe') : join(root, 'node', 'bin', 'node'))
     && (!gitPath || existsSync(gitPath))
 }
@@ -382,7 +384,8 @@ export async function ensureDesktopRuntime(
 
   if (cachedRuntimeMatches(runtimeRoot, descriptor) && !process.env.HERMES_DESKTOP_RUNTIME_FORCE_UPDATE) return
 
-  const archive = join(dirname(runtimeRoot), `${descriptor.name}.download`)
+  const downloadTempDir = mkdtempSync(join(tmpdir(), 'hermes-runtime-download-'))
+  const archive = join(downloadTempDir, `${descriptor.name}.download`)
   console.log(`[runtime] downloading Hermes runtime ${descriptor.name}`)
   onProgress?.({ stage: 'download', message: t('runtime.downloadingPackage', { name: descriptor.name }) })
   let archiveSize = 0
@@ -401,6 +404,7 @@ export async function ensureDesktopRuntime(
     await extractRuntimeArchive(archive, runtimeRoot)
   } finally {
     rmSync(archive, { force: true })
+    rmSync(downloadTempDir, { recursive: true, force: true })
   }
 
   const manifestPath = join(runtimeRoot, RUNTIME_MANIFEST_NAME)

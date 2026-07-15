@@ -4,6 +4,7 @@ import { NTag, NAlert } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
+  platformKey?: string
   name: string
   icon: string
   config: Record<string, any>
@@ -17,6 +18,14 @@ const { t } = useI18n()
 const configured = computed(() => {
   const creds = props.credentials
   if (!creds) return false
+  if (props.platformKey === 'matrix') {
+    const extra = creds.extra || {}
+    const homeserver = String(extra.homeserver || '').trim()
+    const token = String(creds.token || '').trim()
+    const userId = String(extra.user_id || '').trim()
+    const password = String(extra.password || '').trim()
+    return Boolean(homeserver && (token || (userId && password)))
+  }
   const keys = ['token', 'api_key', 'app_id', 'client_id', 'secret', 'app_secret', 'client_secret', 'access_token', 'bot_id', 'account_id', 'enabled']
   // Check top-level and nested extra.*
   const targets = [creds, creds.extra].filter(Boolean)

@@ -88,6 +88,32 @@ describe('doubaoTtsProvider', () => {
     })
   })
 
+  it('defaults to PCM at 24kHz when requested for MCU playback', async () => {
+    const pcm = Buffer.from('pcm-audio')
+    mockFetch.mockResolvedValueOnce(textResponse(JSON.stringify({
+      data: pcm.toString('base64'),
+    })))
+
+    const result = await doubaoTtsProvider.synthesize(
+      { text: '已经找到设备。' },
+      {
+        apiKey: 'secret',
+        mcuPlayback: true,
+      },
+    )
+
+    expect(result).toEqual({
+      audio: pcm,
+      contentType: 'audio/x-pcm',
+      engine: 'doubao',
+      provider: 'doubao',
+    })
+    expect(getJsonBody().req_params.audio_params).toEqual({
+      format: 'pcm',
+      sample_rate: 24000,
+    })
+  })
+
   it('rejects unsupported formats before calling Doubao', async () => {
     await expect(doubaoTtsProvider.synthesize(
       { text: 'hello' },

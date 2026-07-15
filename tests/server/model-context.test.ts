@@ -359,4 +359,20 @@ describe('getModelContextLength', () => {
 
     expect(getModelContextLength()).toBe(256_000)
   })
+
+  it('uses the MoA preset aggregator context length for the virtual provider', async () => {
+    writeConfig(`model:\n  default: research-team\n  provider: moa\n\nmoa:\n  default_preset: research-team\n  presets:\n    research-team:\n      enabled: true\n      aggregator:\n        provider: qwen\n        model: qwen3.6-plus\n      reference_models:\n        - provider: openai\n          model: gpt-5.5\n\nproviders:\n  qwen:\n    name: Qwen\n    default_model: qwen3.6-plus\n    models:\n      qwen3.6-plus:\n        context_length: 1048576\n`)
+
+    const { getModelContextLength } = await loadModelContext()
+
+    expect(getModelContextLength({ provider: 'moa', model: 'research-team' })).toBe(1_048_576)
+  })
+
+  it('falls back safely when a MoA preset has no valid aggregator', async () => {
+    writeConfig(`model:\n  default: broken-team\n  provider: moa\n\nmoa:\n  presets:\n    broken-team:\n      enabled: true\n`)
+
+    const { getModelContextLength } = await loadModelContext()
+
+    expect(getModelContextLength({ provider: 'moa', model: 'broken-team' })).toBe(256_000)
+  })
 })

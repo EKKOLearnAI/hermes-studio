@@ -4,6 +4,7 @@ export type BrowserSpeechRecognitionStatus = 'idle' | 'listening' | 'stopping' |
 
 export interface BrowserSpeechRecognitionStartOptions {
   language?: string
+  continuous?: boolean
 }
 
 export interface BrowserSpeechRecognitionMessages {
@@ -123,6 +124,7 @@ export function useBrowserSpeechRecognition(options: BrowserSpeechRecognitionOpt
   const transcript = ref('')
   const partialTranscript = ref('')
   const error = ref<Error | null>(null)
+  const errorCode = ref<string | null>(null)
 
   let activeRecognition: BrowserSpeechRecognitionInstance | null = null
   let sessionToken = 0
@@ -193,6 +195,7 @@ export function useBrowserSpeechRecognition(options: BrowserSpeechRecognitionOpt
     }
     if (options.clearError) {
       error.value = null
+      errorCode.value = null
     }
   }
 
@@ -204,13 +207,14 @@ export function useBrowserSpeechRecognition(options: BrowserSpeechRecognitionOpt
     recognitionConstructor: BrowserSpeechRecognitionConstructor,
     token: number,
     language: string,
+    continuous: boolean,
   ) {
     const recognition = new recognitionConstructor()
     activeRecognition = recognition
 
     recognition.lang = language
     recognition.interimResults = true
-    recognition.continuous = true
+    recognition.continuous = continuous
 
     recognition.onresult = (event) => {
       if (token !== sessionToken || activeRecognition !== recognition) {
@@ -227,7 +231,8 @@ export function useBrowserSpeechRecognition(options: BrowserSpeechRecognitionOpt
     }
 
     recognition.onerror = (event) => {
-      failRecognition(token, new Error(recognitionFailedMessage(typeof event.error === 'string' ? event.error : undefined)))
+      const code = typeof event.error === 'string' ? event.error : undefined
+      failRecognition(token, new Error(recognitionFailedMessage(code)), code)
     }
 
     recognition.onend = () => {
@@ -240,7 +245,7 @@ export function useBrowserSpeechRecognition(options: BrowserSpeechRecognitionOpt
         detachRecognition(recognition)
         partialTranscript.value = ''
         try {
-          createRecognition(recognitionConstructor, token, language).start()
+          createRecognition(recognitionConstructor, token, language, continuous).start()
         } catch (cause) {
           failRecognition(token, cause)
         }
@@ -255,6 +260,7 @@ export function useBrowserSpeechRecognition(options: BrowserSpeechRecognitionOpt
 
   function clearError() {
     error.value = null
+    errorCode.value = null
     if (status.value === 'error') {
       status.value = 'idle'
     }
@@ -272,7 +278,7 @@ export function useBrowserSpeechRecognition(options: BrowserSpeechRecognitionOpt
     resolveStop(text)
   }
 
-  function failRecognition(token: number, cause: unknown) {
+  function failRecognition(token: number, cause: unknown, code?: string) {
     if (token !== sessionToken) {
       return normalizeError(cause)
     }
@@ -284,6 +290,7 @@ export function useBrowserSpeechRecognition(options: BrowserSpeechRecognitionOpt
     partialTranscript.value = ''
     status.value = 'error'
     error.value = normalizedError
+    errorCode.value = code?.trim() || null
     rejectStop(normalizedError)
     return normalizedError
   }
@@ -302,12 +309,17 @@ export function useBrowserSpeechRecognition(options: BrowserSpeechRecognitionOpt
     cancel()
 
     const token = ++sessionToken
-    const language = typeof startOptions.language === 'string' ? startOptions.language.trim() : ''
+    const configuredLanguage = typeof startOptions.language === 'string' ? startOptions.language.trim() : ''
+    const documentLanguage = typeof document !== 'undefined' ? document.documentElement.lang.trim() : ''
+    const navigatorLanguage = typeof navigator !== 'undefined' ? navigator.language?.trim() : ''
+    const language = configuredLanguage || documentLanguage || navigatorLanguage || 'en-US'
+    const continuous = startOptions.continuous !== false
     transcript.value = ''
     partialTranscript.value = ''
     error.value = null
+    errorCode.value = null
     status.value = 'listening'
-    const recognition = createRecognition(recognitionConstructor, token, language)
+    const recognition = createRecognition(recognitionConstructor, token, language, continuous)
 
     try {
       recognition.start()
@@ -374,6 +386,7 @@ export function useBrowserSpeechRecognition(options: BrowserSpeechRecognitionOpt
     transcript,
     partialTranscript,
     error,
+    errorCode,
     start,
     stop,
     cancel,

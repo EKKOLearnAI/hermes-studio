@@ -164,7 +164,7 @@ function requiredRuntimeFiles(root: string): string[] {
     ? join(root, 'python', 'python.exe')
     : join(root, 'python', 'bin', 'python3')
   const hermesBin = process.platform === 'win32'
-    ? join(root, 'python', 'Scripts', 'hermes.exe')
+    ? join(root, 'python', 'Scripts', 'hermes.cmd')
     : join(root, 'python', 'bin', 'hermes')
   const nodeBin = process.platform === 'win32'
     ? join(root, 'node', 'node.exe')

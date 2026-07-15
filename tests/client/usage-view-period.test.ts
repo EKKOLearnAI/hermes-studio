@@ -53,6 +53,10 @@ vi.mock('@/components/hermes/usage/ModelBreakdown.vue', () => ({
   default: defineComponent({ name: 'ModelBreakdown', template: '<section class="model-breakdown-stub" />' }),
 }))
 
+vi.mock('@/components/hermes/usage/AgentBreakdown.vue', () => ({
+  default: defineComponent({ name: 'AgentBreakdown', template: '<section class="agent-breakdown-stub" />' }),
+}))
+
 vi.mock('@/components/hermes/usage/DailyTrend.vue', () => ({
   default: defineComponent({ name: 'DailyTrend', template: '<section class="daily-trend-stub" />' }),
 }))

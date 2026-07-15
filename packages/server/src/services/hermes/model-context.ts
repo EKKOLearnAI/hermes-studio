@@ -120,6 +120,20 @@ function getDefaultProvider(config: any): string | null {
   return typeof model.provider === 'string' ? model.provider.trim() || null : null
 }
 
+function resolveMoaAggregator(config: any, presetName: string): { model: string; provider: string } | null {
+  const moa = config?.moa
+  if (!moa || typeof moa !== 'object' || Array.isArray(moa)) return null
+  const presets = moa.presets
+  if (!presets || typeof presets !== 'object' || Array.isArray(presets)) return null
+  const preset = presets[presetName]
+  if (!preset || typeof preset !== 'object' || Array.isArray(preset)) return null
+  const aggregator = preset.aggregator
+  if (!aggregator || typeof aggregator !== 'object' || Array.isArray(aggregator)) return null
+  const model = typeof aggregator.model === 'string' ? aggregator.model.trim() : ''
+  const provider = typeof aggregator.provider === 'string' ? aggregator.provider.trim() : ''
+  return model && provider ? { model, provider } : null
+}
+
 /**
  * Read context_length from config.yaml, only as a sibling of default.
  * e.g. model:\n  default: gpt-5.4\n  context_length: 256000
@@ -421,14 +435,26 @@ export function getModelContextLength(input?: string | ModelContextLengthOptions
   const config = loadConfig(profileDir)
   if (!config) return DEFAULT_CONTEXT_LENGTH
 
-  const model = String(options.model || '').trim() || getDefaultModel(config)
+  let model = String(options.model || '').trim() || getDefaultModel(config)
   if (!model) return DEFAULT_CONTEXT_LENGTH
 
-  const provider = String(options.provider || '').trim() || getDefaultProvider(config)
+  let provider = String(options.provider || '').trim() || getDefaultProvider(config)
 
-  // 0. Database model_context table (highest priority)
+  // 0. Database model_context table (highest priority). Keep a virtual MoA
+  // preset override addressable as moa/<preset> before resolving its acting
+  // aggregator model.
   const dbCtx = lookupContextFromDatabase(model, provider)
   if (dbCtx && dbCtx > 0) return dbCtx
+
+  if (provider?.toLowerCase() === 'moa') {
+    const aggregator = resolveMoaAggregator(config, model)
+    if (!aggregator) return DEFAULT_CONTEXT_LENGTH
+    model = aggregator.model
+    provider = aggregator.provider
+
+    const aggregatorDbCtx = lookupContextFromDatabase(model, provider)
+    if (aggregatorDbCtx && aggregatorDbCtx > 0) return aggregatorDbCtx
+  }
 
   // 1. Provider-specific context_length in config.yaml
   const providerConfigCtx = lookupProviderConfigContextLength(config, model, provider)

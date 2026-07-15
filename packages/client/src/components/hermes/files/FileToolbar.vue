@@ -7,6 +7,12 @@ const { t } = useI18n()
 const message = useMessage()
 const filesStore = useFilesStore()
 
+withDefaults(defineProps<{
+  allowUpload?: boolean
+}>(), {
+  allowUpload: true,
+})
+
 const emit = defineEmits<{
   (e: 'showNewFile'): void
   (e: 'showNewFolder'): void
@@ -31,7 +37,7 @@ async function handleRefresh() {
       <NButton size="small" @click="emit('showNewFolder')" class="toolbar-btn">
         {{ t('files.newFolder') }}
       </NButton>
-      <NButton size="small" @click="emit('showUpload')" class="toolbar-btn">
+      <NButton v-if="allowUpload" size="small" @click="emit('showUpload')" class="toolbar-btn">
         {{ t('files.upload') }}
       </NButton>
       <NButton size="small" @click="handleRefresh" class="toolbar-btn">

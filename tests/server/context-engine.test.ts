@@ -165,7 +165,7 @@ describe('ContextEngine.buildContext', () => {
     beforeEach(() => {
         vi.clearAllMocks()
         mockFetcher = {
-            getMessages: vi.fn().mockReturnValue([]),
+            getMessagesForContext: vi.fn().mockReturnValue([]),
             getContextSnapshot: vi.fn().mockReturnValue(null),
             saveContextSnapshot: vi.fn(),
             deleteContextSnapshot: vi.fn(),
@@ -179,7 +179,7 @@ describe('ContextEngine.buildContext', () => {
 
     it('returns all messages as history when under threshold', async () => {
         const messages = makeMessages(10) // 10 messages, under trigger threshold
-        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
 
         const result = await engine.buildContext({
             roomId: 'room-1',
@@ -205,7 +205,7 @@ describe('ContextEngine.buildContext', () => {
 
     it('records full context token estimates without compressing when under threshold', async () => {
         const messages = makeMessages(3)
-        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
         const contextTokenEstimator = vi.fn().mockResolvedValue(19_379)
         const onProgress = vi.fn()
 
@@ -238,7 +238,7 @@ describe('ContextEngine.buildContext', () => {
 
     it('uses full context token estimates to trigger group compression', async () => {
         const messages = makeMessages(20)
-        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
         const onProgress = vi.fn()
 
         const result = await engine.buildContext({
@@ -271,7 +271,7 @@ describe('ContextEngine.buildContext', () => {
 
     it('throws when group prompt and tools exceed threshold with too little history to compress', async () => {
         const messages = makeMessages(4)
-        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
 
         await expect(engine.buildContext({
             roomId: 'room-1',
@@ -294,7 +294,7 @@ describe('ContextEngine.buildContext', () => {
 
     it('throws on snapshot path when overhead plus new messages exceed threshold without compressible history', async () => {
         const messages = makeMessages(12)
-        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
         mockFetcher.getContextSnapshot = vi.fn().mockReturnValue({
             roomId: 'room-1',
             summary: 'Existing summary',
@@ -324,7 +324,7 @@ describe('ContextEngine.buildContext', () => {
 
     it('splits into head/tail and compresses middle when over threshold', async () => {
         const messages = makeMessages(20)
-        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
 
         const result = await engine.buildContext({
             roomId: 'room-1',
@@ -348,7 +348,7 @@ describe('ContextEngine.buildContext', () => {
 
     it('uses cache hit when available and no new messages', async () => {
         const messages = makeMessages(20)
-        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
 
         // First call — creates snapshot (with forced compression)
         await engine.buildContext({
@@ -387,7 +387,7 @@ describe('ContextEngine.buildContext', () => {
 
     it('does incremental update when cache hit with new messages', async () => {
         const messages = makeMessages(20)
-        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
 
         // First call — full compression (with forced compression)
         await engine.buildContext({
@@ -422,7 +422,7 @@ describe('ContextEngine.buildContext', () => {
             senderName: 'NewUser', content: 'New middle message', timestamp: 12000,
         })
         const updatedMessages = [...messages.slice(0, 9), middleInsert, ...messages.slice(9)]
-        mockFetcher.getMessages = vi.fn().mockReturnValue(updatedMessages)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(updatedMessages)
 
         const onProgress = vi.fn()
         // Second call — incremental update
@@ -449,7 +449,7 @@ describe('ContextEngine.buildContext', () => {
         mockSummarize.mockRejectedValue(new Error('LLM timeout'))
 
         const messages = makeMessages(20)
-        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
 
         const result = await engine.buildContext({
             roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude',
@@ -479,7 +479,7 @@ describe('ContextEngine.buildContext', () => {
         })
 
         const messages = makeMessages(20)
-        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
 
         const result = await engine.buildContext({
             roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude',
@@ -502,7 +502,7 @@ describe('ContextEngine.buildContext', () => {
             makeMessage({ senderId: 'user-1', senderName: 'Alice', content: 'Hello', timestamp: 1000 }),
             makeMessage({ senderId: 'agent-socket', senderName: 'Claude', content: 'Hi there', timestamp: 2000 }),
         ]
-        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
 
         const result = await engine.buildContext({
             roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude',
@@ -524,7 +524,7 @@ describe('ContextEngine.buildContext', () => {
         const messages = [
             makeMessage({ senderId: 'user-2', senderName: 'Bob', content: 'Hey', timestamp: 1000 }),
         ]
-        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
 
         const result = await engine.buildContext({
             roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude',
@@ -539,7 +539,7 @@ describe('ContextEngine.buildContext', () => {
 
     it('generates instructions with agent identity', async () => {
         const messages = makeMessages(1)
-        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
 
         const result = await engine.buildContext({
             roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude',
@@ -570,7 +570,7 @@ describe('ContextEngine.buildContext', () => {
         })
 
         const messages = makeMessages(5)
-        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
 
         // Build context to create snapshot
         await engine.buildContext({

@@ -1,4 +1,5 @@
 import { request, getApiKey, getBaseUrlValue } from '../client'
+import type { ProviderApiMode } from './system'
 
 export interface SessionSummary {
   id: string
@@ -10,6 +11,7 @@ export interface SessionSummary {
   agent_native_session_id?: string
   model: string
   provider?: string
+  api_mode?: ProviderApiMode
   title: string | null
   parent_session_id?: string | null
   fork_point_message_id?: string | null
@@ -20,6 +22,7 @@ export interface SessionSummary {
   started_at: number
   ended_at: number | null
   last_active?: number
+  is_archived?: number | boolean
   message_count: number
   tool_call_count: number
   input_tokens: number
@@ -75,7 +78,7 @@ export interface SessionSearchResult extends SessionSummary {
 export interface HermesMessage {
   id: number
   session_id: string
-  role: 'user' | 'assistant' | 'system' | 'tool' | 'command'
+  role: 'user' | 'assistant' | 'system' | 'tool' | 'command' | 'moa'
   content: string
   display_role?: 'user' | 'assistant' | 'system' | 'tool' | 'command' | null
   display_content?: string | null
@@ -88,6 +91,45 @@ export interface HermesMessage {
   reasoning: string | null
 }
 
+export interface WorkspaceRunChangeFileSummary {
+  id: number
+  change_id: string
+  session_id: string
+  path: string
+  old_path: string | null
+  change_type: 'added' | 'modified' | 'deleted' | 'renamed'
+  additions: number
+  deletions: number
+  size_before: number | null
+  size_after: number | null
+  patch_bytes: number
+  truncated: boolean
+  binary: boolean
+  created_at: number
+}
+
+export interface WorkspaceRunChangeFileDetail extends WorkspaceRunChangeFileSummary {
+  patch: string | null
+}
+
+export interface WorkspaceRunChangeSummary {
+  change_id: string
+  session_id: string
+  run_id: string
+  source: 'run'
+  workspace: string
+  workspace_kind: 'git' | 'filesystem'
+  started_at: number
+  finished_at: number
+  files_changed: number
+  additions: number
+  deletions: number
+  truncated: boolean
+  total_patch_bytes: number
+  created_at: number
+  files: WorkspaceRunChangeFileSummary[]
+}
+
 export async function fetchSessions(source?: string, limit?: number, profile?: string): Promise<SessionSummary[]> {
   const params = new URLSearchParams()
   if (source) params.set('source', source)
@@ -96,6 +138,94 @@ export async function fetchSessions(source?: string, limit?: number, profile?: s
   const query = params.toString()
   const res = await request<{ sessions: SessionSummary[] }>(`/api/hermes/sessions${query ? `?${query}` : ''}`)
   return res.sessions
+}
+
+export async function fetchWorkspaceRunChangesForSession(id: string): Promise<WorkspaceRunChangeSummary[]> {
+  try {
+    const res = await request<{ changes: WorkspaceRunChangeSummary[] }>(
+      `/api/hermes/sessions/${encodeURIComponent(id)}/workspace-run-changes`,
+    )
+    return Array.isArray(res.changes) ? res.changes : []
+  } catch {
+    return []
+  }
+}
+
+export async function fetchWorkspaceRunChangeFile(
+  sessionId: string,
+  changeId: string,
+  fileId: number,
+): Promise<WorkspaceRunChangeFileDetail | null> {
+  try {
+    const res = await request<{ file: WorkspaceRunChangeFileDetail }>(
+      `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-run-changes/${encodeURIComponent(changeId)}/files/${encodeURIComponent(String(fileId))}`,
+    )
+    return res.file
+  } catch {
+    return null
+  }
+}
+
+export async function readSessionWorkspaceFile(
+  sessionId: string,
+  path: string,
+): Promise<{ content: string; path: string; size: number }> {
+  const params = new URLSearchParams({ path })
+  return request<{ content: string; path: string; size: number }>(
+    `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-file/read?${params}`,
+  )
+}
+
+export async function listSessionWorkspaceFiles(
+  sessionId: string,
+  path: string = '',
+): Promise<{ entries: Array<{ name: string; path: string; absolutePath?: string; isDir: boolean; size: number; modTime: string }>; path: string; absolutePath?: string }> {
+  const params = new URLSearchParams()
+  if (path) params.set('path', path)
+  const query = params.toString()
+  return request(`/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-files/list${query ? `?${query}` : ''}`)
+}
+
+export async function writeSessionWorkspaceFile(
+  sessionId: string,
+  path: string,
+  content: string,
+): Promise<void> {
+  await request<{ ok: boolean }>(
+    `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-file/write`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ path, content }),
+    },
+  )
+}
+
+export async function mkdirSessionWorkspaceFile(sessionId: string, path: string): Promise<void> {
+  await request<{ ok: boolean }>(
+    `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-file/mkdir`,
+    { method: 'POST', body: JSON.stringify({ path }) },
+  )
+}
+
+export async function deleteSessionWorkspaceFile(sessionId: string, path: string, recursive = false): Promise<void> {
+  await request<{ ok: boolean }>(
+    `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-file/delete`,
+    { method: 'DELETE', body: JSON.stringify({ path, recursive }) },
+  )
+}
+
+export async function renameSessionWorkspaceFile(sessionId: string, oldPath: string, newPath: string): Promise<void> {
+  await request<{ ok: boolean }>(
+    `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-file/rename`,
+    { method: 'POST', body: JSON.stringify({ oldPath, newPath }) },
+  )
+}
+
+export async function copySessionWorkspaceFile(sessionId: string, srcPath: string, destPath: string): Promise<void> {
+  await request<{ ok: boolean }>(
+    `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-file/copy`,
+    { method: 'POST', body: JSON.stringify({ srcPath, destPath }) },
+  )
 }
 
 /**
@@ -242,6 +372,24 @@ export async function renameSession(id: string, title: string): Promise<boolean>
   }
 }
 
+export async function archiveSession(id: string): Promise<boolean> {
+  try {
+    await request(`/api/hermes/sessions/${id}/archive`, { method: 'POST' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function unarchiveSession(id: string): Promise<boolean> {
+  try {
+    await request(`/api/hermes/sessions/${id}/unarchive`, { method: 'POST' })
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function setSessionWorkspace(id: string, workspace: string | null): Promise<boolean> {
   try {
     await request(`/api/hermes/sessions/${id}/workspace`, {
@@ -254,11 +402,11 @@ export async function setSessionWorkspace(id: string, workspace: string | null):
   }
 }
 
-export async function setSessionModel(id: string, model: string, provider: string): Promise<boolean> {
+export async function setSessionModel(id: string, model: string, provider: string, apiMode?: ProviderApiMode): Promise<boolean> {
   try {
     await request(`/api/hermes/sessions/${id}/model`, {
       method: 'POST',
-      body: JSON.stringify({ model, provider }),
+      body: JSON.stringify({ model, provider, apiMode }),
     })
     return true
   } catch {
@@ -276,7 +424,14 @@ export async function exportSession(id: string, mode: 'full' | 'compressed' = 'f
   const contentDisposition = res.headers.get('Content-Disposition') || ''
   let filename = `session_${id}.${ext}`
   const match = contentDisposition.match(/filename\*?=(?:UTF-8'')?([^;\n]+)/i)
-  if (match) filename = decodeURIComponent(match[1].replace(/"/g, ''))
+  if (match) {
+    const dispositionFilename = match[1].replace(/"/g, '')
+    try {
+      filename = decodeURIComponent(dispositionFilename)
+    } catch {
+      filename = dispositionFilename
+    }
+  }
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
   a.download = filename
@@ -296,6 +451,15 @@ export interface UsageStatsResponse {
   period_days?: number
   model_usage: Array<{
     model: string
+    input_tokens: number
+    output_tokens: number
+    cache_read_tokens: number
+    cache_write_tokens: number
+    reasoning_tokens: number
+    sessions: number
+  }>
+  agent_usage?: Array<{
+    agent: string
     input_tokens: number
     output_tokens: number
     cache_read_tokens: number

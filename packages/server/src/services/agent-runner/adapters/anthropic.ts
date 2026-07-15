@@ -4,7 +4,12 @@ export interface AnthropicAdapterTarget {
   baseUrl: string
 }
 
-export function stringifyContent(value: unknown): string {
+export function targetReasoningEffort(target: any): string {
+  const effort = String(target?.reasoningEffort || '').trim()
+  return ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(effort) ? effort : ''
+}
+
+function stringifyContent(value: unknown): string {
   if (typeof value === 'string') return value
   if (Array.isArray(value)) {
     return value.map((item) => {
@@ -99,6 +104,7 @@ export function anthropicToOpenAiChat(body: any, target: AnthropicAdapterTarget,
     messages.push(...anthropicContentToOpenAiMessages(message, preserveReasoningContent))
   }
 
+  const reasoningEffort = targetReasoningEffort(target)
   const tools = Array.isArray(body?.tools)
     ? body.tools.map((tool: any) => ({
       type: 'function',
@@ -115,8 +121,10 @@ export function anthropicToOpenAiChat(body: any, target: AnthropicAdapterTarget,
     messages,
     ...(typeof body?.max_tokens === 'number' ? { max_tokens: body.max_tokens } : {}),
     ...(typeof body?.temperature === 'number' ? { temperature: body.temperature } : {}),
+    ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
     ...(tools?.length ? { tools } : {}),
     stream,
+    ...(stream ? { stream_options: { include_usage: true } } : {}),
   }
 }
 
@@ -169,6 +177,7 @@ export function anthropicToOpenAiResponses(body: any, target: AnthropicAdapterTa
     input.push(...anthropicToOpenAiResponsesInput(message))
   }
 
+  const reasoningEffort = targetReasoningEffort(target)
   const tools = Array.isArray(body?.tools)
     ? body.tools.map((tool: any) => ({
       type: 'function',
@@ -184,6 +193,7 @@ export function anthropicToOpenAiResponses(body: any, target: AnthropicAdapterTa
     ...(body?.system ? { instructions: stringifyContent(body.system) } : {}),
     ...(typeof body?.max_tokens === 'number' ? { max_output_tokens: body.max_tokens } : {}),
     ...(typeof body?.temperature === 'number' ? { temperature: body.temperature } : {}),
+    ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
     ...(tools?.length ? { tools } : {}),
     stream,
     store: false,

@@ -7,6 +7,7 @@ import { uploadRoutes } from './upload'
 import { updateRoutes } from './update'
 import { authPublicRoutes, authProtectedRoutes } from './auth'
 import { devicePublicRoutes, deviceRoutes } from './devices'
+import { mcuDeviceRoutes } from './mcu-devices'
 import { codingAgentRoutes } from './coding-agents'
 import { apiDocsRoutes } from './api-docs'
 import { claudeCodeProxyRoutes } from './claude-code-proxy'
@@ -27,13 +28,13 @@ import { nousAuthRoutes } from './hermes/nous-auth'
 import { copilotAuthRoutes } from './hermes/copilot-auth'
 import { xaiAuthRoutes } from './hermes/xai-auth'
 import { anthropicAuthRoutes } from './hermes/anthropic-auth'
-import { geminiAuthRoutes } from './hermes/gemini-auth'
 import { weixinRoutes } from './hermes/weixin'
 import { fileRoutes } from './hermes/files'
 import { downloadRoutes } from './hermes/download'
 import { jobRoutes } from './hermes/jobs'
 import { cronHistoryRoutes } from './hermes/cron-history'
 import { kanbanRoutes } from './hermes/kanban'
+import { workflowRoutes } from './hermes/workflows'
 import { ttsRoutes, ttsProtectedRoutes } from './hermes/tts'
 import { sttProtectedRoutes } from './hermes/stt'
 import { mcuFirmwareRoutes } from './hermes/mcu-firmware'
@@ -41,6 +42,7 @@ import { mediaRoutes } from './hermes/media'
 import { groupChatRoutes, setGroupChatServer } from './hermes/group-chat'
 import { chatRunRoutes } from './hermes/chat-run'
 import { performanceMonitorRoutes } from './hermes/performance-monitor'
+import { journeyRoutes } from './hermes/journey'
 import { mcpRoutes } from './hermes/mcp'
 import { runtimeVersionRoutes } from './hermes/runtime-versions'
 import { writeGateRoutes } from './hermes/write-gate'
@@ -57,6 +59,8 @@ import { healthLoopRoutes } from './hermes/health-loop'
 import { homeRoutes } from './hermes/home'
 import { internetExecutionRoutes } from './hermes/internet-execution'
 import { androidCompanionRoutes } from './hermes/android-companion'
+import { petdexPublicRoutes, petdexRoutes } from './hermes/petdex'
+import { petRoutes } from './hermes/pets'
 
 /**
  * Register all routes on the Koa app.
@@ -73,6 +77,7 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(codexProxyRoutes.routes())
   app.use(ttsRoutes.routes())
   app.use(apiDocsRoutes.routes())
+  app.use(petdexPublicRoutes.routes())
 
   // --- Auth middleware: all routes below require authentication ---
   authMiddleware.forEach((middleware) => app.use(middleware))
@@ -80,6 +85,7 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   // --- Protected routes (auth required) ---
   app.use(authProtectedRoutes.routes())
   app.use(deviceRoutes.routes())
+  app.use(mcuDeviceRoutes.routes())
   app.use(uploadRoutes.routes())
   app.use(updateRoutes.routes())           // Must be before proxy (proxy catch-all matches everything)
   app.use(codingAgentRoutes.routes())
@@ -97,7 +103,6 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(copilotAuthRoutes.routes())
   app.use(xaiAuthRoutes.routes())
   app.use(anthropicAuthRoutes.routes())
-  app.use(geminiAuthRoutes.routes())
   app.use(weixinRoutes.routes())
   app.use(chatRunRoutes.routes())
   app.use(groupChatRoutes.routes())
@@ -106,11 +111,13 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(jobRoutes.routes())
   app.use(cronHistoryRoutes.routes())
   app.use(kanbanRoutes.routes())
+  app.use(workflowRoutes.routes())
   app.use(ttsProtectedRoutes.routes())
   app.use(sttProtectedRoutes.routes())
   app.use(mcuFirmwareRoutes.routes())
   app.use(mediaRoutes.routes())
   app.use(performanceMonitorRoutes.routes())
+  app.use(journeyRoutes.routes())
   app.use(mcpRoutes.routes())                   // MCP management
   app.use(runtimeVersionRoutes.routes())         // Runtime and version management
   app.use(writeGateRoutes.routes())              // Hermes Agent write approval review
@@ -127,4 +134,6 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(homeRoutes.routes())                   // Home closed loop API
   app.use(internetExecutionRoutes.routes())      // Governed internet execution proof API
   app.use(androidCompanionRoutes.routes())       // Encrypted Android companion command center
+  app.use(petdexRoutes.routes())
+  app.use(petRoutes.routes())
 }

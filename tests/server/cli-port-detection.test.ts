@@ -141,11 +141,14 @@ describe('CLI port detection', () => {
     }
   })
 
-  it('keeps restart grace short while allowing stop to wait for bridge cleanup', async () => {
+  it('waits for bridge cleanup on restart unless broker preservation is requested', async () => {
     const { getDaemonStopGraceMs } = await loadCli()
 
-    expect(getDaemonStopGraceMs({ restart: true })).toBe(5_000)
+    expect(getDaemonStopGraceMs({ restart: true })).toBe(15_000)
     expect(getDaemonStopGraceMs()).toBe(15_000)
+
+    process.env.HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN = '0'
+    expect(getDaemonStopGraceMs({ restart: true })).toBe(5_000)
   })
 
   it('allows CLI stop and restart grace periods to be overridden separately', async () => {
@@ -155,6 +158,9 @@ describe('CLI port detection', () => {
 
     expect(getDaemonStopGraceMs({ restart: true })).toBe(2_500)
     expect(getDaemonStopGraceMs()).toBe(9_000)
+
+    delete process.env.HERMES_WEB_UI_RESTART_GRACE_MS
+    expect(getDaemonStopGraceMs({ restart: true })).toBe(9_000)
   })
 
   it('skips browser launch when --no-open is provided', async () => {

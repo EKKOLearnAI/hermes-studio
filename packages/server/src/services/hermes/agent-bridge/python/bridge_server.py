@@ -71,6 +71,7 @@ class BridgeServer:
             profile = req.get("profile")
             model = req.get("model")
             provider = req.get("provider")
+            workspace = req.get("workspace")
             source = req.get("source")
             # Local patch (reasoning-effort): per-session reasoning effort override (Web UI brain button).
             reasoning_effort = req.get("reasoning_effort")
@@ -84,6 +85,7 @@ class BridgeServer:
                 bool(req.get("force_compress")),
                 model,
                 provider,
+                workspace,
                 source,
                 reasoning_effort,
             )
@@ -109,6 +111,7 @@ class BridgeServer:
                 profile=req.get("profile"),
                 model=req.get("model"),
                 provider=req.get("provider"),
+                workspace=req.get("workspace"),
             )
 
         if action == "get_result":
@@ -226,6 +229,7 @@ class BridgeServer:
             return self.pool.list_sessions()
 
         if action == "shutdown":
+            self._shutdown_all_mcp_servers()
             self._stop.set()
             return {"status": "shutting_down"}
 
@@ -468,6 +472,15 @@ class BridgeServer:
             finally:
                 _restore_profile_env(original)
         threading.Thread(target=_bg, daemon=True).start()
+
+    def _shutdown_all_mcp_servers(self) -> int:
+        try:
+            from tools.mcp_tool import _run_on_mcp_loop, _servers, _lock
+        except ImportError:
+            return 0
+        with _lock:
+            names = list(_servers.keys())
+        return self._shutdown_mcp_servers(names, _servers, _lock, _run_on_mcp_loop)
 
     def _handle_mcp_action(self, action: str, req: dict[str, Any], profile: str | None = None) -> dict[str, Any]:
         """Handle MCP management actions in worker process."""

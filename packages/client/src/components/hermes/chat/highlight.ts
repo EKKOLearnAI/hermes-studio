@@ -41,16 +41,20 @@ function renderCodeBlockWrapper(
   copyLabel: string,
   extraClasses: string[] = [],
   rawCopyText?: string,
+  showCopyButton = true,
 ): string {
   const languageLabelHtml = labelLanguage
     ? `<span class="code-lang">${escapeHtml(labelLanguage)}</span>`
+    : ''
+  const copyButtonHtml = showCopyButton
+    ? `<button type="button" class="copy-btn" data-copy-code="true">${escapeHtml(copyLabel)}</button>`
     : ''
   const blockClasses = ['hljs-code-block', ...extraClasses].join(' ')
   const copyTextAttr = rawCopyText == null
     ? ''
     : ` data-copy-text="${escapeHtml(rawCopyText)}"`
 
-  return `<pre class="${blockClasses}"${copyTextAttr}><div class="code-header">${languageLabelHtml}<button type="button" class="copy-btn" data-copy-code="true">${escapeHtml(copyLabel)}</button></div><code class="hljs language-${sanitizeLanguageClass(codeClassLanguage)}">${highlighted}</code></pre>`
+  return `<pre class="${blockClasses}"${copyTextAttr}><div class="code-header">${languageLabelHtml}${copyButtonHtml}</div><code class="hljs language-${sanitizeLanguageClass(codeClassLanguage)}">${highlighted}</code></pre>`
 }
 
 function isUnifiedDiffLanguage(lang?: string): boolean {
@@ -176,6 +180,7 @@ function renderUnifiedDiffCode(
   labelLanguage: string,
   copyLabel: string,
   formatFoldLabel: (hiddenCount: number) => string,
+  showCopyButton = true,
 ): string {
   const numbers: DiffLineNumbers = {}
   const lines = content.split(/\r?\n/)
@@ -208,7 +213,7 @@ function renderUnifiedDiffCode(
     .map((row) => row.html)
     .join('')
 
-  return renderCodeBlockWrapper(highlighted, 'diff', labelLanguage, copyLabel, ['hljs-unified-diff'], content)
+  return renderCodeBlockWrapper(highlighted, 'diff', labelLanguage, copyLabel, ['hljs-unified-diff'], content, showCopyButton)
 }
 
 export function normalizeHighlightLanguage(lang?: string): string {
@@ -314,6 +319,7 @@ export function extractUnifiedDiffPayload(value: unknown, depth = 0): string | n
 type RenderHighlightedCodeBlockOptions = {
   maxHighlightLength?: number
   formatDiffFoldLabel?: (hiddenCount: number) => string
+  showCopyButton?: boolean
 }
 
 export function renderHighlightedCodeBlock(
@@ -328,7 +334,7 @@ export function renderHighlightedCodeBlock(
 
   if (isUnifiedDiffContent(content, requestedLanguage || normalizedLanguage)) {
     const formatDiffFoldLabel = options.formatDiffFoldLabel ?? ((hiddenCount: number) => String(hiddenCount))
-    return renderUnifiedDiffCode(content, requestedLanguage || 'diff', copyLabel, formatDiffFoldLabel)
+    return renderUnifiedDiffCode(content, requestedLanguage || 'diff', copyLabel, formatDiffFoldLabel, options.showCopyButton ?? true)
   }
 
   let highlighted = ''
@@ -355,7 +361,7 @@ export function renderHighlightedCodeBlock(
     }
   }
 
-  return renderCodeBlockWrapper(highlighted, codeClassLanguage, labelLanguage, copyLabel)
+  return renderCodeBlockWrapper(highlighted, codeClassLanguage, labelLanguage, copyLabel, [], undefined, options.showCopyButton ?? true)
 }
 
 export async function copyTextToClipboard(text: string): Promise<boolean> {

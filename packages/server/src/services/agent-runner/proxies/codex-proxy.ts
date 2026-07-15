@@ -137,11 +137,27 @@ function responsesEventStream(events: AsyncIterable<CanonicalResponsesEvent>): R
   return Readable.from(generate())
 }
 
+function responseEventForCodexClient(target: CodexProxyTarget, event: CanonicalResponsesEvent): CanonicalResponsesEvent {
+  if (target.apiMode === 'codex_responses' || event.type !== 'response.completed') return event
+  const response = (event.data as any).response
+  if (!response?.usage) return event
+  const { usage: _usage, ...responseWithoutUsage } = response
+  return {
+    ...event,
+    data: {
+      ...event.data,
+      response: responseWithoutUsage,
+    },
+  }
+}
+
 function observableResponsesEvents(target: CodexProxyTarget, events: AsyncIterable<CanonicalResponsesEvent>): AsyncIterable<CanonicalResponsesEvent> {
   async function* observe() {
     for await (const event of events) {
-      codingAgentRunManager.handleResponseEvent(target.agentSessionId, event)
-      yield event
+      codingAgentRunManager.handleProxyUsageEvent(target.agentSessionId, event)
+      const clientEvent = responseEventForCodexClient(target, event)
+      codingAgentRunManager.handleResponseEvent(target.agentSessionId, clientEvent)
+      yield clientEvent
     }
   }
   return observe()

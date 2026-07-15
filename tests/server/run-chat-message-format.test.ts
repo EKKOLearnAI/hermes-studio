@@ -48,6 +48,29 @@ describe('run-chat message formatting', () => {
     }))
   })
 
+  it('preserves persisted MoA display rows when resuming from database messages', () => {
+    const messages: SessionMessage[] = [
+      {
+        id: 1,
+        session_id: 's1',
+        role: 'moa',
+        display_role: 'tool',
+        content: JSON.stringify({ preview: '1/2 grok', text: 'reference answer' }),
+        timestamp: 1,
+        tool_call_id: 'moa:reference:run-1:1',
+        tool_name: 'moa_reference',
+      },
+    ]
+
+    expect(handleMessage(messages, 's1')[0]).toEqual(expect.objectContaining({
+      role: 'moa',
+      display_role: 'tool',
+      content: JSON.stringify({ preview: '1/2 grok', text: 'reference answer' }),
+      tool_call_id: 'moa:reference:run-1:1',
+      tool_name: 'moa_reference',
+    }))
+  })
+
   it('treats assistant tool-call messages as sendable even with empty text', () => {
     expect(isAssistantMessageSendable({
       content: '',

@@ -40,7 +40,10 @@ export const useModelsStore = defineStore('models', () => {
     try {
       const profile = useProfilesStore().activeProfileName || 'default'
       const res = await systemApi.fetchAvailableModelsForProfile(profile)
-      providers.value = res.groups
+      // MoA is a virtual Hermes runtime provider used by chat model pickers,
+      // not a credential-backed provider that belongs in model settings or
+      // auxiliary-model configuration.
+      providers.value = res.groups.filter(group => group.provider !== 'moa')
       allProviders.value = res.allProviders
       defaultModel.value = res.default
       defaultProvider.value = res.default_provider || ''
@@ -68,7 +71,20 @@ export const useModelsStore = defineStore('models', () => {
     defaultModel.value = modelId
     defaultProvider.value = provider
     const appStore = useAppStore()
-    appStore.reloadModels()
+    await appStore.reloadModels()
+  }
+
+  async function setDefaultProvider(providerId: string) {
+    const group = providers.value.find(entry => entry.provider === providerId)
+    if (!group || group.models.length === 0) {
+      throw new Error('Provider has no available models')
+    }
+
+    const nextModel = group.models.includes(defaultModel.value)
+      ? defaultModel.value
+      : group.models[0]
+
+    await setDefaultModel(nextModel, providerId)
   }
 
   async function addProvider(data: CustomProvider) {
@@ -96,6 +112,7 @@ export const useModelsStore = defineStore('models', () => {
     fetchProviders,
     refreshModelCache,
     setDefaultModel,
+    setDefaultProvider,
     addProvider,
     removeProvider,
   }

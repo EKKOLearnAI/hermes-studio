@@ -874,7 +874,9 @@ Bridge 启动失败不会阻止 Web UI server 启动，但普通 Chat run 会在
 关闭时：
 
 - `ChatRunSocket.close()` abort active response stream/清理内存态。
-- `AgentBridgeManager.stop()` 关闭 Python broker。
+- `AgentBridgeManager.stop()` 默认关闭 Python broker，包括 `restart` 使用的
+  `SIGUSR2`。如果需要保留 broker 和正在运行的 bridge session，可显式设置
+  `HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN=0`。
 - 其他 WebSocket/Socket.IO 服务按 shutdown 流程停止。
 
 ## 22. 环境变量
@@ -887,6 +889,7 @@ Bridge 启动失败不会阻止 Web UI server 启动，但普通 Chat run 会在
 | `HERMES_AGENT_BRIDGE_TIMEOUT_MS` | Node 等待 bridge 请求响应的超时，默认 120000ms。 |
 | `HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS` | Node connect bridge 的短重试窗口，默认 5000ms。 |
 | `HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS` | bridge ready 超时，默认 120000ms。 |
+| `HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN` | Web UI shutdown/restart 是否关闭 bridge broker，默认开启。设为 `0`/`false`/`no`/`off` 才会保留 broker。 |
 | `HERMES_AGENT_BRIDGE_AUTO_RESTART` | broker 意外退出是否自动重启，默认开启。 |
 | `HERMES_AGENT_BRIDGE_RESTART_DELAY_MS` | 自动重启基础延迟。 |
 | `HERMES_AGENT_BRIDGE_PYTHON` | 指定 Python 解释器。 |

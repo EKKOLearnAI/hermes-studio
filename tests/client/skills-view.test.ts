@@ -51,6 +51,11 @@ vi.mock('naive-ui', () => ({
     emits: ['update:value'],
     template: '<input class="n-input-stub" :value="value" @input="$emit(\'update:value\', $event.target.value)" />',
   }),
+  NSelect: defineComponent({
+    props: ['value', 'options', 'size'],
+    emits: ['update:value'],
+    template: '<select class="n-select-stub" :value="value" @change="$emit(\'update:value\', $event.target.value)"><option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option></select>',
+  }),
 }))
 
 import SkillsView from '@/views/hermes/SkillsView.vue'

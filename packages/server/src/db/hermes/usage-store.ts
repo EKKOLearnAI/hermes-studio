@@ -26,13 +26,21 @@ function hasUpdatedAtColumn(): boolean {
 export function updateUsage(
   sessionId: string,
   data: {
+    runId?: string
+    source?: string
+    agent?: string
+    usageScope?: 'model_call' | 'run'
+    purpose?: string
+    apiCalls?: number
     inputTokens: number
     outputTokens: number
     cacheReadTokens?: number
     cacheWriteTokens?: number
     reasoningTokens?: number
     model?: string
+    provider?: string
     profile?: string
+    isEstimated?: boolean
   },
 ): void {
   const cacheReadTokens = data.cacheReadTokens ?? 0
@@ -40,30 +48,47 @@ export function updateUsage(
   const reasoningTokens = data.reasoningTokens ?? 0
   const now = Date.now()
   const model = data.model || ''
+  const provider = data.provider || ''
   const profile = data.profile || 'default'
   if (isSqliteAvailable()) {
     const db = getDb()!
     const columns = [
       'session_id',
+      'run_id',
+      'source',
+      'agent',
+      'usage_scope',
+      'purpose',
+      'api_calls',
       'input_tokens',
       'output_tokens',
       'cache_read_tokens',
       'cache_write_tokens',
       'reasoning_tokens',
       'model',
+      'provider',
       'profile',
+      'is_estimated',
       'created_at',
     ]
     const values = columns.map(() => '?')
     const params = [
       sessionId,
+      data.runId || '',
+      data.source || '',
+      data.agent || '',
+      data.usageScope || 'run',
+      data.purpose || '',
+      data.apiCalls ?? 0,
       data.inputTokens,
       data.outputTokens,
       cacheReadTokens,
       cacheWriteTokens,
       reasoningTokens,
       model,
+      provider,
       profile,
+      data.isEstimated ? 1 : 0,
       now,
     ]
     if (hasUpdatedAtColumn()) {
@@ -72,19 +97,66 @@ export function updateUsage(
       params.push(now)
     }
     db.prepare(
-      `INSERT INTO ${TABLE} (${columns.join(', ')}) VALUES (${values.join(', ')})`,
+      `INSERT OR IGNORE INTO ${TABLE} (${columns.join(', ')}) VALUES (${values.join(', ')})`,
     ).run(...params)
   } else {
     jsonSet(TABLE, sessionId, {
+      run_id: data.runId || '',
+      source: data.source || '',
+      agent: data.agent || '',
+      usage_scope: data.usageScope || 'run',
+      purpose: data.purpose || '',
+      api_calls: data.apiCalls ?? 0,
       input_tokens: data.inputTokens,
       output_tokens: data.outputTokens,
       cache_read_tokens: cacheReadTokens,
       cache_write_tokens: cacheWriteTokens,
       reasoning_tokens: reasoningTokens,
       model,
+      provider,
       profile,
+      is_estimated: data.isEstimated ? 1 : 0,
       created_at: now,
     })
+  }
+}
+
+export function getRecordedUsageTotals(sessionId: string, source: string): {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  reasoningTokens: number
+  apiCalls: number
+} {
+  if (!isSqliteAvailable()) {
+    return {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+      apiCalls: 0,
+    }
+  }
+  const row = getDb()!.prepare(`
+    SELECT
+      COALESCE(SUM(input_tokens), 0) AS input_tokens,
+      COALESCE(SUM(output_tokens), 0) AS output_tokens,
+      COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+      COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+      COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+      COALESCE(SUM(api_calls), 0) AS api_calls
+    FROM ${TABLE}
+    WHERE session_id = ? AND source = ?
+  `).get(sessionId, source) as any
+  return {
+    inputTokens: Number(row?.input_tokens || 0),
+    outputTokens: Number(row?.output_tokens || 0),
+    cacheReadTokens: Number(row?.cache_read_tokens || 0),
+    cacheWriteTokens: Number(row?.cache_write_tokens || 0),
+    reasoningTokens: Number(row?.reasoning_tokens || 0),
+    apiCalls: Number(row?.api_calls || 0),
   }
 }
 
@@ -173,6 +245,16 @@ export interface UsageStatsModelRow {
   sessions: number
 }
 
+export interface UsageStatsAgentRow {
+  agent: string
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  reasoning_tokens: number
+  sessions: number
+}
+
 export interface UsageStatsDailyRow {
   date: string
   input_tokens: number
@@ -192,14 +274,32 @@ export interface LocalUsageStats {
   reasoning_tokens: number
   sessions: number
   by_model: UsageStatsModelRow[]
+  by_agent: UsageStatsAgentRow[]
   by_day: UsageStatsDailyRow[]
+  cost: number
+  total_api_calls: number
+}
+
+export function getRecordedUsageSessionIds(profile?: string): string[] {
+  if (isSqliteAvailable()) {
+    const filters = profile ? ' WHERE profile = ?' : ''
+    const params = profile ? [profile] : []
+    const rows = getDb()!.prepare(
+      `SELECT DISTINCT session_id FROM ${TABLE}${filters}`,
+    ).all(...params) as unknown as Array<{ session_id: string }>
+    return rows.map(row => String(row.session_id || '')).filter(Boolean)
+  }
+  return Object.entries(jsonGetAll(TABLE))
+    .filter(([, row]) => !profile || (row.profile || 'default') === profile)
+    .map(([sessionId]) => sessionId)
+    .filter(Boolean)
 }
 
 export function getLocalUsageStats(profile?: string, days = 30): LocalUsageStats {
   const empty: LocalUsageStats = {
     input_tokens: 0, output_tokens: 0, cache_read_tokens: 0,
     cache_write_tokens: 0, reasoning_tokens: 0, sessions: 0,
-    by_model: [], by_day: [],
+    by_model: [], by_agent: [], by_day: [], cost: 0, total_api_calls: 0,
   }
   if (!isSqliteAvailable()) return empty
 
@@ -220,6 +320,7 @@ export function getLocalUsageStats(profile?: string, days = 30): LocalUsageStats
       COALESCE(SUM(cache_read_tokens),0) as cache_read_tokens,
       COALESCE(SUM(cache_write_tokens),0) as cache_write_tokens,
       COALESCE(SUM(reasoning_tokens),0) as reasoning_tokens,
+      COALESCE(SUM(api_calls),0) as total_api_calls,
       COUNT(DISTINCT session_id) as sessions
     FROM ${TABLE}
     ${whereClause}
@@ -238,6 +339,20 @@ export function getLocalUsageStats(profile?: string, days = 30): LocalUsageStats
     GROUP BY model
     ORDER BY COALESCE(SUM(input_tokens),0) + COALESCE(SUM(output_tokens),0) DESC
   `).all(...params) as unknown as UsageStatsModelRow[]
+
+  const byAgent = db.prepare(`
+    SELECT agent,
+      COALESCE(SUM(input_tokens),0) as input_tokens,
+      COALESCE(SUM(output_tokens),0) as output_tokens,
+      COALESCE(SUM(cache_read_tokens),0) as cache_read_tokens,
+      COALESCE(SUM(cache_write_tokens),0) as cache_write_tokens,
+      COALESCE(SUM(reasoning_tokens),0) as reasoning_tokens,
+      COUNT(DISTINCT session_id) as sessions
+    FROM ${TABLE}
+    ${whereClause}
+    GROUP BY agent
+    ORDER BY COALESCE(SUM(input_tokens),0) + COALESCE(SUM(output_tokens),0) DESC
+  `).all(...params) as unknown as UsageStatsAgentRow[]
 
   const byDay = db.prepare(`
     SELECT DATE(created_at / 1000, 'unixepoch') as date,
@@ -260,6 +375,9 @@ export function getLocalUsageStats(profile?: string, days = 30): LocalUsageStats
     reasoning_tokens: totals.reasoning_tokens,
     sessions: totals.sessions,
     by_model: byModel,
+    by_agent: byAgent,
     by_day: byDay.map(d => ({ ...d, errors: 0, cost: 0 })),
+    cost: 0,
+    total_api_calls: totals.total_api_calls,
   }
 }

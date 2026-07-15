@@ -3,14 +3,21 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
+  gatewayAutostartDisabledByEnv,
+  gatewayAutoStartManagementMode,
+  gatewayMultiplexConfigEnabledForDefaultProfile,
   gatewayStatusLooksRuntimeLocked,
   gatewayStatusLooksRunning,
   gatewayStateLooksRunningForProfile,
   parseGatewayStatusesFromProfileListOutput,
   prepareGatewayForProfileDelete,
   recoverWindowsDesktopGatewayOrphans,
+  reconcileGatewayManagementTransition,
+  resolveGatewayTargetProfile,
+  selectGatewayProfilesForAutostart,
   selectProfilesForGatewayAutostart,
   shouldRecoverWindowsDesktopGatewayOrphans,
+  shouldUseUnifiedGatewayManagement,
   shouldUseManagedGatewayRun,
   shouldUseManagedGatewayRunForAutostart,
 } from '../../packages/server/src/services/hermes/gateway-autostart'
@@ -38,6 +45,127 @@ describe('gateway autostart status parsing', () => {
     expect(selectProfilesForGatewayAutostart(profiles, { include: ['missing'] })).toEqual([])
     expect(selectProfilesForGatewayAutostart(profiles, { include: [] })).toEqual([])
     expect(selectProfilesForGatewayAutostart(profiles, { enabled: false, include: ['default'] })).toEqual([])
+  })
+
+  it('selects only the default gateway target in unified gateway management', () => {
+    const profiles = ['default', 'work', 'reviewer']
+
+    expect(selectGatewayProfilesForAutostart(profiles, undefined, true)).toEqual(['default'])
+    expect(selectGatewayProfilesForAutostart(profiles, { include: ['work'] }, true)).toEqual(['default'])
+    expect(selectGatewayProfilesForAutostart(profiles, { include: [] }, true)).toEqual([])
+    expect(selectGatewayProfilesForAutostart(profiles, { enabled: false }, true)).toEqual([])
+    expect(selectGatewayProfilesForAutostart(profiles, { include: ['work'] }, false)).toEqual(['work'])
+  })
+
+  it('resolves gateway target profile for unified management', () => {
+    expect(resolveGatewayTargetProfile('work', false)).toEqual({
+      requestedProfile: 'work',
+      targetProfile: 'work',
+      unified: false,
+    })
+    expect(resolveGatewayTargetProfile('work', true)).toEqual({
+      requestedProfile: 'work',
+      targetProfile: 'default',
+      unified: true,
+    })
+    expect(resolveGatewayTargetProfile('', true)).toEqual({
+      requestedProfile: 'default',
+      targetProfile: 'default',
+      unified: true,
+    })
+  })
+
+  it('detects Hermes Agent multiplex gateway config in the default profile', () => {
+    const home = mkdtempSync(join(tmpdir(), 'hermes-gateway-multiplex-'))
+    try {
+      expect(gatewayMultiplexConfigEnabledForDefaultProfile(home)).toBe(false)
+
+      writeFileSync(join(home, 'config.yaml'), 'gateway:\n  multiplex_profiles: true\n', 'utf-8')
+      expect(gatewayMultiplexConfigEnabledForDefaultProfile(home)).toBe(true)
+
+      writeFileSync(join(home, 'config.yaml'), 'multiplex_profiles: "yes"\n', 'utf-8')
+      expect(gatewayMultiplexConfigEnabledForDefaultProfile(home)).toBe(true)
+
+      writeFileSync(join(home, 'config.yaml'), 'gateway:\n  multiplex_profiles: false\n', 'utf-8')
+      expect(gatewayMultiplexConfigEnabledForDefaultProfile(home)).toBe(false)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('honors Web UI gateway management overrides around Hermes Agent multiplex config', () => {
+    const home = mkdtempSync(join(tmpdir(), 'hermes-gateway-management-'))
+    try {
+      writeFileSync(join(home, 'config.yaml'), 'gateway:\n  multiplex_profiles: true\n', 'utf-8')
+
+      expect(gatewayAutoStartManagementMode({ management: 'unified' })).toBe('unified')
+      expect(gatewayAutoStartManagementMode({ management: 'per_profile' })).toBe('per_profile')
+      expect(gatewayAutoStartManagementMode({ management: 'auto' })).toBe('auto')
+      expect(shouldUseUnifiedGatewayManagement({ management: 'auto' }, home)).toBe(true)
+      expect(shouldUseUnifiedGatewayManagement({ management: 'per_profile' }, home)).toBe(false)
+      expect(shouldUseUnifiedGatewayManagement({ management: 'unified' }, home)).toBe(true)
+
+      writeFileSync(join(home, 'config.yaml'), 'gateway:\n  multiplex_profiles: false\n', 'utf-8')
+      expect(shouldUseUnifiedGatewayManagement({ management: 'auto' }, home)).toBe(false)
+      expect(shouldUseUnifiedGatewayManagement({ management: 'unified' }, home)).toBe(true)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('detects the environment-level gateway autostart disable flag', () => {
+    expect(gatewayAutostartDisabledByEnv({ HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART: '1' })).toBe(true)
+    expect(gatewayAutostartDisabledByEnv({ HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART: 'true' })).toBe(true)
+    expect(gatewayAutostartDisabledByEnv({ HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART: 'off' })).toBe(false)
+    expect(gatewayAutostartDisabledByEnv({})).toBe(false)
+  })
+
+  it('stops per-profile gateways and starts default when switching to unified management', async () => {
+    const events: string[] = []
+
+    const result = await reconcileGatewayManagementTransition(
+      { management: 'per_profile' },
+      { management: 'unified' },
+      {
+        profiles: ['default', 'work', 'reviewer'],
+        stopGateway: async profile => { events.push(`stop:${profile}`) },
+        startGateway: async profile => { events.push(`start:${profile}`) },
+        waitForGateway: async () => true,
+      },
+    )
+
+    expect(result).toMatchObject({
+      changed: true,
+      previousUnified: false,
+      nextUnified: true,
+      stoppedProfiles: ['default', 'work', 'reviewer'],
+      startedProfiles: ['default'],
+    })
+    expect(events).toEqual(['stop:default', 'stop:work', 'stop:reviewer', 'start:default'])
+  })
+
+  it('stops default and starts selected profile gateways when switching back to per-profile management', async () => {
+    const events: string[] = []
+
+    const result = await reconcileGatewayManagementTransition(
+      { management: 'unified' },
+      { management: 'per_profile', exclude: ['reviewer'] },
+      {
+        profiles: ['default', 'work', 'reviewer'],
+        stopGateway: async profile => { events.push(`stop:${profile}`) },
+        startGateway: async profile => { events.push(`start:${profile}`) },
+        waitForGateway: async () => true,
+      },
+    )
+
+    expect(result).toMatchObject({
+      changed: true,
+      previousUnified: true,
+      nextUnified: false,
+      stoppedProfiles: ['default'],
+      startedProfiles: ['default', 'work'],
+    })
+    expect(events).toEqual(['stop:default', 'start:default', 'start:work'])
   })
 
   it('treats runtime lock conflicts as an already-running gateway', () => {

@@ -35,3 +35,9 @@ export interface HermesPluginsResponse {
 export async function fetchPlugins(): Promise<HermesPluginsResponse> {
   return request<HermesPluginsResponse>('/api/hermes/plugins')
 }
+
+export async function setPluginEnabled(key: string, enabled: boolean): Promise<{ key: string; enabled: boolean }> {
+  return request<{ key: string; enabled: boolean }>(`/api/hermes/plugins/${encodeURIComponent(key)}/${enabled ? 'enable' : 'disable'}`, {
+    method: 'POST',
+  })
+}

@@ -3,13 +3,18 @@ import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSy
 import { homedir } from 'os'
 import { spawn, type ChildProcess } from 'child_process'
 import { createSession, addMessage, getSession, updateSession, updateSessionStats } from '../../db/hermes/session-store'
+import type { ApiMode } from './types'
 import { logger } from '../logger'
+import { normalizeTokenUsage, recordSessionUsage } from '../usage-recorder'
 import { applyResponseStreamEvent, flushResponseRunToDb } from '../hermes/run-chat/response-stream'
+import { calcAndUpdateUsage, estimateUsageTokensFromMessages, updateContextTokenUsage } from '../hermes/run-chat/usage'
 import { extractResponseText } from '../hermes/run-chat/response-utils'
 import type { SessionState } from '../hermes/run-chat/types'
 import type { CanonicalResponsesEvent } from './adapters/responses-stream'
 import { mapCodingAgentResponseEvent } from './coding-agent-event-mapper'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell } from '../windows-command'
+import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from '../hermes/run-chat/workspace-diff-tracker'
+import { buildDbHistory, buildSnapshotAwareHistory } from '../hermes/run-chat/compression'
 
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
 const TERMINAL_OUTPUT_FLUSH_MS = 120
@@ -60,6 +65,7 @@ export interface CodingAgentRunLaunch {
   profile: string
   provider: string
   model: string
+  apiMode?: ApiMode
   sessionId: string
   agentNativeSessionId?: string
   nativeResume?: boolean
@@ -69,7 +75,8 @@ export interface CodingAgentRunLaunch {
   workspaceDir: string
   env?: NodeJS.ProcessEnv
   state?: SessionState
-  sessionSource?: 'global_agent'
+  sessionSource?: 'global_agent' | 'workflow'
+  reasoningEffort?: string
 }
 
 interface ManagedCodingAgentRun {
@@ -101,9 +108,11 @@ interface ManagedCodingAgentRun {
   codexToolBlocks?: Map<string, { id: string; name: string; arguments: string; done: boolean }>
   codexChatText?: string
   codexPendingUsage?: any
+  terminalUsageRefresh?: Promise<void>
   stoppedByUser?: boolean
   pendingChatCompletionEvent?: 'run.completed' | 'run.failed'
   pendingChatCompletionPayload?: Record<string, unknown>
+  memoryExportStarted?: boolean
 }
 
 interface CodingAgentRunSendOptions {
@@ -116,6 +125,25 @@ function nowSeconds(): number {
 
 function makeId(): string {
   return `car_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+export function codingAgentGatewayErrorMessage(text: string): string | null {
+  const value = String(text || '').trim()
+  if (!value) return null
+  if (/^API Error:\s*\d+\b/i.test(value)) return value
+  if (/^Provider returned HTTP\s+\d+\b/i.test(value)) return value
+  return null
+}
+
+function responseErrorMessage(error: unknown): string {
+  if (!error) return ''
+  if (typeof error === 'string') return error
+  if (typeof error === 'object') {
+    const record = error as Record<string, unknown>
+    const message = record.message || record.error || record.detail
+    if (typeof message === 'string') return message
+  }
+  return String(error)
 }
 
 function isProxyToolEvent(event: CanonicalResponsesEvent): boolean {
@@ -394,6 +422,8 @@ export class CodingAgentRunManager {
     mode?: 'scoped' | 'global'
     provider?: string
     model?: string
+    reasoningEffort?: string
+    apiMode?: ApiMode
   }): boolean {
     const run = this.getBySession(sessionId)
     if (!run || run.exited) return false
@@ -405,7 +435,10 @@ export class CodingAgentRunManager {
       const model = String(launch.model || '').trim()
       if (provider && run.launch.provider !== provider) return false
       if (model && run.launch.model !== model) return false
+      const apiMode = String(launch.apiMode || '').trim()
+      if (apiMode && String(run.launch.apiMode || '').trim() !== apiMode) return false
     }
+    if (String(run.launch.reasoningEffort || '').trim() !== String(launch.reasoningEffort || '').trim()) return false
     if (!hasManagedHermesMcpConfig(run)) return false
     return true
   }
@@ -421,7 +454,7 @@ export class CodingAgentRunManager {
     const state = launch.state || { messages: [], isWorking: false, events: [], queue: [] }
     state.isWorking = true
     state.profile = launch.profile
-    state.source = 'coding_agent'
+    state.source = launch.sessionSource === 'workflow' ? 'workflow' : 'coding_agent'
     state.runId = runId
 
     if (isPrintAgent(launch.agentId)) {
@@ -520,6 +553,7 @@ export class CodingAgentRunManager {
     this.addUserMessage(run, text)
     this.touch(run)
     this.emitTerminalStatus(run, 'Input sent to coding agent.')
+    this.startWorkspaceRunDiff(run)
     if (run.launch.agentId === 'claude-code') {
       this.startClaudePrintTurn(run, text, systemPrompt)
       return { runId: run.id }
@@ -545,6 +579,40 @@ export class CodingAgentRunManager {
     if (!agentSessionId) return
     const run = this.runs.get(agentSessionId)
     if (run) this.touch(run)
+  }
+
+  handleProxyUsageEvent(agentSessionId: string | undefined, event: CanonicalResponsesEvent) {
+    if (!agentSessionId || event.type !== 'response.completed') return
+    const run = this.runs.get(agentSessionId)
+    if (!run || run.launch.mode !== 'scoped') return
+    const final = (event.data as any).response || event.data
+    if (!final?.usage) return
+    const usage = normalizeTokenUsage(final.usage, {}, {
+      inputIncludesCache: run.launch.apiMode !== 'anthropic_messages',
+    })
+    if (usage.isEstimated) {
+      logger.warn({
+        runId: run.id,
+        sessionId: run.launch.sessionId,
+        responseId: final?.id,
+        provider: run.launch.provider,
+        model: final?.model || run.launch.model,
+      }, '[coding-agent-run] scoped proxy response omitted token usage')
+      return
+    }
+    recordSessionUsage({
+      sessionId: run.launch.sessionId,
+      runId: final?.id,
+      source: 'coding_agent',
+      agent: run.launch.agentId === 'codex' ? 'codex' : 'claude_code',
+      usageScope: 'model_call',
+      apiCalls: 1,
+      usage,
+      profile: run.launch.profile,
+      model: final?.model || run.launch.model,
+      provider: run.launch.provider,
+      isEstimated: false,
+    })
   }
 
   handleResponseEvent(agentSessionId: string | undefined, event: CanonicalResponsesEvent) {
@@ -579,34 +647,86 @@ export class CodingAgentRunManager {
     if (!run.runMarker) run.runMarker = `coding_agent_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
     run.state.isWorking = true
     run.state.profile = run.launch.profile
-    run.state.source = 'coding_agent'
+    run.state.source = run.launch.sessionSource === 'workflow' ? 'workflow' : 'coding_agent'
     run.state.runId = run.id
     for (const mappedEvent of mapCodingAgentResponseEvent(storageSafeResponseEvent)) {
       this.emitToChat(run.launch.sessionId, mappedEvent.event, mappedEvent.payload)
     }
     const mapped = applyResponseStreamEvent(run.state, run.launch.sessionId, run.runMarker, storageSafeResponseEvent.type, storageSafeResponseEvent.data)
-    if (mapped) this.emitToChat(run.launch.sessionId, mapped.event, mapped.payload)
+    if (mapped) {
+      this.emitToChat(run.launch.sessionId, mapped.event, mapped.payload)
+    }
     if (isTerminalEvent) {
       flushResponseRunToDb(run.state, run.launch.sessionId)
       run.state.responseRun = undefined
       updateSessionStats(run.launch.sessionId)
+      run.terminalUsageRefresh = this.refreshCodingAgentUsage(run)
       const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
+      if (run.launch.mode !== 'scoped' && final?.usage) {
+        const usage = normalizeTokenUsage(final.usage)
+        if (!usage.isEstimated) {
+          recordSessionUsage({
+            sessionId: run.launch.sessionId,
+            runId: final?.id || run.printResponseId || run.runMarker,
+            source: 'coding_agent',
+            agent: run.launch.agentId === 'codex' ? 'codex' : 'claude_code',
+            usageScope: 'run',
+            usage: final.usage,
+            profile: run.launch.profile,
+            model: final?.model || run.launch.model,
+            provider: run.launch.provider,
+            isEstimated: false,
+          })
+        }
+      }
       const finalText = extractResponseText(final)
-      const chatCompletionEvent = storageSafeResponseEvent.type === 'response.completed' ? 'run.completed' : 'run.failed'
+      const terminalError = storageSafeResponseEvent.type === 'response.failed'
+        ? responseErrorMessage(final?.error || (responseEvent.data as any).error) || 'Coding agent run failed'
+        : codingAgentGatewayErrorMessage(finalText)
+      const chatCompletionEvent = terminalError ? 'run.failed' : 'run.completed'
       const chatCompletionPayload: Record<string, unknown> = {
         event: chatCompletionEvent,
         run_id: final?.id,
         response_id: final?.id,
         output: finalText,
-        error: final?.error || (responseEvent.data as any).error,
+        error: terminalError || undefined,
       }
       if (childIsRunning(run.currentChild)) {
         run.pendingChatCompletionEvent = chatCompletionEvent
         run.pendingChatCompletionPayload = chatCompletionPayload
       } else {
-        this.emitAndMarkPrintChatRunCompleted(run, chatCompletionEvent, chatCompletionPayload)
+        void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, chatCompletionEvent, chatCompletionPayload)
       }
     }
+  }
+
+  private async refreshCodingAgentUsage(run: ManagedCodingAgentRun) {
+    const emitUsage = (event: string, payload: any) => {
+      this.emitToChat(run.launch.sessionId, event, payload)
+    }
+    const usage = await calcAndUpdateUsage(run.launch.sessionId, run.state, emitUsage)
+    const contextTokens = await this.estimateCodingAgentContextTokens(run)
+    if (contextTokens != null) {
+      updateContextTokenUsage(run.launch.sessionId, run.state, emitUsage, contextTokens, usage)
+    }
+  }
+
+  private async estimateCodingAgentContextTokens(run: ManagedCodingAgentRun): Promise<number | undefined> {
+    try {
+      const dbHistory = await buildDbHistory(run.launch.sessionId, { excludeLastUser: false })
+      const snapshotHistory = await buildSnapshotAwareHistory(
+        run.launch.sessionId,
+        run.launch.profile || 'default',
+        dbHistory,
+        { model: run.launch.model, provider: run.launch.provider },
+      )
+      const usage = estimateUsageTokensFromMessages(snapshotHistory)
+      const contextTokens = usage.inputTokens + usage.outputTokens
+      if (contextTokens > 0) return contextTokens
+    } catch (err) {
+      logger.warn(err, '[coding-agent-run] failed to calculate context tokens for session %s', run.launch.sessionId)
+    }
+    return undefined
   }
 
   private normalizeCodexChatTextEvent(run: ManagedCodingAgentRun, event: CanonicalResponsesEvent): CanonicalResponsesEvent | null {
@@ -619,9 +739,10 @@ export class CodingAgentRunManager {
         : ''
     if (!text) return event
     const existing = run.codexChatText || ''
-    const delta = text.length >= 16 ? appendedTextDelta(existing, text) : text
+    const baseline = existing || (run.acceptingPrintEvent ? '' : run.printText || '')
+    const delta = text.length >= 16 ? appendedTextDelta(baseline, text) : text
     if (!delta) return null
-    run.codexChatText = `${existing}${delta}`
+    run.codexChatText = `${baseline}${delta}`
     if (delta === text) return event
     return {
       ...event,
@@ -644,16 +765,21 @@ export class CodingAgentRunManager {
 
   private ensureDbSession(run: ManagedCodingAgentRun) {
     if (getSession(run.launch.sessionId)) return
-    const source = run.launch.sessionSource === 'global_agent' ? 'global_agent' : 'coding_agent'
+    const source = run.launch.sessionSource === 'global_agent'
+      ? 'global_agent'
+      : run.launch.sessionSource === 'workflow'
+        ? 'workflow'
+        : 'coding_agent'
     createSession({
       id: run.launch.sessionId,
       profile: run.launch.profile,
-        source,
-        agent: run.launch.agentId === 'codex' ? 'codex' : 'claude',
-        agent_session_id: run.id,
-        agent_native_session_id: run.launch.agentNativeSessionId,
-        model: run.launch.model,
+      source,
+      agent: run.launch.agentId === 'codex' ? 'codex' : 'claude',
+      agent_session_id: run.id,
+      agent_native_session_id: run.launch.agentNativeSessionId,
+      model: run.launch.model,
       provider: run.launch.provider,
+      api_mode: run.launch.apiMode || '',
       title: '',
       workspace: run.launch.workspaceDir,
     })
@@ -707,9 +833,11 @@ export class CodingAgentRunManager {
     run.exited = true
     run.state.isWorking = false
     if (shouldReportClosed) {
+      const workspaceRunChange = this.completeWorkspaceRunDiff(run)
       this.emitToChat(run.launch.sessionId, 'run.failed', {
         event: 'run.failed',
         error: 'Coding agent session closed',
+        workspace_run_change: workspaceRunChange,
       })
       this.markChatRunCompleted(run.launch.sessionId, 'run.failed')
     }
@@ -731,6 +859,7 @@ export class CodingAgentRunManager {
     run.printToolBlocks = new Map()
     run.currentChildStderr = ''
     run.runMarker = undefined
+    run.memoryExportStarted = false
 
     this.handleClaudePrintResponseEvent(run, {
       type: 'response.created',
@@ -812,7 +941,7 @@ export class CodingAgentRunManager {
       logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] claude print exited')
       if (run.stoppedByUser) return
       if (run.pendingChatCompletionEvent) {
-        this.emitAndMarkPrintChatRunCompleted(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
+        void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
         return
       }
       if (code === 0) {
@@ -1175,6 +1304,7 @@ export class CodingAgentRunManager {
     run.codexPendingUsage = undefined
     run.currentChildStderr = ''
     run.runMarker = undefined
+    run.memoryExportStarted = false
 
     this.handleClaudePrintResponseEvent(run, {
       type: 'response.created',
@@ -1250,7 +1380,7 @@ export class CodingAgentRunManager {
       logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] codex exec exited')
       if (run.stoppedByUser) return
       if (run.pendingChatCompletionEvent) {
-        this.emitAndMarkPrintChatRunCompleted(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
+        void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
         return
       }
       if (code === 0) {
@@ -1553,6 +1683,21 @@ export class CodingAgentRunManager {
 
   private appendCodexFinalText(run: ManagedCodingAgentRun, text: string) {
     if (!text) return
+    const streamedText = run.codexChatText || ''
+    const streamedTrimmed = streamedText.trimEnd()
+    const finalTrimmed = text.trimEnd()
+    if (streamedTrimmed) {
+      if (
+        finalTrimmed === streamedTrimmed ||
+        streamedTrimmed.endsWith(finalTrimmed) ||
+        streamedTrimmed.startsWith(finalTrimmed)
+      ) return
+      if (finalTrimmed.startsWith(streamedTrimmed)) {
+        run.printText = streamedText
+        this.appendCodexText(run, text)
+        return
+      }
+    }
     const existing = run.printText || ''
     if (!existing) {
       this.appendCodexText(run, text)
@@ -1622,21 +1767,115 @@ export class CodingAgentRunManager {
     this.completeClaudePrintTurn(run, usage)
   }
 
+  private async emitAndMarkPrintChatRunCompletedAfterUsage(
+    run: ManagedCodingAgentRun,
+    event: 'run.completed' | 'run.failed',
+    payload?: Record<string, unknown>,
+  ) {
+    const usageRefresh = run.terminalUsageRefresh
+    run.terminalUsageRefresh = undefined
+    if (usageRefresh) {
+      try {
+        await usageRefresh
+      } catch (err) {
+        logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] terminal usage refresh failed before completion')
+      }
+    }
+    this.emitAndMarkPrintChatRunCompleted(run, event, payload)
+  }
+
   private emitAndMarkPrintChatRunCompleted(run: ManagedCodingAgentRun, event: 'run.completed' | 'run.failed', payload?: Record<string, unknown>) {
     run.pendingChatCompletionEvent = undefined
     run.pendingChatCompletionPayload = undefined
     const queueRemaining = run.state.queue.length
+    const workspaceRunChange = this.completeWorkspaceRunDiff(run)
     this.emitToChat(run.launch.sessionId, event, {
       ...(payload || { event }),
       ...(queueRemaining > 0 ? { queue_remaining: queueRemaining } : {}),
+      workspace_run_change: workspaceRunChange,
     })
+    if (queueRemaining === 0) {
+      try {
+        updateSession(run.launch.sessionId, {
+          ended_at: nowSeconds(),
+          end_reason: event === 'run.failed' ? 'error' : 'complete',
+        })
+      } catch (err) {
+        logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] failed to write coding-agent session end marker')
+      }
+    }
     run.state.isWorking = false
     run.state.runId = undefined
     run.state.abortController = undefined
     run.state.activeRunMarker = undefined
     run.state.events = []
     this.markChatRunCompleted(run.launch.sessionId, event)
+    if (event === 'run.completed') this.startCodingAgentMemoryExport(run)
     run.runMarker = undefined
+  }
+
+  private startCodingAgentMemoryExport(run: ManagedCodingAgentRun) {
+    if (run.memoryExportStarted) return
+    const agentId = run.launch.agentId
+    const source = agentId === 'codex' ? 'codex' : agentId === 'claude-code' ? 'claude-code' : ''
+    if (!source) return
+    const nativeSessionId = String(run.launch.agentNativeSessionId || '').trim()
+    if (!nativeSessionId) {
+      logger.debug({ runId: run.id, sessionId: run.launch.sessionId, agentId }, '[coding-agent-run] memory export skipped: missing native session id')
+      return
+    }
+    run.memoryExportStarted = true
+
+    const args = ['threads', 'save', '--from', source, '--truncate', '--session-id', nativeSessionId]
+    const env: NodeJS.ProcessEnv = { ...process.env }
+    if (source === 'codex') {
+      const codexHome = run.launch.env?.CODEX_HOME || process.env.CODEX_HOME
+      if (codexHome) env.CODEX_HOME = codexHome
+    }
+
+    let child: ChildProcess
+    try {
+      child = spawnCodingAgentChild('nmem', args, {
+        cwd: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
+        env,
+      })
+    } catch (err) {
+      logger.debug({ err, runId: run.id, sessionId: run.launch.sessionId, agentId, nativeSessionId }, '[coding-agent-run] memory export failed to start')
+      return
+    }
+
+    let stdout = ''
+    let stderr = ''
+    const timeout = setTimeout(() => {
+      try { child.kill() } catch {}
+    }, 60_000)
+    timeout.unref?.()
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout = `${stdout}${chunk.toString('utf8')}`.slice(-4000)
+    })
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr = `${stderr}${chunk.toString('utf8')}`.slice(-4000)
+    })
+    child.on('error', (err) => {
+      clearTimeout(timeout)
+      logger.debug({ err, runId: run.id, sessionId: run.launch.sessionId, agentId, nativeSessionId }, '[coding-agent-run] memory export process error')
+    })
+    child.on('exit', (code) => {
+      clearTimeout(timeout)
+      if (code === 0) {
+        logger.info({ runId: run.id, sessionId: run.launch.sessionId, agentId, nativeSessionId }, '[coding-agent-run] memory export completed')
+      } else {
+        logger.debug({
+          runId: run.id,
+          sessionId: run.launch.sessionId,
+          agentId,
+          nativeSessionId,
+          code,
+          stdout: stdout.slice(0, 1000),
+          stderr: stderr.slice(0, 1000),
+        }, '[coding-agent-run] memory export failed')
+      }
+    })
   }
 
   private codexNativeSessionIdFrom(value: any): string {
@@ -1658,6 +1897,39 @@ export class CodingAgentRunManager {
       logger.info({ runId: run.id, sessionId: run.launch.sessionId, nativeSessionId }, '[coding-agent-run] recorded Codex native session id')
     } catch (err) {
       logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] failed to persist Codex native session id')
+    }
+  }
+
+  private startWorkspaceRunDiff(run: ManagedCodingAgentRun) {
+    try {
+      startWorkspaceRunCheckpoint({
+        sessionId: run.launch.sessionId,
+        runId: run.id,
+        workspace: run.launch.workspaceDir,
+      })
+    } catch (err) {
+      logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[workspace-diff] failed to start coding agent run checkpoint')
+    }
+  }
+
+  private completeWorkspaceRunDiff(run: ManagedCodingAgentRun) {
+    try {
+      const change = completeWorkspaceRunCheckpoint({
+        sessionId: run.launch.sessionId,
+        runId: run.id,
+        workspace: run.launch.workspaceDir,
+      })
+      if (!change) return null
+      this.emitToChat(run.launch.sessionId, 'workspace.diff.completed', {
+        event: 'workspace.diff.completed',
+        run_id: run.id,
+        change_id: change.change_id,
+        change,
+      })
+      return change
+    } catch (err) {
+      logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[workspace-diff] failed to complete coding agent run checkpoint')
+      return null
     }
   }
 

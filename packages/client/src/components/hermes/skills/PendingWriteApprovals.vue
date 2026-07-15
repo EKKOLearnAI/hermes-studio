@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
 import { NButton, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import {
   approvePendingWrite,
   fetchPendingWriteReview,
@@ -11,6 +10,8 @@ import {
   type PendingWriteReview,
   type PendingWriteRecord,
 } from '@/api/hermes/write-gate'
+
+const MarkdownRenderer = defineAsyncComponent(async () => (await import('@/components/hermes/chat/MarkdownRenderer.vue')).default)
 
 const emit = defineEmits<{
   (e: 'count-change', count: number): void

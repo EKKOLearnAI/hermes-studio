@@ -11,7 +11,11 @@ type UpdateControllerMocks = {
   appendFileSync: ReturnType<typeof vi.fn>
 }
 
-async function loadUpdateController(overrides: Partial<UpdateControllerMocks> = {}) {
+type LoadUpdateControllerOptions = Partial<UpdateControllerMocks> & {
+  isDocker?: boolean
+}
+
+async function loadUpdateController(overrides: LoadUpdateControllerOptions = {}) {
   const execFile = overrides.execFile ?? vi.fn((_command: string, _args: string[], _options: any, callback: any) => callback(null, '', ''))
   const execFileSync = overrides.execFileSync ?? vi.fn().mockReturnValue('updated')
   const unref = overrides.unref ?? vi.fn()
@@ -35,6 +39,9 @@ async function loadUpdateController(overrides: Partial<UpdateControllerMocks> = 
     readFileSync,
     rmSync: vi.fn(),
     writeFileSync: vi.fn(),
+  }))
+  vi.doMock('../../packages/server/src/services/runtime-environment', () => ({
+    isDockerContainer: () => overrides.isDocker === true,
   }))
 
   const mod = await import('../../packages/server/src/controllers/update')
@@ -85,6 +92,7 @@ describe('update controller', () => {
     vi.useRealTimers()
     vi.doUnmock('child_process')
     vi.doUnmock('fs')
+    vi.doUnmock('../../packages/server/src/services/runtime-environment')
     vi.unstubAllGlobals()
     if (originalPort === undefined) {
       delete process.env.PORT
@@ -100,47 +108,48 @@ describe('update controller', () => {
     const npmCli = getNpmCliPath()
     const globalPrefix = getNodePrefix()
     const cliScript = getGlobalCliScript(globalPrefix)
-    const execFile = vi.fn((_command: string, args: string[], _options: any, callback: any) => {
+    const execFileSync = vi.fn((_command: string, args: string[]) => {
       if (args[1] === 'root') {
-        callback(null, process.platform === 'win32'
+        return process.platform === 'win32'
           ? join(globalPrefix, 'node_modules')
-          : join(globalPrefix, 'lib', 'node_modules'), '')
-        return
+          : join(globalPrefix, 'lib', 'node_modules')
       }
-      callback(null, 'updated', '')
+      return 'updated'
     })
-    const { handleUpdate, mocks } = await loadUpdateController({ execFile })
+    const { handleUpdate, mocks } = await loadUpdateController({ execFileSync })
     const ctx = createMockCtx()
 
     await handleUpdate(ctx)
 
-    expect(mocks.execFile).toHaveBeenCalledWith(
+    expect(mocks.execFileSync).toHaveBeenCalledWith(
       process.execPath,
       [npmCli, 'install', '-g', 'hermes-web-ui@latest'],
       expect.objectContaining({
         encoding: 'utf-8',
         timeout: 10 * 60 * 1000,
+        stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        cwd: expect.any(String),
         env: expect.objectContaining({
           npm_node_execpath: process.execPath,
           PATH: expect.stringContaining(`${nodeBinDir}${delimiter}`),
         }),
       }),
-      expect.any(Function),
     )
     expect(ctx.body).toEqual({ success: true, message: 'updated' })
 
     await vi.runAllTimersAsync()
 
-    expect(mocks.execFile).toHaveBeenCalledWith(
+    expect(mocks.execFileSync).toHaveBeenCalledWith(
       process.execPath,
       [npmCli, 'root', '-g'],
       expect.objectContaining({
         encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        cwd: expect.any(String),
         env: expect.objectContaining({ npm_node_execpath: process.execPath }),
       }),
-      expect.any(Function),
     )
     expect(mocks.spawn).toHaveBeenCalledWith(
       process.execPath,
@@ -153,54 +162,6 @@ describe('update controller', () => {
       }),
     )
     expect(mocks.unref).toHaveBeenCalledOnce()
-  })
-
-  it('keeps update requests responsive while npm install is pending', async () => {
-    const npmCli = getNpmCliPath()
-    let installCallback: ((error: Error | null, stdout: string, stderr: string) => void) | undefined
-    const execFile = vi.fn((_command: string, args: string[], _options: any, callback: any) => {
-      if (args.includes('install') && args.includes('hermes-web-ui@latest')) {
-        installCallback = callback
-        return
-      }
-      callback(null, '', '')
-    })
-    const execFileSync = vi.fn((_command: string, args: string[]) => {
-      if (args.includes('install') && args.includes('hermes-web-ui@latest')) {
-        throw new Error('global update install must not use execFileSync')
-      }
-      return ''
-    })
-    const { handleUpdate, mocks } = await loadUpdateController({ execFile, execFileSync })
-    const first = createMockCtx()
-    const second = createMockCtx()
-
-    const firstUpdate = handleUpdate(first)
-    await Promise.resolve()
-    await handleUpdate(second)
-
-    expect(installCallback).toBeTypeOf('function')
-    expect(second.status).toBe(409)
-    expect(second.body).toEqual({
-      success: false,
-      message: 'hermes-web-ui update is already in progress',
-    })
-    expect(mocks.execFile).toHaveBeenCalledWith(
-      process.execPath,
-      [npmCli, 'install', '-g', 'hermes-web-ui@latest'],
-      expect.objectContaining({ timeout: 10 * 60 * 1000 }),
-      expect.any(Function),
-    )
-    expect(mocks.execFileSync).not.toHaveBeenCalledWith(
-      process.execPath,
-      [npmCli, 'install', '-g', 'hermes-web-ui@latest'],
-      expect.any(Object),
-    )
-
-    installCallback?.(null, 'updated', '')
-    await firstUpdate
-
-    expect(first.body).toEqual({ success: true, message: 'updated' })
   })
 
   it('falls back to the default port when PORT is not set', async () => {
@@ -242,37 +203,57 @@ describe('update controller', () => {
   })
 
   it('returns a 500 with stderr when installation fails', async () => {
-    const execFile = vi.fn((_command: string, args: string[], _options: any, callback: any) => {
+    const execFileSync = vi.fn((_command: string, args: string[]) => {
       if (args.includes('install') && args.includes('hermes-web-ui@latest')) {
         const error = new Error('install failed') as Error & { stderr?: string }
         error.stderr = 'engine mismatch'
-        callback(error, '', 'engine mismatch')
-        return
+        throw error
       }
-      callback(null, '', '')
+      return ''
     })
-    const { handleUpdate, mocks } = await loadUpdateController({ execFile })
+    const { handleUpdate, mocks } = await loadUpdateController({ execFileSync })
     const ctx = createMockCtx()
 
     await handleUpdate(ctx)
 
     expect(ctx.status).toBe(500)
     expect(ctx.body).toEqual({ success: false, message: 'engine mismatch' })
-    expect(mocks.execFileSync).not.toHaveBeenCalledWith(
-      process.execPath,
-      [expect.any(String), 'install', '-g', 'hermes-web-ui@latest'],
-      expect.any(Object),
-    )
     expect(mocks.spawn).not.toHaveBeenCalled()
     expect(exitSpy).not.toHaveBeenCalled()
+  })
+
+  it('rejects in-container npm updates with Docker recreation guidance', async () => {
+    const { handleUpdate, mocks } = await loadUpdateController({ isDocker: true })
+    const ctx = createMockCtx()
+
+    await handleUpdate(ctx)
+
+    expect(ctx.status).toBe(400)
+    expect(ctx.body).toEqual({
+      success: false,
+      code: 'docker_environment',
+      message: expect.stringContaining('docker compose pull'),
+    })
+    expect(mocks.execFileSync).not.toHaveBeenCalled()
+    expect(mocks.spawn).not.toHaveBeenCalled()
   })
 
   it('loads preview tags through async git with a short timeout', async () => {
     process.env.HERMES_WEB_UI_PREVIEW_REPO = 'https://github.com/EKKOLearnAI/hermes-studio'
     const execFile = vi.fn((_command: string, _args: string[], _options: any, callback: any) => {
       callback(null, [
+        'ghi789\trefs/tags/v0.6.9',
+        'jkl012\trefs/tags/v0.6.10-beta',
         'abc123\trefs/tags/v0.6.6',
-        'def456\trefs/tags/v0.6.7',
+        'def456\trefs/tags/v0.6.10',
+        'mno345\trefs/tags/v0.6.28',
+        'pqr678\trefs/tags/v0.6.6-linux-desktop-fixes-test-20260530200253',
+        'stu901\trefs/tags/0.6.29',
+        'vwx234\trefs/tags/v0.6.27',
+        'yz0567\trefs/tags/v0.6.26',
+        'bcd890\trefs/tags/v0.6.25',
+        'efg123\trefs/tags/v0.6.24',
+        'hij456\trefs/tags/v0.6.23',
       ].join('\n'), '')
     })
     const execFileSync = vi.fn(() => 'git version 2.0.0')
@@ -285,8 +266,14 @@ describe('update controller', () => {
     expect(ctx.body).toEqual({
       tags: [
         { name: 'main', sha: '' },
-        { name: 'v0.6.7', sha: 'def456' },
-        { name: 'v0.6.6', sha: 'abc123' },
+        { name: 'v0.6.28', sha: 'mno345' },
+        { name: 'v0.6.27', sha: 'vwx234' },
+        { name: 'v0.6.26', sha: 'yz0567' },
+        { name: 'v0.6.25', sha: 'bcd890' },
+        { name: 'v0.6.24', sha: 'efg123' },
+        { name: 'v0.6.23', sha: 'hij456' },
+        { name: 'v0.6.10', sha: 'def456' },
+        { name: 'v0.6.10-beta', sha: 'jkl012' },
       ],
     })
     expect(mocks.execFile).toHaveBeenCalledWith(
@@ -306,8 +293,18 @@ describe('update controller', () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => [
-        { name: 'v0.6.7', commit: { sha: 'def456' } },
+        { name: 'v0.6.9', commit: { sha: 'ghi789' } },
         { name: 'v0.6.6', commit: { sha: 'abc123' } },
+        { name: 'v0.6.10-beta', commit: { sha: 'jkl012' } },
+        { name: 'v0.6.28', commit: { sha: 'mno345' } },
+        { name: 'v0.6.10', commit: { sha: 'def456' } },
+        { name: 'v0.6.6-linux-desktop-fixes-test-20260530200253', commit: { sha: 'pqr678' } },
+        { name: '0.6.29', commit: { sha: 'stu901' } },
+        { name: 'v0.6.27', commit: { sha: 'vwx234' } },
+        { name: 'v0.6.26', commit: { sha: 'yz0567' } },
+        { name: 'v0.6.25', commit: { sha: 'bcd890' } },
+        { name: 'v0.6.24', commit: { sha: 'efg123' } },
+        { name: 'v0.6.23', commit: { sha: 'hij456' } },
       ],
     }))
     vi.stubGlobal('fetch', fetchMock)
@@ -320,8 +317,14 @@ describe('update controller', () => {
     expect(ctx.body).toEqual({
       tags: [
         { name: 'main', sha: '' },
-        { name: 'v0.6.7', sha: 'def456' },
-        { name: 'v0.6.6', sha: 'abc123' },
+        { name: 'v0.6.28', sha: 'mno345' },
+        { name: 'v0.6.27', sha: 'vwx234' },
+        { name: 'v0.6.26', sha: 'yz0567' },
+        { name: 'v0.6.25', sha: 'bcd890' },
+        { name: 'v0.6.24', sha: 'efg123' },
+        { name: 'v0.6.23', sha: 'hij456' },
+        { name: 'v0.6.10', sha: 'def456' },
+        { name: 'v0.6.10-beta', sha: 'jkl012' },
       ],
     })
     expect(fetchMock).toHaveBeenCalledWith(

@@ -22,15 +22,15 @@ export function getShutdownForceExitMs(): number {
   return desktop ? DEFAULT_DESKTOP_SHUTDOWN_FORCE_EXIT_MS : DEFAULT_SHUTDOWN_FORCE_EXIT_MS
 }
 
-export function shouldStopAgentBridgeOnShutdown(signal: string): boolean {
+export function shouldStopAgentBridgeOnShutdown(_signal: string): boolean {
   const raw = String(process.env.HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN || '').trim().toLowerCase()
   if (['1', 'true', 'yes', 'on'].includes(raw)) return true
   if (['0', 'false', 'no', 'off'].includes(raw)) return false
 
-  // The CLI uses SIGUSR2 for an intentional Web UI restart so active bridge
-  // runs survive and can be reattached. SIGTERM/SIGINT represent real service
-  // shutdown and should stop the bridge broker/workers.
-  return signal !== 'SIGUSR2'
+  // Restart now defaults to a fresh bridge so package/runtime upgrades do not
+  // attach to stale brokers. Operators can opt back into restart resume with
+  // HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN=0.
+  return true
 }
 
 export function shouldStopManagedGatewaysOnShutdown(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -112,8 +112,7 @@ export function createShutdownHandler(
         logger.info('Leaving agent bridge running across Web UI shutdown')
       }
 
-      // Close ChatRunSocket first to release WebSocket state. CLI bridge runs
-      // keep running in the external bridge and are reattached after restart.
+      // Close ChatRunSocket first to release WebSocket state.
       if (chatRunServer) {
         chatRunServer.close()
         logger.info('ChatRunSocket closed')

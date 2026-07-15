@@ -4,7 +4,9 @@ export type BridgeSessionCommandName =
   | 'abort'
   | 'queue'
   | 'skill'
+  | 'learn'
   | 'plan'
+  | 'moa'
   | 'goal'
   | 'subgoal'
   | 'clear'
@@ -32,7 +34,9 @@ export const BRIDGE_SESSION_COMMAND_DEFINITIONS: BridgeSessionCommandDefinition[
   { key: 'command:abort', name: 'abort', args: '', descriptionKey: 'chat.slashCommands.abort' },
   { key: 'command:queue', name: 'queue', argsKey: 'chat.slashCommandArgs.message', descriptionKey: 'chat.slashCommands.queue' },
   { key: 'command:skill', name: 'skill', args: '', descriptionKey: 'skills.title', opensSkillPicker: true },
+  { key: 'command:learn', name: 'learn', argsKey: 'chat.slashCommandArgs.text', descriptionKey: 'chat.slashCommands.learn' },
   { key: 'command:plan', name: 'plan', argsKey: 'chat.slashCommandArgs.text', descriptionKey: 'chat.slashCommands.plan' },
+  { key: 'command:moa', name: 'moa', argsKey: 'chat.slashCommandArgs.text', descriptionKey: 'chat.slashCommands.moa' },
   { key: 'command:goal', name: 'goal', argsKey: 'chat.slashCommandArgs.text', descriptionKey: 'chat.slashCommands.goal' },
   { key: 'command:goal-status', name: 'goal', args: 'status', insertText: 'goal status', descriptionKey: 'chat.slashCommands.goalStatus' },
   { key: 'command:goal-pause', name: 'goal', args: 'pause', insertText: 'goal pause', descriptionKey: 'chat.slashCommands.goalPause' },

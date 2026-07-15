@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useDialog } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import FileTree from '@/components/hermes/files/FileTree.vue'
@@ -15,6 +18,10 @@ import type { FileEntry } from '@/api/hermes/files'
 
 const filesStore = useFilesStore()
 const profilesStore = useProfilesStore()
+const route = useRoute()
+const router = useRouter()
+const dialog = useDialog()
+const { t } = useI18n()
 
 const contextMenuRef = ref<InstanceType<typeof FileContextMenu> | null>(null)
 const showUpload = ref(false)
@@ -22,6 +29,12 @@ const showRenameModal = ref(false)
 const renameMode = ref<'newFile' | 'newFolder' | 'rename'>('newFile')
 const renameEntry = ref<FileEntry | null>(null)
 const renameTargetPath = ref<string | null>(null)
+const scopedProfile = computed(() => firstQueryString(route.query.profile))
+const routeFilePath = computed(() => firstQueryString(route.query.file))
+const isProfileConfigEditor = computed(() => !!scopedProfile.value && routeFilePath.value === 'config.yaml')
+const profileConfigTitle = computed(() =>
+  scopedProfile.value ? `${scopedProfile.value} / config.yaml` : 'config.yaml',
+)
 
 function handleContextMenu(e: MouseEvent, entry: FileEntry) {
   contextMenuRef.value?.show(e, entry)
@@ -55,24 +68,85 @@ function handleRename(entry: FileEntry) {
   showRenameModal.value = true
 }
 
-async function loadRoot() {
+function firstQueryString(value: unknown): string | null {
+  const raw = Array.isArray(value) ? value[0] : value
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : null
+}
+
+function parentDir(filePath: string): string {
+  const lastSlash = filePath.lastIndexOf('/')
+  return lastSlash > 0 ? filePath.slice(0, lastSlash) : ''
+}
+
+async function ensureProfilesLoaded() {
   if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
     await profilesStore.fetchProfiles()
   }
-  await filesStore.fetchEntries('')
 }
 
-onMounted(() => {
-  void loadRoot()
-})
+async function loadFromRoute() {
+  await ensureProfilesLoaded()
+
+  const profile = scopedProfile.value
+  const filePath = routeFilePath.value
+  const directoryPath = filePath
+    ? parentDir(filePath)
+    : (firstQueryString(route.query.path) || '')
+
+  if (!isProfileConfigEditor.value) {
+    await filesStore.fetchEntries(directoryPath, { profile })
+  }
+
+  if (filePath) {
+    await filesStore.openEditor(filePath, { profile })
+  }
+}
+
+function closeProfileConfigEditor() {
+  const close = () => {
+    filesStore.closeEditor()
+    void router.push({ name: 'hermes.profiles' })
+  }
+
+  if (filesStore.hasUnsavedChanges) {
+    dialog.warning({
+      title: t('files.unsavedChanges'),
+      positiveText: t('common.ok'),
+      negativeText: t('common.cancel'),
+      onPositiveClick: close,
+    })
+    return
+  }
+
+  close()
+}
+
+watch(
+  [() => route.query.profile, () => route.query.path, () => route.query.file],
+  () => {
+    void loadFromRoute()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
-  <div class="files-view">
-    <div class="files-tree-panel">
-      <FileTree />
+  <div class="files-view" :class="{ 'profile-config-editor-view': isProfileConfigEditor }">
+    <template v-if="isProfileConfigEditor">
+      <div class="profile-config-editor-header">
+        <div class="profile-config-title">
+          <span class="profile-config-eyebrow">{{ t('profiles.editConfig') }}</span>
+          <span class="profile-config-file">{{ profileConfigTitle }}</span>
+        </div>
+      </div>
+      <div class="profile-config-editor-content">
+        <FileEditor v-if="filesStore.editingFile" :custom-close="closeProfileConfigEditor" />
+      </div>
+    </template>
+    <div v-else class="files-tree-panel">
+      <FileTree :profile="scopedProfile" />
     </div>
-    <div class="files-main-panel">
+    <div v-if="!isProfileConfigEditor" class="files-main-panel">
       <FileToolbar
         @show-new-file="handleShowNewFile"
         @show-new-folder="handleShowNewFolder"
@@ -106,6 +180,47 @@ onMounted(() => {
 .files-view {
   display: flex;
   height: 100%;
+  overflow: hidden;
+}
+
+.profile-config-editor-view {
+  flex-direction: column;
+}
+
+.profile-config-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid $border-color;
+  background-color: $bg-card;
+}
+
+.profile-config-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.profile-config-eyebrow {
+  font-size: 12px;
+  color: $text-secondary;
+}
+
+.profile-config-file {
+  font-size: 14px;
+  font-weight: 600;
+  color: $text-primary;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-config-editor-content {
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 

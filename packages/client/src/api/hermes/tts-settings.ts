@@ -107,6 +107,15 @@ export async function clearTtsSecret(
   return body as TtsProviderSettingsResponse
 }
 
+export async function deleteTtsProvider(
+  provider: Exclude<StoredTtsProvider, 'edge'>,
+): Promise<{ success?: boolean; deleted?: boolean; activeProvider?: StoredTtsProvider | null }> {
+  return request<{ success?: boolean; deleted?: boolean; activeProvider?: StoredTtsProvider | null }>(
+    `/api/hermes/tts/settings/${provider}`,
+    { method: 'DELETE' },
+  )
+}
+
 export async function deleteTtsBaseUrlPreset(
   provider: StoredTtsProvider,
   url: string,

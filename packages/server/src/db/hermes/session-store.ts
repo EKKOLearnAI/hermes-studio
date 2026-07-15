@@ -19,6 +19,7 @@ export interface HermesSessionRow {
   user_id: string | null
   model: string
   provider: string
+  api_mode: string
   title: string | null
   parent_session_id: string | null
   fork_point_message_id: string | null
@@ -38,6 +39,7 @@ export interface HermesSessionRow {
   cost_status: string
   preview: string
   last_active: number
+  is_archived: number
   workspace: string | null
   parent_title?: string | null
   parent_last_message?: string | null
@@ -104,6 +106,7 @@ function mapSessionRow(row: Record<string, unknown>): HermesSessionRow {
     user_id: row.user_id != null ? String(row.user_id) : null,
     model: String(row.model || ''),
     provider: String(row.provider || ''),
+    api_mode: String(row.api_mode || ''),
     title,
     parent_session_id: row.parent_session_id != null ? String(row.parent_session_id) : null,
     fork_point_message_id: row.fork_point_message_id != null ? String(row.fork_point_message_id) : null,
@@ -123,6 +126,7 @@ function mapSessionRow(row: Record<string, unknown>): HermesSessionRow {
     cost_status: String(row.cost_status || ''),
     preview: String(row.preview || ''),
     last_active: Number(row.last_active || 0),
+    is_archived: Number(row.is_archived || 0),
     workspace: row.workspace != null ? String(row.workspace) : null,
     parent_title: row.parent_title != null ? String(row.parent_title) : null,
     parent_last_message: row.parent_last_message != null ? String(row.parent_last_message) : null,
@@ -163,6 +167,7 @@ export function createSession(data: {
   agent_native_session_id?: string
   model?: string
   provider?: string
+  api_mode?: string
   title?: string
   parent_session_id?: string | null
   workspace?: string
@@ -175,20 +180,20 @@ export function createSession(data: {
       id: data.id, profile: data.profile || 'default', source, agent,
       agent_mode: data.agent_mode || '',
       agent_session_id: data.agent_session_id || '', agent_native_session_id: data.agent_native_session_id || '',
-      user_id: null, model: data.model || '', provider: data.provider || '', title: data.title || null,
+      user_id: null, model: data.model || '', provider: data.provider || '', api_mode: data.api_mode || '', title: data.title || null,
       parent_session_id: data.parent_session_id || null,
       fork_point_message_id: null,
       started_at: now, ended_at: null, end_reason: null,
       message_count: 0, tool_call_count: 0,
       input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0,
       billing_provider: null, estimated_cost_usd: 0, actual_cost_usd: null,
-      cost_status: '', preview: '', last_active: now, workspace: data.workspace || null,
+      cost_status: '', preview: '', last_active: now, is_archived: 0, workspace: data.workspace || null,
     }
   }
   const db = getDb()!
   db.prepare(
-    `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_session_id, agent_native_session_id, model, provider, title, parent_session_id, started_at, last_active, workspace)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_session_id, agent_native_session_id, model, provider, api_mode, title, parent_session_id, started_at, last_active, workspace)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     data.id,
     data.profile || 'default',
@@ -199,6 +204,7 @@ export function createSession(data: {
     data.agent_native_session_id || '',
     data.model || '',
     data.provider || '',
+    data.api_mode || '',
     data.title || null,
     data.parent_session_id || null,
     now,
@@ -219,6 +225,7 @@ export function createBranchedSession(data: {
   agent_native_session_id?: string
   model?: string
   provider?: string
+  api_mode?: string
   title?: string
   workspace?: string | null
   ended_at: number
@@ -255,8 +262,8 @@ export function createBranchedSession(data: {
     ).run(data.ended_at, 'branched', data.parent_session_id)
 
     db.prepare(
-      `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_session_id, agent_native_session_id, model, provider, title, parent_session_id, started_at, last_active, workspace, message_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_session_id, agent_native_session_id, model, provider, api_mode, title, parent_session_id, started_at, last_active, workspace, message_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       data.id,
       data.profile || 'default',
@@ -267,6 +274,7 @@ export function createBranchedSession(data: {
       data.agent_native_session_id || '',
       data.model || '',
       data.provider || '',
+      data.api_mode || '',
       data.title || null,
       data.parent_session_id,
       data.ended_at,
@@ -373,6 +381,13 @@ export function renameSession(id: string, title: string): boolean {
   if (!isSqliteAvailable()) return false
   const db = getDb()!
   const result = db.prepare(`UPDATE ${SESSIONS_TABLE} SET title = ? WHERE id = ?`).run(title, id)
+  return result.changes > 0
+}
+
+export function setSessionArchived(id: string, archived: boolean): boolean {
+  if (!isSqliteAvailable()) return false
+  const db = getDb()!
+  const result = db.prepare(`UPDATE ${SESSIONS_TABLE} SET is_archived = ? WHERE id = ?`).run(archived ? 1 : 0, id)
   return result.changes > 0
 }
 

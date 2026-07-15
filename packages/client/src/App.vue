@@ -1,29 +1,35 @@
 <script setup lang="ts">
-import { onUnmounted, computed, watch } from 'vue'
+import { computed, defineAsyncComponent, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { darkTheme, NConfigProvider, NMessageProvider, NDialogProvider, NNotificationProvider } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { getThemeOverrides } from '@/styles/theme'
 import { useTheme } from '@/composables/useTheme'
-import AppSidebar from '@/components/layout/AppSidebar.vue'
-import DesktopTitleBar from '@/components/layout/DesktopTitleBar.vue'
 import { useKeyboard } from '@/composables/useKeyboard'
+import { useSessionSearch } from '@/composables/useSessionSearch'
 import { useAppStore } from '@/stores/hermes/app'
-import SessionSearchModal from '@/components/hermes/chat/SessionSearchModal.vue'
 import AuthEventListener from '@/components/auth/AuthEventListener.vue'
-import DefaultCredentialPrompt from '@/components/auth/DefaultCredentialPrompt.vue'
+import { desktopBridge } from '@/utils/desktop-bridge'
+
+const AppSidebar = defineAsyncComponent(async () => (await import('@/components/layout/AppSidebar.vue')).default)
+const DesktopTitleBar = defineAsyncComponent(async () => (await import('@/components/layout/DesktopTitleBar.vue')).default)
+const SessionSearchModal = defineAsyncComponent(async () => (await import('@/components/hermes/chat/SessionSearchModal.vue')).default)
+const DefaultCredentialPrompt = defineAsyncComponent(async () => (await import('@/components/auth/DefaultCredentialPrompt.vue')).default)
+const ProviderConfigurationPrompt = defineAsyncComponent(async () => (await import('@/components/hermes/models/ProviderConfigurationPrompt.vue')).default)
+const WebPet = defineAsyncComponent(async () => (await import('@/components/hermes/pets/WebPet.vue')).default)
 
 const { isDark, isComic } = useTheme()
 const { t } = useI18n()
 const appStore = useAppStore()
 const route = useRoute()
+const { sessionSearchOpen } = useSessionSearch()
 
 const themeOverrides = computed(() => getThemeOverrides(isDark.value, isComic.value))
 const naiveTheme = computed(() => isDark.value ? darkTheme : null)
 
 const isLoginPage = computed(() => route.name === 'login')
 const usesPageSidebar = computed(() =>
-  ['hermes.chat', 'hermes.session', 'hermes.history', 'hermes.historySession', 'hermes.globalAgent', 'hermes.globalAgentSession', 'hermes.groupChat', 'hermes.groupChatRoom'].includes(route.name as string),
+  ['hermes.chat', 'hermes.session', 'hermes.history', 'hermes.historySession', 'hermes.globalAgent', 'hermes.globalAgentSession', 'hermes.groupChat', 'hermes.groupChatRoom', 'hermes.workflow'].includes(route.name as string),
 )
 const showAppSidebar = computed(() => !isLoginPage.value && !usesPageSidebar.value)
 const showMobileMenuButton = computed(() => !isLoginPage.value && (showAppSidebar.value || usesPageSidebar.value))
@@ -34,11 +40,11 @@ const nodeVersionLow = computed(() => {
   return !isNaN(major) && major < 23
 })
 
-const isDesktopShell = computed(() =>
-  (window as typeof window & { hermesDesktop?: { isDesktop?: boolean } }).hermesDesktop?.isDesktop === true,
-)
+const isDesktopShell = computed(() => desktopBridge()?.isDesktop === true)
+const isDesktopPetRoute = computed(() => route.name === 'desktop.pet')
+const showWebPet = computed(() => !isLoginPage.value && !isDesktopShell.value && !isDesktopPetRoute.value)
 const hasDesktopTitleBar = computed(() => {
-  const platform = (window as typeof window & { hermesDesktop?: { platform?: string } }).hermesDesktop?.platform
+  const platform = desktopBridge()?.platform
   return isDesktopShell.value && (platform === 'darwin' || platform === 'win32')
 })
 
@@ -74,7 +80,8 @@ useKeyboard()
       <AuthEventListener />
       <NDialogProvider>
         <NNotificationProvider>
-          <div class="app-shell" :class="{ desktop: isDesktopShell, 'desktop-titlebar-host': hasDesktopTitleBar }">
+          <router-view v-if="isDesktopPetRoute" />
+          <div v-else class="app-shell" :class="{ desktop: isDesktopShell, 'desktop-titlebar-host': hasDesktopTitleBar }">
             <DesktopTitleBar v-if="isDesktopShell" />
             <div v-if="nodeVersionLow" class="node-warning-bar">
               {{ t('sidebar.nodeVersionWarning', { version: appStore.nodeVersion }) }}
@@ -90,8 +97,10 @@ useKeyboard()
               </main>
             </div>
           </div>
-          <SessionSearchModal />
-          <DefaultCredentialPrompt />
+          <WebPet v-if="showWebPet" />
+          <SessionSearchModal v-if="!isDesktopPetRoute && sessionSearchOpen" />
+          <DefaultCredentialPrompt v-if="!isDesktopPetRoute" />
+          <ProviderConfigurationPrompt v-if="!isDesktopPetRoute" />
         </NNotificationProvider>
       </NDialogProvider>
     </NMessageProvider>

@@ -39,6 +39,8 @@ export interface ProfileRuntimeStatus {
   gateway: {
     profile: string
     running: boolean
+    targetProfile?: string
+    unified?: boolean
     pid?: number
     port?: number
     host?: string

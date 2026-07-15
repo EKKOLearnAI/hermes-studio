@@ -1,7 +1,7 @@
 import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
-import { restartGatewayForProfile } from '../../services/hermes/gateway-autostart'
+import { gatewayAutostartDisabledByEnv, reconcileGatewayManagementTransition, restartGatewayForProfile } from '../../services/hermes/gateway-autostart'
 import { readAppConfig, writeAppConfig, normalizeGatewayAutoStartConfig } from '../../services/app-config'
 import { saveEnvValueForProfile } from '../../services/config-helpers'
 import { logger } from '../../services/logger'
@@ -15,6 +15,7 @@ const PLATFORM_SECTIONS = new Set([
 ])
 
 const APP_CONFIG_SECTIONS = new Set(['gatewayAutoStart'])
+const PROXY_ENV_KEYS = ['HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NO_PROXY'] as const
 
 function requestedProfile(ctx: any): string {
   const headerProfile = typeof ctx.get === 'function' ? ctx.get('x-hermes-profile') : ''
@@ -33,10 +34,15 @@ const envPath = (profile: string) => join(getProfileDir(profile), '.env')
 
 const envPlatformMap: Record<string, [string, string]> = {
   TELEGRAM_BOT_TOKEN: ['telegram', 'token'],
+  TELEGRAM_PROXY: ['telegram', 'proxy'],
   DISCORD_BOT_TOKEN: ['discord', 'token'],
+  DISCORD_PROXY: ['discord', 'proxy'],
   SLACK_BOT_TOKEN: ['slack', 'token'],
   MATRIX_ACCESS_TOKEN: ['matrix', 'token'],
+  MATRIX_PROXY: ['matrix', 'proxy'],
   MATRIX_HOMESERVER: ['matrix', 'extra.homeserver'],
+  MATRIX_USER_ID: ['matrix', 'extra.user_id'],
+  MATRIX_PASSWORD: ['matrix', 'extra.password'],
   FEISHU_APP_ID: ['feishu', 'extra.app_id'],
   FEISHU_APP_SECRET: ['feishu', 'extra.app_secret'],
   FEISHU_ENCRYPT_KEY: ['feishu', 'extra.encrypt_key'],
@@ -117,6 +123,13 @@ const AUXILIARY_TASKS = [
 const AUX_STRING_FIELDS = new Set(['provider', 'model', 'base_url', 'api_key'])
 const AUX_NUMBER_FIELDS = new Set(['timeout', 'download_timeout'])
 
+const DEFAULT_MOA_PRESET_NAME = 'default'
+const DEFAULT_MOA_REFERENCE_MODELS = [
+  { provider: 'openai-codex', model: 'gpt-5.5' },
+  { provider: 'openrouter', model: 'deepseek/deepseek-v4-pro' },
+]
+const DEFAULT_MOA_AGGREGATOR = { provider: 'openrouter', model: 'anthropic/claude-opus-4.8' }
+
 function isPlainRecord(value: unknown): value is Record<string, any> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
@@ -164,6 +177,84 @@ function normalizeAuxiliaryConfig(value: unknown, options: { resetAuto?: boolean
   return normalized
 }
 
+function cleanMoaSlot(value: unknown): { provider: string; model: string } | null {
+  if (!isPlainRecord(value)) return null
+  const provider = typeof value.provider === 'string' ? value.provider.trim() : ''
+  const model = typeof value.model === 'string' ? value.model.trim() : ''
+  if (!provider || !model || provider.toLowerCase() === 'moa') return null
+  return { provider, model }
+}
+
+function coerceMoaNumber(value: unknown, fallback: number): number {
+  if (value === null || value === undefined || value === '') return fallback
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : fallback
+}
+
+function coerceMoaInt(value: unknown, fallback: number): number {
+  return Math.floor(coerceMoaNumber(value, fallback))
+}
+
+function defaultMoaPreset(): Record<string, any> {
+  return {
+    reference_models: DEFAULT_MOA_REFERENCE_MODELS.map(slot => ({ ...slot })),
+    aggregator: { ...DEFAULT_MOA_AGGREGATOR },
+    reference_temperature: 0.6,
+    aggregator_temperature: 0.4,
+    max_tokens: 4096,
+    enabled: true,
+  }
+}
+
+function normalizeMoaPreset(value: unknown): Record<string, any> {
+  const raw = isPlainRecord(value) ? value : {}
+  const rawRefs = Array.isArray(raw.reference_models)
+    ? raw.reference_models
+    : isPlainRecord(raw.reference_models) ? [raw.reference_models] : []
+  const referenceModels = rawRefs.map(cleanMoaSlot).filter((slot): slot is { provider: string; model: string } => !!slot)
+  const aggregator = cleanMoaSlot(raw.aggregator) || { ...DEFAULT_MOA_AGGREGATOR }
+  return {
+    enabled: raw.enabled === undefined ? true : Boolean(raw.enabled),
+    reference_models: referenceModels.length > 0 ? referenceModels : DEFAULT_MOA_REFERENCE_MODELS.map(slot => ({ ...slot })),
+    aggregator,
+    reference_temperature: coerceMoaNumber(raw.reference_temperature, 0.6),
+    aggregator_temperature: coerceMoaNumber(raw.aggregator_temperature, 0.4),
+    max_tokens: coerceMoaInt(raw.max_tokens, 4096),
+  }
+}
+
+function normalizeMoaConfig(value: unknown): Record<string, any> {
+  const raw = isPlainRecord(value) ? value : {}
+  const presets: Record<string, any> = {}
+  if (isPlainRecord(raw.presets)) {
+    for (const [name, preset] of Object.entries(raw.presets)) {
+      const cleanName = String(name || '').trim()
+      if (cleanName && isSafeAuxiliaryKey(cleanName)) presets[cleanName] = normalizeMoaPreset(preset)
+    }
+  }
+  if (Object.keys(presets).length === 0) presets[DEFAULT_MOA_PRESET_NAME] = normalizeMoaPreset(raw)
+
+  let defaultPreset = typeof raw.default_preset === 'string' ? raw.default_preset.trim() : ''
+  if (!defaultPreset || !presets[defaultPreset]) defaultPreset = Object.keys(presets)[0] || DEFAULT_MOA_PRESET_NAME
+  if (!presets[defaultPreset]) presets[defaultPreset] = defaultMoaPreset()
+
+  let activePreset = typeof raw.active_preset === 'string' ? raw.active_preset.trim() : ''
+  if (!presets[activePreset]) activePreset = ''
+
+  const active = presets[defaultPreset]
+  return {
+    default_preset: defaultPreset,
+    active_preset: activePreset,
+    presets,
+    reference_models: active.reference_models.map((slot: any) => ({ ...slot })),
+    aggregator: { ...active.aggregator },
+    reference_temperature: active.reference_temperature,
+    aggregator_temperature: active.aggregator_temperature,
+    max_tokens: active.max_tokens,
+    enabled: active.enabled,
+  }
+}
+
 async function readEnvPlatforms(profile: string): Promise<Record<string, any>> {
   try {
     const raw = await readFile(envPath(profile), 'utf-8')
@@ -181,16 +272,75 @@ async function readEnvPlatforms(profile: string): Promise<Record<string, any>> {
   } catch { return {} }
 }
 
+async function readProxyEnv(profile: string): Promise<Record<string, string>> {
+  try {
+    const raw = await readFile(envPath(profile), 'utf-8')
+    const env = parseEnv(raw)
+    const proxy: Record<string, string> = {}
+    for (const key of PROXY_ENV_KEYS) {
+      if (env[key]) proxy[key] = env[key]
+    }
+    return proxy
+  } catch { return {} }
+}
+
 async function readConfig(profile: string): Promise<Record<string, any>> {
   return safeFileStore.readYaml(configPath(profile))
+}
+
+function configTruthy(value: unknown): boolean {
+  if (value === true) return true
+  const normalized = String(value || '').trim().toLowerCase()
+  return ['1', 'true', 'yes', 'on'].includes(normalized)
+}
+
+function gatewayManagementFromHermesConfig(config: Record<string, any>): 'per_profile' | 'unified' {
+  return configTruthy(config.multiplex_profiles) || configTruthy(config.gateway?.multiplex_profiles)
+    ? 'unified'
+    : 'per_profile'
+}
+
+async function readGatewayAutoStartForResponse(): Promise<ReturnType<typeof normalizeGatewayAutoStartConfig>> {
+  const appConfig = await readAppConfig()
+  const gatewayAutoStart = normalizeGatewayAutoStartConfig(appConfig.gatewayAutoStart)
+  const defaultConfig = await readConfig('default')
+  gatewayAutoStart.management = gatewayManagementFromHermesConfig(defaultConfig)
+  return gatewayAutoStart
+}
+
+async function writeHermesGatewayManagement(mode: unknown): Promise<'per_profile' | 'unified' | null> {
+  if (mode !== 'per_profile' && mode !== 'unified') return null
+  await safeFileStore.updateYaml(configPath('default'), (config) => {
+    if (mode === 'unified') {
+      config.multiplex_profiles = true
+    } else {
+      delete config.multiplex_profiles
+    }
+    if (config.gateway && typeof config.gateway === 'object' && !Array.isArray(config.gateway)) {
+      delete config.gateway.multiplex_profiles
+      if (Object.keys(config.gateway).length === 0) delete config.gateway
+    }
+    return config
+  }, {
+    backup: true,
+    dumpOptions: {
+      forceQuotes: true,
+    },
+  })
+  return mode
+}
+
+async function gatewayAutoRestartAllowed(): Promise<boolean> {
+  if (gatewayAutostartDisabledByEnv()) return false
+  return normalizeGatewayAutoStartConfig((await readAppConfig()).gatewayAutoStart).enabled !== false
 }
 
 export async function getConfig(ctx: any) {
   try {
     const profile = requestedProfile(ctx)
     const config = await readConfig(profile)
-    const appConfig = await readAppConfig()
-    const gatewayAutoStart = normalizeGatewayAutoStartConfig(appConfig.gatewayAutoStart)
+    const gatewayAutoStart = await readGatewayAutoStartForResponse()
+    const proxy = await readProxyEnv(profile)
     const envPlatforms = await readEnvPlatforms(profile)
     if (Object.keys(envPlatforms).length > 0) {
       const existing = config.platforms || {}
@@ -206,17 +356,25 @@ export async function getConfig(ctx: any) {
         ctx.body = { gatewayAutoStart }
         return
       }
+      if (key === 'proxy') {
+        ctx.body = { proxy }
+        return
+      }
       ctx.body = { [key]: config[key] || {} }
     } else if (sections) {
       const keys = (sections as string).split(',')
       const result: Record<string, any> = {}
       for (const key of keys) {
         const trimmed = key.trim()
-        result[trimmed] = trimmed === 'gatewayAutoStart' ? gatewayAutoStart : (config[trimmed] || {})
+        result[trimmed] = trimmed === 'gatewayAutoStart'
+          ? gatewayAutoStart
+          : trimmed === 'proxy'
+            ? proxy
+            : (config[trimmed] || {})
       }
       ctx.body = result
     } else {
-      ctx.body = { ...config, gatewayAutoStart }
+      ctx.body = { ...config, gatewayAutoStart, proxy }
     }
   } catch (err: any) {
     ctx.status = 500; ctx.body = { error: err.message }
@@ -229,16 +387,47 @@ export async function updateConfig(ctx: any) {
     ctx.status = 400; ctx.body = { error: 'Missing section or values' }; return
   }
   try {
+    if (section === 'proxy') {
+      const profile = requestedProfile(ctx)
+      for (const key of PROXY_ENV_KEYS) {
+        if (!Object.prototype.hasOwnProperty.call(values, key)) continue
+        await saveEnvValueForProfile(profile, key, values[key] ? String(values[key]) : '')
+      }
+      if (restart !== false && await gatewayAutoRestartAllowed()) {
+        try {
+          const restartResult = await restartGatewayForProfile(profile)
+          logger.info('[config] gateway restarted after proxy update profile=%s result=%j', profile, restartResult)
+        } catch (err) {
+          logger.error(err, 'Gateway restart failed')
+          ctx.status = 500
+          ctx.body = { error: err instanceof Error ? err.message : 'Gateway restart failed' }
+          return
+        }
+      }
+      ctx.body = { success: true }
+      return
+    }
+
     if (APP_CONFIG_SECTIONS.has(section)) {
       if (section === 'gatewayAutoStart') {
         const appConfig = await readAppConfig()
+        const previousGatewayAutoStart = await readGatewayAutoStartForResponse()
         const next: Record<string, any> = { ...(appConfig.gatewayAutoStart || {}), ...values }
         if ('include' in values && !Array.isArray(values.include)) delete next.include
         if ('exclude' in values && !Array.isArray(values.exclude)) delete next.exclude
         if ('enabled' in values && typeof values.enabled !== 'boolean') delete next.enabled
+        delete next.management
         const gatewayAutoStart = normalizeGatewayAutoStartConfig(next)
         await writeAppConfig({ gatewayAutoStart })
-        ctx.body = { success: true, gatewayAutoStart }
+        const writtenManagement = await writeHermesGatewayManagement(values.management)
+        if (writtenManagement) gatewayAutoStart.management = writtenManagement
+        else gatewayAutoStart.management = previousGatewayAutoStart.management
+        const body: Record<string, any> = { success: true, gatewayAutoStart }
+        if ('management' in values && gatewayAutoStart.enabled !== false && !gatewayAutostartDisabledByEnv()) {
+          const gatewayManagement = await reconcileGatewayManagementTransition(previousGatewayAutoStart, gatewayAutoStart)
+          if (gatewayManagement.changed) body.gatewayManagement = gatewayManagement
+        }
+        ctx.body = body
         return
       }
     }
@@ -256,7 +445,10 @@ export async function updateConfig(ctx: any) {
 
     // Platform adapters run through Hermes gateway; restart it so channel
     // config changes (Feishu/Weixin/etc.) are applied.
-    if (restart !== false && PLATFORM_SECTIONS.has(section)) {
+    const shouldRestartGateway = restart !== false &&
+      PLATFORM_SECTIONS.has(section) &&
+      await gatewayAutoRestartAllowed()
+    if (shouldRestartGateway) {
       try {
         const restartResult = await restartGatewayForProfile(profile)
         logger.info('[config] gateway restarted after config update section=%s profile=%s result=%j', section, profile, restartResult)
@@ -310,6 +502,48 @@ export async function updateAuxiliaryModels(ctx: any) {
       },
     })
     ctx.body = { success: true, auxiliary }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function getMoaConfig(ctx: any) {
+  try {
+    const profile = requestedProfile(ctx)
+    const config = await readConfig(profile)
+    ctx.body = normalizeMoaConfig(config.moa)
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function updateMoaConfig(ctx: any) {
+  const body = ctx.request.body as { moa?: unknown }
+  if (!body || !isPlainRecord(body.moa)) {
+    ctx.status = 400
+    ctx.body = { error: 'Missing MoA config' }
+    return
+  }
+
+  try {
+    const profile = requestedProfile(ctx)
+    const moa = normalizeMoaConfig(body.moa)
+    await safeFileStore.updateYaml(configPath(profile), (config) => {
+      config.moa = {
+        default_preset: moa.default_preset,
+        active_preset: moa.active_preset,
+        presets: moa.presets,
+      }
+      return config
+    }, {
+      backup: true,
+      dumpOptions: {
+        forceQuotes: true,
+      },
+    })
+    ctx.body = { success: true, moa }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }
@@ -387,14 +621,16 @@ export async function updateCredentials(ctx: any) {
 
     // Platform adapters run through Hermes gateway; restart it so channel
     // credentials are applied.
-    try {
-      const restartResult = await restartGatewayForProfile(profile)
-      logger.info('[config] gateway restarted after credentials update platform=%s profile=%s result=%j', platform, profile, restartResult)
-    } catch (err) {
-      logger.error(err, 'Gateway restart failed')
-      ctx.status = 500
-      ctx.body = { error: err instanceof Error ? err.message : 'Gateway restart failed' }
-      return
+    if (await gatewayAutoRestartAllowed()) {
+      try {
+        const restartResult = await restartGatewayForProfile(profile)
+        logger.info('[config] gateway restarted after credentials update platform=%s profile=%s result=%j', platform, profile, restartResult)
+      } catch (err) {
+        logger.error(err, 'Gateway restart failed')
+        ctx.status = 500
+        ctx.body = { error: err instanceof Error ? err.message : 'Gateway restart failed' }
+        return
+      }
     }
 
     ctx.body = { success: true }

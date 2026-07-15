@@ -5,6 +5,12 @@ const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     {
+      path: '/desktop-pet',
+      name: 'desktop.pet',
+      component: () => import('@/views/hermes/DesktopPetView.vue'),
+      meta: { public: true },
+    },
+    {
       path: '/',
       name: 'login',
       component: () => import('@/views/LoginView.vue'),
@@ -51,6 +57,11 @@ const router = createRouter({
       component: () => import('@/views/hermes/KanbanView.vue'),
     },
     {
+      path: '/hermes/workflow',
+      name: 'hermes.workflow',
+      component: () => import('@/views/hermes/WorkflowView.vue'),
+    },
+    {
       path: '/hermes/models',
       name: 'hermes.models',
       component: () => import('@/views/hermes/ModelsView.vue'),
@@ -78,6 +89,11 @@ const router = createRouter({
       meta: { requiresSuperAdmin: true },
     },
     {
+      path: '/hermes/journey',
+      name: 'hermes.journey',
+      component: () => import('@/views/hermes/JourneyView.vue'),
+    },
+    {
       path: '/hermes/skills-usage',
       name: 'hermes.skillsUsage',
       component: () => import('@/views/hermes/SkillsUsageView.vue'),
@@ -91,6 +107,11 @@ const router = createRouter({
       path: '/hermes/plugins',
       name: 'hermes.plugins',
       component: () => import('@/views/hermes/PluginsView.vue'),
+    },
+    {
+      path: '/hermes/petdex',
+      name: 'hermes.petdex',
+      component: () => import('@/views/hermes/PetdexView.vue'),
     },
     {
       path: '/hermes/memory',
@@ -152,6 +173,7 @@ const router = createRouter({
       path: '/hermes/devices',
       name: 'hermes.devices',
       component: () => import('@/views/hermes/DevicesView.vue'),
+      meta: { requiresSuperAdmin: true },
     },
     {
       path: '/hermes/group-chat',
@@ -183,16 +205,33 @@ const router = createRouter({
       path: '/hermes/mcp',
       name: 'hermes.mcp',
       component: () => import('@/views/hermes/McpManagerView.vue'),
-      meta: { requiresSuperAdmin: true },
     },
   ],
 })
 
-router.beforeEach((to, _from, next) => {
+async function ensureDesktopAuth(): Promise<void> {
+  if (hasApiKey()) return
+  const bridge = (window as typeof window & {
+    hermesDesktop?: { isDesktop?: boolean; ensureAuth?: () => Promise<boolean> }
+  }).hermesDesktop
+  if (bridge?.isDesktop === true && bridge.ensureAuth) {
+    await bridge.ensureAuth().catch(() => false)
+  }
+}
+
+function isDesktopShell(): boolean {
+  return (window as typeof window & {
+    hermesDesktop?: { isDesktop?: boolean }
+  }).hermesDesktop?.isDesktop === true
+}
+
+router.beforeEach(async (to, _from, next) => {
+  await ensureDesktopAuth()
+
   // Public pages don't need auth
   if (to.meta.public) {
     // Already has key, skip login
-    if (to.name === 'login' && hasApiKey()) {
+    if (to.name === 'login' && hasApiKey() && !isDesktopShell()) {
       next({ path: '/hermes/chat' })
       return
     }

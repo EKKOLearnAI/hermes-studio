@@ -14,6 +14,9 @@ export interface GatewayAutoStartConfig {
   enabled?: boolean
   include?: string[]
   exclude?: string[]
+  // Derived from Hermes Agent default config.yaml when returned by the config
+  // controller. It is not persisted in the Web UI app config.
+  management?: 'auto' | 'per_profile' | 'unified'
 }
 
 function normalizeProfileList(values: unknown): string[] {

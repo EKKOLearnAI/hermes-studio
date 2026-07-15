@@ -1,6 +1,6 @@
 {
   "name": "hermes-studio",
-  "version": "0.6.17",
+  "version": "0.6.30",
   "description": "Hermes Studio desktop distribution with bundled Python runtime and hermes-agent",
   "homepage": "https://hermes-studio.ai",
   "author": {
@@ -25,10 +25,10 @@
     "runtime:asset-name": "node scripts/runtime-asset-name.mjs",
     "prune:python": "node scripts/prune-python.mjs",
     "dev": "npm run build:main && electron .",
-    "dist": "npm run build && electron-builder",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "npm run build && electron-builder --win",
-    "dist:linux": "npm run build && electron-builder --linux"
+    "dist": "npm run build && node scripts/electron-builder.mjs",
+    "dist:mac": "npm run build && node scripts/electron-builder.mjs --mac",
+    "dist:win": "npm run build && node scripts/electron-builder.mjs --win",
+    "dist:linux": "npm run build && node scripts/electron-builder.mjs --linux"
   },
   "devDependencies": {
     "@types/node": "^24.12.2",

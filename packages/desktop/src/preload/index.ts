@@ -1,43 +1,39 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+type DesktopWindowKind = 'main' | 'pet'
+
+function desktopWindowKind(): DesktopWindowKind {
+  const arg = process.argv.find(item => item.startsWith('--hermes-window-kind='))
+  return arg?.slice('--hermes-window-kind='.length) === 'pet' ? 'pet' : 'main'
+}
+
 contextBridge.exposeInMainWorld('hermesDesktop', {
   getToken: (): Promise<string> => ipcRenderer.invoke('hermes-desktop:get-token'),
   retryBootstrap: (source?: 'cf' | 'github'): Promise<void> => ipcRenderer.invoke('hermes-desktop:retry-bootstrap', source),
   notifyCompletion: (payload: { title: string; body?: string; icon?: string; tag?: string }): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:notify-completion', payload),
+  ensureAuth: async (): Promise<boolean> => {
+    const token = await ipcRenderer.invoke('hermes-desktop:get-token')
+    if (token) {
+      try { localStorage.setItem('AUTH_TOKEN', token) } catch { /* */ }
+    }
+    return !!localStorage.getItem(API_KEY_LS)
+  },
   getWindowState: (): Promise<{ isMaximized: boolean }> => ipcRenderer.invoke('hermes-desktop:get-window-state'),
   windowControl: (action: 'minimize' | 'toggle-maximize' | 'close'): Promise<{ isMaximized: boolean }> => ipcRenderer.invoke('hermes-desktop:window-control', action),
+  getPetWindowState: () => ipcRenderer.invoke('hermes-desktop:get-pet-window-state'),
+  setPetWindowBounds: (bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke('hermes-desktop:set-pet-window-bounds', bounds),
+  setPetWindowVisible: (visible: boolean) => ipcRenderer.invoke('hermes-desktop:set-pet-window-visible', visible),
+  onPetWindowRefresh: (callback: () => void): (() => void) => {
+    const listener = () => callback()
+    ipcRenderer.on('hermes-desktop:pet-window-refresh', listener)
+    return () => ipcRenderer.removeListener('hermes-desktop:pet-window-refresh', listener)
+  },
   platform: process.platform,
   isDesktop: true,
+  windowKind: desktopWindowKind(),
 })
 
 const API_KEY_LS = 'hermes_api_key'
-const DEFAULT_USERNAME = 'admin'
-const DEFAULT_PASSWORD = '123456'
-
-// Auto-login the bundled web UI so users don't see a login screen on launch.
-// We POST to /api/auth/login with the well-known default credentials, using
-// the server's AUTH_TOKEN as the bearer (the server requires *some* auth on
-// /api/auth/login from a packaged client). The returned JWT is dropped into
-// localStorage where the Vue client expects it.
-async function autoLogin(token: string): Promise<void> {
-  if (localStorage.getItem(API_KEY_LS)) return
-  try {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ username: DEFAULT_USERNAME, password: DEFAULT_PASSWORD }),
-    })
-    if (!res.ok) return
-    const body = await res.json().catch(() => null) as { token?: string; jwt?: string } | null
-    const jwt = body?.token || body?.jwt
-    if (jwt) localStorage.setItem(API_KEY_LS, jwt)
-  } catch {
-    /* ignore — first-load race or server still starting */
-  }
-}
 
 // Silently strip the "你必须修改默认密码" flag from /api/auth/me responses on
 // desktop. Users on a single-machine install don't benefit from a managed
@@ -129,7 +125,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     const token = await ipcRenderer.invoke('hermes-desktop:get-token')
     if (token) {
       try { localStorage.setItem('AUTH_TOKEN', token) } catch { /* */ }
-      await autoLogin(token)
     }
   } catch {
     /* ignore */

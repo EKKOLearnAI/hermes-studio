@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
-import { authenticate } from './fixtures'
+import { authenticate, TEST_MODEL_GROUP } from './fixtures'
 
 const historySessions = [
   {
@@ -103,7 +103,7 @@ async function mockHistoryApi(page: Page) {
 
     if (pathname === '/health') return json({ status: 'ok' })
     if (pathname === '/api/auth/status') return json({ hasPasswordLogin: false, username: null })
-    if (pathname === '/api/hermes/available-models') return json({ default: 'test-model', default_provider: 'test-provider', groups: [], allProviders: [], model_aliases: {}, model_visibility: {} })
+    if (pathname === '/api/hermes/available-models') return json({ default: 'test-model', default_provider: 'test-provider', groups: [TEST_MODEL_GROUP], allProviders: [TEST_MODEL_GROUP], model_aliases: {}, model_visibility: {} })
     if (pathname === '/api/hermes/profiles') return json({ profiles: [{ name: 'default', active: true, model: 'test-model', gateway: 'test' }] })
     if (pathname === '/api/hermes/sessions/hermes') return json({ sessions: historySessions })
 

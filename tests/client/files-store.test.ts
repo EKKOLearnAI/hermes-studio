@@ -15,8 +15,30 @@ const mockFilesApi = vi.hoisted(() => ({
 
 vi.mock('@/api/hermes/files', () => mockFilesApi)
 
+const mockSessionsApi = vi.hoisted(() => ({
+  copySessionWorkspaceFile: vi.fn(),
+  deleteSessionWorkspaceFile: vi.fn(),
+  listSessionWorkspaceFiles: vi.fn(),
+  mkdirSessionWorkspaceFile: vi.fn(),
+  readSessionWorkspaceFile: vi.fn(),
+  renameSessionWorkspaceFile: vi.fn(),
+  writeSessionWorkspaceFile: vi.fn(),
+}))
+
+vi.mock('@/api/hermes/sessions', () => mockSessionsApi)
+
 import { getLanguageFromPath, isPreviewableFile, isTextFile, useFilesStore } from '@/stores/hermes/files'
 import type { FileEntry } from '@/api/hermes/files'
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
 
 describe('files store', () => {
   beforeEach(() => {
@@ -61,13 +83,85 @@ describe('files store', () => {
 
     await store.openPreview(entry)
 
-    expect(mockFilesApi.readFile).toHaveBeenCalledWith('Dockerfile')
+    expect(mockFilesApi.readFile).toHaveBeenCalledWith('Dockerfile', null)
     expect(store.previewFile).toEqual({
       path: 'Dockerfile',
+      profile: null,
       type: 'text',
       content: 'FROM node:20\nRUN npm test\n',
       language: 'dockerfile',
     })
+  })
+
+  it('resets profile scope for unscoped file panels', async () => {
+    mockFilesApi.listFiles.mockResolvedValue({ entries: [], path: '' })
+
+    const store = useFilesStore()
+
+    await store.fetchEntries('', { profile: 'reviewer' })
+    await store.fetchEntries('', { profile: null })
+
+    expect(store.currentProfile).toBeNull()
+    expect(mockFilesApi.listFiles).toHaveBeenLastCalledWith('', null)
+  })
+
+  it('does not let an older root fetch overwrite a later session workspace fetch', async () => {
+    const rootFetch = deferred<{ entries: FileEntry[]; path: string }>()
+    const rootEntry: FileEntry = {
+      name: 'regular-root',
+      path: 'regular-root',
+      isDir: true,
+      size: 0,
+      modTime: '2026-07-09T00:00:00.000Z',
+    }
+    const workspaceEntry: FileEntry = {
+      name: 'session-workspace',
+      path: 'session-workspace',
+      isDir: true,
+      size: 0,
+      modTime: '2026-07-09T00:00:00.000Z',
+    }
+    mockFilesApi.listFiles.mockReturnValueOnce(rootFetch.promise)
+    mockSessionsApi.listSessionWorkspaceFiles.mockResolvedValueOnce({
+      entries: [workspaceEntry],
+      path: '',
+    })
+
+    const store = useFilesStore()
+    const firstFetch = store.fetchEntries('', { profile: null })
+    const secondFetch = store.fetchEntries('', { workspaceSessionId: 'session-1' })
+
+    await secondFetch
+    expect(store.entries).toEqual([workspaceEntry])
+    expect(store.currentWorkspaceSessionId).toBe('session-1')
+
+    rootFetch.resolve({ entries: [rootEntry], path: '' })
+    await firstFetch
+
+    expect(store.entries).toEqual([workspaceEntry])
+    expect(mockFilesApi.listFiles).toHaveBeenCalledWith('', null)
+    expect(mockSessionsApi.listSessionWorkspaceFiles).toHaveBeenCalledWith('session-1', '')
+  })
+
+  it('keeps an explicit profile scope for config editor actions', async () => {
+    mockFilesApi.listFiles.mockResolvedValue({ entries: [], path: '' })
+    mockFilesApi.readFile.mockResolvedValue({
+      content: 'model:\n  default: gpt-5.4\n',
+      path: 'config.yaml',
+      size: 28,
+    })
+
+    const store = useFilesStore()
+
+    await store.fetchEntries('', { profile: 'reviewer' })
+    await store.openEditor('config.yaml')
+    store.editingFile!.content = 'model:\n  default: gpt-5.4-mini\n'
+    await store.saveEditor()
+
+    expect(store.currentProfile).toBe('reviewer')
+    expect(mockFilesApi.listFiles).toHaveBeenCalledWith('', 'reviewer')
+    expect(mockFilesApi.readFile).toHaveBeenCalledWith('config.yaml', 'reviewer')
+    expect(mockFilesApi.writeFile).toHaveBeenCalledWith('config.yaml', 'model:\n  default: gpt-5.4-mini\n', 'reviewer')
   })
 
   it('opens image previews without reading file contents', async () => {
@@ -85,6 +179,7 @@ describe('files store', () => {
     expect(mockFilesApi.readFile).not.toHaveBeenCalled()
     expect(store.previewFile).toEqual({
       path: 'diagram.png',
+      profile: null,
       type: 'image',
     })
   })

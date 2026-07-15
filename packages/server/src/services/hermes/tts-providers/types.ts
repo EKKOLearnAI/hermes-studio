@@ -56,6 +56,7 @@ export interface DoubaoTtsProviderOptions {
   format?: string
   sampleRate?: number
   sample_rate?: number
+  mcuPlayback?: boolean
 }
 
 export type OpenaiTtsProvider = TtsProvider<OpenaiTtsProviderOptions>

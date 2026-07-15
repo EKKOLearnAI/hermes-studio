@@ -1,14 +1,3 @@
-import en from './locales/en'
-import zh from './locales/zh'
-import zhTW from './locales/zh-TW'
-import ja from './locales/ja'
-import ko from './locales/ko'
-import fr from './locales/fr'
-import es from './locales/es'
-import de from './locales/de'
-import pt from './locales/pt'
-import ru from './locales/ru'
-
 export type LocaleMessages = Record<string, any>
 
 export const supportedLocales = ['en', 'zh', 'zh-TW', 'ja', 'ko', 'fr', 'es', 'de', 'pt', 'ru'] as const
@@ -34,11 +23,31 @@ export function mergeMessagesWithFallback(
   return merged
 }
 
-const rawMessages: Record<string, LocaleMessages> = { en, zh, 'zh-TW': zhTW, ja, ko, fr, es, de, pt, ru }
-
-export const messages: Record<string, LocaleMessages> = {}
-for (const [locale, msg] of Object.entries(rawMessages)) {
-  messages[locale] = locale === 'en' ? msg : mergeMessagesWithFallback({ ...en }, { ...msg })
+const localeLoaders: Record<SupportedLocale, () => Promise<{ default: LocaleMessages }>> = {
+  en: () => import('./locales/en'),
+  zh: () => import('./locales/zh'),
+  'zh-TW': () => import('./locales/zh-TW'),
+  ja: () => import('./locales/ja'),
+  ko: () => import('./locales/ko'),
+  fr: () => import('./locales/fr'),
+  es: () => import('./locales/es'),
+  de: () => import('./locales/de'),
+  pt: () => import('./locales/pt'),
+  ru: () => import('./locales/ru'),
 }
 
-export { en }
+const localeMessagePromises = new Map<SupportedLocale, Promise<LocaleMessages>>()
+
+export function loadLocaleMessages(locale: SupportedLocale): Promise<LocaleMessages> {
+  const existing = localeMessagePromises.get(locale)
+  if (existing) return existing
+
+  const pending = localeLoaders[locale]()
+    .then(module => module.default)
+    .catch((error) => {
+      localeMessagePromises.delete(locale)
+      throw error
+    })
+  localeMessagePromises.set(locale, pending)
+  return pending
+}

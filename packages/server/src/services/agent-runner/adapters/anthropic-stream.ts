@@ -143,6 +143,9 @@ export async function* openAiChatSseToAnthropicEvents(
       for (const dataLine of extractSseData(event)) {
         if (!dataLine || dataLine === '[DONE]') continue
         const data = safeJsonParse(dataLine)
+        if (data?.usage?.completion_tokens != null) {
+          outputTokens = Number(data.usage.completion_tokens)
+        }
         const choice = data?.choices?.[0]
         if (!choice) continue
 
@@ -201,7 +204,6 @@ export async function* openAiChatSseToAnthropicEvents(
         }
 
         if (choice.finish_reason) stopReason = String(choice.finish_reason)
-        if (data?.usage?.completion_tokens) outputTokens = Number(data.usage.completion_tokens)
       }
     }
   }

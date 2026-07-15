@@ -16,6 +16,8 @@ describe('MCU login controller', () => {
   beforeEach(async () => {
     vi.resetModules()
     vi.clearAllMocks()
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
     vi.stubEnv('AUTH_JWT_SECRET', 'test-secret')
 
     const { DatabaseSync } = await import('node:sqlite')
@@ -157,5 +159,98 @@ describe('MCU login controller', () => {
       instanceId: 'mcu-1',
       relayProtocol: 'socket.io',
     })
+  })
+
+  it('keeps LAN login local when remote relay is not requested', async () => {
+    const { ctrl, users } = await loadModules()
+    users.createUser({
+      username: 'ops',
+      password: 'secret123',
+      role: 'admin',
+      profiles: ['default'],
+      defaultProfile: 'default',
+    })
+    const ctx = makeCtx({
+      token: 'relay-token',
+      id: 'mcu-1',
+      account: 'ops',
+      password: 'secret123',
+    })
+
+    await ctrl.microcontrollerLogin(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body.relay).toEqual({
+      connected: false,
+      id: 'mcu-1',
+    })
+    expect(startOutboundRelayClientMock).not.toHaveBeenCalled()
+  })
+
+  it('uses the fixed remote relay when remote login is requested', async () => {
+    const remoteRelayUrl = 'https://api.hermes-studio.ai'
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })))
+    startOutboundRelayClientMock.mockReturnValue({ start: vi.fn() })
+    const { ctrl, users } = await loadModules()
+    users.createUser({
+      username: 'ops',
+      password: 'secret123',
+      role: 'admin',
+      profiles: ['default'],
+      defaultProfile: 'default',
+    })
+    const ctx = makeCtx({
+      token: 'relay-token',
+      id: 'mcu-1',
+      account: 'ops',
+      password: 'secret123',
+      relayMode: 'remote',
+      device_code: 'hstudio_mcu_test',
+    })
+
+    await ctrl.microcontrollerLogin(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body.relay).toEqual({
+      connected: true,
+      id: 'mcu-1',
+      remote: true,
+      url: remoteRelayUrl,
+    })
+    expect(startOutboundRelayClientMock).toHaveBeenCalledWith({
+      connectionId: 'mcu-1',
+      relayUrl: remoteRelayUrl,
+      relayToken: 'relay-token',
+      userToken: ctx.body.token,
+      instanceId: 'mcu-1',
+      deviceCode: 'hstudio_mcu_test',
+      relayProtocol: 'mcu-socket.io',
+    })
+  })
+
+  it('rejects remote login when the fixed relay does not allow the device code', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: false }), { status: 404 })))
+    const { ctrl, users } = await loadModules()
+    users.createUser({
+      username: 'ops',
+      password: 'secret123',
+      role: 'admin',
+      profiles: ['default'],
+      defaultProfile: 'default',
+    })
+    const ctx = makeCtx({
+      token: 'relay-token',
+      id: 'mcu-1',
+      account: 'ops',
+      password: 'secret123',
+      relayMode: 'remote',
+      device_code: 'missing-device',
+    })
+
+    await ctrl.microcontrollerLogin(ctx)
+
+    expect(ctx.status).toBe(403)
+    expect(ctx.body).toEqual({ error: '非官方设备码' })
+    expect(startOutboundRelayClientMock).not.toHaveBeenCalled()
   })
 })

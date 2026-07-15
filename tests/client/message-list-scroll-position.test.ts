@@ -247,4 +247,46 @@ describe('MessageList session scroll position', () => {
 
     expect(mockScrollToBottom).toHaveBeenCalledWith({ frames: 1, keepAliveMs: 0 })
   })
+
+  it('only portals approvals to the global layer while realtime voice is open', async () => {
+    const chatStore = useChatStore()
+    const session = makeSession('approval-layer-session')
+    chatStore.activeSessionId = session.id
+    chatStore.activeSession = session
+    chatStore.pendingApprovals.set(session.id, {
+      sessionId: session.id,
+      approvalId: 'approval-layer-request',
+      command: 'npm run test',
+      description: 'Run tests',
+      choices: ['once', 'deny'],
+      allowPermanent: false,
+      isMemoryWrite: false,
+      requestedAt: Date.now(),
+    })
+
+    const wrapper = mount(MessageList, {
+      props: { approvalPortalToBody: false },
+      global: {
+        stubs: { Transition: false },
+      },
+    })
+    await nextTick()
+
+    expect(wrapper.find('.message-float-stack .approval-float-panel').exists()).toBe(true)
+    expect(document.body.querySelector('.approval-float-panel--global')).toBeNull()
+
+    await wrapper.setProps({ approvalPortalToBody: true })
+    await nextTick()
+
+    const globalPanel = document.body.querySelector('.approval-float-panel--global')
+    expect(globalPanel).not.toBeNull()
+    expect(globalPanel?.parentElement).toBe(document.body)
+
+    await wrapper.setProps({ approvalPortalToBody: false })
+    await nextTick()
+
+    expect(document.body.querySelector('.approval-float-panel--global')).toBeNull()
+    expect(wrapper.find('.message-float-stack .approval-float-panel').exists()).toBe(true)
+    wrapper.unmount()
+  })
 })

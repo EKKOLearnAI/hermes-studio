@@ -20,6 +20,7 @@ from bridge_runtime import _hidden_subprocess_kwargs, _json_line_bytes, _platfor
 class WorkerProcess:
     STARTUP_TIMEOUT_SECONDS = 120
     REQUEST_TIMEOUT_SECONDS = 120
+    SHUTDOWN_REQUEST_TIMEOUT_SECONDS = 15
 
     def __init__(self, key: str, profile: str, endpoint: str, agent_root: str | None, hermes_home: str | None) -> None:
         self.key = key or profile or "default"
@@ -145,6 +146,10 @@ class WorkerProcess:
         if proc is None:
             return
         if proc.poll() is None:
+            try:
+                self.request({"action": "shutdown"}, timeout=self.SHUTDOWN_REQUEST_TIMEOUT_SECONDS)
+            except Exception as exc:
+                print(f"[hermes-bridge-worker:{self.key}] graceful shutdown failed: {exc}", file=sys.stderr, flush=True)
             proc.terminate()
             try:
                 proc.wait(timeout=3)
@@ -171,7 +176,17 @@ def _worker_endpoint(key: str, namespace: str | None = None) -> str:
     use_tcp = transport == "tcp" or (transport not in {"ipc", "unix"} and os.name == "nt")
     if use_tcp:
         port_base = int(os.environ.get("HERMES_AGENT_BRIDGE_WORKER_PORT_BASE", "18780"))
-        return f"tcp://127.0.0.1:{port_base + int(safe[:4], 16) % 1000}"
+        port_offset = int(safe[:4], 16) % 1000
+        port = port_base + port_offset
+        # Windows can reserve/exclude ports in the dynamic range (49152-65535).
+        # Desktop/runtime environments may provide a high worker port base; adding
+        # the per-worker hash can then choose an excluded port and make the
+        # profile worker exit before it can report ready. Prefer the known-safe
+        # default range when the final worker port would fall in that dynamic
+        # range.
+        if os.name == "nt" and port >= 49152:
+            port = 18780 + port_offset
+        return f"tcp://127.0.0.1:{port}"
     root = Path(tempfile.gettempdir()) / "hermes-agent-bridge-workers"
     return f"ipc://{root / f'{safe}.sock'}"
 

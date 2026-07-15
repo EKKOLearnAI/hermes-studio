@@ -32,6 +32,21 @@ interface ModelUsage {
   cachePercent: number
 }
 
+interface AgentUsage {
+  agent: string
+  inputTokens: number
+  outputTokens: number
+  cacheTokens: number
+  cacheWriteTokens: number
+  totalTokens: number
+  visualTokens: number
+  sessions: number
+  color: string
+  inputPercent: number
+  outputPercent: number
+  cachePercent: number
+}
+
 const MODEL_COLORS = [
   '#4fd1c5',
   '#63b3ed',
@@ -138,6 +153,29 @@ export const useUsageStore = defineStore('usage', () => {
     }).map(m => ({ model: m.model, color: m.color }))
   })
 
+  const agentUsage = computed<AgentUsage[]>(() => {
+    if (!stats.value) return []
+    return (stats.value.agent_usage ?? []).map(a => {
+      const agent = (a.agent || '').trim() || 'unknown'
+      const totalTokens = a.input_tokens + a.output_tokens
+      const visualTokens = totalTokens + a.cache_read_tokens
+      return {
+        agent,
+        inputTokens: a.input_tokens,
+        outputTokens: a.output_tokens,
+        cacheTokens: a.cache_read_tokens,
+        cacheWriteTokens: a.cache_write_tokens,
+        totalTokens,
+        visualTokens,
+        sessions: a.sessions,
+        color: getModelColor(`agent:${agent}`),
+        inputPercent: percent(a.input_tokens, visualTokens),
+        outputPercent: percent(a.output_tokens, visualTokens),
+        cachePercent: percent(a.cache_read_tokens, visualTokens),
+      }
+    }).sort((a, b) => b.visualTokens - a.visualTokens)
+  })
+
   const dailyUsage = computed<DailyUsage[]>(() => (stats.value?.daily_usage ?? []).map(d => {
     const visualTokens = d.input_tokens + d.output_tokens + d.cache_read_tokens
     return {
@@ -170,6 +208,7 @@ export const useUsageStore = defineStore('usage', () => {
     estimatedCost,
     modelUsage,
     modelLegend,
+    agentUsage,
     dailyUsage,
     avgSessionsPerDay,
     getModelColor,

@@ -42,6 +42,37 @@ from bridge_runtime import (
     _tool_names_from_definitions,
 )
 
+
+def _bind_session_workspace_cwd(session_id: str, workspace: str | None) -> bool:
+    workspace_cwd = str(workspace or "").strip()
+    if not workspace_cwd:
+        return False
+    bound = False
+    try:
+        from agent.runtime_cwd import set_session_cwd
+
+        set_session_cwd(workspace_cwd)
+        bound = True
+        try:
+            from tools.terminal_tool import register_task_env_overrides
+
+            register_task_env_overrides(session_id, {"cwd": workspace_cwd})
+        except Exception:
+            pass
+    except Exception:
+        return bound
+    return bound
+
+
+def _clear_session_workspace_cwd() -> None:
+    try:
+        from agent.runtime_cwd import clear_session_cwd
+
+        clear_session_cwd()
+    except Exception:
+        pass
+
+
 class SessionDbHolder:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -115,6 +146,45 @@ class AgentPool:
         self._approval_handlers: dict[str, Callable[..., str]] = {}
         self._exec_ask_depth = 0
         self._exec_ask_previous: str | None = None
+
+    def _install_usage_hook(self) -> None:
+        """Observe exact per-request model usage without requiring a user plugin."""
+        try:
+            from hermes_cli.plugins import get_plugin_manager
+
+            manager = get_plugin_manager()
+            hooks = getattr(manager, "_hooks", None)
+            if not isinstance(hooks, dict):
+                raise RuntimeError("Hermes plugin manager does not expose its hook registry")
+            callbacks = hooks.setdefault("post_api_request", [])
+            callback = self._post_api_request_usage_hook
+            if callback not in callbacks:
+                callbacks.append(callback)
+        except Exception as exc:
+            print(
+                f"[hermes_bridge] failed to install model usage hook: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    def _post_api_request_usage_hook(self, **kwargs: Any) -> None:
+        session_id = str(kwargs.get("session_id") or "").strip()
+        usage = kwargs.get("usage")
+        if not session_id or not isinstance(usage, dict):
+            return
+        self._append_event(session_id, {
+            "event": "model.usage",
+            "api_request_id": str(kwargs.get("api_request_id") or "").strip(),
+            "turn_id": str(kwargs.get("turn_id") or "").strip(),
+            "api_call_count": kwargs.get("api_call_count"),
+            "usage": usage,
+            "model": kwargs.get("response_model") or kwargs.get("model"),
+            "provider": kwargs.get("provider"),
+            "api_mode": kwargs.get("api_mode"),
+            "api_duration": kwargs.get("api_duration"),
+            "started_at": kwargs.get("started_at"),
+            "ended_at": kwargs.get("ended_at"),
+        })
 
     def get_or_create(
         self,
@@ -227,7 +297,11 @@ class AgentPool:
                         "requested_session_id": session_id,
                         "profile": profile or "default",
                         "model": resolved_model,
-                        "provider": runtime.get("provider"),
+                        # Keep the user-facing provider selector (for example
+                        # custom:liuzheng) separate from the normalized runtime
+                        # provider (custom). Otherwise the next request sees a
+                        # false provider change and rebuilds the client.
+                        "provider": requested_provider or runtime.get("provider"),
                         "base_url": runtime.get("base_url"),
                         "api_mode": runtime.get("api_mode"),
                         "platform": _bridge_platform(),
@@ -293,6 +367,45 @@ class AgentPool:
             runtime = _resolve_runtime(requested_model, requested_provider or None)
 
         resolved_provider = str(runtime.get("provider") or requested_provider or "")
+        effective_provider = requested_provider or resolved_provider
+        current_agent_provider = str(getattr(session.agent, "provider", "") or "")
+        current_agent_model = str(getattr(session.agent, "model", "") or "")
+        current_base_url = str(getattr(session.agent, "base_url", "") or "").rstrip("/")
+        resolved_base_url = str(runtime.get("base_url") or "").rstrip("/")
+        current_api_mode = str(getattr(session.agent, "api_mode", "") or "")
+        resolved_api_mode = str(runtime.get("api_mode") or "")
+        current_api_key = getattr(session.agent, "api_key", None)
+        resolved_api_key = runtime.get("api_key")
+
+        # Provider selectors such as custom:liuzheng normalize to the runtime
+        # provider "custom". Re-selecting that same runtime must not rebuild the
+        # client: switch_model reconstructs _client_kwargs, and affected Hermes
+        # runtimes lose model.default_headers during that reconstruction.
+        runtime_unchanged = (
+            requested_model == current_agent_model
+            and resolved_provider == current_agent_provider
+            and resolved_base_url == current_base_url
+            and resolved_api_mode == current_api_mode
+            and resolved_api_key == current_api_key
+        )
+        if runtime_unchanged:
+            session.config.update({
+                "profile": target_profile,
+                "model": requested_model,
+                "provider": effective_provider,
+                "base_url": runtime.get("base_url"),
+                "api_mode": runtime.get("api_mode"),
+            })
+            session.config.pop("pending_model_switch", None)
+            session.last_used_at = time.time()
+            return {
+                "switched": True,
+                "deferred": False,
+                "session_id": session.session_id,
+                "model": requested_model,
+                "provider": effective_provider,
+            }
+
         switch_model = getattr(session.agent, "switch_model", None)
         if not callable(switch_model):
             raise RuntimeError("loaded agent does not support switch_model")
@@ -304,10 +417,12 @@ class AgentPool:
             base_url=runtime.get("base_url") or "",
             api_mode=runtime.get("api_mode") or "",
         )
+        if resolved_provider.lower() == "moa":
+            self._install_moa_reference_callback(session)
         session.config.update({
             "profile": target_profile,
             "model": requested_model,
-            "provider": resolved_provider,
+            "provider": effective_provider,
             "base_url": runtime.get("base_url"),
             "api_mode": runtime.get("api_mode"),
         })
@@ -328,10 +443,49 @@ class AgentPool:
         return {
             "session_id": session.session_id,
             "model": requested_model,
-            "provider": resolved_provider,
+            "provider": effective_provider,
             "loaded": True,
             "switched": True,
         }
+
+    def _install_moa_reference_callback(self, session: AgentSession) -> None:
+        try:
+            from agent.moa_loop import MoAClient
+
+            progress_callback = self._tool_progress_callback(session.session_id)
+
+            def reference_callback(event: str, **kwargs: Any) -> None:
+                if event == "moa.reference":
+                    progress_callback(
+                        "moa.reference",
+                        str(kwargs.get("label") or ""),
+                        str(kwargs.get("text") or ""),
+                        None,
+                        moa_index=kwargs.get("index"),
+                        moa_count=kwargs.get("count"),
+                    )
+                elif event == "moa.aggregating":
+                    progress_callback(
+                        "moa.aggregating",
+                        str(kwargs.get("aggregator") or ""),
+                        None,
+                        None,
+                        moa_ref_count=kwargs.get("ref_count"),
+                    )
+
+            session.agent.client = MoAClient(
+                str(getattr(session.agent, "model", "") or session.config.get("model") or "default"),
+                reference_callback=reference_callback,
+            )
+            session.agent._client_kwargs = {}
+            session.agent.api_key = getattr(session.agent, "api_key", None) or "moa-virtual-provider"
+            session.agent.base_url = "moa://local"
+        except Exception as exc:
+            print(
+                f"[hermes_bridge] failed to install MoA reference callback session={session.session_id} error={exc}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def _apply_pending_session_model_switch(self, session: AgentSession) -> None:
         pending = session.config.get("pending_model_switch")
@@ -556,9 +710,15 @@ class AgentPool:
         profile: str | None = None,
         model: str | None = None,
         provider: str | None = None,
+        workspace: str | None = None,
     ) -> dict[str, Any]:
         session = self.get_or_create(session_id, profile=profile, model=model, provider=provider)
-        context_info = self._estimate_context_info(session.agent, messages or [], instructions)
+        session_cwd_bound = _bind_session_workspace_cwd(session.session_id, workspace)
+        try:
+            context_info = self._estimate_context_info(session.agent, messages or [], instructions)
+        finally:
+            if session_cwd_bound:
+                _clear_session_workspace_cwd()
         print(
             "[hermes_bridge] context estimate "
             f"session={session_id} profile={profile or 'default'} "
@@ -706,6 +866,26 @@ class AgentPool:
                 for key, value in kwargs.items():
                     payload[str(key)] = _jsonable(value)
                 self._append_event(session_id, payload)
+                return
+
+            if event_type == "moa.reference":
+                payload = {
+                    "event": "moa.reference",
+                    "label": str(function_name or kwargs.get("label") or "reference"),
+                    "text": str(preview) if preview is not None else "",
+                }
+                if kwargs.get("moa_index") is not None:
+                    payload["index"] = _jsonable(kwargs.get("moa_index"))
+                if kwargs.get("moa_count") is not None:
+                    payload["count"] = _jsonable(kwargs.get("moa_count"))
+                self._append_event(session_id, payload)
+                return
+
+            if event_type == "moa.aggregating":
+                self._append_event(session_id, {
+                    "event": "moa.aggregating",
+                    "aggregator": str(function_name or kwargs.get("aggregator") or ""),
+                })
                 return
 
             if event_type == "_thinking":
@@ -1016,10 +1196,15 @@ class AgentPool:
         force_compress: bool = False,
         model: str | None = None,
         provider: str | None = None,
+        workspace: str | None = None,
         source: str | None = None,
         reasoning_effort: str | None = None,
     ) -> RunRecord:
         session = self.get_or_create(session_id, profile=profile, model=model, provider=provider)
+        # Install after agent construction so any runtime plugin initialization
+        # has completed. Rechecking on every run also recovers from a forced
+        # plugin reload that clears the manager's callback registry.
+        self._install_usage_hook()
         with session.lock:
             if session.running:
                 raise RuntimeError(f"session {session_id} is already running")
@@ -1030,20 +1215,25 @@ class AgentPool:
             session.running = True
             session.current_run_id = run_id
             session.last_used_at = time.time()
-            context_event = self._bridge_context_ready_event(session, instructions, profile)
-            if context_event:
-                record.events.append(_jsonable(context_event))
+            session_cwd_bound = _bind_session_workspace_cwd(session.session_id, workspace)
+            try:
+                context_event = self._bridge_context_ready_event(session, instructions, profile)
+                if context_event:
+                    record.events.append(_jsonable(context_event))
+            finally:
+                if session_cwd_bound:
+                    _clear_session_workspace_cwd()
 
         thread = threading.Thread(
             target=self._run_chat,
-            args=(session, record, message, storage_message, instructions, conversation_history, profile, force_compress, source, reasoning_effort),
+            args=(session, record, message, storage_message, instructions, conversation_history, profile, force_compress, workspace, source, reasoning_effort),
             daemon=True,
             name=f"hermes-bridge-run-{run_id[:8]}",
         )
         thread.start()
         return record
 
-    def _run_chat(self, session: AgentSession, record: RunRecord, message: Any, storage_message: Any | None = None, instructions: str | None = None, conversation_history: list[dict[str, Any]] | None = None, profile: str | None = None, force_compress: bool = False, source: str | None = None, reasoning_effort: str | None = None) -> None:
+    def _run_chat(self, session: AgentSession, record: RunRecord, message: Any, storage_message: Any | None = None, instructions: str | None = None, conversation_history: list[dict[str, Any]] | None = None, profile: str | None = None, force_compress: bool = False, workspace: str | None = None, source: str | None = None, reasoning_effort: str | None = None) -> None:
         with _profile_env(profile):
             _refresh_approval_allowlist()
             _install_execute_code_approval_memory_patch()
@@ -1067,10 +1257,12 @@ class AgentPool:
             approval_session_token = None
             registered_gateway_approval_session = None
             exec_ask_scope_entered = False
+            session_cwd_bound = False
             db_count_after_prepersist: int | None = None
             result_for_tail_sync: dict[str, Any] | None = None
             tail_synced = False
             try:
+                session_cwd_bound = _bind_session_workspace_cwd(session.session_id, workspace)
                 try:
                     self._enter_exec_ask_scope()
                     exec_ask_scope_entered = True
@@ -1239,6 +1431,8 @@ class AgentPool:
                         pass
                 if exec_ask_scope_entered:
                     self._exit_exec_ask_scope()
+                if session_cwd_bound:
+                    _clear_session_workspace_cwd()
 
     def interrupt(self, session_id: str, message: str | None = None) -> dict[str, Any]:
         with self._lock:
@@ -1347,6 +1541,25 @@ class AgentPool:
                 return self._dispatch_goal_command(session_id, arg)
             if name == "subgoal":
                 return self._dispatch_subgoal_command(session_id, arg)
+            if name == "learn":
+                try:
+                    from agent.learn_prompt import build_learn_prompt
+                except ImportError:
+                    return {
+                        "session_id": session_id,
+                        "command": name,
+                        "handled": False,
+                        "type": "learn",
+                        "message": "/learn requires a newer Hermes Agent runtime with agent.learn_prompt.",
+                    }
+
+                return {
+                    "session_id": session_id,
+                    "command": name,
+                    "handled": True,
+                    "type": "learn",
+                    "message": build_learn_prompt(arg),
+                }
             if name in {"reload-skills", "reload_skills"}:
                 from agent.skill_commands import reload_skills
 

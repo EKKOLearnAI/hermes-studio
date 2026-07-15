@@ -13,8 +13,10 @@ const { t } = useI18n()
 
 const enabled = computed(() => settingsStore.gatewayAutoStart.enabled !== false)
 const mode = computed(() => Array.isArray(settingsStore.gatewayAutoStart.include) ? 'include' : 'all')
+const managementEnabled = computed(() => settingsStore.gatewayAutoStart.management === 'unified')
 const includeProfiles = computed(() => settingsStore.gatewayAutoStart.include || [])
 const excludeProfiles = computed(() => settingsStore.gatewayAutoStart.exclude || [])
+const isDefaultProfile = computed(() => (profilesStore.activeProfileName || profilesStore.activeProfile?.name || 'default') === 'default')
 const profileOptions = computed(() =>
   profilesStore.profiles.map(profile => ({
     label: profile.name,
@@ -42,6 +44,7 @@ async function save(values: Record<string, any>) {
   try {
     settingsStore.updateLocal('gatewayAutoStart', values)
     await settingsStore.saveSection('gatewayAutoStart', values, { restart: false })
+    await settingsStore.fetchSettings()
     message.success(t('settings.saved'))
   } catch {
     message.error(t('settings.saveFailed'))
@@ -52,6 +55,10 @@ function saveMode(value: string) {
   void save(value === 'include'
     ? { include: settingsStore.gatewayAutoStart.include || [], exclude: null }
     : { include: null })
+}
+
+function saveManagement(value: boolean) {
+  void save({ management: value ? 'unified' : 'per_profile' })
 }
 
 function saveInclude(value: string[]) {
@@ -71,6 +78,14 @@ function saveExclude(value: string[]) {
 
     <SettingRow :label="t('settings.gatewayAutoStart.enabled')" :hint="t('settings.gatewayAutoStart.enabledHint')">
       <NSwitch :value="enabled" @update:value="value => save({ enabled: value })" />
+    </SettingRow>
+
+    <SettingRow
+      v-if="isDefaultProfile"
+      :label="t('settings.gatewayAutoStart.management')"
+      :hint="t('settings.gatewayAutoStart.managementHint')"
+    >
+      <NSwitch :value="managementEnabled" @update:value="saveManagement" />
     </SettingRow>
 
     <SettingRow :label="t('settings.gatewayAutoStart.mode')" :hint="t('settings.gatewayAutoStart.modeHint')">

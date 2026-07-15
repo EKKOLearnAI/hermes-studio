@@ -2,6 +2,7 @@ import type { Server, Socket } from 'socket.io'
 import { addMessage, clearSessionMessages, createBranchedSession, createSession, getSession, getSessionDetail, renameSession, updateSessionStats } from '../../../db/hermes/session-store'
 import { logger } from '../../logger'
 import type { AgentBridgeClient } from '../agent-bridge'
+import { readConfigYamlForProfile } from '../../config-helpers'
 import { flushBridgePendingToDb } from './bridge-message'
 import { buildDbHistory, estimateSnapshotAwareHistoryUsage, forceCompressBridgeHistory, getOrCreateSession, replaceState } from './compression'
 import { handleAbort } from './abort'
@@ -15,7 +16,9 @@ type CommandName =
   | 'abort'
   | 'queue'
   | 'skill'
+  | 'learn'
   | 'plan'
+  | 'moa'
   | 'goal'
   | 'subgoal'
   | 'clear'
@@ -65,13 +68,22 @@ interface BranchSessionSummary {
   workspace: string | null
 }
 
+interface MoaPresetInfo {
+  name: string
+  referenceModels: string[]
+  aggregator: string
+  configured: boolean
+}
+
 const COMMAND_ALIASES: Record<string, CommandName> = {
   usage: 'usage',
   status: 'status',
   abort: 'abort',
   queue: 'queue',
   skill: 'skill',
+  learn: 'learn',
   plan: 'plan',
+  moa: 'moa',
   goal: 'goal',
   subgoal: 'subgoal',
   clear: 'clear',
@@ -105,12 +117,12 @@ export async function handleSessionCommand(
   sessionId: string,
   command: ParsedSessionCommand,
   ctx: SessionCommandContext,
-): Promise<void> {
+): Promise<boolean | void> {
   const state = getOrCreateSession(ctx.sessionMap, sessionId)
   ctx.socket.join(`session:${sessionId}`)
   ensureCommandSession(sessionId, command, ctx)
   const isKnownCommand = Boolean(COMMAND_ALIASES[command.rawName])
-  if (command.name !== 'plan' && command.name !== 'skill' && command.name !== 'branch' && isKnownCommand) {
+  if (command.name !== 'plan' && command.name !== 'skill' && command.name !== 'learn' && command.name !== 'branch' && command.name !== 'moa' && isKnownCommand) {
     persistCommandMessage(sessionId, state, `/${command.rawName}${command.args ? ` ${command.args}` : ''}`)
   }
 
@@ -217,6 +229,132 @@ export async function handleSessionCommand(
       terminal: !state.isWorking,
       message: result?.message || `Unknown bridge command: /${command.rawName}`,
     })
+    return
+  }
+
+  if (command.name === 'learn') {
+    const displayCommand = `/${command.rawName}${command.args ? ` ${command.args}` : ''}`
+    const bridgeCommand = `/learn${command.args ? ` ${command.args}` : ''}`
+    let result
+    try {
+      result = await ctx.bridge.command(sessionId, bridgeCommand, ctx.profile)
+    } catch (err) {
+      if (state.isWorking) emitQueuedState(ctx, sessionId, state)
+      emitCommand({
+        ok: false,
+        action: 'learn',
+        terminal: !state.isWorking,
+        message: `Learn command failed: ${err instanceof Error ? err.message : String(err)}`,
+      })
+      return
+    }
+
+    const expandedPrompt = typeof result.message === 'string' ? result.message.trim() : ''
+    if (result.handled && expandedPrompt && result.type === 'learn') {
+      logger.info(
+        '[chat-run-socket] /learn resolved session=%s profile=%s chars=%d',
+        sessionId,
+        ctx.profile,
+        expandedPrompt.length,
+      )
+      const next: QueuedRun = {
+        queue_id: ctx.queueId || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        input: expandedPrompt,
+        displayInput: displayCommand,
+        displayRole: 'command',
+        storageMessage: displayCommand,
+        model: ctx.model,
+        provider: ctx.provider,
+        model_groups: ctx.model_groups,
+        instructions: ctx.instructions,
+        profile: ctx.profile,
+        source: 'cli',
+        originSocketId: ctx.socket.id,
+      }
+
+      if (state.isWorking) {
+        state.queue.push(next)
+        emitQueuedState(ctx, sessionId, state)
+        return
+      }
+
+      emitCommand({
+        action: 'learn',
+        terminal: false,
+        started: true,
+      })
+      ctx.runQueuedItem(ctx.socket, sessionId, next, ctx.profile)
+      return
+    }
+
+    logger.warn(
+      '[chat-run-socket] /learn unresolved session=%s profile=%s bridge_type=%s message=%s',
+      sessionId,
+      ctx.profile,
+      typeof result.type === 'string' ? result.type : '',
+      typeof result.message === 'string' ? result.message : '',
+    )
+    if (state.isWorking) emitQueuedState(ctx, sessionId, state)
+    emitCommand({
+      ok: false,
+      action: 'learn',
+      terminal: !state.isWorking,
+      message: result?.message || 'Learn command is not available.',
+    })
+    return
+  }
+
+  if (command.name === 'moa') {
+    const displayCommand = `/${command.rawName}${command.args ? ` ${command.args}` : ''}`
+    const presetInfo = await resolveDefaultMoaPresetInfo(ctx.profile)
+    if (!presetInfo.configured) return false
+
+    if (!command.args) {
+      emitCommand({
+        ok: false,
+        action: 'moa',
+        terminal: !state.isWorking,
+        message: 'Usage: /moa <prompt>',
+      })
+      return
+    }
+
+    const preset = presetInfo.name
+    const next: QueuedRun = {
+      queue_id: ctx.queueId || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      input: command.args,
+      displayInput: displayCommand,
+      displayRole: 'command',
+      storageMessage: displayCommand,
+      model: preset,
+      provider: 'moa',
+      model_groups: ctx.model_groups,
+      instructions: ctx.instructions,
+      profile: ctx.profile,
+      source: 'cli',
+      originSocketId: ctx.socket.id,
+      oneShotModel: true,
+    }
+
+    if (state.isWorking) {
+      state.queue.push(next)
+      emitQueuedState(ctx, sessionId, state)
+      return
+    }
+
+    emitCommand({
+      action: 'moa',
+      terminal: false,
+      started: true,
+      message: `MoA one-shot queued with preset ${preset}.`,
+      preset,
+      moa: {
+        preset,
+        reference_models: presetInfo.referenceModels,
+        aggregator: presetInfo.aggregator,
+      },
+    })
+    ctx.runQueuedItem(ctx.socket, sessionId, next, ctx.profile)
     return
   }
 
@@ -754,6 +892,38 @@ export async function handleSessionCommand(
   }
 }
 
+function moaSlotLabel(slot: unknown): string {
+  if (!slot || typeof slot !== 'object') return ''
+  const data = slot as Record<string, unknown>
+  const provider = typeof data.provider === 'string' ? data.provider.trim() : ''
+  const model = typeof data.model === 'string' ? data.model.trim() : ''
+  if (provider && model) return `${provider}:${model}`
+  return provider || model
+}
+
+async function resolveDefaultMoaPresetInfo(profile: string): Promise<MoaPresetInfo> {
+  try {
+    const config = await readConfigYamlForProfile(profile)
+    const moa = config?.moa
+    if (!moa || typeof moa !== 'object' || !moa.presets || typeof moa.presets !== 'object') {
+      return { name: 'default', referenceModels: [], aggregator: '', configured: false }
+    }
+    const defaultPreset = typeof moa?.default_preset === 'string' ? moa.default_preset.trim() : ''
+    const presets = Object.keys(moa.presets)
+    const name = defaultPreset || presets[0] || 'default'
+    const preset = (moa.presets as Record<string, unknown>)[name]
+    const presetData = preset && typeof preset === 'object' ? preset as Record<string, unknown> : {}
+    const referenceModels = Array.isArray(presetData.reference_models)
+      ? presetData.reference_models.map(moaSlotLabel).filter(Boolean)
+      : []
+    const aggregator = moaSlotLabel(presetData.aggregator)
+    const enabled = presetData.enabled === undefined || presetData.enabled === true
+    return { name, referenceModels, aggregator, configured: enabled && referenceModels.length > 0 && Boolean(aggregator) }
+  } catch {
+    return { name: 'default', referenceModels: [], aggregator: '', configured: false }
+  }
+}
+
 function clearTransientRunState(state: SessionState) {
   state.events = []
   state.bridgePendingTools = undefined
@@ -947,6 +1117,7 @@ function createBranchSession(parentSessionId: string, requestedTitle: string, ct
     agent_native_session_id: parent.agent_native_session_id || '',
     model: parent.model || ctx.model || '',
     provider: parent.provider || ctx.provider || '',
+    api_mode: parent.api_mode || '',
     title,
     parent_session_id: parentSessionId,
     workspace: parent.workspace || undefined,
@@ -991,7 +1162,7 @@ function createBranchSession(parentSessionId: string, requestedTitle: string, ct
 
 
 function isCodingAgentBranchSource(session: { source?: string | null; agent?: string | null } | null | undefined): boolean {
-  return session?.source === 'coding_agent' || session?.agent === 'claude' || session?.agent === 'codex'
+  return session?.source === 'coding_agent' || session?.agent === 'claude' || session?.agent === 'codex' || session?.agent === 'ekko-agent'
 }
 
 function generateBranchSessionId(): string {
@@ -1017,7 +1188,7 @@ function buildBranchTitle(requestedTitle: string, parentTitle: string): string {
 }
 
 function normalizeBranchSource(source: string | null | undefined): ChatRunSource {
-  if (source === 'api_server' || source === 'cli' || source === 'global_agent') return source
+  if (source === 'api_server' || source === 'cli' || source === 'global_agent' || source === 'workflow') return source
   return 'cli'
 }
 

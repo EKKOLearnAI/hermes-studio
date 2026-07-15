@@ -112,6 +112,38 @@ describe('useBrowserSpeechRecognition', () => {
     expect(recognition.error.value).toBeNull()
   })
 
+  it('uses the document language and supports restart-based non-continuous capture', async () => {
+    installSpeechRecognition()
+    document.documentElement.lang = 'zh-CN'
+    const recognition = useBrowserSpeechRecognition()
+
+    await recognition.start({ language: '', continuous: false })
+
+    const first = FakeSpeechRecognition.instances[0]
+    expect(first.lang).toBe('zh-CN')
+    expect(first.continuous).toBe(false)
+
+    first.emitEnd()
+    const second = FakeSpeechRecognition.instances[1]
+    expect(second.lang).toBe('zh-CN')
+    expect(second.continuous).toBe(false)
+  })
+
+  it('exposes browser recognition error codes for targeted fallback handling', async () => {
+    installSpeechRecognition()
+    const recognition = useBrowserSpeechRecognition()
+
+    await recognition.start({ language: 'zh-CN' })
+    FakeSpeechRecognition.instances[0].emitError('network')
+
+    expect(recognition.status.value).toBe('error')
+    expect(recognition.errorCode.value).toBe('network')
+    expect(recognition.error.value?.message).toContain('network')
+
+    recognition.clearError()
+    expect(recognition.errorCode.value).toBeNull()
+  })
+
   it('records interim and final transcripts from onresult callbacks', async () => {
     installSpeechRecognition()
     const recognition = useBrowserSpeechRecognition()

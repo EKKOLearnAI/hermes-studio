@@ -67,7 +67,6 @@ const tagMappings = {
   'routes/hermes/copilot-auth.ts': { name: 'Copilot Auth', description: 'GitHub Copilot OAuth' },
   'routes/hermes/xai-auth.ts': { name: 'xAI Auth', description: 'xAI OAuth' },
   'routes/hermes/anthropic-auth.ts': { name: 'Anthropic Auth', description: 'Anthropic OAuth' },
-  'routes/hermes/gemini-auth.ts': { name: 'Gemini Auth', description: 'Google Gemini OAuth' },
   'routes/hermes/group-chat.ts': { name: 'Group Chat', description: 'Group chat management' },
   'routes/hermes/chat-run.ts': { name: 'Chat Run', description: 'Chat run HTTP and Socket.IO bridge operations' },
   'routes/hermes/config.ts': { name: 'Config', description: 'Configuration management' },
@@ -89,6 +88,7 @@ const tagMappings = {
   'routes/hermes/internet-execution.ts': { name: 'Internet Execution', description: 'Governed semantic internet reads, durable receipts, and workflow status' },
   'routes/hermes/android-companion.ts': { name: 'Android Companion', description: 'Authenticated Android device pairing, capability health, minimized observations, and governed execution receipts' },
   'routes/hermes/performance-monitor.ts': { name: 'Performance', description: 'Runtime performance monitoring' },
+  'routes/hermes/journey.ts': { name: 'Journey', description: 'Hermes Agent learning journey graph' },
   'routes/hermes/terminal.ts': { name: 'Terminal', description: 'WebSocket terminal' },
   'routes/health.ts': { name: 'Health', description: 'Health check' },
   'routes/update.ts': { name: 'Update', description: 'Self-update management' },
@@ -1041,6 +1041,9 @@ function schemaFromType(type, name = '', source = '') {
   const guardedType = name ? guardedPrimitiveType(name, source) : null
   if (guardedType) return { type: guardedType, ...(/\bnull\b/.test(normalized) ? { nullable: true } : {}) }
   if (/\bnull\b/.test(normalized)) schema.nullable = true
+  if (/SessionProviderApiMode|CodingAgentApiMode/.test(normalized)) {
+    return { ...schema, type: 'string', enum: ['chat_completions', 'codex_responses', 'anthropic_messages'] }
+  }
   if (/string\[\]|Array<string>/.test(normalized)) {
     return { ...schema, type: 'array', items: { type: 'string' } }
   }
@@ -1164,6 +1167,11 @@ function generateResponses(path, method, metadata) {
 
   if (method === 'post' || method === 'put' || method === 'patch') {
     responses['400'] = { $ref: '#/components/responses/BadRequest' }
+  }
+
+  if (path === '/api/hermes/group-chat/rooms/:roomId/workspace') {
+    responses['403'] = { description: 'Forbidden - Workspace folder is not allowed' }
+    responses['404'] = { $ref: '#/components/responses/NotFound' }
   }
 
   return responses

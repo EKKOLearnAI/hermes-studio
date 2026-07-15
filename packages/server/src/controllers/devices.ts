@@ -336,6 +336,7 @@ export async function deviceLinkInfoController(ctx: any) {
     ...info,
     http_port: config.port,
     endpoint_kind: getLanEndpointKind(config.port),
+    relay_url: config.remoteRelay.url,
   }
 }
 

@@ -7,8 +7,8 @@ import { getCompatibleCustomProviders, normalizeCustomProviderEntry } from '../.
 import { PROVIDER_PRESETS } from '../../shared/providers'
 import { logger } from '../../services/logger'
 
-const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex', 'google-gemini-cli', 'claude-oauth'])
-const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth', 'openai-codex', 'google-gemini-cli', 'claude-oauth'])
+const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex', 'claude-oauth'])
+const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth', 'openai-codex', 'claude-oauth'])
 type ProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages' | 'bedrock_converse' | 'codex_app_server'
 
 function requestedProfile(ctx: any): string {

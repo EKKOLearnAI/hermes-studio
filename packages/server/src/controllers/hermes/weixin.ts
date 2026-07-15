@@ -1,12 +1,18 @@
 import axios from 'axios'
 import { getActiveProfileName } from '../../services/hermes/hermes-profile'
-import { restartGatewayForProfile } from '../../services/hermes/gateway-autostart'
+import { gatewayAutostartDisabledByEnv, restartGatewayForProfile } from '../../services/hermes/gateway-autostart'
 import { saveEnvValueForProfile } from '../../services/config-helpers'
+import { normalizeGatewayAutoStartConfig, readAppConfig } from '../../services/app-config'
 
 const ILINK_BASE = 'https://ilinkai.weixin.qq.com'
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
+}
+
+async function gatewayAutoRestartAllowed(): Promise<boolean> {
+  if (gatewayAutostartDisabledByEnv()) return false
+  return normalizeGatewayAutoStartConfig((await readAppConfig()).gatewayAutoStart).enabled !== false
 }
 
 export async function getQrcode(ctx: any) {
@@ -47,7 +53,7 @@ export async function save(ctx: any) {
     for (const [key, val] of Object.entries(entries)) {
       await saveEnvValueForProfile(profile, key, val)
     }
-    await restartGatewayForProfile(profile)
+    if (await gatewayAutoRestartAllowed()) await restartGatewayForProfile(profile)
     ctx.body = { success: true }
   } catch (err: any) {
     ctx.status = 500; ctx.body = { error: err.message }

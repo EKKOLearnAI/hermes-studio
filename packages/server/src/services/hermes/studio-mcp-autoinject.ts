@@ -6,7 +6,18 @@ import { updateConfigYamlForProfile } from '../config-helpers'
 import { logger } from '../logger'
 import { listProfileNamesFromDisk } from './hermes-profile'
 
-const SERVER_NAME = 'hermes-studio'
+const LEGACY_SERVER_NAME = 'hermes-studio'
+const MANAGED_SERVERS = [
+  { name: 'hermes-studio-api', toolset: 'api' },
+  { name: 'hermes-studio-devices', toolset: 'devices' },
+  { name: 'hermes-studio-use', toolset: 'use' },
+] as const
+const MANAGED_SERVER_NAMES: Set<string> = new Set(MANAGED_SERVERS.map(server => server.name))
+const LEGACY_SERVER_NAMES = new Set([
+  LEGACY_SERVER_NAME,
+  'hermes-web-ui-mcp',
+  'hermes-studio-mcp',
+])
 const MANAGED_ENV_KEY = 'HERMES_WEB_UI_MANAGED_MCP'
 const LEGACY_COMMANDS = new Set([
   'hermes-lan-peer-mcp',
@@ -24,7 +35,7 @@ export interface BundledMcpInjectionTargetResult {
 }
 
 export interface BundledMcpInjectionResult {
-  serverName: string
+  serverNames: string[]
   command: string
   targets: BundledMcpInjectionTargetResult[]
 }
@@ -64,6 +75,9 @@ function isDesktopRuntime(): boolean {
 function candidateBundledMcpScripts(): string[] {
   return [
     process.env.HERMES_WEB_UI_MCP_BIN,
+    join(process.cwd(), 'bin/hermes-studio-mcp.mjs'),
+    join(__dirname, '../../bin/hermes-studio-mcp.mjs'),
+    join(__dirname, '../../../../../bin/hermes-studio-mcp.mjs'),
     join(process.cwd(), 'bin/hermes-web-ui-mcp.mjs'),
     join(__dirname, '../../bin/hermes-web-ui-mcp.mjs'),
     join(__dirname, '../../../../../bin/hermes-web-ui-mcp.mjs'),
@@ -74,31 +88,42 @@ function bundledMcpScriptPath(): string | null {
   return candidateBundledMcpScripts().find(candidate => existsSync(candidate)) || null
 }
 
-function managedCommandConfig(): Record<string, unknown> {
-  if (isDesktopRuntime()) {
-    return { command: 'hermes-studio-mcp' }
-  }
+function runtimeNodePath(): string | null {
+  const node = process.env.HERMES_AGENT_NODE?.trim()
+  return node || null
+}
 
+function managedCommandConfig(toolset: string): Record<string, unknown> {
+  // Prefer the bundled script with an absolute path over a bare command name.
+  // On Windows (especially desktop builds), `hermes-studio-mcp` may not be in
+  // PATH even though the bundled .mjs script exists on disk.  Desktop provides
+  // HERMES_AGENT_NODE for the packaged runtime node; fall back to process.execPath.
   const bundledScript = bundledMcpScriptPath()
   if (bundledScript) {
-    return { command: process.execPath, args: [bundledScript] }
+    return { command: runtimeNodePath() || process.execPath, args: [bundledScript, toolset] }
+  }
+
+  if (isDesktopRuntime()) {
+    return { command: 'hermes-studio-mcp', args: [toolset] }
   }
 
   logger.warn({ candidates: candidateBundledMcpScripts() }, '[mcp-autoinject] bundled MCP script not found; falling back to PATH command')
-  return { command: 'hermes-web-ui-mcp' }
+  return { command: 'hermes-studio-mcp', args: [toolset] }
 }
 
-function managedConfig(profile: string): Record<string, unknown> {
+function managedConfig(profile: string, serverName: string, toolset: string): Record<string, unknown> {
   const env: Record<string, string> = {
     HERMES_WEB_UI_URL: `http://127.0.0.1:${config.port}`,
     HERMES_WEB_UI_HOME: config.appHome,
     HERMES_WEBUI_STATE_DIR: config.appHome,
     HERMES_WEB_UI_PROFILE: profile,
+    HERMES_MCP_SERVER_NAME: serverName,
+    HERMES_MCP_TOOLSET: toolset,
     [MANAGED_ENV_KEY]: '1',
   }
 
   return {
-    ...managedCommandConfig(),
+    ...managedCommandConfig(toolset),
     env,
     enabled: true,
   }
@@ -132,46 +157,83 @@ function sameConfig(existing: Record<string, any>, desired: Record<string, unkno
     existing.env.HERMES_WEB_UI_HOME === desiredEnv.HERMES_WEB_UI_HOME &&
     existing.env.HERMES_WEBUI_STATE_DIR === desiredEnv.HERMES_WEBUI_STATE_DIR &&
     existing.env.HERMES_WEB_UI_PROFILE === desiredEnv.HERMES_WEB_UI_PROFILE &&
+    existing.env.HERMES_MCP_SERVER_NAME === desiredEnv.HERMES_MCP_SERVER_NAME &&
+    existing.env.HERMES_MCP_TOOLSET === desiredEnv.HERMES_MCP_TOOLSET &&
     existing.env.HERMES_WEB_UI_TOKEN === undefined &&
     existing.env[MANAGED_ENV_KEY] === desiredEnv[MANAGED_ENV_KEY]
 }
 
-async function injectIntoProfile(profile: string, desired: Record<string, unknown>): Promise<BundledMcpInjectionTargetResult> {
+async function injectIntoProfile(profile: string): Promise<BundledMcpInjectionTargetResult> {
   return await updateConfigYamlForProfile(profile, current => {
     const cfg = isRecord(current) ? current : {}
     if (!isRecord(cfg.mcp_servers)) cfg.mcp_servers = {}
 
-    const existing = cfg.mcp_servers[SERVER_NAME]
-    if (!existing) {
-      cfg.mcp_servers[SERVER_NAME] = desired
-      return { data: cfg, result: { profile, status: 'injected' } satisfies BundledMcpInjectionTargetResult }
-    }
+    let changed = false
+    let injected = false
+    let hadManagedExisting = false
 
-    if (!isManagedServer(existing)) {
-      return {
-        data: cfg,
-        write: false,
-        result: {
-          profile,
-          status: 'skipped',
-          reason: `existing ${SERVER_NAME} MCP server is not managed by Hermes Web UI`,
-        } satisfies BundledMcpInjectionTargetResult,
+    for (const [name, server] of Object.entries(cfg.mcp_servers)) {
+      if (MANAGED_SERVER_NAMES.has(name)) continue
+      if (LEGACY_SERVER_NAMES.has(name) && !isManagedServer(server)) {
+        return {
+          data: cfg,
+          write: false,
+          result: {
+            profile,
+            status: 'skipped',
+            reason: `existing ${name} MCP server is not managed by Hermes Web UI`,
+          } satisfies BundledMcpInjectionTargetResult,
+        }
+      }
+      if (isManagedServer(server)) {
+        delete cfg.mcp_servers[name]
+        changed = true
+        hadManagedExisting = true
       }
     }
 
-    if (isRecord(existing) && existing.enabled === false) {
-      return {
-        data: cfg,
-        write: false,
-        result: {
-          profile,
-          status: 'skipped',
-          reason: `existing ${SERVER_NAME} MCP server is disabled by user`,
-        } satisfies BundledMcpInjectionTargetResult,
+    for (const server of MANAGED_SERVERS) {
+      const desired = managedConfig(profile, server.name, server.toolset)
+      const existing = cfg.mcp_servers[server.name]
+      if (!existing) {
+        cfg.mcp_servers[server.name] = desired
+        changed = true
+        injected = true
+        continue
+      }
+      hadManagedExisting = true
+
+      if (!isManagedServer(existing)) {
+        return {
+          data: cfg,
+          write: false,
+          result: {
+            profile,
+            status: 'skipped',
+            reason: `existing ${server.name} MCP server is not managed by Hermes Web UI`,
+          } satisfies BundledMcpInjectionTargetResult,
+        }
+      }
+
+      if (isRecord(existing) && existing.enabled === false) {
+        return {
+          data: cfg,
+          write: false,
+          result: {
+            profile,
+            status: 'skipped',
+            reason: `existing ${server.name} MCP server is disabled by user`,
+          } satisfies BundledMcpInjectionTargetResult,
+        }
+      }
+
+      if (!sameConfig(existing, desired)) {
+        cfg.mcp_servers[server.name] = desired
+        changed = true
       }
     }
 
-    if (sameConfig(existing, desired)) {
+    if (!changed) {
       return {
         data: cfg,
         write: false,
@@ -179,15 +241,14 @@ async function injectIntoProfile(profile: string, desired: Record<string, unknow
       }
     }
 
-    cfg.mcp_servers[SERVER_NAME] = desired
-    return { data: cfg, result: { profile, status: 'updated' } satisfies BundledMcpInjectionTargetResult }
+    return { data: cfg, result: { profile, status: injected && !hadManagedExisting ? 'injected' : 'updated' } satisfies BundledMcpInjectionTargetResult }
   }) as BundledMcpInjectionTargetResult
 }
 
 export async function injectBundledMcpServer(): Promise<BundledMcpInjectionResult> {
-  const commandInfo = managedConfig('default')
+  const commandInfo = managedConfig('default', MANAGED_SERVERS[0].name, MANAGED_SERVERS[0].toolset)
   const result: BundledMcpInjectionResult = {
-    serverName: SERVER_NAME,
+    serverNames: MANAGED_SERVERS.map(server => server.name),
     command: String(commandInfo.command),
     targets: [],
   }
@@ -203,14 +264,13 @@ export async function injectBundledMcpServer(): Promise<BundledMcpInjectionResul
   }
 
   for (const profile of listProfileNamesFromDisk()) {
-    const desired = managedConfig(profile)
-    result.targets.push(await injectIntoProfile(profile, desired))
+    result.targets.push(await injectIntoProfile(profile))
   }
 
   const changed = result.targets.filter(target => target.status === 'injected' || target.status === 'updated')
   if (changed.length > 0) {
     logger.info({
-      serverName: SERVER_NAME,
+      serverNames: result.serverNames,
       command: commandInfo.command,
       targets: changed,
     }, '[mcp-autoinject] synced bundled MCP server')
@@ -218,7 +278,7 @@ export async function injectBundledMcpServer(): Promise<BundledMcpInjectionResul
 
   const skipped = result.targets.filter(target => target.status === 'skipped')
   if (skipped.length > 0) {
-    logger.warn({ serverName: SERVER_NAME, targets: skipped }, '[mcp-autoinject] skipped unmanaged MCP server entries')
+    logger.warn({ serverNames: result.serverNames, targets: skipped }, '[mcp-autoinject] skipped unmanaged MCP server entries')
   }
 
   return result

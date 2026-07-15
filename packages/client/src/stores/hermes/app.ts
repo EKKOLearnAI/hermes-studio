@@ -43,6 +43,7 @@ export const useAppStore = defineStore('app', () => {
   const modelVisibility = ref<ModelVisibility>({})
   const healthPollTimer = ref<ReturnType<typeof setInterval>>()
   const nodeVersion = ref('')
+  const isDocker = ref(false)
 
   // Settings
   const streamEnabled = ref(true)
@@ -77,6 +78,7 @@ export const useAppStore = defineStore('app', () => {
       if (res.webui_latest) latestVersion.value = res.webui_latest
       updateAvailable.value = !!res.webui_update_available
       if (res.node_version) nodeVersion.value = res.node_version
+      isDocker.value = !!res.is_docker
     } catch {
       connected.value = false
       clientOutdated.value = false
@@ -343,6 +345,7 @@ export const useAppStore = defineStore('app', () => {
     serverVersion,
     latestVersion,
     nodeVersion,
+    isDocker,
     updateAvailable,
     clientOutdated,
     updating,

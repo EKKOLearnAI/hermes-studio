@@ -142,7 +142,7 @@ describe('stt settings store', () => {
   it('stores settings and masks secrets on read', async () => {
     const { store } = await initStore()
 
-    const saved = store.saveSttProviderSetting(7, 'openai', {
+    const saved = store.saveSttProviderSetting('default', 'openai', {
       settings: {
         baseUrl: 'https://api.openai.com/v1/audio/transcriptions',
         model: 'gpt-4o-transcribe',
@@ -154,7 +154,7 @@ describe('stt settings store', () => {
     })
 
     expect(saved).toMatchObject({
-      userId: 7,
+      profile: 'default',
       provider: 'openai',
       settings: {
         baseUrl: 'https://api.openai.com/v1/audio/transcriptions',
@@ -167,7 +167,7 @@ describe('stt settings store', () => {
     })
     expect(JSON.stringify(saved)).not.toContain('secret-value')
 
-    const fetched = store.getSttProviderSetting(7, 'openai')
+    const fetched = store.getSttProviderSetting('default', 'openai')
     expect(fetched).toEqual(saved)
     expect(JSON.stringify(fetched)).not.toContain('secret-value')
   })
@@ -175,7 +175,7 @@ describe('stt settings store', () => {
   it('returns raw secrets only for backend callers that opt in', async () => {
     const { store } = await initStore()
 
-    store.saveSttProviderSetting(7, 'openai', {
+    store.saveSttProviderSetting('default', 'openai', {
       settings: {
         baseUrl: 'https://api.openai.com/v1/audio/transcriptions',
         model: 'gpt-4o-transcribe',
@@ -185,8 +185,8 @@ describe('stt settings store', () => {
       },
     })
 
-    expect(store.getSttProviderSetting(7, 'openai', { includeSecrets: true })).toMatchObject({
-      userId: 7,
+    expect(store.getSttProviderSetting('default', 'openai', { includeSecrets: true })).toMatchObject({
+      profile: 'default',
       provider: 'openai',
       settings: {
         baseUrl: 'https://api.openai.com/v1/audio/transcriptions',
@@ -201,7 +201,7 @@ describe('stt settings store', () => {
   it('preserves existing raw secrets when the stored marker is submitted again', async () => {
     const { store } = await initStore()
 
-    store.saveSttProviderSetting(7, 'openai', {
+    store.saveSttProviderSetting('default', 'openai', {
       settings: {
         baseUrl: 'https://api.openai.com/v1/audio/transcriptions',
         model: 'gpt-4o-transcribe',
@@ -211,7 +211,7 @@ describe('stt settings store', () => {
       },
     })
 
-    const updated = store.saveSttProviderSetting(7, 'openai', {
+    const updated = store.saveSttProviderSetting('default', 'openai', {
       settings: {
         language: 'en',
         prompt: 'Transcribe carefully',
@@ -222,7 +222,7 @@ describe('stt settings store', () => {
     })
 
     expect(updated).toMatchObject({
-      userId: 7,
+      profile: 'default',
       provider: 'openai',
       settings: {
         baseUrl: 'https://api.openai.com/v1/audio/transcriptions',
@@ -235,7 +235,7 @@ describe('stt settings store', () => {
       },
     })
 
-    expect(store.getSttProviderSetting(7, 'openai', { includeSecrets: true })?.secrets).toEqual({
+    expect(store.getSttProviderSetting('default', 'openai', { includeSecrets: true })?.secrets).toEqual({
       apiKey: 'secret-value',
     })
   })
@@ -244,7 +244,7 @@ describe('stt settings store', () => {
     const { store } = await initStore()
     const trimmedPrompt = 'x'.repeat(1000)
 
-    const saved = store.saveSttProviderSetting(7, 'openai', {
+    const saved = store.saveSttProviderSetting('default', 'openai', {
       settings: {
         prompt: `  ${trimmedPrompt}extra  `,
       },
@@ -254,8 +254,8 @@ describe('stt settings store', () => {
     expect(saved.settings.prompt).toHaveLength(1000)
 
     const storedRow = db.prepare(
-      'SELECT settings_json FROM stt_provider_settings WHERE user_id = ? AND provider = ?'
-    ).get(7, 'openai') as { settings_json: string }
+      'SELECT settings_json FROM stt_profile_provider_settings WHERE profile = ? AND provider = ?'
+    ).get('default', 'openai') as { settings_json: string }
 
     expect(JSON.parse(storedRow.settings_json)).toMatchObject({
       prompt: trimmedPrompt,
@@ -265,7 +265,7 @@ describe('stt settings store', () => {
   it('clears one stored secret without deleting settings', async () => {
     const { store } = await initStore()
 
-    store.saveSttProviderSetting(7, 'openai', {
+    store.saveSttProviderSetting('default', 'openai', {
       settings: {
         baseUrl: 'https://api.openai.com/v1/audio/transcriptions',
         model: 'gpt-4o-transcribe',
@@ -276,9 +276,9 @@ describe('stt settings store', () => {
       },
     })
 
-    const cleared = store.clearStoredSttSecret(7, 'openai', 'apiKey')
+    const cleared = store.clearStoredSttSecret('default', 'openai', 'apiKey')
     expect(cleared).toMatchObject({
-      userId: 7,
+      profile: 'default',
       provider: 'openai',
       settings: {
         baseUrl: 'https://api.openai.com/v1/audio/transcriptions',
@@ -288,14 +288,14 @@ describe('stt settings store', () => {
       secrets: {},
     })
 
-    expect(store.getSttProviderSetting(7, 'openai')).toEqual(cleared)
-    expect(store.getSttProviderSetting(7, 'openai', { includeSecrets: true })?.secrets).toEqual({})
+    expect(store.getSttProviderSetting('default', 'openai')).toEqual(cleared)
+    expect(store.getSttProviderSetting('default', 'openai', { includeSecrets: true })?.secrets).toEqual({})
   })
 
-  it('lists only settings for the requested user', async () => {
+  it('lists only settings for the requested profile', async () => {
     const { store } = await initStore()
 
-    const expected = store.saveSttProviderSetting(7, 'openai', {
+    const expected = store.saveSttProviderSetting('default', 'openai', {
       settings: {
         baseUrl: 'https://api.openai.com/v1/audio/transcriptions',
         model: 'gpt-4o-transcribe',
@@ -305,7 +305,7 @@ describe('stt settings store', () => {
       },
     })
 
-    store.saveSttProviderSetting(8, 'custom', {
+    store.saveSttProviderSetting('research', 'custom', {
       settings: {
         baseUrl: 'https://transcribe.example.com/v1',
         model: 'custom-whisper',
@@ -315,13 +315,13 @@ describe('stt settings store', () => {
       },
     })
 
-    expect(store.listSttProviderSettings(7)).toEqual([expected])
+    expect(store.listSttProviderSettings('default')).toEqual([expected])
   })
 
   it('ignores unsupported legacy provider rows when listing settings', async () => {
     const { store } = await initStore()
 
-    const expected = store.saveSttProviderSetting(7, 'openai', {
+    const expected = store.saveSttProviderSetting('default', 'openai', {
       settings: {
         baseUrl: 'https://api.openai.com/v1/audio/transcriptions',
         model: 'gpt-4o-transcribe',
@@ -332,19 +332,19 @@ describe('stt settings store', () => {
     })
 
     db.prepare(
-      'INSERT INTO stt_provider_settings (user_id, provider, settings_json, secrets_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(7, 'deepgram', '{"language":"en"}', '{"apiKey":"legacy-secret"}', 1710000000, 1710000100)
+      'INSERT INTO stt_profile_provider_settings (profile, provider, settings_json, secrets_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('default', 'deepgram', '{"language":"en"}', '{"apiKey":"legacy-secret"}', 1710000000, 1710000100)
 
-    expect(() => store.listSttProviderSettings(7)).not.toThrow()
-    expect(store.listSttProviderSettings(7)).toEqual([expected])
-    expect(() => store.getSttProviderSetting(7, 'deepgram' as any)).toThrow(/unknown STT provider/i)
+    expect(() => store.listSttProviderSettings('default')).not.toThrow()
+    expect(store.listSttProviderSettings('default')).toEqual([expected])
+    expect(() => store.getSttProviderSetting('default', 'deepgram' as any)).toThrow(/unknown STT provider/i)
   })
 
   it('rejects unsupported providers and secret names', async () => {
     const { store } = await initStore()
 
     expect(() => {
-      store.saveSttProviderSetting(7, 'deepgram', {
+      store.saveSttProviderSetting('default', 'deepgram', {
         settings: {
           model: 'nova-2',
         },
@@ -352,7 +352,7 @@ describe('stt settings store', () => {
     }).toThrow(/unknown STT provider/i)
 
     expect(() => {
-      store.saveSttProviderSetting(7, 'openai', {
+      store.saveSttProviderSetting('default', 'openai', {
         secrets: {
           token: 'secret-value',
         },
@@ -372,7 +372,7 @@ describe('stt settings store', () => {
   ])('allows local or private base urls using the shared url rules: %s', async (baseUrl) => {
     const { store } = await initStore()
 
-    const saved = store.saveSttProviderSetting(7, 'openai', {
+    const saved = store.saveSttProviderSetting('default', 'openai', {
       settings: {
         baseUrl,
       },
@@ -384,7 +384,7 @@ describe('stt settings store', () => {
   it('stores only supported audio transcode modes', async () => {
     const { store } = await initStore()
 
-    const saved = store.saveSttProviderSetting(7, 'custom', {
+    const saved = store.saveSttProviderSetting('default', 'custom', {
       settings: {
         baseUrl: 'http://127.0.0.1:8000/v1',
         model: 'whisper-1',
@@ -393,7 +393,7 @@ describe('stt settings store', () => {
     })
     expect(saved.settings.audioTranscode).toBe('ffmpeg')
 
-    const ignored = store.saveSttProviderSetting(7, 'custom', {
+    const ignored = store.saveSttProviderSetting('default', 'custom', {
       settings: {
         audioTranscode: 'auto',
       },

@@ -41,6 +41,12 @@ const router = createRouter({
           meta: { page: 'hermesStudioManual' },
         },
         {
+          path: 'esp32',
+          name: 'docs.esp32',
+          component: EmptyView,
+          meta: { page: 'esp32Intro' },
+        },
+        {
           path: 'platforms',
           name: 'docs.platforms',
           component: EmptyView,

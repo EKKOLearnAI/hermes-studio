@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import * as configApi from '@/api/hermes/config'
-import type { DisplayConfig, AgentConfig, MemoryConfig, SkillsConfig, CompressionConfig, SessionResetConfig, PrivacyConfig, ApprovalConfig, GatewayAutoStartConfig } from '@/api/hermes/config'
+import type { DisplayConfig, AgentConfig, MemoryConfig, SkillsConfig, CompressionConfig, SessionResetConfig, PrivacyConfig, ApprovalConfig, GatewayAutoStartConfig, ProxyConfig } from '@/api/hermes/config'
 
 function parseProfileList(value: unknown): string[] {
   if (!Array.isArray(value)) return []
@@ -30,6 +30,13 @@ function mergeGatewayAutoStart(current: GatewayAutoStartConfig, values: Record<s
     if (Array.isArray(values.exclude)) next.exclude = parseProfileList(values.exclude)
     else delete next.exclude
   }
+  if ('management' in values) {
+    if (values.management === 'auto' || values.management === 'per_profile' || values.management === 'unified') {
+      next.management = values.management
+    } else {
+      delete next.management
+    }
+  }
   return next
 }
 
@@ -46,6 +53,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const privacy = ref<PrivacyConfig>({})
   const approvals = ref<ApprovalConfig>({})
   const gatewayAutoStart = ref<GatewayAutoStartConfig>({})
+  const proxy = ref<ProxyConfig>({})
   const telegram = ref<Record<string, any>>({})
   const discord = ref<Record<string, any>>({})
   const slack = ref<Record<string, any>>({})
@@ -71,6 +79,7 @@ export const useSettingsStore = defineStore('settings', () => {
       privacy.value = data.privacy || {}
       approvals.value = data.approvals || {}
       gatewayAutoStart.value = data.gatewayAutoStart || {}
+      proxy.value = data.proxy || {}
       telegram.value = data.telegram || {}
       discord.value = data.discord || {}
       slack.value = data.slack || {}
@@ -100,6 +109,7 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'privacy': privacy.value = { ...privacy.value, ...values }; break
       case 'approvals': approvals.value = { ...approvals.value, ...values }; break
       case 'gatewayAutoStart': gatewayAutoStart.value = mergeGatewayAutoStart(gatewayAutoStart.value, values); break
+      case 'proxy': proxy.value = { ...proxy.value, ...values }; break
       case 'telegram': telegram.value = { ...telegram.value, ...values }; break
       case 'discord': discord.value = { ...discord.value, ...values }; break
       case 'slack': slack.value = { ...slack.value, ...values }; break
@@ -136,6 +146,7 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'privacy': privacy.value = { ...privacy.value, ...values }; break
       case 'approvals': approvals.value = { ...approvals.value, ...values }; break
       case 'gatewayAutoStart': gatewayAutoStart.value = mergeGatewayAutoStart(gatewayAutoStart.value, values); break
+      case 'proxy': proxy.value = { ...proxy.value, ...values }; break
       case 'telegram': telegram.value = { ...telegram.value, ...values }; break
       case 'discord': discord.value = { ...discord.value, ...values }; break
       case 'slack': slack.value = { ...slack.value, ...values }; break
@@ -164,7 +175,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   return {
     loading, saving,
-    display, agent, memory, skills, compression, sessionReset, privacy, approvals, gatewayAutoStart,
+    display, agent, memory, skills, compression, sessionReset, privacy, approvals, gatewayAutoStart, proxy,
     telegram, discord, slack, whatsapp, matrix, wecom, feishu, dingtalk, qqbot, weixin, platforms,
     fetchSettings, saveSection, updateLocal,
   }

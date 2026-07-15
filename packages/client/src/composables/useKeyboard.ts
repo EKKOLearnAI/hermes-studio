@@ -1,11 +1,9 @@
 import { onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { useChatStore } from '@/stores/hermes/chat'
 import { useSessionSearch } from './useSessionSearch'
 
 export function useKeyboard() {
   const router = useRouter()
-  const chatStore = useChatStore()
   const { sessionSearchOpen, openSessionSearch, closeSessionSearch } = useSessionSearch()
 
   function handleKeydown(e: KeyboardEvent) {
@@ -13,7 +11,9 @@ export function useKeyboard() {
 
     if (mod && e.key === 'n') {
       e.preventDefault()
-      chatStore.newChat()
+      void import('@/stores/hermes/chat').then(({ useChatStore }) => {
+        useChatStore().newChat()
+      })
       return
     }
 

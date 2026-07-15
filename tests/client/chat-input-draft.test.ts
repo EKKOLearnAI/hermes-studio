@@ -4,6 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import { nextTick } from 'vue'
 import { useChatStore } from '@/stores/hermes/chat'
+import { useSettingsStore } from '@/stores/hermes/settings'
 import ChatInput from '@/components/hermes/chat/ChatInput.vue'
 
 const fetchSkillsMock = vi.hoisted(() => vi.fn())
@@ -16,6 +17,7 @@ vi.mock('naive-ui', () => ({
   NButton: { template: '<button type="button" v-bind="$attrs"><slot /><slot name="icon" /></button>' },
   NTooltip: { template: '<div><slot name="trigger" /><slot /></div>' },
   NSwitch: { template: '<button type="button"></button>' },
+  NDropdown: { template: '<div><slot /></div>' },
   NModal: { template: '<div><slot /><slot name="footer" /></div>' },
   NInputNumber: { template: '<input />' },
   NPopselect: {
@@ -56,20 +58,27 @@ vi.mock('@/composables/useToolTraceVisibility', () => ({
   useToolTraceVisibility: () => ({ toolTraceVisible: { value: true }, toggleToolTraceVisible: vi.fn() }),
 }))
 
-function mountForSession(sessionId: string, sessionOverrides: Partial<ReturnType<typeof useChatStore>['sessions'][number]> = {}) {
+function mountForSession(
+  sessionId: string,
+  sessionOverrides: Partial<ReturnType<typeof useChatStore>['sessions'][number]> = {},
+  displayOverrides: Record<string, any> = {},
+) {
   const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
   const chatStore = useChatStore()
+  const settingsStore = useSettingsStore()
   chatStore.sessions = [
     { id: sessionId, title: sessionId, source: 'cli', messages: [], createdAt: Date.now(), updatedAt: Date.now(), ...sessionOverrides },
   ]
   chatStore.activeSessionId = sessionId
   chatStore.activeSession = chatStore.sessions[0]
+  settingsStore.display = displayOverrides
   return mount(ChatInput, { global: { plugins: [pinia] } })
 }
 
 describe('ChatInput draft persistence', () => {
   beforeEach(() => {
     localStorage.clear()
+    window.innerWidth = 1024
     fetchSkillsMock.mockReset()
     fetchSkillsMock.mockResolvedValue({ categories: [], archived: [] })
   })
@@ -110,7 +119,42 @@ describe('ChatInput draft persistence', () => {
     expect((remountedA.get('textarea').element as HTMLTextAreaElement).value).toBe('draft for session a')
   })
 
-  it('hides context usage for coding-agent sessions', async () => {
+  it('applies the configured desktop input height from display settings', async () => {
+    const wrapper = mountForSession('session-a', {}, { chat_input_height: 180 })
+    await flushPromises()
+    await nextTick()
+
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).style.height).toBe('180px')
+    expect((wrapper.get('.input-wrapper').element as HTMLElement).style.minHeight).toBe('251px')
+  })
+
+  it('applies display setting changes after a manual resize', async () => {
+    const wrapper = mountForSession('session-a')
+    const settingsStore = useSettingsStore()
+    const resizeHandle = wrapper.get('.resize-handle')
+
+    await resizeHandle.trigger('mousedown', { clientY: 100 })
+    document.dispatchEvent(new MouseEvent('mousemove', { clientY: 50 }))
+    document.dispatchEvent(new MouseEvent('mouseup'))
+    await nextTick()
+
+    settingsStore.display.chat_input_height = 220
+    await nextTick()
+
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).style.height).toBe('220px')
+    expect((wrapper.get('.input-wrapper').element as HTMLElement).style.minHeight).toBe('291px')
+  })
+
+  it('keeps mobile chat input behavior even when a desktop height is configured', async () => {
+    window.innerWidth = 640
+    const wrapper = mountForSession('session-mobile', {}, { chat_input_height: 180 })
+    await flushPromises()
+    await nextTick()
+
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).style.height).not.toBe('180px')
+  })
+
+  it('shows context usage for coding-agent sessions', async () => {
     const wrapper = mountForSession('session-codex', {
       source: 'coding_agent',
       agent: 'codex',
@@ -121,11 +165,12 @@ describe('ChatInput draft persistence', () => {
     })
     await nextTick()
 
-    expect(wrapper.find('.context-info').exists()).toBe(false)
-    expect(wrapper.find('.context-bar').exists()).toBe(false)
+    expect(wrapper.find('.context-info').exists()).toBe(true)
+    expect(wrapper.find('.context-info').text()).toContain('2.0k')
+    expect(wrapper.find('.context-bar').exists()).toBe(true)
   })
 
-  it('hides reasoning effort selector for coding-agent sessions', async () => {
+  it('shows reasoning effort selector for coding-agent sessions', async () => {
     const wrapper = mountForSession('session-codex', {
       source: 'coding_agent',
       agent: 'codex',
@@ -133,8 +178,30 @@ describe('ChatInput draft persistence', () => {
     })
     await nextTick()
 
+    expect(wrapper.find('.n-popselect-stub').exists()).toBe(true)
+    expect(wrapper.find('[data-value="high"]').exists()).toBe(true)
+    expect(wrapper.find('[data-value="max"]').exists()).toBe(true)
+  })
+
+  it('hides the reasoning effort selector for MoA sessions', async () => {
+    const wrapper = mountForSession('session-moa', {
+      provider: 'moa',
+      model: 'research-team',
+    })
+    await nextTick()
+
     expect(wrapper.find('.n-popselect-stub').exists()).toBe(false)
-    expect(wrapper.find('[data-value="high"]').exists()).toBe(false)
+  })
+
+  it('stores maximum reasoning effort for the active session', async () => {
+    const wrapper = mountForSession('session-reasoning-max')
+    const store = useChatStore()
+
+    await wrapper.get('[data-value="max"]').trigger('click')
+    await nextTick()
+
+    expect(store.sessions[0].reasoningEffort).toBe('max')
+    expect(localStorage.getItem('hermes:reasoning_effort:session-reasoning-max')).toBe('max')
   })
 
   it('stores the selected reasoning effort for the active session', async () => {

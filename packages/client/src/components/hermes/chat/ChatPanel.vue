@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { renameSession, setSessionWorkspace, batchDeleteSessions, exportSession } from "@/api/hermes/sessions";
 import type { AvailableModelGroup } from "@/api/hermes/system";
-import { fetchCodingAgentsStatus, inferCodingAgentApiMode, normalizeCodingAgentApiMode, type CodingAgentApiMode, type CodingAgentId } from "@/api/coding-agents";
+import { fetchCodingAgentsStatus, inferCodingAgentApiMode, normalizeCodingAgentApiMode, type ChatCodingAgentId, type CodingAgentApiMode, type CodingAgentId } from "@/api/coding-agents";
 import { useChatStore, type Session } from "@/stores/hermes/chat";
 import { useAppStore } from "@/stores/hermes/app";
 import { useProfilesStore } from "@/stores/hermes/profiles";
@@ -18,6 +18,7 @@ import {
   NPopconfirm,
   NRadioButton,
   NRadioGroup,
+  NSpin,
   useMessage,
   type DropdownOption,
 } from "naive-ui";
@@ -27,6 +28,7 @@ import { useI18n } from "vue-i18n";
 import { copyToClipboard } from "@/utils/clipboard";
 import FolderPicker from "./FolderPicker.vue";
 import ChatInput from "./ChatInput.vue";
+import RealtimeVoiceStage from "./RealtimeVoiceStage.vue";
 import ConversationMonitorPane from "./ConversationMonitorPane.vue";
 import MessageList from "./MessageList.vue";
 import SessionListItem from "./SessionListItem.vue";
@@ -34,7 +36,10 @@ import OutlinePanel from "./OutlinePanel.vue";
 import FilesPanel from "./FilesPanel.vue";
 import TerminalPanel from "./TerminalPanel.vue";
 import PageSidebarNav from "@/components/layout/PageSidebarNav.vue";
+import SettingsCircuitBadge from "@/components/layout/SettingsCircuitBadge.vue";
 import { isStoredSuperAdmin } from "@/api/client";
+import { useDefaultWorkspace } from "@/composables/useDefaultWorkspace";
+import { canScopedCodingAgentUseProvider, usesServerManagedProviderAuth } from "@/utils/codingAgentProviders";
 
 const chatStore = useChatStore();
 const appStore = useAppStore();
@@ -46,13 +51,18 @@ const { t } = useI18n();
 const isSuperAdmin = computed(() => isStoredSuperAdmin());
 
 const showOutline = ref(false);
+const showRealtimeVoice = ref(false);
 const messageListRef = ref<InstanceType<typeof MessageList> | null>(null);
 const chatInputRef = ref<(InstanceType<typeof ChatInput> & { addFiles?: (files: File[]) => void }) | null>(null);
 const chatContentWrapperRef = ref<HTMLElement | null>(null);
+const chatMainContentRef = ref<HTMLElement | null>(null);
+let sessionFadeAnimation: Animation | null = null;
 const chatDropCounter = ref(0);
 const isChatDropActive = ref(false);
 const showToolPanel = ref(false);
 const activeToolPanel = ref<"files" | "terminal">("files");
+const activeWorkspaceSessionId = computed(() => chatStore.activeSession?.workspace && !chatStore.activeSession.isLocalOnly ? chatStore.activeSession.id : null);
+const activeWorkspacePath = computed(() => chatStore.activeSession?.workspace && !chatStore.activeSession.isLocalOnly ? chatStore.activeSession.workspace : null);
 const TOOL_PANEL_MIN_WIDTH = 360;
 const TOOL_PANEL_DEFAULT_WIDTH = 560;
 const TOOL_PANEL_STORAGE_KEY = "hermes.chat.toolPanelWidth";
@@ -82,6 +92,15 @@ const isMobile = ref(false);
 const toolPanelStyle = computed(() => ({
   width: isMobile.value ? "100%" : `${toolPanelWidth.value}px`,
 }));
+
+function openRealtimeVoice() {
+  if (!chatStore.activeSessionId) return;
+  showRealtimeVoice.value = true;
+}
+
+function closeRealtimeVoice() {
+  showRealtimeVoice.value = false;
+}
 
 function sessionHref(sessionId: string) {
   return router.resolve({
@@ -232,11 +251,37 @@ onMounted(() => {
   }
 });
 
+watch(
+  () => chatStore.activeSessionId,
+  async (sessionId, previousSessionId) => {
+    if (!sessionId || !previousSessionId || sessionId === previousSessionId) return;
+
+    await nextTick();
+    const surface = chatMainContentRef.value;
+    if (!surface || typeof surface.animate !== "function") return;
+
+    sessionFadeAnimation?.cancel();
+    sessionFadeAnimation = surface.animate(
+      [
+        { opacity: 0 },
+        { opacity: 1 },
+      ],
+      {
+        duration: 1500,
+        easing: "ease",
+      },
+    );
+  },
+  { flush: "post" },
+);
+
 onUnmounted(() => {
   mobileQuery?.removeEventListener("change", handleMobileChange);
   window.removeEventListener("hermes:open-page-sidebar", openPageSidebar);
   window.removeEventListener("resize", handleToolPanelViewportResize);
   stopToolResize();
+  sessionFadeAnimation?.cancel();
+  sessionFadeAnimation = null;
 });
 watch(showToolPanel, async (visible) => {
   if (!visible || isMobile.value) return;
@@ -307,12 +352,9 @@ const activeSessionTitle = computed(
 const activeSessionModelLabel = computed(() => {
   const session = chatStore.activeSession;
   if (!session?.model) return t("models.selectModel");
+  if (session.provider === "moa") return `MoA · ${session.model}`;
   return appStore.displayModelName(session.model, session.provider);
 });
-
-const isActiveSessionCodingAgent = computed(() =>
-  chatStore.activeSession?.source === "coding_agent",
-);
 
 const headerTitle = computed(() =>
   currentMode.value === "live"
@@ -321,23 +363,121 @@ const headerTitle = computed(() =>
 );
 
 const showNewChatModal = ref(false);
-const newChatAgent = ref<"hermes" | "claude-code" | "codex">("hermes");
+const newChatAgent = ref<"hermes" | ChatCodingAgentId>("hermes");
 const newChatAgentMode = ref<"global" | "scoped">("scoped");
 const newChatProfile = ref<string>("default");
 const newChatProvider = ref<string>("");
 const newChatModel = ref<string>("");
+const newChatModelKind = ref<"model" | "moa">("model");
 const newChatBaseUrl = ref<string>("");
 const newChatApiKey = ref<string>("");
 const newChatApiMode = ref<CodingAgentApiMode>("codex_responses");
 const newChatWorkspace = ref("");
 const newChatLoading = ref(false);
-const CODING_AGENT_AUTH_PROVIDER_KEYS = new Set(["openai-codex", "copilot", "xai-oauth", "nous", "google-gemini-cli", "claude-oauth"]);
 
-const newChatAgentOptions = computed(() => [
-  { label: "Hermes", value: "hermes" },
-  { label: "Claude Code", value: "claude-code" },
-  { label: "Codex", value: "codex" },
-]);
+// Default workspace feature (multiple defaults supported)
+const defaultWorkspaces = ref<string[]>([]);
+const recentWorkspaces = ref<Array<{ path: string; lastUsed: number; useCount: number }>>([]);
+let workspaceComposable: ReturnType<typeof useDefaultWorkspace> | null = null;
+
+function initWorkspaceComposable(profile: string) {
+  workspaceComposable = useDefaultWorkspace(profile);
+  defaultWorkspaces.value = workspaceComposable.loadDefaultWorkspaces();
+  recentWorkspaces.value = workspaceComposable.loadRecentWorkspaces();
+}
+
+function handleToggleDefaultWorkspace() {
+  if (!workspaceComposable) return;
+  const currentPath = newChatWorkspace.value;
+  if (!currentPath) return;
+  
+  const isDefault = defaultWorkspaces.value.includes(currentPath);
+  if (isDefault) {
+    workspaceComposable.removeDefaultWorkspace(currentPath);
+    defaultWorkspaces.value = defaultWorkspaces.value.filter(p => p !== currentPath);
+  } else {
+    workspaceComposable.addDefaultWorkspace(currentPath);
+    defaultWorkspaces.value = [...defaultWorkspaces.value, currentPath];
+  }
+}
+
+function handleSelectRecentWorkspace(path: string) {
+  newChatWorkspace.value = path;
+}
+
+function handleSelectDefaultWorkspace(path: string) {
+  newChatWorkspace.value = path;
+  showDefaultWorkspaceMenu.value = false;
+}
+
+function handleTogglePinRecent(path: string) {
+  if (!workspaceComposable) return;
+  const isDefault = defaultWorkspaces.value.includes(path);
+  if (isDefault) {
+    workspaceComposable.removeDefaultWorkspace(path);
+    defaultWorkspaces.value = defaultWorkspaces.value.filter(p => p !== path);
+  } else {
+    workspaceComposable.addDefaultWorkspace(path);
+    defaultWorkspaces.value = [...defaultWorkspaces.value, path];
+  }
+}
+
+const isCurrentWorkspaceDefault = computed(() => {
+  return Boolean(newChatWorkspace.value && defaultWorkspaces.value.includes(newChatWorkspace.value));
+});
+
+const showDefaultWorkspaceMenu = ref(false);
+
+function getFolderName(path: string | null): string {
+  if (!path) return '';
+  const parts = path.split('/');
+  return parts[parts.length - 1] || path;
+}
+
+const mostRecentDefaultWorkspace = computed(() => {
+  if (defaultWorkspaces.value.length === 0) return null;
+  
+  // 从最近使用记录中找第一个默认工作区
+  const recent = [...recentWorkspaces.value].sort((a, b) => b.lastUsed - a.lastUsed);
+  for (const entry of recent) {
+    if (defaultWorkspaces.value.includes(entry.path)) {
+      return entry.path;
+    }
+  }
+  
+  // 如果没有使用记录，返回第一个默认工作区
+  return defaultWorkspaces.value[0];
+});
+
+// 动态计算可见的工作区数量（根据容器宽度）
+const visibleDefaultWorkspaces = computed(() => {
+  if (defaultWorkspaces.value.length === 0) return [];
+  
+  // 简单策略：前2个总是可见，其余通过"更多"菜单
+  // 未来可以根据实际容器宽度动态调整
+  const maxVisible = Math.min(2, defaultWorkspaces.value.length);
+  return defaultWorkspaces.value.slice(0, maxVisible);
+});
+
+const hasHiddenDefaults = computed(() => {
+  return defaultWorkspaces.value.length > visibleDefaultWorkspaces.value.length;
+});
+
+const hiddenDefaultWorkspaces = computed(() => {
+  const visible = new Set(visibleDefaultWorkspaces.value);
+  return defaultWorkspaces.value.filter(ws => !visible.has(ws));
+});
+
+const showEkkoAgentEntry = import.meta.env.DEV;
+const newChatAgentOptions = computed(() => {
+  const options = [
+    { label: "Hermes", value: "hermes" },
+    { label: "Claude Code", value: "claude-code" },
+    { label: "Codex", value: "codex" },
+  ];
+  if (showEkkoAgentEntry) options.push({ label: "Ekko Agent", value: "ekko-agent" });
+  return options;
+});
 
 const newChatApiModeOptions = computed(() => [
   { label: t("codingAgents.protocolOpenAiChat"), value: "chat_completions" },
@@ -357,13 +497,11 @@ function getModelGroupsForProfile(profile: string) {
   return profileModels?.groups || [];
 }
 
-function isCodingAgentAuthProvider(provider?: string) {
-  return CODING_AGENT_AUTH_PROVIDER_KEYS.has(String(provider || "").toLowerCase());
-}
-
 function isNewChatProviderAllowed(group: AvailableModelGroup) {
-  if (!(newChatAgent.value !== "hermes" && newChatAgentMode.value === "scoped")) return true;
-  return !isCodingAgentAuthProvider(group.provider);
+  if (group.provider === "moa") return newChatAgent.value === "hermes";
+  const mode = newChatAgent.value === "ekko-agent" ? "scoped" : newChatAgentMode.value;
+  if (!(newChatAgent.value !== "hermes" && mode === "scoped")) return true;
+  return canScopedCodingAgentUseProvider(newChatAgent.value as ChatCodingAgentId, group.provider);
 }
 
 function getSelectableModelGroupsForProfile(profile: string) {
@@ -372,6 +510,21 @@ function getSelectableModelGroupsForProfile(profile: string) {
 
 function getDefaultModelForProfile(profile: string) {
   const groups = getSelectableModelGroupsForProfile(profile);
+  const activeProfileName = profilesStore.activeProfileName || "default";
+  const selectedProvider = appStore.selectedProvider || "";
+  const selectedModel = appStore.selectedModel || "";
+  const selectedGroup = selectedProvider
+    ? groups.find((group) => group.provider === selectedProvider)
+    : undefined;
+  if (
+    profile === activeProfileName &&
+    selectedGroup?.models.includes(selectedModel)
+  ) {
+    return {
+      provider: selectedProvider,
+      model: selectedModel,
+    };
+  }
   const profileModels = appStore.profileModelGroups.find(
     (entry) => entry.profile === profile,
   );
@@ -397,8 +550,19 @@ const newChatProfileOptions = computed(() =>
 );
 
 const newChatModelGroups = computed(() => {
-  return getSelectableModelGroupsForProfile(newChatProfile.value);
+  const groups = getSelectableModelGroupsForProfile(newChatProfile.value);
+  return newChatModelKind.value === "moa"
+    ? groups.filter((group) => group.provider === "moa")
+    : groups.filter((group) => group.provider !== "moa");
 });
+
+const newChatMoaGroup = computed(() =>
+  getSelectableModelGroupsForProfile(newChatProfile.value).find((group) => group.provider === "moa"),
+);
+
+const newChatCanUseMoa = computed(() =>
+  newChatAgent.value === "hermes" && Boolean(newChatMoaGroup.value?.models.length),
+);
 
 const newChatProviderOptions = computed(() =>
   newChatModelGroups.value.map((group) => ({
@@ -422,22 +586,32 @@ const selectedNewChatProviderGroup = computed(() =>
 );
 
 const isNewChatCodingAgent = computed(() => newChatAgent.value !== "hermes");
+const isNewChatExternalCodingAgent = computed(() => newChatAgent.value === "claude-code" || newChatAgent.value === "codex");
+const effectiveNewChatAgentMode = computed(() =>
+  newChatAgent.value === "ekko-agent" ? "scoped" : newChatAgentMode.value,
+);
 const isNewChatGlobalCodingAgent = computed(() =>
-  isNewChatCodingAgent.value && newChatAgentMode.value === "global",
+  isNewChatCodingAgent.value && effectiveNewChatAgentMode.value === "global",
 );
 const newChatUsesProviderModel = computed(() => !isNewChatGlobalCodingAgent.value);
 const newChatNeedsBaseUrl = computed(() =>
-  isNewChatCodingAgent.value && newChatAgentMode.value === "scoped" && !selectedNewChatProviderGroup.value?.base_url,
+  isNewChatCodingAgent.value && effectiveNewChatAgentMode.value === "scoped" && !selectedNewChatProviderGroup.value?.base_url,
+);
+const newChatUsesServerAuth = computed(() =>
+  usesServerManagedProviderAuth(newChatAgent.value as ChatCodingAgentId, selectedNewChatProviderGroup.value?.provider),
 );
 const newChatNeedsApiKey = computed(() =>
-  isNewChatCodingAgent.value && newChatAgentMode.value === "scoped" && !selectedNewChatProviderGroup.value?.api_key,
+  isNewChatCodingAgent.value &&
+  effectiveNewChatAgentMode.value === "scoped" &&
+  !newChatUsesServerAuth.value &&
+  !selectedNewChatProviderGroup.value?.api_key,
 );
 const canConfirmNewChat = computed(() => {
   if (!newChatProfile.value) return false;
   if (!newChatUsesProviderModel.value) return true;
   if (!newChatProvider.value || !newChatModel.value) return false;
   if (!isNewChatCodingAgent.value) return true;
-  if (!newChatApiMode.value) return false;
+  if (isNewChatExternalCodingAgent.value && !newChatApiMode.value) return false;
   if (newChatNeedsBaseUrl.value && !newChatBaseUrl.value.trim()) return false;
   if (newChatNeedsApiKey.value && !newChatApiKey.value.trim()) return false;
   return true;
@@ -458,8 +632,37 @@ function syncNewChatApiMode() {
 
 function syncNewChatModelSelection() {
   const defaults = getDefaultModelForProfile(newChatProfile.value);
+  newChatModelKind.value = defaults.provider === "moa" && newChatAgent.value === "hermes"
+    ? "moa"
+    : "model";
   newChatProvider.value = defaults.provider;
   newChatModel.value = defaults.model;
+  newChatBaseUrl.value = "";
+  newChatApiKey.value = "";
+  syncNewChatApiMode();
+}
+
+function handleNewChatModelKindChange(value: "model" | "moa") {
+  if (value === "moa") {
+    const group = newChatMoaGroup.value;
+    if (!group?.models.length) return;
+    newChatModelKind.value = "moa";
+    newChatProvider.value = "moa";
+    newChatModel.value = group.models[0];
+  } else {
+    newChatModelKind.value = "model";
+    const groups = getSelectableModelGroupsForProfile(newChatProfile.value)
+      .filter((group) => group.provider !== "moa");
+    const profileModels = appStore.profileModelGroups.find(
+      (entry) => entry.profile === newChatProfile.value,
+    );
+    const defaultGroup = groups.find((group) => group.provider === profileModels?.default_provider);
+    const group = defaultGroup || groups.find((item) => item.models.length > 0);
+    newChatProvider.value = group?.provider || "";
+    newChatModel.value = group?.models.includes(profileModels?.default || "")
+      ? profileModels?.default || ""
+      : group?.models[0] || "";
+  }
   newChatBaseUrl.value = "";
   newChatApiKey.value = "";
   syncNewChatApiMode();
@@ -477,7 +680,13 @@ function ensureNewChatProviderSelection() {
 
 watch(
   () => [newChatAgent.value, newChatAgentMode.value, newChatProfile.value],
-  () => ensureNewChatProviderSelection(),
+  () => {
+    ensureNewChatProviderSelection();
+    // Reload workspace data when profile changes
+    if (newChatProfile.value) {
+      initWorkspaceComposable(newChatProfile.value);
+    }
+  },
 );
 
 async function openNewChatModal() {
@@ -491,12 +700,22 @@ async function openNewChatModal() {
     if (appStore.modelGroups.length === 0 && appStore.profileModelGroups.length === 0) {
       await appStore.loadModels();
     }
-    newChatWorkspace.value = "";
     newChatProfile.value =
       profilesStore.activeProfileName ||
       profilesStore.profiles.find((profile) => profile.active)?.name ||
       profilesStore.profiles[0]?.name ||
       "default";
+    
+    // Initialize workspace composable and load defaults
+    initWorkspaceComposable(newChatProfile.value);
+    
+    // Auto-fill most recent default workspace if available
+    if (mostRecentDefaultWorkspace.value) {
+      newChatWorkspace.value = mostRecentDefaultWorkspace.value;
+    } else {
+      newChatWorkspace.value = "";
+    }
+    
     syncNewChatModelSelection();
   } finally {
     newChatLoading.value = false;
@@ -517,7 +736,7 @@ function handleNewChatProviderChange(value: string) {
 }
 
 async function confirmNewChat() {
-  if (newChatAgent.value !== "hermes") {
+  if (isNewChatExternalCodingAgent.value) {
     newChatLoading.value = true;
     try {
       const agentId = newChatAgent.value as CodingAgentId;
@@ -540,11 +759,14 @@ async function confirmNewChat() {
 
   const group = selectedNewChatProviderGroup.value;
   const source = newChatAgent.value === "hermes" ? "cli" : "coding_agent";
-  const isGlobalCodingAgent = source === "coding_agent" && newChatAgentMode.value === "global";
+  const codingAgentMode = effectiveNewChatAgentMode.value;
+  const isGlobalCodingAgent = source === "coding_agent" && codingAgentMode === "global";
   const agent = newChatAgent.value === "codex"
     ? "codex"
     : newChatAgent.value === "claude-code"
       ? "claude"
+      : newChatAgent.value === "ekko-agent"
+        ? "ekko-agent"
       : "hermes";
   const session = chatStore.newChat({
     profile: newChatProfile.value,
@@ -553,12 +775,18 @@ async function confirmNewChat() {
     source,
     agent,
     codingAgentId: newChatAgent.value === "hermes" ? undefined : newChatAgent.value,
-    codingAgentMode: source === "coding_agent" ? newChatAgentMode.value : undefined,
+    codingAgentMode: source === "coding_agent" ? codingAgentMode : undefined,
     workspace: newChatWorkspace.value || null,
     baseUrl: source === "coding_agent" && !isGlobalCodingAgent ? group?.base_url || newChatBaseUrl.value.trim() || undefined : undefined,
     apiKey: source === "coding_agent" && !isGlobalCodingAgent ? group?.api_key || newChatApiKey.value.trim() || undefined : undefined,
-    apiMode: source === "coding_agent" && !isGlobalCodingAgent ? newChatApiMode.value : undefined,
+    apiMode: isNewChatExternalCodingAgent.value && !isGlobalCodingAgent ? newChatApiMode.value : undefined,
   });
+  // Record workspace to recent list
+  if (newChatWorkspace.value && workspaceComposable) {
+    workspaceComposable.recordWorkspaceUsage(newChatWorkspace.value);
+    recentWorkspaces.value = workspaceComposable.loadRecentWorkspaces();
+  }
+  
   await router.push({
     name: chatStore.runtimeMode === "global_agent" ? "hermes.globalAgentSession" : "hermes.session",
     params: { sessionId: session.id },
@@ -715,10 +943,15 @@ const contextMenuOptions = computed(() => {
     label: t(contextSessionPinned.value ? "chat.unpin" : "chat.pin"),
     key: "pin",
   },
-  { label: t("chat.rename"), key: "rename" },
-  { label: t("chat.setWorkspace"), key: "workspace" }]
+  { label: t("chat.rename"), key: "rename" }]
 
-  if (contextSession.value?.source === "cli") {
+  if (contextSession.value?.source !== "global_agent") {
+    options.push({ label: t("chat.archiveSession"), key: "archive" })
+  }
+
+  options.push({ label: t("chat.setWorkspace"), key: "workspace" })
+
+  if (contextSession.value?.source === "cli" || contextSession.value?.source === "coding_agent") {
     options.push({ label: t("chat.setModel"), key: "model" })
   }
 
@@ -787,6 +1020,19 @@ async function handleContextMenuSelect(key: string) {
     copySessionId(contextSessionId.value);
   } else if (key === "open-link") {
     openSessionInNewTab(contextSessionId.value);
+  } else if (key === "archive") {
+    const archivedSession = contextSession.value;
+    const ok = await chatStore.archiveSession(contextSessionId.value);
+    if (ok) {
+      sessionBrowserPrefsStore.removePinned(contextSessionId.value);
+      if (archivedSession) {
+        selectedSessionKeys.value.delete(sessionSelectionKey(archivedSession));
+        selectedSessionKeys.value = new Set(selectedSessionKeys.value);
+      }
+      message.success(t("chat.sessionArchived"));
+    } else {
+      message.error(t("chat.archiveSessionFailed"));
+    }
   } else if (parseExportKey(key)) {
     const { mode, ext } = parseExportKey(key)!;
     const loadingMsg = mode === "compressed" ? message.loading(t("chat.exportCompressing"), { duration: 0 }) : null;
@@ -849,6 +1095,14 @@ const showWorkspaceModal = ref(false);
 const workspaceValue = ref("");
 const workspaceSessionId = ref<string | null>(null);
 
+function openActiveSessionWorkspace() {
+  const session = chatStore.activeSession;
+  if (!session?.id) return;
+  workspaceSessionId.value = session.id;
+  workspaceValue.value = session.workspace || "";
+  showWorkspaceModal.value = true;
+}
+
 async function handleWorkspaceConfirm() {
   if (!workspaceSessionId.value) return;
   const ok = await setSessionWorkspace(
@@ -871,21 +1125,74 @@ async function handleWorkspaceConfirm() {
 }
 
 const showSessionModelModal = ref(false);
+const showSessionModelModeModal = ref(false);
 const sessionModelSessionId = ref<string | null>(null);
 const sessionModelSearch = ref("");
+const sessionModelKind = ref<"model" | "moa">("model");
 const sessionModelCollapsedGroups = ref<Record<string, boolean>>({});
 const sessionModelValue = ref("");
 const sessionModelProvider = ref("");
 const sessionModelCustomInput = ref("");
 const sessionModelCustomProvider = ref("");
+const sessionModelApiMode = ref<CodingAgentApiMode>("codex_responses");
+const pendingSessionModelSwitch = ref<{ model: string; provider: string } | null>(null);
+const sessionModelSwitching = ref(false);
 
 const sessionModelProfile = computed<string | null>(() => {
   const session = chatStore.sessions.find((s) => s.id === sessionModelSessionId.value);
   return session?.profile || null;
 });
 
+const sessionModelSession = computed(() =>
+  chatStore.sessions.find((s) => s.id === sessionModelSessionId.value) ||
+  (chatStore.activeSession?.id === sessionModelSessionId.value ? chatStore.activeSession : undefined),
+);
+
+const isSessionModelScopedCodingAgent = computed(() =>
+  sessionModelSession.value?.source === "coding_agent" &&
+  sessionModelSession.value?.codingAgentMode !== "global",
+);
+const sessionModelCodingAgentId = computed<ChatCodingAgentId | undefined>(() =>
+  sessionModelSession.value?.codingAgentId ||
+  (sessionModelSession.value?.agent === "claude"
+    ? "claude-code"
+    : sessionModelSession.value?.agent === "codex"
+      ? "codex"
+      : sessionModelSession.value?.agent === "ekko-agent"
+        ? "ekko-agent"
+        : undefined),
+);
+const isSessionModelExternalCodingAgent = computed(() =>
+  isSessionModelScopedCodingAgent.value &&
+  (sessionModelCodingAgentId.value === "claude-code" || sessionModelCodingAgentId.value === "codex"),
+);
+
+const isSessionModelCodingAgent = computed(() =>
+  sessionModelSession.value?.source === "coding_agent" || Boolean(sessionModelSession.value?.codingAgentId),
+);
+
+const sessionModelAllGroups = computed(() =>
+  sessionModelProfile.value
+    ? getModelGroupsForProfile(sessionModelProfile.value).filter((group) => (
+        group.provider === "moa"
+          ? !isSessionModelCodingAgent.value
+          : (!isSessionModelScopedCodingAgent.value ||
+            !sessionModelCodingAgentId.value ||
+            canScopedCodingAgentUseProvider(sessionModelCodingAgentId.value, group.provider))
+      ))
+    : [],
+);
+
 const sessionModelBaseGroups = computed(() =>
-  sessionModelProfile.value ? getModelGroupsForProfile(sessionModelProfile.value) : [],
+  sessionModelAllGroups.value.filter((group) => group.provider !== "moa"),
+);
+
+const sessionMoaGroup = computed(() =>
+  sessionModelAllGroups.value.find((group) => group.provider === "moa"),
+);
+
+const sessionCanUseMoa = computed(() =>
+  !isSessionModelCodingAgent.value && Boolean(sessionMoaGroup.value?.models.length),
 );
 
 const sessionModelProviderOptions = computed(() =>
@@ -918,6 +1225,12 @@ const filteredSessionModelGroups = computed(() => {
     .filter((group) => group.models.length > 0 || group.label.toLowerCase().includes(query));
 });
 
+const filteredSessionMoaModels = computed(() => {
+  const models = sessionMoaGroup.value?.models || [];
+  const query = sessionModelSearch.value.trim().toLowerCase();
+  return query ? models.filter((model) => model.toLowerCase().includes(query)) : models;
+});
+
 async function openSessionModelModal(sessionId: string) {
   if (appStore.modelGroups.length === 0 && appStore.profileModelGroups.length === 0) {
     await appStore.loadModels();
@@ -925,17 +1238,37 @@ async function openSessionModelModal(sessionId: string) {
   const session =
     chatStore.sessions.find((s) => s.id === sessionId) ||
     (chatStore.activeSession?.id === sessionId ? chatStore.activeSession : undefined);
-  const defaults = session?.profile
-    ? getDefaultModelForProfile(session.profile)
-    : { provider: "", model: "" };
   sessionModelSessionId.value = sessionId;
-  sessionModelValue.value = session?.model || defaults.model || "";
-  sessionModelProvider.value = session?.provider || defaults.provider || "";
-  sessionModelCustomProvider.value = sessionModelProvider.value;
+  const groups = sessionModelBaseGroups.value;
+  const providerGroup = session?.provider
+    ? groups.find((group) => group.provider === session.provider)
+    : undefined;
+  const fallbackGroup = providerGroup || groups.find((group) => group.models.length > 0);
+  const defaults = {
+    provider: fallbackGroup?.provider || "",
+    model: fallbackGroup?.models.includes(session?.model || "")
+      ? session?.model || ""
+      : fallbackGroup?.models[0] || "",
+  };
+  const usesMoa = session?.provider === "moa" && sessionCanUseMoa.value;
+  sessionModelKind.value = usesMoa ? "moa" : "model";
+  sessionModelValue.value = usesMoa
+    ? session?.model || ""
+    : providerGroup ? session?.model || defaults.model || "" : defaults.model || "";
+  sessionModelProvider.value = usesMoa
+    ? "moa"
+    : providerGroup ? session?.provider || "" : defaults.provider || "";
+  sessionModelCustomProvider.value = usesMoa ? defaults.provider : sessionModelProvider.value;
   sessionModelSearch.value = "";
   sessionModelCustomInput.value = "";
   sessionModelCollapsedGroups.value = {};
   showSessionModelModal.value = true;
+}
+
+function handleSessionModelKindChange(value: "model" | "moa") {
+  if (sessionModelSwitching.value || (value === "moa" && !sessionCanUseMoa.value)) return;
+  sessionModelKind.value = value;
+  sessionModelSearch.value = "";
 }
 
 function handleHeaderModelClick() {
@@ -944,7 +1277,6 @@ function handleHeaderModelClick() {
     openNewChatModal();
     return;
   }
-  if (isActiveSessionCodingAgent.value) return;
   openSessionModelModal(sessionId);
 }
 
@@ -953,6 +1285,7 @@ function isSessionModelGroupCollapsed(provider: string) {
 }
 
 function toggleSessionModelGroup(provider: string) {
+  if (sessionModelSwitching.value) return;
   sessionModelCollapsedGroups.value[provider] = !sessionModelCollapsedGroups.value[provider];
 }
 
@@ -968,24 +1301,72 @@ function sessionModelAlias(model: string, provider: string) {
   return appStore.getModelAlias(model, provider);
 }
 
+function defaultSessionModelApiMode(provider: string): CodingAgentApiMode {
+  const group = sessionModelBaseGroups.value.find((item) => item.provider === provider);
+  const providerKey = String(group?.provider || provider || "").toLowerCase();
+  const baseUrl = String(group?.base_url || "").toLowerCase();
+  return normalizeCodingAgentApiMode(
+    group?.api_mode,
+    inferCodingAgentApiMode(providerKey, baseUrl),
+  );
+}
+
+async function applySessionModelSwitch(model: string, provider: string, apiMode?: CodingAgentApiMode) {
+  if (!sessionModelSessionId.value || sessionModelSwitching.value) return;
+  sessionModelSwitching.value = true;
+  try {
+    const ok = await chatStore.switchSessionModel(model, provider, sessionModelSessionId.value, apiMode);
+    if (ok) {
+      sessionModelValue.value = model;
+      sessionModelProvider.value = provider;
+      if (apiMode) sessionModelApiMode.value = apiMode;
+      pendingSessionModelSwitch.value = null;
+      showSessionModelModeModal.value = false;
+      showSessionModelModal.value = false;
+      message.success(t("chat.modelSet"));
+    } else {
+      message.error(t("chat.modelSetFailed"));
+    }
+  } finally {
+    sessionModelSwitching.value = false;
+  }
+}
+
 async function selectSessionModel(model: string, provider: string) {
   const meta = sessionModelBaseGroups.value.find((group) => group.provider === provider)?.model_meta?.[model];
-  if (meta?.disabled || !sessionModelSessionId.value) return;
-  const ok = await chatStore.switchSessionModel(model, provider, sessionModelSessionId.value);
-  if (ok) {
-    sessionModelValue.value = model;
-    sessionModelProvider.value = provider;
-    showSessionModelModal.value = false;
-    message.success(t("chat.modelSet"));
-  } else {
-    message.error(t("chat.modelSetFailed"));
+  if (meta?.disabled || !sessionModelSessionId.value || sessionModelSwitching.value) return;
+  if (isSessionModelExternalCodingAgent.value) {
+    pendingSessionModelSwitch.value = { model, provider };
+    sessionModelApiMode.value = sessionModelSession.value?.provider === provider && sessionModelSession.value.apiMode
+      ? normalizeCodingAgentApiMode(sessionModelSession.value.apiMode, defaultSessionModelApiMode(provider))
+      : defaultSessionModelApiMode(provider);
+    showSessionModelModeModal.value = true;
+    return;
   }
+  await applySessionModelSwitch(model, provider);
+}
+
+async function selectSessionMoaPreset(preset: string) {
+  if (!preset || sessionModelSwitching.value) return;
+  await applySessionModelSwitch(preset, "moa");
+}
+
+async function confirmSessionModelMode() {
+  const pending = pendingSessionModelSwitch.value;
+  if (!pending) return;
+  await applySessionModelSwitch(pending.model, pending.provider, sessionModelApiMode.value);
+}
+
+function cancelSessionModelMode() {
+  if (sessionModelSwitching.value) return;
+  pendingSessionModelSwitch.value = null;
+  showSessionModelModeModal.value = false;
 }
 
 async function handleSessionModelCustomSubmit() {
   const model = sessionModelCustomInput.value.trim();
   const provider = sessionModelCustomProvider.value;
-  if (!model || !provider) return;
+  if (!model || !provider || sessionModelSwitching.value) return;
   await selectSessionModel(model, provider);
 }
 </script>
@@ -1203,6 +1584,7 @@ async function handleSessionModelCustomSubmit() {
           </svg>
           <span>{{ t("sidebar.settings") }}</span>
         </button>
+        <SettingsCircuitBadge />
       </div>
     </aside>
 
@@ -1250,16 +1632,32 @@ async function handleSessionModelCustomSubmit() {
       preset="card"
       :title="t('chat.setModelTitle')"
       :style="{ width: 'min(480px, calc(100vw - 32px))' }"
-      :mask-closable="true"
+      :mask-closable="!sessionModelSwitching"
+      :close-on-esc="!sessionModelSwitching"
+      :closable="!sessionModelSwitching"
     >
-      <NInput
-        v-model:value="sessionModelSearch"
-        :placeholder="t('models.searchPlaceholder')"
-        clearable
-        size="small"
-        class="session-model-search"
-      />
-      <div class="session-model-list">
+      <NSpin :show="sessionModelSwitching" class="session-model-switch-spin">
+        <template #description>{{ t('chat.modelSwitching') }}</template>
+        <div v-if="sessionCanUseMoa" class="session-model-kind-field">
+          <span class="session-model-kind-label">{{ t('chat.modelType') }}</span>
+          <NRadioGroup
+            :value="sessionModelKind"
+            name="session-model-kind"
+            @update:value="handleSessionModelKindChange"
+          >
+            <NRadioButton value="model">{{ t('chat.standardModels') }}</NRadioButton>
+            <NRadioButton value="moa">{{ t('chat.moaPresets') }}</NRadioButton>
+          </NRadioGroup>
+        </div>
+        <NInput
+          v-model:value="sessionModelSearch"
+          :placeholder="t('models.searchPlaceholder')"
+          :disabled="sessionModelSwitching"
+          clearable
+          size="small"
+          class="session-model-search"
+        />
+        <div v-if="sessionModelKind === 'model'" class="session-model-list" :aria-busy="sessionModelSwitching">
         <div v-for="group in filteredSessionModelGroups" :key="group.provider" class="session-model-group">
           <div class="session-model-group-header" @click="toggleSessionModelGroup(group.provider)">
             <svg
@@ -1287,7 +1685,9 @@ async function handleSessionModelCustomSubmit() {
               :class="{
                 active: model === sessionModelValue && group.provider === sessionModelProvider,
                 disabled: !!group.model_meta?.[model]?.disabled,
+                switching: sessionModelSwitching,
               }"
+              :aria-disabled="sessionModelSwitching || !!group.model_meta?.[model]?.disabled"
               :title="group.model_meta?.[model]?.disabled ? t('models.disabledTooltip') : ''"
               @click="selectSessionModel(model, group.provider)"
             >
@@ -1325,12 +1725,14 @@ async function handleSessionModelCustomSubmit() {
             <NSelect
               v-model:value="sessionModelCustomProvider"
               :options="sessionModelProviderOptions"
+              :disabled="sessionModelSwitching"
               size="small"
               class="session-model-custom-provider"
             />
             <NInput
               v-model:value="sessionModelCustomInput"
               :placeholder="t('models.customModelPlaceholder')"
+              :disabled="sessionModelSwitching"
               size="small"
               class="session-model-custom-input"
               @keydown.enter="handleSessionModelCustomSubmit"
@@ -1340,7 +1742,68 @@ async function handleSessionModelCustomSubmit() {
             {{ t('models.customModelHint') }}
           </div>
         </div>
-      </div>
+        </div>
+        <div v-else class="session-model-list" :aria-busy="sessionModelSwitching">
+          <div class="session-model-group-items session-moa-items">
+            <div
+              v-for="preset in filteredSessionMoaModels"
+              :key="preset"
+              class="session-model-item"
+              :class="{
+                active: preset === sessionModelValue && sessionModelProvider === 'moa',
+                switching: sessionModelSwitching,
+              }"
+              :aria-disabled="sessionModelSwitching"
+              @click="selectSessionMoaPreset(preset)"
+            >
+              <span class="session-model-item-label">
+                <span class="session-model-item-name">{{ preset }}</span>
+              </span>
+              <svg
+                v-if="preset === sessionModelValue && sessionModelProvider === 'moa'"
+                class="session-model-check"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </div>
+          </div>
+          <div v-if="filteredSessionMoaModels.length === 0" class="session-model-empty">
+            {{ t('chat.noMoaPresets') }}
+          </div>
+        </div>
+      </NSpin>
+    </NModal>
+
+    <NModal
+      v-model:show="showSessionModelModeModal"
+      preset="dialog"
+      :title="t('codingAgents.protocolScope')"
+      :mask-closable="!sessionModelSwitching"
+      :close-on-esc="!sessionModelSwitching"
+      :closable="!sessionModelSwitching"
+      style="width: min(420px, calc(100vw - 32px))"
+    >
+      <NSelect
+        v-model:value="sessionModelApiMode"
+        :options="newChatApiModeOptions"
+        :disabled="sessionModelSwitching"
+      />
+      <template #action>
+        <NButton size="small" :disabled="sessionModelSwitching" @click="cancelSessionModelMode">
+          {{ t('common.cancel') }}
+        </NButton>
+        <NButton size="small" type="primary" :loading="sessionModelSwitching" @click="confirmSessionModelMode">
+          {{ sessionModelSwitching ? t('chat.modelSwitching') : t('common.confirm') }}
+        </NButton>
+      </template>
     </NModal>
 
     <NDrawer
@@ -1360,7 +1823,7 @@ async function handleSessionModelCustomSubmit() {
               :disabled="newChatLoading"
             />
           </label>
-          <label v-if="isNewChatCodingAgent" class="new-chat-field">
+          <label v-if="isNewChatExternalCodingAgent" class="new-chat-field">
             <span class="new-chat-label">{{ t("codingAgents.launchModeScope") }}</span>
             <NRadioGroup v-model:value="newChatAgentMode" name="new-chat-coding-agent-mode">
               <NRadioButton
@@ -1381,7 +1844,18 @@ async function handleSessionModelCustomSubmit() {
               @update:value="handleNewChatProfileChange"
             />
           </label>
-          <label v-if="newChatUsesProviderModel" class="new-chat-field">
+          <label v-if="newChatUsesProviderModel && newChatCanUseMoa" class="new-chat-field">
+            <span class="new-chat-label">{{ t('chat.modelType') }}</span>
+            <NRadioGroup
+              :value="newChatModelKind"
+              name="new-chat-model-kind"
+              @update:value="handleNewChatModelKindChange"
+            >
+              <NRadioButton value="model">{{ t('chat.standardModels') }}</NRadioButton>
+              <NRadioButton value="moa">{{ t('chat.moaPresets') }}</NRadioButton>
+            </NRadioGroup>
+          </label>
+          <label v-if="newChatUsesProviderModel && newChatModelKind === 'model'" class="new-chat-field">
             <span class="new-chat-label">{{ t("models.provider") }}</span>
             <NSelect
               :value="newChatProvider"
@@ -1391,7 +1865,9 @@ async function handleSessionModelCustomSubmit() {
             />
           </label>
           <label v-if="newChatUsesProviderModel" class="new-chat-field">
-            <span class="new-chat-label">{{ t("models.models") }}</span>
+            <span class="new-chat-label">
+              {{ newChatModelKind === 'moa' ? t('chat.moaPresets') : t('models.models') }}
+            </span>
             <NSelect
               v-model:value="newChatModel"
               :options="newChatModelOptions"
@@ -1399,7 +1875,7 @@ async function handleSessionModelCustomSubmit() {
               filterable
             />
           </label>
-          <label v-if="isNewChatCodingAgent && newChatAgentMode === 'scoped'" class="new-chat-field">
+          <label v-if="isNewChatExternalCodingAgent && effectiveNewChatAgentMode === 'scoped'" class="new-chat-field">
             <span class="new-chat-label">{{ t("codingAgents.protocolScope") }}</span>
             <NSelect
               v-model:value="newChatApiMode"
@@ -1424,8 +1900,84 @@ async function handleSessionModelCustomSubmit() {
             />
           </label>
           <div class="new-chat-field">
-            <span class="new-chat-label">{{ t("chat.workspace") }}</span>
-            <FolderPicker v-model="newChatWorkspace" />
+            <span class="new-chat-label">
+              {{ t("chat.workspace") }}
+              <NTooltip v-if="isCurrentWorkspaceDefault">
+                <template #trigger>
+                  <span class="workspace-default-badge">{{ t("chat.workspaceDefault") }}</span>
+                </template>
+                {{ t("chat.workspaceDefaultTooltip") }}
+              </NTooltip>
+            </span>
+            <!-- Default workspace chips -->
+            <div v-if="defaultWorkspaces.length > 0" class="default-workspace-chips">
+              <span class="default-workspace-label">{{ t("chat.defaultWorkspace") }}:</span>
+              <div class="workspace-chips-container">
+                <template v-for="(ws, index) in visibleDefaultWorkspaces" :key="ws">
+                  <div
+                    class="workspace-chip"
+                    :class="{ active: newChatWorkspace === ws }"
+                    @click="handleSelectDefaultWorkspace(ws)"
+                    :title="ws"
+                  >
+                    {{ getFolderName(ws) }}
+                  </div>
+                  <span v-if="index < visibleDefaultWorkspaces.length - 1 || hasHiddenDefaults" class="workspace-chip-separator">/</span>
+                </template>
+                <div v-if="hasHiddenDefaults" class="workspace-chip-dropdown">
+                  <button class="workspace-chip-more" @click="showDefaultWorkspaceMenu = !showDefaultWorkspaceMenu">
+                    {{ t("chat.more") }} ▼
+                  </button>
+                  <div v-if="showDefaultWorkspaceMenu" class="workspace-dropdown-menu">
+                    <div
+                      v-for="ws in hiddenDefaultWorkspaces"
+                      :key="ws"
+                      class="workspace-dropdown-item"
+                      @click="handleSelectDefaultWorkspace(ws)"
+                      :title="ws"
+                    >
+                      {{ getFolderName(ws) }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <FolderPicker
+              v-model="newChatWorkspace"
+              show-favorite
+              :favorite="isCurrentWorkspaceDefault"
+              :favorite-disabled="!newChatWorkspace"
+              :favorite-title="isCurrentWorkspaceDefault ? t('chat.workspaceUnpin') : t('chat.workspacePin')"
+              @toggle-favorite="handleToggleDefaultWorkspace"
+            />
+            <div v-if="recentWorkspaces.length > 0" class="recent-workspaces">
+              <span class="recent-workspaces-label">{{ t("chat.workspaceRecent") }}:</span>
+              <div class="recent-workspaces-chips">
+                <NButton
+                  v-for="ws in recentWorkspaces"
+                  :key="ws.path"
+                  size="tiny"
+                  :type="ws.path === newChatWorkspace ? 'primary' : 'default'"
+                  @click="handleSelectRecentWorkspace(ws.path)"
+                >
+                  <template #icon>
+                    <span
+                      v-if="defaultWorkspaces.includes(ws.path)"
+                      class="recent-pin-icon"
+                      @click.stop="handleTogglePinRecent(ws.path)"
+                      :title="t('chat.workspaceUnpin')"
+                    >★</span>
+                    <span
+                      v-else
+                      class="recent-pin-icon"
+                      @click.stop="handleTogglePinRecent(ws.path)"
+                      :title="t('chat.workspacePin')"
+                    >☆</span>
+                  </template>
+                  {{ getFolderName(ws.path) }}
+                </NButton>
+              </div>
+            </div>
           </div>
         </div>
         <template #footer>
@@ -1436,7 +1988,7 @@ async function handleSessionModelCustomSubmit() {
               :disabled="!canConfirmNewChat"
               @click="confirmNewChat"
             >
-              {{ t("chat.newChat") }}
+              {{ t("common.create") }}
             </NButton>
           </div>
         </template>
@@ -1471,16 +2023,23 @@ async function handleSessionModelCustomSubmit() {
             </template>
           </NButton>
           <span class="header-session-title">{{ headerTitle }}</span>
-          <span
+          <button
             v-if="chatStore.activeSession?.workspace"
             class="workspace-badge"
+            type="button"
             :title="chatStore.activeSession.workspace"
-            >📁
-            {{
-              chatStore.activeSession.workspace.split("/").pop() ||
-              chatStore.activeSession.workspace
-            }}</span
+            @click="openActiveSessionWorkspace"
           >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            </svg>
+            <span>
+              {{
+                chatStore.activeSession.workspace.split("/").pop() ||
+                chatStore.activeSession.workspace
+              }}
+            </span>
+          </button>
         </div>
         <div class="header-actions">
           <!-- chat/live mode toggle hidden -->
@@ -1564,38 +2123,6 @@ async function handleSessionModelCustomSubmit() {
               </template>
               {{ t("chat.copySessionId") }}
             </NTooltip>
-            <NButton
-              class="header-model-button"
-              :class="{ 'header-model-button--readonly': isActiveSessionCodingAgent }"
-              size="small"
-              :circle="isMobile"
-              :title="activeSessionModelLabel"
-              @click="handleHeaderModelClick"
-            >
-              <template #icon>
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M12 1v4" />
-                  <path d="M12 19v4" />
-                  <path d="M1 12h4" />
-                  <path d="M19 12h4" />
-                  <path d="M4.22 4.22l2.83 2.83" />
-                  <path d="M16.95 16.95l2.83 2.83" />
-                  <path d="M4.22 19.78l2.83-2.83" />
-                  <path d="M16.95 7.05l2.83-2.83" />
-                </svg>
-              </template>
-              <template v-if="!isMobile">{{ activeSessionModelLabel }}</template>
-            </NButton>
           </template>
         </div>
       </header>
@@ -1610,9 +2137,17 @@ async function handleSessionModelCustomSubmit() {
           @dragleave="handleChatDragLeave"
           @drop="handleChatDrop"
         >
-          <div class="chat-main-content">
-            <MessageList ref="messageListRef" />
-            <ChatInput ref="chatInputRef" />
+          <div ref="chatMainContentRef" class="chat-main-content">
+            <MessageList
+              ref="messageListRef"
+              :approval-portal-to-body="showRealtimeVoice"
+            />
+            <ChatInput
+              ref="chatInputRef"
+              :model-label="activeSessionModelLabel"
+              @model-click="handleHeaderModelClick"
+              @voice-click="openRealtimeVoice"
+            />
           </div>
           <OutlinePanel
             v-if="showOutline"
@@ -1652,7 +2187,11 @@ async function handleSessionModelCustomSubmit() {
                 </button>
               </div>
               <div class="chat-tool-content">
-                <FilesPanel v-show="activeToolPanel === 'files'" />
+                <FilesPanel
+                  v-show="activeToolPanel === 'files'"
+                  :workspace-session-id="activeWorkspaceSessionId"
+                  :workspace="activeWorkspacePath"
+                />
                 <TerminalPanel
                   v-show="activeToolPanel === 'terminal'"
                   :visible="showToolPanel && activeToolPanel === 'terminal'"
@@ -1667,6 +2206,12 @@ async function handleSessionModelCustomSubmit() {
         :human-only="sessionBrowserPrefsStore.humanOnly"
       />
     </div>
+    <Teleport to="body">
+      <RealtimeVoiceStage
+        v-if="showRealtimeVoice"
+        @close="closeRealtimeVoice"
+      />
+    </Teleport>
   </div>
 </template>
 
@@ -1684,6 +2229,23 @@ async function handleSessionModelCustomSubmit() {
 
 .session-model-search {
   margin-bottom: 12px;
+}
+
+.session-model-kind-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.session-model-kind-label {
+  font-size: 12px;
+  color: $text-muted;
+  font-weight: 500;
+}
+
+.session-model-switch-spin {
+  min-height: 180px;
 }
 
 .session-model-list {
@@ -1737,6 +2299,10 @@ async function handleSessionModelCustomSubmit() {
   padding-left: 8px;
 }
 
+.session-moa-items {
+  padding-left: 0;
+}
+
 .session-model-item {
   display: flex;
   align-items: center;
@@ -1766,6 +2332,10 @@ async function handleSessionModelCustomSubmit() {
       background-color: transparent;
       color: $text-secondary;
     }
+  }
+
+  &.switching {
+    cursor: wait;
   }
 }
 
@@ -2172,10 +2742,14 @@ async function handleSessionModelCustomSubmit() {
 .page-sidebar-bottom {
   flex-shrink: 0;
   padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .page-sidebar-menu-btn {
-  width: 100%;
+  flex: 1 1 auto;
+  width: auto;
   min-width: 0;
   height: 36px;
   border: none;
@@ -2249,6 +2823,18 @@ async function handleSessionModelCustomSubmit() {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  background-color: $bg-card;
+  animation: chat-surface-fade-in 1.5s ease both;
+}
+
+@keyframes chat-surface-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .chat-header {
@@ -2296,26 +2882,6 @@ async function handleSessionModelCustomSubmit() {
   flex-shrink: 0;
 }
 
-.header-model-button {
-  max-width: 220px;
-}
-
-.header-model-button--readonly {
-  cursor: default;
-}
-
-.header-model-button--readonly :deep(.n-button__content),
-.header-model-button--readonly :deep(.n-button__icon) {
-  cursor: default;
-}
-
-.header-model-button :deep(.n-button__content) {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .chat-mode-toggle {
   display: flex;
   align-items: center;
@@ -2325,26 +2891,49 @@ async function handleSessionModelCustomSubmit() {
 
 @media (max-width: $breakpoint-mobile) {
   .chat-header {
-    padding: 16px 12px 16px 52px;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 12px 16px 52px;
   }
 
   .header-sidebar-toggle {
     display: none;
   }
 
+  .header-session-title {
+    display: none;
+  }
+
 }
 
 .workspace-badge {
+  border: 0;
   font-size: 11px;
+  line-height: 16px;
   color: $text-muted;
   background: rgba(255, 255, 255, 0.05);
   padding: 2px 8px;
   border-radius: 4px;
   max-width: 160px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: default;
+  cursor: pointer;
+
+  svg {
+    flex: 0 0 auto;
+  }
+
+  span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &:hover {
+    color: $text-secondary;
+    background: rgba(var(--accent-primary-rgb), 0.06);
+  }
 }
 
 .header-tool-toggle.active {
@@ -2493,6 +3082,159 @@ async function handleSessionModelCustomSubmit() {
 
   .chat-tool-resize-handle {
     display: none;
+  }
+}
+
+/* ── Default Workspace Feature ─────────────────────────────────── */
+
+.default-workspace-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.default-workspace-label {
+  font-size: 13px;
+  color: var(--n-text-color-3);
+  flex-shrink: 0;
+}
+
+.workspace-chips-container {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  position: relative;
+}
+
+.workspace-chip {
+  padding: 4px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-chip:hover {
+  background: rgba(var(--accent-primary-rgb), 0.06);
+  border-color: var(--accent-muted);
+  color: var(--text-primary);
+}
+
+.workspace-chip.active {
+  background: rgba(var(--accent-primary-rgb), 0.12);
+  border-color: var(--accent-muted);
+  color: var(--accent-primary);
+  font-weight: 500;
+}
+
+.workspace-chip-separator {
+  color: var(--n-text-color-3);
+  font-size: 13px;
+  user-select: none;
+}
+
+.workspace-chip-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.workspace-chip-more {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  font-size: 13px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  color: var(--text-secondary);
+}
+
+.workspace-chip-more:hover {
+  background: rgba(var(--accent-primary-rgb), 0.06);
+  border-color: var(--accent-muted);
+  color: var(--text-primary);
+}
+
+.workspace-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  min-width: 200px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 9999;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.workspace-dropdown-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-dropdown-item:hover {
+  background: var(--n-color-hover);
+}
+
+.workspace-default-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #f5a623;
+  background: rgba(245, 166, 35, 0.12);
+  border: 1px solid rgba(245, 166, 35, 0.3);
+  border-radius: 3px;
+  vertical-align: middle;
+}
+
+.recent-workspaces {
+  margin-top: 8px;
+}
+
+.recent-workspaces-label {
+  display: block;
+  font-size: 11px;
+  color: $text-muted;
+  margin-bottom: 4px;
+}
+
+.recent-workspaces-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.recent-pin-icon {
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  color: $text-muted;
+  transition: color $transition-fast;
+
+  &:hover {
+    color: #f5a623;
   }
 }
 </style>

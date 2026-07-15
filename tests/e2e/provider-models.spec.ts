@@ -1,6 +1,16 @@
 import { expect, test } from '@playwright/test'
 import { authenticate, mockHermesApi, TEST_ACCESS_KEY } from './fixtures'
 
+test('opens the provider form when model settings are entered from setup guidance', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY)
+  await mockHermesApi(page)
+
+  await page.goto('/#/hermes/models?addProvider=1')
+
+  await expect(page.getByText('Provider Type')).toBeVisible()
+  await expect(page).toHaveURL(/#\/hermes\/models$/)
+})
+
 test('fetches custom provider models through the backend proxy', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY)
   const api = await mockHermesApi(page)

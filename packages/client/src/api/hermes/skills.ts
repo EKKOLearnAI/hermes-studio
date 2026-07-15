@@ -1,6 +1,7 @@
 import { request, getBaseUrlValue, getApiKey, getActiveProfileName } from '../client'
 
 export type SkillSource = 'builtin' | 'hub' | 'local' | 'external'
+export type SkillTarget = 'hermes' | 'claude' | 'codex'
 
 export interface SkillInfo {
   name: string
@@ -102,8 +103,11 @@ export interface SkillUsageStats {
   top_skills: SkillUsageRow[]
 }
 
-export async function fetchSkills(profile?: string): Promise<SkillsData> {
-  const query = profile ? `?profile=${encodeURIComponent(profile)}` : ''
+export async function fetchSkills(profile?: string, target: SkillTarget = 'hermes'): Promise<SkillsData> {
+  const params = new URLSearchParams()
+  if (profile) params.set('profile', profile)
+  if (target !== 'hermes') params.set('target', target)
+  const query = params.toString() ? `?${params.toString()}` : ''
   const res = await request<SkillListResponse>(`/api/hermes/skills${query}`)
   return { categories: res.categories, archived: res.archived ?? [], paths: res.paths }
 }
@@ -113,13 +117,32 @@ export async function fetchSkillUsageStats(days = 7): Promise<SkillUsageStats> {
   return request<SkillUsageStats>(`/api/hermes/skills/usage/stats?${params}`)
 }
 
-export async function fetchSkillContent(skillPath: string): Promise<string> {
-  const res = await request<{ content: string }>(`/api/hermes/skills/${skillPath}`)
+function targetQuery(target: SkillTarget = 'hermes'): string {
+  if (target === 'hermes') return ''
+  return `?target=${encodeURIComponent(target)}`
+}
+
+export async function fetchSkillContent(skillPath: string, target: SkillTarget = 'hermes'): Promise<string> {
+  const res = await request<{ content: string }>(`/api/hermes/skills/${skillPath}${targetQuery(target)}`)
   return res.content
 }
 
-export async function fetchSkillFiles(category: string, skill: string): Promise<SkillFileEntry[]> {
-  const res = await request<{ files: SkillFileEntry[] }>(`/api/hermes/skills/${category}/${skill}/files`)
+export async function saveSkillContent(
+  category: string,
+  skill: string,
+  content: string,
+  target: SkillTarget = 'hermes',
+): Promise<void> {
+  const c = encodeURIComponent(category)
+  const s = encodeURIComponent(skill)
+  await request(`/api/hermes/skills/${c}/${s}${targetQuery(target)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
+  })
+}
+
+export async function fetchSkillFiles(category: string, skill: string, target: SkillTarget = 'hermes'): Promise<SkillFileEntry[]> {
+  const res = await request<{ files: SkillFileEntry[] }>(`/api/hermes/skills/${category}/${skill}/files${targetQuery(target)}`)
   return res.files
 }
 

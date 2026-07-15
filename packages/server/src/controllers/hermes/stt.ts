@@ -5,6 +5,7 @@ import {
   assertActiveSttProvider,
   assertStoredSttProvider,
   clearStoredSttSecret,
+  deleteSttProviderSetting,
   getActiveSttProvider,
   getSttProviderSetting,
   isStoredSttProvider,
@@ -20,15 +21,10 @@ import { SttProviderConfigError, transcribeWithProvider } from '../../services/h
 import { SttNoSpeechDetectedError } from '../../services/hermes/stt-providers/types'
 import { logger } from '../../services/logger'
 import { getActiveGlobalAgentServer } from '../../services/global-agent/server'
+import { MCU_TTS_SAMPLE_RATE, mcuPromptText, mcuPromptUrl } from '../../services/hermes/mcu-prompts'
 
 const MAX_STT_UPLOAD_SIZE = 50 * 1024 * 1024
 const MCU_STT_TIMEOUT_MS = 120_000
-const MISSING_STT_PROMPT_TEXT = '当前profile没有配置语音转文字，请配置后再使用哦'
-const MISSING_STT_PROMPT_PCM_URL =
-  'https://ekko-hermes-studio.oss-cn-beijing.aliyuncs.com/current-profile-stt-not-configured-xiaohe.s16le.pcm'
-const STT_TRANSCRIBE_FAILED_PROMPT_TEXT = '当前语音转文字失败了，请配置下语音转文字再使用哦'
-const STT_TRANSCRIBE_FAILED_PROMPT_PCM_URL =
-  'https://ekko-hermes-studio.oss-cn-beijing.aliyuncs.com/stt-transcribe-failed-xiaohe.s16le.pcm'
 
 interface ParsedPart {
   fieldName: string
@@ -56,9 +52,9 @@ function authUserId(ctx: Context): number | null {
 }
 
 function requestedProfile(ctx: Context): string {
-  const queryProfile = typeof ctx.query.profile === 'string' ? ctx.query.profile : ''
+  const queryProfile = typeof ctx.query?.profile === 'string' ? ctx.query.profile : ''
   const headerProfile = ctx.get?.('x-hermes-profile') || ''
-  return (ctx.state.profile?.name || queryProfile || headerProfile || 'default').trim() || 'default'
+  return (ctx.state?.profile?.name || queryProfile || headerProfile || 'default').trim() || 'default'
 }
 
 function bearerToken(ctx: Context): string {
@@ -67,8 +63,8 @@ function bearerToken(ctx: Context): string {
   return match?.[1]?.trim() || ''
 }
 
-function resolveSttProfileStatus(userId: number, profile: string) {
-  const activeProvider = getActiveSttProvider(userId)
+function resolveSttProfileStatus(profile: string) {
+  const activeProvider = getActiveSttProvider(profile)
   if (!activeProvider || activeProvider === 'browser') {
     return {
       profile,
@@ -87,7 +83,7 @@ function resolveSttProfileStatus(userId: number, profile: string) {
     }
   }
 
-  const storedSetting = getSttProviderSetting(userId, activeProvider, { includeSecrets: true })
+  const storedSetting = getSttProviderSetting(profile, activeProvider, { includeSecrets: true })
   const hasSecret = Boolean(storedSetting?.secrets.apiKey)
   return {
     profile,
@@ -292,9 +288,10 @@ export async function listSettings(ctx: Context) {
   if (!userId) return
 
   try {
+    const profile = requestedProfile(ctx)
     ctx.body = {
-      settings: listSttProviderSettings(userId),
-      activeProvider: getActiveSttProvider(userId),
+      settings: listSttProviderSettings(profile),
+      activeProvider: getActiveSttProvider(profile),
     }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
@@ -306,25 +303,25 @@ export async function profileStatus(ctx: Context) {
   const userId = authUserId(ctx)
   if (!userId) return
 
-  ctx.body = resolveSttProfileStatus(userId, requestedProfile(ctx))
+  ctx.body = resolveSttProfileStatus(requestedProfile(ctx))
 }
 
 export async function missingProfileAudio(ctx: Context) {
   const userId = authUserId(ctx)
   if (!userId) return
 
-  const status = resolveSttProfileStatus(userId, requestedProfile(ctx))
+  const status = resolveSttProfileStatus(requestedProfile(ctx))
   if (status.configured) {
     ctx.status = 204
     return
   }
 
   ctx.status = 302
-  ctx.set('Location', MISSING_STT_PROMPT_PCM_URL)
+  ctx.set('Location', mcuPromptUrl('missing-stt'))
   ctx.set('Cache-Control', 'public, max-age=31536000, immutable')
   ctx.set('X-Hermes-STT-Configured', 'false')
   ctx.set('X-Hermes-STT-Reason', status.reason || 'stt_not_configured')
-  ctx.body = { url: MISSING_STT_PROMPT_PCM_URL }
+  ctx.body = { url: mcuPromptUrl('missing-stt') }
 }
 
 export async function saveSettings(ctx: Context) {
@@ -339,14 +336,15 @@ export async function saveSettings(ctx: Context) {
   } | undefined
 
   try {
+    const profile = requestedProfile(ctx)
     const storedProvider = assertStoredSttProvider(provider)
-    const setting = saveSttProviderSetting(userId, storedProvider, {
+    const setting = saveSttProviderSetting(profile, storedProvider, {
       settings: body?.settings,
       secrets: body?.secrets,
     })
     const activeProvider = body?.activeProvider === undefined
-      ? saveActiveSttProvider(userId, storedProvider)
-      : saveActiveSttProvider(userId, assertActiveSttProvider(String(body.activeProvider)))
+      ? saveActiveSttProvider(profile, storedProvider)
+      : saveActiveSttProvider(profile, assertActiveSttProvider(String(body.activeProvider)))
 
     ctx.body = { setting, activeProvider }
   } catch (error) {
@@ -368,7 +366,9 @@ export async function deleteBaseUrlPreset(ctx: Context) {
   }
 
   try {
-    const setting = removeSttBaseUrlPreset(userId, assertStoredSttProvider(provider), rawUrl)
+    const profile = requestedProfile(ctx)
+    const storedProvider = assertStoredSttProvider(provider)
+    const setting = removeSttBaseUrlPreset(profile, storedProvider, rawUrl)
     ctx.body = { success: true, setting }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
@@ -384,8 +384,31 @@ export async function deleteSecret(ctx: Context) {
   const secretName = ctx.params.secretName || ''
 
   try {
-    const setting = clearStoredSttSecret(userId, assertStoredSttProvider(provider), secretName)
+    const profile = requestedProfile(ctx)
+    const storedProvider = assertStoredSttProvider(provider)
+    const setting = clearStoredSttSecret(profile, storedProvider, secretName)
     ctx.body = { success: true, setting }
+  } catch (error) {
+    if (handleSettingsError(ctx, error)) return
+    throw error
+  }
+}
+
+export async function deleteProvider(ctx: Context) {
+  const userId = authUserId(ctx)
+  if (!userId) return
+
+  const provider = ctx.params.provider || ''
+
+  try {
+    const profile = requestedProfile(ctx)
+    const storedProvider = assertStoredSttProvider(provider)
+    const deleted = deleteSttProviderSetting(profile, storedProvider)
+    const currentActiveProvider = getActiveSttProvider(profile)
+    const activeProvider = currentActiveProvider === storedProvider
+      ? saveActiveSttProvider(profile, 'browser')
+      : currentActiveProvider
+    ctx.body = { success: true, deleted, activeProvider }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
     throw error
@@ -399,7 +422,8 @@ export async function saveActiveProvider(ctx: Context) {
   const body = ctx.request.body as { provider?: unknown } | undefined
 
   try {
-    const activeProvider = saveActiveSttProvider(userId, assertActiveSttProvider(String(body?.provider || '')))
+    const profile = requestedProfile(ctx)
+    const activeProvider = saveActiveSttProvider(profile, assertActiveSttProvider(String(body?.provider || '')))
     ctx.body = { activeProvider }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
@@ -437,7 +461,7 @@ export async function transcribe(ctx: Context) {
     return
   }
 
-  const storedSetting = getSttProviderSetting(userId, provider, { includeSecrets: true })
+  const storedSetting = getSttProviderSetting(requestedProfile(ctx), provider, { includeSecrets: true })
   if (!storedSetting) {
     ctx.status = 400
     ctx.body = { error: `STT settings are required for provider ${provider}` }
@@ -494,18 +518,18 @@ export async function mcuVoiceTurn(ctx: Context) {
   if (!userId) return
 
   const profile = requestedProfile(ctx)
-  const status = resolveSttProfileStatus(userId, profile)
+  const status = resolveSttProfileStatus(profile)
   if (!status.configured || !status.activeProvider || status.activeProvider === 'browser' || !isStoredSttProvider(status.activeProvider)) {
     ctx.body = {
       ok: false,
       profile,
       reason: status.reason || 'stt_not_configured',
       audio: {
-        text: MISSING_STT_PROMPT_TEXT,
-        url: MISSING_STT_PROMPT_PCM_URL,
+        text: mcuPromptText('missing-stt'),
+        url: mcuPromptUrl('missing-stt'),
         mimeType: 'audio/x-pcm',
         format: 's16le',
-        sampleRate: 16000,
+        sampleRate: MCU_TTS_SAMPLE_RATE,
         channels: 1,
       },
     }
@@ -519,18 +543,18 @@ export async function mcuVoiceTurn(ctx: Context) {
     return
   }
 
-  const storedSetting = getSttProviderSetting(userId, status.activeProvider, { includeSecrets: true })
+  const storedSetting = getSttProviderSetting(profile, status.activeProvider, { includeSecrets: true })
   if (!storedSetting?.secrets.apiKey) {
     ctx.body = {
       ok: false,
       profile,
       reason: 'active_stt_provider_secret_missing',
       audio: {
-        text: MISSING_STT_PROMPT_TEXT,
-        url: MISSING_STT_PROMPT_PCM_URL,
+        text: mcuPromptText('missing-stt'),
+        url: mcuPromptUrl('missing-stt'),
         mimeType: 'audio/x-pcm',
         format: 's16le',
-        sampleRate: 16000,
+        sampleRate: MCU_TTS_SAMPLE_RATE,
         channels: 1,
       },
     }
@@ -666,11 +690,11 @@ export async function mcuVoiceTurn(ctx: Context) {
         type: 'audio.enqueue',
         interactionId,
         segmentId: `${interactionId}-stt-failed`,
-        text: STT_TRANSCRIBE_FAILED_PROMPT_TEXT,
-        url: STT_TRANSCRIBE_FAILED_PROMPT_PCM_URL,
+        text: mcuPromptText('stt-failed'),
+        url: mcuPromptUrl('stt-failed'),
         mimeType: 'audio/x-pcm',
         format: 's16le',
-        sampleRate: 16000,
+        sampleRate: MCU_TTS_SAMPLE_RATE,
         channels: 1,
       }, { clientId })
     } finally {

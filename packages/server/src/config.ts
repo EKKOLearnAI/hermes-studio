@@ -18,12 +18,14 @@ import { homedir } from 'os'
  *
  * Auth:
  * - AUTH_TOKEN: Explicit bearer token. If unset, Web UI stores an auto-generated token under HERMES_WEB_UI_HOME.
+ * - HERMES_WEB_UI_AUTH_JWT_EXPIRES_IN: Username/password session JWT lifetime. Supports seconds or s/m/h/d suffixes. Default: 30d.
  *
  * Runtime behavior:
  * - PROFILE: Initial Hermes profile name. Default: default.
  * - HERMES_GATEWAY_URL / GATEWAY_URL: Explicit Hermes gateway upstream URL for proxy routes.
  * - GATEWAY_HOST: Default Hermes gateway upstream host. Default: 127.0.0.1.
  * - GATEWAY_PORT: Default Hermes gateway upstream port. Default: 8642.
+ * - HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART: Disable Web UI gateway autostart checks and config-driven gateway start/stop reconciliation.
  * - HERMES_WEB_UI_MANAGED_GATEWAY: Web UI-managed Hermes gateway handling. Enabled by default; set 0/false/off to use CLI start.
  * - HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN: Whether Web UI shutdown also stops managed gateways.
  * - HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT: Disable Hermes Studio MCP config injection.
@@ -59,6 +61,9 @@ export function getCorsOrigins(env: Record<string, string | undefined> = process
 }
 
 const appHome = getWebUiHome()
+const remoteRelay = {
+  url: 'https://api.hermes-studio.ai',
+}
 
 export const config = {
   port: parseInt(process.env.PORT || '8648', 10),
@@ -68,4 +73,5 @@ export const config = {
   uploadDir: process.env.UPLOAD_DIR || join(appHome, 'upload'),
   dataDir: resolve(__dirname, '..', 'data'),
   corsOrigins: getCorsOrigins(),
+  remoteRelay,
 }

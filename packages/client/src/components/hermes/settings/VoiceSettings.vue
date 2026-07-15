@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NButton, NInput, NSelect, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSpeech, type MimoTtsOptions, type OpenaiTtsOptions } from '@/composables/useSpeech'
-import { useMicRecorder } from '@/composables/useMicRecorder'
+import { usePcmStreamRecorder } from '@/composables/usePcmStreamRecorder'
 import { transcribeSpeech } from '@/api/hermes/stt'
 import { useVoiceApiConnections } from '@/composables/useVoiceApiConnections'
+import { useVoiceSettings } from '@/composables/useVoiceSettings'
+import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
 import VoiceApiCard, { type VoiceApiCardTestState } from './voice/VoiceApiCard.vue'
 import VoiceApiFormModal from './voice/VoiceApiFormModal.vue'
 import VoiceApiConfigurator from './voice/VoiceApiConfigurator.vue'
@@ -22,13 +24,14 @@ const { t } = useI18n()
 const message = useMessage()
 const speech = useSpeech()
 const voiceApi = useVoiceApiConnections()
+const voiceSettings = useVoiceSettings()
 
 const testText = ref(t('settings.voice.testTextDefault'))
 const showAddModal = ref(false)
 const addModalKind = ref<VoiceApiKind>('tts')
 const showConfigurator = ref(false)
 const editingConnection = ref<VoiceApiConnection | null>(null)
-const sttRecorder = useMicRecorder({ maxDurationMs: 30_000 })
+const sttRecorder = usePcmStreamRecorder({ voiceActivityThreshold: 0.02 })
 const cardTestStates = ref<Record<string, VoiceApiCardTestState>>({})
 
 const activeTtsDescription = computed(() => voiceApi.activeTtsConnection.value?.label || t('settings.voice.noneSelected'))
@@ -36,6 +39,10 @@ const activeSttDescription = computed(() => voiceApi.activeSttConnection.value?.
 
 onMounted(async () => {
   await voiceApi.refresh()
+})
+
+onBeforeUnmount(() => {
+  sttRecorder.cancel()
 })
 
 function openAddModal(kind: VoiceApiKind) {
@@ -124,12 +131,18 @@ function openaiOptionsFor(connection: VoiceApiConnection): OpenaiTtsOptions {
   const provider = connection.provider === 'edge' || connection.provider === 'openai' || connection.provider === 'custom' || connection.provider === 'doubao'
     ? connection.provider
     : undefined
+  const edgeRate = Number(options.rate)
+  const edgePitch = Number(options.pitch)
   return {
     baseUrl: String(options.baseUrl || ''),
     model: typeof options.model === 'string' ? options.model : undefined,
     voice: typeof options.voice === 'string' ? options.voice : undefined,
-    rate: typeof options.rate === 'string' ? options.rate : undefined,
-    pitch: typeof options.pitch === 'string' ? options.pitch : undefined,
+    rate: connection.provider === 'edge' && Number.isFinite(edgeRate)
+      ? speedToEdgeRate(edgeRate)
+      : typeof options.rate === 'string' ? options.rate : undefined,
+    pitch: connection.provider === 'edge' && Number.isFinite(edgePitch)
+      ? hzToEdgePitch(edgePitch)
+      : typeof options.pitch === 'string' ? options.pitch : undefined,
     stylePrompt: typeof options.stylePrompt === 'string' ? options.stylePrompt : undefined,
     provider,
   }
@@ -144,8 +157,12 @@ function mimoOptionsFor(connection: VoiceApiConnection): MimoTtsOptions {
     authMode: options.authMode === 'api-key' || options.authMode === 'bearer' || options.authMode === 'both' ? options.authMode : undefined,
     voiceMode: options.voiceMode === 'preset' || options.voiceMode === 'voiceDesign' || options.voiceMode === 'voiceClone' ? options.voiceMode : undefined,
     voiceDesignDesc: typeof options.voiceDesignDesc === 'string' ? options.voiceDesignDesc : undefined,
-    voiceCloneDataUri: typeof options.voiceCloneDataUri === 'string' ? options.voiceCloneDataUri : undefined,
-    voiceCloneFormat: options.voiceCloneFormat === 'mp3' || options.voiceCloneFormat === 'wav' ? options.voiceCloneFormat : undefined,
+    voiceCloneDataUri: typeof options.voiceCloneDataUri === 'string'
+      ? options.voiceCloneDataUri
+      : voiceSettings.mimoVoiceCloneDataUri.value || undefined,
+    voiceCloneFormat: options.voiceCloneFormat === 'mp3' || options.voiceCloneFormat === 'wav'
+      ? options.voiceCloneFormat
+      : voiceSettings.mimoVoiceCloneFormat.value,
     stylePrompt: typeof options.stylePrompt === 'string' ? options.stylePrompt : undefined,
   }
 }
@@ -190,7 +207,7 @@ async function handleSttTest(connection: VoiceApiConnection) {
     setCardTestState(connection.id, 'loading', t('settings.voice.transcribing'))
     try {
       const audio = await sttRecorder.stop()
-      if (!audio.size) {
+      if (!audio?.size) {
         setCardTestState(connection.id, 'error', t('settings.voice.sttEmptyAudio'))
         return
       }

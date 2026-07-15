@@ -35,6 +35,22 @@ const mockUsageStore = vi.hoisted(() => ({
       cachePercent: 33.333,
     },
   ],
+  agentUsage: [
+    {
+      agent: 'hermes',
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheTokens: 75,
+      cacheWriteTokens: 10,
+      totalTokens: 150,
+      visualTokens: 225,
+      sessions: 2,
+      color: '#63b3ed',
+      inputPercent: 44.444,
+      outputPercent: 22.222,
+      cachePercent: 33.333,
+    },
+  ],
 }))
 
 vi.mock('@/stores/hermes/usage', () => ({
@@ -49,6 +65,7 @@ vi.mock('vue-i18n', () => ({
 
 import DailyTrend from '@/components/hermes/usage/DailyTrend.vue'
 import ModelBreakdown from '@/components/hermes/usage/ModelBreakdown.vue'
+import AgentBreakdown from '@/components/hermes/usage/AgentBreakdown.vue'
 
 describe('usage cache visualizations', () => {
   it('renders cache-read as a visible segment in the daily usage bars', () => {
@@ -69,5 +86,15 @@ describe('usage cache visualizations', () => {
     const cacheSegment = wrapper.find('.model-bar-segment.cache')
     expect(cacheSegment.exists()).toBe(true)
     expect(cacheSegment.attributes('style')).toContain('width: 33.333%')
+  })
+
+  it('renders agent breakdown as input/output/cache stacked segments', () => {
+    const wrapper = mount(AgentBreakdown)
+
+    expect(wrapper.text()).toContain('usage.agents.hermes')
+    expect(wrapper.find('.agent-swatch').attributes('style')).toContain('background: rgb(99, 179, 237)')
+    expect(wrapper.find('.agent-bar-segment.input').exists()).toBe(true)
+    expect(wrapper.find('.agent-bar-segment.output').exists()).toBe(true)
+    expect(wrapper.find('.agent-bar-segment.cache').attributes('style')).toContain('width: 33.333%')
   })
 })

@@ -7,6 +7,7 @@ import {
   cpSync,
   existsSync,
   lstatSync,
+  mkdtempSync,
   mkdirSync,
   readdirSync,
   rmSync,
@@ -17,7 +18,7 @@ import {
 import { basename, resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { platform as osPlatform, arch as osArch, homedir as osHomedir } from 'node:os'
+import { platform as osPlatform, arch as osArch, homedir as osHomedir, tmpdir } from 'node:os'
 import { hermesVersion } from './runtime-config.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -55,6 +56,11 @@ const EXTRA_PYTHON_PACKAGES = splitPackageList(
 const BROWSER_PACKAGES = splitPackageList(
   process.env.HERMES_BROWSER_PACKAGES || 'agent-browser@^0.26.0 @askjo/camofox-browser@^1.5.2',
 )
+const CHROME_FOR_TESTING_VERSION = (
+  process.env.HERMES_CHROME_FOR_TESTING_VERSION
+  || process.env.HERMES_WINDOWS_CHROME_FOR_TESTING_VERSION
+  || '149.0.7827.55'
+).trim()
 const SKIP_BROWSER_RUNTIME = process.env.HERMES_SKIP_BROWSER_RUNTIME === '1'
   || process.env.HERMES_SKIP_BROWSER_RUNTIME?.toLowerCase() === 'true'
 
@@ -265,6 +271,98 @@ function findBundledBrowserExecutable() {
   return findBrowserInstallInHome(AGENT_BROWSER_HOME)?.executable ?? null
 }
 
+function shouldPinChromeForTesting() {
+  if (!CHROME_FOR_TESTING_VERSION) return false
+  return !['0', 'false', 'off', 'auto'].includes(CHROME_FOR_TESTING_VERSION.toLowerCase())
+}
+
+function chromeForTestingPlatform() {
+  if (TARGET_OS === 'win32' && TARGET_ARCH === 'x64') return 'win64'
+  if (TARGET_OS === 'darwin' && TARGET_ARCH === 'arm64') return 'mac-arm64'
+  if (TARGET_OS === 'darwin' && TARGET_ARCH === 'x64') return 'mac-x64'
+  if (TARGET_OS === 'linux' && TARGET_ARCH === 'x64') return 'linux64'
+  throw new Error(`Pinned Chrome for Testing is not configured for ${TARGET_OS}-${TARGET_ARCH}`)
+}
+
+function chromeForTestingUrl() {
+  if (process.env.HERMES_CHROME_FOR_TESTING_URL?.trim()) {
+    return process.env.HERMES_CHROME_FOR_TESTING_URL.trim()
+  }
+  if (process.env.HERMES_WINDOWS_CHROME_FOR_TESTING_URL?.trim()) {
+    return process.env.HERMES_WINDOWS_CHROME_FOR_TESTING_URL.trim()
+  }
+  const platform = chromeForTestingPlatform()
+  return `https://storage.googleapis.com/chrome-for-testing-public/${CHROME_FOR_TESTING_VERSION}/${platform}/chrome-${platform}.zip`
+}
+
+function removeChromeBundles() {
+  const browsersDir = join(AGENT_BROWSER_HOME, 'browsers')
+  if (!existsSync(browsersDir)) return
+
+  for (const entry of readdirSync(browsersDir, { withFileTypes: true })) {
+    if (entry.isDirectory() && entry.name.startsWith('chrome-')) {
+      rmSync(join(browsersDir, entry.name), { recursive: true, force: true })
+    }
+  }
+}
+
+function extractChromeForTestingArchive(url, zipPath, extractDir) {
+  run(pyBin, [
+    '-c',
+    [
+      'import sys',
+      'import urllib.request',
+      'import zipfile',
+      'url, zip_path, extract_dir = sys.argv[1:4]',
+      'urllib.request.urlretrieve(url, zip_path)',
+      'with zipfile.ZipFile(zip_path) as archive:',
+      '    archive.extractall(extract_dir)',
+    ].join('\n'),
+    url,
+    zipPath,
+    extractDir,
+  ])
+}
+
+function extractedChromeBundleDir(extractDir) {
+  const entries = readdirSync(extractDir, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && entry.name.startsWith('chrome-'))
+    .map(entry => join(extractDir, entry.name))
+  if (entries.length === 0) return null
+  return entries[0]
+}
+
+function pinChromeForTestingBundle() {
+  if (!shouldPinChromeForTesting()) return
+
+  const targetBrowsersDir = join(AGENT_BROWSER_HOME, 'browsers')
+  const targetBundleDir = join(targetBrowsersDir, `chrome-${CHROME_FOR_TESTING_VERSION}`)
+  const tmpRoot = mkdtempSync(join(tmpdir(), 'hermes-cft-'))
+  const zipPath = join(tmpRoot, 'chrome.zip')
+  const extractDir = join(tmpRoot, 'extract')
+  const url = chromeForTestingUrl()
+
+  try {
+    console.log(`→ Pinning Chrome for Testing ${CHROME_FOR_TESTING_VERSION} for ${TARGET_OS}-${TARGET_ARCH}`)
+    mkdirSync(extractDir, { recursive: true })
+    extractChromeForTestingArchive(url, zipPath, extractDir)
+
+    const bundleDir = extractedChromeBundleDir(extractDir)
+    const executable = bundleDir ? findBrowserExecutableUnder(bundleDir, bundledBrowserExecutableNames()) : null
+    if (!executable) {
+      console.error(`Pinned Chrome for Testing archive did not contain a browser executable: ${url}`)
+      process.exit(1)
+    }
+
+    removeChromeBundles()
+    mkdirSync(targetBrowsersDir, { recursive: true })
+    cpSync(bundleDir, targetBundleDir, { recursive: true, force: true, verbatimSymlinks: true })
+    console.log(`✓ pinned Chrome for Testing at ${targetBundleDir}`)
+  } finally {
+    rmSync(tmpRoot, { recursive: true, force: true })
+  }
+}
+
 function ensureBundledBrowserExecutable() {
   const bundled = findBrowserInstallInHome(AGENT_BROWSER_HOME)
   if (bundled) return bundled.executable
@@ -357,6 +455,7 @@ function installBrowserRuntime() {
 
   console.log(`→ Installing Chromium for bundled agent-browser at ${AGENT_BROWSER_HOME}`)
   runInvocation(commandInvocation(ab), ['install'], { env: browserRuntimeEnv() })
+  pinChromeForTestingBundle()
 
   const browserExecutable = ensureBundledBrowserExecutable()
   if (!browserExecutable) {
@@ -383,15 +482,10 @@ run(pyBin, [
 ])
 
 const hermesBin = TARGET_OS === 'win32'
-  ? resolve(PY_DIR, 'Scripts', 'hermes.exe')
+  ? resolve(PY_DIR, 'Scripts', 'hermes.cmd')
   : resolve(PY_DIR, 'bin', 'hermes')
 const hermesCheckCommand = TARGET_OS === 'win32' ? pyBin : hermesBin
 const hermesCheckArgs = TARGET_OS === 'win32' ? ['-m', 'hermes_cli.main', '--version'] : ['--version']
-
-if (!existsSync(hermesBin)) {
-  console.error(`hermes binary not found at ${hermesBin} after install`)
-  process.exit(1)
-}
 
 // hermes-web-ui's agent-bridge searches for `run_agent.py` at <python_root>/run_agent.py
 // (and a few neighbouring dirs). pip places it at site-packages/run_agent.py — surface
@@ -422,17 +516,26 @@ function siteRunAgentRelative() {
 // shebang to the build-time Python path) with a relative wrapper so the
 // bundled venv works after being moved into the .app/.exe payload.
 if (TARGET_OS === 'win32') {
-  // Windows: pip generates a .exe launcher that embeds a relative shebang
-  // already. Add a .cmd wrapper that prefers the colocated python.exe.
-  const cmdPath = resolve(PY_DIR, 'Scripts', 'hermes.cmd')
-  writeFileSync(
-    cmdPath,
-    [
-      '@echo off',
-      'set "PY=%~dp0..\\python.exe"',
-      '"%PY%" -m hermes_cli.main %*',
-    ].join('\r\n'),
-  )
+  // Windows: uv/pip .exe launchers can embed build-machine paths. Replace the
+  // Hermes entry points with relocatable .cmd wrappers and remove the .exe
+  // trampolines so PATHEXT lookups cannot pick a stale launcher first.
+  const wrappers = [
+    ['hermes', 'hermes_cli.main'],
+    ['hermes-agent', 'run_agent'],
+    ['hermes-acp', 'acp_adapter.entry'],
+  ]
+  for (const [name, mod] of wrappers) {
+    const cmdPath = resolve(PY_DIR, 'Scripts', `${name}.cmd`)
+    writeFileSync(
+      cmdPath,
+      [
+        '@echo off',
+        'set "PY=%~dp0..\\python.exe"',
+        `"%PY%" -m ${mod} %*`,
+      ].join('\r\n'),
+    )
+    rmSync(resolve(PY_DIR, 'Scripts', `${name}.exe`), { force: true })
+  }
 } else {
   const launcher = [
     '#!/bin/sh',
@@ -456,6 +559,11 @@ if (TARGET_OS === 'win32') {
 }
 
 console.log(`✓ hermes installed at ${hermesBin} (relocatable launcher)`)
+
+if (!existsSync(hermesBin)) {
+  console.error(`hermes binary not found at ${hermesBin} after install`)
+  process.exit(1)
+}
 
 run(hermesCheckCommand, hermesCheckArgs)
 

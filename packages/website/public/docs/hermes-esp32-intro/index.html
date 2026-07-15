@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f2f2ee" />
+    <meta
+      name="description"
+      content="Hermes ESP32-C3 桌面 AI 对话小方盒，带小屏、麦克风、扬声器和实体按键。"
+    />
+    <title>Hermes ESP32-C3 | 把你的 AI 放到桌面上</title>
+    <link rel="icon" type="image/png" href="public/assets/products/hd/black-hd.png" />
+    <link rel="stylesheet" href="styles.css" />
+    <script defer src="script.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+    <header class="site-header">
+      <div class="header-shell">
+        <a class="brand" href="#top" aria-label="Hermes ESP32-C3 首页">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>HERMES <i>/</i> ESP32-C3</span>
+        </a>
+
+        <nav class="desktop-nav" aria-label="主导航">
+          <a href="#hardware">功能</a>
+          <a href="#colors">配色</a>
+          <a href="#connection">如何工作</a>
+          <a href="#specs">规格</a>
+        </nav>
+
+        <div class="header-actions">
+          <a
+            class="docs-link"
+            href="https://hermes-studio.ai/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Hermes Studio 官网
+          </a>
+          <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="mobile-menu">
+            <span class="sr-only">打开菜单</span>
+            <span></span><span></span>
+          </button>
+        </div>
+      </div>
+
+      <nav class="mobile-nav" id="mobile-menu" aria-label="移动端主导航">
+        <a href="#hardware">功能</a>
+        <a href="#colors">配色</a>
+        <a href="#connection">如何工作</a>
+        <a href="#specs">规格</a>
+      </nav>
+    </header>
+
+    <main id="main-content">
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <div class="hero-copy reveal">
+          <p class="eyebrow">ESP32-C3 / HERMES STUDIO</p>
+          <h1 id="hero-title">把你的 AI，<br /><em>放到桌面上。</em></h1>
+          <p class="hero-intro hero-purchase-intro">
+            <strong class="hero-price"><span>¥</span>99</strong>
+            <span>通过以下渠道购买</span>
+          </p>
+          <div class="purchase-links" aria-label="购买与社区渠道">
+            <a
+              class="purchase-icon-link"
+              href="https://www.goofish.com/item?id=1061059557051&amp;spm=widle.12011849.copy.detail&amp;ut_sk=1.Z39DFAK6GPgDAOkQ8AmuzKPg_12431167_1782134125235.copy.detail.1061059557051.3314708927"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往闲鱼购买"
+              title="闲鱼"
+            >
+              <img src="public/assets/icons/goofish.png" alt="" />
+              <span class="sr-only">闲鱼</span>
+            </a>
+            <a
+              class="purchase-icon-link"
+              href="https://www.xiaohongshu.com/explore/6a392766000000000603388a?source=webshare&amp;xhsshare=pc_web&amp;xsec_token=CBIdoSWLtVJK2hb23fBG8KsuTMVKROk6O6NR-ornGx584=&amp;xsec_source=pc_share"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往小红书购买"
+              title="小红书"
+            >
+              <img src="public/assets/icons/xiaohongshu.png" alt="" />
+              <span class="sr-only">小红书</span>
+            </a>
+            <a
+              class="purchase-icon-link"
+              href="https://v.douyin.com/1ckDESgpG9k/"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往抖音主页"
+              title="抖音"
+            >
+              <img src="public/assets/icons/douyin.png" alt="" />
+              <span class="sr-only">抖音</span>
+            </a>
+            <a
+              class="purchase-icon-link purchase-icon-link--inset"
+              href="https://space.bilibili.com/257809052"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往哔哩哔哩主页"
+              title="哔哩哔哩"
+            >
+              <img src="public/assets/icons/bilibili.png" alt="" />
+              <span class="sr-only">哔哩哔哩</span>
+            </a>
+            <a
+              class="purchase-icon-link purchase-icon-link--inset"
+              href="https://github.com/EKKOLearnAI/hermes-studio"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往 GitHub 项目主页"
+              title="GitHub"
+            >
+              <img src="public/assets/icons/github.svg" alt="" />
+              <span class="sr-only">GitHub</span>
+            </a>
+          </div>
+        </div>
+
+        <div class="hero-visual reveal reveal-delay" data-orbit-stage>
+          <div class="orbit-ring orbit-ring--outer" aria-hidden="true"></div>
+          <div class="orbit-ring orbit-ring--inner" aria-hidden="true"></div>
+          <div class="orbit-caption" aria-hidden="true">
+            <span>7 COLORS</span>
+            <span>ONE DESKTOP</span>
+          </div>
+
+          <div class="orbit-device" data-index="0" data-color="pink">
+            <img src="public/assets/products/hd/pink-hd.png" alt="玫瑰粉 Hermes ESP32-C3 正面设备" />
+          </div>
+          <div class="orbit-device" data-index="1" data-color="white">
+            <img src="public/assets/products/hd/white-hd.png" alt="暖瓷白 Hermes ESP32-C3 正面设备" />
+          </div>
+          <div class="orbit-device" data-index="2" data-color="orange">
+            <img src="public/assets/products/hd/orange-hd.png" alt="杏橙 Hermes ESP32-C3 背面设备" />
+          </div>
+          <div class="orbit-device" data-index="3" data-color="blue">
+            <img src="public/assets/products/hd/blue-hd.png" alt="天空蓝 Hermes ESP32-C3 侧面设备" />
+          </div>
+          <div class="orbit-device" data-index="4" data-color="green">
+            <img src="public/assets/products/hd/green-hd.png" alt="薄荷绿 Hermes ESP32-C3 正面设备" />
+          </div>
+          <div class="orbit-device" data-index="5" data-color="black">
+            <img src="public/assets/products/hd/black-hd.png" alt="石墨黑 Hermes ESP32-C3 正面设备" />
+          </div>
+          <div class="orbit-device" data-index="6" data-color="red">
+            <img src="public/assets/products/hd/red-hd.png" alt="深莓红 Hermes ESP32-C3 正面设备" />
+          </div>
+
+          <div class="orbit-status">
+            <span class="status-swatch" data-status-swatch></span>
+            <span data-status-label>玫瑰粉</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="signal-section" aria-labelledby="signal-title">
+        <div class="section-intro reveal">
+          <h2 id="signal-title">一个小方盒，一套完整的桌面回应。</h2>
+          <p>它把语音输入、AI 回复和实体反馈，放进一个可以真正触碰的设备里。</p>
+        </div>
+        <div class="signal-grid" role="list">
+          <div class="signal-item reveal" role="listitem">
+            <span class="signal-index">01</span>
+            <strong>听见</strong>
+            <p>麦克风接住你的声音。</p>
+          </div>
+          <div class="signal-item reveal reveal-delay-1" role="listitem">
+            <span class="signal-index">02</span>
+            <strong>理解</strong>
+            <p>Hermes Studio 负责模型与服务。</p>
+          </div>
+          <div class="signal-item reveal reveal-delay-2" role="listitem">
+            <span class="signal-index">03</span>
+            <strong>回应</strong>
+            <p>扬声器把回复带回桌面。</p>
+          </div>
+          <div class="signal-item reveal reveal-delay-3" role="listitem">
+            <span class="signal-index">04</span>
+            <strong>触碰</strong>
+            <p>实体按键让控制动作更明确。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="feature-section feature-section--screen" id="hardware" aria-labelledby="screen-title">
+        <div class="feature-visual reveal">
+          <span class="feature-orbit" aria-hidden="true"></span>
+          <img src="public/assets/products/hd/pink-hd.png" alt="玫瑰粉设备正面的小屏显示表情和连接状态" />
+        </div>
+        <div class="feature-copy reveal reveal-delay">
+          <p class="feature-kicker">小屏表情入口</p>
+          <h2 id="screen-title">让状态被看见。</h2>
+          <p>
+            正面小屏显示连接状态、配网提示和表情反馈。它不只是一个开发板，更像一件会回应你的桌面设备。
+          </p>
+        </div>
+      </section>
+
+      <section class="colors-section" id="colors" aria-labelledby="colors-title">
+        <div class="colors-heading reveal">
+          <h2 id="colors-title">七种颜色，同一张桌面。</h2>
+          <p>从安静的暖瓷白，到更有存在感的深莓红。选一台和你的桌面相处舒服的颜色。</p>
+        </div>
+
+        <div class="color-rail" role="list" aria-label="选择设备颜色">
+          <button class="color-item is-selected" type="button" data-color-choice="pink" aria-pressed="true" role="listitem">
+            <span class="color-image"><img src="public/assets/products/hd/pink-hd.png" alt="" /></span>
+            <span class="color-name">玫瑰粉</span>
+            <span class="color-code">PINK</span>
+          </button>
+          <button class="color-item" type="button" data-color-choice="green" aria-pressed="false" role="listitem">
+            <span class="color-image"><img src="public/assets/products/hd/green-hd.png" alt="" /></span>
+            <span class="color-name">薄荷绿</span>
+            <span class="color-code">GREEN</span>
+          </button>
+          <button class="color-item" type="button" data-color-choice="red" aria-pressed="false" role="listitem">
+            <span class="color-image"><img src="public/assets/products/hd/red-hd.png" alt="" /></span>
+            <span class="color-name">深莓红</span>
+            <span class="color-code">RED</span>
+          </button>
+          <button class="color-item" type="button" data-color-choice="white" aria-pressed="false" role="listitem">
+            <span class="color-image"><img src="public/assets/products/hd/white-hd.png" alt="" /></span>
+            <span class="color-name">暖瓷白</span>
+            <span class="color-code">WHITE</span>
+          </button>
+          <button class="color-item" type="button" data-color-choice="blue" aria-pressed="false" role="listitem">
+            <span class="color-image"><img src="public/assets/products/hd/blue-hd.png" alt="" /></span>
+            <span class="color-name">天空蓝</span>
+            <span class="color-code">BLUE</span>
+          </button>
+          <button class="color-item" type="button" data-color-choice="orange" aria-pressed="false" role="listitem">
+            <span class="color-image"><img src="public/assets/products/hd/orange-hd.png" alt="" /></span>
+            <span class="color-name">杏橙</span>
+            <span class="color-code">ORANGE</span>
+          </button>
+          <button class="color-item" type="button" data-color-choice="black" aria-pressed="false" role="listitem">
+            <span class="color-image"><img src="public/assets/products/hd/black-hd.png" alt="" /></span>
+            <span class="color-name">石墨黑</span>
+            <span class="color-code">BLACK</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="connection-section" id="connection" aria-labelledby="connection-title">
+        <div class="connection-layout">
+          <div class="connection-heading reveal">
+            <p class="connection-kicker">CONNECTION / 连接方式</p>
+            <h2 id="connection-title">硬件在桌面，AI 在 Studio。</h2>
+            <p>小方盒负责听见、显示与播放；电脑或云服务器上的 Hermes Studio 负责模型、语音识别和语音合成。</p>
+            <div class="connection-facts" aria-label="连接要求">
+              <span><i aria-hidden="true"></i> 2.4GHz Wi-Fi</span>
+              <span><i aria-hidden="true"></i> Hermes Studio 在线</span>
+            </div>
+            <a class="connection-docs-link" href="https://hermes-studio.ai/#/docs/esp32" target="_blank" rel="noreferrer">
+              查看配对说明 <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+
+          <div class="connection-panel reveal reveal-delay">
+            <div class="connection-panel-header">
+              <span class="connection-panel-title">DEVICE ROUTE / 设备链路</span>
+              <span class="connection-panel-status"><i aria-hidden="true"></i> 双向通信</span>
+            </div>
+
+            <div class="system-map" aria-label="设备与 Hermes Studio 的双向连接路径">
+              <div class="system-node system-node--device">
+                <span class="system-node-index">01 / DEVICE</span>
+                <span class="system-icon system-icon--box" aria-hidden="true"></span>
+                <strong>Hermes 小方盒</strong>
+                <small>麦克风 · 屏幕 · 扬声器 · 按键</small>
+              </div>
+
+              <div class="system-transport" aria-label="通过网络双向传输">
+                <span class="transport-name">2.4GHz Wi-Fi / Internet</span>
+                <div class="transport-lane transport-lane--outbound">
+                  <span>语音与按键事件</span>
+                  <i aria-hidden="true"></i>
+                </div>
+                <div class="transport-lane transport-lane--inbound">
+                  <i aria-hidden="true"></i>
+                  <span>语音与屏幕状态</span>
+                </div>
+                <small>局域网直连或远程服务</small>
+              </div>
+
+              <div class="system-node system-node--studio">
+                <span class="system-node-index">02 / RUNTIME</span>
+                <span class="system-icon system-icon--studio" aria-hidden="true"></span>
+                <strong>Hermes Studio</strong>
+                <small>Agent · 模型 · STT · TTS</small>
+              </div>
+            </div>
+
+            <ol class="connection-steps" aria-label="连接设备的三个步骤">
+              <li>
+                <span>01</span>
+                <strong>启动 Studio</strong>
+                <small>在电脑或服务器运行 Hermes Studio。</small>
+              </li>
+              <li>
+                <span>02</span>
+                <strong>接入网络</strong>
+                <small>让设备连上可访问 Studio 的 2.4GHz Wi-Fi。</small>
+              </li>
+              <li>
+                <span>03</span>
+                <strong>完成配对</strong>
+                <small>在设备页输入配对码，之后即可开始对话。</small>
+              </li>
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <section class="feature-section feature-section--button" aria-labelledby="button-title">
+        <div class="feature-copy reveal">
+          <p class="feature-kicker">实体按键控制</p>
+          <h2 id="button-title">每次触碰，都有回应。</h2>
+          <p>
+            侧边按键适合触发语音交互、切换模式或进入开发调试，让控制动作从屏幕里回到手上。
+          </p>
+        </div>
+        <div class="feature-visual feature-visual--blue reveal reveal-delay">
+          <span class="feature-orbit" aria-hidden="true"></span>
+          <img src="public/assets/products/hd/blue-hd.png" alt="天空蓝设备侧边的两个实体按键" />
+        </div>
+      </section>
+
+      <section class="specs-section" id="specs" aria-labelledby="specs-title">
+        <div class="specs-heading reveal">
+          <h2 id="specs-title">它适合怎样的桌面。</h2>
+          <p>这是开源硬件风格的桌面入口，不是完全独立的消费级智能音箱。</p>
+        </div>
+        <div class="spec-columns">
+          <div class="spec-group reveal">
+            <h3>核心规格</h3>
+            <dl>
+              <div><dt>主控</dt><dd>ESP32-C3</dd></div>
+              <div><dt>网络</dt><dd>2.4GHz Wi-Fi</dd></div>
+              <div><dt>显示</dt><dd>正面小屏</dd></div>
+              <div><dt>音频</dt><dd>麦克风 + 扬声器</dd></div>
+              <div><dt>控制</dt><dd>侧边实体按键</dd></div>
+              <div><dt>软件</dt><dd>Hermes Studio 固件</dd></div>
+            </dl>
+          </div>
+          <div class="fit-group reveal reveal-delay">
+            <h3>适合这些人</h3>
+            <ul>
+              <li>开源硬件玩家</li>
+              <li>AI Agent 用户</li>
+              <li>桌面助手原型开发者</li>
+              <li>想要实体 AI 交互入口的用户</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="notice-section" aria-labelledby="notice-title">
+        <div class="notice-copy reveal">
+          <h2 id="notice-title">买之前，先确认这五件事。</h2>
+          <p>了解它需要怎样的服务和网络环境，才能判断它是不是适合你的设备。</p>
+        </div>
+        <div class="notice-list reveal reveal-delay">
+          <p><span>01</span> 需要电脑端或云服务器 Hermes Studio，不能完全脱离服务独立聊天。</p>
+          <p><span>02</span> AI 回复、语音识别和语音合成依赖你自己的软件与服务配置。</p>
+          <p><span>03</span> ESP32 访问电脑时要填写局域网 IP。</p>
+          <p><span>04</span> 3D 打印外壳可能有轻微层纹。</p>
+          <p><span>05</span> 音频定位是桌面近场反馈，不是远场或大功率音箱。</p>
+        </div>
+      </section>
+
+      <section class="faq-section" aria-labelledby="faq-title">
+        <div class="faq-heading reveal">
+          <h2 id="faq-title">常见问题</h2>
+        </div>
+        <div class="faq-list reveal reveal-delay">
+          <details>
+            <summary>它能脱离电脑单独聊天吗<span aria-hidden="true">+</span></summary>
+            <p>不能。它需要连接电脑端或者云服务器 Hermes Studio。ESP32 负责硬件交互，AI 能力由 Hermes Studio 和你配置的服务提供。</p>
+          </details>
+          <details>
+            <summary>买来后需要配置什么<span aria-hidden="true">+</span></summary>
+            <p>需要给设备配 Wi-Fi，在 Hermes Studio 中完成配对，并配置语音识别、语音合成和模型服务。</p>
+          </details>
+          <details>
+            <summary>声音适合什么场景<span aria-hidden="true">+</span></summary>
+            <p>适合桌面近距离听，定位是语音提示和近场对话反馈，不是大功率音箱或远场智能音箱。</p>
+          </details>
+          <details>
+            <summary>可以二次开发吗<span aria-hidden="true">+</span></summary>
+            <p>可以。它适合有 ESP32、Arduino、PlatformIO 或 Hermes Studio 使用基础的用户继续修改固件和交互逻辑。</p>
+          </details>
+        </div>
+      </section>
+
+      <section class="purchase-section" id="purchase" aria-labelledby="purchase-title">
+        <div class="purchase-copy reveal">
+          <h2 id="purchase-title">让 AI 有一个在桌面上的位置。</h2>
+          <p>先看清楚它，再选一台真正想长期相处的颜色。</p>
+          <div class="purchase-links" aria-label="购买与社区渠道">
+            <a
+              class="purchase-icon-link"
+              href="https://www.goofish.com/item?id=1061059557051&amp;spm=widle.12011849.copy.detail&amp;ut_sk=1.Z39DFAK6GPgDAOkQ8AmuzKPg_12431167_1782134125235.copy.detail.1061059557051.3314708927"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往闲鱼购买"
+              title="闲鱼"
+            >
+              <img src="public/assets/icons/goofish.png" alt="" />
+              <span class="sr-only">闲鱼</span>
+            </a>
+            <a
+              class="purchase-icon-link"
+              href="https://www.xiaohongshu.com/explore/6a392766000000000603388a?source=webshare&amp;xhsshare=pc_web&amp;xsec_token=CBIdoSWLtVJK2hb23fBG8KsuTMVKROk6O6NR-ornGx584=&amp;xsec_source=pc_share"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往小红书购买"
+              title="小红书"
+            >
+              <img src="public/assets/icons/xiaohongshu.png" alt="" />
+              <span class="sr-only">小红书</span>
+            </a>
+            <a
+              class="purchase-icon-link"
+              href="https://v.douyin.com/1ckDESgpG9k/"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往抖音主页"
+              title="抖音"
+            >
+              <img src="public/assets/icons/douyin.png" alt="" />
+              <span class="sr-only">抖音</span>
+            </a>
+            <a
+              class="purchase-icon-link purchase-icon-link--inset"
+              href="https://space.bilibili.com/257809052"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往哔哩哔哩主页"
+              title="哔哩哔哩"
+            >
+              <img src="public/assets/icons/bilibili.png" alt="" />
+              <span class="sr-only">哔哩哔哩</span>
+            </a>
+            <a
+              class="purchase-icon-link purchase-icon-link--inset"
+              href="https://github.com/EKKOLearnAI/hermes-studio"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="前往 GitHub 项目主页"
+              title="GitHub"
+            >
+              <img src="public/assets/icons/github.svg" alt="" />
+              <span class="sr-only">GitHub</span>
+            </a>
+          </div>
+          <small>价格与供货状态以购买页面为准。</small>
+        </div>
+        <div class="purchase-visual reveal reveal-delay">
+          <span class="purchase-shadow" aria-hidden="true"></span>
+          <img src="public/assets/products/hd/white-hd.png" alt="暖瓷白 Hermes ESP32-C3 桌面设备" />
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>HERMES / ESP32-C3</span>
+      <span>桌面 AI 对话小方盒</span>
+      <a href="https://hermes-studio.ai/#/docs/esp32" target="_blank" rel="noreferrer">产品介绍 ↗</a>
+    </footer>
+  </body>
+</html>

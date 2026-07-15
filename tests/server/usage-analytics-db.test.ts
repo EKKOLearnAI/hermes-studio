@@ -224,6 +224,27 @@ describe('native-style Hermes usage analytics DB aggregation', () => {
       errors: 0,
     })
     expect(result.by_day[1].cost).toBeCloseTo(5.038)
+
+    const withoutLocallyRecorded = await mod.getUsageStatsFromDb(
+      30,
+      now,
+      undefined,
+      ['root', 'web-local-copy'],
+    )
+    expect(withoutLocallyRecorded).toMatchObject({
+      input_tokens: 38,
+      output_tokens: 25,
+      cache_read_tokens: 6,
+      cache_write_tokens: 1,
+      reasoning_tokens: 2,
+      sessions: 3,
+      total_api_calls: 2,
+    })
+    expect(withoutLocallyRecorded.cost).toBeCloseTo(0.023)
+    expect(withoutLocallyRecorded.by_model).toEqual([
+      { model: 'tool-model', input_tokens: 30, output_tokens: 20, cache_read_tokens: 5, cache_write_tokens: 1, reasoning_tokens: 2, sessions: 1 },
+      { model: 'gpt-5', input_tokens: 7, output_tokens: 3, cache_read_tokens: 1, cache_write_tokens: 0, reasoning_tokens: 0, sessions: 1 },
+    ])
   })
 
   it('keeps analytics working against older state.db schemas without api_call_count', async () => {

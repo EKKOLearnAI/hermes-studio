@@ -11,6 +11,21 @@ architecture from the project
 The desktop app bundles the Web UI runtime and launches it locally from the
 native shell app.
 
+## Command shims
+
+After the packaged desktop app starts, it installs managed command shims:
+
+| Command | Description |
+| --- | --- |
+| `hermes-studio` | Open the Hermes Studio desktop app |
+| `hermes-studio cli ...` | Run the bundled Hermes Agent CLI |
+| `hermes-studio web ...` | Run the bundled `hermes-web-ui` command |
+| `hermes-studio -h` | Show wrapper help |
+| `hermes-studio-mcp` | Run the managed Web UI MCP bridge |
+
+Use `hermes-studio cli -h` for Hermes Agent CLI help and
+`hermes-studio web -h` for Web UI CLI help.
+
 ## Data directories
 
 Hermes Agent data is stored in the same platform-specific location as native

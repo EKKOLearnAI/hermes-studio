@@ -19,6 +19,7 @@ const { t } = useI18n()
 const message = useMessage()
 const dialogApi = useDialog()
 const filesStore = useFilesStore()
+const props = defineProps<{ customClose?: () => void }>()
 
 const editorContainer = ref<HTMLElement | null>(null)
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
@@ -70,6 +71,11 @@ async function handleSave() {
 }
 
 function handleClose() {
+  if (props.customClose) {
+    props.customClose()
+    return
+  }
+
   if (filesStore.hasUnsavedChanges) {
     dialogApi.warning({
       title: t('files.unsavedChanges'),

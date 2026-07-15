@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import 'katex/dist/katex.min.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { NDrawer, NDrawerContent, NSpin, useMessage } from 'naive-ui'
@@ -17,7 +18,7 @@ import {
   renderMermaidPlaceholder,
   SUPPORT_PREVIEW_FILE_TYPES,
 } from './mermaidRenderer'
-import { downloadFile, getDownloadUrl, fetchFileText } from '@/api/hermes/download'
+import { downloadFile, getDownloadUrl, fetchFileText, inferDownloadFileName } from '@/api/hermes/download'
 
 const LATEX_FENCE_LANGS = new Set(['latex', 'tex', 'math', 'katex'])
 const PREVIEW_AREA_WIDTH = 'min(800px, 100vw)'
@@ -181,6 +182,7 @@ const renderedHtml = computed(() => {
 
     const path = normalizeLocalFilePath(rawPath)
     const fileName = filename.trim()
+    const downloadName = inferDownloadFileName(path, fileName)
 
     // Video files: render as video player
     if (hasExtension(path, VIDEO_EXTENSIONS)) {
@@ -213,7 +215,7 @@ const renderedHtml = computed(() => {
     }
 
     // Other files: render as file card
-    return `<div class="markdown-file-card" data-path="${path}" data-filename="${fileName}" title="${t('download.downloadFile')}">
+    return `<div class="markdown-file-card" data-path="${path}" data-filename="${downloadName}" title="${t('download.downloadFile')}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
         <polyline points="14 2 14 8 20 8" />
@@ -454,7 +456,7 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     // Parse the real file path from the existing query param
     const url = new URL(href, window.location.origin)
     const realPath = url.searchParams.get('path') || href
-    downloadFile(realPath, fileName || undefined).catch((err: Error) => {
+    downloadFile(realPath, inferDownloadFileName(realPath, fileName || undefined)).catch((err: Error) => {
       message.error(err.message || t('download.downloadFailed'))
     })
     return
@@ -466,8 +468,9 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     event.stopPropagation()
     const linkText = link.textContent || ''
     const fileName = linkText.startsWith('File: ') ? linkText.slice(6).trim() : linkText.trim()
+    const path = normalizeLocalFilePath(href)
     message.info(t('download.downloading'))
-    downloadFile(normalizeLocalFilePath(href), fileName || undefined).catch((err: Error) => {
+    downloadFile(path, inferDownloadFileName(path, fileName || undefined)).catch((err: Error) => {
       message.error(err.message || t('download.downloadFailed'))
     })
   }

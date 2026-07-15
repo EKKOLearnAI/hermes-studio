@@ -5,6 +5,7 @@ import { createTestingPinia } from '@pinia/testing'
 import { nextTick } from 'vue'
 import GroupChatInput from '@/components/hermes/group-chat/GroupChatInput.vue'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
+import { useSettingsStore } from '@/stores/hermes/settings'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -14,6 +15,7 @@ vi.mock('naive-ui', () => ({
   NButton: { template: '<button type="button" v-bind="$attrs"><slot /><slot name="icon" /></button>' },
   NTooltip: { template: '<div><slot name="trigger" /><slot /></div>' },
   NSwitch: { template: '<button type="button"></button>' },
+  NDropdown: { template: '<div><slot /></div>' },
 }))
 
 vi.mock('@/composables/useToolTraceVisibility', () => ({
@@ -23,10 +25,13 @@ vi.mock('@/composables/useToolTraceVisibility', () => ({
 describe('GroupChatInput mentions', () => {
   beforeEach(() => {
     localStorage.clear()
+    window.innerWidth = 1024
   })
 
   it('updates mention suggestions after the textarea has a custom height', async () => {
     const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = {}
     const store = useGroupChatStore()
     store.agents = [{ id: 'agent-1', agentId: 'agent-1', profile: 'worker', name: 'Worker', roomId: 'room-1', description: '', invited: 1 }]
     store.emitTyping = vi.fn()
@@ -47,5 +52,57 @@ describe('GroupChatInput mentions', () => {
     await nextTick()
     expect(wrapper.find('.mention-dropdown').exists()).toBe(true)
     expect(wrapper.find('.mention-dropdown').text()).toContain('@Worker')
+  })
+
+  it('applies the configured desktop input height', async () => {
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = { chat_input_height: 168 }
+
+    const wrapper = mount(GroupChatInput, {
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+
+    await nextTick()
+
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).style.height).toBe('168px')
+    expect((wrapper.get('.input-wrapper').element as HTMLElement).style.minHeight).toBe('231px')
+  })
+
+  it('applies display setting changes after a manual resize', async () => {
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = {}
+
+    const wrapper = mount(GroupChatInput, {
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+    const resizeHandle = wrapper.get('.resize-handle')
+
+    await resizeHandle.trigger('mousedown', { clientY: 100 })
+    document.dispatchEvent(new MouseEvent('mousemove', { clientY: 50 }))
+    document.dispatchEvent(new MouseEvent('mouseup'))
+    await nextTick()
+
+    settingsStore.display.chat_input_height = 216
+    await nextTick()
+
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).style.height).toBe('216px')
+    expect((wrapper.get('.input-wrapper').element as HTMLElement).style.minHeight).toBe('279px')
+  })
+
+  it('preserves mobile auto height when a desktop preference is configured', async () => {
+    window.innerWidth = 640
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = { chat_input_height: 168 }
+
+    const wrapper = mount(GroupChatInput, {
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+
+    await nextTick()
+
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).style.height).not.toBe('168px')
   })
 })

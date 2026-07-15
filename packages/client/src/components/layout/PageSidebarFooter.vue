@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
+import SettingsCircuitBadge from '@/components/layout/SettingsCircuitBadge.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -19,6 +20,7 @@ function openSettingsPage() {
       </svg>
       <span>{{ t('sidebar.settings') }}</span>
     </button>
+    <SettingsCircuitBadge />
   </div>
 </template>
 
@@ -28,10 +30,14 @@ function openSettingsPage() {
 .page-sidebar-bottom {
   flex-shrink: 0;
   padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .page-sidebar-menu-btn {
-  width: 100%;
+  flex: 1 1 auto;
+  width: auto;
   min-width: 0;
   height: 36px;
   border: none;

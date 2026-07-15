@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 
 export type MicRecorderStatus = 'idle' | 'requesting' | 'recording' | 'stopping' | 'error'
 
@@ -39,6 +39,7 @@ export function useMicRecorder(options: MicRecorderOptions = {}) {
   })
 
   const isRecording = computed(() => state.value.status === 'recording')
+  const streamRef = shallowRef<MediaStream | null>(null)
 
   let activeRecorder: MediaRecorder | null = null
   let activeStream: MediaStream | null = null
@@ -98,6 +99,7 @@ export function useMicRecorder(options: MicRecorderOptions = {}) {
 
     activeRecorder = null
     activeStream = null
+    streamRef.value = null
 
     if (clearChunks) {
       recordedChunks = []
@@ -222,6 +224,7 @@ export function useMicRecorder(options: MicRecorderOptions = {}) {
             : new mediaRecorderConstructor(stream)
 
           activeStream = stream
+          streamRef.value = stream
           activeRecorder = recorder
           recordedChunks = []
 
@@ -365,6 +368,7 @@ export function useMicRecorder(options: MicRecorderOptions = {}) {
   return {
     state,
     isRecording,
+    stream: streamRef,
     start,
     stop,
     cancel,

@@ -74,6 +74,28 @@ describe('Hermes process invocation', () => {
     }
   })
 
+  it('discovers sibling python.exe for a Windows hermes.cmd launcher', async () => {
+    setPlatform('win32')
+    const root = mkdtempSync(join(tmpdir(), 'hermes-process-'))
+    try {
+      const scripts = join(root, 'Scripts')
+      mkdirSync(scripts)
+      writeFileSync(join(root, 'python.exe'), '')
+      writeFileSync(join(scripts, 'hermes.cmd'), '')
+      const { execHermesWithBin } = await import('../../packages/server/src/services/hermes/hermes-process')
+
+      await execHermesWithBin(join(scripts, 'hermes.cmd'), ['--version'])
+
+      expect(execFileCalls[0]).toMatchObject({
+        command: join(root, 'python.exe'),
+        args: ['-m', 'hermes_cli.main', '--version'],
+        options: expect.objectContaining({ windowsHide: true }),
+      })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps normal Hermes command execution unchanged on non-Windows platforms', async () => {
     setPlatform('darwin')
     const { execHermesWithBin } = await import('../../packages/server/src/services/hermes/hermes-process')

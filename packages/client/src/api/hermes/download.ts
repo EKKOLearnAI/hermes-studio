@@ -8,11 +8,48 @@ function safeDecodeURIComponent(value: string): string {
   }
 }
 
+function normalizeProfile(profile?: string | null): string | null {
+  const value = typeof profile === 'string' ? profile.trim() : ''
+  return value || null
+}
+
+function hasConventionalExtension(value: string): boolean {
+  return /\.[A-Za-z0-9]{1,12}$/.test(value.trim())
+}
+
+function extractDownloadPath(filePath: string): string {
+  if (filePath.startsWith('/api/hermes/download?')) {
+    try {
+      const parsed = new URL(filePath, 'http://localhost')
+      return parsed.searchParams.get('path') || filePath
+    } catch {
+      return filePath
+    }
+  }
+
+  return filePath.split('?')[0].split('#')[0]
+}
+
+function getPathBasename(filePath: string): string {
+  const decodedPath = safeDecodeURIComponent(extractDownloadPath(filePath))
+  return decodedPath.split(/[\\/]/).pop()?.trim() || ''
+}
+
+export function inferDownloadFileName(filePath: string, fileName?: string): string {
+  const decodedName = fileName ? safeDecodeURIComponent(fileName).trim() : ''
+  if (decodedName && hasConventionalExtension(decodedName)) return decodedName
+
+  const basename = getPathBasename(filePath)
+  if (basename && hasConventionalExtension(basename)) return basename
+
+  return decodedName || basename || 'download'
+}
+
 /**
  * Construct a download URL with auth token as query parameter.
  * Token is passed via query param because <a> tags cannot set headers.
  */
-export function getDownloadUrl(filePath: string, fileName?: string): string {
+export function getDownloadUrl(filePath: string, fileName?: string, profile?: string | null): string {
   const base = getBaseUrlValue()
 
   // Guard: if filePath is already a full download URL, extract the real path
@@ -32,10 +69,11 @@ export function getDownloadUrl(filePath: string, fileName?: string): string {
   const decodedPath = safeDecodeURIComponent(filePath)
   const params = new URLSearchParams({ path: decodedPath })
   if (fileName) {
-    const decodedName = safeDecodeURIComponent(fileName)
+    const decodedName = inferDownloadFileName(decodedPath, fileName)
     params.set('name', decodedName)
   }
-  const profileName = getActiveProfileName()
+  const explicitProfile = normalizeProfile(profile)
+  const profileName = profile === undefined ? getActiveProfileName() : explicitProfile
   if (profileName) params.set('profile', profileName)
   const token = getApiKey()
   if (token) params.set('token', token)
@@ -46,8 +84,8 @@ export function getDownloadUrl(filePath: string, fileName?: string): string {
  * Download a file. Uses fetch to detect errors, then creates a blob URL
  * for the browser download. Throws with error message on failure.
  */
-export async function downloadFile(filePath: string, fileName?: string): Promise<void> {
-  const url = getDownloadUrl(filePath, fileName)
+export async function downloadFile(filePath: string, fileName?: string, profile?: string | null): Promise<void> {
+  const url = getDownloadUrl(filePath, fileName, profile)
   const res = await fetch(url)
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
@@ -57,7 +95,7 @@ export async function downloadFile(filePath: string, fileName?: string): Promise
   const blobUrl = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = blobUrl
-  a.download = fileName || filePath.split('/').pop() || 'download'
+  a.download = inferDownloadFileName(filePath, fileName)
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -68,8 +106,8 @@ export async function downloadFile(filePath: string, fileName?: string): Promise
  * Get preview file content.
  * Throws with error message on failure.
  */
-export async function fetchFileText(filePath: string, fileName?: string): Promise<string> {
-  const url = getDownloadUrl(filePath, fileName)
+export async function fetchFileText(filePath: string, fileName?: string, profile?: string | null): Promise<string> {
+  const url = getDownloadUrl(filePath, fileName, profile)
   const res = await fetch(url)
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))

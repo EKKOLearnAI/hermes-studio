@@ -55,7 +55,6 @@ const AUTH_CATALOG_PROVIDERS = new Set([
   'copilot',
   'xai-oauth',
   'nous',
-  'google-gemini-cli',
   'claude-oauth',
 ])
 let backgroundRefresh: Promise<void> | null = null
@@ -123,14 +122,18 @@ export async function readProviderModelCatalogCache(): Promise<ProviderModelCata
   }
 }
 
-export function getCachedProviderModels(
+export function resolveProviderCatalogModels(
   cache: ProviderModelCatalogCache,
   provider: string,
   baseUrl: string,
-  freeOnly = false,
-): string[] | null {
-  const entry = cache.providers[providerModelCatalogKey(provider, baseUrl, freeOnly)]
-  return entry && entry.models.length > 0 ? entry.models : null
+  staticModels: string[],
+  options: { freeOnly?: boolean; hasStaticManifest?: boolean } = {},
+): string[] {
+  const entry = cache.providers[providerModelCatalogKey(provider, baseUrl, options.freeOnly === true)]
+  if (!entry || entry.models.length === 0) return [...staticModels]
+  const hasStaticManifest = options.hasStaticManifest ?? staticModels.length > 0
+  if (entry.source === 'fallback' && hasStaticManifest) return [...staticModels]
+  return [...entry.models]
 }
 
 export async function writeProviderModelCatalogEntry(input: {
@@ -295,38 +298,8 @@ async function fetchCodexOAuthModels(accessToken: string): Promise<string[]> {
   }
 }
 
-async function fetchGeminiOAuthModels(accessToken: string): Promise<string[]> {
-  if (!accessToken) return []
-  try {
-    const res = await fetch('https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'User-Agent': 'google-api-nodejs-client/9.15.1 (gzip)',
-        'X-Goog-Api-Client': 'gl-node/24.0.0',
-      },
-      body: '{}',
-      signal: AbortSignal.timeout(10000),
-    })
-    if (!res.ok) {
-      logger.warn('[model-catalog-cache] Gemini quota models returned %d', res.status)
-      return []
-    }
-    const body = await res.json() as { buckets?: Array<{ modelId?: unknown }> }
-    return uniqueModels((Array.isArray(body.buckets) ? body.buckets : [])
-      .map(bucket => String(bucket.modelId || '').trim())
-      .filter(Boolean))
-  } catch (err) {
-    logger.warn(err, '[model-catalog-cache] Gemini quota models fetch failed')
-    return []
-  }
-}
-
 async function fetchProviderModelsForCatalog(provider: string, baseUrl: string, apiKey: string, freeOnly: boolean): Promise<string[]> {
   if (provider === 'openai-codex') return fetchCodexOAuthModels(apiKey)
-  if (provider === 'google-gemini-cli') return fetchGeminiOAuthModels(apiKey)
   return fetchProviderModels(baseUrl, apiKey, freeOnly)
 }
 
@@ -354,8 +327,7 @@ async function profileStoredAuthCredential(profile: string, provider: string): P
     if (!hasAuth) return { hasAuth: false }
     const providerSupportsLiveCatalog = provider === 'nous' ||
       provider === 'xai-oauth' ||
-      provider === 'openai-codex' ||
-      provider === 'google-gemini-cli'
+      provider === 'openai-codex'
     if (!providerSupportsLiveCatalog) return { hasAuth: true }
     const apiKey = provider === 'nous'
       ? authCredentialToken(providerEntry) || authCredentialToken(poolEntry)

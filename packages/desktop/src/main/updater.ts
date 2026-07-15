@@ -1,17 +1,24 @@
 import { app, dialog } from 'electron'
 import { autoUpdater, type ProgressInfo, type UpdateDownloadedEvent, type UpdateInfo } from 'electron-updater'
+import { execFile } from 'node:child_process'
+import { rm } from 'node:fs/promises'
+import { basename } from 'node:path'
+import { promisify } from 'node:util'
 import { t } from './desktop-i18n'
+import { isWindowsUpdaterLockError, pendingUpdateDirectories } from './updater-helpers'
 
 let initialized = false
 let checking = false
-let updateDownloaded = false
+let downloadedUpdate: UpdateDownloadedEvent | null = null
 let tryingFallbackFeed = false
+let recoveringPendingUpdate = false
 
 const CLOUDFLARE_LATEST_FEED_URL = 'https://download.ekkolearnai.com/latest'
 const GITHUB_LATEST_FEED_URL = 'https://github.com/EKKOLearnAI/hermes-studio/releases/latest/download'
+const execFileAsync = promisify(execFile)
 
 interface AutoUpdaterOptions {
-  beforeQuitAndInstall?: () => void
+  beforeQuitAndInstall?: () => void | Promise<void>
 }
 
 let options: AutoUpdaterOptions = {}
@@ -59,6 +66,107 @@ function showUpdateCheckFailed() {
   }).catch(() => undefined)
 }
 
+async function clearPendingUpdateDirectories(): Promise<void> {
+  if (process.platform !== 'win32') return
+  const dirs = pendingUpdateDirectories({
+    appDataPath: app.getPath('appData'),
+    localAppData: process.env.LOCALAPPDATA,
+    appName: app.getName(),
+  })
+  await Promise.all(dirs.map(async dir => {
+    try {
+      await rm(dir, { recursive: true, force: true })
+      console.warn(`[updater] cleared pending update directory: ${dir}`)
+    } catch (err) {
+      console.warn(`[updater] failed to clear pending update directory ${dir}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }))
+}
+
+async function recoverFailedPendingUpdate(err: unknown): Promise<void> {
+  if (recoveringPendingUpdate || process.platform !== 'win32' || !isWindowsUpdaterLockError(err)) return
+  recoveringPendingUpdate = true
+  try {
+    await clearPendingUpdateDirectories()
+    downloadedUpdate = null
+  } finally {
+    recoveringPendingUpdate = false
+  }
+}
+
+export async function stopOtherWindowsAppInstances(execPath = process.execPath, currentPid = process.pid): Promise<void> {
+  if (process.platform !== 'win32') return
+  const normalizedExecPath = execPath.trim()
+  if (!normalizedExecPath) return
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$target = [System.IO.Path]::GetFullPath($env:HERMES_STUDIO_UPDATE_EXE)
+$current = [int]$env:HERMES_STUDIO_UPDATE_PID
+function Get-HermesStudioProcess {
+  Get-CimInstance Win32_Process | Where-Object {
+    try {
+      $_.ProcessId -ne $current -and $_.ExecutablePath -and ([System.IO.Path]::GetFullPath($_.ExecutablePath) -ieq $target)
+    } catch {
+      $false
+    }
+  }
+}
+Get-HermesStudioProcess | ForEach-Object {
+  try {
+    $process = Get-Process -Id $_.ProcessId
+    if ($process) { $process.CloseMainWindow() | Out-Null }
+  } catch {}
+}
+Start-Sleep -Milliseconds 750
+Get-HermesStudioProcess | ForEach-Object {
+  try { Stop-Process -Id $_.ProcessId -Force } catch {}
+}
+`.trim()
+  try {
+    await execFileAsync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+      env: {
+        ...process.env,
+        HERMES_STUDIO_UPDATE_EXE: normalizedExecPath,
+        HERMES_STUDIO_UPDATE_PID: String(currentPid),
+      },
+      timeout: 30_000,
+      windowsHide: true,
+    })
+    console.log(`[updater] stopped other ${basename(normalizedExecPath)} instances before update install`)
+  } catch (err) {
+    console.warn(`[updater] failed to stop other app instances before update install: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+async function prepareQuitAndInstall(): Promise<void> {
+  try {
+    await options.beforeQuitAndInstall?.()
+  } catch (err) {
+    console.warn(`[updater] beforeQuitAndInstall hook failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
+  await stopOtherWindowsAppInstances()
+}
+
+async function quitAndInstallDownloadedUpdate(): Promise<void> {
+  await prepareQuitAndInstall()
+  autoUpdater.quitAndInstall()
+}
+
+async function promptInstallDownloadedUpdate(info: UpdateInfo): Promise<void> {
+  const { response } = await dialog.showMessageBox({
+    type: 'info',
+    title: t('update.readyTitle'),
+    message: t('update.readyMessage', { version: info.version }),
+    detail: t('update.readyDetail'),
+    buttons: [t('update.restartNow'), t('update.later')],
+    defaultId: 0,
+    cancelId: 1,
+  })
+  if (response === 0) {
+    await quitAndInstallDownloadedUpdate()
+  }
+}
+
 export function initAutoUpdater(nextOptions: AutoUpdaterOptions = {}) {
   options = { ...options, ...nextOptions }
   if (initialized) return
@@ -85,26 +193,17 @@ export function initAutoUpdater(nextOptions: AutoUpdaterOptions = {}) {
   })
   autoUpdater.on('error', err => {
     console.error('[updater] error:', err)
+    recoverFailedPendingUpdate(err).catch(cleanupErr => {
+      console.warn(`[updater] pending update recovery failed: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`)
+    })
     if (checking && !tryingFallbackFeed) showUpdateCheckFailed()
   })
   autoUpdater.on('download-progress', (info: ProgressInfo) => {
     console.log(`[updater] download ${Math.round(info.percent)}%`)
   })
   autoUpdater.on('update-downloaded', async (info: UpdateDownloadedEvent) => {
-    updateDownloaded = true
-    const { response } = await dialog.showMessageBox({
-      type: 'info',
-      title: t('update.readyTitle'),
-      message: t('update.readyMessage', { version: info.version }),
-      detail: t('update.readyDetail'),
-      buttons: [t('update.restartNow'), t('update.later')],
-      defaultId: 0,
-      cancelId: 1,
-    })
-    if (response === 0) {
-      options.beforeQuitAndInstall?.()
-      autoUpdater.quitAndInstall()
-    }
+    downloadedUpdate = info
+    await promptInstallDownloadedUpdate(info)
   })
 
   if (process.env.HERMES_DESKTOP_ENABLE_AUTO_UPDATE !== 'false') {
@@ -132,9 +231,8 @@ export async function checkForDesktopUpdates(manual: boolean): Promise<void> {
     return
   }
 
-  if (updateDownloaded) {
-    options.beforeQuitAndInstall?.()
-    autoUpdater.quitAndInstall()
+  if (downloadedUpdate) {
+    if (manual) await promptInstallDownloadedUpdate(downloadedUpdate)
     return
   }
 

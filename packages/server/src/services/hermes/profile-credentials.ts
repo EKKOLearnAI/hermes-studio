@@ -220,7 +220,7 @@ const MODEL_AUTH_PROVIDERS = new Set([
   'openai-codex',
   'claude-oauth',
   'xai-oauth',
-  'google-gemini-cli',
+  'qwen-oauth',
   'nous',
 ])
 

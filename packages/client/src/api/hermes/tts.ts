@@ -1,3 +1,5 @@
+import { getActiveProfileName, getApiKey } from '../client'
+
 export interface TtsOptions {
   text: string
   lang?: string
@@ -26,15 +28,27 @@ async function readTtsError(res: Response): Promise<string> {
   }
 }
 
+function ttsHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  const apiKey = getApiKey()
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`
+  }
+  const profile = getActiveProfileName()
+  if (profile) {
+    headers['X-Hermes-Profile'] = profile
+  }
+  return headers
+}
+
 export async function generateSpeech(opts: TtsOptions): Promise<{ audio: Blob; engine: string }> {
   const res = await fetch(
     `${localStorage.getItem('hermes_server_url') || ''}/api/hermes/tts`,
     {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('hermes_api_key') || ''}`,
-      },
+      headers: ttsHeaders(),
       body: JSON.stringify(opts),
     },
   )
@@ -55,10 +69,7 @@ export async function synthesizeSpeech(
     `${localStorage.getItem('hermes_server_url') || ''}/api/hermes/tts/synthesize`,
     {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('hermes_api_key') || ''}`,
-      },
+      headers: ttsHeaders(),
       body: JSON.stringify({
         provider: req.provider,
         text: req.text,

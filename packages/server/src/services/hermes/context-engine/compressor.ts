@@ -11,6 +11,8 @@ import { DEFAULT_COMPRESSION_CONFIG } from './types'
 import { GatewaySummarizer } from './gateway-client'
 import { buildAgentInstructions, buildSummarizationSystemPrompt } from './prompt'
 import { logger } from '../../../services/logger'
+import { buildProjectedGroupChatHistory, projectGroupChatMessage } from '../group-chat/context-projection'
+import { sliceGroupMessagesForSnapshotTail } from '../group-chat/group-message-ordering'
 
 export class ContextEngine {
     private config: CompressionConfig
@@ -74,12 +76,18 @@ export class ContextEngine {
 
     private async _buildContextImpl(input: BuildContextInput): Promise<CompressedContext> {
         const config = { ...this.config, ...input.compression }
-        const allMessages = this.messageFetcher.getMessages(input.roomId)
-        // Filter out messages newer than the current one
-        const messages = allMessages.filter(m => m.timestamp <= input.currentMessage.timestamp)
+        const messages = this.messageFetcher.getMessagesForContext(input.roomId, {
+            throughMessageId: input.currentMessage.id,
+        })
         const total = messages.length
 
-        logger.debug(`[ContextEngine] buildContext START — room=${input.roomId}, agent=${input.agentName}, totalMessagesInDb=${allMessages.length}, afterFilter=${total}`)
+        logger.debug({
+            roomId: input.roomId,
+            agentName: input.agentName,
+            profile: input.profile || 'default',
+            retainedMessages: total,
+            throughMessageId: input.currentMessage.id,
+        }, '[ContextEngine] buildContext start')
 
         const instructions = buildAgentInstructions({
             agentName: input.agentName,
@@ -98,7 +106,15 @@ export class ContextEngine {
         }
 
         const snapshot = this.messageFetcher.getContextSnapshot(input.roomId)
-        logger.debug(`[ContextEngine] snapshot=${snapshot ? `EXISTS (lastMsgId=${snapshot.lastMessageId}, summaryLen=${snapshot.summary.length})` : 'NONE'}`)
+        logger.debug({
+            roomId: input.roomId,
+            agentName: input.agentName,
+            path: snapshot ? 'snapshot' : 'full',
+            snapshot: snapshot ? 'hit' : 'miss',
+            lastMessageId: snapshot?.lastMessageId,
+            summaryChars: snapshot?.summary.length || 0,
+            messageCount: total,
+        }, '[ContextEngine] snapshot lookup')
 
         const estimateFullContextTokens = async (
             history: Array<{ role: 'user' | 'assistant'; content: string }>,
@@ -135,12 +151,20 @@ export class ContextEngine {
         if (snapshot) {
             meta.hadSnapshot = true
 
-            // Find the position of lastMessageId in messages
-            const snapshotIdx = messages.findIndex(m => m.id === snapshot.lastMessageId)
-            // Collect messages after the snapshot position
-            const newMessages = snapshotIdx >= 0
-                ? messages.slice(snapshotIdx + 1)
-                : messages.filter(m => m.timestamp > snapshot.lastMessageTimestamp)
+            const snapshotTail = sliceGroupMessagesForSnapshotTail(messages, snapshot.lastMessageId)
+            const newMessages = snapshotTail.messages
+
+            if (!snapshotTail.snapshotCursorFound) {
+                logger.warn({
+                    roomId: input.roomId,
+                    agentName: input.agentName,
+                    path: 'snapshot',
+                    reason: 'snapshot_cursor_missing',
+                    lastMessageId: snapshot.lastMessageId,
+                    messageCount: newMessages.length,
+                    preservedTailCount: newMessages.length,
+                }, '[ContextEngine] snapshot cursor missing')
+            }
 
             const summaryTokens = this.countTokens(snapshot.summary)
             const newTokens = this.estimateTokensFromMessages(newMessages)
@@ -149,19 +173,38 @@ export class ContextEngine {
             meta.verbatimCount = newMessages.length
             meta.summaryTokenEstimate = summaryTokens
 
-            const snapshotHistory = this.buildHistory(snapshot.summary, newMessages, input.agentSocketId, input.agentName)
+            const snapshotHistory = this.buildHistory(snapshot.summary, newMessages, input.agentId, input.agentSocketId, input.agentName)
             const totalTokens = await estimateFullContextTokens(snapshotHistory, messageOnlyTokens)
             logThresholdCheck('snapshot', messageOnlyTokens, totalTokens)
+            logger.debug({
+                roomId: input.roomId,
+                agentName: input.agentName,
+                path: 'snapshot',
+                snapshotCursorFound: snapshotTail.snapshotCursorFound,
+                lastMessageId: snapshot.lastMessageId,
+                messageCount: newMessages.length,
+                summaryTokenEstimate: summaryTokens,
+                messageTailTokenEstimate: newTokens,
+                messageOnlyTokens,
+                fullContextTokens: totalTokens,
+                triggerTokens: config.triggerTokens,
+                preservedTailCount: newMessages.length,
+                decision: totalTokens <= config.triggerTokens ? 'reuse_summary' : 'incremental_compress',
+            }, '[ContextEngine] snapshot path evaluated')
 
-            logger.debug(`[ContextEngine] [Path A] snapshotIdx=${snapshotIdx}, newMessages=${newMessages.length}, summaryTokens=~${summaryTokens}, newTokens=~${newTokens}, totalTokens=~${totalTokens}, threshold=${config.triggerTokens}`)
-            logger.debug(`[ContextEngine] [Path A] EXISTING SUMMARY (${snapshot.summary.length} chars): ${snapshot.summary.slice(0, 300)}`)
-            if (newMessages.length > 0) {
-                logger.debug(`[ContextEngine] [Path A] NEW MESSAGES (${newMessages.length}): ${newMessages.map(m => `[${m.senderName}]: ${m.content.slice(0, 80)}`).join(' | ')}`)
-            }
-
-            // Under threshold — return summary + new messages directly
+            // Under threshold — return summary + new messages directly.
+            // If the cursor anchor was pruned, the retained transcript is our conservative
+            // verbatim tail after the still-valid summary.
             if (totalTokens <= config.triggerTokens) {
-                logger.debug(`[ContextEngine] [Path A] UNDER threshold — return summary + ${newMessages.length} verbatim msgs directly`)
+                logger.debug({
+                    roomId: input.roomId,
+                    agentName: input.agentName,
+                    path: 'snapshot',
+                    messageCount: newMessages.length,
+                    fullContextTokens: totalTokens,
+                    preservedTailCount: newMessages.length,
+                    decision: 'skip_compression',
+                }, '[ContextEngine] using snapshot summary with verbatim tail')
                 this.logHistory('Path A (no compress)', snapshotHistory)
                 return { conversationHistory: snapshotHistory, instructions, meta }
             }
@@ -172,8 +215,19 @@ export class ContextEngine {
                     `Context window is too small for group chat agent ${input.agentName}: fixed prompt/tool overhead plus ${newMessages.length} new messages uses ~${totalTokens} tokens, exceeding trigger ${config.triggerTokens}, and there is not enough history to compress.`,
                 )
             }
-            logger.debug(`[ContextEngine] [Path A] OVER threshold — starting INCREMENTAL compression of ${newMessages.length} msgs...`)
-            logger.debug(`[ContextEngine] [Path A] CONTEXT BEFORE COMPRESSION: summary(${snapshot.summary.length} chars) + ${newMessages.length} new msgs`)
+            logger.info({
+                roomId: input.roomId,
+                agentName: input.agentName,
+                path: 'snapshot',
+                messageCount: newMessages.length,
+                summaryTokenEstimate: summaryTokens,
+                messageTailTokenEstimate: newTokens,
+                messageOnlyTokens,
+                fullContextTokens: totalTokens,
+                triggerTokens: config.triggerTokens,
+                preservedTailCount: newMessages.length,
+                decision: 'incremental_compress',
+            }, '[ContextEngine] compression started')
             meta.compressed = true
             input.onProgress?.({
                 status: 'compressing',
@@ -198,34 +252,75 @@ export class ContextEngine {
                 this.messageFetcher.saveContextSnapshot(input.roomId, result.summary, lastMsg.id, lastMsg.timestamp)
 
                 meta.summaryTokenEstimate = this.countTokens(result.summary)
-                logger.debug(`[ContextEngine] [Path A] incremental compression DONE in ${elapsed}ms, newSummaryLen=${result.summary.length}, newLastMsgId=${lastMsg.id}`)
-                logger.debug(`[ContextEngine] [Path A] NEW SUMMARY (${result.summary.length} chars): ${result.summary.slice(0, 300)}`)
-                const history = this.buildHistory(result.summary, newMessages, input.agentSocketId, input.agentName)
+                const history = this.buildHistory(result.summary, newMessages, input.agentId, input.agentSocketId, input.agentName)
                 meta.contextTokenEstimate = await estimateFullContextTokens(history, this.estimateTokens(history))
+                logger.info({
+                    roomId: input.roomId,
+                    agentName: input.agentName,
+                    path: 'snapshot',
+                    messageCount: newMessages.length,
+                    summaryTokenEstimate: meta.summaryTokenEstimate,
+                    fullContextTokens: meta.contextTokenEstimate,
+                    preservedTailCount: newMessages.length,
+                    savedLastMessageId: lastMsg.id,
+                    elapsedMs: elapsed,
+                }, '[ContextEngine] compression completed')
                 this.logHistory('Path A (after incremental compress)', history)
                 if (result.sessionId) this.sessionCleaner?.(result.sessionId)
                 return { conversationHistory: history, instructions, meta }
             }
 
             // Compression failed — degrade
-            logger.warn(`[ContextEngine] [Path A] incremental compression FAILED (${elapsed}ms) — degrading to summary + trimmed verbatim`)
-            const history = this.buildHistory(snapshot.summary, newMessages, input.agentSocketId, input.agentName)
-            this.trimToBudget(history, summaryTokens, config.maxHistoryTokens)
+            const history = this.buildHistory(snapshot.summary, newMessages, input.agentId, input.agentSocketId, input.agentName)
+            this.trimToBudget(history, summaryTokens, config.maxHistoryTokens, 2, 1)
+            meta.verbatimCount = Math.max(0, history.length - 2)
+            logger.warn({
+                roomId: input.roomId,
+                agentName: input.agentName,
+                path: 'snapshot_degrade',
+                reason: 'incremental_compression_failed',
+                messageCount: newMessages.length,
+                summaryTokenEstimate: summaryTokens,
+                messageTailTokenEstimate: newTokens,
+                messageOnlyTokens,
+                fullContextTokens: totalTokens,
+                preservedTailCount: meta.verbatimCount,
+                maxHistoryTokens: config.maxHistoryTokens,
+                elapsedMs: elapsed,
+            }, '[ContextEngine] degraded to summary plus trimmed verbatim tail')
             return { conversationHistory: history, instructions, meta }
         }
 
         // ── Path B: No snapshot — full context ───────────────
         const messageOnlyTokens = this.estimateTokensFromMessages(messages)
         meta.verbatimCount = total
-        const fullHistory = messages.map(m => this.mapToHistory(m, input.agentSocketId, input.agentName))
+        const fullHistory = buildProjectedGroupChatHistory('', messages, { agentId: input.agentId, socketId: input.agentSocketId, name: input.agentName })
         const totalTokens = await estimateFullContextTokens(fullHistory, messageOnlyTokens)
         logThresholdCheck('full', messageOnlyTokens, totalTokens)
 
-        logger.debug(`[ContextEngine] [Path B] no snapshot, totalMessages=${total}, totalTokens=~${totalTokens}, threshold=${config.triggerTokens}`)
+        logger.debug({
+            roomId: input.roomId,
+            agentName: input.agentName,
+            path: 'full',
+            messageCount: total,
+            messageOnlyTokens,
+            fullContextTokens: totalTokens,
+            triggerTokens: config.triggerTokens,
+            preservedTailCount: total,
+            decision: totalTokens <= config.triggerTokens ? 'skip_compression' : 'full_compress',
+        }, '[ContextEngine] full path evaluated')
 
         // Under threshold — pass all messages verbatim
         if (totalTokens <= config.triggerTokens) {
-            logger.debug(`[ContextEngine] [Path B] UNDER threshold — return all ${total} msgs verbatim`)
+            logger.debug({
+                roomId: input.roomId,
+                agentName: input.agentName,
+                path: 'full',
+                messageCount: total,
+                fullContextTokens: totalTokens,
+                preservedTailCount: total,
+                decision: 'skip_compression',
+            }, '[ContextEngine] using full verbatim history')
             this.logHistory('Path B (no compress)', fullHistory)
             return { conversationHistory: fullHistory, instructions, meta }
         }
@@ -236,8 +331,17 @@ export class ContextEngine {
                 `Context window is too small for group chat agent ${input.agentName}: fixed prompt/tool overhead plus ${messages.length} messages uses ~${totalTokens} tokens, exceeding trigger ${config.triggerTokens}, and there is not enough history to compress.`,
             )
         }
-        logger.debug(`[ContextEngine] [Path B] OVER threshold — starting FULL compression of ${total} msgs...`)
-        logger.debug(`[ContextEngine] [Path B] CONTEXT BEFORE COMPRESSION: ${total} msgs, ~${totalTokens} tokens`)
+        logger.info({
+            roomId: input.roomId,
+            agentName: input.agentName,
+            path: 'full',
+            messageCount: total,
+            messageOnlyTokens,
+            fullContextTokens: totalTokens,
+            triggerTokens: config.triggerTokens,
+            preservedTailCount: messages.length > config.tailMessageCount ? config.tailMessageCount : 0,
+            decision: 'full_compress',
+        }, '[ContextEngine] compression started')
         meta.compressed = true
         input.onProgress?.({
             status: 'compressing',
@@ -266,20 +370,41 @@ export class ContextEngine {
             this.messageFetcher.saveContextSnapshot(input.roomId, result.summary, lastCompressedMsg.id, lastCompressedMsg.timestamp)
 
             meta.summaryTokenEstimate = this.countTokens(result.summary)
-            logger.debug(`[ContextEngine] [Path B] full compression DONE in ${elapsed}ms, summaryLen=${result.summary.length}, compressed=${toCompress.length} msgs, keptTail=${tail.length} msgs, savedLastMsgId=${lastCompressedMsg.id}`)
-            logger.debug(`[ContextEngine] [Path B] COMPRESSED SUMMARY (${result.summary.length} chars): ${result.summary.slice(0, 300)}`)
-            const history = this.buildHistory(result.summary, tail, input.agentSocketId, input.agentName)
+            const history = this.buildHistory(result.summary, tail, input.agentId, input.agentSocketId, input.agentName)
             meta.contextTokenEstimate = await estimateFullContextTokens(history, this.estimateTokens(history))
+            logger.info({
+                roomId: input.roomId,
+                agentName: input.agentName,
+                path: 'full',
+                messageCount: total,
+                compressedMessageCount: toCompress.length,
+                preservedTailCount: tail.length,
+                summaryTokenEstimate: meta.summaryTokenEstimate,
+                fullContextTokens: meta.contextTokenEstimate,
+                savedLastMessageId: lastCompressedMsg.id,
+                elapsedMs: elapsed,
+            }, '[ContextEngine] compression completed')
             this.logHistory('Path B (after full compress)', history)
             if (result.sessionId) this.sessionCleaner?.(result.sessionId)
             return { conversationHistory: history, instructions, meta }
         }
 
         // Compression failed — degrade
-        logger.warn(`[ContextEngine] [Path B] full compression FAILED (${elapsed}ms) — degrading to trimmed verbatim`)
-        const history = messages.map(m => this.mapToHistory(m, input.agentSocketId, input.agentName))
-        this.trimToBudget(history, 0, config.maxHistoryTokens)
+        const history = buildProjectedGroupChatHistory('', messages, { agentId: input.agentId, socketId: input.agentSocketId, name: input.agentName })
+        this.trimToBudget(history, 0, config.maxHistoryTokens, 0, 1)
         meta.verbatimCount = history.length
+        logger.warn({
+            roomId: input.roomId,
+            agentName: input.agentName,
+            path: 'full_degrade',
+            reason: 'full_compression_failed',
+            messageCount: total,
+            messageOnlyTokens,
+            fullContextTokens: totalTokens,
+            preservedTailCount: history.length,
+            maxHistoryTokens: config.maxHistoryTokens,
+            elapsedMs: elapsed,
+        }, '[ContextEngine] degraded to trimmed verbatim history')
         return { conversationHistory: history, instructions, meta }
     }
 
@@ -292,7 +417,7 @@ export class ContextEngine {
      * Used when user manually triggers compression.
      */
     async forceCompress(roomId: string, profile?: string): Promise<string> {
-        const allMessages = this.messageFetcher.getMessages(roomId)
+        const allMessages = this.messageFetcher.getMessagesForContext(roomId)
         if (allMessages.length === 0) return ''
 
         const config = { ...this.config }
@@ -324,20 +449,11 @@ export class ContextEngine {
     private buildHistory(
         summary: string,
         messages: StoredMessage[],
+        agentId: string,
         agentSocketId: string,
         agentName: string,
     ): Array<{ role: 'user' | 'assistant'; content: string }> {
-        const history: Array<{ role: 'user' | 'assistant'; content: string }> = []
-
-        if (summary) {
-            history.push(
-                { role: 'user', content: '[Previous conversation summary]\n' + summary },
-                { role: 'assistant', content: 'I have reviewed the conversation history and understand the context.' },
-            )
-        }
-
-        history.push(...messages.map(m => this.mapToHistory(m, agentSocketId, agentName)))
-        return history
+        return buildProjectedGroupChatHistory(summary, messages, { agentId, socketId: agentSocketId, name: agentName })
     }
 
     /**
@@ -374,62 +490,26 @@ export class ContextEngine {
 
     private mapToHistory(
         msg: StoredMessage,
+        agentId: string,
         agentSocketId: string,
         agentName: string,
     ): { role: 'user' | 'assistant'; content: string } {
-        const senderName = msg.senderName || 'unknown'
-        const isOwnAgent = msg.senderId === agentSocketId || senderName === agentName
-
-        if (msg.role === 'tool') {
-            const label = msg.tool_name ? `Tool result: ${msg.tool_name}` : 'Tool result'
-            return { role: 'user', content: `[${senderName}] [${label}]\n${msg.content || ''}` }
-        }
-
-        if (msg.role === 'assistant' && msg.tool_calls?.length) {
-            const toolsInfo = msg.tool_calls.map(tc => {
-                const name = tc.function?.name || 'unknown'
-                let args = tc.function?.arguments || '{}'
-                if (args.length > 4000) args = `${args.slice(0, 4000)}...`
-                return `[Calling tool: ${name} with arguments: ${args}]`
-            }).join('\n')
-            const content = msg.content?.trim()
-            return {
-                role: isOwnAgent ? 'assistant' : 'user',
-                content: content
-                    ? `${this.formatAttributedContent(senderName, content)}\n${this.formatAttributionPrefix(senderName, content)}${toolsInfo}`
-                    : `${this.formatAttributionPrefix(senderName, content)}${toolsInfo}`,
-            }
-        }
-
-        return {
-            role: isOwnAgent ? 'assistant' : 'user',
-            content: this.formatAttributedContent(senderName, msg.content || ''),
-        }
-    }
-
-    private formatAttributedContent(senderName: string, content: string): string {
-        return `${this.formatAttributionPrefix(senderName)}${this.stripMentions(content)}`
-    }
-
-    private formatAttributionPrefix(senderName: string, _content?: string): string {
-        return `[${senderName}]: `
-    }
-
-    private stripMentions(content: string): string {
-        return String(content || '')
-            .replace(/@([^\s@]+)/g, '')
-            .replace(/[ \t]{2,}/g, ' ')
-            .replace(/^\s+/, '')
+        return projectGroupChatMessage(msg, { agentId, socketId: agentSocketId, name: agentName })
     }
 
     private trimToBudget(
         history: Array<{ role: 'user' | 'assistant'; content: string }>,
         summaryTokens: number,
         maxTokens: number,
+        protectedPrefixCount: number,
+        minimumVerbatimCount: number,
     ): void {
+        const minimumHistoryLength = history.length <= protectedPrefixCount
+            ? history.length
+            : Math.min(history.length, protectedPrefixCount + Math.max(0, minimumVerbatimCount))
         let totalTokens = summaryTokens + this.estimateTokens(history)
-        while (totalTokens > maxTokens && history.length > 0) {
-            history.pop()
+        while (totalTokens > maxTokens && history.length > minimumHistoryLength) {
+            history.splice(protectedPrefixCount, 1)
             totalTokens = summaryTokens + this.estimateTokens(history)
         }
     }
@@ -451,13 +531,22 @@ export class ContextEngine {
         return Math.ceil(cjk * 1.5 + other / this.config.charsPerToken)
     }
 
-    /** Log assembled history for debugging */
+    /** Log assembled history for debugging without persisting message bodies */
     private logHistory(label: string, history: Array<{ role: string; content: string }>): void {
         const totalTokens = this.estimateTokens(history)
-        logger.debug(`[ContextEngine] ASSEMBLED HISTORY (${label}): ${history.length} entries, ~${totalTokens} tokens`)
-        for (const entry of history) {
-            const preview = entry.content.length > 150 ? entry.content.slice(0, 150) + '...' : entry.content
-            logger.debug(`  [${entry.role}] ${preview}`)
-        }
+        const roleCounts = history.reduce<Record<string, number>>((acc, entry) => {
+            acc[entry.role] = (acc[entry.role] || 0) + 1
+            return acc
+        }, {})
+        const charCounts = history.map((entry) => entry.content.length)
+        logger.debug({
+            label,
+            entryCount: history.length,
+            totalTokens,
+            roleCounts,
+            minChars: charCounts.length ? Math.min(...charCounts) : 0,
+            maxChars: charCounts.length ? Math.max(...charCounts) : 0,
+            tailEntryChars: charCounts.slice(-3),
+        }, '[ContextEngine] assembled history')
     }
 }

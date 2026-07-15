@@ -7,10 +7,12 @@ export interface RoomInfo {
     id: string
     name: string
     inviteCode: string | null
+    canManage?: boolean
     triggerTokens?: number
     maxHistoryTokens?: number
     tailMessageCount?: number
     totalTokens?: number
+    workspace: string
 }
 
 export interface RoomAgent {
@@ -127,8 +129,10 @@ function generateUUID(): string {
     })
 }
 
-export function getSocket(): ReturnType<typeof io> | null {
-    return socket?.connected ? socket : null
+export function getSocket(options: { requireConnected?: boolean } = {}): ReturnType<typeof io> | null {
+    if (!socket) return null
+    if (options.requireConnected === false) return socket
+    return socket.connected ? socket : null
 }
 
 export function disconnectGroupChat(): void {
@@ -145,6 +149,7 @@ export async function createRoom(data: {
     inviteCode: string
     agents?: { profile: string; name?: string; description?: string; invited?: boolean }[]
     compression?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }
+    workspace?: string
 }): Promise<{ room: RoomInfo; agents: RoomAgent[]; agentResults?: AgentAddResult[] }> {
     return request('/api/hermes/group-chat/rooms', {
         method: 'POST',
@@ -228,6 +233,14 @@ export async function updateRoomConfig(roomId: string, config: { triggerTokens?:
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
+    })
+}
+
+export async function updateRoomWorkspace(roomId: string, workspace: string): Promise<{ room: RoomInfo }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/workspace`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace }),
     })
 }
 

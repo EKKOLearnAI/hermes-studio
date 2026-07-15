@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, defineAsyncComponent } from 'vue'
 import { NSpin, NEmpty, NCollapse, NCollapseItem } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { listCronRuns, readCronRun } from '@/api/hermes/cron-history'
 import type { RunEntry, RunDetail } from '@/api/hermes/cron-history'
-import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
+
+const MarkdownRenderer = defineAsyncComponent(async () => (await import('@/components/hermes/chat/MarkdownRenderer.vue')).default)
 
 const props = defineProps<{
   selectedJobId: string | null

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, defineAsyncComponent } from 'vue'
 import { NButton, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import { fetchMemory, saveMemory, type MemoryData } from '@/api/hermes/skills'
 import { useProfilesStore } from '@/stores/hermes/profiles'
+
+const MarkdownRenderer = defineAsyncComponent(async () => (await import('@/components/hermes/chat/MarkdownRenderer.vue')).default)
 
 const { t } = useI18n()
 const message = useMessage()

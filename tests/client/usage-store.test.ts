@@ -21,6 +21,7 @@ function emptyStats(totalSessions = 0, periodDays = 30) {
     total_sessions: totalSessions,
     period_days: periodDays,
     model_usage: [],
+    agent_usage: [],
     daily_usage: [],
   }
 }
@@ -44,6 +45,10 @@ describe('usage store analytics adapter', () => {
       model_usage: [
         { model: 'gpt-5', input_tokens: 80, output_tokens: 40, cache_read_tokens: 20, cache_write_tokens: 3, reasoning_tokens: 7, sessions: 1 },
         { model: '', input_tokens: 20, output_tokens: 10, cache_read_tokens: 5, cache_write_tokens: 2, reasoning_tokens: 3, sessions: 1 },
+      ],
+      agent_usage: [
+        { agent: 'hermes', input_tokens: 90, output_tokens: 45, cache_read_tokens: 20, cache_write_tokens: 3, reasoning_tokens: 7, sessions: 1 },
+        { agent: 'codex', input_tokens: 10, output_tokens: 5, cache_read_tokens: 5, cache_write_tokens: 2, reasoning_tokens: 3, sessions: 1 },
       ],
       daily_usage: [
         { date: '2026-04-29', input_tokens: 80, output_tokens: 20, cache_read_tokens: 40, cache_write_tokens: 4, sessions: 1, errors: 0, cost: 0.01 },
@@ -86,6 +91,17 @@ describe('usage store analytics adapter', () => {
     })
     expect(store.modelUsage[1].color).toBe(store.getModelColor('unknown'))
     expect(store.modelLegend.map(m => m.model)).toEqual(['gpt-5', 'unknown'])
+    expect(store.agentUsage).toHaveLength(2)
+    expect(store.agentUsage[0]).toMatchObject({
+      agent: 'hermes',
+      inputTokens: 90,
+      outputTokens: 45,
+      cacheTokens: 20,
+      cacheWriteTokens: 3,
+      totalTokens: 135,
+      visualTokens: 155,
+      sessions: 1,
+    })
     expect(store.dailyUsage).toHaveLength(2)
     expect(store.dailyUsage[0]).toMatchObject({
       date: '2026-04-29',

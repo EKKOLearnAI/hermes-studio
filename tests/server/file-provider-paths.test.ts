@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { join, resolve } from 'path'
 import { tmpdir } from 'os'
+import { mkdir, mkdtemp, rm, symlink } from 'fs/promises'
 import { normalizePlatformPath, validatePath } from '../../packages/server/src/services/hermes/file-provider'
-import { isPathWithin, relativePathFromBase } from '../../packages/server/src/services/hermes/hermes-path'
+import { isNearestExistingRealPathWithin, isPathWithin, isRealPathWithin, relativePathFromBase } from '../../packages/server/src/services/hermes/hermes-path'
 
 describe('file provider platform path normalization', () => {
   it('converts MSYS drive paths to Windows absolute paths on Windows', () => {
@@ -48,5 +49,30 @@ describe('Hermes path containment helpers', () => {
       .toBe('logs/run.txt')
     expect(relativePathFromBase('/tmp/hermes-profile2/logs/run.txt', '/tmp/hermes-profile'))
       .toBeNull()
+  })
+
+  it('realpath-vets symlinked ancestors before allowing nested workspace operations', async () => {
+    const workspaceBase = await mkdtemp(join(tmpdir(), 'hermes-workspace-base-'))
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'hermes-workspace-outside-'))
+
+    try {
+      const safeTarget = join(workspaceBase, 'projects')
+      const safeLink = join(workspaceBase, 'linked-projects')
+      const outsideTarget = join(outsideRoot, 'external-projects')
+      const outsideLink = join(workspaceBase, 'linked-external')
+
+      await mkdir(safeTarget, { recursive: true })
+      await mkdir(outsideTarget, { recursive: true })
+      await symlink(safeTarget, safeLink)
+      await symlink(outsideTarget, outsideLink)
+
+      await expect(isRealPathWithin(safeLink, workspaceBase)).resolves.toBe(true)
+      await expect(isRealPathWithin(outsideLink, workspaceBase)).resolves.toBe(false)
+      await expect(isNearestExistingRealPathWithin(join(safeLink, 'child'), workspaceBase)).resolves.toBe(true)
+      await expect(isNearestExistingRealPathWithin(join(outsideLink, 'child'), workspaceBase)).resolves.toBe(false)
+    } finally {
+      await rm(workspaceBase, { recursive: true, force: true })
+      await rm(outsideRoot, { recursive: true, force: true })
+    }
   })
 })

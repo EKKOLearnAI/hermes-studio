@@ -24,6 +24,7 @@ describe('coding agent api modes', () => {
   it('infers a safe fallback protocol from provider identity and base URL', () => {
     expect(inferCodingAgentApiMode('anthropic', 'https://api.anthropic.com')).toBe('anthropic_messages')
     expect(inferCodingAgentApiMode('deepseek', 'https://api.deepseek.com')).toBe('chat_completions')
-    expect(inferCodingAgentApiMode('openrouter', 'https://openrouter.ai/api/v1')).toBe('codex_responses')
+    expect(inferCodingAgentApiMode('xiaomi', 'https://api.xiaomimimo.com/v1')).toBe('chat_completions')
+    expect(inferCodingAgentApiMode('openrouter', 'https://openrouter.ai/api/v1')).toBe('chat_completions')
   })
 })

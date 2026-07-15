@@ -69,6 +69,8 @@ export interface CreateJobRequest {
   deliver?: string
   skills?: string[]
   repeat?: number
+  model?: string
+  provider?: string
 }
 
 export interface UpdateJobRequest {
@@ -91,6 +93,8 @@ export interface JobFormValues {
   deliver: string
   skills: string[]
   repeat_times: number | null
+  model: string
+  provider: string
 }
 
 function unwrap(res: { job: Job }): Job {
@@ -138,6 +142,8 @@ export function buildJobUpdateRequest(original: Job, form: JobFormValues): Updat
   const originalRepeat = jobRepeatToEditValue(original.repeat)
   const originalDeliver = original.deliver || 'origin'
   const originalSkills = original.skills || (original.skill ? [original.skill] : [])
+  const originalModel = original.model || ''
+  const originalProvider = original.provider || ''
 
   if (form.name !== original.name) payload.name = form.name
   if (form.schedule !== originalSchedule) payload.schedule = form.schedule
@@ -147,6 +153,8 @@ export function buildJobUpdateRequest(original: Job, form: JobFormValues): Updat
     payload.skills = form.skills
   }
   if (form.repeat_times !== originalRepeat) payload.repeat = form.repeat_times
+  if (form.model !== originalModel) payload.model = form.model
+  if (form.provider !== originalProvider) payload.provider = form.provider
 
   return payload
 }

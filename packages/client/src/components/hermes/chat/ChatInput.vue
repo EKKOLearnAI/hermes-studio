@@ -3,15 +3,17 @@ import type { Attachment } from '@/stores/hermes/chat'
 import { useChatStore } from '@/stores/hermes/chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
+import { useSettingsStore } from '@/stores/hermes/settings'
 import { fetchContextLength } from '@/api/hermes/sessions'
 import { setModelContext } from '@/api/hermes/model-context'
 import { fetchSkills, type SkillCategory, type SkillInfo } from '@/api/hermes/skills'
-import { NButton, NTooltip, NSwitch, NModal, NInputNumber, NPopselect, useMessage } from 'naive-ui'
-import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { NButton, NTooltip, NModal, NInputNumber, NPopselect, NDropdown, useMessage, type DropdownOption } from 'naive-ui'
+import { computed, ref, nextTick, onMounted, onUnmounted, watch, h } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import VoiceDialogueControls from './VoiceDialogueControls.vue'
 import { useMicRecorder } from '@/composables/useMicRecorder'
+import { usePcmStreamRecorder } from '@/composables/usePcmStreamRecorder'
 import { useGlobalSpeech } from '@/composables/useSpeech'
 import { useVoiceDialogue } from '@/composables/useVoiceDialogue'
 import { transcribeSpeech } from '@/api/hermes/stt'
@@ -19,13 +21,28 @@ import type { StoredSttProvider } from '@/api/hermes/stt-settings'
 import { useSttSettings } from '@/composables/useSttSettings'
 import { useBrowserSpeechRecognition } from '@/composables/useBrowserSpeechRecognition'
 import { BRIDGE_SESSION_COMMAND_DEFINITIONS } from '@/utils/hermes/bridge-session-commands'
+import { clampChatInputHeight, isMobileChatInputViewport } from '@/utils/chat-input-height'
+import { isDesktopShell } from '@/utils/desktop-bridge'
+import { isMobileDevice } from '@/utils/device'
 
 const chatStore = useChatStore()
 const appStore = useAppStore()
 const profilesStore = useProfilesStore()
+const settingsStore = useSettingsStore()
 const { t } = useI18n()
 const message = useMessage()
 const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
+
+const props = withDefaults(defineProps<{
+  modelLabel?: string
+}>(), {
+  modelLabel: '',
+})
+
+const emit = defineEmits<{
+  modelClick: []
+  voiceClick: []
+}>()
 
 const reasoningEffortOptions = computed(() => [
   { label: t('chat.reasoningEffort.options.default'), value: '' },
@@ -35,10 +52,12 @@ const reasoningEffortOptions = computed(() => [
   { label: t('chat.reasoningEffort.options.medium'), value: 'medium' },
   { label: t('chat.reasoningEffort.options.high'), value: 'high' },
   { label: t('chat.reasoningEffort.options.xhigh'), value: 'xhigh' },
+  { label: t('chat.reasoningEffort.options.max'), value: 'max' },
 ])
 const currentReasoningEffort = computed<string>(() =>
   chatStore.activeSession?.reasoningEffort || ''
 )
+const isMoaSession = computed(() => chatStore.activeSession?.provider === 'moa')
 const reasoningEffortLabel = computed<string>(() => {
   const v = currentReasoningEffort.value
   if (!v) return t('chat.reasoningEffort.defaultLabel')
@@ -50,6 +69,17 @@ function onReasoningEffortChange(value: string | null | undefined) {
   if (!sid) return
   chatStore.setSessionReasoningEffort(sid, value || '')
 }
+
+function handleModelButtonClick() {
+  emit('modelClick')
+}
+
+const compactModelLabel = computed(() => {
+  const label = props.modelLabel || t('models.selectModel')
+  const parts = label.split('/').filter(Boolean)
+  return parts[parts.length - 1] || label
+})
+
 const DRAFT_STORAGE_KEY = 'hermes_chat_input_drafts_v1'
 type DraftMap = Record<string, string>
 const inputText = ref('')
@@ -60,8 +90,17 @@ const attachments = ref<Attachment[]>([])
 const isDragging = ref(false)
 const dragCounter = ref(0)
 const isComposing = ref(false)
+const isMobileViewport = ref(typeof window !== 'undefined' ? isMobileChatInputViewport(window.innerWidth) : false)
+const manualTextareaResize = ref(false)
 const speech = useGlobalSpeech()
 const micRecorder = useMicRecorder({
+  messages: {
+    unsupported: t('chat.voiceInput.microphoneUnsupported'),
+    recordingFailed: t('chat.voiceInput.microphoneRecordingFailed'),
+  },
+})
+const pcmRecorder = usePcmStreamRecorder({
+  voiceActivityThreshold: 0.02,
   messages: {
     unsupported: t('chat.voiceInput.microphoneUnsupported'),
     recordingFailed: t('chat.voiceInput.microphoneRecordingFailed'),
@@ -75,7 +114,10 @@ const browserRecognition = useBrowserSpeechRecognition({
     failedWithReason: (reason) => t('chat.voiceInput.browserSpeechFailedWithReason', { error: reason }),
   },
 })
-const activeVoiceCaptureMode = ref<'browser' | 'backend' | null>(null)
+const activeVoiceCaptureMode = ref<'browser' | 'backend' | 'pcm' | null>(null)
+const configuredTextareaHeight = computed(() =>
+  isMobileViewport.value ? null : clampChatInputHeight(settingsStore.display.chat_input_height),
+)
 
 type SlashCommandOption = {
   name: string
@@ -144,11 +186,7 @@ function insertVoiceTranscriptIntoInput(text: string) {
 
     textarea.focus()
     textarea.setSelectionRange(nextCursorPosition, nextCursorPosition)
-
-    if (textareaHeight.value === null) {
-      textarea.style.height = 'auto'
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 100)}px`
-    }
+    autoSizeTextarea(textarea)
   })
 }
 
@@ -178,6 +216,7 @@ const shouldShowBrowserRecognitionError = computed(() =>
 const voiceDialogueError = computed(() =>
   voiceDialogue.error.value?.message
   ?? (shouldShowBrowserRecognitionError.value ? browserRecognition.error.value?.message : null)
+  ?? pcmRecorder.error.value?.message
   ?? micRecorder.state.value.error?.message
   ?? null,
 )
@@ -285,11 +324,70 @@ async function loadSkills() {
 
 // 自定义高度拖拽
 const textareaHeight = ref<number | null>(null) // null = auto
+const inputWrapperStyle = computed(() => {
+  const height = textareaHeight.value ?? configuredTextareaHeight.value
+  if (height === null) return {}
+  return { minHeight: `${height + 71}px` }
+})
+
+function syncViewport() {
+  if (typeof window === 'undefined') return
+  isMobileViewport.value = isMobileChatInputViewport(window.innerWidth)
+}
+
+function resetTextareaHeight() {
+  manualTextareaResize.value = false
+  applyConfiguredTextareaHeight()
+}
+
+function autoSizeTextarea(el: HTMLTextAreaElement | undefined = textareaRef.value) {
+  if (!el || textareaHeight.value !== null) return
+  el.style.height = 'auto'
+  el.style.height = `${Math.min(el.scrollHeight, 100)}px`
+}
+
+function focusTextareaFromInputWrapper(event: MouseEvent) {
+  if (event.defaultPrevented) return
+
+  const target = event.target instanceof Element ? event.target : null
+  if (!target) return
+
+  const interactiveTarget = target.closest([
+    'button',
+    'input',
+    'textarea',
+    '[role="button"]',
+    '.context-limit-editable',
+    '.input-toolbar',
+    '.resize-handle',
+  ].join(','))
+
+  if (interactiveTarget) return
+
+  textareaRef.value?.focus()
+}
+
+function applyConfiguredTextareaHeight() {
+  if (manualTextareaResize.value) return
+
+  textareaHeight.value = configuredTextareaHeight.value
+
+  const textarea = textareaRef.value
+  if (!textarea) return
+
+  if (textareaHeight.value === null) {
+    autoSizeTextarea(textarea)
+    return
+  }
+
+  textarea.style.height = `${textareaHeight.value}px`
+}
 
 function startResize(e: MouseEvent) {
   e.preventDefault()
   const el = textareaRef.value
   if (!el) return
+  manualTextareaResize.value = true
   // 如果当前是 auto，用实际 clientHeight 作为起始值
   const startHeight = el.clientHeight
   const startY = e.clientY
@@ -298,7 +396,7 @@ function startResize(e: MouseEvent) {
     const deltaY = e.clientY - startY
     // 往上拖 (deltaY < 0) → 高度增加
     const newHeight = startHeight - deltaY
-    textareaHeight.value = Math.max(20, Math.min(400, Math.round(newHeight)))
+    textareaHeight.value = clampChatInputHeight(newHeight) ?? textareaHeight.value
   }
 
   function onMouseUp() {
@@ -314,8 +412,24 @@ function startResize(e: MouseEvent) {
   document.addEventListener('mouseup', onMouseUp)
 }
 
-// 自动播放语音开关
-const autoPlaySpeech = ref(false)
+const inputSettingsOptions = computed<DropdownOption[]>(() => [
+  {
+    label: t('realtimeVoice.mode'),
+    key: 'voiceMode',
+    icon: () => h('span', {
+      class: 'settings-voice-mode-icon',
+      'aria-hidden': 'true',
+    }, '◉'),
+  },
+  {
+    label: t('chat.showToolCalls'),
+    key: 'toolTrace',
+    icon: () => h('span', {
+      class: ['settings-check', { active: toolTraceVisible.value }],
+      'aria-hidden': 'true',
+    }, toolTraceVisible.value ? '✓' : ''),
+  },
+])
 
 function readDraftMap(): DraftMap {
   try {
@@ -354,20 +468,23 @@ function saveDraftForActiveSession(value: string) {
 // 从 localStorage 读取设置
 onMounted(() => {
   loadDraftForActiveSession()
-  const saved = localStorage.getItem('autoPlaySpeech')
-  if (saved !== null) {
-    autoPlaySpeech.value = saved === 'true'
-    // 同步到 chat store
-    chatStore.setAutoPlaySpeech(autoPlaySpeech.value)
-  }
+  syncViewport()
+  window.addEventListener('resize', syncViewport)
+  nextTick(() => {
+    applyConfiguredTextareaHeight()
+  })
 })
 
-// 监听变化并保存
-watch(autoPlaySpeech, (value) => {
-  localStorage.setItem('autoPlaySpeech', String(value))
-  // 通知 chat store
-  chatStore.setAutoPlaySpeech(value)
-})
+function handleInputSettingsSelect(key: string | number) {
+  if (key === 'voiceMode') {
+    if (chatStore.activeSessionId) emit('voiceClick')
+    return
+  }
+
+  if (key === 'toolTrace') {
+    toggleToolTraceVisible()
+  }
+}
 
 watch(inputText, (value) => {
   saveDraftForActiveSession(value)
@@ -375,6 +492,18 @@ watch(inputText, (value) => {
 
 watch(() => chatStore.activeSession?.id, () => {
   loadDraftForActiveSession()
+  nextTick(() => {
+    applyConfiguredTextareaHeight()
+  })
+})
+
+watch(configuredTextareaHeight, () => {
+  applyConfiguredTextareaHeight()
+})
+
+watch(() => settingsStore.display.chat_input_height, () => {
+  manualTextareaResize.value = false
+  applyConfiguredTextareaHeight()
 })
 
 watch(
@@ -385,7 +514,8 @@ watch(
   },
 )
 
-const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
+const canSend = computed(() => inputText.value.trim().length > 0 || attachments.value.length > 0)
+const sendButtonIsStop = computed(() => chatStore.isStreaming && !canSend.value)
 
 function scrollCommandIntoView() {
   nextTick(() => {
@@ -467,10 +597,8 @@ let contextLengthRequest: Promise<void> | null = null
 const showContextEditModal = ref(false)
 const editingContextLimit = ref(256000)
 const isSavingContextLimit = ref(false)
-const isCodingAgentSession = computed(() => chatStore.activeSession?.source === 'coding_agent')
 
 async function handleEditContextLimit() {
-  if (isCodingAgentSession.value) return
   editingContextLimit.value = contextLength.value
   showContextEditModal.value = true
 }
@@ -518,7 +646,6 @@ function currentContextLengthKey() {
 }
 
 async function loadContextLength() {
-  if (isCodingAgentSession.value) return
   const key = currentContextLengthKey()
   if (key === contextLengthLoadedKey) return
   if (key === contextLengthRequestKey && contextLengthRequest) return contextLengthRequest
@@ -562,14 +689,13 @@ watch(
 )
 
 const totalTokens = computed(() => {
-  if (isCodingAgentSession.value) return 0
   const context = chatStore.activeSession?.contextTokens
   if (typeof context === 'number' && Number.isFinite(context) && context > 0) return context
   const input = chatStore.activeSession?.inputTokens ?? 0
   const output = chatStore.activeSession?.outputTokens ?? 0
   return input + output
 })
-const showContextUsage = computed(() => totalTokens.value > 0)
+const showContextUsage = computed(() => !!chatStore.activeSession)
 
 const remainingTokens = computed(() => Math.max(0, contextLength.value - totalTokens.value))
 
@@ -689,8 +815,11 @@ async function startVoiceCapture() {
   browserRecognition.clearError()
   const { captureId } = await voiceDialogue.beginCapture()
   const useBrowserProvider = sttSettings.provider.value === 'browser'
+  const usePcmCapture = !useBrowserProvider && (isDesktopShell() || isMobileDevice())
 
-  activeVoiceCaptureMode.value = useBrowserProvider ? 'browser' : 'backend'
+  activeVoiceCaptureMode.value = useBrowserProvider
+    ? 'browser'
+    : usePcmCapture ? 'pcm' : 'backend'
 
   try {
     if (useBrowserProvider) {
@@ -698,7 +827,11 @@ async function startVoiceCapture() {
       return
     }
 
-    await micRecorder.start()
+    if (usePcmCapture) {
+      await pcmRecorder.start()
+    } else {
+      await micRecorder.start()
+    }
   } catch {
     activeVoiceCaptureMode.value = null
     voiceDialogue.cancelCapture(captureId)
@@ -730,17 +863,24 @@ async function stopVoiceCapture() {
     return
   }
 
-  if (micRecorder.state.value.status === 'requesting') {
-    micRecorder.cancel()
+  const usePcmCapture = activeVoiceCaptureMode.value === 'pcm'
+  const captureStatus = usePcmCapture
+    ? pcmRecorder.status.value
+    : micRecorder.state.value.status
+  if (captureStatus === 'requesting') {
+    if (usePcmCapture) pcmRecorder.cancel()
+    else micRecorder.cancel()
     activeVoiceCaptureMode.value = null
     voiceDialogue.cancelCapture(captureId)
     return
   }
 
-  let audio: Blob
+  let audio: Blob | null
 
   try {
-    audio = await micRecorder.stop()
+    audio = usePcmCapture
+      ? await pcmRecorder.stop()
+      : await micRecorder.stop()
   } catch {
     activeVoiceCaptureMode.value = null
     voiceDialogue.cancelCapture(captureId)
@@ -749,7 +889,7 @@ async function stopVoiceCapture() {
 
   activeVoiceCaptureMode.value = null
 
-  if (audio.size <= 0) {
+  if (!audio || audio.size <= 0) {
     voiceDialogue.cancelCapture(captureId)
     return
   }
@@ -764,6 +904,8 @@ async function stopVoiceCapture() {
 function cancelVoiceCapture() {
   if (activeVoiceCaptureMode.value === 'browser') {
     browserRecognition.cancel()
+  } else if (activeVoiceCaptureMode.value === 'pcm') {
+    pcmRecorder.cancel()
   } else {
     micRecorder.cancel()
   }
@@ -825,8 +967,7 @@ function handleInput(e: Event) {
   if (!isComposing.value) updateSlashState()
   // 用户手动拖拽自定义高度时，不覆盖
   if (textareaHeight.value !== null) return
-  el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 100) + 'px'
+  autoSizeTextarea(el)
 }
 
 function handleCommandHover(index: number) {
@@ -847,6 +988,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('mousedown', onDocumentMousedown)
+  window.removeEventListener('resize', syncViewport)
 })
 
 function removeAttachment(id: string) {
@@ -870,108 +1012,6 @@ function isImage(type: string): boolean {
 
 <template>
   <div class="chat-input-area">
-    <!-- Top bar: attach + auto play speech + context info -->
-    <div class="input-top-bar">
-      <NTooltip trigger="hover">
-        <template #trigger>
-          <NButton quaternary size="tiny" @click="handleAttachClick" circle>
-            <template #icon>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-            </template>
-          </NButton>
-        </template>
-        {{ t('chat.attachFiles') }}
-      </NTooltip>
-
-      <NPopselect
-        v-if="!isCodingAgentSession"
-        :value="currentReasoningEffort"
-        :options="reasoningEffortOptions"
-        trigger="click"
-        @update:value="onReasoningEffortChange"
-      >
-        <NTooltip trigger="hover">
-          <template #trigger>
-            <NButton
-              quaternary
-              size="tiny"
-              circle
-              class="reasoning-effort-button"
-              :class="{ active: !!currentReasoningEffort }"
-              :aria-label="`${t('chat.reasoningEffort.tooltip')}: ${reasoningEffortLabel}`"
-            >
-              <template #icon>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/>
-                  <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/>
-                </svg>
-              </template>
-            </NButton>
-          </template>
-          {{ t('chat.reasoningEffort.tooltip') }}: {{ reasoningEffortLabel }}
-        </NTooltip>
-      </NPopselect>
-
-      <div class="auto-play-speech-switch">
-        <NTooltip trigger="hover">
-          <template #trigger>
-            <div class="switch-label">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polygon points="5 3 19 12 5 21 5 3"/>
-              </svg>
-            </div>
-          </template>
-          {{ t('chat.autoPlaySpeech') }}
-        </NTooltip>
-        <NSwitch
-          size="small"
-          v-model:value="autoPlaySpeech"
-          :round="false"
-        />
-      </div>
-
-      <NTooltip trigger="hover">
-        <template #trigger>
-          <NButton
-            quaternary
-            size="tiny"
-            class="tool-trace-toggle"
-            :class="{ active: toolTraceVisible }"
-            :aria-label="toolTraceVisible ? t('chat.hideToolCalls') : t('chat.showToolCalls')"
-            @click="toggleToolTraceVisible"
-          >
-            <svg class="tool-trace-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14.7 6.3a4.5 4.5 0 0 0-5.8 5.8L3.5 17.5a2.1 2.1 0 0 0 3 3l5.4-5.4a4.5 4.5 0 0 0 5.8-5.8l-3 3-3-3 3-3z"/>
-            </svg>
-          </NButton>
-        </template>
-        {{ toolTraceVisible ? t('chat.hideToolCalls') : t('chat.showToolCalls') }}
-      </NTooltip>
-
-      <span v-if="showContextUsage" class="context-info" :class="{ 'context-warning': usagePercent > 80 }">
-        {{ formatTokens(totalTokens) }} /
-        <NTooltip trigger="hover">
-          <template #trigger>
-            <span class="context-limit-editable" @click="handleEditContextLimit">
-              {{ formatTokens(contextLength) }}
-            </span>
-          </template>
-          <span>{{ t('chat.contextClickToEdit') }}</span>
-        </NTooltip>
-        · {{ t('chat.contextRemaining') }} {{ formatTokens(remainingTokens) }}
-      </span>
-      <div v-if="showContextUsage" class="context-bar">
-        <div
-          class="context-bar-fill"
-          :class="{
-            'context-bar-warn': usagePercent > 60 && usagePercent <= 80,
-            'context-bar-danger': usagePercent > 80,
-          }"
-          :style="{ width: `${usagePercent}%` }"
-        />
-      </div>
-    </div>
-
     <!-- Attachment previews -->
     <div v-if="attachments.length > 0" class="attachment-previews">
       <div
@@ -999,10 +1039,12 @@ function isImage(type: string): boolean {
     <div
       class="input-wrapper"
       :class="{ 'drag-over': isDragging }"
+      :style="inputWrapperStyle"
       @dragover="handleDragOver"
       @dragenter="handleDragEnter"
       @dragleave="handleDragLeave"
       @drop="handleDrop"
+      @mousedown="focusTextareaFromInputWrapper"
     >
       <input
         ref="fileInputRef"
@@ -1011,7 +1053,36 @@ function isImage(type: string): boolean {
         class="file-input-hidden"
         @change="handleFileChange"
       />
-      <div class="resize-handle" @mousedown="startResize"></div>
+      <div
+        class="resize-handle"
+        :title="t('chat.inputHeightResizeHint')"
+        @mousedown="startResize"
+        @dblclick="resetTextareaHeight"
+      ></div>
+      <div v-if="showContextUsage" class="context-usage-row">
+        <span class="context-info" :class="{ 'context-warning': usagePercent > 80 }">
+          {{ formatTokens(totalTokens) }} /
+          <NTooltip trigger="hover" :disabled="isMobileViewport">
+            <template #trigger>
+              <span class="context-limit-editable" @click="handleEditContextLimit">
+                {{ formatTokens(contextLength) }}
+              </span>
+            </template>
+            <span>{{ t('chat.contextClickToEdit') }}</span>
+          </NTooltip>
+          · {{ t('chat.contextRemaining') }} {{ formatTokens(remainingTokens) }}
+        </span>
+        <div class="context-bar">
+          <div
+            class="context-bar-fill"
+            :class="{
+              'context-bar-warn': usagePercent > 60 && usagePercent <= 80,
+              'context-bar-danger': usagePercent > 80,
+            }"
+            :style="{ width: `${usagePercent}%` }"
+          />
+        </div>
+      </div>
       <textarea
         ref="textareaRef"
         v-model="inputText"
@@ -1025,6 +1096,154 @@ function isImage(type: string): boolean {
         @input="handleInput"
         @paste="handlePaste"
       ></textarea>
+      <div class="input-toolbar">
+        <!-- Bottom bar: attach + input settings + actions -->
+        <div class="input-top-bar">
+          <NTooltip trigger="hover" :disabled="isMobileViewport">
+            <template #trigger>
+              <NButton quaternary size="tiny" @click="handleAttachClick" circle class="toolbar-icon-button">
+                <template #icon>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                </template>
+              </NButton>
+            </template>
+            {{ t('chat.attachFiles') }}
+          </NTooltip>
+
+          <NPopselect
+            v-if="!isMoaSession"
+            :value="currentReasoningEffort"
+            :options="reasoningEffortOptions"
+            trigger="click"
+            @update:value="onReasoningEffortChange"
+          >
+            <NTooltip trigger="hover" :disabled="isMobileViewport">
+              <template #trigger>
+                <NButton
+                  quaternary
+                  size="tiny"
+                  class="reasoning-effort-button"
+                  :class="{ active: !!currentReasoningEffort }"
+                  :aria-label="`${t('chat.reasoningEffort.tooltip')}: ${reasoningEffortLabel}`"
+                >
+                  <template #icon>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/>
+                      <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/>
+                    </svg>
+                  </template>
+                  <span class="reasoning-effort-label">{{ reasoningEffortLabel }}</span>
+                  <svg class="toolbar-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+                </NButton>
+              </template>
+              {{ t('chat.reasoningEffort.tooltip') }}: {{ reasoningEffortLabel }}
+            </NTooltip>
+          </NPopselect>
+
+          <NDropdown
+            trigger="click"
+            :options="inputSettingsOptions"
+            :show-arrow="true"
+            @select="handleInputSettingsSelect"
+          >
+            <NTooltip trigger="hover" :disabled="isMobileViewport">
+              <template #trigger>
+                <NButton
+                  quaternary
+                  size="tiny"
+                  class="input-settings-button"
+                  :aria-label="t('sidebar.settings')"
+                >
+                  <template #icon>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="3"/>
+                      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06A2 2 0 1 1 7.04 4.3l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.08a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.2.6.77 1 1.4 1H21a2 2 0 1 1 0 4h-.09c-.63 0-1.2.4-1.51 1Z"/>
+                    </svg>
+                  </template>
+                  <span class="input-settings-label">{{ t('sidebar.settings') }}</span>
+                  <svg class="toolbar-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+                </NButton>
+              </template>
+              {{ t('sidebar.settings') }}
+            </NTooltip>
+          </NDropdown>
+
+          <NTooltip trigger="hover" :disabled="isMobileViewport">
+            <template #trigger>
+              <NButton
+                quaternary
+                size="tiny"
+                class="input-model-button"
+                :title="isMobileViewport ? undefined : props.modelLabel || t('models.selectModel')"
+                :aria-label="props.modelLabel || t('models.selectModel')"
+                @click="handleModelButtonClick"
+              >
+                <template #icon>
+                  <svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M12 1v4" />
+                    <path d="M12 19v4" />
+                    <path d="M1 12h4" />
+                    <path d="M19 12h4" />
+                    <path d="M4.22 4.22l2.83 2.83" />
+                    <path d="M16.95 16.95l2.83 2.83" />
+                    <path d="M4.22 19.78l2.83-2.83" />
+                    <path d="M16.95 7.05l2.83-2.83" />
+                  </svg>
+                </template>
+                <span class="input-model-label">{{ compactModelLabel }}</span>
+                <svg class="toolbar-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+              </NButton>
+            </template>
+            {{ props.modelLabel || t('models.selectModel') }}
+          </NTooltip>
+
+        </div>
+        <div class="input-actions">
+          <VoiceDialogueControls
+            :status="voiceDialogue.status.value"
+            :transcript="voiceDialogueTranscript"
+            :error="voiceDialogueError"
+            :events="voiceDialogue.events.value"
+            :on-start="startVoiceCapture"
+            :on-stop="stopVoiceCapture"
+            :on-cancel="cancelVoiceCapture"
+          />
+          <NButton
+            size="medium"
+            type="primary"
+            circle
+            class="send-button"
+            :class="{ 'send-button--stop': sendButtonIsStop }"
+            :disabled="sendButtonIsStop ? chatStore.isAborting : !canSend"
+            :aria-label="sendButtonIsStop ? 'Stop' : 'Send'"
+            @click="sendButtonIsStop ? chatStore.stopStreaming() : handleSend()"
+          >
+            <template #icon>
+              <svg
+                v-if="sendButtonIsStop"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor" />
+              </svg>
+              <svg v-else width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+            </template>
+            <span class="visually-hidden">{{ sendButtonIsStop ? t('chat.stop') : t('chat.send') }}</span>
+          </NButton>
+        </div>
+      </div>
       <Transition name="dropdown-fade">
         <div
           v-if="slashActive && filteredBridgeCommands.length > 0"
@@ -1045,37 +1264,6 @@ function isImage(type: string): boolean {
           </div>
         </div>
       </Transition>
-      <div class="input-actions">
-        <VoiceDialogueControls
-          :status="voiceDialogue.status.value"
-          :transcript="voiceDialogueTranscript"
-          :error="voiceDialogueError"
-          :events="voiceDialogue.events.value"
-          :on-start="startVoiceCapture"
-          :on-stop="stopVoiceCapture"
-          :on-cancel="cancelVoiceCapture"
-        />
-        <NButton
-          v-if="chatStore.isStreaming"
-          size="small"
-          type="error"
-          :disabled="chatStore.isAborting"
-          @click="chatStore.stopStreaming()"
-        >
-          {{ t('chat.stop') }}
-        </NButton>
-        <NButton
-          size="small"
-          type="primary"
-          :disabled="!canSend"
-          @click="handleSend"
-        >
-          <template #icon>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-          </template>
-          {{ t('chat.send') }}
-        </NButton>
-      </div>
     </div>
 
     <NModal
@@ -1166,25 +1354,33 @@ function isImage(type: string): boolean {
 @use '@/styles/variables' as *;
 
 .chat-input-area {
-  padding: 12px 20px 16px;
-  border-top: 1px solid $border-color;
+  position: relative;
+  z-index: 80;
+  padding: 8px 20px 14px;
+  border-top: 0;
+  background-color: $bg-card;
   flex-shrink: 0;
+
+  .dark & {
+    background-color: #333333;
+  }
 }
 
 .input-top-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 0 6px;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+  padding: 0;
 }
 
 .auto-play-speech-switch {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 0 0 8px;
-  border-left: 1px solid $border-light;
-  margin-left: 4px;
+  gap: 5px;
+  padding: 0 0 0 2px;
+  margin-left: 0;
 
   .switch-label {
     display: flex;
@@ -1214,7 +1410,7 @@ function isImage(type: string): boolean {
   width: 24px;
   min-width: 24px;
   height: 22px;
-  margin-left: -4px;
+  margin-left: 0;
   padding: 0;
   background: transparent !important;
   opacity: 1;
@@ -1243,10 +1439,91 @@ function isImage(type: string): boolean {
   }
 }
 
+.input-settings-button {
+  color: $text-secondary;
+  border-radius: 999px;
+  padding: 0 7px 0 6px;
+
+  :deep(.n-button__content) {
+    gap: 4px;
+  }
+
+  :deep(.n-button__state-border),
+  :deep(.n-button__border),
+  :deep(.n-button__ripple) {
+    display: none;
+  }
+}
+
+.input-model-button {
+  color: $text-secondary;
+  border-radius: 999px;
+  max-width: 190px;
+  padding: 0 4px 0 6px;
+
+  :deep(.n-button__content) {
+    gap: 4px;
+    min-width: 0;
+  }
+
+  :deep(.n-button__state-border),
+  :deep(.n-button__border),
+  :deep(.n-button__ripple) {
+    display: none;
+  }
+}
+
+.input-model-label {
+  display: inline-block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
 .reasoning-effort-button {
+  color: $text-secondary;
+  border-radius: 999px;
+  padding: 0 4px 0 6px;
+
   &.active {
     color: #4caf50;
   }
+
+  :deep(.n-button__content) {
+    gap: 4px;
+    min-width: 0;
+  }
+}
+
+.reasoning-effort-label {
+  display: inline-block;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.toolbar-chevron {
+  flex: 0 0 12px;
+  color: $text-muted;
+}
+
+.context-usage-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  position: absolute;
+  top: 9px;
+  right: 14px;
+  z-index: 1;
+  min-width: 0;
+  max-width: calc(100% - 28px);
+  padding: 0;
+  pointer-events: auto;
 }
 
 .context-info {
@@ -1297,9 +1574,79 @@ function isImage(type: string): boolean {
   }
 }
 
+.dark .context-info {
+  color: rgba(255, 255, 255, 0.68);
+
+  &.context-warning {
+    color: #f0bc58;
+  }
+}
+
+.dark .context-limit-editable {
+  color: rgba(255, 255, 255, 0.8);
+
+  &:hover {
+    border-bottom-color: rgba(255, 255, 255, 0.58);
+    background: rgba(255, 255, 255, 0.08);
+  }
+}
+
+.dark .context-bar {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.dark .context-bar-fill {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.72));
+
+  &.context-bar-warn {
+    background: linear-gradient(90deg, #d99d35, #f0bc58);
+  }
+
+  &.context-bar-danger {
+    background: linear-gradient(90deg, #d95445, #ff7a68);
+  }
+}
+
 @media (max-width: 768px) {
+  .chat-input-area {
+    --voice-overlay-mobile-bottom-offset: 146px;
+    padding: 8px 12px 12px;
+  }
+
   .input-top-bar {
     gap: 5px;
+  }
+
+  .reasoning-effort-label,
+  .auto-play-speech-switch {
+    display: none;
+  }
+
+  .input-model-button {
+    min-width: 35px;
+    max-width: 35px;
+    padding: 0 4px 0 6px;
+  }
+
+  .input-model-label {
+    display: none;
+  }
+
+  .input-settings-button {
+    min-width: 36px;
+    padding: 0 4px 0 6px;
+
+    :deep(.n-button__content) {
+      gap: 2px;
+    }
+
+    :deep(.n-button__icon) {
+      margin: 0;
+    }
+  }
+
+  .input-settings-label {
+    display: none;
   }
 
   .context-info {
@@ -1307,7 +1654,6 @@ function isImage(type: string): boolean {
     text-overflow: ellipsis;
     font-size: 10px;
     line-height: 14px;
-    margin-right: 10px;
   }
 
   .context-bar {
@@ -1317,6 +1663,7 @@ function isImage(type: string): boolean {
 }
 
 .attachment-previews {
+  width: 100%;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -1395,21 +1742,33 @@ function isImage(type: string): boolean {
 
 .input-wrapper {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  background-color: $bg-input;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  min-height: 150px;
+  background-color: $bg-card;
   border: 1px solid $border-color;
-  border-radius: $radius-md;
-  padding: 10px 12px;
+  border-radius: 18px;
+  padding: 22px 12px 9px;
   position: relative;
-  transition: border-color $transition-fast, background-color $transition-fast;
+  cursor: text;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.08);
+  transition: border-color $transition-fast, box-shadow $transition-fast;
 
   &:focus-within {
+    border-color: rgba(var(--text-primary-rgb), 0.22);
+    box-shadow: 0 10px 32px rgba(0, 0, 0, 0.11);
+  }
+
+  &.drag-over {
     border-color: $accent-primary;
+    background-color: rgba(var(--accent-primary-rgb), 0.04);
   }
 
   .dark & {
     background-color: #333333;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.32);
   }
 }
 
@@ -1429,7 +1788,9 @@ function isImage(type: string): boolean {
 }
 
 .input-textarea {
-  flex: 1;
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
   background: none;
   border: none;
   outline: none;
@@ -1439,7 +1800,8 @@ function isImage(type: string): boolean {
   line-height: 1.5;
   resize: none;
   max-height: 400px;
-  min-height: 20px;
+  min-height: 44px;
+  padding: 0;
   overflow-y: auto;
 
   @media (max-width: 768px) {
@@ -1456,9 +1818,64 @@ function isImage(type: string): boolean {
 
 .input-actions {
   display: flex;
-  gap: 6px;
+  gap: 7px;
   flex-shrink: 0;
   align-items: center;
+}
+
+.input-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  min-height: 32px;
+}
+
+.toolbar-icon-button {
+  color: $text-muted;
+}
+
+.send-button {
+  width: 30px !important;
+  min-width: 30px !important;
+  height: 30px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  box-shadow: none !important;
+
+  :deep(.n-button__icon) {
+    margin: 0 !important;
+  }
+
+  :deep(.n-button__content) {
+    display: none;
+  }
+
+  :deep(.n-button__border),
+  :deep(.n-button__state-border),
+  :deep(.n-button__ripple),
+  :deep(.n-base-wave) {
+    display: none;
+  }
+
+  &:disabled {
+    color: var(--text-on-overlay);
+    background-color: #9f9f9f;
+    opacity: 1;
+  }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .slash-command-dropdown {
@@ -1620,6 +2037,15 @@ function isImage(type: string): boolean {
   .skill-picker-item {
     height: 76px;
   }
+
+  .input-wrapper {
+    min-height: 118px;
+  }
+
+  .input-textarea::placeholder {
+    font-size: 13px;
+    line-height: 1.35;
+  }
 }
 
 .dropdown-fade-enter-active,
@@ -1633,10 +2059,4 @@ function isImage(type: string): boolean {
   transform: translateY(4px);
 }
 
-// Drag-over state
-.input-wrapper.drag-over {
-  border-color: var(--accent-info);
-  border-style: dashed;
-  background-color: rgba(var(--accent-info-rgb), 0.04);
-}
 </style>

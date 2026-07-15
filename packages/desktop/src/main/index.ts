@@ -1,10 +1,11 @@
-import { app, BrowserWindow, Menu, Tray, shell, ipcMain, nativeImage, Notification } from 'electron'
+import { app, BrowserWindow, Menu, Tray, shell, ipcMain, nativeImage, Notification, screen, dialog, session, systemPreferences, type MessageBoxOptions } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { startWebUiServer, stopWebUiServer, getToken } from './webui-server'
 import { bundledNode, desktopIcon, desktopRuntimeVersion, desktopTrayTemplateIcon, desktopWindowsTrayIcon, hermesBinExists, hermesBin, webuiDir } from './paths'
 import { checkForDesktopUpdates, initAutoUpdater } from './updater'
 import { t } from './desktop-i18n'
+import { resetDesktopDefaultLogin } from './desktop-login-reset'
 import { installHermesStudioCliShim, installHermesStudioMcpShim } from './cli-shim'
 import { parseHermesCliArgs, runBundledHermesCli } from './hermes-cli'
 import {
@@ -19,13 +20,22 @@ const PORT = Number(process.env.HERMES_DESKTOP_PORT) || 8748
 const START_HIDDEN = process.argv.includes('--hidden')
 const QUIT_EXISTING = process.argv.includes('--quit')
 const APP_USER_MODEL_ID = 'com.hermeswebui.studio'
+const PET_WINDOW_DEFAULT_WIDTH = 300
+const PET_WINDOW_DEFAULT_HEIGHT = 320
+const PET_WINDOW_MIN_SIZE = 72
+const PET_WINDOW_MAX_SIZE = 1200
+const PET_WINDOW_REFRESH_CHANNEL = 'hermes-desktop:pet-window-refresh'
 type WindowControlAction = 'minimize' | 'toggle-maximize' | 'close'
+type DesktopWindowBounds = { x: number; y: number; width: number; height: number }
 
 let mainWindow: BrowserWindow | null = null
+let petWindow: BrowserWindow | null = null
+let petWindowLoadPromise: Promise<void> | null = null
 let serverUrl: string | null = null
 let tray: Tray | null = null
 let isQuitting = false
 let isBootstrapping = false
+let isResettingLogin = false
 let windowFadeTimer: NodeJS.Timeout | null = null
 const activeNotifications = new Set<Notification>()
 
@@ -84,6 +94,120 @@ function quitApp() {
   app.quit()
 }
 
+function defaultPetWindowBounds(): DesktopWindowBounds {
+  const { workArea } = screen.getPrimaryDisplay()
+  return {
+    x: Math.round(workArea.x + workArea.width - PET_WINDOW_DEFAULT_WIDTH - 28),
+    y: Math.round(workArea.y + workArea.height - PET_WINDOW_DEFAULT_HEIGHT - 28),
+    width: PET_WINDOW_DEFAULT_WIDTH,
+    height: PET_WINDOW_DEFAULT_HEIGHT,
+  }
+}
+
+function petWindowState() {
+  const target = petWindow && !petWindow.isDestroyed() ? petWindow : null
+  return {
+    bounds: target?.getBounds() || defaultPetWindowBounds(),
+    visible: !!target?.isVisible(),
+  }
+}
+
+function sanitizePetWindowBounds(input: unknown): DesktopWindowBounds | null {
+  if (!input || typeof input !== 'object') return null
+  const value = input as Partial<DesktopWindowBounds>
+  const x = Number(value.x)
+  const y = Number(value.y)
+  const width = Number(value.width)
+  const height = Number(value.height)
+  if (![x, y, width, height].every(Number.isFinite)) return null
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+    width: Math.round(Math.min(PET_WINDOW_MAX_SIZE, Math.max(PET_WINDOW_MIN_SIZE, width))),
+    height: Math.round(Math.min(PET_WINDOW_MAX_SIZE, Math.max(PET_WINDOW_MIN_SIZE, height))),
+  }
+}
+
+function webUiHashUrl(hashPath: string): string | null {
+  if (!serverUrl) return null
+  const normalizedHash = hashPath.startsWith('/') ? hashPath : `/${hashPath}`
+  return `${serverUrl.replace(/#.*$/, '').replace(/\/$/, '')}/#${normalizedHash}`
+}
+
+function mainRouteUrl(): string | null {
+  return webUiHashUrl('/hermes/chat')
+}
+
+function petRouteUrl(): string | null {
+  return webUiHashUrl('/desktop-pet')
+}
+
+function ensurePetWindow(): BrowserWindow {
+  if (petWindow && !petWindow.isDestroyed()) return petWindow
+
+  petWindow = new BrowserWindow({
+    ...defaultPetWindowBounds(),
+    title: 'Hermes Pet',
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    ...(process.platform === 'darwin' ? { roundedCorners: false } : {}),
+    ...(process.platform === 'win32' ? { thickFrame: false } : {}),
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    show: false,
+    acceptFirstMouse: true,
+    autoHideMenuBar: true,
+    alwaysOnTop: true,
+    webPreferences: {
+      preload: join(__dirname, '..', 'preload', 'index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      additionalArguments: ['--hermes-window-kind=pet'],
+    },
+  })
+  petWindow.setBackgroundColor('#00000000')
+  petWindow.setHasShadow(false)
+  petWindow.setAlwaysOnTop(true, process.platform === 'darwin' ? 'floating' : 'normal')
+  if (process.platform === 'darwin') {
+    petWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false })
+  }
+  petWindow.on('closed', () => {
+    petWindow = null
+    petWindowLoadPromise = null
+  })
+  petWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
+      return { action: 'allow' }
+    }
+    shell.openExternal(url).catch(() => undefined)
+    return { action: 'deny' }
+  })
+  return petWindow
+}
+
+async function loadPetWindowRoute(): Promise<void> {
+  const url = petRouteUrl()
+  if (!url) return
+  const target = ensurePetWindow()
+  if (target.webContents.getURL() === url) return
+  if (!petWindowLoadPromise) {
+    petWindowLoadPromise = target.loadURL(url)
+      .catch(err => {
+        console.warn('[desktop-pet] failed to load pet window:', err)
+      })
+      .finally(() => {
+        petWindowLoadPromise = null
+      })
+  }
+  await petWindowLoadPromise
+}
+
 function windowState() {
   return {
     isMaximized: !!mainWindow?.isMaximized(),
@@ -128,6 +252,78 @@ function setOpenAtLogin(openAtLogin: boolean) {
   })
 }
 
+async function clearWebLoginSession() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  await mainWindow.webContents.executeJavaScript(`
+    try {
+      localStorage.removeItem('hermes_api_key');
+      sessionStorage.clear();
+      window.location.hash = '#/login';
+    } catch {
+      window.location.hash = '#/login';
+    }
+  `).catch(() => undefined)
+}
+
+function showDesktopMessageBox(options: MessageBoxOptions) {
+  if (mainWindow && !mainWindow.isDestroyed()) return dialog.showMessageBox(mainWindow, options)
+  return dialog.showMessageBox(options)
+}
+
+async function handleResetDefaultLogin() {
+  if (isResettingLogin || (isBootstrapping && !serverUrl)) return
+
+  const choice = await showDesktopMessageBox({
+    type: 'warning',
+    buttons: [t('tray.resetLogin'), t('common.cancel')],
+    defaultId: 0,
+    cancelId: 1,
+    title: t('loginReset.confirmTitle'),
+    message: t('loginReset.confirmMessage'),
+    detail: t('loginReset.confirmDetail'),
+  })
+  if (choice.response !== 0) return
+
+  isResettingLogin = true
+  updateTrayMenu()
+  showMainWindow()
+
+  try {
+    await clearWebLoginSession()
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await mainWindow.loadURL(splashHtml(t('loginReset.resetting')))
+    }
+    await stopWebUiServer()
+    serverUrl = null
+    const credentials = await resetDesktopDefaultLogin()
+    const url = await startWebUiServer(PORT)
+    serverUrl = url
+    if (mainWindow && !mainWindow.isDestroyed()) await mainWindow.loadURL(url)
+    await loadPetWindowRoute()
+    await clearWebLoginSession()
+    await showDesktopMessageBox({
+      type: 'info',
+      buttons: [t('common.ok')],
+      defaultId: 0,
+      title: t('loginReset.successTitle'),
+      message: t('loginReset.successMessage', credentials),
+    })
+  } catch (err) {
+    console.error('[desktop-login-reset] failed:', err)
+    await showDesktopMessageBox({
+      type: 'error',
+      buttons: [t('common.ok')],
+      defaultId: 0,
+      title: t('loginReset.failedTitle'),
+      message: t('loginReset.failedMessage'),
+      detail: err instanceof Error ? err.message : String(err),
+    })
+  } finally {
+    isResettingLogin = false
+    updateTrayMenu()
+  }
+}
+
 function updateTrayMenu() {
   if (!tray) return
   const isVisible = !!mainWindow && mainWindow.isVisible()
@@ -148,6 +344,15 @@ function updateTrayMenu() {
       click: () => {
         checkForDesktopUpdates(true).catch(err => {
           console.error('[tray] update check failed:', err)
+        })
+      },
+    },
+    {
+      label: isResettingLogin ? t('loginReset.resetting') : t('tray.resetLogin'),
+      enabled: !isResettingLogin && (!isBootstrapping || !!serverUrl),
+      click: () => {
+        handleResetDefaultLogin().catch(err => {
+          console.error('[tray] reset login failed:', err)
         })
       },
     },
@@ -250,11 +455,49 @@ function createWindow() {
   // macOS), go straight to it. Otherwise show a loading splash; bootstrap()
   // will swap in the real URL once the server is ready.
   if (serverUrl) {
-    mainWindow.loadURL(serverUrl)
+    mainWindow.loadURL(mainRouteUrl() || serverUrl)
   } else {
     mainWindow.loadURL(splashHtml(t('runtime.checking')))
   }
   updateTrayMenu()
+}
+
+function installMicrophonePermissionHandler() {
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const isMainRenderer = !!mainWindow
+      && !mainWindow.isDestroyed()
+      && webContents === mainWindow.webContents
+    if (permission !== 'media') {
+      callback(isMainRenderer)
+      return
+    }
+
+    const mediaTypes = ('mediaTypes' in details ? details.mediaTypes : undefined) ?? []
+    const requestsAudio = mediaTypes.length ? mediaTypes.includes('audio') : true
+
+    if (!isMainRenderer || !requestsAudio) {
+      callback(false)
+      return
+    }
+
+    if (process.platform !== 'darwin') {
+      callback(true)
+      return
+    }
+
+    const status = systemPreferences.getMediaAccessStatus('microphone')
+    if (status === 'granted') {
+      callback(true)
+      return
+    }
+    if (status === 'denied' || status === 'restricted') {
+      callback(false)
+      return
+    }
+    void systemPreferences.askForMediaAccess('microphone')
+      .then(granted => callback(granted))
+      .catch(() => callback(false))
+  })
 }
 
 function splashHtml(label = t('desktop.startingLocalServices')): string {
@@ -471,7 +714,9 @@ async function bootstrap(source?: RuntimeDownloadSource) {
     updateSplash({ stage: 'resolve', message: t('desktop.startingLocalServices') })
     const url = await startWebUiServer(PORT)
     serverUrl = url
-    if (mainWindow) await mainWindow.loadURL(url)
+    updateTrayMenu()
+    if (mainWindow) await mainWindow.loadURL(mainRouteUrl() || url)
+    await loadPetWindowRoute()
   } catch (err) {
     console.error('Failed to start Web UI server:', err)
     if (mainWindow) {
@@ -492,6 +737,27 @@ ipcMain.handle('hermes-desktop:get-window-state', () => windowState())
 ipcMain.handle('hermes-desktop:window-control', (_event, action?: unknown) => {
   if (action !== 'minimize' && action !== 'toggle-maximize' && action !== 'close') return windowState()
   return handleWindowControl(action)
+})
+ipcMain.handle('hermes-desktop:get-pet-window-state', () => petWindowState())
+ipcMain.handle('hermes-desktop:set-pet-window-bounds', (_event, bounds?: unknown) => {
+  const nextBounds = sanitizePetWindowBounds(bounds)
+  if (!nextBounds) return petWindowState()
+  const target = ensurePetWindow()
+  target.setBounds(nextBounds, false)
+  return petWindowState()
+})
+ipcMain.handle('hermes-desktop:set-pet-window-visible', async (_event, visible?: unknown) => {
+  if (visible === false) {
+    if (!petWindow || petWindow.isDestroyed()) return petWindowState()
+    petWindow.hide()
+    return petWindowState()
+  }
+  const fromPetWindow = !!petWindow && !petWindow.isDestroyed() && _event.sender === petWindow.webContents
+  await loadPetWindowRoute()
+  const target = ensurePetWindow()
+  if (!fromPetWindow) target.webContents.send(PET_WINDOW_REFRESH_CHANNEL)
+  target.showInactive()
+  return petWindowState()
 })
 function resolveNotificationIcon(icon: unknown): string {
   if (typeof icon !== 'string') return desktopIcon()
@@ -543,7 +809,7 @@ ipcMain.handle('hermes-desktop:notify-completion', (_event, payload?: { title?: 
 })
 ipcMain.handle('hermes-desktop:retry-bootstrap', async (_event, source?: RuntimeDownloadSource) => {
   if (serverUrl) {
-    await mainWindow?.loadURL(serverUrl)
+    await mainWindow?.loadURL(mainRouteUrl() || serverUrl)
     return
   }
   const selectedSource = source === 'cf' || source === 'github' ? source : undefined
@@ -577,6 +843,7 @@ function runDesktopApp() {
     // visual clutter. macOS keeps a menu (system requirement) but Electron's
     // default is fine there.
     if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
+    installMicrophonePermissionHandler()
     if (app.isPackaged) {
       installHermesStudioCliShim({
         nodePath: bundledNode(),
@@ -591,7 +858,7 @@ function runDesktopApp() {
       })
       installHermesStudioMcpShim({
         nodePath: bundledNode(),
-        scriptPath: join(webuiDir(), 'bin', 'hermes-web-ui-mcp.mjs'),
+        scriptPath: join(webuiDir(), 'bin', 'hermes-studio-mcp.mjs'),
         webUiUrl: `http://127.0.0.1:${PORT}`,
       }).then(result => {
         if (result.status === 'skipped') {

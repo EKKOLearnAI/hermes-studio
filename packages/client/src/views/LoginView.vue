@@ -2,8 +2,9 @@
 import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { setApiKey, hasApiKey } from "@/api/client";
+import { setApiKey, clearApiKey, hasApiKey } from "@/api/client";
 import { fetchAuthStatus, loginWithPassword } from "@/api/auth";
+import { isDesktopShell } from "@/utils/desktop-bridge";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -13,9 +14,13 @@ const password = ref("");
 const loading = ref(false);
 const errorMsg = ref("");
 const showLockResetHint = ref(false);
+const desktopShell = isDesktopShell();
 
-// If already has a key, try to go to main page
-if (hasApiKey()) {
+if (desktopShell) {
+  // Desktop login is a recovery path. Drop stale JWTs before any background
+  // request can reuse them and show an unrelated expiry notice.
+  clearApiKey();
+} else if (hasApiKey()) {
   router.replace("/hermes/chat");
 }
 
@@ -86,10 +91,15 @@ async function handlePasswordLogin() {
 
         <div v-if="errorMsg" class="login-error">{{ errorMsg }}</div>
         <div v-if="showLockResetHint" class="login-lock-hint">
-          <span>{{ t("login.lockResetHint") }}</span>
-          <code>hermes-web-ui clear-login-locks --restart</code>
-          <span>{{ t("login.defaultLoginResetHint") }}</span>
-          <code>hermes-web-ui reset-default-login</code>
+          <template v-if="desktopShell">
+            <span>{{ t("login.desktopLockResetHint") }}</span>
+          </template>
+          <template v-else>
+            <span>{{ t("login.lockResetHint") }}</span>
+            <code>hermes-web-ui clear-login-locks --restart</code>
+            <span>{{ t("login.defaultLoginResetHint") }}</span>
+            <code>hermes-web-ui reset-default-login</code>
+          </template>
         </div>
         <button type="submit" class="login-btn" :disabled="loading">
           {{ loading ? "..." : t("login.submit") }}

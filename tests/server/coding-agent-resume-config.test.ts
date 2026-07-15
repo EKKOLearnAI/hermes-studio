@@ -135,6 +135,79 @@ describe('coding agent resumed session config', () => {
     expect(settings.env.ANTHROPIC_API_KEY).toMatch(/^hwui_/)
   })
 
+  it('preserves the stored workspace when a coding agent session switches provider and model', async () => {
+    const home = makeHome()
+    const originalWorkspace = join(home, 'coding-agent', 'workspace', 'default', 'openrouter')
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'coding_agent',
+      agent: 'codex',
+      agent_session_id: 'agent-session-1',
+      agent_native_session_id: 'old-native-thread',
+      provider: 'openrouter',
+      model: 'old-model',
+      workspace: originalWorkspace,
+    })
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await startCodingAgentRun('codex', {
+      sessionId: 'session-1',
+      provider: 'deepseek',
+      model: 'deepseek-reasoner',
+      baseUrl: 'https://api.deepseek.com/v1',
+      apiKey: 'sk-test',
+      apiMode: 'chat_completions',
+    })
+
+    const launch = startRunMock.mock.calls[0][0]
+    expect(launch.workspaceDir).toBe(originalWorkspace)
+    expect(launch.agentNativeSessionId).toBe('')
+    expect(launch.nativeResume).toBe(false)
+    expect(updateSessionMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
+      provider: 'deepseek',
+      model: 'deepseek-reasoner',
+      agent_native_session_id: '',
+      workspace: originalWorkspace,
+    }))
+  })
+
+  it('ignores a stale builtin base URL when the requested provider changed', async () => {
+    const home = makeHome()
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'coding_agent',
+      agent: 'codex',
+      agent_session_id: 'agent-session-1',
+      provider: 'deepseek',
+      model: 'deepseek-v4-pro',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({})
+    safeReadFileMock.mockResolvedValue('DEEPSEEK_API_KEY=sk-deepseek\n')
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await startCodingAgentRun('codex', {
+      sessionId: 'session-1',
+      provider: 'deepseek',
+      model: 'deepseek-v4-pro',
+      baseUrl: 'https://api.xiaomimimo.com/v1',
+      apiKey: 'sk-xiaomi',
+      apiMode: 'chat_completions',
+    })
+
+    const config = readFileSync(join(home, 'coding-agent', 'model', 'default', 'deepseek', 'codex', 'config.toml'), 'utf-8')
+    const routeKey = config.match(/\/api\/codex-proxy\/([^/]+)\/v1/)?.[1] || ''
+    const routeParts = Buffer.from(routeKey, 'base64url').toString('utf8').split('\0')
+    expect(routeParts).toEqual(expect.arrayContaining([
+      'deepseek',
+      'deepseek-v4-pro',
+      'chat_completions',
+      'https://api.deepseek.com',
+    ]))
+    expect(routeParts).not.toContain('https://api.xiaomimimo.com/v1')
+  })
+
   it('resumes Claude with a stored native session id after service restart', async () => {
     makeHome()
     getSessionMock.mockReturnValue({
@@ -208,6 +281,39 @@ describe('coding agent resumed session config', () => {
     }))
   })
 
+
+  it('prefers a stored coding-agent API mode when resuming without an explicit mode', async () => {
+    const home = makeHome()
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'coding_agent',
+      agent: 'codex',
+      agent_session_id: 'agent-session-1',
+      provider: 'fun-codex',
+      model: 'gpt-5.5',
+      api_mode: 'chat_completions',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({})
+    safeReadFileMock.mockResolvedValue('')
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await startCodingAgentRun('codex', {
+      sessionId: 'session-1',
+      baseUrl: 'https://api.apikey.fun/v1',
+      apiKey: 'sk-test',
+    })
+
+    const launch = startRunMock.mock.calls[0][0]
+    expect(launch.apiMode).toBe('chat_completions')
+    const config = readFileSync(join(home, 'coding-agent', 'model', 'default', 'fun-codex', 'codex', 'config.toml'), 'utf-8')
+    const routeKey = config.match(/\/api\/codex-proxy\/([^/]+)\/v1/)?.[1] || ''
+    expect(Buffer.from(routeKey, 'base64url').toString('utf8')).toContain('chat_completions')
+    expect(updateSessionMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
+      api_mode: 'chat_completions',
+    }))
+  })
+
   it('rejects OAuth/subscription providers for scoped coding-agent launches', async () => {
     makeHome()
     getSessionMock.mockReturnValue(null)
@@ -246,5 +352,36 @@ describe('coding agent resumed session config', () => {
     await expect(startCodingAgentRun('claude-code', { sessionId: 'session-1' }))
       .rejects.toThrow('Coding agent provider credentials are missing')
     expect(startRunMock).not.toHaveBeenCalled()
+  })
+
+  it('resolves custom-provider credentials from key_env on continuation', async () => {
+    const home = makeHome()
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'coding_agent',
+      agent: 'claude',
+      agent_session_id: 'agent-session-1',
+      provider: 'custom:sensenova',
+      model: 'deepseek-v4-flash',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({
+      custom_providers: [{
+        name: 'sensenova',
+        base_url: 'https://api.sensenova.cn/v1',
+        key_env: 'SENSENOVA_API_KEY',
+        model: 'deepseek-v4-flash',
+      }],
+    })
+    safeReadFileMock.mockResolvedValue('SENSENOVA_API_KEY=sk-from-env\n')
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await expect(startCodingAgentRun('claude-code', { sessionId: 'session-1' })).resolves.toEqual(
+      expect.objectContaining({
+        provider: 'custom:sensenova',
+      }),
+    )
+    expect(startRunMock).toHaveBeenCalled()
+    expect(home).toBeTruthy()
   })
 })

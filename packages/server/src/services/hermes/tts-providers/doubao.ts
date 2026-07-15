@@ -45,7 +45,7 @@ function audioContentType(format: string): string {
 }
 
 function resolveAudioFormat(opts: DoubaoTtsProviderOptions): string {
-  const format = trimOptional(opts.format)?.toLowerCase().replace('-', '_') || DEFAULT_FORMAT
+  const format = trimOptional(opts.format)?.toLowerCase().replace('-', '_') || (opts.mcuPlayback ? 'pcm' : DEFAULT_FORMAT)
   if (!SUPPORTED_FORMATS.has(format)) {
     throw new Error(`Doubao TTS format must be one of ${Array.from(SUPPORTED_FORMATS).join(', ')}`)
   }
@@ -54,6 +54,7 @@ function resolveAudioFormat(opts: DoubaoTtsProviderOptions): string {
 
 function resolveSampleRate(opts: DoubaoTtsProviderOptions): number {
   const raw = opts.sampleRate ?? opts.sample_rate
+  if ((raw === undefined || raw === null) && opts.mcuPlayback) return DEFAULT_SAMPLE_RATE
   if (raw === undefined || raw === null) return DEFAULT_SAMPLE_RATE
   const sampleRate = Number(raw)
   if (!Number.isInteger(sampleRate) || sampleRate <= 0) {

@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { NButton, NSwitch, NSelect, useMessage } from 'naive-ui'
+import { computed } from 'vue'
+import { NButton, NSwitch, NSelect, NInputNumber, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { useTheme, type BrightnessMode } from '@/composables/useTheme'
 import { requestCompletionNotificationPermission, showCompletionNotification, type CompletionNotificationPermissionResult } from '@/utils/completion-notification'
+import { clampChatInputHeight, MAX_CHAT_INPUT_HEIGHT, MIN_CHAT_INPUT_HEIGHT } from '@/utils/chat-input-height'
 import SettingRow from './SettingRow.vue'
 
 const settingsStore = useSettingsStore()
@@ -16,6 +18,7 @@ const themeOptions = [
   { label: t('settings.display.themeDark'), value: 'dark' },
   { label: t('settings.display.themeSystem'), value: 'system' },
 ]
+const chatInputHeight = computed(() => clampChatInputHeight(settingsStore.display.chat_input_height))
 
 async function save(values: Record<string, any>) {
   try {
@@ -30,6 +33,14 @@ function handleThemeChange(val: string) {
   const m = val as BrightnessMode
   setBrightness(m)
   save({ skin: m })
+}
+
+function handleChatInputHeightChange(value: number | null) {
+  return save({ chat_input_height: clampChatInputHeight(value) })
+}
+
+function resetChatInputHeight() {
+  return save({ chat_input_height: null })
 }
 
 function notificationPermissionErrorKey(result: CompletionNotificationPermissionResult): string {
@@ -108,6 +119,25 @@ async function testCompletionNotification() {
         </NButton>
       </div>
     </SettingRow>
+    <SettingRow :label="t('settings.display.chatInputHeight')" :hint="t('settings.display.chatInputHeightHint')">
+      <div class="chat-input-height-controls">
+        <NInputNumber
+          :value="chatInputHeight"
+          :min="MIN_CHAT_INPUT_HEIGHT"
+          :max="MAX_CHAT_INPUT_HEIGHT"
+          :step="8"
+          :show-button="false"
+          size="small"
+          class="input-sm"
+          @update:value="handleChatInputHeightChange"
+        >
+          <template #suffix>px</template>
+        </NInputNumber>
+        <NButton size="tiny" secondary @click="resetChatInputHeight">
+          {{ t('common.reset') }}
+        </NButton>
+      </div>
+    </SettingRow>
   </section>
 </template>
 
@@ -119,6 +149,12 @@ async function testCompletionNotification() {
 }
 
 .notify-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.chat-input-height-controls {
   display: inline-flex;
   align-items: center;
   gap: 10px;

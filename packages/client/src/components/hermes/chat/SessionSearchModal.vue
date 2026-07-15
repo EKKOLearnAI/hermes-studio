@@ -211,6 +211,7 @@ watch(
     await nextTick()
     inputRef.value?.focus?.()
   },
+  { immediate: true },
 )
 
 watch(query, (value) => {

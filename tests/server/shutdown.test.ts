@@ -25,10 +25,10 @@ describe('shutdown bridge policy', () => {
     else process.env.HERMES_WEB_UI_SHUTDOWN_FORCE_EXIT_MS = originalForceExitMs
   })
 
-  it('keeps the bridge for restart signals and stops it for service shutdown signals by default', () => {
+  it('stops the bridge for restart and service shutdown signals by default', () => {
     delete process.env.HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN
 
-    expect(shouldStopAgentBridgeOnShutdown('SIGUSR2')).toBe(false)
+    expect(shouldStopAgentBridgeOnShutdown('SIGUSR2')).toBe(true)
     expect(shouldStopAgentBridgeOnShutdown('SIGTERM')).toBe(true)
     expect(shouldStopAgentBridgeOnShutdown('SIGINT')).toBe(true)
   })
@@ -38,6 +38,7 @@ describe('shutdown bridge policy', () => {
     expect(shouldStopAgentBridgeOnShutdown('SIGUSR2')).toBe(true)
 
     process.env.HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN = '0'
+    expect(shouldStopAgentBridgeOnShutdown('SIGUSR2')).toBe(false)
     expect(shouldStopAgentBridgeOnShutdown('SIGTERM')).toBe(false)
   })
 

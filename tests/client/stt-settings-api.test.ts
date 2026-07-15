@@ -11,7 +11,7 @@ vi.mock('@/router', () => ({
 
 import router from '@/router'
 import { hasApiKey } from '../../packages/client/src/api/client'
-import { clearSttSecret, deleteSttBaseUrlPreset, fetchSttSettings, saveActiveSttProvider, saveSttSettings } from '../../packages/client/src/api/hermes/stt-settings'
+import { clearSttSecret, deleteSttBaseUrlPreset, deleteSttProvider, fetchSttSettings, saveActiveSttProvider, saveSttSettings } from '../../packages/client/src/api/hermes/stt-settings'
 import { transcribeSpeech } from '../../packages/client/src/api/hermes/stt'
 
 const mockFetch = vi.fn()
@@ -199,6 +199,34 @@ describe('stt api wrappers', () => {
     })
   })
 
+  it('deletes stored provider settings via the provider endpoint', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        success: true,
+        deleted: true,
+        activeProvider: 'browser',
+      }),
+    })
+
+    const result = await deleteSttProvider('openai')
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://hermes.example/api/hermes/stt/settings/openai',
+      expect.objectContaining({
+        method: 'DELETE',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer jwt-token',
+        }),
+      }),
+    )
+    expect(result).toEqual({
+      success: true,
+      deleted: true,
+      activeProvider: 'browser',
+    })
+  })
+
   it('deletes saved base URL presets via the provider preset endpoint', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -320,6 +348,29 @@ describe('stt api wrappers', () => {
     expect(serialized).not.toContain('attacker-secret')
     expect(serialized).not.toContain('body-secret')
     expect(serialized).not.toContain('127.0.0.1:8000')
+  })
+
+  it('uploads PCM stream fragments with a WAV filename', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({
+        text: 'streamed transcript',
+        provider: 'openai',
+        model: 'gpt-4o-transcribe',
+        durationMs: 10,
+      }),
+    })
+
+    await transcribeSpeech({
+      audio: new Blob([new Uint8Array(256)], { type: 'audio/wav' }),
+      provider: 'openai',
+    })
+
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit]
+    const upload = (init.body as FormData).get('audio') as File
+    expect(upload.name).toBe('speech.wav')
+    expect(upload.type).toBe('audio/wav')
   })
 
   it('does not persist raw STT API keys to localStorage when composable state changes', async () => {

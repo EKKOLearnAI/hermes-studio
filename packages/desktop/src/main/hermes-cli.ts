@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { delimiter, dirname, join } from 'node:path'
 import {
-  bundledBrowserExecutable,
+  bundledAgentBrowserHome,
   bundledGit,
   bundledNode,
   bundledPython,
@@ -62,7 +62,7 @@ export async function runBundledHermesCli(args: string[]): Promise<number> {
     inheritedPath,
   ].filter(Boolean).join(delimiter)
   const gitBin = bundledGit()
-  const browserExecutable = process.env.AGENT_BROWSER_EXECUTABLE_PATH?.trim() || bundledBrowserExecutable()
+  const browserExecutableOverride = process.env.AGENT_BROWSER_EXECUTABLE_PATH?.trim()
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HERMES_DESKTOP: 'true',
@@ -72,8 +72,8 @@ export async function runBundledHermesCli(args: string[]): Promise<number> {
     HERMES_AGENT_ROOT: pythonDir(),
     HERMES_AGENT_NODE: bundledNode(),
     HERMES_AGENT_NODE_ROOT: process.platform === 'win32' ? bundledNodeBin : dirname(bundledNodeBin),
-    AGENT_BROWSER_HOME: process.env.AGENT_BROWSER_HOME?.trim() || join(hermesHome(), 'agent-browser'),
-    ...(browserExecutable ? { AGENT_BROWSER_EXECUTABLE_PATH: browserExecutable } : {}),
+    AGENT_BROWSER_HOME: process.env.AGENT_BROWSER_HOME?.trim() || bundledAgentBrowserHome(),
+    ...(browserExecutableOverride ? { AGENT_BROWSER_EXECUTABLE_PATH: browserExecutableOverride } : {}),
     PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || join(pythonDir(), 'ms-playwright'),
     ...(gitBin ? { HERMES_AGENT_GIT: gitBin } : {}),
     HERMES_HOME: hermesHome(),

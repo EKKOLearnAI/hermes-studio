@@ -66,6 +66,7 @@ describe('client TTS unified synthesize flow', () => {
   })
 
   it('synthesizeSpeech posts to the unified endpoint with auth, body, and signal', async () => {
+    localStorage.setItem('hermes_active_profile_name', 'research')
     mockFetch.mockResolvedValue(new Response('audio-bytes', {
       status: 200,
       headers: {
@@ -93,6 +94,7 @@ describe('client TTS unified synthesize flow', () => {
         headers: {
           'Content-Type': 'application/json',
           Authorization: 'Bearer secret-key',
+          'X-Hermes-Profile': 'research',
         },
         body: JSON.stringify({
           provider: 'openai',

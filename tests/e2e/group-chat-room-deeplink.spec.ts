@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
-import { authenticate } from './fixtures'
+import { authenticate, TEST_MODEL_GROUP } from './fixtures'
 
 const rooms = [
   { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 123 },
@@ -31,6 +31,16 @@ async function mockGroupChatApi(page: Page) {
     if (pathname === '/health') return json({ status: 'ok' })
     if (pathname === '/api/auth/status') return json({ hasPasswordLogin: false, username: null })
     if (pathname === '/api/hermes/profiles') return json({ profiles: [{ name: 'default', active: true, model: 'test-model', gateway: 'test' }] })
+    if (pathname === '/api/hermes/available-models') {
+      return json({
+        default: 'test-model',
+        default_provider: 'test-provider',
+        groups: [TEST_MODEL_GROUP],
+        allProviders: [TEST_MODEL_GROUP],
+        model_aliases: {},
+        model_visibility: {},
+      })
+    }
     if (pathname === '/api/hermes/group-chat/rooms') return json({ rooms })
 
     const detailMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)$/)

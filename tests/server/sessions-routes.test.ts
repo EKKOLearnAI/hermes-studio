@@ -4,6 +4,7 @@ const listConversationsMock = vi.fn(async (ctx: any) => { ctx.body = { sessions:
 const getConversationMessagesMock = vi.fn(async (ctx: any) => { ctx.body = { session_id: ctx.params.id, messages: [] } })
 const getConversationMessagesPaginatedMock = vi.fn(async (ctx: any) => { ctx.body = { session_id: ctx.params.id, messages: [], pagination: {} } })
 const listMock = vi.fn(async (ctx: any) => { ctx.body = { sessions: [{ id: 's1' }] } })
+const countMock = vi.fn(async (ctx: any) => { ctx.body = { count: 1 } })
 const listHermesSessionsMock = vi.fn(async (ctx: any) => { ctx.body = { sessions: [{ id: 'hermes-1' }] } })
 const getHermesSessionMock = vi.fn(async (ctx: any) => { ctx.body = { session: { id: ctx.params.id } } })
 const importHermesSessionMock = vi.fn(async (ctx: any) => { ctx.body = { session_id: ctx.params.id } })
@@ -12,6 +13,8 @@ const getMock = vi.fn(async (ctx: any) => { ctx.body = { session: { id: ctx.para
 const getContextMock = vi.fn(async (ctx: any) => { ctx.body = { session_id: ctx.params.id, messages: [] } })
 const removeMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const renameMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const archiveMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const unarchiveMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setWorkspaceMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setModelMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const listWorkspaceFoldersMock = vi.fn(async (ctx: any) => { ctx.body = { folders: [] } })
@@ -24,12 +27,22 @@ const usageStatsMock = vi.fn(async (ctx: any) => { ctx.body = { total_input_toke
 const contextLengthMock = vi.fn(async (ctx: any) => { ctx.body = { context_length: 256000 } })
 const batchRemoveMock = vi.fn(async (ctx: any) => { ctx.body = { deleted: 1, failed: 0, errors: [] } })
 const exportSessionMock = vi.fn(async (ctx: any) => { ctx.body = JSON.stringify({ id: ctx.params.id }) })
+const listWorkspaceRunChangesMock = vi.fn(async (ctx: any) => { ctx.body = { changes: [] } })
+const getWorkspaceRunChangeFileMock = vi.fn(async (ctx: any) => { ctx.body = { file: null } })
+const listWorkspaceFilesMock = vi.fn(async (ctx: any) => { ctx.body = { entries: [], path: '' } })
+const readWorkspaceFileMock = vi.fn(async (ctx: any) => { ctx.body = { content: '' } })
+const writeWorkspaceFileMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const mkdirWorkspaceFileMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const deleteWorkspaceFileMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const renameWorkspaceFileMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const copyWorkspaceFileMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 
 vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   listConversations: listConversationsMock,
   getConversationMessages: getConversationMessagesMock,
   getConversationMessagesPaginated: getConversationMessagesPaginatedMock,
   list: listMock,
+  count: countMock,
   listHermesSessions: listHermesSessionsMock,
   getHermesSession: getHermesSessionMock,
   importHermesSession: importHermesSessionMock,
@@ -39,6 +52,8 @@ vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   remove: removeMock,
   batchRemove: batchRemoveMock,
   rename: renameMock,
+  archive: archiveMock,
+  unarchive: unarchiveMock,
   setWorkspace: setWorkspaceMock,
   setModel: setModelMock,
   listWorkspaceFolders: listWorkspaceFoldersMock,
@@ -50,6 +65,15 @@ vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   usageStats: usageStatsMock,
   contextLength: contextLengthMock,
   exportSession: exportSessionMock,
+  listWorkspaceRunChanges: listWorkspaceRunChangesMock,
+  getWorkspaceRunChangeFile: getWorkspaceRunChangeFileMock,
+  listWorkspaceFiles: listWorkspaceFilesMock,
+  readWorkspaceFile: readWorkspaceFileMock,
+  writeWorkspaceFile: writeWorkspaceFileMock,
+  mkdirWorkspaceFile: mkdirWorkspaceFileMock,
+  deleteWorkspaceFile: deleteWorkspaceFileMock,
+  renameWorkspaceFile: renameWorkspaceFileMock,
+  copyWorkspaceFile: copyWorkspaceFileMock,
 }))
 
 describe('session routes', () => {
@@ -59,6 +83,7 @@ describe('session routes', () => {
     getConversationMessagesMock.mockClear()
     getConversationMessagesPaginatedMock.mockClear()
     listMock.mockClear()
+    countMock.mockClear()
     listHermesSessionsMock.mockClear()
     getHermesSessionMock.mockClear()
     importHermesSessionMock.mockClear()
@@ -67,11 +92,22 @@ describe('session routes', () => {
     getContextMock.mockClear()
     removeMock.mockClear()
     renameMock.mockClear()
+    archiveMock.mockClear()
+    unarchiveMock.mockClear()
     setModelMock.mockClear()
     listWorkspaceFoldersMock.mockClear()
     createWorkspaceFolderMock.mockClear()
     renameWorkspaceFolderMock.mockClear()
     deleteWorkspaceFolderMock.mockClear()
+    listWorkspaceRunChangesMock.mockClear()
+    getWorkspaceRunChangeFileMock.mockClear()
+    listWorkspaceFilesMock.mockClear()
+    readWorkspaceFileMock.mockClear()
+    writeWorkspaceFileMock.mockClear()
+    mkdirWorkspaceFileMock.mockClear()
+    deleteWorkspaceFileMock.mockClear()
+    renameWorkspaceFileMock.mockClear()
+    copyWorkspaceFileMock.mockClear()
   })
 
   it('registers conversations, session list, and search routes', async () => {
@@ -83,6 +119,7 @@ describe('session routes', () => {
       '/api/hermes/sessions/conversations/:id/messages',
       '/api/hermes/sessions/conversations/:id/messages/paginated',
       '/api/hermes/sessions',
+      '/api/hermes/sessions/count',
       '/api/hermes/sessions/hermes',
       '/api/hermes/sessions/hermes/:id',
       '/api/hermes/sessions/hermes/:id/import',
@@ -92,14 +129,39 @@ describe('session routes', () => {
       '/api/hermes/usage/stats',
       '/api/hermes/sessions/context-length',
       '/api/hermes/sessions/:id/context',
+      '/api/hermes/sessions/:id/workspace-run-changes',
+      '/api/hermes/sessions/:id/workspace-run-changes/:changeId/files/:fileId',
+      '/api/hermes/sessions/:id/workspace-files/list',
+      '/api/hermes/sessions/:id/workspace-file/read',
+      '/api/hermes/sessions/:id/workspace-file/write',
+      '/api/hermes/sessions/:id/workspace-file/mkdir',
+      '/api/hermes/sessions/:id/workspace-file/delete',
+      '/api/hermes/sessions/:id/workspace-file/rename',
+      '/api/hermes/sessions/:id/workspace-file/copy',
       '/api/hermes/sessions/:id',
       '/api/hermes/sessions/:id/export',
       '/api/hermes/sessions/:id/usage',
       '/api/hermes/sessions/:id/rename',
+      '/api/hermes/sessions/:id/archive',
+      '/api/hermes/sessions/:id/unarchive',
       '/api/hermes/sessions/:id/model',
       '/api/hermes/workspace/folders',
       '/api/hermes/workspace/folders/rename',
     ]))
+  })
+
+  it('delegates session count route before the session id route', async () => {
+    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const countLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/count')
+    const idLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id')
+    expect(sessionRoutes.stack.indexOf(countLayer)).toBeLessThan(sessionRoutes.stack.indexOf(idLayer))
+
+    const ctx: any = { query: { source: 'cli' }, body: null, params: {} }
+    await countLayer.stack[0](ctx)
+
+    expect(countMock).toHaveBeenCalledWith(ctx)
+    expect(getMock).not.toHaveBeenCalled()
+    expect(ctx.body).toEqual({ count: 1 })
   })
 
   it('delegates session context route to the controller', async () => {
@@ -136,6 +198,34 @@ describe('session routes', () => {
     const deleteCtx: any = { query: {}, request: { body: { path: 'new-folder' } }, body: null, params: {} }
     await deleteLayer.stack[0](deleteCtx)
     expect(deleteWorkspaceFolderMock).toHaveBeenCalledWith(deleteCtx)
+  })
+
+  it('delegates session workspace file routes to the controller', async () => {
+    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const listLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-files/list')
+    const readLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/read')
+    const writeLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/write')
+    const mkdirLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/mkdir')
+    const deleteLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/delete')
+    const renameLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/rename')
+    const copyLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/copy')
+
+    const ctx: any = { query: {}, request: { body: {} }, body: null, params: { id: 'session-1' } }
+    await listLayer.stack[0](ctx)
+    await readLayer.stack[0](ctx)
+    await writeLayer.stack[0](ctx)
+    await mkdirLayer.stack[0](ctx)
+    await deleteLayer.stack[0](ctx)
+    await renameLayer.stack[0](ctx)
+    await copyLayer.stack[0](ctx)
+
+    expect(listWorkspaceFilesMock).toHaveBeenCalledWith(ctx)
+    expect(readWorkspaceFileMock).toHaveBeenCalledWith(ctx)
+    expect(writeWorkspaceFileMock).toHaveBeenCalledWith(ctx)
+    expect(mkdirWorkspaceFileMock).toHaveBeenCalledWith(ctx)
+    expect(deleteWorkspaceFileMock).toHaveBeenCalledWith(ctx)
+    expect(renameWorkspaceFileMock).toHaveBeenCalledWith(ctx)
+    expect(copyWorkspaceFileMock).toHaveBeenCalledWith(ctx)
   })
 
   it('delegates session search to the controller', async () => {
@@ -199,5 +289,29 @@ describe('session routes', () => {
     await handler(ctx)
 
     expect(exportSessionMock).toHaveBeenCalledWith(ctx)
+  })
+
+  it('delegates session archive to the controller', async () => {
+    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/archive')
+    const handler = layer.stack[0]
+    const ctx: any = { params: { id: 'session-abc' }, query: {}, body: null }
+
+    await handler(ctx)
+
+    expect(archiveMock).toHaveBeenCalledWith(ctx)
+    expect(ctx.body).toEqual({ ok: true })
+  })
+
+  it('delegates session unarchive to the controller', async () => {
+    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/unarchive')
+    const handler = layer.stack[0]
+    const ctx: any = { params: { id: 'session-abc' }, query: {}, body: null }
+
+    await handler(ctx)
+
+    expect(unarchiveMock).toHaveBeenCalledWith(ctx)
+    expect(ctx.body).toEqual({ ok: true })
   })
 })

@@ -61,6 +61,7 @@ export interface AgentBridgeChatOptions {
   storage_message?: AgentBridgeMessage
   model?: string
   provider?: string
+  workspace?: string
   source?: string
   wait?: boolean
   timeout?: number
@@ -453,6 +454,7 @@ export class AgentBridgeClient {
       ...(profile ? { profile } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.provider ? { provider: options.provider } : {}),
+      ...(options.workspace ? { workspace: options.workspace } : {}),
       ...(options.source ? { source: options.source } : {}),
       ...(options.wait ? { wait: true } : {}),
       ...(options.timeout ? { timeout: options.timeout } : {}),
@@ -467,7 +469,7 @@ export class AgentBridgeClient {
     messages: unknown[],
     instructions?: string,
     profile?: string,
-    options: Pick<AgentBridgeChatOptions, 'model' | 'provider'> = {},
+    options: Pick<AgentBridgeChatOptions, 'model' | 'provider' | 'workspace'> = {},
   ): Promise<AgentBridgeContextEstimate> {
     return this.request<AgentBridgeContextEstimate>({
       action: 'context_estimate',
@@ -477,6 +479,7 @@ export class AgentBridgeClient {
       ...(profile ? { profile } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.provider ? { provider: options.provider } : {}),
+      ...(options.workspace ? { workspace: options.workspace } : {}),
     })
   }
 

@@ -11,6 +11,7 @@ import { useSettingsStore } from "@/stores/hermes/settings";
 import DisplaySettings from "@/components/hermes/settings/DisplaySettings.vue";
 import AgentSettings from "@/components/hermes/settings/AgentSettings.vue";
 import GatewayAutoStartSettings from "@/components/hermes/settings/GatewayAutoStartSettings.vue";
+import ProxySettings from "@/components/hermes/settings/ProxySettings.vue";
 import MemorySettings from "@/components/hermes/settings/MemorySettings.vue";
 import CompressionSettings from "@/components/hermes/settings/CompressionSettings.vue";
 import SessionSettings from "@/components/hermes/settings/SessionSettings.vue";
@@ -34,6 +35,7 @@ const validTabs = computed(() => new Set([
   "account",
   ...(canManageUsers ? ["users"] : []),
   "display",
+  "proxy",
   "agent",
   "memory",
   "compression",
@@ -95,6 +97,9 @@ onMounted(() => {
           </NTabPane>
           <NTabPane name="display" :tab="t('settings.tabs.display')">
             <DisplaySettings />
+          </NTabPane>
+          <NTabPane name="proxy" :tab="t('settings.tabs.proxy')">
+            <ProxySettings />
           </NTabPane>
           <NTabPane name="agent" :tab="t('settings.tabs.agent')">
             <AgentSettings />

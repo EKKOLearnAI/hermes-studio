@@ -14,7 +14,7 @@ import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 import OutlinePanel from '@/components/hermes/chat/OutlinePanel.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import PageSidebarFooter from '@/components/layout/PageSidebarFooter.vue'
-import { batchDeleteSessions, deleteSession, fetchHermesSessions, fetchHermesSession, fetchSessionMessagesPage, importHermesSession, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { batchDeleteSessions, deleteSession, fetchHermesSessions, fetchHermesSession, fetchSessionMessagesPage, importHermesSession, unarchiveSession, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 
 const appStore = useAppStore()
 const profilesStore = useProfilesStore()
@@ -110,36 +110,84 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
       disabled: Boolean(contextSessionSummary.value?.webui_imported),
     },
     { label: t(contextSessionPinned.value ? 'chat.unpin' : 'chat.pin'), key: 'pin' },
+    ...(contextSessionSummary.value?.is_archived ? [{ label: t('chat.unarchiveSession'), key: 'unarchive' }] : []),
     { label: t('chat.copySessionLink'), key: 'copy-link' },
     { label: t('chat.copySessionId'), key: 'copy-id' },
   ]
   return options
 })
 
+function isHistoryMoaToolDisplay(message: HermesMessage): boolean {
+  return (message.role === 'moa' || message.display_role === 'tool')
+    && (message.tool_name === 'moa_reference' || message.tool_name === 'moa_aggregating')
+}
+
+function parseHistoryMoaToolPayload(toolName: string | null, value: unknown): { preview?: string; result?: unknown } | null {
+  if (toolName !== 'moa_reference' && toolName !== 'moa_aggregating') return null
+  const payload = typeof value === 'string'
+    ? (() => {
+        try {
+          return JSON.parse(value)
+        } catch {
+          return null
+        }
+      })()
+    : value
+  if (!payload || typeof payload !== 'object') return null
+  const data = payload as Record<string, unknown>
+  const preview = typeof data.preview === 'string'
+    ? data.preview
+    : typeof data.label === 'string'
+      ? data.label
+      : typeof data.aggregator === 'string'
+        ? data.aggregator
+        : undefined
+  const result = data.text ?? data.result
+  return { preview, result }
+}
+
 function mapHistoryMessages(messages: HermesMessage[]): Session['messages'] {
   return messages.map(m => {
+    const displayRole = isHistoryMoaToolDisplay(m) ? 'tool' : (m.display_role || m.role)
     const msg: Session['messages'][number] = {
       id: String(m.id),
-      role: m.role,
+      role: displayRole === 'moa' ? 'system' : displayRole,
       content: m.content || '',
       timestamp: m.timestamp * 1000,
       reasoning: m.reasoning || undefined,
-      systemType: m.role === 'command' ? 'command' : undefined,
+      systemType: displayRole === 'command' ? 'command' : undefined,
     }
 
-    if (m.role === 'tool') {
+    if (m.role === 'tool' || isHistoryMoaToolDisplay(m)) {
+      const moaPayload = parseHistoryMoaToolPayload(m.tool_name, m.content)
       msg.toolName = m.tool_name || undefined
       msg.toolCallId = m.tool_call_id || undefined
       msg.toolArgs = m.tool_calls?.[0]?.function?.arguments
         ? JSON.stringify(m.tool_calls[0].function.arguments)
         : undefined
-      msg.toolStatus = 'done'
-      msg.toolResult = m.content || undefined
+      msg.toolPreview = moaPayload?.preview
+      msg.toolStatus = m.finish_reason === 'error' ? 'error' : 'done'
+      msg.toolResult = moaPayload ? moaPayload.result : (m.content || undefined)
       msg.content = ''
     }
 
     return msg
   })
+}
+
+function codingAgentFields(summary: SessionSummary): Pick<Session, 'agent' | 'agentSessionId' | 'agentNativeSessionId' | 'codingAgentId' | 'codingAgentMode'> {
+  const isCodingAgentSession = summary.source === 'coding_agent' || summary.agent === 'claude' || summary.agent === 'codex'
+  return {
+    agent: summary.agent || undefined,
+    agentSessionId: summary.agent_session_id || undefined,
+    agentNativeSessionId: summary.agent_native_session_id || undefined,
+    codingAgentId: summary.agent === 'codex' ? 'codex' : summary.agent === 'claude' ? 'claude-code' : undefined,
+    codingAgentMode: isCodingAgentSession
+      ? (summary.agent_mode === 'global' || summary.agent_mode === 'scoped'
+          ? summary.agent_mode
+          : summary.provider === 'global' ? 'global' : 'scoped')
+      : undefined,
+  }
 }
 
 function sessionFromSummary(summary: SessionSummary, messages: Session['messages'] = []): Session {
@@ -148,6 +196,7 @@ function sessionFromSummary(summary: SessionSummary, messages: Session['messages
     profile: summary.profile || undefined,
     title: summary.title || '',
     source: summary.source,
+    ...codingAgentFields(summary),
     createdAt: summary.started_at * 1000,
     updatedAt: (summary.last_active || summary.ended_at || summary.started_at) * 1000,
     model: summary.model,
@@ -160,6 +209,7 @@ function sessionFromSummary(summary: SessionSummary, messages: Session['messages
     outputTokens: summary.output_tokens,
     endedAt: summary.ended_at ? summary.ended_at * 1000 : undefined,
     lastActiveAt: summary.last_active ? summary.last_active * 1000 : undefined,
+    isArchived: Boolean(summary.is_archived),
     workspace: summary.workspace || undefined,
     messages,
   }
@@ -355,6 +405,7 @@ function sessionSummaryToSession(summary: SessionSummary): Session {
     profile: summary.profile || undefined,
     title: summary.title || '',
     source: summary.source,
+    ...codingAgentFields(summary),
     createdAt: summary.started_at * 1000,
     updatedAt: (summary.last_active || summary.started_at) * 1000,
     model: summary.model,
@@ -364,6 +415,7 @@ function sessionSummaryToSession(summary: SessionSummary): Session {
     outputTokens: summary.output_tokens,
     endedAt: summary.ended_at ? summary.ended_at * 1000 : undefined,
     lastActiveAt: summary.last_active ? summary.last_active * 1000 : undefined,
+    isArchived: Boolean(summary.is_archived),
     workspace: summary.workspace || undefined,
     messages: [],
   }
@@ -592,6 +644,22 @@ async function handleContextMenuSelect(key: string) {
     await copySessionId(contextSessionId.value)
   } else if (key === 'import-webui') {
     await handleImportToWebUi(contextSessionId.value)
+  } else if (key === 'unarchive') {
+    const summary = contextSessionSummary.value
+    if (!summary?.is_archived) return
+    const ok = await unarchiveSession(contextSessionId.value)
+    if (!ok) {
+      message.error(t('chat.unarchiveSessionFailed'))
+      return
+    }
+    message.success(t('chat.sessionUnarchived'))
+    await loadHermesSessions()
+    if (!findHistorySession(contextSessionId.value)) {
+      historySessionId.value = null
+      historySession.value = null
+      await router.replace({ name: 'hermes.history' })
+      await openDefaultHistorySession(true)
+    }
   }
 }
 

@@ -28,6 +28,10 @@ function hasModelInGroups(groups: RunModelGroup[] | undefined, provider: string,
   return Array.isArray(group?.models) && group.models.includes(model)
 }
 
+function isVirtualProvider(provider: string): boolean {
+  return provider === 'moa'
+}
+
 export async function resolveBridgeRunModelConfig(options: {
   profile: string
   sessionModel?: string | null
@@ -35,16 +39,17 @@ export async function resolveBridgeRunModelConfig(options: {
   requestedModel?: string | null
   requestedProvider?: string | null
   modelGroups?: RunModelGroup[]
+  preferRequested?: boolean
 }): Promise<{ model: string; provider: string }> {
   const sessionModel = String(options.sessionModel || '').trim()
   const sessionProvider = String(options.sessionProvider || '').trim()
   const requestedModel = String(options.requestedModel || '').trim()
   const requestedProvider = String(options.requestedProvider || '').trim()
-  const candidateModel = sessionModel || requestedModel
-  const candidateProvider = sessionProvider || requestedProvider
+  const candidateModel = options.preferRequested ? (requestedModel || sessionModel) : (sessionModel || requestedModel)
+  const candidateProvider = options.preferRequested ? (requestedProvider || sessionProvider) : (sessionProvider || requestedProvider)
   const hasGroups = Array.isArray(options.modelGroups) && options.modelGroups.length > 0
   const candidateAvailable = hasGroups && hasModelInGroups(options.modelGroups, candidateProvider, candidateModel)
-  const shouldUseDefault = !candidateModel || !candidateProvider || (hasGroups && !candidateAvailable)
+  const shouldUseDefault = !candidateModel || !candidateProvider || (hasGroups && !candidateAvailable && !isVirtualProvider(candidateProvider))
   return shouldUseDefault
     ? resolveDefaultModelConfig(options.profile)
     : { model: candidateModel, provider: runtimeProvider(candidateProvider) }

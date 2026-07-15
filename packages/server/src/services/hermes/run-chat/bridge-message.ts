@@ -189,6 +189,37 @@ export function recordBridgeToolCompleted(
   return { id, output, duration }
 }
 
+export function recordBridgeMoaDisplayTool(
+  state: SessionState,
+  sessionId: string,
+  runMarker: string,
+  toolName: 'moa_reference' | 'moa_aggregating',
+  toolCallId: string,
+  content: string,
+) {
+  const timestamp = Math.floor(Date.now() / 1000)
+  state.messages.push({
+    id: state.messages.length + 1,
+    session_id: sessionId,
+    runMarker,
+    role: 'moa',
+    content,
+    display_role: 'tool',
+    tool_call_id: toolCallId,
+    tool_name: toolName,
+    timestamp,
+  })
+  addMessage({
+    session_id: sessionId,
+    role: 'moa',
+    content,
+    display_role: 'tool',
+    tool_call_id: toolCallId,
+    tool_name: toolName,
+    timestamp,
+  })
+}
+
 export function bridgeToolCallId(state: SessionState, rawToolCallId: unknown, toolName: string): string {
   const raw = String(rawToolCallId || '').trim()
   if (raw) return raw

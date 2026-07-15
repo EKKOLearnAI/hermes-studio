@@ -173,7 +173,7 @@ describe('stt transcribe controller', () => {
   it('transcribes multipart audio using the stored secret and ignores client-supplied api keys', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({ text: 'transcribed text' }))
     const { ctrl, store } = await initControllerAndStore()
-    store.saveSttProviderSetting(7, 'openai', {
+    store.saveSttProviderSetting('default', 'openai', {
       settings: {
         model: 'gpt-4o-transcribe',
         language: 'en',
@@ -220,7 +220,7 @@ describe('stt transcribe controller', () => {
 
   it('masks stored api keys when listing STT settings', async () => {
     const { ctrl, store } = await initControllerAndStore()
-    store.saveSttProviderSetting(7, 'openai', {
+    store.saveSttProviderSetting('default', 'openai', {
       settings: {
         model: 'gpt-4o-transcribe',
       },
@@ -261,27 +261,27 @@ describe('stt transcribe controller', () => {
     })
   })
 
-  it('redirects to the hosted missing-STT prompt audio when profile STT is unconfigured', async () => {
+  it('redirects to the bundled missing-STT prompt audio when profile STT is unconfigured', async () => {
     const { ctrl } = await initControllerAndStore()
     const ctx = makeJsonCtx({ id: 7, username: 'han', role: 'admin' }, '', undefined)
 
     await ctrl.missingProfileAudio(ctx)
 
     expect(ctx.status).toBe(302)
-    expect(ctx.headers.Location).toBe('https://ekko-hermes-studio.oss-cn-beijing.aliyuncs.com/current-profile-stt-not-configured-xiaohe.s16le.pcm')
+    expect(ctx.headers.Location).toBe('/api/hermes/mcu/audio/missing-stt-24k.s16le.pcm')
     expect(ctx.headers['X-Hermes-STT-Configured']).toBe('false')
     expect(ctx.body).toEqual({
-      url: 'https://ekko-hermes-studio.oss-cn-beijing.aliyuncs.com/current-profile-stt-not-configured-xiaohe.s16le.pcm',
+      url: '/api/hermes/mcu/audio/missing-stt-24k.s16le.pcm',
     })
   })
 
   it('returns 204 from missing-STT prompt audio when profile STT is configured', async () => {
     const { ctrl, store } = await initControllerAndStore()
-    store.saveSttProviderSetting(7, 'doubao', {
+    store.saveSttProviderSetting('default', 'doubao', {
       settings: { model: 'volc.seedasr.auc' },
       secrets: { apiKey: 'server-secret' },
     })
-    store.saveActiveSttProvider(7, 'doubao')
+    store.saveActiveSttProvider('default', 'doubao')
     const ctx = makeJsonCtx({ id: 7, username: 'han', role: 'admin' }, '', undefined)
 
     await ctrl.missingProfileAudio(ctx)
@@ -292,7 +292,7 @@ describe('stt transcribe controller', () => {
 
   it('returns 400 when multipart audio is missing', async () => {
     const { ctrl, store } = await initControllerAndStore()
-    store.saveSttProviderSetting(7, 'openai', {
+    store.saveSttProviderSetting('default', 'openai', {
       settings: { model: 'gpt-4o-transcribe' },
       secrets: { apiKey: 'server-secret' },
     })
@@ -311,7 +311,7 @@ describe('stt transcribe controller', () => {
 
   it('returns 400 for malformed multipart filename* without throwing', async () => {
     const { ctrl, store } = await initControllerAndStore()
-    store.saveSttProviderSetting(7, 'openai', {
+    store.saveSttProviderSetting('default', 'openai', {
       settings: { model: 'gpt-4o-transcribe' },
       secrets: { apiKey: 'server-secret' },
     })
@@ -356,7 +356,7 @@ describe('stt transcribe controller', () => {
 
   it('returns 400 for saved custom provider settings missing baseUrl', async () => {
     const { ctrl, store } = await initControllerAndStore()
-    store.saveSttProviderSetting(7, 'custom', {
+    store.saveSttProviderSetting('default', 'custom', {
       settings: {
         model: 'whisper-1',
       },
@@ -384,7 +384,7 @@ describe('stt transcribe controller', () => {
   it('ignores client-supplied custom baseUrl, apiKey, and headers during transcription', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({ text: 'custom transcript' }))
     const { ctrl, store } = await initControllerAndStore()
-    store.saveSttProviderSetting(7, 'custom', {
+    store.saveSttProviderSetting('default', 'custom', {
       settings: {
         baseUrl: 'https://example.com/v1',
         model: 'whisper-1',
@@ -434,7 +434,7 @@ describe('stt transcribe controller', () => {
         headers: new Headers({ 'X-Api-Status-Code': '20000000' }),
       })
     const { ctrl, store } = await initControllerAndStore()
-    store.saveSttProviderSetting(7, 'doubao', {
+    store.saveSttProviderSetting('default', 'doubao', {
       settings: {
         baseUrl: 'https://openspeech.bytedance.com/api/v3/auc/bigmodel',
         model: 'volc.seedasr.auc',
@@ -495,7 +495,7 @@ describe('stt transcribe controller', () => {
       })
 
     const { ctrl, store } = await initControllerAndStore()
-    store.saveSttProviderSetting(7, 'doubao', {
+    store.saveSttProviderSetting('default', 'doubao', {
       settings: {
         baseUrl: 'https://openspeech.bytedance.com/api/v3/auc/bigmodel',
         model: 'volc.seedasr.auc',
@@ -504,7 +504,7 @@ describe('stt transcribe controller', () => {
         apiKey: 'server-secret',
       },
     })
-    store.saveActiveSttProvider(7, 'doubao')
+    store.saveActiveSttProvider('default', 'doubao')
 
     const wav = Buffer.from('raw-mcu-wav')
     const ctx = makeRawAudioCtx(
@@ -544,14 +544,14 @@ describe('stt transcribe controller', () => {
     }))
 
     const { ctrl, store } = await initControllerAndStore()
-    store.saveSttProviderSetting(7, 'openai', {
+    store.saveSttProviderSetting('default', 'openai', {
       settings: {
         baseUrl: 'https://api.openai.com/v1/audio/transcriptions',
         model: 'gpt-4o-transcribe',
       },
       secrets: { apiKey: 'server-secret' },
     })
-    store.saveActiveSttProvider(7, 'openai')
+    store.saveActiveSttProvider('default', 'openai')
 
     const ctx = makeRawAudioCtx(
       { id: 7, username: 'han', role: 'admin' },
@@ -574,10 +574,10 @@ describe('stt transcribe controller', () => {
       interactionId: 'voice-1',
       segmentId: 'voice-1-stt-failed',
       text: '当前语音转文字失败了，请配置下语音转文字再使用哦',
-      url: 'https://ekko-hermes-studio.oss-cn-beijing.aliyuncs.com/stt-transcribe-failed-xiaohe.s16le.pcm',
+      url: '/api/hermes/mcu/audio/stt-failed-24k.s16le.pcm',
       mimeType: 'audio/x-pcm',
       format: 's16le',
-      sampleRate: 16000,
+      sampleRate: 24000,
       channels: 1,
     }, { clientId: 'device-1' })
   })
@@ -618,7 +618,7 @@ describe('stt transcribe controller', () => {
   it('returns 502 without leaking secrets when the provider fails', async () => {
     mockFetch.mockResolvedValueOnce(textResponse('upstream rejected bearer server-secret', { status: 401, statusText: 'Unauthorized' }))
     const { ctrl, store } = await initControllerAndStore()
-    store.saveSttProviderSetting(7, 'openai', {
+    store.saveSttProviderSetting('default', 'openai', {
       settings: { model: 'gpt-4o-transcribe' },
       secrets: { apiKey: 'server-secret' },
     })

@@ -55,28 +55,6 @@ export default defineConfig({
     cssCodeSplit: true,
     rollupOptions: {
       output: {
-        // Manual chunk splitting to speed up rendering
-        manualChunks(id) {
-          // Separate large heavy packages to avoid blocking other chunks
-          if (id.includes('node_modules/monaco-editor')) {
-            return 'monaco-editor'
-          }
-          if (id.includes('node_modules/mermaid')) {
-            return 'mermaid'
-          }
-          if (id.includes('node_modules/@xterm')) {
-            return 'xterm'
-          }
-          if (id.includes('node_modules')) {
-            if (id.includes('vue') || id.includes('pinia') || id.includes('vue-router')) {
-              return 'vue-vendor'
-            }
-            if (id.includes('naive-ui')) {
-              return 'ui-vendor'
-            }
-            return 'vendor'
-          }
-        },
         // Optimize chunk file names for better caching
         chunkFileNames: 'assets/js/[name]-[hash].js',
         entryFileNames: 'assets/js/[name]-[hash].js',

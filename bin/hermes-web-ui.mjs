@@ -36,10 +36,20 @@ function envPositiveInt(name) {
   return Number.isFinite(value) && value > 0 ? value : undefined
 }
 
+function shouldPreserveBridgeOnShutdown() {
+  const raw = String(process.env.HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN || '').trim().toLowerCase()
+  return ['0', 'false', 'no', 'off'].includes(raw)
+}
+
 function getDaemonStopGraceMs(options = {}) {
   const { restart = false } = options
-  if (restart) {
+  if (restart && shouldPreserveBridgeOnShutdown()) {
     return envPositiveInt('HERMES_WEB_UI_RESTART_GRACE_MS') ?? DEFAULT_RESTART_GRACE_MS
+  }
+  if (restart) {
+    return envPositiveInt('HERMES_WEB_UI_RESTART_GRACE_MS')
+      ?? envPositiveInt('HERMES_WEB_UI_STOP_GRACE_MS')
+      ?? DEFAULT_STOP_GRACE_MS
   }
   return envPositiveInt('HERMES_WEB_UI_STOP_GRACE_MS') ?? DEFAULT_STOP_GRACE_MS
 }
@@ -522,8 +532,9 @@ function stopDaemon(options = {}) {
   try {
     try {
       process.kill(pid, restart ? 'SIGUSR2' : 'SIGTERM')
-      // Restart keeps the bridge alive and should be quick. Stop waits longer
-      // so the server can ask the bridge broker to stop worker subprocesses.
+      // Restart uses a shorter grace window than stop. By default the server
+      // still shuts down the bridge; set HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN=0
+      // to keep the bridge across restarts.
       const graceMs = getDaemonStopGraceMs({ restart })
       const attempts = Math.max(1, Math.ceil(graceMs / STOP_POLL_INTERVAL_MS))
       for (let i = 0; i < attempts; i++) {

@@ -193,6 +193,21 @@ describe('App Store', () => {
     expect(store.clientOutdated).toBe(false)
   })
 
+  it('records Docker runtime state from the health response', async () => {
+    mockSystemApi.checkHealth.mockResolvedValue({
+      status: 'ok',
+      webui_version: 'test',
+      webui_update_available: false,
+      is_docker: true,
+    })
+    const store = useAppStore()
+
+    await store.checkConnection()
+
+    expect(store.isDocker).toBe(true)
+    expect(store.updateAvailable).toBe(false)
+  })
+
   it('clears the updating state and reports failure when self-update request fails', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     mockSystemApi.triggerUpdate.mockRejectedValue(new Error('install failed'))

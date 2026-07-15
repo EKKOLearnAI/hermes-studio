@@ -11,11 +11,12 @@ import {
 import { parseSseFrame, readSseFrames, readSseFrameTexts, sseEvent } from '../../packages/server/src/services/agent-runner/sse'
 import { AgentTargetRegistry, type AgentTargetInput } from '../../packages/server/src/services/agent-runner/target-registry'
 import { teeAsyncIterable } from '../../packages/server/src/services/agent-runner/stream-tee'
-import { CodingAgentRunManager, sanitizeCodingAgentTerminalOutput } from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
+import { CodingAgentRunManager, codingAgentGatewayErrorMessage, sanitizeCodingAgentTerminalOutput } from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
 import { mapCodingAgentResponseEvent } from '../../packages/server/src/services/agent-runner/coding-agent-event-mapper'
 import { applyResponseStreamEvent } from '../../packages/server/src/services/hermes/run-chat/response-stream'
 import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
 import { addMessage, getSession, getSessionDetail, listSessions } from '../../packages/server/src/db/hermes/session-store'
+import { getRecordedUsageTotals, getUsage } from '../../packages/server/src/db/hermes/usage-store'
 
 describe('agent runner endpoint resolver', () => {
   it('adds v1 for provider hosts without an API root path', () => {
@@ -45,6 +46,17 @@ describe('agent runner endpoint resolver', () => {
     expect(anthropicMessagesUrl('https://api.apikey.fun')).toBe('https://api.apikey.fun/v1/messages')
     expect(anthropicMessagesUrl('https://api.z.ai/api/anthropic')).toBe('https://api.z.ai/api/anthropic/v1/messages')
     expect(providerEndpointUrl('anthropic_messages', 'https://api.example.com/v1')).toBe('https://api.example.com/v1/messages')
+  })
+})
+
+describe('coding agent completion errors', () => {
+  it('treats gateway API error text as a failed coding-agent run', () => {
+    const error = 'API Error: 529 [1305][The service may be temporarily overloaded, please try again later]'
+
+    expect(codingAgentGatewayErrorMessage(error)).toBe(error)
+    expect(codingAgentGatewayErrorMessage(`  ${error}\n`)).toBe(error)
+    expect(codingAgentGatewayErrorMessage('Provider returned HTTP 502')).toBe('Provider returned HTTP 502')
+    expect(codingAgentGatewayErrorMessage('Here is a normal answer mentioning API Error: 529 as an example')).toBeNull()
   })
 })
 
@@ -274,7 +286,7 @@ describe('coding agent run state', () => {
     manager.shutdown()
   })
 
-  it('clears shared chat session run state when a print turn completes', () => {
+  it('clears shared chat session run state when a print turn completes', async () => {
     initAllHermesTables()
     const manager = new CodingAgentRunManager()
     const state: any = { messages: [], isWorking: false, events: [], queue: [] }
@@ -308,9 +320,12 @@ describe('coding agent run state', () => {
           id: 'resp-1',
           status: 'completed',
           output: [],
+          model: 'test-model',
+          usage: { input_tokens: 12, output_tokens: 5 },
         },
       },
     })
+    await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(state).toEqual(expect.objectContaining({
       isWorking: false,
@@ -318,6 +333,79 @@ describe('coding agent run state', () => {
       activeRunMarker: undefined,
       events: [],
     }))
+    expect(getUsage('chat-session-1')).toEqual(expect.objectContaining({
+      input_tokens: 12,
+      output_tokens: 5,
+      model: 'test-model',
+      profile: 'default',
+    }))
+    manager.shutdown()
+  })
+
+  it('records scoped proxy usage once per model call and skips the scoped turn aggregate', async () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const agentSessionId = `agent-session-proxy-usage-${suffix}`
+    const chatSessionId = `chat-session-proxy-usage-${suffix}`
+    const state: any = { messages: [], isWorking: false, events: [], queue: [] }
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).emitToChat = () => {}
+    ;(manager as any).markChatRunCompleted = () => {}
+
+    manager.start({
+      agentSessionId,
+      agentId: 'claude-code',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'glm',
+      model: 'glm-5-turbo',
+      sessionId: chatSessionId,
+      command: 'claude',
+      args: [],
+      shellCommand: 'claude',
+      workspaceDir: process.cwd(),
+      state,
+    })
+
+    const proxyCompleted = {
+      type: 'response.completed',
+      data: {
+        response: {
+          id: `provider-call-${suffix}`,
+          status: 'completed',
+          model: 'glm-5-turbo',
+          output: [],
+          usage: {
+            prompt_tokens: 120,
+            completion_tokens: 7,
+            prompt_tokens_details: { cached_tokens: 30 },
+          },
+        },
+      },
+    }
+    manager.handleProxyUsageEvent(agentSessionId, proxyCompleted)
+    manager.handleProxyUsageEvent(agentSessionId, proxyCompleted)
+    manager.handleResponseEvent(agentSessionId, {
+      type: 'response.completed',
+      data: {
+        response: {
+          id: `turn-${suffix}`,
+          status: 'completed',
+          output: [],
+          usage: { input_tokens: 120, output_tokens: 7 },
+        },
+      },
+    })
+
+    expect(getRecordedUsageTotals(chatSessionId, 'coding_agent')).toEqual({
+      inputTokens: 90,
+      outputTokens: 7,
+      cacheReadTokens: 30,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+      apiCalls: 1,
+    })
     manager.shutdown()
   })
 
@@ -421,7 +509,7 @@ describe('coding agent run state', () => {
     manager.shutdown()
   })
 
-  it('maps Codex exec JSONL assistant deltas into chat messages', () => {
+  it('maps Codex exec JSONL assistant deltas into chat messages', async () => {
     initAllHermesTables()
     const manager = new CodingAgentRunManager()
     const state: any = { messages: [], isWorking: false, events: [], queue: [] }
@@ -476,10 +564,63 @@ describe('coding agent run state', () => {
       content: 'I am GPT-5-Codex',
       finish_reason: 'stop',
     }))
+    await new Promise(resolve => setTimeout(resolve, 0))
     expect(state.isWorking).toBe(false)
+
     expect(emitted.map(event => event.event)).toContain('message.delta')
-    expect(emitted.map(event => event.event)).not.toContain('usage.updated')
+    expect(emitted.map(event => event.event)).toContain('usage.updated')
+    expect(emitted.find(event => event.event === 'usage.updated' && event.payload.contextTokens != null)?.payload).toEqual(expect.objectContaining({
+      contextTokens: expect.any(Number),
+    }))
     expect(emitted.find(event => event.event === 'run.completed')?.payload).not.toHaveProperty('usage')
+    const eventNames = emitted.map(event => event.event)
+    expect(eventNames.lastIndexOf('usage.updated')).toBeLessThan(eventNames.indexOf('run.completed'))
+    manager.shutdown()
+  })
+
+  it('does not reset Codex context tokens when a usage refresh has no context estimate', async () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const state: any = {
+      messages: [],
+      isWorking: false,
+      events: [],
+      queue: [],
+      contextTokens: 15_000,
+    }
+    const emitted: Array<{ event: string; payload: any }> = []
+    ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => {
+      emitted.push({ event, payload })
+    }
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const agentSessionId = `agent-session-codex-empty-usage-${suffix}`
+    const chatSessionId = `chat-session-codex-empty-usage-${suffix}`
+    manager.start({
+      agentSessionId,
+      agentId: 'codex',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'gpt-5-codex',
+      sessionId: chatSessionId,
+      command: 'codex',
+      args: ['--model', 'gpt-5-codex'],
+      shellCommand: 'codex --model gpt-5-codex',
+      workspaceDir: process.cwd(),
+      state,
+    })
+    const run = (manager as any).runs.get(agentSessionId)
+
+    await (manager as any).refreshCodingAgentUsage(run)
+
+    expect(state.contextTokens).toBe(15_000)
+    expect(emitted).toContainEqual(expect.objectContaining({
+      event: 'usage.updated',
+      payload: expect.objectContaining({ inputTokens: 0, outputTokens: 0 }),
+    }))
+    expect(emitted).not.toContainEqual(expect.objectContaining({
+      event: 'usage.updated',
+      payload: expect.objectContaining({ contextTokens: 0 }),
+    }))
     manager.shutdown()
   })
 
@@ -859,6 +1000,66 @@ describe('coding agent run state', () => {
     manager.shutdown()
   })
 
+  it('deduplicates a Codex CLI final snapshot already completed by the proxy stream', () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const state: any = { messages: [], isWorking: false, events: [], queue: [] }
+    const emitted: Array<{ event: string; payload: any }> = []
+    ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => {
+      emitted.push({ event, payload })
+    }
+    ;(manager as any).markChatRunCompleted = () => {}
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const agentSessionId = `agent-session-codex-proxy-cli-dedupe-${suffix}`
+    const chatSessionId = `chat-session-codex-proxy-cli-dedupe-${suffix}`
+    manager.start({
+      agentSessionId,
+      agentId: 'codex',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'gpt-5-codex',
+      sessionId: chatSessionId,
+      command: 'codex',
+      args: ['--model', 'gpt-5-codex'],
+      shellCommand: 'codex --model gpt-5-codex',
+      workspaceDir: process.cwd(),
+      state,
+    })
+    const run = (manager as any).runs.get(agentSessionId)
+    run.printResponseId = 'resp_codex_proxy_cli_dedupe'
+    run.printMessageId = 'msg_resp_codex_proxy_cli_dedupe'
+    run.printTextStarted = false
+    run.printText = ''
+    run.printCompleted = false
+    run.responseStartEmitted = false
+    run.terminalEventHandled = false
+    run.codexToolBlocks = new Map()
+    run.codexChatText = ''
+    ;(manager as any).handleClaudePrintResponseEvent(run, {
+      type: 'response.created',
+      data: { response: { id: 'resp_codex_proxy_cli_dedupe', status: 'in_progress', model: 'gpt-5-codex', output: [] } },
+    })
+
+    const text = '好的，我来帮你查询厦门的天气。'
+    manager.handleResponseEvent(agentSessionId, {
+      type: 'response.output_text.delta',
+      data: { type: 'response.output_text.delta', delta: text },
+    })
+    manager.handleResponseEvent(agentSessionId, {
+      type: 'response.output_text.done',
+      data: { type: 'response.output_text.done', text },
+    })
+    ;(manager as any).handleCodexExecLine(run, JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'agent_message', text },
+    }))
+
+    const textMessages = state.messages.filter((message: any) => message.role === 'assistant' && !message.tool_calls?.length)
+    expect(textMessages.map((message: any) => message.content)).toEqual([text])
+    expect(emitted.filter(event => event.event === 'message.delta').map(event => event.payload.delta)).toEqual([text])
+    manager.shutdown()
+  })
+
   it('keeps repeated short Codex streaming deltas', () => {
     initAllHermesTables()
     const manager = new CodingAgentRunManager()
@@ -915,7 +1116,7 @@ describe('coding agent run state', () => {
     manager.shutdown()
   })
 
-  it('waits for Codex process exit before flushing final text after tools', () => {
+  it('waits for Codex process exit before flushing final text after tools', async () => {
     initAllHermesTables()
     const manager = new CodingAgentRunManager()
     const state: any = { messages: [], isWorking: false, events: [], queue: [] }
@@ -1050,6 +1251,7 @@ describe('coding agent run state', () => {
     }))
     run.currentChild = undefined
     ;(manager as any).completeCodexExecTurn(run, run.codexPendingUsage)
+    await new Promise(resolve => setTimeout(resolve, 0))
 
     const textMessages = state.messages.filter((message: any) => message.role === 'assistant' && !message.tool_calls?.length)
     expect(textMessages.map((message: any) => message.content)).toEqual([openingText, finalText])
@@ -1308,6 +1510,40 @@ describe('coding agent run state', () => {
     expect(run.pendingChatCompletionEvent).toBeUndefined()
     expect(run.pendingChatCompletionPayload).toBeUndefined()
   })
+
+  it('writes print coding-agent session end markers only after the final queued run completes', () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const state: any = { messages: [], isWorking: true, events: [], queue: [{ queue_id: 'queued-1', input: 'next' }] }
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const agentSessionId = `agent-session-ended-marker-${suffix}`
+    const chatSessionId = `chat-session-ended-marker-${suffix}`
+    manager.start({
+      agentSessionId,
+      agentId: 'claude-code',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'claude-test',
+      sessionId: chatSessionId,
+      command: 'claude',
+      args: [],
+      shellCommand: 'claude',
+      workspaceDir: process.cwd(),
+      state,
+    })
+    const run = (manager as any).runs.get(agentSessionId)
+
+    ;(manager as any).emitAndMarkPrintChatRunCompleted(run, 'run.completed', { event: 'run.completed' })
+    expect(getSession(chatSessionId)?.ended_at).toBeNull()
+    expect(getSession(chatSessionId)?.end_reason).toBeNull()
+
+    state.queue = []
+    state.isWorking = true
+    ;(manager as any).emitAndMarkPrintChatRunCompleted(run, 'run.failed', { event: 'run.failed' })
+    const session = getSession(chatSessionId)
+    expect(session?.ended_at).toEqual(expect.any(Number))
+    expect(session?.end_reason).toBe('error')
+  })
 })
 
 describe('coding agent chat event mapper', () => {
@@ -1371,6 +1607,73 @@ describe('response stream tool detail events', () => {
         arguments: '{"command":"pwd"}',
       }),
     }))
+  })
+
+  it('emits completed tool events with duration', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+      const state: any = { messages: [], isWorking: false, events: [], queue: [] }
+      applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.created', {
+        response: { id: 'resp-1', status: 'in_progress' },
+      })
+      applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_item.added', {
+        item: { type: 'function_call', call_id: 'call-1', name: 'Bash', arguments: '{"command":"pwd"}' },
+      })
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:01.230Z'))
+      const completed = applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_item.done', {
+        item: { type: 'function_call_output', call_id: 'call-1', output: 'ok' },
+      })
+
+      expect(completed).toEqual(expect.objectContaining({
+        event: 'tool.completed',
+        payload: expect.objectContaining({
+          event: 'tool.completed',
+          tool_call_id: 'call-1',
+          duration: 1.23,
+          output: 'ok',
+        }),
+      }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('emits failed tool events with duration and persisted error state', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+      const state: any = { messages: [], isWorking: false, events: [], queue: [] }
+      applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.created', {
+        response: { id: 'resp-1', status: 'in_progress' },
+      })
+      applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_item.added', {
+        item: { type: 'function_call', call_id: 'call-1', name: 'Bash', arguments: '{"command":"pwd"}' },
+      })
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:02.500Z'))
+      const failed = applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_item.done', {
+        item: { type: 'function_call_output', call_id: 'call-1', output: { ok: false, error: 'permission denied' } },
+      })
+
+      expect(failed).toEqual(expect.objectContaining({
+        event: 'tool.failed',
+        payload: expect.objectContaining({
+          event: 'tool.failed',
+          tool_call_id: 'call-1',
+          duration: 2.5,
+          error: 'permission denied',
+          output: '{"ok":false,"error":"permission denied"}',
+        }),
+      }))
+      expect(state.messages.find((message: any) => message.role === 'tool')).toEqual(expect.objectContaining({
+        finish_reason: 'error',
+        tool_call_id: 'call-1',
+      }))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

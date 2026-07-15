@@ -58,6 +58,49 @@ function appendReasoningToMessage(run: ResponseRunState, message: any, text: str
   run.reasoningMessageId = message.id
 }
 
+function stringifyToolOutput(output: unknown): string {
+  if (typeof output === 'string') return output
+  try {
+    return JSON.stringify(output ?? '')
+  } catch {
+    return String(output ?? '')
+  }
+}
+
+function errorFromValue(value: unknown): string | true | undefined {
+  if (value === true) return true
+  if (typeof value === 'string') return value || true
+  if (!value || typeof value !== 'object') return undefined
+  const record = value as Record<string, unknown>
+  if (typeof record.message === 'string' && record.message) return record.message
+  if (typeof record.error === 'string' && record.error) return record.error
+  try {
+    return JSON.stringify(record)
+  } catch {
+    return true
+  }
+}
+
+function toolOutputError(item: any): string | true | undefined {
+  const directError = errorFromValue(item?.error)
+  if (directError) return directError
+
+  const status = typeof item?.status === 'string' ? item.status.toLowerCase() : ''
+  if (status === 'failed' || status === 'error' || status === 'errored') return true
+
+  const output = item?.output
+  if (typeof output === 'string') return output.startsWith('Error') ? true : undefined
+  if (!output || typeof output !== 'object') return undefined
+
+  const record = output as Record<string, unknown>
+  const outputError = errorFromValue(record.error)
+  if (outputError) return outputError
+  if (record.is_error === true || record.ok === false) return true
+  const outputStatus = typeof record.status === 'string' ? record.status.toLowerCase() : ''
+  if (outputStatus === 'failed' || outputStatus === 'error' || outputStatus === 'errored') return true
+  return undefined
+}
+
 export function applyResponseStreamEvent(
   state: SessionState,
   sessionId: string,
@@ -242,12 +285,13 @@ export function applyResponseStreamEvent(
       const callId = item.call_id || item.id
       if (!callId) return null
       const key = `tool:${callId}`
-      const output = typeof item.output === 'string' ? item.output : JSON.stringify(item.output ?? '')
+      const output = stringifyToolOutput(item.output)
       const toolCallEntry = run.toolCalls.get(callId)
       const toolName = toolCallEntry?.function?.name || null
       const startedAt = toolCallEntry?.startedAt
       const duration = startedAt ? Math.round((Date.now() - startedAt) / 10) / 100 : undefined
-      const hasError = typeof item.output === 'string' && item.output.startsWith('Error')
+      const error = toolOutputError(item)
+      const eventName = error ? 'tool.failed' : 'tool.completed'
       if (!run.insertedKeys.has(key)) {
         run.insertedKeys.add(key)
         state.messages.push({
@@ -258,13 +302,14 @@ export function applyResponseStreamEvent(
           content: output,
           tool_call_id: callId,
           tool_name: toolName,
+          finish_reason: error ? 'error' : null,
           timestamp: now(),
         })
       }
       return {
-        event: 'tool.completed',
+        event: eventName,
         payload: {
-          event: 'tool.completed',
+          event: eventName,
           run_id: run.responseId,
           response_id: run.responseId,
           tool_call_id: callId,
@@ -272,7 +317,7 @@ export function applyResponseStreamEvent(
           name: toolName,
           output,
           duration,
-          error: hasError || undefined,
+          error: error || undefined,
         },
       }
     }

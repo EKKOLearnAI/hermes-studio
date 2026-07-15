@@ -7,17 +7,25 @@ import {
   getSessionDetail as localGetSessionDetail,
   deleteSession as localDeleteSession,
   renameSession as localRenameSession,
+  setSessionArchived as localSetSessionArchived,
   createSession as localCreateSession,
   addMessages as localAddMessages,
   updateSession as localUpdateSession,
   updateSessionStats as localUpdateSessionStats,
 } from '../../db/hermes/session-store'
 import { ExportCompressor } from '../../lib/context-compressor/export-compressor'
-import { deleteUsage, getUsage, getUsageBatch } from '../../db/hermes/usage-store'
-import type { UsageStatsModelRow, UsageStatsDailyRow } from '../../db/hermes/usage-store'
+import { getLocalUsageStats, getRecordedUsageSessionIds, getUsage, getUsageBatch } from '../../db/hermes/usage-store'
+import type { UsageStatsAgentRow, UsageStatsModelRow, UsageStatsDailyRow } from '../../db/hermes/usage-store'
+import { deleteWorkspaceRunChangesForSession, getWorkspaceRunChangeFile as getWorkspaceRunChangeFileFromDb, listWorkspaceRunChangesForSession } from '../../db/hermes/workspace-run-changes-store'
 import { getModelContextLength } from '../../services/hermes/model-context'
 import { getActiveProfileName, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
-import { isPathWithin } from '../../services/hermes/hermes-path'
+import { isNearestExistingRealPathWithin, isPathWithin } from '../../services/hermes/hermes-path'
+import {
+  isWorkspaceListPathAllowed,
+  normalizeWindowsWorkspacePath,
+  useWindowsDriveWorkspaceMode,
+  workspaceBaseOverride,
+} from '../../services/hermes/workspace-path'
 import { getGroupChatServer } from '../../routes/hermes/group-chat'
 import { logger } from '../../services/logger'
 import type { ConversationSummary } from '../../services/hermes/conversations'
@@ -25,6 +33,10 @@ import { listUserProfiles } from '../../db/hermes/users-store'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
 import { codingAgentRunManager } from '../../services/agent-runner/coding-agent-run-manager'
 import { AgentBridgeClient, getAgentBridgeManager } from '../../services/hermes/agent-bridge'
+import { ensureHermesRunWorkspace } from '../../services/hermes/run-chat/workspace'
+import { isSensitivePath, MAX_EDIT_SIZE } from '../../services/hermes/file-provider'
+import { copyFile, mkdir, readFile, readdir, rename as fsRename, rm as fsRm, stat as fsStat, writeFile } from 'fs/promises'
+import { relative, normalize as pathNormalize, resolve as pathResolve } from 'path'
 
 function getPendingDeletedSessionIds(): Set<string> {
   return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
@@ -38,6 +50,16 @@ function filterPendingDeletedSessions<T extends { id: string }>(items: T[]): T[]
 
 function filterPendingDeletedConversationSummaries(items: ConversationSummary[]): ConversationSummary[] {
   return filterPendingDeletedSessions(items)
+}
+
+function isArchivedSession(session?: { is_archived?: number | boolean | null } | null): boolean {
+  if (!session) return false
+  if (typeof session.is_archived === 'boolean') return session.is_archived
+  return Number(session.is_archived || 0) !== 0
+}
+
+function filterArchivedSessions<T extends { is_archived?: number | boolean | null }>(items: T[]): T[] {
+  return items.filter(item => !isArchivedSession(item))
 }
 
 function requestedProfile(ctx: any): string | undefined {
@@ -105,11 +127,12 @@ function isVisibleWebUiSessionSource(source?: string | null): boolean {
 
 function isRequestedSessionSource(source: string | undefined, sessionSource?: string | null): boolean {
   if (source === 'global_agent') return sessionSource === 'global_agent'
+  if (source === 'workflow') return sessionSource === 'workflow'
   return isVisibleWebUiSessionSource(sessionSource)
 }
 
 function isHermesHistorySessionSource(source?: string | null): boolean {
-  return source !== 'api_server' && source !== 'global_agent'
+  return source !== 'api_server' && source !== 'global_agent' && source !== 'workflow'
 }
 
 function isCodingAgentSession(session?: { source?: string | null; agent?: string | null; agent_session_id?: string | null } | null): boolean {
@@ -306,6 +329,7 @@ export async function listConversations(ctx: any) {
     agent_native_session_id: s.agent_native_session_id,
     model: s.model,
     provider: s.provider,
+    api_mode: s.api_mode,
     title: s.title,
     started_at: s.started_at,
     ended_at: s.ended_at,
@@ -323,6 +347,7 @@ export async function listConversations(ctx: any) {
     cost_status: s.cost_status,
     preview: s.preview,
     workspace: s.workspace || null,
+    is_archived: s.is_archived || 0,
     is_active: s.ended_at == null && (Date.now() / 1000 - s.last_active) <= 300,
     thread_session_count: 1,
   }))
@@ -339,7 +364,7 @@ export async function getConversationMessages(ctx: any) {
     return
   }
   if (denySessionAccess(ctx, detail)) return
-  const messages = detail.messages
+  const messages = (detail.messages || [])
     .filter(m => {
       if (humanOnly && m.role !== 'user' && m.role !== 'assistant') return false
       if (!m.content) return false
@@ -369,11 +394,23 @@ export async function list(ctx: any) {
   const allSessions = localListSessions(profile, source, effectiveLimit)
   const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
   ctx.body = {
-    sessions: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
+    sessions: filterPendingDeletedSessions(filterArchivedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
       isRequestedSessionSource(source, s.source) &&
       (!knownProfiles || knownProfiles.has(s.profile || 'default')),
-    )),
+    ))),
   }
+}
+
+export async function count(ctx: any) {
+  const source = (ctx.query.source as string) || undefined
+  const profile = explicitProfileFilter(ctx)
+  const allSessions = localListSessions(profile, source, 2147483647)
+  const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
+  const sessions = filterPendingDeletedSessions(filterArchivedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
+    isRequestedSessionSource(source, s.source) &&
+    (!knownProfiles || knownProfiles.has(s.profile || 'default')),
+  )))
+  ctx.body = { count: sessions.length }
 }
 
 /**
@@ -386,13 +423,42 @@ export async function listHermesSessions(ctx: any) {
   const profile = requestedProfile(ctx)
   const effectiveLimit = limit && limit > 0 ? limit : 2000
 
-  const importedIds = new Set(localListSessions(profile, undefined, effectiveLimit).map(session => session.id))
+  const localSessions = localListSessions(profile, undefined, effectiveLimit)
+  const importedIds = new Set(localSessions.map(session => session.id))
   const allSessions = (await listSessionSummaries(source, effectiveLimit, profile))
     .map(session => ({
       ...(profile ? { ...session, profile } : session),
       webui_imported: importedIds.has(session.id),
     }))
-  ctx.body = { sessions: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s => isHermesHistorySessionSource(s.source))) }
+  const historySessionsById = new Map<string, any>()
+  for (const session of allSessions) historySessionsById.set(session.id, session)
+
+  // Hermes state.db does not carry Web UI local archive state. When a CLI or
+  // api_server session exists in both databases, the state.db row is inserted
+  // first and would otherwise hide the local `is_archived` flag from History,
+  // preventing archived sessions from rendering the unarchive action.
+  const localSessionsById = new Map(localSessions.map(session => [session.id, session]))
+  for (const [id, session] of historySessionsById) {
+    const localSession = localSessionsById.get(id)
+    if (localSession?.is_archived != null) {
+      session.is_archived = localSession.is_archived
+    }
+  }
+
+  for (const session of localSessions) {
+    if (historySessionsById.has(session.id)) continue
+    // Surface local-only sessions that are absent from the Hermes state.db
+    // (e.g. coding_agent runs started via the Web UI such as Claude Code /
+    // Codex). Without this, the History view cannot list or open them, and the
+    // chat panel's "view in history" link dead-ends to an empty list.
+    if (!isArchivedSession(session) && !isHermesHistorySessionSource(session.source)) continue
+    historySessionsById.set(session.id, { ...session, webui_imported: true })
+  }
+  ctx.body = {
+    sessions: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, [...historySessionsById.values()]).filter(s =>
+      isHermesHistorySessionSource(s.source) || (isArchivedSession(s) && s.source !== 'global_agent'),
+    )),
+  }
 }
 
 export async function search(ctx: any) {
@@ -403,10 +469,10 @@ export async function search(ctx: any) {
   const results = localSearchSessions(profile, q, limit && limit > 0 ? limit : 20)
   const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
   ctx.body = {
-    results: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, results).filter(s =>
+    results: filterPendingDeletedSessions(filterArchivedSessions(filterByAllowedProfiles(ctx, results).filter(s =>
       isRequestedSessionSource(source, s.source) &&
       (!knownProfiles || knownProfiles.has(s.profile || 'default')),
-    )),
+    ))),
   }
 }
 
@@ -419,6 +485,235 @@ export async function get(ctx: any) {
   }
   if (denySessionAccess(ctx, session)) return
   ctx.body = { session }
+}
+
+export async function listWorkspaceRunChanges(ctx: any) {
+  const session = localGetSession(ctx.params.id)
+  if (!session) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, session)) return
+  ctx.body = { changes: listWorkspaceRunChangesForSession(ctx.params.id) }
+}
+
+export async function getWorkspaceRunChangeFile(ctx: any) {
+  const session = localGetSession(ctx.params.id)
+  if (!session) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, session)) return
+  const fileId = Number.parseInt(String(ctx.params.fileId || ''), 10)
+  if (!Number.isFinite(fileId) || fileId <= 0) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid file id' }
+    return
+  }
+  const file = getWorkspaceRunChangeFileFromDb(ctx.params.id, ctx.params.changeId, fileId)
+  if (!file) {
+    ctx.status = 404
+    ctx.body = { error: 'Workspace change file not found' }
+    return
+  }
+  ctx.body = { file }
+}
+
+function normalizeWorkspaceRelativePath(value: unknown, options: { allowEmpty?: boolean } = {}): string {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (!raw && options.allowEmpty) return ''
+  if (!raw) throw Object.assign(new Error('Missing path parameter'), { code: 'missing_path', status: 400 })
+  if (raw.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(raw)) {
+    throw Object.assign(new Error('Invalid file path'), { code: 'invalid_path', status: 400 })
+  }
+  const normalized = pathNormalize(raw).replace(/\\/g, '/')
+  if (normalized === '..' || normalized.startsWith('../') || normalized.includes('/../')) {
+    throw Object.assign(new Error('Invalid file path'), { code: 'invalid_path', status: 400 })
+  }
+  return normalized
+}
+
+function workspaceRelativePath(workspace: string, fullPath: string): string {
+  return relative(workspace, fullPath).replace(/\\/g, '/')
+}
+
+function resolveSessionWorkspacePath(
+  ctx: any,
+  relativePathValue: unknown,
+  options: { allowEmpty?: boolean } = {},
+): { session: ReturnType<typeof localGetSession>; relativePath: string; fullPath: string; workspace: string } {
+  const session = localGetSession(ctx.params.id)
+  if (!session) throw Object.assign(new Error('Session not found'), { code: 'not_found', status: 404 })
+  if (denySessionAccess(ctx, session)) throw Object.assign(new Error('Forbidden'), { code: 'forbidden', status: 403, handled: true })
+  const workspace = String(session.workspace || '').trim()
+  if (!workspace) throw Object.assign(new Error('Session workspace not found'), { code: 'workspace_not_found', status: 404 })
+  const relativePath = normalizeWorkspaceRelativePath(relativePathValue, options)
+  const fullPath = pathResolve(workspace, relativePath)
+  if (!isPathWithin(fullPath, workspace)) {
+    throw Object.assign(new Error('Invalid file path'), { code: 'invalid_path', status: 400 })
+  }
+  return { session, relativePath, fullPath, workspace }
+}
+
+function resolveSessionWorkspaceFile(ctx: any, relativePathValue: unknown) {
+  return resolveSessionWorkspacePath(ctx, relativePathValue)
+}
+
+function handleWorkspaceFileError(ctx: any, err: any): void {
+  if (err?.handled) return
+  const status = Number(err?.status || 0)
+  ctx.status = status >= 400 ? status : err?.code === 'ENOENT' ? 404 : 500
+  ctx.body = { error: err?.message || 'Failed to access workspace file', code: err?.code || 'workspace_file_error' }
+}
+
+export async function listWorkspaceFiles(ctx: any) {
+  try {
+    const { relativePath, fullPath, workspace } = resolveSessionWorkspacePath(ctx, ctx.query.path, { allowEmpty: true })
+    const info = await fsStat(fullPath)
+    if (!info.isDirectory()) {
+      ctx.status = 400
+      ctx.body = { error: 'Not a directory', code: 'not_a_directory' }
+      return
+    }
+    const entries = await readdir(fullPath, { withFileTypes: true })
+    const mapped = await Promise.all(entries.map(async entry => {
+      const entryFullPath = pathResolve(fullPath, entry.name)
+      const stat = await fsStat(entryFullPath)
+      return {
+        name: entry.name,
+        path: workspaceRelativePath(workspace, entryFullPath),
+        absolutePath: entryFullPath,
+        isDir: stat.isDirectory(),
+        size: stat.size,
+        modTime: stat.mtime.toISOString(),
+      }
+    }))
+    mapped.sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+    ctx.body = { entries: mapped, path: relativePath, absolutePath: fullPath }
+  } catch (err: any) {
+    handleWorkspaceFileError(ctx, err)
+  }
+}
+
+export async function readWorkspaceFile(ctx: any) {
+  try {
+    const { relativePath, fullPath } = resolveSessionWorkspaceFile(ctx, ctx.query.path)
+    const info = await fsStat(fullPath)
+    if (!info.isFile()) {
+      ctx.status = 400
+      ctx.body = { error: 'Not a file', code: 'not_a_file' }
+      return
+    }
+    if (info.size > MAX_EDIT_SIZE) {
+      ctx.status = 413
+      ctx.body = { error: 'File too large to edit', code: 'file_too_large' }
+      return
+    }
+    const data = await readFile(fullPath)
+    ctx.body = { content: data.toString('utf-8'), path: relativePath, size: data.length }
+  } catch (err: any) {
+    handleWorkspaceFileError(ctx, err)
+  }
+}
+
+export async function writeWorkspaceFile(ctx: any) {
+  const body = ctx.request.body as { path?: unknown; content?: unknown }
+  try {
+    const { relativePath, fullPath } = resolveSessionWorkspaceFile(ctx, body?.path)
+    if (isSensitivePath(relativePath)) {
+      ctx.status = 403
+      ctx.body = { error: 'Cannot modify sensitive file', code: 'permission_denied' }
+      return
+    }
+    const content = typeof body?.content === 'string' ? body.content : ''
+    const data = Buffer.from(content, 'utf-8')
+    if (data.length > MAX_EDIT_SIZE) {
+      ctx.status = 413
+      ctx.body = { error: 'Content too large', code: 'file_too_large' }
+      return
+    }
+    await writeFile(fullPath, data)
+    ctx.body = { ok: true, path: relativePath }
+  } catch (err: any) {
+    handleWorkspaceFileError(ctx, err)
+  }
+}
+
+export async function mkdirWorkspaceFile(ctx: any) {
+  const body = ctx.request.body as { path?: unknown }
+  try {
+    const { fullPath } = resolveSessionWorkspaceFile(ctx, body?.path)
+    await mkdir(fullPath, { recursive: true })
+    ctx.body = { ok: true }
+  } catch (err: any) {
+    handleWorkspaceFileError(ctx, err)
+  }
+}
+
+export async function deleteWorkspaceFile(ctx: any) {
+  const body = ctx.request.body as { path?: unknown; recursive?: unknown }
+  try {
+    const { relativePath, fullPath } = resolveSessionWorkspaceFile(ctx, body?.path)
+    if (isSensitivePath(relativePath)) {
+      ctx.status = 403
+      ctx.body = { error: 'Cannot delete sensitive file', code: 'permission_denied' }
+      return
+    }
+    const info = await fsStat(fullPath)
+    if (info.isDirectory()) {
+      await fsRm(fullPath, { recursive: Boolean(body?.recursive), force: false })
+    } else {
+      await fsRm(fullPath)
+    }
+    ctx.body = { ok: true }
+  } catch (err: any) {
+    handleWorkspaceFileError(ctx, err)
+  }
+}
+
+export async function renameWorkspaceFile(ctx: any) {
+  const body = ctx.request.body as { oldPath?: unknown; newPath?: unknown }
+  try {
+    const oldTarget = resolveSessionWorkspaceFile(ctx, body?.oldPath)
+    const newTarget = resolveSessionWorkspaceFile(ctx, body?.newPath)
+    if (isSensitivePath(oldTarget.relativePath) || isSensitivePath(newTarget.relativePath)) {
+      ctx.status = 403
+      ctx.body = { error: 'Cannot rename sensitive file', code: 'permission_denied' }
+      return
+    }
+    await fsRename(oldTarget.fullPath, newTarget.fullPath)
+    ctx.body = { ok: true }
+  } catch (err: any) {
+    handleWorkspaceFileError(ctx, err)
+  }
+}
+
+export async function copyWorkspaceFile(ctx: any) {
+  const body = ctx.request.body as { srcPath?: unknown; destPath?: unknown }
+  try {
+    const srcTarget = resolveSessionWorkspaceFile(ctx, body?.srcPath)
+    const destTarget = resolveSessionWorkspaceFile(ctx, body?.destPath)
+    if (isSensitivePath(destTarget.relativePath)) {
+      ctx.status = 403
+      ctx.body = { error: 'Cannot overwrite sensitive file', code: 'permission_denied' }
+      return
+    }
+    const info = await fsStat(srcTarget.fullPath)
+    if (!info.isFile()) {
+      ctx.status = 400
+      ctx.body = { error: 'Not a file', code: 'not_a_file' }
+      return
+    }
+    await copyFile(srcTarget.fullPath, destTarget.fullPath)
+    ctx.body = { ok: true }
+  } catch (err: any) {
+    handleWorkspaceFileError(ctx, err)
+  }
 }
 
 function cleanSessionContextMessages(messages: any[]): Array<{
@@ -624,7 +919,7 @@ export async function remove(ctx: any) {
     ctx.body = { error: 'Failed to delete session' }
     return
   }
-  deleteUsage(sessionId)
+  deleteWorkspaceRunChangesForSession(sessionId)
   ctx.body = { ok: true, deleted: Boolean(existing), hermes }
 }
 
@@ -699,7 +994,7 @@ export async function batchRemove(ctx: any) {
     if (shouldDeleteLocal) {
       const ok = localDeleteSession(id)
       if (ok) {
-        deleteUsage(id)
+        deleteWorkspaceRunChangesForSession(id)
         results.deleted++
       } else {
         results.failed++
@@ -755,6 +1050,45 @@ export async function rename(ctx: any) {
   ctx.body = { ok: true }
 }
 
+export async function archive(ctx: any) {
+  const existing = localGetSession(ctx.params.id)
+  if (!existing) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, existing)) return
+  if (existing.source === 'global_agent') {
+    ctx.status = 400
+    ctx.body = { error: 'Global agent sessions cannot be archived' }
+    return
+  }
+  const ok = localSetSessionArchived(ctx.params.id, true)
+  if (!ok) {
+    ctx.status = 500
+    ctx.body = { error: 'Failed to archive session' }
+    return
+  }
+  ctx.body = { ok: true }
+}
+
+export async function unarchive(ctx: any) {
+  const existing = localGetSession(ctx.params.id)
+  if (!existing) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, existing)) return
+  const ok = localSetSessionArchived(ctx.params.id, false)
+  if (!ok) {
+    ctx.status = 500
+    ctx.body = { error: 'Failed to unarchive session' }
+    return
+  }
+  ctx.body = { ok: true }
+}
+
 export async function setWorkspace(ctx: any) {
   const { workspace } = ctx.request.body as { workspace?: string }
   if (workspace !== undefined && workspace !== null && typeof workspace !== 'string') {
@@ -773,8 +1107,17 @@ export async function setWorkspace(ctx: any) {
   ctx.body = { ok: true }
 }
 
+type SessionProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages'
+
+function normalizeSessionApiMode(value: unknown): SessionProviderApiMode | undefined {
+  const mode = typeof value === 'string' ? value.trim() : ''
+  return mode === 'chat_completions' || mode === 'codex_responses' || mode === 'anthropic_messages'
+    ? mode
+    : undefined
+}
+
 export async function setModel(ctx: any) {
-  const { model, provider } = ctx.request.body as { model?: string; provider?: string }
+  const { model, provider, apiMode, api_mode } = ctx.request.body as { model?: string; provider?: string; apiMode?: SessionProviderApiMode; api_mode?: SessionProviderApiMode }
   if (!model || typeof model !== 'string') {
     ctx.status = 400
     ctx.body = { error: 'model is required' }
@@ -790,13 +1133,31 @@ export async function setModel(ctx: any) {
   const existing = getSession(id)
   if (denySessionAccess(ctx, existing)) return
   const profile = existing?.profile || requestedProfile(ctx) || 'default'
-  if (!existing) {
-    createSession({ id, profile, title: '' })
-  }
   const cleanModel = model.trim()
   const cleanProvider = (provider || '').trim()
-  updateSession(id, { model: cleanModel, provider: cleanProvider } as any)
-  await notifyBridgeSessionModelChanged(id, cleanModel, cleanProvider, profile)
+  const cleanApiMode = normalizeSessionApiMode(apiMode ?? api_mode)
+  const codingAgentSession = isCodingAgentSession(existing)
+  const workspace = !codingAgentSession
+    ? await ensureHermesRunWorkspace(profile, existing?.workspace)
+    : undefined
+  if (!existing) {
+    createSession({ id, profile, title: '', model: cleanModel, provider: cleanProvider, api_mode: cleanApiMode || '', workspace })
+  }
+  const updates: Record<string, string> = { model: cleanModel, provider: cleanProvider }
+  if (cleanApiMode) updates.api_mode = cleanApiMode
+  else if (codingAgentSession && existing && existing.provider !== cleanProvider) updates.api_mode = ''
+  if (!codingAgentSession && existing && !existing.workspace && workspace) updates.workspace = workspace
+  if (
+    codingAgentSession &&
+    existing &&
+    (existing.model !== cleanModel || existing.provider !== cleanProvider || (cleanApiMode && existing.api_mode !== cleanApiMode))
+  ) {
+    updates.agent_native_session_id = ''
+  }
+  updateSession(id, updates as any)
+  if (!codingAgentSession) {
+    await notifyBridgeSessionModelChanged(id, cleanModel, cleanProvider, profile)
+  }
   ctx.body = { ok: true }
 }
 
@@ -810,7 +1171,10 @@ export async function contextLength(ctx: any) {
 export async function usageStats(ctx: any) {
   const rawDays = parseInt(String(ctx.query?.days ?? '30'), 10)
   const days = Number.isFinite(rawDays) && rawDays > 0 ? Math.min(rawDays, 365) : 30
-  const profile = requestedProfile(ctx)
+  const profile = requestedProfile(ctx) || getActiveProfileName()
+
+  const local = getLocalUsageStats(profile, days)
+  const localSessionIds = getRecordedUsageSessionIds(profile)
 
   let hermes = {
     input_tokens: 0,
@@ -820,15 +1184,58 @@ export async function usageStats(ctx: any) {
     reasoning_tokens: 0,
     sessions: 0,
     by_model: [] as UsageStatsModelRow[],
+    by_agent: [] as UsageStatsAgentRow[],
     by_day: [] as UsageStatsDailyRow[],
     cost: 0,
     total_api_calls: 0,
   }
 
   try {
-    hermes = profile ? await getUsageStatsFromDb(days, undefined, profile) : await getUsageStatsFromDb(days)
+    hermes = await getUsageStatsFromDb(days, undefined, profile, localSessionIds)
   } catch (err) {
     logger.warn(err, 'usageStats: failed to load Hermes usage analytics from state.db')
+  }
+
+  const modelMap = new Map<string, UsageStatsModelRow>()
+  for (const row of [...local.by_model, ...hermes.by_model]) {
+    const model = row.model.trim()
+    const current = modelMap.get(model) || {
+      model,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      sessions: 0,
+    }
+    current.input_tokens += row.input_tokens
+    current.output_tokens += row.output_tokens
+    current.cache_read_tokens += row.cache_read_tokens
+    current.cache_write_tokens += row.cache_write_tokens
+    current.reasoning_tokens += row.reasoning_tokens
+    current.sessions += row.sessions
+    modelMap.set(model, current)
+  }
+
+  const agentMap = new Map<string, UsageStatsAgentRow>()
+  for (const row of [...(local.by_agent || []), ...(hermes.by_agent || [])]) {
+    const agent = row.agent.trim() || 'hermes'
+    const current = agentMap.get(agent) || {
+      agent,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      sessions: 0,
+    }
+    current.input_tokens += row.input_tokens
+    current.output_tokens += row.output_tokens
+    current.cache_read_tokens += row.cache_read_tokens
+    current.cache_write_tokens += row.cache_write_tokens
+    current.reasoning_tokens += row.reasoning_tokens
+    current.sessions += row.sessions
+    agentMap.set(agent, current)
   }
 
   const dayMap = new Map<string, UsageStatsDailyRow>()
@@ -839,7 +1246,7 @@ export async function usageStats(ctx: any) {
     const key = d.toISOString().slice(0, 10)
     dayMap.set(key, { date: key, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, sessions: 0, errors: 0, cost: 0 })
   }
-  for (const d of hermes.by_day) {
+  for (const d of [...local.by_day, ...hermes.by_day]) {
     const existing = dayMap.get(d.date)
     if (existing) {
       existing.input_tokens += d.input_tokens; existing.output_tokens += d.output_tokens
@@ -849,33 +1256,110 @@ export async function usageStats(ctx: any) {
   }
 
   ctx.body = {
-    total_input_tokens: hermes.input_tokens,
-    total_output_tokens: hermes.output_tokens,
-    total_cache_read_tokens: hermes.cache_read_tokens,
-    total_cache_write_tokens: hermes.cache_write_tokens,
-    total_reasoning_tokens: hermes.reasoning_tokens,
-    total_sessions: hermes.sessions,
-    total_cost: hermes.cost,
-    total_api_calls: hermes.total_api_calls,
+    total_input_tokens: local.input_tokens + hermes.input_tokens,
+    total_output_tokens: local.output_tokens + hermes.output_tokens,
+    total_cache_read_tokens: local.cache_read_tokens + hermes.cache_read_tokens,
+    total_cache_write_tokens: local.cache_write_tokens + hermes.cache_write_tokens,
+    total_reasoning_tokens: local.reasoning_tokens + hermes.reasoning_tokens,
+    total_sessions: local.sessions + hermes.sessions,
+    total_cost: local.cost + hermes.cost,
+    total_api_calls: local.total_api_calls + hermes.total_api_calls,
     period_days: days,
-    model_usage: hermes.by_model.sort((a, b) => (b.input_tokens + b.output_tokens) - (a.input_tokens + a.output_tokens)),
+    model_usage: [...modelMap.values()].sort((a, b) => (b.input_tokens + b.output_tokens) - (a.input_tokens + a.output_tokens)),
+    agent_usage: [...agentMap.values()].sort((a, b) => (b.input_tokens + b.output_tokens) - (a.input_tokens + a.output_tokens)),
     daily_usage: [...dayMap.values()],
   }
 }
 
+async function listWindowsWorkspaceDrives() {
+  const { existsSync } = await import('fs')
+  const drives = []
+  for (let code = 65; code <= 90; code += 1) {
+    const root = `${String.fromCharCode(code)}:\\`
+    if (!existsSync(root)) continue
+    drives.push({
+      name: root,
+      path: root,
+      fullPath: root,
+      readonly: true,
+    })
+  }
+  return drives
+}
+
+async function isSafeWorkspaceFolderEntry(entry: any, fullPath: string, basePath: string, statFn: any, options?: { trustWindowsJunctions?: boolean }): Promise<boolean> {
+  if (!entry.isDirectory() && !(typeof entry.isSymbolicLink === 'function' && entry.isSymbolicLink())) {
+    return false
+  }
+
+  return isWorkspaceListPathAllowed(fullPath, basePath, statFn, options)
+}
+
 /**
- * List folders under workspace base path for folder picker.
- * GET /api/hermes/workspace/folders?path=<relative_path>
- * Base: current user's home directory (overridable via WORKSPACE_BASE env)
+ * List folders for the workspace folder picker.
+ * GET /api/hermes/workspace/folders?path=<path>
+ *
+ * By default this is rooted at the current user's home directory, or at
+ * WORKSPACE_BASE when configured. On native Windows without WORKSPACE_BASE, the
+ * picker can browse any available drive letter, while each request remains
+ * constrained to the selected drive root.
  */
 export async function listWorkspaceFolders(ctx: any) {
-  const { resolve, join } = await import('path')
-  const { readdir } = await import('fs/promises')
+  const { resolve, join, win32 } = await import('path')
+  const { readdir, stat } = await import('fs/promises')
   const { existsSync } = await import('fs')
   const { homedir } = await import('os')
 
-  const WORKSPACE_BASE = process.env.WORKSPACE_BASE?.trim() || homedir()
   const subPath = (ctx.query.path as string) || ''
+  if (useWindowsDriveWorkspaceMode()) {
+    if (!subPath) {
+      const drives = await listWindowsWorkspaceDrives()
+      ctx.body = { base: '', current: '', roots: drives, folders: drives }
+      return
+    }
+
+    const resolved = normalizeWindowsWorkspacePath(subPath)
+    if (!resolved) {
+      ctx.status = 403
+      ctx.body = { error: 'Access denied' }
+      return
+    }
+
+    if (!existsSync(resolved.fullPath)) {
+      ctx.status = 404
+      ctx.body = { error: 'Path not found', folders: [] }
+      return
+    }
+
+    if (!await isWorkspaceListPathAllowed(resolved.fullPath, resolved.base, stat)) {
+      ctx.status = 403
+      ctx.body = { error: 'Access denied' }
+      return
+    }
+
+    try {
+      const entries = await readdir(resolved.fullPath, { withFileTypes: true })
+      const folders = (await Promise.all(entries.map(async (entry) => {
+        const fullPath = win32.join(resolved.fullPath, entry.name)
+        if (!await isSafeWorkspaceFolderEntry(entry, fullPath, resolved.base, stat)) return null
+        return {
+          name: entry.name,
+          path: fullPath,
+          fullPath,
+        }
+      })))
+        .filter((entry): entry is { name: string; path: string; fullPath: string } => !!entry)
+        .sort((a, b) => a.name.localeCompare(b.name))
+
+      ctx.body = { base: resolved.base, current: resolved.fullPath, folders }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { error: err.message }
+    }
+    return
+  }
+
+  const WORKSPACE_BASE = workspaceBaseOverride() || homedir()
 
   // Security: prevent path traversal
   const fullPath = resolve(join(WORKSPACE_BASE, subPath))
@@ -891,15 +1375,24 @@ export async function listWorkspaceFolders(ctx: any) {
     return
   }
 
+  if (!await isWorkspaceListPathAllowed(fullPath, WORKSPACE_BASE, stat)) {
+    ctx.status = 403
+    ctx.body = { error: 'Access denied' }
+    return
+  }
+
   try {
     const entries = await readdir(fullPath, { withFileTypes: true })
-    const folders = entries
-      .filter(e => e.isDirectory() && !e.name.startsWith('.'))
-      .map(e => ({
-        name: e.name,
-        path: subPath ? `${subPath}/${e.name}` : e.name,
-        fullPath: join(fullPath, e.name),
-      }))
+    const folders = (await Promise.all(entries.map(async (entry) => {
+      const entryFullPath = join(fullPath, entry.name)
+      if (!await isSafeWorkspaceFolderEntry(entry, entryFullPath, WORKSPACE_BASE, stat)) return null
+      return {
+        name: entry.name,
+        path: subPath ? `${subPath}/${entry.name}` : entry.name,
+        fullPath: entryFullPath,
+      }
+    })))
+      .filter((entry): entry is { name: string; path: string; fullPath: string } => !!entry)
       .sort((a, b) => a.name.localeCompare(b.name))
 
     ctx.body = { base: WORKSPACE_BASE, current: subPath, folders }
@@ -921,7 +1414,17 @@ function invalidWorkspaceFolderName(name: string): boolean {
 async function resolveWorkspaceFolderPath(ctx: any, inputPath: string) {
   const { resolve, join } = await import('path')
   const { homedir } = await import('os')
-  const WORKSPACE_BASE = process.env.WORKSPACE_BASE?.trim() || homedir()
+  if (useWindowsDriveWorkspaceMode()) {
+    const resolved = normalizeWindowsWorkspacePath(inputPath)
+    if (!resolved) {
+      ctx.status = 403
+      ctx.body = { error: 'Access denied' }
+      return null
+    }
+    return resolved
+  }
+
+  const WORKSPACE_BASE = workspaceBaseOverride() || homedir()
   const fullPath = resolve(join(WORKSPACE_BASE, inputPath || ''))
   if (!isPathWithin(fullPath, WORKSPACE_BASE)) {
     ctx.status = 403
@@ -946,6 +1449,11 @@ export async function createWorkspaceFolder(ctx: any) {
   if (!resolvedParent) return
   const targetPath = join(resolvedParent.fullPath, folderName)
   if (!isPathWithin(targetPath, resolvedParent.base)) {
+    ctx.status = 403
+    ctx.body = { error: 'Access denied' }
+    return
+  }
+  if (!await isNearestExistingRealPathWithin(targetPath, resolvedParent.base)) {
     ctx.status = 403
     ctx.body = { error: 'Access denied' }
     return
@@ -986,6 +1494,12 @@ export async function renameWorkspaceFolder(ctx: any) {
     ctx.body = { error: 'Access denied' }
     return
   }
+  if (!await isNearestExistingRealPathWithin(resolvedCurrent.fullPath, resolvedCurrent.base) ||
+    !await isNearestExistingRealPathWithin(targetPath, resolvedCurrent.base)) {
+    ctx.status = 403
+    ctx.body = { error: 'Access denied' }
+    return
+  }
 
   try {
     const info = await stat(resolvedCurrent.fullPath)
@@ -994,7 +1508,7 @@ export async function renameWorkspaceFolder(ctx: any) {
       ctx.body = { error: 'Path is not a directory' }
       return
     }
-    await rename(resolvedCurrent.fullPath, targetPath)
+    await fsRename(resolvedCurrent.fullPath, targetPath)
     ctx.body = { ok: true }
   } catch (err: any) {
     ctx.status = err?.code === 'EEXIST' ? 409 : err?.code === 'ENOENT' ? 404 : 500
@@ -1019,6 +1533,11 @@ export async function deleteWorkspaceFolder(ctx: any) {
     ctx.body = { error: 'Cannot delete workspace root' }
     return
   }
+  if (!await isNearestExistingRealPathWithin(resolvedCurrent.fullPath, resolvedCurrent.base)) {
+    ctx.status = 403
+    ctx.body = { error: 'Access denied' }
+    return
+  }
 
   try {
     const info = await stat(resolvedCurrent.fullPath)
@@ -1027,7 +1546,7 @@ export async function deleteWorkspaceFolder(ctx: any) {
       ctx.body = { error: 'Path is not a directory' }
       return
     }
-    await rm(resolvedCurrent.fullPath, { recursive: true })
+    await fsRm(resolvedCurrent.fullPath, { recursive: true })
     ctx.body = { ok: true }
   } catch (err: any) {
     ctx.status = err?.code === 'ENOENT' ? 404 : 500
@@ -1144,6 +1663,7 @@ export async function getConversationMessagesPaginated(ctx: any) {
       started_at: session.started_at,
       ended_at: session.ended_at,
       last_active: session.last_active,
+      is_archived: (session as any).is_archived || 0,
       message_count: session.message_count,
       input_tokens: session.input_tokens,
       output_tokens: session.output_tokens,

@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMessage } from 'naive-ui'
-import MarkdownRenderer from '../chat/MarkdownRenderer.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import {
@@ -19,6 +18,8 @@ import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
 import { getDownloadUrl } from '@/api/hermes/download'
 import { formatChatTimestamp } from '@/utils/chat-timestamp'
 import type { ChatMessage, RoomAgent, MemberInfo } from '@/api/hermes/group-chat'
+
+const MarkdownRenderer = defineAsyncComponent(async () => (await import('../chat/MarkdownRenderer.vue')).default)
 
 const TOOL_PAYLOAD_DISPLAY_LIMIT = 1000
 const JSON_STRING_DISPLAY_LIMIT = 200
@@ -174,6 +175,23 @@ const copyableContent = computed(() => {
 
 const toolExpanded = ref(false)
 const isToolMessage = computed(() => props.message.role === 'tool')
+const workspaceDiffPayload = computed(() => {
+    if ((props.message.toolName || props.message.tool_name) !== 'workspace_diff') return null
+    const raw = props.message.toolResult ?? props.message.content
+    if (!raw) return null
+    if (typeof raw === 'object' && (raw as any)?.kind === 'workspace_diff') return raw as any
+    if (typeof raw === 'string') {
+        try {
+            const parsed = JSON.parse(raw)
+            return parsed?.kind === 'workspace_diff' ? parsed : null
+        } catch {
+            return null
+        }
+    }
+    return null
+})
+const workspaceDiffFiles = computed(() => Array.isArray(workspaceDiffPayload.value?.files) ? workspaceDiffPayload.value.files : [])
+const workspaceDiffLabel = computed(() => workspaceDiffPayload.value?.workspace_basename || t('chat.workspace'))
 const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs))
 const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult, true))
 const hasToolDetails = computed(() => !!(toolArgsPayload.value.full || toolResultPayload.value.full))
@@ -490,7 +508,52 @@ onBeforeUnmount(() => {
                 <span class="sender-name">{{ message.senderName }}</span>
                 <span v-if="isAgent && agentInfo?.description" class="agent-desc">{{ agentInfo.description }}</span>
             </div>
-            <div class="tool-line" :class="{ expandable: hasToolDetails }" @click="hasToolDetails && (toolExpanded = !toolExpanded)">
+            <div v-if="workspaceDiffPayload" class="workspace-diff-card">
+                <button
+                    class="workspace-diff-head"
+                    type="button"
+                    :aria-expanded="toolExpanded"
+                    @click="toolExpanded = !toolExpanded"
+                >
+                    <span class="workspace-diff-title-wrap">
+                        <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            class="workspace-diff-chevron"
+                            :class="{ rotated: toolExpanded }"
+                        >
+                            <polyline points="9 18 15 12 9 6" />
+                        </svg>
+                        <span class="workspace-diff-title">{{ t('chat.workspaceChanges') }}</span>
+                    </span>
+                    <span class="workspace-diff-status">{{ workspaceDiffPayload.status }}</span>
+                </button>
+                <div class="workspace-diff-meta" :title="workspaceDiffLabel">
+                    <span>{{ workspaceDiffLabel }}</span>
+                    <span>{{ t('chat.changedFiles', { files: workspaceDiffPayload.files_changed ?? workspaceDiffFiles.length }) }}</span>
+                    <span class="diff-add">+{{ workspaceDiffPayload.additions || 0 }}</span>
+                    <span class="diff-del">-{{ workspaceDiffPayload.deletions || 0 }}</span>
+                    <span v-if="workspaceDiffPayload.truncated">{{ t('chat.truncated') }}</span>
+                </div>
+                <div v-if="toolExpanded" class="workspace-diff-files" @click="handleToolDetailClick">
+                    <div v-for="file in workspaceDiffFiles" :key="file.id || file.path" class="workspace-diff-file">
+                        <div class="workspace-diff-file-head">
+                            <span class="workspace-diff-path">{{ file.path }}</span>
+                            <span>{{ file.change_type }}</span>
+                            <span class="diff-add">+{{ file.additions || 0 }}</span>
+                            <span class="diff-del">-{{ file.deletions || 0 }}</span>
+                            <span v-if="file.binary">{{ t('chat.binaryFileDiffUnavailable') }}</span>
+                            <span v-if="file.truncated">{{ t('chat.truncated') }}</span>
+                        </div>
+                        <div v-if="file.patch" class="tool-detail-code-block" v-html="renderToolPayload(file.patch, 'diff')"></div>
+                    </div>
+                </div>
+            </div>
+            <div v-else class="tool-line" :class="{ expandable: hasToolDetails }" @click="hasToolDetails && (toolExpanded = !toolExpanded)">
                 <svg
                     v-if="hasToolDetails"
                     width="10"
@@ -512,7 +575,7 @@ onBeforeUnmount(() => {
                 <span v-if="message.toolStatus === 'running'" class="tool-spinner"></span>
                 <span v-if="message.toolStatus === 'error'" class="tool-error-badge">{{ t('chat.error') }}</span>
             </div>
-            <div v-if="toolExpanded && hasToolDetails" class="tool-details" @click="handleToolDetailClick">
+            <div v-if="!workspaceDiffPayload && toolExpanded && hasToolDetails" class="tool-details" @click="handleToolDetailClick">
                 <div v-if="formattedToolArgs" class="tool-detail-section" data-copy-source="tool-args">
                     <div class="tool-detail-label">{{ t('chat.arguments') }}</div>
                     <div class="tool-detail-code-block" v-html="renderedToolArgs"></div>
@@ -754,6 +817,103 @@ onBeforeUnmount(() => {
     margin-top: 2px;
     border-left: 2px solid $border-light;
     padding-left: 10px;
+}
+
+.workspace-diff-card {
+    width: min(760px, 100%);
+    border: 1px solid $border-color;
+    border-radius: $radius-sm;
+    background: rgba(var(--accent-primary-rgb), 0.04);
+    overflow: hidden;
+}
+
+.workspace-diff-head,
+.workspace-diff-meta,
+.workspace-diff-file-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.workspace-diff-head {
+    background: transparent;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-bottom: 1px solid $border-color;
+    text-align: left;
+    width: 100%;
+}
+
+.workspace-diff-title-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.workspace-diff-chevron {
+    flex-shrink: 0;
+    transition: transform 0.15s ease;
+
+    &.rotated {
+        transform: rotate(90deg);
+    }
+}
+
+.workspace-diff-title {
+    font-weight: 700;
+    color: $text-primary;
+}
+
+.workspace-diff-status {
+    font-size: 11px;
+    color: $text-secondary;
+    font-family: $font-code;
+}
+
+.workspace-diff-meta {
+    padding: 6px 10px;
+    font-size: 12px;
+    color: $text-secondary;
+    flex-wrap: wrap;
+}
+
+.workspace-diff-files {
+    display: grid;
+    gap: 8px;
+    padding: 8px 10px 10px;
+}
+
+.workspace-diff-file {
+    min-width: 0;
+}
+
+.workspace-diff-file-head {
+    padding: 4px 0;
+    font-size: 11px;
+    color: $text-muted;
+    font-family: $font-code;
+}
+
+.workspace-diff-path {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: $text-primary;
+}
+
+.diff-add {
+    color: $success;
+}
+
+.diff-del {
+    color: $error;
 }
 
 .tool-detail-section {

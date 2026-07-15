@@ -109,6 +109,36 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+// Chat input route CSS is code-split; keep the footer color stable before the
+// component-scoped chunk arrives so entering chat does not flash the page bg.
+.chat-input-area,
+.chat-input-area .input-wrapper {
+  background-color: $bg-card;
+}
+
+.settings-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  color: transparent;
+  font-size: 13px;
+  line-height: 16px;
+}
+
+.settings-check.active {
+  color: $accent-primary;
+}
+
+.hermes-desktop-pet-window,
+.hermes-desktop-pet-window body,
+.hermes-desktop-pet-window #app {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
 // Teleported overlays must remain clickable above Electron drag regions.
 .hermes-desktop-shell {
   .n-drawer,
@@ -189,15 +219,26 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 21px 20px;
+  gap: 12px;
+  min-height: 64px;
+  padding: 14px 20px;
   border-bottom: 1px solid $border-color;
   flex-shrink: 0;
 }
 
 .header-title {
+  margin: 0;
   font-size: 16px;
   font-weight: 600;
+  line-height: 1.4;
   color: $text-primary;
+}
+
+.page-header > .header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 // Responsive utility classes for inline width replacement
@@ -218,7 +259,7 @@ a {
 .hamburger-btn {
   display: none;
   position: fixed;
-  top: 10px;
+  top: calc(10px + env(safe-area-inset-top, 0px));
   left: 12px;
   z-index: 99;
   width: 36px;
@@ -243,7 +284,7 @@ a {
   }
 
   .page-header {
-    padding: 16px 12px 16px 52px !important;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 12px 16px 52px !important;
   }
 
   .input-sm,

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetchProviderModels, mockBuildModelGroups, mockReadAppConfig, mockWriteAppConfig, mockExistsSync, mockReadFileSync, mockListProfileNamesFromDisk, mockListUserProfiles, mockReadProviderModelCatalogCache, mockGetCachedProviderModels, mockRefreshConfiguredProviderModelCatalogs, mockWriteProviderModelCatalogEntry, mockGetCopilotModelsDetailed } = vi.hoisted(() => ({
+const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetchProviderModels, mockBuildModelGroups, mockReadAppConfig, mockWriteAppConfig, mockExistsSync, mockReadFileSync, mockListProfileNamesFromDisk, mockListUserProfiles, mockReadProviderModelCatalogCache, mockResolveProviderCatalogModels, mockRefreshConfiguredProviderModelCatalogs, mockWriteProviderModelCatalogEntry, mockGetCopilotModelsDetailed } = vi.hoisted(() => ({
   mockReadFile: vi.fn(),
   mockReadConfigYaml: vi.fn(),
   mockReadConfigYamlForProfile: vi.fn(),
@@ -13,7 +13,7 @@ const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetc
   mockListProfileNamesFromDisk: vi.fn(() => ['default']),
   mockListUserProfiles: vi.fn(() => []),
   mockReadProviderModelCatalogCache: vi.fn(),
-  mockGetCachedProviderModels: vi.fn(),
+  mockResolveProviderCatalogModels: vi.fn(),
   mockRefreshConfiguredProviderModelCatalogs: vi.fn(),
   mockWriteProviderModelCatalogEntry: vi.fn(),
   mockGetCopilotModelsDetailed: vi.fn(async () => []),
@@ -120,7 +120,7 @@ vi.mock('../../packages/server/src/services/app-config', () => ({
 
 vi.mock('../../packages/server/src/services/hermes/model-catalog-cache', () => ({
   readProviderModelCatalogCache: mockReadProviderModelCatalogCache,
-  getCachedProviderModels: mockGetCachedProviderModels,
+  resolveProviderCatalogModels: mockResolveProviderCatalogModels,
   refreshConfiguredProviderModelCatalogs: mockRefreshConfiguredProviderModelCatalogs,
   writeProviderModelCatalogEntry: mockWriteProviderModelCatalogEntry,
 }))
@@ -139,6 +139,23 @@ function makeCtx(body: Record<string, unknown> = {}): any {
   return { params: {}, query: {}, request: { body }, body: undefined, status: 200 }
 }
 
+function modelCatalogKey(provider: string, baseUrl: string, freeOnly = false): string {
+  return `${provider}|${baseUrl.replace(/\/+$/, '')}|${freeOnly ? 'free' : 'all'}`
+}
+
+function sourceAwareProviderModels(
+  cache: any,
+  provider: string,
+  baseUrl: string,
+  staticModels: string[],
+  options: { freeOnly?: boolean; hasStaticManifest?: boolean } = {},
+): string[] {
+  const entry = cache?.providers?.[modelCatalogKey(provider, baseUrl, options.freeOnly === true)]
+  if (!entry || !Array.isArray(entry.models) || entry.models.length === 0) return [...staticModels]
+  if (entry.source === 'fallback' && options.hasStaticManifest === true) return [...staticModels]
+  return [...entry.models]
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   mockReadFile.mockResolvedValue('DEEPSEEK_API_KEY=sk-test\n')
@@ -153,7 +170,7 @@ beforeEach(() => {
   mockListProfileNamesFromDisk.mockReturnValue(['default'])
   mockListUserProfiles.mockReturnValue([])
   mockReadProviderModelCatalogCache.mockResolvedValue({ version: 1, updated_at: '1970-01-01T00:00:00.000Z', providers: {} })
-  mockGetCachedProviderModels.mockReturnValue(null)
+  mockResolveProviderCatalogModels.mockImplementation(sourceAwareProviderModels)
   mockRefreshConfiguredProviderModelCatalogs.mockResolvedValue(undefined)
   mockWriteProviderModelCatalogEntry.mockResolvedValue({})
   mockGetCopilotModelsDetailed.mockResolvedValue([])
@@ -205,10 +222,52 @@ describe('models controller — model visibility', () => {
     })
   })
 
+  it('exposes enabled MoA presets as a profile-scoped virtual provider', async () => {
+    mockReadConfigYamlForProfile.mockResolvedValue({
+      model: { default: 'deepseek-chat', provider: 'deepseek' },
+      moa: {
+        default_preset: 'coding',
+        presets: {
+          research: { enabled: true },
+          coding: {},
+          archived: { enabled: false },
+        },
+      },
+    })
+
+    const ctx = makeCtx()
+    ctx.query = { profile: 'default' }
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'moa',
+        label: 'Mixture of Agents',
+        base_url: 'moa://local',
+        api_key: 'moa-virtual-provider',
+        api_mode: 'chat_completions',
+        models: ['coding', 'research'],
+      }),
+    ]))
+    expect(JSON.stringify(ctx.body.groups)).not.toContain('archived')
+  })
+
   it('prefers cached live provider catalogs over static built-in presets', async () => {
     mockReadConfigYamlForProfile.mockResolvedValue({ model: { default: 'deepseek-live', provider: 'deepseek' } })
-    mockGetCachedProviderModels.mockImplementation((_cache: unknown, provider: string) => {
-      return provider === 'deepseek' ? ['deepseek-live', 'deepseek-new'] : null
+    const key = modelCatalogKey('deepseek', 'https://api.deepseek.com/v1')
+    mockReadProviderModelCatalogCache.mockResolvedValue({
+      version: 1,
+      updated_at: '2026-07-11T00:00:00.000Z',
+      providers: {
+        [key]: {
+          provider: 'deepseek',
+          label: 'DeepSeek',
+          base_url: 'https://api.deepseek.com/v1',
+          models: ['deepseek-live', 'deepseek-new'],
+          source: 'live',
+          updated_at: '2026-07-11T00:00:00.000Z',
+        },
+      },
     })
 
     const ctx = makeCtx()
@@ -223,6 +282,174 @@ describe('models controller — model visibility', () => {
       }),
     ]))
     expect(mockFetchProviderModels).not.toHaveBeenCalled()
+  })
+
+  it('ignores persisted fallback entries for built-ins in groups and allProviders', async () => {
+    const key = modelCatalogKey('deepseek', 'https://api.deepseek.com/v1')
+    mockReadProviderModelCatalogCache.mockResolvedValue({
+      version: 1,
+      updated_at: '2026-07-10T00:00:00.000Z',
+      providers: {
+        [key]: {
+          provider: 'deepseek',
+          label: 'DeepSeek',
+          base_url: 'https://api.deepseek.com/v1',
+          models: ['deepseek-old-fallback'],
+          source: 'fallback',
+          updated_at: '2026-07-10T00:00:00.000Z',
+        },
+      },
+    })
+
+    const ctx = makeCtx()
+    await ctrl.getAvailable(ctx)
+
+    for (const surface of [ctx.body.groups, ctx.body.allProviders]) {
+      expect(surface).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          provider: 'deepseek',
+          models: ['deepseek-chat', 'deepseek-reasoner'],
+        }),
+      ]))
+    }
+    expect(JSON.stringify(ctx.body)).not.toContain('deepseek-old-fallback')
+  })
+
+  it.each([
+    {
+      source: 'fallback',
+      cachedModels: ['gpt-5.3-stale'],
+      expectedModels: ['gpt-5.5', 'gpt-5.4'],
+    },
+    {
+      source: 'live',
+      cachedModels: ['gpt-5.6-live'],
+      expectedModels: ['gpt-5.5', 'gpt-5.6-live'],
+    },
+  ])('applies $source cache precedence to built-in-backed custom providers', async ({ source, cachedModels, expectedModels }) => {
+    const provider = 'custom:fun-codex'
+    const baseUrl = 'https://proxy.example.com/v1'
+    const updatedAt = '2026-01-01T00:00:00.000Z'
+    mockReadConfigYamlForProfile.mockResolvedValue({
+      model: { default: 'gpt-5.5', provider },
+      custom_providers: [
+        {
+          name: 'fun-codex',
+          base_url: baseUrl,
+          model: 'gpt-5.5',
+          api_key: 'test-placeholder',
+        },
+      ],
+    })
+    mockReadProviderModelCatalogCache.mockResolvedValue({
+      version: 1,
+      updated_at: updatedAt,
+      providers: {
+        [modelCatalogKey(provider, baseUrl)]: {
+          provider,
+          label: 'fun-codex',
+          base_url: baseUrl,
+          models: cachedModels,
+          source,
+          updated_at: updatedAt,
+        },
+      },
+    })
+
+    const ctx = makeCtx()
+    ctx.query = { profile: 'default' }
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider, builtin: true, models: expectedModels }),
+    ]))
+  })
+
+  it('does not re-inject fallback cache models for an authoritatively empty built-in manifest', async () => {
+    const provider = 'custom:lmstudio'
+    const baseUrl = 'http://127.0.0.1:1234/v1'
+    const updatedAt = '2026-07-11T00:00:00.000Z'
+    mockReadConfigYamlForProfile.mockResolvedValue({
+      model: { default: 'configured-local-model', provider },
+      custom_providers: [
+        {
+          name: 'lmstudio',
+          base_url: baseUrl,
+          model: 'configured-local-model',
+          api_key: 'test-placeholder',
+        },
+      ],
+    })
+    mockReadProviderModelCatalogCache.mockResolvedValue({
+      version: 1,
+      updated_at: updatedAt,
+      providers: {
+        [modelCatalogKey(provider, baseUrl)]: {
+          provider,
+          label: 'lmstudio',
+          base_url: baseUrl,
+          models: ['stale-fallback-model'],
+          source: 'fallback',
+          updated_at: updatedAt,
+        },
+      },
+    })
+
+    const ctx = makeCtx()
+    ctx.query = { profile: 'default' }
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider,
+        builtin: true,
+        models: ['configured-local-model'],
+      }),
+    ]))
+    expect(JSON.stringify(ctx.body)).not.toContain('stale-fallback-model')
+  })
+
+  it('preserves cached catalogs for custom providers without a built-in manifest', async () => {
+    const provider = 'custom:research-proxy'
+    const baseUrl = 'https://research.invalid/v1'
+    const updatedAt = '2026-07-11T00:00:00.000Z'
+    mockReadConfigYamlForProfile.mockResolvedValue({
+      model: { default: 'research-model', provider },
+      custom_providers: [
+        {
+          name: 'research-proxy',
+          base_url: baseUrl,
+          model: 'research-model',
+          api_key: 'test-placeholder',
+          api_mode: 'chat_completions',
+        },
+      ],
+    })
+    mockReadProviderModelCatalogCache.mockResolvedValue({
+      version: 1,
+      updated_at: updatedAt,
+      providers: {
+        [modelCatalogKey(provider, baseUrl)]: {
+          provider,
+          label: 'research-proxy',
+          base_url: baseUrl,
+          models: ['cached-research-model'],
+          source: 'fallback',
+          updated_at: updatedAt,
+        },
+      },
+    })
+
+    const ctx = makeCtx()
+    ctx.query = { profile: 'default' }
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider,
+        models: ['research-model', 'cached-research-model'],
+      }),
+    ]))
   })
 
   it('limits the default available-models response to profiles bound to regular admins', async () => {

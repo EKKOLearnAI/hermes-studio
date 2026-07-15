@@ -22,7 +22,7 @@ export async function transcribeSpeech(req: TranscribeSpeechRequest): Promise<Tr
   }
 
   const formData = new FormData()
-  formData.append('audio', req.audio, 'speech.webm')
+  formData.append('audio', req.audio, speechFileName(req.audio.type))
   formData.append('provider', req.provider)
 
   if (typeof req.language === 'string' && req.language) {
@@ -37,4 +37,13 @@ export async function transcribeSpeech(req: TranscribeSpeechRequest): Promise<Tr
     method: 'POST',
     body: formData,
   })
+}
+
+function speechFileName(mimeType: string) {
+  const normalized = mimeType.split(';')[0]?.trim().toLowerCase()
+  if (normalized === 'audio/wav' || normalized === 'audio/x-wav' || normalized === 'audio/wave') return 'speech.wav'
+  if (normalized === 'audio/mpeg' || normalized === 'audio/mp3') return 'speech.mp3'
+  if (normalized === 'audio/mp4' || normalized === 'audio/x-m4a') return 'speech.m4a'
+  if (normalized === 'audio/ogg') return 'speech.ogg'
+  return 'speech.webm'
 }

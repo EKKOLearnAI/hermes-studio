@@ -100,9 +100,9 @@ function discoveryPortsForHttpPorts(httpPorts: number[]): number[] {
   return [...ports]
 }
 
-export function getLanEndpointKind(httpPort: number): LanEndpointKind {
-  if (httpPort === 8648) return 'web'
+export function getLanEndpointKind(httpPort: number, currentPort = config.port): LanEndpointKind {
   if (httpPort === 8748) return 'desktop'
+  if (httpPort === 8648 || httpPort === currentPort) return 'web'
   return 'custom'
 }
 

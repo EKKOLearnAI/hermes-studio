@@ -129,4 +129,28 @@ describe('tool trace visibility', () => {
       'assistant-1',
     ])
   })
+
+  it('does not treat tool traces before a slash command as current tool calls', () => {
+    const chatStore = useChatStore()
+    chatStore.activeSessionId = 'session-1'
+    chatStore.activeSession = makeSession([
+      { id: 'user-1', role: 'user', content: 'check weather', timestamp: 1 },
+      { id: 'tool-weather', role: 'tool', content: '', timestamp: 2, toolName: 'weather', toolResult: 'ok', toolStatus: 'done' },
+      { id: 'command-1', role: 'command', content: '/moa where next', timestamp: 3 },
+    ])
+    chatStore.abortState = { aborting: true, synced: false }
+
+    const wrapper = mount(MessageList, {
+      global: {
+        stubs: {
+          MessageItem: MessageItemStub,
+          Transition: false,
+        },
+      },
+    })
+
+    expect(wrapper.findAll('.stub-message').map(node => node.attributes('data-id'))).toContain('tool-weather')
+    expect(wrapper.findAll('.tool-call-name').map(node => node.text())).not.toContain('weather')
+  })
+
 })

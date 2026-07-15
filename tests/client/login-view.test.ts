@@ -6,7 +6,9 @@ const mockReplace = vi.hoisted(() => vi.fn())
 const mockFetchAuthStatus = vi.hoisted(() => vi.fn())
 const mockLoginWithPassword = vi.hoisted(() => vi.fn())
 const mockSetApiKey = vi.hoisted(() => vi.fn())
+const mockClearApiKey = vi.hoisted(() => vi.fn())
 const mockHasApiKey = vi.hoisted(() => vi.fn())
+const mockIsDesktopShell = vi.hoisted(() => vi.fn())
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({
@@ -22,6 +24,7 @@ vi.mock('vue-i18n', () => ({
 
 vi.mock('@/api/client', () => ({
   setApiKey: mockSetApiKey,
+  clearApiKey: mockClearApiKey,
   hasApiKey: mockHasApiKey,
 }))
 
@@ -30,14 +33,38 @@ vi.mock('@/api/auth', () => ({
   loginWithPassword: mockLoginWithPassword,
 }))
 
+vi.mock('@/utils/desktop-bridge', () => ({
+  isDesktopShell: mockIsDesktopShell,
+}))
+
 import LoginView from '@/views/LoginView.vue'
 
 describe('LoginView password login', () => {
   beforeEach(() => {
     delete (window as any).__LOGIN_TOKEN__
     vi.clearAllMocks()
+    mockIsDesktopShell.mockReturnValue(false)
     mockHasApiKey.mockReturnValue(false)
     mockFetchAuthStatus.mockResolvedValue({ hasPasswordLogin: true, username: 'admin' })
+  })
+
+  it('keeps the web login redirect when a token already exists', () => {
+    mockHasApiKey.mockReturnValue(true)
+
+    mount(LoginView)
+
+    expect(mockClearApiKey).not.toHaveBeenCalled()
+    expect(mockReplace).toHaveBeenCalledWith('/hermes/chat')
+  })
+
+  it('clears stale tokens when the desktop login page is opened', () => {
+    mockIsDesktopShell.mockReturnValue(true)
+    mockHasApiKey.mockReturnValue(true)
+
+    mount(LoginView)
+
+    expect(mockClearApiKey).toHaveBeenCalledOnce()
+    expect(mockReplace).not.toHaveBeenCalledWith('/hermes/chat')
   })
 
   it('logs in with username and password', async () => {
@@ -93,5 +120,22 @@ describe('LoginView password login', () => {
       'hermes-web-ui clear-login-locks --restart',
       'hermes-web-ui reset-default-login',
     ])
+  })
+
+  it('shows the tray reset hint for locked desktop logins', async () => {
+    mockIsDesktopShell.mockReturnValue(true)
+    const err: any = new Error('Too many login attempts')
+    err.status = 429
+    mockLoginWithPassword.mockRejectedValue(err)
+    const wrapper = mount(LoginView)
+
+    const inputs = wrapper.findAll('input.login-input')
+    await inputs[0].setValue('admin')
+    await inputs[1].setValue('123456')
+    await wrapper.find('form.login-form').trigger('submit')
+
+    expect(wrapper.find('.login-error').text()).toBe('login.tooManyAttempts')
+    expect(wrapper.find('.login-lock-hint').text()).toContain('login.desktopLockResetHint')
+    expect(wrapper.findAll('.login-lock-hint code')).toHaveLength(0)
   })
 })

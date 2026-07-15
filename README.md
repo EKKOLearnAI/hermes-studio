@@ -233,6 +233,20 @@ runtime and stores Hermes Agent data in the native Hermes location:
 The desktop wrapper stores its own Web UI state separately in
 `~/.hermes-web-ui` unless `HERMES_WEB_UI_HOME` is set.
 
+After the packaged desktop app starts, it installs managed command shims so the
+desktop app, bundled Hermes Agent CLI, and bundled Web UI CLI do not conflict:
+
+| Command | Description |
+| --- | --- |
+| `hermes-studio` | Open the Hermes Studio desktop app |
+| `hermes-studio cli ...` | Run the bundled Hermes Agent CLI |
+| `hermes-studio web ...` | Run the bundled `hermes-web-ui` command |
+| `hermes-studio -h` | Show wrapper help |
+| `hermes-studio-mcp` | Run the managed Web UI MCP bridge |
+
+Use `hermes-studio cli -h` for Hermes Agent CLI help and
+`hermes-studio web -h` for Web UI CLI help.
+
 Desktop auto-updates read the latest feed from
 `https://download.ekkolearnai.com/latest` first. If that endpoint is
 unavailable, the updater falls back to
@@ -294,6 +308,7 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | `CORS_ORIGINS` | same host only | Comma- or space-separated cross-origin allowlist for HTTP, Socket.IO, and WebSocket requests. Set `*` only when you intentionally need legacy wildcard CORS. |
 | `AUTH_TOKEN` | auto-generated | Explicit bearer token. If unset, Web UI creates one under `HERMES_WEB_UI_HOME`. |
 | `AUTH_JWT_SECRET` | `AUTH_TOKEN` | JWT signing secret override for username/password sessions. |
+| `HERMES_WEB_UI_AUTH_JWT_EXPIRES_IN` | `30d` | Username/password session JWT lifetime. Accepts seconds or `s`/`m`/`h`/`d` suffixes, for example `12h` or `7d`. |
 | `PROFILE` | `default` | Startup/default Hermes profile. Runtime requests use the profile selected by the frontend and authorized for the current account. |
 | `LOG_LEVEL` | `info` | Server log level. |
 | `BRIDGE_LOG_LEVEL` | `$LOG_LEVEL` or `info` | Bridge log level. |
@@ -311,6 +326,7 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | `HERMES_AGENT_BRIDGE_TIMEOUT_MS` | `120000` | Timeout for Node requests to the bridge broker. |
 | `HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS` | `5000` | Short retry window for connecting to the bridge socket. |
 | `HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS` | `120000` | Timeout while waiting for the Python bridge to become ready. |
+| `HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN` | enabled | Stop the bridge broker during Web UI shutdown and restart. Set `0`, `false`, `no`, or `off` to keep the bridge across restarts. |
 | `HERMES_AGENT_BRIDGE_AUTO_RESTART` | enabled | Auto-restart the bridge broker after unexpected exit. Set `0`, `false`, `no`, or `off` to disable. |
 | `HERMES_AGENT_BRIDGE_RESTART_DELAY_MS` | `1000` | Base delay for bridge auto-restart backoff. |
 | `HERMES_AGENT_BRIDGE_PLATFORM` | `cli` | Platform identity passed to Hermes Agent. |
@@ -343,12 +359,14 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | `hermes-web-ui start`             | Start in background (daemon mode)  |
 | `hermes-web-ui start --port 9000` | Start on custom port               |
 | `hermes-web-ui stop`              | Stop background process            |
-| `hermes-web-ui restart`           | Restart background process         |
+| `hermes-web-ui restart`           | Restart background process; stops the bridge by default |
 | `hermes-web-ui status`            | Check if running                   |
 | `hermes-web-ui update`            | Update to latest version & restart |
 | `hermes-web-ui upgrade`           | Alias for `update`                 |
 | `hermes-web-ui -v`                | Show version number                |
 | `hermes-web-ui -h`                | Show help message                  |
+
+`restart`, `update`, and `upgrade` stop the Agent Bridge broker by default so restarted or updated servers do not reuse stale Python bridge processes. Set `HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN=0` before restarting only when you explicitly want to keep the bridge broker and running bridge sessions alive.
 
 `update` / `upgrade` first attempt `npm cache clean --force`, then run `npm install -g hermes-web-ui@latest` and restart. Cache cleanup is best-effort; if it fails, the updater continues with the install.
 
@@ -403,12 +421,10 @@ The BFF layer handles Socket.IO chat streaming, the Hermes agent bridge, profile
 
 **Backend:** Koa 2 (BFF server) + node-pty (web terminal)
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=EKKOLearnAI/hermes-studio&type=Date)](https://star-history.com/#EKKOLearnAI/hermes-studio&Date)
-
-<!-- If the chart above doesn't load, visit https://star-history.com/#EKKOLearnAI/hermes-studio -->
-
 ## License
 
 [BSL-1.1](./LICENSE)
+
+The license covers Hermes Studio, the former Hermes Web UI name, the
+`hermes-web-ui` npm package and CLI, desktop applications, firmware, release
+artifacts, documentation, and associated files in this repository.

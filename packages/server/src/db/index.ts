@@ -6,9 +6,13 @@ import { config } from '../config'
 const isDev = process.env.NODE_ENV !== 'production'
 const isTest = process.env.VITEST === 'true' || process.env.NODE_ENV === 'test'
 
+const testDbDirOverride = process.env.HERMES_WEB_UI_TEST_DB_DIR?.trim()
+
 // In WSL, always use home directory to avoid cross-filesystem issues
 const DB_DIR = isTest
-  ? resolve(process.cwd(), 'packages/server/data/test-runtime')
+  ? testDbDirOverride
+    ? resolve(testDbDirOverride)
+    : resolve(process.cwd(), 'packages/server/data/test-runtime')
   : isDev
   ? resolve(process.cwd(), 'packages/server/data')
   : config.appHome
@@ -36,7 +40,12 @@ export function getDb(): DatabaseSync | null {
     mkdirSync(DB_DIR, { recursive: true })
     _db = new DatabaseSync(DB_PATH)
     // Use WAL mode for better concurrency and WSL compatibility
-    if (isDev) {
+    if (isTest) {
+      _db.exec('PRAGMA journal_mode=WAL')
+      _db.exec('PRAGMA synchronous=NORMAL')
+      _db.exec('PRAGMA busy_timeout=5000')
+      _db.exec('PRAGMA foreign_keys=ON')
+    } else if (isDev) {
       _db.exec('PRAGMA journal_mode=DELETE')
     } else {
       _db.exec('PRAGMA journal_mode=WAL')

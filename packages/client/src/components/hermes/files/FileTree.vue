@@ -1,20 +1,29 @@
 <script setup lang="ts">
-import { ref, onMounted, h } from 'vue'
+import { computed, ref, watch, h } from 'vue'
 import { NTree } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useFilesStore } from '@/stores/hermes/files'
-import * as filesApi from '@/api/hermes/files'
 import type { TreeOption } from 'naive-ui'
 
 const { t } = useI18n()
 const filesStore = useFilesStore()
+const props = defineProps<{
+  profile?: string | null
+  workspaceKey?: string | null
+}>()
+
+const effectiveProfile = computed(() => props.profile === undefined ? filesStore.currentProfile : props.profile)
 
 const treeData = ref<TreeOption[]>([])
 const selectedKeys = ref<string[]>([])
+const treeInstanceKey = ref(0)
+let rootLoadSeq = 0
 
 async function loadChildren(path: string): Promise<TreeOption[]> {
   try {
-    const result = await filesApi.listFiles(path)
+    const result = filesStore.currentWorkspaceSessionId
+      ? await filesStore.listEntries(path)
+      : await filesStore.fetchDirectory(path, { profile: effectiveProfile.value })
     return result.entries
       .filter(e => e.isDir)
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -29,19 +38,21 @@ async function loadChildren(path: string): Promise<TreeOption[]> {
 }
 
 async function handleLoad(node: TreeOption): Promise<void> {
-  node.children = await loadChildren(node.key as string)
+  const seq = rootLoadSeq
+  const children = await loadChildren(node.key as string)
+  if (seq === rootLoadSeq) node.children = children
 }
 
 function handleSelect(keys: string[]) {
   if (keys.length > 0) {
     selectedKeys.value = keys
-    filesStore.navigateTo(keys[0])
+    filesStore.navigateTo(keys[0], { profile: effectiveProfile.value })
   }
 }
 
 function handleRootClick() {
   selectedKeys.value = []
-  filesStore.navigateTo('')
+  filesStore.navigateTo('', { profile: effectiveProfile.value })
 }
 
 function renderLabel({ option }: { option: TreeOption }) {
@@ -49,9 +60,13 @@ function renderLabel({ option }: { option: TreeOption }) {
   return h('span', { class: 'tree-node-label', title: label }, label)
 }
 
-onMounted(async () => {
-  treeData.value = await loadChildren('')
-})
+watch([effectiveProfile, () => filesStore.currentWorkspaceSessionId, () => props.workspaceKey], async () => {
+  const seq = ++rootLoadSeq
+  selectedKeys.value = []
+  treeInstanceKey.value += 1
+  const nextTreeData = await loadChildren('')
+  if (seq === rootLoadSeq) treeData.value = nextTreeData
+}, { immediate: true })
 </script>
 
 <template>
@@ -64,6 +79,7 @@ onMounted(async () => {
       <span>{{ t('files.breadcrumbRoot') }}</span>
     </div>
     <NTree
+      :key="treeInstanceKey"
       :data="treeData"
       :selected-keys="selectedKeys"
       :on-load="handleLoad"

@@ -42,6 +42,7 @@ export interface ConversationSummary {
   agent_native_session_id?: string
   model: string
   provider?: string
+  api_mode?: string
   title: string | null
   started_at: number
   ended_at: number | null
@@ -58,6 +59,7 @@ export interface ConversationSummary {
   actual_cost_usd: number | null
   cost_status: string
   preview: string
+  is_archived?: number | boolean
   is_active: boolean
   thread_session_count: number
 }

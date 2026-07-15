@@ -4,13 +4,23 @@ import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import YAML from 'js-yaml'
 
-const { mockRestartGateway, mockDestroyProfile } = vi.hoisted(() => ({
+const { mockGatewayAutostartDisabledByEnv, mockRestartGateway, mockReconcileGatewayManagement, mockDestroyProfile } = vi.hoisted(() => ({
+  mockGatewayAutostartDisabledByEnv: vi.fn(() => false),
   mockRestartGateway: vi.fn().mockResolvedValue({ running: true, profile: 'default' }),
+  mockReconcileGatewayManagement: vi.fn().mockResolvedValue({
+    changed: false,
+    previousUnified: false,
+    nextUnified: false,
+    stoppedProfiles: [],
+    startedProfiles: [],
+  }),
   mockDestroyProfile: vi.fn().mockResolvedValue({ destroyed: true }),
 }))
 
 vi.mock('../../packages/server/src/services/hermes/gateway-autostart', () => {
   return {
+    gatewayAutostartDisabledByEnv: mockGatewayAutostartDisabledByEnv,
+    reconcileGatewayManagementTransition: mockReconcileGatewayManagement,
     restartGatewayForProfile: mockRestartGateway,
   }
 })
@@ -46,6 +56,7 @@ function makeCtx(body: unknown, profile?: string): any {
 
 beforeEach(async () => {
   vi.clearAllMocks()
+  mockGatewayAutostartDisabledByEnv.mockReturnValue(false)
   hermesHome = await mkdtemp(join(tmpdir(), 'hermes-config-controller-'))
   tempHomes.push(hermesHome)
   await mkdir(hermesHome, { recursive: true })
@@ -86,6 +97,42 @@ describe('config controller locked file updates', () => {
     expect(config.model.default).toBe('glm-5.1')
   })
 
+  it('does not auto-restart gateway for channel config when gateway auto-start is disabled', async () => {
+    await writeFile(join(hermesHome, 'config.yaml'), [
+      'telegram:',
+      '  enabled: false',
+      '',
+    ].join('\n'), 'utf-8')
+    await writeFile(join(hermesHome, 'config.json'), JSON.stringify({
+      gatewayAutoStart: { enabled: false },
+    }), 'utf-8')
+    const { updateConfig } = await loadController()
+    const ctx = makeCtx({ section: 'telegram', values: { enabled: true } })
+
+    await updateConfig(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    expect(mockRestartGateway).not.toHaveBeenCalled()
+    const config = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
+    expect(config.telegram.enabled).toBe(true)
+  })
+
+  it('does not auto-restart gateway for channel config when gateway autostart is disabled by env', async () => {
+    mockGatewayAutostartDisabledByEnv.mockReturnValue(true)
+    await writeFile(join(hermesHome, 'config.yaml'), [
+      'telegram:',
+      '  enabled: false',
+      '',
+    ].join('\n'), 'utf-8')
+    const { updateConfig } = await loadController()
+    const ctx = makeCtx({ section: 'telegram', values: { enabled: true } })
+
+    await updateConfig(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    expect(mockRestartGateway).not.toHaveBeenCalled()
+  })
+
 
   it('reads and writes gateway auto-start policy from Web UI app config', async () => {
     await writeFile(join(hermesHome, 'config.yaml'), [
@@ -99,6 +146,7 @@ describe('config controller locked file updates', () => {
       section: 'gatewayAutoStart',
       values: {
         enabled: true,
+        management: 'unified',
         include: ['default', ' reviewer ', '', 'default'],
         exclude: ['scratch', ' missing '],
       },
@@ -109,11 +157,20 @@ describe('config controller locked file updates', () => {
       success: true,
       gatewayAutoStart: {
         enabled: true,
+        management: 'unified',
         include: ['default', 'reviewer'],
         exclude: ['scratch', 'missing'],
       },
     })
     expect(mockRestartGateway).not.toHaveBeenCalled()
+    expect(mockReconcileGatewayManagement).toHaveBeenCalledWith({
+      management: 'per_profile',
+    }, {
+      enabled: true,
+      management: 'unified',
+      include: ['default', 'reviewer'],
+      exclude: ['scratch', 'missing'],
+    })
 
     const persisted = JSON.parse(await readFile(join(hermesHome, 'config.json'), 'utf-8'))
     expect(persisted.gatewayAutoStart).toEqual({
@@ -123,15 +180,90 @@ describe('config controller locked file updates', () => {
     })
     const yamlConfig = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
     expect(yamlConfig.gatewayAutoStart).toBeUndefined()
+    expect(yamlConfig.multiplex_profiles).toBe(true)
+    expect(yamlConfig.gateway).toBeUndefined()
     expect(yamlConfig.model.default).toBe('keep-model')
 
     const readCtx = makeCtx({})
     await getConfig(readCtx)
     expect(readCtx.body.gatewayAutoStart).toEqual({
       enabled: true,
+      management: 'unified',
       include: ['default', 'reviewer'],
       exclude: ['scratch', 'missing'],
     })
+  })
+
+  it('does not reconcile gateway management when Web UI gateway auto-start is disabled', async () => {
+    await writeFile(join(hermesHome, 'config.yaml'), 'model:\n  default: keep-model\n', 'utf-8')
+    const { updateConfig } = await loadController()
+
+    const ctx = makeCtx({
+      section: 'gatewayAutoStart',
+      values: {
+        enabled: false,
+        management: 'unified',
+      },
+    })
+    await updateConfig(ctx)
+
+    expect(ctx.body).toEqual({
+      success: true,
+      gatewayAutoStart: {
+        enabled: false,
+        management: 'unified',
+      },
+    })
+    expect(mockReconcileGatewayManagement).not.toHaveBeenCalled()
+  })
+
+  it('does not reconcile gateway management when gateway autostart is disabled by env', async () => {
+    mockGatewayAutostartDisabledByEnv.mockReturnValue(true)
+    await writeFile(join(hermesHome, 'config.yaml'), 'model:\n  default: keep-model\n', 'utf-8')
+    const { updateConfig } = await loadController()
+
+    const ctx = makeCtx({
+      section: 'gatewayAutoStart',
+      values: {
+        enabled: true,
+        management: 'unified',
+      },
+    })
+    await updateConfig(ctx)
+
+    expect(ctx.body).toEqual({
+      success: true,
+      gatewayAutoStart: {
+        enabled: true,
+        management: 'unified',
+      },
+    })
+    expect(mockReconcileGatewayManagement).not.toHaveBeenCalled()
+  })
+
+  it('removes Hermes multiplex gateway config when unified gateway is disabled', async () => {
+    await writeFile(join(hermesHome, 'config.yaml'), [
+      'gateway:',
+      '  multiplex_profiles: true',
+      'model:',
+      '  default: keep-model',
+      '',
+    ].join('\n'), 'utf-8')
+    const { updateConfig } = await loadController()
+
+    const ctx = makeCtx({
+      section: 'gatewayAutoStart',
+      values: {
+        management: 'per_profile',
+      },
+    })
+    await updateConfig(ctx)
+
+    expect(ctx.body.gatewayAutoStart.management).toBe('per_profile')
+    const yamlConfig = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
+    expect(yamlConfig.gateway).toBeUndefined()
+    expect(yamlConfig.multiplex_profiles).toBeUndefined()
+    expect(yamlConfig.model.default).toBe('keep-model')
   })
 
   it('clears credential env values and removes matching config fields without losing unrelated env keys', async () => {
@@ -168,6 +300,39 @@ describe('config controller locked file updates', () => {
     expect(config.platforms.weixin.extra.account_id).toBeUndefined()
     expect(config.platforms.weixin.extra.base_url).toBe('https://old.example')
     expect(config.model.default).toBe('glm-5.1')
+  })
+
+  it('does not auto-restart gateway after credential updates when gateway auto-start is disabled', async () => {
+    await writeFile(join(hermesHome, 'config.yaml'), [
+      'platforms:',
+      '  weixin:',
+      '    token: old-token',
+      '',
+    ].join('\n'), 'utf-8')
+    await writeFile(join(hermesHome, 'config.json'), JSON.stringify({
+      gatewayAutoStart: { enabled: false },
+    }), 'utf-8')
+    const { updateCredentials } = await loadController()
+    const ctx = makeCtx({ platform: 'weixin', values: { token: 'new-token' } })
+
+    await updateCredentials(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    expect(mockRestartGateway).not.toHaveBeenCalled()
+    const env = await readFile(join(hermesHome, '.env'), 'utf-8')
+    expect(env).toContain('WEIXIN_TOKEN=new-token')
+  })
+
+  it('does not auto-restart gateway after credential updates when gateway autostart is disabled by env', async () => {
+    mockGatewayAutostartDisabledByEnv.mockReturnValue(true)
+    await writeFile(join(hermesHome, 'config.yaml'), 'platforms: {}\n', 'utf-8')
+    const { updateCredentials } = await loadController()
+    const ctx = makeCtx({ platform: 'weixin', values: { token: 'new-token' } })
+
+    await updateCredentials(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    expect(mockRestartGateway).not.toHaveBeenCalled()
   })
 
   it('writes QQBot credentials to env and overlays them into platform config reads', async () => {
@@ -278,6 +443,114 @@ describe('config controller locked file updates', () => {
     expect(config.platforms.feishu.extra.app_secret).toBeUndefined()
     expect(config.platforms.feishu.extra.encrypt_key).toBeUndefined()
     expect(config.platforms.feishu.extra.verification_token).toBeUndefined()
+  })
+
+  it('round-trips Matrix password credentials through env-backed platform settings', async () => {
+    await writeFile(join(hermesHome, 'config.yaml'), [
+      'platforms:',
+      '  matrix:',
+      '    extra:',
+      '      homeserver: https://old.example.org',
+      '',
+    ].join('\n'), 'utf-8')
+    await writeFile(join(hermesHome, '.env'), 'OPENROUTER_API_KEY=keep\n', 'utf-8')
+    const { updateCredentials, getConfig } = await loadController()
+
+    await updateCredentials(makeCtx({
+      platform: 'matrix',
+      values: {
+        extra: {
+          homeserver: 'https://matrix.example.org',
+          user_id: '@hermes:example.org',
+          password: 'matrix-secret',
+        },
+      },
+    }))
+
+    const env = await readFile(join(hermesHome, '.env'), 'utf-8')
+    expect(env).toContain('OPENROUTER_API_KEY=keep')
+    expect(env).toContain('MATRIX_HOMESERVER=https://matrix.example.org')
+    expect(env).toContain('MATRIX_USER_ID=@hermes:example.org')
+    expect(env).toContain('MATRIX_PASSWORD=matrix-secret')
+
+    const readCtx = makeCtx({})
+    await getConfig(readCtx)
+    expect(readCtx.body.platforms.matrix.extra.homeserver).toBe('https://matrix.example.org')
+    expect(readCtx.body.platforms.matrix.extra.user_id).toBe('@hermes:example.org')
+    expect(readCtx.body.platforms.matrix.extra.password).toBe('matrix-secret')
+  })
+
+  it('round-trips platform proxy URLs through env-backed channel settings', async () => {
+    await writeFile(join(hermesHome, 'config.yaml'), 'platforms: {}\n', 'utf-8')
+    await writeFile(join(hermesHome, '.env'), 'OPENROUTER_API_KEY=keep\n', 'utf-8')
+    const { updateCredentials, getConfig } = await loadController()
+
+    await updateCredentials(makeCtx({
+      platform: 'telegram',
+      values: { proxy: 'socks5://127.0.0.1:7890' },
+    }))
+    await updateCredentials(makeCtx({
+      platform: 'discord',
+      values: { proxy: 'http://127.0.0.1:8080' },
+    }))
+    await updateCredentials(makeCtx({
+      platform: 'matrix',
+      values: { proxy: 'https://proxy.example:8443' },
+    }))
+
+    const env = await readFile(join(hermesHome, '.env'), 'utf-8')
+    expect(env).toContain('OPENROUTER_API_KEY=keep')
+    expect(env).toContain('TELEGRAM_PROXY=socks5://127.0.0.1:7890')
+    expect(env).toContain('DISCORD_PROXY=http://127.0.0.1:8080')
+    expect(env).toContain('MATRIX_PROXY=https://proxy.example:8443')
+
+    const readCtx = makeCtx({})
+    await getConfig(readCtx)
+    expect(readCtx.body.platforms.telegram.proxy).toBe('socks5://127.0.0.1:7890')
+    expect(readCtx.body.platforms.discord.proxy).toBe('http://127.0.0.1:8080')
+    expect(readCtx.body.platforms.matrix.proxy).toBe('https://proxy.example:8443')
+
+    await updateCredentials(makeCtx({
+      platform: 'discord',
+      values: { proxy: '' },
+    }))
+    const clearedEnv = await readFile(join(hermesHome, '.env'), 'utf-8')
+    expect(clearedEnv).not.toContain('DISCORD_PROXY=')
+  })
+
+  it('round-trips global proxy env settings and restarts the gateway', async () => {
+    await writeFile(join(hermesHome, 'config.yaml'), 'model:\n  default: glm-5.1\n', 'utf-8')
+    await writeFile(join(hermesHome, '.env'), 'OPENROUTER_API_KEY=keep\nHTTP_PROXY=http://old.example:8080\n', 'utf-8')
+    const { updateConfig, getConfig } = await loadController()
+
+    await updateConfig(makeCtx({
+      section: 'proxy',
+      values: {
+        HTTPS_PROXY: 'http://127.0.0.1:7890',
+        HTTP_PROXY: '',
+        ALL_PROXY: 'socks5://127.0.0.1:7891',
+        NO_PROXY: 'localhost,127.0.0.1,.local',
+      },
+    }))
+
+    expect(mockRestartGateway).toHaveBeenCalledWith('default')
+    const env = await readFile(join(hermesHome, '.env'), 'utf-8')
+    expect(env).toContain('OPENROUTER_API_KEY=keep')
+    expect(env).toContain('HTTPS_PROXY=http://127.0.0.1:7890')
+    expect(env).not.toContain('HTTP_PROXY=')
+    expect(env).toContain('ALL_PROXY=socks5://127.0.0.1:7891')
+    expect(env).toContain('NO_PROXY=localhost,127.0.0.1,.local')
+
+    const ctx = makeCtx({})
+    await getConfig(ctx)
+    expect(ctx.body.proxy).toEqual({
+      HTTPS_PROXY: 'http://127.0.0.1:7890',
+      ALL_PROXY: 'socks5://127.0.0.1:7891',
+      NO_PROXY: 'localhost,127.0.0.1,.local',
+    })
+    const config = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
+    expect(config.proxy).toBeUndefined()
+    expect(config.model.default).toBe('glm-5.1')
   })
 
   it('reads and writes channel settings in the request-scoped profile only', async () => {
