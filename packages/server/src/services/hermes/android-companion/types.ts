@@ -12,6 +12,14 @@ export const ANDROID_RECEIPT_STATUSES = [
 ] as const
 export const ANDROID_NOTIFICATION_SENSITIVITY = ['metadata', 'minimized', 'standard'] as const
 export const ANDROID_TAKEOVER_STATUSES = ['requested', 'claimed', 'completed', 'expired', 'cancelled'] as const
+export const ANDROID_COMPANION_MESSAGE_TYPES = [
+  'capabilities.report', 'permissions.report',
+  'notification.observed', 'notification.removed',
+  'command.execute', 'command.result', 'command.cancel',
+  'screen.capture.request', 'screen.capture.result',
+  'takeover.requested', 'takeover.claimed', 'takeover.completed',
+  'heartbeat', 'ack',
+] as const
 
 export type AndroidDeviceState = typeof ANDROID_DEVICE_STATES[number]
 export type AndroidCapabilityHealth = typeof ANDROID_CAPABILITY_HEALTH[number]
@@ -20,6 +28,7 @@ export type AndroidCommandStatus = typeof ANDROID_COMMAND_STATUSES[number]
 export type AndroidReceiptStatus = typeof ANDROID_RECEIPT_STATUSES[number]
 export type AndroidNotificationSensitivity = typeof ANDROID_NOTIFICATION_SENSITIVITY[number]
 export type AndroidTakeoverStatus = typeof ANDROID_TAKEOVER_STATUSES[number]
+export type AndroidCompanionMessageType = typeof ANDROID_COMPANION_MESSAGE_TYPES[number]
 
 export interface AndroidCompanionDevice {
   id: string
@@ -171,4 +180,12 @@ export class AndroidCompanionIdentityConflictError extends Error {
 
 export class AndroidCompanionVersionConflictError extends Error {
   constructor(message: string) { super(message); this.name = 'AndroidCompanionVersionConflictError' }
+}
+
+export class AndroidCompanionAuthenticationError extends Error {
+  constructor(message: string) { super(message); this.name = 'AndroidCompanionAuthenticationError' }
+}
+
+export class AndroidCompanionReplayError extends Error {
+  constructor(message: string) { super(message); this.name = 'AndroidCompanionReplayError' }
 }
