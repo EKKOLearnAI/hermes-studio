@@ -54,6 +54,7 @@ import { actionFabricRoutes } from './hermes/action-fabric'
 import { healthLoopRoutes } from './hermes/health-loop'
 import { homeRoutes } from './hermes/home'
 import { internetExecutionRoutes } from './hermes/internet-execution'
+import { androidCompanionRoutes } from './hermes/android-companion'
 
 /**
  * Register all routes on the Koa app.
@@ -121,4 +122,5 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(healthLoopRoutes.routes())             // Health closed loop API
   app.use(homeRoutes.routes())                   // Home closed loop API
   app.use(internetExecutionRoutes.routes())      // Governed internet execution proof API
+  app.use(androidCompanionRoutes.routes())       // Encrypted Android companion command center
 }

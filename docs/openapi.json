@@ -17,6 +17,10 @@
       "description": "Governed capability discovery, durable action workflows, audit, and emergency controls"
     },
     {
+      "name": "Android Companion",
+      "description": "Authenticated Android device pairing, capability health, minimized observations, and governed execution receipts"
+    },
+    {
       "name": "Anthropic Auth",
       "description": "Anthropic OAuth"
     },
@@ -4671,6 +4675,1617 @@
             }
           }
         }
+      }
+    },
+    "/api/hermes/android-companion/artifacts": {
+      "get": {
+        "tags": [
+          "Android Companion"
+        ],
+        "summary": "Get artifacts",
+        "description": "GET /api/hermes/android-companion/artifacts",
+        "operationId": "artifacts",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidArtifactListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workflowId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/android-companion/capabilities": {
+      "get": {
+        "tags": [
+          "Android Companion"
+        ],
+        "summary": "Get capabilities",
+        "description": "GET /api/hermes/android-companion/capabilities",
+        "operationId": "capabilities",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidCapabilityListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "deviceId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/android-companion/commands": {
+      "get": {
+        "tags": [
+          "Android Companion"
+        ],
+        "summary": "Get commands",
+        "description": "GET /api/hermes/android-companion/commands",
+        "operationId": "commands",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidCommandListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "deviceId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+            }
+          },
+          {
+            "name": "workflowId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "delivered",
+                "acknowledged",
+                "succeeded",
+                "failed",
+                "unknown",
+                "waiting_user",
+                "cancelled"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/android-companion/devices": {
+      "get": {
+        "tags": [
+          "Android Companion"
+        ],
+        "summary": "Get devices",
+        "description": "GET /api/hermes/android-companion/devices",
+        "operationId": "devices",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidDeviceListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/android-companion/devices/{deviceId}/revoke": {
+      "post": {
+        "tags": [
+          "Android Companion"
+        ],
+        "summary": "Create revoke",
+        "description": "POST /api/hermes/android-companion/devices/:deviceId/revoke",
+        "operationId": "revokeDevice",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidDeviceResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "deviceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "reason": {
+                    "type": "string",
+                    "pattern": "^[A-Z][A-Z0-9_]{1,127}$",
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "x-hermes-required-role": "super_admin"
+      }
+    },
+    "/api/hermes/android-companion/notifications": {
+      "get": {
+        "tags": [
+          "Android Companion"
+        ],
+        "summary": "Get notifications",
+        "description": "GET /api/hermes/android-companion/notifications",
+        "operationId": "notifications",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidNotificationListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "deviceId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/android-companion/overview": {
+      "get": {
+        "tags": [
+          "Android Companion"
+        ],
+        "summary": "Get overview",
+        "description": "GET /api/hermes/android-companion/overview",
+        "operationId": "overview",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidOverviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/android-companion/pairing/complete": {
+      "post": {
+        "tags": [
+          "Android Companion"
+        ],
+        "summary": "Create complete",
+        "description": "POST /api/hermes/android-companion/pairing/complete",
+        "operationId": "completePairing",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidPairingCompletionResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidPairingCompletionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "challengeId": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 200,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+                  },
+                  "code": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "signedTranscript": {
+                    "type": "object",
+                    "properties": {
+                      "transcript": {
+                        "type": "object",
+                        "properties": {
+                          "protocolVersion": {
+                            "type": "integer",
+                            "enum": [
+                              1
+                            ]
+                          },
+                          "challengeId": {
+                            "type": "string",
+                            "minLength": 8,
+                            "maxLength": 200,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+                          },
+                          "challengeNonce": {
+                            "type": "string",
+                            "minLength": 16,
+                            "maxLength": 256
+                          },
+                          "expiresAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "maxLength": 64
+                          },
+                          "studio": {
+                            "type": "object",
+                            "properties": {
+                              "deviceId": {
+                                "type": "string",
+                                "minLength": 8,
+                                "maxLength": 200,
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+                              },
+                              "signingPublicKey": {
+                                "type": "string",
+                                "minLength": 80,
+                                "maxLength": 512,
+                                "pattern": "^-----BEGIN PUBLIC KEY-----"
+                              },
+                              "exchangePublicKey": {
+                                "type": "string",
+                                "minLength": 80,
+                                "maxLength": 512,
+                                "pattern": "^-----BEGIN PUBLIC KEY-----"
+                              }
+                            },
+                            "required": [
+                              "deviceId",
+                              "signingPublicKey",
+                              "exchangePublicKey"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "companion": {
+                            "type": "object",
+                            "properties": {
+                              "deviceId": {
+                                "type": "string",
+                                "minLength": 8,
+                                "maxLength": 200,
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+                              },
+                              "signingPublicKey": {
+                                "type": "string",
+                                "minLength": 80,
+                                "maxLength": 512,
+                                "pattern": "^-----BEGIN PUBLIC KEY-----"
+                              },
+                              "exchangePublicKey": {
+                                "type": "string",
+                                "minLength": 80,
+                                "maxLength": 512,
+                                "pattern": "^-----BEGIN PUBLIC KEY-----"
+                              },
+                              "installationId": {
+                                "type": "string",
+                                "minLength": 8,
+                                "maxLength": 200,
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+                              },
+                              "label": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 80
+                              },
+                              "androidVersion": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 40
+                              },
+                              "appVersion": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 40
+                              }
+                            },
+                            "required": [
+                              "deviceId",
+                              "signingPublicKey",
+                              "exchangePublicKey",
+                              "installationId",
+                              "label",
+                              "androidVersion",
+                              "appVersion"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "initialCapabilitiesDigest": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$",
+                            "minLength": 64,
+                            "maxLength": 64
+                          }
+                        },
+                        "required": [
+                          "protocolVersion",
+                          "challengeId",
+                          "challengeNonce",
+                          "expiresAt",
+                          "studio",
+                          "companion",
+                          "initialCapabilitiesDigest"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "companionSignature": {
+                        "type": "string",
+                        "minLength": 32,
+                        "maxLength": 256,
+                        "pattern": "^[A-Za-z0-9_-]+$"
+                      }
+                    },
+                    "required": [
+                      "transcript",
+                      "companionSignature"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "approved": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  }
+                },
+                "required": [
+                  "challengeId",
+                  "code",
+                  "signedTranscript",
+                  "approved"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "x-hermes-required-role": "super_admin"
+      }
+    },
+    "/api/hermes/android-companion/pairing/offers": {
+      "post": {
+        "tags": [
+          "Android Companion"
+        ],
+        "summary": "Create offers",
+        "description": "POST /api/hermes/android-companion/pairing/offers",
+        "operationId": "issuePairingOffer",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidPairingOfferResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-hermes-required-role": "super_admin"
+      }
+    },
+    "/api/hermes/android-companion/pairing/offers/{challengeId}": {
+      "delete": {
+        "tags": [
+          "Android Companion"
+        ],
+        "summary": "Delete :challengeId",
+        "description": "DELETE /api/hermes/android-companion/pairing/offers/:challengeId",
+        "operationId": "revokePairingOffer",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidPairingRevocationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "challengeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-hermes-required-role": "super_admin"
+      }
+    },
+    "/api/hermes/android-companion/receipts": {
+      "get": {
+        "tags": [
+          "Android Companion"
+        ],
+        "summary": "Get receipts",
+        "description": "GET /api/hermes/android-companion/receipts",
+        "operationId": "receipts",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidReceiptListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "deviceId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "prepared",
+                "executing",
+                "executed",
+                "verifying",
+                "verified",
+                "unknown",
+                "mismatch",
+                "failed",
+                "waiting_user"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/android-companion/takeovers": {
+      "get": {
+        "tags": [
+          "Android Companion"
+        ],
+        "summary": "Get takeovers",
+        "description": "GET /api/hermes/android-companion/takeovers",
+        "operationId": "takeovers",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidTakeoverListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AndroidApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workflowId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "requested",
+                "claimed",
+                "completed",
+                "expired",
+                "cancelled"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100
+            }
+          }
+        ]
       }
     },
     "/api/hermes/assistant-roles": {
@@ -24404,6 +26019,1215 @@
         },
         "required": [
           "workflow"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidApiError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,127}$",
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "error",
+          "code"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidPublicIdentityDto": {
+        "type": "object",
+        "properties": {
+          "deviceId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "signingPublicKey": {
+            "type": "string",
+            "minLength": 80,
+            "maxLength": 512,
+            "pattern": "^-----BEGIN PUBLIC KEY-----"
+          },
+          "exchangePublicKey": {
+            "type": "string",
+            "minLength": 80,
+            "maxLength": 512,
+            "pattern": "^-----BEGIN PUBLIC KEY-----"
+          }
+        },
+        "required": [
+          "deviceId",
+          "signingPublicKey",
+          "exchangePublicKey"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidDeviceDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "androidVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "appVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "paired",
+              "revoked"
+            ]
+          },
+          "connected": {
+            "type": "boolean"
+          },
+          "signingFingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "exchangeFingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "capabilitiesRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "pairedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "revokedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64,
+            "nullable": true
+          },
+          "revocationReason": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,127}$",
+            "maxLength": 128,
+            "nullable": true
+          },
+          "lastSeenAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64,
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "androidVersion",
+          "appVersion",
+          "state",
+          "connected",
+          "signingFingerprint",
+          "exchangeFingerprint",
+          "capabilitiesRevision",
+          "version",
+          "pairedAt",
+          "revokedAt",
+          "revocationReason",
+          "lastSeenAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidCapabilityDto": {
+        "type": "object",
+        "properties": {
+          "deviceId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "capabilityId": {
+            "type": "string",
+            "enum": [
+              "android.app.launch",
+              "android.screen.capture"
+            ]
+          },
+          "capabilityVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "packageBinding": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 255,
+            "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z0-9_]+)+$"
+          },
+          "packageFingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "driverVersion": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 80
+          },
+          "permissions": {
+            "type": "array",
+            "maxItems": 16,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "verificationStrategy": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "health": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "degraded",
+              "unavailable"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "reportRevision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "deviceId",
+          "capabilityId",
+          "capabilityVersion",
+          "packageBinding",
+          "packageFingerprint",
+          "driverVersion",
+          "permissions",
+          "verificationStrategy",
+          "health",
+          "enabled",
+          "reportRevision",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidCommandDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "workflowId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "deviceId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "capabilityId": {
+            "type": "string",
+            "enum": [
+              "android.app.launch",
+              "android.screen.capture"
+            ]
+          },
+          "capabilityVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "app_launch",
+              "screen_capture",
+              "foreground_verify",
+              "cancel"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "delivered",
+              "acknowledged",
+              "succeeded",
+              "failed",
+              "unknown",
+              "waiting_user",
+              "cancelled"
+            ]
+          },
+          "deliveryAttempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "errorCode": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,127}$",
+            "maxLength": 128,
+            "nullable": true
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64,
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "workflowId",
+          "deviceId",
+          "capabilityId",
+          "capabilityVersion",
+          "kind",
+          "status",
+          "deliveryAttempts",
+          "errorCode",
+          "version",
+          "expiresAt",
+          "createdAt",
+          "updatedAt",
+          "completedAt"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidExecutionResultDto": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "succeeded"
+                ]
+              },
+              "foregroundPackage": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 255,
+                "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z0-9_]+)+$"
+              },
+              "observedAt": {
+                "type": "string",
+                "format": "date-time",
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "status",
+              "foregroundPackage",
+              "observedAt"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "succeeded"
+                ]
+              },
+              "captureId": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 200,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$",
+                "minLength": 64,
+                "maxLength": 64
+              },
+              "mimeType": {
+                "type": "string",
+                "enum": [
+                  "image/png",
+                  "image/webp"
+                ]
+              },
+              "width": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16384
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16384
+              },
+              "byteSize": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 52428800
+              },
+              "capturedAt": {
+                "type": "string",
+                "format": "date-time",
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "status",
+              "captureId",
+              "digest",
+              "mimeType",
+              "width",
+              "height",
+              "byteSize",
+              "capturedAt"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "nullable": true
+      },
+      "AndroidReceiptDto": {
+        "type": "object",
+        "properties": {
+          "workflowId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "intentId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "deviceId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "capabilityId": {
+            "type": "string",
+            "enum": [
+              "android.app.launch",
+              "android.screen.capture"
+            ]
+          },
+          "capabilityVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "prepared",
+              "executing",
+              "executed",
+              "verifying",
+              "verified",
+              "unknown",
+              "mismatch",
+              "failed",
+              "waiting_user"
+            ]
+          },
+          "commandId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$",
+            "nullable": true
+          },
+          "result": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "succeeded"
+                    ]
+                  },
+                  "foregroundPackage": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 255,
+                    "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z0-9_]+)+$"
+                  },
+                  "observedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "status",
+                  "foregroundPackage",
+                  "observedAt"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "succeeded"
+                    ]
+                  },
+                  "captureId": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 200,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+                  },
+                  "digest": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$",
+                    "minLength": 64,
+                    "maxLength": 64
+                  },
+                  "mimeType": {
+                    "type": "string",
+                    "enum": [
+                      "image/png",
+                      "image/webp"
+                    ]
+                  },
+                  "width": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 16384
+                  },
+                  "height": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 16384
+                  },
+                  "byteSize": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 52428800
+                  },
+                  "capturedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "status",
+                  "captureId",
+                  "digest",
+                  "mimeType",
+                  "width",
+                  "height",
+                  "byteSize",
+                  "capturedAt"
+                ],
+                "additionalProperties": false
+              }
+            ],
+            "nullable": true
+          },
+          "errorCode": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,127}$",
+            "maxLength": 128,
+            "nullable": true
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64,
+            "nullable": true
+          }
+        },
+        "required": [
+          "workflowId",
+          "intentId",
+          "deviceId",
+          "capabilityId",
+          "capabilityVersion",
+          "status",
+          "commandId",
+          "result",
+          "errorCode",
+          "version",
+          "createdAt",
+          "updatedAt",
+          "completedAt"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidNotificationDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "deviceId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "packageBinding": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 255,
+            "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z0-9_]+)+$"
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "titleSummary": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "textSummary": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "sensitivity": {
+            "type": "string",
+            "enum": [
+              "metadata",
+              "minimized",
+              "standard"
+            ]
+          },
+          "postedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "removedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64,
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "id",
+          "deviceId",
+          "packageBinding",
+          "category",
+          "titleSummary",
+          "textSummary",
+          "sensitivity",
+          "postedAt",
+          "removedAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidArtifactDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "deviceId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "workflowId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "commandId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "mimeType": {
+            "type": "string",
+            "enum": [
+              "image/png",
+              "image/webp"
+            ]
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16384
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16384
+          },
+          "byteSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 52428800
+          },
+          "capturedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "id",
+          "deviceId",
+          "workflowId",
+          "commandId",
+          "digest",
+          "mimeType",
+          "width",
+          "height",
+          "byteSize",
+          "capturedAt",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidTakeoverDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "workflowId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "commandId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "deviceId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "capabilityId": {
+            "type": "string",
+            "enum": [
+              "android.app.launch",
+              "android.screen.capture"
+            ]
+          },
+          "reasonCode": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,127}$",
+            "maxLength": 128
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "requested",
+              "claimed",
+              "completed",
+              "expired",
+              "cancelled"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "requestedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "claimedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64,
+            "nullable": true
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64,
+            "nullable": true
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "id",
+          "workflowId",
+          "commandId",
+          "deviceId",
+          "capabilityId",
+          "reasonCode",
+          "generation",
+          "status",
+          "version",
+          "requestedAt",
+          "claimedAt",
+          "completedAt",
+          "expiresAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidOverviewSummaryDto": {
+        "type": "object",
+        "properties": {
+          "pairedDeviceCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "connectedDeviceCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "healthyCapabilityCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 200
+          },
+          "activeCommandCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 200
+          },
+          "verifiedReceiptCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 200
+          },
+          "notificationCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 200
+          },
+          "artifactCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 200
+          },
+          "pendingTakeoverCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 200
+          }
+        },
+        "required": [
+          "pairedDeviceCount",
+          "connectedDeviceCount",
+          "healthyCapabilityCount",
+          "activeCommandCount",
+          "verifiedReceiptCount",
+          "notificationCount",
+          "artifactCount",
+          "pendingTakeoverCount"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidOverviewResponse": {
+        "type": "object",
+        "properties": {
+          "devices": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/AndroidDeviceDto"
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/AndroidCapabilityDto"
+            }
+          },
+          "summary": {
+            "$ref": "#/components/schemas/AndroidOverviewSummaryDto"
+          },
+          "emergencyStop": {
+            "type": "object",
+            "properties": {
+              "level": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "level",
+              "version"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "devices",
+          "capabilities",
+          "summary",
+          "emergencyStop"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidPairingOfferResponse": {
+        "type": "object",
+        "properties": {
+          "offer": {
+            "type": "object",
+            "properties": {
+              "challengeId": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 200,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+              },
+              "nonce": {
+                "type": "string",
+                "minLength": 16,
+                "maxLength": 256
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "studioDeviceId": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 200,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+              },
+              "expiresAt": {
+                "type": "string",
+                "format": "date-time",
+                "maxLength": 64
+              },
+              "studio": {
+                "$ref": "#/components/schemas/AndroidPublicIdentityDto"
+              }
+            },
+            "required": [
+              "challengeId",
+              "nonce",
+              "code",
+              "studioDeviceId",
+              "expiresAt",
+              "studio"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "offer"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidPairingRevocationResponse": {
+        "type": "object",
+        "properties": {
+          "challengeId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$"
+          },
+          "revoked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "challengeId",
+          "revoked"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidPairingCompletionResponse": {
+        "type": "object",
+        "properties": {
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "created",
+              "replayed"
+            ]
+          },
+          "device": {
+            "$ref": "#/components/schemas/AndroidDeviceDto"
+          }
+        },
+        "required": [
+          "disposition",
+          "device"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidDeviceListResponse": {
+        "type": "object",
+        "properties": {
+          "devices": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/AndroidDeviceDto"
+            }
+          }
+        },
+        "required": [
+          "devices"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidDeviceResponse": {
+        "type": "object",
+        "properties": {
+          "device": {
+            "$ref": "#/components/schemas/AndroidDeviceDto"
+          }
+        },
+        "required": [
+          "device"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidCapabilityListResponse": {
+        "type": "object",
+        "properties": {
+          "capabilities": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/AndroidCapabilityDto"
+            }
+          }
+        },
+        "required": [
+          "capabilities"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidCommandListResponse": {
+        "type": "object",
+        "properties": {
+          "commands": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/AndroidCommandDto"
+            }
+          }
+        },
+        "required": [
+          "commands"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidReceiptListResponse": {
+        "type": "object",
+        "properties": {
+          "receipts": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/AndroidReceiptDto"
+            }
+          }
+        },
+        "required": [
+          "receipts"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidNotificationListResponse": {
+        "type": "object",
+        "properties": {
+          "notifications": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/AndroidNotificationDto"
+            }
+          }
+        },
+        "required": [
+          "notifications"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidArtifactListResponse": {
+        "type": "object",
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/AndroidArtifactDto"
+            }
+          }
+        },
+        "required": [
+          "artifacts"
+        ],
+        "additionalProperties": false
+      },
+      "AndroidTakeoverListResponse": {
+        "type": "object",
+        "properties": {
+          "takeovers": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/AndroidTakeoverDto"
+            }
+          }
+        },
+        "required": [
+          "takeovers"
         ],
         "additionalProperties": false
       }

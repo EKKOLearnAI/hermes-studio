@@ -745,6 +745,21 @@ export class AndroidCompanionStore {
     return row ? receiptFromRow(row) : null
   }
 
+  listReceipts(options: { deviceId?: string; status?: AndroidReceiptStatus; limit?: number } = {}):
+  AndroidExecutionReceipt[] {
+    const conditions: string[] = []
+    const values: Array<string | number> = []
+    if (options.deviceId !== undefined) { conditions.push('device_id=?'); values.push(deviceIdentifier(options.deviceId)) }
+    if (options.status !== undefined) {
+      if (!ANDROID_RECEIPT_STATUSES.includes(options.status)) throw invalid('Android receipt status is invalid')
+      conditions.push('status=?'); values.push(options.status)
+    }
+    values.push(listLimit(options.limit))
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+    return (this.database.prepare(`SELECT * FROM android_execution_receipts ${where}
+      ORDER BY updated_at DESC,workflow_id LIMIT ?`).all(...values) as unknown as ReceiptRow[]).map(receiptFromRow)
+  }
+
   transitionReceipt(input: TransitionAndroidReceiptInput): AndroidExecutionReceipt {
     const workflowId = workflowIdentifier(input.workflowId)
     const materialDigest = digest(input.materialDigest, 'Android receipt material digest')

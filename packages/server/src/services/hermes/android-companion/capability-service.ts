@@ -125,6 +125,21 @@ export class AndroidCompanionCapabilityService {
     return { ...stored, executors }
   }
 
+  disableDevice(deviceId: string, source = 'device_revoked'): string[] {
+    this.#registry.ensure()
+    const disabled: string[] = []
+    for (let executor of this.#registry.listExecutors()) {
+      if (executor.type !== 'android' || executor.configuration.deviceId !== deviceId) continue
+      if (executor.enabled) executor = this.#registry.updateExecutor(executor.id, { enabled: false })
+      executor = this.#registry.updateHealth(executor.id, 'unhealthy', {
+        lifecycle: source,
+        deviceId,
+      })
+      disabled.push(executor.id)
+    }
+    return disabled.sort()
+  }
+
   private reconcile(
     device: AndroidCompanionDevice,
     capabilities: AndroidCompanionCapability[],

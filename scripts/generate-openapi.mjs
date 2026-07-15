@@ -85,6 +85,7 @@ const tagMappings = {
   'routes/hermes/health-loop.ts': { name: 'Health Loop', description: 'Protected health ingestion, artifact consent, intervention feedback, and automation settings' },
   'routes/hermes/home.ts': { name: 'Home', description: 'Personal Twin home state, inventory, governed Home Assistant commands, and workflow review' },
   'routes/hermes/internet-execution.ts': { name: 'Internet Execution', description: 'Governed semantic internet reads, durable receipts, and workflow status' },
+  'routes/hermes/android-companion.ts': { name: 'Android Companion', description: 'Authenticated Android device pairing, capability health, minimized observations, and governed execution receipts' },
   'routes/hermes/performance-monitor.ts': { name: 'Performance', description: 'Runtime performance monitoring' },
   'routes/hermes/terminal.ts': { name: 'Terminal', description: 'WebSocket terminal' },
   'routes/health.ts': { name: 'Health', description: 'Health check' },
@@ -2000,6 +2001,294 @@ for (const path of [
   const responses = openapi.paths[path].post.responses
   responses['202'] = responses['200']
   delete responses['200']
+}
+
+// Android Companion exposes a deliberately minimized control-plane view. Device trust material,
+// session keys, raw commands, notification provenance, and device-local encrypted references stay
+// server-owned and are never part of these response schemas.
+const androidId = { type: 'string', minLength: 8, maxLength: 200,
+  pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$' }
+const androidTimestamp = { type: 'string', format: 'date-time', maxLength: 64 }
+const androidDigest = { type: 'string', pattern: '^[a-f0-9]{64}$', minLength: 64, maxLength: 64 }
+const androidErrorCode = { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,127}$', maxLength: 128 }
+const androidPublicKey = { type: 'string', minLength: 80, maxLength: 512,
+  pattern: '^-----BEGIN PUBLIC KEY-----' }
+const androidNullableTimestamp = { ...androidTimestamp, nullable: true }
+const androidNullableError = { ...androidErrorCode, nullable: true }
+const androidCommandStatuses = ['queued', 'delivered', 'acknowledged', 'succeeded', 'failed', 'unknown',
+  'waiting_user', 'cancelled']
+const androidReceiptStatuses = ['prepared', 'executing', 'executed', 'verifying', 'verified', 'unknown',
+  'mismatch', 'failed', 'waiting_user']
+const androidTakeoverStatuses = ['requested', 'claimed', 'completed', 'expired', 'cancelled']
+const androidCapabilityIds = ['android.app.launch', 'android.screen.capture']
+const androidPackage = { type: 'string', minLength: 3, maxLength: 255,
+  pattern: '^[a-z][a-z0-9_]*(?:\\.[a-z0-9_]+)+$' }
+const androidPublicIdentity = exactObject({
+  deviceId: androidId,
+  signingPublicKey: androidPublicKey,
+  exchangePublicKey: androidPublicKey,
+}, ['deviceId', 'signingPublicKey', 'exchangePublicKey'])
+const androidDevice = exactObject({
+  id: androidId,
+  label: { type: 'string', minLength: 1, maxLength: 80 },
+  androidVersion: { type: 'string', minLength: 1, maxLength: 40 },
+  appVersion: { type: 'string', minLength: 1, maxLength: 40 },
+  state: { type: 'string', enum: ['paired', 'revoked'] },
+  connected: { type: 'boolean' },
+  signingFingerprint: androidDigest,
+  exchangeFingerprint: androidDigest,
+  capabilitiesRevision: { type: 'integer', minimum: 0 },
+  version: { type: 'integer', minimum: 1 },
+  pairedAt: androidTimestamp,
+  revokedAt: androidNullableTimestamp,
+  revocationReason: androidNullableError,
+  lastSeenAt: androidNullableTimestamp,
+  updatedAt: androidTimestamp,
+}, ['id', 'label', 'androidVersion', 'appVersion', 'state', 'connected', 'signingFingerprint',
+  'exchangeFingerprint', 'capabilitiesRevision', 'version', 'pairedAt', 'revokedAt', 'revocationReason',
+  'lastSeenAt', 'updatedAt'])
+const androidCapability = exactObject({
+  deviceId: androidId,
+  capabilityId: { type: 'string', enum: androidCapabilityIds },
+  capabilityVersion: { type: 'integer', minimum: 1 },
+  packageBinding: androidPackage,
+  packageFingerprint: androidDigest,
+  driverVersion: { type: 'string', minLength: 5, maxLength: 80 },
+  permissions: { type: 'array', maxItems: 16, uniqueItems: true,
+    items: { type: 'string', minLength: 1, maxLength: 200 } },
+  verificationStrategy: { type: 'string', minLength: 1, maxLength: 160 },
+  health: { type: 'string', enum: ['healthy', 'degraded', 'unavailable'] },
+  enabled: { type: 'boolean' },
+  reportRevision: { type: 'integer', minimum: 1 },
+  updatedAt: androidTimestamp,
+}, ['deviceId', 'capabilityId', 'capabilityVersion', 'packageBinding', 'packageFingerprint',
+  'driverVersion', 'permissions', 'verificationStrategy', 'health', 'enabled', 'reportRevision', 'updatedAt'])
+const androidCommand = exactObject({
+  id: androidId,
+  workflowId: androidId,
+  deviceId: androidId,
+  capabilityId: { type: 'string', enum: androidCapabilityIds },
+  capabilityVersion: { type: 'integer', minimum: 1 },
+  kind: { type: 'string', enum: ['app_launch', 'screen_capture', 'foreground_verify', 'cancel'] },
+  status: { type: 'string', enum: androidCommandStatuses },
+  deliveryAttempts: { type: 'integer', minimum: 0 },
+  errorCode: androidNullableError,
+  version: { type: 'integer', minimum: 1 },
+  expiresAt: androidTimestamp,
+  createdAt: androidTimestamp,
+  updatedAt: androidTimestamp,
+  completedAt: androidNullableTimestamp,
+}, ['id', 'workflowId', 'deviceId', 'capabilityId', 'capabilityVersion', 'kind', 'status',
+  'deliveryAttempts', 'errorCode', 'version', 'expiresAt', 'createdAt', 'updatedAt', 'completedAt'])
+const androidLaunchResult = exactObject({
+  status: { type: 'string', enum: ['succeeded'] },
+  foregroundPackage: androidPackage,
+  observedAt: androidTimestamp,
+}, ['status', 'foregroundPackage', 'observedAt'])
+const androidCaptureResult = exactObject({
+  status: { type: 'string', enum: ['succeeded'] },
+  captureId: androidId,
+  digest: androidDigest,
+  mimeType: { type: 'string', enum: ['image/png', 'image/webp'] },
+  width: { type: 'integer', minimum: 1, maximum: 16384 },
+  height: { type: 'integer', minimum: 1, maximum: 16384 },
+  byteSize: { type: 'integer', minimum: 1, maximum: 52428800 },
+  capturedAt: androidTimestamp,
+}, ['status', 'captureId', 'digest', 'mimeType', 'width', 'height', 'byteSize', 'capturedAt'])
+const androidReceipt = exactObject({
+  workflowId: androidId,
+  intentId: androidId,
+  deviceId: androidId,
+  capabilityId: { type: 'string', enum: androidCapabilityIds },
+  capabilityVersion: { type: 'integer', minimum: 1 },
+  status: { type: 'string', enum: androidReceiptStatuses },
+  commandId: { ...androidId, nullable: true },
+  result: { oneOf: [androidLaunchResult, androidCaptureResult], nullable: true },
+  errorCode: androidNullableError,
+  version: { type: 'integer', minimum: 1 },
+  createdAt: androidTimestamp,
+  updatedAt: androidTimestamp,
+  completedAt: androidNullableTimestamp,
+}, ['workflowId', 'intentId', 'deviceId', 'capabilityId', 'capabilityVersion', 'status', 'commandId',
+  'result', 'errorCode', 'version', 'createdAt', 'updatedAt', 'completedAt'])
+const androidNotification = exactObject({
+  id: androidId,
+  deviceId: androidId,
+  packageBinding: androidPackage,
+  category: { type: 'string', minLength: 1, maxLength: 120 },
+  titleSummary: { type: 'string', maxLength: 240 },
+  textSummary: { type: 'string', maxLength: 500 },
+  sensitivity: { type: 'string', enum: ['metadata', 'minimized', 'standard'] },
+  postedAt: androidTimestamp,
+  removedAt: androidNullableTimestamp,
+  updatedAt: androidTimestamp,
+}, ['id', 'deviceId', 'packageBinding', 'category', 'titleSummary', 'textSummary', 'sensitivity',
+  'postedAt', 'removedAt', 'updatedAt'])
+const androidArtifact = exactObject({
+  id: androidId,
+  deviceId: androidId,
+  workflowId: androidId,
+  commandId: androidId,
+  digest: androidDigest,
+  mimeType: { type: 'string', enum: ['image/png', 'image/webp'] },
+  width: { type: 'integer', minimum: 1, maximum: 16384 },
+  height: { type: 'integer', minimum: 1, maximum: 16384 },
+  byteSize: { type: 'integer', minimum: 1, maximum: 52428800 },
+  capturedAt: androidTimestamp,
+  createdAt: androidTimestamp,
+}, ['id', 'deviceId', 'workflowId', 'commandId', 'digest', 'mimeType', 'width', 'height',
+  'byteSize', 'capturedAt', 'createdAt'])
+const androidTakeover = exactObject({
+  id: androidId,
+  workflowId: androidId,
+  commandId: androidId,
+  deviceId: androidId,
+  capabilityId: { type: 'string', enum: androidCapabilityIds },
+  reasonCode: androidErrorCode,
+  generation: { type: 'integer', minimum: 1 },
+  status: { type: 'string', enum: androidTakeoverStatuses },
+  version: { type: 'integer', minimum: 1 },
+  requestedAt: androidTimestamp,
+  claimedAt: androidNullableTimestamp,
+  completedAt: androidNullableTimestamp,
+  expiresAt: androidTimestamp,
+  updatedAt: androidTimestamp,
+}, ['id', 'workflowId', 'commandId', 'deviceId', 'capabilityId', 'reasonCode', 'generation', 'status',
+  'version', 'requestedAt', 'claimedAt', 'completedAt', 'expiresAt', 'updatedAt'])
+
+Object.assign(openapi.components.schemas, {
+  AndroidApiError: exactObject({ error: { type: 'string', maxLength: 200 }, code: androidErrorCode },
+    ['error', 'code']),
+  AndroidPublicIdentityDto: androidPublicIdentity,
+  AndroidDeviceDto: androidDevice,
+  AndroidCapabilityDto: androidCapability,
+  AndroidCommandDto: androidCommand,
+  AndroidExecutionResultDto: { oneOf: [androidLaunchResult, androidCaptureResult], nullable: true },
+  AndroidReceiptDto: androidReceipt,
+  AndroidNotificationDto: androidNotification,
+  AndroidArtifactDto: androidArtifact,
+  AndroidTakeoverDto: androidTakeover,
+  AndroidOverviewSummaryDto: exactObject({
+    pairedDeviceCount: { type: 'integer', minimum: 0, maximum: 100 },
+    connectedDeviceCount: { type: 'integer', minimum: 0, maximum: 100 },
+    healthyCapabilityCount: { type: 'integer', minimum: 0, maximum: 200 },
+    activeCommandCount: { type: 'integer', minimum: 0, maximum: 200 },
+    verifiedReceiptCount: { type: 'integer', minimum: 0, maximum: 200 },
+    notificationCount: { type: 'integer', minimum: 0, maximum: 200 },
+    artifactCount: { type: 'integer', minimum: 0, maximum: 200 },
+    pendingTakeoverCount: { type: 'integer', minimum: 0, maximum: 200 },
+  }, ['pairedDeviceCount', 'connectedDeviceCount', 'healthyCapabilityCount', 'activeCommandCount',
+    'verifiedReceiptCount', 'notificationCount', 'artifactCount', 'pendingTakeoverCount']),
+  AndroidOverviewResponse: exactObject({
+    devices: { type: 'array', maxItems: 100, items: schemaRef('AndroidDeviceDto') },
+    capabilities: { type: 'array', maxItems: 200, items: schemaRef('AndroidCapabilityDto') },
+    summary: schemaRef('AndroidOverviewSummaryDto'),
+    emergencyStop: exactObject({ level: { type: 'integer', minimum: 0, maximum: 3 },
+      version: { type: 'integer', minimum: 1 } }, ['level', 'version']),
+  }, ['devices', 'capabilities', 'summary', 'emergencyStop']),
+  AndroidPairingOfferResponse: exactObject({ offer: exactObject({
+    challengeId: androidId,
+    nonce: { type: 'string', minLength: 16, maxLength: 256 },
+    code: { type: 'string', minLength: 1, maxLength: 128 },
+    studioDeviceId: androidId,
+    expiresAt: androidTimestamp,
+    studio: schemaRef('AndroidPublicIdentityDto'),
+  }, ['challengeId', 'nonce', 'code', 'studioDeviceId', 'expiresAt', 'studio']) }, ['offer']),
+  AndroidPairingRevocationResponse: exactObject({ challengeId: androidId, revoked: { type: 'boolean' } },
+    ['challengeId', 'revoked']),
+  AndroidPairingCompletionResponse: exactObject({
+    disposition: { type: 'string', enum: ['created', 'replayed'] },
+    device: schemaRef('AndroidDeviceDto'),
+  }, ['disposition', 'device']),
+  AndroidDeviceListResponse: exactObject({ devices: { type: 'array', maxItems: 200,
+    items: schemaRef('AndroidDeviceDto') } }, ['devices']),
+  AndroidDeviceResponse: exactObject({ device: schemaRef('AndroidDeviceDto') }, ['device']),
+  AndroidCapabilityListResponse: exactObject({ capabilities: { type: 'array', maxItems: 200,
+    items: schemaRef('AndroidCapabilityDto') } }, ['capabilities']),
+  AndroidCommandListResponse: exactObject({ commands: { type: 'array', maxItems: 200,
+    items: schemaRef('AndroidCommandDto') } }, ['commands']),
+  AndroidReceiptListResponse: exactObject({ receipts: { type: 'array', maxItems: 200,
+    items: schemaRef('AndroidReceiptDto') } }, ['receipts']),
+  AndroidNotificationListResponse: exactObject({ notifications: { type: 'array', maxItems: 200,
+    items: schemaRef('AndroidNotificationDto') } }, ['notifications']),
+  AndroidArtifactListResponse: exactObject({ artifacts: { type: 'array', maxItems: 200,
+    items: schemaRef('AndroidArtifactDto') } }, ['artifacts']),
+  AndroidTakeoverListResponse: exactObject({ takeovers: { type: 'array', maxItems: 200,
+    items: schemaRef('AndroidTakeoverDto') } }, ['takeovers']),
+})
+
+const androidJsonBody = (path, schema) => {
+  openapi.paths[path].post.requestBody = { required: true, content: { 'application/json': { schema } } }
+}
+const androidTranscriptIdentity = exactObject({
+  deviceId: androidId,
+  signingPublicKey: androidPublicKey,
+  exchangePublicKey: androidPublicKey,
+}, ['deviceId', 'signingPublicKey', 'exchangePublicKey'])
+androidJsonBody('/api/hermes/android-companion/pairing/complete', exactObject({
+  challengeId: androidId,
+  code: { type: 'string', minLength: 1, maxLength: 128 },
+  signedTranscript: exactObject({
+    transcript: exactObject({
+      protocolVersion: { type: 'integer', enum: [1] },
+      challengeId: androidId,
+      challengeNonce: { type: 'string', minLength: 16, maxLength: 256 },
+      expiresAt: androidTimestamp,
+      studio: androidTranscriptIdentity,
+      companion: exactObject({
+        deviceId: androidId,
+        signingPublicKey: androidPublicKey,
+        exchangePublicKey: androidPublicKey,
+        installationId: androidId,
+        label: { type: 'string', minLength: 1, maxLength: 80 },
+        androidVersion: { type: 'string', minLength: 1, maxLength: 40 },
+        appVersion: { type: 'string', minLength: 1, maxLength: 40 },
+      }, ['deviceId', 'signingPublicKey', 'exchangePublicKey', 'installationId', 'label', 'androidVersion',
+        'appVersion']),
+      initialCapabilitiesDigest: androidDigest,
+    }, ['protocolVersion', 'challengeId', 'challengeNonce', 'expiresAt', 'studio', 'companion',
+      'initialCapabilitiesDigest']),
+    companionSignature: { type: 'string', minLength: 32, maxLength: 256,
+      pattern: '^[A-Za-z0-9_-]+$' },
+  }, ['transcript', 'companionSignature']),
+  approved: { type: 'boolean', enum: [true] },
+}, ['challengeId', 'code', 'signedTranscript', 'approved']))
+androidJsonBody('/api/hermes/android-companion/devices/{deviceId}/revoke', exactObject({
+  expectedVersion: { type: 'integer', minimum: 1 },
+  reason: androidErrorCode,
+}, ['expectedVersion', 'reason']))
+
+const androidLimitParameter = { name: 'limit', in: 'query', required: false,
+  schema: { type: 'integer', minimum: 1, maximum: 200, default: 100 } }
+const androidIdParameter = name => ({ name, in: 'query', required: false, schema: androidId })
+openapi.paths['/api/hermes/android-companion/devices'].get.parameters = [androidLimitParameter]
+openapi.paths['/api/hermes/android-companion/capabilities'].get.parameters = [androidIdParameter('deviceId')]
+openapi.paths['/api/hermes/android-companion/commands'].get.parameters = [androidIdParameter('deviceId'),
+  androidIdParameter('workflowId'), { name: 'status', in: 'query', required: false,
+    schema: { type: 'string', enum: androidCommandStatuses } }, androidLimitParameter]
+openapi.paths['/api/hermes/android-companion/receipts'].get.parameters = [androidIdParameter('deviceId'),
+  { name: 'status', in: 'query', required: false,
+    schema: { type: 'string', enum: androidReceiptStatuses } }, androidLimitParameter]
+openapi.paths['/api/hermes/android-companion/notifications'].get.parameters = [androidIdParameter('deviceId'),
+  androidLimitParameter]
+openapi.paths['/api/hermes/android-companion/artifacts'].get.parameters = [androidIdParameter('workflowId'),
+  androidLimitParameter]
+openapi.paths['/api/hermes/android-companion/takeovers'].get.parameters = [androidIdParameter('workflowId'),
+  { name: 'status', in: 'query', required: false,
+    schema: { type: 'string', enum: androidTakeoverStatuses } }, androidLimitParameter]
+for (const [path, method] of [
+  ['/api/hermes/android-companion/pairing/offers', 'post'],
+  ['/api/hermes/android-companion/pairing/offers/{challengeId}', 'delete'],
+  ['/api/hermes/android-companion/pairing/complete', 'post'],
+  ['/api/hermes/android-companion/devices/{deviceId}/revoke', 'post'],
+]) openapi.paths[path][method]['x-hermes-required-role'] = 'super_admin'
+for (const [path, status] of [
+  ['/api/hermes/android-companion/pairing/offers', '201'],
+  ['/api/hermes/android-companion/pairing/complete', '201'],
+]) {
+  const responses = openapi.paths[path].post.responses
+  responses[status] = responses['200']
+  if (status === '201' && path.endsWith('/offers')) delete responses['200']
 }
 
 // Write output
