@@ -1,7 +1,7 @@
 import { arch, hostname, platform, release, type } from 'os'
-import { createHash, generateKeyPairSync, sign, verify } from 'crypto'
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomUUID, sign, verify } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
-import { mkdir, readFile, writeFile } from 'fs/promises'
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'fs/promises'
 import { dirname, resolve } from 'path'
 import { config } from '../config'
 import * as hermesCli from './hermes/hermes-cli'
@@ -26,10 +26,18 @@ export type PublicSystemInfo = {
   hermes_web_ui_version: string
 }
 
-type DeviceIdentity = {
+export type DeviceIdentity = {
   device_id: string
   device_public_key: string
   device_private_key: string
+  device_exchange_public_key: string
+  device_exchange_private_key: string
+}
+
+export type PublicDeviceTrustInfo = {
+  device_id: string
+  device_public_key: string
+  device_exchange_public_key: string
 }
 
 const DEVICE_IDENTITY_PATH = resolve(config.appHome, 'device-identity.json')
@@ -70,13 +78,35 @@ export function normalizeHermesAgentVersion(raw: string): string {
   return raw.split('\n')[0]?.replace(/^Hermes Agent\s+/, '').trim() || ''
 }
 
+type SigningIdentity = Pick<DeviceIdentity, 'device_id' | 'device_public_key' | 'device_private_key'>
+
+function isValidSigningIdentity(value: any): value is SigningIdentity {
+  return typeof value?.device_id === 'string'
+    && typeof value?.device_public_key === 'string'
+    && typeof value?.device_private_key === 'string'
+    && deviceIdFromPublicKey(value.device_public_key) === value.device_id
+    && isValidKeyPair(value.device_public_key, value.device_private_key, 'ed25519')
+}
+
 function isValidDeviceIdentity(value: any): value is DeviceIdentity {
-  return typeof value?.device_id === 'string' &&
-    value.device_id.length >= 16 &&
-    typeof value?.device_public_key === 'string' &&
-    value.device_public_key.includes('PUBLIC KEY') &&
-    typeof value?.device_private_key === 'string' &&
-    value.device_private_key.includes('PRIVATE KEY')
+  if (!isValidSigningIdentity(value)) return false
+  const candidate = value as SigningIdentity & Partial<DeviceIdentity>
+  return typeof candidate.device_exchange_public_key === 'string'
+    && typeof candidate.device_exchange_private_key === 'string'
+    && isValidKeyPair(candidate.device_exchange_public_key, candidate.device_exchange_private_key, 'x25519')
+}
+
+function isValidKeyPair(publicKey: string, privateKey: string, type: 'ed25519' | 'x25519'): boolean {
+  try {
+    const publicObject = createPublicKey(publicKey)
+    const privateObject = createPrivateKey(privateKey)
+    if (publicObject.asymmetricKeyType !== type || privateObject.asymmetricKeyType !== type) return false
+    const normalizedPublic = publicObject.export({ type: 'spki', format: 'pem' }).toString()
+    const derivedPublic = createPublicKey(privateObject).export({ type: 'spki', format: 'pem' }).toString()
+    return normalizedPublic === derivedPublic
+  } catch {
+    return false
+  }
 }
 
 export function deviceIdFromPublicKey(publicKey: string): string {
@@ -84,25 +114,60 @@ export function deviceIdFromPublicKey(publicKey: string): string {
 }
 
 async function readOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
+  let existing: unknown = null
   try {
-    const existing = JSON.parse(await readFile(DEVICE_IDENTITY_PATH, 'utf-8'))
-    if (isValidDeviceIdentity(existing)) return existing
+    existing = JSON.parse(await readFile(DEVICE_IDENTITY_PATH, 'utf-8'))
   } catch {
     // Create a fresh identity below.
   }
+  if (isValidDeviceIdentity(existing)) {
+    await chmod(DEVICE_IDENTITY_PATH, 0o600)
+    return existing
+  }
 
-  const keyPair = generateKeyPairSync('ed25519', {
+  let deviceId: string
+  let signingPublicKey: string
+  let signingPrivateKey: string
+  if (isValidSigningIdentity(existing)) {
+    deviceId = existing.device_id
+    signingPublicKey = existing.device_public_key
+    signingPrivateKey = existing.device_private_key
+  } else {
+    const signing = generateKeyPairSync('ed25519', {
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    })
+    deviceId = deviceIdFromPublicKey(signing.publicKey)
+    signingPublicKey = signing.publicKey
+    signingPrivateKey = signing.privateKey
+  }
+  const exchange = generateKeyPairSync('x25519', {
     publicKeyEncoding: { type: 'spki', format: 'pem' },
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   })
   const identity: DeviceIdentity = {
-    device_id: deviceIdFromPublicKey(keyPair.publicKey),
-    device_public_key: keyPair.publicKey,
-    device_private_key: keyPair.privateKey,
+    device_id: deviceId,
+    device_public_key: signingPublicKey,
+    device_private_key: signingPrivateKey,
+    device_exchange_public_key: exchange.publicKey,
+    device_exchange_private_key: exchange.privateKey,
   }
   await mkdir(dirname(DEVICE_IDENTITY_PATH), { recursive: true })
-  await writeFile(DEVICE_IDENTITY_PATH, JSON.stringify(identity, null, 2), { encoding: 'utf-8', mode: 0o600 })
+  await writeIdentityAtomic(identity)
   return identity
+}
+
+async function writeIdentityAtomic(identity: DeviceIdentity): Promise<void> {
+  const temporaryPath = `${DEVICE_IDENTITY_PATH}.${process.pid}.${randomUUID()}.tmp`
+  try {
+    await writeFile(temporaryPath, JSON.stringify(identity, null, 2), {
+      encoding: 'utf-8', mode: 0o600, flag: 'wx',
+    })
+    await rename(temporaryPath, DEVICE_IDENTITY_PATH)
+    await chmod(DEVICE_IDENTITY_PATH, 0o600)
+  } finally {
+    await unlink(temporaryPath).catch(() => undefined)
+  }
 }
 
 export function getDeviceIdentity(): Promise<DeviceIdentity> {
@@ -112,6 +177,15 @@ export function getDeviceIdentity(): Promise<DeviceIdentity> {
 
 export async function getDeviceId(): Promise<string> {
   return (await getDeviceIdentity()).device_id
+}
+
+export async function getPublicDeviceTrustInfo(): Promise<PublicDeviceTrustInfo> {
+  const identity = await getDeviceIdentity()
+  return {
+    device_id: identity.device_id,
+    device_public_key: identity.device_public_key,
+    device_exchange_public_key: identity.device_exchange_public_key,
+  }
 }
 
 export function createDeviceSigningPayload(payload: {
