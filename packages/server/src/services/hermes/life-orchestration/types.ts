@@ -241,6 +241,7 @@ export interface LifeHandoff {
   targetCapabilityId: string
   materialDigest: string
   state: LifeHandoffState
+  version: number
   createdAt: string
   updatedAt: string
 }
@@ -255,4 +256,3 @@ export interface LifeCheckpoint {
   details: Record<string, unknown>
   observedAt: string
 }
-
