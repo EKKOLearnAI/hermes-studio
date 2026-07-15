@@ -46,6 +46,26 @@ describe('Android companion pairing and encrypted sessions', () => {
       .toThrow(/expired/i)
   })
 
+  it('rate-limits pairing issuance and exhausts a challenge after five invalid codes', () => {
+    const registry = new AndroidPairingChallengeRegistry()
+    const challenge = registry.issue(studio.deviceId, now, 10_000)
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      expect(() => registry.consume(challenge.challengeId, `invalid-${attempt}`, now))
+        .toThrow(AndroidCompanionAuthenticationError)
+    }
+    expect(registry.size).toBe(0)
+    expect(() => registry.consume(challenge.challengeId, challenge.code, now)).toThrow(/unknown or consumed/i)
+
+    const issueRegistry = new AndroidPairingChallengeRegistry()
+    for (let issue = 0; issue < 8; issue += 1) {
+      const offer = issueRegistry.issue(studio.deviceId, now, 10_000)
+      expect(issueRegistry.revoke(offer.challengeId)).toBe(true)
+    }
+    expect(() => issueRegistry.issue(studio.deviceId, now, 10_000)).toThrow(/rate exceeded/i)
+    expect(issueRegistry.issue(studio.deviceId, new Date(now.getTime() + 60_000), 10_000))
+      .toMatchObject({ studioDeviceId: studio.deviceId })
+  })
+
   it('binds an approved challenge and both long-term identities in the signed enrollment transcript', () => {
     const registry = new AndroidPairingChallengeRegistry()
     const issued = registry.issue(studio.deviceId, now, 10_000)

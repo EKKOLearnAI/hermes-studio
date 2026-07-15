@@ -34,6 +34,8 @@ const MAX_PLAINTEXT_BYTES = 48 * 1024
 const MAX_CIPHERTEXT_BYTES = MAX_PLAINTEXT_BYTES + 16
 const MAX_PAIRING_CHALLENGES = 32
 const MAX_PAIRING_ATTEMPTS = 5
+const MAX_PAIRING_ISSUES_PER_WINDOW = 8
+const PAIRING_ISSUE_WINDOW_MS = 60_000
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$/
 const DIGEST = /^[a-f0-9]{64}$/
 const MESSAGE_TYPES = new Set<string>(ANDROID_COMPANION_MESSAGE_TYPES)
@@ -140,11 +142,16 @@ type SessionSecrets = {
 
 export class AndroidPairingChallengeRegistry {
   readonly #challenges = new Map<string, StoredPairingChallenge>()
+  readonly #issueHistory = new Map<string, number[]>()
 
   issue(studioDeviceId: string, now = new Date(), ttlMs = 5 * 60_000): AndroidPairingChallenge {
     assertIdentifier(studioDeviceId, 'studio device ID')
     assertTtl(ttlMs, 10_000, 10 * 60_000, 'pairing challenge')
     this.prune(now)
+    const issued = this.#issueHistory.get(studioDeviceId) ?? []
+    if (issued.length >= MAX_PAIRING_ISSUES_PER_WINDOW) {
+      throw new AndroidCompanionValidationError('Android pairing issue rate exceeded')
+    }
     if (this.#challenges.size >= MAX_PAIRING_CHALLENGES) {
       throw new AndroidCompanionValidationError('too many active Android pairing challenges')
     }
@@ -162,6 +169,8 @@ export class AndroidPairingChallengeRegistry {
       codeDigest: pairingCodeDigest(challenge.challengeId, code),
       attemptsRemaining: MAX_PAIRING_ATTEMPTS,
     })
+    issued.push(now.getTime())
+    this.#issueHistory.set(studioDeviceId, issued)
     return challenge
   }
 
@@ -200,6 +209,12 @@ export class AndroidPairingChallengeRegistry {
   private prune(now: Date): void {
     for (const [id, challenge] of this.#challenges) {
       if (Date.parse(challenge.expiresAt) <= now.getTime()) this.#challenges.delete(id)
+    }
+    const threshold = now.getTime() - PAIRING_ISSUE_WINDOW_MS
+    for (const [deviceId, timestamps] of this.#issueHistory) {
+      const fresh = timestamps.filter(timestamp => timestamp > threshold && timestamp <= now.getTime())
+      if (fresh.length) this.#issueHistory.set(deviceId, fresh)
+      else this.#issueHistory.delete(deviceId)
     }
   }
 }

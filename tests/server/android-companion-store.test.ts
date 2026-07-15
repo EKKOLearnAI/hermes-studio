@@ -34,6 +34,11 @@ describe('Android companion store', () => {
     const replacement = generateKeyPairSync('x25519', keyOptions)
     expect(() => store.pairDevice(pairing({ exchangePublicKey: replacement.publicKey })))
       .toThrow(AndroidCompanionIdentityConflictError)
+    const rotatedSigning = generateKeyPairSync('ed25519', keyOptions)
+    expect(() => store.pairDevice(pairing({
+      deviceId: deviceIdFromPublicKey(rotatedSigning.publicKey),
+      signingPublicKey: rotatedSigning.publicKey,
+    }))).toThrow(AndroidCompanionIdentityConflictError)
     expect(JSON.stringify(store.listDevices())).not.toMatch(/PRIVATE KEY|pairing.?code|session.?key/i)
 
     const revoked = store.revokeDevice(deviceId, 1, 'USER_REVOKED')
@@ -126,6 +131,8 @@ describe('Android companion store', () => {
     const getter = Object.defineProperty({}, 'appBinding', { enumerable: true, get: () => 'tv.danmaku.bili' })
     expect(() => store.queueCommand(command({ id: 'command-getter-1', executionToken: 'execution-getter-1', payload: getter })))
       .toThrow(AndroidCompanionValidationError)
+    expect(() => store.queueCommand(command({ id: 'command-oversized-1', executionToken: 'execution-oversized-1',
+      payload: { value: 'x'.repeat(32_768) } }))).toThrow(AndroidCompanionValidationError)
     expect(() => store.replaceCapabilityReport({ ...report, revision: 2, expectedDeviceVersion: 2,
       capabilities: [{ ...report.capabilities[0]!, packageBinding: 'HTTPS://example.com' }] }))
       .toThrow(AndroidCompanionValidationError)

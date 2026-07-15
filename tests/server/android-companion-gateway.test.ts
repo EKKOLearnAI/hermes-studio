@@ -133,6 +133,32 @@ describe('Android companion pairing service and gateway', () => {
     expect(gateway.listConnections()[0]).toMatchObject({ receivedSequence: 1, sentSequence: 2 })
   })
 
+  it('rejects cross-origin and query-bearing upgrade requests before the signed handshake', async () => {
+    const { database, store } = memoryStore()
+    cleanup.push(() => database.close())
+    const gateway = new AndroidCompanionGateway({
+      store, studioIdentity: async () => identity(), heartbeatMs: 0,
+      corsOrigins: 'https://studio.example',
+    })
+    const server = createServer()
+    gateway.setupServer(server)
+    const port = await listen(server)
+    cleanup.push(async () => {
+      await gateway.shutdown()
+      await closeServer(server)
+    })
+
+    await expect(rejectedUpgrade(
+      `ws://127.0.0.1:${port}/api/hermes/android-companion/session`,
+      'https://attacker.example',
+    )).resolves.toBe(403)
+    await expect(rejectedUpgrade(
+      `ws://127.0.0.1:${port}/api/hermes/android-companion/session?device_id=peer-device`,
+      'https://studio.example',
+    )).resolves.toBe(400)
+    expect(gateway.listConnections()).toEqual([])
+  })
+
   it('closes fail-closed on replay and supports immediate revocation disconnect', async () => {
     const { database, store } = memoryStore()
     cleanup.push(() => database.close())
@@ -204,6 +230,27 @@ async function connect(port: number, companion: AndroidCompanionPrivateIdentity,
   socket.send(JSON.stringify(initiator.hello))
   const response = JSON.parse((await socketMessage(socket)).toString()) as AndroidSessionAccept
   return { socket, session: initiator.complete(response, now) }
+}
+
+function rejectedUpgrade(url: string, origin: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url, { headers: { Origin: origin } })
+    const timeout = setTimeout(() => {
+      socket.terminate()
+      reject(new Error('upgrade rejection timed out'))
+    }, 2_000)
+    socket.once('unexpected-response', (_request, response) => {
+      clearTimeout(timeout)
+      response.resume()
+      resolve(response.statusCode ?? 0)
+    })
+    socket.once('open', () => {
+      clearTimeout(timeout)
+      socket.terminate()
+      reject(new Error('upgrade unexpectedly succeeded'))
+    })
+    socket.once('error', () => undefined)
+  })
 }
 
 function memoryStore() {

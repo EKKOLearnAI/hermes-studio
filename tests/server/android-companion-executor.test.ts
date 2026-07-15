@@ -51,6 +51,9 @@ describe('Android Action Fabric executor', () => {
     expect(prepared).toMatchObject({ outcome: 'prepared', output: {
       materialDigest: expect.stringMatching(/^[a-f0-9]{64}$/), deviceId, capabilityId: 'android.app.launch',
     } })
+    expect(JSON.stringify(prepared.evidence)).not.toMatch(
+      /execute-token|policy-android|packageFingerprint|materialDigest|deviceId|executionToken|payload|target/i,
+    )
 
     const execution = executor.execute({ ...executeContext, preparedOutput: prepared.output })
     await eventually(() => transport.sent.length === 1)
