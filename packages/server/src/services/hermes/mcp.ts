@@ -1,5 +1,5 @@
 import { AgentBridgeClient } from './agent-bridge/client'
-import type { McpActionResponse } from './mcp-types'
+import type { McpActionResponse, McpToolCallResponse } from './mcp-types'
 
 export type { McpServerEntry, McpActionResponse } from './mcp-types'
 
@@ -20,6 +20,19 @@ export function getBridgeClient(): AgentBridgeClient {
     bridgeClient = new AgentBridgeClient()
   }
   return bridgeClient
+}
+
+/** Server-internal MCP execution boundary. This is intentionally absent from bridgeMcpAction and HTTP controllers. */
+export function callProfileMcpTool(input: {
+  profile: string
+  server: string
+  tool: string
+  arguments: Record<string, unknown>
+  timeoutMs?: number
+}): Promise<McpToolCallResponse> {
+  return getBridgeClient().mcpToolCall(
+    input.server, input.tool, input.arguments, input.profile, input.timeoutMs,
+  )
 }
 
 /**

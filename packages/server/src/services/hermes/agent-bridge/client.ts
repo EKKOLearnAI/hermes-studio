@@ -5,7 +5,7 @@ import { URL } from 'url'
 import { join } from 'path'
 import { bridgeLogger } from '../../logger'
 import { getActiveProfileName, getProfileDir } from '../hermes-profile'
-import type { McpActionResponse } from '../mcp-types'
+import type { McpActionResponse, McpToolCallResponse } from '../mcp-types'
 
 function resolveDefaultAgentBridgeEndpoint(): string {
   if (process.env.VITEST) {
@@ -671,6 +671,21 @@ export class AgentBridgeClient {
 
   mcpTools(server?: string, profile?: string, raw?: boolean): Promise<McpActionResponse> {
     return this.request({ action: 'mcp_tools_list', ...(server ? { server } : {}), ...(profile ? { profile } : {}), ...(raw ? { raw } : {}) })
+  }
+
+  mcpToolCall(
+    server: string,
+    tool: string,
+    arguments_: Record<string, unknown>,
+    profile: string,
+    timeoutMs = 30_000,
+  ): Promise<McpToolCallResponse> {
+    const requestedTimeoutMs = Number.isFinite(timeoutMs) ? Math.floor(timeoutMs) : 30_000
+    const boundedTimeoutMs = Math.max(1_000, Math.min(60_000, requestedTimeoutMs))
+    return this.request<McpToolCallResponse>({
+      action: 'mcp_tool_call', server, tool, arguments: arguments_, profile,
+      timeout: boundedTimeoutMs / 1_000,
+    }, { timeoutMs: boundedTimeoutMs + 15_000 })
   }
 
   mcpReload(server?: string, profile?: string): Promise<McpActionResponse> {

@@ -54,6 +54,16 @@ export interface McpReloadResponse extends McpActionResult {
   message?: string
 }
 
+export interface McpToolCallResponse extends McpActionResult {
+  ok: true
+  [key: string]: unknown
+  server: string
+  tool: string
+  status: 'succeeded' | 'error'
+  error_code: string | null
+  result: unknown
+}
+
 /**
  * Union of all MCP action responses.
  * Bridge client methods return this; controllers narrow by action.
@@ -64,4 +74,5 @@ export type McpActionResponse =
   | McpTestResponse
   | McpToolsListResponse
   | McpReloadResponse
+  | McpToolCallResponse
   | McpActionResult

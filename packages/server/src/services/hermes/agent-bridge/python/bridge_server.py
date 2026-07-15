@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import socket
 import sys
 import threading
@@ -272,6 +274,12 @@ class BridgeServer:
         except ImportError:
             return {"error": "MCP tool module not available", "ok": False}
 
+        try:
+            from tools.mcp_tool import sanitize_mcp_name_component, _make_tool_handler
+        except ImportError:
+            sanitize_mcp_name_component = None
+            _make_tool_handler = None
+
         if profile is None:
             profile = _worker_profile() or "default"
 
@@ -282,6 +290,9 @@ class BridgeServer:
             "mcp_server_remove":   lambda: self._mcp_server_remove(req, profile, _servers, _lock, _run_on_mcp_loop),
             "mcp_server_test":     lambda: self._mcp_server_test(req, _servers, _lock),
             "mcp_tools_list":      lambda: self._mcp_tools_list(req, profile, _servers, _lock),
+            "mcp_tool_call":       lambda: self._mcp_call_error("MCP_EXECUTION_UNAVAILABLE")
+            if _make_tool_handler is None or sanitize_mcp_name_component is None else self._mcp_tool_call(
+                req, profile, _servers, _lock, _make_tool_handler, sanitize_mcp_name_component),
             "mcp_reload":          lambda: self._mcp_reload(req, profile, _servers, _lock, _run_on_mcp_loop, discover_mcp_tools, register_mcp_servers),
         }
         handler = dispatch.get(action)
@@ -549,6 +560,155 @@ class BridgeServer:
             results.append({"server": sname, "tools": tools})
 
         return {"ok": True, "results": results}
+
+    _MCP_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$")
+    _MCP_SENSITIVE_KEY = re.compile(
+        r"^(?:auth|authentication|authorization|bearer|cookie|credentials?|password|passphrase|secret|token|"
+        r"api[_-]?key|private[_-]?key|headers?|environment|env|path|file|directory)$|(?:^|[_-])(?:token|secret|password|cookie)$",
+        re.IGNORECASE,
+    )
+    _MCP_SENSITIVE_TEXT = re.compile(
+        r"(?:\bBearer\s+\S+|\bsk-(?:proj-|live-|test-)?[A-Za-z0-9_-]{12,}|"
+        r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}|"
+        r"\b(?:api[_ -]?key|access[_ -]?token|password|secret|credential)\s*[:=]\s*\S+|"
+        r"-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----|"
+        r"(?:^|[\s(\"'=])(?:[a-z]:[\\/]|\\\\|/(?:etc|home|Users|usr|app|workspace|data|var|tmp|opt|root|mnt)/)|"
+        r"\bMEDIA:\s*\S+)",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _bounded_mcp_json(cls, value: Any, *, maximum_bytes: int, maximum_string: int) -> Any:
+        nodes = 0
+
+        def visit(item: Any, depth: int) -> Any:
+            nonlocal nodes
+            nodes += 1
+            if nodes > 2048 or depth > 8:
+                raise ValueError("MCP JSON exceeds structural bounds")
+            if item is None or isinstance(item, bool):
+                return item
+            if isinstance(item, int):
+                if abs(item) > 9_007_199_254_740_991:
+                    raise ValueError("MCP JSON integer is outside the safe range")
+                return item
+            if isinstance(item, float):
+                if not math.isfinite(item):
+                    raise ValueError("MCP JSON number must be finite")
+                return item
+            if isinstance(item, str):
+                if len(item) > maximum_string or cls._MCP_SENSITIVE_TEXT.search(item):
+                    raise ValueError("MCP JSON contains sensitive or oversized text")
+                return item
+            if isinstance(item, list):
+                if len(item) > 128:
+                    raise ValueError("MCP JSON array is too large")
+                return [visit(child, depth + 1) for child in item]
+            if isinstance(item, dict):
+                if len(item) > 128:
+                    raise ValueError("MCP JSON object is too large")
+                result = {}
+                for key, child in item.items():
+                    if not isinstance(key, str) or not key or len(key) > 160 or cls._MCP_SENSITIVE_KEY.search(key):
+                        raise ValueError("MCP JSON contains an unsafe key")
+                    result[key] = visit(child, depth + 1)
+                return result
+            raise ValueError("MCP JSON must contain only plain JSON values")
+
+        sanitized = visit(value, 0)
+        encoded = json.dumps(sanitized, ensure_ascii=False, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) > maximum_bytes:
+            raise ValueError("MCP JSON exceeds its byte limit")
+        return sanitized
+
+    @classmethod
+    def _mcp_call_error(cls, code: str) -> dict[str, Any]:
+        return {"ok": False, "error": "MCP tool call rejected", "error_code": code}
+
+    def _mcp_tool_call(self, req: dict, profile: str, _servers, _lock,
+                       make_tool_handler, sanitize_name) -> dict[str, Any]:
+        worker_profile = _worker_profile() or "default"
+        if profile != worker_profile:
+            return self._mcp_call_error("MCP_PROFILE_MISMATCH")
+
+        server_name = str(req.get("server") or "").strip()
+        tool_name = str(req.get("tool") or "").strip()
+        if not self._MCP_IDENTIFIER.fullmatch(server_name) or not self._MCP_IDENTIFIER.fullmatch(tool_name):
+            return self._mcp_call_error("MCP_IDENTITY_INVALID")
+
+        arguments = req.get("arguments", {})
+        if not isinstance(arguments, dict):
+            return self._mcp_call_error("MCP_ARGUMENTS_INVALID")
+        try:
+            arguments = self._bounded_mcp_json(arguments, maximum_bytes=32_768, maximum_string=4_096)
+        except Exception:
+            return self._mcp_call_error("MCP_ARGUMENTS_INVALID")
+
+        try:
+            timeout = float(req.get("timeout") or 30)
+        except (TypeError, ValueError):
+            return self._mcp_call_error("MCP_TIMEOUT_INVALID")
+        if not math.isfinite(timeout) or timeout < 1 or timeout > 60:
+            return self._mcp_call_error("MCP_TIMEOUT_INVALID")
+
+        config = self._read_mcp_config(profile)
+        mcp_configs = config.get("mcp_servers", {}) if isinstance(config, dict) else {}
+        if not isinstance(mcp_configs, dict) or server_name not in mcp_configs:
+            return self._mcp_call_error("MCP_SERVER_NOT_CONFIGURED")
+        server_config = mcp_configs.get(server_name)
+        if not isinstance(server_config, dict) or server_config.get("enabled") is False:
+            return self._mcp_call_error("MCP_SERVER_DISABLED")
+
+        tools_filter = server_config.get("tools") if isinstance(server_config.get("tools"), dict) else {}
+        include_active = "include" in tools_filter
+        exclude_active = "exclude" in tools_filter
+        include = tools_filter.get("include")
+        exclude = tools_filter.get("exclude")
+        include_names = {str(item) for item in include} if isinstance(include, list) else ({include} if isinstance(include, str) else set())
+        exclude_names = {str(item) for item in exclude} if isinstance(exclude, list) else ({exclude} if isinstance(exclude, str) else set())
+        if (include_active and tool_name not in include_names) or (not include_active and exclude_active and tool_name in exclude_names):
+            return self._mcp_call_error("MCP_TOOL_FILTERED")
+
+        with _lock:
+            task = _servers.get(server_name)
+        if task is None or getattr(task, "session", None) is None:
+            return self._mcp_call_error("MCP_SERVER_UNAVAILABLE")
+        runtime_tool = None
+        for candidate in list(getattr(task, "_tools", []) or []):
+            if getattr(candidate, "name", None) == tool_name:
+                runtime_tool = candidate
+                break
+        if runtime_tool is None:
+            return self._mcp_call_error("MCP_TOOL_UNAVAILABLE")
+        registered = set(getattr(task, "_registered_tool_names", None) or [])
+        prefixed_name = f"mcp_{sanitize_name(server_name)}_{sanitize_name(tool_name)}"
+        if prefixed_name not in registered:
+            return self._mcp_call_error("MCP_TOOL_NOT_REGISTERED")
+
+        try:
+            raw = make_tool_handler(server_name, tool_name, timeout)(arguments)
+            if not isinstance(raw, str) or len(raw.encode("utf-8")) > 262_144:
+                return self._mcp_call_error("MCP_RESULT_INVALID")
+            parsed = json.loads(raw)
+            if not isinstance(parsed, dict):
+                return self._mcp_call_error("MCP_RESULT_INVALID")
+            if "error" in parsed:
+                return {"ok": True, "server": server_name, "tool": tool_name,
+                        "status": "error", "error_code": "MCP_TOOL_FAILED", "result": None}
+            result = parsed.get("structuredContent")
+            if result is None:
+                result = parsed.get("result")
+                if isinstance(result, str):
+                    try:
+                        result = json.loads(result)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            result = self._bounded_mcp_json(result, maximum_bytes=131_072, maximum_string=32_768)
+        except Exception:
+            return {"ok": True, "server": server_name, "tool": tool_name,
+                    "status": "error", "error_code": "MCP_TOOL_FAILED", "result": None}
+        return {"ok": True, "server": server_name, "tool": tool_name,
+                "status": "succeeded", "error_code": None, "result": result}
 
     def _mcp_reload(self, req: dict, profile: str, _servers, _lock, run_on_mcp_loop,
                     discover_mcp_tools, register_mcp_servers) -> dict[str, Any]:
