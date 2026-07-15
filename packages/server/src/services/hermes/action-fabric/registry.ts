@@ -347,6 +347,7 @@ const BUILT_IN_EXECUTORS: FabricExecutorInput[] = [
   { id: 'health-weixin', type: 'connector', name: 'Weixin Self Reminder Executor', environment: 'production', configuration: { externalWrite: true, interruptible: false, recipientRestriction: 'configured-self' }, enabled: true },
   { id: 'home-assistant', type: 'connector', name: 'Home Assistant Executor', environment: 'production', configuration: { externalWrite: true, interruptible: false, managedAvailability: 'home-assistant' }, enabled: false },
   { id: 'bilibili-mcp', type: 'mcp', name: 'Bilibili Read-Only MCP Executor', environment: 'production', configuration: { externalWrite: false, interruptible: false, managedAvailability: 'bilibili-mcp', credentialScope: 'profile-runtime' }, enabled: false },
+  { id: 'bilibili-browser', type: 'browser', name: 'Bilibili Read-Only Browser Fallback', environment: 'production', configuration: { externalWrite: false, interruptible: false, managedAvailability: 'bilibili-browser', credentialScope: 'profile-runtime', primitives: ['navigate', 'snapshot'] }, enabled: false },
 ]
 
 const BUILT_IN_BINDINGS = [
@@ -376,6 +377,8 @@ const BUILT_IN_BINDINGS = [
   ['home-assistant', 'home.scene.activate.safe'],
   ['bilibili-mcp', 'bilibili.video.search'],
   ['bilibili-mcp', 'bilibili.video.inspect'],
+  ['bilibili-browser', 'bilibili.video.search'],
+  ['bilibili-browser', 'bilibili.video.inspect'],
 ] as const
 
 export function ensureBuiltInFabricRegistry(): void {
@@ -390,7 +393,7 @@ export function ensureBuiltInFabricRegistry(): void {
       }
       for (const input of BUILT_IN_EXECUTORS) {
         insertExecutorIfMissing(db, input)
-        if (['health-local-analysis', 'health-remote-analysis', 'health-plan', 'health-source', 'home-assistant', 'bilibili-mcp'].includes(input.id)) {
+        if (['health-local-analysis', 'health-remote-analysis', 'health-plan', 'health-source', 'home-assistant', 'bilibili-mcp', 'bilibili-browser'].includes(input.id)) {
           ensureKnownExecutorConfiguration(db, input)
         }
       }
@@ -602,7 +605,9 @@ export function resolveFabricExecutorInDb(
       WHERE c.id=? AND c.enabled=1
         AND e.enabled=1 AND e.health='healthy' AND e.environment IN (${placeholders})
         AND (? IS NULL OR e.id=?)
-      ORDER BY CASE e.environment ${priority} ELSE ${environments.length} END, e.id LIMIT 1`).get(
+      ORDER BY CASE e.environment ${priority} ELSE ${environments.length} END,
+        CASE e.id WHEN 'bilibili-mcp' THEN 0 WHEN 'bilibili-browser' THEN 1 ELSE 2 END,
+        e.id LIMIT 1`).get(
     capabilityId, ...environments, options.executorId ?? null, options.executorId ?? null, ...environments,
   ) as ResolutionRow | undefined
   if (!row) return null

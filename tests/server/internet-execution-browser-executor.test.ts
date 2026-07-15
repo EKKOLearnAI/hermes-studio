@@ -112,6 +112,51 @@ describe('persistent Bilibili browser Action Fabric executor', () => {
       .toEqual(['browser_navigate', 'browser_navigate', 'browser_snapshot'])
   })
 
+  it('safely repeats a read-only navigation after effect-before-checkpoint uncertainty', async () => {
+    const navigate = vi.fn(async input => navigateResponse(input.workflowId, input.url))
+    const snapshot = vi.fn(async input => snapshotResponse(input.workflowId, searchSnapshot(BVID_A, 'Video A', 'Alice')))
+    let failNavigationCheckpoint = true
+    const accessStore = <T>(operation: (store: InternetExecutionStore) => T): T => withInternetExecutionDb<T>(database => {
+      const store = new InternetExecutionStore(database)
+      const record = store.recordCheckpoint.bind(store)
+      store.recordCheckpoint = input => {
+        if (failNavigationCheckpoint && input.kind === 'browser_navigate') {
+          failNavigationCheckpoint = false
+          throw new Error('simulated checkpoint loss')
+        }
+        return record(input)
+      }
+      return operation(store) as T & (T extends PromiseLike<unknown> ? never : unknown)
+    })
+    const adapter = createInternetBrowserExecutorAdapter({
+      id: EXECUTOR_ID,
+      environment: 'production',
+      now: () => '2026-07-15T03:00:00.000Z',
+      navigate,
+      snapshot,
+      accessStore,
+    })
+    const context = searchContext('effect-before-checkpoint')
+    const prepared = await adapter.prepare(context)
+    const executing = { ...context, preparedOutput: prepared.output }
+
+    expect(await adapter.execute(executing)).toMatchObject({
+      outcome: 'temporary_failure', errorCode: 'INTERNET_BROWSER_NAVIGATION_PERSIST_UNCERTAIN', safeToRetry: true,
+    })
+    expect(readStore(store => store.getReceipt(context.workflowId))).toMatchObject({
+      status: 'unknown', result: null, errorCode: 'INTERNET_BROWSER_NAVIGATION_PERSIST_UNCERTAIN',
+    })
+    expect(readStore(store => store.listCheckpoints(context.workflowId))).toEqual([])
+
+    expect(await adapter.execute(executing)).toMatchObject({
+      outcome: 'succeeded', output: { videos: [{ bvid: BVID_A }] },
+    })
+    expect(navigate).toHaveBeenCalledTimes(2)
+    expect(snapshot).toHaveBeenCalledTimes(1)
+    expect(readStore(store => store.listCheckpoints(context.workflowId)).map(item => item.kind))
+      .toEqual(['browser_navigate', 'browser_snapshot'])
+  })
+
   it('persists challenge takeover without page content and resumes only after an explicit retry', async () => {
     const navigate = vi.fn(async input => navigateResponse(input.workflowId, input.url))
     const snapshot = vi.fn()

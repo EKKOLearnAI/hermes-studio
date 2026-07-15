@@ -103,9 +103,9 @@ async function bootstrapRuntime(): Promise<void> {
     const homeAdapter = await startHomeProductionRuntime()
     homeStarted = true
     registerOwnedAdapter(homeAdapter, ownedAdapters)
-    const internetAdapter = await startInternetProductionRuntime()
+    const internetAdapters = await startInternetProductionRuntime()
     internetStarted = true
-    registerOwnedAdapter(internetAdapter, ownedAdapters)
+    for (const adapter of internetAdapters) registerOwnedAdapter(adapter, ownedAdapters)
     const initialControl = getFabricControlState()
     const initialEnforcement = await enforceControlState(initialControl.version)
     startActionFabricWorker()
