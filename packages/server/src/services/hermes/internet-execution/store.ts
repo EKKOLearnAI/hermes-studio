@@ -41,7 +41,9 @@ const SEMANTIC_ID = /^[a-z][a-z0-9]*(?:[._:-][a-z0-9][a-z0-9-]*)+$/
 const PROVIDER = /^[a-z0-9][a-z0-9-]{0,79}$/
 const OPERATION = /^[a-z][a-z0-9._-]{0,99}$/
 const ERROR_CODE = /^[A-Z][A-Z0-9_]{1,127}$/
-const SENSITIVE_KEY = /(?:auth(?:entication|orization)?|bearer|cookie|credential|password|passphrase|secret|token|api.?key|private.?key|headers?|environment|local.?path|file.?path|directory)/i
+// `author` is public Bilibili result data; match the exact `auth` key or full
+// credential terms so the security filter does not confuse authorship with auth.
+const SENSITIVE_KEY = /(?:^auth$|authentication|authorization|bearer|cookie|credential|password|passphrase|secret|token|api.?key|private.?key|headers?|environment|local.?path|file.?path|directory)/i
 const TERMINAL = new Set<InternetReceiptStatus>(['verified', 'mismatch', 'failed', 'waiting_user'])
 const TRANSITIONS: Record<InternetReceiptStatus, readonly InternetReceiptStatus[]> = {
   prepared: ['executing', 'failed', 'waiting_user'],

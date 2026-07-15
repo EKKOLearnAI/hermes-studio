@@ -128,6 +128,26 @@ describe('internet execution store', () => {
     }), workflowId: 'workflow-internet-browser' })).toThrow(/sensitive/i)
   })
 
+  it('allows public author fields without weakening exact auth-key rejection', () => {
+    let receipt = store.prepareReceipt(prepare()).receipt
+    receipt = store.transitionReceipt(transition(receipt.version, 'executing'))
+    receipt = store.transitionReceipt(transition(receipt.version, 'executed', {
+      result: { video: { author: 'Alice' } },
+    }))
+    expect(receipt.result).toEqual({ video: { author: 'Alice' } })
+
+    const second = store.prepareReceipt(prepare({
+      workflowId: 'workflow-internet-auth', intentId: 'intent-internet-auth',
+    })).receipt
+    const executing = store.transitionReceipt({
+      ...transition(second.version, 'executing'), workflowId: second.workflowId,
+    })
+    expect(() => store.transitionReceipt({
+      ...transition(executing.version, 'executed', { result: { auth: 'must-not-persist' } }),
+      workflowId: second.workflowId,
+    })).toThrow(InternetExecutionValidationError)
+  })
+
   it('filters bounded receipt history without exposing internal mutable references', () => {
     store.prepareReceipt(prepare())
     store.prepareReceipt(prepare({ workflowId: 'workflow-internet-2', intentId: 'intent-internet-2', profile: 'research' }))
