@@ -68,6 +68,7 @@ export interface CommerceProviderAccount {
   health: CommerceAccountHealth
   enabled: boolean
   policyEpoch: number
+  version: number
   createdAt: string
   updatedAt: string
   revokedAt: string | null
@@ -195,4 +196,3 @@ export interface CommerceCheckpoint {
   observedAt: string
   createdAt: string
 }
-
