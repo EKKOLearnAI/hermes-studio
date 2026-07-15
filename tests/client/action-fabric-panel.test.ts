@@ -59,13 +59,19 @@ describe('ActionFabricPanel', () => {
   })
 
   it('groups authoritative workflows and shows local capability, executor, and role declarations', async () => {
+    actionStore.executors = [executor,
+      { ...executor, id: 'bilibili-mcp', name: 'Bilibili MCP', type: 'mcp', environment: 'production' },
+      { ...executor, id: 'bilibili-browser', name: 'Bilibili Browser', type: 'browser', environment: 'production' },
+    ] as any[]
     const wrapper = mount(ActionFabricPanel)
     await flushPromises()
     for (const group of ['running', 'waiting', 'failed', 'reversible', 'completed']) expect(wrapper.find(`[data-test="group-${group}"]`).exists()).toBe(true)
     expect(wrapper.find('[data-test="group-running"]').text()).toContain('running')
     expect(wrapper.find('[data-test="group-reversible"]').text()).toContain('reversible')
-    expect(wrapper.text()).toContain('Only simulator and reversible internal executors are available')
-    expect(wrapper.text()).not.toMatch(/MCP|browser/i)
+    expect(wrapper.text()).toContain('Internal and external executors share one server-owned policy')
+    expect(wrapper.get('[data-test="external-executor-boundary"]').text()).toContain('profile-scoped runtimes')
+    expect(wrapper.get('[data-test="executor-type-mcp"]').text()).toContain('MCP · profile runtime')
+    expect(wrapper.get('[data-test="executor-type-browser"]').text()).toContain('Browser · governed session')
     expect(wrapper.text()).toContain('required')
     expect(wrapper.text()).toContain('internal')
     expect(wrapper.text()).toContain('degraded')

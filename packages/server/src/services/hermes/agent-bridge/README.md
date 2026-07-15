@@ -101,6 +101,23 @@ The external chat call only sends `session_id` and `message`. Provider, model,
 keys, tools, reasoning, and session DB are resolved by hermes-agent from the
 normal Hermes config and environment.
 
+## Governed Internal Execution Actions
+
+Action Fabric also uses three server-internal bridge actions: `mcp_tool_call`,
+`browser_navigate`, and `browser_snapshot`. They are not generic authenticated
+HTTP endpoints and do not expand the tool surface available to chat prompts.
+
+- MCP execution requires an exact configured server, an exact registered tool,
+  and the existing include/exclude tool filter. MCP management actions keep
+  their existing behavior and do not depend on the private execution helper.
+- Browser execution accepts only an allowlisted public Bilibili URL generated
+  from semantic input. Click, type, evaluate, download, and arbitrary URLs are
+  rejected. Its deterministic `fabric_browser_*` task identity is separate from
+  chat browser task identities, so chat browser state is not reused or cleared.
+- Both paths bind to the selected Hermes Profile, bound timeouts and result
+  sizes, remove secret-shaped output, and return stable error codes. Credentials
+  remain inside the profile runtime and never enter Action Fabric receipts.
+
 The bridge instantiates `AIAgent` with `platform="cli"` by default so behavior
 matches CLI chat. Override it only if a caller intentionally needs a distinct
 platform identity:

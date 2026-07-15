@@ -213,6 +213,39 @@ describe('action fabric audit, outbox, and control', () => {
     expect(markers.length).toBe(sensitive.length)
   })
 
+  it('redacts header tuples and signed callback URLs without invoking array accessors', () => {
+    append({
+      headers: [['X-Api-Key', 'tuple-secret'], ['Authorization', 'Basic dXNlcjpwYXNz']],
+      callback: 'https://example.com/callback?code=oauth-secret&state=public',
+      signed: 'https://cdn.example.com/object?X-Amz-Signature=private-signature',
+    })
+    expect(listFabricAuditEvents()[0].payload).toEqual({
+      callback: '[REDACTED]',
+      headers: [['X-Api-Key', '[REDACTED]'], ['Authorization', '[REDACTED]']],
+      signed: '[REDACTED]',
+    })
+
+    let getterCalls = 0
+    const accessor: unknown[] = []
+    Object.defineProperty(accessor, '0', {
+      enumerable: true,
+      get: () => { getterCalls += 1; return 'must-not-run' },
+    })
+    accessor.length = 1
+    expect(() => append({ accessor }, 'workflow.hostile-array')).toThrow('FABRIC_AUDIT_INVALID_JSON')
+    expect(getterCalls).toBe(0)
+
+    const accessorObject: Record<string, unknown> = {}
+    Object.defineProperty(accessorObject, 'secret', {
+      enumerable: true,
+      get: () => { getterCalls += 1; return 'must-not-run' },
+    })
+    expect(() => append({ accessorObject }, 'workflow.hostile-object')).toThrow('FABRIC_AUDIT_INVALID_JSON')
+    expect(() => append({ hostile: new Proxy({}, {}) }, 'workflow.hostile-proxy'))
+      .toThrow('FABRIC_AUDIT_INVALID_JSON')
+    expect(getterCalls).toBe(0)
+  })
+
   it('preserves benign prose, relative labels, and ordinary HTTPS URLs below benign detail keys', () => {
     const benign = [
       'Request completed normally',
@@ -292,7 +325,7 @@ describe('action fabric audit, outbox, and control', () => {
     const oversizedArray = new Proxy(new Array(10_000), {
       ownKeys: () => { throw new Error('discarded array keys were traversed') },
     })
-    expect(() => append({ oversizedArray }, 'workflow.array')).toThrow('FABRIC_AUDIT_INPUT_LIMIT')
+    expect(() => append({ oversizedArray }, 'workflow.array')).toThrow('FABRIC_AUDIT_INVALID_JSON')
     expect(() => append({ wide: Object.fromEntries(
       Array.from({ length: 10_000 }, (_, index) => [`key-${index}`, { nested: 'not visited' }]),
     ) }, 'workflow.wide')).toThrow('FABRIC_AUDIT_INPUT_LIMIT')

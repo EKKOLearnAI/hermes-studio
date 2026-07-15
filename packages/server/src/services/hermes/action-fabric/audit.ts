@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto'
 import { dirname } from 'path'
 import type { DatabaseSync } from 'node:sqlite'
+import { isProxy } from 'node:util/types'
 import { getActionFabricDbPath, withActionFabricDb } from './database'
 import { FabricAuditKeyProvider } from './audit-key'
 import { withFabricAuditWriterLock } from './audit-lock'
@@ -44,6 +45,7 @@ const CREDENTIAL_MARKER = /(?:\bBearer\s+[a-z0-9._~+/=-]+|\b(?:api[_ -]?key|acce
 const API_KEY_VALUE = /\b(?:sk-(?:live-|test-|proj-)?[a-z0-9_-]{12,}|AKIA[A-Z0-9]{16}|gh[pousr]_[a-z0-9]{20,}|xox[baprs]-[a-z0-9-]{12,}|AIza[a-z0-9_-]{20,})\b/i
 const JWT_VALUE = /\beyJ[a-z0-9_-]{8,}\.[a-z0-9_-]{4,}\.[a-z0-9_-]{4,}\b/i
 const PRIVATE_KEY_MARKER = /-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----/i
+const URL_SENSITIVE_PARAMETER = /[?&#](?:authorization[_-]?code|code|session(?:id)?|sid|signature|sig|x-amz-(?:credential|signature|security-token)|key)=[^&#\s]+/i
 const auditKeyProviders = new Map<string, FabricAuditKeyProvider>()
 const auditedTransactions = new WeakMap<DatabaseSync, {
   directory: string
@@ -775,6 +777,7 @@ function sanitizeValue(
     return value
   }
   if (typeof value !== 'object') throw new Error('FABRIC_AUDIT_INVALID_JSON')
+  if (isProxy(value)) throw new Error('FABRIC_AUDIT_INVALID_JSON')
   const prototype = Object.getPrototypeOf(value)
   if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) {
     throw new Error('FABRIC_AUDIT_INVALID_JSON')
@@ -789,11 +792,17 @@ function sanitizeValue(
         || (key !== 'length' && !/^(0|[1-9]\d*)$/.test(key)))) {
         throw new Error('FABRIC_AUDIT_INVALID_JSON')
       }
-      return value.map(item => sanitizeValue(item, depth + 1, seen, budget))
+      const items: unknown[] = []
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+        if (!descriptor?.enumerable || !('value' in descriptor)) throw new Error('FABRIC_AUDIT_INVALID_JSON')
+        items.push(descriptor.value)
+      }
+      const sensitiveTuple = items.length === 2 && typeof items[0] === 'string' && isSensitiveKey(items[0])
+      return items.map((item, index) => sensitiveTuple && index === 1
+        ? REDACTED : sanitizeValue(item, depth + 1, seen, budget))
     }
     const source = value as Record<string, unknown>
-    const semanticName = ['key', 'name', 'type', 'kind'].map(key => source[key])
-      .find(item => typeof item === 'string' && isSensitiveKey(item))
     const keys = Object.keys(source)
     if (keys.length > MAX_ITEMS) throw new Error('FABRIC_AUDIT_INPUT_LIMIT')
     for (const key of keys) {
@@ -801,7 +810,13 @@ function sanitizeValue(
       budget.bytes += Buffer.byteLength(key, 'utf8')
       if (budget.bytes > MAX_INPUT_BYTES) throw new Error('FABRIC_AUDIT_INPUT_LIMIT')
     }
-    const entries = keys.sort().map(key => [key, source[key]] as [string, unknown])
+    const entries = keys.sort().map(key => {
+      const descriptor = Object.getOwnPropertyDescriptor(source, key)
+      if (!descriptor?.enumerable || !('value' in descriptor)) throw new Error('FABRIC_AUDIT_INVALID_JSON')
+      return [key, descriptor.value] as [string, unknown]
+    })
+    const semanticName = ['key', 'name', 'type', 'kind'].map(key => entries.find(([name]) => name === key)?.[1])
+      .find(item => typeof item === 'string' && isSensitiveKey(item))
     const output: FabricJsonObject = {}
     for (const [key, item] of entries) {
       const semanticValue = semanticName !== undefined && /^(value|content|data)$/i.test(key)
@@ -850,6 +865,7 @@ export function isFabricSensitiveString(value: string): boolean {
     || API_KEY_VALUE.test(value)
     || JWT_VALUE.test(value)
     || PRIVATE_KEY_MARKER.test(value)
+    || URL_SENSITIVE_PARAMETER.test(value)
 }
 
 function parseJsonObject(value: string): FabricJsonObject {

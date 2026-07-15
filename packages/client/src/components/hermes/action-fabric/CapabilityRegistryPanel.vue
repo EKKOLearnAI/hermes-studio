@@ -14,6 +14,9 @@ function declaration(role: AssistantRoleSummary, capabilityId: string): 'allow' 
   if (role.capabilityScope.allow.includes(capabilityId)) return 'allow'
   return 'none'
 }
+function executorTypeLabel(type: ActionExecutorDto['type']): string {
+  return m.value[`${type}Executor` as 'simulatorExecutor' | 'internalExecutor' | 'connectorExecutor' | 'mcpExecutor' | 'browserExecutor']
+}
 </script>
 
 <template>
@@ -45,10 +48,11 @@ function declaration(role: AssistantRoleSummary, capabilityId: string): 'allow' 
       </li>
     </ul>
     <h4>{{ m.executors }}</h4>
+    <p class="executor-boundary" data-test="external-executor-boundary">{{ m.executorBoundary }}</p>
     <NEmpty v-if="!executors.length" :description="m.noExecutors" />
     <ul v-else class="executor-list" aria-label="Executor registry">
       <li v-for="executor in executors.slice(0, 100)" :key="executor.id" class="registry-card">
-        <strong>{{ executor.name }}</strong><span>{{ executor.type }}</span><span>{{ m.environment }}: {{ executor.environment }}</span>
+        <strong>{{ executor.name }}</strong><span :data-test="`executor-type-${executor.type}`">{{ executorTypeLabel(executor.type) }}</span><span>{{ m.environment }}: {{ executor.environment }}</span>
         <span>{{ m.health }}: <NTag size="small" :type="executor.health === 'healthy' ? 'success' : executor.health === 'degraded' ? 'warning' : 'error'">{{ executor.health }}</NTag></span>
       </li>
     </ul>
@@ -56,5 +60,5 @@ function declaration(role: AssistantRoleSummary, capabilityId: string): 'allow' 
 </template>
 
 <style scoped lang="scss">
-.registry { display:flex; flex-direction:column; gap:12px; } h3,h4,p { margin:0; } .card-list,.executor-list,.declarations ul { list-style:none; padding:0; margin:0; } .card-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; } .registry-card { padding:14px; border:1px solid var(--border-color); border-radius:10px; background:var(--card-color); overflow-wrap:anywhere; } .heading,.declarations li { display:flex; justify-content:space-between; align-items:center; gap:8px; } dl { display:grid; grid-template-columns:max-content 1fr; gap:6px 10px; } dt { font-weight:600; } dd { margin:0; } .declarations { display:flex; flex-direction:column; gap:8px; } .declarations ul { display:flex; flex-direction:column; gap:6px; } .executor-list { display:grid; gap:8px; } .executor-list li { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+.registry { display:flex; flex-direction:column; gap:12px; } h3,h4,p { margin:0; } .executor-boundary { color:var(--text-color-2); font-size:13px; } .card-list,.executor-list,.declarations ul { list-style:none; padding:0; margin:0; } .card-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; } .registry-card { padding:14px; border:1px solid var(--border-color); border-radius:10px; background:var(--card-color); overflow-wrap:anywhere; } .heading,.declarations li { display:flex; justify-content:space-between; align-items:center; gap:8px; } dl { display:grid; grid-template-columns:max-content 1fr; gap:6px 10px; } dt { font-weight:600; } dd { margin:0; } .declarations { display:flex; flex-direction:column; gap:8px; } .declarations ul { display:flex; flex-direction:column; gap:6px; } .executor-list { display:grid; gap:8px; } .executor-list li { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
 </style>

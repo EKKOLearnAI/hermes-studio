@@ -37,7 +37,8 @@ const role = {
 describe('AssistantRoleEditor', () => {
   it('validates identity and exposes domain, section, capability, and mapping controls', async () => {
     const wrapper = mount(AssistantRoleEditor, { props: { show: true, mode: 'edit', role: { ...role, builtIn: false }, profileNames: ['default'] } })
-    expect(wrapper.text()).toContain('Capability permissions are enforced by Action Fabric. External executors are not available yet.')
+    expect(wrapper.text()).toContain('Action Fabric enforces capability permissions for internal and external executors.')
+    expect(wrapper.text()).toContain('never bypasses policy, target authorization, emergency control, or verification')
     expect(wrapper.find('[data-test="role-domain-health"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="role-section-observations"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="role-profile-mapping"]').exists()).toBe(true)

@@ -152,6 +152,8 @@ print(json.dumps({
     })
     expect(result.success_snapshot.snapshot).toContain('BV1xx411c7mD')
     expect(result.stable_task_id).toBe(true)
+    expect(result.calls[0].task_id).toMatch(/^fabric_browser_[a-f0-9]{32}$/)
+    expect(result.calls[0].task_id).not.toContain('workflow-proof-1')
     expect(result.calls[0]).toMatchObject({ command: 'open', timeout: 12 })
     expect(result.calls[1]).toMatchObject({ command: 'snapshot', args: ['-c'], timeout: 9 })
     expect(result.wrong_profile).toMatchObject({ ok: false, error_code: 'BROWSER_PROFILE_MISMATCH' })

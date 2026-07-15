@@ -75,6 +75,10 @@ describe('internet execution semantic contracts', () => {
       'http://www.bilibili.com/video/BV1xx411c7mD',
       'https://www.bilibili.com/account',
       'https://evil.example/video/BV1xx411c7mD',
+      'https://localhost/video/BV1xx411c7mD',
+      'https://127.0.0.1/video/BV1xx411c7mD',
+      'https://[::1]/video/BV1xx411c7mD',
+      'https://user:password@www.bilibili.com/video/BV1xx411c7mD',
       'https://search.bilibili.com/all?keyword=x&order=pubdate&page=2&token=secret',
       'file:///etc/passwd',
     ]) expect(isAllowedBilibiliPublicUrl(url)).toBe(false)
@@ -140,7 +144,8 @@ describe('internet execution semantic contracts', () => {
   it('allows only discovery-shaped tool bindings and rejects mutation-shaped tools', () => {
     expect(isBilibiliReadOnlyToolName(BILIBILI_SEARCH_CAPABILITY, 'search_videos')).toBe(true)
     expect(isBilibiliReadOnlyToolName(BILIBILI_INSPECT_CAPABILITY, 'get_video_info')).toBe(true)
-    for (const name of ['publish_video', 'like_video', 'add_favorite', 'comment_search_result', 'login_account']) {
+    for (const name of ['publish_video', 'like_video', 'add_favorite', 'comment_search_result', 'login_account',
+      'search_videos\npublish_video', 'search_videos; delete_account']) {
       expect(isBilibiliReadOnlyToolName(BILIBILI_SEARCH_CAPABILITY, name)).toBe(false)
       expect(isBilibiliReadOnlyToolName(BILIBILI_INSPECT_CAPABILITY, name)).toBe(false)
     }
