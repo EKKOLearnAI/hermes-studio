@@ -24,6 +24,7 @@ import { createAndroidCompanionExecutorAdapter } from './executor'
 import { isAndroidFabricCapability } from './fabric-contracts'
 import { AndroidCompanionNotificationService } from './notification-service'
 import { AndroidCompanionScreenArtifactService } from './screen-artifact-service'
+import { AndroidCompanionTakeoverService } from './takeover-service'
 import {
   registerFabricExecutorAdapter,
   unregisterFabricExecutorAdapter,
@@ -325,6 +326,7 @@ type RuntimeSingleton = {
   adapterIds: Set<string>
   notifications: AndroidCompanionNotificationService
   screenArtifacts: AndroidCompanionScreenArtifactService
+  takeovers: AndroidCompanionTakeoverService
 }
 
 let singleton: RuntimeSingleton | null = null
@@ -338,6 +340,7 @@ export function getAndroidCompanionRuntime(): RuntimeSingleton {
   const adapterIds = new Set<string>()
   const notifications = new AndroidCompanionNotificationService({ store })
   const screenArtifacts = new AndroidCompanionScreenArtifactService({ store })
+  const takeovers = new AndroidCompanionTakeoverService({ store })
   let gateway!: AndroidCompanionGateway
   const commands = new AndroidCompanionCommandBridge({
     store,
@@ -389,7 +392,7 @@ export function getAndroidCompanionRuntime(): RuntimeSingleton {
         }
       }
       return notifications.handleMessage(message) ?? screenArtifacts.handleMessage(message)
-        ?? commands.handleMessage(message)
+        ?? takeovers.handleMessage(message) ?? commands.handleMessage(message)
     },
   })
   singleton = {
@@ -402,6 +405,7 @@ export function getAndroidCompanionRuntime(): RuntimeSingleton {
     adapterIds,
     notifications,
     screenArtifacts,
+    takeovers,
   }
   return singleton
 }

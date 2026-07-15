@@ -23,6 +23,7 @@ import {
   type AndroidNotificationSensitivity,
   type AndroidReceiptStatus,
   type AndroidScreenArtifact,
+  type AndroidTakeover,
 } from './types'
 
 export interface PairAndroidDeviceInput {
@@ -125,6 +126,37 @@ export interface RecordAndroidScreenArtifactInput {
   capturedAt: string
 }
 
+export interface RequestAndroidTakeoverInput {
+  id: string
+  workflowId: string
+  commandId: string
+  deviceId: string
+  capabilityId: string
+  reasonCode: string
+  generation: number
+  requestedAt: string
+  expiresAt: string
+}
+
+export interface ClaimAndroidTakeoverInput {
+  id: string
+  deviceId: string
+  workflowId: string
+  generation: number
+  claimDigest: string
+  claimedAt: string
+}
+
+export interface CompleteAndroidTakeoverInput {
+  id: string
+  deviceId: string
+  workflowId: string
+  commandId: string
+  generation: number
+  claimDigest: string
+  completedAt: string
+}
+
 type DeviceRow = {
   id: string; installation_id: string; signing_public_key: string; exchange_public_key: string
   signing_fingerprint: string; exchange_fingerprint: string; label: string; android_version: string
@@ -169,6 +201,13 @@ type ArtifactRow = {
   encryption_context_digest: string; captured_at: string; created_at: string
 }
 
+type TakeoverRow = {
+  id: string; workflow_id: string; command_id: string; device_id: string; capability_id: string
+  reason_code: string; generation: number; status: AndroidTakeover['status']; claim_digest: string | null
+  version: number; requested_at: string; claimed_at: string | null; completed_at: string | null
+  expires_at: string; updated_at: string
+}
+
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$/
 const SEMANTIC_ID = /^[a-z][a-z0-9]*(?:[._:-][a-z0-9][a-z0-9-]*)+$/
 const PACKAGE = /^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+$/
@@ -183,7 +222,7 @@ const COMMAND_TRANSITIONS: Record<AndroidCommandStatus, readonly AndroidCommandS
   delivered: ['delivered', 'acknowledged', 'succeeded', 'failed', 'unknown', 'waiting_user', 'cancelled'],
   acknowledged: ['delivered', 'succeeded', 'failed', 'unknown', 'waiting_user', 'cancelled'],
   unknown: ['delivered', 'succeeded', 'failed', 'waiting_user', 'cancelled'],
-  waiting_user: ['delivered', 'cancelled'],
+  waiting_user: ['delivered', 'succeeded', 'failed', 'cancelled'],
   succeeded: [], failed: [], cancelled: [],
 }
 const RECEIPT_TRANSITIONS: Record<AndroidReceiptStatus, readonly AndroidReceiptStatus[]> = {
@@ -261,6 +300,8 @@ export class AndroidCompanionStore {
       const now = new Date().toISOString()
       this.database.prepare(`UPDATE android_companion_devices SET state='revoked',revoked_at=?,revocation_reason=?,
         version=version+1,updated_at=? WHERE id=? AND version=?`).run(now, reasonCode, now, id, version)
+      this.database.prepare(`UPDATE android_takeovers SET status='cancelled',version=version+1,updated_at=?
+        WHERE device_id=? AND status IN ('requested','claimed')`).run(now, id)
       return this.requiredDevice(id)
     })
   }
@@ -455,6 +496,130 @@ export class AndroidCompanionStore {
     return (rows as unknown as ArtifactRow[]).map(artifactFromRow)
   }
 
+  requestTakeover(input: RequestAndroidTakeoverInput): {
+    disposition: 'created' | 'replayed'; takeover: AndroidTakeover
+  } {
+    const normalized = normalizeTakeoverRequest(input)
+    return transaction(this.database, () => {
+      const device = this.deviceRow(normalized.deviceId)
+      if (!device || device.state !== 'paired') throw invalid('Android companion is unavailable')
+      const command = this.commandRow(normalized.commandId)
+      if (!command || command.device_id !== normalized.deviceId || command.workflow_id !== normalized.workflowId
+        || command.capability_id !== normalized.capabilityId) {
+        throw new AndroidCompanionIdentityConflictError('Android takeover command binding is invalid')
+      }
+      const existing = (this.database.prepare('SELECT * FROM android_takeovers WHERE id=?').get(normalized.id)
+        ?? this.database.prepare('SELECT * FROM android_takeovers WHERE workflow_id=? AND generation=?')
+          .get(normalized.workflowId, normalized.generation)) as TakeoverRow | undefined
+      if (existing) {
+        if (!sameTakeoverRequest(existing, normalized)) {
+          throw new AndroidCompanionIdentityConflictError('Android takeover changed material')
+        }
+        return { disposition: 'replayed', takeover: takeoverFromRow(existing) }
+      }
+      if (!['delivered', 'acknowledged', 'waiting_user'].includes(command.status)) {
+        throw invalid('Android takeover command is not awaiting user intervention')
+      }
+      const latest = this.database.prepare('SELECT MAX(generation) AS generation FROM android_takeovers WHERE workflow_id=?')
+        .get(normalized.workflowId) as { generation: number | null }
+      if (normalized.generation !== (latest.generation ?? 0) + 1) {
+        throw invalid('Android takeover generation is not monotonic')
+      }
+      this.database.prepare(`INSERT INTO android_takeovers
+        (id,workflow_id,command_id,device_id,capability_id,reason_code,generation,status,claim_digest,
+         version,requested_at,claimed_at,completed_at,expires_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,'requested',NULL,1,?,NULL,NULL,?,?)`).run(
+        normalized.id, normalized.workflowId, normalized.commandId, normalized.deviceId,
+        normalized.capabilityId, normalized.reasonCode, normalized.generation, normalized.requestedAt,
+        normalized.expiresAt, normalized.requestedAt,
+      )
+      return { disposition: 'created', takeover: this.requiredTakeover(normalized.id) }
+    })
+  }
+
+  claimTakeover(input: ClaimAndroidTakeoverInput): {
+    disposition: 'updated' | 'replayed'; takeover: AndroidTakeover
+  } {
+    const normalized = normalizeTakeoverClaim(input)
+    return transaction(this.database, () => {
+      const device = this.deviceRow(normalized.deviceId)
+      if (!device || device.state !== 'paired') throw invalid('Android companion is unavailable')
+      const current = this.requiredTakeoverRow(normalized.id)
+      assertTakeoverRoute(current, normalized)
+      if (current.status === 'claimed') {
+        if (current.claim_digest !== normalized.claimDigest || current.claimed_at !== normalized.claimedAt) {
+          throw new AndroidCompanionIdentityConflictError('Android takeover claim changed')
+        }
+        return { disposition: 'replayed', takeover: takeoverFromRow(current) }
+      }
+      if (current.status !== 'requested' || Date.parse(current.expires_at) <= Date.parse(normalized.claimedAt)) {
+        throw invalid('Android takeover cannot be claimed')
+      }
+      this.database.prepare(`UPDATE android_takeovers SET status='claimed',claim_digest=?,claimed_at=?,
+        version=version+1,updated_at=? WHERE id=? AND version=?`).run(
+        normalized.claimDigest, normalized.claimedAt, normalized.claimedAt, current.id, current.version,
+      )
+      return { disposition: 'updated', takeover: this.requiredTakeover(current.id) }
+    })
+  }
+
+  completeTakeover(input: CompleteAndroidTakeoverInput): {
+    disposition: 'updated' | 'replayed'; takeover: AndroidTakeover
+  } {
+    const normalized = normalizeTakeoverCompletion(input)
+    return transaction(this.database, () => {
+      const device = this.deviceRow(normalized.deviceId)
+      if (!device || device.state !== 'paired') throw invalid('Android companion is unavailable')
+      const current = this.requiredTakeoverRow(normalized.id)
+      assertTakeoverRoute(current, normalized)
+      if (current.command_id !== normalized.commandId || current.claim_digest !== normalized.claimDigest) {
+        throw new AndroidCompanionIdentityConflictError('Android takeover completion binding is invalid')
+      }
+      if (current.status === 'completed') {
+        if (current.completed_at !== normalized.completedAt) {
+          throw new AndroidCompanionIdentityConflictError('Android takeover completion time changed')
+        }
+        return { disposition: 'replayed', takeover: takeoverFromRow(current) }
+      }
+      if (current.status !== 'claimed' || Date.parse(current.expires_at) <= Date.parse(normalized.completedAt)) {
+        throw invalid('Android takeover cannot be completed')
+      }
+      this.database.prepare(`UPDATE android_takeovers SET status='completed',completed_at=?,
+        version=version+1,updated_at=? WHERE id=? AND version=?`).run(
+        normalized.completedAt, normalized.completedAt, current.id, current.version,
+      )
+      return { disposition: 'updated', takeover: this.requiredTakeover(current.id) }
+    })
+  }
+
+  getTakeover(id: string): AndroidTakeover | null {
+    const row = this.takeoverRow(identifier(id, 'Android takeover id'))
+    return row ? takeoverFromRow(row) : null
+  }
+
+  listTakeovers(input: { workflowId?: string; status?: AndroidTakeover['status']; limit?: number } = {}): AndroidTakeover[] {
+    const clauses: string[] = []
+    const values: Array<string | number> = []
+    if (input.workflowId) { clauses.push('workflow_id=?'); values.push(workflowIdentifier(input.workflowId)) }
+    if (input.status) {
+      if (!['requested', 'claimed', 'completed', 'expired', 'cancelled'].includes(input.status)) {
+        throw invalid('Android takeover status is invalid')
+      }
+      clauses.push('status=?'); values.push(input.status)
+    }
+    values.push(listLimit(input.limit ?? 100))
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+    return (this.database.prepare(`SELECT * FROM android_takeovers ${where}
+      ORDER BY requested_at DESC,id LIMIT ?`).all(...values) as unknown as TakeoverRow[]).map(takeoverFromRow)
+  }
+
+  expireTakeovers(at = new Date().toISOString()): number {
+    const now = timestamp(at, 'Android takeover expiry sweep time')
+    return transaction(this.database, () => Number(this.database.prepare(`UPDATE android_takeovers
+      SET status='expired',version=version+1,updated_at=?
+      WHERE status IN ('requested','claimed') AND expires_at<=?`).run(now, now).changes))
+  }
+
   queueCommand(input: QueueAndroidCommandInput): {
     disposition: 'created' | 'replayed'; command: AndroidCompanionCommand
   } {
@@ -646,6 +811,11 @@ export class AndroidCompanionStore {
       .get(id) as ArtifactRow | undefined ?? null
   }
 
+  private takeoverRow(id: string): TakeoverRow | null {
+    return this.database.prepare('SELECT * FROM android_takeovers WHERE id=?')
+      .get(id) as TakeoverRow | undefined ?? null
+  }
+
   private advanceDeviceReceivedSequence(device: DeviceRow, sequence: number, now: string): void {
     if (sequence <= device.last_received_sequence) throw invalid('Android notification source sequence is not fresh')
     this.database.prepare(`UPDATE android_companion_devices SET last_received_sequence=?,last_seen_at=?,
@@ -686,6 +856,16 @@ export class AndroidCompanionStore {
     const row = this.artifactRow(id)
     if (!row) throw new AndroidCompanionNotFoundError(`Android screen artifact not found: ${id}`)
     return artifactFromRow(row)
+  }
+
+  private requiredTakeoverRow(id: string): TakeoverRow {
+    const row = this.takeoverRow(id)
+    if (!row) throw new AndroidCompanionNotFoundError(`Android takeover not found: ${id}`)
+    return row
+  }
+
+  private requiredTakeover(id: string): AndroidTakeover {
+    return takeoverFromRow(this.requiredTakeoverRow(id))
   }
 }
 
@@ -837,6 +1017,48 @@ function normalizeScreenArtifact(input: RecordAndroidScreenArtifactInput) {
   }
 }
 
+function normalizeTakeoverRequest(input: RequestAndroidTakeoverInput) {
+  const id = identifier(input.id, 'Android takeover id')
+  if (id.length < 10) throw invalid('Android takeover id is invalid')
+  const requestedAt = timestamp(input.requestedAt, 'Android takeover request time')
+  const expiresAt = timestamp(input.expiresAt, 'Android takeover expiry')
+  if (Date.parse(expiresAt) <= Date.parse(requestedAt)) throw invalid('Android takeover expiry is invalid')
+  return {
+    id,
+    workflowId: workflowIdentifier(input.workflowId),
+    commandId: identifier(input.commandId, 'Android takeover command id'),
+    deviceId: deviceIdentifier(input.deviceId),
+    capabilityId: semanticId(input.capabilityId, 'Android takeover capability id'),
+    reasonCode: errorCode(input.reasonCode),
+    generation: positiveVersion(input.generation),
+    requestedAt,
+    expiresAt,
+  }
+}
+
+function normalizeTakeoverClaim(input: ClaimAndroidTakeoverInput) {
+  return {
+    id: identifier(input.id, 'Android takeover id'),
+    deviceId: deviceIdentifier(input.deviceId),
+    workflowId: workflowIdentifier(input.workflowId),
+    generation: positiveVersion(input.generation),
+    claimDigest: digest(input.claimDigest, 'Android takeover claim digest'),
+    claimedAt: timestamp(input.claimedAt, 'Android takeover claim time'),
+  }
+}
+
+function normalizeTakeoverCompletion(input: CompleteAndroidTakeoverInput) {
+  return {
+    id: identifier(input.id, 'Android takeover id'),
+    deviceId: deviceIdentifier(input.deviceId),
+    workflowId: workflowIdentifier(input.workflowId),
+    commandId: identifier(input.commandId, 'Android takeover command id'),
+    generation: positiveVersion(input.generation),
+    claimDigest: digest(input.claimDigest, 'Android takeover claim digest'),
+    completedAt: timestamp(input.completedAt, 'Android takeover completion time'),
+  }
+}
+
 function assertCommandTransition(status: AndroidCommandStatus, sequence: number | null, response: string | null, error: string | null): void {
   if (status === 'delivered' && sequence === null) throw invalid('Delivered Android command requires a sequence')
   if (status !== 'delivered' && sequence !== null) throw invalid('Only delivery may assign an Android command sequence')
@@ -948,6 +1170,26 @@ function artifactFromRow(row: ArtifactRow): AndroidScreenArtifact {
   }
 }
 
+function takeoverFromRow(row: TakeoverRow): AndroidTakeover {
+  return {
+    id: row.id,
+    workflowId: row.workflow_id,
+    commandId: row.command_id,
+    deviceId: row.device_id,
+    capabilityId: row.capability_id,
+    reasonCode: row.reason_code,
+    generation: row.generation,
+    status: row.status,
+    claimDigest: row.claim_digest,
+    version: row.version,
+    requestedAt: row.requested_at,
+    claimedAt: row.claimed_at,
+    completedAt: row.completed_at,
+    expiresAt: row.expires_at,
+    updatedAt: row.updated_at,
+  }
+}
+
 function sameDeviceIdentity(row: DeviceRow, value: ReturnType<typeof normalizePairing>): boolean {
   return row.id === value.deviceId && row.installation_id === value.installationId
     && row.signing_public_key === value.signingPublicKey && row.exchange_public_key === value.exchangePublicKey
@@ -980,6 +1222,23 @@ function sameScreenArtifact(row: ArtifactRow, value: ReturnType<typeof normalize
     && row.command_id === value.commandId && row.digest === value.digest && row.mime_type === value.mimeType
     && row.width === value.width && row.height === value.height && row.byte_size === value.byteSize
     && row.encryption_context_digest === value.encryptionContextDigest && row.captured_at === value.capturedAt
+}
+
+function sameTakeoverRequest(row: TakeoverRow, value: ReturnType<typeof normalizeTakeoverRequest>): boolean {
+  return row.id === value.id && row.workflow_id === value.workflowId && row.command_id === value.commandId
+    && row.device_id === value.deviceId && row.capability_id === value.capabilityId
+    && row.reason_code === value.reasonCode && row.generation === value.generation
+    && row.requested_at === value.requestedAt && row.expires_at === value.expiresAt
+}
+
+function assertTakeoverRoute(
+  row: TakeoverRow,
+  value: { deviceId: string; workflowId: string; generation: number },
+): void {
+  if (row.device_id !== value.deviceId || row.workflow_id !== value.workflowId
+    || row.generation !== value.generation) {
+    throw new AndroidCompanionIdentityConflictError('Android takeover route binding is invalid')
+  }
 }
 
 function publicKey(value: unknown, type: 'ed25519' | 'x25519', label: string): string {

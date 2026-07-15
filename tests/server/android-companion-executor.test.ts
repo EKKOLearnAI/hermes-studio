@@ -161,6 +161,35 @@ describe('Android Action Fabric executor', () => {
     })).resolves.toMatchObject({ outcome: 'mismatch', errorCode: 'ANDROID_CAPTURE_ARTIFACT_MISMATCH' })
   })
 
+  it('resumes a waiting-user command from its late result and verifies the same receipt', async () => {
+    const executor = createAndroidCompanionExecutorAdapter({
+      id: 'android-test-app-launch', deviceId, capabilityId: 'android.app.launch', store, bridge,
+    })
+    const context = appContext('execute-token-takeover')
+    const prepared = await executor.prepare(context)
+    const execution = executor.execute({ ...context, preparedOutput: prepared.output })
+    await eventually(() => transport.sent.length === 1)
+    const command = commandPayload(transport.sent[0]!.reply)
+    bridge.handleMessage(resultMessage(deviceId, command, null, 'waiting_user', 'CHALLENGE_REQUIRED'))
+    await expect(execution).resolves.toMatchObject({ outcome: 'unknown', errorCode: 'CHALLENGE_REQUIRED' })
+    expect(store.getReceipt(context.workflowId)).toMatchObject({ status: 'waiting_user', result: null })
+
+    const completedOutput = launchOutput(new Date().toISOString())
+    bridge.handleMessage(resultMessage(deviceId, command, completedOutput, 'succeeded', null))
+    const verification = executor.verify({
+      ...context,
+      executionToken: 'verify-token-takeover',
+      preparedOutput: prepared.output,
+      executionOutput: {},
+    })
+    await eventually(() => transport.sent.length === 2)
+    const verificationCommand = commandPayload(transport.sent[1]!.reply)
+    const freshOutput = launchOutput(new Date(Date.now() + 1_000).toISOString())
+    bridge.handleMessage(resultMessage(deviceId, verificationCommand, freshOutput, 'succeeded', null))
+    await expect(verification).resolves.toMatchObject({ outcome: 'verified', output: completedOutput })
+    expect(store.getReceipt(context.workflowId)).toMatchObject({ status: 'verified', result: completedOutput })
+  })
+
   it('returns a retryable offline outcome without claiming device execution', async () => {
     const executor = createAndroidCompanionExecutorAdapter({
       id: 'android-test-app-launch', deviceId, capabilityId: 'android.app.launch', store, bridge,
@@ -300,7 +329,7 @@ function resultMessage(
   deviceId: string,
   command: Record<string, any>,
   output: Record<string, unknown> | null,
-  status: 'succeeded' | 'cancelled',
+  status: 'succeeded' | 'waiting_user' | 'cancelled',
   errorCode: string | null,
 ): AndroidCompanionGatewayMessage {
   return {

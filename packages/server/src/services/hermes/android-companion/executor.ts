@@ -115,13 +115,29 @@ export function createAndroidCompanionExecutorAdapter(
       let digest: string
       let receipt: AndroidExecutionReceipt
       let executionResult: FabricJsonObject
+      let resumedFromTakeover = false
       try {
         assertContext(options, context)
         digest = materialDigest(context)
         if (!matchesPrepared(context, digest, options)) throw new Error('prepared mismatch')
         receipt = requiredReceipt(options.store, context.workflowId, digest)
         if (receipt.status === 'verified' && receipt.result) return success('verified', context, receipt.result)
-        if (!receipt.result || !context.executionOutput || !isDeepStrictEqual(receipt.result, context.executionOutput)
+        if (receipt.status === 'waiting_user' && receipt.commandId) {
+          const completedCommand = options.store.getCommand(receipt.commandId)
+          if (completedCommand?.status === 'succeeded' && completedCommand.response
+            && validateAndroidOutputSemantics(context.capabilityId, context.input, completedCommand.response)) {
+            receipt = options.store.transitionReceipt({
+              workflowId: receipt.workflowId,
+              materialDigest: receipt.materialDigest,
+              expectedVersion: receipt.version,
+              status: 'verifying',
+              result: completedCommand.response,
+            })
+            resumedFromTakeover = true
+          }
+        }
+        if (!receipt.result || (!resumedFromTakeover
+          && (!context.executionOutput || !isDeepStrictEqual(receipt.result, context.executionOutput)))
           || !validateAndroidOutputSemantics(context.capabilityId, context.input, receipt.result)) {
           return failure('failed', 'ANDROID_EXECUTION_RESULT_INVALID')
         }
