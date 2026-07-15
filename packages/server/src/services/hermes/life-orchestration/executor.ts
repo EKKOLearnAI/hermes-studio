@@ -52,6 +52,11 @@ import type { LifeSourceAccount } from './types'
 
 const EXECUTOR_ID = /^[a-z][a-z0-9]*(?:[.-][a-z0-9][a-z0-9-]*)*$/
 const READ_CAPABILITIES = new Set([LIFE_SOURCE_SYNC_CAPABILITY, LIFE_PLAN_VERIFY_CAPABILITY])
+const RECOVERABLE_WRITE_CAPABILITIES = new Set([
+  LIFE_CALENDAR_HOLD_CREATE_CAPABILITY,
+  LIFE_CALENDAR_HOLD_CANCEL_CAPABILITY,
+  LIFE_SUBSCRIPTION_CANCEL_CAPABILITY,
+])
 
 export interface LifeExecutorOptions {
   id: string
@@ -104,10 +109,17 @@ export function createLifeExecutorAdapter(options: LifeExecutorOptions): FabricE
     async verify(context): Promise<FabricVerifyResult> {
       try {
         const binding = assertContext(options, context, false)
-        if (!matchesPrepared(context, binding) || !context.executionOutput) {
+        const recoveryVerification = RECOVERABLE_WRITE_CAPABILITIES.has(context.capabilityId)
+          && (!context.executionOutput || Object.keys(context.executionOutput).length === 0)
+        if (!matchesPrepared(context, binding) || (!context.executionOutput && !recoveryVerification)) {
           return failure('failed', 'LIFE_VERIFICATION_PREPARATION_INVALID')
         }
         assertBoundMaterial(context, binding, false)
+        if (recoveryVerification) {
+          const recovered = await recoverUncertainOutput(context, binding)
+          if (!recovered) return failure('unknown', 'LIFE_PROVIDER_RESULT_UNKNOWN')
+          return success('verified', context, recovered)
+        }
         const current = await currentOutput(context, binding)
         if (!current || !isDeepStrictEqual(current, context.executionOutput)) {
           return failure('mismatch', 'LIFE_VERIFICATION_MISMATCH')
@@ -311,6 +323,49 @@ async function executeSubscriptionCancel(
     markCancellationLookupRequired(cancellation.id, context)
     throw error
   }
+}
+
+/** Verification recovery is lookup-only: it may reconcile durable local state, but never repeat a provider write. */
+async function recoverUncertainOutput(
+  context: FabricExecutionContext,
+  binding: LifeExecutionBinding,
+): Promise<FabricJsonObject | null> {
+  if (context.capabilityId === LIFE_CALENDAR_HOLD_CREATE_CAPABILITY) {
+    const hold = getLifeCalendarHoldByWorkflow(context.workflowId)
+    if (!hold || hold.state !== 'lookup_required') return null
+    const lookup = await requiredCalendar(binding).lookupCalendarHold({ providerRequestId: hold.providerRequestId })
+    if (lookup.status !== 'confirmed' || !lookup.providerHoldId || !lookup.receiptDigest) return null
+    const confirmed = confirmHold(hold.id, lookup.providerHoldId, lookup.receiptDigest, context)
+    return calendarOutput(context, confirmed, 'calendar_hold_create', lookup.receiptDigest)
+  }
+  if (context.capabilityId === LIFE_CALENDAR_HOLD_CANCEL_CAPABILITY) {
+    const hold = getLifeCalendarHold(String(context.input.holdId))
+    if (!hold || hold.state !== 'lookup_required' || !hold.providerHoldId) return null
+    const lookup = await requiredCalendar(binding).lookupCalendarCancellation({
+      providerRequestId: String(context.input.providerRequestId), providerHoldId: hold.providerHoldId,
+    })
+    if (lookup.status !== 'cancelled' || lookup.providerHoldId !== hold.providerHoldId || !lookup.receiptDigest) {
+      return null
+    }
+    const cancelled = cancelHold(hold.id, context)
+    checkpointHold(cancelled.id, 'provider_cancelled', lookup.receiptDigest, context)
+    return calendarOutput(context, cancelled, 'calendar_hold_cancel', lookup.receiptDigest)
+  }
+  if (context.capabilityId === LIFE_SUBSCRIPTION_CANCEL_CAPABILITY) {
+    const cancellation = getLifeSubscriptionCancellationByWorkflow(context.workflowId)
+    const subscription = cancellation ? getLifeSubscription(cancellation.subscriptionId) : null
+    if (!cancellation || cancellation.state !== 'lookup_required' || !subscription) return null
+    const lookup = await requiredSubscription(binding).lookupSubscriptionCancellation({
+      providerRequestId: cancellation.providerRequestId,
+      providerSubscriptionId: subscription.providerSubscriptionId,
+    })
+    if (!['cancelled', 'rejected'].includes(lookup.status) || !lookup.providerReceiptId || !lookup.receiptDigest) {
+      return null
+    }
+    const finalized = finalizeSubscriptionCancellation(cancellation.id, lookup, context)
+    return subscriptionOutput(context, finalized)
+  }
+  return null
 }
 
 async function currentOutput(
