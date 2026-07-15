@@ -18,7 +18,7 @@ describe('assistant role registry', () => {
     if (hermesHome) rmSync(hermesHome, { recursive: true, force: true })
   })
 
-  it('seeds five complete built-ins once in deterministic order', async () => {
+  it('seeds six complete built-ins once in deterministic order', async () => {
     const roles = await import('../../packages/server/src/services/hermes/personal-twin')
 
     roles.ensureBuiltInAssistantRoles()
@@ -27,6 +27,7 @@ describe('assistant role registry', () => {
     const seeded = roles.listAssistantRoles()
     expect(seeded.map(role => role.id)).toEqual([
       'chief-of-staff',
+      'commerce-assistant',
       'entertainment-assistant',
       'fitness-coach',
       'health-manager',
@@ -36,6 +37,7 @@ describe('assistant role registry', () => {
     expect(seeded.every(role => role.capabilityScope.enforcement === 'action_fabric_v1')).toBe(true)
     expect(seeded.map(role => [role.id, role.dataScope.domains])).toEqual([
       ['chief-of-staff', [...roles.TWIN_DOMAINS]],
+      ['commerce-assistant', ['commerce', 'life', 'nutrition']],
       ['entertainment-assistant', ['entertainment', 'life', 'commerce']],
       ['fitness-coach', ['body', 'fitness', 'nutrition', 'health']],
       ['health-manager', ['body', 'health', 'nutrition', 'fitness']],
@@ -45,6 +47,13 @@ describe('assistant role registry', () => {
     expect(roles.withPersonalTwinDb(db => db.prepare(
       'SELECT role_id, COUNT(*) AS count FROM twin_context_recipes GROUP BY role_id ORDER BY role_id',
     ).all())).toEqual(seeded.map(role => ({ role_id: role.id, count: 1 })))
+
+    expect(roles.getAssistantRole('commerce-assistant')).toMatchObject({
+      capabilityScope: { allow: ['twin.read'], deny: ['action.execute'], enforcement: 'action_fabric_v1' },
+      decisionAuthority: { maxRisk: 'none', requireApprovalAbove: 'none', allowedTargets: [] },
+      spendingLimits: { currency: null, perAction: 0, daily: 0 },
+      memoryNamespace: 'assistant.commerce-assistant',
+    })
   })
 
   it('does not overwrite edits to a built-in when reseeded and forbids deleting it', async () => {

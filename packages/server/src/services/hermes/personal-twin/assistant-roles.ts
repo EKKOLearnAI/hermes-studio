@@ -104,6 +104,14 @@ const BUILT_IN_ROLES: BuiltInRoleTemplate[] = [
     memoryNamespace: 'assistant.chief-of-staff',
   }),
   builtInTemplate({
+    id: 'commerce-assistant',
+    name: 'Commerce Assistant',
+    description: 'Prepares bounded comparisons and commerce workflows without default purchasing authority.',
+    persona: 'Act as a transaction-safe commerce assistant. Compare exact offers, expose total cost and material changes, respect hard constraints and spending limits, and never claim an order or payment succeeded without verified provider evidence.',
+    domains: ['commerce', 'life', 'nutrition'],
+    memoryNamespace: 'assistant.commerce-assistant',
+  }),
+  builtInTemplate({
     id: 'entertainment-assistant',
     name: 'Entertainment Assistant',
     description: 'Supports leisure planning, media discovery, and bounded purchasing recommendations.',
