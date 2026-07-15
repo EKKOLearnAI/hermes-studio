@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { HOME_FABRIC_CAPABILITIES } from '../home/fabric-contracts'
 import { INTERNET_FABRIC_CAPABILITIES } from '../internet-execution/fabric-contracts'
 import { ANDROID_FABRIC_CAPABILITIES } from '../android-companion/fabric-contracts'
+import { COMMERCE_FABRIC_CAPABILITIES } from '../commerce-autonomy/fabric-contracts'
 import { withActionFabricDb } from './database'
 import type {
   FabricCapability,
@@ -336,6 +337,7 @@ const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
   ...HOME_FABRIC_CAPABILITIES,
   ...INTERNET_FABRIC_CAPABILITIES,
   ...ANDROID_FABRIC_CAPABILITIES,
+  ...COMMERCE_FABRIC_CAPABILITIES,
 ]
 
 const BUILT_IN_EXECUTORS: FabricExecutorInput[] = [
@@ -388,7 +390,7 @@ export function ensureBuiltInFabricRegistry(): void {
     if (hasCompleteBuiltInRegistry(db) && hasValidExternalWriteClassification(db)) return
     transaction(db, () => {
       const wasComplete = hasCompleteBuiltInRegistry(db)
-      for (const input of BUILT_IN_CAPABILITIES) {
+      for (const input of orderedBuiltInCapabilities()) {
         if (input.id === HEALTH_REMINDER_V2.id) ensureReminderCapability(db)
         else if (input.id === REMOTE_ANALYSIS_V2.id) ensureRemoteAnalysisCapability(db)
         else insertCapabilityIfMissing(db, input)
@@ -409,6 +411,29 @@ export function ensureBuiltInFabricRegistry(): void {
       if (!wasComplete || backfilled) bumpRegistryPolicyRevision(db)
     })
   })
+}
+
+function orderedBuiltInCapabilities(): FabricCapabilityInput[] {
+  const byId = new Map(BUILT_IN_CAPABILITIES.map(capability => [capability.id, capability]))
+  const visiting = new Set<string>()
+  const visited = new Set<string>()
+  const ordered: FabricCapabilityInput[] = []
+  const visit = (capability: FabricCapabilityInput): void => {
+    if (visited.has(capability.id)) return
+    if (visiting.has(capability.id)) {
+      if (capability.compensationCapabilityId === capability.id) return
+      throw new Error(`Built-in capability compensation cycle: ${capability.id}`)
+    }
+    visiting.add(capability.id)
+    const compensation = capability.compensationCapabilityId
+      ? byId.get(capability.compensationCapabilityId) : undefined
+    if (compensation && compensation.id !== capability.id) visit(compensation)
+    visiting.delete(capability.id)
+    visited.add(capability.id)
+    ordered.push(capability)
+  }
+  BUILT_IN_CAPABILITIES.forEach(visit)
+  return ordered
 }
 
 export function listFabricCapabilities(): FabricCapability[] {

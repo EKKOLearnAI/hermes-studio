@@ -33,6 +33,11 @@ import {
   isAndroidFabricCapability,
   validateAndroidSemantics,
 } from '../android-companion/fabric-contracts'
+import {
+  commerceTargetAtoms,
+  isCommerceFabricCapability,
+  validateCommerceFabricSemantics,
+} from '../commerce-autonomy/fabric-contracts'
 import { ensureBuiltInFabricRegistry, resolveFabricExecutorInDb } from './registry'
 import type {
   FabricBudgetReservation,
@@ -91,12 +96,15 @@ export function evaluateFabricPolicyInDb(
   const ledgerDate = utcDate(instant)
   const environments = input.environments ?? (isHealthCapability(input.capabilityId) ? ['sandbox']
     : isHomeCapability(input.capabilityId) || isAndroidFabricCapability(input.capabilityId)
-      ? ['production'] : ['simulator', 'internal'])
+      ? ['production'] : isCommerceFabricCapability(input.capabilityId)
+        ? ['sandbox', 'production'] : ['simulator', 'internal'])
   const resolution = resolveFabricExecutorInDb(db, input.capabilityId, { environments })
   if (resolution && ((isInternetCapability(input.capabilityId)
     && !validateInternetSemantics(input.capabilityId, input.input))
     || (isAndroidFabricCapability(input.capabilityId)
       && !validateAndroidSemantics(input.capabilityId, input.input))
+    || (isCommerceFabricCapability(input.capabilityId)
+      && !validateCommerceFabricSemantics(input.capabilityId, input.input))
     || !validateFabricSchema(input.input, resolution.capability.inputSchema)
     || !validateHealthSemantics(input.capabilityId, input.input))) {
     throw new Error('FABRIC_CAPABILITY_INPUT_INVALID')
@@ -109,7 +117,9 @@ export function evaluateFabricPolicyInDb(
       : resolution && isInternetCapability(input.capabilityId)
         ? internetTargetAtoms(input.capabilityId, input.target, input.input)
         : resolution && isAndroidFabricCapability(input.capabilityId)
-          ? androidTargetAtoms(input.capabilityId, input.target, input.input) : null
+          ? androidTargetAtoms(input.capabilityId, input.target, input.input)
+          : resolution && isCommerceFabricCapability(input.capabilityId)
+            ? commerceTargetAtoms(input.capabilityId, input.target, input.input) : null
   const authorizationRequirements = resolution && isHealthCapability(input.capabilityId)
     ? healthStandingAuthorizationRequirements(resolution.capability) : null
   const standingAuthorizationRequired = !!resolution && isHealthCapability(input.capabilityId)
@@ -460,6 +470,12 @@ function targetAllowed(
   }
   if (isAndroidFabricCapability(resolution.capability.id)) {
     const atoms = androidTargetAtoms(resolution.capability.id, target, input)
+    if (!atoms || atoms.length === 0) return false
+    const roleTargets = role.decisionAuthority.allowedTargets
+    return !!roleTargets && atoms.every(atom => roleTargets.includes(atom))
+  }
+  if (isCommerceFabricCapability(resolution.capability.id)) {
+    const atoms = commerceTargetAtoms(resolution.capability.id, target, input)
     if (!atoms || atoms.length === 0) return false
     const roleTargets = role.decisionAuthority.allowedTargets
     return !!roleTargets && atoms.every(atom => roleTargets.includes(atom))
