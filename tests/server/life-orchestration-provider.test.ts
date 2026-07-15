@@ -53,6 +53,12 @@ describe('virtual life source adapters', () => {
     expect(() => assertLifeProviderResult('cancel_subscription', {
       schemaVersion: 1, operation: 'cancel_subscription', accessToken: 'forbidden',
     })).toThrow('LIFE_SECRET_FIELD_FORBIDDEN')
+    expect(() => new VirtualLifeSourceProvider({ sourceKind: 'contacts', records: [
+      { ...contactRecord(), alias: 'person@example.com' },
+    ] })).toThrow('LIFE_PROVIDER_CONFIGURATION_INVALID')
+    expect(() => new VirtualLifeSourceProvider({ sourceKind: 'games', records: [
+      { ...gameRecord(), source: 'https://provider.example/private' },
+    ] })).toThrow('LIFE_PROVIDER_CONFIGURATION_INVALID')
     const optionPage = await provider('games').listPage({ cursor: null, limit: 1 })
     expect(() => assertLifeProviderResult('list_options', { ...optionPage,
       records: [{ ...optionPage.records[0], durationMinutes: 0 }] })).toThrow('LIFE_PROVIDER_RESPONSE_INVALID')

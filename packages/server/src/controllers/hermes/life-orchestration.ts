@@ -20,6 +20,7 @@ import {
   LIFE_SOURCE_SYNC_CAPABILITY,
   LIFE_SUBSCRIPTION_CANCEL_CAPABILITY,
   LifeContractError,
+  isLifePrivateText,
   buildLifeConstraintSnapshot,
   createLifeSourceAccount,
   getLifeCalendarHold,
@@ -494,7 +495,7 @@ function requiredCursor(value: unknown) { if (typeof value !== 'string' || !/^of
 function requiredCurrency(value: unknown) { if (typeof value !== 'string' || !CURRENCY.test(value)) throw new LifeRequestError('Invalid currency'); return value }
 function requiredErrorCode(value: unknown) { if (typeof value !== 'string' || !ERROR_CODE.test(value)) throw new LifeRequestError('Invalid reason'); return value }
 function requiredText(value: unknown, max: number) { if (typeof value !== 'string' || value.trim() !== value
-  || value.length < 1 || value.length > max || /[\u0000-\u001f]/.test(value) || isFabricSensitiveString(value))
+  || value.length < 1 || value.length > max || /[\u0000-\u001f]/.test(value) || isLifePrivateText(value))
   throw new LifeRequestError('Invalid text'); return value }
 function requiredInteger(value: unknown, min: number, max: number) { if (!Number.isSafeInteger(value)
   || Number(value) < min || Number(value) > max) throw new LifeRequestError('Invalid integer'); return Number(value) }
@@ -511,7 +512,7 @@ function exactKeys(value: Record<string, unknown>, wanted: string[]) { const key
   const expected = [...wanted].sort(); return keys.length === expected.length && keys.every((key, i) => key === expected[i]) }
 function validTimestamp(value: string) { const parsed = Date.parse(value); return Number.isFinite(parsed)
   && new Date(parsed).toISOString() === value }
-function publicText(value: string) { return isFabricSensitiveString(value) ? '[REDACTED]' : value }
+function publicText(value: string) { return isLifePrivateText(value) ? '[REDACTED]' : value }
 function noQuery(ctx: Context) { queryKeys(ctx, new Set()) }
 function queryKeys(ctx: Context, allowed: ReadonlySet<string>) { if (!plainRecord(ctx.query)) throw new LifeRequestError('Invalid query')
   for (const key of Reflect.ownKeys(ctx.query)) if (typeof key !== 'string' || !allowed.has(key)

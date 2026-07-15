@@ -30,6 +30,13 @@ const CURRENCY = /^[A-Z]{3}$/
 const DIGEST = /^[a-f0-9]{64}$/
 const ERROR_CODE = /^[A-Z][A-Z0-9_]{1,127}$/
 const SECRET_KEY = /(?:password|passwd|secret|token|cookie|authorization|api.?key|access.?key|session(?:[_-]?(?:id|token|key|cookie|secret))?$|email|phone|mobile|address|passport|identity|card|cvv|cvc)/i
+const RAW_PRIMITIVE_KEY = /(?:^|[_-])(?:url|uri|href|selector|xpath|script|javascript|html|dom|coordinates?|latitude|longitude|mouse|keycode)(?:$|[_-])/i
+const RAW_PRIMITIVE_CAMEL_KEY = /(?:URL|URI|Href|Selector|XPath|Script|JavaScript|Html|DOM|Coordinates?|Latitude|Longitude|Mouse|Keycode)$/
+const EMAIL_VALUE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i
+const PHONE_VALUE = /(?:^\+\d[\d ().-]{6,18}\d$|^\d{10,15}$|^\(?\d{2,4}\)?[ -]\d{3,4}[ -]\d{3,4}$)/
+const URL_VALUE = /(?:\b(?:https?|wss?):\/\/|\bwww\.)/i
+const CONTACT_HANDLE_VALUE = /^@[A-Za-z0-9_.-]{2,64}$/
+const COORDINATE_VALUE = /(?:^|\s)[+-]?(?:\d{1,2}(?:\.\d{4,})?|1[0-7]\d(?:\.\d{4,})?|180(?:\.0{4,})?)\s*[,/]\s*[+-]?(?:\d{1,2}(?:\.\d{4,})?|1[0-7]\d(?:\.\d{4,})?|180(?:\.0{4,})?)(?:$|\s)/
 const MAX_JSON_BYTES = 32_768
 const MAX_JSON_DEPTH = 8
 const MAX_JSON_NODES = 512
@@ -82,6 +89,12 @@ export function isLifeDigest(value: unknown): value is string {
 }
 export function isLifeErrorCode(value: unknown): value is string {
   return typeof value === 'string' && ERROR_CODE.test(value)
+}
+export function isLifePrivateText(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const normalized = value.trim()
+  return isFabricSensitiveString(normalized) || EMAIL_VALUE.test(normalized) || PHONE_VALUE.test(normalized)
+    || URL_VALUE.test(normalized) || CONTACT_HANDLE_VALUE.test(normalized) || COORDINATE_VALUE.test(normalized)
 }
 export function isLifeSourceKind(value: unknown): value is LifeSourceKind {
   return typeof value === 'string' && SETS.source.has(value)
@@ -165,7 +178,7 @@ export function assertLifeSafeData(value: unknown): void {
     if (candidate === null || typeof candidate === 'boolean') return
     if (typeof candidate === 'string') {
       if (candidate.length > MAX_TEXT) throw new LifeContractError('LIFE_DATA_BOUNDS_EXCEEDED')
-      if (isFabricSensitiveString(candidate)) throw new LifeContractError('LIFE_SENSITIVE_VALUE_FORBIDDEN')
+      if (isLifePrivateText(candidate)) throw new LifeContractError('LIFE_SENSITIVE_VALUE_FORBIDDEN')
       return
     }
     if (typeof candidate === 'number') {
@@ -187,6 +200,9 @@ export function assertLifeSafeData(value: unknown): void {
     for (const key of keys) {
       if (!SEMANTIC_ID.test(key)) throw new LifeContractError('LIFE_DATA_INVALID')
       if (SECRET_KEY.test(key)) throw new LifeContractError('LIFE_SECRET_FIELD_FORBIDDEN')
+      if (RAW_PRIMITIVE_KEY.test(key) || RAW_PRIMITIVE_CAMEL_KEY.test(key)) {
+        throw new LifeContractError('LIFE_RAW_PRIMITIVE_FORBIDDEN')
+      }
       visit(read(candidate, key), depth + 1)
     }
   }

@@ -20,6 +20,9 @@ const life = vi.hoisted(() => ({
   listLifeConstraintSnapshots: vi.fn(), listLifeContactAliases: vi.fn(), listLifeHandoffs: vi.fn(),
   listLifeOptions: vi.fn(), listLifePlanRevisions: vi.fn(), listLifeSourceAccounts: vi.fn(),
   listLifeSubscriptionCancellations: vi.fn(), listLifeSubscriptions: vi.fn(), planLifeLeisure: vi.fn(),
+  isLifePrivateText: (value: unknown) => typeof value === 'string' && (/@/.test(value)
+    || /^\+?\d[\d -]{8,}$/.test(value) || /https?:\/\//i.test(value)
+    || /Bearer\s+/i.test(value) || /^\s*[+-]?\d{1,3}\.\d{4,}\s*,\s*[+-]?\d{1,3}\.\d{4,}\s*$/.test(value)),
   reconcileLifeRuntime: vi.fn(), revokeLifeSourceAccount: vi.fn(), transitionLifeSourceAccountMode: vi.fn(),
   updateLifeSourceAccountHealth: vi.fn(),
 }))
@@ -103,6 +106,31 @@ describe('life orchestration controller', () => {
     expect(text).not.toContain('provider-hold-private')
     expect(text).not.toContain('cancel-request-private')
     expect(text).not.toContain('provider-receipt-private')
+  })
+
+  it('redacts private contact channels, provider URLs, phone numbers, and coordinates in legacy projections', async () => {
+    life.listLifeContactAliases.mockReturnValue([{ id: 'contact-1', accountId: 'life-contacts-1',
+      alias: 'person@example.com', relationshipTags: ['friend'], availabilityTags: [], observedAt: now,
+      sourceDigest: 'e'.repeat(64) }])
+    life.listLifeOptions.mockReturnValue([{ id: 'option-1', accountId: 'life-games-1', kind: 'game',
+      source: 'https://provider.example/private', title: 'Puzzle', categoryTags: ['puzzle'], durationMinutes: 60,
+      exertion: 'low', screenBased: true, locationClass: 'home', cost: { currency: 'CNY', amountMinor: 0 },
+      available: true, observedAt: now, expiresAt: '2026-07-16T00:00:00.000Z', sourceDigest: 'f'.repeat(64) }])
+    life.listLifeSubscriptions.mockReturnValue([{ ...subscription, serviceLabel: '+86 138 0013 8000' }])
+    life.listLifeCommitments.mockReturnValue([{ id: 'commitment-1', accountId: account.id,
+      label: '31.2304, 121.4737', category: 'personal', startsAt: now,
+      endsAt: '2026-07-15T01:00:00.000Z', allDay: false, busy: true, locationClass: 'local',
+      participantAliasIds: [], observedAt: now, expiresAt: '2026-07-16T00:00:00.000Z',
+      sourceDigest: '1'.repeat(64) }])
+    const ctrl = await import('../../packages/server/src/controllers/hermes/life-orchestration')
+    const contactContext = ctx(); await ctrl.contacts(contactContext)
+    const optionContext = ctx(); await ctrl.options(optionContext)
+    const subscriptionContext = ctx(); await ctrl.subscriptions(subscriptionContext)
+    const commitmentContext = ctx(); await ctrl.commitments(commitmentContext)
+    expect(contactContext.body.contacts[0].alias).toBe('[REDACTED]')
+    expect(optionContext.body.options[0].source).toBe('[REDACTED]')
+    expect(subscriptionContext.body.subscriptions[0].serviceLabel).toBe('[REDACTED]')
+    expect(commitmentContext.body.commitments[0].label).toBe('[REDACTED]')
   })
 
   it('creates only observe or shadow sources and derives the executor binding', async () => {

@@ -145,6 +145,15 @@ describe('life orchestration Action Fabric executor', () => {
     expect((await invokeFabricExecutor('execute', executing)).output).toEqual(created.result.output)
     await expect(invokeFabricExecutor('verify', { ...executing, executionOutput: created.result.output }))
       .resolves.toMatchObject({ outcome: 'verified' })
+    await expect(invokeFabricExecutor('verify', { ...executing, executionOutput: {
+      ...created.result.output, receiptDigest: 'f'.repeat(64),
+    } })).resolves.toMatchObject({ outcome: 'mismatch', errorCode: 'LIFE_VERIFICATION_MISMATCH' })
+    expect(created.result.evidence).toEqual([expect.objectContaining({ kind: 'life_receipt', data: {
+      capabilityId: LIFE_CALENDAR_HOLD_CREATE_CAPABILITY,
+      materialDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      outputDigest: expect.stringMatching(/^[a-f0-9]{64}$/), holdId: expect.any(String),
+    } })])
+    expect(JSON.stringify(created.result.evidence)).not.toMatch(/provider(?:Hold|Request|Receipt)Id/)
 
     const reused = { ...calendarCreateContext('calendar'), intentId: 'intent-calendar-owner-conflict',
       workflowId: 'workflow-calendar-owner-conflict', stepId: 'step-calendar-owner-conflict',
@@ -191,6 +200,9 @@ describe('life orchestration Action Fabric executor', () => {
     })
     transitionLifePlanRevision({ planId: plan.id, expectedVersion: plan.version, state: 'superseded',
       updatedAt: '2026-07-15T10:01:00.000Z' })
+    await expect(invokeFabricExecutor('prepare', calendarCreateContext('fresh-stale'))).resolves.toMatchObject({
+      outcome: 'failed', errorCode: 'LIFE_PLAN_STALE',
+    })
     const recovered = await invokeFabricExecutor('execute', executing)
     expect(recovered).toMatchObject({ outcome: 'succeeded', output: { state: 'confirmed' } })
     const compensated = await invokeFabricExecutor('compensate', { ...executing, executionOutput: recovered.output })
@@ -231,6 +243,23 @@ describe('life orchestration Action Fabric executor', () => {
     expect((await invokeFabricExecutor('execute', executing)).output).toEqual(result.output)
     await expect(invokeFabricExecutor('verify', { ...executing, executionOutput: result.output }))
       .resolves.toMatchObject({ outcome: 'verified' })
+    expect(result.evidence).toEqual([expect.objectContaining({ kind: 'life_receipt', data: {
+      capabilityId: LIFE_SUBSCRIPTION_CANCEL_CAPABILITY,
+      materialDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      outputDigest: expect.stringMatching(/^[a-f0-9]{64}$/), cancellationId: expect.any(String),
+    } })])
+    expect(JSON.stringify(result.evidence)).not.toMatch(/provider(?:Hold|Request|Receipt)Id/)
+
+    createLifeSourceAccount({ id: 'subscriptions-other', sourceKind: 'subscriptions', mode: 'shadow',
+      executorId: EXECUTOR, displayName: 'Other subscriptions shadow' })
+    providers.set('subscriptions-other', subscriptions)
+    const crossAccountInput = { ...input, accountId: 'subscriptions-other' }
+    const crossAccount = executionContext(LIFE_SUBSCRIPTION_CANCEL_CAPABILITY, crossAccountInput,
+      { kind: 'life_subscription', accountId: 'subscriptions-other', subscriptionId, currency: 'CNY' },
+      'cross-account')
+    await expect(invokeFabricExecutor('prepare', crossAccount)).resolves.toMatchObject({
+      outcome: 'failed', errorCode: 'LIFE_SUBSCRIPTION_MATERIAL_MISMATCH',
+    })
 
     createLifeSourceAccount({ id: 'subscriptions-observe', sourceKind: 'subscriptions', mode: 'observe',
       executorId: EXECUTOR, displayName: 'Subscriptions observe' })

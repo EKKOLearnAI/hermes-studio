@@ -10,6 +10,7 @@ import {
   LIFE_SOURCE_KINDS,
   LIFE_SUBSCRIPTION_STATES,
   assertLifeSafeData,
+  isLifePrivateText,
   isLegalLifeCancellationTransition,
   isLegalLifeHandoffTransition,
   isLegalLifeHoldTransition,
@@ -87,5 +88,24 @@ describe('life and entertainment orchestration contracts', () => {
     expect(() => assertLifeSafeData(accessor)).toThrow('LIFE_DATA_BOUNDS_EXCEEDED')
     expect(invoked).toBe(false)
     expect(() => assertLifeSafeData(new Proxy({ planId: 'plan-1' }, {}))).toThrow('LIFE_DATA_INVALID')
+  })
+
+  it('rejects raw contact channels, locations, provider primitives, and camel-case execution primitives', () => {
+    expect(() => assertLifeSafeData({ observedAt: '2026-07-15T10:00:00.000Z',
+      alias: 'Friend A', source: 'virtual-games' })).not.toThrow()
+    for (const value of [{ alias: 'person@example.com' }, { label: '+8613800138000' },
+      { source: 'https://provider.example/private' }, { location: '31.2304, 121.4737' },
+      { alias: '@private_handle' }]) {
+      expect(() => assertLifeSafeData(value)).toThrow('LIFE_SENSITIVE_VALUE_FORBIDDEN')
+    }
+    for (const value of [{ selector: '.buy' }, { provider_url: 'virtual-provider' },
+      { providerURL: 'virtual-provider' }, { coordinates: [31, 121] }, { androidScript: 'tap' }]) {
+      expect(() => assertLifeSafeData(value)).toThrow('LIFE_RAW_PRIMITIVE_FORBIDDEN')
+    }
+    expect(isLifePrivateText('Friend A')).toBe(false)
+    expect(isLifePrivateText('person@example.com')).toBe(true)
+    expect(isLifePrivateText('+8613800138000')).toBe(true)
+    expect(isLifePrivateText('https://provider.example')).toBe(true)
+    expect(isLifePrivateText('31.2304, 121.4737')).toBe(true)
   })
 })
