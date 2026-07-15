@@ -143,6 +143,16 @@ export interface UpdateLifeSourceAccountInput {
   activationReviewId?: string
   updatedAt?: string
 }
+export interface RecordLifeActivationReviewInput {
+  accountId: string
+  fromMode: LifeActivationReview['fromMode']
+  toMode: LifeActivationReview['toMode']
+  actorUserId: string
+  shadowEvidenceDigest: string | null
+  limitsDigest: string
+  approved: boolean
+  createdAt?: string
+}
 export interface RecordLifeCommitmentInput extends Omit<LifeCommitment, 'id'> {}
 export interface RecordLifeContactAliasInput extends Omit<LifeContactAlias, 'id'> {}
 export interface RecordLifeOptionInput extends Omit<LifeOption, 'id'> {}
@@ -251,6 +261,67 @@ export function updateLifeSourceAccount(input: UpdateLifeSourceAccountInput): Li
     )
     if (result.changes !== 1) throw new LifeContractError('LIFE_ACCOUNT_VERSION_CONFLICT')
     return required(accountById(db, current.id), 'LIFE_ACCOUNT_UPDATE_FAILED')
+  })
+}
+
+export function recordLifeActivationReview(input: RecordLifeActivationReviewInput): LifeActivationReview {
+  validateId(input.accountId, 'LIFE_ACCOUNT_ID_INVALID')
+  if (!isLifeExecutionMode(input.fromMode) || !isLifeExecutionMode(input.toMode)
+    || input.fromMode === input.toMode || !cleanText(input.actorUserId, 160)
+    || input.shadowEvidenceDigest !== null && !isLifeDigest(input.shadowEvidenceDigest)
+    || !isLifeDigest(input.limitsDigest) || typeof input.approved !== 'boolean') {
+    throw new LifeContractError('LIFE_ACTIVATION_REVIEW_INVALID')
+  }
+  const createdAt = timestamp(input.createdAt ?? new Date().toISOString(), 'LIFE_TIME_INVALID')
+  return withLifeOrchestrationDb(db => {
+    required(accountById(db, input.accountId), 'LIFE_ACCOUNT_NOT_FOUND')
+    const id = `activation-${stableId({ accountId: input.accountId, actorUserId: input.actorUserId,
+      createdAt, fromMode: input.fromMode, toMode: input.toMode })}`
+    db.prepare(`INSERT INTO life_activation_reviews(id,account_id,from_mode,to_mode,actor_user_id,
+      shadow_evidence_digest,limits_digest,approved,created_at) VALUES(?,?,?,?,?,?,?,?,?)`).run(
+      id, input.accountId, input.fromMode, input.toMode, input.actorUserId, input.shadowEvidenceDigest,
+      input.limitsDigest, input.approved ? 1 : 0, createdAt,
+    )
+    return required(activationById(db, id), 'LIFE_ACTIVATION_REVIEW_CREATE_FAILED')
+  })
+}
+
+export function listLifeActivationReviews(accountId: string, limit = 100): LifeActivationReview[] {
+  validateId(accountId, 'LIFE_ACCOUNT_ID_INVALID'); const bounded = listLimit(limit)
+  return withLifeOrchestrationDb(db => (db.prepare(`SELECT * FROM life_activation_reviews
+    WHERE account_id=? ORDER BY created_at DESC,id DESC LIMIT ?`).all(accountId, bounded) as ActivationRow[])
+    .map(activationFromRow))
+}
+
+export function getRecentLifeShadowEvidence(input: { accountId: string; since: string }): {
+  aggregateKind: 'calendar_hold' | 'subscription_cancellation'
+  aggregateId: string
+  evidenceDigest: string
+  observedAt: string
+} | null {
+  validateId(input.accountId, 'LIFE_ACCOUNT_ID_INVALID')
+  const since = timestamp(input.since, 'LIFE_TIME_INVALID')
+  return withLifeOrchestrationDb(db => {
+    const account = required(accountById(db, input.accountId), 'LIFE_ACCOUNT_NOT_FOUND')
+    if (account.mode !== 'shadow') return null
+    const row = account.sourceKind === 'calendar'
+      ? db.prepare(`SELECT 'calendar_hold' AS aggregate_kind,c.aggregate_id,c.evidence_digest,c.observed_at
+          FROM life_checkpoints c JOIN life_calendar_holds h ON h.id=c.aggregate_id
+          WHERE c.aggregate_kind='calendar_hold' AND h.account_id=? AND h.policy_epoch=?
+            AND h.state IN ('confirmed','cancelled') AND c.evidence_digest IS NOT NULL AND c.observed_at>=?
+          ORDER BY c.observed_at DESC,c.ordinal DESC LIMIT 1`).get(account.id, account.policyEpoch, since)
+      : account.sourceKind === 'subscriptions'
+        ? db.prepare(`SELECT 'subscription_cancellation' AS aggregate_kind,c.aggregate_id,c.evidence_digest,c.observed_at
+            FROM life_checkpoints c JOIN life_subscription_cancellations s ON s.id=c.aggregate_id
+            WHERE c.aggregate_kind='subscription_cancellation' AND s.account_id=? AND s.policy_epoch=?
+              AND s.state='cancelled' AND c.evidence_digest IS NOT NULL AND c.observed_at>=?
+            ORDER BY c.observed_at DESC,c.ordinal DESC LIMIT 1`).get(account.id, account.policyEpoch, since)
+        : undefined
+    if (!row) return null
+    const value = row as { aggregate_kind: 'calendar_hold' | 'subscription_cancellation'; aggregate_id: string
+      evidence_digest: string; observed_at: string }
+    return { aggregateKind: value.aggregate_kind, aggregateId: value.aggregate_id,
+      evidenceDigest: value.evidence_digest, observedAt: value.observed_at }
   })
 }
 

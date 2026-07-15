@@ -375,7 +375,7 @@ function assertContext(
     return { account: null, provider: null, mode: 'read', policyEpoch: 0 }
   }
   const account = getLifeSourceAccount(String(context.input.accountId))
-  if (!account || !account.enabled || account.health === 'revoked'
+  if (!account || !account.enabled || account.health === 'revoked' || account.health === 'unhealthy'
     || account.executorId !== null && account.executorId !== options.id
     || context.input.sourceKind !== undefined && account.sourceKind !== context.input.sourceKind
     || context.capabilityId.startsWith('life.calendar.') && account.sourceKind !== 'calendar'

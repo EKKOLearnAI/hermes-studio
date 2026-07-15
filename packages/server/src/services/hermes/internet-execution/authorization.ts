@@ -27,17 +27,21 @@ export function clearEntertainmentInternetAuthorization(): void {
 
 function updateAuthorization(allowedTargets: string[]): void {
   ensureBuiltInAssistantRoles()
+  const current = getAssistantRole(ENTERTAINMENT_ASSISTANT_ROLE_ID)
+  const lifeCapabilities = current?.capabilityScope.allow.filter(id => id.startsWith('life.')) ?? []
+  const lifeTargets = current?.decisionAuthority.allowedTargets?.filter(target => target.startsWith('life:')) ?? []
+  const lifeTransactional = lifeCapabilities.some(id => id === 'life.calendar.hold.create'
+    || id === 'life.calendar.hold.cancel' || id === 'life.subscription.cancel')
   const capabilityScope = {
-    allow: INTERNET_CAPABILITY_IDS,
+    allow: [...new Set([...INTERNET_CAPABILITY_IDS, ...lifeCapabilities])].sort(),
     deny: [],
     enforcement: 'action_fabric_v1' as const,
   }
   const decisionAuthority = {
-    maxRisk: 'low' as const,
+    maxRisk: lifeTransactional ? 'high' as const : 'low' as const,
     requireApprovalAbove: 'low' as const,
-    allowedTargets,
+    allowedTargets: [...new Set([...allowedTargets, ...lifeTargets])].sort(),
   }
-  const current = getAssistantRole(ENTERTAINMENT_ASSISTANT_ROLE_ID)
   if (!current || !isDeepStrictEqual(current.capabilityScope, capabilityScope)
     || !isDeepStrictEqual(current.decisionAuthority, decisionAuthority)) {
     updateAssistantRole(ENTERTAINMENT_ASSISTANT_ROLE_ID, { capabilityScope, decisionAuthority })

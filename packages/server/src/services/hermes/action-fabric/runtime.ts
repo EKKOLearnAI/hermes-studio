@@ -21,6 +21,11 @@ import {
   reconcileCommerceRuntime,
   stopCommerceRuntime,
 } from '../commerce-autonomy/runtime'
+import {
+  createConfiguredLifeExecutorAdapters,
+  reconcileLifeRuntime,
+  stopLifeRuntime,
+} from '../life-orchestration/runtime'
 import { startHomeProductionRuntime, stopHomeProductionRuntime } from '../home/production-runtime'
 import {
   reconcileInternetProductionRuntime,
@@ -40,6 +45,7 @@ interface RunningRuntime {
   homeStarted: boolean
   internetStarted: boolean
   commerceStarted: boolean
+  lifeStarted: boolean
 }
 
 let running: RunningRuntime | null = null
@@ -71,6 +77,7 @@ export async function enforceControlStateOnce(version: number): Promise<{ applie
     state.appliedControlVersion = Math.max(state.appliedControlVersion, result.version)
     if (state.internetStarted) await reconcileInternetProductionRuntime()
     if (state.commerceStarted) reconcileCommerceRuntime()
+    if (state.lifeStarted) reconcileLifeRuntime()
   }
   return result
 }
@@ -86,6 +93,9 @@ async function teardownRuntime(): Promise<void> {
   try { await stopActionFabricWorker() } catch (error) { if (failure === null) failure = error }
   if (state.commerceStarted) {
     try { stopCommerceRuntime() } catch (error) { if (failure === null) failure = error }
+  }
+  if (state.lifeStarted) {
+    try { stopLifeRuntime() } catch (error) { if (failure === null) failure = error }
   }
   if (state.internetStarted) {
     try { await stopInternetProductionRuntime() } catch (error) { if (failure === null) failure = error }
@@ -104,6 +114,7 @@ async function bootstrapRuntime(): Promise<void> {
   let homeStarted = false
   let internetStarted = false
   let commerceStarted = false
+  let lifeStarted = false
   try {
     // These migrations are deliberately complete before a worker can claim a lease.
     ensureBuiltInFabricRegistry()
@@ -114,6 +125,9 @@ async function bootstrapRuntime(): Promise<void> {
     for (const adapter of createConfiguredCommerceExecutorAdapters()) registerOwnedAdapter(adapter, ownedAdapters)
     reconcileCommerceRuntime()
     commerceStarted = true
+    for (const adapter of createConfiguredLifeExecutorAdapters()) registerOwnedAdapter(adapter, ownedAdapters)
+    reconcileLifeRuntime()
+    lifeStarted = true
     const homeAdapter = await startHomeProductionRuntime()
     homeStarted = true
     registerOwnedAdapter(homeAdapter, ownedAdapters)
@@ -132,6 +146,7 @@ async function bootstrapRuntime(): Promise<void> {
       homeStarted,
       internetStarted,
       commerceStarted,
+      lifeStarted,
     }
     state.controlTimer = setInterval(() => pollControl(state), CONTROL_POLL_MS)
     state.controlTimer.unref?.()
@@ -140,6 +155,7 @@ async function bootstrapRuntime(): Promise<void> {
     if (workerStarted) { try { await stopActionFabricWorker() } catch { /* preserve the startup failure */ } }
     if (internetStarted) { try { await stopInternetProductionRuntime() } catch { /* preserve the startup failure */ } }
     if (commerceStarted) { try { stopCommerceRuntime() } catch { /* preserve the startup failure */ } }
+    if (lifeStarted) { try { stopLifeRuntime() } catch { /* preserve the startup failure */ } }
     if (homeStarted) { try { await stopHomeProductionRuntime() } catch { /* preserve the startup failure */ } }
     for (const id of ownedAdapters.reverse()) unregisterFabricExecutorAdapter(id)
     throw error
@@ -169,6 +185,7 @@ function pollControl(state: RunningRuntime): void {
       state.appliedControlVersion = Math.max(state.appliedControlVersion, result.version)
       if (controlChanged && state.internetStarted) await reconcileInternetProductionRuntime()
       if (controlChanged && state.commerceStarted) reconcileCommerceRuntime()
+      if (controlChanged && state.lifeStarted) reconcileLifeRuntime()
     }
   })().catch(error => {
     logger.error({ errorClass: stableErrorClass(error) }, '[action-fabric] control enforcement failed')
