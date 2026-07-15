@@ -12,10 +12,15 @@ import {
   LIFE_SOURCE_KINDS,
   LIFE_SUBSCRIPTION_STATES,
   type LifeCalendarHoldState,
+  type LifeAccountHealth,
   type LifeExecutionMode,
+  type LifeHandoffKind,
   type LifeHandoffState,
   type LifeMoney,
+  type LifeOptionKind,
   type LifePlanState,
+  type LifeSourceKind,
+  type LifeSubscriptionState,
   type LifeSubscriptionCancellationState,
   type LifeTimeWindow,
 } from './types'
@@ -78,13 +83,21 @@ export function isLifeDigest(value: unknown): value is string {
 export function isLifeErrorCode(value: unknown): value is string {
   return typeof value === 'string' && ERROR_CODE.test(value)
 }
-export function isLifeSourceKind(value: unknown): boolean { return typeof value === 'string' && SETS.source.has(value) }
+export function isLifeSourceKind(value: unknown): value is LifeSourceKind {
+  return typeof value === 'string' && SETS.source.has(value)
+}
 export function isLifeExecutionMode(value: unknown): value is LifeExecutionMode {
   return typeof value === 'string' && SETS.mode.has(value)
 }
-export function isLifeAccountHealth(value: unknown): boolean { return typeof value === 'string' && SETS.health.has(value) }
-export function isLifeOptionKind(value: unknown): boolean { return typeof value === 'string' && SETS.option.has(value) }
-export function isLifeSubscriptionState(value: unknown): boolean { return typeof value === 'string' && SETS.subscription.has(value) }
+export function isLifeAccountHealth(value: unknown): value is LifeAccountHealth {
+  return typeof value === 'string' && SETS.health.has(value)
+}
+export function isLifeOptionKind(value: unknown): value is LifeOptionKind {
+  return typeof value === 'string' && SETS.option.has(value)
+}
+export function isLifeSubscriptionState(value: unknown): value is LifeSubscriptionState {
+  return typeof value === 'string' && SETS.subscription.has(value)
+}
 export function isLifePlanState(value: unknown): value is LifePlanState { return typeof value === 'string' && SETS.plan.has(value) }
 export function isLifeCalendarHoldState(value: unknown): value is LifeCalendarHoldState {
   return typeof value === 'string' && SETS.hold.has(value)
@@ -92,7 +105,9 @@ export function isLifeCalendarHoldState(value: unknown): value is LifeCalendarHo
 export function isLifeSubscriptionCancellationState(value: unknown): value is LifeSubscriptionCancellationState {
   return typeof value === 'string' && SETS.cancellation.has(value)
 }
-export function isLifeHandoffKind(value: unknown): boolean { return typeof value === 'string' && SETS.handoffKind.has(value) }
+export function isLifeHandoffKind(value: unknown): value is LifeHandoffKind {
+  return typeof value === 'string' && SETS.handoffKind.has(value)
+}
 export function isLifeHandoffState(value: unknown): value is LifeHandoffState {
   return typeof value === 'string' && SETS.handoffState.has(value)
 }
