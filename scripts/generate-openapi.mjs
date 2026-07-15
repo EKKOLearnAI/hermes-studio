@@ -1670,7 +1670,8 @@ const homeLegacyInventory = exactObject({ id: homeLegacyId, name: { type: 'strin
   unit: { type: 'string', maxLength: 40 }, expiryDate: { type: 'string', nullable: true, maxLength: 80 },
   notes: { type: 'string', maxLength: 2000 }, createdAt: homeTimestamp, updatedAt: homeTimestamp },
 ['id', 'name', 'quantity', 'unit', 'expiryDate', 'notes', 'createdAt', 'updatedAt'])
-const homeLegacyPlacement = exactObject({ id: homeLegacyId, targetType: { type: 'string', enum: ['object', 'inventory_batch', 'asset', 'device'] },
+const homeLegacyPlacement = exactObject({ id: homeLegacyId,
+  targetType: { type: 'string', pattern: '^(object|inventory_batch|asset|device)$', maxLength: 15 },
   targetId: homeLegacyId, roomId: { ...homeLegacyId, nullable: true }, furnitureId: { ...homeLegacyId, nullable: true },
   compartmentId: { ...homeLegacyId, nullable: true }, x: homeNullableNumber, y: homeNullableNumber, z: homeNullableNumber,
   createdAt: homeTimestamp, updatedAt: homeTimestamp },

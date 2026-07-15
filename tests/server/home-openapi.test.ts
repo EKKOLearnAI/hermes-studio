@@ -70,6 +70,9 @@ describe('home OpenAPI', () => {
       expect(encoded).not.toMatch(/token|password|secret|credential|service_data/i)
     }
     expect(ctx.body.components.schemas.HomeProviderDto.properties).not.toHaveProperty('credentialFingerprint')
+    expect(ctx.body.components.schemas.HomeLegacyMapDto.properties.placements.items.properties.targetType).toEqual({
+      type: 'string', pattern: '^(object|inventory_batch|asset|device)$', maxLength: 15,
+    })
     expect(ctx.body.components.schemas.HomeDeviceListResponse.properties.devices.maxItems).toBe(200)
     expect(ctx.body.components.schemas.HomeDeviceDto.properties.bindings.maxItems).toBe(50)
     expect(ctx.body.components.schemas.HomeWorkflowDetailDto.properties.steps.maxItems).toBe(16)

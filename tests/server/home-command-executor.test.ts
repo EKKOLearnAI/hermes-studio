@@ -63,27 +63,32 @@ describe('home assistant command executor', () => {
     const prepared = await adapter.prepare(context)
     expect(prepared).toMatchObject({ outcome: 'prepared', errorCode: null })
 
-    const executed = await adapter.execute({ ...context, preparedOutput: prepared.output })
+    const executed = await adapter.execute({
+      ...context, stepId: 'step:home:execute', executionToken: 'execution-power-1-execute', preparedOutput: prepared.output,
+    })
     expect(executed).toMatchObject({ outcome: 'succeeded', output: { status: 'unknown' } })
     expect(transport.calls).toEqual([{
       domain: 'light', service: 'turn_on', data: { entity_id: 'light.office_lamp' },
     }])
-    const sent = store.getCommandReceipt(context.executionToken)!
+    const sent = store.getCommandReceipt(context.workflowId)!
     expect(sent).toMatchObject({ status: 'sent', operation: 'home.device.set_power', observedEventId: null })
     expect(JSON.stringify(sent)).not.toContain('unrelated.entity')
 
     const observedAt = new Date(Math.max(Date.parse(sent.createdAt), Date.parse('2026-07-15T00:00:00Z')) + 1_000).toISOString()
     transport.readback = state('on', observedAt)
     const verified = await adapter.verify({
-      ...context, preparedOutput: prepared.output, executionOutput: executed.output,
+      ...context, stepId: 'step:home:verify', executionToken: 'execution-power-1-verify',
+      preparedOutput: prepared.output, executionOutput: executed.output,
     })
     expect(verified).toMatchObject({ outcome: 'verified', output: { status: 'verified' } })
-    expect(store.getCommandReceipt(context.executionToken)).toMatchObject({
+    expect(store.getCommandReceipt(context.workflowId)).toMatchObject({
       status: 'verified', observedEventId: expect.stringMatching(/^event:ha:/), verifiedAt: expect.any(String),
     })
     expect(store.listDeviceStates({ deviceId: identity.deviceId, key: 'power' })[0]).toMatchObject({ value: true, version: 2 })
 
-    const replay = await adapter.execute({ ...context, preparedOutput: prepared.output })
+    const replay = await adapter.execute({
+      ...context, stepId: 'step:home:execute', executionToken: 'execution-power-1-execute', preparedOutput: prepared.output,
+    })
     expect(replay).toMatchObject({ outcome: 'succeeded', output: { status: 'verified' } })
     expect(transport.calls).toHaveLength(1)
   })
@@ -96,7 +101,7 @@ describe('home assistant command executor', () => {
 
     const first = await adapter.execute({ ...context, preparedOutput: prepared.output })
     expect(first).toMatchObject({ outcome: 'unknown', errorCode: 'HOME_COMMAND_TRANSPORT_UNCERTAIN', safeToRetry: false })
-    expect(store.getCommandReceipt(context.executionToken)).toMatchObject({ status: 'unknown' })
+    expect(store.getCommandReceipt(context.workflowId)).toMatchObject({ status: 'unknown' })
     const replay = await adapter.execute({ ...context, preparedOutput: prepared.output })
     expect(replay).toMatchObject({ outcome: 'unknown', errorCode: 'HOME_COMMAND_OUTCOME_UNCERTAIN' })
     expect(transport.calls).toHaveLength(1)

@@ -40,8 +40,9 @@ export function createHomeAssistantCommandExecutorAdapter(
     async prepare(context): Promise<FabricPrepareResult> {
       try {
         const prepared = prepareMaterial(options.store, context)
+        const receiptKey = commandReceiptKey(context)
         options.store.prepareCommandReceipt({
-          executionToken: context.executionToken,
+          executionToken: receiptKey,
           materialDigest: prepared.materialDigest,
           provider: 'home-assistant',
           externalId: prepared.externalId,
@@ -51,7 +52,7 @@ export function createHomeAssistantCommandExecutorAdapter(
         })
         return success('prepared', context, {
           materialDigest: prepared.materialDigest,
-          receiptId: receiptId(context.executionToken),
+          receiptId: receiptId(receiptKey),
         })
       } catch (error) {
         return failure('failed', stablePrepareError(error))
@@ -62,7 +63,7 @@ export function createHomeAssistantCommandExecutorAdapter(
       if (context.preparedOutput?.materialDigest !== digest) {
         return failure('permanent_failure', 'HOME_COMMAND_PREPARATION_INVALID')
       }
-      const receipt = options.store.getCommandReceipt(context.executionToken)
+      const receipt = options.store.getCommandReceipt(commandReceiptKey(context))
       if (!receipt || receipt.materialDigest !== digest) {
         return failure('permanent_failure', 'HOME_COMMAND_RECEIPT_INVALID')
       }
@@ -101,7 +102,7 @@ export function createHomeAssistantCommandExecutorAdapter(
     },
     async verify(context): Promise<FabricVerifyResult> {
       const digest = materialDigest(context)
-      let receipt = options.store.getCommandReceipt(context.executionToken)
+      let receipt = options.store.getCommandReceipt(commandReceiptKey(context))
       if (!receipt || receipt.materialDigest !== digest) return failure('failed', 'HOME_COMMAND_RECEIPT_INVALID')
       if (receipt.status === 'verified') return success('verified', context, commandOutput(receipt, context))
       if (receipt.status === 'failed') return failure('mismatch', 'HOME_COMMAND_STATE_MISMATCH')
@@ -321,6 +322,12 @@ function materialDigest(context: FabricExecutionContext): string {
     input: context.input,
     target: context.target,
   })).digest('hex')
+}
+
+function commandReceiptKey(context: FabricExecutionContext): string {
+  // Action Fabric rotates execution tokens between prepare, execute, and verify.
+  // The governed workflow is the stable identity for the command across all three steps.
+  return context.workflowId
 }
 
 function receiptId(executionToken: string): string {

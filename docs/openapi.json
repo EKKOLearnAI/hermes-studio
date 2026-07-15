@@ -21710,12 +21710,8 @@
                 },
                 "targetType": {
                   "type": "string",
-                  "enum": [
-                    "object",
-                    "inventory_batch",
-                    "asset",
-                    "device"
-                  ]
+                  "pattern": "^(object|inventory_batch|asset|device)$",
+                  "maxLength": 15
                 },
                 "targetId": {
                   "type": "string",
@@ -22114,12 +22110,8 @@
                 },
                 "targetType": {
                   "type": "string",
-                  "enum": [
-                    "object",
-                    "inventory_batch",
-                    "asset",
-                    "device"
-                  ]
+                  "pattern": "^(object|inventory_batch|asset|device)$",
+                  "maxLength": 15
                 },
                 "targetId": {
                   "type": "string",
