@@ -84,6 +84,7 @@ const tagMappings = {
   'routes/hermes/action-fabric.ts': { name: 'Action Fabric', description: 'Governed capability discovery, durable action workflows, audit, and emergency controls' },
   'routes/hermes/health-loop.ts': { name: 'Health Loop', description: 'Protected health ingestion, artifact consent, intervention feedback, and automation settings' },
   'routes/hermes/home.ts': { name: 'Home', description: 'Personal Twin home state, inventory, governed Home Assistant commands, and workflow review' },
+  'routes/hermes/internet-execution.ts': { name: 'Internet Execution', description: 'Governed semantic internet reads, durable receipts, and workflow status' },
   'routes/hermes/performance-monitor.ts': { name: 'Performance', description: 'Runtime performance monitoring' },
   'routes/hermes/terminal.ts': { name: 'Terminal', description: 'WebSocket terminal' },
   'routes/health.ts': { name: 'Health', description: 'Health check' },
@@ -1825,6 +1826,179 @@ for (const [path, method, status] of [
 ]) {
   const responses = openapi.paths[path][method].responses
   responses[status] = responses['200']
+  delete responses['200']
+}
+
+// Internet Execution accepts only provider-independent semantic read intents. Profile, provider,
+// target, executor bindings, MCP tools, browser primitives, and URLs are all server-owned.
+const internetId = { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$' }
+const internetTimestamp = { type: 'string', format: 'date-time', maxLength: 64 }
+const internetDigest = { type: 'string', pattern: '^[a-f0-9]{64}$' }
+const internetProfile = { type: 'string', minLength: 1, maxLength: 200, pattern: '^[^/\\\\\\u0000-\\u001f\\u007f]+$' }
+const internetBvid = { type: 'string', pattern: '^BV[0-9A-Za-z]{10}$', minLength: 12, maxLength: 12 }
+const internetNullableInteger = { type: 'integer', minimum: 0, nullable: true }
+const internetVideo = exactObject({
+  bvid: internetBvid,
+  title: { type: 'string', minLength: 1, maxLength: 200 },
+  author: { type: 'string', minLength: 1, maxLength: 120 },
+  publishedAt: { ...internetTimestamp, nullable: true },
+  durationSeconds: { type: 'integer', minimum: 0, maximum: 86400, nullable: true },
+  viewCount: internetNullableInteger,
+  canonicalUrl: { type: 'string', pattern: '^https://www\\.bilibili\\.com/video/BV[0-9A-Za-z]{10}/?$', maxLength: 44 },
+}, ['bvid', 'title', 'author', 'publishedAt', 'durationSeconds', 'viewCount', 'canonicalUrl'])
+const internetSearchInput = exactObject({
+  query: { type: 'string', minLength: 1, maxLength: 120 },
+  limit: { type: 'integer', minimum: 1, maximum: 20 },
+  page: { type: 'integer', minimum: 1, maximum: 10 },
+  order: { type: 'string', enum: ['relevance', 'newest', 'most_viewed'] },
+}, ['query', 'limit', 'page', 'order'])
+const internetInspectInput = exactObject({ bvid: internetBvid }, ['bvid'])
+const internetSearchResult = exactObject({
+  schemaVersion: { type: 'integer', enum: [1] },
+  provider: { type: 'string', enum: ['bilibili'] },
+  profile: internetProfile,
+  operation: { type: 'string', enum: ['search'] },
+  query: { type: 'string', minLength: 1, maxLength: 120 },
+  status: { type: 'string', enum: ['succeeded', 'partial'] },
+  videos: { type: 'array', maxItems: 20, items: internetVideo },
+  totalCount: { type: 'integer', minimum: 0 },
+  omittedCount: { type: 'integer', minimum: 0 },
+}, ['schemaVersion', 'provider', 'profile', 'operation', 'query', 'status', 'videos', 'totalCount', 'omittedCount'])
+const internetInspectResult = exactObject({
+  schemaVersion: { type: 'integer', enum: [1] },
+  provider: { type: 'string', enum: ['bilibili'] },
+  profile: internetProfile,
+  operation: { type: 'string', enum: ['inspect'] },
+  status: { type: 'string', enum: ['succeeded'] },
+  video: internetVideo,
+  description: { type: 'string', maxLength: 2000 },
+  tags: { type: 'array', maxItems: 32, items: { type: 'string', minLength: 1, maxLength: 80 } },
+}, ['schemaVersion', 'provider', 'profile', 'operation', 'status', 'video', 'description', 'tags'])
+const internetReceiptStatuses = ['prepared', 'executing', 'executed', 'verifying', 'verified', 'unknown',
+  'mismatch', 'failed', 'waiting_user']
+Object.assign(openapi.components.schemas, {
+  InternetApiError: exactObject({ error: { type: 'string' },
+    code: { type: 'string', pattern: '^INTERNET_[A-Z0-9_]+$' } }, ['error', 'code']),
+  InternetProviderDto: exactObject({
+    provider: { type: 'string', enum: ['bilibili'] },
+    profile: internetProfile,
+    active: { type: 'boolean' },
+    configured: { type: 'boolean' },
+    discoveryStatus: { type: 'string', enum: ['stopped', 'unavailable', 'degraded', 'healthy'] },
+    executorEnabled: { type: 'boolean' },
+    selectedExecutorType: { type: 'string', enum: ['mcp', 'browser'], nullable: true },
+    authorizedTargetCount: { type: 'integer', minimum: 0, maximum: 64 },
+    lastErrorCode: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,127}$', nullable: true },
+  }, ['provider', 'profile', 'active', 'configured', 'discoveryStatus', 'executorEnabled',
+    'selectedExecutorType', 'authorizedTargetCount', 'lastErrorCode']),
+  InternetExecutorDto: exactObject({
+    type: { type: 'string', enum: ['mcp', 'browser'] },
+    environment: { type: 'string', enum: ['production'] },
+    enabled: { type: 'boolean' },
+    health: { type: 'string', enum: ['unknown', 'healthy', 'degraded', 'unhealthy'] },
+    selected: { type: 'boolean' },
+  }, ['type', 'environment', 'enabled', 'health', 'selected']),
+  InternetCapabilityDto: exactObject({
+    id: { type: 'string', enum: ['bilibili.video.search', 'bilibili.video.inspect'] },
+    provider: { type: 'string', enum: ['bilibili'] },
+    available: { type: 'boolean' },
+  }, ['id', 'provider', 'available']),
+  InternetOverviewSummaryDto: exactObject({
+    receiptCount: { type: 'integer', minimum: 0, maximum: 200 },
+    verifiedReceiptCount: { type: 'integer', minimum: 0, maximum: 200 },
+    waitingUserReceiptCount: { type: 'integer', minimum: 0, maximum: 200 },
+    activeWorkflowCount: { type: 'integer', minimum: 0, maximum: 200 },
+  }, ['receiptCount', 'verifiedReceiptCount', 'waitingUserReceiptCount', 'activeWorkflowCount']),
+  InternetWorkflowSummaryDto: exactObject(homeWorkflowSummaryProperties, homeWorkflowSummaryRequired),
+  InternetWorkflowStepDto: exactObject({
+    kind: internetId,
+    state: { type: 'string', maxLength: 80 },
+    attempt: { type: 'integer', minimum: 0 },
+    lastErrorCode: { type: 'string', nullable: true, maxLength: 160 },
+    updatedAt: internetTimestamp,
+  }, ['kind', 'state', 'attempt', 'lastErrorCode', 'updatedAt']),
+  InternetWorkflowDetailDto: exactObject({ ...homeWorkflowSummaryProperties,
+    capabilityId: { type: 'string', enum: ['bilibili.video.search', 'bilibili.video.inspect'] },
+    policyDecision: { ...schemaRef('HomePolicyDecisionDto'), nullable: true },
+    steps: { type: 'array', maxItems: 16, items: schemaRef('InternetWorkflowStepDto') },
+  }, [...homeWorkflowSummaryRequired, 'capabilityId', 'policyDecision', 'steps']),
+  InternetSemanticInputDto: { oneOf: [internetSearchInput, internetInspectInput] },
+  InternetVideoDto: internetVideo,
+  InternetSearchResultDto: internetSearchResult,
+  InternetInspectResultDto: internetInspectResult,
+  InternetResultDto: { oneOf: [schemaRef('InternetSearchResultDto'), schemaRef('InternetInspectResultDto')], nullable: true },
+  InternetReceiptDto: exactObject({
+    workflowId: internetId,
+    intentId: internetId,
+    capabilityId: { type: 'string', enum: ['bilibili.video.search', 'bilibili.video.inspect'] },
+    provider: { type: 'string', enum: ['bilibili'] },
+    profile: internetProfile,
+    executorType: { type: 'string', enum: ['mcp', 'browser'] },
+    environment: { type: 'string', enum: ['sandbox', 'production'] },
+    operation: { type: 'string', enum: ['search', 'inspect'] },
+    input: schemaRef('InternetSemanticInputDto'),
+    safeToReplay: { type: 'boolean' },
+    status: { type: 'string', enum: internetReceiptStatuses },
+    result: schemaRef('InternetResultDto'),
+    resultDigest: { ...internetDigest, nullable: true },
+    errorCode: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,127}$', nullable: true },
+    version: { type: 'integer', minimum: 1 },
+    createdAt: internetTimestamp,
+    updatedAt: internetTimestamp,
+    completedAt: { ...internetTimestamp, nullable: true },
+  }, ['workflowId', 'intentId', 'capabilityId', 'provider', 'profile', 'executorType', 'environment',
+    'operation', 'input', 'safeToReplay', 'status', 'result', 'resultDigest', 'errorCode', 'version',
+    'createdAt', 'updatedAt', 'completedAt']),
+  InternetEvidenceDto: exactObject({
+    ordinal: { type: 'integer', minimum: 0 },
+    stage: { type: 'string', enum: ['provider_read', 'navigation', 'snapshot', 'verification'] },
+    evidenceDigest: { ...internetDigest, nullable: true },
+    observedAt: internetTimestamp,
+  }, ['ordinal', 'stage', 'evidenceDigest', 'observedAt']),
+  InternetOverviewResponse: exactObject({
+    provider: schemaRef('InternetProviderDto'),
+    executors: { type: 'array', minItems: 2, maxItems: 2, items: schemaRef('InternetExecutorDto') },
+    capabilities: { type: 'array', minItems: 2, maxItems: 2, items: schemaRef('InternetCapabilityDto') },
+    summary: schemaRef('InternetOverviewSummaryDto'),
+  }, ['provider', 'executors', 'capabilities', 'summary']),
+  InternetActionResponse: exactObject({
+    intent: schemaRef('HealthActionIntentDto'),
+    policyDecision: schemaRef('HomePolicyDecisionDto'),
+    workflow: schemaRef('InternetWorkflowSummaryDto'),
+  }, ['intent', 'policyDecision', 'workflow']),
+  InternetReceiptListResponse: exactObject({
+    receipts: { type: 'array', maxItems: 200, items: schemaRef('InternetReceiptDto') },
+  }, ['receipts']),
+  InternetReceiptResponse: exactObject({
+    receipt: schemaRef('InternetReceiptDto'),
+    evidence: { type: 'array', maxItems: 1000, items: schemaRef('InternetEvidenceDto') },
+  }, ['receipt', 'evidence']),
+  InternetWorkflowResponse: exactObject({ workflow: schemaRef('InternetWorkflowDetailDto') }, ['workflow']),
+})
+const internetJsonBody = (path, schema) => {
+  openapi.paths[path].post.requestBody = { required: true, content: { 'application/json': { schema } } }
+}
+internetJsonBody('/api/hermes/internet-execution/bilibili/search', exactObject({
+  query: { type: 'string', minLength: 1, maxLength: 120 },
+  limit: { type: 'integer', minimum: 1, maximum: 20, default: 10 },
+  page: { type: 'integer', minimum: 1, maximum: 10, default: 1 },
+  order: { type: 'string', enum: ['relevance', 'newest', 'most_viewed'], default: 'relevance' },
+  idempotencyKey: internetId,
+}, ['query', 'idempotencyKey']))
+internetJsonBody('/api/hermes/internet-execution/bilibili/inspect', exactObject({
+  bvid: internetBvid,
+  idempotencyKey: internetId,
+}, ['bvid', 'idempotencyKey']))
+openapi.paths['/api/hermes/internet-execution/receipts'].get.parameters = [
+  { name: 'status', in: 'query', required: false, schema: { type: 'string', enum: internetReceiptStatuses } },
+  { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 200, default: 100 } },
+]
+for (const path of [
+  '/api/hermes/internet-execution/bilibili/search',
+  '/api/hermes/internet-execution/bilibili/inspect',
+]) {
+  const responses = openapi.paths[path].post.responses
+  responses['202'] = responses['200']
   delete responses['200']
 }
 

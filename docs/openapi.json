@@ -69,6 +69,10 @@
       "description": "Personal Twin home state, inventory, governed Home Assistant commands, and workflow review"
     },
     {
+      "name": "Internet Execution",
+      "description": "Governed semantic internet reads, durable receipts, and workflow status"
+    },
+    {
       "name": "Kanban",
       "description": "Kanban board and task management"
     },
@@ -11758,6 +11762,714 @@
         }
       }
     },
+    "/api/hermes/internet-execution/bilibili/inspect": {
+      "post": {
+        "tags": [
+          "Internet Execution"
+        ],
+        "summary": "Create inspect",
+        "description": "POST /api/hermes/internet-execution/bilibili/inspect",
+        "operationId": "inspectBilibili",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "bvid": {
+                    "type": "string",
+                    "pattern": "^BV[0-9A-Za-z]{10}$",
+                    "minLength": 12,
+                    "maxLength": 12
+                  },
+                  "idempotencyKey": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$"
+                  }
+                },
+                "required": [
+                  "bvid",
+                  "idempotencyKey"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/internet-execution/bilibili/search": {
+      "post": {
+        "tags": [
+          "Internet Execution"
+        ],
+        "summary": "Create search",
+        "description": "POST /api/hermes/internet-execution/bilibili/search",
+        "operationId": "searchBilibili",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 20,
+                    "default": 10
+                  },
+                  "page": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "default": 1
+                  },
+                  "order": {
+                    "type": "string",
+                    "enum": [
+                      "relevance",
+                      "newest",
+                      "most_viewed"
+                    ],
+                    "default": "relevance"
+                  },
+                  "idempotencyKey": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$"
+                  }
+                },
+                "required": [
+                  "query",
+                  "idempotencyKey"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/internet-execution/overview": {
+      "get": {
+        "tags": [
+          "Internet Execution"
+        ],
+        "summary": "Get overview",
+        "description": "GET /api/hermes/internet-execution/overview",
+        "operationId": "overview",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetOverviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/internet-execution/receipts": {
+      "get": {
+        "tags": [
+          "Internet Execution"
+        ],
+        "summary": "Get receipts",
+        "description": "GET /api/hermes/internet-execution/receipts",
+        "operationId": "receipts",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetReceiptListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "prepared",
+                "executing",
+                "executed",
+                "verifying",
+                "verified",
+                "unknown",
+                "mismatch",
+                "failed",
+                "waiting_user"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/internet-execution/receipts/{workflowId}": {
+      "get": {
+        "tags": [
+          "Internet Execution"
+        ],
+        "summary": "Get :workflowId",
+        "description": "GET /api/hermes/internet-execution/receipts/:workflowId",
+        "operationId": "receipt",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetReceiptResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/internet-execution/workflows/{workflowId}": {
+      "get": {
+        "tags": [
+          "Internet Execution"
+        ],
+        "summary": "Get :workflowId",
+        "description": "GET /api/hermes/internet-execution/workflows/:workflowId",
+        "operationId": "workflow",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetWorkflowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternetApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/jobs": {
       "get": {
         "tags": [
@@ -22642,6 +23354,1050 @@
         "properties": {
           "workflow": {
             "$ref": "#/components/schemas/HomeWorkflowDetailDto"
+          }
+        },
+        "required": [
+          "workflow"
+        ],
+        "additionalProperties": false
+      },
+      "InternetApiError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^INTERNET_[A-Z0-9_]+$"
+          }
+        },
+        "required": [
+          "error",
+          "code"
+        ],
+        "additionalProperties": false
+      },
+      "InternetProviderDto": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "bilibili"
+            ]
+          },
+          "profile": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "discoveryStatus": {
+            "type": "string",
+            "enum": [
+              "stopped",
+              "unavailable",
+              "degraded",
+              "healthy"
+            ]
+          },
+          "executorEnabled": {
+            "type": "boolean"
+          },
+          "selectedExecutorType": {
+            "type": "string",
+            "enum": [
+              "mcp",
+              "browser"
+            ],
+            "nullable": true
+          },
+          "authorizedTargetCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 64
+          },
+          "lastErrorCode": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,127}$",
+            "nullable": true
+          }
+        },
+        "required": [
+          "provider",
+          "profile",
+          "active",
+          "configured",
+          "discoveryStatus",
+          "executorEnabled",
+          "selectedExecutorType",
+          "authorizedTargetCount",
+          "lastErrorCode"
+        ],
+        "additionalProperties": false
+      },
+      "InternetExecutorDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "mcp",
+              "browser"
+            ]
+          },
+          "environment": {
+            "type": "string",
+            "enum": [
+              "production"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "health": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "healthy",
+              "degraded",
+              "unhealthy"
+            ]
+          },
+          "selected": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "type",
+          "environment",
+          "enabled",
+          "health",
+          "selected"
+        ],
+        "additionalProperties": false
+      },
+      "InternetCapabilityDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "bilibili.video.search",
+              "bilibili.video.inspect"
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "bilibili"
+            ]
+          },
+          "available": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "available"
+        ],
+        "additionalProperties": false
+      },
+      "InternetOverviewSummaryDto": {
+        "type": "object",
+        "properties": {
+          "receiptCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 200
+          },
+          "verifiedReceiptCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 200
+          },
+          "waitingUserReceiptCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 200
+          },
+          "activeWorkflowCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 200
+          }
+        },
+        "required": [
+          "receiptCount",
+          "verifiedReceiptCount",
+          "waitingUserReceiptCount",
+          "activeWorkflowCount"
+        ],
+        "additionalProperties": false
+      },
+      "InternetWorkflowSummaryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "policy_check",
+              "preparing",
+              "executing",
+              "verifying",
+              "waiting_user",
+              "retrying",
+              "compensating",
+              "succeeded",
+              "denied",
+              "cancelled",
+              "failed",
+              "dead_letter",
+              "compensated"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastErrorCode": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 160
+          },
+          "availableActions": {
+            "type": "object",
+            "properties": {
+              "approve": {
+                "type": "boolean"
+              },
+              "reject": {
+                "type": "boolean"
+              },
+              "cancel": {
+                "type": "boolean"
+              },
+              "retry": {
+                "type": "boolean"
+              },
+              "compensate": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "approve",
+              "reject",
+              "cancel",
+              "retry",
+              "compensate"
+            ],
+            "additionalProperties": false
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64,
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "version",
+          "attempt",
+          "lastErrorCode",
+          "availableActions",
+          "createdAt",
+          "updatedAt",
+          "completedAt"
+        ],
+        "additionalProperties": false
+      },
+      "InternetWorkflowStepDto": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$"
+          },
+          "state": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastErrorCode": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 160
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "kind",
+          "state",
+          "attempt",
+          "lastErrorCode",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "InternetWorkflowDetailDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "policy_check",
+              "preparing",
+              "executing",
+              "verifying",
+              "waiting_user",
+              "retrying",
+              "compensating",
+              "succeeded",
+              "denied",
+              "cancelled",
+              "failed",
+              "dead_letter",
+              "compensated"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastErrorCode": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 160
+          },
+          "availableActions": {
+            "type": "object",
+            "properties": {
+              "approve": {
+                "type": "boolean"
+              },
+              "reject": {
+                "type": "boolean"
+              },
+              "cancel": {
+                "type": "boolean"
+              },
+              "retry": {
+                "type": "boolean"
+              },
+              "compensate": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "approve",
+              "reject",
+              "cancel",
+              "retry",
+              "compensate"
+            ],
+            "additionalProperties": false
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64,
+            "nullable": true
+          },
+          "capabilityId": {
+            "type": "string",
+            "enum": [
+              "bilibili.video.search",
+              "bilibili.video.inspect"
+            ]
+          },
+          "policyDecision": {
+            "$ref": "#/components/schemas/HomePolicyDecisionDto",
+            "nullable": true
+          },
+          "steps": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/components/schemas/InternetWorkflowStepDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "version",
+          "attempt",
+          "lastErrorCode",
+          "availableActions",
+          "createdAt",
+          "updatedAt",
+          "completedAt",
+          "capabilityId",
+          "policyDecision",
+          "steps"
+        ],
+        "additionalProperties": false
+      },
+      "InternetSemanticInputDto": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20
+              },
+              "page": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10
+              },
+              "order": {
+                "type": "string",
+                "enum": [
+                  "relevance",
+                  "newest",
+                  "most_viewed"
+                ]
+              }
+            },
+            "required": [
+              "query",
+              "limit",
+              "page",
+              "order"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "bvid": {
+                "type": "string",
+                "pattern": "^BV[0-9A-Za-z]{10}$",
+                "minLength": 12,
+                "maxLength": 12
+              }
+            },
+            "required": [
+              "bvid"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "InternetVideoDto": {
+        "type": "object",
+        "properties": {
+          "bvid": {
+            "type": "string",
+            "pattern": "^BV[0-9A-Za-z]{10}$",
+            "minLength": 12,
+            "maxLength": 12
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "author": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "publishedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64,
+            "nullable": true
+          },
+          "durationSeconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 86400,
+            "nullable": true
+          },
+          "viewCount": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "canonicalUrl": {
+            "type": "string",
+            "pattern": "^https://www\\.bilibili\\.com/video/BV[0-9A-Za-z]{10}/?$",
+            "maxLength": 44
+          }
+        },
+        "required": [
+          "bvid",
+          "title",
+          "author",
+          "publishedAt",
+          "durationSeconds",
+          "viewCount",
+          "canonicalUrl"
+        ],
+        "additionalProperties": false
+      },
+      "InternetSearchResultDto": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "bilibili"
+            ]
+          },
+          "profile": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$"
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "search"
+            ]
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "partial"
+            ]
+          },
+          "videos": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "properties": {
+                "bvid": {
+                  "type": "string",
+                  "pattern": "^BV[0-9A-Za-z]{10}$",
+                  "minLength": 12,
+                  "maxLength": 12
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "author": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "publishedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 64,
+                  "nullable": true
+                },
+                "durationSeconds": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 86400,
+                  "nullable": true
+                },
+                "viewCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "nullable": true
+                },
+                "canonicalUrl": {
+                  "type": "string",
+                  "pattern": "^https://www\\.bilibili\\.com/video/BV[0-9A-Za-z]{10}/?$",
+                  "maxLength": 44
+                }
+              },
+              "required": [
+                "bvid",
+                "title",
+                "author",
+                "publishedAt",
+                "durationSeconds",
+                "viewCount",
+                "canonicalUrl"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "totalCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "omittedCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "provider",
+          "profile",
+          "operation",
+          "query",
+          "status",
+          "videos",
+          "totalCount",
+          "omittedCount"
+        ],
+        "additionalProperties": false
+      },
+      "InternetInspectResultDto": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "bilibili"
+            ]
+          },
+          "profile": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$"
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "inspect"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "succeeded"
+            ]
+          },
+          "video": {
+            "type": "object",
+            "properties": {
+              "bvid": {
+                "type": "string",
+                "pattern": "^BV[0-9A-Za-z]{10}$",
+                "minLength": 12,
+                "maxLength": 12
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "author": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "publishedAt": {
+                "type": "string",
+                "format": "date-time",
+                "maxLength": 64,
+                "nullable": true
+              },
+              "durationSeconds": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 86400,
+                "nullable": true
+              },
+              "viewCount": {
+                "type": "integer",
+                "minimum": 0,
+                "nullable": true
+              },
+              "canonicalUrl": {
+                "type": "string",
+                "pattern": "^https://www\\.bilibili\\.com/video/BV[0-9A-Za-z]{10}/?$",
+                "maxLength": 44
+              }
+            },
+            "required": [
+              "bvid",
+              "title",
+              "author",
+              "publishedAt",
+              "durationSeconds",
+              "viewCount",
+              "canonicalUrl"
+            ],
+            "additionalProperties": false
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "provider",
+          "profile",
+          "operation",
+          "status",
+          "video",
+          "description",
+          "tags"
+        ],
+        "additionalProperties": false
+      },
+      "InternetResultDto": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/InternetSearchResultDto"
+          },
+          {
+            "$ref": "#/components/schemas/InternetInspectResultDto"
+          }
+        ],
+        "nullable": true
+      },
+      "InternetReceiptDto": {
+        "type": "object",
+        "properties": {
+          "workflowId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$"
+          },
+          "intentId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$"
+          },
+          "capabilityId": {
+            "type": "string",
+            "enum": [
+              "bilibili.video.search",
+              "bilibili.video.inspect"
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "bilibili"
+            ]
+          },
+          "profile": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$"
+          },
+          "executorType": {
+            "type": "string",
+            "enum": [
+              "mcp",
+              "browser"
+            ]
+          },
+          "environment": {
+            "type": "string",
+            "enum": [
+              "sandbox",
+              "production"
+            ]
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "search",
+              "inspect"
+            ]
+          },
+          "input": {
+            "$ref": "#/components/schemas/InternetSemanticInputDto"
+          },
+          "safeToReplay": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "prepared",
+              "executing",
+              "executed",
+              "verifying",
+              "verified",
+              "unknown",
+              "mismatch",
+              "failed",
+              "waiting_user"
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/InternetResultDto"
+          },
+          "resultDigest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "nullable": true
+          },
+          "errorCode": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,127}$",
+            "nullable": true
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64,
+            "nullable": true
+          }
+        },
+        "required": [
+          "workflowId",
+          "intentId",
+          "capabilityId",
+          "provider",
+          "profile",
+          "executorType",
+          "environment",
+          "operation",
+          "input",
+          "safeToReplay",
+          "status",
+          "result",
+          "resultDigest",
+          "errorCode",
+          "version",
+          "createdAt",
+          "updatedAt",
+          "completedAt"
+        ],
+        "additionalProperties": false
+      },
+      "InternetEvidenceDto": {
+        "type": "object",
+        "properties": {
+          "ordinal": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "provider_read",
+              "navigation",
+              "snapshot",
+              "verification"
+            ]
+          },
+          "evidenceDigest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "nullable": true
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "ordinal",
+          "stage",
+          "evidenceDigest",
+          "observedAt"
+        ],
+        "additionalProperties": false
+      },
+      "InternetOverviewResponse": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/InternetProviderDto"
+          },
+          "executors": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {
+              "$ref": "#/components/schemas/InternetExecutorDto"
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {
+              "$ref": "#/components/schemas/InternetCapabilityDto"
+            }
+          },
+          "summary": {
+            "$ref": "#/components/schemas/InternetOverviewSummaryDto"
+          }
+        },
+        "required": [
+          "provider",
+          "executors",
+          "capabilities",
+          "summary"
+        ],
+        "additionalProperties": false
+      },
+      "InternetActionResponse": {
+        "type": "object",
+        "properties": {
+          "intent": {
+            "$ref": "#/components/schemas/HealthActionIntentDto"
+          },
+          "policyDecision": {
+            "$ref": "#/components/schemas/HomePolicyDecisionDto"
+          },
+          "workflow": {
+            "$ref": "#/components/schemas/InternetWorkflowSummaryDto"
+          }
+        },
+        "required": [
+          "intent",
+          "policyDecision",
+          "workflow"
+        ],
+        "additionalProperties": false
+      },
+      "InternetReceiptListResponse": {
+        "type": "object",
+        "properties": {
+          "receipts": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/InternetReceiptDto"
+            }
+          }
+        },
+        "required": [
+          "receipts"
+        ],
+        "additionalProperties": false
+      },
+      "InternetReceiptResponse": {
+        "type": "object",
+        "properties": {
+          "receipt": {
+            "$ref": "#/components/schemas/InternetReceiptDto"
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 1000,
+            "items": {
+              "$ref": "#/components/schemas/InternetEvidenceDto"
+            }
+          }
+        },
+        "required": [
+          "receipt",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "InternetWorkflowResponse": {
+        "type": "object",
+        "properties": {
+          "workflow": {
+            "$ref": "#/components/schemas/InternetWorkflowDetailDto"
           }
         },
         "required": [
