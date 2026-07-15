@@ -126,8 +126,8 @@ const TERMINAL_COMMAND = new Set<AndroidCommandStatus>(['succeeded', 'failed', '
 const TERMINAL_RECEIPT = new Set<AndroidReceiptStatus>(['verified', 'mismatch', 'failed'])
 const COMMAND_TRANSITIONS: Record<AndroidCommandStatus, readonly AndroidCommandStatus[]> = {
   queued: ['delivered', 'failed', 'cancelled'],
-  delivered: ['acknowledged', 'succeeded', 'failed', 'unknown', 'waiting_user', 'cancelled'],
-  acknowledged: ['succeeded', 'failed', 'unknown', 'waiting_user', 'cancelled'],
+  delivered: ['delivered', 'acknowledged', 'succeeded', 'failed', 'unknown', 'waiting_user', 'cancelled'],
+  acknowledged: ['delivered', 'succeeded', 'failed', 'unknown', 'waiting_user', 'cancelled'],
   unknown: ['delivered', 'succeeded', 'failed', 'waiting_user', 'cancelled'],
   waiting_user: ['delivered', 'cancelled'],
   succeeded: [], failed: [], cancelled: [],
@@ -672,15 +672,19 @@ function boundedJson(value: unknown, maxBytes: number): string {
   return json
 }
 
-function normalizeJson(value: unknown, depth: number, seen: Set<object>): unknown {
+function normalizeJson(value: unknown, depth: number, seen: Set<object>, fieldName?: string): unknown {
   if (value === null || typeof value === 'boolean') return value
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) throw invalid('Android companion JSON number is invalid')
     return value
   }
   if (typeof value === 'string') {
-    if (value.length > 4_000 || isFabricSensitiveString(value)
-      || /(?:^|[\\/])[A-Za-z0-9_. -]+[\\/]/.test(value)) throw invalid('Android companion JSON contains sensitive data')
+    const allowedDigest = !!fieldName && /(?:digest|fingerprint)$/i.test(fieldName) && /^[a-f0-9]{64}$/.test(value)
+    const allowedMimeType = fieldName === 'mimeType' && /^(?:image\/png|image\/webp)$/.test(value)
+    if (value.length > 4_000 || (!allowedDigest && isFabricSensitiveString(value))
+      || (!allowedMimeType && /(?:^|[\\/])[A-Za-z0-9_. -]+[\\/]/.test(value))) {
+      throw invalid('Android companion JSON contains sensitive data')
+    }
     return value
   }
   if (value === null || typeof value !== 'object' || isProxy(value) || depth >= 6 || seen.has(value)) {
@@ -704,7 +708,7 @@ function normalizeJson(value: unknown, depth: number, seen: Set<object>): unknow
       if (!key || key.length > 128 || SENSITIVE_KEY.test(key)) throw invalid('Android companion JSON key is forbidden')
       const property = Object.getOwnPropertyDescriptor(value, key)
       if (!property || !('value' in property)) throw invalid('Android companion JSON accessor is forbidden')
-      output[key] = normalizeJson(property.value, depth + 1, seen)
+      output[key] = normalizeJson(property.value, depth + 1, seen, key)
     }
     return output
   } finally {

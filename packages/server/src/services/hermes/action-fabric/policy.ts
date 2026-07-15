@@ -28,6 +28,11 @@ import {
   isInternetCapability,
   validateInternetSemantics,
 } from '../internet-execution/fabric-contracts'
+import {
+  androidTargetAtoms,
+  isAndroidFabricCapability,
+  validateAndroidSemantics,
+} from '../android-companion/fabric-contracts'
 import { ensureBuiltInFabricRegistry, resolveFabricExecutorInDb } from './registry'
 import type {
   FabricBudgetReservation,
@@ -85,10 +90,13 @@ export function evaluateFabricPolicyInDb(
   const now = instant.toISOString()
   const ledgerDate = utcDate(instant)
   const environments = input.environments ?? (isHealthCapability(input.capabilityId) ? ['sandbox']
-    : isHomeCapability(input.capabilityId) ? ['production'] : ['simulator', 'internal'])
+    : isHomeCapability(input.capabilityId) || isAndroidFabricCapability(input.capabilityId)
+      ? ['production'] : ['simulator', 'internal'])
   const resolution = resolveFabricExecutorInDb(db, input.capabilityId, { environments })
   if (resolution && ((isInternetCapability(input.capabilityId)
     && !validateInternetSemantics(input.capabilityId, input.input))
+    || (isAndroidFabricCapability(input.capabilityId)
+      && !validateAndroidSemantics(input.capabilityId, input.input))
     || !validateFabricSchema(input.input, resolution.capability.inputSchema)
     || !validateHealthSemantics(input.capabilityId, input.input))) {
     throw new Error('FABRIC_CAPABILITY_INPUT_INVALID')
@@ -99,7 +107,9 @@ export function evaluateFabricPolicyInDb(
     : resolution && isHomeCapability(input.capabilityId)
       ? homeTargetAtoms(input.capabilityId, input.target, input.input)
       : resolution && isInternetCapability(input.capabilityId)
-        ? internetTargetAtoms(input.capabilityId, input.target, input.input) : null
+        ? internetTargetAtoms(input.capabilityId, input.target, input.input)
+        : resolution && isAndroidFabricCapability(input.capabilityId)
+          ? androidTargetAtoms(input.capabilityId, input.target, input.input) : null
   const authorizationRequirements = resolution && isHealthCapability(input.capabilityId)
     ? healthStandingAuthorizationRequirements(resolution.capability) : null
   const standingAuthorizationRequired = !!resolution && isHealthCapability(input.capabilityId)
@@ -444,6 +454,12 @@ function targetAllowed(
   }
   if (isInternetCapability(resolution.capability.id)) {
     const atoms = internetTargetAtoms(resolution.capability.id, target, input)
+    if (!atoms || atoms.length === 0) return false
+    const roleTargets = role.decisionAuthority.allowedTargets
+    return !!roleTargets && atoms.every(atom => roleTargets.includes(atom))
+  }
+  if (isAndroidFabricCapability(resolution.capability.id)) {
+    const atoms = androidTargetAtoms(resolution.capability.id, target, input)
     if (!atoms || atoms.length === 0) return false
     const roleTargets = role.decisionAuthority.allowedTargets
     return !!roleTargets && atoms.every(atom => roleTargets.includes(atom))

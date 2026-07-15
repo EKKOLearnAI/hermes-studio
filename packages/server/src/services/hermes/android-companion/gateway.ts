@@ -19,6 +19,13 @@ import {
   AndroidCompanionCapabilityService,
   type AndroidCapabilityReportPayload,
 } from './capability-service'
+import { AndroidCompanionCommandBridge } from './command-bridge'
+import { createAndroidCompanionExecutorAdapter } from './executor'
+import { isAndroidFabricCapability } from './fabric-contracts'
+import {
+  registerFabricExecutorAdapter,
+  unregisterFabricExecutorAdapter,
+} from '../action-fabric/executors'
 import {
   AndroidCompanionAuthenticationError,
   AndroidCompanionValidationError,
@@ -312,6 +319,8 @@ type RuntimeSingleton = {
   gateway: AndroidCompanionGateway
   pairing: AndroidCompanionPairingService
   capabilities: AndroidCompanionCapabilityService
+  commands: AndroidCompanionCommandBridge
+  adapterIds: Set<string>
 }
 
 let singleton: RuntimeSingleton | null = null
@@ -322,7 +331,16 @@ export function getAndroidCompanionRuntime(): RuntimeSingleton {
   const store = new AndroidCompanionStore(database.database)
   const studioIdentity = async () => normalizeStudioIdentity(await getDeviceIdentity())
   const capabilities = new AndroidCompanionCapabilityService({ store })
-  const gateway = new AndroidCompanionGateway({
+  const adapterIds = new Set<string>()
+  let gateway!: AndroidCompanionGateway
+  const commands = new AndroidCompanionCommandBridge({
+    store,
+    transport: {
+      send: (deviceId, reply) => gateway.send(deviceId, reply),
+      isConnected: deviceId => gateway.isConnected(deviceId),
+    },
+  })
+  gateway = new AndroidCompanionGateway({
     store,
     studioIdentity,
     onMessage(message) {
@@ -330,6 +348,24 @@ export function getAndroidCompanionRuntime(): RuntimeSingleton {
         const result = capabilities.applyReport(
           message.deviceId, message.messageType, message.payload as AndroidCapabilityReportPayload,
         )
+        for (const executor of result.executors) {
+          if (!isAndroidFabricCapability(executor.capabilityId)) {
+            throw new AndroidCompanionValidationError('Android executor capability is invalid')
+          }
+          if (adapterIds.has(executor.executorId)) continue
+          try {
+            registerFabricExecutorAdapter(createAndroidCompanionExecutorAdapter({
+              id: executor.executorId,
+              deviceId: message.deviceId,
+              capabilityId: executor.capabilityId,
+              store,
+              bridge: commands,
+            }))
+            adapterIds.add(executor.executorId)
+          } catch (error) {
+            if (!(error instanceof Error) || error.message !== 'FABRIC_EXECUTOR_ADAPTER_EXISTS') throw error
+          }
+        }
         return {
           messageType: 'ack',
           bindingId: message.bindingId,
@@ -346,7 +382,7 @@ export function getAndroidCompanionRuntime(): RuntimeSingleton {
           payload: { acknowledgedSequence: message.sequence },
         }
       }
-      return undefined
+      return commands.handleMessage(message)
     },
   })
   singleton = {
@@ -355,6 +391,8 @@ export function getAndroidCompanionRuntime(): RuntimeSingleton {
     gateway,
     pairing: new AndroidCompanionPairingService({ store, studioIdentity }),
     capabilities,
+    commands,
+    adapterIds,
   }
   return singleton
 }
@@ -363,6 +401,9 @@ export async function shutdownAndroidCompanionRuntime(): Promise<void> {
   const active = singleton
   singleton = null
   if (!active) return
+  for (const id of active.adapterIds) unregisterFabricExecutorAdapter(id)
+  active.adapterIds.clear()
+  active.commands.shutdown()
   await active.gateway.shutdown()
   active.database.close()
 }
