@@ -256,3 +256,15 @@ export interface LifeCheckpoint {
   details: Record<string, unknown>
   observedAt: string
 }
+
+export interface LifeActivationReview {
+  id: string
+  accountId: string
+  fromMode: LifeExecutionMode
+  toMode: LifeExecutionMode
+  actorUserId: string
+  shadowEvidenceDigest: string | null
+  limitsDigest: string
+  approved: boolean
+  createdAt: string
+}

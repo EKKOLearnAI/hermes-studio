@@ -24,7 +24,7 @@ const SEMANTIC_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/
 const CURRENCY = /^[A-Z]{3}$/
 const DIGEST = /^[a-f0-9]{64}$/
 const ERROR_CODE = /^[A-Z][A-Z0-9_]{1,127}$/
-const SECRET_KEY = /(?:password|passwd|secret|token|cookie|authorization|api.?key|access.?key|session|email|phone|mobile|address|passport|identity|card|cvv|cvc)/i
+const SECRET_KEY = /(?:password|passwd|secret|token|cookie|authorization|api.?key|access.?key|session(?:[_-]?(?:id|token|key|cookie|secret))?$|email|phone|mobile|address|passport|identity|card|cvv|cvc)/i
 const MAX_JSON_BYTES = 32_768
 const MAX_JSON_DEPTH = 8
 const MAX_JSON_NODES = 512
@@ -216,4 +216,3 @@ function denseArray(value: unknown[]): boolean {
       return !!descriptor?.enumerable && 'value' in descriptor
     })
 }
-

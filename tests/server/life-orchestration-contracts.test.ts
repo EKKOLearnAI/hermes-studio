@@ -74,6 +74,7 @@ describe('life and entertainment orchestration contracts', () => {
   it('rejects secrets, credential-shaped values, sparse arrays, accessors, proxies, and oversized data', () => {
     expect(() => assertLifeSafeData({ planId: 'plan-1', reasonCodes: ['schedule_fit'], amountMinor: 100 }))
       .not.toThrow()
+    expect(() => assertLifeSafeData({ sessions: [{ optionId: 'option-1' }] })).not.toThrow()
     for (const value of [{ accessToken: 'hidden' }, { email: 'hidden' }, { label: 'Bearer abcdefghijklmnopqrstuvwxyz' },
       { value: Number.NaN }, { text: 'x'.repeat(2_001) }, Array.from({ length: 65 }, () => 'x')]) {
       expect(() => assertLifeSafeData(value)).toThrow(/LIFE_/)
@@ -88,4 +89,3 @@ describe('life and entertainment orchestration contracts', () => {
     expect(() => assertLifeSafeData(new Proxy({ planId: 'plan-1' }, {}))).toThrow('LIFE_DATA_INVALID')
   })
 })
-
