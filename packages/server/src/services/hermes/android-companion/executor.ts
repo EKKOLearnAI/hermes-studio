@@ -21,6 +21,7 @@ import {
 import type { AndroidCompanionCommandBridge, AndroidCommandBridgeOutcome } from './command-bridge'
 import type { AndroidCompanionStore } from './store'
 import type { AndroidExecutionReceipt } from './types'
+import { androidScreenArtifactId } from './screen-artifact-service'
 
 const EXECUTOR_ID = /^[a-z][a-z0-9]*(?:[.-][a-z0-9][a-z0-9-]*)*$/
 const FRESH_OBSERVATION_MS = 2 * 60_000
@@ -300,12 +301,27 @@ function completeLocalCaptureVerification(
   context: FabricExecutionContext,
   now: Date,
 ): FabricVerifyResult {
-  if (!receipt.result || !freshTimestamp(receipt.result.capturedAt, now)
-    || receipt.result.permissionGrantActive !== true) {
+  const artifact = receipt.commandId ? store.getScreenArtifactByCommand(receipt.commandId) : null
+  const expectedArtifactId = receipt.result && receipt.commandId ? androidScreenArtifactId({
+    deviceId: receipt.deviceId,
+    workflowId: receipt.workflowId,
+    commandId: receipt.commandId,
+    captureId: String(receipt.result.captureId),
+    digest: String(receipt.result.digest),
+    capturedAt: String(receipt.result.capturedAt),
+  }) : null
+  if (!receipt.result || !artifact || artifact.workflowId !== receipt.workflowId || artifact.deviceId !== receipt.deviceId
+    || artifact.id !== expectedArtifactId || artifact.digest !== receipt.result.digest || artifact.mimeType !== receipt.result.mimeType
+    || artifact.width !== receipt.result.width || artifact.height !== receipt.result.height
+    || artifact.byteSize !== receipt.result.byteSize || artifact.capturedAt !== receipt.result.capturedAt) {
+    return markVerificationMismatch(store, receipt, context, 'ANDROID_CAPTURE_ARTIFACT_MISMATCH')
+  }
+  if (!freshTimestamp(receipt.result.capturedAt, now) || receipt.result.permissionGrantActive !== true) {
     return markVerificationMismatch(store, receipt, context, 'ANDROID_CAPTURE_NOT_FRESH')
   }
   return completeVerified(store, receipt, context, {
     strategy: 'fresh_capture_digest_dimensions_and_grant',
+    artifactId: artifact.id,
     captureId: receipt.result.captureId,
     digest: receipt.result.digest,
     verifiedAt: now.toISOString(),

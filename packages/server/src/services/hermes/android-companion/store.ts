@@ -22,6 +22,7 @@ import {
   type AndroidNotificationObservation,
   type AndroidNotificationSensitivity,
   type AndroidReceiptStatus,
+  type AndroidScreenArtifact,
 } from './types'
 
 export interface PairAndroidDeviceInput {
@@ -110,6 +111,20 @@ export interface RemoveAndroidNotificationInput {
   removedAt: string
 }
 
+export interface RecordAndroidScreenArtifactInput {
+  id: string
+  deviceId: string
+  workflowId: string
+  commandId: string
+  digest: string
+  mimeType: AndroidScreenArtifact['mimeType']
+  width: number
+  height: number
+  byteSize: number
+  encryptionContextDigest: string
+  capturedAt: string
+}
+
 type DeviceRow = {
   id: string; installation_id: string; signing_public_key: string; exchange_public_key: string
   signing_fingerprint: string; exchange_fingerprint: string; label: string; android_version: string
@@ -146,6 +161,12 @@ type NotificationRow = {
   channel_hash: string | null; title_summary: string; text_summary: string
   sensitivity: AndroidNotificationSensitivity; source_sequence: number; provenance_digest: string
   posted_at: string; removed_at: string | null; version: number; created_at: string; updated_at: string
+}
+
+type ArtifactRow = {
+  id: string; device_id: string; workflow_id: string; command_id: string; digest: string
+  mime_type: AndroidScreenArtifact['mimeType']; width: number; height: number; byte_size: number
+  encryption_context_digest: string; captured_at: string; created_at: string
 }
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$/
@@ -381,6 +402,59 @@ export class AndroidCompanionStore {
     return (rows as unknown as NotificationRow[]).map(notificationFromRow)
   }
 
+  recordScreenArtifact(input: RecordAndroidScreenArtifactInput): {
+    disposition: 'created' | 'replayed'; artifact: AndroidScreenArtifact
+  } {
+    const normalized = normalizeScreenArtifact(input)
+    return transaction(this.database, () => {
+      const device = this.deviceRow(normalized.deviceId)
+      if (!device || device.state !== 'paired') throw invalid('Android companion is unavailable')
+      const command = this.commandRow(normalized.commandId)
+      if (!command || command.device_id !== normalized.deviceId || command.workflow_id !== normalized.workflowId
+        || command.kind !== 'screen_capture' || !['delivered', 'acknowledged', 'succeeded'].includes(command.status)) {
+        throw new AndroidCompanionIdentityConflictError('Android screen artifact command binding is invalid')
+      }
+      const existing = (this.database.prepare('SELECT * FROM android_screen_artifacts WHERE id=?').get(normalized.id)
+        ?? this.database.prepare('SELECT * FROM android_screen_artifacts WHERE command_id=?')
+          .get(normalized.commandId)) as ArtifactRow | undefined
+      if (existing) {
+        if (!sameScreenArtifact(existing, normalized)) {
+          throw new AndroidCompanionIdentityConflictError('Android screen artifact changed material')
+        }
+        return { disposition: 'replayed', artifact: artifactFromRow(existing) }
+      }
+      this.database.prepare(`INSERT INTO android_screen_artifacts
+        (id,device_id,workflow_id,command_id,digest,mime_type,width,height,byte_size,
+         encryption_context_digest,captured_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        normalized.id, normalized.deviceId, normalized.workflowId, normalized.commandId, normalized.digest,
+        normalized.mimeType, normalized.width, normalized.height, normalized.byteSize,
+        normalized.encryptionContextDigest, normalized.capturedAt, normalized.createdAt,
+      )
+      return { disposition: 'created', artifact: this.requiredScreenArtifact(normalized.id) }
+    })
+  }
+
+  getScreenArtifact(id: string): AndroidScreenArtifact | null {
+    const row = this.artifactRow(identifier(id, 'Android screen artifact id'))
+    return row ? artifactFromRow(row) : null
+  }
+
+  getScreenArtifactByCommand(commandId: string): AndroidScreenArtifact | null {
+    const row = this.database.prepare('SELECT * FROM android_screen_artifacts WHERE command_id=?')
+      .get(identifier(commandId, 'Android command id')) as ArtifactRow | undefined
+    return row ? artifactFromRow(row) : null
+  }
+
+  listScreenArtifacts(input: { workflowId?: string; limit?: number } = {}): AndroidScreenArtifact[] {
+    const limit = listLimit(input.limit ?? 100)
+    const rows = input.workflowId
+      ? this.database.prepare(`SELECT * FROM android_screen_artifacts WHERE workflow_id=?
+          ORDER BY captured_at DESC,id LIMIT ?`).all(workflowIdentifier(input.workflowId), limit)
+      : this.database.prepare(`SELECT * FROM android_screen_artifacts
+          ORDER BY captured_at DESC,id LIMIT ?`).all(limit)
+    return (rows as unknown as ArtifactRow[]).map(artifactFromRow)
+  }
+
   queueCommand(input: QueueAndroidCommandInput): {
     disposition: 'created' | 'replayed'; command: AndroidCompanionCommand
   } {
@@ -567,6 +641,11 @@ export class AndroidCompanionStore {
       .get(id) as NotificationRow | undefined ?? null
   }
 
+  private artifactRow(id: string): ArtifactRow | null {
+    return this.database.prepare('SELECT * FROM android_screen_artifacts WHERE id=?')
+      .get(id) as ArtifactRow | undefined ?? null
+  }
+
   private advanceDeviceReceivedSequence(device: DeviceRow, sequence: number, now: string): void {
     if (sequence <= device.last_received_sequence) throw invalid('Android notification source sequence is not fresh')
     this.database.prepare(`UPDATE android_companion_devices SET last_received_sequence=?,last_seen_at=?,
@@ -601,6 +680,12 @@ export class AndroidCompanionStore {
     const row = this.notificationRow(id)
     if (!row) throw new AndroidCompanionNotFoundError(`Android notification observation not found: ${id}`)
     return notificationFromRow(row)
+  }
+
+  private requiredScreenArtifact(id: string): AndroidScreenArtifact {
+    const row = this.artifactRow(id)
+    if (!row) throw new AndroidCompanionNotFoundError(`Android screen artifact not found: ${id}`)
+    return artifactFromRow(row)
   }
 }
 
@@ -728,6 +813,30 @@ function normalizeNotificationRemoval(input: RemoveAndroidNotificationInput) {
   }
 }
 
+function normalizeScreenArtifact(input: RecordAndroidScreenArtifactInput) {
+  const id = identifier(input.id, 'Android screen artifact id')
+  if (id.length < 10 || !['image/png', 'image/webp'].includes(input.mimeType)
+    || !Number.isSafeInteger(input.width) || input.width < 1 || input.width > 16_384
+    || !Number.isSafeInteger(input.height) || input.height < 1 || input.height > 16_384
+    || !Number.isSafeInteger(input.byteSize) || input.byteSize < 1 || input.byteSize > 52_428_800) {
+    throw invalid('Android screen artifact metadata is invalid')
+  }
+  return {
+    id,
+    deviceId: deviceIdentifier(input.deviceId),
+    workflowId: workflowIdentifier(input.workflowId),
+    commandId: identifier(input.commandId, 'Android command id'),
+    digest: digest(input.digest, 'Android screen artifact digest'),
+    mimeType: input.mimeType,
+    width: input.width,
+    height: input.height,
+    byteSize: input.byteSize,
+    encryptionContextDigest: digest(input.encryptionContextDigest, 'Android artifact encryption context digest'),
+    capturedAt: timestamp(input.capturedAt, 'Android screen artifact capture time'),
+    createdAt: new Date().toISOString(),
+  }
+}
+
 function assertCommandTransition(status: AndroidCommandStatus, sequence: number | null, response: string | null, error: string | null): void {
   if (status === 'delivered' && sequence === null) throw invalid('Delivered Android command requires a sequence')
   if (status !== 'delivered' && sequence !== null) throw invalid('Only delivery may assign an Android command sequence')
@@ -822,6 +931,23 @@ function notificationFromRow(row: NotificationRow): AndroidNotificationObservati
   }
 }
 
+function artifactFromRow(row: ArtifactRow): AndroidScreenArtifact {
+  return {
+    id: row.id,
+    deviceId: row.device_id,
+    workflowId: row.workflow_id,
+    commandId: row.command_id,
+    digest: row.digest,
+    mimeType: row.mime_type,
+    width: row.width,
+    height: row.height,
+    byteSize: row.byte_size,
+    encryptionContextDigest: row.encryption_context_digest,
+    capturedAt: row.captured_at,
+    createdAt: row.created_at,
+  }
+}
+
 function sameDeviceIdentity(row: DeviceRow, value: ReturnType<typeof normalizePairing>): boolean {
   return row.id === value.deviceId && row.installation_id === value.installationId
     && row.signing_public_key === value.signingPublicKey && row.exchange_public_key === value.exchangePublicKey
@@ -847,6 +973,13 @@ function sameNotificationIdentity(row: NotificationRow, value: ReturnType<typeof
     && row.channel_hash === value.channelHash && row.title_summary === value.titleSummary
     && row.text_summary === value.textSummary && row.sensitivity === value.sensitivity
     && row.provenance_digest === value.provenanceDigest && row.posted_at === value.postedAt
+}
+
+function sameScreenArtifact(row: ArtifactRow, value: ReturnType<typeof normalizeScreenArtifact>): boolean {
+  return row.id === value.id && row.device_id === value.deviceId && row.workflow_id === value.workflowId
+    && row.command_id === value.commandId && row.digest === value.digest && row.mime_type === value.mimeType
+    && row.width === value.width && row.height === value.height && row.byte_size === value.byteSize
+    && row.encryption_context_digest === value.encryptionContextDigest && row.captured_at === value.capturedAt
 }
 
 function publicKey(value: unknown, type: 'ed25519' | 'x25519', label: string): string {

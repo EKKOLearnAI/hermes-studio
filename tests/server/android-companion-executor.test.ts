@@ -9,6 +9,7 @@ import {
   ANDROID_SCREEN_CAPTURE_VERIFICATION,
   AndroidCompanionCommandBridge,
   AndroidCompanionStore,
+  androidScreenArtifactId,
   createAndroidCompanionExecutorAdapter,
   digestAndroidCapabilityReport,
   initAndroidCompanionSchema,
@@ -95,6 +96,21 @@ describe('Android Action Fabric executor', () => {
     await eventually(() => transport.sent.length === 1)
     const command = commandPayload(transport.sent[0]!.reply)
     const output = captureOutput(new Date().toISOString())
+    const artifactId = androidScreenArtifactId({ deviceId, workflowId: context.workflowId,
+      commandId: command.commandId, captureId: output.captureId, digest: output.digest, capturedAt: output.capturedAt })
+    store.recordScreenArtifact({
+      id: artifactId,
+      deviceId,
+      workflowId: context.workflowId,
+      commandId: command.commandId,
+      digest: output.digest,
+      mimeType: output.mimeType,
+      width: output.width,
+      height: output.height,
+      byteSize: output.byteSize,
+      encryptionContextDigest: 'e'.repeat(64),
+      capturedAt: output.capturedAt,
+    })
     bridge.handleMessage(resultMessage(deviceId, command, output, 'succeeded', null))
     await expect(execution).resolves.toMatchObject({ outcome: 'succeeded', output })
     await expect(executor.verify({
@@ -106,7 +122,8 @@ describe('Android Action Fabric executor', () => {
     expect(transport.sent).toHaveLength(1)
     expect(store.getReceipt(context.workflowId)).toMatchObject({
       status: 'verified',
-      verification: { strategy: ANDROID_SCREEN_CAPTURE_VERIFICATION, captureId: output.captureId, digest: output.digest },
+      verification: { strategy: ANDROID_SCREEN_CAPTURE_VERIFICATION, artifactId,
+        captureId: output.captureId, digest: output.digest },
     })
   })
 
@@ -122,6 +139,26 @@ describe('Android Action Fabric executor', () => {
     expect(prepared).toMatchObject({ outcome: 'failed', errorCode: 'ANDROID_CONTEXT_INVALID' })
     expect(store.getReceipt(context.workflowId)).toBeNull()
     expect(store.listCommands()).toEqual([])
+  })
+
+  it('cannot verify a screen result without its separately bound encrypted artifact metadata', async () => {
+    const executor = createAndroidCompanionExecutorAdapter({
+      id: 'android-test-screen-capture', deviceId, capabilityId: 'android.screen.capture', store, bridge,
+    })
+    const context = screenContext('execute-token-capture-missing-artifact')
+    const prepared = await executor.prepare(context)
+    const execution = executor.execute({ ...context, preparedOutput: prepared.output })
+    await eventually(() => transport.sent.length === 1)
+    const command = commandPayload(transport.sent[0]!.reply)
+    const output = captureOutput(new Date().toISOString())
+    bridge.handleMessage(resultMessage(deviceId, command, output, 'succeeded', null))
+    await execution
+    await expect(executor.verify({
+      ...context,
+      executionToken: 'verify-token-capture-missing-artifact',
+      preparedOutput: prepared.output,
+      executionOutput: output,
+    })).resolves.toMatchObject({ outcome: 'mismatch', errorCode: 'ANDROID_CAPTURE_ARTIFACT_MISMATCH' })
   })
 
   it('returns a retryable offline outcome without claiming device execution', async () => {
