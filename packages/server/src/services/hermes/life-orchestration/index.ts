@@ -1,6 +1,7 @@
 export * from './contracts'
 export * from './constraint-service'
 export * from './database'
+export * from './fabric-contracts'
 export * from './observation-service'
 export * from './planner'
 export * from './provider'

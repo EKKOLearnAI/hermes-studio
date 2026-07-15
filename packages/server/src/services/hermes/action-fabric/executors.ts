@@ -7,6 +7,7 @@ import { validateHomeOutputSemantics } from '../home/fabric-contracts'
 import { validateInternetOutputSemantics } from '../internet-execution/fabric-contracts'
 import { validateAndroidOutputSemantics } from '../android-companion/fabric-contracts'
 import { validateCommerceFabricOutput } from '../commerce-autonomy/fabric-contracts'
+import { validateLifeFabricOutput } from '../life-orchestration/fabric-contracts'
 
 export type FabricExecutorPhase = 'prepare' | 'execute' | 'verify' | 'interrupt' | 'compensate'
 
@@ -164,7 +165,8 @@ export async function invokeFabricExecutor(
         || !validateHomeOutputSemantics(context.capabilityId, context.input, result.output)
         || !validateInternetOutputSemantics(context.capabilityId, context.input, result.output)
         || !validateAndroidOutputSemantics(context.capabilityId, context.input, result.output)
-        || !validateCommerceFabricOutput(context.capabilityId, context.input, result.output))) {
+        || !validateCommerceFabricOutput(context.capabilityId, context.input, result.output)
+        || !validateLifeFabricOutput(context.capabilityId, context.input, result.output))) {
       return contractViolationResult(phase, context.now)
     }
     return result

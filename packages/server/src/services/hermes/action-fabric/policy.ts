@@ -38,6 +38,11 @@ import {
   isCommerceFabricCapability,
   validateCommerceFabricSemantics,
 } from '../commerce-autonomy/fabric-contracts'
+import {
+  isLifeFabricCapability,
+  lifeTargetAtoms,
+  validateLifeFabricSemantics,
+} from '../life-orchestration/fabric-contracts'
 import { ensureBuiltInFabricRegistry, resolveFabricExecutorInDb } from './registry'
 import type {
   FabricBudgetReservation,
@@ -96,7 +101,7 @@ export function evaluateFabricPolicyInDb(
   const ledgerDate = utcDate(instant)
   const environments = input.environments ?? (isHealthCapability(input.capabilityId) ? ['sandbox']
     : isHomeCapability(input.capabilityId) || isAndroidFabricCapability(input.capabilityId)
-      ? ['production'] : isCommerceFabricCapability(input.capabilityId)
+      ? ['production'] : isCommerceFabricCapability(input.capabilityId) || isLifeFabricCapability(input.capabilityId)
         ? ['sandbox', 'production'] : ['simulator', 'internal'])
   const resolution = resolveFabricExecutorInDb(db, input.capabilityId, { environments })
   if (resolution && ((isInternetCapability(input.capabilityId)
@@ -105,6 +110,8 @@ export function evaluateFabricPolicyInDb(
       && !validateAndroidSemantics(input.capabilityId, input.input))
     || (isCommerceFabricCapability(input.capabilityId)
       && !validateCommerceFabricSemantics(input.capabilityId, input.input))
+    || (isLifeFabricCapability(input.capabilityId)
+      && !validateLifeFabricSemantics(input.capabilityId, input.input))
     || !validateFabricSchema(input.input, resolution.capability.inputSchema)
     || !validateHealthSemantics(input.capabilityId, input.input))) {
     throw new Error('FABRIC_CAPABILITY_INPUT_INVALID')
@@ -119,7 +126,9 @@ export function evaluateFabricPolicyInDb(
         : resolution && isAndroidFabricCapability(input.capabilityId)
           ? androidTargetAtoms(input.capabilityId, input.target, input.input)
           : resolution && isCommerceFabricCapability(input.capabilityId)
-            ? commerceTargetAtoms(input.capabilityId, input.target, input.input) : null
+            ? commerceTargetAtoms(input.capabilityId, input.target, input.input)
+            : resolution && isLifeFabricCapability(input.capabilityId)
+              ? lifeTargetAtoms(input.capabilityId, input.target, input.input) : null
   const authorizationRequirements = resolution && isHealthCapability(input.capabilityId)
     ? healthStandingAuthorizationRequirements(resolution.capability) : null
   const standingAuthorizationRequired = !!resolution && isHealthCapability(input.capabilityId)
@@ -241,7 +250,7 @@ export function evaluateFabricPolicyInDb(
         }
         if (resolution.capability.sideEffect && !resolution.capability.reversible
           && !standingAuthorization
-          && !trustedPlanRestore && resolution.capability.id !== 'home.device.refresh') {
+          && !trustedPlanRestore && !isLocalProjectionRefresh(resolution.capability.id)) {
           reasons.push('irreversible_requires_approval')
           outcome = 'waiting_user'
         }
@@ -293,6 +302,10 @@ export function evaluateFabricPolicyInDb(
       policyVersion: POLICY_VERSION, materialInputDigest, policySnapshot: snapshot, sanitizedSummary,
       budget, createdAt: now,
   }
+}
+
+function isLocalProjectionRefresh(capabilityId: string): boolean {
+  return capabilityId === 'home.device.refresh' || capabilityId === 'life.source.sync'
 }
 
 export function reserveFabricBudget(decisionId: string): FabricBudgetReservation {
@@ -476,6 +489,12 @@ function targetAllowed(
   }
   if (isCommerceFabricCapability(resolution.capability.id)) {
     const atoms = commerceTargetAtoms(resolution.capability.id, target, input)
+    if (!atoms || atoms.length === 0) return false
+    const roleTargets = role.decisionAuthority.allowedTargets
+    return !!roleTargets && atoms.every(atom => roleTargets.includes(atom))
+  }
+  if (isLifeFabricCapability(resolution.capability.id)) {
+    const atoms = lifeTargetAtoms(resolution.capability.id, target, input)
     if (!atoms || atoms.length === 0) return false
     const roleTargets = role.decisionAuthority.allowedTargets
     return !!roleTargets && atoms.every(atom => roleTargets.includes(atom))

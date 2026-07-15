@@ -70,7 +70,8 @@ describe('action fabric registry', () => {
     ensureBuiltInFabricRegistry()
 
     expect(listFabricCapabilities().filter(item => !item.id.startsWith('health.') && !item.id.startsWith('home.')
-      && !item.id.startsWith('bilibili.') && !item.id.startsWith('android.') && !item.id.startsWith('commerce.'))
+      && !item.id.startsWith('bilibili.') && !item.id.startsWith('android.') && !item.id.startsWith('commerce.')
+      && !item.id.startsWith('life.'))
       .map(item => [item.id, item.contractDigest])).toEqual([
       ['internal.twin.preference.set', 'dbdbf09d1e81e330cd0381e0ec5a12a4d56dd2d0b290c1fe65383af9e794ab09'],
       ['simulator.counter.increment', '3146a84ee07c62677ee6e608668c0c71f8b99b1cbecd81d546437f188f71a50e'],
@@ -78,7 +79,8 @@ describe('action fabric registry', () => {
     ])
     expect(listFabricExecutors().filter(item => !item.id.startsWith('health-') && !item.id.startsWith('home-')
       && !item.id.startsWith('bilibili-') && !item.id.startsWith('android-')
-      && !item.id.startsWith('commerce-')).map(item => [item.id, item.type, item.environment, item.configuration.externalWrite])).toEqual([
+      && !item.id.startsWith('commerce-') && !item.id.startsWith('life-'))
+      .map(item => [item.id, item.type, item.environment, item.configuration.externalWrite])).toEqual([
       ['internal-twin', 'internal', 'internal', false],
       ['simulator-main', 'simulator', 'simulator', false],
     ])
@@ -86,7 +88,7 @@ describe('action fabric registry', () => {
       SELECT executor_id, capability_id, capability_version
       FROM fabric_executor_capabilities WHERE capability_id NOT LIKE 'health.%' AND capability_id NOT LIKE 'home.%'
         AND capability_id NOT LIKE 'bilibili.%' AND capability_id NOT LIKE 'android.%'
-        AND capability_id NOT LIKE 'commerce.%'
+        AND capability_id NOT LIKE 'commerce.%' AND capability_id NOT LIKE 'life.%'
       ORDER BY capability_id
     `).all())).toEqual([
       expect.objectContaining({ executor_id: 'internal-twin', capability_id: 'internal.twin.preference.set', capability_version: 1 }),
@@ -109,7 +111,7 @@ describe('action fabric registry', () => {
       health: 'degraded',
       healthDetails: { reason: 'maintenance' },
     })
-    expect(withActionFabricDb(db => db.prepare("SELECT COUNT(*) AS count FROM fabric_executor_capabilities WHERE capability_id NOT LIKE 'health.%' AND capability_id NOT LIKE 'home.%' AND capability_id NOT LIKE 'bilibili.%' AND capability_id NOT LIKE 'android.%' AND capability_id NOT LIKE 'commerce.%'").get()))
+    expect(withActionFabricDb(db => db.prepare("SELECT COUNT(*) AS count FROM fabric_executor_capabilities WHERE capability_id NOT LIKE 'health.%' AND capability_id NOT LIKE 'home.%' AND capability_id NOT LIKE 'bilibili.%' AND capability_id NOT LIKE 'android.%' AND capability_id NOT LIKE 'commerce.%' AND capability_id NOT LIKE 'life.%'").get()))
       .toEqual({ count: 3 })
   })
 
