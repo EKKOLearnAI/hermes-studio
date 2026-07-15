@@ -1,10 +1,12 @@
 import { internetExecutionMessages, internetSystemMessages } from '../internet-execution'
 import { androidCompanionMessages, androidSystemMessages } from '../android-companion'
+import { commerceMessages, commerceSystemMessages } from '../commerce'
 
 export default {
-  personalOS: { systems: { internet: internetSystemMessages.ru, android: androidSystemMessages.ru } },
+  personalOS: { systems: { internet: internetSystemMessages.ru, android: androidSystemMessages.ru, commerce: commerceSystemMessages.ru } },
   internetExecution: internetExecutionMessages.ru,
   androidCompanion: androidCompanionMessages.ru,
+  commerce: commerceMessages.ru,
 
   login: {
     title: 'Hermes Web UI',

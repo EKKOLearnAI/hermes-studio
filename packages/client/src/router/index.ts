@@ -113,6 +113,11 @@ const router = createRouter({
       component: () => import('@/views/hermes/HomeView.vue'),
     },
     {
+      path: '/hermes/personal-os/commerce',
+      name: 'hermes.commerce',
+      component: () => import('@/views/hermes/CommerceView.vue'),
+    },
+    {
       path: '/hermes/personal-os/internet-execution',
       name: 'hermes.internetExecution',
       component: () => import('@/views/hermes/InternetExecutionView.vue'),
