@@ -1,12 +1,14 @@
 import { internetExecutionMessages, internetSystemMessages } from '../internet-execution'
 import { androidCompanionMessages, androidSystemMessages } from '../android-companion'
 import { commerceMessages, commerceSystemMessages } from '../commerce'
+import { lifeMessages, lifeSystemMessages } from '../life-orchestration'
 
 export default {
-  personalOS: { systems: { internet: internetSystemMessages.ja, android: androidSystemMessages.ja, commerce: commerceSystemMessages.ja } },
+  personalOS: { systems: { internet: internetSystemMessages.ja, android: androidSystemMessages.ja, commerce: commerceSystemMessages.ja, life: lifeSystemMessages.ja } },
   internetExecution: internetExecutionMessages.ja,
   androidCompanion: androidCompanionMessages.ja,
   commerce: commerceMessages.ja,
+  life: lifeMessages.ja,
   // ログイン
   login: {
     title: 'Hermes Web UI',

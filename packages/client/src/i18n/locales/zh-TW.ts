@@ -1,12 +1,14 @@
 import { internetExecutionMessages, internetSystemMessages } from '../internet-execution'
 import { androidCompanionMessages, androidSystemMessages } from '../android-companion'
 import { commerceMessages, commerceSystemMessages } from '../commerce'
+import { lifeMessages, lifeSystemMessages } from '../life-orchestration'
 
 export default {
-  personalOS: { systems: { internet: internetSystemMessages['zh-TW'], android: androidSystemMessages['zh-TW'], commerce: commerceSystemMessages['zh-TW'] } },
+  personalOS: { systems: { internet: internetSystemMessages['zh-TW'], android: androidSystemMessages['zh-TW'], commerce: commerceSystemMessages['zh-TW'], life: lifeSystemMessages['zh-TW'] } },
   internetExecution: internetExecutionMessages['zh-TW'],
   androidCompanion: androidCompanionMessages['zh-TW'],
   commerce: commerceMessages['zh-TW'],
+  life: lifeMessages['zh-TW'],
   // 登入
   login: {
     title: 'Hermes Web UI',

@@ -1,6 +1,7 @@
 import { internetExecutionMessages, internetSystemMessages } from '../internet-execution'
 import { androidCompanionMessages, androidSystemMessages } from '../android-companion'
 import { commerceMessages, commerceSystemMessages } from '../commerce'
+import { lifeMessages, lifeSystemMessages } from '../life-orchestration'
 
 export default {
   // 登录
@@ -301,6 +302,7 @@ export default {
       internet: internetSystemMessages.zh,
       android: androidSystemMessages.zh,
       commerce: commerceSystemMessages.zh,
+      life: lifeSystemMessages.zh,
     },
     memoryContext: '记忆上下文',
     reviewQueue: '审核队列',
@@ -328,6 +330,7 @@ export default {
   internetExecution: internetExecutionMessages.zh,
   androidCompanion: androidCompanionMessages.zh,
   commerce: commerceMessages.zh,
+  life: lifeMessages.zh,
 
   home: {
     title: '家庭指挥中心',

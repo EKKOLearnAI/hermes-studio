@@ -1,6 +1,7 @@
 import { internetExecutionMessages, internetSystemMessages } from '../internet-execution'
 import { androidCompanionMessages, androidSystemMessages } from '../android-companion'
 import { commerceMessages, commerceSystemMessages } from '../commerce'
+import { lifeMessages, lifeSystemMessages } from '../life-orchestration'
 
 export default {
   // Login
@@ -301,6 +302,7 @@ export default {
       internet: internetSystemMessages.en,
       android: androidSystemMessages.en,
       commerce: commerceSystemMessages.en,
+      life: lifeSystemMessages.en,
     },
     memoryContext: 'Memory Context',
     reviewQueue: 'Review Queue',
@@ -328,6 +330,7 @@ export default {
   internetExecution: internetExecutionMessages.en,
   androidCompanion: androidCompanionMessages.en,
   commerce: commerceMessages.en,
+  life: lifeMessages.en,
 
   home: {
     title: 'Home Command Center',

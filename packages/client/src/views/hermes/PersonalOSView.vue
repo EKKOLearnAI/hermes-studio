@@ -50,6 +50,7 @@ const systemModules = [
   { key: 'health', href: '#/hermes/personal-os/health' },
   { key: 'home', href: '#/hermes/personal-os/home' },
   { key: 'commerce', href: '#/hermes/personal-os/commerce' },
+  { key: 'life', href: '#/hermes/personal-os/life' },
   { key: 'internet', href: '#/hermes/personal-os/internet-execution' },
   { key: 'android', href: '#/hermes/personal-os/android-companion' },
 ]
