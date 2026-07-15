@@ -94,7 +94,9 @@ export function resolveBilibiliMcpBinding(profile: string): BilibiliMcpBinding {
 
 export async function discoverBilibiliMcpBinding(
   profile: string,
-  discover: DiscoverTools = (server, requestedProfile) => getBridgeClient().mcpTools(server, requestedProfile, false),
+  discover: DiscoverTools = (server, requestedProfile) => getBridgeClient().mcpTools(
+    server, requestedProfile, false, { timeoutMs: 5_000, connectRetryMs: 0 },
+  ),
 ): Promise<BilibiliMcpDiscovery> {
   const binding = resolveBilibiliMcpBinding(profile)
   let raw: McpActionResponse

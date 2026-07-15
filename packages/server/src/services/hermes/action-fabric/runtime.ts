@@ -17,6 +17,11 @@ import { createSerializedFabricLifecycle } from './runtime-lifecycle'
 import type { FabricExecutorAdapter } from './executors'
 import { createConfiguredHealthFabricExecutorAdapters } from '../health-loop/executors/configuration'
 import { startHomeProductionRuntime, stopHomeProductionRuntime } from '../home/production-runtime'
+import {
+  reconcileInternetProductionRuntime,
+  startInternetProductionRuntime,
+  stopInternetProductionRuntime,
+} from '../internet-execution/production-runtime'
 
 const CONTROL_POLL_MS = 100
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on'])
@@ -28,6 +33,7 @@ interface RunningRuntime {
   appliedControlVersion: number
   controlPoll: Promise<void> | null
   homeStarted: boolean
+  internetStarted: boolean
 }
 
 let running: RunningRuntime | null = null
@@ -57,6 +63,7 @@ export async function enforceControlStateOnce(version: number): Promise<{ applie
   const state = running
   if (state && result.applied) {
     state.appliedControlVersion = Math.max(state.appliedControlVersion, result.version)
+    if (state.internetStarted) await reconcileInternetProductionRuntime()
   }
   return result
 }
@@ -70,6 +77,9 @@ async function teardownRuntime(): Promise<void> {
     try { await state.controlPoll } catch (error) { failure = error }
   }
   try { await stopActionFabricWorker() } catch (error) { if (failure === null) failure = error }
+  if (state.internetStarted) {
+    try { await stopInternetProductionRuntime() } catch (error) { if (failure === null) failure = error }
+  }
   if (state.homeStarted) {
     try { await stopHomeProductionRuntime() } catch (error) { if (failure === null) failure = error }
   }
@@ -82,6 +92,7 @@ async function bootstrapRuntime(): Promise<void> {
   const ownedAdapters: string[] = []
   let workerStarted = false
   let homeStarted = false
+  let internetStarted = false
   try {
     // These migrations are deliberately complete before a worker can claim a lease.
     ensureBuiltInFabricRegistry()
@@ -92,6 +103,9 @@ async function bootstrapRuntime(): Promise<void> {
     const homeAdapter = await startHomeProductionRuntime()
     homeStarted = true
     registerOwnedAdapter(homeAdapter, ownedAdapters)
+    const internetAdapter = await startInternetProductionRuntime()
+    internetStarted = true
+    registerOwnedAdapter(internetAdapter, ownedAdapters)
     const initialControl = getFabricControlState()
     const initialEnforcement = await enforceControlState(initialControl.version)
     startActionFabricWorker()
@@ -102,12 +116,14 @@ async function bootstrapRuntime(): Promise<void> {
       appliedControlVersion: Math.max(initialControl.version, initialEnforcement.version),
       controlPoll: null,
       homeStarted,
+      internetStarted,
     }
     state.controlTimer = setInterval(() => pollControl(state), CONTROL_POLL_MS)
     state.controlTimer.unref?.()
     running = state
   } catch (error) {
     if (workerStarted) { try { await stopActionFabricWorker() } catch { /* preserve the startup failure */ } }
+    if (internetStarted) { try { await stopInternetProductionRuntime() } catch { /* preserve the startup failure */ } }
     if (homeStarted) { try { await stopHomeProductionRuntime() } catch { /* preserve the startup failure */ } }
     for (const id of ownedAdapters.reverse()) unregisterFabricExecutorAdapter(id)
     throw error
@@ -131,8 +147,12 @@ function pollControl(state: RunningRuntime): void {
   const poll = (async () => {
     const control = getFabricControlState()
     if (control.version === state.appliedControlVersion && control.level < 2) return
+    const controlChanged = control.version !== state.appliedControlVersion
     const result = await enforceControlState(control.version)
-    if (result.applied) state.appliedControlVersion = Math.max(state.appliedControlVersion, result.version)
+    if (result.applied) {
+      state.appliedControlVersion = Math.max(state.appliedControlVersion, result.version)
+      if (controlChanged && state.internetStarted) await reconcileInternetProductionRuntime()
+    }
   })().catch(error => {
     logger.error({ errorClass: stableErrorClass(error) }, '[action-fabric] control enforcement failed')
   }).finally(() => {

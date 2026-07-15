@@ -38,6 +38,7 @@ export interface AgentBridgeOptions {
 
 export interface AgentBridgeRequestOptions {
   timeoutMs?: number
+  connectRetryMs?: number
   serialize?: boolean
 }
 
@@ -288,8 +289,8 @@ export class AgentBridgeClient {
     return ['ECONNREFUSED', 'ENOENT', 'ECONNRESET', 'EPIPE', 'ETIMEDOUT'].includes(code)
   }
 
-  private async connectSocket(): Promise<Socket> {
-    const deadline = Date.now() + Math.max(0, this.connectRetryMs)
+  private async connectSocket(connectRetryMs = this.connectRetryMs): Promise<Socket> {
+    const deadline = Date.now() + Math.max(0, connectRetryMs)
     for (;;) {
       try {
         return await this.connectSocketOnce()
@@ -372,7 +373,7 @@ export class AgentBridgeClient {
         }, '[agent-bridge-client] request')
       }
       try {
-        const socket = await this.connectSocket()
+        const socket = await this.connectSocket(options.connectRetryMs)
         socket.write(`${JSON.stringify(payload)}\n`)
         const raw = await this.readResponse(socket, timeoutMs)
         const response = JSON.parse(raw) as { ok?: boolean; error?: string }
@@ -669,8 +670,13 @@ export class AgentBridgeClient {
     return this.request({ action: 'mcp_server_test', name, ...(profile ? { profile } : {}) }, { timeoutMs: 180_000 })
   }
 
-  mcpTools(server?: string, profile?: string, raw?: boolean): Promise<McpActionResponse> {
-    return this.request({ action: 'mcp_tools_list', ...(server ? { server } : {}), ...(profile ? { profile } : {}), ...(raw ? { raw } : {}) })
+  mcpTools(
+    server?: string,
+    profile?: string,
+    raw?: boolean,
+    options: AgentBridgeRequestOptions = {},
+  ): Promise<McpActionResponse> {
+    return this.request({ action: 'mcp_tools_list', ...(server ? { server } : {}), ...(profile ? { profile } : {}), ...(raw ? { raw } : {}) }, options)
   }
 
   mcpToolCall(

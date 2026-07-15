@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { HOME_FABRIC_CAPABILITIES } from '../home/fabric-contracts'
+import { INTERNET_FABRIC_CAPABILITIES } from '../internet-execution/fabric-contracts'
 import { withActionFabricDb } from './database'
 import type {
   FabricCapability,
@@ -332,6 +333,7 @@ const BUILT_IN_CAPABILITIES: FabricCapabilityInput[] = [
     targetRestrictions: ['health:owner'], cost: { currency: null, estimatedMinor: 0 }, enabled: true,
   },
   ...HOME_FABRIC_CAPABILITIES,
+  ...INTERNET_FABRIC_CAPABILITIES,
 ]
 
 const BUILT_IN_EXECUTORS: FabricExecutorInput[] = [
@@ -344,6 +346,7 @@ const BUILT_IN_EXECUTORS: FabricExecutorInput[] = [
   { id: 'health-source', type: 'connector', name: 'Health Source Connector', environment: 'production', configuration: { externalWrite: false, interruptible: false }, enabled: true },
   { id: 'health-weixin', type: 'connector', name: 'Weixin Self Reminder Executor', environment: 'production', configuration: { externalWrite: true, interruptible: false, recipientRestriction: 'configured-self' }, enabled: true },
   { id: 'home-assistant', type: 'connector', name: 'Home Assistant Executor', environment: 'production', configuration: { externalWrite: true, interruptible: false, managedAvailability: 'home-assistant' }, enabled: false },
+  { id: 'bilibili-mcp', type: 'mcp', name: 'Bilibili Read-Only MCP Executor', environment: 'production', configuration: { externalWrite: false, interruptible: false, managedAvailability: 'bilibili-mcp', credentialScope: 'profile-runtime' }, enabled: false },
 ]
 
 const BUILT_IN_BINDINGS = [
@@ -371,6 +374,8 @@ const BUILT_IN_BINDINGS = [
   ['home-assistant', 'home.device.set_power'],
   ['home-assistant', 'home.device.set_temperature'],
   ['home-assistant', 'home.scene.activate.safe'],
+  ['bilibili-mcp', 'bilibili.video.search'],
+  ['bilibili-mcp', 'bilibili.video.inspect'],
 ] as const
 
 export function ensureBuiltInFabricRegistry(): void {
@@ -385,7 +390,7 @@ export function ensureBuiltInFabricRegistry(): void {
       }
       for (const input of BUILT_IN_EXECUTORS) {
         insertExecutorIfMissing(db, input)
-        if (['health-local-analysis', 'health-remote-analysis', 'health-plan', 'health-source', 'home-assistant'].includes(input.id)) {
+        if (['health-local-analysis', 'health-remote-analysis', 'health-plan', 'health-source', 'home-assistant', 'bilibili-mcp'].includes(input.id)) {
           ensureKnownExecutorConfiguration(db, input)
         }
       }
