@@ -1,4 +1,5 @@
 export * from './contracts'
+export * from './constraint-service'
 export * from './database'
 export * from './observation-service'
 export * from './provider'
