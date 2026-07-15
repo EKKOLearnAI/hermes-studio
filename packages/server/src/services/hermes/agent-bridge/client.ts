@@ -7,6 +7,20 @@ import { bridgeLogger } from '../../logger'
 import { getActiveProfileName, getProfileDir } from '../hermes-profile'
 import type { McpActionResponse, McpToolCallResponse } from '../mcp-types'
 
+export type AgentBridgeBrowserStatus = 'succeeded' | 'error' | 'waiting_user'
+
+export interface AgentBridgeBrowserResponse extends AgentBridgeResponse {
+  action: 'navigate' | 'snapshot'
+  workflow_id: string
+  session_id: string
+  status: AgentBridgeBrowserStatus
+  error_code: string | null
+  url?: string
+  title?: string
+  snapshot?: string
+  element_count?: number
+}
+
 function resolveDefaultAgentBridgeEndpoint(): string {
   if (process.env.VITEST) {
     return process.platform === 'win32'
@@ -696,6 +710,33 @@ export class AgentBridgeClient {
 
   mcpReload(server?: string, profile?: string): Promise<McpActionResponse> {
     return this.request({ action: 'mcp_reload', ...(server ? { server } : {}), ...(profile ? { profile } : {}) }, { serialize: true })
+  }
+
+  browserNavigate(
+    workflowId: string,
+    url: string,
+    profile: string,
+    timeoutMs = 30_000,
+  ): Promise<AgentBridgeBrowserResponse> {
+    const requestedTimeoutMs = Number.isFinite(timeoutMs) ? Math.floor(timeoutMs) : 30_000
+    const boundedTimeoutMs = Math.max(5_000, Math.min(60_000, requestedTimeoutMs))
+    return this.request<AgentBridgeBrowserResponse>({
+      action: 'browser_navigate', workflow_id: workflowId, url, profile,
+      timeout: boundedTimeoutMs / 1_000,
+    }, { timeoutMs: boundedTimeoutMs + 15_000 })
+  }
+
+  browserSnapshot(
+    workflowId: string,
+    profile: string,
+    timeoutMs = 30_000,
+  ): Promise<AgentBridgeBrowserResponse> {
+    const requestedTimeoutMs = Number.isFinite(timeoutMs) ? Math.floor(timeoutMs) : 30_000
+    const boundedTimeoutMs = Math.max(5_000, Math.min(60_000, requestedTimeoutMs))
+    return this.request<AgentBridgeBrowserResponse>({
+      action: 'browser_snapshot', workflow_id: workflowId, profile,
+      timeout: boundedTimeoutMs / 1_000,
+    }, { timeoutMs: boundedTimeoutMs + 15_000 })
   }
 
   reloadSkills(profile?: string): Promise<AgentBridgeSkillReloadResult> {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -11,6 +12,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlsplit
 
 from bridge_pool import AgentPool
 from bridge_runtime import (
@@ -37,6 +39,8 @@ class BridgeServer:
         self.pool = AgentPool()
         self._stop = threading.Event()
         self._last_gc = time.time()
+        self._fabric_browser_lock = threading.RLock()
+        self._fabric_browser_sessions: dict[str, dict[str, str]] = {}
 
     def handle(self, req: dict[str, Any]) -> dict[str, Any]:
         action = str(req.get("action") or "").strip()
@@ -229,7 +233,205 @@ class BridgeServer:
         if action.startswith("mcp_"):
             return self._handle_mcp_action(action, req, req.get("profile"))
 
+        # Server-internal browser execution is intentionally narrower than
+        # the chat browser tool surface. Route every browser-prefixed action
+        # through the deny-by-default handler so click/type/evaluate/download
+        # primitives receive a stable security error.
+        if action.startswith("browser_"):
+            return self._handle_browser_action(action, req, req.get("profile"))
+
         raise ValueError(f"unknown action: {action}")
+
+    # ───── Governed Browser Execution (for Action Fabric only) ─────
+
+    _BROWSER_WORKFLOW_ID = re.compile(r"^workflow-[A-Za-z0-9._:-]{1,190}$")
+    _BROWSER_SEARCH_ORDERS = {"totalrank", "pubdate", "click"}
+    _BROWSER_CHALLENGE_TEXT = re.compile(
+        r"captcha|are you (?:a )?robot|robot verification|human verification|"
+        r"verification required|please verify|cloudflare|checking your browser|"
+        r"just a moment|attention required|\u4eba\u673a\u9a8c\u8bc1|\u5b89\u5168\u9a8c\u8bc1|\u8bf7\u5b8c\u6210\u9a8c\u8bc1|\u6ed1\u5757\u9a8c\u8bc1",
+        re.IGNORECASE,
+    )
+    _BROWSER_LOGIN_TEXT = re.compile(
+        r"login required|sign in to continue|please log in to continue|"
+        r"\u8bf7\u5148\u767b\u5f55|\u767b\u5f55\u540e(?:\u624d\u53ef|\u53ef\u4ee5|\u67e5\u770b|\u7ee7\u7eed)|\u626b\u7801\u767b\u5f55",
+        re.IGNORECASE,
+    )
+    _BROWSER_CONSENT_TEXT = re.compile(
+        r"consent required|accept cookies to continue|privacy choices required|"
+        r"\u8bf7\u540c\u610f(?:\u9690\u79c1|\u7528\u6237)\u534f\u8bae|\u540c\u610f\u540e\u7ee7\u7eed",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _browser_error(cls, code: str) -> dict[str, Any]:
+        return {"ok": False, "error": "Browser call rejected", "error_code": code}
+
+    @classmethod
+    def _browser_result_error(cls, action: str, workflow_id: str, session_id: str,
+                              code: str, status: str = "error") -> dict[str, Any]:
+        return {
+            "ok": True,
+            "action": action,
+            "workflow_id": workflow_id,
+            "session_id": session_id,
+            "status": status,
+            "error_code": code,
+        }
+
+    @classmethod
+    def _validate_browser_url(cls, value: Any) -> str | None:
+        if not isinstance(value, str) or not value or len(value) > 2048 or cls._MCP_SENSITIVE_TEXT.search(value):
+            return None
+        try:
+            parsed = urlsplit(value)
+            if parsed.scheme.lower() != "https" or parsed.fragment or parsed.username or parsed.password or parsed.port is not None:
+                return None
+        except (TypeError, ValueError):
+            return None
+
+        host = (parsed.hostname or "").lower()
+        if host == "www.bilibili.com":
+            match = re.fullmatch(r"/video/(BV[0-9A-Za-z]{10})/?", parsed.path)
+            if match is None or parsed.query:
+                return None
+            return f"https://www.bilibili.com/video/{match.group(1)}"
+
+        if host != "search.bilibili.com" or parsed.path != "/all":
+            return None
+        try:
+            pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
+        except ValueError:
+            return None
+        if len(pairs) != 3 or {key for key, _value in pairs} != {"keyword", "order", "page"}:
+            return None
+        values = {key: item for key, item in pairs}
+        keyword = values.get("keyword", "").strip()
+        if not keyword or len(keyword) > 120 or cls._MCP_SENSITIVE_TEXT.search(keyword):
+            return None
+        if values.get("order") not in cls._BROWSER_SEARCH_ORDERS:
+            return None
+        try:
+            page = int(values.get("page", ""))
+        except ValueError:
+            return None
+        if str(page) != values.get("page") or page < 1 or page > 10:
+            return None
+        return value
+
+    @staticmethod
+    def _browser_session_identity(profile: str, workflow_id: str) -> tuple[str, str]:
+        digest = hashlib.sha256(f"{profile}:{workflow_id}".encode("utf-8")).hexdigest()
+        return f"fabric_browser_{digest[:32]}", f"browser-session-{digest[:24]}"
+
+    def _handle_browser_action(self, action: str, req: dict[str, Any], profile: str | None = None) -> dict[str, Any]:
+        if action not in {"browser_navigate", "browser_snapshot"}:
+            return self._browser_error("BROWSER_ACTION_FORBIDDEN")
+
+        allowed_keys = {"action", "profile", "workflow_id", "timeout"}
+        if action == "browser_navigate":
+            allowed_keys.add("url")
+        if set(req) - allowed_keys:
+            return self._browser_error("BROWSER_REQUEST_INVALID")
+
+        worker_profile = _worker_profile() or "default"
+        if profile != worker_profile:
+            return self._browser_error("BROWSER_PROFILE_MISMATCH")
+        workflow_id = str(req.get("workflow_id") or "").strip()
+        if not self._BROWSER_WORKFLOW_ID.fullmatch(workflow_id):
+            return self._browser_error("BROWSER_WORKFLOW_INVALID")
+        try:
+            timeout = float(req.get("timeout") or 30)
+        except (TypeError, ValueError):
+            return self._browser_error("BROWSER_TIMEOUT_INVALID")
+        if not math.isfinite(timeout) or timeout < 5 or timeout > 60 or not timeout.is_integer():
+            return self._browser_error("BROWSER_TIMEOUT_INVALID")
+        timeout_seconds = int(timeout)
+
+        try:
+            from tools.browser_tool import _run_browser_command, cleanup_browser
+        except ImportError:
+            return self._browser_error("BROWSER_EXECUTION_UNAVAILABLE")
+
+        task_id, session_id = self._browser_session_identity(profile, workflow_id)
+        if action == "browser_navigate":
+            url = self._validate_browser_url(req.get("url"))
+            if url is None:
+                return self._browser_error("BROWSER_URL_REJECTED")
+            try:
+                raw = _run_browser_command(task_id, "open", [url], timeout=timeout_seconds)
+            except Exception:
+                return self._browser_result_error("navigate", workflow_id, session_id, "BROWSER_NAVIGATION_FAILED")
+            if not isinstance(raw, dict) or raw.get("success") is not True or not isinstance(raw.get("data"), dict):
+                return self._browser_result_error("navigate", workflow_id, session_id, "BROWSER_NAVIGATION_FAILED")
+            data = raw["data"]
+            final_url = self._validate_browser_url(data.get("url", url))
+            if final_url is None:
+                try:
+                    cleanup_browser(task_id)
+                except Exception:
+                    pass
+                with self._fabric_browser_lock:
+                    self._fabric_browser_sessions.pop(task_id, None)
+                return self._browser_error("BROWSER_REDIRECT_REJECTED")
+            title = data.get("title", "")
+            if not isinstance(title, str) or len(title) > 512 or self._MCP_SENSITIVE_TEXT.search(title):
+                return self._browser_result_error("navigate", workflow_id, session_id, "BROWSER_RESULT_INVALID")
+            with self._fabric_browser_lock:
+                self._fabric_browser_sessions[task_id] = {
+                    "profile": profile,
+                    "workflow_id": workflow_id,
+                    "url": final_url,
+                }
+            return {
+                "ok": True,
+                "action": "navigate",
+                "workflow_id": workflow_id,
+                "session_id": session_id,
+                "status": "succeeded",
+                "error_code": None,
+                "url": final_url,
+                "title": title,
+            }
+
+        with self._fabric_browser_lock:
+            state = self._fabric_browser_sessions.get(task_id)
+        if not state or state.get("profile") != profile or state.get("workflow_id") != workflow_id:
+            return self._browser_result_error("snapshot", workflow_id, session_id, "BROWSER_SESSION_REOPEN_REQUIRED")
+        try:
+            raw = _run_browser_command(task_id, "snapshot", ["-c"], timeout=timeout_seconds)
+        except Exception:
+            return self._browser_result_error("snapshot", workflow_id, session_id, "BROWSER_SNAPSHOT_FAILED")
+        if not isinstance(raw, dict) or raw.get("success") is not True or not isinstance(raw.get("data"), dict):
+            return self._browser_result_error("snapshot", workflow_id, session_id, "BROWSER_SNAPSHOT_FAILED")
+        data = raw["data"]
+        snapshot = data.get("snapshot")
+        refs = data.get("refs", {})
+        if not isinstance(snapshot, str) or len(snapshot.encode("utf-8")) > 65_536:
+            return self._browser_result_error("snapshot", workflow_id, session_id, "BROWSER_RESULT_INVALID")
+        if self._BROWSER_CHALLENGE_TEXT.search(snapshot):
+            return self._browser_result_error(
+                "snapshot", workflow_id, session_id, "BROWSER_HUMAN_VERIFICATION_REQUIRED", "waiting_user")
+        if self._BROWSER_LOGIN_TEXT.search(snapshot):
+            return self._browser_result_error(
+                "snapshot", workflow_id, session_id, "BROWSER_LOGIN_REQUIRED", "waiting_user")
+        if self._BROWSER_CONSENT_TEXT.search(snapshot):
+            return self._browser_result_error(
+                "snapshot", workflow_id, session_id, "BROWSER_CONSENT_REQUIRED", "waiting_user")
+        if self._MCP_SENSITIVE_TEXT.search(snapshot):
+            return self._browser_result_error("snapshot", workflow_id, session_id, "BROWSER_RESULT_INVALID")
+        element_count = len(refs) if isinstance(refs, dict) else 0
+        return {
+            "ok": True,
+            "action": "snapshot",
+            "workflow_id": workflow_id,
+            "session_id": session_id,
+            "status": "succeeded",
+            "error_code": None,
+            "url": state["url"],
+            "snapshot": snapshot,
+            "element_count": min(element_count, 100_000),
+        }
 
     # ───── MCP Management Methods (for BridgeServer worker process) ─────
 

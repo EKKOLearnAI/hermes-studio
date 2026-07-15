@@ -389,8 +389,8 @@ class BridgeBroker:
             self.stop()
             return {"status": "shutting_down"}
 
-        # ───── MCP Management ─────
-        if action.startswith("mcp_"):
+        # ───── Internal profile-scoped execution ─────
+        if action.startswith("mcp_") or action.startswith("browser_"):
             profile = self._normalize_profile(req.get("profile"))
             return self._forward(profile, req)
 
