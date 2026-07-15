@@ -51,7 +51,7 @@ const TRANSITIONS: Record<InternetReceiptStatus, readonly InternetReceiptStatus[
   executed: ['verifying', 'failed', 'waiting_user'],
   verifying: ['verified', 'mismatch', 'unknown', 'failed', 'waiting_user'],
   unknown: ['executing', 'verifying', 'failed', 'waiting_user'],
-  verified: [], mismatch: [], failed: [], waiting_user: [],
+  verified: [], mismatch: [], failed: [], waiting_user: ['executing', 'verifying'],
 }
 
 export class InternetExecutionStore {
