@@ -662,6 +662,22 @@ export function getLifeCalendarHoldByProviderRequest(accountId: string,
   if (!TOKEN.test(providerRequestId)) throw new LifeContractError('LIFE_PROVIDER_REQUEST_ID_INVALID')
   return withLifeOrchestrationDb(db => holdByProviderRequest(db, accountId, providerRequestId))
 }
+export function listLifeCalendarHolds(options: { accountId?: string; state?: LifeCalendarHoldState;
+  limit?: number } = {}): LifeCalendarHold[] {
+  if (options.accountId !== undefined) validateId(options.accountId, 'LIFE_ACCOUNT_ID_INVALID')
+  if (options.state !== undefined && !isLifeCalendarHoldState(options.state)) {
+    throw new LifeContractError('LIFE_CALENDAR_HOLD_STATE_INVALID')
+  }
+  const limit = listLimit(options.limit ?? 100)
+  return withLifeOrchestrationDb(db => {
+    const clauses: string[] = []; const values: Array<string | number> = []
+    if (options.accountId) { clauses.push('account_id=?'); values.push(options.accountId) }
+    if (options.state) { clauses.push('state=?'); values.push(options.state) }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+    return (db.prepare(`SELECT * FROM life_calendar_holds ${where} ORDER BY updated_at DESC,id DESC LIMIT ?`)
+      .all(...values, limit) as HoldRow[]).map(holdFromRow)
+  })
+}
 export function transitionLifeCalendarHold(input: TransitionLifeCalendarHoldInput): LifeCalendarHold {
   validateId(input.holdId, 'LIFE_CALENDAR_HOLD_ID_INVALID')
   if (!validVersion(input.expectedVersion) || !isLifeCalendarHoldState(input.state)) {
@@ -747,6 +763,23 @@ export function getLifeSubscriptionCancellationByProviderRequest(accountId: stri
   validateId(accountId, 'LIFE_ACCOUNT_ID_INVALID')
   if (!TOKEN.test(providerRequestId)) throw new LifeContractError('LIFE_PROVIDER_REQUEST_ID_INVALID')
   return withLifeOrchestrationDb(db => cancellationByProviderRequest(db, accountId, providerRequestId))
+}
+export function listLifeSubscriptionCancellations(options: { accountId?: string;
+  state?: LifeSubscriptionCancellationState; limit?: number } = {}): LifeSubscriptionCancellation[] {
+  if (options.accountId !== undefined) validateId(options.accountId, 'LIFE_ACCOUNT_ID_INVALID')
+  if (options.state !== undefined && !isLifeSubscriptionCancellationState(options.state)) {
+    throw new LifeContractError('LIFE_CANCELLATION_STATE_INVALID')
+  }
+  const limit = listLimit(options.limit ?? 100)
+  return withLifeOrchestrationDb(db => {
+    const clauses: string[] = []; const values: Array<string | number> = []
+    if (options.accountId) { clauses.push('account_id=?'); values.push(options.accountId) }
+    if (options.state) { clauses.push('state=?'); values.push(options.state) }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+    return (db.prepare(`SELECT * FROM life_subscription_cancellations ${where}
+      ORDER BY updated_at DESC,id DESC LIMIT ?`).all(...values, limit) as CancellationRow[])
+      .map(cancellationFromRow)
+  })
 }
 export function transitionLifeSubscriptionCancellation(
   input: TransitionLifeSubscriptionCancellationInput,

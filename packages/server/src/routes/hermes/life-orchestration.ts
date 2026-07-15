@@ -1,0 +1,32 @@
+import Router from '@koa/router'
+import * as ctrl from '../../controllers/hermes/life-orchestration'
+import { requireSuperAdmin } from '../../middleware/user-auth'
+
+export const lifeOrchestrationRoutes = new Router()
+
+lifeOrchestrationRoutes.get('/api/hermes/life/overview', ctrl.overview)
+lifeOrchestrationRoutes.get('/api/hermes/life/sources', ctrl.sources)
+lifeOrchestrationRoutes.post('/api/hermes/life/sources', requireSuperAdmin, ctrl.createSource)
+lifeOrchestrationRoutes.put('/api/hermes/life/sources/:id/health', requireSuperAdmin, ctrl.updateSourceHealth)
+lifeOrchestrationRoutes.get('/api/hermes/life/sources/:id/activation-reviews', ctrl.activationReviews)
+lifeOrchestrationRoutes.post('/api/hermes/life/sources/:id/activate', requireSuperAdmin, ctrl.activateSource)
+lifeOrchestrationRoutes.post('/api/hermes/life/sources/:id/revoke', requireSuperAdmin, ctrl.revokeSource)
+lifeOrchestrationRoutes.post('/api/hermes/life/sources/sync', ctrl.syncSource)
+lifeOrchestrationRoutes.get('/api/hermes/life/commitments', ctrl.commitments)
+lifeOrchestrationRoutes.get('/api/hermes/life/contacts', ctrl.contacts)
+lifeOrchestrationRoutes.get('/api/hermes/life/options', ctrl.options)
+lifeOrchestrationRoutes.get('/api/hermes/life/subscriptions', ctrl.subscriptions)
+lifeOrchestrationRoutes.post('/api/hermes/life/subscriptions/cancel', ctrl.cancelSubscription)
+lifeOrchestrationRoutes.get('/api/hermes/life/constraints', ctrl.constraints)
+lifeOrchestrationRoutes.post('/api/hermes/life/constraints', ctrl.createConstraint)
+lifeOrchestrationRoutes.get('/api/hermes/life/plans', ctrl.plans)
+lifeOrchestrationRoutes.post('/api/hermes/life/plans', ctrl.createPlan)
+lifeOrchestrationRoutes.post('/api/hermes/life/plans/verify', ctrl.verifyPlan)
+lifeOrchestrationRoutes.get('/api/hermes/life/handoffs', ctrl.handoffs)
+lifeOrchestrationRoutes.get('/api/hermes/life/holds', ctrl.holds)
+lifeOrchestrationRoutes.post('/api/hermes/life/holds', ctrl.createCalendarHold)
+lifeOrchestrationRoutes.post('/api/hermes/life/holds/cancel', ctrl.cancelCalendarHold)
+lifeOrchestrationRoutes.get('/api/hermes/life/cancellations', ctrl.cancellations)
+lifeOrchestrationRoutes.get('/api/hermes/life/workflows', ctrl.workflows)
+lifeOrchestrationRoutes.get('/api/hermes/life/workflows/:id', ctrl.workflow)
+lifeOrchestrationRoutes.get('/api/hermes/life/takeovers', ctrl.takeovers)

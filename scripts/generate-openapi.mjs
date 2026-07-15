@@ -83,6 +83,7 @@ const tagMappings = {
   'routes/hermes/assistant-roles.ts': { name: 'Assistant Roles', description: 'Assistant role registry, profile mappings, scoped context previews, and context recipes' },
   'routes/hermes/action-fabric.ts': { name: 'Action Fabric', description: 'Governed capability discovery, durable action workflows, audit, and emergency controls' },
   'routes/hermes/commerce.ts': { name: 'Commerce', description: 'Governed commerce observation, comparison, transaction, fulfillment, and activation' },
+  'routes/hermes/life-orchestration.ts': { name: 'Life Orchestration', description: 'Governed life-source observation, leisure planning, calendar holds, subscription cancellation, and activation' },
   'routes/hermes/health-loop.ts': { name: 'Health Loop', description: 'Protected health ingestion, artifact consent, intervention feedback, and automation settings' },
   'routes/hermes/home.ts': { name: 'Home', description: 'Personal Twin home state, inventory, governed Home Assistant commands, and workflow review' },
   'routes/hermes/internet-execution.ts': { name: 'Internet Execution', description: 'Governed semantic internet reads, durable receipts, and workflow status' },
@@ -2537,6 +2538,307 @@ for (const path of ['/api/hermes/commerce/offers/search', '/api/hermes/commerce/
   '/api/hermes/commerce/carts', '/api/hermes/commerce/quotes', '/api/hermes/commerce/orders',
   '/api/hermes/commerce/payments', '/api/hermes/commerce/delivery', '/api/hermes/commerce/cancellations',
   '/api/hermes/commerce/refunds']) {
+  const responses = openapi.paths[path].post.responses
+  responses['202'] = responses['200']; delete responses['200']
+}
+
+// Life orchestration exposes semantic projections only. Provider item identities, provider request
+// identities, provider receipts, raw contact channels, credentials, and adapter payloads remain server-owned.
+const lifeId = { type: 'string', minLength: 1, maxLength: 200,
+  pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$' }
+const lifeToken = { type: 'string', minLength: 8, maxLength: 200,
+  pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$' }
+const lifeDigest = { type: 'string', minLength: 64, maxLength: 64, pattern: '^[a-f0-9]{64}$' }
+const lifeTimestamp = { type: 'string', format: 'date-time', maxLength: 64 }
+const lifeNullableTimestamp = { ...lifeTimestamp, nullable: true }
+const lifeCurrency = { type: 'string', pattern: '^[A-Z]{3}$', minLength: 3, maxLength: 3 }
+const lifeMoneyMinor = { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
+const lifeModes = ['observe', 'shadow', 'live']
+const lifeSourceKinds = ['calendar', 'contacts', 'travel', 'music', 'games', 'subscriptions']
+const lifeOptionKinds = ['travel', 'video', 'music', 'game']
+const lifeLocationClasses = ['remote', 'home', 'local', 'out_of_area', 'unknown']
+const lifePlanStates = ['proposed', 'reserved', 'superseded', 'completed', 'expired']
+const lifeHoldStates = ['requested', 'submitting', 'confirmed', 'cancel_requested', 'cancelling',
+  'cancelled', 'lookup_required', 'waiting_user', 'failed']
+const lifeCancellationStates = ['requested', 'submitting', 'processing', 'cancelled', 'rejected',
+  'lookup_required', 'waiting_user', 'failed']
+const lifeWorkflowStates = ['draft', 'policy_check', 'preparing', 'executing', 'verifying',
+  'waiting_user', 'retrying', 'compensating', 'succeeded', 'denied', 'cancelled', 'failed',
+  'dead_letter', 'compensated']
+const lifeErrorCode = { type: 'string', pattern: '^LIFE_[A-Z0-9_]+$', maxLength: 160 }
+const lifeReasonCode = { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,127}$', maxLength: 128 }
+const lifeMoney = exactObject({ currency: lifeCurrency, amountMinor: lifeMoneyMinor },
+  ['currency', 'amountMinor'])
+const lifeWindow = exactObject({ startsAt: lifeTimestamp, endsAt: lifeTimestamp }, ['startsAt', 'endsAt'])
+const lifeAvailableActions = exactObject({ approve: { type: 'boolean' }, reject: { type: 'boolean' },
+  cancel: { type: 'boolean' }, retry: { type: 'boolean' }, compensate: { type: 'boolean' } },
+['approve', 'reject', 'cancel', 'retry', 'compensate'])
+const lifeWorkflow = exactObject({ id: lifeId, capabilityId: lifeId,
+  state: { type: 'string', enum: lifeWorkflowStates }, version: { type: 'integer', minimum: 1 },
+  attempt: { type: 'integer', minimum: 0 }, lastErrorCode: { ...lifeErrorCode, nullable: true },
+  createdAt: lifeTimestamp, updatedAt: lifeTimestamp, completedAt: lifeNullableTimestamp,
+  availableActions: lifeAvailableActions },
+['id', 'capabilityId', 'state', 'version', 'attempt', 'lastErrorCode', 'createdAt', 'updatedAt',
+  'completedAt', 'availableActions'])
+const lifePolicyDecision = exactObject({ id: lifeId,
+  outcome: { type: 'string', enum: ['allow', 'deny', 'waiting_user'] },
+  reasonCodes: { type: 'array', maxItems: 64, items: lifeId } }, ['id', 'outcome', 'reasonCodes'])
+const lifeWorkflowStep = exactObject({ kind: lifeId,
+  state: { type: 'string', maxLength: 80 }, attempt: { type: 'integer', minimum: 0 },
+  lastErrorCode: { ...lifeErrorCode, nullable: true }, updatedAt: lifeTimestamp },
+['kind', 'state', 'attempt', 'lastErrorCode', 'updatedAt'])
+const lifeWorkflowDetail = exactObject({ ...lifeWorkflow.properties,
+  policyDecision: { ...lifePolicyDecision, nullable: true },
+  steps: { type: 'array', maxItems: 32, items: lifeWorkflowStep } },
+[...lifeWorkflow.required, 'policyDecision', 'steps'])
+const lifeSource = exactObject({ id: lifeId, sourceKind: { type: 'string', enum: lifeSourceKinds },
+  mode: { type: 'string', enum: lifeModes }, executorId: { ...lifeId, nullable: true },
+  displayName: { type: 'string', minLength: 1, maxLength: 160 },
+  health: { type: 'string', enum: ['unknown', 'healthy', 'degraded', 'unhealthy', 'revoked'] },
+  enabled: { type: 'boolean' }, policyEpoch: { type: 'integer', minimum: 1 },
+  version: { type: 'integer', minimum: 1 }, createdAt: lifeTimestamp, updatedAt: lifeTimestamp,
+  revokedAt: lifeNullableTimestamp }, ['id', 'sourceKind', 'mode', 'executorId', 'displayName', 'health',
+  'enabled', 'policyEpoch', 'version', 'createdAt', 'updatedAt', 'revokedAt'])
+const lifeCommitment = exactObject({ id: lifeId, accountId: lifeId,
+  label: { type: 'string', maxLength: 500 },
+  category: { type: 'string', enum: ['work', 'personal', 'health', 'travel', 'leisure', 'other'] },
+  startsAt: lifeTimestamp, endsAt: lifeTimestamp, allDay: { type: 'boolean' }, busy: { type: 'boolean' },
+  locationClass: { type: 'string', enum: lifeLocationClasses },
+  participantAliasIds: { type: 'array', maxItems: 64, items: lifeId }, observedAt: lifeTimestamp,
+  expiresAt: lifeTimestamp, sourceDigest: lifeDigest }, ['id', 'accountId', 'label', 'category', 'startsAt',
+  'endsAt', 'allDay', 'busy', 'locationClass', 'participantAliasIds', 'observedAt', 'expiresAt', 'sourceDigest'])
+const lifeContact = exactObject({ id: lifeId, accountId: lifeId,
+  alias: { type: 'string', maxLength: 200 }, relationshipTags: { type: 'array', maxItems: 64, items: lifeId },
+  availabilityTags: { type: 'array', maxItems: 64, items: lifeId }, observedAt: lifeTimestamp,
+  sourceDigest: lifeDigest }, ['id', 'accountId', 'alias', 'relationshipTags', 'availabilityTags',
+  'observedAt', 'sourceDigest'])
+const lifeOption = exactObject({ id: lifeId, accountId: { ...lifeId, nullable: true },
+  kind: { type: 'string', enum: lifeOptionKinds }, source: { type: 'string', maxLength: 200 },
+  title: { type: 'string', maxLength: 500 }, categoryTags: { type: 'array', maxItems: 64, items: lifeId },
+  durationMinutes: { type: 'integer', minimum: 0, maximum: 10080 },
+  exertion: { type: 'string', enum: ['low', 'medium', 'high'] }, screenBased: { type: 'boolean' },
+  locationClass: { type: 'string', enum: lifeLocationClasses }, cost: { ...lifeMoney, nullable: true },
+  available: { type: 'boolean' }, observedAt: lifeTimestamp, expiresAt: lifeTimestamp,
+  sourceDigest: lifeDigest }, ['id', 'accountId', 'kind', 'source', 'title', 'categoryTags', 'durationMinutes',
+  'exertion', 'screenBased', 'locationClass', 'cost', 'available', 'observedAt', 'expiresAt', 'sourceDigest'])
+const lifeSubscription = exactObject({ id: lifeId, accountId: lifeId,
+  serviceLabel: { type: 'string', maxLength: 200 }, planLabel: { type: 'string', maxLength: 200 },
+  recurringCost: lifeMoney, renewalAt: lifeTimestamp, cancellationDeadline: lifeNullableTimestamp,
+  state: { type: 'string', enum: ['active', 'trial', 'paused', 'cancel_pending', 'cancelled', 'expired'] },
+  observedAt: lifeTimestamp, sourceDigest: lifeDigest, version: { type: 'integer', minimum: 1 } },
+['id', 'accountId', 'serviceLabel', 'planLabel', 'recurringCost', 'renewalAt', 'cancellationDeadline',
+  'state', 'observedAt', 'sourceDigest', 'version'])
+const lifeFactRef = exactObject({ recordId: lifeId, recordDigest: lifeDigest, observedAt: lifeTimestamp },
+  ['recordId', 'recordDigest', 'observedAt'])
+const lifeConstraint = exactObject({ id: lifeId, subjectId: lifeId, horizon: lifeWindow,
+  timezone: { type: 'string', minLength: 1, maxLength: 100 },
+  freeWindows: { type: 'array', maxItems: 200, items: lifeWindow },
+  commitmentIds: { type: 'array', maxItems: 200, items: lifeId },
+  readiness: { type: 'string', enum: ['unknown', 'low', 'normal', 'high'] },
+  recovery: { type: 'string', enum: ['unknown', 'poor', 'fair', 'good'] },
+  sleepDebt: { type: 'string', enum: ['unknown', 'none', 'moderate', 'high'] },
+  screenTimeUsedMinutes: { type: 'integer', minimum: 0 }, screenTimeLimitMinutes: { type: 'integer', minimum: 0 },
+  leisureTimeLimitMinutes: { type: 'integer', minimum: 0 }, budget: lifeMoney,
+  quietStartMinute: { type: 'integer', minimum: 0, maximum: 1439 },
+  quietEndMinute: { type: 'integer', minimum: 0, maximum: 1439 },
+  maxTravelRadiusKm: { type: 'integer', minimum: 0, maximum: 100000 },
+  excludedCategories: { type: 'array', maxItems: 64, items: lifeId },
+  preferredCategories: { type: 'array', maxItems: 64, items: lifeId },
+  factRefs: { type: 'array', maxItems: 200, items: lifeFactRef }, materialDigest: lifeDigest,
+  createdAt: lifeTimestamp, expiresAt: lifeTimestamp }, ['id', 'subjectId', 'horizon', 'timezone', 'freeWindows',
+  'commitmentIds', 'readiness', 'recovery', 'sleepDebt', 'screenTimeUsedMinutes', 'screenTimeLimitMinutes',
+  'leisureTimeLimitMinutes', 'budget', 'quietStartMinute', 'quietEndMinute', 'maxTravelRadiusKm',
+  'excludedCategories', 'preferredCategories', 'factRefs', 'materialDigest', 'createdAt', 'expiresAt'])
+const lifePlanCandidate = exactObject({ optionId: lifeId, eligible: { type: 'boolean' },
+  score: { type: 'integer', nullable: true }, exclusionCodes: { type: 'array', maxItems: 64, items: lifeId },
+  rationaleCodes: { type: 'array', maxItems: 64, items: lifeId } },
+['optionId', 'eligible', 'score', 'exclusionCodes', 'rationaleCodes'])
+const lifePlanSession = exactObject({ optionId: lifeId, startsAt: lifeTimestamp, endsAt: lifeTimestamp,
+  cost: { ...lifeMoney, nullable: true }, rationaleCodes: { type: 'array', maxItems: 64, items: lifeId } },
+['optionId', 'startsAt', 'endsAt', 'cost', 'rationaleCodes'])
+const lifePlan = exactObject({ id: lifeId, constraintSnapshotId: lifeId, constraintDigest: lifeDigest,
+  candidates: { type: 'array', maxItems: 64, items: lifePlanCandidate },
+  sessions: { type: 'array', maxItems: 32, items: lifePlanSession },
+  totalMinutes: { type: 'integer', minimum: 0 }, totalCost: lifeMoney, planDigest: lifeDigest,
+  state: { type: 'string', enum: lifePlanStates }, version: { type: 'integer', minimum: 1 },
+  createdAt: lifeTimestamp, updatedAt: lifeTimestamp }, ['id', 'constraintSnapshotId', 'constraintDigest',
+  'candidates', 'sessions', 'totalMinutes', 'totalCost', 'planDigest', 'state', 'version', 'createdAt', 'updatedAt'])
+const lifeHandoff = exactObject({ id: lifeId, planRevisionId: lifeId, optionId: lifeId,
+  kind: { type: 'string', enum: ['commerce', 'internet', 'android'] }, targetCapabilityId: lifeId,
+  materialDigest: lifeDigest, state: { type: 'string', enum: ['proposed', 'accepted', 'expired', 'cancelled'] },
+  version: { type: 'integer', minimum: 1 }, createdAt: lifeTimestamp, updatedAt: lifeTimestamp },
+['id', 'planRevisionId', 'optionId', 'kind', 'targetCapabilityId', 'materialDigest', 'state', 'version',
+  'createdAt', 'updatedAt'])
+const lifeHold = exactObject({ id: lifeId, workflowId: lifeId, accountId: lifeId, planRevisionId: lifeId,
+  planDigest: lifeDigest, optionId: lifeId, window: lifeWindow, receiptDigest: { ...lifeDigest, nullable: true },
+  state: { type: 'string', enum: lifeHoldStates }, policyEpoch: { type: 'integer', minimum: 1 },
+  version: { type: 'integer', minimum: 1 }, createdAt: lifeTimestamp, updatedAt: lifeTimestamp,
+  completedAt: lifeNullableTimestamp }, ['id', 'workflowId', 'accountId', 'planRevisionId', 'planDigest',
+  'optionId', 'window', 'receiptDigest', 'state', 'policyEpoch', 'version', 'createdAt', 'updatedAt', 'completedAt'])
+const lifeCancellation = exactObject({ id: lifeId, workflowId: lifeId, accountId: lifeId,
+  subscriptionId: lifeId, subscriptionDigest: lifeDigest, reasonCode: lifeReasonCode,
+  receiptDigest: { ...lifeDigest, nullable: true }, state: { type: 'string', enum: lifeCancellationStates },
+  policyEpoch: { type: 'integer', minimum: 1 }, version: { type: 'integer', minimum: 1 },
+  createdAt: lifeTimestamp, updatedAt: lifeTimestamp, completedAt: lifeNullableTimestamp },
+['id', 'workflowId', 'accountId', 'subscriptionId', 'subscriptionDigest', 'reasonCode', 'receiptDigest',
+  'state', 'policyEpoch', 'version', 'createdAt', 'updatedAt', 'completedAt'])
+const lifeActivationReview = exactObject({ id: lifeId, accountId: lifeId,
+  fromMode: { type: 'string', enum: lifeModes }, toMode: { type: 'string', enum: lifeModes },
+  actorUserId: lifeId, shadowEvidenceDigest: { ...lifeDigest, nullable: true }, limitsDigest: lifeDigest,
+  approved: { type: 'boolean' }, createdAt: lifeTimestamp }, ['id', 'accountId', 'fromMode', 'toMode',
+  'actorUserId', 'shadowEvidenceDigest', 'limitsDigest', 'approved', 'createdAt'])
+const lifeTakeover = exactObject({ workflowId: lifeId, capabilityId: lifeId, reasonCode: lifeReasonCode,
+  state: { type: 'string', enum: ['waiting_user'] }, requestedAt: lifeTimestamp },
+['workflowId', 'capabilityId', 'reasonCode', 'state', 'requestedAt'])
+const lifeRuntime = exactObject({ configuredAccountCount: { type: 'integer', minimum: 0 },
+  sourceExecutorEnabled: { type: 'boolean' }, shadowExecutorEnabled: { type: 'boolean' },
+  liveExecutorEnabled: { type: 'boolean' }, authorizedTargetCount: { type: 'integer', minimum: 0 },
+  emergencyStopped: { type: 'boolean' } }, ['configuredAccountCount', 'sourceExecutorEnabled',
+  'shadowExecutorEnabled', 'liveExecutorEnabled', 'authorizedTargetCount', 'emergencyStopped'])
+
+Object.assign(openapi.components.schemas, {
+  LifeApiError: exactObject({ error: { type: 'string', maxLength: 200 }, code: lifeErrorCode },
+    ['error', 'code']),
+  LifeSourceDto: lifeSource, LifeCommitmentDto: lifeCommitment, LifeContactDto: lifeContact,
+  LifeOptionDto: lifeOption, LifeSubscriptionDto: lifeSubscription, LifeConstraintDto: lifeConstraint,
+  LifePlanDto: lifePlan, LifeHandoffDto: lifeHandoff, LifeCalendarHoldDto: lifeHold,
+  LifeCancellationDto: lifeCancellation, LifeWorkflowDto: lifeWorkflow, LifeTakeoverDto: lifeTakeover,
+  LifeActivationReviewDto: lifeActivationReview,
+  LifeActionResponse: exactObject({ intent: exactObject({ id: lifeId, capabilityId: lifeId },
+    ['id', 'capabilityId']), policyDecision: lifePolicyDecision, workflow: lifeWorkflow },
+  ['intent', 'policyDecision', 'workflow']),
+  LifeSourceListResponse: arrayResponse('sources', schemaRef('LifeSourceDto')),
+  LifeSourceResponse: exactObject({ source: schemaRef('LifeSourceDto') }, ['source']),
+  LifeActivationReviewListResponse: arrayResponse('reviews', schemaRef('LifeActivationReviewDto')),
+  LifeActivationResponse: exactObject({ source: schemaRef('LifeSourceDto'),
+    review: schemaRef('LifeActivationReviewDto') }, ['source', 'review']),
+  LifeCommitmentListResponse: arrayResponse('commitments', schemaRef('LifeCommitmentDto')),
+  LifeContactListResponse: arrayResponse('contacts', schemaRef('LifeContactDto')),
+  LifeOptionListResponse: arrayResponse('options', schemaRef('LifeOptionDto')),
+  LifeSubscriptionListResponse: arrayResponse('subscriptions', schemaRef('LifeSubscriptionDto')),
+  LifeConstraintListResponse: arrayResponse('constraints', schemaRef('LifeConstraintDto')),
+  LifeConstraintResponse: exactObject({ constraint: schemaRef('LifeConstraintDto') }, ['constraint']),
+  LifePlanListResponse: arrayResponse('plans', schemaRef('LifePlanDto')),
+  LifePlanResponse: exactObject({ plan: schemaRef('LifePlanDto'),
+    handoffs: { type: 'array', maxItems: 32, items: schemaRef('LifeHandoffDto') } }, ['plan', 'handoffs']),
+  LifeHandoffListResponse: arrayResponse('handoffs', schemaRef('LifeHandoffDto')),
+  LifeCalendarHoldListResponse: arrayResponse('holds', schemaRef('LifeCalendarHoldDto')),
+  LifeCancellationListResponse: arrayResponse('cancellations', schemaRef('LifeCancellationDto')),
+  LifeWorkflowListResponse: arrayResponse('workflows', schemaRef('LifeWorkflowDto')),
+  LifeWorkflowResponse: exactObject({ workflow: lifeWorkflowDetail }, ['workflow']),
+  LifeTakeoverListResponse: arrayResponse('takeovers', schemaRef('LifeTakeoverDto')),
+  LifeOverviewResponse: exactObject({ runtime: lifeRuntime,
+    accounts: { type: 'array', maxItems: 200, items: schemaRef('LifeSourceDto') },
+    plans: { type: 'array', maxItems: 20, items: schemaRef('LifePlanDto') },
+    workflows: { type: 'array', maxItems: 20, items: schemaRef('LifeWorkflowDto') },
+    holds: { type: 'array', maxItems: 20, items: schemaRef('LifeCalendarHoldDto') },
+    cancellations: { type: 'array', maxItems: 20, items: schemaRef('LifeCancellationDto') },
+    takeovers: { type: 'array', maxItems: 20, items: schemaRef('LifeTakeoverDto') },
+    summary: exactObject({ accountCount: { type: 'integer', minimum: 0 },
+      liveAccountCount: { type: 'integer', minimum: 0 }, activePlanCount: { type: 'integer', minimum: 0 },
+      activeWorkflowCount: { type: 'integer', minimum: 0 }, pendingTakeoverCount: { type: 'integer', minimum: 0 } },
+    ['accountCount', 'liveAccountCount', 'activePlanCount', 'activeWorkflowCount', 'pendingTakeoverCount']) },
+  ['runtime', 'accounts', 'plans', 'workflows', 'holds', 'cancellations', 'takeovers', 'summary']),
+})
+
+const lifeJsonBody = (path, schema, method = 'post') => {
+  openapi.paths[path][method].requestBody = { required: true, content: { 'application/json': { schema } } }
+}
+const lifeActionFields = { idempotencyKey: lifeToken,
+  rationale: { type: 'string', minLength: 1, maxLength: 500 } }
+lifeJsonBody('/api/hermes/life/sources', exactObject({ id: lifeId,
+  sourceKind: { type: 'string', enum: lifeSourceKinds }, mode: { type: 'string', enum: ['observe', 'shadow'] },
+  displayName: { type: 'string', minLength: 1, maxLength: 160 }, enabled: { type: 'boolean', default: true } },
+['id', 'sourceKind', 'mode', 'displayName']))
+lifeJsonBody('/api/hermes/life/sources/{id}/health', exactObject({
+  health: { type: 'string', enum: ['unknown', 'healthy', 'degraded', 'unhealthy'] },
+  expectedVersion: { type: 'integer', minimum: 1 } }, ['health', 'expectedVersion']), 'put')
+const lifeLimits = exactObject({ currency: lifeCurrency,
+  calendarIds: { type: 'array', maxItems: 30, uniqueItems: true, items: lifeId },
+  subscriptionIds: { type: 'array', maxItems: 30, uniqueItems: true, items: lifeId } },
+['currency', 'calendarIds', 'subscriptionIds'])
+lifeJsonBody('/api/hermes/life/sources/{id}/activate', exactObject({
+  toMode: { type: 'string', enum: lifeModes }, limits: lifeLimits }, ['toMode', 'limits']))
+lifeJsonBody('/api/hermes/life/sources/{id}/revoke', exactObject({
+  expectedVersion: { type: 'integer', minimum: 1 } }, ['expectedVersion']))
+lifeJsonBody('/api/hermes/life/sources/sync', exactObject({ ...lifeActionFields, accountId: lifeId,
+  cursor: { type: 'string', pattern: '^offset-(0|[1-9][0-9]*)$', nullable: true, maxLength: 200 },
+  limit: { type: 'integer', minimum: 1, maximum: 20 } },
+['accountId', 'cursor', 'limit', 'idempotencyKey', 'rationale']))
+const lifeConstraintPolicy = exactObject({ budget: lifeMoney,
+  screenTimeLimitMinutes: { type: 'integer', minimum: 0, maximum: 10080 },
+  leisureTimeLimitMinutes: { type: 'integer', minimum: 0, maximum: 10080 },
+  quietStartMinute: { type: 'integer', minimum: 0, maximum: 1439 },
+  quietEndMinute: { type: 'integer', minimum: 0, maximum: 1439 },
+  maxTravelRadiusKm: { type: 'integer', minimum: 0, maximum: 100000 },
+  excludedCategories: { type: 'array', maxItems: 64, uniqueItems: true, items: lifeId },
+  preferredCategories: { type: 'array', maxItems: 64, uniqueItems: true, items: lifeId } },
+['budget', 'screenTimeLimitMinutes', 'leisureTimeLimitMinutes', 'quietStartMinute', 'quietEndMinute',
+  'maxTravelRadiusKm', 'excludedCategories', 'preferredCategories'])
+lifeJsonBody('/api/hermes/life/constraints', exactObject({ subjectId: lifeId, horizon: lifeWindow,
+  timezone: { type: 'string', minLength: 1, maxLength: 100 }, policy: lifeConstraintPolicy,
+  createdAt: lifeTimestamp, expiresAt: lifeTimestamp,
+  healthFreshnessMs: { type: 'integer', minimum: 1, maximum: 2592000000 },
+  screenTimeFreshnessMs: { type: 'integer', minimum: 1, maximum: 2592000000 },
+  useTwinPreferences: { type: 'boolean' } }, ['horizon', 'timezone', 'policy', 'createdAt', 'expiresAt']))
+lifeJsonBody('/api/hermes/life/plans', exactObject({ constraintSnapshotId: lifeId, activeAt: lifeTimestamp,
+  maxOptions: { type: 'integer', minimum: 1, maximum: 64 },
+  maxSessions: { type: 'integer', minimum: 1, maximum: 32 } }, ['constraintSnapshotId', 'activeAt']))
+lifeJsonBody('/api/hermes/life/plans/verify', exactObject({ ...lifeActionFields,
+  planRevisionId: lifeId, activeAt: lifeTimestamp },
+['planRevisionId', 'activeAt', 'idempotencyKey', 'rationale']))
+lifeJsonBody('/api/hermes/life/holds', exactObject({ ...lifeActionFields, accountId: lifeId,
+  planRevisionId: lifeId, optionId: lifeId, providerRequestId: lifeToken },
+['accountId', 'planRevisionId', 'optionId', 'providerRequestId', 'idempotencyKey', 'rationale']))
+lifeJsonBody('/api/hermes/life/holds/cancel', exactObject({ ...lifeActionFields, holdId: lifeId,
+  providerRequestId: lifeToken, reasonCode: lifeReasonCode },
+['holdId', 'providerRequestId', 'reasonCode', 'idempotencyKey', 'rationale']))
+lifeJsonBody('/api/hermes/life/subscriptions/cancel', exactObject({ ...lifeActionFields,
+  subscriptionId: lifeId, providerRequestId: lifeToken, reasonCode: lifeReasonCode },
+['subscriptionId', 'providerRequestId', 'reasonCode', 'idempotencyKey', 'rationale']))
+
+const lifeLimitParameter = { name: 'limit', in: 'query', required: false,
+  schema: { type: 'integer', minimum: 1, maximum: 200, default: 100 } }
+const lifeQueryId = name => ({ name, in: 'query', required: false, schema: lifeId })
+openapi.paths['/api/hermes/life/sources'].get.parameters = [lifeLimitParameter]
+openapi.paths['/api/hermes/life/sources/{id}/activation-reviews'].get.parameters = [
+  { name: 'id', in: 'path', required: true, schema: lifeId }, lifeLimitParameter]
+openapi.paths['/api/hermes/life/commitments'].get.parameters = [lifeQueryId('accountId'), lifeLimitParameter]
+openapi.paths['/api/hermes/life/contacts'].get.parameters = [lifeQueryId('accountId'), lifeLimitParameter]
+openapi.paths['/api/hermes/life/options'].get.parameters = [
+  { name: 'kind', in: 'query', required: false, schema: { type: 'string', enum: lifeOptionKinds } },
+  { name: 'activeAt', in: 'query', required: false, schema: lifeTimestamp }, lifeLimitParameter]
+openapi.paths['/api/hermes/life/subscriptions'].get.parameters = [lifeQueryId('accountId'),
+  { name: 'state', in: 'query', required: false,
+    schema: { type: 'string', enum: ['active', 'trial', 'paused', 'cancel_pending', 'cancelled', 'expired'] } },
+  lifeLimitParameter]
+openapi.paths['/api/hermes/life/constraints'].get.parameters = [lifeLimitParameter]
+openapi.paths['/api/hermes/life/plans'].get.parameters = [
+  { name: 'state', in: 'query', required: false, schema: { type: 'string', enum: lifePlanStates } },
+  lifeLimitParameter]
+openapi.paths['/api/hermes/life/handoffs'].get.parameters = [lifeQueryId('planRevisionId'), lifeLimitParameter]
+openapi.paths['/api/hermes/life/holds'].get.parameters = [lifeQueryId('accountId'),
+  { name: 'state', in: 'query', required: false, schema: { type: 'string', enum: lifeHoldStates } },
+  lifeLimitParameter]
+openapi.paths['/api/hermes/life/cancellations'].get.parameters = [lifeQueryId('accountId'),
+  { name: 'state', in: 'query', required: false, schema: { type: 'string', enum: lifeCancellationStates } },
+  lifeLimitParameter]
+openapi.paths['/api/hermes/life/workflows'].get.parameters = [
+  { name: 'state', in: 'query', required: false, schema: { type: 'string', enum: lifeWorkflowStates } },
+  lifeLimitParameter]
+openapi.paths['/api/hermes/life/takeovers'].get.parameters = [lifeLimitParameter]
+for (const [path, method] of [
+  ['/api/hermes/life/sources', 'post'],
+  ['/api/hermes/life/sources/{id}/health', 'put'],
+  ['/api/hermes/life/sources/{id}/activate', 'post'],
+  ['/api/hermes/life/sources/{id}/revoke', 'post'],
+]) openapi.paths[path][method]['x-hermes-required-role'] = 'super_admin'
+for (const path of ['/api/hermes/life/sources', '/api/hermes/life/constraints', '/api/hermes/life/plans']) {
+  const responses = openapi.paths[path].post.responses
+  responses['201'] = responses['200']; delete responses['200']
+}
+for (const path of ['/api/hermes/life/sources/sync', '/api/hermes/life/plans/verify',
+  '/api/hermes/life/holds', '/api/hermes/life/holds/cancel', '/api/hermes/life/subscriptions/cancel']) {
   const responses = openapi.paths[path].post.responses
   responses['202'] = responses['200']; delete responses['200']
 }

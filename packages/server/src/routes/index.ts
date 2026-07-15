@@ -52,6 +52,7 @@ import { personalTwinRoutes } from './hermes/personal-twin'
 import { assistantRoleRoutes } from './hermes/assistant-roles'
 import { actionFabricRoutes } from './hermes/action-fabric'
 import { commerceRoutes } from './hermes/commerce'
+import { lifeOrchestrationRoutes } from './hermes/life-orchestration'
 import { healthLoopRoutes } from './hermes/health-loop'
 import { homeRoutes } from './hermes/home'
 import { internetExecutionRoutes } from './hermes/internet-execution'
@@ -121,6 +122,7 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(assistantRoleRoutes.routes())         // Assistant role registry and context preview
   app.use(actionFabricRoutes.routes())          // Action Fabric capability, workflow, audit, and control API
   app.use(commerceRoutes.routes())               // Governed commerce autonomy API
+  app.use(lifeOrchestrationRoutes.routes())       // Governed life and entertainment orchestration API
   app.use(healthLoopRoutes.routes())             // Health closed loop API
   app.use(homeRoutes.routes())                   // Home closed loop API
   app.use(internetExecutionRoutes.routes())      // Governed internet execution proof API
