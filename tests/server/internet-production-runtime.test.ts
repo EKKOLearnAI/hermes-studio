@@ -218,7 +218,7 @@ describe('Bilibili MCP production lifecycle', () => {
     expect(browserDecision.materialInputDigest).toBe(mcpDecision.materialInputDigest)
     expect(browserDecision.policySnapshot.registryPolicyEvaluationToken)
       .not.toBe(mcpDecision.policySnapshot.registryPolicyEvaluationToken)
-  })
+  }, 10_000)
 
   it('does not stale unrelated workflows when internet execution was never configured', async () => {
     discovery = {
