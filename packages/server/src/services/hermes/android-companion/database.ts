@@ -3,7 +3,7 @@ import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { getHermesBaseDir } from '../hermes-profile'
 
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 
 const TABLE_SQL = {
   android_companion_devices: `CREATE TABLE android_companion_devices (
@@ -207,7 +207,7 @@ const TRIGGERS = {
       OR NEW.notification_key_hash<>OLD.notification_key_hash OR NEW.category<>OLD.category
       OR NEW.channel_hash IS NOT OLD.channel_hash OR NEW.title_summary<>OLD.title_summary
       OR NEW.text_summary<>OLD.text_summary OR NEW.sensitivity<>OLD.sensitivity
-      OR NEW.source_sequence<>OLD.source_sequence OR NEW.provenance_digest<>OLD.provenance_digest
+      OR NEW.source_sequence<OLD.source_sequence OR NEW.provenance_digest<>OLD.provenance_digest
       OR NEW.posted_at<>OLD.posted_at OR NEW.created_at<>OLD.created_at
     BEGIN SELECT RAISE(ABORT,'Android notification observation identity is immutable'); END`,
   android_notifications_version_monotonic: `CREATE TRIGGER android_notifications_version_monotonic
@@ -306,12 +306,19 @@ export function initAndroidCompanionSchema(db: DatabaseSync): void {
     if (version < 1) {
       db.prepare("INSERT INTO android_companion_meta(key,value) VALUES('schema_version','1') ON CONFLICT(key) DO UPDATE SET value='1'").run()
     }
+    if (version < 2) migrateSchemaV2(db)
     assertSchema(db)
     db.exec('COMMIT')
   } catch (error) {
     db.exec('ROLLBACK')
     throw error
   }
+}
+
+function migrateSchemaV2(db: DatabaseSync): void {
+  db.exec('DROP TRIGGER IF EXISTS android_notifications_identity_immutable')
+  db.exec(TRIGGERS.android_notifications_identity_immutable)
+  db.prepare("UPDATE android_companion_meta SET value='2' WHERE key='schema_version'").run()
 }
 
 function createSchemaV1(db: DatabaseSync): void {

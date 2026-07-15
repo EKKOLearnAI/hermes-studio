@@ -22,6 +22,7 @@ import {
 import { AndroidCompanionCommandBridge } from './command-bridge'
 import { createAndroidCompanionExecutorAdapter } from './executor'
 import { isAndroidFabricCapability } from './fabric-contracts'
+import { AndroidCompanionNotificationService } from './notification-service'
 import {
   registerFabricExecutorAdapter,
   unregisterFabricExecutorAdapter,
@@ -321,6 +322,7 @@ type RuntimeSingleton = {
   capabilities: AndroidCompanionCapabilityService
   commands: AndroidCompanionCommandBridge
   adapterIds: Set<string>
+  notifications: AndroidCompanionNotificationService
 }
 
 let singleton: RuntimeSingleton | null = null
@@ -332,6 +334,7 @@ export function getAndroidCompanionRuntime(): RuntimeSingleton {
   const studioIdentity = async () => normalizeStudioIdentity(await getDeviceIdentity())
   const capabilities = new AndroidCompanionCapabilityService({ store })
   const adapterIds = new Set<string>()
+  const notifications = new AndroidCompanionNotificationService({ store })
   let gateway!: AndroidCompanionGateway
   const commands = new AndroidCompanionCommandBridge({
     store,
@@ -382,7 +385,7 @@ export function getAndroidCompanionRuntime(): RuntimeSingleton {
           payload: { acknowledgedSequence: message.sequence },
         }
       }
-      return commands.handleMessage(message)
+      return notifications.handleMessage(message) ?? commands.handleMessage(message)
     },
   })
   singleton = {
@@ -393,6 +396,7 @@ export function getAndroidCompanionRuntime(): RuntimeSingleton {
     capabilities,
     commands,
     adapterIds,
+    notifications,
   }
   return singleton
 }

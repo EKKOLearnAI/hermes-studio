@@ -7,6 +7,7 @@ import {
   ANDROID_CAPABILITY_HEALTH,
   ANDROID_COMMAND_KINDS,
   ANDROID_COMMAND_STATUSES,
+  ANDROID_NOTIFICATION_SENSITIVITY,
   ANDROID_RECEIPT_STATUSES,
   AndroidCompanionCapability,
   AndroidCompanionCommand,
@@ -18,6 +19,8 @@ import {
   AndroidExecutionReceipt,
   type AndroidCapabilityReportItem,
   type AndroidCommandStatus,
+  type AndroidNotificationObservation,
+  type AndroidNotificationSensitivity,
   type AndroidReceiptStatus,
 } from './types'
 
@@ -84,6 +87,29 @@ export interface TransitionAndroidReceiptInput {
   errorCode?: string | null
 }
 
+export interface ObserveAndroidNotificationInput {
+  id: string
+  deviceId: string
+  packageBinding: string
+  notificationKeyHash: string
+  category: string
+  channelHash: string | null
+  titleSummary: string
+  textSummary: string
+  sensitivity: AndroidNotificationSensitivity
+  sourceSequence: number
+  provenanceDigest: string
+  postedAt: string
+}
+
+export interface RemoveAndroidNotificationInput {
+  deviceId: string
+  notificationKeyHash: string
+  postedAt: string
+  sourceSequence: number
+  removedAt: string
+}
+
 type DeviceRow = {
   id: string; installation_id: string; signing_public_key: string; exchange_public_key: string
   signing_fingerprint: string; exchange_fingerprint: string; label: string; android_version: string
@@ -113,6 +139,13 @@ type ReceiptRow = {
   capability_version: number; target_json: string; status: AndroidReceiptStatus; command_id: string | null
   result_json: string | null; verification_json: string | null; error_code: string | null; version: number
   created_at: string; updated_at: string; completed_at: string | null
+}
+
+type NotificationRow = {
+  id: string; device_id: string; package_binding: string; notification_key_hash: string; category: string
+  channel_hash: string | null; title_summary: string; text_summary: string
+  sensitivity: AndroidNotificationSensitivity; source_sequence: number; provenance_digest: string
+  posted_at: string; removed_at: string | null; version: number; created_at: string; updated_at: string
 }
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$/
@@ -254,6 +287,98 @@ export class AndroidCompanionStore {
     const id = deviceIdentifier(deviceId)
     return (this.database.prepare(`SELECT * FROM android_companion_capabilities
       WHERE device_id=? ORDER BY capability_id`).all(id) as unknown as CapabilityRow[]).map(capabilityFromRow)
+  }
+
+  observeNotification(input: ObserveAndroidNotificationInput): {
+    disposition: 'created' | 'replayed'; observation: AndroidNotificationObservation
+  } {
+    const normalized = normalizeNotification(input)
+    return transaction(this.database, () => {
+      const device = this.deviceRow(normalized.deviceId)
+      if (!device || device.state !== 'paired') throw invalid('Android companion is unavailable')
+      const existing = (this.database.prepare('SELECT * FROM android_notification_observations WHERE id=?')
+        .get(normalized.id) ?? this.database.prepare(`SELECT * FROM android_notification_observations
+          WHERE device_id=? AND notification_key_hash=? AND posted_at=?`).get(
+          normalized.deviceId, normalized.notificationKeyHash, normalized.postedAt,
+        )) as NotificationRow | undefined
+      if (existing) {
+        if (!sameNotificationIdentity(existing, normalized)) {
+          throw new AndroidCompanionIdentityConflictError('Android notification observation changed material')
+        }
+        if (normalized.sourceSequence < existing.source_sequence) {
+          throw invalid('Android notification source sequence moved backwards')
+        }
+        if (normalized.sourceSequence > existing.source_sequence) {
+          this.advanceDeviceReceivedSequence(device, normalized.sourceSequence, normalized.updatedAt)
+          this.database.prepare(`UPDATE android_notification_observations SET source_sequence=?,version=version+1,
+            updated_at=? WHERE id=? AND version=?`).run(
+            normalized.sourceSequence, normalized.updatedAt, existing.id, existing.version,
+          )
+        }
+        return { disposition: 'replayed', observation: this.requiredNotification(existing.id) }
+      }
+      this.advanceDeviceReceivedSequence(device, normalized.sourceSequence, normalized.updatedAt)
+      this.database.prepare(`INSERT INTO android_notification_observations
+        (id,device_id,package_binding,notification_key_hash,category,channel_hash,title_summary,text_summary,
+         sensitivity,source_sequence,provenance_digest,posted_at,removed_at,version,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL,1,?,?)`).run(
+        normalized.id, normalized.deviceId, normalized.packageBinding, normalized.notificationKeyHash,
+        normalized.category, normalized.channelHash, normalized.titleSummary, normalized.textSummary,
+        normalized.sensitivity, normalized.sourceSequence, normalized.provenanceDigest, normalized.postedAt,
+        normalized.createdAt, normalized.updatedAt,
+      )
+      return { disposition: 'created', observation: this.requiredNotification(normalized.id) }
+    })
+  }
+
+  removeNotification(input: RemoveAndroidNotificationInput): {
+    disposition: 'updated' | 'replayed'; observation: AndroidNotificationObservation
+  } {
+    const normalized = normalizeNotificationRemoval(input)
+    return transaction(this.database, () => {
+      const device = this.deviceRow(normalized.deviceId)
+      if (!device || device.state !== 'paired') throw invalid('Android companion is unavailable')
+      const current = this.database.prepare(`SELECT * FROM android_notification_observations
+        WHERE device_id=? AND notification_key_hash=? AND posted_at=?`).get(
+        normalized.deviceId, normalized.notificationKeyHash, normalized.postedAt,
+      ) as NotificationRow | undefined
+      if (!current) throw new AndroidCompanionNotFoundError('Android notification observation was not found')
+      if (current.removed_at !== null && current.removed_at !== normalized.removedAt) {
+        throw new AndroidCompanionIdentityConflictError('Android notification removal time changed')
+      }
+      if (normalized.sourceSequence < current.source_sequence) {
+        throw invalid('Android notification source sequence moved backwards')
+      }
+      if (normalized.sourceSequence === current.source_sequence) {
+        if (current.removed_at === null) throw invalid('Android notification removal sequence was already consumed')
+        return { disposition: 'replayed', observation: notificationFromRow(current) }
+      }
+      this.advanceDeviceReceivedSequence(device, normalized.sourceSequence, normalized.updatedAt)
+      this.database.prepare(`UPDATE android_notification_observations SET removed_at=?,source_sequence=?,
+        version=version+1,updated_at=? WHERE id=? AND version=?`).run(
+        current.removed_at ?? normalized.removedAt, normalized.sourceSequence, normalized.updatedAt,
+        current.id, current.version,
+      )
+      return {
+        disposition: current.removed_at === null ? 'updated' : 'replayed',
+        observation: this.requiredNotification(current.id),
+      }
+    })
+  }
+
+  getNotification(id: string): AndroidNotificationObservation | null {
+    const row = this.notificationRow(identifier(id, 'Android notification observation id'))
+    return row ? notificationFromRow(row) : null
+  }
+
+  listNotifications(input: { deviceId?: string; limit?: number } = {}): AndroidNotificationObservation[] {
+    const limit = listLimit(input.limit ?? 100)
+    const rows = input.deviceId
+      ? this.database.prepare(`SELECT * FROM android_notification_observations WHERE device_id=?
+          ORDER BY posted_at DESC,id LIMIT ?`).all(deviceIdentifier(input.deviceId), limit)
+      : this.database.prepare(`SELECT * FROM android_notification_observations
+          ORDER BY posted_at DESC,id LIMIT ?`).all(limit)
+    return (rows as unknown as NotificationRow[]).map(notificationFromRow)
   }
 
   queueCommand(input: QueueAndroidCommandInput): {
@@ -437,6 +562,17 @@ export class AndroidCompanionStore {
       .get(workflowId) as ReceiptRow | undefined ?? null
   }
 
+  private notificationRow(id: string): NotificationRow | null {
+    return this.database.prepare('SELECT * FROM android_notification_observations WHERE id=?')
+      .get(id) as NotificationRow | undefined ?? null
+  }
+
+  private advanceDeviceReceivedSequence(device: DeviceRow, sequence: number, now: string): void {
+    if (sequence <= device.last_received_sequence) throw invalid('Android notification source sequence is not fresh')
+    this.database.prepare(`UPDATE android_companion_devices SET last_received_sequence=?,last_seen_at=?,
+      version=version+1,updated_at=? WHERE id=? AND version=?`).run(sequence, now, now, device.id, device.version)
+  }
+
   private enrollmentCapabilitiesDigest(deviceId: string): string | null {
     const row = this.database.prepare('SELECT value FROM android_companion_meta WHERE key=?')
       .get(enrollmentDigestKey(deviceId)) as { value: string } | undefined
@@ -459,6 +595,12 @@ export class AndroidCompanionStore {
     const row = this.receiptRow(workflowId)
     if (!row) throw new AndroidCompanionNotFoundError(`Android receipt not found: ${workflowId}`)
     return receiptFromRow(row)
+  }
+
+  private requiredNotification(id: string): AndroidNotificationObservation {
+    const row = this.notificationRow(id)
+    if (!row) throw new AndroidCompanionNotFoundError(`Android notification observation not found: ${id}`)
+    return notificationFromRow(row)
   }
 }
 
@@ -547,6 +689,45 @@ function normalizeReceipt(input: PrepareAndroidReceiptInput) {
   }
 }
 
+function normalizeNotification(input: ObserveAndroidNotificationInput) {
+  const id = identifier(input.id, 'Android notification observation id')
+  if (id.length < 10) throw invalid('Android notification observation id is invalid')
+  if (typeof input.category !== 'string' || !/^[a-z][a-z0-9_.-]{0,79}$/.test(input.category)) {
+    throw invalid('Android notification category is invalid')
+  }
+  if (!ANDROID_NOTIFICATION_SENSITIVITY.includes(input.sensitivity)) {
+    throw invalid('Android notification sensitivity is invalid')
+  }
+  const now = new Date().toISOString()
+  return {
+    id,
+    deviceId: deviceIdentifier(input.deviceId),
+    packageBinding: packageBinding(input.packageBinding),
+    notificationKeyHash: digest(input.notificationKeyHash, 'Android notification key hash'),
+    category: input.category,
+    channelHash: input.channelHash === null ? null : digest(input.channelHash, 'Android notification channel hash'),
+    titleSummary: boundedSummary(input.titleSummary, 'Android notification title summary', 500),
+    textSummary: boundedSummary(input.textSummary, 'Android notification text summary', 1_000),
+    sensitivity: input.sensitivity,
+    sourceSequence: positiveSequence(input.sourceSequence),
+    provenanceDigest: digest(input.provenanceDigest, 'Android notification provenance digest'),
+    postedAt: timestamp(input.postedAt, 'Android notification posted time'),
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+function normalizeNotificationRemoval(input: RemoveAndroidNotificationInput) {
+  return {
+    deviceId: deviceIdentifier(input.deviceId),
+    notificationKeyHash: digest(input.notificationKeyHash, 'Android notification key hash'),
+    postedAt: timestamp(input.postedAt, 'Android notification posted time'),
+    sourceSequence: positiveSequence(input.sourceSequence),
+    removedAt: timestamp(input.removedAt, 'Android notification removed time'),
+    updatedAt: new Date().toISOString(),
+  }
+}
+
 function assertCommandTransition(status: AndroidCommandStatus, sequence: number | null, response: string | null, error: string | null): void {
   if (status === 'delivered' && sequence === null) throw invalid('Delivered Android command requires a sequence')
   if (status !== 'delivered' && sequence !== null) throw invalid('Only delivery may assign an Android command sequence')
@@ -620,6 +801,27 @@ function receiptFromRow(row: ReceiptRow): AndroidExecutionReceipt {
   }
 }
 
+function notificationFromRow(row: NotificationRow): AndroidNotificationObservation {
+  return {
+    id: row.id,
+    deviceId: row.device_id,
+    packageBinding: row.package_binding,
+    notificationKeyHash: row.notification_key_hash,
+    category: row.category,
+    channelHash: row.channel_hash,
+    titleSummary: row.title_summary,
+    textSummary: row.text_summary,
+    sensitivity: row.sensitivity,
+    sourceSequence: row.source_sequence,
+    provenanceDigest: row.provenance_digest,
+    postedAt: row.posted_at,
+    removedAt: row.removed_at,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
 function sameDeviceIdentity(row: DeviceRow, value: ReturnType<typeof normalizePairing>): boolean {
   return row.id === value.deviceId && row.installation_id === value.installationId
     && row.signing_public_key === value.signingPublicKey && row.exchange_public_key === value.exchangePublicKey
@@ -637,6 +839,14 @@ function sameReceiptIdentity(row: ReceiptRow, value: ReturnType<typeof normalize
     && row.material_digest === value.materialDigest && row.device_id === value.deviceId
     && row.capability_id === value.capabilityId && row.capability_version === value.capabilityVersion
     && row.target_json === value.targetJson
+}
+
+function sameNotificationIdentity(row: NotificationRow, value: ReturnType<typeof normalizeNotification>): boolean {
+  return row.id === value.id && row.device_id === value.deviceId && row.package_binding === value.packageBinding
+    && row.notification_key_hash === value.notificationKeyHash && row.category === value.category
+    && row.channel_hash === value.channelHash && row.title_summary === value.titleSummary
+    && row.text_summary === value.textSummary && row.sensitivity === value.sensitivity
+    && row.provenance_digest === value.provenanceDigest && row.posted_at === value.postedAt
 }
 
 function publicKey(value: unknown, type: 'ed25519' | 'x25519', label: string): string {
@@ -763,6 +973,12 @@ function safeText(value: unknown, label: string, max: number): string {
   if (typeof value !== 'string' || !value.trim() || value.length > max || /[\u0000-\u001f\u007f]/.test(value)
     || isFabricSensitiveString(value)) throw invalid(`${label} is invalid`)
   return value.trim()
+}
+
+function boundedSummary(value: unknown, label: string, max: number): string {
+  if (typeof value !== 'string' || value.length > max || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)
+    || isFabricSensitiveString(value)) throw invalid(`${label} is invalid`)
+  return value
 }
 
 function timestamp(value: unknown, label: string): string {

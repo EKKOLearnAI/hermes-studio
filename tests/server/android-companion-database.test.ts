@@ -29,7 +29,7 @@ describe('Android companion database', () => {
 
     const db = new DatabaseSync(getAndroidCompanionDbPath(), { readOnly: true })
     expect(db.prepare("SELECT value FROM android_companion_meta WHERE key='schema_version'").get())
-      .toEqual({ value: '1' })
+      .toEqual({ value: '2' })
     expect((db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'android_%' ORDER BY name")
       .all() as Array<{ name: string }>).map(row => row.name)).toEqual([
       'android_companion_capabilities',
@@ -87,6 +87,17 @@ describe('Android companion database', () => {
     expect(() => db.prepare("DELETE FROM android_companion_commands WHERE id='command-android-1'").run())
       .toThrow(/immutable/i)
 
+    db.prepare(`INSERT INTO android_notification_observations
+      (id,device_id,package_binding,notification_key_hash,category,channel_hash,title_summary,text_summary,
+       sensitivity,source_sequence,provenance_digest,posted_at,removed_at,version,created_at,updated_at)
+      VALUES('notification-1',?,'ai.hermes.companion',?,'workflow.status',NULL,'Ready','Continue',
+       'standard',1,?,'posted',NULL,1,'now','now')`).run(deviceId, 'e'.repeat(64), 'f'.repeat(64))
+    db.prepare("UPDATE android_notification_observations SET source_sequence=2,version=2 WHERE id='notification-1'").run()
+    expect(() => db.prepare(`UPDATE android_notification_observations
+      SET title_summary='Changed',version=3 WHERE id='notification-1'`).run()).toThrow(/identity is immutable/i)
+    expect(() => db.prepare(`UPDATE android_notification_observations
+      SET source_sequence=1,version=3 WHERE id='notification-1'`).run()).toThrow(/identity is immutable/i)
+
     expect(() => db.prepare(`INSERT INTO android_screen_artifacts
       (id,device_id,workflow_id,command_id,digest,mime_type,width,height,byte_size,encryption_context_digest,captured_at,created_at)
       VALUES('artifact-1',?,'workflow-android-1','command-android-1',?,'image/png',1080,2400,1024,?,'now','now')`)
@@ -105,9 +116,9 @@ describe('Android companion database', () => {
     db.exec('PRAGMA foreign_keys=ON')
     initAndroidCompanionSchema(db)
     expect(() => initAndroidCompanionSchema(db)).not.toThrow()
-    db.prepare("UPDATE android_companion_meta SET value='2' WHERE key='schema_version'").run()
+    db.prepare("UPDATE android_companion_meta SET value='3' WHERE key='schema_version'").run()
     expect(() => initAndroidCompanionSchema(db)).toThrow(/newer than supported/i)
-    db.prepare("UPDATE android_companion_meta SET value='1' WHERE key='schema_version'").run()
+    db.prepare("UPDATE android_companion_meta SET value='2' WHERE key='schema_version'").run()
     db.exec('DROP INDEX idx_android_devices_state_updated')
     expect(() => initAndroidCompanionSchema(db)).not.toThrow()
     db.exec('DROP TRIGGER android_devices_identity_immutable')
