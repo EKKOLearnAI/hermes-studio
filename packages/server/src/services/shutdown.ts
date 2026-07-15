@@ -5,6 +5,7 @@ import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
 import { shutdownManagedGateways } from './hermes/gateway-runner'
 import { stopOutboundRelayClient } from './global-agent/outbound-relay-client'
 import { stopHealthLoopRuntime } from './hermes/health-loop/runtime'
+import { shutdownAndroidCompanionRuntime } from './hermes/android-companion'
 
 const DEFAULT_SHUTDOWN_FORCE_EXIT_MS = 15_000
 const DEFAULT_DESKTOP_SHUTDOWN_FORCE_EXIT_MS = 15_000
@@ -123,6 +124,13 @@ export function createShutdownHandler(
 
       codingAgentRunManager.shutdown()
       logger.info('Coding agent hidden sessions closed')
+
+      try {
+        await shutdownAndroidCompanionRuntime()
+        logger.info('Android companion sessions and database closed')
+      } catch (err) {
+        logger.warn(err, 'Failed to stop Android companion runtime (non-fatal)')
+      }
 
       // Disconnect Socket.IO before HTTP server to prevent hanging
       if (groupChatServer) {

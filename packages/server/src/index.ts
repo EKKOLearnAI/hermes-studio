@@ -35,6 +35,10 @@ import type { ShutdownHandler } from './services/shutdown'
 import { startHealthLoopRuntime, stopHealthLoopRuntime } from './services/hermes/health-loop/runtime'
 import { runServerMain } from './services/server-main'
 import { runLegacyHomeBootstrapMigration } from './services/hermes/home/bootstrap-migration'
+import {
+  ANDROID_COMPANION_SOCKET_PATH,
+  getAndroidCompanionRuntime,
+} from './services/hermes/android-companion'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -340,7 +344,8 @@ export async function bootstrap() {
   setupTerminalWebSocket(servers)
   setupKanbanEventsWebSocket(servers)
   getLanPeerSocketManager().setupServer(servers)
-  console.log('[bootstrap] terminal + kanban + LAN peer websocket setup')
+  getAndroidCompanionRuntime().gateway.setupServer(servers)
+  console.log('[bootstrap] terminal + kanban + LAN peer + Android companion websocket setup')
 
   // Group chat Socket.IO (must be after server is created)
   const groupChatServer = new GroupChatServer(servers)
@@ -373,6 +378,7 @@ export async function bootstrap() {
       if (url.pathname !== '/api/hermes/terminal' &&
         url.pathname !== '/api/hermes/kanban/events' &&
         url.pathname !== getLanPeerSocketPath() &&
+        url.pathname !== ANDROID_COMPANION_SOCKET_PATH &&
         !url.pathname.startsWith('/socket.io/')) {
         socket.destroy()
       }

@@ -262,6 +262,30 @@ export function withAndroidCompanionDb<T>(operation: (db: DatabaseSync) => SyncR
   }
 }
 
+export function openAndroidCompanionDatabase(path = getAndroidCompanionDbPath()): {
+  database: DatabaseSync
+  close(): void
+} {
+  mkdirSync(dirname(path), { recursive: true })
+  const database = new DatabaseSync(path)
+  try {
+    database.exec('PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL')
+    initAndroidCompanionSchema(database)
+  } catch (error) {
+    database.close()
+    throw error
+  }
+  let closed = false
+  return {
+    database,
+    close() {
+      if (closed) return
+      closed = true
+      database.close()
+    },
+  }
+}
+
 export function initAndroidCompanionSchema(db: DatabaseSync): void {
   db.exec('BEGIN IMMEDIATE')
   try {
