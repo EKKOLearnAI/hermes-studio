@@ -114,24 +114,23 @@ function parseBusinessResult(value: unknown): Record<string, unknown> | null {
   const direct = recordValue(value)
   if (direct) return direct
   if (typeof value !== 'string') return null
-  const candidates: string[] = []
-  const fenced = value.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  if (fenced?.[1]) candidates.push(fenced[1].trim())
   const trimmed = value.trim()
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) candidates.push(trimmed)
-  const firstBrace = value.indexOf('{')
-  const lastBrace = value.lastIndexOf('}')
-  if (firstBrace >= 0 && lastBrace > firstBrace) candidates.push(value.slice(firstBrace, lastBrace + 1))
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate)
-      const record = recordValue(parsed)
-      if (record) return record
-    } catch {
-      // Keep the raw condition value when the output is not JSON.
-    }
+  if (!trimmed) return null
+  try {
+    return recordValue(JSON.parse(trimmed))
+  } catch {
+    // Match the runtime contract for one explicit JSON fence.
   }
-  return null
+
+  const fenceOpenings = [...trimmed.matchAll(/```json\b/gi)]
+  if (fenceOpenings.length !== 1) return null
+  const fencedJson = [...trimmed.matchAll(/```json\s*([\s\S]*?)```/gi)]
+  if (fencedJson.length !== 1) return null
+  try {
+    return recordValue(JSON.parse(fencedJson[0][1].trim()))
+  } catch {
+    return null
+  }
 }
 
 function businessReason(result: Record<string, unknown> | null): string | undefined {

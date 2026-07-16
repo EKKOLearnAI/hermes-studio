@@ -101,6 +101,37 @@ describe('workflow history evidence', () => {
     expect(row.actualValue).toBe(row.businessDecision)
   })
 
+  it('fails business summaries closed for malformed or ambiguous structured output', () => {
+    const rowFor = (actual: string) => buildWorkflowEvidenceRows({
+      snapshot_nodes: [{ id: 'publish' }, { id: 'verify' }],
+      node_sessions: [],
+      edge_evaluations: [{
+        edge_id: 'publish-to-verify', source_node_id: 'publish', target_node_id: 'verify',
+        source_execution_id: 'publish', source_outcome: 'success', status: 'not_taken', route: 'success',
+        reason: 'condition_not_matched', sequence: 1, iteration_path: [],
+        orchestration: { condition: { path: 'output', operator: 'contains', value: 'RELEASED' } },
+        condition_evaluation: { status: 'not_matched', actual },
+      }],
+      loop_epochs: [],
+    } as any)[0]
+    const result = { decision: 'BLOCKED', failed_gate: 'quality', reason: 'Tests failed.' }
+
+    expect(rowFor(JSON.stringify(result))).toMatchObject({ businessDecision: 'BLOCKED', businessGate: 'quality' })
+    expect(rowFor(`Result:\n\`\`\`json\n${JSON.stringify(result)}\n\`\`\``)).toMatchObject({ businessDecision: 'BLOCKED', businessGate: 'quality' })
+    for (const output of [
+      `prefix ${JSON.stringify(result)} suffix`,
+      `\`\`\`json\n${JSON.stringify(result)}\n\`\`\`\n\`\`\`json\n{"decision":"RELEASED"}\n\`\`\``,
+      `\`\`\`json\n${JSON.stringify(result)}\n\`\`\`\n\`\`\`json\n{"decision":"RELEASED"`,
+      '```json\n{"decision":\n```',
+    ]) {
+      expect(rowFor(output)).toMatchObject({
+        businessDecision: undefined,
+        businessGate: undefined,
+        businessReason: undefined,
+      })
+    }
+  })
+
   it('summarizes the chosen path and blocker separately from unused alternatives', () => {
     const blockedOutput = JSON.stringify({
       decision: 'BLOCKED',
