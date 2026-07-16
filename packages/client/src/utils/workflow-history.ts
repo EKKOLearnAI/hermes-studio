@@ -17,12 +17,31 @@ export interface WorkflowEvidenceRow {
   conditionOperator?: string
   expectedValue?: string
   actualValue?: string
+  conditionMatched?: boolean
   businessDecision?: string
+  businessGate?: string
   businessReason?: string
   iteration?: number
   exitReason?: string | null
   error?: string | null
 }
+
+export interface WorkflowEvidenceSummary {
+  businessDecision?: string
+  businessGate?: string
+  businessReason?: string
+  takenEdges: WorkflowEvidenceRow[]
+  actualPathEdges: WorkflowEvidenceRow[]
+  notTakenEdges: WorkflowEvidenceRow[]
+  supplementalRows: WorkflowEvidenceRow[]
+  otherRows: WorkflowEvidenceRow[]
+}
+
+export type WorkflowEdgePlaybackState =
+  | 'idle' | 'inactive'
+  | 'flowing' | 'completed'
+  | 'blocked-flowing' | 'blocked'
+  | 'failed-flowing' | 'failed'
 
 export function formatIterationPath(raw: unknown): string {
   if (!Array.isArray(raw) || raw.length === 0) return '—'
@@ -117,7 +136,7 @@ function parseBusinessResult(value: unknown): Record<string, unknown> | null {
 
 function businessReason(result: Record<string, unknown> | null): string | undefined {
   if (!result) return undefined
-  const direct = boundedSummaryText(result.reason) || boundedSummaryText(result.message) || boundedSummaryText(result.error)
+  const direct = boundedSummaryText(result.reason) || boundedSummaryText(result.root_cause) || boundedSummaryText(result.message) || boundedSummaryText(result.error)
   if (direct) return direct
   if (Array.isArray(result.blocking_reasons)) {
     const reasons = result.blocking_reasons
@@ -148,6 +167,7 @@ export function buildWorkflowEvidenceRows(run: Pick<WorkflowRunRecord, 'snapshot
     const result = parseBusinessResult(actual)
     const decision = boundedSummaryText(result?.decision, 80)
     const routeMarker = boundedSummaryText(result?.route_marker, 80)
+    const evaluationStatus = nonEmptyText(evaluation?.status)
     rows.push({
       kind: 'edge', sequence: edge.sequence, technicalId: edge.edge_id, status: edge.status,
       sourceTitle: nodeTitle(edge.source_node_id), targetTitle: nodeTitle(edge.target_node_id),
@@ -155,7 +175,9 @@ export function buildWorkflowEvidenceRows(run: Pick<WorkflowRunRecord, 'snapshot
       conditionPath: nonEmptyText(condition?.path), conditionOperator: nonEmptyText(condition?.operator),
       expectedValue: displayValue(condition?.value),
       actualValue: routeMarker || decision || displayValue(actual),
+      conditionMatched: evaluationStatus === 'matched' ? true : evaluationStatus === 'not_matched' ? false : undefined,
       businessDecision: decision,
+      businessGate: boundedSummaryText(result?.failed_gate, 120),
       businessReason: businessReason(result),
       iterationPath: formatIterationPath(edge.iteration_path),
     })
@@ -165,4 +187,50 @@ export function buildWorkflowEvidenceRows(run: Pick<WorkflowRunRecord, 'snapshot
     iteration: loop.iteration, exitReason: loop.exit_reason, iterationPath: formatIterationPath(loop.iteration_path),
   })
   return rows.sort((a, b) => a.sequence - b.sequence || a.kind.localeCompare(b.kind) || a.technicalId.localeCompare(b.technicalId))
+}
+
+export function summarizeWorkflowEvidenceRows(rows: WorkflowEvidenceRow[]): WorkflowEvidenceSummary {
+  const takenEdges = rows.filter(row => row.kind === 'edge' && row.status === 'taken')
+  const notTakenEdges = rows.filter(row => row.kind === 'edge' && row.status !== 'taken')
+  const nonEdgeRows = rows.filter(row => row.kind !== 'edge')
+  const actualPathEdges = takenEdges.filter((row, index) => takenEdges.findIndex(candidate => (
+    candidate.technicalId === row.technicalId
+      && candidate.sourceTitle === row.sourceTitle
+      && candidate.targetTitle === row.targetTitle
+  )) === index)
+  const businessRow = takenEdges.find(row => row.businessDecision || row.businessGate || row.businessReason)
+    || notTakenEdges.find(row => row.businessDecision || row.businessGate || row.businessReason)
+    || nonEdgeRows.find(row => row.businessDecision || row.businessGate || row.businessReason)
+  return {
+    businessDecision: businessRow?.businessDecision,
+    businessGate: businessRow?.businessGate,
+    businessReason: businessRow?.businessReason,
+    takenEdges,
+    actualPathEdges,
+    notTakenEdges,
+    supplementalRows: nonEdgeRows,
+    otherRows: [...notTakenEdges, ...nonEdgeRows],
+  }
+}
+
+export function workflowEdgePlaybackState(
+  edgeId: string,
+  targetNodeStatus: string,
+  runStatus: string,
+  rows: WorkflowEvidenceRow[],
+): WorkflowEdgePlaybackState {
+  const evidenceRows = rows.filter(row => row.kind === 'edge' && row.technicalId === edgeId)
+  if (evidenceRows.length === 0) return 'idle'
+  const takenRows = evidenceRows.filter(row => row.status === 'taken')
+  if (takenRows.length === 0) return evidenceRows.some(row => row.status === 'error') ? 'failed' : 'inactive'
+
+  const latestTaken = takenRows[takenRows.length - 1]
+  const summary = summarizeWorkflowEvidenceRows(rows)
+  const businessBlocked = summary.businessGate || summary.businessDecision?.trim().toUpperCase() === 'BLOCKED'
+  const failedPath = latestTaken.sourceOutcome === 'failure'
+    || ['failed', 'blocked', 'approval_rejected', 'canceled'].includes(targetNodeStatus)
+  const active = ['queued', 'running', 'pending_approval'].includes(targetNodeStatus)
+    || (targetNodeStatus === 'idle' && (runStatus === 'queued' || runStatus === 'running'))
+  if (active) return failedPath ? 'failed-flowing' : businessBlocked ? 'blocked-flowing' : 'flowing'
+  return failedPath ? 'failed' : businessBlocked ? 'blocked' : 'completed'
 }

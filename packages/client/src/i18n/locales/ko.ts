@@ -2059,11 +2059,13 @@ export default {
     evidence: {
       ariaLabel: 'Workflow 실행 세부 정보', title: '실행 세부 정보', count: '{count}개',
       intro: '이번 실행의 경로 결정, 반복 횟수, 예외 노드를 표시합니다.', empty: '실행 세부 정보 없음', loadFailed: '저장된 실행 세부 정보를 불러오지 못했습니다',
+      summaryTitle: '실행 결과', blockedAt: '{gate}에서 차단됨', actualPath: '실제 경로', noActualPath: '선택된 경로 없음', pathChecks: '경로 판단', selectedPaths: '사용된 경로', otherPaths: '기타 판단 및 이벤트', selectedCount: '{count}개 사용', otherCount: '{count}개 미사용', eventCount: '이벤트 {count}개', showOtherPaths: '기타 세부 정보 보기 ({count})', hideOtherPaths: '기타 세부 정보 숨기기',
+      condition: '조건', conditionMatched: '일치', conditionNotMatched: '불일치', sourceOutcome: '노드 결과', sourceReturned: '정상 응답', sourceFailed: '실행 실패', sourceSkippedStatus: '실행 안 됨',
       node: '예외 노드', edge: '경로', loop: '루프', pathTitle: '{source} → {target}', loopPass: '루프 {count}회차', exceptionalNode: '이 노드는 정상적으로 완료되지 않았습니다.',
       technical: '기술 정보', recordId: '기록 ID', sequence: '순서', rawStatus: '원시 상태', rawRoute: '경로', rawReason: '사유', iterationPath: '반복 경로', expectedValue: '필요한 결과', actualValue: '상위 단계 실제 결과',
       statuses: { taken: '사용됨', notTaken: '사용 안 됨', evaluationFailed: '판단 실패', timedOut: '시간 초과', blocked: '차단됨' },
       routes: { success: '성공 후 계속', failure: '실패 후 계속', always: '결과와 관계없이 계속' },
-      reasons: { evaluationFailed: '경로 판단 실패', conditionNotMatched: '조건이 일치하지 않음', iterationLimitReached: '최대 반복 횟수 도달', routeNotMatched: '경로가 일치하지 않음', businessBlocked: '“{source}” 단계가 워크플로를 중단했습니다({decision}): {reason}. 따라서 “{target}” 단계는 실행되지 않았습니다.', businessBlockedWithCondition: '“{source}” 단계가 워크플로를 중단했습니다({decision}): {reason}. 계속하려면 “{expected}”이(가) 필요했지만 상위 결과는 “{actual}”이었으므로 “{target}” 단계는 실행되지 않았습니다.', conditionMismatchDetail: '계속하려면 “{expected}”이(가) 필요했지만 상위 결과는 “{actual}”이었으므로 “{target}” 단계는 실행되지 않았습니다.' },
+      reasons: { evaluationFailed: '경로 판단 실패', conditionNotMatched: '조건이 일치하지 않음', iterationLimitReached: '최대 반복 횟수 도달', routeNotMatched: '경로가 일치하지 않음', pathSelected: '이 경로가 선택되었습니다.', sourceSkipped: '상위 노드가 실행되지 않아 이번 실행에서 이 경로를 사용하지 않았습니다.', failureRouteAfterSuccess: '상위 노드는 정상 응답했습니다. 이 경로는 노드 실행 실패 시에만 사용됩니다.', successRouteAfterFailure: '상위 노드 실행이 실패했습니다. 이 경로는 정상 응답 시에만 사용됩니다.', businessBlocked: '“{source}” 단계가 워크플로를 중단했습니다({decision}): {reason}. 따라서 “{target}” 단계는 실행되지 않았습니다.', businessBlockedWithCondition: '“{source}” 단계가 워크플로를 중단했습니다({decision}): {reason}. 계속하려면 “{expected}”이(가) 필요했지만 상위 결과는 “{actual}”이었으므로 “{target}” 단계는 실행되지 않았습니다.', conditionMismatchDetail: '계속하려면 “{expected}”이(가) 필요했지만 상위 결과는 “{actual}”이었으므로 “{target}” 단계는 실행되지 않았습니다.' },
       loopOutcomes: { continued: '조건 일치; 다음 회차로 계속', iterationLimitReached: '최대 횟수에서 중지', conditionNotMatched: '조건 불일치로 종료', finished: '루프 종료' },
     },
     edgeEditor: {

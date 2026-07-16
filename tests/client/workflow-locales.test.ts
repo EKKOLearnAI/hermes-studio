@@ -6,6 +6,8 @@ const required = [
   'importWorkflow', 'exportWorkflow', 'importFailed', 'exportFailed',
   'conditionValuePlaceholder', 'invalidConditionValue', 'loopIdPlaceholder',
   'loadFailed', 'expectedValue', 'actualValue', 'businessBlocked', 'businessBlockedWithCondition',
+  'summaryTitle', 'blockedAt', 'actualPath', 'pathChecks', 'selectedPaths', 'otherPaths',
+  'condition', 'conditionMatched', 'conditionNotMatched', 'sourceOutcome', 'eventCount',
   'outputJson', 'structuredOutputPathPlaceholder', 'structuredOutputHelp',
 ]
 

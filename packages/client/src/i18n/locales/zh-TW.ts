@@ -791,11 +791,13 @@ export default {
     evidence: {
       ariaLabel: 'Workflow 執行詳情', title: '執行詳情', count: '{count} 條',
       intro: '顯示本次執行的路徑選擇、循環輪次和異常節點。', empty: '暫無執行詳情', loadFailed: '讀取持久化執行詳情失敗',
+      summaryTitle: '執行結論', blockedAt: '卡在 {gate}', actualPath: '實際執行路徑', noActualPath: '本次未採用任何路徑', pathChecks: '路徑判斷', selectedPaths: '已採用路徑', otherPaths: '其他判斷與事件', selectedCount: '已採用 {count} 條', otherCount: '未採用 {count} 條', eventCount: '事件 {count} 條', showOtherPaths: '查看其他詳情（{count}）', hideOtherPaths: '收合其他詳情',
+      condition: '條件', conditionMatched: '已符合', conditionNotMatched: '未符合', sourceOutcome: '節點結果', sourceReturned: '正常回傳', sourceFailed: '執行失敗', sourceSkippedStatus: '未執行',
       node: '異常節點', edge: '執行路徑', loop: '循環', pathTitle: '{source} → {target}', loopPass: '循環第 {count} 輪', exceptionalNode: '此節點未正常完成。',
       technical: '技術資訊', recordId: '記錄 ID', sequence: '執行順序', rawStatus: '原始狀態', rawRoute: '路由', rawReason: '原因', iterationPath: '循環路徑', expectedValue: '需要的結果', actualValue: '上游實際結果',
       statuses: { taken: '已採用', notTaken: '未採用', evaluationFailed: '判斷失敗', timedOut: '已逾時', blocked: '已阻擋' },
       routes: { success: '成功後繼續', failure: '失敗後進入處理', always: '無論成功或失敗均繼續' },
-      reasons: { evaluationFailed: '路徑判斷失敗', conditionNotMatched: '條件不符合', iterationLimitReached: '已達最大循環輪次', routeNotMatched: '目前結果不符合此路徑', businessBlocked: '「{source}」已阻止繼續執行（{decision}）：{reason}。因此沒有執行「{target}」。', businessBlockedWithCondition: '「{source}」已阻止繼續執行（{decision}）：{reason}。繼續執行需要「{expected}」，但上游實際結果是「{actual}」，因此沒有執行「{target}」。', conditionMismatchDetail: '繼續執行需要「{expected}」，但上游實際結果是「{actual}」，因此沒有執行「{target}」。' },
+      reasons: { evaluationFailed: '路徑判斷失敗', conditionNotMatched: '條件不符合', iterationLimitReached: '已達最大循環輪次', routeNotMatched: '目前結果不符合此路徑', pathSelected: '本次已採用此路徑。', sourceSkipped: '上游節點未執行，因此本次不經過此路徑。', failureRouteAfterSuccess: '上游節點已正常回傳；此路徑只在節點執行失敗時採用。', successRouteAfterFailure: '上游節點執行失敗；此路徑只在節點正常回傳時採用。', businessBlocked: '「{source}」已阻止繼續執行（{decision}）：{reason}。因此沒有執行「{target}」。', businessBlockedWithCondition: '「{source}」已阻止繼續執行（{decision}）：{reason}。繼續執行需要「{expected}」，但上游實際結果是「{actual}」，因此沒有執行「{target}」。', conditionMismatchDetail: '繼續執行需要「{expected}」，但上游實際結果是「{actual}」，因此沒有執行「{target}」。' },
       loopOutcomes: { continued: '條件符合，繼續下一輪', iterationLimitReached: '達到最大輪次後停止', conditionNotMatched: '條件不符合，循環結束', finished: '循環已結束' },
     },
     edgeEditor: {

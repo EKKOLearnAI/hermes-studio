@@ -2059,11 +2059,13 @@ export default {
     evidence: {
       ariaLabel: 'Workflow 実行詳細', title: '実行詳細', count: '{count} 件',
       intro: 'この実行の経路判定、ループ回数、異常ノードを表示します。', empty: '実行詳細はありません', loadFailed: '保存済みの実行詳細を読み込めませんでした',
+      summaryTitle: '実行結果', blockedAt: '{gate} でブロック', actualPath: '実際の経路', noActualPath: '選択された経路はありません', pathChecks: '経路判定', selectedPaths: '使用した経路', otherPaths: 'その他の判定とイベント', selectedCount: '{count} 件使用', otherCount: '{count} 件未使用', eventCount: 'イベント {count} 件', showOtherPaths: 'その他の詳細を表示（{count}）', hideOtherPaths: 'その他の詳細を隠す',
+      condition: '条件', conditionMatched: '一致', conditionNotMatched: '不一致', sourceOutcome: 'ノード結果', sourceReturned: '正常に返答', sourceFailed: '実行失敗', sourceSkippedStatus: '未実行',
       node: '異常ノード', edge: '経路', loop: 'ループ', pathTitle: '{source} → {target}', loopPass: 'ループ {count} 回目', exceptionalNode: 'このノードは正常に完了しませんでした。',
       technical: '技術情報', recordId: '記録 ID', sequence: '順序', rawStatus: '元の状態', rawRoute: '経路', rawReason: '理由', iterationPath: '反復経路', expectedValue: '必要な結果', actualValue: '上流の実際の結果',
       statuses: { taken: '使用', notTaken: '未使用', evaluationFailed: '判定失敗', timedOut: 'タイムアウト', blocked: 'ブロック済み' },
       routes: { success: '成功後に続行', failure: '失敗後に続行', always: '結果にかかわらず続行' },
-      reasons: { evaluationFailed: '経路判定に失敗しました', conditionNotMatched: '条件が一致しませんでした', iterationLimitReached: '最大ループ回数に到達しました', routeNotMatched: '経路が一致しませんでした', businessBlocked: '「{source}」がワークフローを停止しました（{decision}）：{reason}。そのため「{target}」は実行されませんでした。', businessBlockedWithCondition: '「{source}」がワークフローを停止しました（{decision}）：{reason}。続行には「{expected}」が必要でしたが、上流の結果は「{actual}」だったため、「{target}」は実行されませんでした。', conditionMismatchDetail: '続行には「{expected}」が必要でしたが、上流の結果は「{actual}」だったため、「{target}」は実行されませんでした。' },
+      reasons: { evaluationFailed: '経路判定に失敗しました', conditionNotMatched: '条件が一致しませんでした', iterationLimitReached: '最大ループ回数に到達しました', routeNotMatched: '経路が一致しませんでした', pathSelected: 'この経路が選択されました。', sourceSkipped: '上流ノードが実行されなかったため、この経路は今回使用されませんでした。', failureRouteAfterSuccess: '上流ノードは正常に返答しました。この経路はノード実行失敗時のみ使用されます。', successRouteAfterFailure: '上流ノードの実行に失敗しました。この経路は正常返答時のみ使用されます。', businessBlocked: '「{source}」がワークフローを停止しました（{decision}）：{reason}。そのため「{target}」は実行されませんでした。', businessBlockedWithCondition: '「{source}」がワークフローを停止しました（{decision}）：{reason}。続行には「{expected}」が必要でしたが、上流の結果は「{actual}」だったため、「{target}」は実行されませんでした。', conditionMismatchDetail: '続行には「{expected}」が必要でしたが、上流の結果は「{actual}」だったため、「{target}」は実行されませんでした。' },
       loopOutcomes: { continued: '条件一致、次の回へ続行', iterationLimitReached: '最大回数で停止', conditionNotMatched: '条件不一致で終了', finished: 'ループ終了' },
     },
     edgeEditor: {

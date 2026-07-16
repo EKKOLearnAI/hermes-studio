@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildWorkflowEvidenceRows, formatIterationPath, latestWorkflowNodeSession } from '../../packages/client/src/utils/workflow-history'
+import { buildWorkflowEvidenceRows, formatIterationPath, latestWorkflowNodeSession, summarizeWorkflowEvidenceRows, workflowEdgePlaybackState } from '../../packages/client/src/utils/workflow-history'
 
 const path = [{ loopId: 'outer', iteration: 1 }, { loopId: 'inner', iteration: 2 }]
 
@@ -99,6 +99,87 @@ describe('workflow history evidence', () => {
     expect(row.businessDecision).not.toContain('\0')
     expect(row.businessDecision?.length).toBeLessThanOrEqual(80)
     expect(row.actualValue).toBe(row.businessDecision)
+  })
+
+  it('summarizes the chosen path and blocker separately from unused alternatives', () => {
+    const blockedOutput = JSON.stringify({
+      decision: 'BLOCKED',
+      failed_gate: 'quality-container-setup',
+      reason: 'The container workdir did not exist.',
+      side_effects_completed: [],
+    })
+    const rows = buildWorkflowEvidenceRows({
+      snapshot_nodes: [
+        { id: 'publish', data: { title: 'Build and publish' } },
+        { id: 'verify', data: { title: 'Verify release' } },
+        { id: 'blocked', data: { title: 'Blocked outcome' } },
+        { id: 'summary', data: { title: 'Plain-language summary' } },
+      ],
+      node_sessions: [],
+      edge_evaluations: [{
+        edge_id: 'publish-verify', source_node_id: 'publish', target_node_id: 'verify',
+        source_execution_id: 'publish', source_outcome: 'success', status: 'not_taken', route: 'success',
+        reason: 'condition_not_matched', sequence: 1, iteration_path: [],
+        orchestration: { route: 'success', condition: { path: 'output', operator: 'contains', value: 'HSR_RELEASED_OK' } },
+        condition_evaluation: { status: 'not_matched', reason: 'not_equal', actual: blockedOutput },
+      }, {
+        edge_id: 'publish-blocked', source_node_id: 'publish', target_node_id: 'blocked',
+        source_execution_id: 'publish', source_outcome: 'success', status: 'taken', route: 'success',
+        reason: null, sequence: 2, iteration_path: [],
+        orchestration: { route: 'success', condition: { path: 'output', operator: 'contains', value: 'failed_gate' } },
+        condition_evaluation: { status: 'matched', actual: blockedOutput },
+      }, {
+        edge_id: 'blocked-summary', source_node_id: 'blocked', target_node_id: 'summary',
+        source_execution_id: 'blocked', source_outcome: 'success', status: 'taken', route: 'always',
+        reason: null, sequence: 3, iteration_path: [], orchestration: { route: 'always' }, condition_evaluation: null,
+      }],
+      loop_epochs: [],
+    } as any)
+
+    const overview = summarizeWorkflowEvidenceRows(rows)
+    expect(overview).toMatchObject({
+      businessDecision: 'BLOCKED',
+      businessGate: 'quality-container-setup',
+      businessReason: 'The container workdir did not exist.',
+    })
+    expect(overview.takenEdges.map(row => `${row.sourceTitle} → ${row.targetTitle}`)).toEqual([
+      'Build and publish → Blocked outcome',
+      'Blocked outcome → Plain-language summary',
+    ])
+    expect(overview.otherRows.map(row => row.technicalId)).toEqual(['publish-verify'])
+    expect(overview.takenEdges[0]).toMatchObject({
+      conditionMatched: true,
+      conditionPath: 'output',
+      conditionOperator: 'contains',
+      expectedValue: 'failed_gate',
+      businessGate: 'quality-container-setup',
+    })
+    expect(overview.otherRows[0]).toMatchObject({ conditionMatched: false })
+  })
+
+  it('maps persisted edge decisions and the target node state to canvas playback states', () => {
+    const edgeRow = (status: string) => ({ kind: 'edge', technicalId: 'publish-summary', status }) as any
+
+    expect(workflowEdgePlaybackState('publish-summary', 'idle', 'running', [])).toBe('idle')
+    expect(workflowEdgePlaybackState('publish-summary', 'idle', 'running', [edgeRow('not_taken')])).toBe('inactive')
+    expect(workflowEdgePlaybackState('publish-summary', 'running', 'running', [edgeRow('taken')])).toBe('flowing')
+    expect(workflowEdgePlaybackState('publish-summary', 'completed', 'running', [edgeRow('taken')])).toBe('completed')
+    expect(workflowEdgePlaybackState('publish-summary', 'failed', 'failed', [edgeRow('taken')])).toBe('failed')
+    expect(workflowEdgePlaybackState('publish-summary', 'blocked', 'failed', [edgeRow('taken')])).toBe('failed')
+    expect(workflowEdgePlaybackState('publish-summary', 'canceled', 'canceled', [edgeRow('taken')])).toBe('failed')
+    expect(workflowEdgePlaybackState('publish-summary', 'idle', 'failed', [edgeRow('error')])).toBe('failed')
+    expect(workflowEdgePlaybackState('publish-summary', 'completed', 'completed', [
+      { ...edgeRow('taken'), businessDecision: 'BLOCKED', businessGate: 'quality' },
+    ])).toBe('blocked')
+    expect(workflowEdgePlaybackState('publish-summary', 'running', 'running', [
+      { ...edgeRow('taken'), businessDecision: 'BLOCKED', businessGate: 'quality' },
+    ])).toBe('blocked-flowing')
+    expect(workflowEdgePlaybackState('publish-summary', 'running', 'running', [
+      { ...edgeRow('taken'), sourceOutcome: 'failure' },
+    ])).toBe('failed-flowing')
+    expect(workflowEdgePlaybackState('publish-summary', 'completed', 'completed', [
+      edgeRow('taken'), edgeRow('not_taken'),
+    ])).toBe('completed')
   })
 
 })

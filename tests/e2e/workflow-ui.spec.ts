@@ -74,16 +74,18 @@ test('workflow canvas exposes orchestration editing and portability controls', a
   await expect(firstNode).toHaveCSS('width', '300px')
   await expect(firstNode).toHaveCSS('height', '550px')
   const evidence = page.getByLabel('Workflow execution details')
-  const evidenceToggle = evidence.getByRole('button', { name: /Execution details/ })
-  await expect(evidenceToggle).toContainText('19 items')
+  const evidenceToggle = evidence.getByRole('button', { name: /Path checks/ })
+  await expect(evidenceToggle).toContainText('18 used')
+  await expect(evidenceToggle).toContainText('0 not used')
+  await expect(evidenceToggle).toContainText('1 event')
   await expect(evidenceToggle).toHaveAttribute('aria-expanded', 'false')
-  await expect(evidence.getByText('Agent A → Agent B', { exact: true })).toHaveCount(0)
+  await expect(evidence.getByTestId('workflow-actual-path')).toContainText('Agent A → Agent B')
   await expect(evidence.getByText('a-b', { exact: true })).toHaveCount(0)
   await evidenceToggle.click()
   await expect(evidenceToggle).toHaveAttribute('aria-expanded', 'true')
-  await expect(evidence.getByText('Shows path decisions, loop passes, and exceptional nodes for this run.', { exact: true })).toBeVisible()
   await expect(evidence.getByText('Agent A → Agent B', { exact: true }).first()).toBeVisible()
-  await expect(evidence.getByText('Continued after success', { exact: true }).first()).toBeVisible()
+  await expect(evidence.getByText('This path was selected.', { exact: true }).first()).toBeVisible()
+  await evidence.getByRole('button', { name: 'Show other details (1)' }).click()
   await expect(evidence.getByText('Loop pass 19', { exact: true })).toBeVisible()
   await expect(evidence.getByText('a-b', { exact: true }).first()).toBeHidden()
   const evidenceList = evidence.locator('.workflow-evidence-list')
@@ -303,12 +305,17 @@ test('workflow execution details explain an upstream business blocker before raw
   await page.goto('/#/hermes/workflow')
   await page.locator('.workflow-run-item').click()
   const evidence = page.getByLabel('Workflow execution details')
-  await evidence.getByRole('button', { name: /Execution details/ }).click()
+  const overview = evidence.getByTestId('workflow-evidence-overview')
+  await expect(overview.getByText('Run outcome', { exact: true })).toBeVisible()
+  await expect(overview.getByText('BLOCKED', { exact: true })).toBeVisible()
+  await expect(overview.getByText('The release lock was missing before publication.', { exact: true })).toBeVisible()
+  await evidence.getByRole('button', { name: /Path checks/ }).click()
+  await evidence.getByRole('button', { name: 'Show other details (2)' }).click()
 
   const blockerText = 'Publish release stopped the workflow (BLOCKED): The release lock was missing before publication. Continuing required “PUBLISHED”, but the upstream result was “BLOCKED”, so “Verify release” was not run.'
-  await expect(evidence.getByText(blockerText, { exact: true })).toBeVisible()
+  await expect(evidence.getByText('Condition did not match', { exact: true })).toBeVisible()
   await expect(evidence.getByText('not_taken', { exact: true })).toHaveCount(0)
-  const blockerRow = evidence.locator('.workflow-evidence-row').filter({ hasText: blockerText })
+  const blockerRow = evidence.locator('.workflow-evidence-row').filter({ hasText: 'Publish release → Verify release' })
   await blockerRow.click()
   const detailModal = page.getByTestId('workflow-evidence-detail-modal')
   await expect(detailModal).toBeVisible()
@@ -318,7 +325,150 @@ test('workflow execution details explain an upstream business blocker before raw
   await expect(detailModal.getByText('Condition did not match (condition_not_matched)', { exact: true })).toBeVisible()
   await expect(detailModal.getByText('PUBLISHED', { exact: true })).toBeVisible()
   await expect(detailModal.getByText('BLOCKED', { exact: true })).toBeVisible()
-  await expect(evidence.getByText('Route did not match', { exact: true })).toBeVisible()
+  await expect(evidence.getByText('The source node returned normally; this path is only used when node execution fails.', { exact: true })).toBeVisible()
+})
+
+
+test('workflow execution details lead with the business outcome, chosen path, and explicit condition comparisons', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const nodes = [
+    { id: 'publish', type: 'agent', position: { x: 80, y: 80 }, data: { title: 'Build and publish', agent: 'hermes', input: 'Publish', skills: [], images: [], approvalRequired: false } },
+    { id: 'verify', type: 'agent', position: { x: 420, y: 40 }, data: { title: 'Verify release', agent: 'hermes', input: 'Verify', skills: [], images: [], approvalRequired: false } },
+    { id: 'blocked', type: 'agent', position: { x: 420, y: 240 }, data: { title: 'Blocked outcome', agent: 'hermes', input: 'Explain blocker', skills: [], images: [], approvalRequired: false } },
+    { id: 'summary', type: 'agent', position: { x: 760, y: 140 }, data: { title: 'Plain-language summary', agent: 'hermes', input: 'Summarize', skills: [], images: [], approvalRequired: false } },
+  ]
+  const edges = [
+    { id: 'publish-verify', source: 'publish', target: 'verify', sourceHandle: 'output', targetHandle: 'input', type: 'smoothstep', data: { orchestration: { route: 'success', condition: { path: 'output', operator: 'contains', value: 'HSR_RELEASED_OK' } } } },
+    { id: 'publish-blocked', source: 'publish', target: 'blocked', sourceHandle: 'output', targetHandle: 'input', type: 'smoothstep', data: { orchestration: { route: 'success', condition: { path: 'output', operator: 'contains', value: 'failed_gate' } } } },
+    { id: 'publish-summary', source: 'publish', target: 'summary', sourceHandle: 'output', targetHandle: 'input', type: 'smoothstep', data: { orchestration: { route: 'failure', condition: { path: 'error', operator: 'contains', value: 'fatal' } } } },
+    { id: 'verify-summary', source: 'verify', target: 'summary', sourceHandle: 'output', targetHandle: 'input', type: 'smoothstep', data: { orchestration: { route: 'always' } } },
+    { id: 'blocked-summary', source: 'blocked', target: 'summary', sourceHandle: 'output', targetHandle: 'input', type: 'smoothstep', data: { orchestration: { route: 'always' } } },
+  ]
+  const blockedOutput = JSON.stringify({
+    decision: 'BLOCKED',
+    failed_gate: 'quality-container-setup',
+    reason: 'The container workdir did not exist before the first command.',
+    side_effects_completed: [],
+  })
+  const evaluation = (input: Record<string, unknown>) => ({
+    id: `evaluation-${input.sequence}`, run_id: 'run-blocked-overview', workflow_id: 'wf-release-overview',
+    source_execution_id: input.source_node_id, iteration_path: [], evaluated_at: 2,
+    condition_evaluation: null, ...input,
+  })
+  await mockHermesApi(page, { workflows: [{
+    id: 'wf-release-overview', name: 'Release workflow', profile: 'research', workspace: null,
+    nodes, edges, viewport: { x: 80, y: 80, zoom: .75 }, created_at: 1, updated_at: 1,
+  }], workflowRuns: [{
+    id: 'run-blocked-overview', workflow_id: 'wf-release-overview', profile: 'research', workspace: null, start_node_ids: ['publish'], status: 'completed',
+    snapshot_nodes: nodes, snapshot_edges: edges, compiled_loops: [], started_at: 1, finished_at: 2, created_at: 1, error: null,
+    node_sessions: [],
+    edge_evaluations: [
+      evaluation({ edge_id: 'publish-verify', source_node_id: 'publish', target_node_id: 'verify', source_outcome: 'success', status: 'not_taken', route: 'success', reason: 'condition_not_matched', sequence: 1, orchestration: edges[0].data.orchestration, condition_evaluation: { status: 'not_matched', reason: 'not_equal', actual: blockedOutput } }),
+      evaluation({ edge_id: 'publish-blocked', source_node_id: 'publish', target_node_id: 'blocked', source_outcome: 'success', status: 'taken', route: 'success', reason: null, sequence: 2, orchestration: edges[1].data.orchestration, condition_evaluation: { status: 'matched', actual: blockedOutput } }),
+      evaluation({ edge_id: 'publish-summary', source_node_id: 'publish', target_node_id: 'summary', source_outcome: 'success', status: 'not_taken', route: 'failure', reason: 'route_not_matched', sequence: 3, orchestration: edges[2].data.orchestration }),
+      evaluation({ edge_id: 'verify-summary', source_node_id: 'verify', target_node_id: 'summary', source_outcome: 'skipped', status: 'not_taken', route: 'always', reason: 'route_not_matched', sequence: 4, orchestration: edges[3].data.orchestration }),
+      evaluation({ edge_id: 'blocked-summary', source_node_id: 'blocked', target_node_id: 'summary', source_outcome: 'success', status: 'taken', route: 'always', reason: null, sequence: 5, orchestration: edges[4].data.orchestration }),
+    ],
+    loop_epochs: [],
+  }] })
+
+  await page.goto('/#/hermes/workflow')
+  await page.locator('.workflow-run-item').click()
+  const evidence = page.getByLabel('Workflow execution details')
+  const overview = evidence.getByTestId('workflow-evidence-overview')
+  await expect(overview.getByText('Run outcome', { exact: true })).toBeVisible()
+  await expect(overview.getByText('BLOCKED', { exact: true })).toBeVisible()
+  await expect(overview.getByText('Blocked at quality-container-setup', { exact: true })).toBeVisible()
+  await expect(overview.getByText('The container workdir did not exist before the first command.', { exact: true })).toBeVisible()
+  const actualPath = overview.getByTestId('workflow-actual-path')
+  await expect(actualPath).toContainText('Build and publish → Blocked outcome')
+  await expect(actualPath).toContainText('Blocked outcome → Plain-language summary')
+  await expect(actualPath).not.toContainText('Verify release')
+
+  const detailsToggle = evidence.getByRole('button', { name: /Path checks/ })
+  await expect(detailsToggle).toContainText('2 used')
+  await expect(detailsToggle).toContainText('3 not used')
+  await detailsToggle.click()
+  const selectedPaths = evidence.getByTestId('workflow-selected-paths')
+  await expect(selectedPaths.locator('.workflow-evidence-row')).toHaveCount(2)
+  const blockedPath = selectedPaths.locator('.workflow-evidence-row').filter({ hasText: 'Build and publish → Blocked outcome' })
+  await expect(blockedPath.getByTestId('workflow-condition-comparison')).toContainText('output')
+  await expect(blockedPath.getByTestId('workflow-condition-comparison')).toContainText('Contains (contains)')
+  await expect(blockedPath.getByTestId('workflow-condition-comparison')).toContainText('failed_gate')
+  await expect(blockedPath.getByTestId('workflow-condition-comparison')).toContainText('BLOCKED')
+  await expect(blockedPath.getByTestId('workflow-condition-comparison')).toContainText('quality-container-setup')
+  await expect(blockedPath.getByTestId('workflow-condition-comparison')).toContainText('Matched')
+  await expect(selectedPaths).not.toContainText('Continued after success')
+  await expect(evidence.getByText('Build and publish → Verify release', { exact: true })).toHaveCount(0)
+
+  const alternativesToggle = evidence.getByRole('button', { name: 'Show other details (3)' })
+  await alternativesToggle.click()
+  const otherPaths = evidence.getByTestId('workflow-other-paths')
+  await expect(otherPaths.locator('.workflow-evidence-row')).toHaveCount(3)
+  const verifyPath = otherPaths.locator('.workflow-evidence-row').filter({ hasText: 'Build and publish → Verify release' })
+  await expect(verifyPath.getByTestId('workflow-condition-comparison')).toContainText('HSR_RELEASED_OK')
+  await expect(verifyPath.getByTestId('workflow-condition-comparison')).toContainText('Did not match')
+  const runtimeFailurePath = otherPaths.locator('.workflow-evidence-row').filter({ hasText: 'Build and publish → Plain-language summary' })
+  await expect(runtimeFailurePath.getByTestId('workflow-condition-comparison')).toContainText('fatal')
+  await expect(runtimeFailurePath.getByTestId('workflow-condition-comparison').locator('.matched, .not-matched')).toHaveCount(0)
+  await expect(otherPaths).toContainText('The source node returned normally; this path is only used when node execution fails.')
+  await expect(otherPaths).toContainText('The source node did not run, so this path was not part of this run.')
+
+  await blockedPath.click()
+  const detailModal = page.getByTestId('workflow-evidence-detail-modal')
+  await expect(detailModal.getByText('Used (taken)', { exact: true })).toBeVisible()
+  await expect(detailModal.getByText('success', { exact: false })).toBeVisible()
+})
+
+
+test('workflow canvas animates the active route and preserves the completed route highlight', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const nodes = [
+    { id: 'prepare', type: 'agent', position: { x: 80, y: 80 }, data: { title: 'Prepare', agent: 'hermes', input: 'Prepare', skills: [], images: [], approvalRequired: false } },
+    { id: 'publish', type: 'agent', position: { x: 420, y: 40 }, data: { title: 'Publish', agent: 'hermes', input: 'Publish', skills: [], images: [], approvalRequired: false } },
+    { id: 'fallback', type: 'agent', position: { x: 420, y: 260 }, data: { title: 'Fallback', agent: 'hermes', input: 'Fallback', skills: [], images: [], approvalRequired: false } },
+  ]
+  const edges = [
+    { id: 'prepare-publish', source: 'prepare', target: 'publish', sourceHandle: 'output', targetHandle: 'input', type: 'smoothstep' },
+    { id: 'prepare-fallback', source: 'prepare', target: 'fallback', sourceHandle: 'output', targetHandle: 'input', type: 'smoothstep' },
+  ]
+  const edgeEvaluation = (runId: string, edgeId: string, targetNodeId: string, status: 'taken' | 'not_taken', sequence: number) => ({
+    id: `${runId}-${edgeId}`, run_id: runId, workflow_id: 'wf-playback', edge_id: edgeId,
+    source_node_id: 'prepare', source_execution_id: 'prepare', iteration_path: [], target_node_id: targetNodeId,
+    source_outcome: 'success', status, route: 'success', reason: status === 'taken' ? null : 'condition_not_matched',
+    sequence, orchestration: { route: 'success' }, condition_evaluation: null, evaluated_at: 2,
+  })
+  const run = (id: string, status: 'running' | 'completed', targetStatus: 'running' | 'completed') => ({
+    id, workflow_id: 'wf-playback', profile: 'research', workspace: null, start_node_ids: ['prepare'], status,
+    snapshot_nodes: nodes, snapshot_edges: edges, compiled_loops: [], started_at: 1, finished_at: status === 'completed' ? 2 : null, created_at: 1, error: null,
+    node_sessions: [
+      { id: `${id}-prepare`, run_id: id, workflow_id: 'wf-playback', node_id: 'prepare', execution_id: 'prepare', iteration_path: [], consumed_edge_evaluation_ids: [], session_id: `${id}-prepare-session`, profile: 'research', agent: 'hermes', agent_mode: '', status: 'completed', sequence: 1, started_at: 1, finished_at: 2, created_at: 1, updated_at: 2, error: null },
+      { id: `${id}-publish`, run_id: id, workflow_id: 'wf-playback', node_id: 'publish', execution_id: 'publish', iteration_path: [], consumed_edge_evaluation_ids: [], session_id: `${id}-publish-session`, profile: 'research', agent: 'hermes', agent_mode: '', status: targetStatus, sequence: 2, started_at: 2, finished_at: targetStatus === 'completed' ? 3 : null, created_at: 2, updated_at: 3, error: null },
+    ],
+    edge_evaluations: [
+      edgeEvaluation(id, 'prepare-publish', 'publish', 'taken', 3),
+      edgeEvaluation(id, 'prepare-fallback', 'fallback', 'not_taken', 4),
+    ],
+    loop_epochs: [],
+  })
+  await mockHermesApi(page, {
+    workflows: [{ id: 'wf-playback', name: 'Playback workflow', profile: 'research', workspace: null, nodes, edges, viewport: { x: 80, y: 80, zoom: .75 }, created_at: 1, updated_at: 1 }],
+    workflowRuns: [run('run-live', 'running', 'running'), run('run-completed', 'completed', 'completed')],
+  })
+
+  await page.goto('/#/hermes/workflow')
+  const runs = page.locator('.workflow-run-item')
+  await runs.nth(0).click()
+  const selectedEdge = page.locator('.vue-flow__edge[data-id="prepare-publish"]')
+  const unusedEdge = page.locator('.vue-flow__edge[data-id="prepare-fallback"]')
+  await expect(selectedEdge).toHaveClass(/workflow-edge--flowing/)
+  await expect(selectedEdge).toHaveClass(/animated/)
+  await expect(unusedEdge).toHaveClass(/workflow-edge--inactive/)
+
+  await runs.nth(1).click()
+  await expect(selectedEdge).toHaveClass(/workflow-edge--completed/)
+  await expect(selectedEdge).not.toHaveClass(/animated/)
+  await expect(unusedEdge).toHaveClass(/workflow-edge--inactive/)
 })
 
 
