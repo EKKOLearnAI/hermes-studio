@@ -806,8 +806,10 @@ export default {
       conditionPath: 'What should this connection check?', conditionPathPlaceholder: 'Advanced path, for example output',
       conditionPathOptions: {
         routeOnly: 'Route only — no condition', outputRecommended: 'Successful reply text (output, recommended)', output: 'Successful reply text (output)',
-        errorRecommended: 'Failure error text (error, recommended)', error: 'Failure error text (error)', custom: 'Custom path (advanced)',
+        outputJson: 'Structured reply JSON (outputJson.*)', errorRecommended: 'Failure error text (error, recommended)', error: 'Failure error text (error)', custom: 'Custom path (advanced)',
       },
+      structuredOutputPathPlaceholder: 'JSON field path, for example outputJson.route_token',
+      structuredOutputHelp: 'Parses a complete JSON reply or exactly one fenced json block. Missing, malformed, or multiple JSON blocks leave outputJson unavailable, so the condition does not match.',
       conditionPathHelp: {
         success: 'For success, output is recommended. Choose Route only when no content check is needed.',
         failure: 'For failure, error is recommended. Choose Route only when no error-text check is needed.',

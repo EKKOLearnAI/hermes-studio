@@ -806,8 +806,10 @@ export default {
       conditionPath: '這條連線要檢查什麼？', conditionPathPlaceholder: '進階路徑，例如 output',
       conditionPathOptions: {
         routeOnly: '只判斷路由，不檢查內容', outputRecommended: '成功回覆文字（output，建議）', output: '成功回覆文字（output）',
-        errorRecommended: '失敗錯誤文字（error，建議）', error: '失敗錯誤文字（error）', custom: '自訂路徑（進階）',
+        outputJson: '結構化回覆 JSON（outputJson.*）', errorRecommended: '失敗錯誤文字（error，建議）', error: '失敗錯誤文字（error）', custom: '自訂路徑（進階）',
       },
+      structuredOutputPathPlaceholder: 'JSON 欄位路徑，例如 outputJson.route_token',
+      structuredOutputHelp: '解析完整 JSON 回覆或唯一一個 fenced json 程式碼區塊。JSON 缺失、格式錯誤或有多個區塊時，outputJson 不可用，條件不會符合。',
       conditionPathHelp: {
         success: '成功路由建議檢查 output；若不需要檢查回覆內容，選擇「只判斷路由」。',
         failure: '失敗路由建議檢查 error；若不需要檢查錯誤文字，選擇「只判斷路由」。',

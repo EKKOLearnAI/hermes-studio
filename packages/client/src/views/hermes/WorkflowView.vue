@@ -156,7 +156,7 @@ const edgeEditorVisible = ref(false)
 const edgeEditorId = ref('')
 const edgeEditorRoute = ref<'success' | 'failure' | 'always'>('success')
 const edgeEditorConditionPath = ref('')
-const edgeEditorConditionPathPreset = ref<'route-only' | 'output' | 'error' | 'custom'>('route-only')
+const edgeEditorConditionPathPreset = ref<'route-only' | 'output' | 'output-json' | 'error' | 'custom'>('route-only')
 const edgeEditorConditionOperator = ref('equals')
 const edgeEditorConditionValueType = ref<WorkflowConditionValueType>('string')
 const edgeEditorConditionValue = ref('')
@@ -206,6 +206,10 @@ const workflowConditionPathOptions = computed(() => {
         ? 'workflow.edgeEditor.conditionPathOptions.outputRecommended'
         : 'workflow.edgeEditor.conditionPathOptions.output'),
       value: 'output',
+    })
+    options.push({
+      label: t('workflow.edgeEditor.conditionPathOptions.outputJson'),
+      value: 'output-json',
     })
   }
   if (edgeEditorRoute.value !== 'success') {
@@ -1983,16 +1987,17 @@ function handleNodeClick(payload: { node: { id: string } }) {
   void openWorkflowNodeSession(payload.node.id)
 }
 
-function setConditionPathPreset(preset: 'route-only' | 'output' | 'error' | 'custom') {
+function setConditionPathPreset(preset: 'route-only' | 'output' | 'output-json' | 'error' | 'custom') {
   edgeEditorConditionPathPreset.value = preset
   if (preset === 'route-only') edgeEditorConditionPath.value = ''
   if (preset === 'output' || preset === 'error') edgeEditorConditionPath.value = preset
+  if (preset === 'output-json' && !edgeEditorConditionPath.value.startsWith('outputJson')) edgeEditorConditionPath.value = 'outputJson'
 }
 
 function handleEdgeEditorRouteChange(route: 'success' | 'failure' | 'always') {
   edgeEditorRoute.value = route
   if (route === 'success' && edgeEditorConditionPathPreset.value === 'error') setConditionPathPreset('output')
-  if (route === 'failure' && edgeEditorConditionPathPreset.value === 'output') setConditionPathPreset('error')
+  if (route === 'failure' && (edgeEditorConditionPathPreset.value === 'output' || edgeEditorConditionPathPreset.value === 'output-json')) setConditionPathPreset('error')
 }
 
 function handleEdgeEditorOperatorChange(operator: string) {
@@ -2018,7 +2023,9 @@ function openEdgeEditor(edgeId: string) {
     ? 'route-only'
     : edgeEditorConditionPath.value === 'output' || edgeEditorConditionPath.value === 'error'
       ? edgeEditorConditionPath.value
-      : 'custom'
+      : edgeEditorConditionPath.value === 'outputJson' || edgeEditorConditionPath.value.startsWith('outputJson.')
+        ? 'output-json'
+        : 'custom'
   edgeEditorConditionOperator.value = orchestration?.condition?.operator || 'equals'
   const conditionValue = orchestration?.condition?.value
   edgeEditorConditionValueType.value = requiredWorkflowConditionValueType(edgeEditorConditionOperator.value)
@@ -2768,6 +2775,9 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
             <span class="workflow-field-label">{{ t('workflow.edgeEditor.conditionPath') }}</span>
             <WorkflowFieldHelp
               :text="t(`workflow.edgeEditor.conditionPathHelp.${edgeEditorRoute}`)"
+              :secondary-text="edgeEditorConditionPathPreset === 'output-json'
+                ? t('workflow.edgeEditor.structuredOutputHelp')
+                : undefined"
               test-id="workflow-edge-condition-path-help"
             />
           </span>
@@ -2778,10 +2788,12 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
             @update:value="setConditionPathPreset"
           />
           <NInput
-            v-if="edgeEditorConditionPathPreset === 'custom'"
+            v-if="edgeEditorConditionPathPreset === 'custom' || edgeEditorConditionPathPreset === 'output-json'"
             v-model:value="edgeEditorConditionPath"
             data-testid="workflow-edge-condition-path"
-            :placeholder="t('workflow.edgeEditor.conditionPathPlaceholder')"
+            :placeholder="edgeEditorConditionPathPreset === 'output-json'
+              ? t('workflow.edgeEditor.structuredOutputPathPlaceholder')
+              : t('workflow.edgeEditor.conditionPathPlaceholder')"
           />
         </div>
         <div v-if="edgeEditorConditionPathPreset !== 'route-only'" class="workflow-field">

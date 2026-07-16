@@ -797,6 +797,37 @@ function lastAssistantOutput(sessionId: string, fallback?: string | null): strin
   return String(fallback || '')
 }
 
+export function parseWorkflowStructuredOutput(output: string): unknown | undefined {
+  const trimmed = output.trim()
+  if (!trimmed) return undefined
+
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    // Agent responses commonly wrap a machine-readable result in one JSON fence.
+  }
+
+  const fenceOpenings = [...trimmed.matchAll(/```json\b/gi)]
+  if (fenceOpenings.length !== 1) return undefined
+  const fencedJson = [...trimmed.matchAll(/```json\s*([\s\S]*?)```/gi)]
+  if (fencedJson.length !== 1) return undefined
+  try {
+    return JSON.parse(fencedJson[0][1].trim())
+  } catch {
+    return undefined
+  }
+}
+
+function workflowOutputConditionContext(output: string, edges: WorkflowEdgeSnapshot[]): { output: string; outputJson?: unknown } {
+  const needsStructuredOutput = edges.some((edge) => {
+    const path = edge.orchestration.condition?.path
+    return path === 'outputJson' || path?.startsWith('outputJson.')
+  })
+  if (!needsStructuredOutput) return { output }
+  const outputJson = parseWorkflowStructuredOutput(output)
+  return outputJson === undefined ? { output } : { output, outputJson }
+}
+
 function isWorkflowCodingAgentSession(session?: { source?: string | null; agent?: string | null; agent_session_id?: string | null } | null): boolean {
   const agent = String(session?.agent || '').trim()
   return agent === 'claude' || agent === 'codex' || Boolean(session?.agent_session_id)
@@ -1362,8 +1393,10 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
         outputs.set(node.id, output)
         updateWorkflowRunNodeSession(nodeSession.id, { status: 'completed', finished_at: Date.now(), error: null })
         nodeStatuses[node.id] = 'completed'
-        for (const edge of forwardEdges.filter(item => activeIds.has(item.target) && item.source === node.id)) {
-          const decision = evaluateWorkflowEdgeRoute(edge.orchestration, 'success', { output })
+        const outgoingEdges = forwardEdges.filter(item => activeIds.has(item.target) && item.source === node.id)
+        const conditionContext = workflowOutputConditionContext(output, outgoingEdges)
+        for (const edge of outgoingEdges) {
+          const decision = evaluateWorkflowEdgeRoute(edge.orchestration, 'success', conditionContext)
           persistDecision(edge, 'success', decision, path)
           decisions.set(edge, decision)
         }
@@ -1530,7 +1563,9 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             : evaluateWorkflowEdgeRoute(
                 feedback.orchestration,
                 sourceOutcome,
-                iterationFailed ? { error: pathFailure?.lastError || 'loop iteration failed' } : { output: outputs.get(loop.latchNodeId) || '' },
+                iterationFailed
+                  ? { error: pathFailure?.lastError || 'loop iteration failed' }
+                  : workflowOutputConditionContext(outputs.get(loop.latchNodeId) || '', [feedback]),
               )
           const decision: WorkflowEdgeDecision = routeDecision.status === 'taken' && iteration + 1 >= loop.maxIterations
             ? { status: 'not_taken', routeMatched: true, reason: 'iteration_limit_reached' }
@@ -1902,8 +1937,10 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             return { node, ok: false, approvalRejected: true, error }
           }
           outputs.set(node.id, output)
-          for (const edge of outgoing.get(node.id) || []) {
-            recordEdgeDecision(edge, 'success', evaluateWorkflowEdgeRoute(edge.orchestration, 'success', { output }))
+          const outgoingEdges = outgoing.get(node.id) || []
+          const conditionContext = workflowOutputConditionContext(output, outgoingEdges)
+          for (const edge of outgoingEdges) {
+            recordEdgeDecision(edge, 'success', evaluateWorkflowEdgeRoute(edge.orchestration, 'success', conditionContext))
           }
           completed.add(node.id)
           nodeStatuses[node.id] = 'completed'

@@ -6,6 +6,7 @@ const required = [
   'importWorkflow', 'exportWorkflow', 'importFailed', 'exportFailed',
   'conditionValuePlaceholder', 'invalidConditionValue', 'loopIdPlaceholder',
   'loadFailed', 'expectedValue', 'actualValue', 'businessBlocked', 'businessBlockedWithCondition',
+  'outputJson', 'structuredOutputPathPlaceholder', 'structuredOutputHelp',
 ]
 
 describe('Workflow locale coverage', () => {

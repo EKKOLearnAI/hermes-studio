@@ -806,8 +806,10 @@ export default {
       conditionPath: '这条连接要检查什么？', conditionPathPlaceholder: '高级路径，例如 output',
       conditionPathOptions: {
         routeOnly: '只判断路由，不检查内容', outputRecommended: '成功回复文本（output，推荐）', output: '成功回复文本（output）',
-        errorRecommended: '失败错误文本（error，推荐）', error: '失败错误文本（error）', custom: '自定义路径（高级）',
+        outputJson: '结构化回复 JSON（outputJson.*）', errorRecommended: '失败错误文本（error，推荐）', error: '失败错误文本（error）', custom: '自定义路径（高级）',
       },
+      structuredOutputPathPlaceholder: 'JSON 字段路径，例如 outputJson.route_token',
+      structuredOutputHelp: '解析完整 JSON 回复或唯一一个 fenced json 代码块。JSON 缺失、格式错误或存在多个代码块时，outputJson 不可用，条件不会匹配。',
       conditionPathHelp: {
         success: '成功路由推荐检查 output；如果不需要检查回复内容，选择“只判断路由”。',
         failure: '失败路由推荐检查 error；如果不需要检查错误文本，选择“只判断路由”。',
