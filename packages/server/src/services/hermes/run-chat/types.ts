@@ -80,6 +80,7 @@ export interface SessionState {
   responseRun?: ResponseRunState
   source?: ChatRunSource
   bridgePendingAssistantContent?: string
+  bridgeAssistantMessageId?: string
   bridgePendingReasoningContent?: string
   bridgePendingToolCallMarkup?: string
   bridgeOutput?: string
