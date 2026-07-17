@@ -20,6 +20,107 @@ function runPython(script: string): any {
 }
 
 describe('agent bridge worker endpoint', () => {
+  it('accepts an already queued ready event before treating worker exit as startup failure', () => {
+    const result = runPython(String.raw`
+import importlib.util
+import json
+import sys
+import types
+
+bridge_runtime = types.ModuleType("bridge_runtime")
+bridge_runtime._hidden_subprocess_kwargs = lambda: {}
+bridge_runtime._json_line_bytes = lambda req: (json.dumps(req) + "\n").encode("utf-8")
+bridge_runtime._platform_text_encoding = lambda: "utf-8"
+sys.modules["bridge_runtime"] = bridge_runtime
+
+spec = importlib.util.spec_from_file_location(
+    "bridge_transport",
+    "packages/server/src/services/hermes/agent-bridge/python/bridge_transport.py",
+)
+bridge_transport = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(bridge_transport)
+
+class InlineThread:
+    def __init__(self, target, **_kwargs):
+        self.target = target
+
+    def start(self):
+        self.target()
+
+class ExitedProcess:
+    stdout = ['{"event":"ready"}\n']
+
+    def poll(self):
+        return 0
+
+original_thread = bridge_transport.threading.Thread
+try:
+    bridge_transport.threading.Thread = InlineThread
+    worker = bridge_transport.WorkerProcess("default", "default", "ipc:///tmp/worker.sock", None, None)
+    worker.process = ExitedProcess()
+    worker._wait_ready()
+finally:
+    bridge_transport.threading.Thread = original_thread
+
+print(json.dumps({"ready": True}))
+`)
+
+    expect(result.ready).toBe(true)
+  })
+
+  it('still rejects an exited worker that has no queued ready event', () => {
+    const result = runPython(String.raw`
+import importlib.util
+import json
+import sys
+import types
+
+bridge_runtime = types.ModuleType("bridge_runtime")
+bridge_runtime._hidden_subprocess_kwargs = lambda: {}
+bridge_runtime._json_line_bytes = lambda req: (json.dumps(req) + "\n").encode("utf-8")
+bridge_runtime._platform_text_encoding = lambda: "utf-8"
+sys.modules["bridge_runtime"] = bridge_runtime
+
+spec = importlib.util.spec_from_file_location(
+    "bridge_transport",
+    "packages/server/src/services/hermes/agent-bridge/python/bridge_transport.py",
+)
+bridge_transport = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(bridge_transport)
+
+class InlineThread:
+    def __init__(self, target, **_kwargs):
+        self.target = target
+
+    def start(self):
+        self.target()
+
+class ExitedProcess:
+    stdout = []
+
+    def poll(self):
+        return 0
+
+original_thread = bridge_transport.threading.Thread
+try:
+    bridge_transport.threading.Thread = InlineThread
+    worker = bridge_transport.WorkerProcess("default", "default", "ipc:///tmp/worker.sock", None, None)
+    worker.process = ExitedProcess()
+    try:
+        worker._wait_ready()
+    except RuntimeError as exc:
+        print(json.dumps({"error": str(exc)}))
+    else:
+        raise AssertionError("expected exited worker without ready event to fail")
+finally:
+    bridge_transport.threading.Thread = original_thread
+`)
+
+    expect(result.error).toContain('exited before ready')
+  })
+
   it('avoids high dynamic worker port bases on Windows', () => {
     const result = runPython(String.raw`
 import importlib.util
