@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NButton, NSpin, NTabPane, NTabs } from 'naive-ui'
+import { NButton, NSpin, NTabPane, NTabs, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import AuxiliaryModelsPanel from '@/components/hermes/models/AuxiliaryModelsPanel.vue'
 import CombinationModelsPanel from '@/components/hermes/models/CombinationModelsPanel.vue'
@@ -14,6 +14,7 @@ import { checkCopilotToken } from '@/api/hermes/copilot-auth'
 const { t } = useI18n()
 const modelsStore = useModelsStore()
 const profilesStore = useProfilesStore()
+const message = useMessage()
 const route = useRoute()
 const router = useRouter()
 const showModal = ref(false)
@@ -54,6 +55,15 @@ async function handleSaved() {
   await modelsStore.fetchProviders()
   handleModalClose()
 }
+
+async function handleRefreshModelCache() {
+  try {
+    await modelsStore.refreshModelCache()
+    message.success(t('models.refreshModelCacheSuccess'))
+  } catch (e: any) {
+    message.error(e?.message || t('models.refreshModelCacheFailed'))
+  }
+}
 </script>
 
 <template>
@@ -65,6 +75,19 @@ async function handleSaved() {
     <header class="page-header">
       <h2 class="header-title">{{ t('models.title') }}</h2>
       <div v-if="activeTab === 'general'" class="header-actions">
+        <NButton
+          size="small"
+          :loading="modelsStore.refreshingModelCache"
+          :disabled="modelsStore.loading"
+          :aria-label="t('models.refreshModelCache')"
+          :title="t('models.refreshModelCache')"
+          @click="handleRefreshModelCache"
+        >
+          <template #icon>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 1-9 9 9.7 9.7 0 0 1-6.7-2.7"/><path d="M3 12a9 9 0 0 1 9-9 9.7 9.7 0 0 1 6.7 2.7"/><path d="M21 3v6h-6"/><path d="M3 21v-6h6"/></svg>
+          </template>
+          <span class="header-action-label">{{ t('models.refreshModelCache') }}</span>
+        </NButton>
         <NButton
           type="primary"
           size="small"
