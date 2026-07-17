@@ -1,9 +1,10 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { config } from '../../config'
 import { updateConfigYamlForProfile } from '../config-helpers'
 import { logger } from '../logger'
+import { isPathWithin } from './hermes-path'
 import { listProfileNamesFromDisk } from './hermes-profile'
 
 const LEGACY_SERVER_NAME = 'hermes-studio'
@@ -52,20 +53,63 @@ function allowTransientAutoinject(): boolean {
   return isEnabledEnv(process.env.HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT)
 }
 
-function normalizedPathPrefix(pathname: string): string {
-  return pathname.replace(/\/+$/, '') + '/'
+function canonicalPath(pathname: string): string {
+  try {
+    return realpathSync(pathname)
+  } catch {
+    return resolve(pathname)
+  }
 }
 
-function isTransientAppHome(appHome: string): boolean {
-  const normalized = normalizedPathPrefix(appHome)
-  const transientRoots = [tmpdir(), '/tmp', '/private/tmp']
+function isTransientPath(pathname: string): boolean {
+  const candidate = canonicalPath(pathname)
+  return [tmpdir(), '/tmp', '/private/tmp']
     .filter(Boolean)
-    .map(root => normalizedPathPrefix(root))
-  return transientRoots.some(root => normalized.startsWith(root))
+    .some(root => isPathWithin(candidate, canonicalPath(root)))
 }
 
-function shouldSkipTransientAutoinject(): boolean {
-  return isTransientAppHome(config.appHome) && !allowTransientAutoinject()
+function isLinkedGitWorktreeMarker(marker: string): boolean {
+  try {
+    const firstLine = readFileSync(marker, 'utf8').split(/\r?\n/, 1)[0]?.trim() || ''
+    const match = /^gitdir:\s*(.+)$/i.exec(firstLine)
+    if (!match) return false
+    const gitDir = canonicalPath(resolve(dirname(marker), match[1].trim()))
+    const commonDirText = readFileSync(join(gitDir, 'commondir'), 'utf8').trim()
+    if (!commonDirText) return false
+    const commonDir = canonicalPath(resolve(gitDir, commonDirText))
+    // Linked worktrees declare their common dir and live at
+    // <common-dir>/worktrees/<id>; a lookalike gitdir pathname is not enough.
+    return canonicalPath(dirname(gitDir)) === canonicalPath(join(commonDir, 'worktrees'))
+  } catch {
+    return false
+  }
+}
+
+function isLinkedGitWorktreePath(pathname: string): boolean {
+  let current = dirname(canonicalPath(pathname))
+  while (true) {
+    const marker = join(current, '.git')
+    if (existsSync(marker)) {
+      try {
+        const markerType = statSync(marker)
+        if (markerType.isFile()) return isLinkedGitWorktreeMarker(marker)
+        if (markerType.isDirectory()) return false
+      } catch {
+        return false
+      }
+    }
+    const parent = dirname(current)
+    if (parent === current) return false
+    current = parent
+  }
+}
+
+function shouldSkipTransientAutoinject(bundledScript: string | null): boolean {
+  if (allowTransientAutoinject()) return false
+  return isTransientPath(config.appHome) || (
+    bundledScript !== null &&
+    (isTransientPath(bundledScript) || isLinkedGitWorktreePath(bundledScript))
+  )
 }
 
 function isDesktopRuntime(): boolean {
@@ -93,12 +137,14 @@ function runtimeNodePath(): string | null {
   return node || null
 }
 
-function managedCommandConfig(toolset: string): Record<string, unknown> {
+function managedCommandConfig(
+  toolset: string,
+  bundledScript: string | null,
+): Record<string, unknown> {
   // Prefer the bundled script with an absolute path over a bare command name.
   // On Windows (especially desktop builds), `hermes-studio-mcp` may not be in
   // PATH even though the bundled .mjs script exists on disk.  Desktop provides
   // HERMES_AGENT_NODE for the packaged runtime node; fall back to process.execPath.
-  const bundledScript = bundledMcpScriptPath()
   if (bundledScript) {
     return { command: runtimeNodePath() || process.execPath, args: [bundledScript, toolset] }
   }
@@ -111,7 +157,12 @@ function managedCommandConfig(toolset: string): Record<string, unknown> {
   return { command: 'hermes-studio-mcp', args: [toolset] }
 }
 
-function managedConfig(profile: string, serverName: string, toolset: string): Record<string, unknown> {
+function managedConfig(
+  profile: string,
+  serverName: string,
+  toolset: string,
+  bundledScript: string | null,
+): Record<string, unknown> {
   const env: Record<string, string> = {
     HERMES_WEB_UI_URL: `http://127.0.0.1:${config.port}`,
     HERMES_WEB_UI_HOME: config.appHome,
@@ -123,7 +174,7 @@ function managedConfig(profile: string, serverName: string, toolset: string): Re
   }
 
   return {
-    ...managedCommandConfig(toolset),
+    ...managedCommandConfig(toolset, bundledScript),
     env,
     enabled: true,
   }
@@ -163,7 +214,10 @@ function sameConfig(existing: Record<string, any>, desired: Record<string, unkno
     existing.env[MANAGED_ENV_KEY] === desiredEnv[MANAGED_ENV_KEY]
 }
 
-async function injectIntoProfile(profile: string): Promise<BundledMcpInjectionTargetResult> {
+async function injectIntoProfile(
+  profile: string,
+  bundledScript: string | null,
+): Promise<BundledMcpInjectionTargetResult> {
   return await updateConfigYamlForProfile(profile, current => {
     const cfg = isRecord(current) ? current : {}
     if (!isRecord(cfg.mcp_servers)) cfg.mcp_servers = {}
@@ -193,7 +247,7 @@ async function injectIntoProfile(profile: string): Promise<BundledMcpInjectionTa
     }
 
     for (const server of MANAGED_SERVERS) {
-      const desired = managedConfig(profile, server.name, server.toolset)
+      const desired = managedConfig(profile, server.name, server.toolset, bundledScript)
       const existing = cfg.mcp_servers[server.name]
       if (!existing) {
         cfg.mcp_servers[server.name] = desired
@@ -246,7 +300,13 @@ async function injectIntoProfile(profile: string): Promise<BundledMcpInjectionTa
 }
 
 export async function injectBundledMcpServer(): Promise<BundledMcpInjectionResult> {
-  const commandInfo = managedConfig('default', MANAGED_SERVERS[0].name, MANAGED_SERVERS[0].toolset)
+  const bundledScript = bundledMcpScriptPath()
+  const commandInfo = managedConfig(
+    'default',
+    MANAGED_SERVERS[0].name,
+    MANAGED_SERVERS[0].toolset,
+    bundledScript,
+  )
   const result: BundledMcpInjectionResult = {
     serverNames: MANAGED_SERVERS.map(server => server.name),
     command: String(commandInfo.command),
@@ -258,13 +318,16 @@ export async function injectBundledMcpServer(): Promise<BundledMcpInjectionResul
     return result
   }
 
-  if (shouldSkipTransientAutoinject()) {
-    logger.info({ appHome: config.appHome }, '[mcp-autoinject] skipped for transient Web UI home')
+  if (shouldSkipTransientAutoinject(bundledScript)) {
+    logger.info(
+      { appHome: config.appHome, bundledScript },
+      '[mcp-autoinject] skipped for transient Web UI home or MCP launcher',
+    )
     return result
   }
 
   for (const profile of listProfileNamesFromDisk()) {
-    result.targets.push(await injectIntoProfile(profile))
+    result.targets.push(await injectIntoProfile(profile, bundledScript))
   }
 
   const changed = result.targets.filter(target => target.status === 'injected' || target.status === 'updated')
