@@ -51,4 +51,52 @@ describe('SafeFileStore', () => {
     await expect(readFile(`${file}.bak`, 'utf-8')).resolves.toContain('default: old')
     await expect(readFile(file, 'utf-8')).resolves.toContain('default: new')
   })
+
+  it('locks multi-file updates in a stable order and preserves concurrent changes', async () => {
+    const store = new SafeFileStore()
+    const first = await tempFile('a.txt')
+    const second = join(first, '..', 'b.txt')
+    await writeFile(first, 'A', 'utf-8')
+    await writeFile(second, 'B', 'utf-8')
+
+    await Promise.all([
+      store.updateTexts([first, second], async current => {
+        await new Promise(resolve => setTimeout(resolve, 25))
+        return {
+          [first]: `${current[first]}1`,
+          [second]: `${current[second]}1`,
+        }
+      }),
+      store.updateTexts([second, first], current => ({
+        [first]: `${current[first]}2`,
+        [second]: `${current[second]}2`,
+      })),
+    ])
+
+    await expect(readFile(first, 'utf-8')).resolves.toBe('A12')
+    await expect(readFile(second, 'utf-8')).resolves.toBe('B12')
+  })
+
+  it('rolls back earlier files when a later multi-file write fails', async () => {
+    const store = new SafeFileStore()
+    const first = await tempFile('a.txt')
+    const second = join(first, '..', 'b.txt')
+    await writeFile(first, 'old-a', 'utf-8')
+    await writeFile(second, 'old-b', 'utf-8')
+
+    const internal = store as any
+    const originalWrite = internal.writeTextUnlocked.bind(store)
+    internal.writeTextUnlocked = async (path: string, content: string, options: unknown) => {
+      if (path === second && content === 'new-b') throw new Error('simulated second write failure')
+      return originalWrite(path, content, options)
+    }
+
+    await expect(store.updateTexts([first, second], () => ({
+      [first]: 'new-a',
+      [second]: 'new-b',
+    }))).rejects.toThrow('simulated second write failure')
+
+    await expect(readFile(first, 'utf-8')).resolves.toBe('old-a')
+    await expect(readFile(second, 'utf-8')).resolves.toBe('old-b')
+  })
 })

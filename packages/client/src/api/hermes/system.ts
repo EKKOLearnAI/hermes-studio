@@ -103,6 +103,8 @@ export interface AvailableModelGroup {
   /** Config source for custom providers. Dict-backed providers can be deleted from providers:<key>. */
   provider_source?: 'custom_providers' | 'providers'
   provider_key?: string
+  provider_editable?: boolean
+  editable_fields?: ProviderEditableField[]
   /** 可选：模型 ID -> 元数据（preview/disabled/alias）。alias 仅用于 Web UI 展示。 */
   model_meta?: Record<string, { preview?: boolean; disabled?: boolean; alias?: string }>
 }
@@ -134,6 +136,63 @@ export interface CustomProvider {
   context_length?: number
   api_mode?: ProviderApiMode
   providerKey?: string | null
+}
+
+export type ProviderEditableField =
+  | 'label'
+  | 'base_url'
+  | 'api_key'
+  | 'api_mode'
+  | 'preferred_model'
+  | 'context_lengths'
+  | 'discover_models'
+  | 'rate_limit_delay'
+  | 'request_timeout_seconds'
+  | 'stale_timeout_seconds'
+  | 'extra_body'
+export type ProviderCredentialAction = 'keep' | 'replace' | 'clear'
+
+export interface ProviderEditorDetail {
+  id: string
+  label: string
+  builtin: boolean
+  source: 'builtin_env' | 'custom_providers' | 'providers'
+  source_key?: string
+  base_url: string
+  api_mode?: ProviderApiMode
+  preferred_model: string
+  credential_configured: boolean
+  editable: boolean
+  editable_fields: ProviderEditableField[]
+  context_lengths: Record<string, number>
+  discover_models?: boolean
+  rate_limit_delay?: number
+  request_timeout_seconds?: number
+  stale_timeout_seconds?: number
+  extra_body?: Record<string, unknown>
+  connection_test_supported: boolean
+  connection_test_reason?: string
+  revision: string
+}
+
+export interface ProviderEditorPatch {
+  label?: string
+  base_url?: string
+  api_mode?: ProviderApiMode
+  preferred_model?: string
+  credential_action?: ProviderCredentialAction
+  api_key?: string
+  discover_models?: boolean
+  rate_limit_delay?: number | null
+  request_timeout_seconds?: number | null
+  stale_timeout_seconds?: number | null
+  extra_body?: Record<string, unknown> | null
+}
+
+export interface ProviderEditorResponse {
+  success?: boolean
+  provider: ProviderEditorDetail
+  changed?: string[]
 }
 
 export async function checkHealth(): Promise<HealthResponse> {
@@ -258,6 +317,53 @@ export async function updateProvider(poolKey: string, data: {
     method: 'PUT',
     body: JSON.stringify(data),
   })
+}
+
+export async function fetchProviderEditor(poolKey: string): Promise<ProviderEditorDetail> {
+  const response = await request<ProviderEditorResponse>(
+    `/api/hermes/config/providers/${encodeURIComponent(poolKey)}/editor`,
+  )
+  return response.provider
+}
+
+export async function patchProviderEditor(
+  poolKey: string,
+  revision: string,
+  data: ProviderEditorPatch,
+): Promise<ProviderEditorResponse> {
+  return request<ProviderEditorResponse>(
+    `/api/hermes/config/providers/${encodeURIComponent(poolKey)}/editor`,
+    {
+      method: 'PATCH',
+      headers: { 'If-Match': `"${revision}"` },
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export async function testProviderEditor(
+  poolKey: string,
+  data: ProviderEditorPatch,
+): Promise<{ success: boolean; models?: string[]; model_count?: number; error?: string; code?: string }> {
+  return request(`/api/hermes/config/providers/${encodeURIComponent(poolKey)}/editor/test`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function patchProviderEditorContexts(
+  poolKey: string,
+  revision: string,
+  contextLengths: Record<string, number | null>,
+): Promise<ProviderEditorResponse> {
+  return request<ProviderEditorResponse>(
+    `/api/hermes/config/providers/${encodeURIComponent(poolKey)}/editor/contexts`,
+    {
+      method: 'PATCH',
+      headers: { 'If-Match': `"${revision}"` },
+      body: JSON.stringify({ context_lengths: contextLengths }),
+    },
+  )
 }
 
 export async function updateModelVisibility(data: {

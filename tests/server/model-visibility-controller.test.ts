@@ -116,6 +116,8 @@ vi.mock('../../packages/server/src/services/hermes/copilot-models', () => ({
 vi.mock('../../packages/server/src/services/app-config', () => ({
   readAppConfig: mockReadAppConfig,
   writeAppConfig: mockWriteAppConfig,
+  providerDisplayLabel: (appConfig: any, profile: string, providerId: string, fallback: string) =>
+    appConfig?.providerLabels?.[profile]?.[providerId]?.trim?.() || fallback,
 }))
 
 vi.mock('../../packages/server/src/services/hermes/model-catalog-cache', () => ({

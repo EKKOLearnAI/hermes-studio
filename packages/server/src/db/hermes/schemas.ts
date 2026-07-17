@@ -280,12 +280,43 @@ export const MODEL_CONTEXT_TABLE = 'model_context'
 
 export const MODEL_CONTEXT_SCHEMA: Record<string, string> = {
   id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  profile: "TEXT NOT NULL DEFAULT 'default'",
   provider: 'TEXT NOT NULL',
   model: 'TEXT NOT NULL',
   context_limit: 'INTEGER NOT NULL',
 }
 
-export const MODEL_CONTEXT_INDEX = 'CREATE UNIQUE INDEX IF NOT EXISTS idx_model_context_provider_model ON model_context(provider, model)'
+export const MODEL_CONTEXT_INDEX = 'CREATE UNIQUE INDEX IF NOT EXISTS idx_model_context_profile_provider_model ON model_context(profile, provider, model)'
+export const LEGACY_MODEL_CONTEXT_INDEX = 'idx_model_context_provider_model'
+
+// ============================================================================
+// Provider Configuration Audit
+// ============================================================================
+
+export const PROVIDER_AUDIT_TABLE = 'provider_audit_events'
+
+export const PROVIDER_AUDIT_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  created_at: 'INTEGER NOT NULL',
+  actor_user_id: 'INTEGER',
+  actor_username: "TEXT NOT NULL DEFAULT ''",
+  actor_role: "TEXT NOT NULL DEFAULT ''",
+  profile: "TEXT NOT NULL DEFAULT 'default'",
+  provider_id: 'TEXT NOT NULL',
+  provider_label: "TEXT NOT NULL DEFAULT ''",
+  action: 'TEXT NOT NULL',
+  fields_json: "TEXT NOT NULL DEFAULT '[]'",
+  result: "TEXT NOT NULL DEFAULT 'success'",
+  details_json: "TEXT NOT NULL DEFAULT '{}'",
+  revision_before: "TEXT NOT NULL DEFAULT ''",
+  revision_after: "TEXT NOT NULL DEFAULT ''",
+}
+
+export const PROVIDER_AUDIT_INDEXES = {
+  idx_provider_audit_created: 'CREATE INDEX IF NOT EXISTS idx_provider_audit_created ON provider_audit_events(created_at)',
+  idx_provider_audit_profile: 'CREATE INDEX IF NOT EXISTS idx_provider_audit_profile ON provider_audit_events(profile, created_at)',
+  idx_provider_audit_provider: 'CREATE INDEX IF NOT EXISTS idx_provider_audit_provider ON provider_audit_events(provider_id, created_at)',
+}
 
 // ============================================================================
 // Users and Profile Access
@@ -957,11 +988,15 @@ export function initAllHermesTables(): void {
     // Compression snapshot
     syncTable(COMPRESSION_SNAPSHOT_TABLE, COMPRESSION_SNAPSHOT_SCHEMA)
 
-    // Model context
-    syncTable(MODEL_CONTEXT_TABLE, MODEL_CONTEXT_SCHEMA, {
-      indexes: {
-        idx_model_context_provider_model: MODEL_CONTEXT_INDEX,
-      }
+    // Model context. Existing rows are assigned to the default profile; replace
+    // the legacy cross-profile uniqueness constraint with a profile-scoped one.
+    syncTable(MODEL_CONTEXT_TABLE, MODEL_CONTEXT_SCHEMA)
+    db.exec(`DROP INDEX IF EXISTS ${quoteIdentifier(LEGACY_MODEL_CONTEXT_INDEX)}`)
+    db.exec(MODEL_CONTEXT_INDEX)
+
+    // Provider configuration audit
+    syncTable(PROVIDER_AUDIT_TABLE, PROVIDER_AUDIT_SCHEMA, {
+      indexes: PROVIDER_AUDIT_INDEXES,
     })
 
     // Users and profile access

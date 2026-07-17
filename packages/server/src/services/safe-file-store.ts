@@ -16,12 +16,22 @@ export interface SafeYamlOptions extends SafeWriteOptions {
   dumpOptions?: DumpOptions
 }
 
+export type MultiTextUpdate = Record<string, string | undefined>
+
+type MultiTextUpdater<T = void> = (
+  current: Readonly<Record<string, string | undefined>>,
+) => MultiTextUpdate | { files: MultiTextUpdate; result: T } | Promise<MultiTextUpdate | { files: MultiTextUpdate; result: T }>
+
 function isTextUpdateResult<T>(value: unknown): value is { content: string; result: T } {
   return !!value && typeof value === 'object' && Object.hasOwn(value as Record<string, unknown>, 'content')
 }
 
 function isYamlUpdateResult<T>(value: unknown): value is YamlUpdateResult<T> {
   return !!value && typeof value === 'object' && Object.hasOwn(value as Record<string, unknown>, 'data')
+}
+
+function isMultiTextUpdateResult<T>(value: unknown): value is { files: MultiTextUpdate; result: T } {
+  return !!value && typeof value === 'object' && Object.hasOwn(value as Record<string, unknown>, 'files')
 }
 
 function shouldUseFallbackBackup(err: any): boolean {
@@ -73,6 +83,65 @@ export class SafeFileStore {
       const content = isTextUpdateResult<T>(updated) ? updated.content : updated
       await this.writeTextUnlocked(filePath, content, options)
       return isTextUpdateResult<T>(updated) ? updated.result : undefined
+    })
+  }
+
+  /**
+   * Update several text files under one in-process lock boundary. Paths are
+   * locked in sorted order to avoid deadlocks. If one write fails, previously
+   * written files are restored from their snapshots before the error escapes.
+   */
+  async updateTexts<T = void>(
+    filePaths: string[],
+    updater: MultiTextUpdater<T>,
+    options: SafeWriteOptions = { backup: true },
+  ): Promise<T | undefined> {
+    const paths = [...new Set(filePaths.map(path => this.normalizePath(path)))].sort()
+    const withLocks = async (index: number, task: () => Promise<T | undefined>): Promise<T | undefined> => {
+      if (index >= paths.length) return task()
+      return this.withLock(paths[index], () => withLocks(index + 1, task))
+    }
+
+    return withLocks(0, async () => {
+      const current: MultiTextUpdate = {}
+      for (const path of paths) {
+        try {
+          current[path] = await readFile(path, 'utf-8')
+        } catch (err: any) {
+          if (err?.code !== 'ENOENT') throw err
+          current[path] = undefined
+        }
+      }
+
+      const updated = await updater(Object.freeze({ ...current }))
+      const files = isMultiTextUpdateResult<T>(updated) ? updated.files : updated
+      for (const path of Object.keys(files)) {
+        if (!paths.includes(this.normalizePath(path))) {
+          throw new Error(`Multi-file update attempted an unlocked path: ${path}`)
+        }
+      }
+
+      const written: string[] = []
+      try {
+        for (const path of paths) {
+          if (!Object.hasOwn(files, path)) continue
+          const next = files[path]
+          if (next === undefined) {
+            await rm(path, { force: true })
+          } else {
+            await this.writeTextUnlocked(path, next, options)
+          }
+          written.push(path)
+        }
+      } catch (error) {
+        for (const path of written.reverse()) {
+          const original = current[path]
+          if (original === undefined) await rm(path, { force: true }).catch(() => undefined)
+          else await this.writeTextUnlocked(path, original, {}).catch(() => undefined)
+        }
+        throw error
+      }
+      return isMultiTextUpdateResult<T>(updated) ? updated.result : undefined
     })
   }
 

@@ -1,6 +1,7 @@
-import { readFile, writeFile, mkdir } from 'fs/promises'
+import { readFile, mkdir, chmod } from 'fs/promises'
 import { join } from 'path'
 import { config } from '../config'
+import { safeFileStore } from './safe-file-store'
 
 const APP_HOME = config.appHome
 const APP_CONFIG_FILE = join(APP_HOME, 'config.json')
@@ -66,6 +67,14 @@ export interface AppConfig {
   // provider/model IDs. Hermes CLI config remains the upstream source of truth.
   modelVisibility?: Record<string, ModelVisibilityRule>
 
+  // Web UI-only provider display labels, isolated by Hermes profile and stable
+  // provider id. Editing a label never renames a config-backed provider.
+  providerLabels?: Record<string, Record<string, string>>
+
+  // Per-provider preferred model used by provider management. This is distinct
+  // from model.default and does not switch the profile's active default model.
+  providerPreferredModels?: Record<string, Record<string, string>>
+
   // Web UI startup policy for automatically starting Hermes API gateways.
   // Defaults to legacy behavior: all local profiles are eligible. This is a
   // Web UI-level setting, not the active Hermes profile's config.yaml.
@@ -88,14 +97,39 @@ export async function readAppConfig(): Promise<AppConfig> {
 }
 
 export async function writeAppConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
-  const current = await readAppConfig()
-  const merged: AppConfig = { ...current, ...patch }
   await mkdir(APP_HOME, { recursive: true })
-  await writeFile(APP_CONFIG_FILE, JSON.stringify(merged, null, 2), { mode: 0o600 })
+  let merged: AppConfig = {}
+  await safeFileStore.updateText(APP_CONFIG_FILE, (currentText) => {
+    let current: AppConfig = {}
+    if (currentText.trim()) {
+      try { current = JSON.parse(currentText) as AppConfig } catch { current = {} }
+    }
+    merged = { ...current, ...patch }
+    return JSON.stringify(merged, null, 2) + '\n'
+  }, { backup: true })
+  await chmod(APP_CONFIG_FILE, 0o600).catch(() => undefined)
   cache = merged
   return merged
 }
 
-export function __resetAppConfigCacheForTest(): void {
+export function providerDisplayLabel(
+  appConfig: AppConfig,
+  profile: string,
+  providerId: string,
+  fallback: string,
+): string {
+  const value = appConfig.providerLabels?.[profile]?.[providerId]
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback
+}
+
+export function appConfigFilePath(): string {
+  return APP_CONFIG_FILE
+}
+
+export function invalidateAppConfigCache(): void {
   cache = null
+}
+
+export function __resetAppConfigCacheForTest(): void {
+  invalidateAppConfigCache()
 }

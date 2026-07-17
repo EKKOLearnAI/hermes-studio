@@ -38,6 +38,7 @@ interface MockHermesApiOptions {
   workflowImportPreviewError?: string
   channelCredentials?: boolean
   channelConfig?: Record<string, unknown>
+  providerEditor?: Record<string, unknown>
 }
 
 export const TEST_MODEL_GROUP = {
@@ -46,8 +47,10 @@ export const TEST_MODEL_GROUP = {
   base_url: 'https://example.invalid/v1',
   models: ['test-model'],
   available_models: ['test-model'],
-  api_key: '',
+  api_key: 'list-response-credential',
   builtin: true,
+  provider_editable: true,
+  editable_fields: ['label', 'base_url', 'api_key', 'preferred_model', 'context_lengths'],
 }
 
 const sampleJob = {
@@ -120,6 +123,21 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
   const tokenValidationStatus = options.tokenValidationStatus ?? 200
   let activeProfileName = options.initialProfileName ?? 'research'
   let channelCredentialsPresent = options.channelCredentials ?? false
+  let providerEditor = {
+    id: 'test-provider',
+    label: 'Test Provider',
+    builtin: true,
+    source: 'builtin_env',
+    base_url: 'https://example.invalid/v1',
+    preferred_model: 'test-model',
+    credential_configured: true,
+    editable: true,
+    editable_fields: ['label', 'base_url', 'api_key', 'preferred_model', 'context_lengths'],
+    context_lengths: {},
+    connection_test_supported: true,
+    revision: 'provider-revision-1',
+    ...options.providerEditor,
+  }
 
   await page.route('**/*', async (route: Route) => {
     const request = route.request()
@@ -286,6 +304,48 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
 
     if (pathname === '/api/auth/locked-ips') {
       await route.fulfill(jsonResponse({ locks: [] }))
+      return
+    }
+
+    if (/^\/api\/hermes\/config\/providers\/[^/]+\/editor\/test$/.test(pathname) && request.method() === 'POST') {
+      await route.fulfill(jsonResponse({ success: true, models: ['test-model'], model_count: 1 }))
+      return
+    }
+
+    if (/^\/api\/hermes\/config\/providers\/[^/]+\/editor\/contexts$/.test(pathname) && request.method() === 'PATCH') {
+      let body: Record<string, any> = {}
+      try { body = JSON.parse(request.postData() || '{}') } catch {}
+      providerEditor = {
+        ...providerEditor,
+        context_lengths: { ...(providerEditor.context_lengths as Record<string, number>), ...(body.context_lengths || {}) },
+        revision: 'provider-revision-3',
+      }
+      await route.fulfill(jsonResponse({ success: true, provider: providerEditor, changed: ['context_lengths'] }))
+      return
+    }
+
+    if (/^\/api\/hermes\/config\/providers\/[^/]+\/editor$/.test(pathname)) {
+      if (request.method() === 'GET') {
+        await route.fulfill(jsonResponse({ provider: providerEditor }))
+        return
+      }
+      if (request.method() === 'PATCH') {
+        let body: Record<string, any> = {}
+        try { body = JSON.parse(request.postData() || '{}') } catch {}
+        providerEditor = {
+          ...providerEditor,
+          ...(body.label !== undefined ? { label: body.label } : {}),
+          ...(body.base_url !== undefined ? { base_url: body.base_url } : {}),
+          ...(body.api_mode !== undefined ? { api_mode: body.api_mode } : {}),
+          ...(body.preferred_model !== undefined ? { preferred_model: body.preferred_model } : {}),
+          ...(body.credential_action === 'clear' ? { credential_configured: false } : {}),
+          ...(body.credential_action === 'replace' ? { credential_configured: true } : {}),
+          revision: 'provider-revision-2',
+        }
+        await route.fulfill(jsonResponse({ success: true, provider: providerEditor, changed: Object.keys(body) }))
+        return
+      }
+      await route.fulfill(jsonResponse({ error: 'Method not allowed' }, 405))
       return
     }
 

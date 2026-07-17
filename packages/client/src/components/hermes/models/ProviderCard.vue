@@ -6,6 +6,8 @@ import { useModelsStore } from '@/stores/hermes/models'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
 import { checkCopilotToken, disableCopilot } from '@/api/hermes/copilot-auth'
+import { getStoredUserRole } from '@/api/client'
+import ProviderEditorModal from './ProviderEditorModal.vue'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ provider: AvailableModelGroup }>()
@@ -22,6 +24,11 @@ const isCustom = computed(() => !props.provider.builtin && isCustomProviderKey.v
 const isConfigBackedProvider = computed(() => isCustomProviderKey.value || (!props.provider.builtin && !!props.provider.provider_source))
 const isCopilot = computed(() => props.provider.provider === 'copilot')
 const displayName = computed(() => props.provider.label)
+const userRole = getStoredUserRole()
+const canEditProvider = computed(() => (
+  props.provider.provider_editable === true && (userRole === 'super_admin' || userRole === 'admin')
+))
+const showEditorModal = ref(false)
 const deleting = ref(false)
 const destructiveActionLabel = computed(() => {
   if (isConfigBackedProvider.value) return t('common.delete')
@@ -302,8 +309,15 @@ async function handleDelete() {
       </NButton>
       <NButton size="tiny" quaternary @click="showAliasListModal = true">{{ t('models.aliasManage') }}</NButton>
       <NButton size="tiny" quaternary @click="openVisibilityModal">{{ t('models.manageVisibleModels') }}</NButton>
+      <NButton v-if="canEditProvider" size="tiny" quaternary @click="showEditorModal = true">{{ t('common.edit') }}</NButton>
       <NButton size="tiny" quaternary type="error" :loading="deleting" @click="handleDelete">{{ destructiveActionLabel }}</NButton>
     </div>
+
+    <ProviderEditorModal
+      v-if="canEditProvider"
+      v-model:show="showEditorModal"
+      :provider="provider"
+    />
 
     <NModal
       v-model:show="showAliasListModal"

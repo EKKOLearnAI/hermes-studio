@@ -638,4 +638,42 @@ describe('Database Schema Synchronization', () => {
       expect(row.session_id).toBe('test-1')
     })
   })
+
+  describe('Model context profile migration', () => {
+    it('moves legacy rows to default profile and replaces the global unique index', async () => {
+      const {
+        initAllHermesTables,
+        LEGACY_MODEL_CONTEXT_INDEX,
+        MODEL_CONTEXT_TABLE,
+      } = await import('../../packages/server/src/db/hermes/schemas')
+      const db = getTestDb()
+      db.exec(`CREATE TABLE "${MODEL_CONTEXT_TABLE}" (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        context_limit INTEGER NOT NULL
+      )`)
+      db.exec(`CREATE UNIQUE INDEX ${LEGACY_MODEL_CONTEXT_INDEX} ON "${MODEL_CONTEXT_TABLE}"(provider, model)`)
+      db.prepare(`INSERT INTO "${MODEL_CONTEXT_TABLE}" (provider, model, context_limit) VALUES (?, ?, ?)`)
+        .run('deepseek', 'shared-model', 64000)
+
+      expect(() => initAllHermesTables()).not.toThrow()
+
+      const legacyRow = db.prepare(
+        `SELECT profile, context_limit FROM "${MODEL_CONTEXT_TABLE}" WHERE provider = ? AND model = ?`,
+      ).get('deepseek', 'shared-model') as { profile: string; context_limit: number }
+      expect(legacyRow).toEqual({ profile: 'default', context_limit: 64000 })
+      expect(db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`).get(LEGACY_MODEL_CONTEXT_INDEX))
+        .toBeUndefined()
+      expect(db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_model_context_profile_provider_model'`).get())
+        .toBeTruthy()
+
+      expect(() => db.prepare(
+        `INSERT INTO "${MODEL_CONTEXT_TABLE}" (profile, provider, model, context_limit) VALUES (?, ?, ?, ?)`,
+      ).run('research', 'deepseek', 'shared-model', 128000)).not.toThrow()
+      expect(() => db.prepare(
+        `INSERT INTO "${MODEL_CONTEXT_TABLE}" (profile, provider, model, context_limit) VALUES (?, ?, ?, ?)`,
+      ).run('default', 'deepseek', 'shared-model', 128000)).toThrow()
+    })
+  })
 })

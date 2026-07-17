@@ -6,6 +6,15 @@ import { updateConfigYamlForProfile, saveEnvValueForProfile, PROVIDER_ENV_MAP } 
 import { getCompatibleCustomProviders, normalizeCustomProviderEntry } from '../../services/hermes/custom-providers-compat'
 import { PROVIDER_PRESETS } from '../../shared/providers'
 import { logger } from '../../services/logger'
+import {
+  getProviderEditorDetail,
+  ProviderEditorError,
+  testProviderEditorDraft,
+  updateProviderContextLengths,
+  updateProviderEditorDetail,
+  type ProviderEditorPatch,
+} from '../../services/hermes/provider-editor'
+import { appendProviderAuditEvent } from '../../db/hermes/provider-audit-store'
 
 const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex', 'claude-oauth'])
 const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth', 'openai-codex', 'claude-oauth'])
@@ -13,6 +22,47 @@ type ProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messa
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
+}
+
+function expectedRevision(ctx: any): string {
+  const header = String(ctx.get?.('if-match') || ctx.headers?.['if-match'] || '').trim()
+  const bodyRevision = String(ctx.request?.body?.revision || '').trim()
+  return header || bodyRevision
+}
+
+function setRevisionHeader(ctx: any, revision: string): void {
+  if (revision) ctx.set?.('ETag', `"${revision}"`)
+}
+
+function actorForAudit(ctx: any) {
+  const user = ctx.state?.user
+  return user ? { id: user.id, username: user.username, role: user.role } : undefined
+}
+
+function appendAuditSafely(input: Parameters<typeof appendProviderAuditEvent>[0]): void {
+  try { appendProviderAuditEvent(input) } catch (error) { logger.warn(error, 'Failed to append provider audit event') }
+}
+
+function respondEditorError(ctx: any, error: unknown, providerId: string, action: string): void {
+  const err = error as any
+  const status = err instanceof ProviderEditorError ? err.status : 500
+  const code = err instanceof ProviderEditorError ? err.code : 'PROVIDER_EDITOR_FAILED'
+  ctx.status = status
+  ctx.body = {
+    error: err?.message || 'Provider editor operation failed',
+    code,
+    ...(err instanceof ProviderEditorError && err.current ? { current: err.current } : {}),
+  }
+  appendAuditSafely({
+    actor: actorForAudit(ctx),
+    profile: requestedProfile(ctx),
+    providerId,
+    providerLabel: err instanceof ProviderEditorError ? err.current?.label : '',
+    action,
+    result: status === 412 ? 'conflict' : 'failed',
+    details: { code, status },
+    revisionBefore: err instanceof ProviderEditorError ? err.current?.revision : '',
+  })
 }
 
 function authPathForProfile(profile: string): string {
@@ -97,6 +147,92 @@ function findProviderDictKey(config: any, poolKey: string, requestedProviderKey 
     if (normalized && providerKeyForCustomName(normalized.name) === poolKey) return key
   }
   return ''
+}
+
+export async function getEditor(ctx: any) {
+  const providerId = decodeURIComponent(ctx.params.poolKey)
+  try {
+    const detail = await getProviderEditorDetail(requestedProfile(ctx), providerId)
+    setRevisionHeader(ctx, detail.revision)
+    ctx.body = { provider: detail }
+  } catch (error) {
+    respondEditorError(ctx, error, providerId, 'provider.editor.read')
+  }
+}
+
+export async function patchEditor(ctx: any) {
+  const providerId = decodeURIComponent(ctx.params.poolKey)
+  const patch = (ctx.request.body || {}) as ProviderEditorPatch
+  try {
+    const result = await updateProviderEditorDetail(
+      requestedProfile(ctx),
+      providerId,
+      patch,
+      expectedRevision(ctx),
+    )
+    setRevisionHeader(ctx, result.detail.revision)
+    appendAuditSafely({
+      actor: actorForAudit(ctx),
+      profile: requestedProfile(ctx),
+      providerId,
+      providerLabel: result.detail.label,
+      action: 'provider.editor.update',
+      fields: result.changed,
+      details: { credential_configured: result.detail.credential_configured },
+      revisionBefore: result.before.revision,
+      revisionAfter: result.detail.revision,
+    })
+    ctx.body = { success: true, provider: result.detail, changed: result.changed }
+  } catch (error) {
+    respondEditorError(ctx, error, providerId, 'provider.editor.update')
+  }
+}
+
+export async function patchEditorContexts(ctx: any) {
+  const providerId = decodeURIComponent(ctx.params.poolKey)
+  const body = (ctx.request.body || {}) as { revision?: string; context_lengths?: Record<string, number | null> }
+  try {
+    const result = await updateProviderContextLengths(
+      requestedProfile(ctx),
+      providerId,
+      body.context_lengths || {},
+      expectedRevision(ctx),
+    )
+    setRevisionHeader(ctx, result.detail.revision)
+    appendAuditSafely({
+      actor: actorForAudit(ctx),
+      profile: requestedProfile(ctx),
+      providerId,
+      providerLabel: result.detail.label,
+      action: 'provider.editor.context.update',
+      fields: result.changed,
+      revisionBefore: result.before.revision,
+      revisionAfter: result.detail.revision,
+    })
+    ctx.body = { success: true, provider: result.detail, changed: result.changed }
+  } catch (error) {
+    respondEditorError(ctx, error, providerId, 'provider.editor.context.update')
+  }
+}
+
+export async function testEditor(ctx: any) {
+  const providerId = decodeURIComponent(ctx.params.poolKey)
+  try {
+    const result = await testProviderEditorDraft(
+      requestedProfile(ctx),
+      providerId,
+      (ctx.request.body || {}) as ProviderEditorPatch,
+    )
+    ctx.body = { success: true, ...result }
+  } catch (error) {
+    const err = error as any
+    if (err instanceof ProviderEditorError) {
+      ctx.status = 200
+      ctx.body = { success: false, error: err.message, code: err.code }
+      return
+    }
+    respondEditorError(ctx, error, providerId, 'provider.editor.test')
+  }
 }
 
 export async function create(ctx: any) {

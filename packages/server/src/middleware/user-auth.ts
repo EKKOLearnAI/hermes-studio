@@ -254,6 +254,16 @@ export async function requireSuperAdmin(ctx: Context, next: Next): Promise<void>
   await next()
 }
 
+export async function requireAdmin(ctx: Context, next: Next): Promise<void> {
+  const role = ctx.state.user?.role
+  if (role !== 'super_admin' && role !== 'admin') {
+    ctx.status = 403
+    ctx.body = { error: 'Administrator privileges are required' }
+    return
+  }
+  await next()
+}
+
 export function resolveRequestedProfile(ctx: Context): string {
   if (ctx.path === '/api/hermes/available-models' && typeof ctx.query.profile !== 'string') {
     return ''

@@ -6,23 +6,23 @@ import { readConfigYaml, readConfigYamlForProfile, updateConfigYaml, updateConfi
 import { getCompatibleCustomProviders } from '../../services/hermes/custom-providers-compat'
 import { buildProviderModelMap, PROVIDER_PRESETS } from '../../shared/providers'
 import { getCopilotModelsDetailed, resolveCopilotOAuthToken, type CopilotModelMeta } from '../../services/hermes/copilot-models'
-import { readAppConfig, writeAppConfig, type ModelVisibilityRule } from '../../services/app-config'
+import { readAppConfig, writeAppConfig, providerDisplayLabel, type ModelVisibilityRule } from '../../services/app-config'
 import { getDb } from '../../db'
 import { MODEL_CONTEXT_TABLE } from '../../db/hermes/schemas'
 import { listUserProfiles } from '../../db/hermes/users-store'
-import {
-  readProviderModelCatalogCache,
+import { readProviderModelCatalogCache,
   refreshConfiguredProviderModelCatalogs,
   resolveProviderCatalogModels,
   writeProviderModelCatalogEntry,
   type ProviderModelCatalogCache,
 } from '../../services/hermes/model-catalog-cache'
+import { providerEditorCapabilities, type ProviderEditableField } from '../../services/hermes/provider-editor'
 
 const PROVIDER_MODEL_CATALOG = buildProviderModelMap()
 
 type ModelMeta = { preview?: boolean; disabled?: boolean; alias?: string }
 type ProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages' | 'bedrock_converse' | 'codex_app_server'
-type AvailableGroup = { provider: string; label: string; base_url: string; models: string[]; api_key: string; api_mode?: ProviderApiMode; builtin?: boolean; model_meta?: Record<string, ModelMeta>; available_models?: string[]; base_url_env?: string; provider_source?: 'custom_providers' | 'providers'; provider_key?: string }
+type AvailableGroup = { provider: string; label: string; base_url: string; models: string[]; api_key: string; api_mode?: ProviderApiMode; builtin?: boolean; model_meta?: Record<string, ModelMeta>; available_models?: string[]; base_url_env?: string; provider_source?: 'custom_providers' | 'providers'; provider_key?: string; provider_editable?: boolean; editable_fields?: ProviderEditableField[] }
 type ModelVisibility = Record<string, ModelVisibilityRule>
 type CustomModels = Record<string, string[]>
 
@@ -119,6 +119,7 @@ function applyCustomModels(groups: AvailableGroup[], customModels: CustomModels)
 function providerPresetToGroup(p: any, models?: string[]): AvailableGroup {
   const envMapping = PROVIDER_ENV_MAP[p.value]
   const apiMode = providerApiMode(p.value)
+  const editor = providerEditorCapabilities(p.value)
   return {
     provider: p.value,
     label: p.label,
@@ -128,6 +129,8 @@ function providerPresetToGroup(p: any, models?: string[]): AvailableGroup {
     ...(apiMode ? { api_mode: apiMode } : {}),
     ...(p.builtin ? { builtin: true } : {}),
     ...(envMapping?.base_url_env ? { base_url_env: envMapping.base_url_env } : {}),
+    provider_editable: editor.editable,
+    editable_fields: editor.editable_fields,
   }
 }
 
@@ -382,7 +385,9 @@ async function buildAvailableForProfile(
     seenProviders.add(provider)
     const availableModels = [...new Set(models)]
     const apiMode = providerApiMode(provider, extra?.api_mode)
-    groups.push({ provider, label, base_url, models: availableModels, available_models: availableModels, api_key, ...(apiMode ? { api_mode: apiMode } : {}), ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}), ...(extra?.provider_source ? { provider_source: extra.provider_source } : {}), ...(extra?.provider_key ? { provider_key: extra.provider_key } : {}) })
+    const displayLabel = providerDisplayLabel(appConfig, profile, provider, label)
+    const editor = providerEditorCapabilities(provider)
+    groups.push({ provider, label: displayLabel, base_url, models: availableModels, available_models: availableModels, api_key, ...(apiMode ? { api_mode: apiMode } : {}), ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}), ...(extra?.provider_source ? { provider_source: extra.provider_source } : {}), ...(extra?.provider_key ? { provider_key: extra.provider_key } : {}), provider_editable: editor.editable, editable_fields: editor.editable_fields })
   }
 
   const copilotEnabled = appConfig.copilotEnabled === true
@@ -1070,6 +1075,7 @@ export async function updateModelContext(ctx: any) {
   }
 
   try {
+    const profile = requestScopedProfileName(ctx)
     const db = getDb()
     if (!db) {
       ctx.status = 500
@@ -1077,15 +1083,15 @@ export async function updateModelContext(ctx: any) {
       return
     }
 
-    // 使用 REPLACE 实现 UPSERT：存在则替换，不存在则插入
     db.prepare(
-      `REPLACE INTO ${MODEL_CONTEXT_TABLE} (provider, model, context_limit) VALUES (?, ?, ?)`
-    ).run(provider, model, context_limit)
+      `INSERT INTO ${MODEL_CONTEXT_TABLE} (profile, provider, model, context_limit) VALUES (?, ?, ?, ?) ` +
+      `ON CONFLICT(profile, provider, model) DO UPDATE SET context_limit = excluded.context_limit`,
+    ).run(profile, provider, model, context_limit)
 
     // 查询并返回更新后的数据
     const row = db.prepare(
-      `SELECT id, provider, model, context_limit FROM ${MODEL_CONTEXT_TABLE} WHERE provider = ? AND model = ?`
-    ).get(provider, model) as { id: number; provider: string; model: string; context_limit: number }
+      `SELECT id, profile, provider, model, context_limit FROM ${MODEL_CONTEXT_TABLE} WHERE profile = ? AND provider = ? AND model = ?`
+    ).get(profile, provider, model) as { id: number; profile: string; provider: string; model: string; context_limit: number }
 
     ctx.body = {
       success: true,
@@ -1125,6 +1131,7 @@ export async function getModelContext(ctx: any) {
   }
 
   try {
+    const profile = requestScopedProfileName(ctx)
     const db = getDb()
     if (!db) {
       ctx.status = 500
@@ -1133,8 +1140,8 @@ export async function getModelContext(ctx: any) {
     }
 
     const row = db.prepare(
-      `SELECT id, provider, model, context_limit FROM ${MODEL_CONTEXT_TABLE} WHERE provider = ? AND model = ?`
-    ).get(provider, model) as { id: number; provider: string; model: string; context_limit: number } | undefined
+      `SELECT id, profile, provider, model, context_limit FROM ${MODEL_CONTEXT_TABLE} WHERE profile = ? AND provider = ? AND model = ?`
+    ).get(profile, provider, model) as { id: number; profile: string; provider: string; model: string; context_limit: number } | undefined
 
     if (!row) {
       ctx.status = 404

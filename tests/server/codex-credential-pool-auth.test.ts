@@ -42,6 +42,7 @@ async function loadModelsController() {
   vi.resetModules()
   vi.doMock('../../packages/server/src/services/app-config', () => ({
     readAppConfig: vi.fn().mockResolvedValue({}),
+    providerDisplayLabel: (_appConfig: any, _profile: string, _providerId: string, fallback: string) => fallback,
   }))
   vi.doMock('../../packages/server/src/services/hermes/copilot-models', () => ({
     getCopilotModelsDetailed: vi.fn().mockResolvedValue([]),

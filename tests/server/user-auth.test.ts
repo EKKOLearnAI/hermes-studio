@@ -276,6 +276,27 @@ describe('user auth tables and middleware', () => {
     expect(next).toHaveBeenCalledOnce()
   })
 
+  it('allows admin and super_admin roles through provider-management authorization', async () => {
+    const { auth } = await initUsers()
+    const adminNext = vi.fn(async () => {})
+    const superNext = vi.fn(async () => {})
+    const missingNext = vi.fn(async () => {})
+
+    const adminCtx = { state: { user: { role: 'admin' } }, status: 200, body: null } as any
+    const superCtx = { state: { user: { role: 'super_admin' } }, status: 200, body: null } as any
+    const missingCtx = { state: {}, status: 200, body: null } as any
+
+    await auth.requireAdmin(adminCtx, adminNext)
+    await auth.requireAdmin(superCtx, superNext)
+    await auth.requireAdmin(missingCtx, missingNext)
+
+    expect(adminNext).toHaveBeenCalledOnce()
+    expect(superNext).toHaveBeenCalledOnce()
+    expect(missingNext).not.toHaveBeenCalled()
+    expect(missingCtx.status).toBe(403)
+    expect(missingCtx.body).toEqual({ error: 'Administrator privileges are required' })
+  })
+
   it('ignores stale profile headers for the aggregate available-models endpoint', async () => {
     const { auth } = await initUsers()
     const ctx = {
@@ -423,6 +444,7 @@ describe('user auth tables and middleware', () => {
   })
 
   it('marks only admin with password 123456 as requiring a credential change', async () => {
+    vi.stubEnv('HERMES_DESKTOP', 'false')
     const { users } = await initUsers()
     const admin = users.bootstrapDefaultSuperAdmin('admin', '123456')!
     const ctrl = await import('../../packages/server/src/controllers/auth')
