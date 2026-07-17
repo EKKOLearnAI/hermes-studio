@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { ref, reactive, onUnmounted, watch } from 'vue'
-import { NSwitch, NInput, NButton, NSpin, useMessage } from 'naive-ui'
+import { NSwitch, NInput, NButton, NSpin, useDialog, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/hermes/settings'
-import { saveCredentials as saveCredsApi, fetchWeixinQrCode, pollWeixinQrStatus, saveWeixinCredentials } from '@/api/hermes/config'
+import { clearCredentials as clearCredsApi, saveCredentials as saveCredsApi, fetchWeixinQrCode, pollWeixinQrStatus, saveWeixinCredentials } from '@/api/hermes/config'
 import PlatformCard from './PlatformCard.vue'
 import SettingRow from './SettingRow.vue'
 
 const settingsStore = useSettingsStore()
 const message = useMessage()
+const dialog = useDialog()
 const { t } = useI18n()
 
 const saving = reactive<Record<string, boolean>>({})
+const clearing = reactive<Record<string, boolean>>({})
 const configDrafts = reactive<Record<string, Record<string, any>>>({})
 const credentialDrafts = reactive<Record<string, Record<string, any>>>({})
 const touchedConfig = reactive<Record<string, boolean>>({})
@@ -74,6 +76,20 @@ function isSavingPlatform(platform: string) {
   return !!saving[platform]
 }
 
+function isClearingPlatform(platform: string) {
+  return !!clearing[platform]
+}
+
+function hasStoredCredentials(platform: string) {
+  return settingsStore.platformCredentialStatus[platform] === true
+}
+
+function clearCredentialsWarningMessage(code: string, fallback: string) {
+  if (code === 'gateway_restart_failed') return t('platform.clearCredentialsGatewayRestartFailed')
+  if (code === 'gateway_restart_disabled') return t('platform.clearCredentialsGatewayRestartDisabled')
+  return fallback
+}
+
 async function savePlatform(platform: string) {
   saving[platform] = true
   try {
@@ -96,6 +112,41 @@ async function savePlatform(platform: string) {
   } finally {
     saving[platform] = false
   }
+}
+
+async function clearPlatformCredentials(platform: string, name: string) {
+  if (hasUnsavedChanges(platform)) {
+    message.warning(t('platform.clearCredentialsUnsaved'))
+    return
+  }
+  if (!hasStoredCredentials(platform)) return
+
+  dialog.warning({
+    title: t('platform.clearCredentials'),
+    content: t('platform.clearCredentialsConfirm', { name }),
+    positiveText: t('platform.clearCredentials'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => {
+      clearing[platform] = true
+      try {
+        const result = await clearCredsApi(platform)
+        await settingsStore.fetchSettings()
+        configDrafts[platform] = cloneValue(settingsStore[platform as keyof typeof settingsStore] as Record<string, any>)
+        credentialDrafts[platform] = cloneValue(getCreds(platform))
+        touchedConfig[platform] = false
+        touchedCredentials[platform] = false
+        if (result.warning) {
+          message.warning(clearCredentialsWarningMessage(result.warning.code, result.warning.message))
+        } else {
+          message.success(t('platform.credentialsCleared'))
+        }
+      } catch (err: any) {
+        message.error(err?.message || t('platform.clearCredentialsFailed'))
+      } finally {
+        clearing[platform] = false
+      }
+    },
+  })
 }
 
 function getCreds(key: string) {
@@ -484,6 +535,16 @@ watch(
 
       <div class="platform-actions">
         <NButton
+          type="error"
+          quaternary
+          size="small"
+          :loading="isClearingPlatform(p.key)"
+          :disabled="isSavingPlatform(p.key) || isClearingPlatform(p.key) || !hasStoredCredentials(p.key)"
+          @click="clearPlatformCredentials(p.key, p.name)"
+        >
+          {{ t('platform.clearCredentials') }}
+        </NButton>
+        <NButton
           type="primary"
           size="small"
           :loading="isSavingPlatform(p.key)"
@@ -524,7 +585,8 @@ watch(
 
 .platform-actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid $border-light;

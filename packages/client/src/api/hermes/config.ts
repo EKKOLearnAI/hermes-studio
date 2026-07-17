@@ -94,6 +94,7 @@ export interface AppConfig {
   dingtalk?: Record<string, any>
   qqbot?: Record<string, any>
   platforms?: Record<string, any>
+  platformCredentialStatus?: Record<string, boolean>
   [key: string]: any
 }
 
@@ -198,6 +199,23 @@ export async function saveCredentials(
   await request('/api/hermes/config/credentials', {
     method: 'PUT',
     body: JSON.stringify({ platform, values }),
+  })
+}
+
+export interface ClearCredentialsResult {
+  success: boolean
+  platform: string
+  clearedPaths: string[]
+  gatewayRestarted: boolean
+  warning?: {
+    code: string
+    message: string
+  }
+}
+
+export async function clearCredentials(platform: string): Promise<ClearCredentialsResult> {
+  return request<ClearCredentialsResult>(`/api/hermes/config/credentials/${encodeURIComponent(platform)}`, {
+    method: 'DELETE',
   })
 }
 

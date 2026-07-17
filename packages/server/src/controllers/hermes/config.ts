@@ -71,6 +71,21 @@ for (const [envVar, [platform, cfgPath]] of Object.entries(envPlatformMap)) {
   platformEnvMap[platform][cfgPath] = envVar
 }
 
+// Keep this list deliberately separate from platformEnvMap: the latter also
+// contains access-control and enablement settings that must survive a
+// credential reset. New credential fields must be added here explicitly.
+const PLATFORM_CREDENTIAL_PATHS: Record<string, readonly string[]> = {
+  telegram: ['token', 'proxy'],
+  discord: ['token', 'proxy'],
+  slack: ['token'],
+  matrix: ['token', 'proxy', 'extra.user_id', 'extra.password'],
+  weixin: ['token', 'extra.account_id'],
+  wecom: ['extra.bot_id', 'extra.secret'],
+  feishu: ['extra.app_id', 'extra.app_secret', 'extra.encrypt_key', 'extra.verification_token'],
+  dingtalk: ['extra.client_id', 'extra.client_secret', 'extra.app_key'],
+  qqbot: ['extra.app_id', 'extra.client_secret'],
+}
+
 function parseEnv(raw: string): Record<string, string> {
   const env: Record<string, string> = {}
   for (const line of raw.split('\n')) {
@@ -83,6 +98,15 @@ function parseEnv(raw: string): Record<string, string> {
     if (val) env[key] = val
   }
   return env
+}
+
+function envContainsKey(raw: string, key: string): boolean {
+  return raw.split('\n').some((line) => {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) return false
+    const eqIdx = trimmed.indexOf('=')
+    return eqIdx !== -1 && trimmed.slice(0, eqIdx).trim() === key
+  })
 }
 
 function setNested(obj: Record<string, any>, path: string, value: any) {
@@ -102,6 +126,29 @@ function deepMerge(target: Record<string, any>, source: Record<string, any>): Re
     }
   }
   return target
+}
+
+function valueAtPath(value: unknown, path: string): unknown {
+  let current = value
+  for (const part of path.split('.')) {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) return undefined
+    current = (current as Record<string, unknown>)[part]
+  }
+  return current
+}
+
+function hasStoredValue(value: unknown): boolean {
+  if (value === undefined || value === null || value === false) return false
+  return typeof value === 'string' ? value.trim().length > 0 : true
+}
+
+function getPlatformCredentialStatus(platforms: unknown): Record<string, boolean> {
+  const status: Record<string, boolean> = {}
+  for (const [platform, paths] of Object.entries(PLATFORM_CREDENTIAL_PATHS)) {
+    const platformConfig = valueAtPath(platforms, platform)
+    status[platform] = paths.some(path => hasStoredValue(valueAtPath(platformConfig, path)))
+  }
+  return status
 }
 
 const AUXILIARY_TASKS = [
@@ -349,6 +396,7 @@ export async function getConfig(ctx: any) {
       }
       config.platforms = existing
     }
+    const platformCredentialStatus = getPlatformCredentialStatus(config.platforms)
     const { section, sections } = ctx.query
     if (section) {
       const key = section as string
@@ -374,7 +422,7 @@ export async function getConfig(ctx: any) {
       }
       ctx.body = result
     } else {
-      ctx.body = { ...config, gatewayAutoStart, proxy }
+      ctx.body = { ...config, gatewayAutoStart, proxy, platformCredentialStatus }
     }
   } catch (err: any) {
     ctx.status = 500; ctx.body = { error: err.message }
@@ -550,18 +598,20 @@ export async function updateMoaConfig(ctx: any) {
   }
 }
 
-function removeConfigPath(config: any, platform: string, cfgPath: string) {
+function removeConfigPath(config: any, platform: string, cfgPath: string): boolean {
   const parts = cfgPath.split('.')
   const obj: any = config.platforms?.[platform]
-  if (!obj) return
+  if (!obj) return false
   if (parts.length === 1) {
+    if (!Object.prototype.hasOwnProperty.call(obj, parts[0])) return false
     delete obj[parts[0]]
   } else {
     let cur = obj
     for (let i = 0; i < parts.length - 1; i++) {
-      if (!cur?.[parts[i]]) return
+      if (!cur?.[parts[i]]) return false
       cur = cur[parts[i]]
     }
+    if (!Object.prototype.hasOwnProperty.call(cur, parts[parts.length - 1])) return false
     delete cur[parts[parts.length - 1]]
     if (obj.extra && Object.keys(obj.extra).length === 0) delete obj.extra
   }
@@ -569,6 +619,7 @@ function removeConfigPath(config: any, platform: string, cfgPath: string) {
     if (!config.platforms) config.platforms = {}
     delete config.platforms[platform]
   }
+  return true
 }
 
 function isSensitiveCredentialPath(cfgPath: string): boolean {
@@ -636,5 +687,124 @@ export async function updateCredentials(ctx: any) {
     ctx.body = { success: true }
   } catch (err: any) {
     ctx.status = 500; ctx.body = { error: err.message }
+  }
+}
+
+export async function clearCredentials(ctx: any) {
+  const platform = typeof ctx.params?.platform === 'string' ? ctx.params.platform.trim() : ''
+  if (!platform || !PLATFORM_CREDENTIAL_PATHS[platform]) {
+    ctx.status = 400
+    ctx.body = { error: `Unsupported credential clearing platform: ${platform || 'missing'}` }
+    return
+  }
+
+  try {
+    const profile = requestedProfile(ctx)
+    const envMap = platformEnvMap[platform] || {}
+    let envRaw = ''
+    try {
+      envRaw = await readFile(envPath(profile), 'utf-8')
+    } catch (err: any) {
+      if (err?.code !== 'ENOENT') throw err
+    }
+
+    let configFileExists = true
+    try {
+      await readFile(configPath(profile), 'utf-8')
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') configFileExists = false
+      else throw err
+    }
+
+    const result = await safeFileStore.updateYaml<{ clearedPaths: string[] }>(
+      configPath(profile),
+      async (config) => {
+        const clearedPaths = new Set<string>()
+        let changed = false
+
+        for (const cfgPath of PLATFORM_CREDENTIAL_PATHS[platform]) {
+          const envVar = envMap[cfgPath]
+          if (!envVar) continue
+
+          const envPresent = envContainsKey(envRaw, envVar)
+          const configPresent = hasStoredValue(valueAtPath(config.platforms?.[platform], cfgPath))
+          if (!envPresent && !configPresent) continue
+
+          if (envPresent) {
+            await saveEnvValueForProfile(profile, envVar, '')
+            changed = true
+          }
+          if (removeConfigPath(config, platform, cfgPath)) changed = true
+          clearedPaths.add(cfgPath)
+        }
+
+        return {
+          data: config,
+          result: { clearedPaths: [...clearedPaths] },
+          // Do not create a new config.yaml when the credentials only lived in
+          // .env. The env update above is still persisted independently.
+          write: changed && configFileExists,
+        }
+      },
+      {
+        backup: true,
+        dumpOptions: {
+          forceQuotes: true,
+        },
+      },
+    )
+
+    const clearedPaths = result?.clearedPaths || []
+    let gatewayRestarted = false
+    let warning: { code: string; message: string } | undefined
+
+    if (clearedPaths.length > 0) {
+      let restartAllowed = false
+      try {
+        restartAllowed = await gatewayAutoRestartAllowed()
+      } catch (err) {
+        logger.error(err, '[config] gateway restart check failed after credentials clear platform=%s profile=%s', platform, profile)
+        warning = {
+          code: 'gateway_restart_failed',
+          message: 'Credentials were cleared, but the gateway could not be restarted automatically.',
+        }
+      }
+
+      if (!warning && restartAllowed) {
+        try {
+          const restartResult = await restartGatewayForProfile(profile)
+          gatewayRestarted = restartResult.running
+          logger.info('[config] gateway restarted after credentials clear platform=%s profile=%s result=%j', platform, profile, restartResult)
+          if (!gatewayRestarted) {
+            warning = {
+              code: 'gateway_restart_failed',
+              message: 'Credentials were cleared, but the gateway did not report running.',
+            }
+          }
+        } catch (err) {
+          logger.error(err, '[config] gateway restart failed after credentials clear platform=%s profile=%s', platform, profile)
+          warning = {
+            code: 'gateway_restart_failed',
+            message: 'Credentials were cleared, but the gateway could not be restarted automatically.',
+          }
+        }
+      } else if (!warning && !restartAllowed) {
+        warning = {
+          code: 'gateway_restart_disabled',
+          message: 'Credentials were cleared, but gateway auto-restart is disabled. Restart the gateway manually to apply the change.',
+        }
+      }
+    }
+
+    ctx.body = {
+      success: true,
+      platform,
+      clearedPaths,
+      gatewayRestarted,
+      ...(warning ? { warning } : {}),
+    }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
   }
 }

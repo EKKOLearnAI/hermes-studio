@@ -3332,6 +3332,42 @@
         }
       }
     },
+    "/api/hermes/config/credentials/{platform}": {
+      "delete": {
+        "tags": [
+          "Config"
+        ],
+        "summary": "Clear credentials",
+        "description": "DELETE /api/hermes/config/credentials/:platform",
+        "operationId": "clearCredentials",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Credentials cleared; the response may include a gateway restart warning."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/config/moa": {
       "get": {
         "tags": [

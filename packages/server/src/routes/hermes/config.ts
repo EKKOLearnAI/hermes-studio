@@ -10,3 +10,4 @@ configRoutes.put('/api/hermes/config/auxiliary-models', ctrl.updateAuxiliaryMode
 configRoutes.get('/api/hermes/config/moa', ctrl.getMoaConfig)
 configRoutes.put('/api/hermes/config/moa', ctrl.updateMoaConfig)
 configRoutes.put('/api/hermes/config/credentials', ctrl.updateCredentials)
+configRoutes.delete('/api/hermes/config/credentials/:platform', ctrl.clearCredentials)

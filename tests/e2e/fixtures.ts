@@ -36,6 +36,8 @@ interface MockHermesApiOptions {
   workflowRuns?: unknown[]
   workflowImportDocument?: unknown
   workflowImportPreviewError?: string
+  channelCredentials?: boolean
+  channelConfig?: Record<string, unknown>
 }
 
 export const TEST_MODEL_GROUP = {
@@ -117,6 +119,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
   const unexpectedRequests: MockedRequest[] = []
   const tokenValidationStatus = options.tokenValidationStatus ?? 200
   let activeProfileName = options.initialProfileName ?? 'research'
+  let channelCredentialsPresent = options.channelCredentials ?? false
 
   await page.route('**/*', async (route: Route) => {
     const request = route.request()
@@ -365,6 +368,22 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (/^\/api\/hermes\/config\/credentials\/[^/]+$/.test(pathname) && request.method() === 'DELETE') {
+      const platform = pathname.split('/').at(-1)
+      if (platform !== 'telegram') {
+        await route.fulfill(jsonResponse({ error: 'Unsupported test platform' }, 400))
+        return
+      }
+      channelCredentialsPresent = false
+      await route.fulfill(jsonResponse({
+        success: true,
+        platform,
+        clearedPaths: ['token', 'proxy'],
+        gatewayRestarted: true,
+      }))
+      return
+    }
+
     if (pathname === '/api/hermes/config') {
       await route.fulfill(jsonResponse({
         display: { streaming: true, show_reasoning: true, show_cost: true },
@@ -373,6 +392,10 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
         session_reset: {},
         privacy: {},
         approvals: {},
+        ...options.channelConfig,
+        platformCredentialStatus: options.channelConfig?.platformCredentialStatus || {
+          telegram: channelCredentialsPresent,
+        },
       }))
       return
     }

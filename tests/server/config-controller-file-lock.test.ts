@@ -708,4 +708,137 @@ describe('config controller locked file updates', () => {
       },
     })
   })
+
+  it('clears only allowlisted channel credentials and keeps access controls and endpoints', async () => {
+    await writeFile(join(hermesHome, 'config.yaml'), [
+      'platforms:',
+      '  telegram:',
+      '    token: yaml-token',
+      '    proxy: socks5://config-proxy',
+      '    allowed_users: user-1,user-2',
+      '    allow_all_users: false',
+      '    extra:',
+      '      base_url: https://telegram.example',
+      'model:',
+      '  default: glm-5.1',
+      '',
+    ].join('\n'), 'utf-8')
+    await writeFile(join(hermesHome, '.env'), [
+      'OPENROUTER_API_KEY=keep',
+      'TELEGRAM_BOT_TOKEN=env-token',
+      'TELEGRAM_PROXY=socks5://env-proxy',
+      '',
+    ].join('\n'), 'utf-8')
+    const { clearCredentials, getConfig } = await loadController()
+
+    const beforeCtx = makeCtx({})
+    await getConfig(beforeCtx)
+    expect(beforeCtx.body.platformCredentialStatus.telegram).toBe(true)
+
+    const ctx = makeCtx({})
+    ctx.params = { platform: 'telegram' }
+    await clearCredentials(ctx)
+
+    expect(ctx.body).toEqual({
+      success: true,
+      platform: 'telegram',
+      clearedPaths: ['token', 'proxy'],
+      gatewayRestarted: true,
+    })
+    expect(mockRestartGateway).toHaveBeenCalledWith('default')
+
+    const env = await readFile(join(hermesHome, '.env'), 'utf-8')
+    expect(env).toContain('OPENROUTER_API_KEY=keep')
+    expect(env).not.toContain('TELEGRAM_BOT_TOKEN=')
+    expect(env).not.toContain('TELEGRAM_PROXY=')
+    const config = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
+    expect(config.platforms.telegram.token).toBeUndefined()
+    expect(config.platforms.telegram.proxy).toBeUndefined()
+    expect(config.platforms.telegram.allowed_users).toBe('user-1,user-2')
+    expect(config.platforms.telegram.allow_all_users).toBe(false)
+    expect(config.platforms.telegram.extra.base_url).toBe('https://telegram.example')
+    expect(config.model.default).toBe('glm-5.1')
+
+    const afterCtx = makeCtx({})
+    await getConfig(afterCtx)
+    expect(afterCtx.body.platformCredentialStatus.telegram).toBe(false)
+
+    const secondCtx = makeCtx({})
+    secondCtx.params = { platform: 'telegram' }
+    await clearCredentials(secondCtx)
+    expect(secondCtx.body).toEqual({
+      success: true,
+      platform: 'telegram',
+      clearedPaths: [],
+      gatewayRestarted: false,
+    })
+    expect(mockRestartGateway).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears credentials only in the requested profile', async () => {
+    const researchDir = join(hermesHome, 'profiles', 'research')
+    await mkdir(researchDir, { recursive: true })
+    await writeFile(join(hermesHome, 'config.yaml'), 'platforms:\n  telegram:\n    token: default-config-token\n', 'utf-8')
+    await writeFile(join(hermesHome, '.env'), 'TELEGRAM_BOT_TOKEN=default-token\n', 'utf-8')
+    await writeFile(join(researchDir, 'config.yaml'), [
+      'platforms:',
+      '  telegram:',
+      '    token: research-config-token',
+      '    allowed_users: research-user',
+      '',
+    ].join('\n'), 'utf-8')
+    await writeFile(join(researchDir, '.env'), 'TELEGRAM_BOT_TOKEN=research-token\n', 'utf-8')
+    const { clearCredentials } = await loadController()
+
+    const ctx = makeCtx({}, 'research')
+    ctx.params = { platform: 'telegram' }
+    await clearCredentials(ctx)
+
+    expect(ctx.body.clearedPaths).toEqual(['token'])
+    expect(mockRestartGateway).toHaveBeenCalledWith('research')
+    expect(await readFile(join(hermesHome, '.env'), 'utf-8')).toContain('TELEGRAM_BOT_TOKEN=default-token')
+    expect(await readFile(join(researchDir, '.env'), 'utf-8')).not.toContain('TELEGRAM_BOT_TOKEN=')
+    const defaultConfig = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
+    const researchConfig = YAML.load(await readFile(join(researchDir, 'config.yaml'), 'utf-8')) as any
+    expect(defaultConfig.platforms.telegram.token).toBe('default-config-token')
+    expect(researchConfig.platforms.telegram.token).toBeUndefined()
+    expect(researchConfig.platforms.telegram.allowed_users).toBe('research-user')
+  })
+
+  it('reports a restart warning without restoring cleared credentials', async () => {
+    await writeFile(join(hermesHome, 'config.yaml'), 'platforms:\n  discord:\n    token: config-token\n', 'utf-8')
+    await writeFile(join(hermesHome, '.env'), 'DISCORD_BOT_TOKEN=discord-token\n', 'utf-8')
+    mockRestartGateway.mockRejectedValueOnce(new Error('restart failed'))
+    const { clearCredentials } = await loadController()
+
+    const ctx = makeCtx({})
+    ctx.params = { platform: 'discord' }
+    await clearCredentials(ctx)
+
+    expect(ctx.body.success).toBe(true)
+    expect(ctx.body.gatewayRestarted).toBe(false)
+    expect(ctx.body.warning).toEqual({
+      code: 'gateway_restart_failed',
+      message: 'Credentials were cleared, but the gateway could not be restarted automatically.',
+    })
+    expect(await readFile(join(hermesHome, '.env'), 'utf-8')).not.toContain('DISCORD_BOT_TOKEN=')
+    const config = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
+    expect(config.platforms?.discord?.token).toBeUndefined()
+  })
+
+  it('fails closed for a channel without an explicit credential allowlist', async () => {
+    await writeFile(join(hermesHome, 'config.yaml'), 'platforms:\n  whatsapp:\n    enabled: true\n', 'utf-8')
+    const { clearCredentials } = await loadController()
+
+    const ctx = makeCtx({})
+    ctx.params = { platform: 'whatsapp' }
+    await clearCredentials(ctx)
+
+    expect(ctx.status).toBe(400)
+    expect(ctx.body).toEqual({ error: 'Unsupported credential clearing platform: whatsapp' })
+    expect(mockRestartGateway).not.toHaveBeenCalled()
+    const config = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
+    expect(config.platforms.whatsapp.enabled).toBe(true)
+  })
+
 })
