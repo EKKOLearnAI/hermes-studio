@@ -13,4 +13,13 @@ describe('workflow canvas atomic transactions', () => {
   it('rejects an absent source atomically', () => {
     expect(() => createConnectedAgentTransaction({ nodes: [], edges: [] }, { source: 'missing', nodeId: 'agent-1', title: 'Agent', position: { x: 0, y: 0 }, nodeData: {} })).toThrow('source node does not exist')
   })
+
+  it('keeps the side handle used when a dangling connection creates a node', () => {
+    const before = { nodes: [{ id: 'source', data: {} }], edges: [] }
+    const result = createConnectedAgentTransaction(before as any, {
+      source: 'source', sourceHandle: 'top', nodeId: 'agent-2', title: 'Agent 2',
+      position: { x: 10, y: 20 }, nodeData: { agent: 'hermes' },
+    })
+    expect(result.after.edges).toEqual([expect.objectContaining({ sourceHandle: 'top', targetHandle: 'input' })])
+  })
 })

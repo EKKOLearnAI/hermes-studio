@@ -69,7 +69,8 @@ test('workflow canvas exposes orchestration editing and portability controls', a
   expect(api.requests.filter(request => request.pathname === '/api/hermes/workflows/import/confirm')).toHaveLength(1)
   await page.locator('.workflow-list-item').filter({ hasText: 'Loop workflow' }).click()
   await expect(page.locator('.header-workflow-title')).toHaveText('Loop workflow')
-  await page.locator('.workflow-run-item').click()
+  const runItem = page.locator('.workflow-run-item')
+  await runItem.click()
   await expect(firstNode).toHaveAttribute('style', /translate\(0px,\s*80px\)/)
   await expect(firstNode).toHaveCSS('width', '300px')
   await expect(firstNode).toHaveCSS('height', '550px')
@@ -97,17 +98,32 @@ test('workflow canvas exposes orchestration editing and portability controls', a
   await expect(evidenceDetailModal.getByText('a-b', { exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(evidenceDetailModal).toBeHidden()
-  await page.locator('.workflow-run-item').click()
+  await runItem.click()
+  await expect(runItem).not.toHaveClass(/active/)
+  await expect(page.getByLabel('Workflow execution details')).toHaveCount(0)
   const joinHelpIcons = page.getByTestId('workflow-node-join-help')
   const joinHelp = page.getByText('All incoming routes must be taken; if one does not match, this node is skipped. Example: wait for both parallel checks.', { exact: true })
   await expect(joinHelpIcons).toHaveCount(2)
   await expect(joinHelp).toHaveCount(0)
   await joinHelpIcons.first().hover()
   await expect(joinHelp).toBeVisible()
-  const edge = page.locator('.vue-flow__edge').first()
+  const edge = page.locator('.vue-flow__edge[data-id="a-b"]')
   await edge.click({ force: true })
+  await expect(edge).toHaveClass(/workflow-edge--preview/)
+  await expect(edge).toHaveClass(/animated/)
+  await expect(page.getByText('Edit connection', { exact: true })).toHaveCount(0)
+  await edge.dblclick({ force: true })
   const edgeDialog = page.locator('.workflow-edge-editor-form').first()
   await expect(page.getByText('Edit connection', { exact: true })).toBeVisible()
+  const connectionSummary = edgeDialog.getByTestId('workflow-edge-connection-summary')
+  await expect(connectionSummary).toContainText('Agent A')
+  await expect(connectionSummary).toContainText('Agent B')
+  const ruleSteps = edgeDialog.getByTestId('workflow-edge-rule-steps')
+  await expect(ruleSteps).toContainText('1. Source node result')
+  await expect(ruleSteps).toContainText('2. Reply data to check')
+  await expect(ruleSteps).toContainText('Run Agent B')
+  await expect(edgeDialog.getByTestId('workflow-edge-continue-when-label')).toHaveText('Required source result')
+  await expect(edgeDialog.getByTestId('workflow-edge-optional-check-label')).toHaveText('Which reply data should be checked?')
   const routeHelp = page.getByText('First match the source result. success: source succeeded; failure: source failed; always: either result. A condition, when present, must also match.', { exact: true })
   const routeExample = page.getByText('Example: use success for the normal path, failure for error handling, and always for cleanup.', { exact: true })
   await expect(routeHelp).toHaveCount(0)
@@ -116,20 +132,23 @@ test('workflow canvas exposes orchestration editing and portability controls', a
   await expect(routeHelp).toBeVisible()
   await expect(routeExample).toBeVisible()
   await edgeDialog.locator('.n-select').first().click()
-  for (const route of ['Success only (success)', 'Failure only (failure)', 'Always (always)']) {
+  for (const route of ['Source returned normally', 'Source execution failed', 'Either result']) {
     await expect(page.getByText(route, { exact: true }).last()).toBeVisible()
   }
   await page.keyboard.press('Escape')
   await expect(page.getByTestId('workflow-edge-condition-path-preset')).toBeVisible()
   await expect(page.getByTestId('workflow-edge-condition-operator')).toHaveCount(0)
   await page.getByTestId('workflow-edge-condition-path-preset').click()
-  await expect(page.getByText('Route only — no condition', { exact: true }).last()).toBeVisible()
-  await expect(page.getByText('Successful reply text (output, recommended)', { exact: true }).last()).toBeVisible()
-  const structuredOutputOption = page.getByText('Structured reply JSON (outputJson.*)', { exact: true }).last()
+  await expect(page.getByText('Do not inspect the reply', { exact: true }).last()).toBeVisible()
+  await expect(page.getByText('Entire successful reply text (output, recommended)', { exact: true }).last()).toBeVisible()
+  const structuredOutputOption = page.getByText('One JSON field value (outputJson.*)', { exact: true }).last()
   await expect(structuredOutputOption).toBeVisible()
   await expect(page.getByText('Failure error text (error)', { exact: true })).toHaveCount(0)
-  await expect(page.getByText('Custom path (advanced)', { exact: true }).last()).toBeVisible()
+  await expect(page.getByText('Advanced data path', { exact: true }).last()).toBeVisible()
   await structuredOutputOption.click()
+  await expect(edgeDialog.getByTestId('workflow-edge-compare-using-label')).toHaveText('Compare using')
+  await expect(edgeDialog.getByTestId('workflow-edge-expected-type-label')).toHaveText('Interpret expected value as')
+  await expect(edgeDialog.getByTestId('workflow-edge-expected-value-label')).toHaveText('Expected field value')
   const structuredOutputPath = edgeDialog.getByTestId('workflow-edge-condition-path').locator('input')
   await expect(structuredOutputPath).toHaveValue('outputJson')
   await structuredOutputPath.fill('outputJson.route_token')
@@ -147,17 +166,16 @@ test('workflow canvas exposes orchestration editing and portability controls', a
   expect(workflowPatch.edges[0].data.orchestration.condition).toEqual({
     path: 'outputJson.route_token', operator: 'equals', value: 'HSR_RELEASED_OK',
   })
-  await edge.click({ force: true })
-  await expect(page.getByTestId('workflow-edge-condition-path-preset')).toContainText('Structured reply JSON (outputJson.*)')
+  await edge.dblclick({ force: true })
+  await expect(page.getByTestId('workflow-edge-condition-path-preset')).toContainText('One JSON field value (outputJson.*)')
   await expect(edgeDialog.getByTestId('workflow-edge-condition-path').locator('input')).toHaveValue('outputJson.route_token')
   await page.getByTestId('workflow-edge-condition-path-preset').click()
-  await page.getByText('Successful reply text (output, recommended)', { exact: true }).last().click()
+  await page.getByText('Entire successful reply text (output, recommended)', { exact: true }).last().click()
   const conditionHelp = page.getByText('For success, output is recommended. Choose Route only when no content check is needed.', { exact: true })
   const operatorHelp = page.getByText('Exactly equal, including type. Example: output equals "APPROVED".', { exact: true })
   const valueTypeHelp = page.getByText('Choose how Value is parsed and validated. This editing aid is inferred from the saved JSON value and is not stored separately.', { exact: true })
-  const valueHelp = page.getByText('Enter a value matching the selected type. Objects and arrays use JSON; strings are entered without JSON quotes.', { exact: true })
-  const feedbackHelp = page.getByText('Marks this backward connection as a bounded loop. It repeats only while the route and condition match, and stops at Maximum iterations.', { exact: true })
-  for (const help of [conditionHelp, operatorHelp, valueTypeHelp, valueHelp, feedbackHelp]) await expect(help).toHaveCount(0)
+  const valueHelp = page.getByText('This checks the entire reply as literal text. With Contains, the text may appear in a JSON key or value; it does not look up a JSON field.', { exact: true })
+  for (const help of [conditionHelp, operatorHelp, valueTypeHelp, valueHelp]) await expect(help).toHaveCount(0)
   await page.getByTestId('workflow-edge-condition-path-help').hover()
   await expect(conditionHelp).toBeVisible()
   await edgeDialog.getByTestId('workflow-edge-operator-help').hover()
@@ -168,8 +186,6 @@ test('workflow canvas exposes orchestration editing and portability controls', a
   await expect(valueTypeHelp).toBeVisible()
   await edgeDialog.getByTestId('workflow-edge-condition-value-help').hover()
   await expect(valueHelp).toBeVisible()
-  await edgeDialog.getByTestId('workflow-edge-feedback-help').hover()
-  await expect(feedbackHelp).toBeVisible()
   await valueType.click()
   const objectValueTypeOption = page.locator('.n-base-select-option:visible').filter({ hasText: /^Object$/ })
   await expect(objectValueTypeOption).toHaveCount(1)
@@ -188,12 +204,12 @@ test('workflow canvas exposes orchestration editing and portability controls', a
   await edgeSaveButton.click()
   await expect(page.getByText('Edit connection', { exact: true })).toHaveCount(0)
 
-  await edge.click({ force: true })
+  await edge.dblclick({ force: true })
   const reopenedEdgeDialog = page.locator('.workflow-edge-editor-form').first()
   await expect(reopenedEdgeDialog.getByTestId('workflow-edge-condition-value-type')).toContainText('Object')
   await expect(reopenedEdgeDialog.getByTestId('workflow-edge-condition-value').locator('input')).toHaveValue('{"status":"ready"}')
   await reopenedEdgeDialog.getByTestId('workflow-edge-condition-operator').click()
-  const greaterThanOption = page.getByText('Greater than (greater_than)', { exact: true }).last()
+  const greaterThanOption = page.getByText('Greater than', { exact: true }).last()
   await expect(greaterThanOption).toBeVisible()
   await greaterThanOption.click()
   const activeValueType = reopenedEdgeDialog.getByTestId('workflow-edge-condition-value-type')
@@ -204,33 +220,16 @@ test('workflow canvas exposes orchestration editing and portability controls', a
   await reopenedEdgeDialog.getByTestId('workflow-edge-operator-help').hover()
   await expect(numberOperatorHelp).toBeVisible()
   await reopenedEdgeDialog.getByTestId('workflow-edge-condition-value').locator('input').fill('42')
-  await reopenedEdgeDialog.getByText('Feedback loop', { exact: true }).click()
-  const maxIterationsHelp = page.getByText('Total loop passes allowed, from 1 to 100. The run also has a global execution safety budget.', { exact: true })
-  const loopIdHelp = page.getByText('This only labels the loop in execution history; it does not change when the loop runs. Keep Automatic unless an advanced multi-loop design needs a stable custom ID.', { exact: true })
-  await expect(maxIterationsHelp).toHaveCount(0)
-  await expect(loopIdHelp).toHaveCount(0)
-  await page.getByTestId('workflow-edge-max-iterations-help').hover()
-  await expect(maxIterationsHelp).toBeVisible()
-  await page.getByTestId('workflow-edge-loop-id-help').hover()
-  await expect(loopIdHelp).toBeVisible()
-  const loopIdSelect = reopenedEdgeDialog.getByTestId('workflow-edge-loop-id')
-  await expect(loopIdSelect).toBeVisible()
-  await loopIdSelect.click()
-  await expect(page.getByText('Automatic (recommended) · loop:a-b', { exact: true }).last()).toBeVisible()
-  await page.keyboard.press('Escape')
-  await loopIdSelect.locator('input').fill('review-loop')
-  await loopIdSelect.locator('input').press('Enter')
   await reopenedEdgeDialog.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.getByRole('dialog')).toBeHidden()
 
-  await edge.click({ force: true })
+  await edge.dblclick({ force: true })
   await expect(page.getByRole('dialog')).toBeVisible()
-  await expect(page.getByTestId('workflow-edge-condition-path-preset')).toContainText('Successful reply text (output, recommended)')
+  await expect(page.getByTestId('workflow-edge-condition-path-preset')).toContainText('Entire successful reply text (output, recommended)')
   await expect(page.getByTestId('workflow-edge-condition-value-type')).toContainText('Number')
   await expect(page.getByTestId('workflow-edge-condition-value').locator('input')).toHaveValue('42')
-  await expect(page.getByTestId('workflow-edge-loop-id')).toContainText('review-loop')
   await page.getByTestId('workflow-edge-condition-operator').click({ force: true })
-  await page.getByText('Exists (exists)', { exact: true }).last().click()
+  await page.getByText('Exists', { exact: true }).last().click()
   await expect(page.getByTestId('workflow-edge-condition-value-type')).toHaveCount(0)
   await expect(page.getByTestId('workflow-edge-condition-value')).toHaveCount(0)
   await edgeDialog.getByRole('button', { name: 'Save', exact: true }).click()
@@ -240,7 +239,7 @@ test('workflow canvas exposes orchestration editing and portability controls', a
   await expect(page.getByText('Edit connection', { exact: true })).toBeVisible()
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click()
 
-  const sourceHandle = page.locator('.vue-flow__node[data-id="a"] .vue-flow__handle.source')
+  const sourceHandle = page.locator('.vue-flow__node[data-id="a"] .vue-flow__handle[data-handleid="output"]')
   const canvas = page.locator('.vue-flow__pane')
   await page.getByRole('button', { name: 'Hide run records' }).click()
   const handleBox = await sourceHandle.boundingBox()
@@ -262,6 +261,193 @@ test('workflow canvas exposes orchestration editing and portability controls', a
   await page.keyboard.press('Control+z')
   await expect(page.locator('.vue-flow__node')).toHaveCount(2)
   await expect(page.locator('.vue-flow__edge')).toHaveCount(1)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('workflow nodes connect from every side and create an automatic self loop', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const nodes = [{
+    id: 'review', type: 'agent', position: { x: 220, y: 100 },
+    data: { title: 'Review', agent: 'hermes', input: 'Review the result', skills: [], images: [], approvalRequired: false },
+  }]
+  const api = await mockHermesApi(page, { workflows: [{
+    id: 'wf-self-loop', name: 'Self loop workflow', profile: 'research', workspace: null,
+    nodes, edges: [], viewport: { x: 80, y: 80, zoom: .75 }, created_at: 1, updated_at: 1,
+  }], workflowRuns: [] })
+  await page.goto('/#/hermes/workflow')
+
+  const node = page.locator('.vue-flow__node[data-id="review"]')
+  const handles = node.locator('.workflow-handle')
+  await expect(handles).toHaveCount(4)
+  for (const handleId of ['input', 'top', 'output', 'bottom']) {
+    const handle = node.locator(`.workflow-handle[data-handleid="${handleId}"]`)
+    await expect(handle).toHaveCount(1)
+    await expect(handle).toHaveClass(/connectablestart/)
+    await expect(handle).toHaveClass(/connectableend/)
+  }
+
+  const rightHandle = node.locator('.workflow-handle[data-handleid="output"]')
+  const topHandle = node.locator('.workflow-handle[data-handleid="top"]')
+  const rightBox = await rightHandle.boundingBox()
+  const topBox = await topHandle.boundingBox()
+  expect(rightBox).not.toBeNull()
+  expect(topBox).not.toBeNull()
+  await page.mouse.move(rightBox!.x + rightBox!.width / 2, rightBox!.y + rightBox!.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(topBox!.x + topBox!.width / 2, topBox!.y + topBox!.height / 2, { steps: 12 })
+  await page.mouse.up()
+
+  const selfLoop = page.locator('.vue-flow__edge[data-id="review-review"]')
+  await expect(selfLoop).toHaveCount(1)
+  await expect(selfLoop).toHaveClass(/vue-flow__edge-workflow-self-loop/)
+  const selfLoopPath = selfLoop.locator('.vue-flow__edge-interaction')
+  await expect(selfLoop.locator('.vue-flow__edge-path')).toHaveAttribute('d', /M\s/)
+  const selfLoopCrossesNode = await selfLoop.locator('.vue-flow__edge-path').evaluate((path: SVGPathElement) => {
+    const matrix = path.getScreenCTM()!
+    const length = path.getTotalLength()
+    const nodeRect = document.querySelector('.vue-flow__node[data-id="review"]')!.getBoundingClientRect()
+    for (let step = 1; step < 40; step += 1) {
+      const point = path.getPointAtLength(length * step / 40)
+      const screen = new DOMPoint(point.x, point.y).matrixTransform(matrix)
+      if (
+        screen.x > nodeRect.left + 1 && screen.x < nodeRect.right - 1
+        && screen.y > nodeRect.top + 1 && screen.y < nodeRect.bottom - 1
+      ) return true
+    }
+    return false
+  })
+  expect(selfLoopCrossesNode).toBe(false)
+  const loopPoint = await selfLoopPath.evaluate((path: SVGPathElement) => {
+    const matrix = path.getScreenCTM()!
+    const length = path.getTotalLength()
+    for (let step = 1; step < 20; step += 1) {
+      const point = path.getPointAtLength(length * step / 20)
+      const screen = new DOMPoint(point.x, point.y).matrixTransform(matrix)
+      const hit = document.elementFromPoint(screen.x, screen.y)?.closest('.vue-flow__edge')
+      if (hit?.getAttribute('data-id') === 'review-review') return { x: screen.x, y: screen.y }
+    }
+    return null
+  })
+  expect(loopPoint).not.toBeNull()
+  await page.mouse.dblclick(loopPoint.x, loopPoint.y)
+
+  const editor = page.locator('.workflow-edge-editor-form').first()
+  await expect(editor.getByTestId('workflow-edge-connection-summary')).toContainText('Review → Review')
+  await expect(editor.getByTestId('workflow-edge-connection-summary')).toContainText('Review will run itself again')
+  await expect(editor.getByTestId('workflow-edge-loop-summary')).toContainText('Returns to Review')
+  await expect(editor.getByTestId('workflow-edge-loop-scope')).toContainText('Loop nodes: Review')
+  await expect(editor.getByText('Feedback loop', { exact: true })).toHaveCount(0)
+  await expect(editor.getByTestId('workflow-edge-loop-id')).toHaveCount(0)
+  await editor.getByText('Advanced settings', { exact: true }).click()
+  await expect(editor.getByTestId('workflow-edge-loop-id')).toBeVisible()
+  await editor.getByTestId('workflow-edge-loop-id').locator('input').fill('review-loop')
+  await editor.getByRole('button', { name: 'Save', exact: true }).click()
+
+  const patchCount = api.requests.filter(request => request.method === 'PATCH' && request.pathname === '/api/hermes/workflows/wf-self-loop').length
+  await page.locator('.header-actions').getByRole('button', { name: 'Save', exact: true }).click()
+  await expect.poll(() => api.requests.filter(request => request.method === 'PATCH' && request.pathname === '/api/hermes/workflows/wf-self-loop').length).toBe(patchCount + 1)
+  const saved = JSON.parse(api.requests.filter(request => request.method === 'PATCH' && request.pathname === '/api/hermes/workflows/wf-self-loop').at(-1)!.postData || '{}')
+  expect(saved.edges).toEqual([expect.objectContaining({
+    id: 'review-review', source: 'review', target: 'review',
+    sourceHandle: 'output', targetHandle: 'top', type: 'workflow-self-loop',
+    data: { orchestration: { route: 'success', feedback: { maxIterations: 3, loopId: 'review-loop' } } },
+  })])
+  expect(saved.edges[0]).not.toHaveProperty('class')
+  expect(saved.edges[0]).not.toHaveProperty('animated')
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('opposite-side self loops use measured node bounds in the rendered SVG', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const feedback = { orchestration: { route: 'success', feedback: { maxIterations: 3 } } }
+  const nodes = [
+    {
+      id: 'horizontal', type: 'agent', position: { x: 180, y: 180 }, style: { width: '480px', height: '260px' },
+      data: { title: 'Horizontal', agent: 'hermes', input: 'Horizontal loop', skills: [], images: [], approvalRequired: false },
+    },
+    {
+      id: 'vertical', type: 'agent', position: { x: 900, y: 120 }, style: { width: '360px', height: '480px' },
+      data: { title: 'Vertical', agent: 'hermes', input: 'Vertical loop', skills: [], images: [], approvalRequired: false },
+    },
+  ]
+  const edges = [
+    {
+      id: 'horizontal-horizontal', source: 'horizontal', target: 'horizontal',
+      sourceHandle: 'input', targetHandle: 'output', type: 'workflow-self-loop', data: feedback,
+    },
+    {
+      id: 'vertical-vertical', source: 'vertical', target: 'vertical',
+      sourceHandle: 'top', targetHandle: 'bottom', type: 'workflow-self-loop', data: feedback,
+    },
+  ]
+  const api = await mockHermesApi(page, { workflows: [{
+    id: 'wf-opposite-loops', name: 'Opposite loops', profile: 'research', workspace: null,
+    nodes, edges, viewport: { x: 80, y: 80, zoom: .4 }, created_at: 1, updated_at: 1,
+  }], workflowRuns: [] })
+  await page.goto('/#/hermes/workflow')
+
+  for (const nodeId of ['horizontal', 'vertical']) {
+    const result = await page.locator(`.vue-flow__edge[data-id="${nodeId}-${nodeId}"] .vue-flow__edge-path`)
+      .evaluate((path: SVGPathElement, currentNodeId) => {
+        const matrix = path.getScreenCTM()!
+        const length = path.getTotalLength()
+        const nodeRect = document.querySelector(`.vue-flow__node[data-id="${currentNodeId}"]`)!.getBoundingClientRect()
+        let inside = 0
+        let hit = 0
+        for (let step = 1; step < 80; step += 1) {
+          const point = path.getPointAtLength(length * step / 80)
+          const screen = new DOMPoint(point.x, point.y).matrixTransform(matrix)
+          if (
+            screen.x > nodeRect.left + 1 && screen.x < nodeRect.right - 1
+            && screen.y > nodeRect.top + 1 && screen.y < nodeRect.bottom - 1
+          ) inside += 1
+          const hitEdge = document.elementFromPoint(screen.x, screen.y)?.closest('.vue-flow__edge')
+          if (hitEdge?.getAttribute('data-id') === `${currentNodeId}-${currentNodeId}`) hit += 1
+        }
+        return { d: path.getAttribute('d'), inside, hit }
+      }, nodeId)
+    expect(result.d).toMatch(/^M\s/)
+    expect(result.inside, `${nodeId}: ${result.d}`).toBe(0)
+    expect(result.hit, `${nodeId}: ${result.d}`).toBe(79)
+  }
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('workflow loop validation blocks invalid editor and workflow saves before API writes', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const nodes = [
+    { id: 'a', type: 'agent', position: { x: 0, y: 20 }, data: { title: 'A', agent: 'hermes', input: 'A', skills: [], images: [], approvalRequired: false } },
+    { id: 'b', type: 'agent', position: { x: 360, y: 20 }, data: { title: 'B', agent: 'hermes', input: 'B', skills: [], images: [], approvalRequired: false } },
+    { id: 'c', type: 'agent', position: { x: 0, y: 640 }, data: { title: 'C', agent: 'hermes', input: 'C', skills: [], images: [], approvalRequired: false } },
+    { id: 'd', type: 'agent', position: { x: 360, y: 640 }, data: { title: 'D', agent: 'hermes', input: 'D', skills: [], images: [], approvalRequired: false } },
+  ]
+  const feedback = (loopId: string) => ({ orchestration: { route: 'success', feedback: { maxIterations: 3, loopId } } })
+  const edges = [
+    { id: 'a-b', source: 'a', target: 'b', type: 'smoothstep' },
+    { id: 'b-a', source: 'b', target: 'a', type: 'smoothstep', data: feedback('retry') },
+    { id: 'c-d', source: 'c', target: 'd', type: 'smoothstep' },
+    { id: 'd-c', source: 'd', target: 'c', type: 'smoothstep', data: feedback('retry') },
+  ]
+  const api = await mockHermesApi(page, { workflows: [{
+    id: 'wf-invalid-loops', name: 'Invalid loops', profile: 'research', workspace: null,
+    nodes, edges, viewport: { x: 80, y: 80, zoom: .65 }, created_at: 1, updated_at: 1,
+  }], workflowRuns: [] })
+  await page.goto('/#/hermes/workflow')
+
+  const feedbackEdge = page.locator('.vue-flow__edge[data-id="b-a"]')
+  await feedbackEdge.dblclick({ force: true })
+  const edgeDialog = page.locator('.workflow-edge-editor-form').first()
+  await expect(edgeDialog).toBeVisible()
+  await edgeDialog.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(page.getByText('Each loop history label must be unique.', { exact: true }).last()).toBeVisible()
+  await expect(edgeDialog).toBeVisible()
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click()
+
+  const patchCount = api.requests.filter(request => request.method === 'PATCH' && request.pathname === '/api/hermes/workflows/wf-invalid-loops').length
+  await page.locator('.header-actions').getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(page.getByText('Each loop history label must be unique.', { exact: true }).last()).toBeVisible()
+  await page.waitForTimeout(100)
+  expect(api.requests.filter(request => request.method === 'PATCH' && request.pathname === '/api/hermes/workflows/wf-invalid-loops')).toHaveLength(patchCount)
   expect(api.unexpectedRequests).toEqual([])
 })
 
@@ -378,7 +564,7 @@ test('workflow execution details lead with the business outcome, chosen path, an
   const overview = evidence.getByTestId('workflow-evidence-overview')
   await expect(overview.getByText('Run outcome', { exact: true })).toBeVisible()
   await expect(overview.getByText('BLOCKED', { exact: true })).toBeVisible()
-  await expect(overview.getByText('Blocked at quality-container-setup', { exact: true })).toBeVisible()
+  await expect(overview.getByText('Failed step (value of failed_gate): quality-container-setup', { exact: true })).toBeVisible()
   await expect(overview.getByText('The container workdir did not exist before the first command.', { exact: true })).toBeVisible()
   const actualPath = overview.getByTestId('workflow-actual-path')
   await expect(actualPath).toContainText('Build and publish → Blocked outcome')
@@ -392,12 +578,20 @@ test('workflow execution details lead with the business outcome, chosen path, an
   const selectedPaths = evidence.getByTestId('workflow-selected-paths')
   await expect(selectedPaths.locator('.workflow-evidence-row')).toHaveCount(2)
   const blockedPath = selectedPaths.locator('.workflow-evidence-row').filter({ hasText: 'Build and publish → Blocked outcome' })
-  await expect(blockedPath.getByTestId('workflow-condition-comparison')).toContainText('output')
-  await expect(blockedPath.getByTestId('workflow-condition-comparison')).toContainText('Contains (contains)')
-  await expect(blockedPath.getByTestId('workflow-condition-comparison')).toContainText('failed_gate')
-  await expect(blockedPath.getByTestId('workflow-condition-comparison')).toContainText('BLOCKED')
-  await expect(blockedPath.getByTestId('workflow-condition-comparison')).toContainText('quality-container-setup')
-  await expect(blockedPath.getByTestId('workflow-condition-comparison')).toContainText('Matched')
+  const blockedCondition = blockedPath.getByTestId('workflow-condition-comparison')
+  await expect(blockedCondition).toContainText('Checked data')
+  await expect(blockedCondition).toContainText('Entire reply text')
+  await expect(blockedCondition).toContainText('output')
+  await expect(blockedCondition).toContainText('Comparison')
+  await expect(blockedCondition).toContainText('Contains')
+  await expect(blockedCondition).toContainText('Text to find')
+  await expect(blockedCondition).toContainText('failed_gate')
+  await expect(blockedCondition).toContainText('Parsed business decision')
+  await expect(blockedCondition).toContainText('BLOCKED')
+  await expect(blockedCondition).toContainText('Failed step (value of failed_gate)')
+  await expect(blockedCondition).toContainText('quality-container-setup')
+  await expect(blockedCondition).toContainText('Literal text check: “failed_gate” may appear in either a JSON key or value.')
+  await expect(blockedCondition).toContainText('Matched')
   await expect(selectedPaths).not.toContainText('Continued after success')
   await expect(evidence.getByText('Build and publish → Verify release', { exact: true })).toHaveCount(0)
 

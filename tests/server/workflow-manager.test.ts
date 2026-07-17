@@ -362,6 +362,21 @@ describe('workflow manager', () => {
     }])
   })
 
+  it('compiles a one-node feedback connection as a bounded self loop', async () => {
+    const { compileWorkflowLoops, normalizeWorkflowEdge } = await import('../../packages/server/src/services/workflow-manager')
+    const feedback = normalizeWorkflowEdge({
+      id: 'review-review', source: 'review', target: 'review',
+      sourceHandle: 'output', targetHandle: 'top',
+      data: { orchestration: { route: 'success', feedback: { maxIterations: 3 } } },
+    })!
+
+    expect(compileWorkflowLoops(['review'], [feedback])).toEqual([{
+      id: 'loop:review-review', feedbackEdgeId: 'review-review',
+      headerNodeId: 'review', latchNodeId: 'review', bodyNodeIds: ['review'],
+      maxIterations: 3, parentLoopId: null,
+    }])
+  })
+
   it('rejects ordinary cycles and feedback edges without a forward path', async () => {
     const { compileWorkflowLoops, normalizeWorkflowEdge } = await import('../../packages/server/src/services/workflow-manager')
     const edge = (id: string, source: string, target: string, feedback = false) => normalizeWorkflowEdge({

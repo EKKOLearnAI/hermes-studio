@@ -128,7 +128,8 @@ async function uploadImages(files: File[]) {
       handle-class-name="workflow-resize-handle"
       line-class-name="workflow-resize-line"
     />
-    <Handle id="input" type="target" :position="Position.Left" class="workflow-handle input-handle" />
+    <Handle id="input" type="source" :position="Position.Left" class="workflow-handle input-handle" />
+    <Handle id="top" type="source" :position="Position.Top" class="workflow-handle top-handle" />
 
     <div class="node-header">
       <NTooltip v-if="statusTip" trigger="hover" placement="top">
@@ -332,6 +333,7 @@ async function uploadImages(files: File[]) {
     </div>
 
     <Handle id="output" type="source" :position="Position.Right" class="workflow-handle output-handle" />
+    <Handle id="bottom" type="source" :position="Position.Bottom" class="workflow-handle bottom-handle" />
 
     <Teleport to="body">
       <div
@@ -726,6 +728,16 @@ async function uploadImages(files: File[]) {
   height: 16px;
   border: 2px solid $bg-card;
   background: var(--accent-info);
+  opacity: 0.36;
+  transition: opacity $transition-fast, transform $transition-fast, box-shadow $transition-fast;
+}
+
+.workflow-agent-node:hover .workflow-handle,
+.workflow-agent-node.selected .workflow-handle,
+.workflow-handle.connecting,
+.workflow-handle.valid {
+  opacity: 1;
+  box-shadow: 0 0 0 3px rgba(var(--accent-info-rgb), 0.14);
 }
 
 .input-handle {
@@ -734,5 +746,13 @@ async function uploadImages(files: File[]) {
 
 .output-handle {
   right: -9px;
+}
+
+.top-handle {
+  top: -9px;
+}
+
+.bottom-handle {
+  bottom: -9px;
 }
 </style>
