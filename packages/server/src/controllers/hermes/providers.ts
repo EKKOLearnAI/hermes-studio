@@ -14,6 +14,7 @@ import {
   updateProviderEditorDetail,
   type ProviderEditorPatch,
 } from '../../services/hermes/provider-editor'
+import { refreshProviderModels, restoreProviderModels } from '../../services/hermes/provider-model-refresh'
 import { appendProviderAuditEvent } from '../../db/hermes/provider-audit-store'
 
 const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex', 'claude-oauth'])
@@ -232,6 +233,52 @@ export async function testEditor(ctx: any) {
       return
     }
     respondEditorError(ctx, error, providerId, 'provider.editor.test')
+  }
+}
+
+export async function refreshModels(ctx: any) {
+  const providerId = decodeURIComponent(ctx.params.poolKey)
+  const confirm = !!(ctx.request.body && typeof ctx.request.body === 'object' && (ctx.request.body as any).confirm)
+  try {
+    const result = await refreshProviderModels(requestedProfile(ctx), providerId, { confirm })
+    appendAuditSafely({
+      actor: actorForAudit(ctx),
+      profile: requestedProfile(ctx),
+      providerId,
+      action: result.applied ? 'provider.models.refresh' : 'provider.models.refresh.preview',
+      fields: ['models'],
+      details: {
+        applied: result.applied,
+        requires_confirmation: result.requires_confirmation,
+        added: result.diff.added.length,
+        removed: result.diff.removed.length,
+        model_count: result.models.length,
+      },
+    })
+    ctx.body = { success: true, ...result }
+  } catch (error) {
+    respondEditorError(ctx, error, providerId, 'provider.models.refresh')
+  }
+}
+
+export async function restoreModels(ctx: any) {
+  const providerId = decodeURIComponent(ctx.params.poolKey)
+  try {
+    const result = await restoreProviderModels(requestedProfile(ctx), providerId)
+    appendAuditSafely({
+      actor: actorForAudit(ctx),
+      profile: requestedProfile(ctx),
+      providerId,
+      action: 'provider.models.restore',
+      fields: ['models'],
+      details: {
+        model_count: result.models.length,
+        restore_available: result.restore_available,
+      },
+    })
+    ctx.body = { success: true, ...result }
+  } catch (error) {
+    respondEditorError(ctx, error, providerId, 'provider.models.restore')
   }
 }
 

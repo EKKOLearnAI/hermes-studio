@@ -13,3 +13,5 @@ providerRoutes.get('/api/hermes/config/providers/:poolKey/editor', requireUserPr
 providerRoutes.patch('/api/hermes/config/providers/:poolKey/editor', requireUserProfile, requireAdmin, ctrl.patchEditor)
 providerRoutes.post('/api/hermes/config/providers/:poolKey/editor/test', requireUserProfile, requireAdmin, ctrl.testEditor)
 providerRoutes.patch('/api/hermes/config/providers/:poolKey/editor/contexts', requireUserProfile, requireAdmin, ctrl.patchEditorContexts)
+providerRoutes.post('/api/hermes/config/providers/:poolKey/models/refresh', requireUserProfile, requireAdmin, ctrl.refreshModels)
+providerRoutes.post('/api/hermes/config/providers/:poolKey/models/restore', requireUserProfile, requireAdmin, ctrl.restoreModels)

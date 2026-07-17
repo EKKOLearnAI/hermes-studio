@@ -105,6 +105,9 @@ export interface AvailableModelGroup {
   provider_key?: string
   provider_editable?: boolean
   editable_fields?: ProviderEditableField[]
+  model_refreshable?: boolean
+  model_refresh_reason?: string
+  model_restore_available?: boolean
   /** 可选：模型 ID -> 元数据（preview/disabled/alias）。alias 仅用于 Web UI 展示。 */
   model_meta?: Record<string, { preview?: boolean; disabled?: boolean; alias?: string }>
 }
@@ -363,6 +366,41 @@ export async function patchProviderEditorContexts(
       headers: { 'If-Match': `"${revision}"` },
       body: JSON.stringify({ context_lengths: contextLengths }),
     },
+  )
+}
+
+export interface ProviderModelRefreshResult {
+  success: boolean
+  applied: boolean
+  requires_confirmation: boolean
+  models: string[]
+  previous_models: string[]
+  unavailable_models: string[]
+  restore_available: boolean
+  diff: { added: string[]; removed: string[]; unchanged: string[] }
+  preferred_model?: string
+  message?: string
+  error?: string
+  code?: string
+}
+
+export async function refreshProviderModels(
+  poolKey: string,
+  options: { confirm?: boolean } = {},
+): Promise<ProviderModelRefreshResult> {
+  return request<ProviderModelRefreshResult>(
+    `/api/hermes/config/providers/${encodeURIComponent(poolKey)}/models/refresh`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ confirm: options.confirm === true }),
+    },
+  )
+}
+
+export async function restoreProviderModels(poolKey: string): Promise<ProviderModelRefreshResult> {
+  return request<ProviderModelRefreshResult>(
+    `/api/hermes/config/providers/${encodeURIComponent(poolKey)}/models/restore`,
+    { method: 'POST', body: JSON.stringify({}) },
   )
 }
 

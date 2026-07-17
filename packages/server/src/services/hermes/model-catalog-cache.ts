@@ -21,6 +21,13 @@ export interface ProviderModelCatalogEntry {
   updated_at: string
   free_only?: boolean
   profiles?: string[]
+  /** Profile-scoped authoritative refresh may keep models that disappeared remotely. */
+  unavailable_models?: string[]
+  /** One-step restore snapshot for the previous authoritative list. */
+  previous_models?: string[]
+  previous_unavailable_models?: string[]
+  previous_updated_at?: string
+  profile?: string
 }
 
 export interface ProviderModelCatalogCache {
@@ -71,8 +78,15 @@ export function normalizeCatalogBaseUrl(baseUrl: string): string {
   return String(baseUrl || '').trim().replace(/\/+$/, '')
 }
 
-export function providerModelCatalogKey(provider: string, baseUrl: string, freeOnly = false): string {
-  return `${provider.trim()}|${normalizeCatalogBaseUrl(baseUrl)}|${freeOnly ? 'free' : 'all'}`
+export function providerModelCatalogKey(
+  provider: string,
+  baseUrl: string,
+  freeOnly = false,
+  profile?: string,
+): string {
+  const base = `${provider.trim()}|${normalizeCatalogBaseUrl(baseUrl)}|${freeOnly ? 'free' : 'all'}`
+  const scopedProfile = String(profile || '').trim()
+  return scopedProfile ? `profile:${scopedProfile}|${base}` : base
 }
 
 function uniqueModels(models: unknown): string[] {
@@ -100,6 +114,11 @@ function normalizeCache(raw: unknown): ProviderModelCatalogCache {
         updated_at: typeof value.updated_at === 'string' ? value.updated_at : new Date(0).toISOString(),
         ...(value.free_only === true ? { free_only: true } : {}),
         ...(Array.isArray(value.profiles) ? { profiles: uniqueModels(value.profiles) } : {}),
+        ...(Array.isArray(value.unavailable_models) ? { unavailable_models: uniqueModels(value.unavailable_models) } : {}),
+        ...(Array.isArray(value.previous_models) ? { previous_models: uniqueModels(value.previous_models) } : {}),
+        ...(Array.isArray(value.previous_unavailable_models) ? { previous_unavailable_models: uniqueModels(value.previous_unavailable_models) } : {}),
+        ...(typeof value.previous_updated_at === 'string' ? { previous_updated_at: value.previous_updated_at } : {}),
+        ...(typeof value.profile === 'string' && value.profile.trim() ? { profile: value.profile.trim() } : {}),
       }
     }
   }
@@ -122,18 +141,34 @@ export async function readProviderModelCatalogCache(): Promise<ProviderModelCata
   }
 }
 
+export function resolveProviderCatalogEntry(
+  cache: ProviderModelCatalogCache,
+  provider: string,
+  baseUrl: string,
+  options: { freeOnly?: boolean; profile?: string } = {},
+): ProviderModelCatalogEntry | undefined {
+  const freeOnly = options.freeOnly === true
+  const profile = String(options.profile || '').trim()
+  if (profile) {
+    const scoped = cache.providers[providerModelCatalogKey(provider, baseUrl, freeOnly, profile)]
+    if (scoped) return scoped
+  }
+  return cache.providers[providerModelCatalogKey(provider, baseUrl, freeOnly)]
+}
+
 export function resolveProviderCatalogModels(
   cache: ProviderModelCatalogCache,
   provider: string,
   baseUrl: string,
   staticModels: string[],
-  options: { freeOnly?: boolean; hasStaticManifest?: boolean } = {},
+  options: { freeOnly?: boolean; hasStaticManifest?: boolean; profile?: string } = {},
 ): string[] {
-  const entry = cache.providers[providerModelCatalogKey(provider, baseUrl, options.freeOnly === true)]
+  const entry = resolveProviderCatalogEntry(cache, provider, baseUrl, options)
   if (!entry || entry.models.length === 0) return [...staticModels]
   const hasStaticManifest = options.hasStaticManifest ?? staticModels.length > 0
   if (entry.source === 'fallback' && hasStaticManifest) return [...staticModels]
-  return [...entry.models]
+  const unavailable = uniqueModels(entry.unavailable_models || [])
+  return uniqueModels([...entry.models, ...unavailable])
 }
 
 export async function writeProviderModelCatalogEntry(input: {
@@ -144,12 +179,18 @@ export async function writeProviderModelCatalogEntry(input: {
   source: ModelCatalogSource
   free_only?: boolean
   profiles?: string[]
+  profile?: string
+  unavailable_models?: string[]
+  previous_models?: string[] | null
+  previous_unavailable_models?: string[] | null
+  previous_updated_at?: string | null
   overwriteExistingModels?: boolean
 }): Promise<ProviderModelCatalogEntry> {
   const provider = input.provider.trim()
   const baseUrl = normalizeCatalogBaseUrl(input.base_url)
   const models = uniqueModels(input.models)
-  const key = providerModelCatalogKey(provider, baseUrl, input.free_only === true)
+  const profile = String(input.profile || '').trim()
+  const key = providerModelCatalogKey(provider, baseUrl, input.free_only === true, profile || undefined)
   const now = new Date().toISOString()
   const entry: ProviderModelCatalogEntry = {
     provider,
@@ -160,6 +201,19 @@ export async function writeProviderModelCatalogEntry(input: {
     updated_at: now,
     ...(input.free_only === true ? { free_only: true } : {}),
     ...(input.profiles?.length ? { profiles: uniqueModels(input.profiles) } : {}),
+    ...(profile ? { profile } : {}),
+    ...(input.unavailable_models?.length ? { unavailable_models: uniqueModels(input.unavailable_models) } : {}),
+  }
+  if (input.previous_models !== undefined) {
+    if (input.previous_models && input.previous_models.length) entry.previous_models = uniqueModels(input.previous_models)
+  }
+  if (input.previous_unavailable_models !== undefined) {
+    if (input.previous_unavailable_models && input.previous_unavailable_models.length) {
+      entry.previous_unavailable_models = uniqueModels(input.previous_unavailable_models)
+    }
+  }
+  if (input.previous_updated_at !== undefined) {
+    if (input.previous_updated_at) entry.previous_updated_at = input.previous_updated_at
   }
 
   await safeFileStore.updateText(CACHE_PATH, (current) => {
@@ -171,6 +225,14 @@ export async function writeProviderModelCatalogEntry(input: {
     if (existing && existing.models.length > 0 && input.overwriteExistingModels === false) {
       const profiles = Array.from(new Set([...(existing.profiles || []), ...(entry.profiles || [])]))
       cache.providers[key] = { ...existing, ...(profiles.length ? { profiles } : {}) }
+    } else if (input.previous_models === undefined && existing) {
+      // Preserve restore snapshot unless the caller explicitly manages it.
+      cache.providers[key] = {
+        ...entry,
+        ...(existing.previous_models?.length ? { previous_models: existing.previous_models } : {}),
+        ...(existing.previous_unavailable_models?.length ? { previous_unavailable_models: existing.previous_unavailable_models } : {}),
+        ...(existing.previous_updated_at ? { previous_updated_at: existing.previous_updated_at } : {}),
+      }
     } else {
       cache.providers[key] = entry
     }

@@ -3964,6 +3964,93 @@
         }
       }
     },
+    "/api/hermes/config/providers/{poolKey}/models/refresh": {
+      "post": {
+        "tags": [
+          "Providers"
+        ],
+        "summary": "Create refresh",
+        "description": "POST /api/hermes/config/providers/:poolKey/models/refresh",
+        "operationId": "refreshModels",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "poolKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "confirm": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/config/providers/{poolKey}/models/restore": {
+      "post": {
+        "tags": [
+          "Providers"
+        ],
+        "summary": "Create restore",
+        "description": "POST /api/hermes/config/providers/:poolKey/models/restore",
+        "operationId": "restoreModels",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "poolKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/custom-model": {
       "put": {
         "tags": [

@@ -120,6 +120,24 @@ export const useModelsStore = defineStore('models', () => {
     return detail
   }
 
+  async function refreshProviderModels(providerId: string, options: { confirm?: boolean } = {}) {
+    const result = await systemApi.refreshProviderModels(providerId, options)
+    if (result.applied) {
+      await fetchProviders()
+      await useAppStore().reloadModels()
+    }
+    return result
+  }
+
+  async function restoreProviderModels(providerId: string) {
+    const result = await systemApi.restoreProviderModels(providerId)
+    if (result.applied) {
+      await fetchProviders()
+      await useAppStore().reloadModels()
+    }
+    return result
+  }
+
   return {
     providers,
     allProviders,
@@ -138,5 +156,7 @@ export const useModelsStore = defineStore('models', () => {
     removeProvider,
     fetchProviderEditor,
     saveProviderEditor,
+    refreshProviderModels,
+    restoreProviderModels,
   }
 })

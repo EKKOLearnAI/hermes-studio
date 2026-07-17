@@ -28,8 +28,13 @@ const userRole = getStoredUserRole()
 const canEditProvider = computed(() => (
   props.provider.provider_editable === true && (userRole === 'super_admin' || userRole === 'admin')
 ))
+const canRefreshModels = computed(() => (
+  props.provider.model_refreshable === true && (userRole === 'super_admin' || userRole === 'admin')
+))
 const showEditorModal = ref(false)
 const deleting = ref(false)
+const refreshingModels = ref(false)
+const restoringModels = ref(false)
 const destructiveActionLabel = computed(() => {
   if (isConfigBackedProvider.value) return t('common.delete')
   if (isCopilot.value) return t('models.disableProvider')
@@ -234,6 +239,57 @@ async function handleDelete() {
     },
   })
 }
+
+async function handleRefreshModels(confirm = false) {
+  refreshingModels.value = true
+  try {
+    const result = await modelsStore.refreshProviderModels(props.provider.provider, { confirm })
+    if (result.requires_confirmation && !confirm) {
+      dialog.warning({
+        title: t('models.refreshModelsConfirmTitle'),
+        content: t('models.refreshModelsConfirmContent', {
+          removed: result.diff.removed.length,
+          added: result.diff.added.length,
+          removedList: result.diff.removed.slice(0, 8).join(', ') || '-',
+        }),
+        positiveText: t('models.refreshModelsConfirmAction'),
+        negativeText: t('common.cancel'),
+        onPositiveClick: async () => {
+          await handleRefreshModels(true)
+        },
+      })
+      return
+    }
+    if (result.applied) {
+      message.success(t('models.refreshModelsSuccess', {
+        count: result.models.length,
+        unavailable: result.unavailable_models.length,
+      }))
+    } else {
+      message.error(result.message || t('models.refreshModelsFailed'))
+    }
+  } catch (e: any) {
+    message.error(e?.message || t('models.refreshModelsFailed'))
+  } finally {
+    refreshingModels.value = false
+  }
+}
+
+async function handleRestoreModels() {
+  restoringModels.value = true
+  try {
+    const result = await modelsStore.restoreProviderModels(props.provider.provider)
+    if (result.applied) {
+      message.success(t('models.restoreModelsSuccess', { count: result.models.length }))
+    } else {
+      message.error(result.message || t('models.restoreModelsFailed'))
+    }
+  } catch (e: any) {
+    message.error(e?.message || t('models.restoreModelsFailed'))
+  } finally {
+    restoringModels.value = false
+  }
+}
 </script>
 
 <template>
@@ -309,6 +365,25 @@ async function handleDelete() {
       </NButton>
       <NButton size="tiny" quaternary @click="showAliasListModal = true">{{ t('models.aliasManage') }}</NButton>
       <NButton size="tiny" quaternary @click="openVisibilityModal">{{ t('models.manageVisibleModels') }}</NButton>
+      <NButton
+        v-if="canRefreshModels"
+        size="tiny"
+        quaternary
+        :loading="refreshingModels"
+        :title="provider.model_refresh_reason || t('models.refreshModels')"
+        @click="handleRefreshModels(false)"
+      >
+        {{ t('models.refreshModels') }}
+      </NButton>
+      <NButton
+        v-if="canRefreshModels && provider.model_restore_available"
+        size="tiny"
+        quaternary
+        :loading="restoringModels"
+        @click="handleRestoreModels"
+      >
+        {{ t('models.restoreModels') }}
+      </NButton>
       <NButton v-if="canEditProvider" size="tiny" quaternary @click="showEditorModal = true">{{ t('common.edit') }}</NButton>
       <NButton size="tiny" quaternary type="error" :loading="deleting" @click="handleDelete">{{ destructiveActionLabel }}</NButton>
     </div>

@@ -444,7 +444,7 @@ async function readLimitedResponse(response: Response): Promise<string> {
   }
 }
 
-async function fetchProviderCatalogForTest(baseUrl: string, apiKey: string, apiMode?: ProviderApiMode): Promise<string[]> {
+export async function fetchProviderCatalogForTest(baseUrl: string, apiKey: string, apiMode?: ProviderApiMode): Promise<string[]> {
   const endpoint = providerModelsEndpoint(baseUrl, apiMode)
   let current = endpoint.url
   const headers: Record<string, string> = { Accept: 'application/json' }

@@ -123,8 +123,13 @@ vi.mock('../../packages/server/src/services/app-config', () => ({
 vi.mock('../../packages/server/src/services/hermes/model-catalog-cache', () => ({
   readProviderModelCatalogCache: mockReadProviderModelCatalogCache,
   resolveProviderCatalogModels: mockResolveProviderCatalogModels,
+  resolveProviderCatalogEntry: vi.fn(() => undefined),
   refreshConfiguredProviderModelCatalogs: mockRefreshConfiguredProviderModelCatalogs,
   writeProviderModelCatalogEntry: mockWriteProviderModelCatalogEntry,
+}))
+
+vi.mock('../../packages/server/src/services/hermes/provider-model-refresh', () => ({
+  providerModelRefreshCapabilities: () => ({ refreshable: true }),
 }))
 
 vi.mock('../../packages/server/src/db', () => ({
