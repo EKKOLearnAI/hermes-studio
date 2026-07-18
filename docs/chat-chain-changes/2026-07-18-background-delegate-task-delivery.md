@@ -1,6 +1,6 @@
 ---
 date: 2026-07-18
-pr: pending
+pr: 2126
 feature: Background delegate task delivery
 impact: Background subagent telemetry remains visible after the parent turn ends, and durable completion notifications start a new parent turn without adding child tool traffic to the parent context.
 ---
