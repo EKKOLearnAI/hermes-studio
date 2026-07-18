@@ -217,7 +217,8 @@ function updateMentionState() {
     }
 
     // Make sure the @ is not part of a word (preceded by space or start of line)
-    if (atPos > 0 && text[atPos - 1] !== ' ' && text[atPos - 1] !== '\n') {
+    // Using /\w/ which matches [a-zA-Z0-9_]; CJK/punctuation/emoji are not \w so they work as delimiters
+    if (atPos > 0 && /\w/.test(text[atPos - 1])) {
         mentionActive.value = false
         return
     }
