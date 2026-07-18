@@ -106,6 +106,7 @@ export const WORKSPACE_RUN_CHANGES_SCHEMA: Record<string, string> = {
   change_id: 'TEXT PRIMARY KEY',
   room_id: "TEXT NOT NULL DEFAULT ''",
   message_id: "TEXT NOT NULL DEFAULT ''",
+  assistant_message_id: "TEXT NOT NULL DEFAULT ''",
   session_id: 'TEXT NOT NULL',
   run_id: 'TEXT NOT NULL DEFAULT \'\'',
   source: 'TEXT NOT NULL DEFAULT \'run\'',
@@ -943,6 +944,59 @@ export function syncTable(
   addMissingSafeColumns(db, tableName, schema)
 }
 
+function cleanupHistoricalZeroLineWorkspaceDiffs(
+  db: NonNullable<ReturnType<typeof getDb>>,
+): void {
+  const zeroLinePredicate = 'additions = 0 AND deletions = 0'
+  const affectedRows = db.prepare(
+    `SELECT DISTINCT change_id FROM ${WORKSPACE_RUN_CHANGE_FILES_TABLE} WHERE ${zeroLinePredicate}`,
+  ).all() as Array<{ change_id: string }>
+  if (affectedRows.length === 0) return
+
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGE_FILES_TABLE} WHERE ${zeroLinePredicate}`).run()
+    const aggregate = db.prepare(
+      `SELECT COUNT(*) AS files_changed, COALESCE(SUM(additions), 0) AS additions,
+        COALESCE(SUM(deletions), 0) AS deletions, COALESCE(MAX(truncated), 0) AS truncated,
+        COALESCE(SUM(patch_bytes), 0) AS total_patch_bytes
+       FROM ${WORKSPACE_RUN_CHANGE_FILES_TABLE} WHERE change_id = ?`,
+    )
+    const updateParent = db.prepare(
+      `UPDATE ${WORKSPACE_RUN_CHANGES_TABLE}
+       SET files_changed = ?, additions = ?, deletions = ?, truncated = ?, total_patch_bytes = ?
+       WHERE change_id = ?`,
+    )
+    const deleteParent = db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGES_TABLE} WHERE change_id = ?`)
+
+    for (const { change_id: changeId } of affectedRows) {
+      const totals = aggregate.get(changeId) as {
+        files_changed: number
+        additions: number
+        deletions: number
+        truncated: number
+        total_patch_bytes: number
+      }
+      if (totals.files_changed === 0) {
+        deleteParent.run(changeId)
+      } else {
+        updateParent.run(
+          totals.files_changed,
+          totals.additions,
+          totals.deletions,
+          totals.truncated,
+          totals.total_patch_bytes,
+          changeId,
+        )
+      }
+    }
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
 // ============================================================================
 // Unified Initializer
 // ============================================================================
@@ -971,6 +1025,7 @@ export function initAllHermesTables(): void {
     syncTable(WORKSPACE_RUN_CHANGE_FILES_TABLE, WORKSPACE_RUN_CHANGE_FILES_SCHEMA, {
       indexes: WORKSPACE_RUN_CHANGE_FILES_INDEXES,
     })
+    cleanupHistoricalZeroLineWorkspaceDiffs(db)
 
     // Workflow store
     syncTable(WORKFLOWS_TABLE, WORKFLOWS_SCHEMA, {

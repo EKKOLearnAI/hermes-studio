@@ -342,6 +342,109 @@ describe('session conversations controller', () => {
     }
   })
 
+  it('accepts legacy workspace-prefixed paths for session workspace files', async () => {
+    const workspace = '/tmp/hermes-test/research/workspace'
+    await rm('/tmp/hermes-test', { recursive: true, force: true })
+    await mkdir(join(workspace, 'project'), { recursive: true })
+    await writeFile(join(workspace, 'project', 'notes.md'), 'hello')
+    getSessionMock.mockReturnValue({
+      id: 'session-with-workspace',
+      profile: 'research',
+      workspace,
+    })
+
+    try {
+      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const listCtx: any = {
+        params: { id: 'session-with-workspace' },
+        query: { path: 'workspace/project' },
+        state: { profile: { name: 'research' } },
+        body: null,
+      }
+
+      await mod.listWorkspaceFiles(listCtx)
+
+      expect(listCtx.status).toBeUndefined()
+      expect(listCtx.body.path).toBe('project')
+      expect(listCtx.body.absolutePath).toBe(join(workspace, 'project'))
+      expect(listCtx.body.entries).toEqual([
+        expect.objectContaining({ name: 'notes.md', path: 'project/notes.md', isDir: false }),
+      ])
+
+      const readCtx: any = {
+        params: { id: 'session-with-workspace' },
+        query: { path: 'workspace/project/notes.md' },
+        state: { profile: { name: 'research' } },
+        body: null,
+      }
+
+      await mod.readWorkspaceFile(readCtx)
+
+      expect(readCtx.status).toBeUndefined()
+      expect(readCtx.body).toMatchObject({ content: 'hello', path: 'project/notes.md' })
+    } finally {
+      await rm('/tmp/hermes-test', { recursive: true, force: true })
+    }
+  })
+
+  it('keeps already session-relative workspace paths unchanged', async () => {
+    const workspace = '/tmp/hermes-test/research/workspace'
+    await rm('/tmp/hermes-test', { recursive: true, force: true })
+    await mkdir(join(workspace, 'project'), { recursive: true })
+    await writeFile(join(workspace, 'project', 'notes.md'), 'hello')
+    getSessionMock.mockReturnValue({
+      id: 'session-relative-workspace',
+      profile: 'research',
+      workspace,
+    })
+
+    try {
+      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const ctx: any = {
+        params: { id: 'session-relative-workspace' },
+        query: { path: 'project/notes.md' },
+        state: { profile: { name: 'research' } },
+        body: null,
+      }
+
+      await mod.readWorkspaceFile(ctx)
+
+      expect(ctx.status).toBeUndefined()
+      expect(ctx.body).toMatchObject({ content: 'hello', path: 'project/notes.md' })
+    } finally {
+      await rm('/tmp/hermes-test', { recursive: true, force: true })
+    }
+  })
+
+  it('uses the session profile when no explicit request profile is present', async () => {
+    const workspace = '/tmp/hermes-test/research/workspace'
+    await rm('/tmp/hermes-test', { recursive: true, force: true })
+    await mkdir(join(workspace, 'project'), { recursive: true })
+    await writeFile(join(workspace, 'project', 'notes.md'), 'hello')
+    getSessionMock.mockReturnValue({
+      id: 'session-profile-workspace',
+      profile: 'research',
+      workspace,
+    })
+
+    try {
+      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const ctx: any = {
+        params: { id: 'session-profile-workspace' },
+        query: { path: 'workspace/project/notes.md' },
+        state: {},
+        body: null,
+      }
+
+      await mod.readWorkspaceFile(ctx)
+
+      expect(ctx.status).toBeUndefined()
+      expect(ctx.body).toMatchObject({ content: 'hello', path: 'project/notes.md' })
+    } finally {
+      await rm('/tmp/hermes-test', { recursive: true, force: true })
+    }
+  })
+
   it('lists Windows drive roots for the workspace folder picker', async () => {
     const originalPlatform = process.platform
     const originalWorkspaceBase = process.env.WORKSPACE_BASE

@@ -423,6 +423,7 @@ export async function handleBridgeRun(
   state.abortController = undefined
   state.bridgeOutput = ''
   state.bridgePendingAssistantContent = ''
+  state.bridgeAssistantMessageId = undefined
   state.bridgePendingReasoningContent = ''
   state.bridgePendingToolCallMarkup = ''
   state.bridgeToolCounter = 0
@@ -1543,6 +1544,7 @@ async function applyBridgeChunkAsync(
       sessionId,
       runId: chunk.run_id,
       workspace,
+      assistantMessageId: state.bridgeAssistantMessageId,
     })
     workspaceRunChange = change
     if (change) {

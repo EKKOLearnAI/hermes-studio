@@ -646,6 +646,7 @@ export default {
     result: 'Resultado',
     workspaceChanges: 'Cambios del workspace',
     changedFiles: '{files} archivos modificados',
+    changesThisTurn: 'Cambios de este turno',
     diffUnavailable: 'Diff no disponible',
     binaryFileDiffUnavailable: 'Diff no disponible para archivos binarios',
     truncated: '... (truncado)',

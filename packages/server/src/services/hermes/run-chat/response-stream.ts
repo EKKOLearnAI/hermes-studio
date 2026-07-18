@@ -383,14 +383,15 @@ export function getResponseRunState(state: SessionState, runMarker?: string): Re
 }
 
 /** Flush all non-user messages for this run to DB in order. */
-export function flushResponseRunToDb(state: SessionState, sessionId: string) {
+export function flushResponseRunToDb(state: SessionState, sessionId: string): string | undefined {
   const run = state.responseRun
-  if (!run?.runMarker) return
+  if (!run?.runMarker) return undefined
   let flushed = 0
+  let finalAssistantMessageId: string | undefined
   for (const msg of state.messages) {
     if (msg.runMarker !== run.runMarker) continue
     if (msg.role === 'user') continue
-    addMessage({
+    const persistedId = addMessage({
       session_id: sessionId,
       role: msg.role,
       content: msg.content || '',
@@ -402,7 +403,11 @@ export function flushResponseRunToDb(state: SessionState, sessionId: string) {
       reasoning_content: msg.reasoning_content ?? null,
       timestamp: msg.timestamp,
     })
+    if (persistedId != null && msg.role === 'assistant' && String(msg.content || '').trim()) {
+      finalAssistantMessageId = String(persistedId)
+    }
     flushed++
   }
   logger.info('[chat-run-socket] flushResponseRunToDb: flushed %d messages for session %s', flushed, sessionId)
+  return finalAssistantMessageId
 }

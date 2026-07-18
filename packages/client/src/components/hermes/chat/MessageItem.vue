@@ -30,6 +30,7 @@ import { useVoiceSettings } from "@/composables/useVoiceSettings";
 import { speedToEdgeRate, hzToEdgePitch } from "@/utils/ttsHelpers";
 import { formatChatTimestamp } from "@/utils/chat-timestamp";
 import { openSubagentStream, subagentIdFromToolCall } from "@/utils/hermes/subagent-stream";
+import type { WorkspaceRunChangeSummary } from "@/api/hermes/sessions";
 
 const MarkdownRenderer = defineAsyncComponent(async () => (await import("./MarkdownRenderer.vue")).default);
 
@@ -197,6 +198,7 @@ function getContentFileUrl(file: DisplayContentFile): string {
 }
 
 const toolExpanded = ref(false);
+const expandedWorkspaceChangeIds = ref(new Set<string>());
 const previewUrl = ref<string | null>(null);
 const selectedToolChangeFileId = ref<number | null>(null);
 
@@ -589,7 +591,19 @@ const hasAttachments = computed(
 const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs));
 const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult, true));
 const toolChange = computed(() => props.message.toolChange || null);
+const workspaceChanges = computed(() => props.message.workspaceChanges || []);
 const hasToolChange = computed(() => (toolChange.value?.files?.length || 0) > 0);
+
+function isWorkspaceChangeExpanded(changeId: string): boolean {
+  return expandedWorkspaceChangeIds.value.has(changeId);
+}
+
+function toggleWorkspaceChange(changeId: string): void {
+  const next = new Set(expandedWorkspaceChangeIds.value);
+  if (next.has(changeId)) next.delete(changeId);
+  else next.add(changeId);
+  expandedWorkspaceChangeIds.value = next;
+}
 
 const hasToolDetails = computed(
   () => !!(toolArgsPayload.value.full || toolResultPayload.value.full || hasToolChange.value),
@@ -632,6 +646,17 @@ async function openToolChangeFile(file: { id: string | number; path: string; add
   selectedToolChangeFileId.value = storedFile.id;
   filesStore.closePreview();
   await toolPanelStore.openWorkspaceDiff(storedFile, toolChange.value?.workspace || "");
+}
+
+async function openAssistantWorkspaceChangeFile(
+  file: { id: string | number; path: string; additions: number; deletions: number },
+  change: WorkspaceRunChangeSummary,
+): Promise<void> {
+  const storedFile = change.files.find(candidate => String(candidate.id) === String(file.id));
+  if (!storedFile) return;
+  selectedToolChangeFileId.value = storedFile.id;
+  filesStore.closePreview();
+  await toolPanelStore.openWorkspaceDiff(storedFile, change.workspace || "");
 }
 
 // 语音播放相关
@@ -1077,6 +1102,21 @@ onBeforeUnmount(() => {
               v-if="message.role === 'assistant' && message.content && !parsedThinking.body"
               :content="message.content"
               :heading-id-prefix="effectiveHeadingIdPrefix"
+            />
+
+            <ToolChangeCard
+              v-for="change in workspaceChanges"
+              :key="change.change_id"
+              class="assistant-workspace-change"
+              :files="change.files || []"
+              :files-changed="change.files_changed || 0"
+              :additions="change.additions || 0"
+              :deletions="change.deletions || 0"
+              :expanded="isWorkspaceChangeExpanded(change.change_id)"
+              :selected-file-id="selectedToolChangeFileId"
+              :title="t('chat.changesThisTurn')"
+              @toggle="toggleWorkspaceChange(change.change_id)"
+              @select="file => openAssistantWorkspaceChangeFile(file, change)"
             />
 
             <!-- Render system message content -->
@@ -1765,6 +1805,10 @@ onBeforeUnmount(() => {
 .tool-change-loading {
   color: $text-muted;
   font-size: 11px;
+}
+
+.assistant-workspace-change {
+  margin-top: 10px;
 }
 
 @keyframes spin {

@@ -133,6 +133,9 @@ export interface WorkspaceRunChangeFileDetail extends WorkspaceRunChangeFileSumm
 
 export interface WorkspaceRunChangeSummary {
   change_id: string
+  room_id?: string
+  message_id?: string
+  assistant_message_id?: string
   session_id: string
   run_id: string
   source: 'run'

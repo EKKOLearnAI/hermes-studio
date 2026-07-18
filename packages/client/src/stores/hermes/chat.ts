@@ -70,6 +70,7 @@ export interface Message {
   toolStatus?: 'running' | 'done' | 'error'
   toolDuration?: number  // 工具执行时长（秒）
   toolChange?: WorkspaceRunChangeSummary
+  workspaceChanges?: WorkspaceRunChangeSummary[]
   isStreaming?: boolean
   attachments?: Attachment[]
   // 思考/推理文本。两条来源：
@@ -410,6 +411,48 @@ interface CompressionState {
 
 function uid(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+}
+
+export function alignWorkspaceChangeAssistantMessage(
+  messages: Message[],
+  change: WorkspaceRunChangeSummary | null | undefined,
+  assistantMessageId?: string | null,
+): string | null {
+  const currentAssistantMessageId = String(assistantMessageId || '').trim()
+  const persistedAssistantMessageId = String(change?.assistant_message_id || '').trim()
+  if (!persistedAssistantMessageId) return currentAssistantMessageId || null
+  if (!currentAssistantMessageId || persistedAssistantMessageId === currentAssistantMessageId) {
+    return messages.some(item => item.id === persistedAssistantMessageId)
+      ? persistedAssistantMessageId
+      : currentAssistantMessageId || null
+  }
+  const message = messages.find(item => item.id === currentAssistantMessageId)
+  const idAlreadyLoaded = messages.some(item => item.id === persistedAssistantMessageId)
+  if (message && !idAlreadyLoaded) {
+    message.id = persistedAssistantMessageId
+    return persistedAssistantMessageId
+  }
+  return idAlreadyLoaded ? persistedAssistantMessageId : currentAssistantMessageId
+}
+
+export function attachWorkspaceChangesToExactTurns(
+  messages: Message[],
+  changes: WorkspaceRunChangeSummary[],
+): WorkspaceRunChangeSummary[] {
+  for (const message of messages) message.workspaceChanges = []
+  const assistantById = new Map(
+    messages
+      .filter(message => message.role === 'assistant')
+      .map(message => [message.id, message]),
+  )
+  const fallback: WorkspaceRunChangeSummary[] = []
+  for (const change of changes) {
+    const assistantMessageId = String(change.assistant_message_id || '').trim()
+    const target = assistantMessageId ? assistantById.get(assistantMessageId) : undefined
+    if (target) target.workspaceChanges!.push(change)
+    else fallback.push(change)
+  }
+  return fallback
 }
 
 function isToolOutputError(output: unknown): boolean {
@@ -1176,21 +1219,24 @@ export const useChatStore = defineStore('chat', () => {
     const target = sessions.value.find(session => session.id === sessionId)
     if (!target) return
     const changes = workspaceRunChangesBySession.value.get(sessionId)
-    const runChanges: WorkspaceRunChangeSummary[] = []
+    const existingById = new Map(
+      target.messages
+        .filter(message => message.id.startsWith(WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX))
+        .map(message => [message.id, message]),
+    )
+    target.messages = target.messages.filter(message => !message.id.startsWith(WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX))
     for (const message of target.messages) {
       if (message.role === 'tool' && message.toolCallId) {
         message.toolChange = changes?.get(message.toolCallId)
       }
-      if (message.id.startsWith(WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX)) {
-        const changeId = message.id.slice(WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX.length)
-        message.toolChange = changes?.get(changeId)
-      }
     }
-    if (!changes) return
-    for (const change of changes.values()) {
-      if (change?.source === 'run') runChanges.push(change)
+    if (!changes) {
+      for (const message of target.messages) message.workspaceChanges = []
+      return
     }
-    insertWorkspaceRunChangeMessages(target, runChanges)
+    const runChanges = [...changes.values()].filter(change => change?.source === 'run')
+    const legacyChanges = attachWorkspaceChangesToExactTurns(target.messages, runChanges)
+    insertWorkspaceRunChangeMessages(target, legacyChanges, existingById)
   }
 
   function workspaceRunChangeMessageId(changeId: string): string {
@@ -1202,7 +1248,11 @@ export const useChatStore = defineStore('chat', () => {
     return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : Date.now()
   }
 
-  function insertWorkspaceRunChangeMessages(target: Session, changes: WorkspaceRunChangeSummary[]) {
+  function insertWorkspaceRunChangeMessages(
+    target: Session,
+    changes: WorkspaceRunChangeSummary[],
+    existingById = new Map<string, Message>(),
+  ) {
     const sortedChanges = changes
       .filter(change => change?.change_id && (change.files?.length > 0))
       .sort((a, b) => {
@@ -1210,12 +1260,6 @@ export const useChatStore = defineStore('chat', () => {
         return timeDelta !== 0 ? timeDelta : b.change_id.localeCompare(a.change_id)
       })
     if (!sortedChanges.length) return
-    const existingById = new Map(
-      target.messages
-        .filter(message => message.id.startsWith(WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX))
-        .map(message => [message.id, message]),
-    )
-    target.messages = target.messages.filter(message => !message.id.startsWith(WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX))
     for (const change of sortedChanges) {
       const messageId = workspaceRunChangeMessageId(change.change_id)
       const existing = existingById.get(messageId) || null
@@ -1268,12 +1312,29 @@ export const useChatStore = defineStore('chat', () => {
     attachToolChangesToMessages(sessionId)
   }
 
-  function handleWorkspaceRunChangeEvent(sessionId: string, evt: any) {
-    upsertWorkspaceRunChange(sessionId, evt?.change as WorkspaceRunChangeSummary | undefined)
+  function handleWorkspaceRunChangeEvent(
+    sessionId: string,
+    evt: any,
+    assistantMessageId?: string | null,
+  ): string | null {
+    const change = evt?.change as WorkspaceRunChangeSummary | undefined
+    const target = sessions.value.find(session => session.id === sessionId)
+    const alignedAssistantMessageId = target
+      ? alignWorkspaceChangeAssistantMessage(target.messages, change, assistantMessageId)
+      : assistantMessageId || null
+    upsertWorkspaceRunChange(sessionId, change)
+    return alignedAssistantMessageId
   }
 
-  function handleTerminalWorkspaceRunChange(sessionId: string, evt: any) {
-    upsertWorkspaceRunChange(sessionId, evt?.workspace_run_change as WorkspaceRunChangeSummary | undefined)
+  function handleTerminalWorkspaceRunChange(
+    sessionId: string,
+    evt: any,
+    assistantMessageId?: string | null,
+  ) {
+    const change = evt?.workspace_run_change as WorkspaceRunChangeSummary | undefined
+    const target = sessions.value.find(session => session.id === sessionId)
+    if (target) alignWorkspaceChangeAssistantMessage(target.messages, change, assistantMessageId)
+    upsertWorkspaceRunChange(sessionId, change)
   }
 
   function restoreWorkspaceRunChangeMessages(sessionId: string) {
@@ -3324,7 +3385,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'workspace.diff.completed': {
-              handleWorkspaceRunChangeEvent(sid, evt)
+              activeAssistantMessageId = handleWorkspaceRunChangeEvent(sid, evt, activeAssistantMessageId)
               break
             }
 
@@ -3361,8 +3422,6 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'run.completed': {
-              handleTerminalWorkspaceRunChange(sid, evt)
-              clearAgentEventMessages(sid)
               const msgs = getSessionMsgs(sid)
               const lastMsg = activeAssistantMessageId
                 ? msgs.find(m => m.id === activeAssistantMessageId)
@@ -3370,6 +3429,7 @@ export const useChatStore = defineStore('chat', () => {
               const completedAssistantMessageId = lastMsg?.role === 'assistant' && lastMsg.isStreaming
                 ? lastMsg.id
                 : null
+              clearAgentEventMessages(sid)
               if (lastMsg?.isStreaming) {
                 updateMessage(sid, lastMsg.id, { isStreaming: false })
               }
@@ -3475,6 +3535,11 @@ export const useChatStore = defineStore('chat', () => {
                 playCompletionBellIfEnabled()
                 showCompletionNotificationIfEnabled(sid, completedAssistantMessageId)
               }
+              const terminalAssistantMessageId = completedAssistantMessageId || [...getSessionMsgs(sid)]
+                .reverse()
+                .find(message => message.role === 'assistant' && String(message.content || '').trim())
+                ?.id
+              handleTerminalWorkspaceRunChange(sid, evt, terminalAssistantMessageId)
               attachToolChangesToMessages(sid)
 
               // 自动播放语音
@@ -3504,7 +3569,11 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'run.failed': {
-              handleTerminalWorkspaceRunChange(sid, evt)
+              const failedMessages = getSessionMsgs(sid)
+              const failedAssistant = activeAssistantMessageId
+                ? failedMessages.find(message => message.id === activeAssistantMessageId)
+                : [...failedMessages].reverse().find(message => message.role === 'assistant' && message.isStreaming)
+              handleTerminalWorkspaceRunChange(sid, evt, failedAssistant?.id)
               clearAgentEventMessages(sid)
               if ((evt as any).inputTokens != null) {
                 const target = sessions.value.find(s => s.id === sid)

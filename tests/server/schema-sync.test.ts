@@ -364,6 +364,43 @@ describe('Database Schema Synchronization', () => {
         .toEqual({ count: 1 })
     })
 
+
+    it('adds assistant turn attribution to legacy workspace changes without losing audit rows', async () => {
+      const {
+        syncTable,
+        WORKSPACE_RUN_CHANGES_TABLE,
+        WORKSPACE_RUN_CHANGES_SCHEMA,
+        WORKSPACE_RUN_CHANGES_INDEXES,
+      } = await import('../../packages/server/src/db/hermes/schemas')
+      const db = getTestDb()
+      const legacySchema = Object.fromEntries(
+        Object.entries(WORKSPACE_RUN_CHANGES_SCHEMA).filter(([name]) => name !== 'assistant_message_id'),
+      )
+      const columnSql = Object.entries(legacySchema)
+        .map(([name, definition]) => `"${name}" ${definition}`)
+        .join(', ')
+      db.exec(`CREATE TABLE "${WORKSPACE_RUN_CHANGES_TABLE}" (${columnSql})`)
+      db.prepare(`
+        INSERT INTO "${WORKSPACE_RUN_CHANGES_TABLE}"
+          (change_id, session_id, workspace, created_at)
+        VALUES (?, ?, ?, ?)
+      `).run('legacy-change', 'session-1', '/tmp/repo', 42)
+
+      syncTable(WORKSPACE_RUN_CHANGES_TABLE, WORKSPACE_RUN_CHANGES_SCHEMA, {
+        indexes: WORKSPACE_RUN_CHANGES_INDEXES,
+      })
+
+      expect(getTableColumns(db, WORKSPACE_RUN_CHANGES_TABLE).has('assistant_message_id')).toBe(true)
+      expect(db.prepare(`
+        SELECT change_id, session_id, assistant_message_id
+        FROM "${WORKSPACE_RUN_CHANGES_TABLE}"
+      `).get()).toEqual({
+        change_id: 'legacy-change',
+        session_id: 'session-1',
+        assistant_message_id: '',
+      })
+    })
+
     it('adds missing safe columns to existing table without rebuilding', async () => {
       const { syncTable, USAGE_TABLE, USAGE_SCHEMA } = await import('../../packages/server/src/db/hermes/schemas')
 

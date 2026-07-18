@@ -646,6 +646,7 @@ export default {
     result: '結果',
     workspaceChanges: 'ワークスペース変更',
     changedFiles: '{files} ファイルを変更',
+    changesThisTurn: 'このターンの変更',
     diffUnavailable: 'diff を表示できません',
     binaryFileDiffUnavailable: 'バイナリファイルの diff は表示できません',
     truncated: '... (省略)',

@@ -29,6 +29,7 @@ export interface WorkspaceRunChangeSummary {
   change_id: string
   room_id: string
   message_id: string
+  assistant_message_id: string
   session_id: string
   run_id: string
   source: 'run'
@@ -49,6 +50,7 @@ export interface SaveWorkspaceRunChangeInput {
   change_id: string
   room_id?: string
   message_id?: string
+  assistant_message_id?: string
   session_id: string
   run_id?: string
   source?: 'run'
@@ -107,6 +109,7 @@ function mapSummary(row: Record<string, unknown>, files: WorkspaceRunChangeFileS
     change_id: String(row.change_id || ''),
     room_id: String(row.room_id || ''),
     message_id: String(row.message_id || ''),
+    assistant_message_id: String(row.assistant_message_id || ''),
     session_id: String(row.session_id || ''),
     run_id: String(row.run_id || ''),
     source: 'run',
@@ -147,13 +150,14 @@ export function insertWorkspaceRunChange(db: HermesDb, change: SaveWorkspaceRunC
   db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGES_TABLE} WHERE change_id = ?`).run(change.change_id)
   db.prepare(
     `INSERT INTO ${WORKSPACE_RUN_CHANGES_TABLE} (
-      change_id, room_id, message_id, session_id, run_id, source, workspace, workspace_kind, started_at, finished_at,
+      change_id, room_id, message_id, assistant_message_id, session_id, run_id, source, workspace, workspace_kind, started_at, finished_at,
       files_changed, additions, deletions, truncated, total_patch_bytes, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     change.change_id,
     change.room_id || '',
     change.message_id || '',
+    change.assistant_message_id || '',
     change.session_id,
     change.run_id || '',
     change.source || 'run',

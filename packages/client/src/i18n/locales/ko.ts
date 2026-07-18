@@ -646,6 +646,7 @@ export default {
     result: '결과',
     workspaceChanges: '작업공간 변경',
     changedFiles: '{files}개 파일 변경됨',
+    changesThisTurn: '이번 턴의 변경 사항',
     diffUnavailable: 'diff를 표시할 수 없습니다',
     binaryFileDiffUnavailable: '바이너리 파일 diff를 표시할 수 없습니다',
     truncated: '... (잘림)',

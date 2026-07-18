@@ -40,6 +40,8 @@ const recordBridgeToolCompletedMock = vi.fn()
 const recordBridgeMoaDisplayToolMock = vi.fn()
 const resolveBridgeRunModelConfigMock = vi.fn()
 const issueModelRunJwtMock = vi.fn(async () => 'model-run-token')
+const startWorkspaceRunCheckpointMock = vi.fn()
+const completeWorkspaceRunCheckpointMock = vi.fn()
 const homes: string[] = []
 
 vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
@@ -92,6 +94,11 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/bridge-message', () 
 
 vi.mock('../../packages/server/src/services/hermes/run-chat/model-config', () => ({
   resolveBridgeRunModelConfig: resolveBridgeRunModelConfigMock,
+}))
+
+vi.mock('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker', () => ({
+  startWorkspaceRunCheckpoint: startWorkspaceRunCheckpointMock,
+  completeWorkspaceRunCheckpoint: completeWorkspaceRunCheckpointMock,
 }))
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
@@ -147,6 +154,7 @@ describe('bridge run final context usage', () => {
     buildSnapshotAwareHistoryMock.mockImplementation(async (_sessionId: string, _profile: string, history: any[]) => history)
     calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 11, outputTokens: 7 })
     estimateUsageTokensFromMessagesMock.mockReturnValue({ inputTokens: 11, outputTokens: 7 })
+    completeWorkspaceRunCheckpointMock.mockReturnValue(null)
     ensureOpenBridgeAssistantMessageMock.mockImplementation((state: any, sessionId: string, runMarker: string) => {
       const existing = [...state.messages].reverse().find((message: any) => (
         message.runMarker === runMarker &&
@@ -1057,6 +1065,105 @@ describe('bridge run final context usage', () => {
       output: 'Text [Call',
     }))
   })
+
+  it.each(['terminal', 'write_file'])(
+    'attributes native Hermes Agent %s workspace changes to the final persisted assistant row',
+    async (toolName) => {
+      const emit = vi.fn()
+      const nsp = makeNamespace(emit)
+      const socket = makeSocket()
+      const state = makeState()
+      const sessionMap = new Map([['session-1', state]])
+      const change = {
+        change_id: `run:run-1:${toolName}`,
+        assistant_message_id: '73',
+        session_id: 'session-1',
+        run_id: 'run-1',
+        source: 'run',
+        files: [],
+      }
+      recordBridgeToolStartedMock.mockReturnValue({
+        id: `call-${toolName}`,
+        name: toolName,
+        arguments: '{}',
+      })
+      recordBridgeToolCompletedMock.mockReturnValue({
+        id: `call-${toolName}`,
+        output: 'ok',
+      })
+      flushBridgePendingToDbMock.mockImplementation((targetState: any) => {
+        if (String(targetState.bridgePendingAssistantContent || '').trim()) {
+          targetState.bridgePendingAssistantContent = ''
+          targetState.bridgeAssistantMessageId = '73'
+        }
+        return targetState.bridgeAssistantMessageId
+      })
+      completeWorkspaceRunCheckpointMock.mockReturnValue(change)
+      const bridge = {
+        chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+        contextEstimate: vi.fn().mockResolvedValue({
+          token_count: 12345,
+          message_count: 2,
+          tool_count: 4,
+          system_prompt_chars: 13,
+        }),
+        streamOutput: vi.fn(async function* () {
+          yield {
+            run_id: 'run-1',
+            done: false,
+            status: 'running',
+            events: [
+              { event: 'tool.started', tool_name: toolName, tool_call_id: `call-${toolName}`, args: {} },
+              { event: 'tool.completed', tool_name: toolName, tool_call_id: `call-${toolName}`, result: 'ok' },
+            ],
+          }
+          yield { run_id: 'run-1', done: true, status: 'completed', delta: 'Done.', output: 'Done.', events: [] }
+        }),
+      } as any
+
+      const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+      await handleBridgeRun(
+        nsp,
+        socket,
+        { input: 'update the workspace', session_id: 'session-1' },
+        'default',
+        sessionMap,
+        bridge,
+        false,
+        vi.fn(),
+        vi.fn(),
+      )
+
+      expect(recordBridgeToolStartedMock).toHaveBeenCalledWith(
+        state,
+        'session-1',
+        expect.any(String),
+        toolName,
+        {},
+        `call-${toolName}`,
+      )
+      expect(recordBridgeToolCompletedMock).toHaveBeenCalledWith(
+        state,
+        'session-1',
+        expect.any(String),
+        toolName,
+        expect.objectContaining({ event: 'tool.completed' }),
+      )
+      expect(startWorkspaceRunCheckpointMock).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'session-1',
+        runId: 'run-1',
+      }))
+      expect(completeWorkspaceRunCheckpointMock).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'session-1',
+        runId: 'run-1',
+        assistantMessageId: '73',
+      }))
+      expect(emit).toHaveBeenCalledWith('workspace.diff.completed', expect.objectContaining({ change }))
+      expect(emit).toHaveBeenCalledWith('run.completed', expect.objectContaining({
+        workspace_run_change: change,
+      }))
+    },
+  )
 
   it('persists the visible plan command instead of the expanded skill prompt', async () => {
     const emit = vi.fn()

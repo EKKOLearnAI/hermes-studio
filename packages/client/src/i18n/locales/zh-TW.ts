@@ -726,6 +726,7 @@ export default {
     result: '結果',
     workspaceChanges: '工作區變更',
     changedFiles: '{files} 個檔案已更改',
+    changesThisTurn: '本輪修改',
     diffUnavailable: '無法顯示 diff',
     binaryFileDiffUnavailable: '二進位檔案無法顯示 diff',
     truncated: '... (已截斷)',

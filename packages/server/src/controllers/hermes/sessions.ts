@@ -18,8 +18,8 @@ import { getLocalUsageStats, getRecordedUsageSessionIds, getUsage, getUsageBatch
 import type { UsageStatsAgentRow, UsageStatsModelRow, UsageStatsDailyRow } from '../../db/hermes/usage-store'
 import { deleteWorkspaceRunChangesForSession, getWorkspaceRunChangeFile as getWorkspaceRunChangeFileFromDb, listWorkspaceRunChangesForSession } from '../../db/hermes/workspace-run-changes-store'
 import { getModelContextLength } from '../../services/hermes/model-context'
-import { getActiveProfileName, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
-import { isNearestExistingRealPathWithin, isPathWithin } from '../../services/hermes/hermes-path'
+import { getActiveProfileDir, getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
+import { isNearestExistingRealPathWithin, isPathWithin, relativePathFromBase } from '../../services/hermes/hermes-path'
 import {
   isWorkspaceListPathAllowed,
   normalizeWindowsWorkspacePath,
@@ -622,6 +622,24 @@ function workspaceRelativePath(workspace: string, fullPath: string): string {
   return relative(workspace, fullPath).replace(/\\/g, '/')
 }
 
+function sessionWorkspacePrefix(workspace: string, profile?: string | null): string {
+  const profileDir = profile ? getProfileDir(profile) : getActiveProfileDir()
+  return relativePathFromBase(workspace, profileDir) || ''
+}
+
+function normalizeSessionWorkspaceRelativePath(
+  workspace: string,
+  profile: string | null | undefined,
+  value: unknown,
+  options: { allowEmpty?: boolean } = {},
+): string {
+  const normalized = normalizeWorkspaceRelativePath(value, options)
+  const prefix = sessionWorkspacePrefix(workspace, profile)
+  if (!prefix) return normalized
+  if (normalized === prefix) return ''
+  return normalized.startsWith(`${prefix}/`) ? normalized.slice(prefix.length + 1) : normalized
+}
+
 async function resolveSessionWorkspacePath(
   ctx: any,
   relativePathValue: unknown,
@@ -632,7 +650,7 @@ async function resolveSessionWorkspacePath(
   if (denySessionAccess(ctx, session)) throw Object.assign(new Error('Forbidden'), { code: 'forbidden', status: 403, handled: true })
   const workspace = String(session.workspace || '').trim()
   if (!workspace) throw Object.assign(new Error('Session workspace not found'), { code: 'workspace_not_found', status: 404 })
-  const relativePath = normalizeWorkspaceRelativePath(relativePathValue, options)
+  const relativePath = normalizeSessionWorkspaceRelativePath(workspace, session.profile, relativePathValue, options)
   const fullPath = pathResolve(workspace, relativePath)
   if (!isPathWithin(fullPath, workspace) || !await isNearestExistingRealPathWithin(fullPath, workspace)) {
     throw Object.assign(new Error('Invalid file path'), { code: 'invalid_path', status: 400 })

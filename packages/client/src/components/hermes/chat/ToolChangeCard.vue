@@ -15,12 +15,14 @@ const props = withDefaults(defineProps<{
   deletions?: number
   expanded?: boolean
   selectedFileId?: string | number | null
+  title?: string
 }>(), {
   filesChanged: 0,
   additions: 0,
   deletions: 0,
   expanded: false,
   selectedFileId: null,
+  title: '',
 })
 
 const emit = defineEmits<{
@@ -79,6 +81,9 @@ function fileBadgeClass(path: string): string {
         <polyline points="9 18 15 12 9 6" />
       </svg>
       <span class="tool-change-card-title">
+        {{ props.title || t('chat.changedFiles', { files: props.filesChanged || props.files.length }) }}
+      </span>
+      <span v-if="props.title" class="tool-change-card-file-count">
         {{ t('chat.changedFiles', { files: props.filesChanged || props.files.length }) }}
       </span>
       <span class="tool-change-card-stats">
@@ -165,6 +170,11 @@ function fileBadgeClass(path: string): string {
 .tool-change-card-title {
   font-size: 13px;
   font-weight: 700;
+}
+
+.tool-change-card-file-count {
+  color: $text-muted;
+  font-size: 12px;
 }
 
 .tool-change-card-stats,
