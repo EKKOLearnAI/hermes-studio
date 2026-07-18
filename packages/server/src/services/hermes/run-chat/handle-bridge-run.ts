@@ -438,6 +438,7 @@ export async function handleBridgeRun(
   const currentInputUsage = estimateUsageTokensFromMessages([{ role: 'user', content: actualInputStr }])
   const currentInputTokens = currentInputUsage.inputTokens
   const shouldPersistUserMessage = !skipUserMessage && displayInput !== null
+  const isGoalKickoff = data.source === 'goal_kickoff'
   const displayRole = data.display_role === 'command' ? 'command' : 'user'
   const storageRole = shouldStoreInputInsteadOfDisplay ? 'user' : displayRole
   const displayRoleForStorage = shouldStoreInputInsteadOfDisplay ? displayRole : null
@@ -542,6 +543,7 @@ export async function handleBridgeRun(
       return contextTokens
     },
     currentInputTokens,
+    { excludeLastUser: !isGoalKickoff },
   )
   const bridgeHistory = history
   let backgroundNotificationAccepted = false
