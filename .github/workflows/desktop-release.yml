@@ -23,7 +23,7 @@ jobs:
       matrix:
         include:
           - label: macOS arm64
-            runner: macos-14
+            runner: macos-26
             target_os: darwin
             target_arch: arm64
             electron_target: "--mac dmg zip --arm64"
@@ -33,7 +33,7 @@ jobs:
               packages/desktop/release/*.zip
               packages/desktop/release/*.zip.blockmap
           - label: macOS x64
-            runner: macos-15-intel
+            runner: macos-26-intel
             target_os: darwin
             target_arch: x64
             electron_target: "--mac dmg zip --x64"

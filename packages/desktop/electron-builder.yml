@@ -53,6 +53,9 @@ asarUnpack:
   - "**/*.node"
 
 mac:
+  # Xcode 26 compiles this Icon Composer source into Assets.car and also
+  # generates the legacy ICNS fallback for pre-Tahoe macOS releases.
+  icon: build/icon.icon
   target:
     - target: dmg
       arch: [arm64, x64]
@@ -69,6 +72,7 @@ mac:
   artifactName: "Hermes.Studio-${version}-${arch}.${ext}"
 
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch: [x64]

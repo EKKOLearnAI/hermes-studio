@@ -75,14 +75,14 @@ jobs:
                 "packages/desktop/release/latest*.yml"
               ;;
             darwin-arm64)
-              write_common_outputs "macOS arm64" "macos-14" "--mac dmg zip --arm64" "desktop-darwin-arm64" \
+              write_common_outputs "macOS arm64" "macos-26" "--mac dmg zip --arm64" "desktop-darwin-arm64" \
                 "packages/desktop/release/*.dmg" \
                 "packages/desktop/release/*.dmg.blockmap" \
                 "packages/desktop/release/*.zip" \
                 "packages/desktop/release/*.zip.blockmap"
               ;;
             darwin-x64)
-              write_common_outputs "macOS x64" "macos-15-intel" "--mac dmg zip --x64" "desktop-darwin-x64" \
+              write_common_outputs "macOS x64" "macos-26-intel" "--mac dmg zip --x64" "desktop-darwin-x64" \
                 "packages/desktop/release/*.dmg" \
                 "packages/desktop/release/*.dmg.blockmap" \
                 "packages/desktop/release/*.zip" \
