@@ -14,7 +14,10 @@ Graceful shutdown now closes the chat scheduler before the bridge, releases
 queued delivery claims, interrupts active parent and delegated runs, and kills
 tracked tool subprocess trees before worker exit.
 The existing session Stop action also interrupts only that session's active
-background delegations alongside its parent Hermes run.
+background delegations alongside its parent Hermes run. Interrupted child task
+snapshots and cards now receive an explicit terminal event, with the client also
+settling any still-running card when abort completion arrives, so a silent child
+shutdown cannot leave a permanent loading indicator.
 Background task cards and the active tool strip open the same resizable side
 panel used by file and PDF previews. Its body reuses the chat message list and
 message renderer for live subagent text, reasoning, and tool calls; lifecycle

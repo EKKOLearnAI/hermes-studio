@@ -1684,6 +1684,33 @@ class AgentPool:
         except Exception:
             return 0
 
+    def _settle_interrupted_background_tasks(self, session_id: str) -> int:
+        """Persist terminal UI events when upstream interruption ends silently."""
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return 0
+            timestamp = time.time()
+            interrupted = 0
+            for subagent_id, task in list(session.background_tasks.items()):
+                if str(task.get("status") or "").lower() != "running":
+                    continue
+                event = {
+                    **task,
+                    "event": "subagent.complete",
+                    "subagent_id": subagent_id,
+                    "tool_name": task.get("last_tool"),
+                    "status": "interrupted",
+                    "timestamp": timestamp,
+                    "completed_at": timestamp,
+                }
+                recorded = self._record_background_event(session, event)
+                session.background_events.append(_jsonable(recorded))
+                interrupted += 1
+            if len(session.background_events) > self.MAX_BACKGROUND_EVENTS_PER_SESSION:
+                del session.background_events[:-self.MAX_BACKGROUND_EVENTS_PER_SESSION]
+            return interrupted
+
     def interrupt(self, session_id: str, message: str | None = None) -> dict[str, Any]:
         with self._lock:
             session = self._sessions.get(session_id)
@@ -1696,6 +1723,7 @@ class AgentPool:
             session_id,
             "user_interrupt",
         )
+        self._settle_interrupted_background_tasks(session_id)
         if not hasattr(session.agent, "interrupt"):
             raise RuntimeError("agent does not support interrupt")
         session.agent.interrupt(message)

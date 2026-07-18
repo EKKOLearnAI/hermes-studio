@@ -180,6 +180,37 @@ describe('chat store compression state', () => {
     expect(store.messages.find(message => message.toolCallId === 'subagent:child-1')?.toolStatus).toBe('error')
   })
 
+  it('settles every running subagent card when session stop completes without child terminal events', async () => {
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1')]
+    await store.switchSession('session-1')
+    const sessionHandlers = chatApi.registerSessionHandlers.mock.calls.find(call => call[0] === 'session-1')?.[1]
+
+    for (const [index, subagentId] of ['child-1', 'child-2'].entries()) {
+      sessionHandlers.onSubagentEvent({
+        event: 'subagent.start',
+        session_id: 'session-1',
+        subagent_id: subagentId,
+        task_index: index,
+        task_count: 2,
+        goal: `Task ${index + 1}`,
+      })
+    }
+
+    sessionHandlers.onAbortCompleted({
+      event: 'abort.completed',
+      session_id: 'session-1',
+      synced: true,
+    })
+
+    expect(store.getSubagentStream('session-1', 'child-1')?.status).toBe('interrupted')
+    expect(store.getSubagentStream('session-1', 'child-2')?.status).toBe('interrupted')
+    expect(store.messages.filter(message => message.toolCallId?.startsWith('subagent:'))).toEqual([
+      expect.objectContaining({ toolCallId: 'subagent:child-1', toolStatus: 'error' }),
+      expect.objectContaining({ toolCallId: 'subagent:child-2', toolStatus: 'error' }),
+    ])
+  })
+
   it('replaces a persisted background delegate dispatch with its real recovered child stream', async () => {
     chatApi.resumeSession.mockImplementationOnce((sessionId: string, onResumed: (data: any) => void) => {
       onResumed({

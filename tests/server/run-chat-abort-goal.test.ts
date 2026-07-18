@@ -76,6 +76,22 @@ describe('run chat abort goal handling', () => {
       runId: 'run-1',
       profile: 'default',
       source: 'cli',
+      backgroundTasks: {
+        'child-1': {
+          subagent_id: 'child-1',
+          status: 'running',
+          task_index: 0,
+          task_count: 2,
+          goal: 'First task',
+        },
+        'child-2': {
+          subagent_id: 'child-2',
+          status: 'completed',
+          task_index: 1,
+          task_count: 2,
+          goal: 'Second task',
+        },
+      },
     } as any
     const sessionMap = new Map([['session-1', state]])
     const bridge = {
@@ -107,6 +123,16 @@ describe('run chat abort goal handling', () => {
       delegation_id: 'deleg-1',
       status: 'interrupted',
       delivery_status: 'cancelled',
+    }))
+    expect(state.backgroundTasks['child-1']).toEqual(expect.objectContaining({
+      status: 'interrupted',
+      last_event: 'subagent.complete',
+    }))
+    expect(state.backgroundTasks['child-2'].status).toBe('completed')
+    expect(emit).toHaveBeenCalledWith('subagent.complete', expect.objectContaining({
+      session_id: 'session-1',
+      subagent_id: 'child-1',
+      status: 'interrupted',
     }))
     expect(emit).toHaveBeenCalledWith('abort.completed', expect.objectContaining({
       session_id: 'session-1',

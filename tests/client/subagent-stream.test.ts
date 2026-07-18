@@ -100,6 +100,14 @@ describe('background subagent streams', () => {
     })
     expect(completed.entries.at(-1)).toMatchObject({ kind: 'status', status: 'completed' })
     expect(stale).toBe(completed)
+
+    const lateOutput = reduceSubagentStream(completed, 'session-1', {
+      event: 'subagent.text',
+      subagent_id: 'child-1',
+      text: 'late output',
+      background_seq: 7,
+    })
+    expect(lateOutput).toBe(completed)
   })
 
   it('opens only subagent tool calls in the live output panel', () => {

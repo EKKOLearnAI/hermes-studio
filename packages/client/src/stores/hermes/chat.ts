@@ -215,6 +215,7 @@ export function reduceSubagentStream(
   const costUsd = Number((evt as any).cost_usd)
   const isTerminal = eventName === 'subagent.complete'
     || (eventName === 'delegation.updated' && ['completed', 'failed', 'error', 'cancelled', 'interrupted'].includes(String((evt as any).status || '').toLowerCase()))
+  if (current && current.status !== 'running' && !isTerminal) return current
   const nextStatus = isTerminal
     ? subagentStatus((evt as any).status, 'completed')
     : 'running'
@@ -1645,6 +1646,7 @@ export const useChatStore = defineStore('chat', () => {
                 setAbortState({ aborting: true, synced: false, timedOut: true, message: (e as any).message })
               } else if (e.event === 'abort.completed') {
                 setAbortState({ aborting: false, synced: e.synced ?? false })
+                settleInterruptedSubagents(sessionId)
               } else if (e.event === 'approval.requested') {
                 setPendingApproval({ ...e, session_id: sessionId } as RunEvent)
               } else if (e.event === 'approval.resolved') {
@@ -1982,10 +1984,10 @@ export const useChatStore = defineStore('chat', () => {
 
     const subagentId = String((evt as any).subagent_id || `${(evt as any).task_index ?? 0}`)
     const streamKey = `${sessionId}:${subagentId}`
-    subagentStreams.value.set(
-      streamKey,
-      reduceSubagentStream(subagentStreams.value.get(streamKey), sessionId, evt),
-    )
+    const currentStream = subagentStreams.value.get(streamKey)
+    const nextStream = reduceSubagentStream(currentStream, sessionId, evt)
+    if (nextStream === currentStream) return
+    subagentStreams.value.set(streamKey, nextStream)
     const toolCallId = `subagent:${subagentId}`
     const taskIndex = Number((evt as any).task_index ?? 0)
     const taskCount = Number((evt as any).task_count ?? 1)
@@ -2011,9 +2013,9 @@ export const useChatStore = defineStore('chat', () => {
 
     const msgs = getSessionMsgs(sessionId)
     const existing = msgs.find(m => m.role === 'tool' && m.toolCallId === toolCallId)
-    const toolStatus = eventName === 'subagent.complete'
-      ? ((evt as any).status && String((evt as any).status) !== 'completed' ? 'error' : 'done')
-      : 'running'
+    const toolStatus = nextStream.status === 'running'
+      ? 'running'
+      : nextStream.status === 'completed' ? 'done' : 'error'
     const update: Partial<Message> = {
       toolName: 'delegate_task',
       toolCallId,
@@ -2047,6 +2049,25 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: Date.now(),
       ...update,
     })
+  }
+
+  function settleInterruptedSubagents(sessionId: string) {
+    const runningStreams = [...subagentStreams.value.values()].filter(stream =>
+      stream.sessionId === sessionId && stream.status === 'running',
+    )
+    for (const stream of runningStreams) {
+      handleSubagentEvent(sessionId, {
+        event: 'subagent.complete',
+        session_id: sessionId,
+        subagent_id: stream.subagentId,
+        task_index: stream.taskIndex,
+        task_count: stream.taskCount,
+        goal: stream.goal,
+        model: stream.model,
+        status: 'interrupted',
+        timestamp: Date.now(),
+      })
+    }
   }
 
   function getSubagentStream(sessionId: string, subagentId: string): SubagentStream | null {
@@ -2981,6 +3002,7 @@ export const useChatStore = defineStore('chat', () => {
                 break
               case 'abort.completed':
                 setAbortState({ aborting: false, synced: (e as any).synced ?? false })
+                settleInterruptedSubagents(sid)
                 break
               case 'approval.requested':
                 setPendingApproval({ ...e, session_id: sid })
@@ -3112,6 +3134,7 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'abort.completed': {
               setAbortState({ aborting: false, synced: (evt as any).synced ?? false })
+              settleInterruptedSubagents(sid)
               clearPendingInteractions(sid)
               if ((evt as any).queue_length > 0) {
                 queueLengths.value.set(sid, (evt as any).queue_length)
@@ -3745,6 +3768,7 @@ export const useChatStore = defineStore('chat', () => {
 
         case 'abort.completed': {
           setAbortState({ aborting: false, synced: (evt as any).synced ?? false })
+          settleInterruptedSubagents(sid)
           clearPendingInteractions(sid)
           if ((evt as any).queue_length > 0) {
             queueLengths.value.set(sid, (evt as any).queue_length)

@@ -406,6 +406,13 @@ class InterruptibleAgent:
 pool, _fake_db = make_pool()
 session = bridge.AgentSession(session_id="session-1", agent=InterruptibleAgent())
 pool._sessions[session.session_id] = session
+pool._append_event(session.session_id, {
+    "event": "subagent.start",
+    "subagent_id": "child-current",
+    "task_index": 0,
+    "task_count": 1,
+    "goal": "background work",
+})
 
 result = pool.interrupt("session-1", "Aborted by user")
 
@@ -423,6 +430,12 @@ assert calls == [{
     "reason": "user_interrupt",
 }, {"parent_message": "Aborted by user"}]
 assert pool._suppressed_background_delegations == {"deleg-current"}
+polled = pool.poll_background()
+assert polled["sessions"][0]["tasks"][0]["status"] == "interrupted"
+assert [event["event"] for event in polled["sessions"][0]["events"]] == [
+    "subagent.start", "subagent.complete"
+]
+assert polled["sessions"][0]["events"][-1]["status"] == "interrupted"
 `)
   })
 

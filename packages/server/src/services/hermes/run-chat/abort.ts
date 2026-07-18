@@ -18,6 +18,30 @@ function isBridgeRunSource(source?: string): boolean {
   return source === 'cli' || source === 'global_agent' || source === 'workflow'
 }
 
+function settleInterruptedBackgroundTasks(state: SessionState): Array<Record<string, unknown>> {
+  const timestamp = Date.now() / 1000
+  const completed: Array<Record<string, unknown>> = []
+  state.backgroundTasks = state.backgroundTasks || {}
+  for (const [subagentId, task] of Object.entries(state.backgroundTasks)) {
+    if (String(task.status || '').toLowerCase() !== 'running') continue
+    const snapshot = {
+      ...task,
+      subagent_id: subagentId,
+      status: 'interrupted',
+      last_event: 'subagent.complete',
+      updated_at: timestamp,
+      completed_at: timestamp,
+    }
+    state.backgroundTasks[subagentId] = snapshot
+    completed.push({
+      ...snapshot,
+      event: 'subagent.complete',
+      timestamp,
+    })
+  }
+  return completed
+}
+
 export async function handleAbort(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
@@ -103,6 +127,9 @@ export async function handleAbort(
           status: 'interrupted',
           delivery_status: 'cancelled',
         })
+      }
+      for (const task of settleInterruptedBackgroundTasks(activeState)) {
+        emitToSession(nsp, socket, sessionId, 'subagent.complete', task)
       }
     } catch (err) {
       logger.warn(err, '[chat-run-socket][abort] failed to interrupt CLI bridge for session %s', sessionId)

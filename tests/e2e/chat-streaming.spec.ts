@@ -196,6 +196,57 @@ test('shows one real subagent card and opens its live chat stream in the resizab
   expect(api.unexpectedRequests).toEqual([])
 })
 
+test('settles a running subagent card when Stop completes without a child terminal event', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+  await sendChatMessage(page, 'Start background work')
+  const { run } = await waitForRun(page)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'run-stop-child' })
+    socket.__trigger('subagent.start', {
+      event: 'subagent.start',
+      session_id: sid,
+      subagent_id: 'child-stop',
+      task_index: 0,
+      task_count: 1,
+      goal: 'Long-running background work',
+      background_seq: 1,
+    })
+  }, run.session_id)
+
+  const subagentCard = page.locator('.subagent-entry').filter({ hasText: 'Long-running background work' })
+  await expect(subagentCard).toHaveCount(1)
+  await subagentCard.click()
+  const panel = page.locator('.subagent-stream-panel')
+  await expect(panel.locator('.subagent-status')).toHaveText('Running')
+  await expect(subagentCard.locator('.tool-call-spinner')).toHaveCount(1)
+
+  await page.getByRole('button', { name: 'Stop' }).click()
+  await page.waitForFunction((sid) => {
+    const emitted = (window as any).__PW_CHAT_SOCKET__?.emitted || []
+    return emitted.some((item: any) => item.event === 'abort' && item.payload?.session_id === sid)
+  }, run.session_id)
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('abort.completed', {
+      event: 'abort.completed',
+      session_id: sid,
+      run_id: 'run-stop-child',
+      synced: true,
+    })
+  }, run.session_id)
+
+  await expect(panel.locator('.subagent-status')).toHaveText('Interrupted')
+  await expect(panel.locator('.subagent-live-dot')).not.toHaveClass(/active/)
+  await expect(subagentCard.locator('.tool-call-spinner, .tool-spinner')).toHaveCount(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
 test('uses the newly selected profile for the next chat-run socket after profile switch reload', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'default')
   const api = await mockHermesApi(page, { initialProfileName: 'default' })
