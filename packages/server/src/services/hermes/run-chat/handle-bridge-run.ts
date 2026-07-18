@@ -292,6 +292,7 @@ async function ensureBridgeFixedContext(args: {
   state: SessionState
   bridge: AgentBridgeClient
   refresh?: boolean
+  backgroundDelegationEnabled?: boolean
 }): Promise<number | undefined> {
   const cached = bridgeContextMatches(args.state, args)
     ? getCachedBridgeContextOverhead(args.state)
@@ -304,7 +305,14 @@ async function ensureBridgeFixedContext(args: {
       [],
       args.instructions,
       args.profile,
-      { model: args.model ?? undefined, provider: args.provider ?? undefined, workspace: args.workspace ?? undefined },
+      {
+        model: args.model ?? undefined,
+        provider: args.provider ?? undefined,
+        workspace: args.workspace ?? undefined,
+        ...(args.backgroundDelegationEnabled !== undefined
+          ? { background_delegation_enabled: args.backgroundDelegationEnabled }
+          : {}),
+      },
     )
     cacheBridgeContext(args.state, estimate, args.workspace)
     const fixedContextTokens = getCachedBridgeContextOverhead(args.state)
@@ -334,7 +342,7 @@ async function ensureBridgeFixedContext(args: {
 export async function handleBridgeRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; display_role?: 'user' | 'command'; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; workspace?: string | null; source?: string; session_source?: 'global_agent' | 'workflow'; queue_id?: string; peerExcludeSocketId?: string; reasoning_effort?: string; one_shot_model?: boolean; background_delegation_id?: string; background_claim_id?: string; autonomous?: boolean; onEvent?: (event: string, payload: any) => void },
+  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; display_role?: 'user' | 'command'; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; workspace?: string | null; source?: string; session_source?: 'global_agent' | 'workflow'; queue_id?: string; peerExcludeSocketId?: string; reasoning_effort?: string; background_delegation_enabled?: boolean; one_shot_model?: boolean; background_delegation_id?: string; background_claim_id?: string; autonomous?: boolean; onEvent?: (event: string, payload: any) => void },
   profile: string,
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
@@ -348,6 +356,10 @@ export async function handleBridgeRun(
     : data.session_source === 'workflow' || data.source === 'workflow'
       ? 'workflow'
       : 'cli'
+  // Web UI Hermes agents currently opt out at creation time. Workflow callers
+  // also pass false explicitly; a future single-chat setting can opt in with true
+  // without changing the permanently-disabled workflow and group-chat callers.
+  const backgroundDelegationEnabled = data.background_delegation_enabled === true
   if (!session_id) {
     socket.emit('run.failed', { event: 'run.failed', error: 'session_id is required for cli source' })
     return
@@ -512,6 +524,7 @@ export async function handleBridgeRun(
         state,
         bridge,
         refresh: true,
+        backgroundDelegationEnabled,
       })
       const contextTokens = fixedContextTokens == null
         ? localMessageTokens
@@ -561,6 +574,9 @@ export async function handleBridgeRun(
         ...(resolvedModel ? { model: resolvedModel } : {}),
         ...(resolvedProvider ? { provider: resolvedProvider } : {}),
         ...(workspace ? { workspace } : {}),
+        // Creation fallback when this chat is the first operation for the
+        // cached AgentSession (for example if context estimation was skipped).
+        background_delegation_enabled: backgroundDelegationEnabled,
         // Local patch (reasoning-effort): per-session reasoning effort override.
         ...(data.reasoning_effort ? { reasoning_effort: data.reasoning_effort } : {}),
       },

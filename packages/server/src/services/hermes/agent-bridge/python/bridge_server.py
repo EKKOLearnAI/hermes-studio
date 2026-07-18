@@ -67,6 +67,12 @@ class BridgeServer:
             provider = req.get("provider")
             workspace = req.get("workspace")
             source = req.get("source")
+            raw_background_delegation_enabled = req.get("background_delegation_enabled")
+            background_delegation_enabled = (
+                raw_background_delegation_enabled
+                if isinstance(raw_background_delegation_enabled, bool)
+                else None
+            )
             # Local patch (reasoning-effort): per-session reasoning effort override (Web UI brain button).
             reasoning_effort = req.get("reasoning_effort")
             record = self.pool.start_chat(
@@ -82,6 +88,7 @@ class BridgeServer:
                 workspace,
                 source,
                 reasoning_effort,
+                background_delegation_enabled,
             )
             if req.get("wait"):
                 timeout = float(req.get("timeout", 0) or 0)
@@ -98,6 +105,12 @@ class BridgeServer:
             messages = req.get("messages") or req.get("conversation_history") or []
             if not isinstance(messages, list):
                 raise ValueError("messages must be a list")
+            raw_background_delegation_enabled = req.get("background_delegation_enabled")
+            background_delegation_enabled = (
+                raw_background_delegation_enabled
+                if isinstance(raw_background_delegation_enabled, bool)
+                else None
+            )
             return self.pool.estimate_context(
                 session_id,
                 messages=messages,
@@ -106,6 +119,7 @@ class BridgeServer:
                 model=req.get("model"),
                 provider=req.get("provider"),
                 workspace=req.get("workspace"),
+                background_delegation_enabled=background_delegation_enabled,
             )
 
         if action == "get_result":

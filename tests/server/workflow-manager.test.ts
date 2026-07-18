@@ -210,6 +210,7 @@ describe('workflow manager', () => {
       expect(result.run.snapshot_nodes[0]?.data).not.toHaveProperty('executionPolicy')
       expect(chatRunMock.runAndWait).toHaveBeenCalledWith(expect.objectContaining({
         provider: 'custom:test', model: 'model-a', one_shot_model: true, reasoning_effort: 'high',
+        background_delegation_enabled: false,
       }), expect.any(Object))
       expect(chatRunMock.runAndWait.mock.calls[0]?.[0]).not.toHaveProperty('apiMode')
       expect(chatRunMock.runAndWait.mock.calls[0]?.[0]).not.toHaveProperty('execution_policy')
@@ -236,6 +237,7 @@ describe('workflow manager', () => {
       expect(chatRunMock.runAndWait).toHaveBeenCalledWith(expect.objectContaining({
         coding_agent_id: 'codex', apiMode: 'chat_completions',
       }), expect.any(Object))
+      expect(chatRunMock.runAndWait.mock.calls[0]?.[0]).not.toHaveProperty('background_delegation_enabled')
     } finally { await manager.delete(workflow.id) }
   })
 

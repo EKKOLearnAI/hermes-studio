@@ -1,6 +1,35 @@
 import { describe, expect, it, vi } from 'vitest'
 
 describe('AgentBridgeClient background delegation requests', () => {
+  it('forwards an explicit Agent-session creation setting', async () => {
+    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const client = new AgentBridgeClient({ endpoint: 'tcp://127.0.0.1:1', connectRetryMs: 0, timeoutMs: 1 })
+    const request = vi.spyOn(client, 'request').mockResolvedValue({
+      ok: true,
+      run_id: 'run-1',
+      session_id: 'session-1',
+      status: 'running',
+    })
+
+    await client.chat('session-1', 'hello', undefined, undefined, 'default', {
+      background_delegation_enabled: false,
+    })
+    await client.chat('session-2', 'hello')
+    await client.contextEstimate('session-3', [], undefined, 'default', {
+      background_delegation_enabled: false,
+    })
+
+    expect(request.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      action: 'chat',
+      background_delegation_enabled: false,
+    }))
+    expect(request.mock.calls[1]?.[0]).not.toHaveProperty('background_delegation_enabled')
+    expect(request.mock.calls[2]?.[0]).toEqual(expect.objectContaining({
+      action: 'context_estimate',
+      background_delegation_enabled: false,
+    }))
+  })
+
   it('forwards recovery routes and delivery acknowledgements', async () => {
     const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
     const client = new AgentBridgeClient({ endpoint: 'tcp://127.0.0.1:1', connectRetryMs: 0, timeoutMs: 1 })

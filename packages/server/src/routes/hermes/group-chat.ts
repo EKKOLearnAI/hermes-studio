@@ -106,6 +106,7 @@ async function connectAndPersistRoomAgent(server: GroupChatServer, roomId: strin
         name,
         description,
         invited,
+        backgroundDelegationEnabled: false,
     })
 
     const storage = server.getStorage()

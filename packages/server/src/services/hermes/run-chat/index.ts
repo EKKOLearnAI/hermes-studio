@@ -430,6 +430,7 @@ export class ChatRunSocket {
       one_shot_model?: boolean
       allow_command_passthrough?: boolean
       reasoning_effort?: string
+      background_delegation_enabled?: boolean
       background_delegation_id?: string
       background_claim_id?: string
       autonomous?: boolean
@@ -938,6 +939,8 @@ export class ChatRunSocket {
       mcp_servers?: Record<string, unknown>
       profile?: string
       reasoning_effort?: string
+      /** Hermes Agent creation policy used by internal orchestration callers. */
+      background_delegation_enabled?: boolean
       one_shot_model?: boolean
     },
     options: { profile?: string; user?: AuthenticatedUser; timeoutMs?: number; approvalChoice?: ChatRunAutoApprovalChoice } = {},

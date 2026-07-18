@@ -1097,6 +1097,7 @@ export class GroupChatServer {
                         name: agent.name,
                         description: agent.description,
                         invited: agent.invited,
+                        backgroundDelegationEnabled: false,
                     })
                     await this.agentClients.addAgentToRoom(room.id, client)
                     total++

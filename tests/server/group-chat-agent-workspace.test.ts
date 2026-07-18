@@ -146,6 +146,7 @@ describe('group chat agent workspace bridge runs', () => {
       name: 'Worker',
       description: '',
       invited: 0,
+      backgroundDelegationEnabled: false,
     } as any) as any
     const storage = { getRoom: vi.fn(() => ({ sessionSeed: 'seed-1', workspace: '' })) }
     client.setStorage(storage as any)
@@ -224,6 +225,7 @@ describe('group chat agent workspace bridge runs', () => {
       name: 'Worker',
       description: '',
       invited: 0,
+      backgroundDelegationEnabled: false,
     } as any)
     const storage = {
       getRoom: vi.fn(() => ({ sessionSeed: 'seed-1', workspace })),
@@ -256,8 +258,12 @@ describe('group chat agent workspace bridge runs', () => {
       expect.any(Array),
       expect.any(String),
       'default',
-      expect.not.objectContaining({ workspace: expect.anything(), run_id: expect.anything() }),
+      expect.objectContaining({
+        background_delegation_enabled: false,
+      }),
     )
+    expect(bridgeMock.chat.mock.calls[0]?.[5]).not.toHaveProperty('workspace')
+    expect(bridgeMock.chat.mock.calls[0]?.[5]).not.toHaveProperty('run_id')
   })
 
   it('cancels a pending reply when interrupt arrives before bridge.chat starts', async () => {

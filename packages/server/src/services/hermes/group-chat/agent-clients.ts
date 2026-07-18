@@ -31,6 +31,8 @@ interface AgentConfig {
     name: string
     description: string
     invited: number
+    /** Group-chat Hermes agents must never detach delegate_task work. */
+    backgroundDelegationEnabled: false
 }
 
 interface MessageData {
@@ -160,6 +162,7 @@ class AgentClient {
     readonly profile: string
     readonly name: string
     readonly description: string
+    private readonly backgroundDelegationEnabled: false
     private socket: Socket | null = null
     private joinedRooms = new Set<string>()
     private handlers: AgentEventHandler
@@ -178,6 +181,7 @@ class AgentClient {
         this.profile = config.profile
         this.name = config.name
         this.description = config.description
+        this.backgroundDelegationEnabled = config.backgroundDelegationEnabled ?? false
         this.handlers = handlers
     }
 
@@ -443,6 +447,7 @@ class AgentClient {
             {
                 ...(modelContext.model ? { model: modelContext.model } : {}),
                 ...(modelContext.provider ? { provider: modelContext.provider } : {}),
+                background_delegation_enabled: this.backgroundDelegationEnabled,
             },
         )
         this.cacheBridgeContext(sessionId, estimate, instructions, modelContext)
@@ -753,6 +758,8 @@ class AgentClient {
                     ...(modelContext.provider ? { provider: modelContext.provider } : {}),
                     source: 'api_server',
                     ...(roomWorkspace ? { workspace: roomWorkspace } : {}),
+                    // Used only if this operation creates the cached AgentSession.
+                    background_delegation_enabled: this.backgroundDelegationEnabled,
                 },
             )
             bridgeStarted = true

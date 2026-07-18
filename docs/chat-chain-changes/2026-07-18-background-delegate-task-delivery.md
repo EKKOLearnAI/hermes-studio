@@ -25,3 +25,19 @@ status remains in the panel header instead of appearing as transcript content.
 Background parent dispatch events and `delegation.updated` lifecycle records do
 not create placeholder cards, so each visible entry is keyed by a real
 `subagent_id` and always opens the corresponding live stream.
+Agent callers may pass `background_delegation_enabled=false` when the Bridge
+creates a cached Hermes `AgentSession`. The value is retained in that session's
+configuration; later turns bind `async_delivery` from the creation policy
+instead of treating it as a mutable per-run setting. This keeps synchronous
+`delegate_task` available while background requests fall back to the current
+turn. Ordinary Web UI single-chat agents are currently created disabled.
+Group-chat agents and Hermes workflow-node agents pass the same disabled policy
+at their own creation call sites and remain disabled independently of any
+future single-chat opt-in. Coding Agent and Ekko Agent paths do not receive the
+field. The bridge filters session-context arguments against the installed
+Hermes Runtime signature, so the bundled 0.18.0 context API keeps receiving its
+supported legacy fields while 0.18.2 and newer receive the session-level
+async-delivery capability. Agent Bridge retains Hermes Runtime's `tui`
+session-source contract because background delegation uses that path to bind
+completion ownership to the durable agent session across compression-driven
+session-id rotation.

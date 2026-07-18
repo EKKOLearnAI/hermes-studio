@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import json
 import os
 import queue
@@ -71,6 +72,40 @@ def _clear_session_workspace_cwd() -> None:
         clear_session_cwd()
     except Exception:
         pass
+
+
+def _set_bridge_session_vars(
+    session_id: str,
+    profile: str | None,
+    workspace: str | None,
+    background_delegation_enabled: bool,
+) -> Any:
+    """Bind the richest session context supported by the installed runtime."""
+    from gateway.session_context import set_session_vars
+
+    values = {
+        "platform": "agent_bridge",
+        # Hermes delegate_task has a TUI-specific durable session routing path.
+        # Agent Bridge uses that contract so compression-driven session-id
+        # rotation cannot orphan a detached completion.
+        "source": "tui",
+        "session_key": session_id,
+        "session_id": session_id,
+        "ui_session_id": session_id,
+        "profile": str(profile or "default"),
+        "cwd": str(workspace or ""),
+        "async_delivery": background_delegation_enabled,
+    }
+    try:
+        parameters = inspect.signature(set_session_vars).parameters.values()
+        accepts_extra = any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters)
+        accepted_names = {parameter.name for parameter in parameters}
+        supported = values if accepts_extra else {
+            name: value for name, value in values.items() if name in accepted_names
+        }
+    except (TypeError, ValueError):
+        supported = values
+    return set_session_vars(**supported)
 
 
 class SessionDbHolder:
@@ -200,6 +235,7 @@ class AgentPool:
         profile: str | None = None,
         model: str | None = None,
         provider: str | None = None,
+        background_delegation_enabled: bool | None = None,
     ) -> AgentSession:
         requested_model = str(model or "").strip()
         requested_provider = str(provider or "").strip()
@@ -318,6 +354,9 @@ class AgentPool:
                         "mcp_tool_count": len(discovered_mcp_tools),
                         "active_mcp_tool_count": len(mcp_tool_names),
                         "db_error": self._db.error,
+                        # This is an Agent-session policy, not a per-turn flag.
+                        # Callers select it when the cached AIAgent is created.
+                        "background_delegation_enabled": background_delegation_enabled is not False,
                     },
                 )
                 self._sessions[session_id] = session
@@ -719,8 +758,15 @@ class AgentPool:
         model: str | None = None,
         provider: str | None = None,
         workspace: str | None = None,
+        background_delegation_enabled: bool | None = None,
     ) -> dict[str, Any]:
-        session = self.get_or_create(session_id, profile=profile, model=model, provider=provider)
+        session = self.get_or_create(
+            session_id,
+            profile=profile,
+            model=model,
+            provider=provider,
+            background_delegation_enabled=background_delegation_enabled,
+        )
         session_cwd_bound = _bind_session_workspace_cwd(session.session_id, workspace)
         try:
             context_info = self._estimate_context_info(session.agent, messages or [], instructions)
@@ -1391,8 +1437,15 @@ class AgentPool:
         workspace: str | None = None,
         source: str | None = None,
         reasoning_effort: str | None = None,
+        background_delegation_enabled: bool | None = None,
     ) -> RunRecord:
-        session = self.get_or_create(session_id, profile=profile, model=model, provider=provider)
+        session = self.get_or_create(
+            session_id,
+            profile=profile,
+            model=model,
+            provider=provider,
+            background_delegation_enabled=background_delegation_enabled,
+        )
         # Install after agent construction so any runtime plugin initialization
         # has completed. Rechecking on every run also recovers from a forced
         # plugin reload that clears the manager's callback registry.
@@ -1457,17 +1510,11 @@ class AgentPool:
             try:
                 session_cwd_bound = _bind_session_workspace_cwd(session.session_id, workspace)
                 try:
-                    from gateway.session_context import set_session_vars
-
-                    session_context_tokens = set_session_vars(
-                        platform="agent_bridge",
-                        source="tui",
-                        session_key=session.session_id,
-                        session_id=session.session_id,
-                        ui_session_id=session.session_id,
-                        profile=str(profile or "default"),
-                        cwd=str(workspace or ""),
-                        async_delivery=True,
+                    session_context_tokens = _set_bridge_session_vars(
+                        session.session_id,
+                        profile,
+                        workspace,
+                        session.config.get("background_delegation_enabled", True) is not False,
                     )
                 except Exception:
                     session_context_tokens = None

@@ -295,6 +295,14 @@ describe('bridge run final context usage', () => {
         workspace: '/tmp/hermes-bridge-final-context/default/workspace',
       },
     )
+    expect(bridge.chat).toHaveBeenCalledWith(
+      'session-1',
+      'hello',
+      expect.any(Array),
+      expect.any(String),
+      'default',
+      expect.objectContaining({ background_delegation_enabled: false }),
+    )
     expect(bridge.contextEstimate.mock.calls[0][2]).toContain('system prompt')
     expect(bridge.contextEstimate.mock.calls[0][2]).toContain('X-Hermes-Profile')
     expect(bridge.contextEstimate.mock.calls[0][2]).not.toContain('Current working directory')
@@ -695,6 +703,7 @@ describe('bridge run final context usage', () => {
         session_id: 'workflow-session',
         source: 'workflow',
         workspace: '/tmp/hermes-workflow-workspace',
+        background_delegation_enabled: false,
       },
       'default',
       sessionMap,
@@ -715,7 +724,10 @@ describe('bridge run final context usage', () => {
       expect.any(Array),
       expect.any(String),
       'default',
-      expect.objectContaining({ workspace: '/tmp/hermes-workflow-workspace' }),
+      expect.objectContaining({
+        workspace: '/tmp/hermes-workflow-workspace',
+        background_delegation_enabled: false,
+      }),
     )
     expect(state.source).toBe('workflow')
   })

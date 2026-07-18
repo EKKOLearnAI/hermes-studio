@@ -212,6 +212,129 @@ def wait_for(condition, timeout=20):
 `
 
 describe('agent bridge Python session concurrency', () => {
+  it('binds Agent-session background delivery capability across runtime context versions', () => {
+    runPython(String.raw`
+${harness}
+
+gateway_pkg = types.ModuleType("gateway")
+gateway_pkg.__path__ = []
+sys.modules["gateway"] = gateway_pkg
+
+session_context = types.ModuleType("gateway.session_context")
+captured = []
+
+def modern_set_session_vars(
+    platform="",
+    source="",
+    session_key="",
+    session_id="",
+    profile="",
+    cwd="",
+    async_delivery=True,
+):
+    captured.append({
+        "platform": platform,
+        "source": source,
+        "session_key": session_key,
+        "session_id": session_id,
+        "profile": profile,
+        "cwd": cwd,
+        "async_delivery": async_delivery,
+    })
+    return ["modern-token"]
+
+session_context.set_session_vars = modern_set_session_vars
+sys.modules["gateway.session_context"] = session_context
+
+tokens = bridge._set_bridge_session_vars(
+    "session-modern",
+    "profile-modern",
+    "/tmp/workspace-modern",
+    False,
+)
+assert tokens == ["modern-token"]
+assert captured[-1] == {
+    "platform": "agent_bridge",
+    "source": "tui",
+    "session_key": "session-modern",
+    "session_id": "session-modern",
+    "profile": "profile-modern",
+    "cwd": "/tmp/workspace-modern",
+    "async_delivery": False,
+}
+
+def legacy_set_session_vars(
+    platform="",
+    chat_id="",
+    chat_name="",
+    thread_id="",
+    user_id="",
+    user_name="",
+    session_key="",
+    message_id="",
+):
+    captured.append({"platform": platform, "session_key": session_key})
+    return ["legacy-token"]
+
+session_context.set_session_vars = legacy_set_session_vars
+tokens = bridge._set_bridge_session_vars(
+    "session-legacy",
+    "profile-legacy",
+    "C:/workspace-legacy",
+    True,
+)
+assert tokens == ["legacy-token"]
+assert captured[-1] == {
+    "platform": "agent_bridge",
+    "session_key": "session-legacy",
+}
+`)
+  })
+
+  it('forwards Agent creation policy from chat and context-estimate requests', () => {
+    runPython(String.raw`
+${harness}
+
+captured = []
+
+class FakePool:
+    def start_chat(self, *args):
+        captured.append(args)
+        return bridge.RunRecord(run_id=f"run-{len(captured)}", session_id=args[0])
+
+    def estimate_context(self, *args, **kwargs):
+        captured.append(kwargs)
+        return {"session_id": args[0]}
+
+server = object.__new__(bridge.BridgeServer)
+server.pool = FakePool()
+
+disabled = server.handle({
+    "action": "chat",
+    "session_id": "session-disabled",
+    "message": "hello",
+    "background_delegation_enabled": False,
+})
+enabled = server.handle({
+    "action": "chat",
+    "session_id": "session-default",
+    "message": "hello",
+})
+estimated = server.handle({
+    "action": "context_estimate",
+    "session_id": "session-estimate-disabled",
+    "background_delegation_enabled": False,
+})
+
+assert disabled["status"] == "running"
+assert enabled["status"] == "running"
+assert captured[0][-1] is False
+assert captured[1][-1] is None
+assert estimated["session_id"] == "session-estimate-disabled"
+assert captured[2]["background_delegation_enabled"] is False
+`)
+  })
+
   it('buffers subagent events after the parent run has ended', () => {
     runPython(String.raw`
 ${harness}

@@ -43,6 +43,9 @@ export interface AgentBridgeRequestOptions {
 
 export interface AgentBridgeChatOptions {
   force_compress?: boolean
+  /** Agent-session creation policy. False keeps delegate_task available but
+   * makes background=true fall back to synchronous execution. */
+  background_delegation_enabled?: boolean
   storage_message?: AgentBridgeMessage
   model?: string
   provider?: string
@@ -486,6 +489,9 @@ export class AgentBridgeClient {
       ...(options.wait ? { wait: true } : {}),
       ...(options.timeout ? { timeout: options.timeout } : {}),
       ...(options.force_compress ? { force_compress: true } : {}),
+      ...(options.background_delegation_enabled !== undefined
+        ? { background_delegation_enabled: options.background_delegation_enabled }
+        : {}),
       // Local patch (reasoning-effort): per-session reasoning effort override.
       ...(options.reasoning_effort ? { reasoning_effort: options.reasoning_effort } : {}),
     })
@@ -496,7 +502,7 @@ export class AgentBridgeClient {
     messages: unknown[],
     instructions?: string,
     profile?: string,
-    options: Pick<AgentBridgeChatOptions, 'model' | 'provider' | 'workspace'> = {},
+    options: Pick<AgentBridgeChatOptions, 'model' | 'provider' | 'workspace' | 'background_delegation_enabled'> = {},
   ): Promise<AgentBridgeContextEstimate> {
     return this.request<AgentBridgeContextEstimate>({
       action: 'context_estimate',
@@ -507,6 +513,9 @@ export class AgentBridgeClient {
       ...(options.model ? { model: options.model } : {}),
       ...(options.provider ? { provider: options.provider } : {}),
       ...(options.workspace ? { workspace: options.workspace } : {}),
+      ...(options.background_delegation_enabled !== undefined
+        ? { background_delegation_enabled: options.background_delegation_enabled }
+        : {}),
     })
   }
 

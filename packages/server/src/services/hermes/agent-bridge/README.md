@@ -88,7 +88,19 @@ is required.
 import { AgentBridgeClient } from './services/hermes/agent-bridge'
 
 const bridge = new AgentBridgeClient()
-const run = await bridge.chat(sessionId, message)
+// Select this policy when the cached Hermes AgentSession is first created.
+// contextEstimate may be the creation boundary before the first chat call.
+await bridge.contextEstimate(
+  sessionId,
+  [],
+  instructions,
+  profile,
+  { background_delegation_enabled: false },
+)
+const run = await bridge.chat(sessionId, message, undefined, instructions, profile, {
+  // Creation fallback if chat is the first Bridge operation for this session.
+  background_delegation_enabled: false,
+})
 
 for await (const chunk of bridge.streamOutput(run.run_id)) {
   if (chunk.delta) {
@@ -100,6 +112,22 @@ for await (const chunk of bridge.streamOutput(run.run_id)) {
 The external chat call only sends `session_id` and `message`. Provider, model,
 keys, tools, reasoning, and session DB are resolved by hermes-agent from the
 normal Hermes config and environment.
+
+`background_delegation_enabled` is an Agent-session creation setting. It is
+optional and defaults to `true` for Bridge consumers that do not select a
+policy. The created `AgentSession` retains the value, and later runs bind the
+Hermes context from that cached setting instead of changing it per turn.
+Passing `false` binds `async_delivery=false`, so `delegate_task` remains
+available but requests for background execution fall back to the synchronous
+path. Hermes currently exposes this as its session-level async-delivery
+capability, so other detached-completion tools in that AgentSession also see it
+disabled.
+
+Hermes Web UI currently creates ordinary single-chat agents with this value set
+to `false`. Group-chat agents and Hermes workflow-node agents also set it to
+`false` at their own call sites and are intentionally kept disabled even if
+single chat is enabled in the future. Coding Agent and Ekko Agent calls do not
+receive this Hermes Bridge field.
 
 The bridge instantiates `AIAgent` with `platform="cli"` by default so behavior
 matches CLI chat. Override it only if a caller intentionally needs a distinct

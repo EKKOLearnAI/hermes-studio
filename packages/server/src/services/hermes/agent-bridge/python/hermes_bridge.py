@@ -212,9 +212,16 @@ class AgentPool(_pool.AgentPool):
         profile: str | None = None,
         model: str | None = None,
         provider: str | None = None,
+        background_delegation_enabled: bool | None = None,
     ) -> AgentSession:
         _sync_pool_patches()
-        return super().get_or_create(session_id, profile, model, provider)
+        return super().get_or_create(
+            session_id,
+            profile,
+            model,
+            provider,
+            background_delegation_enabled,
+        )
 
     def start_chat(self, *args: Any, **kwargs: Any) -> RunRecord:
         _sync_pool_patches()
