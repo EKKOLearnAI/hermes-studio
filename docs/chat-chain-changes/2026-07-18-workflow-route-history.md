@@ -1,7 +1,7 @@
 ---
 date: 2026-07-18
 issue: "#2111"
-pr: pending
+pr: 2128
 feature: Workflow route and history legibility
 impact: Workflow connection authoring, loop routes, and read-only run history explain persisted path decisions without changing scheduler semantics.
 ---
