@@ -29,6 +29,7 @@ import { useGlobalSpeech } from "@/composables/useSpeech";
 import { useVoiceSettings } from "@/composables/useVoiceSettings";
 import { speedToEdgeRate, hzToEdgePitch } from "@/utils/ttsHelpers";
 import { formatChatTimestamp } from "@/utils/chat-timestamp";
+import { openSubagentStream, subagentIdFromToolCall } from "@/utils/hermes/subagent-stream";
 
 const MarkdownRenderer = defineAsyncComponent(async () => (await import("./MarkdownRenderer.vue")).default);
 
@@ -593,6 +594,8 @@ const hasToolChange = computed(() => (toolChange.value?.files?.length || 0) > 0)
 const hasToolDetails = computed(
   () => !!(toolArgsPayload.value.full || toolResultPayload.value.full || hasToolChange.value),
 );
+const isSubagentTool = computed(() => subagentIdFromToolCall(props.message.toolCallId) !== null);
+const hasInlineToolDetails = computed(() => hasToolDetails.value && !isSubagentTool.value);
 
 const fullToolArgs = computed(() => toolArgsPayload.value.full);
 const formattedToolArgs = computed(() => toolArgsPayload.value.display);
@@ -614,6 +617,14 @@ const renderedToolResult = computed(() => {
     toolResultPayload.value.language,
   );
 });
+
+function handleToolLineClick() {
+  if (isSubagentTool.value) {
+    openSubagentStream(chatStore.activeSessionId, props.message.toolCallId);
+    return;
+  }
+  if (hasInlineToolDetails.value) toolExpanded.value = !toolExpanded.value;
+}
 
 async function openToolChangeFile(file: { id: string | number; path: string; additions: number; deletions: number }): Promise<void> {
   const storedFile = toolChange.value?.files.find(candidate => String(candidate.id) === String(file.id));
@@ -838,11 +849,16 @@ onBeforeUnmount(() => {
       <div
         v-if="!hasToolChange"
         class="tool-line"
-        :class="{ expandable: hasToolDetails }"
-        @click="hasToolDetails && (toolExpanded = !toolExpanded)"
+        :class="{ expandable: hasInlineToolDetails || isSubagentTool, 'subagent-entry': isSubagentTool }"
+        :role="isSubagentTool ? 'button' : undefined"
+        :tabindex="isSubagentTool ? 0 : undefined"
+        :title="isSubagentTool ? t('subagent.open') : undefined"
+        @click="handleToolLineClick"
+        @keydown.enter.prevent="handleToolLineClick"
+        @keydown.space.prevent="handleToolLineClick"
       >
         <svg
-          v-if="hasToolDetails"
+          v-if="hasInlineToolDetails || isSubagentTool"
           width="10"
           height="10"
           viewBox="0 0 24 24"
@@ -850,7 +866,7 @@ onBeforeUnmount(() => {
           stroke="currentColor"
           stroke-width="2"
           class="tool-chevron"
-          :class="{ rotated: toolExpanded }"
+          :class="{ rotated: toolExpanded && !isSubagentTool }"
         >
           <polyline points="9 18 15 12 9 6" />
         </svg>
@@ -870,7 +886,7 @@ onBeforeUnmount(() => {
         </svg>
         <span class="tool-name">{{ message.toolName }}</span>
         <span
-          v-if="message.toolPreview && !toolExpanded"
+          v-if="message.toolPreview && (!toolExpanded || isSubagentTool)"
           class="tool-preview"
           >{{ message.toolPreview }}</span
         >
@@ -898,7 +914,7 @@ onBeforeUnmount(() => {
           @select="openToolChangeFile"
         />
       </div>
-      <div v-else-if="toolExpanded && hasToolDetails" class="tool-details" @click="handleToolDetailClick">
+      <div v-else-if="!isSubagentTool && toolExpanded && hasToolDetails" class="tool-details" @click="handleToolDetailClick">
         <div v-if="formattedToolArgs" class="tool-detail-section" data-copy-source="tool-args">
           <div class="tool-detail-label">{{ t("chat.arguments") }}</div>
           <div class="tool-detail-code-block" v-html="renderedToolArgs"></div>
@@ -1637,7 +1653,9 @@ onBeforeUnmount(() => {
   &.expandable {
     cursor: pointer;
 
-    &:hover {
+    &:hover,
+    &:focus-visible {
+      outline: none;
       background: rgba(0, 0, 0, 0.03);
     }
   }

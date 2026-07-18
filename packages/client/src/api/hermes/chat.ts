@@ -89,6 +89,26 @@ export interface RunEvent {
   workspace?: string | null
   /** Queue length from run.queued event */
   queue_length?: number
+  /** Number of background delegations still running or awaiting delivery. */
+  background_pending?: number
+  /** True when this run was started by a delivered background completion. */
+  autonomous?: boolean
+  delegation_id?: string
+  subagent_id?: string
+  task_index?: number
+  task_count?: number
+  goal?: string
+  model?: string
+  status?: string
+  summary?: string
+  arguments?: unknown
+  tool_count?: number
+  duration_seconds?: number
+  background_seq?: number
+  api_calls?: number
+  input_tokens?: number
+  output_tokens?: number
+  cost_usd?: number
   /** Queue item that was just removed because it is starting now. */
   dequeued_queue_id?: string
   /** Queued user messages from run.queued/resume payloads. */
@@ -125,6 +145,8 @@ export interface ResumeSessionPayload {
   workspace?: string | null
   queueLength?: number
   queueMessages?: RunEvent['queued_messages']
+  backgroundTasks?: Array<Record<string, unknown>>
+  backgroundPending?: number
 }
 
 // ============================
@@ -307,7 +329,7 @@ function globalRunCompletedHandler(event: RunEvent): void {
   }
 
   // Auto-cleanup session handlers on completion (skip if more runs queued)
-  if ((event as any).queue_remaining > 0) return
+  if ((event as any).queue_remaining > 0 || (event.background_pending || 0) > 0) return
   sessionEventHandlers.delete(sid)
 }
 
@@ -324,7 +346,7 @@ function globalRunFailedHandler(event: RunEvent): void {
   }
 
   // Auto-cleanup session handlers on failure (skip if more runs queued)
-  if ((event as any).queue_remaining > 0) return
+  if ((event as any).queue_remaining > 0 || (event.background_pending || 0) > 0) return
   sessionEventHandlers.delete(sid)
 }
 
@@ -722,7 +744,10 @@ export function connectChatRun(requestedProfile?: string | null, transport: Chat
     chatRunSocket.on('subagent.start', globalSubagentEventHandler)
     chatRunSocket.on('subagent.tool', globalSubagentEventHandler)
     chatRunSocket.on('subagent.progress', globalSubagentEventHandler)
+    chatRunSocket.on('subagent.text', globalSubagentEventHandler)
+    chatRunSocket.on('subagent.thinking', globalSubagentEventHandler)
     chatRunSocket.on('subagent.complete', globalSubagentEventHandler)
+    chatRunSocket.on('delegation.updated', globalSubagentEventHandler)
 
     // Run lifecycle events
     chatRunSocket.on('run.started', globalRunStartedHandler)
@@ -937,6 +962,10 @@ export function startRunViaSocket(
       if (closed) return
       onEvent(evt)
       if ((evt as any).queue_remaining > 0) return
+      if ((evt.background_pending || 0) > 0) {
+        onDone()
+        return
+      }
       closed = true
       removeTerminalSocketListeners()
       onDone()
@@ -945,6 +974,10 @@ export function startRunViaSocket(
       if (closed) return
       onEvent(evt)
       if ((evt as any).queue_remaining > 0) return
+      if ((evt.background_pending || 0) > 0) {
+        onDone()
+        return
+      }
       closed = true
       removeTerminalSocketListeners()
       onDone()

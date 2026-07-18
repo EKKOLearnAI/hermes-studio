@@ -121,6 +121,115 @@ describe('chat store compression state', () => {
     }))
   })
 
+  it('does not create a duplicate placeholder card for delegation lifecycle updates', async () => {
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1')]
+    await store.switchSession('session-1')
+    const sessionHandlers = chatApi.registerSessionHandlers.mock.calls.find(call => call[0] === 'session-1')?.[1]
+
+    sessionHandlers.onToolStarted({
+      event: 'tool.started',
+      session_id: 'session-1',
+      tool_call_id: 'delegate-call-1',
+      tool: 'delegate_task',
+      arguments: { mode: 'background', goal: 'Inspect the task' },
+    })
+    sessionHandlers.onToolCompleted({
+      event: 'tool.completed',
+      session_id: 'session-1',
+      tool_call_id: 'delegate-call-1',
+      tool: 'delegate_task',
+      output: JSON.stringify({ mode: 'background', delegation_id: 'delegation-1' }),
+    })
+    sessionHandlers.onSubagentEvent({
+      event: 'delegation.updated',
+      session_id: 'session-1',
+      delegation_id: 'delegation-1',
+      status: 'running',
+    })
+    expect(store.messages.filter(message => message.toolCallId?.startsWith('subagent:'))).toHaveLength(0)
+    expect(store.subagentStreams.size).toBe(0)
+
+    sessionHandlers.onSubagentEvent({
+      event: 'subagent.start',
+      session_id: 'session-1',
+      subagent_id: 'child-1',
+      task_index: 0,
+      task_count: 1,
+      goal: 'Inspect the task',
+    })
+    sessionHandlers.onSubagentEvent({
+      event: 'subagent.text',
+      session_id: 'session-1',
+      subagent_id: 'child-1',
+      text: 'Working on it',
+    })
+
+    const taskCards = store.messages.filter(message => message.toolCallId?.startsWith('subagent:'))
+    expect(taskCards).toHaveLength(1)
+    expect(store.getSubagentStream('session-1', 'child-1')?.entries.some(entry => entry.kind === 'text')).toBe(true)
+
+    sessionHandlers.onSubagentEvent({
+      event: 'delegation.updated',
+      session_id: 'session-1',
+      delegation_id: 'delegation-1',
+      status: 'interrupted',
+    })
+    expect(store.messages.filter(message => message.toolCallId?.startsWith('subagent:'))).toHaveLength(1)
+    expect(store.getSubagentStream('session-1', 'child-1')?.status).toBe('interrupted')
+    expect(store.messages.find(message => message.toolCallId === 'subagent:child-1')?.toolStatus).toBe('error')
+  })
+
+  it('replaces a persisted background delegate dispatch with its real recovered child stream', async () => {
+    chatApi.resumeSession.mockImplementationOnce((sessionId: string, onResumed: (data: any) => void) => {
+      onResumed({
+        session_id: sessionId,
+        isWorking: false,
+        messages: [{
+          id: 'assistant-tool-call',
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now() / 1000,
+          tool_calls: [{
+            id: 'delegate-call-1',
+            function: {
+              name: 'delegate_task',
+              arguments: JSON.stringify({ mode: 'background', goal: 'Inspect the task' }),
+            },
+          }],
+        }, {
+          id: 'delegate-result',
+          role: 'tool',
+          content: JSON.stringify({ mode: 'background', delegation_id: 'delegation-1' }),
+          tool_call_id: 'delegate-call-1',
+          tool_name: 'delegate_task',
+          timestamp: Date.now() / 1000,
+        }],
+        events: [],
+        backgroundPending: 1,
+        backgroundTasks: [{
+          subagent_id: 'child-1',
+          status: 'running',
+          last_event: 'subagent.text',
+          task_index: 0,
+          task_count: 1,
+          goal: 'Inspect the task',
+          preview: 'Recovered live output',
+        }],
+      })
+      return {} as any
+    })
+
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1')]
+    await store.switchSession('session-1')
+
+    const delegateCards = store.messages.filter(message => message.toolName === 'delegate_task')
+    expect(delegateCards).toHaveLength(1)
+    expect(delegateCards[0]?.toolCallId).toBe('subagent:child-1')
+    expect(store.getSubagentStream('session-1', 'child-1')?.entries.some(entry => entry.text === 'Recovered live output')).toBe(true)
+  })
+
   it('surfaces non-terminal reattach warnings replayed in a non-working resume payload', async () => {
     chatApi.resumeSession.mockImplementationOnce((sessionId: string, onResumed: (data: any) => void) => {
       onResumed({

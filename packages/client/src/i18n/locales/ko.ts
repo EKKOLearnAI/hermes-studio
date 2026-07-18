@@ -481,6 +481,12 @@ export default {
     files: '작업 공간',
   },
 
+  subagent: {
+    title: '백그라운드 작업', noGoal: '제목 없는 백그라운드 작업', open: '백그라운드 작업 실시간 출력 열기', close: '백그라운드 작업 출력 닫기',
+    waiting: '실시간 출력을 기다리는 중…', tool: '도구', tools: '도구 호출 {count}회', tokens: '입력 {input} · 출력 {output}',
+    started: '시작됨', running: '실행 중', completed: '완료됨', failed: '실패함', cancelled: '취소됨', interrupted: '중단됨',
+  },
+
   realtimeVoice: {
     title: '실시간 음성', mode: '음성 모드', open: '실시간 음성 열기', back: '채팅으로 돌아가기', connected: '음성 연결 준비됨',
     turnMode: '실시간 미리보기 · 턴 방식', browserStt: '브라우저', browserTts: '브라우저', untitledSession: '제목 없는 대화',

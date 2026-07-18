@@ -36,11 +36,13 @@ import MessageList from "./MessageList.vue";
 import SessionListItem from "./SessionListItem.vue";
 import OutlinePanel from "./OutlinePanel.vue";
 import TerminalPanel from "./TerminalPanel.vue";
+import SubagentStreamPanel from "./SubagentStreamPanel.vue";
 import PageSidebarNav from "@/components/layout/PageSidebarNav.vue";
 import SettingsCircuitBadge from "@/components/layout/SettingsCircuitBadge.vue";
 import { isStoredSuperAdmin } from "@/api/client";
 import { useDefaultWorkspace } from "@/composables/useDefaultWorkspace";
 import { canScopedCodingAgentUseProvider, usesServerManagedProviderAuth } from "@/utils/codingAgentProviders";
+import { OPEN_SUBAGENT_STREAM_EVENT, type OpenSubagentStreamDetail } from "@/utils/hermes/subagent-stream";
 
 const FilesPanel = defineAsyncComponent(async () => (await import('./FilesPanel.vue')).default);
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default);
@@ -68,6 +70,11 @@ const chatDropCounter = ref(0);
 const isChatDropActive = ref(false);
 const showToolPanel = ref(false);
 const activeToolPanel = ref<"files" | "terminal">("files");
+const selectedSubagent = ref<OpenSubagentStreamDetail | null>(null);
+const selectedSubagentStream = computed(() => {
+  const selected = selectedSubagent.value;
+  return selected ? chatStore.getSubagentStream(selected.sessionId, selected.subagentId) : null;
+});
 const activeWorkspaceSessionId = computed(() => chatStore.activeSession?.workspace && !chatStore.activeSession.isLocalOnly ? chatStore.activeSession.id : null);
 const activePreviewSessionId = computed(() => chatStore.activeSession?.id && !chatStore.activeSession.isLocalOnly ? chatStore.activeSession.id : null);
 const activeWorkspacePath = computed(() => chatStore.activeSession?.workspace && !chatStore.activeSession.isLocalOnly ? chatStore.activeSession.workspace : null);
@@ -194,6 +201,7 @@ function closeToolPanelOverlay(): boolean {
   if (toolPanelStore.workspaceDiff && filesStore.editingFile) filesStore.closeEditor();
   filesStore.closePreview();
   toolPanelStore.closeWorkspaceDiff();
+  selectedSubagent.value = null;
   showToolPanel.value = false;
   return true;
 }
@@ -296,9 +304,25 @@ function handleWorkspaceFilePreviewRequest(event: Event) {
   const fileName = customEvent.detail?.fileName || previewPath.split("/").pop() || previewPath;
   filesStore.closePreview();
   toolPanelStore.closeWorkspaceDiff();
+  selectedSubagent.value = null;
   void filesStore.openSessionWorkspacePreview(sessionId, previewPath, fileName).catch((error) => {
     message.error(error instanceof Error ? error.message : t("files.previewFailed"));
   });
+}
+
+function handleOpenSubagentStreamRequest(event: Event) {
+  const customEvent = event as CustomEvent<OpenSubagentStreamDetail>;
+  const detail = customEvent.detail;
+  if (!detail?.sessionId || !detail.subagentId || detail.sessionId !== chatStore.activeSessionId) return;
+  if (toolPanelStore.workspaceDiff && filesStore.hasUnsavedChanges) {
+    message.warning(t("files.unsavedChanges"));
+    return;
+  }
+  if (toolPanelStore.workspaceDiff && filesStore.editingFile) filesStore.closeEditor();
+  filesStore.closePreview();
+  toolPanelStore.closeWorkspaceDiff();
+  selectedSubagent.value = detail;
+  showToolPanel.value = true;
 }
 
 onMounted(() => {
@@ -307,6 +331,7 @@ onMounted(() => {
   mobileQuery.addEventListener("change", handleMobileChange);
   window.addEventListener("hermes:open-page-sidebar", openPageSidebar);
   window.addEventListener("hermes:preview-workspace-file", handleWorkspaceFilePreviewRequest);
+  window.addEventListener(OPEN_SUBAGENT_STREAM_EVENT, handleOpenSubagentStreamRequest);
   window.addEventListener("resize", handleToolPanelViewportResize);
   handleToolPanelViewportResize();
   if (profilesStore.profiles.length === 0) {
@@ -319,7 +344,7 @@ watch(
   async (sessionId, previousSessionId) => {
     if (!sessionId || !previousSessionId || sessionId === previousSessionId) return;
 
-    if (filesStore.previewFile || toolPanelStore.workspaceDiff) {
+    if (filesStore.previewFile || toolPanelStore.workspaceDiff || selectedSubagent.value) {
       closeToolPanelOverlay();
     }
 
@@ -346,6 +371,7 @@ onUnmounted(() => {
   mobileQuery?.removeEventListener("change", handleMobileChange);
   window.removeEventListener("hermes:open-page-sidebar", openPageSidebar);
   window.removeEventListener("hermes:preview-workspace-file", handleWorkspaceFilePreviewRequest);
+  window.removeEventListener(OPEN_SUBAGENT_STREAM_EVENT, handleOpenSubagentStreamRequest);
   window.removeEventListener("resize", handleToolPanelViewportResize);
   stopToolResize();
   sessionFadeAnimation?.cancel();
@@ -362,14 +388,20 @@ watch(showToolPanel, async (visible) => {
 watch(
   () => toolPanelStore.workspaceDiff,
   (workspaceDiff) => {
-    if (workspaceDiff) showToolPanel.value = true;
+    if (workspaceDiff) {
+      selectedSubagent.value = null;
+      showToolPanel.value = true;
+    }
   },
 );
 
 watch(
   () => filesStore.previewFile,
   (previewFile) => {
-    if (previewFile) showToolPanel.value = true;
+    if (previewFile) {
+      selectedSubagent.value = null;
+      showToolPanel.value = true;
+    }
   },
 );
 
@@ -2258,6 +2290,11 @@ async function handleSessionModelCustomSubmit() {
               <FilePreview
                 v-else-if="filesStore.previewFile"
                 :custom-close="closeToolPanelOverlay"
+              />
+              <SubagentStreamPanel
+                v-else-if="selectedSubagent"
+                :stream="selectedSubagentStream"
+                @close="closeToolPanelOverlay"
               />
               <template v-else>
                 <div class="chat-tool-tabs" role="tablist">

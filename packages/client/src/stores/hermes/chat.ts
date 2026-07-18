@@ -85,6 +85,212 @@ export interface Message {
   runMarker?: string | null
 }
 
+export type SubagentStreamStatus =
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'error'
+  | 'cancelled'
+  | 'interrupted'
+
+export interface SubagentStreamEntry {
+  id: string
+  kind: 'text' | 'thinking' | 'tool' | 'status'
+  timestamp: number
+  text?: string
+  toolName?: string
+  toolArgs?: unknown
+  status?: SubagentStreamStatus | 'started'
+}
+
+export interface SubagentStream {
+  sessionId: string
+  subagentId: string
+  taskIndex: number
+  taskCount: number
+  goal?: string
+  model?: string
+  status: SubagentStreamStatus
+  startedAt: number
+  updatedAt: number
+  completedAt?: number
+  durationSeconds?: number
+  toolCount?: number
+  apiCalls?: number
+  inputTokens?: number
+  outputTokens?: number
+  costUsd?: number
+  summary?: string
+  lastBackgroundSeq?: number
+  entries: SubagentStreamEntry[]
+}
+
+const SUBAGENT_STREAM_ENTRY_LIMIT = 200
+const SUBAGENT_STREAM_TEXT_LIMIT = 80_000
+let subagentStreamEntrySequence = 0
+
+function subagentEventTimestamp(value: unknown): number {
+  const timestamp = Number(value)
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return Date.now()
+  return timestamp < 1_000_000_000_000 ? Math.round(timestamp * 1000) : Math.round(timestamp)
+}
+
+function subagentStatus(value: unknown, fallback: SubagentStreamStatus = 'running'): SubagentStreamStatus {
+  const status = String(value || '').trim().toLowerCase()
+  if (status === 'completed' || status === 'failed' || status === 'error' || status === 'cancelled' || status === 'interrupted') {
+    return status
+  }
+  return fallback
+}
+
+function subagentEntryId(eventName: string, evt: RunEvent): string {
+  const backgroundSequence = Number((evt as any).background_seq)
+  if (Number.isFinite(backgroundSequence)) return `${eventName}:${backgroundSequence}`
+  if ((evt as any).background_snapshot) return `snapshot:${eventName}`
+  subagentStreamEntrySequence += 1
+  return `${eventName}:${subagentStreamEntrySequence}`
+}
+
+function trimSubagentEntries(entries: SubagentStreamEntry[]): SubagentStreamEntry[] {
+  return entries.length > SUBAGENT_STREAM_ENTRY_LIMIT
+    ? entries.slice(entries.length - SUBAGENT_STREAM_ENTRY_LIMIT)
+    : entries
+}
+
+function appendSubagentText(
+  entries: SubagentStreamEntry[],
+  entry: SubagentStreamEntry,
+): SubagentStreamEntry[] {
+  const previous = entries[entries.length - 1]
+  if (previous?.kind === entry.kind && entry.text) {
+    const previousText = previous.text || ''
+    const nextText = entry.text.startsWith(previousText)
+      ? entry.text
+      : `${previousText}${entry.text}`
+    entries[entries.length - 1] = {
+      ...previous,
+      text: nextText.slice(-SUBAGENT_STREAM_TEXT_LIMIT),
+      timestamp: entry.timestamp,
+    }
+    return entries
+  }
+  entries.push({
+    ...entry,
+    text: entry.text?.slice(-SUBAGENT_STREAM_TEXT_LIMIT),
+  })
+  return trimSubagentEntries(entries)
+}
+
+export function reduceSubagentStream(
+  current: SubagentStream | undefined,
+  sessionId: string,
+  evt: RunEvent,
+): SubagentStream {
+  const eventName = String(evt.event || '')
+  const subagentId = String((evt as any).subagent_id || evt.delegation_id || `${(evt as any).task_index ?? 0}`)
+  const timestamp = subagentEventTimestamp(evt.timestamp || (evt as any).updated_at)
+  const backgroundSequence = Number((evt as any).background_seq)
+  if (
+    current
+    && Number.isFinite(backgroundSequence)
+    && current.lastBackgroundSeq != null
+    && backgroundSequence <= current.lastBackgroundSeq
+  ) {
+    return current
+  }
+
+  const incomingTaskIndex = Number((evt as any).task_index)
+  const incomingTaskCount = Number((evt as any).task_count)
+  const goal = String((evt as any).goal || '').trim()
+  const model = String((evt as any).model || '').trim()
+  const summary = String((evt as any).summary || '').trim()
+  const rawText = String(evt.text || evt.preview || '')
+  const text = rawText.trim()
+  const toolName = String((evt as any).tool || (evt as any).name || '').trim()
+  const durationSeconds = Number((evt as any).duration_seconds ?? (evt as any).duration)
+  const toolCount = Number((evt as any).tool_count)
+  const apiCalls = Number((evt as any).api_calls)
+  const inputTokens = Number((evt as any).input_tokens)
+  const outputTokens = Number((evt as any).output_tokens)
+  const costUsd = Number((evt as any).cost_usd)
+  const isTerminal = eventName === 'subagent.complete'
+    || (eventName === 'delegation.updated' && ['completed', 'failed', 'error', 'cancelled', 'interrupted'].includes(String((evt as any).status || '').toLowerCase()))
+  const nextStatus = isTerminal
+    ? subagentStatus((evt as any).status, 'completed')
+    : 'running'
+  const entries = current ? [...current.entries] : []
+  const entryId = subagentEntryId(eventName, evt)
+
+  if (eventName === 'subagent.start') {
+    if (!entries.some(entry => entry.kind === 'status' && entry.status === 'started')) {
+      entries.push({ id: entryId, kind: 'status', status: 'started', timestamp, text: goal || undefined })
+    }
+  } else if (eventName === 'subagent.text' && rawText) {
+    appendSubagentText(entries, { id: entryId, kind: 'text', timestamp, text: rawText })
+  } else if (eventName === 'subagent.thinking' && rawText) {
+    appendSubagentText(entries, { id: entryId, kind: 'thinking', timestamp, text: rawText })
+  } else if (eventName === 'subagent.tool') {
+    entries.push({
+      id: entryId,
+      kind: 'tool',
+      timestamp,
+      text: text || undefined,
+      toolName: toolName || undefined,
+      toolArgs: (evt as any).arguments,
+    })
+  } else if (eventName === 'subagent.progress' && text) {
+    const previous = entries[entries.length - 1]
+    const progressEntry: SubagentStreamEntry = {
+      id: entryId,
+      kind: 'status',
+      status: 'running',
+      timestamp,
+      text,
+    }
+    if (previous?.kind === 'status' && previous.status === 'running') entries[entries.length - 1] = progressEntry
+    else entries.push(progressEntry)
+  }
+
+  if (isTerminal) {
+    const finalText = summary || text
+    const previousText = [...entries].reverse().find(entry => entry.kind === 'text')?.text?.trim()
+    if (finalText && previousText !== finalText) {
+      entries.push({ id: `${entryId}:summary`, kind: 'text', timestamp, text: finalText })
+    }
+    const previous = entries[entries.length - 1]
+    const terminalEntry: SubagentStreamEntry = {
+      id: entryId,
+      kind: 'status',
+      status: nextStatus,
+      timestamp,
+    }
+    if (previous?.kind === 'status' && previous.status !== 'started') entries[entries.length - 1] = terminalEntry
+    else entries.push(terminalEntry)
+  }
+
+  return {
+    sessionId,
+    subagentId,
+    taskIndex: Number.isFinite(incomingTaskIndex) ? incomingTaskIndex : current?.taskIndex || 0,
+    taskCount: Number.isFinite(incomingTaskCount) && incomingTaskCount > 0 ? incomingTaskCount : current?.taskCount || 1,
+    goal: goal || current?.goal,
+    model: model || current?.model,
+    status: nextStatus,
+    startedAt: current?.startedAt || subagentEventTimestamp((evt as any).started_at || timestamp),
+    updatedAt: timestamp,
+    completedAt: isTerminal ? subagentEventTimestamp((evt as any).completed_at || timestamp) : current?.completedAt,
+    durationSeconds: Number.isFinite(durationSeconds) ? durationSeconds : current?.durationSeconds,
+    toolCount: Number.isFinite(toolCount) ? toolCount : current?.toolCount,
+    apiCalls: Number.isFinite(apiCalls) ? apiCalls : current?.apiCalls,
+    inputTokens: Number.isFinite(inputTokens) ? inputTokens : current?.inputTokens,
+    outputTokens: Number.isFinite(outputTokens) ? outputTokens : current?.outputTokens,
+    costUsd: Number.isFinite(costUsd) ? costUsd : current?.costUsd,
+    summary: summary || current?.summary,
+    lastBackgroundSeq: Number.isFinite(backgroundSequence) ? backgroundSequence : current?.lastBackgroundSeq,
+    entries: trimSubagentEntries(entries),
+  }
+}
+
 export interface MessageReference {
   id: string
   role: 'user' | 'assistant'
@@ -332,6 +538,25 @@ function runtimePayloadText(value: unknown): string {
   return String(value)
 }
 
+function runtimeObjectPayload(value: unknown): Record<string, unknown> | null {
+  if (!value) return null
+  if (typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>
+  if (typeof value !== 'string') return null
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null
+  } catch {
+    return null
+  }
+}
+
+function isBackgroundDelegateToolPayload(toolName: unknown, payload: unknown): boolean {
+  if (String(toolName || '') !== 'delegate_task') return false
+  return runtimeObjectPayload(payload)?.mode === 'background'
+}
+
 function parsePersistedMoaToolPayload(toolName: string | undefined, value: unknown): { preview?: string; result?: unknown } | null {
   if (toolName !== 'moa_reference' && toolName !== 'moa_aggregating') return null
   const payload = typeof value === 'string'
@@ -500,6 +725,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
       const toolName = msg.tool_name || toolNameMap.get(tcId) || undefined
       const toolArgs = toolArgsMap.has(tcId) ? toolArgsMap.get(tcId) : undefined
       const moaPayload = parsePersistedMoaToolPayload(toolName, (msg as any).content)
+      const backgroundDelegate = isBackgroundDelegateToolPayload(toolName, (msg as any).content)
       // Extract a short preview from the content
       let preview = moaPayload?.preview || ''
       const contentText = runtimePayloadText((msg as any).content)
@@ -520,6 +746,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
       if (placeholderIdx !== -1) {
         result.splice(placeholderIdx, 1)
       }
+      if (backgroundDelegate) continue
       result.push({
         id: String(msg.id),
         role: 'tool',
@@ -749,6 +976,8 @@ export const useChatStore = defineStore('chat', () => {
   const pendingForkCommands = ref<Set<string>>(new Set())
   /** Sessions that completed while the user was viewing another session. */
   const completedUnreadSessions = ref<Set<string>>(new Set())
+  /** UI-only live streams for Hermes background subagents. Never sent into parent context. */
+  const subagentStreams = ref<Map<string, SubagentStream>>(new Map())
   const storedSessionProfileFilter = getItemBestEffort(SESSION_PROFILE_FILTER_STORAGE_KEY)?.trim()
   const sessionProfileFilter = ref<string | null>(
     storedSessionProfileFilter && storedSessionProfileFilter !== '__all__'
@@ -1320,6 +1549,7 @@ export const useChatStore = defineStore('chat', () => {
     if (!activeSession.value) return
 
     isLoadingMessages.value = true
+    let backgroundPendingOnResume = 0
 
     try {
       // Load messages via Socket.IO resume (server loads from DB if not in memory)
@@ -1341,6 +1571,7 @@ export const useChatStore = defineStore('chat', () => {
           } else {
             serverWorking.value.delete(sessionId)
           }
+          backgroundPendingOnResume = Number(data.backgroundPending || 0)
           if (data.queueLength && data.queueLength > 0) {
             queueLengths.value.set(sessionId, data.queueLength)
           } else {
@@ -1432,6 +1663,7 @@ export const useChatStore = defineStore('chat', () => {
               } else if (e.event === 'workspace.diff.completed') {
                 handleWorkspaceRunChangeEvent(sessionId, e)
               } else if (e.event === 'tool.started') {
+                if (isBackgroundDelegateToolPayload(e.tool || e.name, (e as any).arguments)) continue
                 const msgs = getSessionMsgs(sessionId)
                 const toolCallId = e.tool_call_id as string | undefined
                 const existingTool = toolCallId
@@ -1463,8 +1695,13 @@ export const useChatStore = defineStore('chat', () => {
                 const toolMsgs = toolCallId
                   ? msgs.filter(m => m.role === 'tool' && m.toolCallId === toolCallId)
                   : msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
+                const output = runtimeToolOutputFromEvent(e)
+                const toolName = e.tool || e.name || toolMsgs[toolMsgs.length - 1]?.toolName
+                if (isBackgroundDelegateToolPayload(toolName, output)) {
+                  target.messages = target.messages.filter(message => !toolMsgs.includes(message))
+                  continue
+                }
                 if (toolMsgs.length > 0) {
-                  const output = runtimeToolOutputFromEvent(e)
                   updateMessage(sessionId, toolMsgs[toolMsgs.length - 1].id, {
                     toolStatus: e.event === 'tool.failed' || e.error === true || runtimeToolOutputHasError(output) ? 'error' : 'done',
                     toolDuration: e.duration,
@@ -1473,9 +1710,29 @@ export const useChatStore = defineStore('chat', () => {
                 }
               } else if (e.event === 'moa.reference' || e.event === 'moa.aggregating') {
                 handleMoaEvent(sessionId, e as RunEvent)
-              } else if (String(e.event || '').startsWith('subagent.')) {
+              } else if (String(e.event || '').startsWith('subagent.') || e.event === 'delegation.updated') {
                 handleSubagentEvent(sessionId, e as RunEvent)
               }
+            }
+          }
+          if (Array.isArray(data.backgroundTasks)) {
+            for (const task of data.backgroundTasks) {
+              const lastEvent = String(task.last_event || '')
+              const status = String(task.status || '')
+              const event = lastEvent.startsWith('subagent.')
+                ? lastEvent
+                : status === 'running' ? 'subagent.progress' : 'subagent.complete'
+              handleSubagentEvent(sessionId, {
+                ...task,
+                event,
+                session_id: sessionId,
+                background_snapshot: true,
+                subagent_id: task.subagent_id,
+                tool: task.last_tool,
+                name: task.last_tool,
+                text: task.preview,
+                duration_seconds: task.duration_seconds,
+              } as RunEvent)
             }
           }
           resolve()
@@ -1492,7 +1749,7 @@ export const useChatStore = defineStore('chat', () => {
 
     // Resume in-flight run event listeners if needed
     if (activeSessionId.value === sessionId) {
-      resumeServerWorkingRun(sessionId)
+      resumeServerWorkingRun(sessionId, backgroundPendingOnResume > 0, !serverWorking.value.has(sessionId))
     }
   }
 
@@ -1669,7 +1926,7 @@ export const useChatStore = defineStore('chat', () => {
   function settleRunningTools(sessionId: string, status: 'done' | 'error') {
     const msgs = getSessionMsgs(sessionId)
     msgs.forEach((m, i) => {
-      if (m.role === 'tool' && m.toolStatus === 'running') {
+      if (m.role === 'tool' && m.toolStatus === 'running' && !m.toolCallId?.startsWith('subagent:')) {
         msgs[i] = { ...m, toolStatus: status }
       }
     })
@@ -1693,31 +1950,63 @@ export const useChatStore = defineStore('chat', () => {
 
   function handleSubagentEvent(sessionId: string, evt: RunEvent) {
     const eventName = String(evt.event || '')
-    if (!eventName.startsWith('subagent.')) return
+    if (!eventName.startsWith('subagent.') && eventName !== 'delegation.updated') return
+
+    if (eventName === 'delegation.updated') {
+      const delegationId = String(evt.delegation_id || '').trim()
+      const status = subagentStatus((evt as any).status)
+      if (status === 'running') return
+      const sessionStreams = [...subagentStreams.value.values()].filter(stream =>
+        stream.sessionId === sessionId && stream.status === 'running',
+      )
+      const exactMatch = sessionStreams.find(stream => stream.subagentId === delegationId)
+      const targets = exactMatch
+        ? [exactMatch]
+        : ['failed', 'error', 'cancelled', 'interrupted'].includes(status)
+          ? sessionStreams
+          : []
+      for (const stream of targets) {
+        handleSubagentEvent(sessionId, {
+          ...evt,
+          event: 'subagent.complete',
+          subagent_id: stream.subagentId,
+          task_index: stream.taskIndex,
+          task_count: stream.taskCount,
+          goal: stream.goal,
+          model: stream.model,
+          status,
+        })
+      }
+      return
+    }
 
     const subagentId = String((evt as any).subagent_id || `${(evt as any).task_index ?? 0}`)
-    const toolCallId = `subagent:${evt.run_id || 'run'}:${subagentId}`
+    const streamKey = `${sessionId}:${subagentId}`
+    subagentStreams.value.set(
+      streamKey,
+      reduceSubagentStream(subagentStreams.value.get(streamKey), sessionId, evt),
+    )
+    const toolCallId = `subagent:${subagentId}`
     const taskIndex = Number((evt as any).task_index ?? 0)
     const taskCount = Number((evt as any).task_count ?? 1)
     const label = `${taskIndex + 1}/${Math.max(1, taskCount || 1)}`
     const toolName = String((evt as any).tool || (evt as any).name || '')
     const toolCount = Number((evt as any).tool_count || 0)
     const goal = String((evt as any).goal || '').trim()
-    const text = String(evt.text || evt.preview || '').trim()
+    const rawText = String(evt.text || evt.preview || '')
+    const text = rawText.trim()
     const summary = String((evt as any).summary || '').trim()
     const duration = Number((evt as any).duration_seconds ?? (evt as any).duration)
 
-    let preview = text || summary || goal
+    let preview = `${label}${goal ? ` · ${goal}` : ''}`
     if (eventName === 'subagent.start') {
-      preview = `subagent ${label} started${goal ? `: ${goal}` : ''}`
+      preview = `${label}${goal ? ` · ${goal}` : ''}`
     } else if (eventName === 'subagent.tool') {
-      const prefix = `subagent ${label}${toolCount ? ` turn ${toolCount}` : ''}`
-      preview = `${prefix}${toolName ? `: ${toolName}` : ''}${text ? ` - ${text}` : ''}`
-    } else if (eventName === 'subagent.progress') {
-      preview = `subagent ${label}: ${text || 'working'}`
+      preview = `${label}${toolCount ? ` · #${toolCount}` : ''}${toolName ? ` · ${toolName}` : ''}${text ? ` · ${text}` : ''}`
+    } else if (eventName === 'subagent.progress' || eventName === 'subagent.text' || eventName === 'subagent.thinking') {
+      preview = `${label}${text ? ` · ${text}` : goal ? ` · ${goal}` : ''}`
     } else if (eventName === 'subagent.complete') {
-      const status = String((evt as any).status || 'completed')
-      preview = `subagent ${label} ${status}${summary ? `: ${summary}` : ''}`
+      preview = `${label}${summary ? ` · ${summary}` : text ? ` · ${text}` : ''}`
     }
 
     const msgs = getSessionMsgs(sessionId)
@@ -1729,6 +2018,9 @@ export const useChatStore = defineStore('chat', () => {
       toolName: 'delegate_task',
       toolCallId,
       toolPreview: preview.slice(0, 220),
+      toolArgs: eventName === 'subagent.tool'
+        ? runtimeToolPayloadOrUndefined((evt as any).arguments)
+        : existing?.toolArgs,
       toolStatus,
       toolDuration: Number.isFinite(duration) ? duration : undefined,
       toolResult: eventName === 'subagent.complete'
@@ -1738,8 +2030,9 @@ export const useChatStore = defineStore('chat', () => {
             api_calls: (evt as any).api_calls,
             input_tokens: (evt as any).input_tokens,
             output_tokens: (evt as any).output_tokens,
+            output_tail: (evt as any).output_tail,
           }, null, 2)
-        : undefined,
+        : existing?.toolResult,
     }
 
     if (existing) {
@@ -1754,6 +2047,10 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: Date.now(),
       ...update,
     })
+  }
+
+  function getSubagentStream(sessionId: string, subagentId: string): SubagentStream | null {
+    return subagentStreams.value.get(`${sessionId}:${subagentId}`) || null
   }
 
   function handleMoaEvent(sessionId: string, evt: RunEvent) {
@@ -2937,6 +3234,7 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'tool.started': {
               runHadToolActivity = true
+              if (isBackgroundDelegateToolPayload(evt.tool || evt.name, (evt as any).arguments)) break
               const msgs = getSessionMsgs(sid)
               const toolCallId = (evt as any).tool_call_id as string | undefined
               const last = activeAssistantMessageId
@@ -2981,9 +3279,15 @@ export const useChatStore = defineStore('chat', () => {
               const toolMsgs = toolCallId
                 ? msgs.filter(m => m.role === 'tool' && m.toolCallId === toolCallId)
                 : msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
+              const output = runtimeToolOutputFromEvent(evt)
+              const toolName = evt.tool || evt.name || toolMsgs[toolMsgs.length - 1]?.toolName
+              if (isBackgroundDelegateToolPayload(toolName, output)) {
+                const session = sessions.value.find(item => item.id === sid)
+                if (session) session.messages = session.messages.filter(message => !toolMsgs.includes(message))
+                break
+              }
               if (toolMsgs.length > 0) {
                 const last = toolMsgs[toolMsgs.length - 1]
-                const output = runtimeToolOutputFromEvent(evt)
                 const hasError = evt.event === 'tool.failed' || (evt as any).error === true || runtimeToolOutputHasError(output)
                 const duration = (evt as any).duration
                 updateMessage(sid, last.id, {
@@ -3004,7 +3308,10 @@ export const useChatStore = defineStore('chat', () => {
             case 'subagent.start':
             case 'subagent.tool':
             case 'subagent.progress':
-            case 'subagent.complete': {
+            case 'subagent.text':
+            case 'subagent.thinking':
+            case 'subagent.complete':
+            case 'delegation.updated': {
               runHadToolActivity = true
               handleSubagentEvent(sid, evt)
               break
@@ -3273,7 +3580,7 @@ export const useChatStore = defineStore('chat', () => {
    * Emits 'resume' to join the session room on the server,
    * then sets up event listeners to receive ongoing events.
    */
-  function resumeServerWorkingRun(sid: string, force = false) {
+  function resumeServerWorkingRun(sid: string, force = false, passive = false) {
     // Don't register duplicate listeners if already streaming
     if (streamStates.value.has(sid)) return
     // Only set up listeners if the server reported an active run during resume.
@@ -3294,6 +3601,20 @@ export const useChatStore = defineStore('chat', () => {
       serverWorking.value.delete(sid)
       // Unregister from global session handlers
       unregisterSessionHandlers(sid)
+    }
+
+    const markIdleKeepingBackgroundListener = () => {
+      streamStates.value.delete(sid)
+      serverWorking.value.delete(sid)
+    }
+
+    const ensureAbortHandle = () => {
+      if (streamStates.value.has(sid)) return
+      streamStates.value.set(sid, {
+        abort: () => {
+          getChatRunSocket(runtimeTransport())?.emit('abort', { session_id: sid })
+        },
+      })
     }
 
     const closeStreamingAssistant = () => {
@@ -3362,6 +3683,7 @@ export const useChatStore = defineStore('chat', () => {
         case 'run.started':
           clearSessionCompletedUnread(sid)
           serverWorking.value.add(sid)
+          ensureAbortHandle()
           clearAgentEventMessages(sid)
           setAbortState(null)
           setCompressionState(sid, null)
@@ -3537,6 +3859,7 @@ export const useChatStore = defineStore('chat', () => {
 
         case 'tool.started': {
           runHadToolActivity = true
+          if (isBackgroundDelegateToolPayload(evt.tool || evt.name, (evt as any).arguments)) break
           const msgs = getSessionMsgs(sid)
           const toolCallId = (evt as any).tool_call_id as string | undefined
           const last = activeAssistantMessageId
@@ -3581,8 +3904,14 @@ export const useChatStore = defineStore('chat', () => {
           const toolMsgs = toolCallId
             ? msgs.filter(m => m.role === 'tool' && m.toolCallId === toolCallId)
             : msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
+          const output = runtimeToolOutputFromEvent(evt)
+          const toolName = evt.tool || evt.name || toolMsgs[toolMsgs.length - 1]?.toolName
+          if (isBackgroundDelegateToolPayload(toolName, output)) {
+            const session = sessions.value.find(item => item.id === sid)
+            if (session) session.messages = session.messages.filter(message => !toolMsgs.includes(message))
+            break
+          }
           if (toolMsgs.length > 0) {
-            const output = runtimeToolOutputFromEvent(evt)
             const hasError = evt.event === 'tool.failed' || (evt as any).error === true || runtimeToolOutputHasError(output)
             updateMessage(sid, toolMsgs[toolMsgs.length - 1].id, {
               toolStatus: hasError ? 'error' : 'done',
@@ -3602,7 +3931,10 @@ export const useChatStore = defineStore('chat', () => {
         case 'subagent.start':
         case 'subagent.tool':
         case 'subagent.progress':
-        case 'subagent.complete': {
+        case 'subagent.text':
+        case 'subagent.thinking':
+        case 'subagent.complete':
+        case 'delegation.updated': {
           runHadToolActivity = true
           handleSubagentEvent(sid, evt)
           break
@@ -3632,6 +3964,7 @@ export const useChatStore = defineStore('chat', () => {
           handleTerminalWorkspaceRunChange(sid, evt)
           clearAgentEventMessages(sid)
           const hasQueue = (evt as any).queue_remaining > 0
+          const hasBackground = (evt.background_pending || 0) > 0
           if (hasQueue) {
             queueLengths.value.set(sid, (evt as any).queue_remaining)
           } else {
@@ -3743,15 +4076,21 @@ export const useChatStore = defineStore('chat', () => {
             }
           }
 
-          if (!hasQueue) {
+          if (!hasQueue && !hasBackground) {
             markSessionCompletedUnread(sid)
             cleanup()
             activeAssistantMessageId = null
             reasoningAssistantMessageId = null
             activeRunMarker = null
-          } else {
+          } else if (hasQueue) {
             markSessionCompletedUnread(sid, true)
             // More runs pending — reset for next run but don't cleanup
+            activeAssistantMessageId = null
+            reasoningAssistantMessageId = null
+            activeRunMarker = null
+          } else {
+            markSessionCompletedUnread(sid)
+            markIdleKeepingBackgroundListener()
             activeAssistantMessageId = null
             reasoningAssistantMessageId = null
             activeRunMarker = null
@@ -3772,6 +4111,7 @@ export const useChatStore = defineStore('chat', () => {
             }
           }
           const hasQueue = (evt as any).queue_remaining > 0
+          const hasBackground = (evt.background_pending || 0) > 0
           if (hasQueue) {
             queueLengths.value.set(sid, (evt as any).queue_remaining)
           } else {
@@ -3779,8 +4119,10 @@ export const useChatStore = defineStore('chat', () => {
           }
           addAgentErrorMessage(sid, evt.error)
           settleRunningTools(sid, 'error')
-          if (!hasQueue) {
+          if (!hasQueue && !hasBackground) {
             cleanup()
+          } else if (hasBackground && !hasQueue) {
+            markIdleKeepingBackgroundListener()
           }
           activeAssistantMessageId = null
           reasoningAssistantMessageId = null
@@ -3831,12 +4173,10 @@ export const useChatStore = defineStore('chat', () => {
     // Server already joined room and replayed events.
     // Just set up handlers for ongoing streaming events.
 
-    // Mark as streaming so UI shows the indicator and can still abort after refresh.
-    streamStates.value.set(sid, {
-      abort: () => {
-        getChatRunSocket(runtimeTransport())?.emit('abort', { session_id: sid })
-      },
-    })
+    // A passive listener keeps background subagent telemetry alive without
+    // making the parent session look busy. The abort handle is installed when
+    // the completion notification starts its autonomous parent turn.
+    if (!passive) ensureAbortHandle()
   }
 
   function handlePeerUserMessage(evt: RunEvent) {
@@ -4116,6 +4456,8 @@ export const useChatStore = defineStore('chat', () => {
     pendingApprovals,
     activePendingApproval,
     activePendingClarify,
+    subagentStreams,
+    getSubagentStream,
     removeQueuedMessage,
     setMessageReference,
     clearMessageReference,

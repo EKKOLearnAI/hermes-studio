@@ -212,4 +212,53 @@ describe('chat-run socket reconnect handling', () => {
     socket.__trigger('session.command', { ...event, message: 'next status' })
     expect(onGlobalCommand).toHaveBeenCalledTimes(1)
   })
+
+  it('keeps the session listener alive while background delegations remain', async () => {
+    const { startRunViaSocket } = await import('../../packages/client/src/api/hermes/chat')
+    const onEvent = vi.fn()
+    const onDone = vi.fn()
+
+    startRunViaSocket(
+      { session_id: 'session-background', input: 'delegate this', profile: 'default', source: 'cli' },
+      onEvent,
+      onDone,
+      vi.fn(),
+    )
+
+    const socket = socketState.sockets[0]
+    socket.__trigger('run.completed', {
+      event: 'run.completed',
+      session_id: 'session-background',
+      background_pending: 1,
+    })
+    expect(onDone).toHaveBeenCalledTimes(1)
+
+    const childText = {
+      event: 'subagent.text',
+      session_id: 'session-background',
+      subagent_id: 'child-1',
+      text: 'still working',
+    }
+    socket.__trigger('subagent.text', childText)
+    expect(onEvent).toHaveBeenCalledWith(childText)
+
+    socket.__trigger('run.started', {
+      event: 'run.started',
+      session_id: 'session-background',
+      autonomous: true,
+      delegation_id: 'deleg-1',
+    })
+    socket.__trigger('run.completed', {
+      event: 'run.completed',
+      session_id: 'session-background',
+      autonomous: true,
+      delegation_id: 'deleg-1',
+      background_pending: 0,
+    })
+    expect(onDone).toHaveBeenCalledTimes(2)
+
+    const callsAfterCompletion = onEvent.mock.calls.length
+    socket.__trigger('subagent.text', { ...childText, text: 'late event' })
+    expect(onEvent).toHaveBeenCalledTimes(callsAfterCompletion)
+  })
 })

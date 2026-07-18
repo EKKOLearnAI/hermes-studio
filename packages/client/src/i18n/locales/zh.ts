@@ -481,6 +481,12 @@ export default {
     files: '工作区',
   },
 
+  subagent: {
+    title: '后台子任务', noGoal: '未命名后台子任务', open: '打开后台子任务实时输出', close: '关闭后台子任务输出',
+    waiting: '正在等待实时输出…', tool: '工具', tools: '{count} 次工具调用', tokens: '输入 {input} · 输出 {output}',
+    started: '已启动', running: '执行中', completed: '已完成', failed: '执行失败', cancelled: '已取消', interrupted: '已停止',
+  },
+
   realtimeVoice: {
     title: '实时语音',
     mode: '语音模式',

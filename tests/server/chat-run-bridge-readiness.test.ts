@@ -12,6 +12,8 @@ const getSessionMock = vi.hoisted(() => vi.fn((sessionId?: string) => sessionId
 const bridgeMock = vi.hoisted(() => ({
   status: vi.fn(),
   statusIfLoaded: vi.fn(),
+  releaseBackgroundNotification: vi.fn(async () => ({ ok: true, released: true })),
+  close: vi.fn(async () => {}),
 }))
 
 vi.mock('../../packages/server/src/services/hermes/run-chat/handle-bridge-run', () => ({
@@ -107,6 +109,10 @@ describe('ensureBridgeReadyForChatRun', () => {
     getRuntimeStateMock.mockReset()
     bridgeMock.status.mockReset()
     bridgeMock.statusIfLoaded.mockReset()
+    bridgeMock.releaseBackgroundNotification.mockReset()
+    bridgeMock.close.mockReset()
+    bridgeMock.releaseBackgroundNotification.mockResolvedValue({ ok: true, released: true })
+    bridgeMock.close.mockResolvedValue(undefined)
     handleBridgeRunMock.mockReset()
     resumeBridgeRunMock.mockReset()
     handleCodingAgentRunMock.mockReset()
@@ -178,6 +184,10 @@ describe('ChatRunSocket bridge readiness gating', () => {
     getRuntimeStateMock.mockReset()
     bridgeMock.status.mockReset()
     bridgeMock.statusIfLoaded.mockReset()
+    bridgeMock.releaseBackgroundNotification.mockReset()
+    bridgeMock.close.mockReset()
+    bridgeMock.releaseBackgroundNotification.mockResolvedValue({ ok: true, released: true })
+    bridgeMock.close.mockResolvedValue(undefined)
     handleBridgeRunMock.mockReset()
     resumeBridgeRunMock.mockReset()
     handleCodingAgentRunMock.mockReset()
@@ -617,5 +627,46 @@ describe('ChatRunSocket bridge readiness gating', () => {
       isWorking: false,
       events: [],
     }))
+  })
+
+  it('releases queued background completion claims before closing bridge clients', async () => {
+    const order: string[] = []
+    bridgeMock.releaseBackgroundNotification.mockImplementationOnce(async () => {
+      order.push('release')
+      return { ok: true, released: true }
+    })
+    bridgeMock.close.mockImplementation(async () => {
+      order.push('close')
+    })
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    ;(server as any).sessionMap.set('session-1', {
+      messages: [],
+      isWorking: true,
+      isAborting: false,
+      events: [],
+      queue: [{
+        queue_id: 'delegation-d1',
+        input: 'completion',
+        profile: 'default',
+        source: 'cli',
+        backgroundDelegationId: 'd1',
+        backgroundClaimId: 'claim-1',
+      }],
+    })
+
+    await server.close()
+
+    expect(bridgeMock.releaseBackgroundNotification).toHaveBeenCalledWith(
+      'session-1',
+      'default',
+      'd1',
+      'claim-1',
+    )
+    expect(order[0]).toBe('release')
+    expect(order.slice(1)).toEqual(['close', 'close'])
+    expect((server as any).sessionMap.size).toBe(0)
+    expect((server as any).closing).toBe(true)
   })
 })

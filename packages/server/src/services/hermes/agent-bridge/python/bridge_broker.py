@@ -256,6 +256,59 @@ class BridgeBroker:
         if action == "status_if_loaded":
             return self._status_if_loaded(req)
 
+        if action == "background_poll":
+            requested_routes: dict[str, set[str]] = {}
+            for route in req.get("routes") or []:
+                if not isinstance(route, dict):
+                    continue
+                profile = self._normalize_profile(route.get("profile"))
+                requested_routes.setdefault(profile, set()).update(
+                    str(session_id).strip()
+                    for session_id in (route.get("session_ids") or [])
+                    if str(session_id).strip()
+                )
+            for profile in requested_routes:
+                self._worker_for_profile(profile)
+            with self._lock:
+                workers = list(self._workers.values())
+            sessions: list[dict[str, Any]] = []
+            notifications: list[dict[str, Any]] = []
+            pending_count = 0
+            for worker in workers:
+                profile = getattr(worker, "profile", "default") or "default"
+                if not worker.running:
+                    if profile not in requested_routes:
+                        continue
+                try:
+                    response = worker.request({
+                        "action": "background_poll",
+                        "session_ids": sorted(requested_routes.get(profile, set())),
+                    })
+                except Exception:
+                    continue
+                pending_count += int(response.get("pending_count") or 0)
+                for session in response.get("sessions") or []:
+                    if isinstance(session, dict):
+                        sessions.append({**session, "profile": profile})
+                for notification in response.get("notifications") or []:
+                    if isinstance(notification, dict):
+                        notifications.append({**notification, "profile": profile})
+            return {
+                "broker_id": str(os.getpid()),
+                "pending_count": pending_count,
+                "sessions": sessions,
+                "notifications": notifications,
+            }
+
+        if action in {"background_notification_complete", "background_notification_release"}:
+            session_id = str(req.get("session_id") or "")
+            profile, worker_key = self._route_for_session(
+                session_id,
+                req.get("profile"),
+                req.get("worker_key") if "worker_key" in req else None,
+            )
+            return self._forward(profile, req, worker_key)
+
         if action in {"interrupt", "steer", "command", "switch_session_model", "goal_evaluate", "goal_pause", "status", "get_history", "get_session_title", "destroy"}:
             session_id = str(req.get("session_id") or "")
             profile, worker_key = self._route_for_session(session_id, req.get("profile"), req.get("worker_key") if "worker_key" in req else None)

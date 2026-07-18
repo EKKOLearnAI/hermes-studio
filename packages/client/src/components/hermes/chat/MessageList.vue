@@ -23,6 +23,7 @@ import MessageItem from "./MessageItem.vue";
 import { LIVE_CHAT_MAX_LOADED_MESSAGES, parseMessageReference, useChatStore, type Message } from "@/stores/hermes/chat";
 import thinkingImage from "@/assets/thinking.gif";
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
+import { openSubagentStream, subagentIdFromToolCall } from "@/utils/hermes/subagent-stream";
 
 const props = withDefaults(defineProps<{
   approvalPortalToBody?: boolean
@@ -58,6 +59,15 @@ function formatToolDuration(seconds: number): string {
 function toolPreviewText(preview?: string): string {
   const text = String(preview || '')
   return text.length > 160 ? `${text.slice(0, 157)}...` : text
+}
+
+function isSubagentToolCall(message: Message): boolean {
+  return subagentIdFromToolCall(message.toolCallId) !== null
+}
+
+function handleToolCallClick(message: Message) {
+  if (!isSubagentToolCall(message)) return
+  openSubagentStream(chatStore.activeSessionId, message.toolCallId)
 }
 
 function formatElapsed(ms: number): string {
@@ -642,6 +652,13 @@ defineExpose({
               v-for="tc in visibleToolCalls"
               :key="tc.id"
               class="tool-call-item"
+              :class="{ 'subagent-entry': isSubagentToolCall(tc) }"
+              :role="isSubagentToolCall(tc) ? 'button' : undefined"
+              :tabindex="isSubagentToolCall(tc) ? 0 : undefined"
+              :title="isSubagentToolCall(tc) ? t('subagent.open') : undefined"
+              @click="handleToolCallClick(tc)"
+              @keydown.enter.prevent="handleToolCallClick(tc)"
+              @keydown.space.prevent="handleToolCallClick(tc)"
             >
               <svg
                 width="12"
@@ -1575,6 +1592,16 @@ defineExpose({
   padding: 3px 8px;
   background: rgba(0, 0, 0, 0.03);
   border-radius: $radius-sm;
+
+  &.subagent-entry {
+    cursor: pointer;
+
+    &:hover,
+    &:focus-visible {
+      outline: none;
+      background: rgba(var(--accent-primary-rgb), 0.09);
+    }
+  }
 
   .dark & {
     background: rgba(255, 255, 255, 0.06);

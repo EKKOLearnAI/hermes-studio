@@ -74,6 +74,128 @@ test('sends a chat run and renders streamed Socket.IO response events', async ({
   expect(api.unexpectedRequests).toEqual([])
 })
 
+test('shows one real subagent card and opens its live chat stream in the resizable preview panel', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+  await sendChatMessage(page, 'Delegate the research task')
+  const { run } = await waitForRun(page)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'run-delegate' })
+    socket.__trigger('tool.started', {
+      event: 'tool.started',
+      session_id: sid,
+      run_id: 'run-delegate',
+      tool_call_id: 'delegate-call-1',
+      tool: 'delegate_task',
+      arguments: { mode: 'background', goal: 'Research the latest technology news' },
+    })
+    socket.__trigger('tool.completed', {
+      event: 'tool.completed',
+      session_id: sid,
+      run_id: 'run-delegate',
+      tool_call_id: 'delegate-call-1',
+      tool: 'delegate_task',
+      output: JSON.stringify({
+        mode: 'background',
+        status: 'dispatched',
+        delegation_id: 'delegation-1',
+      }),
+    })
+    socket.__trigger('delegation.updated', {
+      event: 'delegation.updated',
+      session_id: sid,
+      delegation_id: 'delegation-1',
+      status: 'running',
+      background_pending: 1,
+    })
+    socket.__trigger('run.completed', {
+      event: 'run.completed',
+      session_id: sid,
+      run_id: 'run-delegate',
+      output: 'Delegation started.',
+      background_pending: 1,
+    })
+  }, run.session_id)
+
+  await expect(page.locator('.subagent-entry')).toHaveCount(0)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('subagent.start', {
+      event: 'subagent.start',
+      session_id: sid,
+      subagent_id: 'child-1',
+      task_index: 0,
+      task_count: 1,
+      goal: 'Research the latest technology news',
+      model: 'test-model',
+      background_seq: 1,
+    })
+    socket.__trigger('subagent.text', {
+      event: 'subagent.text',
+      session_id: sid,
+      subagent_id: 'child-1',
+      text: 'Child live answer.',
+      background_seq: 2,
+    })
+    socket.__trigger('subagent.tool', {
+      event: 'subagent.tool',
+      session_id: sid,
+      subagent_id: 'child-1',
+      tool: 'search_web',
+      arguments: { query: 'technology news' },
+      preview: 'technology news',
+      tool_count: 1,
+      background_seq: 3,
+    })
+  }, run.session_id)
+
+  const subagentCards = page.locator('.message.tool .subagent-entry')
+  await expect(subagentCards).toHaveCount(1)
+  await expect(subagentCards).toContainText('delegate_task')
+  await subagentCards.click()
+
+  const panel = page.locator('.subagent-stream-panel')
+  await expect(panel).toBeVisible()
+  await expect(panel).toContainText('Research the latest technology news')
+  await expect(panel).toContainText('Child live answer.')
+  await expect(panel).toContainText('search_web')
+  await expect(panel.getByText('Waiting for live output...')).toHaveCount(0)
+  await expect(panel.locator('.message-bubble.system')).toHaveCount(0)
+
+  const backgrounds = await page.evaluate(() => ({
+    chat: getComputedStyle(document.querySelector('.chat-main-content')!).backgroundColor,
+    panel: getComputedStyle(document.querySelector('.subagent-stream-panel')!).backgroundColor,
+    transcript: getComputedStyle(document.querySelector('.subagent-stream-panel .virtual-message-list')!).backgroundColor,
+  }))
+  expect(backgrounds.panel).toBe(backgrounds.chat)
+  expect(backgrounds.transcript).toBe(backgrounds.chat)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('subagent.complete', {
+      event: 'subagent.complete',
+      session_id: sid,
+      subagent_id: 'child-1',
+      task_index: 0,
+      task_count: 1,
+      status: 'completed',
+      summary: 'Research finished.',
+      background_seq: 4,
+    })
+  }, run.session_id)
+
+  await expect(panel.locator('.subagent-status')).toHaveText('Completed')
+  await expect(panel).toContainText('Research finished.')
+  await expect(panel.locator('.message-bubble.system')).toHaveCount(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
 test('uses the newly selected profile for the next chat-run socket after profile switch reload', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'default')
   const api = await mockHermesApi(page, { initialProfileName: 'default' })

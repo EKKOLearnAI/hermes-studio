@@ -213,6 +213,24 @@ class BridgeServer:
         if action == "status":
             return self.pool.status(str(req.get("session_id") or ""))
 
+        if action == "background_poll":
+            session_ids = req.get("session_ids")
+            return self.pool.poll_background(session_ids if isinstance(session_ids, list) else None)
+
+        if action == "background_notification_complete":
+            delegation_id = str(req.get("delegation_id") or "").strip()
+            claim_id = str(req.get("claim_id") or "").strip()
+            if not delegation_id or not claim_id:
+                raise ValueError("delegation_id and claim_id are required")
+            return self.pool.complete_background_notification(delegation_id, claim_id)
+
+        if action == "background_notification_release":
+            delegation_id = str(req.get("delegation_id") or "").strip()
+            claim_id = str(req.get("claim_id") or "").strip()
+            if not delegation_id or not claim_id:
+                raise ValueError("delegation_id and claim_id are required")
+            return self.pool.release_background_notification(delegation_id, claim_id)
+
         if action == "destroy":
             return self.pool.destroy(str(req.get("session_id") or ""))
 
@@ -223,9 +241,10 @@ class BridgeServer:
             return self.pool.list_sessions()
 
         if action == "shutdown":
-            self._shutdown_all_mcp_servers()
+            cleanup = self.pool.shutdown()
+            cleanup["mcp_servers"] = self._shutdown_all_mcp_servers()
             self._stop.set()
-            return {"status": "shutting_down"}
+            return {"status": "shutting_down", "cleanup": cleanup}
 
         # ───── MCP Management (forwarded from broker) ─────
         if action.startswith("mcp_"):

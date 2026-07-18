@@ -481,6 +481,12 @@ export default {
     files: '工作區',
   },
 
+  subagent: {
+    title: '背景子任務', noGoal: '未命名背景子任務', open: '開啟背景子任務即時輸出', close: '關閉背景子任務輸出',
+    waiting: '正在等待即時輸出…', tool: '工具', tools: '{count} 次工具呼叫', tokens: '輸入 {input} · 輸出 {output}',
+    started: '已啟動', running: '執行中', completed: '已完成', failed: '執行失敗', cancelled: '已取消', interrupted: '已停止',
+  },
+
   realtimeVoice: {
     title: '即時語音',
     mode: '語音模式',

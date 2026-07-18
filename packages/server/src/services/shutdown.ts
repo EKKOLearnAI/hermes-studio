@@ -74,6 +74,14 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
         logger.info('[shutdown] leaving managed gateways running')
       }
 
+      // Stop accepting/routing chat work before stopping the bridge. This lets
+      // ChatRunSocket release any claimed background completion back to Hermes
+      // while the broker is still reachable.
+      if (chatRunServer) {
+        await chatRunServer.close()
+        logger.info('ChatRunSocket closed')
+      }
+
       if (agentBridgeManager && shouldStopAgentBridgeOnShutdown(signal)) {
         try {
           await agentBridgeManager.stop()
@@ -83,12 +91,6 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
         }
       } else if (agentBridgeManager) {
         logger.info('Leaving agent bridge running across Web UI shutdown')
-      }
-
-      // Close ChatRunSocket first to release WebSocket state.
-      if (chatRunServer) {
-        chatRunServer.close()
-        logger.info('ChatRunSocket closed')
       }
 
       stopOutboundRelayClient()

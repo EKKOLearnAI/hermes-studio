@@ -481,6 +481,12 @@ export default {
     files: 'Espaço de trabalho',
   },
 
+  subagent: {
+    title: 'Tarefa em segundo plano', noGoal: 'Tarefa em segundo plano sem título', open: 'Abrir saída ao vivo da tarefa', close: 'Fechar saída da tarefa',
+    waiting: 'Aguardando saída ao vivo…', tool: 'Ferramenta', tools: '{count} ferramentas', tokens: '{input} entrada · {output} saída',
+    started: 'Iniciada', running: 'Em execução', completed: 'Concluída', failed: 'Falhou', cancelled: 'Cancelada', interrupted: 'Interrompida',
+  },
+
   realtimeVoice: {
     title: 'Voz em tempo real', mode: 'Modo de voz', open: 'Abrir voz em tempo real', back: 'Voltar ao chat', connected: 'Conexão de voz pronta',
     turnMode: 'Prévia em tempo real · por turnos', browserStt: 'Navegador', browserTts: 'Navegador', untitledSession: 'Conversa sem título',

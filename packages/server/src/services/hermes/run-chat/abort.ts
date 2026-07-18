@@ -85,6 +85,25 @@ export async function handleAbort(
     let interruptResult: any = null
     try {
       interruptResult = await bridge.interrupt(sessionId, 'Aborted by user', activeState.profile)
+      const interruptedDelegationIds = Array.isArray(interruptResult?.background_delegation_ids)
+        ? interruptResult.background_delegation_ids.map((value: unknown) => String(value || '').trim()).filter(Boolean)
+        : []
+      for (const delegationId of interruptedDelegationIds) {
+        activeState.backgroundDelegations = activeState.backgroundDelegations || {}
+        const previous = activeState.backgroundDelegations[delegationId]
+        activeState.backgroundDelegations[delegationId] = {
+          delegationId,
+          status: 'interrupted',
+          profile: previous?.profile || activeState.profile || 'default',
+          updatedAt: Date.now(),
+        }
+        emitToSession(nsp, socket, sessionId, 'delegation.updated', {
+          event: 'delegation.updated',
+          delegation_id: delegationId,
+          status: 'interrupted',
+          delivery_status: 'cancelled',
+        })
+      }
     } catch (err) {
       logger.warn(err, '[chat-run-socket][abort] failed to interrupt CLI bridge for session %s', sessionId)
     }

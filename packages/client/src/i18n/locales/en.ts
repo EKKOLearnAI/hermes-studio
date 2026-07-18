@@ -481,6 +481,12 @@ export default {
     files: 'Workspace',
   },
 
+  subagent: {
+    title: 'Background task', noGoal: 'Untitled background task', open: 'Open live background task output', close: 'Close background task output',
+    waiting: 'Waiting for live output...', tool: 'Tool', tools: '{count} tools', tokens: '{input} in · {output} out',
+    started: 'Started', running: 'Running', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted',
+  },
+
   realtimeVoice: {
     title: 'Realtime Voice',
     mode: 'Voice mode',

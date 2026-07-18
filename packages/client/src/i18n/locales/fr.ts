@@ -481,6 +481,12 @@ export default {
     files: 'Espace de travail',
   },
 
+  subagent: {
+    title: 'Tâche en arrière-plan', noGoal: 'Tâche en arrière-plan sans titre', open: 'Ouvrir la sortie en direct de la tâche', close: 'Fermer la sortie de la tâche',
+    waiting: 'En attente de la sortie en direct…', tool: 'Outil', tools: '{count} outils', tokens: '{input} entrée · {output} sortie',
+    started: 'Démarrée', running: 'En cours', completed: 'Terminée', failed: 'Échec', cancelled: 'Annulée', interrupted: 'Interrompue',
+  },
+
   realtimeVoice: {
     title: 'Voix en temps réel', mode: 'Mode vocal', open: 'Ouvrir la voix en temps réel', back: 'Retour au chat', connected: 'Liaison vocale prête',
     turnMode: 'Aperçu temps réel · mode tour par tour', browserStt: 'Navigateur', browserTts: 'Navigateur', untitledSession: 'Conversation sans titre',

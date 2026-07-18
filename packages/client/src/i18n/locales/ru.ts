@@ -408,6 +408,12 @@ export default {
     files: 'Рабочая область',
   },
 
+  subagent: {
+    title: 'Фоновая задача', noGoal: 'Фоновая задача без названия', open: 'Открыть поток фоновой задачи', close: 'Закрыть поток фоновой задачи',
+    waiting: 'Ожидание потока данных…', tool: 'Инструмент', tools: 'Инструментов: {count}', tokens: 'Ввод {input} · вывод {output}',
+    started: 'Запущена', running: 'Выполняется', completed: 'Завершена', failed: 'Ошибка', cancelled: 'Отменена', interrupted: 'Прервана',
+  },
+
   realtimeVoice: {
     title: 'Голос в реальном времени', mode: 'Голосовой режим', open: 'Открыть голосовой режим', back: 'Вернуться в чат', connected: 'Голосовая связь готова',
     turnMode: 'Предпросмотр · по очереди', browserStt: 'Браузер', browserTts: 'Браузер', untitledSession: 'Разговор без названия',

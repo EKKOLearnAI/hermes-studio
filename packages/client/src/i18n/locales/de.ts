@@ -481,6 +481,12 @@ export default {
     files: 'Arbeitsbereich',
   },
 
+  subagent: {
+    title: 'Hintergrundaufgabe', noGoal: 'Unbenannte Hintergrundaufgabe', open: 'Live-Ausgabe der Hintergrundaufgabe öffnen', close: 'Ausgabe der Hintergrundaufgabe schließen',
+    waiting: 'Warte auf Live-Ausgabe…', tool: 'Werkzeug', tools: '{count} Werkzeuge', tokens: '{input} ein · {output} aus',
+    started: 'Gestartet', running: 'Wird ausgeführt', completed: 'Abgeschlossen', failed: 'Fehlgeschlagen', cancelled: 'Abgebrochen', interrupted: 'Unterbrochen',
+  },
+
   realtimeVoice: {
     title: 'Echtzeit-Sprache', mode: 'Sprachmodus', open: 'Echtzeit-Sprache öffnen', back: 'Zurück zum Chat', connected: 'Sprachverbindung bereit',
     turnMode: 'Echtzeit-Vorschau · rundenbasiert', browserStt: 'Browser', browserTts: 'Browser', untitledSession: 'Unbenannte Unterhaltung',

@@ -79,7 +79,11 @@ describe('run chat abort goal handling', () => {
     } as any
     const sessionMap = new Map([['session-1', state]])
     const bridge = {
-      interrupt: vi.fn().mockResolvedValue({ ok: true }),
+      interrupt: vi.fn().mockResolvedValue({
+        ok: true,
+        background_interrupted: 1,
+        background_delegation_ids: ['deleg-1'],
+      }),
       goalPause: vi.fn().mockResolvedValue({ handled: true, status: 'paused', reason: 'user-interrupted' }),
     }
     const runQueuedItem = vi.fn()
@@ -92,6 +96,18 @@ describe('run chat abort goal handling', () => {
       queue_id: 'user-1',
     }), 'default')
     expect(state.queue).toEqual([])
+    expect(state.backgroundDelegations).toEqual({
+      'deleg-1': expect.objectContaining({
+        delegationId: 'deleg-1',
+        status: 'interrupted',
+      }),
+    })
+    expect(emit).toHaveBeenCalledWith('delegation.updated', expect.objectContaining({
+      session_id: 'session-1',
+      delegation_id: 'deleg-1',
+      status: 'interrupted',
+      delivery_status: 'cancelled',
+    }))
     expect(emit).toHaveBeenCalledWith('abort.completed', expect.objectContaining({
       session_id: 'session-1',
       synced: true,

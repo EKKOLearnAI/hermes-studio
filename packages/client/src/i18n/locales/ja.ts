@@ -481,6 +481,12 @@ export default {
     files: 'ワークスペース',
   },
 
+  subagent: {
+    title: 'バックグラウンドタスク', noGoal: '無題のバックグラウンドタスク', open: 'バックグラウンドタスクのライブ出力を開く', close: 'バックグラウンドタスクの出力を閉じる',
+    waiting: 'ライブ出力を待機中…', tool: 'ツール', tools: 'ツール呼び出し {count} 回', tokens: '入力 {input} · 出力 {output}',
+    started: '開始済み', running: '実行中', completed: '完了', failed: '失敗', cancelled: 'キャンセル済み', interrupted: '中断済み',
+  },
+
   realtimeVoice: {
     title: 'リアルタイム音声', mode: '音声モード', open: 'リアルタイム音声を開く', back: 'チャットに戻る', connected: '音声リンク準備完了',
     turnMode: 'リアルタイムプレビュー · ターン方式', browserStt: 'ブラウザ', browserTts: 'ブラウザ', untitledSession: '無題の会話',
