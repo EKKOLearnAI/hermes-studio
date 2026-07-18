@@ -403,8 +403,13 @@ export function flushResponseRunToDb(state: SessionState, sessionId: string): st
       reasoning_content: msg.reasoning_content ?? null,
       timestamp: msg.timestamp,
     })
-    if (persistedId != null && msg.role === 'assistant' && String(msg.content || '').trim()) {
-      finalAssistantMessageId = String(persistedId)
+    if (persistedId != null) {
+      const previousId = msg.id
+      msg.id = persistedId
+      if (run.reasoningMessageId === previousId) run.reasoningMessageId = persistedId
+      if (msg.role === 'assistant' && String(msg.content || '').trim()) {
+        finalAssistantMessageId = String(persistedId)
+      }
     }
     flushed++
   }

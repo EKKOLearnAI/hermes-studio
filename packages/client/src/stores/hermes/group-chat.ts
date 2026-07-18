@@ -14,6 +14,7 @@ import {
     type RoomInfo,
     type RoomAgent,
     type ChatMessage,
+    type GroupWorkspaceDiffPayload,
     type MemberInfo,
     createRoom,
     listRooms,
@@ -992,6 +993,31 @@ function parseWorkspaceDiffPayload(value: unknown): unknown {
     }
 }
 
+function groupWorkspaceDiffPayload(value: unknown): GroupWorkspaceDiffPayload | null {
+    const parsed = parseWorkspaceDiffPayload(value)
+    return parsed && typeof parsed === 'object' && (parsed as any).kind === 'workspace_diff'
+        ? parsed as GroupWorkspaceDiffPayload
+        : null
+}
+
+function attachWorkspaceDiffsToParentMessages(messages: ChatMessage[]): ChatMessage[] {
+    const mapped: ChatMessage[] = messages.map(message => ({ ...message, workspaceChanges: [] }))
+    const assistantById = new Map(
+        mapped
+            .filter(message => message.role === 'assistant')
+            .map(message => [message.id, message]),
+    )
+    return mapped.filter(message => {
+        if ((message.toolName || message.tool_name) !== 'workspace_diff') return true
+        const payload = groupWorkspaceDiffPayload(message.toolResult ?? message.content)
+        const parentMessageId = String(payload?.parent_message_id || '').trim()
+        const parent = parentMessageId ? assistantById.get(parentMessageId) : undefined
+        if (!payload || !parent) return true
+        parent.workspaceChanges!.push(payload)
+        return false
+    })
+}
+
 function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
     const toolNameMap = new Map<string, string>()
     const toolArgsMap = new Map<string, unknown>()
@@ -1077,5 +1103,5 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
 
         result.push(msg)
     }
-    return result
+    return attachWorkspaceDiffsToParentMessages(result)
 }

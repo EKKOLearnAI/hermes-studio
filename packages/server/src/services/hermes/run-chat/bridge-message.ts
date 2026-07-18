@@ -11,10 +11,8 @@ export function flushBridgePendingToDb(state: SessionState, sessionId: string, r
   const content = state.bridgePendingAssistantContent || ''
   const reasoning = state.bridgePendingReasoningContent || ''
   if (!content.trim()) return state.bridgeAssistantMessageId
-  if (runMarker) {
-    const last = findOpenBridgeAssistantMessage(state, runMarker)
-    if (last) syncBridgeReasoningToMessage(last, reasoning)
-  }
+  const assistantMessage = runMarker ? findOpenBridgeAssistantMessage(state, runMarker) : undefined
+  if (assistantMessage) syncBridgeReasoningToMessage(assistantMessage, reasoning)
   const persistedId = addMessage({
     session_id: sessionId,
     role: 'assistant',
@@ -25,11 +23,11 @@ export function flushBridgePendingToDb(state: SessionState, sessionId: string, r
   })
   state.bridgePendingAssistantContent = ''
   state.bridgePendingReasoningContent = ''
-  if (persistedId != null) state.bridgeAssistantMessageId = String(persistedId)
-  if (runMarker) {
-    const last = findOpenBridgeAssistantMessage(state, runMarker)
-    if (last && last.finish_reason == null) last.finish_reason = 'stop'
+  if (persistedId != null) {
+    state.bridgeAssistantMessageId = String(persistedId)
+    if (assistantMessage) assistantMessage.id = persistedId
   }
+  if (assistantMessage && assistantMessage.finish_reason == null) assistantMessage.finish_reason = 'stop'
   return state.bridgeAssistantMessageId
 }
 

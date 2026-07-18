@@ -17,7 +17,7 @@ import { useVoiceSettings } from '@/composables/useVoiceSettings'
 import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
 import { getDownloadUrl } from '@/api/hermes/download'
 import { formatChatTimestamp } from '@/utils/chat-timestamp'
-import type { ChatMessage, RoomAgent, MemberInfo } from '@/api/hermes/group-chat'
+import type { ChatMessage, GroupWorkspaceDiffFile, GroupWorkspaceDiffPayload, RoomAgent, MemberInfo } from '@/api/hermes/group-chat'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { formatReferencedContentForDisplay, parseMessageReference } from '@/stores/hermes/chat'
 import { isPreviewableFile } from '@/utils/hermes/file-preview'
@@ -34,15 +34,6 @@ const JSON_MAX_NODES = 1000
 const JSON_MAX_KEYS_PER_OBJECT = 50
 const JSON_MAX_ITEMS_PER_ARRAY = 50
 const JSON_TRUNCATED_KEY = '__truncated__'
-
-interface GroupWorkspaceDiffFile {
-    id: string | number
-    path: string
-    additions: number
-    deletions: number
-    binary?: boolean
-    patch?: string | null
-}
 
 const props = defineProps<{
     message: ChatMessage
@@ -215,6 +206,7 @@ const quotableContent = computed(() => {
 })
 
 const toolExpanded = ref(false)
+const expandedWorkspaceChangeIds = ref(new Set<string>())
 const isToolMessage = computed(() => props.message.role === 'tool')
 const workspaceDiffPayload = computed(() => {
     if ((props.message.toolName || props.message.tool_name) !== 'workspace_diff') return null
@@ -232,6 +224,7 @@ const workspaceDiffPayload = computed(() => {
     return null
 })
 const workspaceDiffFiles = computed(() => Array.isArray(workspaceDiffPayload.value?.files) ? workspaceDiffPayload.value.files : [])
+const assistantWorkspaceChanges = computed(() => props.message.workspaceChanges || [])
 const selectedWorkspaceDiffFileId = computed(() => toolPanelStore.workspaceDiff?.file.id ?? null)
 const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs))
 const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult, true))
@@ -243,8 +236,18 @@ const formattedToolResult = computed(() => toolResultPayload.value.display)
 const renderedToolArgs = computed(() => formattedToolArgs.value ? renderToolPayload(formattedToolArgs.value, toolArgsPayload.value.language) : '')
 const renderedToolResult = computed(() => formattedToolResult.value ? renderToolPayload(formattedToolResult.value, toolResultPayload.value.language) : '')
 
-function openWorkspaceDiffFile(file: GroupWorkspaceDiffFile): void {
-    const payload = workspaceDiffPayload.value
+function isWorkspaceChangeExpanded(changeId: string): boolean {
+    return expandedWorkspaceChangeIds.value.has(changeId)
+}
+
+function toggleWorkspaceChange(changeId: string): void {
+    const next = new Set(expandedWorkspaceChangeIds.value)
+    if (next.has(changeId)) next.delete(changeId)
+    else next.add(changeId)
+    expandedWorkspaceChangeIds.value = next
+}
+
+function openWorkspaceDiffFileForPayload(file: GroupWorkspaceDiffFile, payload: GroupWorkspaceDiffPayload | null): void {
     if (!payload || !file) return
     filesStore.closePreview()
     toolPanelStore.openInlineWorkspaceDiff({
@@ -254,6 +257,10 @@ function openWorkspaceDiffFile(file: GroupWorkspaceDiffFile): void {
         deletions: Number(file.deletions || 0),
         binary: file.binary === true,
     }, typeof file.patch === 'string' ? file.patch : null, payload.workspace || payload.workspace_root || '')
+}
+
+function openWorkspaceDiffFile(file: GroupWorkspaceDiffFile): void {
+    openWorkspaceDiffFileForPayload(file, workspaceDiffPayload.value)
 }
 const canPlaySpeech = computed(() => {
     if (props.message.role !== 'assistant') return false
@@ -709,6 +716,20 @@ onBeforeUnmount(() => {
                     <MarkdownRenderer v-if="parsedMessageReference.reply" :content="parsedMessageReference.reply" :mention-names="mentionNames" />
                 </template>
                 <MarkdownRenderer v-else-if="displayBody" :content="displayBody" :mention-names="mentionNames" />
+                <ToolChangeCard
+                    v-for="change in assistantWorkspaceChanges"
+                    :key="change.change_id"
+                    class="assistant-workspace-change"
+                    :files="change.files || []"
+                    :files-changed="change.files_changed || 0"
+                    :additions="change.additions || 0"
+                    :deletions="change.deletions || 0"
+                    :expanded="isWorkspaceChangeExpanded(change.change_id)"
+                    :selected-file-id="selectedWorkspaceDiffFileId"
+                    :title="t('chat.changesThisTurn')"
+                    @toggle="toggleWorkspaceChange(change.change_id)"
+                    @select="file => openWorkspaceDiffFileForPayload(file, change)"
+                />
                 <span v-if="message.isStreaming && !displayBody" class="streaming-dots">
                     <span></span><span></span><span></span>
                 </span>
@@ -894,6 +915,10 @@ onBeforeUnmount(() => {
     max-width: 100%;
     min-width: 0;
     width: fit-content;
+}
+
+.assistant-workspace-change {
+    margin-top: 10px;
 }
 
 .tool-detail-section {

@@ -4,7 +4,7 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import GroupMessageItem from '@/components/hermes/group-chat/GroupMessageItem.vue'
 import GroupMessageList from '@/components/hermes/group-chat/GroupMessageList.vue'
-import type { ChatMessage } from '@/api/hermes/group-chat'
+import type { ChatMessage, GroupWorkspaceDiffPayload } from '@/api/hermes/group-chat'
 
 const toolTraceVisibleState = vi.hoisted(() => ({ value: true }))
 
@@ -67,7 +67,7 @@ vi.mock('naive-ui', () => ({
   useMessage: () => ({ error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn() }),
 }))
 
-const payload = {
+const payload: GroupWorkspaceDiffPayload = {
   kind: 'workspace_diff',
   version: 1,
   room_id: 'room-1',
@@ -85,6 +85,18 @@ const payload = {
     { id: 1, path: 'src/a.ts', change_type: 'modified', additions: 2, deletions: 1, patch: 'diff --git a/src/a.ts b/src/a.ts\n-old\n+new\n', binary: false, truncated: false },
     { id: 2, path: 'asset.bin', change_type: 'added', additions: 0, deletions: 0, patch: null, binary: true, truncated: false },
   ],
+}
+
+function assistantMessage(): ChatMessage {
+  return {
+    id: 'assistant-1',
+    roomId: 'room-1',
+    senderId: 'agent-1',
+    senderName: 'Worker',
+    content: 'Finished the workspace update.',
+    timestamp: 1,
+    role: 'assistant',
+  }
 }
 
 function workspaceDiffMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
@@ -130,6 +142,63 @@ describe('group chat workspace diff client rendering', () => {
       toolName: 'workspace_diff',
       toolResult: expect.objectContaining({ kind: 'workspace_diff', files_changed: 2 }),
     })
+  })
+
+  it('attaches persisted and realtime workspace diffs to their exact assistant message', async () => {
+    groupChatApiMock.getRoomDetail.mockResolvedValue({
+      room: { id: 'room-1', name: 'Room 1', inviteCode: null, workspace: '/tmp/repo' },
+      messages: [
+        assistantMessage(),
+        workspaceDiffMessage({
+          content: JSON.stringify({ ...payload, parent_message_id: 'assistant-1' }),
+          timestamp: 2,
+        }),
+      ],
+      agents: [],
+      members: [],
+    })
+    const { useGroupChatStore } = await import('@/stores/hermes/group-chat')
+    const store = useGroupChatStore()
+
+    await store.joinRoom('room-1')
+
+    expect(store.sortedMessages).toHaveLength(1)
+    expect(store.sortedMessages[0]).toMatchObject({
+      id: 'assistant-1',
+      role: 'assistant',
+      workspaceChanges: [expect.objectContaining({ change_id: 'change-1' })],
+    })
+
+    store.messages = [assistantMessage()]
+    store.messages.push(workspaceDiffMessage({
+      content: JSON.stringify({ ...payload, parent_message_id: 'assistant-1' }),
+      timestamp: 2,
+    }))
+
+    expect(store.sortedMessages).toHaveLength(1)
+    expect(store.sortedMessages[0].workspaceChanges?.[0]?.change_id).toBe('change-1')
+  })
+
+  it('renders an associated workspace diff inside the assistant message', async () => {
+    const wrapper = mount(GroupMessageItem, {
+      props: {
+        message: {
+          ...assistantMessage(),
+          workspaceChanges: [{ ...payload, parent_message_id: 'assistant-1' }],
+        },
+        agents: [{ id: 'a1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: 'Worker', description: '', invited: 0 }],
+        members: [],
+        currentUserId: 'user-1',
+      },
+      global: { stubs: { MarkdownRenderer: true, ProfileAvatar: true } },
+    })
+
+    expect(wrapper.find('.tool-message').exists()).toBe(false)
+    expect(wrapper.find('.assistant-workspace-change').exists()).toBe(true)
+    expect(wrapper.text()).toContain('chat.changesThisTurn')
+
+    await wrapper.find('.tool-change-card-header').trigger('click')
+    expect(wrapper.find('.tool-change-file-row').text()).toContain('a.ts')
   })
 
   it('renders a workspace diff card collapsed by default and expands it on demand', async () => {

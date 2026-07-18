@@ -91,6 +91,7 @@ describe('group chat workspace diff persistence', () => {
     storage.saveRoom('room-1', 'Room 1')
     const runId = '0123456789abcdef0123456789abcdef'
     const draft = await makeDraft(runId)
+    const parentMessageId = 'assistant-message-1'
 
     const saved = storage.saveWorkspaceDiffMessageForRun({
       roomId: 'room-1',
@@ -101,6 +102,7 @@ describe('group chat workspace diff persistence', () => {
       status: 'completed',
       workspace,
       draft: draft!,
+      parentMessageId,
     })
 
     expect(saved?.message).toMatchObject({
@@ -119,6 +121,7 @@ describe('group chat workspace diff persistence', () => {
       run_id: runId,
       status: 'completed',
       files_changed: 1,
+      parent_message_id: parentMessageId,
     })
     expect(payload.files[0].patch).toContain('-old')
     expect(payload.files[0].patch).toContain('+new')
@@ -127,11 +130,12 @@ describe('group chat workspace diff persistence', () => {
 
     const rows = dbState.db?.prepare('SELECT COUNT(*) AS count FROM gc_messages WHERE tool_name = ?').get('workspace_diff') as { count: number }
     expect(rows.count).toBe(1)
-    const changeRow = dbState.db?.prepare('SELECT workspace, room_id, message_id FROM workspace_run_changes WHERE change_id = ?').get(payload.change_id) as { workspace: string; room_id: string; message_id: string }
+    const changeRow = dbState.db?.prepare('SELECT workspace, room_id, message_id, assistant_message_id FROM workspace_run_changes WHERE change_id = ?').get(payload.change_id) as { workspace: string; room_id: string; message_id: string; assistant_message_id: string }
     expect(changeRow.workspace).toBe('workspace')
     expect(changeRow.workspace).not.toBe(workspace)
     expect(changeRow.room_id).toBe('room-1')
     expect(changeRow.message_id).toBe(saved!.message.id)
+    expect(changeRow.assistant_message_id).toBe(parentMessageId)
     const changeRows = dbState.db?.prepare('SELECT COUNT(*) AS count FROM workspace_run_changes WHERE change_id = ?').get(payload.change_id) as { count: number }
     expect(changeRows.count).toBe(1)
     server.getIO().close()

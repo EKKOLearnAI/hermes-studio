@@ -534,6 +534,7 @@ class ChatStorage {
                 ...args.draft,
                 room_id: args.roomId,
                 message_id: messageId,
+                assistant_message_id: args.parentMessageId || '',
                 workspace: workspaceLabel,
             }
             const change = insertWorkspaceRunChange(db, redactedDraft)

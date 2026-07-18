@@ -57,8 +57,39 @@ export interface ChatMessage {
     toolPreview?: string
     toolResult?: unknown
     toolStatus?: 'running' | 'done' | 'error'
+    workspaceChanges?: GroupWorkspaceDiffPayload[]
     firstSeenAt?: number
     attachments?: Array<{ id: string; name: string; type: string; size: number; url: string }>
+}
+
+export interface GroupWorkspaceDiffFile {
+    id: string | number
+    path: string
+    change_type?: 'added' | 'modified' | 'deleted' | 'renamed'
+    additions: number
+    deletions: number
+    patch?: string | null
+    binary?: boolean
+    truncated?: boolean
+}
+
+export interface GroupWorkspaceDiffPayload {
+    kind: 'workspace_diff'
+    version: number
+    room_id: string
+    session_id: string
+    run_id: string
+    status: 'completed' | 'failed' | 'aborted'
+    change_id: string
+    workspace_basename: string
+    workspace?: string
+    workspace_root?: string
+    files_changed: number
+    additions: number
+    deletions: number
+    truncated: boolean
+    files: GroupWorkspaceDiffFile[]
+    parent_message_id?: string
 }
 
 export interface MemberInfo {

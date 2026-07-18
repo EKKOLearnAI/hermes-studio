@@ -103,7 +103,7 @@ describe('response stream reasoning storage', () => {
     }))
   })
 
-  it('returns the persisted final assistant message id for turn-scoped records', () => {
+  it('rebinds run messages to persisted ids and returns the final assistant id', () => {
     const state: SessionState = { messages: [], isWorking: false, events: [], queue: [] }
     addMessageMock.mockReturnValueOnce(40).mockReturnValueOnce(41).mockReturnValueOnce(42)
 
@@ -121,6 +121,7 @@ describe('response stream reasoning storage', () => {
     })
 
     expect(flushResponseRunToDb(state, 'session-1')).toBe('42')
+    expect(state.messages.map(message => message.id)).toEqual([40, 41, 42])
   })
 
   it('deduplicates final reasoning snapshots after streamed reasoning deltas', () => {

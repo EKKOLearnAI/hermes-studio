@@ -15,10 +15,17 @@ describe('bridge assistant workspace attribution', () => {
     vi.clearAllMocks()
   })
 
-  it('retains the latest persisted assistant row id for the active Hermes Agent run', async () => {
+  it('rebinds the in-memory assistant message to its persisted row id for session resume', async () => {
     addMessageMock.mockReturnValue(73)
     const state: any = {
-      messages: [],
+      messages: [{
+        id: 1,
+        session_id: 'session-hermes',
+        runMarker: 'run-hermes',
+        role: 'assistant',
+        content: 'Finished the workspace update.',
+        timestamp: 1,
+      }],
       isWorking: true,
       events: [],
       queue: [],
@@ -27,9 +34,10 @@ describe('bridge assistant workspace attribution', () => {
     }
     const { flushBridgePendingToDb } = await import('../../packages/server/src/services/hermes/run-chat/bridge-message')
 
-    const persistedId = flushBridgePendingToDb(state, 'session-hermes')
+    const persistedId = flushBridgePendingToDb(state, 'session-hermes', 'run-hermes')
 
     expect(persistedId).toBe('73')
     expect(state.bridgeAssistantMessageId).toBe('73')
+    expect(state.messages[0]).toMatchObject({ id: 73, finish_reason: 'stop' })
   })
 })
