@@ -16,6 +16,19 @@ export interface WorkflowAuthoringConnection {
   targetHandle?: string | null
 }
 
+export interface WorkflowEdgeConditionLabelInput {
+  route?: 'success' | 'failure' | 'always'
+  condition?: { path?: string; operator?: string; value?: unknown }
+}
+
+export interface WorkflowEdgeConditionLabels {
+  route: (value: string) => string
+  operator: (value: string) => string
+  subject: (path: string) => string
+  condition: (subject: string, operator: string, value?: string) => string
+  join: (route: string, condition: string) => string
+}
+
 export type WorkflowHandleId = 'input' | 'top' | 'output' | 'bottom'
 export type WorkflowHandleType = 'source' | 'target'
 export type WorkflowHandlePosition = 'left' | 'top' | 'right' | 'bottom'
@@ -106,6 +119,40 @@ export function workflowEdgeVisualType(source: string, target: string): 'smooths
   return source === target ? 'workflow-self-loop' : 'smoothstep'
 }
 
+function workflowEdgeLabelValue(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value === 'string') return value.replace(/\s+/g, ' ').trim()
+  try {
+    const serialized = JSON.stringify(value)
+    return serialized === undefined ? String(value) : serialized
+  } catch {
+    return String(value)
+  }
+}
+
+function boundedWorkflowEdgeLabel(value: string, maxLength = 72): string {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength) return normalized
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`
+}
+
+export function workflowEdgeConditionLabel(
+  orchestration: WorkflowEdgeConditionLabelInput | undefined,
+  labels: WorkflowEdgeConditionLabels,
+): string {
+  const route = labels.route(orchestration?.route || 'success')
+  const path = orchestration?.condition?.path?.trim()
+  const operator = orchestration?.condition?.operator?.trim()
+  if (!path || !operator) return boundedWorkflowEdgeLabel(route)
+  const needsValue = operator !== 'exists' && operator !== 'not_exists'
+  const condition = labels.condition(
+    labels.subject(path),
+    labels.operator(operator),
+    needsValue ? workflowEdgeLabelValue(orchestration?.condition?.value) : undefined,
+  )
+  return boundedWorkflowEdgeLabel(labels.join(route, condition))
+}
+
 export function createWorkflowAuthoringEdge(
   connection: WorkflowAuthoringConnection,
   edges: WorkflowAuthoringEdge[],
@@ -130,7 +177,7 @@ export function createWorkflowAuthoringEdge(
   }
 }
 
-export function workflowSelfLoopPath(input: {
+export interface WorkflowSelfLoopPathInput {
   sourceX: number
   sourceY: number
   sourcePosition: WorkflowHandlePosition
@@ -138,7 +185,15 @@ export function workflowSelfLoopPath(input: {
   targetY: number
   targetPosition: WorkflowHandlePosition
   nodeBounds: { left: number; top: number; right: number; bottom: number }
-}): string {
+}
+
+export interface WorkflowSelfLoopGeometry {
+  path: string
+  labelX: number
+  labelY: number
+}
+
+export function workflowSelfLoopGeometry(input: WorkflowSelfLoopPathInput): WorkflowSelfLoopGeometry {
   const margin = 80
   const outer = {
     left: input.nodeBounds.left - margin,
@@ -166,14 +221,18 @@ export function workflowSelfLoopPath(input: {
     input.sourcePosition === 'right' && input.targetPosition === 'left'
   )
   if (oppositeHorizontal) {
-    return [
-      `M ${input.sourceX} ${input.sourceY}`,
-      `L ${sourceOuter.x} ${sourceOuter.y}`,
-      `L ${sourceOuter.x} ${outer.top}`,
-      `L ${targetOuter.x} ${outer.top}`,
-      `L ${targetOuter.x} ${targetOuter.y}`,
-      `L ${input.targetX} ${input.targetY}`,
-    ].join(' ')
+    return {
+      path: [
+        `M ${input.sourceX} ${input.sourceY}`,
+        `L ${sourceOuter.x} ${sourceOuter.y}`,
+        `L ${sourceOuter.x} ${outer.top}`,
+        `L ${targetOuter.x} ${outer.top}`,
+        `L ${targetOuter.x} ${targetOuter.y}`,
+        `L ${input.targetX} ${input.targetY}`,
+      ].join(' '),
+      labelX: (sourceOuter.x + targetOuter.x) / 2,
+      labelY: outer.top,
+    }
   }
 
   const oppositeVertical = (
@@ -182,26 +241,38 @@ export function workflowSelfLoopPath(input: {
     input.sourcePosition === 'bottom' && input.targetPosition === 'top'
   )
   if (oppositeVertical) {
-    return [
-      `M ${input.sourceX} ${input.sourceY}`,
-      `L ${sourceOuter.x} ${sourceOuter.y}`,
-      `L ${outer.right} ${sourceOuter.y}`,
-      `L ${outer.right} ${targetOuter.y}`,
-      `L ${targetOuter.x} ${targetOuter.y}`,
-      `L ${input.targetX} ${input.targetY}`,
-    ].join(' ')
+    return {
+      path: [
+        `M ${input.sourceX} ${input.sourceY}`,
+        `L ${sourceOuter.x} ${sourceOuter.y}`,
+        `L ${outer.right} ${sourceOuter.y}`,
+        `L ${outer.right} ${targetOuter.y}`,
+        `L ${targetOuter.x} ${targetOuter.y}`,
+        `L ${input.targetX} ${input.targetY}`,
+      ].join(' '),
+      labelX: outer.right,
+      labelY: (sourceOuter.y + targetOuter.y) / 2,
+    }
   }
 
   const sourceIsHorizontal = input.sourcePosition === 'left' || input.sourcePosition === 'right'
   const cornerX = sourceIsHorizontal ? sourceOuter.x : targetOuter.x
   const cornerY = sourceIsHorizontal ? targetOuter.y : sourceOuter.y
-  return [
-    `M ${input.sourceX} ${input.sourceY}`,
-    `L ${sourceOuter.x} ${sourceOuter.y}`,
-    `L ${cornerX} ${cornerY}`,
-    `L ${targetOuter.x} ${targetOuter.y}`,
-    `L ${input.targetX} ${input.targetY}`,
-  ].join(' ')
+  return {
+    path: [
+      `M ${input.sourceX} ${input.sourceY}`,
+      `L ${sourceOuter.x} ${sourceOuter.y}`,
+      `L ${cornerX} ${cornerY}`,
+      `L ${targetOuter.x} ${targetOuter.y}`,
+      `L ${input.targetX} ${input.targetY}`,
+    ].join(' '),
+    labelX: cornerX,
+    labelY: cornerY,
+  }
+}
+
+export function workflowSelfLoopPath(input: WorkflowSelfLoopPathInput): string {
+  return workflowSelfLoopGeometry(input).path
 }
 
 function workflowFeedbackConfig(edge: WorkflowAuthoringEdge): { loopId?: string } | null {

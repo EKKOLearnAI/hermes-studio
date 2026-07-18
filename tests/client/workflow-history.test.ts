@@ -15,6 +15,52 @@ describe('workflow history evidence', () => {
     expect(formatIterationPath(scoped)).toBe('rerun:1783910000000 · outer#2 / inner#3')
   })
 
+  it('uses the selected node name instead of a loop id in operator-facing history', () => {
+    const rows = buildWorkflowEvidenceRows({
+      snapshot_nodes: [
+        { id: 'prepare', data: { title: 'Prepare release' } },
+        { id: 'review', data: { title: 'Review release' } },
+      ],
+      compiled_loops: [{
+        id: 'legacy-loop-id', feedbackEdgeId: 'review-prepare',
+        headerNodeId: 'prepare', latchNodeId: 'review', bodyNodeIds: ['prepare', 'review'],
+        maxIterations: 3, parentLoopId: null,
+      }],
+      node_sessions: [],
+      edge_evaluations: [],
+      loop_epochs: [{
+        loop_id: 'legacy-loop-id', iteration: 1, status: 'completed', exit_reason: 'feedback_taken',
+        sequence: 1, iteration_path: [{ loopId: 'legacy-loop-id', iteration: 1 }],
+      }],
+    } as any)
+
+    expect(rows[0]).toMatchObject({ kind: 'loop', loopTitle: 'Prepare release' })
+    expect(rows[0].iterationPath).toBe('Prepare release#2')
+    expect(rows[0].iterationPath).not.toContain('legacy-loop-id')
+  })
+
+  it('keeps missing snapshot titles absent instead of promoting technical node ids to user-facing labels', () => {
+    const sourceId = '11111111-1111-4111-8111-111111111111'
+    const targetId = '22222222-2222-4222-8222-222222222222'
+    const rows = buildWorkflowEvidenceRows({
+      snapshot_nodes: [{ id: sourceId, data: {} }, { id: targetId, data: {} }],
+      node_sessions: [{
+        execution_id: `${sourceId}@1`, node_id: sourceId, status: 'failed', error: 'failed',
+        sequence: 2, iteration_path: [],
+      }],
+      edge_evaluations: [{
+        edge_id: 'edge-1', source_node_id: sourceId, target_node_id: targetId,
+        source_execution_id: sourceId, source_outcome: 'success', status: 'taken', route: 'success',
+        reason: null, sequence: 1, iteration_path: [],
+      }],
+      loop_epochs: [],
+    } as any)
+
+    expect(rows[0]).toMatchObject({ kind: 'edge', sourceTitle: undefined, targetTitle: undefined })
+    expect(rows[1]).toMatchObject({ kind: 'node', nodeTitle: undefined })
+    expect(rows[1].technicalId).toBe(`${sourceId}@1`)
+  })
+
   it('selects the latest node execution by sequence for canvas status, errors, and session opening', () => {
     const sessions = [
       { node_id: 'agent', execution_id: 'agent', sequence: 1, status: 'failed', error: 'old failure' },
@@ -72,9 +118,11 @@ describe('workflow history evidence', () => {
     expect(row).toMatchObject({
       kind: 'edge', sourceTitle: 'Publish release', targetTitle: 'Verify release',
       sourceOutcome: 'success', conditionPath: 'output', conditionOperator: 'contains',
-      expectedValue: 'PUBLISHED', actualValue: 'BLOCKED', businessDecision: 'BLOCKED',
+      expectedValue: 'PUBLISHED', businessDecision: 'BLOCKED',
       businessReason: 'The release lock was missing before publication.',
     })
+    expect(row.conditionActualValue).toContain('"decision":"BLOCKED"')
+    expect(row.conditionActualValue).toContain('"route_marker":"BLOCKED"')
   })
 
   it('sanitizes and bounds business explanations instead of exposing the full node output', () => {
@@ -98,7 +146,54 @@ describe('workflow history evidence', () => {
     expect(row.businessReason).toMatch(/\.\.\.$/)
     expect(row.businessDecision).not.toContain('\0')
     expect(row.businessDecision?.length).toBeLessThanOrEqual(80)
-    expect(row.actualValue).toBe(row.businessDecision)
+    expect(row.conditionActualValue).toContain('"decision"')
+    expect(row.conditionActualValue).not.toContain('\0')
+    expect(row.conditionActualValue?.length).toBeLessThanOrEqual(240)
+  })
+
+  it('projects structured decision fields without treating ordinary JSON fields as business codes', () => {
+    const rowFor = (path: string, actual: unknown) => buildWorkflowEvidenceRows({
+      snapshot_nodes: [{ id: 'source' }, { id: 'target' }],
+      node_sessions: [],
+      edge_evaluations: [{
+        edge_id: 'source-target', source_node_id: 'source', target_node_id: 'target',
+        source_execution_id: 'source', source_outcome: 'success', status: 'not_taken', route: 'success',
+        reason: 'condition_not_matched', sequence: 1, iteration_path: [],
+        orchestration: { condition: { path, operator: 'equals', value: 'PUBLISHED' } },
+        condition_evaluation: { status: 'not_matched', actual },
+      }],
+      loop_epochs: [],
+    } as any)[0]
+
+    expect(rowFor('outputJson.decision', 'BLOCKED')).toMatchObject({
+      conditionActualValue: 'BLOCKED', businessDecision: 'BLOCKED',
+    })
+    expect(rowFor('outputJson.route_marker', 'RELEASE_BLOCKED')).toMatchObject({
+      conditionActualValue: 'RELEASE_BLOCKED', businessDecision: 'RELEASE_BLOCKED',
+    })
+    expect(rowFor('outputJson.failed_gate', 'image-build')).toMatchObject({
+      conditionActualValue: 'image-build', businessDecision: undefined,
+    })
+  })
+
+  it('preserves falsy condition operands separately from parsed business projections', () => {
+    const rowFor = (actual: unknown) => buildWorkflowEvidenceRows({
+      snapshot_nodes: [{ id: 'source' }, { id: 'target' }],
+      node_sessions: [],
+      edge_evaluations: [{
+        edge_id: 'source-target', source_node_id: 'source', target_node_id: 'target',
+        source_execution_id: 'source', source_outcome: 'success', status: 'not_taken', route: 'success',
+        reason: 'condition_not_matched', sequence: 1, iteration_path: [],
+        orchestration: { condition: { path: 'outputJson.flag', operator: 'equals', value: true } },
+        condition_evaluation: { status: 'not_matched', actual },
+      }],
+      loop_epochs: [],
+    } as any)[0]
+
+    expect(rowFor(false)).toMatchObject({ conditionActualValue: 'false', businessDecision: undefined })
+    expect(rowFor(0)).toMatchObject({ conditionActualValue: '0', businessDecision: undefined })
+    expect(rowFor('')).toMatchObject({ conditionActualValue: '', businessDecision: undefined })
+    expect(rowFor(null)).toMatchObject({ conditionActualValue: 'null', businessDecision: undefined })
   })
 
   it('fails business summaries closed for malformed or ambiguous structured output', () => {

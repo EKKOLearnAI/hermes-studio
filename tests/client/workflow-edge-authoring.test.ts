@@ -4,6 +4,7 @@ import {
   normalizeWorkflowHandleId,
   validateWorkflowAuthoringLoops,
   workflowConnectionIsValid,
+  workflowEdgeConditionLabel,
   workflowEdgeClosesCycle,
   workflowEdgeVisualType,
   workflowLoopBodyNodeIds,
@@ -25,6 +26,44 @@ const edge = (id: string, source: string, target: string, feedback = false): Tes
 })
 
 describe('workflow edge authoring', () => {
+  it('summarizes route and condition semantics for direct canvas labels', () => {
+    const labels = {
+      route: (value: string) => ({ success: '成功后', failure: '失败后', always: '无论结果' }[value] || value),
+      operator: (value: string) => ({
+        equals: '等于', not_equals: '不等于', contains: '包含', not_contains: '不包含',
+        exists: '存在', not_exists: '不存在', greater_than: '大于',
+      }[value] || value),
+      subject: (path: string) => ({ output: '完整回复', error: '错误文本' }[path] || path.replace(/^outputJson\./, '')),
+      condition: (subject: string, operator: string, value?: string) => (
+        value === undefined ? `${subject}${operator}` : `${subject}${operator}「${value}」`
+      ),
+      join: (route: string, condition: string) => `${route} · ${condition}`,
+    }
+
+    expect(workflowEdgeConditionLabel({ route: 'success' }, labels)).toBe('成功后')
+    expect(workflowEdgeConditionLabel({
+      route: 'success', condition: { path: 'output', operator: 'contains', value: 'failed_gate' },
+    }, labels)).toBe('成功后 · 完整回复包含「failed_gate」')
+    expect(workflowEdgeConditionLabel({
+      route: 'success', condition: { path: 'outputJson.failed_gate', operator: 'equals', value: 'quality' },
+    }, labels)).toBe('成功后 · failed_gate等于「quality」')
+    expect(workflowEdgeConditionLabel({
+      route: 'failure', condition: { path: 'error', operator: 'contains', value: 'timeout' },
+    }, labels)).toBe('失败后 · 错误文本包含「timeout」')
+    expect(workflowEdgeConditionLabel({
+      route: 'always', condition: { path: 'outputJson.approved', operator: 'exists' },
+    }, labels)).toBe('无论结果 · approved存在')
+    expect(workflowEdgeConditionLabel({
+      route: 'success', condition: { path: 'outputJson.flag', operator: 'equals', value: false },
+    }, labels)).toBe('成功后 · flag等于「false」')
+    expect(workflowEdgeConditionLabel({
+      route: 'success', condition: { path: 'outputJson.payload', operator: 'equals', value: { state: 'ready' } },
+    }, labels)).toContain('{"state":"ready"}')
+    expect(workflowEdgeConditionLabel({
+      route: 'success', condition: { path: 'outputJson.very.deep.field', operator: 'equals', value: 'x'.repeat(200) },
+    }, labels).length).toBeLessThanOrEqual(72)
+  })
+
   it('recognizes a backward connection as one loop and derives its node scope', () => {
     const edges = [
       edge('implement-review', 'implement', 'review'),
