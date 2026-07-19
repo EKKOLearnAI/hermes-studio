@@ -27,7 +27,7 @@ import {
   recordBridgeMoaDisplayTool,
 } from './bridge-message'
 import { summarizeToolArguments } from './response-utils'
-import type { ContentBlock, QueuedRun, SessionState } from './types'
+import type { ChatRunSource, ContentBlock, QueuedRun, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
@@ -42,6 +42,14 @@ const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 const BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS = 500
 const BRIDGE_TITLE_EVENT_POLL_TIMEOUT_MS = 45_000
 const BRIDGE_GOAL_EVALUATE_TIMEOUT_MS = 120_000
+
+type BridgeRunSource = Extract<ChatRunSource, 'cli' | 'global_agent' | 'workflow'>
+
+function normalizeBridgeRunSource(source?: string | null, sessionSource?: string | null): BridgeRunSource {
+  if (sessionSource === 'global_agent' || source === 'global_agent') return 'global_agent'
+  if (sessionSource === 'workflow' || source === 'workflow') return 'workflow'
+  return 'cli'
+}
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -351,11 +359,7 @@ export async function handleBridgeRun(
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
 ) {
   const { input, session_id, instructions } = data
-  const runSource = data.session_source === 'global_agent' || data.source === 'global_agent'
-    ? 'global_agent'
-    : data.session_source === 'workflow' || data.source === 'workflow'
-      ? 'workflow'
-      : 'cli'
+  const runSource = normalizeBridgeRunSource(data.source, data.session_source)
   // Web UI Hermes agents currently opt out at creation time. Workflow callers
   // also pass false explicitly; a future single-chat setting can opt in with true
   // without changing the permanently-disabled workflow and group-chat callers.
@@ -639,6 +643,7 @@ export async function handleBridgeRun(
         dequeueNextQueuedRun,
         fullInstructions,
         { model: resolvedModel, provider: resolvedProvider },
+        runSource,
         workspace,
         currentInputTokens,
         shouldPersistUserMessage && displayRole === 'user',
@@ -684,6 +689,7 @@ export async function handleBridgeRun(
         dequeueNextQueuedRun,
         fullInstructions,
         { model: resolvedModel, provider: resolvedProvider },
+        runSource,
         workspace,
         currentInputTokens,
         shouldPersistUserMessage && displayRole === 'user',
@@ -777,6 +783,7 @@ export async function resumeBridgeRun(
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
 ) {
   const { sessionId, runId, profile, instructions } = args
+  const runSource = normalizeBridgeRunSource(args.source)
   let state = sessionMap.get(sessionId)
   if (!state) {
     state = { messages: [], isWorking: false, events: [], queue: [] }
@@ -787,7 +794,7 @@ export async function resumeBridgeRun(
   state.isWorking = true
   state.isAborting = state.isAborting === true
   state.profile = profile
-  state.source = args.source === 'global_agent' ? 'global_agent' : 'cli'
+  state.source = runSource
   state.runId = runId
   state.activeRunMarker = runMarker
   state.bridgeOutput = state.bridgeOutput || latestAssistantText(state)
@@ -852,6 +859,7 @@ export async function resumeBridgeRun(
         dequeueNextQueuedRun,
         instructions,
         { model: args.model, provider: args.provider },
+        runSource,
         args.workspace,
       )
     }
@@ -885,6 +893,7 @@ export async function resumeBridgeRun(
           dequeueNextQueuedRun,
           instructions,
           { model: args.model, provider: args.provider },
+          runSource,
           args.workspace,
         )
       }
@@ -1066,6 +1075,7 @@ async function applyBridgeChunkAsync(
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
   instructions: string,
   modelContext: { model?: string | null; provider?: string | null },
+  runSource: BridgeRunSource,
   workspace?: string | null,
   currentInputTokens = 0,
   currentInputIncludedInDb = true,
@@ -1584,7 +1594,11 @@ async function applyBridgeChunkAsync(
   }
   emit(eventName, payload)
 
-  if (!terminalError) {
+  // Workflow node progression is owned by the DAG scheduler. Use the immutable
+  // source of the run being finalized: state.source may already describe the
+  // next queued run by this point. The standing-goal judge uses the same profile
+  // worker as chat runs and can otherwise delay the scheduler's next node.
+  if (!terminalError && runSource !== 'workflow') {
     await maybeEnqueueGoalContinuation({
       nsp,
       socket,
@@ -1596,6 +1610,7 @@ async function applyBridgeChunkAsync(
       modelGroups,
       instructions,
       finalResponse,
+      runSource,
     })
   }
 
@@ -1667,6 +1682,7 @@ async function maybeEnqueueGoalContinuation(args: {
   modelGroups?: RunModelGroup[]
   instructions: string
   finalResponse: string
+  runSource: BridgeRunSource
 }) {
   const finalResponse = args.finalResponse || ''
   if (!finalResponse.trim()) return
@@ -1717,7 +1733,7 @@ async function maybeEnqueueGoalContinuation(args: {
     model_groups: args.modelGroups,
     instructions: undefined,
     profile: args.profile,
-    source: args.state.source === 'global_agent' ? 'global_agent' : 'cli',
+    source: args.runSource === 'global_agent' ? 'global_agent' : 'cli',
     goalContinuation: true,
   }
   args.state.queue.push(next)

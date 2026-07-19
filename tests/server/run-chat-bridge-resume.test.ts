@@ -89,11 +89,12 @@ describe('resumeBridgeRun', () => {
     estimateUsageTokensFromMessagesMock.mockReturnValue({ inputTokens: 3, outputTokens: 2 })
   })
 
-  it('continues polling an existing bridge run after web server state is recreated', async () => {
+  it('continues polling a resumed workflow run without judging goals when a cli continuation is queued', async () => {
     const { resumeBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
     const { nsp, emitted } = createNamespace()
     const socket = { id: 'socket-1', connected: true, emit: vi.fn() }
     const sessionMap = new Map<string, any>()
+    const dequeueNextQueuedRun = vi.fn()
     sessionMap.set('session-resume', {
       messages: [
         { id: 1, session_id: 'session-resume', role: 'user', content: 'hello', timestamp: 1 },
@@ -101,7 +102,13 @@ describe('resumeBridgeRun', () => {
       ],
       isWorking: true,
       events: [],
-      queue: [],
+      queue: [{
+        queue_id: 'next-cli',
+        input: 'queued cli continuation',
+        profile: 'default',
+        source: 'cli',
+        goalContinuation: true,
+      }],
     })
 
     const bridge = {
@@ -170,10 +177,11 @@ describe('resumeBridgeRun', () => {
         instructions: 'system prompt',
         model: 'gpt-test',
         provider: 'openai',
+        source: 'workflow',
       },
       sessionMap,
       bridge as any,
-      vi.fn(),
+      dequeueNextQueuedRun,
     )
 
     expect(bridge.getResult).toHaveBeenCalledWith('run-resume')
@@ -193,6 +201,9 @@ describe('resumeBridgeRun', () => {
       isEstimated: false,
     }))
     expect(updateUsageMock).toHaveBeenCalledTimes(1)
+    expect(bridge.goalEvaluate).not.toHaveBeenCalled()
+    expect(sessionMap.get('session-resume').source).toBe('cli')
+    expect(dequeueNextQueuedRun).toHaveBeenCalledWith(socket, 'session-resume')
     expect(emitted).toEqual(expect.arrayContaining([
       expect.objectContaining({
         event: 'message.delta',
@@ -203,8 +214,110 @@ describe('resumeBridgeRun', () => {
         payload: expect.objectContaining({ output: 'Hello world', session_id: 'session-resume' }),
       }),
     ]))
-    expect(sessionMap.get('session-resume').isWorking).toBe(false)
+    expect(sessionMap.get('session-resume').isWorking).toBe(true)
   })
+
+  it.each(['cli', 'global_agent'] as const)(
+    'preserves standing-goal evaluation and continuation source for a resumed %s run when a workflow continuation is queued',
+    async (runSource) => {
+      const { resumeBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+      const { nsp } = createNamespace()
+      const socket = { id: 'socket-1', connected: true, emit: vi.fn() }
+      const sessionMap = new Map<string, any>()
+      const dequeueNextQueuedRun = vi.fn()
+      sessionMap.set('session-resume', {
+        messages: [
+          { id: 1, session_id: 'session-resume', role: 'user', content: 'hello', timestamp: 1 },
+          { id: 2, session_id: 'session-resume', role: 'assistant', content: 'Hello', timestamp: 2 },
+        ],
+        isWorking: true,
+        events: [],
+        queue: [{
+          queue_id: 'next-workflow',
+          input: 'queued workflow continuation',
+          profile: 'default',
+          source: 'workflow',
+          goalContinuation: true,
+        }],
+      })
+
+      const bridge = {
+        getResult: vi.fn(async () => ({
+          ok: true,
+          run_id: `run-${runSource}`,
+          session_id: 'session-resume',
+          status: 'running',
+          output: 'Hello',
+          deltas: ['Hello'],
+          events: [],
+        })),
+        getOutput: vi.fn(async () => ({
+          ok: true,
+          run_id: `run-${runSource}`,
+          session_id: 'session-resume',
+          status: 'complete',
+          delta: ' world',
+          cursor: 2,
+          output: 'Hello world',
+          done: true,
+          result: { final_response: 'Hello world' },
+          error: null,
+          events: [],
+          event_cursor: 0,
+        })),
+        contextEstimate: vi.fn(async () => ({
+          ok: true,
+          session_id: 'session-resume',
+          fixed_context_tokens: 0,
+          system_prompt_tokens: 0,
+          tool_tokens: 0,
+          message_count: 0,
+          tool_count: 0,
+          system_prompt_chars: 0,
+        })),
+        goalEvaluate: vi.fn(async () => ({
+          ok: true,
+          session_id: 'session-resume',
+          handled: true,
+          should_continue: true,
+          continuation_prompt: `continue ${runSource}`,
+        })),
+      }
+
+      await resumeBridgeRun(
+        nsp as any,
+        socket as any,
+        {
+          sessionId: 'session-resume',
+          runId: `run-${runSource}`,
+          profile: 'default',
+          instructions: 'system prompt',
+          model: 'gpt-test',
+          provider: 'openai',
+          source: runSource,
+        },
+        sessionMap,
+        bridge as any,
+        dequeueNextQueuedRun,
+      )
+
+      expect(bridge.goalEvaluate).toHaveBeenCalledWith('session-resume', 'Hello world', 'default')
+      expect(sessionMap.get('session-resume').source).toBe('workflow')
+      expect(sessionMap.get('session-resume').queue).toEqual([
+        expect.objectContaining({
+          input: 'queued workflow continuation',
+          source: 'workflow',
+          goalContinuation: true,
+        }),
+        expect.objectContaining({
+          input: `continue ${runSource}`,
+          source: runSource,
+          goalContinuation: true,
+        }),
+      ])
+      expect(dequeueNextQueuedRun).toHaveBeenCalledWith(socket, 'session-resume')
+    },
+  )
 
   it('completes a timed-out abort when the resumed bridge run reaches a terminal state', async () => {
     const { resumeBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')

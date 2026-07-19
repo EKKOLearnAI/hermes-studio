@@ -592,6 +592,66 @@ describe('bridge run final context usage', () => {
     }))
   })
 
+  it('releases workflow state without judging goals when the bridge stream ends without a terminal chunk', async () => {
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    const sessionMap = new Map([['session-1', state]])
+    const goalEvaluate = vi.fn(async () => {
+      throw new Error('workflow synthetic completion must not judge standing goals')
+    })
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({
+        token_count: 12345,
+        fixed_context_tokens: 12327,
+        message_count: 2,
+        tool_count: 4,
+        system_prompt_chars: 13,
+      }),
+      streamOutput: vi.fn(async function* () {
+        yield {
+          run_id: 'run-1',
+          session_id: 'session-1',
+          done: false,
+          status: 'running',
+          delta: 'partial workflow reply',
+          cursor: 1,
+          output: 'partial workflow reply',
+          events: [],
+          event_cursor: 0,
+        }
+      }),
+      goalEvaluate,
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      { input: 'hello', session_id: 'session-1', source: 'workflow' },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    expect(state.isWorking).toBe(false)
+    expect(state.isAborting).toBe(false)
+    expect(state.runId).toBeUndefined()
+    expect(state.activeRunMarker).toBeUndefined()
+    expect(goalEvaluate).not.toHaveBeenCalled()
+    expect(emit).toHaveBeenCalledWith('run.completed', expect.objectContaining({
+      output: 'partial workflow reply',
+      inputTokens: 11,
+      outputTokens: 7,
+      contextTokens: 12345,
+    }))
+  })
+
   it('stores a super admin model-run token for the profile without adding it to bridge instructions', async () => {
     const emit = vi.fn()
     const nsp = makeNamespace(emit)
@@ -739,6 +799,182 @@ describe('bridge run final context usage', () => {
     )
     expect(state.source).toBe('workflow')
   })
+
+  it('does not evaluate standing goals after a workflow run with no queued continuation', async () => {
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    const sessionMap = new Map([['workflow-session', state]])
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-workflow', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({
+        token_count: 42,
+        message_count: 1,
+        tool_count: 0,
+        system_prompt_chars: 13,
+      }),
+      goalEvaluate: vi.fn().mockRejectedValue(new Error('workflow must not evaluate standing goals')),
+      streamOutput: vi.fn(async function* () {
+        yield {
+          run_id: 'run-workflow',
+          done: true,
+          status: 'completed',
+          output: 'workflow node complete',
+          result: { final_response: 'workflow node complete' },
+        }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      { input: 'run workflow node', session_id: 'workflow-session', source: 'workflow' },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    expect(bridge.goalEvaluate).not.toHaveBeenCalled()
+    expect(state.queue).toEqual([])
+    expect(emit).toHaveBeenCalledWith('run.completed', expect.objectContaining({
+      output: 'workflow node complete',
+    }))
+  })
+
+  it.each(['cli', 'global_agent'] as const)(
+    'does not evaluate standing goals after a workflow run when a %s continuation is queued',
+    async (nextSource) => {
+      const emit = vi.fn()
+      const nsp = makeNamespace(emit)
+      const socket = makeSocket()
+      const state = makeState()
+      // Mark the queued item as an internal continuation so hasRealQueuedRun()
+      // cannot hide a regression in the completed-run source decision.
+      state.queue.push({
+        queue_id: `next-${nextSource}`,
+        input: 'queued continuation',
+        profile: 'default',
+        source: nextSource,
+        goalContinuation: true,
+      })
+      const sessionMap = new Map([['workflow-session', state]])
+      const dequeueNextQueuedRun = vi.fn()
+      const bridge = {
+        chat: vi.fn().mockResolvedValue({ run_id: 'run-workflow', status: 'started' }),
+        contextEstimate: vi.fn().mockResolvedValue({
+          token_count: 42,
+          message_count: 1,
+          tool_count: 0,
+          system_prompt_chars: 13,
+        }),
+        goalEvaluate: vi.fn().mockRejectedValue(new Error('workflow must not evaluate standing goals')),
+        streamOutput: vi.fn(async function* () {
+          yield {
+            run_id: 'run-workflow',
+            done: true,
+            status: 'completed',
+            output: 'workflow node complete',
+            result: { final_response: 'workflow node complete' },
+          }
+        }),
+      } as any
+
+      const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+      await handleBridgeRun(
+        nsp,
+        socket,
+        { input: 'run workflow node', session_id: 'workflow-session', source: 'workflow' },
+        'default',
+        sessionMap,
+        bridge,
+        false,
+        vi.fn(),
+        dequeueNextQueuedRun,
+      )
+
+      expect(bridge.goalEvaluate).not.toHaveBeenCalled()
+      expect(state.source).toBe(nextSource)
+      expect(dequeueNextQueuedRun).toHaveBeenCalledWith(socket, 'workflow-session')
+      expect(emit).toHaveBeenCalledWith('run.completed', expect.objectContaining({
+        output: 'workflow node complete',
+      }))
+      expect(emit).not.toHaveBeenCalledWith('run.failed', expect.anything())
+    },
+  )
+
+  it.each(['cli', 'global_agent'] as const)(
+    'evaluates standing goals for a completed %s run even when a workflow continuation is queued',
+    async (runSource) => {
+      const emit = vi.fn()
+      const nsp = makeNamespace(emit)
+      const socket = makeSocket()
+      const state = makeState()
+      // Keep the queued Workflow item internal so the real-queue guard cannot
+      // bypass the completed ordinary run's standing-goal evaluation.
+      state.queue.push({
+        queue_id: 'next-workflow',
+        input: 'queued workflow continuation',
+        profile: 'default',
+        source: 'workflow',
+        goalContinuation: true,
+      })
+      const sessionMap = new Map([['ordinary-session', state]])
+      const dequeueNextQueuedRun = vi.fn()
+      const bridge = {
+        chat: vi.fn().mockResolvedValue({ run_id: `run-${runSource}`, status: 'started' }),
+        contextEstimate: vi.fn().mockResolvedValue({
+          token_count: 42,
+          message_count: 1,
+          tool_count: 0,
+          system_prompt_chars: 13,
+        }),
+        goalEvaluate: vi.fn().mockResolvedValue({
+          handled: true,
+          should_continue: true,
+          continuation_prompt: 'continue ordinary standing goal',
+        }),
+        streamOutput: vi.fn(async function* () {
+          yield {
+            run_id: `run-${runSource}`,
+            done: true,
+            status: 'completed',
+            output: 'ordinary chat complete',
+            result: { final_response: 'ordinary chat complete' },
+          }
+        }),
+      } as any
+
+      const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+      await handleBridgeRun(
+        nsp,
+        socket,
+        { input: 'continue chat', session_id: 'ordinary-session', source: runSource },
+        'default',
+        sessionMap,
+        bridge,
+        false,
+        vi.fn(),
+        dequeueNextQueuedRun,
+      )
+
+      expect(bridge.goalEvaluate).toHaveBeenCalledWith('ordinary-session', 'ordinary chat complete', 'default')
+      expect(state.queue).toEqual([
+        expect.objectContaining({ source: 'workflow' }),
+        expect.objectContaining({
+          input: 'continue ordinary standing goal',
+          source: runSource,
+          goalContinuation: true,
+        }),
+      ])
+      expect(state.source).toBe('workflow')
+      expect(dequeueNextQueuedRun).toHaveBeenCalledWith(socket, 'ordinary-session')
+    },
+  )
 
   it('evaluates active goals after a successful bridge run and queues continuation prompts', async () => {
     const emit = vi.fn()

@@ -796,7 +796,11 @@ export class ChatRunSocket {
       state.runId = runId
       state.activeRunMarker = undefined
       state.profile = profile
-      state.source = source === 'global_agent' ? 'global_agent' : 'cli'
+      state.source = source === 'global_agent'
+        ? 'global_agent'
+        : source === 'workflow'
+          ? 'workflow'
+          : 'cli'
       state.events = []
       const instructions = this.resumeInstructionsForSession(sid)
       void resumeBridgeRun(
