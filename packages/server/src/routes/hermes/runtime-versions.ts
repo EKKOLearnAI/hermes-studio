@@ -8,6 +8,7 @@ runtimeVersionRoutes.get('/api/hermes/runtime-versions', requireSuperAdmin, ctrl
 runtimeVersionRoutes.get('/api/hermes/runtime-versions/jobs', requireSuperAdmin, ctrl.jobs)
 runtimeVersionRoutes.get('/api/hermes/runtime-versions/jobs/:id', requireSuperAdmin, ctrl.job)
 runtimeVersionRoutes.post('/api/hermes/runtime-versions/active-runtime', requireSuperAdmin, ctrl.activateRuntime)
+runtimeVersionRoutes.post('/api/hermes/runtime-versions/runtime-root', requireSuperAdmin, ctrl.selectRuntimeRoot)
 runtimeVersionRoutes.post('/api/hermes/runtime-versions/active-webui', requireSuperAdmin, ctrl.activateWebUi)
 runtimeVersionRoutes.post('/api/hermes/runtime-versions/runtime/download', requireSuperAdmin, ctrl.downloadRuntime)
 runtimeVersionRoutes.post('/api/hermes/runtime-versions/webui/download', requireSuperAdmin, ctrl.downloadWebUi)

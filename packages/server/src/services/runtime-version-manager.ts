@@ -1,8 +1,8 @@
 import { createHash } from 'crypto'
-import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'fs'
+import { accessSync, constants, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { get as httpGet } from 'http'
 import { get as httpsGet } from 'https'
-import { basename, dirname, join, relative, resolve } from 'path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import * as tar from 'tar'
 import { config } from '../config'
 import { getHermesWebUiVersion } from './system-info'
@@ -17,6 +17,9 @@ export interface ActiveVersionManifest {
   hermesRuntimeVersion?: string
   webUiVersion?: string
   runtimeDirectory?: string
+  runtimeRootDirectory?: string
+  pendingRuntimeRootDirectory?: string
+  runtimeMigrationError?: string
   webUiDirectory?: string
   platform?: string
   updatedAt?: string
@@ -73,6 +76,9 @@ export interface RuntimeVersionStatus {
   hermes: {
     activeVersion: string
     activeDirectory: string
+    storageDirectory: string
+    pendingStorageDirectory: string
+    migrationError: string
     installed: InstalledRuntimeVersion[]
     remoteVersions: string[]
   }
@@ -87,6 +93,7 @@ export interface RuntimeVersionStatus {
 
 interface RuntimePackageManifest {
   hermesAgentVersion?: string
+  platform?: string
   asset?: {
     name?: string
     url?: string
@@ -110,12 +117,22 @@ function runtimePlatformKey(platformName = process.platform, archName = process.
   return `${osLabel}-${archName}`
 }
 
-function desktopRuntimeRoot(): string {
+function defaultDesktopRuntimeRoot(): string {
   return join(config.appHome, 'desktop-runtime')
 }
 
 function activeVersionPath(): string {
-  return join(desktopRuntimeRoot(), ACTIVE_VERSION_FILE)
+  return join(defaultDesktopRuntimeRoot(), ACTIVE_VERSION_FILE)
+}
+
+function runtimeStorageRoot(active = readActiveVersionManifest()): string {
+  const configured = active?.runtimeRootDirectory?.trim()
+  return configured ? resolve(configured) : defaultDesktopRuntimeRoot()
+}
+
+function isSameOrNestedPath(parent: string, candidate: string): boolean {
+  const rel = relative(resolve(parent), resolve(candidate))
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
 }
 
 function downloadBaseUrl(): string {
@@ -179,31 +196,43 @@ function missingRuntimeFiles(root: string): string[] {
 }
 
 export function listInstalledRuntimeVersions(active = readActiveVersionManifest()): InstalledRuntimeVersion[] {
-  const root = join(desktopRuntimeRoot(), 'hermes')
-  if (!existsSync(root)) return []
-
+  const root = join(runtimeStorageRoot(active), 'hermes')
   const currentPlatform = runtimePlatformKey()
   const activeDir = active?.runtimeDirectory ? resolve(active.runtimeDirectory) : ''
   const installed: InstalledRuntimeVersion[] = []
 
-  for (const versionEntry of readdirSync(root, { withFileTypes: true })) {
-    if (!versionEntry.isDirectory()) continue
-    const version = versionEntry.name
-    const platformRoot = join(root, version)
-    for (const platformEntry of readdirSync(platformRoot, { withFileTypes: true })) {
-      if (!platformEntry.isDirectory()) continue
-      const directory = join(platformRoot, platformEntry.name)
-      installed.push({
-        version,
-        platform: platformEntry.name,
-        directory,
-        active: activeDir === resolve(directory),
-        manifestHermesRuntimeVersion: readRuntimeManifestVersion(directory),
-      })
+  if (existsSync(root)) {
+    for (const versionEntry of readdirSync(root, { withFileTypes: true })) {
+      if (!versionEntry.isDirectory()) continue
+      const version = versionEntry.name
+      const platformRoot = join(root, version)
+      for (const platformEntry of readdirSync(platformRoot, { withFileTypes: true })) {
+        if (!platformEntry.isDirectory()) continue
+        const directory = join(platformRoot, platformEntry.name)
+        installed.push({
+          version,
+          platform: platformEntry.name,
+          directory,
+          active: activeDir === resolve(directory),
+          manifestHermesRuntimeVersion: readRuntimeManifestVersion(directory),
+        })
+      }
     }
   }
 
+  if (activeDir && !installed.some(item => resolve(item.directory) === activeDir)) {
+    const manifestVersion = readRuntimeManifestVersion(activeDir)
+    installed.push({
+      version: active?.hermesRuntimeVersion || manifestVersion || basename(activeDir),
+      platform: active?.platform || currentPlatform,
+      directory: activeDir,
+      active: true,
+      manifestHermesRuntimeVersion: manifestVersion,
+    })
+  }
+
   return installed.sort((left, right) => {
+    if (left.active !== right.active) return left.active ? -1 : 1
     if (left.platform === currentPlatform && right.platform !== currentPlatform) return -1
     if (right.platform === currentPlatform && left.platform !== currentPlatform) return 1
     return right.version.localeCompare(left.version, undefined, { numeric: true })
@@ -260,6 +289,9 @@ export async function getRuntimeVersionStatus(): Promise<RuntimeVersionStatus> {
     hermes: {
       activeVersion: active?.hermesRuntimeVersion || '',
       activeDirectory: active?.runtimeDirectory || '',
+      storageDirectory: runtimeStorageRoot(active),
+      pendingStorageDirectory: active?.pendingRuntimeRootDirectory || '',
+      migrationError: active?.runtimeMigrationError || '',
       installed: listInstalledRuntimeVersions(active),
       remoteVersions: normalizeStringList(manifest?.hermes),
     },
@@ -356,11 +388,12 @@ export async function downloadRuntimeVersion(version: string, source: VersionDow
   const assetName = asset.name
 
   const assetUrl = downloadAssetUrl(assetName, releaseTag, source)
-  const targetRoot = join(desktopRuntimeRoot(), 'hermes', cleanVersion, platform)
-  const archive = join(desktopRuntimeRoot(), `${basename(assetName)}.download`)
-  const tempRoot = join(desktopRuntimeRoot(), `.runtime-download-${process.pid}-${Date.now()}`)
+  const storageRoot = runtimeStorageRoot()
+  const targetRoot = join(storageRoot, 'hermes', cleanVersion, platform)
+  const archive = join(storageRoot, `${basename(assetName)}.download`)
+  const tempRoot = join(storageRoot, `.runtime-download-${process.pid}-${Date.now()}`)
 
-  mkdirSync(desktopRuntimeRoot(), { recursive: true })
+  mkdirSync(storageRoot, { recursive: true })
   rmSync(tempRoot, { recursive: true, force: true })
   mkdirSync(tempRoot, { recursive: true })
 
@@ -405,12 +438,13 @@ export async function downloadWebUiVersion(version: string, source: VersionDownl
   const manifestUrl = downloadAssetUrl(manifestName, releaseTag, source)
   onProgress?.({ stage: 'resolve', message: 'runtimeVersions.jobStage.resolveWebUi' })
   const manifest = await fetchJson<{ asset?: { sha256?: string; size?: number } }>(manifestUrl)
-  const archive = join(desktopRuntimeRoot(), `${assetName}.download`)
-  const tempRoot = join(desktopRuntimeRoot(), `.webui-download-${process.pid}-${Date.now()}`)
+  const storageRoot = defaultDesktopRuntimeRoot()
+  const archive = join(storageRoot, `${assetName}.download`)
+  const tempRoot = join(storageRoot, `.webui-download-${process.pid}-${Date.now()}`)
   const targetRoot = join(config.appHome, 'webui', cleanVersion)
   const assetUrl = downloadAssetUrl(assetName, releaseTag, source)
 
-  mkdirSync(desktopRuntimeRoot(), { recursive: true })
+  mkdirSync(storageRoot, { recursive: true })
   rmSync(tempRoot, { recursive: true, force: true })
   mkdirSync(tempRoot, { recursive: true })
 
@@ -454,7 +488,49 @@ export function activateInstalledRuntimeVersion(version: string): ActiveVersionM
     webUiVersion: active?.webUiVersion || getHermesWebUiVersion(),
     runtimeDirectory: target.directory,
     webUiDirectory: active?.webUiDirectory || '',
+    runtimeRootDirectory: active?.runtimeRootDirectory || '',
+    pendingRuntimeRootDirectory: active?.pendingRuntimeRootDirectory || '',
+    runtimeMigrationError: active?.runtimeMigrationError || '',
     platform: target.platform,
+    updatedAt: new Date().toISOString(),
+  }
+
+  mkdirSync(dirname(activeVersionPath()), { recursive: true })
+  writeFileSync(activeVersionPath(), JSON.stringify(next, null, 2) + '\n', 'utf-8')
+  return next
+}
+
+export function scheduleRuntimeRootMigration(directory: string): ActiveVersionManifest {
+  const selectedDirectory = directory.trim()
+  if (!selectedDirectory) throw new Error('Runtime storage directory is required')
+  if (process.env.HERMES_DESKTOP_RUNTIME_DIR?.trim()) {
+    throw new Error('Runtime storage directory cannot be changed while HERMES_DESKTOP_RUNTIME_DIR is set')
+  }
+
+  const target = resolve(selectedDirectory)
+  if (!existsSync(target) || !statSync(target).isDirectory()) {
+    throw new Error('Runtime storage directory must be an existing directory')
+  }
+  try {
+    accessSync(target, constants.W_OK)
+  } catch {
+    throw new Error('Runtime storage directory is not writable')
+  }
+
+  const active = readActiveVersionManifest()
+  const currentRoot = runtimeStorageRoot(active)
+  if (target !== resolve(currentRoot) && isSameOrNestedPath(currentRoot, target)) {
+    throw new Error('Runtime storage directory cannot be inside the current Runtime storage directory')
+  }
+  if (active?.runtimeDirectory && isSameOrNestedPath(active.runtimeDirectory, target)) {
+    throw new Error('Runtime storage directory cannot be the current Runtime directory or one of its subdirectories')
+  }
+
+  const next: ActiveVersionManifest = {
+    ...(active || { schema: 1 }),
+    schema: 1,
+    pendingRuntimeRootDirectory: target === resolve(currentRoot) ? '' : target,
+    runtimeMigrationError: '',
     updatedAt: new Date().toISOString(),
   }
 
@@ -496,6 +572,9 @@ export function activateDownloadedWebUiVersion(version: string): ActiveVersionMa
     hermesRuntimeVersion: active?.hermesRuntimeVersion || '',
     webUiVersion: cleanVersion,
     runtimeDirectory: active?.runtimeDirectory || '',
+    runtimeRootDirectory: active?.runtimeRootDirectory || '',
+    pendingRuntimeRootDirectory: active?.pendingRuntimeRootDirectory || '',
+    runtimeMigrationError: active?.runtimeMigrationError || '',
     webUiDirectory: directory,
     platform: active?.platform || runtimePlatformKey(),
     updatedAt: new Date().toISOString(),

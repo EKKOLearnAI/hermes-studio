@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import {
+  cpSync,
   createReadStream,
   createWriteStream,
   existsSync,
@@ -14,12 +15,13 @@ import {
 import { get as httpGet } from 'node:http'
 import { get as httpsGet } from 'node:https'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, relative } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { app } from 'electron'
 import {
   desktopRuntimeDir,
   desktopRuntimeVersion,
   runtimePlatformKey,
+  runtimeStorageRoot,
   targetDesktopRuntimeDir,
   webUiHome,
   webuiDir,
@@ -62,6 +64,19 @@ type RuntimeDescriptor = {
 type PackagedRuntimeRelease = {
   tag?: string
   hermesAgentVersion?: string
+}
+
+type ActiveRuntimeVersion = {
+  schema?: number
+  hermesRuntimeVersion?: string
+  webUiVersion?: string
+  runtimeDirectory?: string
+  runtimeRootDirectory?: string
+  pendingRuntimeRootDirectory?: string
+  runtimeMigrationError?: string
+  webUiDirectory?: string
+  platform?: string
+  updatedAt?: string
 }
 
 export type RuntimeProgress = {
@@ -261,12 +276,117 @@ function webUiVersion(): string {
   return app.getVersion()
 }
 
+function activeVersionPath(): string {
+  return join(webUiHome(), 'desktop-runtime', ACTIVE_RUNTIME_VERSION_NAME)
+}
+
+function readActiveRuntimeVersion(): ActiveRuntimeVersion | null {
+  const file = activeVersionPath()
+  if (!existsSync(file)) return null
+  try {
+    return JSON.parse(readFileSync(file, 'utf-8')) as ActiveRuntimeVersion
+  } catch {
+    return null
+  }
+}
+
+function writeActiveRuntimeManifest(active: ActiveRuntimeVersion): void {
+  const file = activeVersionPath()
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, JSON.stringify(active, null, 2) + '\n')
+}
+
+export function migratePendingRuntimeRoot(onProgress?: RuntimeProgressHandler): { migrated: boolean; error: string } {
+  const active = readActiveRuntimeVersion()
+  const pendingRoot = active?.pendingRuntimeRootDirectory?.trim()
+  if (!active || !pendingRoot) return { migrated: false, error: '' }
+
+  const sourceRuntime = desktopRuntimeDir()
+  const targetRoot = resolve(pendingRoot)
+  const manifest = readCachedRuntimeManifest(sourceRuntime)
+  const version = manifest?.hermesAgentVersion || active.hermesRuntimeVersion || desktopRuntimeVersion()
+  const targetRuntime = join(targetRoot, 'hermes', version, runtimePlatformKey())
+  const tempRuntime = join(dirname(targetRuntime), `.runtime-migration-${process.pid}-${Date.now()}`)
+
+  try {
+    if (!rootRuntimeReady(sourceRuntime)) {
+      throw new Error(`Current Runtime is incomplete: ${sourceRuntime}`)
+    }
+
+    const relativeTarget = relative(resolve(sourceRuntime), targetRoot)
+    if (relativeTarget === ''
+      || (relativeTarget !== '..' && !relativeTarget.startsWith(`..${sep}`) && !isAbsolute(relativeTarget))) {
+      throw new Error('Runtime migration destination cannot be inside the current Runtime directory')
+    }
+
+    if (resolve(sourceRuntime) === resolve(targetRuntime)) {
+      const next: ActiveRuntimeVersion = {
+        ...active,
+        runtimeRootDirectory: targetRoot,
+        runtimeMigrationError: '',
+        updatedAt: new Date().toISOString(),
+      }
+      delete next.pendingRuntimeRootDirectory
+      writeActiveRuntimeManifest(next)
+      return { migrated: true, error: '' }
+    }
+
+    onProgress?.({ stage: 'extract', message: t('runtime.migrating') })
+    mkdirSync(dirname(targetRuntime), { recursive: true })
+    rmSync(tempRuntime, { recursive: true, force: true })
+    cpSync(sourceRuntime, tempRuntime, { recursive: true, force: true, verbatimSymlinks: true })
+
+    const missing = missingRuntimeFiles(tempRuntime)
+    if (missing.length > 0) {
+      throw new Error(`Migrated Runtime is missing required files: ${missing.map(file => relative(tempRuntime, file)).join(', ')}`)
+    }
+    const copiedManifest = readCachedRuntimeManifest(tempRuntime)
+    if (copiedManifest?.platform && copiedManifest.platform !== runtimePlatformKey()) {
+      throw new Error(`Runtime platform mismatch: expected ${runtimePlatformKey()}, received ${copiedManifest.platform}`)
+    }
+
+    rmSync(targetRuntime, { recursive: true, force: true })
+    renameSync(tempRuntime, targetRuntime)
+
+    const next: ActiveRuntimeVersion = {
+      ...active,
+      schema: 1,
+      hermesRuntimeVersion: version,
+      runtimeDirectory: targetRuntime,
+      runtimeRootDirectory: targetRoot,
+      runtimeMigrationError: '',
+      platform: runtimePlatformKey(),
+      updatedAt: new Date().toISOString(),
+    }
+    delete next.pendingRuntimeRootDirectory
+    writeActiveRuntimeManifest(next)
+    console.log(`[runtime] copied Hermes runtime to ${targetRuntime}; previous runtime retained at ${sourceRuntime}`)
+    return { migrated: true, error: '' }
+  } catch (err) {
+    rmSync(tempRuntime, { recursive: true, force: true })
+    const error = err instanceof Error ? err.message : String(err)
+    const next: ActiveRuntimeVersion = {
+      ...active,
+      runtimeMigrationError: error,
+      updatedAt: new Date().toISOString(),
+    }
+    delete next.pendingRuntimeRootDirectory
+    try {
+      writeActiveRuntimeManifest(next)
+    } catch (writeErr) {
+      console.warn(`[runtime] failed to persist Runtime migration error: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`)
+    }
+    console.warn(`[runtime] failed to migrate Hermes runtime: ${error}`)
+    return { migrated: false, error }
+  }
+}
+
 export function writeActiveRuntimeVersion(runtimeRoot = desktopRuntimeDir()): void {
+  const active = readActiveRuntimeVersion()
   const manifest = readCachedRuntimeManifest(runtimeRoot)
   const hermesRuntimeVersion = manifest?.hermesAgentVersion || desktopRuntimeVersion()
-  const activeVersionPath = join(webUiHome(), 'desktop-runtime', ACTIVE_RUNTIME_VERSION_NAME)
-  mkdirSync(dirname(activeVersionPath), { recursive: true })
-  writeFileSync(activeVersionPath, JSON.stringify({
+  writeActiveRuntimeManifest({
+    ...(active || {}),
     schema: 1,
     hermesRuntimeVersion,
     webUiVersion: webUiVersion(),
@@ -274,7 +394,7 @@ export function writeActiveRuntimeVersion(runtimeRoot = desktopRuntimeDir()): vo
     webUiDirectory: webuiDir(),
     platform: runtimePlatformKey(),
     updatedAt: new Date().toISOString(),
-  }, null, 2) + '\n')
+  })
 }
 
 function cachedRuntimeMatches(root: string, descriptor: RuntimeDescriptor): boolean {

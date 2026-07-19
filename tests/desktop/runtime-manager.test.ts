@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -45,7 +45,7 @@ function createRuntimeFiles(root: string) {
   }
   writeFileSync(join(root, 'runtime-manifest.json'), JSON.stringify({
     schema: 1,
-    platform: process.platform,
+    platform: `${process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : process.platform}-${process.arch}`,
     hermesAgentVersion: '0.17.0',
     asset: { name: 'hermes-runtime-test.tar.gz' },
   }))
@@ -147,5 +147,60 @@ describe('desktop runtime manager', () => {
     )
     expect(existsSync(join(runtimeRoot, 'python', 'Scripts', 'hermes.cmd'))).toBe(true)
     expect(existsSync(join(runtimeRoot, 'python', 'Scripts', 'hermes.exe'))).toBe(false)
+  })
+
+  it('copies a pending Runtime migration before switching the active directory', async () => {
+    const home = process.env.HERMES_WEB_UI_HOME!
+    const destination = tempDir('hermes-runtime-migration-target-')
+    const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
+    const sourceRuntime = join(home, 'desktop-runtime', 'hermes', '0.17.0', runtimePlatformKey())
+    const activeVersionPath = join(home, 'desktop-runtime', 'active-version.json')
+    createRuntimeFiles(sourceRuntime)
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      hermesRuntimeVersion: '0.17.0',
+      runtimeDirectory: sourceRuntime,
+      pendingRuntimeRootDirectory: destination,
+      platform: runtimePlatformKey(),
+    }))
+
+    const { migratePendingRuntimeRoot } = await import('../../packages/desktop/src/main/runtime-manager')
+    const result = migratePendingRuntimeRoot()
+    const migratedRuntime = join(destination, 'hermes', '0.17.0', runtimePlatformKey())
+    const active = JSON.parse(readFileSync(activeVersionPath, 'utf-8'))
+
+    expect(result).toEqual({ migrated: true, error: '' })
+    expect(existsSync(join(migratedRuntime, 'runtime-manifest.json'))).toBe(true)
+    expect(existsSync(join(sourceRuntime, 'runtime-manifest.json'))).toBe(true)
+    expect(active.runtimeDirectory).toBe(migratedRuntime)
+    expect(active.runtimeRootDirectory).toBe(destination)
+    expect(active.pendingRuntimeRootDirectory).toBeUndefined()
+  })
+
+  it('keeps the previous Runtime selected when a pending migration fails', async () => {
+    const home = process.env.HERMES_WEB_UI_HOME!
+    const destination = tempDir('hermes-runtime-migration-failure-')
+    const missingRuntime = join(home, 'missing-runtime')
+    const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
+    const activeVersionPath = join(home, 'desktop-runtime', 'active-version.json')
+    mkdirSync(join(home, 'desktop-runtime'), { recursive: true })
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      hermesRuntimeVersion: '0.17.0',
+      runtimeDirectory: missingRuntime,
+      pendingRuntimeRootDirectory: destination,
+      platform: runtimePlatformKey(),
+    }))
+
+    const { migratePendingRuntimeRoot } = await import('../../packages/desktop/src/main/runtime-manager')
+    const result = migratePendingRuntimeRoot()
+    const active = JSON.parse(readFileSync(activeVersionPath, 'utf-8'))
+
+    expect(result.migrated).toBe(false)
+    expect(result.error).toContain('Current Runtime is incomplete')
+    expect(active.runtimeDirectory).toBe(missingRuntime)
+    expect(active.runtimeRootDirectory).toBeUndefined()
+    expect(active.pendingRuntimeRootDirectory).toBeUndefined()
+    expect(active.runtimeMigrationError).toContain('Current Runtime is incomplete')
   })
 })

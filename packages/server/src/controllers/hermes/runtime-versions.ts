@@ -7,6 +7,7 @@ import {
   getVersionDownloadJob,
   getRuntimeVersionStatus,
   listVersionDownloadJobs,
+  scheduleRuntimeRootMigration,
   startRuntimeVersionDownload,
   startWebUiVersionDownload,
   type VersionDownloadSource,
@@ -25,6 +26,18 @@ export async function activateRuntime(ctx: Context) {
   const version = typeof body?.version === 'string' ? body.version : ''
   try {
     const active = activateInstalledRuntimeVersion(version)
+    ctx.body = { success: true, active }
+  } catch (err) {
+    ctx.status = 400
+    ctx.body = { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export async function selectRuntimeRoot(ctx: Context) {
+  const body = ctx.request.body as { directory?: unknown }
+  const directory = typeof body?.directory === 'string' ? body.directory : ''
+  try {
+    const active = scheduleRuntimeRootMigration(directory)
     ctx.body = { success: true, active }
   } catch (err) {
     ctx.status = 400

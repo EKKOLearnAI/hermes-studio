@@ -36,6 +36,9 @@ type RuntimeReleaseMetadata = {
 type ActiveRuntimeVersion = {
   platform?: unknown
   runtimeDirectory?: unknown
+  runtimeRootDirectory?: unknown
+  pendingRuntimeRootDirectory?: unknown
+  runtimeMigrationError?: unknown
   webUiDirectory?: unknown
 }
 
@@ -70,7 +73,7 @@ function readRuntimeManifestVersion(runtimeDir: string): string | null {
 }
 
 function installedRuntimeDirectories(): Array<{ directory: string; version: string }> {
-  const root = join(webUiHome(), 'desktop-runtime', 'hermes')
+  const root = join(runtimeStorageRoot(), 'hermes')
   const currentPlatform = runtimePlatformKey()
   if (!existsSync(root)) return []
 
@@ -229,7 +232,15 @@ export function desktopRuntimeVersion(): string {
 export function targetDesktopRuntimeDir(): string {
   const override = process.env.HERMES_DESKTOP_RUNTIME_DIR?.trim()
   if (override) return resolve(override)
-  return join(webUiHome(), 'desktop-runtime', 'hermes', desktopRuntimeVersion(), runtimePlatformKey())
+  return join(runtimeStorageRoot(), 'hermes', desktopRuntimeVersion(), runtimePlatformKey())
+}
+
+export function runtimeStorageRoot(): string {
+  const active = readActiveRuntimeVersion()
+  const configured = typeof active?.runtimeRootDirectory === 'string'
+    ? active.runtimeRootDirectory.trim()
+    : ''
+  return configured ? resolve(configured) : join(webUiHome(), 'desktop-runtime')
 }
 
 export function desktopRuntimeDir(): string {

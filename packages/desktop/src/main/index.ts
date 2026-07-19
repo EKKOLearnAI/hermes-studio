@@ -1,8 +1,23 @@
-import { app, BrowserWindow, Menu, Tray, shell, ipcMain, nativeImage, Notification, screen, dialog, session, systemPreferences, type MessageBoxOptions } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  Notification,
+  screen,
+  session,
+  shell,
+  systemPreferences,
+  Tray,
+  type MessageBoxOptions,
+  type OpenDialogOptions,
+} from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { startWebUiServer, stopWebUiServer, getToken } from './webui-server'
-import { bundledNode, desktopIcon, desktopMacTrayIcon, desktopRuntimeVersion, desktopWindowsTrayIcon, hermesBinExists, hermesBin, webuiDir } from './paths'
+import { bundledNode, desktopIcon, desktopMacTrayIcon, desktopRuntimeVersion, desktopWindowsTrayIcon, hermesBinExists, hermesBin, runtimeStorageRoot, webuiDir } from './paths'
 import { checkForDesktopUpdates, initAutoUpdater } from './updater'
 import { t } from './desktop-i18n'
 import { resetDesktopDefaultLogin } from './desktop-login-reset'
@@ -11,6 +26,7 @@ import { parseHermesCliArgs, runBundledHermesCli } from './hermes-cli'
 import {
   ensureDesktopRuntime,
   isDesktopRuntimeReady,
+  migratePendingRuntimeRoot,
   writeActiveRuntimeVersion,
   type RuntimeDownloadSource,
   type RuntimeProgress,
@@ -690,6 +706,7 @@ async function bootstrap(source?: RuntimeDownloadSource) {
   isBootstrapping = true
 
   try {
+    migratePendingRuntimeRoot(updateSplash)
     const selectedSource = source || envRuntimeDownloadSource()
     const runtimeUrlOverride = !!process.env.HERMES_DESKTOP_RUNTIME_URL?.trim()
     const manifestOverride = !!process.env.HERMES_DESKTOP_RUNTIME_MANIFEST_URL?.trim()
@@ -746,6 +763,18 @@ async function bootstrap(source?: RuntimeDownloadSource) {
 }
 
 ipcMain.handle('hermes-desktop:get-token', () => getToken())
+ipcMain.handle('hermes-desktop:select-runtime-directory', async (_event, defaultPath?: unknown) => {
+  const options: OpenDialogOptions = {
+    properties: ['openDirectory'],
+    defaultPath: typeof defaultPath === 'string' && defaultPath.trim()
+      ? defaultPath.trim()
+      : runtimeStorageRoot(),
+  }
+  const result = mainWindow && !mainWindow.isDestroyed()
+    ? await dialog.showOpenDialog(mainWindow, options)
+    : await dialog.showOpenDialog(options)
+  return result.canceled ? null : result.filePaths[0] || null
+})
 ipcMain.handle('hermes-desktop:get-window-state', () => windowState())
 ipcMain.handle('hermes-desktop:window-control', (_event, action?: unknown) => {
   if (action !== 'minimize' && action !== 'toggle-maximize' && action !== 'close') return windowState()

@@ -11,6 +11,7 @@ import {
   downloadWebUiVersion,
   fetchRuntimeVersionStatus,
   fetchVersionDownloadJobs,
+  selectRuntimeRoot,
   type InstalledRuntimeVersion,
   type InstalledWebUiVersion,
   type RuntimeVersionStatus,
@@ -19,6 +20,7 @@ import {
   type VersionDownloadKind,
   type VersionDownloadSource,
 } from '@/api/hermes/runtime-versions'
+import { desktopBridge } from '@/utils/desktop-bridge'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ (event: 'update:show', value: boolean): void }>()
@@ -32,6 +34,8 @@ const loading = ref(false)
 const actionLoading = ref<Record<string, boolean>>({})
 const loadError = ref('')
 let pollTimer: ReturnType<typeof setInterval> | null = null
+
+const canSelectRuntimeDirectory = computed(() => typeof desktopBridge()?.selectRuntimeDirectory === 'function')
 
 const currentPlatformRuntime = computed(() =>
   (status.value?.hermes.installed || []).filter(item => item.platform === status.value?.platform),
@@ -220,6 +224,21 @@ async function useRuntime(version: string) {
   })
 }
 
+async function chooseRuntimeDirectory() {
+  const selectDirectory = desktopBridge()?.selectRuntimeDirectory
+  if (!selectDirectory) return
+
+  await runAction('select-runtime-directory', async () => {
+    const directory = await selectDirectory(
+      status.value?.hermes.pendingStorageDirectory || status.value?.hermes.storageDirectory || undefined,
+    )
+    if (!directory) return
+    await selectRuntimeRoot(directory)
+    message.success(t('runtimeVersions.runtimeDirectorySaved'))
+    await loadAll()
+  })
+}
+
 async function removeRuntime(version: string) {
   await runAction(`delete-runtime-${version}`, async () => {
     await deleteRuntimeVersion(version)
@@ -274,6 +293,33 @@ async function removeWebUi(version: string) {
             <span>{{ t('runtimeVersions.activeVersion') }}: {{ status?.hermes.activeVersion || '-' }}</span>
             <span :title="status?.hermes.activeDirectory || ''">{{ status?.hermes.activeDirectory || '-' }}</span>
           </div>
+          <div class="runtime-directory-control">
+            <div class="runtime-directory-value">
+              <strong>{{ t('runtimeVersions.runtimeDirectory') }}</strong>
+              <span :title="status?.hermes.storageDirectory || ''">
+                {{ status?.hermes.storageDirectory || '-' }}
+              </span>
+            </div>
+            <NButton
+              v-if="canSelectRuntimeDirectory"
+              data-testid="select-runtime-directory"
+              size="small"
+              secondary
+              :loading="actionLoading['select-runtime-directory']"
+              @click="chooseRuntimeDirectory"
+            >
+              {{ t('runtimeVersions.chooseRuntimeDirectory') }}
+            </NButton>
+          </div>
+          <p v-if="canSelectRuntimeDirectory" class="runtime-directory-hint">
+            {{ t('runtimeVersions.runtimeDirectoryHint') }}
+          </p>
+          <NAlert v-if="status?.hermes.pendingStorageDirectory" type="info" :bordered="false">
+            {{ t('runtimeVersions.runtimeMigrationPending', { directory: status.hermes.pendingStorageDirectory }) }}
+          </NAlert>
+          <NAlert v-if="status?.hermes.migrationError" type="error" :bordered="false">
+            {{ t('runtimeVersions.runtimeMigrationFailed') }}: {{ status.hermes.migrationError }}
+          </NAlert>
           <div class="version-list">
             <div v-for="version in runtimeVersions" :key="`runtime-${version}`" class="version-row">
               <div class="version-main">
@@ -504,6 +550,38 @@ async function removeWebUi(version: string) {
   }
 }
 
+.runtime-directory-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+.runtime-directory-value {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+
+  span {
+    overflow: hidden;
+    color: var(--text-color-2);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.runtime-directory-hint {
+  margin: -4px 2px 0;
+  color: var(--text-color-3);
+  font-size: 12px;
+}
+
 .version-list,
 .job-list {
   display: flex;
@@ -578,7 +656,8 @@ async function removeWebUi(version: string) {
 @media (max-width: 640px) {
   .section-heading,
   .version-row,
-  .job-row {
+  .job-row,
+  .runtime-directory-control {
     align-items: stretch;
     flex-direction: column;
   }

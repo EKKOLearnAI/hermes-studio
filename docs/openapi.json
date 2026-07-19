@@ -8780,6 +8780,47 @@
         ]
       }
     },
+    "/api/hermes/runtime-versions/runtime-root": {
+      "post": {
+        "tags": [
+          "Runtime Versions"
+        ],
+        "summary": "Create runtime-root",
+        "description": "POST /api/hermes/runtime-versions/runtime-root",
+        "operationId": "selectRuntimeRoot",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "directory": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/runtime-versions/runtime/download": {
       "post": {
         "tags": [
