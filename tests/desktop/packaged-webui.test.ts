@@ -49,7 +49,7 @@ describe('packaged desktop Web UI', () => {
     await expect(verifyPackagedWebUi({
       appOutDir,
       electronPlatformName: 'win32',
-      arch: 0,
+      arch: 1,
       packager: { appInfo: { productFilename: 'Hermes Studio' } },
     } as never)).resolves.toBeUndefined()
   })
@@ -62,7 +62,7 @@ describe('packaged desktop Web UI', () => {
     await expect(verifyPackagedWebUi({
       appOutDir,
       electronPlatformName: 'win32',
-      arch: 0,
+      arch: 1,
       packager: { appInfo: { productFilename: 'Hermes Studio' } },
     } as never)).rejects.toThrow('Packaged Web UI is incomplete')
   })
