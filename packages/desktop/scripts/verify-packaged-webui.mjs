@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { Arch } from 'builder-util'
+
+const ARCH_NAMES = ['ia32', 'x64', 'armv7l', 'arm64', 'universal']
 
 function packagedResourcesDirectory(context) {
   if (context.electronPlatformName === 'darwin') {
@@ -10,8 +11,8 @@ function packagedResourcesDirectory(context) {
   return join(context.appOutDir, 'resources')
 }
 
-function targetArchName(arch) {
-  if (typeof arch === 'number') return Arch[arch] || String(arch)
+export function targetArchName(arch) {
+  if (typeof arch === 'number') return ARCH_NAMES[arch] || String(arch)
   return String(arch)
 }
 

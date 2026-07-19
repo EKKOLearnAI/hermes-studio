@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join, resolve } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
-import verifyPackagedWebUi from '../../packages/desktop/scripts/verify-packaged-webui.mjs'
+import verifyPackagedWebUi, { targetArchName } from '../../packages/desktop/scripts/verify-packaged-webui.mjs'
 
 const tempRoots: string[] = []
 
@@ -34,6 +34,11 @@ afterEach(() => {
 })
 
 describe('packaged desktop Web UI', () => {
+  it('maps electron-builder architecture values without desktop-only dependencies', () => {
+    expect(targetArchName(1)).toBe('x64')
+    expect(targetArchName(3)).toBe('arm64')
+  })
+
   it('copies production dependencies through a dedicated node_modules matcher', () => {
     const config = readFileSync(resolve('packages/desktop/electron-builder.yml'), 'utf8')
 
