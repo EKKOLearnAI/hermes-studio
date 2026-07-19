@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto'
 import {
-  cpSync,
   createReadStream,
   createWriteStream,
   existsSync,
@@ -13,6 +12,12 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
+import {
+  cp as copyAsync,
+  mkdir as mkdirAsync,
+  rename as renameAsync,
+  rm as removeAsync,
+} from 'node:fs/promises'
 import { get as httpGet } from 'node:http'
 import { get as httpsGet } from 'node:https'
 import { tmpdir } from 'node:os'
@@ -83,6 +88,7 @@ type ActiveRuntimeVersion = {
 export type RuntimeProgress = {
   stage: 'resolve' | 'download' | 'verify' | 'extract' | 'ready'
   message: string
+  detail?: string
   percent?: number
   receivedBytes?: number
   totalBytes?: number
@@ -317,7 +323,9 @@ function writeActiveRuntimeManifest(active: ActiveRuntimeVersion): void {
   writeFileSync(file, JSON.stringify(active, null, 2) + '\n')
 }
 
-export function migratePendingRuntimeRoot(onProgress?: RuntimeProgressHandler): { migrated: boolean; error: string } {
+export async function migratePendingRuntimeRoot(
+  onProgress?: RuntimeProgressHandler,
+): Promise<{ migrated: boolean; error: string }> {
   const active = readActiveRuntimeVersion()
   const pendingRoot = active?.pendingRuntimeRootDirectory?.trim()
   if (!active || !pendingRoot) return { migrated: false, error: '' }
@@ -357,10 +365,14 @@ export function migratePendingRuntimeRoot(onProgress?: RuntimeProgressHandler): 
       return { migrated: true, error: '' }
     }
 
-    onProgress?.({ stage: 'extract', message: t('runtime.migrating') })
-    mkdirSync(dirname(targetRuntime), { recursive: true })
-    rmSync(tempRuntime, { recursive: true, force: true })
-    cpSync(sourceRuntime, tempRuntime, { recursive: true, force: true, verbatimSymlinks: true })
+    onProgress?.({
+      stage: 'extract',
+      message: t('runtime.migrating'),
+      detail: targetRoot,
+    })
+    await mkdirAsync(dirname(targetRuntime), { recursive: true })
+    await removeAsync(tempRuntime, { recursive: true, force: true })
+    await copyAsync(sourceRuntime, tempRuntime, { recursive: true, force: true, verbatimSymlinks: true })
 
     const missing = missingRuntimeFiles(tempRuntime)
     if (missing.length > 0) {
@@ -374,21 +386,21 @@ export function migratePendingRuntimeRoot(onProgress?: RuntimeProgressHandler): 
     const shouldCopyWebUi = existsSync(sourceWebUiRoot)
       && resolve(sourceWebUiRoot) !== resolve(targetWebUiRoot)
     if (shouldCopyWebUi) {
-      rmSync(tempWebUiRoot, { recursive: true, force: true })
+      await removeAsync(tempWebUiRoot, { recursive: true, force: true })
       if (existsSync(targetWebUiRoot)) {
-        cpSync(targetWebUiRoot, tempWebUiRoot, { recursive: true, force: true, verbatimSymlinks: true })
+        await copyAsync(targetWebUiRoot, tempWebUiRoot, { recursive: true, force: true, verbatimSymlinks: true })
       } else {
-        mkdirSync(tempWebUiRoot, { recursive: true })
+        await mkdirAsync(tempWebUiRoot, { recursive: true })
       }
-      cpSync(sourceWebUiRoot, tempWebUiRoot, { recursive: true, force: true, verbatimSymlinks: true })
+      await copyAsync(sourceWebUiRoot, tempWebUiRoot, { recursive: true, force: true, verbatimSymlinks: true })
       validateWebUiVersions(tempWebUiRoot)
     }
 
-    rmSync(targetRuntime, { recursive: true, force: true })
-    renameSync(tempRuntime, targetRuntime)
+    await removeAsync(targetRuntime, { recursive: true, force: true })
+    await renameAsync(tempRuntime, targetRuntime)
     if (shouldCopyWebUi) {
-      rmSync(targetWebUiRoot, { recursive: true, force: true })
-      renameSync(tempWebUiRoot, targetWebUiRoot)
+      await removeAsync(targetWebUiRoot, { recursive: true, force: true })
+      await renameAsync(tempWebUiRoot, targetWebUiRoot)
     }
 
     const next: ActiveRuntimeVersion = {
@@ -407,8 +419,10 @@ export function migratePendingRuntimeRoot(onProgress?: RuntimeProgressHandler): 
     console.log(`[runtime] copied desktop runtime storage to ${targetRoot}; previous storage retained at ${sourceRoot}`)
     return { migrated: true, error: '' }
   } catch (err) {
-    rmSync(tempRuntime, { recursive: true, force: true })
-    rmSync(tempWebUiRoot, { recursive: true, force: true })
+    await Promise.allSettled([
+      removeAsync(tempRuntime, { recursive: true, force: true }),
+      removeAsync(tempWebUiRoot, { recursive: true, force: true }),
+    ])
     const error = err instanceof Error ? err.message : String(err)
     const next: ActiveRuntimeVersion = {
       ...active,

@@ -200,8 +200,9 @@ describe('desktop runtime manager', () => {
       platform: runtimePlatformKey(),
     }))
 
+    const onProgress = vi.fn()
     const { migratePendingRuntimeRoot } = await import('../../packages/desktop/src/main/runtime-manager')
-    const result = migratePendingRuntimeRoot()
+    const result = await migratePendingRuntimeRoot(onProgress)
     const migratedRuntime = join(destination, 'hermes', '0.17.0', runtimePlatformKey())
     const migratedWebUi = join(destination, 'webui', '0.6.31')
     const active = JSON.parse(readFileSync(activeVersionPath, 'utf-8'))
@@ -216,6 +217,10 @@ describe('desktop runtime manager', () => {
     expect(active.webUiVersion).toBe('0.6.31')
     expect(active.webUiDirectory).toBeUndefined()
     expect(active.pendingRuntimeRootDirectory).toBeUndefined()
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
+      stage: 'extract',
+      detail: destination,
+    }))
   })
 
   it('keeps the previous Runtime selected when a pending migration fails', async () => {
@@ -234,7 +239,7 @@ describe('desktop runtime manager', () => {
     }))
 
     const { migratePendingRuntimeRoot } = await import('../../packages/desktop/src/main/runtime-manager')
-    const result = migratePendingRuntimeRoot()
+    const result = await migratePendingRuntimeRoot()
     const active = JSON.parse(readFileSync(activeVersionPath, 'utf-8'))
 
     expect(result.migrated).toBe(false)
@@ -266,7 +271,7 @@ describe('desktop runtime manager', () => {
     }))
 
     const { migratePendingRuntimeRoot } = await import('../../packages/desktop/src/main/runtime-manager')
-    const result = migratePendingRuntimeRoot()
+    const result = await migratePendingRuntimeRoot()
     const active = JSON.parse(readFileSync(activeVersionPath, 'utf-8'))
 
     expect(result.migrated).toBe(false)

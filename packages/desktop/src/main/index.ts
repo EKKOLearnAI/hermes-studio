@@ -100,7 +100,7 @@ function showWindowWithFade(focus = true) {
 
 function showMainWindow() {
   if (!mainWindow) {
-    createWindow()
+    void createWindow()
   }
   if (!mainWindow) return
   showWindowWithFade(true)
@@ -427,7 +427,7 @@ function createTray() {
   updateTrayMenu()
 }
 
-function createWindow() {
+async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -484,9 +484,9 @@ function createWindow() {
   // macOS), go straight to it. Otherwise show a loading splash; bootstrap()
   // will swap in the real URL once the server is ready.
   if (serverUrl) {
-    mainWindow.loadURL(mainRouteUrl() || serverUrl)
+    await mainWindow.loadURL(mainRouteUrl() || serverUrl)
   } else {
-    mainWindow.loadURL(splashHtml(t('runtime.checking')))
+    await mainWindow.loadURL(splashHtml(t('runtime.checking')))
   }
   updateTrayMenu()
 }
@@ -543,12 +543,14 @@ function splashHtml(label = t('desktop.startingLocalServices')): string {
   .detail{min-height:18px;font-size:12px;color:#7f7f7f}
   .progress{width:320px;height:6px;border-radius:999px;background:#2b2b2b;overflow:hidden}
   .bar{width:0;height:100%;background:#d8d8d8;transition:width .18s ease}
+  .bar.indeterminate{width:40%;animation:progress 1.2s ease-in-out infinite;transition:none}
+  @keyframes progress{0%{transform:translateX(-110%)}100%{transform:translateX(360%)}}
   h1{font-weight:500;margin:0;font-size:18px}
 </style></head><body><div class="wrap">
 <h1>Hermes Studio</h1>
 <div class="row"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
 <div id="label" class="label">${startingLabel}</div>
-<div class="progress"><div id="bar" class="bar"></div></div>
+<div class="progress"><div id="bar" class="bar indeterminate"></div></div>
 <div id="detail" class="detail"></div>
 </div></body></html>`
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
@@ -681,7 +683,7 @@ function updateSplash(progress: RuntimeProgress) {
   if (!mainWindow || mainWindow.isDestroyed()) return
   const label = progress.message
   const percent = typeof progress.percent === 'number' ? Math.round(progress.percent) : null
-  let detail = ''
+  let detail = progress.detail || ''
   if (progress.receivedBytes && progress.totalBytes) {
     detail = `${formatBytes(progress.receivedBytes)} / ${formatBytes(progress.totalBytes)}`
     if (percent !== null) detail += ` (${percent}%)`
@@ -696,7 +698,10 @@ function updateSplash(progress: RuntimeProgress) {
       const bar = document.getElementById('bar');
       if (label) label.textContent = ${JSON.stringify(label)};
       if (detail) detail.textContent = ${JSON.stringify(detail)};
-      if (bar) bar.style.width = ${JSON.stringify(percent === null ? '100%' : `${percent}%`)};
+      if (bar) {
+        bar.classList.toggle('indeterminate', ${JSON.stringify(percent === null)});
+        bar.style.width = ${JSON.stringify(percent === null ? '' : `${percent}%`)};
+      }
     }
   `).catch(() => undefined)
 }
@@ -706,7 +711,7 @@ async function bootstrap(source?: RuntimeDownloadSource) {
   isBootstrapping = true
 
   try {
-    migratePendingRuntimeRoot(updateSplash)
+    await migratePendingRuntimeRoot(updateSplash)
     const selectedSource = source || envRuntimeDownloadSource()
     const runtimeUrlOverride = !!process.env.HERMES_DESKTOP_RUNTIME_URL?.trim()
     const manifestOverride = !!process.env.HERMES_DESKTOP_RUNTIME_MANIFEST_URL?.trim()
@@ -874,7 +879,7 @@ function runDesktopApp() {
     showMainWindow()
   })
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     if (QUIT_EXISTING) {
       quitApp()
       return
@@ -911,12 +916,12 @@ function runDesktopApp() {
       })
     }
     createTray()
-    createWindow()
-    bootstrap()
+    await createWindow()
+    void bootstrap()
     initAutoUpdater({ beforeQuitAndInstall: prepareAppShutdown })
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow()
+        void createWindow()
       } else if (mainWindow) {
         showMainWindow()
       }
