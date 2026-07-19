@@ -14,6 +14,7 @@ publish:
 buildDependenciesFromSource: false
 nodeGypRebuild: false
 npmRebuild: false
+afterPack: "./scripts/verify-packaged-webui.mjs"
 
 files:
   - "dist/**/*"
@@ -41,13 +42,19 @@ extraResources:
       - "package.json"
       - "bin/**"
       - "dist/**"
-      - "node_modules/**"
-      # Drop other-platform node-pty prebuilds (saves ~45MB)
-      - "!node_modules/node-pty/prebuilds/!(${platform}-${arch})/**"
-      - "!node_modules/node-pty/build/**"
       - "!packages/desktop/**"
       - "!**/{.git,.github,docs,tests,playwright.config.ts,README*,scripts,*.map}"
-      - "!node_modules/**/*.md"
+  # electron-builder 26 deliberately skips a root-level node_modules directory
+  # when it is nested inside a broader matcher. Use node_modules itself as the
+  # source so the pruned production dependencies are copied into the Web UI.
+  - from: "../../node_modules"
+    to: "webui/node_modules"
+    filter:
+      - "**/*"
+      # Drop other-platform node-pty prebuilds (saves ~45MB)
+      - "!node-pty/prebuilds/!(${platform}-${arch})/**"
+      - "!node-pty/build/**"
+      - "!**/*.md"
 
 asarUnpack:
   - "**/*.node"

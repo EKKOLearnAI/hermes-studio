@@ -1,0 +1,37 @@
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+
+const ARCH_NAMES = ['x64', 'ia32', 'armv7l', 'arm64', 'universal']
+
+function packagedResourcesDirectory(context) {
+  if (context.electronPlatformName === 'darwin') {
+    const productFilename = context.packager.appInfo.productFilename
+    return join(context.appOutDir, `${productFilename}.app`, 'Contents', 'Resources')
+  }
+  return join(context.appOutDir, 'resources')
+}
+
+function targetArchName(arch) {
+  if (typeof arch === 'number') return ARCH_NAMES[arch] || String(arch)
+  return String(arch)
+}
+
+export default async function verifyPackagedWebUi(context) {
+  const webUiRoot = join(packagedResourcesDirectory(context), 'webui')
+  const nodePtyRoot = join(webUiRoot, 'node_modules', 'node-pty')
+  const nodePtyTarget = `${context.electronPlatformName}-${targetArchName(context.arch)}`
+  const required = [
+    join(webUiRoot, 'package.json'),
+    join(webUiRoot, 'bin', 'hermes-web-ui.mjs'),
+    join(webUiRoot, 'dist', 'server', 'index.js'),
+    join(nodePtyRoot, 'package.json'),
+    join(nodePtyRoot, 'prebuilds', nodePtyTarget),
+    join(webUiRoot, 'node_modules', 'socket.io', 'package.json'),
+  ]
+  const missing = required.filter(path => !existsSync(path))
+  if (missing.length > 0) {
+    throw new Error(`Packaged Web UI is incomplete; missing: ${missing.join(', ')}`)
+  }
+
+  console.log(`[package] verified bundled Web UI and production dependencies at ${webUiRoot}`)
+}
