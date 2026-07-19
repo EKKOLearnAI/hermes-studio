@@ -21,6 +21,7 @@ function runPython(script: string): any {
 
 const harness = String.raw`
 import contextlib
+import ast
 import importlib.util
 import json
 import sys
@@ -31,6 +32,7 @@ from pathlib import Path
 bridge_runtime = types.ModuleType("bridge_runtime")
 bridge_runtime.APPROVAL_TIMEOUT_MS = 1000
 bridge_runtime.APPROVAL_TIMEOUT_SECONDS = 1
+bridge_runtime._approval_is_execute_code = lambda *_args, **_kwargs: False
 bridge_runtime._approval_pattern_keys = lambda *_args, **_kwargs: []
 bridge_runtime._base_hermes_home = lambda: Path(tempfile.gettempdir())
 bridge_runtime._bridge_platform = lambda: "agent-bridge"
@@ -60,11 +62,21 @@ def _profile_env(_profile):
     yield
 
 bridge_runtime._profile_env = _profile_env
+
+bridge_pool_path = Path("packages/server/src/services/hermes/agent-bridge/python/bridge_pool.py")
+imported_runtime_names = {
+    alias.name
+    for node in ast.parse(bridge_pool_path.read_text(encoding="utf-8")).body
+    if isinstance(node, ast.ImportFrom) and node.module == "bridge_runtime"
+    for alias in node.names
+}
+missing_runtime_stubs = sorted(name for name in imported_runtime_names if not hasattr(bridge_runtime, name))
+assert not missing_runtime_stubs, f"fake bridge_runtime is missing stubs: {missing_runtime_stubs}"
 sys.modules["bridge_runtime"] = bridge_runtime
 
 spec = importlib.util.spec_from_file_location(
     "bridge_pool",
-    "packages/server/src/services/hermes/agent-bridge/python/bridge_pool.py",
+    bridge_pool_path,
 )
 bridge_pool = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
