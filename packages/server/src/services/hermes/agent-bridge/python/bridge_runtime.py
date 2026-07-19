@@ -720,7 +720,14 @@ def _install_execute_code_approval_memory_patch() -> None:
         import tools.approval as approval
 
         original = getattr(approval, "check_execute_code_guard", None)
-        if not callable(original) or getattr(original, "_hermes_web_ui_memory_patch", False):
+        if getattr(original, "_hermes_web_ui_memory_patch", False):
+            return
+        if not callable(original):
+            if not getattr(approval, "_hermes_web_ui_memory_patch_missing_logged", False):
+                _bridge_log("execute_code_approval_memory_patch.skipped", {
+                    "reason": "check_execute_code_guard_missing",
+                })
+                setattr(approval, "_hermes_web_ui_memory_patch_missing_logged", True)
             return
 
         def patched_check_execute_code_guard(code: str, env_type: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -735,8 +742,9 @@ def _install_execute_code_approval_memory_patch() -> None:
         setattr(patched_check_execute_code_guard, "_hermes_web_ui_memory_patch", True)
         setattr(patched_check_execute_code_guard, "_hermes_web_ui_original", original)
         approval.check_execute_code_guard = patched_check_execute_code_guard
-    except Exception:
-        pass
+        _bridge_log("execute_code_approval_memory_patch.installed", {})
+    except Exception as exc:
+        _bridge_log("execute_code_approval_memory_patch.failed", {"error": str(exc)})
 
 
 def _approval_pattern_keys(approval_data: dict[str, Any]) -> list[str]:
@@ -750,8 +758,51 @@ def _approval_pattern_keys(approval_data: dict[str, Any]) -> list[str]:
     return result
 
 
-def _persist_execute_code_approval_choice(session_id: str, pattern_keys: list[str], choice: str) -> None:
-    if "execute_code" not in pattern_keys or choice not in {"session", "always"}:
+def _tool_name_from_approval_data(approval_data: Any) -> str:
+    if not isinstance(approval_data, dict):
+        return ""
+    for key in ("tool_name", "function_name"):
+        value = approval_data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    tool = approval_data.get("tool")
+    if isinstance(tool, str) and tool.strip():
+        return tool.strip()
+    if isinstance(tool, dict):
+        value = tool.get("name")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        function = tool.get("function")
+        if isinstance(function, dict):
+            value = function.get("name")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    tool_call = approval_data.get("tool_call")
+    if isinstance(tool_call, dict):
+        value = tool_call.get("name")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        function = tool_call.get("function")
+        if isinstance(function, dict):
+            value = function.get("name")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def _approval_is_execute_code(approval_data: dict[str, Any]) -> bool:
+    return _tool_name_from_approval_data(approval_data) == "execute_code"
+
+
+def _persist_execute_code_approval_choice(
+    session_id: str,
+    pattern_keys: list[str],
+    choice: str,
+    is_execute_code: bool = False,
+) -> None:
+    if choice not in {"session", "always"}:
+        return
+    if not is_execute_code and "execute_code" not in pattern_keys:
         return
     try:
         from tools.approval import approve_permanent, approve_session, load_permanent_allowlist, save_permanent_allowlist
@@ -764,8 +815,8 @@ def _persist_execute_code_approval_choice(session_id: str, pattern_keys: list[st
             patterns = set(permanent) if isinstance(permanent, set) else set(load_permanent_allowlist())
             patterns.add("execute_code")
             save_permanent_allowlist(patterns)
-    except Exception:
-        pass
+    except Exception as exc:
+        _bridge_log("execute_code_approval_memory_persist.failed", {"error": str(exc)})
 
 
 def _resolve_model(cfg: dict[str, Any]) -> str:

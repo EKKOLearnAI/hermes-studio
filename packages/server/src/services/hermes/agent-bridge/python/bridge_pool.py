@@ -17,6 +17,7 @@ from typing import Any, Callable
 from bridge_runtime import (
     APPROVAL_TIMEOUT_MS,
     APPROVAL_TIMEOUT_SECONDS,
+    _approval_is_execute_code,
     _approval_pattern_keys,
     _base_hermes_home,
     _bridge_platform,
@@ -181,6 +182,7 @@ class AgentPool:
         self._approval_requests: dict[str, queue.Queue[str]] = {}
         self._gateway_approval_requests: dict[str, str] = {}
         self._gateway_approval_pattern_keys: dict[str, list[str]] = {}
+        self._gateway_approval_execute_code: dict[str, bool] = {}
         self._compression_requests: dict[str, queue.Queue[dict[str, Any]]] = {}
         self._background_notification_claims: dict[tuple[str, str], dict[str, Any]] = {}
         self._suppressed_background_delegations: set[str] = set()
@@ -1270,9 +1272,11 @@ class AgentPool:
             approval_id = uuid.uuid4().hex
             choices = ["once", "session", "always", "deny"]
             pattern_keys = _approval_pattern_keys(approval_data)
+            is_execute_code = _approval_is_execute_code(approval_data)
             with self._lock:
                 self._gateway_approval_requests[approval_id] = session_id
                 self._gateway_approval_pattern_keys[approval_id] = pattern_keys
+                self._gateway_approval_execute_code[approval_id] = is_execute_code
             self._append_event(session_id, {
                 "event": "approval.requested",
                 "approval_id": approval_id,
@@ -1810,6 +1814,7 @@ class AgentPool:
             with self._lock:
                 gateway_session_id = self._gateway_approval_requests.pop(approval_id, None)
                 pattern_keys = self._gateway_approval_pattern_keys.pop(approval_id, [])
+                is_execute_code = self._gateway_approval_execute_code.pop(approval_id, False)
             if gateway_session_id is None:
                 return {"approval_id": approval_id, "resolved": False, "choice": cleaned}
             try:
@@ -1819,7 +1824,7 @@ class AgentPool:
             except Exception:
                 resolved = False
             if resolved:
-                _persist_execute_code_approval_choice(gateway_session_id, pattern_keys, cleaned)
+                _persist_execute_code_approval_choice(gateway_session_id, pattern_keys, cleaned, is_execute_code)
             self._append_event(gateway_session_id, {
                 "event": "approval.resolved",
                 "approval_id": approval_id,

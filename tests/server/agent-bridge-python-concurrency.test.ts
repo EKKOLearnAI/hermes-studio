@@ -876,6 +876,31 @@ assert approval._check_execute_code_calls == [("print(4)", "local", True)]
 `)
   })
 
+  it('remembers legacy execute_code gateway approvals with descriptive pattern keys', () => {
+    runPython(String.raw`
+${harness}
+
+delattr(approval, "check_execute_code_guard")
+pool, _fake_db = make_pool()
+
+notify = pool._gateway_approval_notify("legacy-session")
+notify({
+    "command": "python3 - <<'PY'\nprint(1)\nPY",
+    "description": "Run Python code",
+    "tool_name": "execute_code",
+    "pattern_key": "python execution",
+    "pattern_keys": ["python execution", "shell heredoc"],
+})
+approval_id = next(iter(pool._gateway_approval_requests.keys()))
+
+result = pool.respond_approval(approval_id, "session")
+
+assert result["resolved"] is True
+assert approval.is_approved("legacy-session", "execute_code") is True
+assert approval._saved_permanent == set()
+`)
+  })
+
   it('routes terminal/gateway approvals and stream callbacks per concurrent session', () => {
     runPython(String.raw`
 ${harness}

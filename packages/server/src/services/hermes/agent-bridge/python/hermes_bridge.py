@@ -42,6 +42,7 @@ _RUNTIME_PATCH_NAMES = (
     "_apply_openrouter_attribution_override",
     "_apply_profile_dotenv",
     "_apply_profile_env",
+    "_approval_is_execute_code",
     "_base_hermes_home",
     "_bridge_log",
     "_bridge_platform",
@@ -74,6 +75,7 @@ _RUNTIME_PATCH_NAMES = (
 _POOL_PATCH_NAMES = (
     "APPROVAL_TIMEOUT_MS",
     "APPROVAL_TIMEOUT_SECONDS",
+    "_approval_is_execute_code",
     "_approval_pattern_keys",
     "_base_hermes_home",
     "_bridge_platform",
