@@ -130,15 +130,46 @@ function requiredWebUiFiles(root: string): string[] {
   ]
 }
 
+function validateWebUiVersion(root: string, version: string): void {
+  const missing = requiredWebUiFiles(root).filter(file => !existsSync(file))
+  if (missing.length > 0) {
+    throw new Error(`Web UI ${version} is missing required files: ${missing.map(file => relative(root, file)).join(', ')}`)
+  }
+}
+
+function webUiVersionReady(root: string): boolean {
+  return requiredWebUiFiles(root).every(file => existsSync(file))
+}
+
 function validateWebUiVersions(root: string): void {
   if (!existsSync(root)) return
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue
     const versionRoot = join(root, entry.name)
-    const missing = requiredWebUiFiles(versionRoot).filter(file => !existsSync(file))
-    if (missing.length > 0) {
-      throw new Error(`Web UI ${entry.name} is missing required files: ${missing.map(file => relative(versionRoot, file)).join(', ')}`)
-    }
+    validateWebUiVersion(versionRoot, entry.name)
+  }
+}
+
+function validateRuntimeDirectory(root: string, label: string): void {
+  const missing = missingRuntimeFiles(root)
+  if (missing.length > 0) {
+    throw new Error(`${label} is missing required files: ${missing.map(file => relative(root, file)).join(', ')}`)
+  }
+  const manifest = readCachedRuntimeManifest(root)
+  if (!manifest) {
+    throw new Error(`${label} has an invalid ${RUNTIME_MANIFEST_NAME}`)
+  }
+  if (manifest.platform && manifest.platform !== runtimePlatformKey()) {
+    throw new Error(`Runtime platform mismatch: expected ${runtimePlatformKey()}, received ${manifest.platform}`)
+  }
+}
+
+function runtimeDirectoryReadyForMigration(root: string): boolean {
+  try {
+    validateRuntimeDirectory(root, 'Runtime')
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -342,10 +373,6 @@ export async function migratePendingRuntimeRoot(
   const tempWebUiRoot = join(targetRoot, `.webui-migration-${process.pid}-${Date.now()}`)
 
   try {
-    if (!rootRuntimeReady(sourceRuntime)) {
-      throw new Error(`Current Runtime is incomplete: ${sourceRuntime}`)
-    }
-
     const relativeTarget = relative(resolve(sourceRuntime), targetRoot)
     if (relativeTarget === ''
       || (relativeTarget !== '..' && !relativeTarget.startsWith(`..${sep}`) && !isAbsolute(relativeTarget))) {
@@ -365,42 +392,78 @@ export async function migratePendingRuntimeRoot(
       return { migrated: true, error: '' }
     }
 
-    onProgress?.({
-      stage: 'extract',
-      message: t('runtime.migrating'),
-      detail: targetRoot,
-    })
-    await mkdirAsync(dirname(targetRuntime), { recursive: true })
-    await removeAsync(tempRuntime, { recursive: true, force: true })
-    await copyAsync(sourceRuntime, tempRuntime, { recursive: true, force: true, verbatimSymlinks: true })
-
-    const missing = missingRuntimeFiles(tempRuntime)
-    if (missing.length > 0) {
-      throw new Error(`Migrated Runtime is missing required files: ${missing.map(file => relative(tempRuntime, file)).join(', ')}`)
-    }
-    const copiedManifest = readCachedRuntimeManifest(tempRuntime)
-    if (copiedManifest?.platform && copiedManifest.platform !== runtimePlatformKey()) {
-      throw new Error(`Runtime platform mismatch: expected ${runtimePlatformKey()}, received ${copiedManifest.platform}`)
+    const shouldCopyRuntime = !runtimeDirectoryReadyForMigration(targetRuntime)
+    if (shouldCopyRuntime && !rootRuntimeReady(sourceRuntime)) {
+      throw new Error(`Current Runtime is incomplete: ${sourceRuntime}`)
     }
 
-    const shouldCopyWebUi = existsSync(sourceWebUiRoot)
+    const shouldMergeWebUi = existsSync(sourceWebUiRoot)
       && resolve(sourceWebUiRoot) !== resolve(targetWebUiRoot)
-    if (shouldCopyWebUi) {
-      await removeAsync(tempWebUiRoot, { recursive: true, force: true })
+    const webUiVersionsToCopy: string[] = []
+    if (shouldMergeWebUi) {
+      const sourceVersions = readdirSync(sourceWebUiRoot, { withFileTypes: true })
+        .filter(entry => entry.isDirectory())
+        .map(entry => entry.name)
+      const sourceVersionSet = new Set(sourceVersions)
+
       if (existsSync(targetWebUiRoot)) {
-        await copyAsync(targetWebUiRoot, tempWebUiRoot, { recursive: true, force: true, verbatimSymlinks: true })
-      } else {
-        await mkdirAsync(tempWebUiRoot, { recursive: true })
+        for (const entry of readdirSync(targetWebUiRoot, { withFileTypes: true })) {
+          if (entry.isDirectory() && !sourceVersionSet.has(entry.name)) {
+            validateWebUiVersion(join(targetWebUiRoot, entry.name), entry.name)
+          }
+        }
       }
-      await copyAsync(sourceWebUiRoot, tempWebUiRoot, { recursive: true, force: true, verbatimSymlinks: true })
+
+      for (const webUiVersion of sourceVersions) {
+        const targetVersion = join(targetWebUiRoot, webUiVersion)
+        if (webUiVersionReady(targetVersion)) continue
+        validateWebUiVersion(join(sourceWebUiRoot, webUiVersion), webUiVersion)
+        webUiVersionsToCopy.push(webUiVersion)
+      }
+    }
+
+    if (shouldCopyRuntime || webUiVersionsToCopy.length > 0) {
+      onProgress?.({
+        stage: 'extract',
+        message: t('runtime.migrating'),
+        detail: targetRoot,
+      })
+    }
+
+    if (shouldCopyRuntime) {
+      await mkdirAsync(dirname(targetRuntime), { recursive: true })
+      await removeAsync(tempRuntime, { recursive: true, force: true })
+      await copyAsync(sourceRuntime, tempRuntime, { recursive: true, force: true, verbatimSymlinks: true })
+      validateRuntimeDirectory(tempRuntime, 'Migrated Runtime')
+    }
+
+    if (webUiVersionsToCopy.length > 0) {
+      await removeAsync(tempWebUiRoot, { recursive: true, force: true })
+      await mkdirAsync(tempWebUiRoot, { recursive: true })
+      for (const webUiVersion of webUiVersionsToCopy) {
+        const stagedVersion = join(tempWebUiRoot, webUiVersion)
+        await copyAsync(join(sourceWebUiRoot, webUiVersion), stagedVersion, {
+          recursive: true,
+          force: true,
+          verbatimSymlinks: true,
+        })
+        validateWebUiVersion(stagedVersion, webUiVersion)
+      }
       validateWebUiVersions(tempWebUiRoot)
     }
 
-    await removeAsync(targetRuntime, { recursive: true, force: true })
-    await renameAsync(tempRuntime, targetRuntime)
-    if (shouldCopyWebUi) {
-      await removeAsync(targetWebUiRoot, { recursive: true, force: true })
-      await renameAsync(tempWebUiRoot, targetWebUiRoot)
+    if (shouldCopyRuntime) {
+      await removeAsync(targetRuntime, { recursive: true, force: true })
+      await renameAsync(tempRuntime, targetRuntime)
+    }
+    if (webUiVersionsToCopy.length > 0) {
+      await mkdirAsync(targetWebUiRoot, { recursive: true })
+      for (const webUiVersion of webUiVersionsToCopy) {
+        const targetVersion = join(targetWebUiRoot, webUiVersion)
+        await removeAsync(targetVersion, { recursive: true, force: true })
+        await renameAsync(join(tempWebUiRoot, webUiVersion), targetVersion)
+      }
+      await removeAsync(tempWebUiRoot, { recursive: true, force: true })
     }
 
     const next: ActiveRuntimeVersion = {
@@ -416,7 +479,11 @@ export async function migratePendingRuntimeRoot(
     delete next.pendingRuntimeRootDirectory
     delete next.webUiDirectory
     writeActiveRuntimeManifest(next)
-    console.log(`[runtime] copied desktop runtime storage to ${targetRoot}; previous storage retained at ${sourceRoot}`)
+    console.log(
+      `[runtime] switched desktop runtime storage to ${targetRoot}; `
+      + `${shouldCopyRuntime ? 'copied' : 'reused'} Runtime, copied ${webUiVersionsToCopy.length} Web UI version(s); `
+      + `previous storage retained at ${sourceRoot}`,
+    )
     return { migrated: true, error: '' }
   } catch (err) {
     await Promise.allSettled([
