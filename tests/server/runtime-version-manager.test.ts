@@ -73,4 +73,37 @@ describe('runtime version manager storage migration', () => {
     expect(() => scheduleRuntimeRootMigration(nestedDestination))
       .toThrow('cannot be inside the current Runtime storage directory')
   })
+
+  it('uses the desktop Runtime root for downloaded Web UI versions without scanning the legacy directory', async () => {
+    const storageRoot = tempDir('hermes-runtime-version-storage-')
+    const activeVersionPath = join(state.appHome, 'desktop-runtime', 'active-version.json')
+    const webUiDirectory = join(storageRoot, 'webui', '0.6.31')
+    const legacyWebUiDirectory = join(state.appHome, 'webui', '0.6.30')
+    mkdirSync(webUiDirectory, { recursive: true })
+    mkdirSync(legacyWebUiDirectory, { recursive: true })
+    mkdirSync(join(state.appHome, 'desktop-runtime'), { recursive: true })
+    writeFileSync(join(webUiDirectory, 'package.json'), JSON.stringify({ version: '0.6.31' }))
+    writeFileSync(join(legacyWebUiDirectory, 'package.json'), JSON.stringify({ version: '0.6.30' }))
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      runtimeRootDirectory: storageRoot,
+      platform: 'test-platform',
+    }))
+
+    const {
+      activateDownloadedWebUiVersion,
+      listInstalledWebUiVersions,
+    } = await import('../../packages/server/src/services/runtime-version-manager')
+
+    expect(listInstalledWebUiVersions()).toEqual([{
+      version: '0.6.31',
+      directory: webUiDirectory,
+      active: false,
+    }])
+    const activated = activateDownloadedWebUiVersion('0.6.31')
+    expect(activated.webUiVersion).toBe('0.6.31')
+    expect(activated.webUiDirectory).toBeUndefined()
+    expect(() => activateDownloadedWebUiVersion('0.6.30'))
+      .toThrow('Downloaded Web UI version not found')
+  })
 })

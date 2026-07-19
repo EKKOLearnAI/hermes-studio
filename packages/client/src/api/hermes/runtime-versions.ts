@@ -59,6 +59,7 @@ export interface RuntimeVersionStatus {
     activeVersion: string
     activeDirectory: string
     storageDirectory: string
+    defaultStorageDirectory: string
     pendingStorageDirectory: string
     migrationError: string
     installed: InstalledRuntimeVersion[]

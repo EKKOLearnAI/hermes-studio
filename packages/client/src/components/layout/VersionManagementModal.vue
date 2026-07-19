@@ -36,6 +36,11 @@ const loadError = ref('')
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const canSelectRuntimeDirectory = computed(() => typeof desktopBridge()?.selectRuntimeDirectory === 'function')
+const isDefaultRuntimeDirectory = computed(() => {
+  const defaultDirectory = status.value?.hermes.defaultStorageDirectory
+  const selectedDirectory = status.value?.hermes.pendingStorageDirectory || status.value?.hermes.storageDirectory
+  return !defaultDirectory || selectedDirectory === defaultDirectory
+})
 
 const currentPlatformRuntime = computed(() =>
   (status.value?.hermes.installed || []).filter(item => item.platform === status.value?.platform),
@@ -239,6 +244,17 @@ async function chooseRuntimeDirectory() {
   })
 }
 
+async function resetRuntimeDirectory() {
+  const directory = status.value?.hermes.defaultStorageDirectory
+  if (!directory) return
+
+  await runAction('reset-runtime-directory', async () => {
+    await selectRuntimeRoot(directory)
+    message.success(t('runtimeVersions.runtimeDirectorySaved'))
+    await loadAll()
+  })
+}
+
 async function removeRuntime(version: string) {
   await runAction(`delete-runtime-${version}`, async () => {
     await deleteRuntimeVersion(version)
@@ -300,16 +316,27 @@ async function removeWebUi(version: string) {
                 {{ status?.hermes.storageDirectory || '-' }}
               </span>
             </div>
-            <NButton
-              v-if="canSelectRuntimeDirectory"
-              data-testid="select-runtime-directory"
-              size="small"
-              secondary
-              :loading="actionLoading['select-runtime-directory']"
-              @click="chooseRuntimeDirectory"
-            >
-              {{ t('runtimeVersions.chooseRuntimeDirectory') }}
-            </NButton>
+            <div v-if="canSelectRuntimeDirectory" class="runtime-directory-actions">
+              <NButton
+                data-testid="select-runtime-directory"
+                size="small"
+                secondary
+                :loading="actionLoading['select-runtime-directory']"
+                @click="chooseRuntimeDirectory"
+              >
+                {{ t('runtimeVersions.chooseRuntimeDirectory') }}
+              </NButton>
+              <NButton
+                data-testid="reset-runtime-directory"
+                size="small"
+                secondary
+                :disabled="isDefaultRuntimeDirectory"
+                :loading="actionLoading['reset-runtime-directory']"
+                @click="resetRuntimeDirectory"
+              >
+                {{ t('runtimeVersions.resetRuntimeDirectory') }}
+              </NButton>
+            </div>
           </div>
           <p v-if="canSelectRuntimeDirectory" class="runtime-directory-hint">
             {{ t('runtimeVersions.runtimeDirectoryHint') }}
@@ -576,6 +603,12 @@ async function removeWebUi(version: string) {
   }
 }
 
+.runtime-directory-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
 .runtime-directory-hint {
   margin: -4px 2px 0;
   color: var(--text-color-3);
@@ -660,6 +693,10 @@ async function removeWebUi(version: string) {
   .runtime-directory-control {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .runtime-directory-actions {
+    flex-wrap: wrap;
   }
 
   .active-path {

@@ -49,6 +49,7 @@ function runtimeStatus() {
       activeVersion: '0.18.0',
       activeDirectory: '/state/desktop-runtime/hermes/0.18.0/mac-arm64',
       storageDirectory: '/state/desktop-runtime',
+      defaultStorageDirectory: '/state/desktop-runtime',
       pendingStorageDirectory: '',
       migrationError: '',
       installed: [],
@@ -99,5 +100,20 @@ describe('VersionManagementModal Runtime storage selector', () => {
     await flushPromises()
 
     expect(api.selectRuntimeRoot).not.toHaveBeenCalled()
+  })
+
+  it('schedules migration back to the system default directory', async () => {
+    const status = runtimeStatus()
+    status.hermes.storageDirectory = '/Volumes/HermesRuntime'
+    api.fetchRuntimeVersionStatus.mockResolvedValue(status)
+    const wrapper = mount(VersionManagementModal, { props: { show: false } })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="reset-runtime-directory"]').trigger('click')
+    await flushPromises()
+
+    expect(api.selectRuntimeRoot).toHaveBeenCalledWith('/state/desktop-runtime')
+    expect(message.success).toHaveBeenCalledWith('runtimeVersions.runtimeDirectorySaved')
   })
 })

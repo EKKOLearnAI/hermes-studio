@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   statSync,
@@ -113,6 +114,26 @@ function requiredRuntimeFiles(root: string): string[] {
 
 function missingRuntimeFiles(root: string): string[] {
   return requiredRuntimeFiles(root).filter(file => !existsSync(file))
+}
+
+function requiredWebUiFiles(root: string): string[] {
+  return [
+    join(root, 'package.json'),
+    join(root, 'bin', 'hermes-web-ui.mjs'),
+    join(root, 'dist', 'server', 'index.js'),
+  ]
+}
+
+function validateWebUiVersions(root: string): void {
+  if (!existsSync(root)) return
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const versionRoot = join(root, entry.name)
+    const missing = requiredWebUiFiles(versionRoot).filter(file => !existsSync(file))
+    if (missing.length > 0) {
+      throw new Error(`Web UI ${entry.name} is missing required files: ${missing.map(file => relative(versionRoot, file)).join(', ')}`)
+    }
+  }
 }
 
 function runtimeReady(): boolean {
@@ -302,11 +323,15 @@ export function migratePendingRuntimeRoot(onProgress?: RuntimeProgressHandler): 
   if (!active || !pendingRoot) return { migrated: false, error: '' }
 
   const sourceRuntime = desktopRuntimeDir()
+  const sourceRoot = runtimeStorageRoot()
+  const sourceWebUiRoot = join(sourceRoot, 'webui')
   const targetRoot = resolve(pendingRoot)
   const manifest = readCachedRuntimeManifest(sourceRuntime)
   const version = manifest?.hermesAgentVersion || active.hermesRuntimeVersion || desktopRuntimeVersion()
   const targetRuntime = join(targetRoot, 'hermes', version, runtimePlatformKey())
+  const targetWebUiRoot = join(targetRoot, 'webui')
   const tempRuntime = join(dirname(targetRuntime), `.runtime-migration-${process.pid}-${Date.now()}`)
+  const tempWebUiRoot = join(targetRoot, `.webui-migration-${process.pid}-${Date.now()}`)
 
   try {
     if (!rootRuntimeReady(sourceRuntime)) {
@@ -327,6 +352,7 @@ export function migratePendingRuntimeRoot(onProgress?: RuntimeProgressHandler): 
         updatedAt: new Date().toISOString(),
       }
       delete next.pendingRuntimeRootDirectory
+      delete next.webUiDirectory
       writeActiveRuntimeManifest(next)
       return { migrated: true, error: '' }
     }
@@ -345,8 +371,25 @@ export function migratePendingRuntimeRoot(onProgress?: RuntimeProgressHandler): 
       throw new Error(`Runtime platform mismatch: expected ${runtimePlatformKey()}, received ${copiedManifest.platform}`)
     }
 
+    const shouldCopyWebUi = existsSync(sourceWebUiRoot)
+      && resolve(sourceWebUiRoot) !== resolve(targetWebUiRoot)
+    if (shouldCopyWebUi) {
+      rmSync(tempWebUiRoot, { recursive: true, force: true })
+      if (existsSync(targetWebUiRoot)) {
+        cpSync(targetWebUiRoot, tempWebUiRoot, { recursive: true, force: true, verbatimSymlinks: true })
+      } else {
+        mkdirSync(tempWebUiRoot, { recursive: true })
+      }
+      cpSync(sourceWebUiRoot, tempWebUiRoot, { recursive: true, force: true, verbatimSymlinks: true })
+      validateWebUiVersions(tempWebUiRoot)
+    }
+
     rmSync(targetRuntime, { recursive: true, force: true })
     renameSync(tempRuntime, targetRuntime)
+    if (shouldCopyWebUi) {
+      rmSync(targetWebUiRoot, { recursive: true, force: true })
+      renameSync(tempWebUiRoot, targetWebUiRoot)
+    }
 
     const next: ActiveRuntimeVersion = {
       ...active,
@@ -359,11 +402,13 @@ export function migratePendingRuntimeRoot(onProgress?: RuntimeProgressHandler): 
       updatedAt: new Date().toISOString(),
     }
     delete next.pendingRuntimeRootDirectory
+    delete next.webUiDirectory
     writeActiveRuntimeManifest(next)
-    console.log(`[runtime] copied Hermes runtime to ${targetRuntime}; previous runtime retained at ${sourceRuntime}`)
+    console.log(`[runtime] copied desktop runtime storage to ${targetRoot}; previous storage retained at ${sourceRoot}`)
     return { migrated: true, error: '' }
   } catch (err) {
     rmSync(tempRuntime, { recursive: true, force: true })
+    rmSync(tempWebUiRoot, { recursive: true, force: true })
     const error = err instanceof Error ? err.message : String(err)
     const next: ActiveRuntimeVersion = {
       ...active,
@@ -371,30 +416,46 @@ export function migratePendingRuntimeRoot(onProgress?: RuntimeProgressHandler): 
       updatedAt: new Date().toISOString(),
     }
     delete next.pendingRuntimeRootDirectory
+    delete next.webUiDirectory
     try {
       writeActiveRuntimeManifest(next)
     } catch (writeErr) {
-      console.warn(`[runtime] failed to persist Runtime migration error: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`)
+      console.warn(`[runtime] failed to persist desktop runtime storage migration error: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`)
     }
-    console.warn(`[runtime] failed to migrate Hermes runtime: ${error}`)
+    console.warn(`[runtime] failed to migrate desktop runtime storage: ${error}`)
     return { migrated: false, error }
   }
 }
 
 export function writeActiveRuntimeVersion(runtimeRoot = desktopRuntimeDir()): void {
-  const active = readActiveRuntimeVersion()
   const manifest = readCachedRuntimeManifest(runtimeRoot)
   const hermesRuntimeVersion = manifest?.hermesAgentVersion || desktopRuntimeVersion()
-  writeActiveRuntimeManifest({
+  const selectedWebUiDirectory = webuiDir()
+  const active = readActiveRuntimeVersion()
+  const activeWebUiVersion = active?.webUiVersion?.trim().replace(/^v/, '') || ''
+  const expectedWebUiDirectory = activeWebUiVersion
+    ? join(runtimeStorageRoot(), 'webui', activeWebUiVersion)
+    : ''
+  const hasWebUiOverride = !!process.env.HERMES_WEB_UI_DIR?.trim()
+  const usingDownloadedWebUi = !!expectedWebUiDirectory
+    && resolve(selectedWebUiDirectory) === resolve(expectedWebUiDirectory)
+  const next: ActiveRuntimeVersion = {
     ...(active || {}),
     schema: 1,
     hermesRuntimeVersion,
-    webUiVersion: webUiVersion(),
     runtimeDirectory: runtimeRoot,
-    webUiDirectory: webuiDir(),
     platform: runtimePlatformKey(),
     updatedAt: new Date().toISOString(),
-  })
+  }
+  if (hasWebUiOverride) {
+    // Development overrides are temporary and must not replace the persisted downloaded version.
+  } else if (usingDownloadedWebUi) {
+    next.webUiVersion = webUiVersion()
+  } else {
+    delete next.webUiVersion
+  }
+  delete next.webUiDirectory
+  writeActiveRuntimeManifest(next)
 }
 
 function cachedRuntimeMatches(root: string, descriptor: RuntimeDescriptor): boolean {

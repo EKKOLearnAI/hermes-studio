@@ -77,6 +77,7 @@ export interface RuntimeVersionStatus {
     activeVersion: string
     activeDirectory: string
     storageDirectory: string
+    defaultStorageDirectory: string
     pendingStorageDirectory: string
     migrationError: string
     installed: InstalledRuntimeVersion[]
@@ -128,6 +129,15 @@ function activeVersionPath(): string {
 function runtimeStorageRoot(active = readActiveVersionManifest()): string {
   const configured = active?.runtimeRootDirectory?.trim()
   return configured ? resolve(configured) : defaultDesktopRuntimeRoot()
+}
+
+function webUiStorageRoot(active = readActiveVersionManifest()): string {
+  return join(runtimeStorageRoot(active), 'webui')
+}
+
+function activeWebUiDirectory(active = readActiveVersionManifest()): string {
+  const version = active?.webUiVersion?.trim().replace(/^v/, '')
+  return version ? join(webUiStorageRoot(active), version) : ''
 }
 
 function isSameOrNestedPath(parent: string, candidate: string): boolean {
@@ -240,10 +250,10 @@ export function listInstalledRuntimeVersions(active = readActiveVersionManifest(
 }
 
 export function listInstalledWebUiVersions(active = readActiveVersionManifest()): InstalledWebUiVersion[] {
-  const root = join(config.appHome, 'webui')
+  const root = webUiStorageRoot(active)
   if (!existsSync(root)) return []
 
-  const activeDir = active?.webUiDirectory ? resolve(active.webUiDirectory) : ''
+  const activeDir = activeWebUiDirectory(active)
   const installed: InstalledWebUiVersion[] = []
 
   for (const versionEntry of readdirSync(root, { withFileTypes: true })) {
@@ -290,6 +300,7 @@ export async function getRuntimeVersionStatus(): Promise<RuntimeVersionStatus> {
       activeVersion: active?.hermesRuntimeVersion || '',
       activeDirectory: active?.runtimeDirectory || '',
       storageDirectory: runtimeStorageRoot(active),
+      defaultStorageDirectory: defaultDesktopRuntimeRoot(),
       pendingStorageDirectory: active?.pendingRuntimeRootDirectory || '',
       migrationError: active?.runtimeMigrationError || '',
       installed: listInstalledRuntimeVersions(active),
@@ -298,7 +309,7 @@ export async function getRuntimeVersionStatus(): Promise<RuntimeVersionStatus> {
     webui: {
       currentVersion: webUiVersion,
       activeVersion: active?.webUiVersion || webUiVersion,
-      activeDirectory: active?.webUiDirectory || '',
+      activeDirectory: activeWebUiDirectory(active),
       installed: listInstalledWebUiVersions(active),
       remoteVersions: normalizeStringList(manifest?.webui),
     },
@@ -438,10 +449,10 @@ export async function downloadWebUiVersion(version: string, source: VersionDownl
   const manifestUrl = downloadAssetUrl(manifestName, releaseTag, source)
   onProgress?.({ stage: 'resolve', message: 'runtimeVersions.jobStage.resolveWebUi' })
   const manifest = await fetchJson<{ asset?: { sha256?: string; size?: number } }>(manifestUrl)
-  const storageRoot = defaultDesktopRuntimeRoot()
+  const storageRoot = runtimeStorageRoot()
   const archive = join(storageRoot, `${assetName}.download`)
   const tempRoot = join(storageRoot, `.webui-download-${process.pid}-${Date.now()}`)
-  const targetRoot = join(config.appHome, 'webui', cleanVersion)
+  const targetRoot = join(storageRoot, 'webui', cleanVersion)
   const assetUrl = downloadAssetUrl(assetName, releaseTag, source)
 
   mkdirSync(storageRoot, { recursive: true })
@@ -485,9 +496,8 @@ export function activateInstalledRuntimeVersion(version: string): ActiveVersionM
   const next: ActiveVersionManifest = {
     schema: 1,
     hermesRuntimeVersion: target.manifestHermesRuntimeVersion || target.version,
-    webUiVersion: active?.webUiVersion || getHermesWebUiVersion(),
+    webUiVersion: active?.webUiVersion || undefined,
     runtimeDirectory: target.directory,
-    webUiDirectory: active?.webUiDirectory || '',
     runtimeRootDirectory: active?.runtimeRootDirectory || '',
     pendingRuntimeRootDirectory: active?.pendingRuntimeRootDirectory || '',
     runtimeMigrationError: active?.runtimeMigrationError || '',
@@ -533,6 +543,7 @@ export function scheduleRuntimeRootMigration(directory: string): ActiveVersionMa
     runtimeMigrationError: '',
     updatedAt: new Date().toISOString(),
   }
+  delete next.webUiDirectory
 
   mkdirSync(dirname(activeVersionPath()), { recursive: true })
   writeFileSync(activeVersionPath(), JSON.stringify(next, null, 2) + '\n', 'utf-8')
@@ -564,9 +575,9 @@ export function deleteInstalledRuntimeVersion(version: string): InstalledRuntime
 export function activateDownloadedWebUiVersion(version: string): ActiveVersionManifest {
   const cleanVersion = version.trim().replace(/^v/, '')
   if (!cleanVersion) throw new Error('Web UI version is required')
-  const directory = join(config.appHome, 'webui', cleanVersion)
-  if (!existsSync(join(directory, 'package.json'))) throw new Error(`Downloaded Web UI version not found: ${cleanVersion}`)
   const active = readActiveVersionManifest()
+  const directory = join(webUiStorageRoot(active), cleanVersion)
+  if (!existsSync(join(directory, 'package.json'))) throw new Error(`Downloaded Web UI version not found: ${cleanVersion}`)
   const next: ActiveVersionManifest = {
     schema: 1,
     hermesRuntimeVersion: active?.hermesRuntimeVersion || '',
@@ -575,7 +586,6 @@ export function activateDownloadedWebUiVersion(version: string): ActiveVersionMa
     runtimeRootDirectory: active?.runtimeRootDirectory || '',
     pendingRuntimeRootDirectory: active?.pendingRuntimeRootDirectory || '',
     runtimeMigrationError: active?.runtimeMigrationError || '',
-    webUiDirectory: directory,
     platform: active?.platform || runtimePlatformKey(),
     updatedAt: new Date().toISOString(),
   }
@@ -594,7 +604,7 @@ export function deleteDownloadedWebUiVersion(version: string): InstalledWebUiVer
   if (!target) throw new Error(`Downloaded Web UI version not found: ${cleanVersion}`)
   if (target.active) throw new Error('Active Web UI version cannot be deleted')
 
-  const webUiRoot = resolve(join(config.appHome, 'webui'))
+  const webUiRoot = resolve(webUiStorageRoot(active))
   const targetDir = resolve(target.directory)
   const rel = relative(webUiRoot, targetDir)
   if (!rel || rel.startsWith('..') || rel === '..') {

@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { homedir, platform } from 'node:os'
 import {
@@ -7,14 +7,12 @@ import {
   runtimePlatformKey,
   type DesktopRuntimeResource,
 } from './runtime-paths'
-import { compareHermesAgentVersions, hermesAgentVersionFromRuntimeTag } from './runtime-version'
+import { hermesAgentVersionFromRuntimeTag } from './runtime-version'
 
 const isWin = platform() === 'win32'
 const DEFAULT_HERMES_AGENT_VERSION = '0.18.0'
-const MIN_COMPATIBLE_WEB_UI_VERSION = '0.6.23'
 const PACKAGED_RUNTIME_RELEASE_NAME = 'runtime-release.json'
 const ACTIVE_RUNTIME_VERSION_NAME = 'active-version.json'
-let legacyWebUiVersionsCleaned = false
 let incompleteActiveWebUiWarningPath = ''
 
 export function isPackaged() {
@@ -35,6 +33,7 @@ type RuntimeReleaseMetadata = {
 
 type ActiveRuntimeVersion = {
   platform?: unknown
+  webUiVersion?: unknown
   runtimeDirectory?: unknown
   runtimeRootDirectory?: unknown
   pendingRuntimeRootDirectory?: unknown
@@ -114,8 +113,14 @@ export function clearActiveWebUiDirectory(expectedDirectory?: string): void {
   const active = readActiveRuntimeVersion()
   if (!active || typeof active !== 'object') return
   const currentDirectory = typeof active.webUiDirectory === 'string' ? active.webUiDirectory.trim() : ''
-  if (!currentDirectory) return
-  if (expectedDirectory && resolve(currentDirectory) !== resolve(expectedDirectory)) return
+  const currentVersion = typeof active.webUiVersion === 'string'
+    ? active.webUiVersion.trim().replace(/^v/, '')
+    : ''
+  if (!currentDirectory && !currentVersion) return
+  const derivedDirectory = currentVersion
+    ? join(runtimeStorageRoot(), 'webui', currentVersion)
+    : currentDirectory
+  if (expectedDirectory && resolve(derivedDirectory) !== resolve(expectedDirectory)) return
 
   const next = { ...(active as Record<string, unknown>) }
   delete next.webUiDirectory
@@ -124,28 +129,6 @@ export function clearActiveWebUiDirectory(expectedDirectory?: string): void {
     writeFileSync(file, JSON.stringify(next, null, 2) + '\n')
   } catch (err) {
     console.warn('[desktop] failed to clear active Web UI directory:', err instanceof Error ? err.message : String(err))
-  }
-}
-
-function cleanupLegacyWebUiVersions(): void {
-  if (legacyWebUiVersionsCleaned) return
-  legacyWebUiVersionsCleaned = true
-
-  const root = join(webUiHome(), 'webui')
-  if (!existsSync(root)) return
-
-  try {
-    for (const entry of readdirSync(root, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue
-      const version = entry.name.trim().replace(/^v/, '')
-      const comparison = compareHermesAgentVersions(version, MIN_COMPATIBLE_WEB_UI_VERSION)
-      if (comparison === null || comparison >= 0) continue
-      const target = join(root, entry.name)
-      rmSync(target, { recursive: true, force: true })
-      console.log(`[desktop] removed incompatible Web UI cache ${version}: ${target}`)
-    }
-  } catch (err) {
-    console.warn('[desktop] failed to clean incompatible Web UI caches:', err instanceof Error ? err.message : String(err))
   }
 }
 
@@ -160,15 +143,18 @@ function webuiDirectoryReady(root: string): boolean {
   return existsSync(webuiServerEntryFor(root))
 }
 
-// active-version.json can pin the Web UI path used to start the local server.
+// active-version.json pins a Web UI version; its directory is derived from desktop runtime storage.
 export function webuiDir(): string {
   const override = process.env.HERMES_WEB_UI_DIR?.trim()
   if (override) return resolve(override)
 
-  cleanupLegacyWebUiVersions()
-
   const active = readActiveRuntimeVersion()
-  const activeWebUiDirectory = typeof active?.webUiDirectory === 'string' ? active.webUiDirectory.trim() : ''
+  const activeWebUiVersion = typeof active?.webUiVersion === 'string'
+    ? active.webUiVersion.trim().replace(/^v/, '')
+    : ''
+  const activeWebUiDirectory = activeWebUiVersion
+    ? join(runtimeStorageRoot(), 'webui', activeWebUiVersion)
+    : ''
   if (active?.platform === runtimePlatformKey()
     && activeWebUiDirectory
     && webuiDirectoryReady(activeWebUiDirectory)) {
@@ -181,7 +167,10 @@ export function webuiDir(): string {
     && incompleteActiveWebUiWarningPath !== activeWebUiDirectory) {
     incompleteActiveWebUiWarningPath = activeWebUiDirectory
     console.warn(`[desktop] ignored incomplete active Web UI directory ${activeWebUiDirectory}; missing ${webuiServerEntryFor(activeWebUiDirectory)}`)
-    clearActiveWebUiDirectory(activeWebUiDirectory)
+    clearActiveWebUiDirectory()
+  } else if (active?.platform === runtimePlatformKey() && activeWebUiVersion && !existsSync(activeWebUiDirectory)) {
+    console.warn(`[desktop] active Web UI ${activeWebUiVersion} was not found in desktop runtime storage; using bundled Web UI`)
+    clearActiveWebUiDirectory()
   }
 
   return defaultWebuiDir()
