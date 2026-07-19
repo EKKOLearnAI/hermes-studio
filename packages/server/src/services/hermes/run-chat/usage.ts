@@ -18,6 +18,18 @@ type UsageTokenMessage = {
   tool_calls?: unknown
 }
 
+export interface CalculatedUsage {
+  inputTokens: number
+  outputTokens: number
+  contextInputTokens?: number
+  contextOutputTokens?: number
+  /**
+   * False means the database/token calculation failed and the values should
+   * not be written back as a fresh usage snapshot.
+   */
+  valid: boolean
+}
+
 function contentToUsageText(content: unknown): string {
   if (typeof content === 'string') return content
   if (!content) return ''
@@ -45,13 +57,8 @@ export async function calcAndUpdateUsage(
   sid: string,
   state: SessionState,
   emit: (event: string, payload: any) => void,
-  options: { truncateToolResultsForContext?: boolean } = {},
-): Promise<{
-  inputTokens: number
-  outputTokens: number
-  contextInputTokens?: number
-  contextOutputTokens?: number
-}> {
+  options: { truncateToolResultsForContext?: boolean; emit?: boolean } = {},
+): Promise<CalculatedUsage> {
   try {
     const detail = getSessionDetail(sid)
     const storedMessages = detail?.messages
@@ -76,12 +83,14 @@ export async function calcAndUpdateUsage(
       : undefined
     state.inputTokens = usage.inputTokens
     state.outputTokens = usage.outputTokens
-    emit('usage.updated', {
-      event: 'usage.updated',
-      session_id: sid,
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-    })
+    if (options.emit !== false) {
+      emit('usage.updated', {
+        event: 'usage.updated',
+        session_id: sid,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+      })
+    }
     return {
       ...usage,
       ...(contextUsage
@@ -90,10 +99,15 @@ export async function calcAndUpdateUsage(
             contextOutputTokens: contextUsage.outputTokens,
           }
         : {}),
+      valid: true,
     }
   } catch (err: any) {
     logger.warn(err, '[chat-run-socket] failed to calculate usage for session %s', sid)
-    return { inputTokens: 0, outputTokens: 0 }
+    return {
+      inputTokens: state.inputTokens ?? 0,
+      outputTokens: state.outputTokens ?? 0,
+      valid: false,
+    }
   }
 }
 
@@ -102,8 +116,11 @@ export function updateContextTokenUsage(
   state: SessionState,
   emit: (event: string, payload: any) => void,
   contextTokens: number | null | undefined,
-  usage?: { inputTokens: number; outputTokens: number },
+  usage?: { inputTokens: number; outputTokens: number; valid?: boolean },
 ): number | undefined {
+  if (usage?.valid === false) {
+    return state.contextTokens
+  }
   if (typeof contextTokens !== 'number' || !Number.isFinite(contextTokens) || contextTokens < 0) {
     return state.contextTokens
   }
@@ -140,7 +157,7 @@ export function updateMessageContextTokenUsage(
   state: SessionState,
   emit: (event: string, payload: any) => void,
   messageTokens: number | null | undefined,
-  usage?: { inputTokens: number; outputTokens: number },
+  usage?: { inputTokens: number; outputTokens: number; valid?: boolean },
 ): number | undefined {
   if (typeof messageTokens !== 'number' || !Number.isFinite(messageTokens) || messageTokens < 0) {
     return state.contextTokens

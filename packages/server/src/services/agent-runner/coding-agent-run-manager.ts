@@ -7,7 +7,7 @@ import type { ApiMode } from './types'
 import { logger } from '../logger'
 import { normalizeTokenUsage, recordSessionUsage } from '../usage-recorder'
 import { applyResponseStreamEvent, flushResponseRunToDb } from '../hermes/run-chat/response-stream'
-import { calcAndUpdateUsage, estimateUsageTokensFromMessages, updateContextTokenUsage } from '../hermes/run-chat/usage'
+import { calcAndUpdateUsage, estimateUsageTokensFromMessages } from '../hermes/run-chat/usage'
 import { extractResponseText } from '../hermes/run-chat/response-utils'
 import type { SessionState } from '../hermes/run-chat/types'
 import type { CanonicalResponsesEvent } from './adapters/responses-stream'
@@ -662,7 +662,7 @@ export class CodingAgentRunManager {
       run.assistantMessageId = flushResponseRunToDb(run.state, run.launch.sessionId)
       run.state.responseRun = undefined
       updateSessionStats(run.launch.sessionId)
-      run.terminalUsageRefresh = this.refreshCodingAgentUsage(run)
+      this.queueCodingAgentUsageRefresh(run)
       const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
       if (run.launch.mode !== 'scoped' && final?.usage) {
         const usage = normalizeTokenUsage(final.usage)
@@ -702,15 +702,41 @@ export class CodingAgentRunManager {
     }
   }
 
+  private queueCodingAgentUsageRefresh(run: ManagedCodingAgentRun): Promise<void> {
+    const previous = run.terminalUsageRefresh || Promise.resolve()
+    const next = previous
+      .catch(() => undefined)
+      .then(() => this.refreshCodingAgentUsage(run))
+    run.terminalUsageRefresh = next
+    return next
+  }
+
   private async refreshCodingAgentUsage(run: ManagedCodingAgentRun) {
     const emitUsage = (event: string, payload: any) => {
       this.emitToChat(run.launch.sessionId, event, payload)
     }
-    const usage = await calcAndUpdateUsage(run.launch.sessionId, run.state, emitUsage)
+    // Coding-agent usage is emitted as one atomic snapshot. Sending the
+    // input/output update first and the context update second lets multiple
+    // turns race in the browser and makes contextTokens visibly jump.
+    const usage = await calcAndUpdateUsage(
+      run.launch.sessionId,
+      run.state,
+      emitUsage,
+      { emit: false },
+    )
+    if (!usage.valid) return
+
     const contextTokens = await this.estimateCodingAgentContextTokens(run)
     if (contextTokens != null) {
-      updateContextTokenUsage(run.launch.sessionId, run.state, emitUsage, contextTokens, usage)
+      run.state.contextTokens = contextTokens
     }
+    emitUsage('usage.updated', {
+      event: 'usage.updated',
+      session_id: run.launch.sessionId,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      ...(contextTokens != null ? { contextTokens } : {}),
+    })
   }
 
   private async estimateCodingAgentContextTokens(run: ManagedCodingAgentRun): Promise<number | undefined> {
