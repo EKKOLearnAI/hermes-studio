@@ -17,7 +17,7 @@ function hasConfigOverride(sourceArgs, key) {
 const debConfigArgs = [
   '--config.productName=hermes-studio',
   '--config.linux.executableName=hermes-studio',
-  '--config.linux.desktop.Name=Hermes Studio',
+  '--config.linux.desktop.entry.Name=Hermes Studio',
 ]
 
 function linuxTargetInfo(sourceArgs) {

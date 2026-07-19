@@ -20,15 +20,28 @@ export default async function verifyPackagedWebUi(context) {
   const webUiRoot = join(packagedResourcesDirectory(context), 'webui')
   const nodePtyRoot = join(webUiRoot, 'node_modules', 'node-pty')
   const nodePtyTarget = `${context.electronPlatformName}-${targetArchName(context.arch)}`
+  const nodePtyPrebuild = join(nodePtyRoot, 'prebuilds', nodePtyTarget)
   const required = [
     join(webUiRoot, 'package.json'),
     join(webUiRoot, 'bin', 'hermes-web-ui.mjs'),
     join(webUiRoot, 'dist', 'server', 'index.js'),
     join(nodePtyRoot, 'package.json'),
-    join(nodePtyRoot, 'prebuilds', nodePtyTarget),
     join(webUiRoot, 'node_modules', 'socket.io', 'package.json'),
   ]
   const missing = required.filter(path => !existsSync(path))
+
+  const hasNodePtyPrebuild = existsSync(nodePtyPrebuild)
+  if (context.electronPlatformName === 'linux' && !hasNodePtyPrebuild) {
+    const nodePtyRelease = join(nodePtyRoot, 'build', 'Release')
+    const compiledRuntime = [
+      join(nodePtyRelease, 'pty.node'),
+      join(nodePtyRelease, 'spawn-helper'),
+    ]
+    missing.push(...compiledRuntime.filter(path => !existsSync(path)))
+  } else if (!hasNodePtyPrebuild) {
+    missing.push(nodePtyPrebuild)
+  }
+
   if (missing.length > 0) {
     throw new Error(`Packaged Web UI is incomplete; missing: ${missing.join(', ')}`)
   }
