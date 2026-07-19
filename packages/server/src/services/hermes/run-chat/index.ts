@@ -443,7 +443,13 @@ export class ChatRunSocket {
     if (data.session_id && isBridgeRunSource(source) && isSessionCommand(data.input) && data.allow_command_passthrough !== true) return
 
     if (!isCodingAgentExecution(source, data)) {
-      const bridgeReady = await ensureBridgeReadyForChatRun()
+      // Workflow nodes are already sequenced by the Workflow manager. A previous
+      // Hermes node can leave the shared broker briefly busy after its terminal
+      // event; a 1s readiness probe would misclassify that handoff as downtime.
+      // Let the real bridge request wait/fail on its normal transport contract.
+      const bridgeReady = source === 'workflow'
+        ? { ok: true as const }
+        : await ensureBridgeReadyForChatRun()
       if (!bridgeReady.ok) {
         let shouldDequeueNext = false
         let queueRemaining = 0
