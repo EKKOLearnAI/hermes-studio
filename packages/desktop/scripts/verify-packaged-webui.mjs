@@ -32,12 +32,8 @@ export default async function verifyPackagedWebUi(context) {
 
   const hasNodePtyPrebuild = existsSync(nodePtyPrebuild)
   if (context.electronPlatformName === 'linux' && !hasNodePtyPrebuild) {
-    const nodePtyRelease = join(nodePtyRoot, 'build', 'Release')
-    const compiledRuntime = [
-      join(nodePtyRelease, 'pty.node'),
-      join(nodePtyRelease, 'spawn-helper'),
-    ]
-    missing.push(...compiledRuntime.filter(path => !existsSync(path)))
+    const compiledModule = join(nodePtyRoot, 'build', 'Release', 'pty.node')
+    if (!existsSync(compiledModule)) missing.push(compiledModule)
   } else if (!hasNodePtyPrebuild) {
     missing.push(nodePtyPrebuild)
   }

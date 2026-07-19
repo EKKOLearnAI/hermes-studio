@@ -32,11 +32,9 @@ function createPackagedWebUi(appOutDir: string): void {
 function createCompiledLinuxNodePty(appOutDir: string): void {
   const nodePtyRoot = join(appOutDir, 'resources', 'webui', 'node_modules', 'node-pty')
   rmSync(join(nodePtyRoot, 'prebuilds'), { recursive: true, force: true })
-  for (const file of ['build/Release/pty.node', 'build/Release/spawn-helper']) {
-    const target = join(nodePtyRoot, file)
-    mkdirSync(dirname(target), { recursive: true })
-    writeFileSync(target, '')
-  }
+  const target = join(nodePtyRoot, 'build', 'Release', 'pty.node')
+  mkdirSync(dirname(target), { recursive: true })
+  writeFileSync(target, '')
 }
 
 afterEach(() => {
@@ -58,7 +56,6 @@ describe('packaged desktop Web UI', () => {
     const buildExclusion = config.indexOf('!node-pty/build/**')
     expect(buildExclusion).toBeGreaterThan(-1)
     expect(config.indexOf('node-pty/build/Release/pty.node')).toBeGreaterThan(buildExclusion)
-    expect(config.indexOf('node-pty/build/Release/spawn-helper')).toBeGreaterThan(buildExclusion)
   })
 
   it('uses the electron-builder 26 desktop entry schema for deb packages', () => {
@@ -106,17 +103,17 @@ describe('packaged desktop Web UI', () => {
     } as never)).resolves.toBeUndefined()
   })
 
-  it('rejects an incomplete source-built node-pty runtime on Linux', async () => {
+  it('rejects a missing source-built node-pty module on Linux', async () => {
     const appOutDir = packagedRoot()
     createPackagedWebUi(appOutDir)
     createCompiledLinuxNodePty(appOutDir)
-    rmSync(join(appOutDir, 'resources', 'webui', 'node_modules', 'node-pty', 'build', 'Release', 'spawn-helper'))
+    rmSync(join(appOutDir, 'resources', 'webui', 'node_modules', 'node-pty', 'build', 'Release', 'pty.node'))
 
     await expect(verifyPackagedWebUi({
       appOutDir,
       electronPlatformName: 'linux',
       arch: 3,
       packager: { appInfo: { productFilename: 'Hermes Studio' } },
-    } as never)).rejects.toThrow('spawn-helper')
+    } as never)).rejects.toThrow('pty.node')
   })
 })

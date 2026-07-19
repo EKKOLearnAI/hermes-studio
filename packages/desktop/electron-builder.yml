@@ -53,11 +53,10 @@ extraResources:
       - "**/*"
       # Drop other-platform node-pty prebuilds (saves ~45MB)
       - "!node-pty/prebuilds/!(${platform}-${arch})/**"
-      # Linux has no bundled prebuild and loads the native module plus helper
-      # compiled by `npm rebuild node-pty` from build/Release.
+      # Linux has no bundled prebuild and loads the native module compiled by
+      # `npm rebuild node-pty` from build/Release.
       - "!node-pty/build/**"
       - "node-pty/build/Release/pty.node"
-      - "node-pty/build/Release/spawn-helper"
       - "!**/*.md"
 
 asarUnpack:
