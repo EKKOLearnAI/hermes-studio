@@ -30,6 +30,7 @@ interface MockHermesApiOptions {
   tokenValidationStatus?: number
   initialProfileName?: 'default' | 'research'
   sessions?: unknown[]
+  sessionCategories?: Array<{ id: number; name: string; created_at?: number; updated_at?: number }>
   journey?: MockJourneyPayload
   skills?: MockSkillsPayload
   workflows?: unknown[]
@@ -122,6 +123,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
   const unexpectedRequests: MockedRequest[] = []
   const tokenValidationStatus = options.tokenValidationStatus ?? 200
   let activeProfileName = options.initialProfileName ?? 'research'
+  const sessionCategories = [...(options.sessionCategories ?? [])]
   let channelCredentialsPresent = options.channelCredentials ?? false
   let providerEditor = {
     id: 'test-provider',
@@ -263,6 +265,50 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (pathname === '/api/hermes/session-categories') {
+      if (request.method() === 'GET') {
+        await route.fulfill(jsonResponse({ categories: sessionCategories }))
+        return
+      }
+      if (request.method() === 'POST') {
+        const body = JSON.parse(request.postData() || '{}') as { name?: string }
+        const now = Math.floor(Date.now() / 1000)
+        const category = {
+          id: Math.max(0, ...sessionCategories.map(item => item.id)) + 1,
+          name: String(body.name || '').trim(),
+          created_at: now,
+          updated_at: now,
+        }
+        sessionCategories.push(category)
+        await route.fulfill(jsonResponse({ category }))
+        return
+      }
+    }
+
+    if (/^\/api\/hermes\/session-categories\/\d+$/.test(pathname)) {
+      const categoryId = Number(pathname.split('/').at(-1))
+      const categoryIndex = sessionCategories.findIndex(item => item.id === categoryId)
+      if (categoryIndex < 0) {
+        await route.fulfill(jsonResponse({ error: 'Category not found' }, 404))
+        return
+      }
+      if (request.method() === 'PATCH') {
+        const body = JSON.parse(request.postData() || '{}') as { name?: string }
+        sessionCategories[categoryIndex] = {
+          ...sessionCategories[categoryIndex],
+          name: String(body.name || '').trim(),
+          updated_at: Math.floor(Date.now() / 1000),
+        }
+        await route.fulfill(jsonResponse({ category: sessionCategories[categoryIndex] }))
+        return
+      }
+      if (request.method() === 'DELETE') {
+        sessionCategories.splice(categoryIndex, 1)
+        await route.fulfill(jsonResponse({ ok: true }))
+        return
+      }
+    }
+
     if (pathname === '/api/hermes/sessions/hermes') {
       await route.fulfill(jsonResponse({ sessions: [] }))
       return
@@ -270,6 +316,16 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
 
     if (pathname === '/api/hermes/sessions/context-length') {
       await route.fulfill(jsonResponse({ context_length: 256000 }))
+      return
+    }
+
+    if (pathname === '/api/hermes/workspace/folders' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse({ base: '/workspace', current: '', folders: [] }))
+      return
+    }
+
+    if (/^\/api\/hermes\/sessions\/[^/]+\/category$/.test(pathname) && request.method() === 'POST') {
+      await route.fulfill(jsonResponse({ ok: true }))
       return
     }
 
@@ -355,6 +411,12 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
         default_provider: 'test-provider',
         groups: [TEST_MODEL_GROUP],
         allProviders: [TEST_MODEL_GROUP],
+        profiles: ['default', 'research'].map(profile => ({
+          profile,
+          default: 'test-model',
+          default_provider: 'test-provider',
+          groups: [TEST_MODEL_GROUP],
+        })),
         model_aliases: {},
         model_visibility: {},
       }))

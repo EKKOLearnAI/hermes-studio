@@ -39,6 +39,19 @@ export const USAGE_RUN_INDEX = `CREATE UNIQUE INDEX IF NOT EXISTS idx_session_us
 
 export const SESSIONS_TABLE = 'sessions'
 
+export const SESSION_CATEGORIES_TABLE = 'session_categories'
+
+export const SESSION_CATEGORIES_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  name: 'TEXT NOT NULL COLLATE NOCASE',
+  created_at: 'INTEGER NOT NULL',
+  updated_at: 'INTEGER NOT NULL',
+}
+
+export const SESSION_CATEGORIES_INDEXES = {
+  uniq_session_categories_name: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_session_categories_name ON session_categories(name COLLATE NOCASE)',
+}
+
 export const SESSIONS_SCHEMA: Record<string, string> = {
   id: 'TEXT PRIMARY KEY',
   profile: 'TEXT NOT NULL DEFAULT \'default\'',
@@ -72,6 +85,11 @@ export const SESSIONS_SCHEMA: Record<string, string> = {
   last_active: 'INTEGER NOT NULL',
   is_archived: 'INTEGER NOT NULL DEFAULT 0',
   workspace: 'TEXT',
+  category_id: 'INTEGER',
+}
+
+export const SESSIONS_INDEXES = {
+  idx_sessions_category_id: 'CREATE INDEX IF NOT EXISTS idx_sessions_category_id ON sessions(category_id)',
 }
 
 export const MESSAGES_TABLE = 'messages'
@@ -1016,7 +1034,14 @@ export function initAllHermesTables(): void {
     db.exec(USAGE_RUN_INDEX)
 
     // Session store
-    syncTable(SESSIONS_TABLE, SESSIONS_SCHEMA)
+    syncTable(SESSION_CATEGORIES_TABLE, SESSION_CATEGORIES_SCHEMA, {
+      indexes: SESSION_CATEGORIES_INDEXES,
+    })
+    syncTable(SESSIONS_TABLE, SESSIONS_SCHEMA, {
+      indexes: SESSIONS_INDEXES,
+    })
+    createIndexes(db, SESSION_CATEGORIES_INDEXES)
+    createIndexes(db, SESSIONS_INDEXES)
     syncTable(MESSAGES_TABLE, MESSAGES_SCHEMA)
     db.exec(MESSAGES_INDEX)
     syncTable(WORKSPACE_RUN_CHANGES_TABLE, WORKSPACE_RUN_CHANGES_SCHEMA, {

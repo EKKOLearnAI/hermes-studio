@@ -15,6 +15,17 @@ import {
 } from '../../db/hermes/session-store'
 import { ExportCompressor } from '../../lib/context-compressor/export-compressor'
 import { getLocalUsageStats, getRecordedUsageSessionIds, getUsage, getUsageBatch } from '../../db/hermes/usage-store'
+import {
+  SESSION_CATEGORY_NAME_MAX_LENGTH,
+  createSessionCategory,
+  deleteSessionCategory,
+  findSessionCategoryByName,
+  getSessionCategory,
+  listSessionCategories,
+  normalizeSessionCategoryName,
+  renameSessionCategory,
+  setSessionCategory,
+} from '../../db/hermes/session-category-store'
 import type { UsageStatsAgentRow, UsageStatsModelRow, UsageStatsDailyRow } from '../../db/hermes/usage-store'
 import { deleteWorkspaceRunChangesForSession, getWorkspaceRunChangeFile as getWorkspaceRunChangeFileFromDb, listWorkspaceRunChangesForSession } from '../../db/hermes/workspace-run-changes-store'
 import { getModelContextLength } from '../../services/hermes/model-context'
@@ -447,6 +458,75 @@ export async function list(ctx: any) {
       (!knownProfiles || knownProfiles.has(s.profile || 'default')),
     ))),
   }
+}
+
+export async function listCategories(ctx: any) {
+  ctx.body = { categories: listSessionCategories() }
+}
+
+export async function createCategory(ctx: any) {
+  const body = ctx.request.body as { name?: string }
+  const name = normalizeSessionCategoryName(body?.name)
+  if (!name) {
+    ctx.status = 400
+    ctx.body = { error: 'Category name is required' }
+    return
+  }
+  if (name.length > SESSION_CATEGORY_NAME_MAX_LENGTH) {
+    ctx.status = 400
+    ctx.body = { error: `Category name must be ${SESSION_CATEGORY_NAME_MAX_LENGTH} characters or fewer` }
+    return
+  }
+  ctx.body = { category: createSessionCategory(name) }
+}
+
+export async function renameCategory(ctx: any) {
+  const categoryId = Number(ctx.params.id)
+  if (!Number.isSafeInteger(categoryId) || categoryId <= 0 || !getSessionCategory(categoryId)) {
+    ctx.status = 404
+    ctx.body = { error: 'Category not found' }
+    return
+  }
+  const body = ctx.request.body as { name?: string }
+  const name = normalizeSessionCategoryName(body?.name)
+  if (!name) {
+    ctx.status = 400
+    ctx.body = { error: 'Category name is required' }
+    return
+  }
+  if (name.length > SESSION_CATEGORY_NAME_MAX_LENGTH) {
+    ctx.status = 400
+    ctx.body = { error: `Category name must be ${SESSION_CATEGORY_NAME_MAX_LENGTH} characters or fewer` }
+    return
+  }
+  const duplicate = findSessionCategoryByName(name)
+  if (duplicate && duplicate.id !== categoryId) {
+    ctx.status = 409
+    ctx.body = { error: 'A category with this name already exists' }
+    return
+  }
+  const category = renameSessionCategory(categoryId, name)
+  if (!category) {
+    ctx.status = 404
+    ctx.body = { error: 'Category not found' }
+    return
+  }
+  ctx.body = { category }
+}
+
+export async function removeCategory(ctx: any) {
+  const categoryId = Number(ctx.params.id)
+  if (!Number.isSafeInteger(categoryId) || categoryId <= 0 || !getSessionCategory(categoryId)) {
+    ctx.status = 404
+    ctx.body = { error: 'Category not found' }
+    return
+  }
+  if (!deleteSessionCategory(categoryId)) {
+    ctx.status = 404
+    ctx.body = { error: 'Category not found' }
+    return
+  }
+  ctx.body = { ok: true }
 }
 
 export async function count(ctx: any) {
@@ -1288,6 +1368,40 @@ export async function setWorkspace(ctx: any) {
   }
   updateSession(id, { workspace: workspace || null } as any)
   ctx.body = { ok: true }
+}
+
+export async function setCategory(ctx: any) {
+  const existing = localGetSession(ctx.params.id)
+  if (!existing) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, existing)) return
+
+  const body = (ctx.request.body || {}) as { categoryId?: number | null; category_id?: number | null }
+  const rawCategoryId = body.categoryId ?? body.category_id
+  let categoryId: number | null = null
+  if (rawCategoryId !== null && rawCategoryId !== undefined) {
+    categoryId = Number(rawCategoryId)
+    if (!Number.isSafeInteger(categoryId) || categoryId <= 0) {
+      ctx.status = 400
+      ctx.body = { error: 'categoryId must be a positive integer or null' }
+      return
+    }
+    if (!getSessionCategory(categoryId)) {
+      ctx.status = 404
+      ctx.body = { error: 'Category not found' }
+      return
+    }
+  }
+
+  if (!setSessionCategory(ctx.params.id, categoryId)) {
+    ctx.status = 500
+    ctx.body = { error: 'Failed to update session category' }
+    return
+  }
+  ctx.body = { ok: true, category_id: categoryId }
 }
 
 type SessionProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages'

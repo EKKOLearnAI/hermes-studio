@@ -41,6 +41,7 @@ export interface EkkoAgentRunSocketData {
   agent_id?: ChatCodingAgentId
   mode?: 'scoped' | 'global'
   workspace?: string | null
+  category_id?: number | null
   source?: string
   baseUrl?: string
   base_url?: string
@@ -449,10 +450,16 @@ export async function handleEkkoAgentRun(
       provider: modelConfig.provider,
       title,
       workspace,
+      category_id: data.category_id,
     })
   }
   try {
-    updateSession(sessionId, { ended_at: null, end_reason: null, last_active: now })
+    updateSession(sessionId, {
+      ended_at: null,
+      end_reason: null,
+      last_active: now,
+      ...(data.category_id !== undefined ? { category_id: data.category_id } : {}),
+    })
   } catch (err) {
     logger.warn(err, '[chat-run-socket] failed to reopen ekko-agent session %s', sessionId)
   }

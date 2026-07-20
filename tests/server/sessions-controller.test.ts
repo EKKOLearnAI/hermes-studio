@@ -25,6 +25,13 @@ const localCreateSessionMock = vi.fn()
 const localUpdateSessionMock = vi.fn()
 const localAddMessagesMock = vi.fn()
 const localUpdateSessionStatsMock = vi.fn()
+const listSessionCategoriesMock = vi.fn()
+const createSessionCategoryMock = vi.fn()
+const deleteSessionCategoryMock = vi.fn()
+const findSessionCategoryByNameMock = vi.fn()
+const getSessionCategoryMock = vi.fn()
+const renameSessionCategoryMock = vi.fn()
+const setSessionCategoryMock = vi.fn()
 const getGroupChatServerMock = vi.fn()
 const getLocalUsageStatsMock = vi.fn()
 const getRecordedUsageSessionIdsMock = vi.fn()
@@ -86,6 +93,19 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   getSession: getSessionMock,
   updateSession: localUpdateSessionMock,
   updateSessionStats: localUpdateSessionStatsMock,
+}))
+
+vi.mock('../../packages/server/src/db/hermes/session-category-store', () => ({
+  SESSION_CATEGORY_NAME_MAX_LENGTH: 40,
+  listSessionCategories: listSessionCategoriesMock,
+  createSessionCategory: createSessionCategoryMock,
+  deleteSessionCategory: deleteSessionCategoryMock,
+  findSessionCategoryByName: findSessionCategoryByNameMock,
+  getSessionCategory: getSessionCategoryMock,
+  normalizeSessionCategoryName: (value: unknown) =>
+    typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '',
+  renameSessionCategory: renameSessionCategoryMock,
+  setSessionCategory: setSessionCategoryMock,
 }))
 
 vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
@@ -172,6 +192,17 @@ describe('session conversations controller', () => {
     localUpdateSessionMock.mockReset()
     localAddMessagesMock.mockReset()
     localUpdateSessionStatsMock.mockReset()
+    listSessionCategoriesMock.mockReset()
+    createSessionCategoryMock.mockReset()
+    deleteSessionCategoryMock.mockReset()
+    findSessionCategoryByNameMock.mockReset()
+    getSessionCategoryMock.mockReset()
+    renameSessionCategoryMock.mockReset()
+    setSessionCategoryMock.mockReset()
+    listSessionCategoriesMock.mockReturnValue([])
+    findSessionCategoryByNameMock.mockReturnValue(null)
+    deleteSessionCategoryMock.mockReturnValue(true)
+    setSessionCategoryMock.mockReturnValue(true)
     getGroupChatServerMock.mockReset()
     getGroupChatServerMock.mockReturnValue(null)
     getLocalUsageStatsMock.mockReset()
@@ -1180,6 +1211,66 @@ describe('session conversations controller', () => {
 
     expect(localSetSessionArchivedMock).toHaveBeenCalledWith('session-1', true)
     expect(ctx.body).toEqual({ ok: true })
+  })
+
+  it('lists and creates normalized global session categories', async () => {
+    const category = { id: 1, name: 'Client Work', created_at: 1, updated_at: 1 }
+    listSessionCategoriesMock.mockReturnValue([category])
+    createSessionCategoryMock.mockReturnValue(category)
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+
+    const listCtx: any = { body: null }
+    await mod.listCategories(listCtx)
+    expect(listCtx.body).toEqual({ categories: [category] })
+
+    const createCtx: any = { request: { body: { name: '  Client   Work ' } }, body: null }
+    await mod.createCategory(createCtx)
+    expect(createSessionCategoryMock).toHaveBeenCalledWith('Client Work')
+    expect(createCtx.body).toEqual({ category })
+  })
+
+  it('renames and deletes an existing global session category', async () => {
+    const existing = { id: 1, name: 'Work', created_at: 1, updated_at: 1 }
+    const renamed = { ...existing, name: 'Client Work', updated_at: 2 }
+    getSessionCategoryMock.mockReturnValue(existing)
+    renameSessionCategoryMock.mockReturnValue(renamed)
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+
+    const renameCtx: any = { params: { id: '1' }, request: { body: { name: 'Client Work' } }, body: null }
+    await mod.renameCategory(renameCtx)
+    expect(renameSessionCategoryMock).toHaveBeenCalledWith(1, 'Client Work')
+    expect(renameCtx.body).toEqual({ category: renamed })
+
+    const deleteCtx: any = { params: { id: '1' }, body: null }
+    await mod.removeCategory(deleteCtx)
+    expect(deleteSessionCategoryMock).toHaveBeenCalledWith(1)
+    expect(deleteCtx.body).toEqual({ ok: true })
+  })
+
+  it('assigns and clears a category on an accessible session', async () => {
+    getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', source: 'cli' })
+    getSessionCategoryMock.mockReturnValue({ id: 1, name: 'Work' })
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+
+    const assignCtx: any = {
+      params: { id: 'session-1' },
+      request: { body: { categoryId: 1 } },
+      state: {},
+      body: null,
+    }
+    await mod.setCategory(assignCtx)
+    expect(setSessionCategoryMock).toHaveBeenCalledWith('session-1', 1)
+    expect(assignCtx.body).toEqual({ ok: true, category_id: 1 })
+
+    const clearCtx: any = {
+      params: { id: 'session-1' },
+      request: { body: { categoryId: null } },
+      state: {},
+      body: null,
+    }
+    await mod.setCategory(clearCtx)
+    expect(setSessionCategoryMock).toHaveBeenCalledWith('session-1', null)
+    expect(clearCtx.body).toEqual({ ok: true, category_id: null })
   })
 
   it('rejects archiving global-agent sessions', async () => {

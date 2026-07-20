@@ -21,7 +21,7 @@ describe('Hermes schema initialization', () => {
   })
 
   it('initializes all tables with correct schemas', async () => {
-    const { initAllHermesTables, USAGE_TABLE, SESSIONS_TABLE, MESSAGES_TABLE, GC_ROOMS_TABLE, USERS_TABLE, USER_PROFILES_TABLE, DEVICES_TABLE, MCU_DEVICES_TABLE } =
+    const { initAllHermesTables, USAGE_TABLE, SESSIONS_TABLE, SESSION_CATEGORIES_TABLE, MESSAGES_TABLE, GC_ROOMS_TABLE, USERS_TABLE, USER_PROFILES_TABLE, DEVICES_TABLE, MCU_DEVICES_TABLE } =
       await import('../../packages/server/src/db/hermes/schemas')
 
     expect(() => initAllHermesTables()).not.toThrow()
@@ -30,6 +30,7 @@ describe('Hermes schema initialization', () => {
     const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toContain(USAGE_TABLE)
     expect(tables.map(t => t.name)).toContain(SESSIONS_TABLE)
+    expect(tables.map(t => t.name)).toContain(SESSION_CATEGORIES_TABLE)
     expect(tables.map(t => t.name)).toContain(MESSAGES_TABLE)
     expect(tables.map(t => t.name)).toContain(GC_ROOMS_TABLE)
     expect(tables.map(t => t.name)).toContain(USERS_TABLE)
@@ -47,6 +48,9 @@ describe('Hermes schema initialization', () => {
     const sessionCols = db.prepare(`PRAGMA table_info("${SESSIONS_TABLE}")`).all() as Array<{ name: string }>
     expect(sessionCols.some(c => c.name === 'source')).toBe(true)
     expect(sessionCols.some(c => c.name === 'agent')).toBe(true)
+    expect(sessionCols.some(c => c.name === 'category_id')).toBe(true)
+    const sessionIndexes = db.prepare(`PRAGMA index_list("${SESSIONS_TABLE}")`).all() as Array<{ name: string }>
+    expect(sessionIndexes.some(index => index.name === 'idx_sessions_category_id')).toBe(true)
 
     const userCols = db.prepare(`PRAGMA table_info("${USERS_TABLE}")`).all() as Array<{ name: string }>
     expect(userCols.some(c => c.name === 'id')).toBe(true)
@@ -94,6 +98,23 @@ describe('Hermes schema initialization', () => {
     const cols = db.prepare(`PRAGMA table_info("${USAGE_TABLE}")`).all() as Array<{ name: string }>
     expect(cols.some(c => c.name === 'input_tokens')).toBe(true)
     expect(cols.some(c => c.name === 'output_tokens')).toBe(true)
+  })
+
+  it('adds the category column and index to an existing sessions table', async () => {
+    const { initAllHermesTables, SESSIONS_SCHEMA, SESSIONS_TABLE } =
+      await import('../../packages/server/src/db/hermes/schemas')
+    const legacyColumns = Object.entries(SESSIONS_SCHEMA)
+      .filter(([name]) => name !== 'category_id')
+      .map(([name, definition]) => `"${name}" ${definition}`)
+      .join(', ')
+    db.exec(`CREATE TABLE "${SESSIONS_TABLE}" (${legacyColumns})`)
+
+    expect(() => initAllHermesTables()).not.toThrow()
+
+    const columns = db.prepare(`PRAGMA table_info("${SESSIONS_TABLE}")`).all() as Array<{ name: string }>
+    expect(columns.some(column => column.name === 'category_id')).toBe(true)
+    const indexes = db.prepare(`PRAGMA index_list("${SESSIONS_TABLE}")`).all() as Array<{ name: string }>
+    expect(indexes.some(index => index.name === 'idx_sessions_category_id')).toBe(true)
   })
 
   it('handles single-column primary key tables correctly', async () => {

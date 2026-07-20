@@ -11,6 +11,7 @@ import type { Server, Socket } from 'socket.io'
 import { logger } from '../../logger'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
 import { clearSessionMessages, getSession, getSessionDetail, listSessions } from '../../../db/hermes/session-store'
+import { getSessionCategory } from '../../../db/hermes/session-category-store'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../hermes-profile'
 import {
   AgentBridgeClient,
@@ -89,6 +90,12 @@ export async function ensureBridgeReadyForChatRun(): Promise<{ ok: true } | { ok
 
 function isCodingAgentExecution(source: string | undefined, data?: { coding_agent_id?: string; agent_id?: string }): boolean {
   return source === 'coding_agent' || (source === 'workflow' && Boolean(data?.coding_agent_id || data?.agent_id))
+}
+
+function resolveSessionCategoryId(value: unknown): number | null {
+  const categoryId = Number(value)
+  if (!Number.isSafeInteger(categoryId) || categoryId <= 0) return null
+  return getSessionCategory(categoryId) ? categoryId : null
 }
 
 function isEkkoAgentExecution(data?: { coding_agent_id?: string; agent_id?: string }): boolean {
@@ -204,6 +211,7 @@ export class ChatRunSocket {
       model_groups?: Array<{ provider: string; models: string[] }>
       queue_id?: string
       workspace?: string | null
+      category_id?: number | null
       source?: string
       session_source?: 'global_agent' | 'workflow'
       coding_agent_id?: ChatCodingAgentId
@@ -232,6 +240,9 @@ export class ChatRunSocket {
           error: err instanceof Error ? err.message : String(err),
         })
         return
+      }
+      if (data.category_id !== undefined) {
+        data.category_id = resolveSessionCategoryId(data.category_id)
       }
       if (data.session_id) {
         const state = getOrCreateSession(this.sessionMap, data.session_id)
@@ -412,6 +423,7 @@ export class ChatRunSocket {
       model_groups?: Array<{ provider: string; models: string[] }>
       instructions?: string
       workspace?: string | null
+      category_id?: number | null
       source?: string
       session_source?: 'global_agent' | 'workflow'
       queue_id?: string

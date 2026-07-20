@@ -25,6 +25,7 @@ export interface CodingAgentRunSocketData {
   agent_id?: ChatCodingAgentId
   mode?: 'scoped' | 'global'
   workspace?: string | null
+  category_id?: number | null
   source?: string
   baseUrl?: string
   base_url?: string
@@ -92,6 +93,10 @@ export async function handleCodingAgentRun(
       sessionSource: data.session_source,
     }, state)
     runId = started.agentSessionId
+  }
+
+  if (data.category_id !== undefined) {
+    updateSession(sessionId, { category_id: data.category_id })
   }
 
   state.isWorking = true

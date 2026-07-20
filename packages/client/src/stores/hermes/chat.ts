@@ -393,6 +393,7 @@ export interface Session {
   lastActiveAt?: number
   isArchived?: boolean
   workspace?: string | null
+  categoryId?: number | null
   isLocalOnly?: boolean
   /** Per-session reasoning effort override.
    * Empty string / undefined = use config.yaml default.
@@ -895,6 +896,7 @@ function mapHermesSession(s: SessionSummary): Session {
     lastActiveAt: s.last_active != null ? Math.round(s.last_active * 1000) : undefined,
     isArchived: Boolean(s.is_archived),
     workspace: s.workspace || null,
+    categoryId: s.category_id ?? null,
   }
 }
 
@@ -1464,6 +1466,7 @@ export const useChatStore = defineStore('chat', () => {
           existing.inputTokens = fresh.inputTokens
           existing.outputTokens = fresh.outputTokens
           existing.workspace = fresh.workspace
+          existing.categoryId = fresh.categoryId
           existing.isLocalOnly = false
           // messageTotal: keep the larger of server count vs what we've loaded,
           // so we don't shrink below already-rendered messages mid-session.
@@ -1519,6 +1522,7 @@ export const useChatStore = defineStore('chat', () => {
       target.hasMoreBefore = detail.hasMore
       if (detail.session.title) target.title = detail.session.title
       target.workspace = detail.session.workspace || target.workspace || null
+      target.categoryId = detail.session.category_id ?? null
       target.isLocalOnly = false
       target.parentSessionId = detail.session.parent_session_id || target.parentSessionId || null
       target.forkPointMessageId = (detail.session as any).fork_point_message_id != null ? String((detail.session as any).fork_point_message_id) : target.forkPointMessageId || null
@@ -1543,6 +1547,7 @@ export const useChatStore = defineStore('chat', () => {
     codingAgentId?: ChatCodingAgentId
     codingAgentMode?: 'global' | 'scoped'
     workspace?: string | null
+    categoryId?: number | null
     baseUrl?: string
     apiKey?: string
     apiMode?: ProviderApiMode
@@ -1564,6 +1569,7 @@ export const useChatStore = defineStore('chat', () => {
       model: options.model || undefined,
       provider: options.provider || '',
       workspace: options.workspace || null,
+      categoryId: options.categoryId ?? null,
       isLocalOnly: true,
       baseUrl: options.baseUrl,
       apiKey: options.apiKey,
@@ -1857,6 +1863,7 @@ export const useChatStore = defineStore('chat', () => {
     codingAgentId?: ChatCodingAgentId
     codingAgentMode?: 'global' | 'scoped'
     workspace?: string | null
+    categoryId?: number | null
     baseUrl?: string
     apiKey?: string
     apiMode?: ProviderApiMode
@@ -1874,6 +1881,7 @@ export const useChatStore = defineStore('chat', () => {
       codingAgentId,
       codingAgentMode: options.codingAgentMode,
       workspace: options.workspace,
+      categoryId: options.categoryId,
       baseUrl: options.baseUrl,
       apiKey: options.apiKey,
       apiMode: options.apiMode,
@@ -2899,6 +2907,7 @@ export const useChatStore = defineStore('chat', () => {
         })),
         queue_id: userMsg.id,
         workspace: activeSession.value?.workspace || undefined,
+        category_id: activeSession.value?.categoryId ?? null,
         source: sessionSource,
         ...(runtimeMode.value === 'global_agent' ? { session_source: 'global_agent' as const } : {}),
         ...(sessionSource === 'workflow' ? { session_source: 'workflow' as const } : {}),
