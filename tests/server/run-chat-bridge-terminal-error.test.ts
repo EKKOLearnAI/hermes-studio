@@ -83,6 +83,39 @@ describe('bridge terminal error detection', () => {
     } as any)).toBeNull()
   })
 
+  it('does not flag successful project documentation that mentions login rate limiting', () => {
+    expect(bridgeTerminalError({
+      status: 'complete',
+      result: {
+        completed: true,
+        final_response: [
+          '# Hermes Studio 项目整体理解',
+          '服务启动流程：',
+          '- 创建数据目录',
+          '- 初始化登录限流',
+          '- 启动 Python Agent Bridge',
+        ].join('\n'),
+      },
+    } as any)).toBeNull()
+  })
+
+  it('still detects a compact Chinese rate-limit failure response', () => {
+    const error = 'API 请求被限流，请稍后重试'
+    expect(bridgeTerminalError({
+      status: 'complete',
+      result: { final_response: error },
+    } as any)).toBe(error)
+  })
+
+  it('does not scan long-form final responses for incidental failure terms', () => {
+    expect(bridgeTerminalError({
+      status: 'complete',
+      result: {
+        final_response: `${'项目架构说明。'.repeat(400)}初始化登录限流。`,
+      },
+    } as any)).toBeNull()
+  })
+
   it('does not treat a successful result message as an error', () => {
     expect(bridgeTerminalError({
       status: 'complete',

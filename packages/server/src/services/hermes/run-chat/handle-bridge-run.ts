@@ -153,7 +153,17 @@ function looksLikeAgentFailure(value: string): boolean {
     || /\b(?:rate limit|too many requests|quota)\b.{0,100}\b429\b/i.test(text)
     || /\b(?:500|502|503|504)\b.{0,100}\b(?:server error|bad gateway|service unavailable|gateway timeout|upstream|provider|request failed|api)\b/i.test(text)
     || /\b(?:server error|bad gateway|service unavailable|gateway timeout|upstream|provider|request failed|api)\b.{0,100}\b(?:500|502|503|504)\b/i.test(text)
-    || /(?:无可用渠道|渠道不可用|认证失败|鉴权失败|额度不足|余额不足|请求失败|接口调用失败|限流)/i.test(text)
+    || /(?:无可用渠道|渠道不可用|认证失败|鉴权失败|额度不足|余额不足|请求失败|接口调用失败)/i.test(text)
+    || /(?:请求|接口|模型|渠道|API).{0,20}(?:被限流|触发限流|因限流失败)/i.test(text)
+    || /(?:限流|频率限制).{0,20}(?:失败|错误|重试|稍后)/i.test(text)
+}
+
+function looksLikeStandaloneAgentFailure(value: string): boolean {
+  const text = value.replace(/\s+/g, ' ').trim()
+  // A provider failure returned as final_response is normally a compact error.
+  // Do not scan an arbitrary long-form successful answer for incidental terms
+  // such as "登录限流" or documentation about HTTP error handling.
+  return text.length > 0 && text.length <= 2_000 && looksLikeAgentFailure(text)
 }
 
 export function bridgeTerminalError(chunk: Pick<AgentBridgeOutput, 'status' | 'error' | 'result'>): string | null {
@@ -176,8 +186,9 @@ export function bridgeTerminalError(chunk: Pick<AgentBridgeOutput, 'status' | 'e
   }
 
   if (resultError && looksLikeAgentFailure(resultError)) return resultError
+  if (result?.completed === true) return null
   if (!finalResponse && resultMessage && looksLikeAgentFailure(resultMessage)) return resultMessage
-  if (finalResponse && looksLikeAgentFailure(finalResponse)) return finalResponse
+  if (finalResponse && looksLikeStandaloneAgentFailure(finalResponse)) return finalResponse
 
   return null
 }
