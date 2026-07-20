@@ -26,6 +26,13 @@ interface MockSkillsPayload {
   paths?: unknown
 }
 
+interface MockSkillBundlePayload {
+  name: string
+  commandName: string
+  description: string
+  skills: string[]
+}
+
 interface MockHermesApiOptions {
   tokenValidationStatus?: number
   initialProfileName?: 'default' | 'research'
@@ -33,6 +40,7 @@ interface MockHermesApiOptions {
   sessionCategories?: Array<{ id: number; name: string; created_at?: number; updated_at?: number }>
   journey?: MockJourneyPayload
   skills?: MockSkillsPayload
+  bundles?: MockSkillBundlePayload[]
   workflows?: unknown[]
   workflowRuns?: unknown[]
   workflowImportDocument?: unknown
@@ -130,6 +138,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
   const tokenValidationStatus = options.tokenValidationStatus ?? 200
   let activeProfileName = options.initialProfileName ?? 'research'
   const sessionCategories = [...(options.sessionCategories ?? [])]
+  const skillBundles = [...(options.bundles ?? [])]
   let channelCredentialsPresent = options.channelCredentials ?? false
   let providerEditor = {
     id: 'test-provider',
@@ -346,6 +355,42 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
 
     if (pathname === '/api/hermes/skills') {
       await route.fulfill(jsonResponse(options.skills ?? { categories: [], archived: [] }))
+      return
+    }
+
+    if (pathname === '/api/hermes/bundles') {
+      if (request.method() === 'GET') {
+        await route.fulfill(jsonResponse({ bundles: skillBundles }))
+        return
+      }
+      if (request.method() === 'POST') {
+        const body = JSON.parse(request.postData() || '{}') as { name?: string; description?: string; skills?: string[] }
+        const commandName = String(body.name || '')
+          .trim()
+          .toLowerCase()
+          .replace(/ /g, '-')
+          .replace(/_/g, '-')
+          .replace(/[^a-z0-9-]/g, '')
+          .replace(/-+/g, '-')
+          .replace(/^-|-$/g, '')
+        const bundle = {
+          name: String(body.name || '').trim(),
+          commandName,
+          description: String(body.description || '').trim(),
+          skills: Array.isArray(body.skills) ? body.skills : [],
+        }
+        skillBundles.push(bundle)
+        await route.fulfill(jsonResponse({ bundle }, 201))
+        return
+      }
+    }
+
+    const bundleDeleteMatch = pathname.match(/^\/api\/hermes\/bundles\/([^/]+)$/)
+    if (bundleDeleteMatch && request.method() === 'DELETE') {
+      const commandName = decodeURIComponent(bundleDeleteMatch[1])
+      const index = skillBundles.findIndex(bundle => bundle.commandName === commandName)
+      if (index >= 0) skillBundles.splice(index, 1)
+      await route.fulfill(jsonResponse({ success: true }))
       return
     }
 

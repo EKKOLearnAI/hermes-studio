@@ -8,6 +8,9 @@ import { useSettingsStore } from '@/stores/hermes/settings'
 import ChatInput from '@/components/hermes/chat/ChatInput.vue'
 
 const fetchSkillsMock = vi.hoisted(() => vi.fn())
+const fetchSkillBundlesMock = vi.hoisted(() => vi.fn())
+const deleteSkillBundleApiMock = vi.hoisted(() => vi.fn())
+const dialogWarningMock = vi.hoisted(() => vi.fn())
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -39,6 +42,7 @@ vi.mock('naive-ui', () => ({
     `,
   },
   useMessage: () => ({ error: vi.fn(), success: vi.fn() }),
+  useDialog: () => ({ warning: dialogWarningMock }),
 }))
 
 vi.mock('@/api/hermes/sessions', () => ({
@@ -51,6 +55,20 @@ vi.mock('@/api/hermes/model-context', () => ({
 
 vi.mock('@/api/hermes/skills', () => ({
   fetchSkills: fetchSkillsMock,
+}))
+
+vi.mock('@/api/hermes/skill-bundles', () => ({
+  fetchSkillBundles: fetchSkillBundlesMock,
+  deleteSkillBundleApi: deleteSkillBundleApiMock,
+}))
+
+vi.mock('@/components/hermes/chat/BundleCreateModal.vue', () => ({
+  default: {
+    name: 'BundleCreateModal',
+    props: ['profile'],
+    emits: ['close', 'created'],
+    template: '<div class="bundle-create-modal">{{ profile }}</div>',
+  },
 }))
 
 vi.mock('@/composables/useToolTraceVisibility', () => ({
@@ -80,6 +98,11 @@ describe('ChatInput draft persistence', () => {
     window.innerWidth = 1024
     fetchSkillsMock.mockReset()
     fetchSkillsMock.mockResolvedValue({ categories: [], archived: [] })
+    fetchSkillBundlesMock.mockReset()
+    fetchSkillBundlesMock.mockResolvedValue([])
+    deleteSkillBundleApiMock.mockReset()
+    deleteSkillBundleApiMock.mockResolvedValue(undefined)
+    dialogWarningMock.mockReset()
   })
 
   it('restores unsent text for the active session after the chat view is remounted', async () => {
@@ -273,6 +296,73 @@ describe('ChatInput draft persistence', () => {
     await nextTick()
 
     expect((textarea.element as HTMLTextAreaElement).value).toBe('/skill github-pr-review ')
+  })
+
+  it('opens the profile-scoped bundle picker from /bundles and inserts the selected bundle command', async () => {
+    fetchSkillBundlesMock.mockResolvedValue([
+      {
+        name: 'PR Review Team',
+        commandName: 'pr-review-team',
+        description: 'Review a pull request',
+        skills: ['github-pr-review', 'security-review'],
+      },
+    ])
+    const wrapper = mountForSession('session-bundles', { profile: 'work' })
+    const textarea = wrapper.get('textarea')
+
+    await textarea.setValue('/bundles')
+    await nextTick()
+    await wrapper.findAll('.slash-command-item')[0].trigger('mousedown')
+    await flushPromises()
+    await nextTick()
+
+    expect(fetchSkillBundlesMock).toHaveBeenCalledWith('work')
+    expect(wrapper.text()).toContain('/bundles pr-review-team')
+    expect(wrapper.text()).toContain('Review a pull request')
+    expect(wrapper.text()).toContain('github-pr-review, security-review')
+
+    await wrapper.get('.bundle-picker-select').trigger('click')
+    await nextTick()
+
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('/bundles pr-review-team ')
+  })
+
+  it('opens the bundle creator when /bundles create is submitted', async () => {
+    const wrapper = mountForSession('session-bundle-create', { profile: 'research' })
+    const textarea = wrapper.get('textarea')
+
+    await textarea.setValue('/bundles create')
+    await nextTick()
+    await wrapper.get('.send-button').trigger('click')
+    await nextTick()
+
+    expect(wrapper.get('.bundle-create-modal').text()).toBe('research')
+  })
+
+  it('deletes a bundle from the current profile after confirmation', async () => {
+    fetchSkillBundlesMock.mockResolvedValue([
+      {
+        name: 'PR Review Team',
+        commandName: 'pr-review-team',
+        description: '',
+        skills: ['github-pr-review'],
+      },
+    ])
+    const wrapper = mountForSession('session-bundle-delete', { profile: 'work' })
+    const textarea = wrapper.get('textarea')
+
+    await textarea.setValue('/bundles')
+    await nextTick()
+    await wrapper.findAll('.slash-command-item')[0].trigger('mousedown')
+    await flushPromises()
+    await wrapper.get('.bundle-picker-delete').trigger('click')
+
+    expect(dialogWarningMock).toHaveBeenCalledOnce()
+    await dialogWarningMock.mock.calls[0][0].onPositiveClick()
+    await flushPromises()
+
+    expect(deleteSkillBundleApiMock).toHaveBeenCalledWith('work', 'pr-review-team')
+    expect(wrapper.text()).not.toContain('/bundles pr-review-team')
   })
 
   it('hides bridge autocomplete for non-Hermes slash prefixes', async () => {

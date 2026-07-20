@@ -50,6 +50,7 @@ const tagMappings = {
   'routes/hermes/models.ts': { name: 'Models', description: 'Model configuration' },
   'routes/hermes/providers.ts': { name: 'Providers', description: 'Model provider management' },
   'routes/hermes/skills.ts': { name: 'Skills', description: 'Skill browsing and management' },
+  'routes/hermes/skill-bundles.ts': { name: 'Skill Bundles', description: 'Skill bundle browsing and management' },
   'routes/hermes/plugins.ts': { name: 'Plugins', description: 'Plugin browsing and management' },
   'routes/hermes/memory.ts': { name: 'Memory', description: 'Agent memory files' },
   'routes/hermes/logs.ts': { name: 'Logs', description: 'Log file access' },

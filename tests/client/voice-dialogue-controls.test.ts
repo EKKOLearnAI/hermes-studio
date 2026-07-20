@@ -92,6 +92,7 @@ vi.mock('naive-ui', () => ({
   NInputNumber: { template: '<input />' },
   NPopover: { template: '<div><slot name="trigger" /><slot /></div>' },
   NSlider: { template: '<div></div>' },
+  useDialog: () => ({ warning: vi.fn() }),
   useMessage: () => ({ error: vi.fn(), success: vi.fn() }),
 }))
 

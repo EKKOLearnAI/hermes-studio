@@ -2777,6 +2777,7 @@ export const useChatStore = defineStore('chat', () => {
     const isBridgeCompressCommand = isBridgeSlashCommand && /^\/compress(?:\s|$)/i.test(trimmedContent)
     const isBridgePlanCommand = isBridgeSlashCommand && /^\/plan(?:\s|$)/i.test(trimmedContent)
     const isBridgeSkillCommand = isBridgeSlashCommand && /^\/skill(?:\s|$)/i.test(trimmedContent)
+    const isBridgeBundleCommand = isBridgeSlashCommand && /^\/bundles(?:\s|$)/i.test(trimmedContent)
     const isBridgeMoaCommand = isBridgeSlashCommand && /^\/moa(?:\s|$)/i.test(trimmedContent)
     const isBridgeGoalCommand = isBridgeSlashCommand && /^\/goal(?:\s|$)/i.test(trimmedContent)
     const isBridgeForkCommand = isBridgeSlashCommand && /^\/fork(?:\s|$)/i.test(trimmedContent)
@@ -2794,6 +2795,7 @@ export const useChatStore = defineStore('chat', () => {
       !isBridgeSlashCommand ||
       isBridgePlanCommand ||
       isBridgeSkillCommand ||
+      isBridgeBundleCommand ||
       isBridgeMoaCommand
     )
     if (isBridgeSlashCommand && !shouldQueue && !wasLiveBeforeSend) {

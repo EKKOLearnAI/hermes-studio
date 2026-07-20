@@ -356,6 +356,103 @@ describe('plan session command', () => {
     }))
   })
 
+  it('starts an idle /bundles command with optional user instructions', async () => {
+    const state = { messages: [], isWorking: false, events: [], queue: [] }
+    const { bridge, namespaceEmit, nsp, runQueuedItem, sessionMap, socket } = makeContext(state, {
+      handled: true,
+      type: 'bundle',
+      message: '[IMPORTANT: expanded bundle prompt]',
+    })
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+    const command = parseSessionCommand('/bundles review-team focus on auth')!
+
+    expect(command).toMatchObject({ name: 'bundles', args: 'review-team focus on auth' })
+
+    await handleSessionCommand('session-1', command, {
+      nsp: nsp as any,
+      socket: socket as any,
+      sessionMap,
+      bridge: bridge as any,
+      profile: 'work',
+      queueId: 'bundle-queue-id',
+      runQueuedItem,
+    })
+
+    expect(bridge.command).toHaveBeenCalledWith('session-1', '/review-team focus on auth', 'work')
+    expect(namespaceEmit).toHaveBeenCalledWith('session.command', expect.objectContaining({
+      action: 'bundle',
+      started: true,
+    }))
+    expect(runQueuedItem).toHaveBeenCalledWith(socket, 'session-1', expect.objectContaining({
+      queue_id: 'bundle-queue-id',
+      input: '[IMPORTANT: expanded bundle prompt]',
+      displayInput: '/bundles review-team focus on auth',
+      displayRole: 'command',
+      storageMessage: '[IMPORTANT: expanded bundle prompt]',
+      profile: 'work',
+    }), 'work')
+  })
+
+  it('queues /bundles commands while the bridge session is running', async () => {
+    const state = { messages: [], isWorking: true, events: [], queue: [] }
+    const { bridge, namespaceEmit, nsp, runQueuedItem, sessionMap, socket } = makeContext(state, {
+      handled: true,
+      type: 'bundle',
+      message: '[IMPORTANT: expanded bundle prompt]',
+    })
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+
+    await handleSessionCommand('session-1', parseSessionCommand('/bundles review-team')!, {
+      nsp: nsp as any,
+      socket: socket as any,
+      sessionMap,
+      bridge: bridge as any,
+      profile: 'default',
+      queueId: 'queued-bundle',
+      runQueuedItem,
+    })
+
+    expect(runQueuedItem).not.toHaveBeenCalled()
+    expect(state.queue).toEqual([expect.objectContaining({
+      queue_id: 'queued-bundle',
+      displayInput: '/bundles review-team',
+      input: '[IMPORTANT: expanded bundle prompt]',
+    })])
+    expect(namespaceEmit).toHaveBeenCalledWith('run.queued', expect.objectContaining({
+      queued_messages: [expect.objectContaining({
+        id: 'queued-bundle',
+        role: 'command',
+        content: '/bundles review-team',
+      })],
+    }))
+  })
+
+  it('keeps skill and bundle command types separate', async () => {
+    const state = { messages: [], isWorking: false, events: [], queue: [] }
+    const { bridge, namespaceEmit, nsp, runQueuedItem, sessionMap, socket } = makeContext(state, {
+      handled: true,
+      type: 'bundle',
+      message: '[IMPORTANT: bundle prompt must not run as a skill]',
+    })
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+
+    await handleSessionCommand('session-1', parseSessionCommand('/skill review-team')!, {
+      nsp: nsp as any,
+      socket: socket as any,
+      sessionMap,
+      bridge: bridge as any,
+      profile: 'default',
+      runQueuedItem,
+    })
+
+    expect(runQueuedItem).not.toHaveBeenCalled()
+    expect(namespaceEmit).toHaveBeenCalledWith('session.command', expect.objectContaining({
+      ok: false,
+      action: 'error',
+      message: '/review-team resolved to a Bundle. Use /bundles review-team instead.',
+    }))
+  })
+
   it('starts an idle /learn command with generated prompt input and command storage', async () => {
     const state = { messages: [], isWorking: false, events: [], queue: [] }
     const { bridge, namespaceEmit, nsp, runQueuedItem, sessionMap, socket } = makeContext(state, {

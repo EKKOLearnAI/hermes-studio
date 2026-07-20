@@ -105,6 +105,10 @@
       "description": "Chat session management"
     },
     {
+      "name": "Skill Bundles",
+      "description": "Skill bundle browsing and management"
+    },
+    {
       "name": "Skills",
       "description": "Skill browsing and management"
     },
@@ -3121,6 +3125,101 @@
             "description": "Not found"
           }
         }
+      }
+    },
+    "/api/hermes/bundles": {
+      "get": {
+        "tags": [
+          "Skill Bundles"
+        ],
+        "summary": "List bundles",
+        "description": "GET /api/hermes/bundles",
+        "operationId": "list",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Skill Bundles"
+        ],
+        "summary": "Create bundles",
+        "description": "POST /api/hermes/bundles",
+        "operationId": "create",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/bundles/{commandName}": {
+      "delete": {
+        "tags": [
+          "Skill Bundles"
+        ],
+        "summary": "Delete :commandName",
+        "description": "DELETE /api/hermes/bundles/:commandName",
+        "operationId": "remove",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "commandName",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/hermes/config": {
