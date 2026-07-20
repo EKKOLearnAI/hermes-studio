@@ -1,8 +1,8 @@
 ---
 date: 2026-07-19
-pr: pending
+pr: 2137
 feature: Workflow bridge handoff
-impact: Hermes Workflow nodes no longer run ordinary-chat standing-goal evaluation after completion, preventing that post-turn work from blocking the next node's Agent Bridge readiness check.
+impact: Hermes Workflow nodes no longer run ordinary-chat standing-goal evaluation after completion, while all Hermes bridge runs retain the existing broker readiness gate.
 ---
 
 Workflow progression is owned by the DAG scheduler, and each Workflow node uses a
@@ -20,4 +20,6 @@ Agent completion followed by queued Workflow work still evaluates ordinary Chat
 goals and keeps the completed run's source on any generated continuation. It also
 covers empty-queue Workflow completion, synthetic completion when a bridge stream
 ends without a terminal chunk, resumed runs, and caller-side source recovery from
-a hydrated state that omits source.
+a hydrated state that omits source. Workflow starts continue to use the same broker
+readiness check as other Hermes bridge runs; this change does not bypass or extend
+the existing outage behavior.

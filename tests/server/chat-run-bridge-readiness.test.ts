@@ -208,35 +208,6 @@ describe('ChatRunSocket bridge readiness gating', () => {
     })
   })
 
-  it('lets workflow Hermes runs use the real bridge request instead of a transient readiness probe', async () => {
-    ensureReadyMock.mockResolvedValueOnce({
-      reachable: false,
-      status: 'unreachable',
-      endpoint: 'ipc:///tmp/hermes-agent-bridge.sock',
-      error: 'Agent bridge request timed out after 1000ms',
-    })
-    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
-    const { handlers, io, socket } = makeServerHarness()
-    const server = new ChatRunSocket(io as any)
-
-    ;(server as any).onConnection(socket)
-    await handlers.get('run')?.({
-      input: 'next workflow node',
-      session_id: 'workflow-session-1',
-      source: 'workflow',
-      session_source: 'workflow',
-    })
-
-    expect(ensureReadyMock).not.toHaveBeenCalled()
-    expect(handleBridgeRunMock).toHaveBeenCalledTimes(1)
-    expect(handleBridgeRunMock.mock.calls[0][2]).toEqual(expect.objectContaining({
-      input: 'next workflow node',
-      source: 'workflow',
-      session_source: 'workflow',
-    }))
-    expect(socket.emit).not.toHaveBeenCalledWith('run.failed', expect.anything())
-  })
-
   it('emits run.failed before starting a cli run when the bridge is unreachable', async () => {
     ensureReadyMock.mockResolvedValueOnce({
       reachable: false,
@@ -300,6 +271,34 @@ describe('ChatRunSocket bridge readiness gating', () => {
       session_source: 'global_agent',
     }))
     expect(socket.emit).not.toHaveBeenCalledWith('run.failed', expect.anything())
+  })
+
+  it('keeps workflow Hermes runs behind the broker readiness gate', async () => {
+    ensureReadyMock.mockResolvedValueOnce({
+      reachable: false,
+      status: 'unreachable',
+      endpoint: 'ipc:///tmp/hermes-agent-bridge.sock',
+      error: 'bridge offline',
+    })
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { handlers, io, socket } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+
+    ;(server as any).onConnection(socket)
+    await handlers.get('run')?.({
+      input: 'next workflow node',
+      session_id: 'workflow-session-1',
+      source: 'workflow',
+      session_source: 'workflow',
+    })
+
+    expect(ensureReadyMock).toHaveBeenCalledTimes(1)
+    expect(handleBridgeRunMock).not.toHaveBeenCalled()
+    expect(socket.emit).toHaveBeenCalledWith('run.failed', {
+      event: 'run.failed',
+      session_id: 'workflow-session-1',
+      error: 'Agent Bridge is not reachable: bridge offline',
+    })
   })
 
   it('routes global coding-agent runs through the coding-agent path while preserving session source', async () => {
