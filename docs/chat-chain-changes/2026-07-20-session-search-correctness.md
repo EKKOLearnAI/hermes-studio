@@ -1,6 +1,6 @@
 ---
 date: 2026-07-20
-pr: pending
+pr: 2145
 feature: Session search correctness
 impact: Session search matches visible text around Markdown formatting and ranks eligible Coding Agent sessions before applying the result limit.
 ---
