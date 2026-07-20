@@ -5,11 +5,6 @@ export type BridgeSessionCommandName =
   | 'queue'
   | 'skill'
   | 'bundles'
-  | 'learn'
-  | 'plan'
-  | 'moa'
-  | 'goal'
-  | 'subgoal'
   | 'clear'
   | 'title'
   | 'compress'
@@ -39,16 +34,6 @@ export const BRIDGE_SESSION_COMMAND_DEFINITIONS: BridgeSessionCommandDefinition[
   { key: 'command:skill', name: 'skill', args: '', descriptionKey: 'skills.title', opensSkillPicker: true },
   { key: 'command:bundles', name: 'bundles', args: '', descriptionKey: 'chat.slashCommands.bundles', opensBundlePicker: true },
   { key: 'command:bundles-create', name: 'bundles', args: 'create', insertText: 'bundles create', descriptionKey: 'chat.slashCommands.bundlesCreate', opensBundleCreator: true },
-  { key: 'command:learn', name: 'learn', argsKey: 'chat.slashCommandArgs.text', descriptionKey: 'chat.slashCommands.learn' },
-  { key: 'command:plan', name: 'plan', argsKey: 'chat.slashCommandArgs.text', descriptionKey: 'chat.slashCommands.plan' },
-  { key: 'command:moa', name: 'moa', argsKey: 'chat.slashCommandArgs.text', descriptionKey: 'chat.slashCommands.moa' },
-  { key: 'command:goal', name: 'goal', argsKey: 'chat.slashCommandArgs.text', descriptionKey: 'chat.slashCommands.goal' },
-  { key: 'command:goal-status', name: 'goal', args: 'status', insertText: 'goal status', descriptionKey: 'chat.slashCommands.goalStatus' },
-  { key: 'command:goal-pause', name: 'goal', args: 'pause', insertText: 'goal pause', descriptionKey: 'chat.slashCommands.goalPause' },
-  { key: 'command:goal-resume', name: 'goal', args: 'resume', insertText: 'goal resume', descriptionKey: 'chat.slashCommands.goalResume' },
-  { key: 'command:goal-done', name: 'goal', args: 'done', insertText: 'goal done', descriptionKey: 'chat.slashCommands.goalDone' },
-  { key: 'command:goal-clear', name: 'goal', args: 'clear', insertText: 'goal clear', descriptionKey: 'chat.slashCommands.goalClear' },
-  { key: 'command:subgoal', name: 'subgoal', argsKey: 'chat.slashCommandArgs.text', descriptionKey: 'chat.slashCommands.subgoal' },
   { key: 'command:clear', name: 'clear', args: '', descriptionKey: 'chat.slashCommands.clear' },
   { key: 'command:clear-history', name: 'clear', args: '--history', insertText: 'clear --history', descriptionKey: 'chat.slashCommands.clearHistory' },
   { key: 'command:title', name: 'title', argsKey: 'chat.slashCommandArgs.title', descriptionKey: 'chat.slashCommands.title' },
@@ -73,9 +58,12 @@ export function normalizeBridgeSessionCommandName(name: string): BridgeSessionCo
   if (!normalized) return null
   const alias = BRIDGE_SESSION_COMMAND_ALIASES.get(normalized)
   if (alias) return alias
-  return (BRIDGE_SESSION_COMMAND_NAMES as string[]).includes(normalized)
-    ? normalized as BridgeSessionCommandName
-    : null
+  // Accept any valid-looking command name — the bridge/gateway handles
+  // resolution for bundles and skill commands dynamically.
+  if (/^[a-z][a-z0-9-]*$/.test(normalized)) {
+    return normalized as BridgeSessionCommandName
+  }
+  return null
 }
 
 export function readBridgeSessionCommandName(input: string): BridgeSessionCommandName | null {

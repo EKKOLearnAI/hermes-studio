@@ -564,6 +564,103 @@ class AgentPool:
             return [{"type": "text", "text": note}, *message]
         return message
 
+    def _resolve_slash_command(self, session: AgentSession, message: Any) -> Any:
+        """Resolve slash commands (/study, /plan, etc.) to their skill bundle or skill command content.
+
+        Mirrors the gateway's slash command dispatch in gateway/run.py for bundles
+        (agent.skill_bundles) and skill commands (agent.skill_commands). If the message
+        starts with / and matches a bundle or skill, the message text is replaced with
+        the invocation prompt so the agent loads the skill content.
+        """
+        text = ""
+        if isinstance(message, str):
+            text = message
+        elif isinstance(message, list):
+            for block in message:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = str(block.get("text", ""))
+                    break
+        else:
+            return message
+
+        stripped = text.lstrip()
+        if not stripped.startswith("/"):
+            return message
+
+        import re as _re
+        m = _re.match(r"^/([a-zA-Z][\w-]*)(?:\s|$)", stripped)
+        if not m:
+            return message
+
+        command = m.group(1)
+        user_instruction = stripped[m.end():].strip()
+
+        # 1. Try skill bundles first
+        try:
+            from agent.skill_bundles import (
+                build_bundle_invocation_message,
+                resolve_bundle_command_key,
+            )
+            bundle_key = resolve_bundle_command_key(command)
+            if bundle_key is not None:
+                platform = _bridge_platform()
+                bundle_result = build_bundle_invocation_message(
+                    bundle_key, user_instruction,
+                    task_id=str(getattr(getattr(self, "_run_context", None), "session_id", "") or ""),
+                    platform=platform,
+                )
+                if bundle_result:
+                    msg, loaded, missing = bundle_result
+                    print(
+                        f"[hermes_bridge] resolved slash command /{command}"
+                        f" as bundle (loaded={loaded}, missing={missing})",
+                        file=sys.stderr, flush=True,
+                    )
+                    if isinstance(message, str):
+                        return msg
+                    if isinstance(message, list):
+                        return [{"type": "text", "text": msg}]
+                return message
+        except Exception as exc:
+            print(
+                f"[hermes_bridge] bundle dispatch failed for /{command}: {exc}",
+                file=sys.stderr, flush=True,
+            )
+
+        # 2. Try individual skill commands
+        try:
+            from agent.skill_commands import (
+                build_skill_invocation_message,
+                resolve_skill_command_key,
+            )
+            skill_key = resolve_skill_command_key(command)
+            if skill_key is not None:
+                skill_result = build_skill_invocation_message(
+                    skill_key, user_instruction,
+                    task_id=str(getattr(getattr(self, "_run_context", None), "session_id", "") or ""),
+                    runtime_note="",
+                )
+                if skill_result:
+                    msg = str(skill_result)
+                    print(
+                        f"[hermes_bridge] resolved slash command /{command}"
+                        f" as skill ({len(msg)} chars)",
+                        file=sys.stderr, flush=True,
+                    )
+                    if isinstance(message, str):
+                        return msg
+                    if isinstance(message, list):
+                        return [{"type": "text", "text": msg}]
+                return message
+        except Exception as exc:
+            print(
+                f"[hermes_bridge] skill dispatch failed for /{command}: {exc}",
+                file=sys.stderr, flush=True,
+            )
+
+        # 3. Not a recognized slash command — pass through as-is
+        return message
+
     def switch_session_model(
         self,
         session_id: str,
@@ -1538,6 +1635,7 @@ class AgentPool:
                 self._prepersist_user_message(session, message, storage_message, conversation_history, profile, source)
                 db_count_after_prepersist = self._session_db_message_count(session.session_id, profile)
                 agent_message = self._prepend_pending_model_switch_note(session, message)
+                agent_message = self._resolve_slash_command(session, agent_message)
                 if force_compress:
                     compress = getattr(session.agent, "_compress_context", None)
                     if callable(compress):
