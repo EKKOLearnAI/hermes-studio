@@ -132,6 +132,12 @@ function isRequestedSessionSource(source: string | undefined, sessionSource?: st
   return isVisibleWebUiSessionSource(sessionSource)
 }
 
+function requestedSessionSources(source?: string): string[] {
+  if (source === 'global_agent') return ['global_agent']
+  if (source === 'workflow') return ['workflow']
+  return ['api_server', 'cli', 'coding_agent', 'global_agent']
+}
+
 function isHermesHistorySessionSource(source?: string | null): boolean {
   return source !== 'global_agent' && source !== 'workflow'
 }
@@ -549,8 +555,22 @@ export async function search(ctx: any) {
   const source = (ctx.query.source as string) || undefined
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
   const profile = explicitProfileFilter(ctx)
-  const results = localSearchSessions(profile, q, limit && limit > 0 ? limit : 20)
-  const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
+  const allowedProfiles = allowedProfileSet(ctx)
+  if (profile && allowedProfiles && !allowedProfiles.has(profile)) {
+    ctx.body = { results: [] }
+    return
+  }
+  const searchableProfiles = profile
+    ? undefined
+    : listProfileNamesFromDisk().filter(name => !allowedProfiles || allowedProfiles.has(name))
+  const pendingDeletedIds = [...getPendingDeletedSessionIds()]
+  const results = localSearchSessions(profile, q, limit && limit > 0 ? limit : 20, {
+    sources: requestedSessionSources(source),
+    profiles: searchableProfiles,
+    includeArchived: false,
+    excludeSessionIds: pendingDeletedIds,
+  })
+  const knownProfiles = profile ? null : new Set(searchableProfiles)
   ctx.body = {
     results: filterPendingDeletedSessions(filterArchivedSessions(filterByAllowedProfiles(ctx, results).filter(s =>
       isRequestedSessionSource(source, s.source) &&

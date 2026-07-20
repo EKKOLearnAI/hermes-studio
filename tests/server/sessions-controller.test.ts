@@ -1248,7 +1248,12 @@ describe('session conversations controller', () => {
     }
     await mod.search(ctx)
 
-    expect(localSearchSessionsMock).toHaveBeenCalledWith(undefined, 'docker', 10)
+    expect(localSearchSessionsMock).toHaveBeenCalledWith(undefined, 'docker', 10, {
+      sources: ['api_server', 'cli', 'coding_agent', 'global_agent'],
+      profiles: ['default', 'travel'],
+      includeArchived: false,
+      excludeSessionIds: [],
+    })
     expect(ctx.body.results).toEqual([
       expect.objectContaining({ id: 'global-1', source: 'global_agent' }),
       expect.objectContaining({ id: 'chat-1', source: 'cli' }),
@@ -1269,7 +1274,12 @@ describe('session conversations controller', () => {
     }
     await mod.search(ctx)
 
-    expect(localSearchSessionsMock).toHaveBeenCalledWith(undefined, 'docker', 10)
+    expect(localSearchSessionsMock).toHaveBeenCalledWith(undefined, 'docker', 10, {
+      sources: ['global_agent'],
+      profiles: ['default', 'travel'],
+      includeArchived: false,
+      excludeSessionIds: [],
+    })
     expect(ctx.body.results).toEqual([expect.objectContaining({ id: 'global-1', source: 'global_agent' })])
   })
 

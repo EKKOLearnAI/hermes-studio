@@ -67,6 +67,14 @@ export interface HermesMessageRow {
 export interface HermesSessionSearchRow extends HermesSessionRow {
   snippet: string
   matched_message_id: number | null
+  rank: number
+}
+
+export interface SessionSearchOptions {
+  sources?: string[]
+  profiles?: string[]
+  includeArchived?: boolean
+  excludeSessionIds?: string[]
 }
 
 export interface HermesSessionDetailRow extends HermesSessionRow {
@@ -454,72 +462,196 @@ export function listSessions(profile?: string, source?: string, limit = 2000): H
   return rows.map(mapSessionRow)
 }
 
-export function searchSessions(profile: string | null | undefined, query: string, limit = 20): HermesSessionSearchRow[] {
-  if (!isSqliteAvailable()) return []
-  const profileFilter = profile?.trim()
-  const trimmed = query.trim()
-  if (!trimmed) {
-    return listSessions(profileFilter, undefined, limit).map(s => ({ ...s, snippet: s.preview || '', matched_message_id: null }))
-  }
-  const db = getDb()!
-  const lowered = trimmed.toLowerCase()
-  const pattern = `%${lowered}%`
+function escapeSessionSearchLike(value: string): string {
+  return value.replace(/[\\%_]/g, '\\$&')
+}
 
-  // Step 1: Find matching sessions
+function sessionSearchTerms(query: string): string[] {
+  const normalized = query.trim().toLowerCase()
+  if (!normalized) return []
+  const splitTerms = normalized
+    .split(/\s+/u)
+    .filter(term => term && !/^[\p{P}\p{S}]+$/u.test(term))
+  const terms = splitTerms.length > 0 ? splitTerms : [normalized]
+  return [...new Set(terms)].slice(0, 20)
+}
+
+function sessionSearchMatchSql(column: string, termCount: number): string {
+  return Array.from(
+    { length: termCount },
+    () => `LOWER(COALESCE(${column}, '')) LIKE ? ESCAPE '\\'`,
+  ).join(' AND ')
+}
+
+function sessionSearchMessageMatchSql(alias: string, termCount: number): string {
+  return Array.from(
+    { length: termCount },
+    () => `(LOWER(COALESCE(${alias}.content, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(${alias}.tool_name, '')) LIKE ? ESCAPE '\\')`,
+  ).join(' AND ')
+}
+
+function sessionSearchFilterSql(
+  profile: string | null | undefined,
+  options: SessionSearchOptions,
+): { sql: string; params: string[] } | null {
+  const clauses: string[] = []
+  const params: string[] = []
+  const profileFilter = profile?.trim()
+  if (profileFilter) {
+    clauses.push('s.profile = ?')
+    params.push(profileFilter)
+  } else if (options.profiles !== undefined) {
+    const profiles = [...new Set(options.profiles.map(value => value.trim()).filter(Boolean))]
+    if (profiles.length === 0) return null
+    clauses.push(`s.profile IN (${profiles.map(() => '?').join(', ')})`)
+    params.push(...profiles)
+  }
+
+  if (options.sources !== undefined) {
+    const sources = [...new Set(options.sources.map(value => value.trim()).filter(Boolean))]
+    if (sources.length === 0) return null
+    clauses.push(`s.source IN (${sources.map(() => '?').join(', ')})`)
+    params.push(...sources)
+  }
+  if (options.includeArchived === false) {
+    clauses.push('COALESCE(s.is_archived, 0) = 0')
+  }
+
+  const excludedIds = [...new Set((options.excludeSessionIds || []).map(value => value.trim()).filter(Boolean))]
+  if (excludedIds.length > 0) {
+    clauses.push(`s.id NOT IN (${excludedIds.map(() => '?').join(', ')})`)
+    params.push(...excludedIds)
+  }
+
+  return {
+    sql: clauses.length > 0 ? clauses.join(' AND ') : '1 = 1',
+    params,
+  }
+}
+
+function firstSessionSearchTermIndex(value: string, terms: string[]): number {
+  const lowered = value.toLowerCase()
+  let first = -1
+  for (const term of terms) {
+    const index = lowered.indexOf(term)
+    if (index >= 0 && (first < 0 || index < first)) first = index
+  }
+  return first
+}
+
+function matchesAllSessionSearchTerms(value: string, terms: string[]): boolean {
+  const lowered = value.toLowerCase()
+  return terms.every(term => lowered.includes(term))
+}
+
+export function searchSessions(
+  profile: string | null | undefined,
+  query: string,
+  limit = 20,
+  options: SessionSearchOptions = {},
+): HermesSessionSearchRow[] {
+  if (!isSqliteAvailable()) return []
+  const trimmed = query.trim()
+  const filters = sessionSearchFilterSql(profile, options)
+  if (!filters) return []
+  const db = getDb()!
+  if (!trimmed) {
+    const rows = db.prepare(
+      `SELECT s.* FROM ${SESSIONS_TABLE} s
+       WHERE ${filters.sql}
+       ORDER BY s.last_active DESC
+       LIMIT ?`,
+    ).all(...filters.params, limit) as Record<string, unknown>[]
+    return rows.map(row => {
+      const session = mapSessionRow(row)
+      return { ...session, snippet: session.preview || '', matched_message_id: null, rank: 0 }
+    })
+  }
+  const lowered = trimmed.toLowerCase()
+  const terms = sessionSearchTerms(trimmed)
+  const patterns = terms.map(term => `%${escapeSessionSearchLike(term)}%`)
+  const titleMatchSql = sessionSearchMatchSql('s.title', terms.length)
+  const previewMatchSql = sessionSearchMatchSql('s.preview', terms.length)
+  const messageContentMatchSql = sessionSearchMatchSql('search_message.content', terms.length)
+  const messageToolMatchSql = sessionSearchMatchSql('search_message.tool_name', terms.length)
+  const rankParams: string[] = [
+    lowered,
+    ...patterns,
+    ...patterns,
+    ...patterns,
+    ...patterns,
+  ]
+
+  // Rank exact and partial title matches ahead of message-body matches. Apply
+  // visibility filters in the same query so hidden rows cannot consume LIMIT.
   const sessionRows = db.prepare(
-    `SELECT * FROM ${SESSIONS_TABLE}
-     WHERE 1 = 1
-       ${profileFilter ? 'AND profile = ?' : ''}
-       AND (
-       LOWER(title) LIKE ? OR LOWER(preview) LIKE ?
-       OR id IN (SELECT DISTINCT session_id FROM ${MESSAGES_TABLE} WHERE LOWER(content) LIKE ? OR LOWER(COALESCE(tool_name, '')) LIKE ?)
+    `WITH ranked_sessions AS (
+       SELECT s.*,
+         CASE
+           WHEN LOWER(TRIM(COALESCE(s.title, ''))) = ? THEN 0
+           WHEN ${titleMatchSql} THEN 1
+           WHEN ${previewMatchSql} THEN 2
+           WHEN EXISTS (
+             SELECT 1 FROM ${MESSAGES_TABLE} search_message
+             WHERE search_message.session_id = s.id AND ${messageContentMatchSql}
+           ) THEN 3
+           WHEN EXISTS (
+             SELECT 1 FROM ${MESSAGES_TABLE} search_message
+             WHERE search_message.session_id = s.id AND ${messageToolMatchSql}
+           ) THEN 4
+           ELSE 5
+         END AS search_rank
+       FROM ${SESSIONS_TABLE} s
+       WHERE ${filters.sql}
      )
-     ORDER BY last_active DESC LIMIT ?`,
-  ).all(...[
-    ...(profileFilter ? [profileFilter] : []),
-    pattern,
-    pattern,
-    pattern,
-    pattern,
-    limit,
-  ]) as Record<string, unknown>[]
+     SELECT * FROM ranked_sessions
+     WHERE search_rank < 5
+     ORDER BY search_rank, last_active DESC
+     LIMIT ?`,
+  ).all(...rankParams, ...filters.params, limit) as Record<string, unknown>[]
 
   if (sessionRows.length === 0) return []
 
-  // Step 2: For each session, find first matching message id + snippet
+  // Find the first message containing every meaningful query term. Splitting on
+  // whitespace makes rendered Markdown such as "**task** — details" searchable
+  // using the plain text that the user sees.
+  const messageMatchSql = sessionSearchMessageMatchSql('search_message', terms.length)
+  const messagePatterns = patterns.flatMap(pattern => [pattern, pattern])
   const msgQuery = db.prepare(
-    `SELECT id, content, tool_name FROM ${MESSAGES_TABLE}
-     WHERE session_id = ? AND (LOWER(content) LIKE ? OR LOWER(COALESCE(tool_name, '')) LIKE ?)
-     ORDER BY timestamp, id LIMIT 1`,
+    `SELECT search_message.id, search_message.content, search_message.tool_name
+     FROM ${MESSAGES_TABLE} search_message
+     WHERE search_message.session_id = ? AND ${messageMatchSql}
+     ORDER BY search_message.timestamp, search_message.id
+     LIMIT 1`,
   )
 
   return sessionRows.map(row => {
     const session = mapSessionRow(row)
     let snippet = ''
     let matched_message_id: number | null = null
+    const title = row.title != null ? String(row.title) : ''
+    const preview = row.preview != null ? String(row.preview) : ''
 
-    // Check if session title or preview matches
-    const titleLower = (session.title || '').toLowerCase()
-    const previewLower = (session.preview || '').toLowerCase()
-    const titleIdx = titleLower.indexOf(lowered)
-    const previewIdx = previewLower.indexOf(lowered)
-
-    if (titleIdx >= 0) {
-      snippet = session.title!.substring(Math.max(0, titleIdx - 20), titleIdx + lowered.length + 60)
-    } else if (previewIdx >= 0) {
-      snippet = session.preview.substring(Math.max(0, previewIdx - 20), previewIdx + lowered.length + 60)
+    if (matchesAllSessionSearchTerms(title, terms)) {
+      const titleIndex = firstSessionSearchTermIndex(title, terms)
+      snippet = title.substring(Math.max(0, titleIndex - 20), titleIndex + terms[0].length + 60)
+    } else if (matchesAllSessionSearchTerms(preview, terms)) {
+      const previewIndex = firstSessionSearchTermIndex(preview, terms)
+      snippet = preview.substring(Math.max(0, previewIndex - 20), previewIndex + terms[0].length + 60)
     } else {
-      // Get snippet from matching message
-      const msg = msgQuery.get(session.id, pattern, pattern) as { id: number; content: string; tool_name: string | null } | undefined
+      const msg = msgQuery.get(session.id, ...messagePatterns) as { id: number; content: string; tool_name: string | null } | undefined
       if (msg) {
         matched_message_id = msg.id
-        const contentLower = msg.content.toLowerCase()
-        const idx = contentLower.indexOf(lowered)
-        snippet = msg.content.substring(Math.max(0, idx - 20), idx + lowered.length + 60)
+        const contentIndex = firstSessionSearchTermIndex(msg.content, terms)
+        if (contentIndex >= 0) {
+          snippet = msg.content.substring(Math.max(0, contentIndex - 20), contentIndex + terms[0].length + 60)
+        } else {
+          snippet = msg.tool_name || ''
+        }
       }
     }
 
-    return { ...session, snippet, matched_message_id }
+    return { ...session, snippet, matched_message_id, rank: Number(row.search_rank || 0) }
   })
 }
 
