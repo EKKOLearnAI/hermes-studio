@@ -64,7 +64,7 @@ test('groups sessions by category and persists collapsed groups', async ({ page 
   const workHeader = page.locator('.session-group-header').filter({ hasText: 'Work' })
   await expect(workHeader).toBeVisible()
   await expect(workHeader.locator('.session-group-count')).toHaveText('2')
-  await expect(page.locator('.session-group-header').filter({ hasText: 'Empty' })).toBeVisible()
+  await expect(page.locator('.session-group-header').filter({ hasText: 'Empty' })).toHaveCount(0)
   await expect(page.getByRole('link', { name: /Project Alpha/ })).toBeVisible()
   await expect(page.getByRole('link', { name: /Project Beta/ })).toBeVisible()
 
