@@ -19,6 +19,7 @@ const groupChatApiMock = vi.hoisted(() => ({
   deleteRoom: vi.fn(),
   clearRoomContext: vi.fn(),
   updateRoomWorkspace: vi.fn(),
+  updateInviteCode: vi.fn(),
 }))
 
 vi.mock('@/api/hermes/group-chat', () => groupChatApiMock)
@@ -90,5 +91,28 @@ describe('group chat store workspace', () => {
     await expect(store.setRoomWorkspace('room-1', '/outside')).rejects.toThrow('invalid workspace')
 
     expect(store.rooms[0].workspace).toBe('/tmp/repo')
+  })
+
+  it('updates the local room invite code after the API succeeds', async () => {
+    const { useGroupChatStore } = await import('@/stores/hermes/group-chat')
+    const store = useGroupChatStore()
+    store.rooms = [{ id: 'room-1', name: 'Room 1', inviteCode: 'OLD123', workspace: '' }]
+    groupChatApiMock.updateInviteCode.mockResolvedValue({ success: true })
+
+    await store.setRoomInviteCode('room-1', ' NEW456 ')
+
+    expect(groupChatApiMock.updateInviteCode).toHaveBeenCalledWith('room-1', 'NEW456')
+    expect(store.rooms[0].inviteCode).toBe('NEW456')
+  })
+
+  it('does not mutate local invite code when the API rejects', async () => {
+    const { useGroupChatStore } = await import('@/stores/hermes/group-chat')
+    const store = useGroupChatStore()
+    store.rooms = [{ id: 'room-1', name: 'Room 1', inviteCode: 'OLD123', workspace: '' }]
+    groupChatApiMock.updateInviteCode.mockRejectedValue(new Error('duplicate invite code'))
+
+    await expect(store.setRoomInviteCode('room-1', 'NEW456')).rejects.toThrow('duplicate invite code')
+
+    expect(store.rooms[0].inviteCode).toBe('OLD123')
   })
 })

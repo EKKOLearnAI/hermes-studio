@@ -50,6 +50,7 @@ vi.mock('@/api/hermes/group-chat', () => ({
   cloneRoom: vi.fn(),
   deleteRoom: vi.fn(),
   clearRoomContext: vi.fn(),
+  updateInviteCode: vi.fn(),
 }))
 
 vi.mock('@/components/hermes/chat/VirtualMessageList.vue', () => ({

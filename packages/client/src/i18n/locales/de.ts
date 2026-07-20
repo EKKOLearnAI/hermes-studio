@@ -2154,6 +2154,17 @@ jobTriggered: 'Job ausgelost',
   },
 
   // Anderungsprotokoll
+  groupChat: {
+    roomSettings: 'Raumeinstellungen',
+    inviteCodeSettings: 'Einladungscode-Einstellungen',
+    inviteCodePlaceholder: 'Neuen Einladungscode eingeben',
+    generateInviteCode: 'Einladungscode generieren',
+    inviteCodeRotateHint: 'Beim Aktualisieren wird der bisherige Code für neue Beitritte ungültig.',
+    inviteCodeUpdated: 'Einladungscode aktualisiert',
+    inviteCodeUpdateFailed: 'Einladungscode konnte nicht aktualisiert werden',
+    saveCompression: 'Komprimierung speichern',
+  },
+
   files: {
     previewMode: 'Vorschau', sourceMode: 'Quelltext', tableMode: 'Tabelle', worksheet: 'Arbeitsblatt',
     htmlPreviewTitle: 'Isolierte HTML-Vorschau', previewLoading: 'Vorschau wird geladen...', previewFailed: 'Vorschau nicht verfügbar',

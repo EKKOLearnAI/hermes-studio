@@ -2154,6 +2154,17 @@ jobTriggered: 'Job declenche',
   },
 
   // Journal des modifications
+  groupChat: {
+    roomSettings: 'Paramètres du salon',
+    inviteCodeSettings: 'Paramètres du code d’invitation',
+    inviteCodePlaceholder: 'Saisir un nouveau code d’invitation',
+    generateInviteCode: 'Générer un code d’invitation',
+    inviteCodeRotateHint: 'La mise à jour invalide l’ancien code pour les nouvelles arrivées.',
+    inviteCodeUpdated: 'Code d’invitation mis à jour',
+    inviteCodeUpdateFailed: 'Échec de la mise à jour du code d’invitation',
+    saveCompression: 'Enregistrer la compression',
+  },
+
   files: {
     previewMode: 'Aperçu', sourceMode: 'Source', tableMode: 'Tableau', worksheet: 'Feuille',
     htmlPreviewTitle: 'Aperçu HTML isolé', previewLoading: 'Chargement de l’aperçu...', previewFailed: 'Aperçu indisponible',

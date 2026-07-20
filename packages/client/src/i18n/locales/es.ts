@@ -2154,6 +2154,17 @@ jobTriggered: 'Job ejecutado',
   },
 
   // Registro de cambios
+  groupChat: {
+    roomSettings: 'Configuración de sala',
+    inviteCodeSettings: 'Configuración del código de invitación',
+    inviteCodePlaceholder: 'Introduce un nuevo código de invitación',
+    generateInviteCode: 'Generar código de invitación',
+    inviteCodeRotateHint: 'Al actualizarlo, el código anterior deja de servir para nuevas uniones.',
+    inviteCodeUpdated: 'Código de invitación actualizado',
+    inviteCodeUpdateFailed: 'No se pudo actualizar el código de invitación',
+    saveCompression: 'Guardar compresión',
+  },
+
   files: {
     previewMode: 'Vista previa', sourceMode: 'Código fuente', tableMode: 'Tabla', worksheet: 'Hoja',
     htmlPreviewTitle: 'Vista previa HTML aislada', previewLoading: 'Cargando vista previa...', previewFailed: 'Vista previa no disponible',

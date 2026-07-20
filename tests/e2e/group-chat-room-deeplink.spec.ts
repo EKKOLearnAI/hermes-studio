@@ -1,9 +1,10 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 import { authenticate, TEST_MODEL_GROUP } from './fixtures'
 
-const rooms = [
+const baseRooms = [
   { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', canManage: true, workspace: '/tmp/alpha', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 123 },
   { id: 'room-beta', name: 'Beta Room', inviteCode: 'BETA22', canManage: true, workspace: '/tmp/beta', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 456 },
+  { id: 'room-readonly', name: 'Read Only Room', inviteCode: null, canManage: false, workspace: '/tmp/readonly', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 0 },
 ]
 
 const groupWorkspaceDiff = {
@@ -39,6 +40,9 @@ const messagesByRoom: Record<string, unknown[]> = {
 }
 
 async function mockGroupChatApi(page: Page) {
+  const rooms = baseRooms.map(room => ({ ...room }))
+  const inviteCodeUpdates: Array<{ roomId: string, body: unknown }> = []
+
   await page.route('**/*', async (route: Route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -65,6 +69,18 @@ async function mockGroupChatApi(page: Page) {
       })
     }
     if (pathname === '/api/hermes/group-chat/rooms') return json({ rooms })
+
+    const inviteCodeMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/invite-code$/)
+    if (inviteCodeMatch && request.method() === 'PUT') {
+      const roomId = decodeURIComponent(inviteCodeMatch[1])
+      const body = JSON.parse(request.postData() || '{}')
+      inviteCodeUpdates.push({ roomId, body })
+      const room = rooms.find(r => r.id === roomId)
+      if (!room || !room.canManage) return json({ error: 'Forbidden' }, 403)
+      if (body.inviteCode === 'FAILCODE') return json({ error: 'duplicate invite code' }, 409)
+      room.inviteCode = body.inviteCode
+      return json({ success: true })
+    }
 
     const workspaceListMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/workspace-files\/list$/)
     if (workspaceListMatch) {
@@ -95,6 +111,8 @@ async function mockGroupChatApi(page: Page) {
 
     return json({ error: `Unexpected mocked route: ${request.method()} ${pathname}` }, 404)
   })
+
+  return { inviteCodeUpdates }
 }
 
 async function mockGroupChatSocket(page: Page) {
@@ -156,11 +174,16 @@ export default { io }
 async function setup(page: Page, path: string) {
   await authenticate(page)
   await mockGroupChatSocket(page)
-  await mockGroupChatApi(page)
+  const api = await mockGroupChatApi(page)
   await page.goto(path)
+  return api
 }
 
 test.describe('group chat room deep links', () => {
+  // This file already covers multi-tab behavior explicitly; keeping the deep-link/socket fixture serial
+  // avoids local fullyParallel races where early tests see the room list before route-room selection settles.
+  test.describe.configure({ mode: 'serial' })
+
   test('route room id opens selected room', async ({ page }) => {
     await setup(page, '/#/hermes/group-chat/room/room-beta')
 
@@ -197,6 +220,49 @@ test.describe('group chat room deep links', () => {
 
     await workspaceButton.click()
     await expect(page.locator('.group-workspace-panel')).toHaveCount(0)
+  })
+
+  test('room settings rotate invite codes only after the update API succeeds', async ({ page }) => {
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
+
+    const settingsButton = page.locator('.chat-header .header-info .compression-settings-button')
+    await settingsButton.click()
+
+    const modal = page.locator('.room-settings-modal')
+    await expect(modal.getByRole('heading', { name: 'Room Settings' })).toBeVisible()
+    const inviteInput = modal.getByPlaceholder('Enter a new invite code')
+    const updateButton = modal.getByRole('button', { name: 'Update' })
+
+    await expect(inviteInput).toHaveValue('ALPHA1')
+    await expect(updateButton).toBeDisabled()
+
+    await inviteInput.fill('   ')
+    await expect(updateButton).toBeDisabled()
+
+    await inviteInput.fill(' NEW456 ')
+    const successResponse = page.waitForResponse(response => response.request().method() === 'PUT' && response.url().includes('/api/hermes/group-chat/rooms/room-alpha/invite-code'))
+    await updateButton.click()
+    await expect((await successResponse).status()).toBe(200)
+    expect(api.inviteCodeUpdates.at(-1)).toEqual({ roomId: 'room-alpha', body: { inviteCode: 'NEW456' } })
+    await expect(inviteInput).toHaveValue('NEW456')
+    await expect(updateButton).toBeDisabled()
+
+    await inviteInput.fill('FAILCODE')
+    const failureResponse = page.waitForResponse(response => response.request().method() === 'PUT' && response.url().includes('/api/hermes/group-chat/rooms/room-alpha/invite-code'))
+    await updateButton.click()
+    await expect((await failureResponse).status()).toBe(409)
+
+    await modal.getByRole('button', { name: 'Cancel' }).click()
+    await settingsButton.click()
+    await expect(modal.getByPlaceholder('Enter a new invite code')).toHaveValue('NEW456')
+  })
+
+  test('read-only room members cannot open room settings', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-readonly')
+
+    await expect(page.locator('.room-title-text', { hasText: 'Read Only Room' })).toBeVisible()
+    await expect(page.locator('.room-item', { hasText: 'Read Only Room' }).locator('.room-code')).toHaveCount(0)
+    await expect(page.locator('.chat-header .header-info .compression-settings-button')).toHaveCount(0)
   })
 
   test('group workspace diffs use the single-chat card and shared diff panel', async ({ page }) => {

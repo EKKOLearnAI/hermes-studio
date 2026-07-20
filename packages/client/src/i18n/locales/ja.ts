@@ -2153,6 +2153,17 @@ export default {
   },
 
   // 更新履歴
+  groupChat: {
+    roomSettings: 'ルーム設定',
+    inviteCodeSettings: '招待コード設定',
+    inviteCodePlaceholder: '新しい招待コードを入力',
+    generateInviteCode: '招待コードを生成',
+    inviteCodeRotateHint: '更新すると、以前のコードは新規参加に使えなくなります。',
+    inviteCodeUpdated: '招待コードを更新しました',
+    inviteCodeUpdateFailed: '招待コードの更新に失敗しました',
+    saveCompression: '圧縮設定を保存',
+  },
+
   files: {
     previewMode: 'プレビュー', sourceMode: 'ソース', tableMode: '表', worksheet: 'ワークシート',
     htmlPreviewTitle: '分離された HTML プレビュー', previewLoading: 'プレビューを読み込み中...', previewFailed: 'プレビューできません',

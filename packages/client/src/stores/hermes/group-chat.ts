@@ -26,6 +26,7 @@ import {
     cloneRoom as cloneRoomApi,
     deleteRoom as deleteRoomApi,
     clearRoomContext,
+    updateInviteCode as updateInviteCodeApi,
     updateRoomWorkspace as updateRoomWorkspaceApi,
 } from '@/api/hermes/group-chat'
 
@@ -828,6 +829,23 @@ const currentUserAvatar = ref('')
         }
     }
 
+    async function setRoomInviteCode(roomId: string, inviteCode: string) {
+        const nextCode = inviteCode.trim()
+        if (!nextCode) throw new Error('inviteCode is required')
+        try {
+            await updateInviteCodeApi(roomId, nextCode)
+            const room = rooms.value.find(r => r.id === roomId)
+            if (room) {
+                room.inviteCode = nextCode
+                rooms.value = [...rooms.value]
+            }
+            return nextCode
+        } catch (err: any) {
+            error.value = err.message
+            throw err
+        }
+    }
+
     // ─── Agent Actions ─────────────────────────────────────
     async function loadAgents(roomId: string) {
         try {
@@ -956,6 +974,7 @@ const currentUserAvatar = ref('')
         cloneRoom,
         clearCurrentRoomContext,
         setRoomWorkspace,
+        setRoomInviteCode,
         loadAgents,
         addAgentToRoom,
         removeAgentFromRoom,

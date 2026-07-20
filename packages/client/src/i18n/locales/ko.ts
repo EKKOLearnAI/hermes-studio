@@ -2153,6 +2153,17 @@ export default {
   },
 
   // 변경 이력
+  groupChat: {
+    roomSettings: '방 설정',
+    inviteCodeSettings: '초대 코드 설정',
+    inviteCodePlaceholder: '새 초대 코드 입력',
+    generateInviteCode: '초대 코드 생성',
+    inviteCodeRotateHint: '업데이트하면 이전 코드는 새 참여에 사용할 수 없습니다.',
+    inviteCodeUpdated: '초대 코드가 업데이트되었습니다',
+    inviteCodeUpdateFailed: '초대 코드 업데이트 실패',
+    saveCompression: '압축 설정 저장',
+  },
+
   files: {
     previewMode: '미리보기', sourceMode: '소스', tableMode: '표', worksheet: '워크시트',
     htmlPreviewTitle: '격리된 HTML 미리보기', previewLoading: '미리보기 불러오는 중...', previewFailed: '미리보기를 사용할 수 없음',

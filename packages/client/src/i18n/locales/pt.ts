@@ -2154,6 +2154,17 @@ jobTriggered: 'Job acionado',
   },
 
   // Registro de alteracoes
+  groupChat: {
+    roomSettings: 'Configurações da sala',
+    inviteCodeSettings: 'Configurações do código de convite',
+    inviteCodePlaceholder: 'Insira um novo código de convite',
+    generateInviteCode: 'Gerar código de convite',
+    inviteCodeRotateHint: 'Atualizar invalida o código anterior para novas entradas.',
+    inviteCodeUpdated: 'Código de convite atualizado',
+    inviteCodeUpdateFailed: 'Falha ao atualizar o código de convite',
+    saveCompression: 'Salvar compressão',
+  },
+
   files: {
     previewMode: 'Prévia', sourceMode: 'Código-fonte', tableMode: 'Tabela', worksheet: 'Planilha',
     htmlPreviewTitle: 'Prévia HTML isolada', previewLoading: 'Carregando prévia...', previewFailed: 'Prévia indisponível',

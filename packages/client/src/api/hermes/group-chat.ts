@@ -217,7 +217,7 @@ export async function joinRoomByCode(code: string): Promise<{ room: RoomInfo }> 
     return request(`/api/hermes/group-chat/rooms/join/${code}`)
 }
 
-export async function updateInviteCode(roomId: string, inviteCode: string): Promise<void> {
+export async function updateInviteCode(roomId: string, inviteCode: string): Promise<{ success: boolean }> {
     return request(`/api/hermes/group-chat/rooms/${roomId}/invite-code`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },

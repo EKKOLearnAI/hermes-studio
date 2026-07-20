@@ -37,6 +37,8 @@ const showAddAgentModal = ref(false)
 const showCompressionModal = ref(false)
 const compressionConfig = ref({ triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10 })
 const isCompressing = ref(false)
+const inviteCodeDraft = ref('')
+const isSavingInviteCode = ref(false)
 const selectedProfile = ref<string | null>(null)
 const agentName = ref('')
 const agentDescription = ref('')
@@ -84,6 +86,10 @@ function canManageRoom(room: Pick<RoomInfo, 'canManage'> | null | undefined): bo
 const currentRoomCanManage = computed(() => canManageRoom(currentRoom.value))
 const visibleApproval = computed(() => currentRoomCanManage.value ? store.activePendingApproval : null)
 const currentWorkspaceLabel = computed(() => workspaceBasename(currentRoom.value?.workspace || ''))
+const canUpdateInviteCode = computed(() => {
+    const nextCode = inviteCodeDraft.value.trim()
+    return currentRoomCanManage.value && !isSavingInviteCode.value && !!nextCode && nextCode !== (currentRoom.value?.inviteCode || '')
+})
 const showWorkspaceModal = ref(false)
 const workspaceRoomId = ref<string | null>(null)
 const workspaceValue = ref('')
@@ -523,10 +529,11 @@ async function handleClearWorkspace() {
     await handleSaveWorkspace()
 }
 
-function handleOpenCompressionConfig() {
+function handleOpenRoomSettings() {
     if (!currentRoomCanManage.value) return
     const room = store.rooms.find(r => r.id === store.currentRoomId)
     if (room) {
+        inviteCodeDraft.value = room.inviteCode || ''
         compressionConfig.value = {
             triggerTokens: room.triggerTokens ?? 100000,
             maxHistoryTokens: room.maxHistoryTokens ?? 32000,
@@ -534,6 +541,21 @@ function handleOpenCompressionConfig() {
         }
     }
     showCompressionModal.value = true
+}
+
+async function handleSaveInviteCode() {
+    if (!store.currentRoomId || !currentRoomCanManage.value || isSavingInviteCode.value || !canUpdateInviteCode.value) return
+    const nextCode = inviteCodeDraft.value.trim()
+    isSavingInviteCode.value = true
+    try {
+        await store.setRoomInviteCode(store.currentRoomId, nextCode)
+        inviteCodeDraft.value = nextCode
+        message.success(t('groupChat.inviteCodeUpdated'))
+    } catch (err: any) {
+        message.error(err?.message || t('groupChat.inviteCodeUpdateFailed'))
+    } finally {
+        isSavingInviteCode.value = false
+    }
 }
 
 async function handleSaveCompressionConfig() {
@@ -758,7 +780,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             <line x1="15" y1="3" x2="15" y2="21" />
                         </svg>
                     </button>
-                    <button v-if="currentRoomCanManage" class="icon-btn compression-settings-button" :title="t('groupChat.compressionConfig')" @click="handleOpenCompressionConfig">
+                    <button v-if="currentRoomCanManage" class="icon-btn compression-settings-button" :title="t('groupChat.roomSettings')" @click="handleOpenRoomSettings">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 4.6a1.65 1.65 0 0 0 1.51 1V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1.51 1z"/></svg>
                     </button>
                     <NPopconfirm v-if="currentRoomCanManage" @positive-click="handleClearRoomContext">
@@ -995,23 +1017,54 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                 </template>
             </NModal>
             <div v-if="showCompressionModal" class="modal-backdrop" @click.self="showCompressionModal = false">
-                <div class="modal">
-                    <h3>{{ t('groupChat.compressionConfig') }}</h3>
-                    <div class="form-group">
-                        <label class="form-label">{{ t('groupChat.triggerTokens') }}</label>
-                        <NInputNumber v-model:value="compressionConfig.triggerTokens" :min="1000" :step="10000" style="width: 100%" />
-                        <p class="form-hint">{{ t('groupChat.triggerTokensDesc') }}</p>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">{{ t('groupChat.maxHistoryTokens') }}</label>
-                        <NInputNumber v-model:value="compressionConfig.maxHistoryTokens" :min="1000" :step="1000" style="width: 100%" />
-                        <p class="form-hint">{{ t('groupChat.maxHistoryTokensDesc') }}</p>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">{{ t('groupChat.tailMessageCount') }}</label>
-                        <NInputNumber v-model:value="compressionConfig.tailMessageCount" :min="1" :step="5" style="width: 100%" />
-                        <p class="form-hint">{{ t('groupChat.tailMessageCountDesc') }}</p>
-                    </div>
+                <div class="modal room-settings-modal">
+                    <h3>{{ t('groupChat.roomSettings') }}</h3>
+                    <section class="settings-section">
+                        <h4>{{ t('groupChat.inviteCodeSettings') }}</h4>
+                        <div class="form-group">
+                            <label class="form-label">{{ t('groupChat.inviteCode') }}</label>
+                            <div class="code-row invite-code-row">
+                                <NInput
+                                    v-model:value="inviteCodeDraft"
+                                    :placeholder="t('groupChat.inviteCodePlaceholder')"
+                                    :disabled="isSavingInviteCode"
+                                    @keyup.enter="handleSaveInviteCode"
+                                />
+                                <NButton size="small" :disabled="isSavingInviteCode" :title="t('groupChat.generateInviteCode')" @click="inviteCodeDraft = generateCode()">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                        <polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                                    </svg>
+                                </NButton>
+                                <NButton
+                                    type="primary"
+                                    :disabled="!canUpdateInviteCode"
+                                    :loading="isSavingInviteCode"
+                                    @click="handleSaveInviteCode"
+                                >
+                                    {{ t('common.update') }}
+                                </NButton>
+                            </div>
+                            <p class="form-hint">{{ t('groupChat.inviteCodeRotateHint') }}</p>
+                        </div>
+                    </section>
+                    <section class="settings-section">
+                        <h4>{{ t('groupChat.compressionSettings') }}</h4>
+                        <div class="form-group">
+                            <label class="form-label">{{ t('groupChat.triggerTokens') }}</label>
+                            <NInputNumber v-model:value="compressionConfig.triggerTokens" :min="1000" :step="10000" style="width: 100%" />
+                            <p class="form-hint">{{ t('groupChat.triggerTokensDesc') }}</p>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">{{ t('groupChat.maxHistoryTokens') }}</label>
+                            <NInputNumber v-model:value="compressionConfig.maxHistoryTokens" :min="1000" :step="1000" style="width: 100%" />
+                            <p class="form-hint">{{ t('groupChat.maxHistoryTokensDesc') }}</p>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">{{ t('groupChat.tailMessageCount') }}</label>
+                            <NInputNumber v-model:value="compressionConfig.tailMessageCount" :min="1" :step="5" style="width: 100%" />
+                            <p class="form-hint">{{ t('groupChat.tailMessageCountDesc') }}</p>
+                        </div>
+                    </section>
                     <div style="margin-top: 8px">
                         <NButton
                             block
@@ -1025,7 +1078,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     <div class="modal-actions">
                         <NSpace justify="end">
                             <NButton @click="showCompressionModal = false">{{ t('common.cancel') }}</NButton>
-                            <NButton type="primary" @click="handleSaveCompressionConfig">{{ t('common.save') }}</NButton>
+                            <NButton type="primary" @click="handleSaveCompressionConfig">{{ t('groupChat.saveCompression') }}</NButton>
                         </NSpace>
                     </div>
                 </div>
@@ -2009,6 +2062,21 @@ export default defineComponent({ components: { CreateRoomForm } })
     }
 }
 
+.room-settings-modal {
+    width: 480px;
+}
+
+.settings-section {
+    margin-bottom: 18px;
+
+    h4 {
+        margin: 0 0 12px;
+        font-size: 13px;
+        font-weight: 600;
+        color: $text-primary;
+    }
+}
+
 .form-group {
     margin-bottom: 16px;
 }
@@ -2025,6 +2093,10 @@ export default defineComponent({ components: { CreateRoomForm } })
     display: flex;
     gap: 8px;
     align-items: center;
+}
+
+.invite-code-row :deep(.n-input) {
+    flex: 1;
 }
 
 .modal-actions {

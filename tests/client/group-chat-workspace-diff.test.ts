@@ -47,6 +47,7 @@ const groupChatApiMock = vi.hoisted(() => {
     cloneRoom: vi.fn(),
     deleteRoom: vi.fn(),
     clearRoomContext: vi.fn(),
+    updateInviteCode: vi.fn(),
     updateRoomWorkspace: vi.fn(),
   }
 })
