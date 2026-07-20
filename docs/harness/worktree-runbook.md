@@ -1,9 +1,23 @@
-# Worktree Runbook
+# Optional Worktree Runbook
 
-Use a separate git worktree for agent changes so local user work remains
-untouched.
+Git worktrees are optional. Work in the current checkout when the user prefers
+that workflow and the working tree is clean. Use a separate worktree when
+isolation is useful, such as when another branch has uncommitted work or a local
+development server must keep running.
 
-## Create A Worktree
+## Use The Current Checkout
+
+Confirm the checkout is clean before switching or creating a branch:
+
+```bash
+git status --short --branch
+git switch -c <short-topic>
+```
+
+Do not switch branches over unrelated uncommitted changes. Ask the user whether
+to preserve the current checkout or use the optional isolated flow below.
+
+## Create An Optional Worktree
 
 ```bash
 git fetch origin --prune
