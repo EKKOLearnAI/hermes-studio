@@ -26,7 +26,7 @@ import {
   openAiResponsesSseToResponsesEvents,
   type CanonicalResponsesEvent,
 } from '../adapters/responses-stream'
-import { agentRunGateway } from '../gateway'
+import { agentRunGateway, ProviderApiError } from '../gateway'
 import { teeAsyncIterable } from '../stream-tee'
 import { codingAgentRunManager } from '../coding-agent-run-manager'
 
@@ -93,21 +93,65 @@ function anthropicRequestBody(body: any, target: ClaudeCodeProxyTarget): any {
   }
 }
 
+const OPAQUE_THINKING_BLOCK_TYPES = new Set(['thinking', 'redacted_thinking'])
+
+function withoutOpaqueThinkingHistory(body: any): any | null {
+  if (!Array.isArray(body?.messages)) return null
+  let removed = false
+  const messages = body.messages.map((message: any) => {
+    if (!Array.isArray(message?.content)) return message
+    const content = message.content.filter((block: any) => {
+      const strip = OPAQUE_THINKING_BLOCK_TYPES.has(String(block?.type || ''))
+      removed ||= strip
+      return !strip
+    })
+    return content.length === message.content.length ? message : { ...message, content }
+  })
+  if (!removed || messages.some((message: any) => Array.isArray(message?.content) && message.content.length === 0)) return null
+  return { ...body, messages }
+}
+
+const ENCRYPTED_CONTENT_MESSAGE = /^Encrypted content could not be decrypted or parsed\.?$/i
+const ENCRYPTED_CONTENT_VERIFICATION_MESSAGE = /^The encrypted content [^\r\n]+ could not be verified\. Reason: Encrypted content could not be decrypted or parsed\.?$/i
+
+function isCustomEncryptedContentFailure(target: ClaudeCodeProxyTarget, error: unknown): boolean {
+  if (!target.provider.startsWith('custom:') || !(error instanceof ProviderApiError) || error.status !== 400) return false
+  const providerError = error.providerError as any
+  if (providerError?.error?.code === 'invalid_encrypted_content') return true
+  const message = String(providerError?.error?.message || '')
+  return ENCRYPTED_CONTENT_MESSAGE.test(message) || ENCRYPTED_CONTENT_VERIFICATION_MESSAGE.test(message)
+}
+
+async function withCustomEncryptedContentRetry<T>(
+  target: ClaudeCodeProxyTarget,
+  body: any,
+  request: (nextBody: any) => Promise<T>,
+): Promise<T> {
+  try {
+    return await request(body)
+  } catch (error) {
+    if (!isCustomEncryptedContentFailure(target, error)) throw error
+    const retryBody = withoutOpaqueThinkingHistory(body)
+    if (!retryBody) throw error
+    return request(retryBody)
+  }
+}
+
 async function callAnthropicMessages(target: ClaudeCodeProxyTarget, body: any): Promise<any> {
   if (target.apiMode !== 'anthropic_messages') {
     const err = new Error(`Claude proxy Anthropic adapter only supports anthropic_messages targets, got ${target.apiMode}`)
     ;(err as any).status = 501
     throw err
   }
-  return agentRunGateway.completeJson({
+  return withCustomEncryptedContentRetry(target, body, nextBody => agentRunGateway.completeJson({
     url: anthropicMessagesUrl(target),
     apiKey: target.apiKey,
     headers: {
       'x-api-key': target.apiKey,
       'anthropic-version': '2023-06-01',
     },
-    body: anthropicRequestBody(body, target),
-  })
+    body: anthropicRequestBody(nextBody, target),
+  }))
 }
 
 async function callOpenAiChat(target: ClaudeCodeProxyTarget, body: any): Promise<any> {
@@ -189,15 +233,15 @@ async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: a
     throw err
   }
 
-  const stream = await agentRunGateway.streamBytes({
+  const stream = await withCustomEncryptedContentRetry(target, body, nextBody => agentRunGateway.streamBytes({
     url: anthropicMessagesUrl(target),
     apiKey: target.apiKey,
     headers: {
       'x-api-key': target.apiKey,
       'anthropic-version': '2023-06-01',
     },
-    body: anthropicRequestBody(body, target),
-  })
+    body: anthropicRequestBody(nextBody, target),
+  }))
   const [clientStream, observerStream] = teeAsyncIterable(stream)
   observeResponsesEvents(target, anthropicMessagesSseToResponsesEvents(observerStream, target))
   return Readable.from(clientStream)
