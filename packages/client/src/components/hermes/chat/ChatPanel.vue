@@ -48,6 +48,7 @@ import SessionListItem from "./SessionListItem.vue";
 import OutlinePanel from "./OutlinePanel.vue";
 import TerminalPanel from "./TerminalPanel.vue";
 import SubagentStreamPanel from "./SubagentStreamPanel.vue";
+import { buildVisibleSessionCategoryGroups } from "./session-category-groups";
 import PageSidebarNav from "@/components/layout/PageSidebarNav.vue";
 import SettingsCircuitBadge from "@/components/layout/SettingsCircuitBadge.vue";
 import { isStoredSuperAdmin } from "@/api/client";
@@ -491,25 +492,11 @@ const unpinnedSessions = computed(() =>
   ),
 );
 
-const categorizedSessions = computed(() => {
-  const knownCategoryIds = new Set(sessionCategories.value.map((category) => category.id));
-  const groups = sessionCategories.value.map((category) => ({
-    key: `category-${category.id}`,
-    label: category.name,
-    sessions: unpinnedSessions.value.filter((session) => session.categoryId === category.id),
-  }));
-  const uncategorized = unpinnedSessions.value.filter(
-    (session) => session.categoryId == null || !knownCategoryIds.has(session.categoryId),
-  );
-  if (uncategorized.length > 0) {
-    groups.push({
-      key: "category-none",
-      label: t("chat.uncategorized"),
-      sessions: uncategorized,
-    });
-  }
-  return groups;
-});
+const categorizedSessions = computed(() => buildVisibleSessionCategoryGroups(
+  sessionCategories.value,
+  unpinnedSessions.value,
+  t("chat.uncategorized"),
+));
 
 watch(
   () => [
