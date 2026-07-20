@@ -13,6 +13,26 @@ describe('workflow import capabilities', () => {
     expect(() => assertWorkflowImportCapabilities([node({ provider: 'custom:test', model: 'model-a', apiMode: 'chat_completions' })], [{ provider: 'custom:test', models: ['model-a'] }])).toThrow('unavailable')
   })
 
+  it('accepts scoped Coding Agent protocol overrides for a configured provider and model', () => {
+    const groups = [{ provider: 'custom:test', models: ['model-a'], api_mode: 'chat_completions' }]
+
+    expect(() => assertWorkflowImportCapabilities([
+      node({ agent: 'codex', provider: 'custom:test', model: 'model-a', apiMode: 'codex_responses' }),
+      node({ agent: 'claude-code', provider: 'custom:test', model: 'model-a', apiMode: 'anthropic_messages' }),
+    ], groups)).not.toThrow()
+  })
+
+  it('keeps scoped Coding Agent targets fail closed for missing models and unsupported protocols', () => {
+    const groups = [{ provider: 'custom:test', models: ['model-a'], api_mode: 'chat_completions' }]
+
+    expect(() => assertWorkflowImportCapabilities([
+      node({ agent: 'codex', provider: 'custom:test', model: 'model-b', apiMode: 'codex_responses' }),
+    ], groups)).toThrow('unavailable')
+    expect(() => assertWorkflowImportCapabilities([
+      node({ agent: 'claude-code', provider: 'custom:test', model: 'model-a', apiMode: 'bedrock_converse' }),
+    ], groups)).toThrow('unavailable')
+  })
+
   it('allows runtime-default nodes and revisions change with any target capability', () => {
     expect(() => assertWorkflowImportCapabilities([node({})], [])).not.toThrow()
     const one = workflowImportEnvironmentRevision([{ provider: 'p', models: ['a'], api_mode: 'chat_completions' }])
