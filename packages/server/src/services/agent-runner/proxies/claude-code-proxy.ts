@@ -29,6 +29,7 @@ import {
 import { agentRunGateway, ProviderApiError } from '../gateway'
 import { teeAsyncIterable } from '../stream-tee'
 import { codingAgentRunManager } from '../coding-agent-run-manager'
+import { logger } from '../../logger'
 
 export type { ApiMode } from '../types'
 
@@ -95,20 +96,41 @@ function anthropicRequestBody(body: any, target: ClaudeCodeProxyTarget): any {
 
 const OPAQUE_THINKING_BLOCK_TYPES = new Set(['thinking', 'redacted_thinking'])
 
-function withoutOpaqueThinkingHistory(body: any): any | null {
+type OpaqueThinkingSanitization = {
+  body: any
+  removedBlocks: number
+  removedMessages: number
+}
+
+function withoutOpaqueThinkingHistory(body: any): OpaqueThinkingSanitization | null {
   if (!Array.isArray(body?.messages)) return null
-  let removed = false
-  const messages = body.messages.map((message: any) => {
-    if (!Array.isArray(message?.content)) return message
+  let removedBlocks = 0
+  let removedMessages = 0
+  const messages: any[] = []
+
+  for (const message of body.messages) {
+    if (!Array.isArray(message?.content)) {
+      messages.push(message)
+      continue
+    }
     const content = message.content.filter((block: any) => {
       const strip = OPAQUE_THINKING_BLOCK_TYPES.has(String(block?.type || ''))
-      removed ||= strip
+      if (strip) removedBlocks += 1
       return !strip
     })
-    return content.length === message.content.length ? message : { ...message, content }
-  })
-  if (!removed || messages.some((message: any) => Array.isArray(message?.content) && message.content.length === 0)) return null
-  return { ...body, messages }
+    if (content.length === 0 && message.content.length > 0) {
+      removedMessages += 1
+      continue
+    }
+    messages.push(content.length === message.content.length ? message : { ...message, content })
+  }
+
+  if (removedBlocks === 0 || messages.length === 0) return null
+  return {
+    body: { ...body, messages },
+    removedBlocks,
+    removedMessages,
+  }
 }
 
 const ENCRYPTED_CONTENT_MESSAGE = /^Encrypted content could not be decrypted or parsed\.?$/i
@@ -131,9 +153,34 @@ async function withCustomEncryptedContentRetry<T>(
     return await request(body)
   } catch (error) {
     if (!isCustomEncryptedContentFailure(target, error)) throw error
-    const retryBody = withoutOpaqueThinkingHistory(body)
-    if (!retryBody) throw error
-    return request(retryBody)
+    const sanitization = withoutOpaqueThinkingHistory(body)
+    if (!sanitization) {
+      loggerLikeWarn({
+        provider: target.provider,
+        status: 400,
+        retryStarted: false,
+      }, '[claude-code-proxy] encrypted-thinking compatibility retry skipped')
+      throw error
+    }
+    loggerLikeWarn({
+      provider: target.provider,
+      status: 400,
+      removedBlocks: sanitization.removedBlocks,
+      removedMessages: sanitization.removedMessages,
+      retryStarted: true,
+    }, '[claude-code-proxy] retrying without historical opaque thinking')
+    try {
+      return await request(sanitization.body)
+    } catch (retryError) {
+      const providerError = retryError instanceof ProviderApiError ? retryError.providerError as any : null
+      loggerLikeWarn({
+        provider: target.provider,
+        status: retryError instanceof ProviderApiError ? retryError.status : null,
+        code: String(providerError?.error?.code || ''),
+        retryFailed: true,
+      }, '[claude-code-proxy] encrypted-thinking compatibility retry failed')
+      throw retryError
+    }
   }
 }
 
@@ -203,10 +250,7 @@ function observeResponsesEvents(target: ClaudeCodeProxyTarget, events: AsyncIter
 }
 
 function loggerLikeWarn(err: unknown, message: string) {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require('../../logger').logger.warn(err, message)
-  } catch {}
+  logger.warn(err, message)
 }
 
 async function openAiChatToAnthropicSseStream(target: ClaudeCodeProxyTarget, body: any): Promise<Readable> {
