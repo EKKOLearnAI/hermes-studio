@@ -663,6 +663,7 @@ export async function handleEkkoAgentRun(
         workspaceId: workspace,
         userId: authenticatedUserId,
         sessionId,
+        profileId: profile,
         browserSessionId: sessionId,
         mcpServers,
         timeoutMs: 120_000,

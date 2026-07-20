@@ -109,7 +109,9 @@ export class AgentRuntime {
     const runSkills = [...this.skills, ...inputSkills]
     this.registerSkillTools(inputSkills)
     const memoryIdentity = this.memoryIdentityFor(input)
-    const memoryContext = await this.prepareMemory(input, memoryIdentity)
+    const memoryPreparation = await this.prepareMemory(input, memoryIdentity)
+    const memoryContext = memoryPreparation?.context
+    const executionToolContext = this.runToolContext(input, memoryPreparation?.sourceMessageIds)
     if (memoryContext) {
       emit({
         type: 'memory.retrieved',
@@ -171,7 +173,7 @@ export class AgentRuntime {
             runId,
             step,
             toolCall,
-            this.runToolContext(input),
+            executionToolContext,
             emit,
             input.signal,
           )
@@ -322,23 +324,34 @@ export class AgentRuntime {
     const context = input.toolContext ?? this.toolContext
     return {
       sessionId,
-      workspaceId: stringMetadata(input.metadata?.workspace_id) || context?.workspaceId || context?.workspaceRoot || context?.cwd,
-      userId: stringMetadata(input.metadata?.user_id) || context?.userId,
+      profileId: stringMetadata(input.metadata?.profile) || context?.profileId || 'default',
     }
   }
 
   private async prepareMemory(
     input: AgentRuntimeRunInput,
     identity: MemoryRuntimeIdentity | undefined,
-  ): Promise<MemoryContext | undefined> {
+  ): Promise<{ context: MemoryContext; sourceMessageIds: string[] } | undefined> {
     if (!this.memory || !identity) return undefined
     await this.memory.drain()
     const normalized = normalizeAgentMessages(input.messages)
       .filter(message => message.role !== 'system')
       .map(toMemoryCaptureMessage)
-    await this.memory.captureMessages(identity, normalized)
+    const capturedIds = await this.memory.captureMessages(identity, normalized)
     const queryText = [...normalized].reverse().find(message => message.role === 'user')?.content
-    return this.memory.retrieve(identity, queryText)
+    let latestUserIndex = -1
+    for (let index = normalized.length - 1; index >= 0; index -= 1) {
+      if (normalized[index].role === 'user') {
+        latestUserIndex = index
+        break
+      }
+    }
+    return {
+      context: await this.memory.retrieve(identity, queryText),
+      sourceMessageIds: latestUserIndex >= 0 && capturedIds[latestUserIndex]
+        ? [capturedIds[latestUserIndex]]
+        : [],
+    }
   }
 
   private completeMemory(
@@ -397,11 +410,12 @@ export class AgentRuntime {
     return modelClient
   }
 
-  private runToolContext(input: AgentRuntimeRunInput): AgentToolContext | undefined {
+  private runToolContext(input: AgentRuntimeRunInput, sourceMessageIds?: string[]): AgentToolContext | undefined {
     const context = input.toolContext ?? this.toolContext
-    if (!input.signal) return context
+    if (!input.signal && !sourceMessageIds?.length) return context
     return {
       ...context,
+      ...(sourceMessageIds?.length ? { sourceMessageIds } : {}),
       signal: input.signal,
     }
   }

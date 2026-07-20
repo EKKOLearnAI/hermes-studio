@@ -47,25 +47,25 @@ describe('SqliteMemoryStore', () => {
     await expect(store.getLatestSummary({ sessionId: 's1' })).resolves.toMatchObject({ id: 'summary-1' })
   })
 
-  it('isolates scopes and excludes expired nodes by default', async () => {
-    await store.upsertNode(memoryNode('workspace-a', { scope: 'workspace', workspaceId: '/a' }))
-    await store.upsertNode(memoryNode('workspace-b', { scope: 'workspace', workspaceId: '/b' }))
+  it('isolates profiles and excludes expired nodes by default', async () => {
+    await store.upsertNode(memoryNode('work', { profileId: 'work' }))
+    await store.upsertNode(memoryNode('personal', { profileId: 'personal' }))
     await store.upsertNode(memoryNode('expired', {
-      scope: 'workspace',
-      workspaceId: '/a',
+      profileId: 'work',
+      key: 'expired-style',
       expiresAt: '2020-01-01T00:00:00.000Z',
     }))
 
-    await expect(store.queryNodes({ scopes: ['workspace'], workspaceId: '/a' })).resolves.toMatchObject([
-      { id: 'workspace-a' },
+    await expect(store.queryNodes({ profileId: 'work' })).resolves.toMatchObject([
+      { id: 'work' },
     ])
-    expect((await store.queryNodes({ scopes: ['workspace'], workspaceId: '/a', includeExpired: true })).map(node => node.id).sort())
-      .toEqual(['expired', 'workspace-a'])
+    expect((await store.queryNodes({ profileId: 'work', includeExpired: true })).map(node => node.id).sort())
+      .toEqual(['expired', 'work'])
   })
 
   it('atomically supersedes nodes and supports soft and hard deletion', async () => {
     const oldNode = memoryNode('old')
-    const newNode = memoryNode('new', { content: 'new preference', updatedAt: '2026-01-02T00:00:00.000Z' })
+    const newNode = memoryNode('new', { revision: 2, content: 'new preference', updatedAt: '2026-01-02T00:00:00.000Z' })
     await store.upsertNode(oldNode)
     store.databaseManager.connection.prepare(
       'INSERT INTO memory_embeddings (node_id, model, embedding, created_at) VALUES (?, ?, ?, ?)',
@@ -97,12 +97,12 @@ describe('SqliteMemoryStore', () => {
 function memoryNode(id: string, overrides: Partial<MemoryNode> = {}): MemoryNode {
   return {
     id,
-    sessionId: 's1',
-    scope: 'session',
+    profileId: 'default',
     domain: 'general',
     categoryPath: ['general'],
     type: 'preference',
     key: 'style',
+    revision: 1,
     valueJson: id,
     title: id,
     content: `${id} preference`,

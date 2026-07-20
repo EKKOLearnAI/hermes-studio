@@ -1,12 +1,5 @@
-import type { MemoryNode, MemoryOmissionReason, MemoryQueryResult, MemoryScope } from './types'
+import type { MemoryNode, MemoryOmissionReason, MemoryQueryResult } from './types'
 import { memoryConflictKey } from './schema'
-
-const SCOPE_PRIORITY: Record<MemoryScope, number> = {
-  session: 4,
-  workspace: 3,
-  user: 2,
-  global: 1,
-}
 
 export function resolveMemoryQuery(
   exactCandidates: MemoryNode[],
@@ -14,12 +7,17 @@ export function resolveMemoryQuery(
   queryText: string | undefined,
   limit: number,
   now = new Date(),
+  options: { includeAlwaysApplicable?: boolean } = {},
 ): MemoryQueryResult {
   const omitted: MemoryQueryResult['omitted'] = []
   const exact = resolveConflicts(exactCandidates, omitted, now)
   const ranked = resolveConflicts(relevantCandidates, omitted, now)
     .map(node => ({ node, score: relevanceScore(node, queryText || '') }))
-    .filter(item => !queryText?.trim() || item.score > 0)
+    .filter(item => (
+      !queryText?.trim() ||
+      item.score > 0 ||
+      options.includeAlwaysApplicable === true && isAlwaysApplicable(item.node)
+    ))
     .sort((left, right) => right.score - left.score || compareMemoryNodes(left.node, right.node))
     .map(item => item.node)
 
@@ -41,8 +39,6 @@ export function resolveMemoryQuery(
 export function compareMemoryNodes(left: MemoryNode, right: MemoryNode): number {
   if (left.type === 'correction' && right.type !== 'correction') return -1
   if (right.type === 'correction' && left.type !== 'correction') return 1
-  const scopeDifference = SCOPE_PRIORITY[right.scope] - SCOPE_PRIORITY[left.scope]
-  if (scopeDifference) return scopeDifference
   const updatedDifference = Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
   if (updatedDifference) return updatedDifference
   const confidenceDifference = right.confidence - left.confidence
@@ -66,7 +62,12 @@ export function relevanceScore(node: MemoryNode, queryText: string): number {
     if (category.includes(token)) score += 2
     if (content.includes(token)) score += 2
   }
+  if (score === 0) return 0
   return score + node.importance * 2 + node.confidence
+}
+
+function isAlwaysApplicable(node: MemoryNode): boolean {
+  return node.type === 'preference' || node.type === 'constraint' || node.type === 'correction'
 }
 
 function resolveConflicts(

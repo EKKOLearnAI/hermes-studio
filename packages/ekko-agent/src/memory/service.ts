@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { buildMemoryContextPrompt } from './context'
 import { RuleBasedMemoryExtractor } from './extraction'
 import { resolveMemoryQuery } from './retrieval'
-import { memoryConflictKey, normalizeMemoryNode } from './schema'
+import { canonicalizeMemoryDraft, memoryKindForCanonicalKey, normalizeMemoryNode } from './schema'
 import { stableJson } from './store'
 import type {
   MemoryAuditEvent,
@@ -61,7 +61,7 @@ export class MemoryService {
     this.nodeLimit = options.nodeLimit ?? 12
     this.reviewEveryUserMessages = Math.max(
       1,
-      Math.floor(options.reviewEveryUserMessages ?? options.summaryEveryMessages ?? 8),
+      Math.floor(options.reviewEveryUserMessages ?? options.summaryEveryMessages ?? 1),
     )
     if (options.warning) this.warnings.add(options.warning)
   }
@@ -107,7 +107,7 @@ export class MemoryService {
   ): Promise<MemoryContext> {
     if (!this.isEnabled || !this.store) return this.disabledContext()
     try {
-      const baseQuery = scopedQuery(identity, overrides)
+      const baseQuery = memoryQuery(identity, overrides)
       const [latestSummary, recentMessages, relevantCandidates] = await Promise.all([
         this.store.getLatestSummary({ sessionId: identity.sessionId }),
         this.store.listRecentMessages({ sessionId: identity.sessionId, limit: this.recentMessageLimit }),
@@ -121,6 +121,8 @@ export class MemoryService {
         relevantCandidates,
         queryText || overrides.queryText,
         overrides.limit ?? this.nodeLimit,
+        new Date(),
+        { includeAlwaysApplicable: true },
       )
       const nodes = [...result.exact, ...result.relevant]
       return {
@@ -147,7 +149,7 @@ export class MemoryService {
 
   async search(identity: MemoryRuntimeIdentity, query: MemoryQuery): Promise<MemoryQueryResult> {
     if (!this.isEnabled || !this.store) return { exact: [], relevant: [], omitted: [] }
-    const scoped = scopedQuery(identity, query)
+    const scoped = memoryQuery(identity, query)
     const candidates = await this.store.queryNodes({ ...scoped, queryText: undefined, limit: 150 })
     const exactCandidates = query.key || query.valueJson !== undefined ? candidates : []
     return resolveMemoryQuery(exactCandidates, candidates, query.queryText, query.limit ?? this.nodeLimit)
@@ -164,84 +166,136 @@ export class MemoryService {
     const actor = input.actor || 'ekko-agent'
     if (input.operation === 'expire') {
       if (!input.targetId) return { accepted: false, reason: 'expire requires targetId.' }
-      if (!await this.get(input.targetId, input.identity)) return { accepted: false, reason: 'Memory node not found.' }
+      const target = await this.get(input.targetId, input.identity)
+      if (!target) return { accepted: false, reason: 'Memory node not found.' }
+      const revisionError = validateExpectedRevision(target, input.expectedRevision)
+      if (revisionError) return { accepted: false, reason: revisionError }
       const changed = await this.store.updateNodeStatus({
         nodeId: input.targetId,
         status: 'expired',
         reason: input.reason,
         actor,
+        expectedRevision: input.expectedRevision,
+        sessionId: input.identity?.sessionId,
       })
-      return changed ? { accepted: true, nodeId: input.targetId } : { accepted: false, reason: 'Memory node not found.' }
+      const node = changed ? await this.get(input.targetId, input.identity) : undefined
+      return changed
+        ? { accepted: true, nodeId: input.targetId, action: 'expired', node }
+        : { accepted: false, reason: 'Memory revision changed before expiration.' }
     }
     if (input.operation === 'delete') {
       if (!input.targetId) return { accepted: false, reason: 'delete requires targetId.' }
-      if (!await this.get(input.targetId, input.identity)) return { accepted: false, reason: 'Memory node not found.' }
-      const changed = await this.store.deleteNode({ nodeId: input.targetId, mode: 'soft', reason: input.reason, actor })
-      return changed ? { accepted: true, nodeId: input.targetId } : { accepted: false, reason: 'Memory node not found.' }
+      const target = await this.get(input.targetId, input.identity)
+      if (!target) return { accepted: false, reason: 'Memory node not found.' }
+      const revisionError = validateExpectedRevision(target, input.expectedRevision)
+      if (revisionError) return { accepted: false, reason: revisionError }
+      const changed = await this.store.deleteNode({
+        nodeId: input.targetId,
+        mode: 'soft',
+        reason: input.reason,
+        actor,
+        expectedRevision: input.expectedRevision,
+        sessionId: input.identity?.sessionId,
+      })
+      const node = changed ? await this.get(input.targetId, input.identity) : undefined
+      return changed
+        ? { accepted: true, nodeId: input.targetId, action: 'deleted', node }
+        : { accepted: false, reason: 'Memory revision changed before deletion.' }
     }
+
+    if (input.operation === 'update' || input.operation === 'supersede') {
+      if (!input.targetId) return { accepted: false, reason: `${input.operation} requires targetId.` }
+      const target = await this.get(input.targetId, input.identity)
+      if (!target || target.status !== 'active') return { accepted: false, reason: 'Active memory node not found.' }
+      const revisionError = validateExpectedRevision(target, input.expectedRevision)
+      if (revisionError) return { accepted: false, reason: revisionError }
+      const slot = memoryKindForCanonicalKey(target.key)
+      if (!slot) return { accepted: false, reason: 'Memory has no server-controlled canonical key.' }
+      const valueJson = applyValuePatch(
+        input.node.valueJson === undefined ? target.valueJson : input.node.valueJson,
+        input.valuePatch,
+        input.unsetValueFields,
+      )
+      const canonical = canonicalizeMemoryDraft(slot.kind, slot.itemKey, {
+        ...target,
+        ...input.node,
+        id: undefined,
+        parentId: target.id,
+        supersedesId: target.id,
+        profileId: target.profileId,
+        key: target.key,
+        domain: target.domain,
+        categoryPath: target.categoryPath,
+        type: target.type,
+        valueJson,
+        revision: target.revision + 1,
+        status: 'active',
+        sourceMessageIds: uniqueValues([...target.sourceMessageIds, ...(input.node.sourceMessageIds || [])]),
+        createdAt: undefined,
+      })
+      if (!canonical.accepted) return canonical
+      const normalized = normalizeMemoryNode({
+        draft: canonical.draft,
+        identity: input.identity,
+        explicitUserIntent: input.explicitUserIntent,
+      })
+      if (!normalized.accepted) return normalized
+      const now = new Date().toISOString()
+      const node: MemoryNode = { id: randomUUID(), ...normalized.node, updatedAt: now }
+      await this.store.supersedeNode({
+        oldNodeId: target.id,
+        newNode: node,
+        reason: input.reason,
+        actor,
+        sessionId: input.identity?.sessionId,
+      })
+      return { accepted: true, nodeId: node.id, action: 'updated', node }
+    }
+
+    const canonical = canonicalizeMemoryDraft(input.kind, input.itemKey, input.node)
+    if (!canonical.accepted) return canonical
     const normalized = normalizeMemoryNode({
-      draft: input.node,
+      draft: canonical.draft,
       identity: input.identity,
       explicitUserIntent: input.explicitUserIntent,
     })
     if (!normalized.accepted) return normalized
     const now = new Date().toISOString()
-    const node: MemoryNode = { id: randomUUID(), ...normalized.node, updatedAt: now }
-
-    const candidates = node.key
-      ? await this.store.queryNodes({
-          ...scopedQuery(input.identity as MemoryRuntimeIdentity, {
-            scopes: [node.scope],
-            domain: node.domain,
-            key: node.key,
-            includeExpired: false,
-          }),
-          limit: 20,
-        })
-      : []
-    const conflictingCandidates = candidates.filter(candidate => memoryConflictKey(candidate) === memoryConflictKey(node))
-    const exactExisting = conflictingCandidates.find(candidate => stableJson(candidate.valueJson) === stableJson(node.valueJson))
-    if (input.operation === 'create' && exactExisting) return { accepted: true, nodeId: exactExisting.id }
-
-    let targetId = input.targetId
-    if (!targetId && (input.operation === 'update' || input.operation === 'supersede')) {
-      if (conflictingCandidates.length !== 1) {
-        return {
-          accepted: false,
-          reason: conflictingCandidates.length ? 'Memory update matched multiple active nodes.' : 'Memory update target was not found.',
-        }
-      }
-      targetId = conflictingCandidates[0].id
+    let node: MemoryNode = { id: randomUUID(), ...normalized.node, revision: 1, updatedAt: now }
+    const existing = (await this.store.queryNodes({
+      ...memoryQuery(input.identity as MemoryRuntimeIdentity, { key: node.key, includeExpired: false }),
+      limit: 2,
+    }))[0]
+    if (existing && stableJson(existing.valueJson) === stableJson(node.valueJson) && existing.content === node.content) {
+      return { accepted: true, nodeId: existing.id, action: 'noop', node: existing }
     }
-    if (!targetId && input.operation === 'create' && conflictingCandidates.length) {
-      if (!input.explicitUserIntent || conflictingCandidates.length !== 1) {
-        return { accepted: false, reason: 'Conflicting active memory requires explicit supersede.' }
+    if (existing) {
+      node = {
+        ...node,
+        revision: existing.revision + 1,
+        parentId: existing.id,
+        supersedesId: existing.id,
+        sourceMessageIds: uniqueValues([...existing.sourceMessageIds, ...node.sourceMessageIds]),
       }
-      targetId = conflictingCandidates[0].id
-    }
-
-    if (targetId) {
-      const target = await this.get(targetId, input.identity)
-      if (!target) return { accepted: false, reason: 'Memory node not found.' }
-      if (memoryConflictKey(node) && memoryConflictKey(target) !== memoryConflictKey(node)) {
-        return { accepted: false, reason: 'Memory update target does not match the proposed memory key.' }
-      }
-      node.parentId = targetId
-      node.supersedesId = targetId
-      await this.store.supersedeNode({ oldNodeId: targetId, newNode: node, reason: input.reason, actor })
-      return { accepted: true, nodeId: node.id }
+      await this.store.supersedeNode({
+        oldNodeId: existing.id,
+        newNode: node,
+        reason: input.reason,
+        actor,
+        sessionId: input.identity?.sessionId,
+      })
+      return { accepted: true, nodeId: node.id, action: 'updated', node }
     }
 
     await this.store.upsertNode(node, {
       eventType: 'create',
-      sessionId: node.sessionId,
-      workspaceId: node.workspaceId,
-      userId: node.userId,
+      sessionId: input.identity?.sessionId,
+      profileId: node.profileId,
       actor,
       reason: input.reason,
-      payload: { scope: node.scope, type: node.type, key: node.key },
+      payload: { type: node.type, key: node.key },
     })
-    return { accepted: true, nodeId: node.id }
+    return { accepted: true, nodeId: node.id, action: 'created', node }
   }
 
   async forget(input: MemoryForgetInput): Promise<MemoryForgetResult> {
@@ -249,13 +303,12 @@ export class MemoryService {
     if (!this.isEnabled || !this.store) {
       return { deletedIds: [], mode, reason: 'Memory store is disabled.' }
     }
-    if (!input.id && !input.scope && !input.domain && !input.type && !input.key && input.valueJson === undefined) {
+    if (!input.id && !input.domain && !input.type && !input.key && input.valueJson === undefined) {
       return { deletedIds: [], mode, reason: 'A memory selector is required.' }
     }
     const candidates = input.id
       ? [await this.get(input.id, input.identity)].filter((node): node is MemoryNode => Boolean(node))
-      : await this.store.queryNodes(scopedQuery(input.identity as MemoryRuntimeIdentity, {
-          scopes: input.scope ? [input.scope] : undefined,
+      : await this.store.queryNodes(memoryQuery(input.identity as MemoryRuntimeIdentity, {
           domain: input.domain,
           categoryPathPrefix: input.categoryPathPrefix,
           types: input.type ? [input.type] : undefined,
@@ -265,6 +318,10 @@ export class MemoryService {
           limit: 100,
         }))
     if (!candidates.length) return { deletedIds: [], mode, reason: 'No matching memory was found.' }
+    if (input.id) {
+      const revisionError = validateExpectedRevision(candidates[0], input.expectedRevision)
+      if (revisionError) return { deletedIds: [], mode, reason: revisionError }
+    }
     if ((!input.confirmed && candidates.length > 1) || (mode === 'hard' && !input.confirmed)) {
       return {
         deletedIds: [],
@@ -280,10 +337,20 @@ export class MemoryService {
         mode,
         reason: input.reason,
         actor: input.actor || 'ekko-agent',
+        expectedRevision: input.id ? input.expectedRevision : undefined,
+        sessionId: input.identity?.sessionId,
       })
       if (deleted) deletedIds.push(node.id)
     }
-    return { deletedIds, mode }
+    return {
+      deletedIds,
+      deletedMemories: candidates.filter(node => deletedIds.includes(node.id)).map(node => ({
+        ...node,
+        status: mode === 'soft' ? 'deleted' : node.status,
+        revision: mode === 'soft' ? node.revision + 1 : node.revision,
+      })),
+      mode,
+    }
   }
 
   scheduleExtraction(identity: MemoryRuntimeIdentity): void {
@@ -299,10 +366,11 @@ export class MemoryService {
     extractor: MemoryExtractor = this.extractor,
   ): void {
     if (!this.isEnabled || !this.store) return
+    const forceReview = hasHighSignalMemoryCandidate(messages)
     this.extractionQueue = this.extractionQueue
       .then(async () => {
         await this.captureMessages(identity, messages)
-        await this.extractAndPersist(identity, extractor)
+        await this.extractAndPersist(identity, extractor, forceReview)
       })
       .catch(error => this.recordWarning(error))
   }
@@ -341,7 +409,10 @@ export class MemoryService {
       if (operation.operation === 'ignore') continue
       await this.proposeUpdate({
         operation: operation.operation,
+        kind: operation.kind,
+        itemKey: operation.itemKey,
         targetId: operation.targetId,
+        expectedRevision: operation.expectedRevision,
         node: {
           ...operation.node,
           sourceMessageIds: operation.node.sourceMessageIds?.length
@@ -368,8 +439,7 @@ export class MemoryService {
         id: randomUUID(),
         eventType: 'summary',
         sessionId: identity.sessionId,
-        workspaceId: identity.workspaceId,
-        userId: identity.userId,
+        profileId: identity.profileId || 'default',
         actor: 'memory-extractor',
         reason: extraction.fallbackReason ? 'Periodic chained summary (safe fallback)' : 'Periodic chained summary',
         payload: {
@@ -393,8 +463,7 @@ export class MemoryService {
       id: randomUUID(),
       eventType: 'extract',
       sessionId: identity.sessionId,
-      workspaceId: identity.workspaceId,
-      userId: identity.userId,
+      profileId: identity.profileId || 'default',
       actor: 'memory-extractor',
       reason: extraction.fallbackReason
         ? 'Processed new conversation messages using safe fallback'
@@ -435,19 +504,10 @@ export class MemoryService {
   }
 }
 
-function scopedQuery(identity: Partial<MemoryRuntimeIdentity> | undefined, overrides: Partial<MemoryQuery>): MemoryQuery {
-  const scopes = overrides.scopes || [
-    ...(identity?.sessionId ? ['session' as const] : []),
-    ...(identity?.workspaceId ? ['workspace' as const] : []),
-    ...(identity?.userId ? ['user' as const] : []),
-    'global' as const,
-  ]
+function memoryQuery(identity: Partial<MemoryRuntimeIdentity> | undefined, overrides: Partial<MemoryQuery>): MemoryQuery {
   return {
     ...overrides,
-    sessionId: identity?.sessionId,
-    workspaceId: identity?.workspaceId,
-    userId: identity?.userId,
-    scopes,
+    profileId: identity?.profileId || 'default',
   }
 }
 
@@ -473,6 +533,46 @@ function messageSignature(message: MemoryCaptureMessage): string {
     .update('\0')
     .update(stableJson(message.metadata || {}))
     .digest('hex')
+}
+
+function hasHighSignalMemoryCandidate(messages: MemoryCaptureMessage[]): boolean {
+  const latestUser = [...messages].reverse().find(message => message.role === 'user')?.content || ''
+  const highSignalPatterns = [
+    /(?:记住|记下来|保存(?:这个|这条|我的)?|以后(?:都|请)?|长期|忘掉|忘记|别记|删除.{0,8}(?:记忆|偏好|记录)|更正|改成|更新.{0,8}(?:记忆|偏好|信息))/i,
+    /(?:我(?:是|叫|来自|住在|常住|在.{0,12}工作|的名字是|的职业是|的身份是)|我的(?:名字|职业|身份|家乡|住址|系统|环境|工作流|习惯|偏好|项目)(?:是|为|用)|叫我|称呼我|你是我的|我是你的)/i,
+    /(?:我(?:喜欢|偏好|习惯|通常|总是|从不|不喜欢|讨厌|不吃|不用|需要|希望|要求)|别再|不要再|以后别|对我(?:要|请)|我对.{0,12}(?:过敏|不耐受))/i,
+    /(?:不是.{0,30}(?:而是|是)|其实我|我现在|我已经不|之前.{0,20}(?:错了|不对)|纠正一下)/i,
+    /(?:remember|from now on|forget|delete (?:that|this|my) memory|update my memory|my name is|call me|i am|i'm|i live|i work|i use|i prefer|i like|i dislike|i hate|i always|i never|i need|i want you to|don't call me|do not call me|actually,? i|not .{0,30} but)/i,
+  ]
+  return highSignalPatterns.some(pattern => pattern.test(latestUser))
+}
+
+function validateExpectedRevision(node: MemoryNode, expectedRevision: number | undefined): string | undefined {
+  if (!Number.isInteger(expectedRevision) || Number(expectedRevision) < 1) {
+    return 'Mutation requires expectedRevision from memory_search, memory_get, or the injected memory card.'
+  }
+  if (node.revision !== expectedRevision) {
+    return `Memory revision mismatch: expected ${expectedRevision}, current ${node.revision}. Search again before mutating.`
+  }
+  return undefined
+}
+
+function applyValuePatch(
+  base: unknown,
+  patch: Record<string, unknown> | undefined,
+  unsetFields: string[] | undefined,
+): unknown {
+  if (!patch && !unsetFields?.length) return base
+  if (!base || typeof base !== 'object' || Array.isArray(base)) {
+    return patch ? { ...patch } : base
+  }
+  const output = { ...(base as Record<string, unknown>), ...(patch || {}) }
+  for (const field of unsetFields || []) delete output[field]
+  return output
+}
+
+function uniqueValues(values: string[]): string[] {
+  return [...new Set(values.map(value => value.trim()).filter(Boolean))]
 }
 
 function buildSummary(
@@ -526,8 +626,5 @@ function emptyContext(diagnostics: MemoryContext['diagnostics']): MemoryContext 
 }
 
 function isNodeAccessible(node: MemoryNode, identity: Partial<MemoryRuntimeIdentity> | undefined): boolean {
-  if (node.scope === 'global') return true
-  if (node.scope === 'session') return Boolean(identity?.sessionId && identity.sessionId === node.sessionId)
-  if (node.scope === 'workspace') return Boolean(identity?.workspaceId && identity.workspaceId === node.workspaceId)
-  return Boolean(identity?.userId && identity.userId === node.userId)
+  return (identity?.profileId || 'default') === node.profileId
 }

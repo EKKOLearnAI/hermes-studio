@@ -13,9 +13,17 @@ import type {
 
 const MEMORY_MIGRATIONS: EkkoDatabaseMigration[] = [{
   component: 'memory',
-  version: 1,
+  version: 3,
   migrate(db) {
     db.exec(`
+      DROP TABLE IF EXISTS memory_nodes_fts;
+      DROP TABLE IF EXISTS memory_embeddings;
+      DROP TABLE IF EXISTS memory_audit_events;
+      DROP TABLE IF EXISTS memory_nodes;
+      DROP TABLE IF EXISTS memory_session_state;
+      DROP TABLE IF EXISTS memory_summaries;
+      DROP TABLE IF EXISTS memory_messages;
+
       CREATE TABLE IF NOT EXISTS memory_messages (
         row_id INTEGER PRIMARY KEY AUTOINCREMENT,
         id TEXT NOT NULL UNIQUE,
@@ -48,15 +56,13 @@ const MEMORY_MIGRATIONS: EkkoDatabaseMigration[] = [{
         id TEXT NOT NULL UNIQUE,
         parent_id TEXT,
         supersedes_id TEXT,
-        session_id TEXT,
-        workspace_id TEXT,
-        user_id TEXT,
-        scope TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
         domain TEXT NOT NULL,
         category_path_json TEXT NOT NULL,
         category_path_text TEXT NOT NULL,
         type TEXT NOT NULL,
-        key TEXT,
+        key TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
         value_json TEXT,
         title TEXT NOT NULL,
         content TEXT NOT NULL,
@@ -76,8 +82,7 @@ const MEMORY_MIGRATIONS: EkkoDatabaseMigration[] = [{
         event_type TEXT NOT NULL,
         node_id TEXT,
         session_id TEXT,
-        workspace_id TEXT,
-        user_id TEXT,
+        profile_id TEXT NOT NULL,
         actor TEXT NOT NULL,
         reason TEXT NOT NULL,
         payload_json TEXT,
@@ -100,17 +105,13 @@ const MEMORY_MIGRATIONS: EkkoDatabaseMigration[] = [{
       CREATE INDEX IF NOT EXISTS idx_memory_summaries_session_created
         ON memory_summaries (session_id, row_id);
       CREATE INDEX IF NOT EXISTS idx_memory_nodes_lookup
-        ON memory_nodes (scope, status, domain, type, importance, updated_at);
+        ON memory_nodes (profile_id, status, domain, type, importance, updated_at);
       CREATE INDEX IF NOT EXISTS idx_memory_nodes_key
-        ON memory_nodes (scope, status, domain, type, key, updated_at);
+        ON memory_nodes (profile_id, status, domain, type, key, updated_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_nodes_unique_active_key
+        ON memory_nodes (profile_id, key) WHERE status = 'active';
       CREATE INDEX IF NOT EXISTS idx_memory_nodes_category
         ON memory_nodes (category_path_text);
-      CREATE INDEX IF NOT EXISTS idx_memory_nodes_session
-        ON memory_nodes (session_id, status, updated_at);
-      CREATE INDEX IF NOT EXISTS idx_memory_nodes_workspace
-        ON memory_nodes (workspace_id, status, updated_at);
-      CREATE INDEX IF NOT EXISTS idx_memory_nodes_user
-        ON memory_nodes (user_id, status, updated_at);
       CREATE INDEX IF NOT EXISTS idx_memory_audit_events_node
         ON memory_audit_events (node_id, row_id);
     `)
@@ -218,51 +219,62 @@ export class SqliteMemoryStore implements MemoryStore {
     })
   }
 
-  async supersedeNode(input: { oldNodeId: string; newNode: MemoryNode; reason: string; actor: string }): Promise<void> {
+  async supersedeNode(input: { oldNodeId: string; newNode: MemoryNode; reason: string; actor: string; sessionId?: string }): Promise<void> {
     this.databaseManager.transaction(() => {
       const old = this.db.prepare('SELECT * FROM memory_nodes WHERE id = ?').get(input.oldNodeId) as Row | undefined
       if (!old) throw new Error(`Memory node not found: ${input.oldNodeId}`)
+      const oldNode = nodeFromRow(old)
+      if (input.newNode.revision !== oldNode.revision + 1) {
+        throw new Error(`Memory revision must advance exactly once: ${input.oldNodeId}`)
+      }
       const changed = this.db.prepare(
-        "UPDATE memory_nodes SET status = 'superseded', updated_at = ? WHERE id = ? AND status = 'active'",
-      ).run(input.newNode.updatedAt, input.oldNodeId)
+        "UPDATE memory_nodes SET status = 'superseded', updated_at = ? WHERE id = ? AND status = 'active' AND revision = ?",
+      ).run(input.newNode.updatedAt, input.oldNodeId, oldNode.revision)
       if (Number(changed.changes) !== 1) throw new Error(`Memory node is not active: ${input.oldNodeId}`)
       this.writeNode({ ...input.newNode, supersedesId: input.oldNodeId })
-      this.syncFts({ ...nodeFromRow(old), status: 'superseded', updatedAt: input.newNode.updatedAt })
+      this.syncFts({ ...oldNode, status: 'superseded', updatedAt: input.newNode.updatedAt })
       this.writeAudit(auditForNode('supersede', input.newNode, input.reason, input.actor, {
         supersededNodeId: input.oldNodeId,
-      }))
+      }, input.sessionId))
     })
   }
 
-  async updateNodeStatus(input: { nodeId: string; status: MemoryNode['status']; reason: string; actor: string }): Promise<boolean> {
+  async updateNodeStatus(input: { nodeId: string; status: MemoryNode['status']; reason: string; actor: string; expectedRevision?: number; sessionId?: string }): Promise<boolean> {
     const existing = await this.getNode(input.nodeId)
     if (!existing) return false
+    if (input.expectedRevision !== undefined && existing.revision !== input.expectedRevision) return false
     const updatedAt = new Date().toISOString()
     this.databaseManager.transaction(() => {
-      this.db.prepare('UPDATE memory_nodes SET status = ?, updated_at = ? WHERE id = ?')
-        .run(input.status, updatedAt, input.nodeId)
-      this.syncFts({ ...existing, status: input.status, updatedAt })
+      const changed = this.db.prepare('UPDATE memory_nodes SET status = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?')
+        .run(input.status, updatedAt, input.nodeId, existing.revision)
+      if (Number(changed.changes) !== 1) throw new Error(`Memory revision changed: ${input.nodeId}`)
+      this.syncFts({ ...existing, status: input.status, revision: existing.revision + 1, updatedAt })
       this.writeAudit(auditForNode(
         input.status === 'expired' ? 'expire' : input.status === 'deleted' ? 'delete' : 'update',
-        { ...existing, status: input.status, updatedAt },
+        { ...existing, status: input.status, revision: existing.revision + 1, updatedAt },
         input.reason,
         input.actor,
+        undefined,
+        input.sessionId,
       ))
     })
     return true
   }
 
-  async deleteNode(input: { nodeId: string; mode: 'soft' | 'hard'; reason: string; actor: string }): Promise<boolean> {
+  async deleteNode(input: { nodeId: string; mode: 'soft' | 'hard'; reason: string; actor: string; expectedRevision?: number; sessionId?: string }): Promise<boolean> {
     const existing = await this.getNode(input.nodeId)
     if (!existing) return false
+    if (input.expectedRevision !== undefined && existing.revision !== input.expectedRevision) return false
     if (input.mode === 'soft') {
       return this.updateNodeStatus({ ...input, status: 'deleted' })
     }
     this.databaseManager.transaction(() => {
-      this.writeAudit(auditForNode('delete', existing, input.reason, input.actor, { mode: 'hard' }))
+      this.writeAudit(auditForNode('delete', existing, input.reason, input.actor, { mode: 'hard' }, input.sessionId))
       if (this.ftsEnabled) this.db.prepare('DELETE FROM memory_nodes_fts WHERE node_id = ?').run(input.nodeId)
       this.db.prepare('DELETE FROM memory_embeddings WHERE node_id = ?').run(input.nodeId)
-      this.db.prepare('DELETE FROM memory_nodes WHERE id = ?').run(input.nodeId)
+      const removed = this.db.prepare('DELETE FROM memory_nodes WHERE id = ? AND revision = ?')
+        .run(input.nodeId, existing.revision)
+      if (Number(removed.changes) !== 1) throw new Error(`Memory revision changed: ${input.nodeId}`)
     })
     return true
   }
@@ -270,13 +282,15 @@ export class SqliteMemoryStore implements MemoryStore {
   async queryNodes(query: MemoryQuery): Promise<MemoryNode[]> {
     const clauses: string[] = []
     const params: SQLInputValue[] = []
+    if (!query.profileId) return []
+    clauses.push('profile_id = ?')
+    params.push(query.profileId)
     if (query.includeExpired) {
       clauses.push("status IN ('active', 'expired')")
     } else {
       clauses.push("status = 'active' AND (expires_at IS NULL OR expires_at > ?)")
       params.push(new Date().toISOString())
     }
-    if (query.scopes?.length) addScopeClause(clauses, params, query)
     if (query.domain) {
       clauses.push('domain = ?')
       params.push(query.domain)
@@ -372,23 +386,21 @@ export class SqliteMemoryStore implements MemoryStore {
   private writeNode(node: MemoryNode): void {
     this.db.prepare(`
       INSERT INTO memory_nodes (
-        id, parent_id, supersedes_id, session_id, workspace_id, user_id, scope,
-        domain, category_path_json, category_path_text, type, key, value_json,
+        id, parent_id, supersedes_id, profile_id,
+        domain, category_path_json, category_path_text, type, key, revision, value_json,
         title, content, status, confidence, importance, tags_json, entities_json,
         source_message_ids_json, created_at, updated_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         parent_id = excluded.parent_id,
         supersedes_id = excluded.supersedes_id,
-        session_id = excluded.session_id,
-        workspace_id = excluded.workspace_id,
-        user_id = excluded.user_id,
-        scope = excluded.scope,
+        profile_id = excluded.profile_id,
         domain = excluded.domain,
         category_path_json = excluded.category_path_json,
         category_path_text = excluded.category_path_text,
         type = excluded.type,
         key = excluded.key,
+        revision = excluded.revision,
         value_json = excluded.value_json,
         title = excluded.title,
         content = excluded.content,
@@ -416,15 +428,14 @@ export class SqliteMemoryStore implements MemoryStore {
   private writeAudit(event: MemoryAuditEvent): void {
     this.db.prepare(`
       INSERT INTO memory_audit_events
-        (id, event_type, node_id, session_id, workspace_id, user_id, actor, reason, payload_json, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, event_type, node_id, session_id, profile_id, actor, reason, payload_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       event.id,
       event.eventType,
       event.nodeId ?? null,
       event.sessionId ?? null,
-      event.workspaceId ?? null,
-      event.userId ?? null,
+      event.profileId,
       event.actor,
       event.reason,
       jsonOrNull(event.payload),
@@ -438,15 +449,13 @@ function nodeValues(node: MemoryNode): SQLInputValue[] {
     node.id,
     node.parentId ?? null,
     node.supersedesId ?? null,
-    node.sessionId ?? null,
-    node.workspaceId ?? null,
-    node.userId ?? null,
-    node.scope,
+    node.profileId,
     node.domain,
     JSON.stringify(node.categoryPath),
     categoryPathText(node.categoryPath),
     node.type,
-    node.key ?? null,
+    node.key,
+    Math.max(1, Math.floor(node.revision || 1)),
     node.valueJson === undefined ? null : stableJson(node.valueJson),
     node.title,
     node.content,
@@ -498,14 +507,12 @@ function nodeFromRow(row: Row): MemoryNode {
     id: String(row.id),
     parentId: optionalString(row.parent_id),
     supersedesId: optionalString(row.supersedes_id),
-    sessionId: optionalString(row.session_id),
-    workspaceId: optionalString(row.workspace_id),
-    userId: optionalString(row.user_id),
-    scope: String(row.scope) as MemoryNode['scope'],
+    profileId: String(row.profile_id),
     domain: String(row.domain),
     categoryPath: parseStringArray(row.category_path_json),
     type: String(row.type) as MemoryNode['type'],
-    key: optionalString(row.key),
+    key: String(row.key),
+    revision: Math.max(1, Number(row.revision || 1)),
     valueJson: parseJsonValue(row.value_json),
     title: String(row.title),
     content: String(row.content),
@@ -527,14 +534,14 @@ function auditForNode(
   reason: string,
   actor: string,
   payload?: Record<string, unknown>,
+  sessionId?: string,
 ): MemoryAuditEvent {
   return {
     id: randomUUID(),
     eventType,
     nodeId: node.id,
-    sessionId: node.sessionId,
-    workspaceId: node.workspaceId,
-    userId: node.userId,
+    sessionId,
+    profileId: node.profileId,
     actor,
     reason,
     payload,
@@ -554,25 +561,6 @@ function boundedLimit(value: number, maximum: number): number {
 function addInClause(clauses: string[], params: SQLInputValue[], column: string, values: readonly string[]): void {
   clauses.push(`${column} IN (${values.map(() => '?').join(', ')})`)
   params.push(...values)
-}
-
-function addScopeClause(clauses: string[], params: SQLInputValue[], query: MemoryQuery): void {
-  const options: string[] = []
-  for (const scope of query.scopes || []) {
-    if (scope === 'session' && query.sessionId) {
-      options.push("(scope = 'session' AND session_id = ?)")
-      params.push(query.sessionId)
-    } else if (scope === 'workspace' && query.workspaceId) {
-      options.push("(scope = 'workspace' AND workspace_id = ?)")
-      params.push(query.workspaceId)
-    } else if (scope === 'user' && query.userId) {
-      options.push("(scope = 'user' AND user_id = ?)")
-      params.push(query.userId)
-    } else if (scope === 'global') {
-      options.push("scope = 'global'")
-    }
-  }
-  clauses.push(options.length ? `(${options.join(' OR ')})` : '0 = 1')
 }
 
 function stableJson(value: unknown): string {

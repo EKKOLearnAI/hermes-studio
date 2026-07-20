@@ -6,6 +6,8 @@ export interface AgentToolContext {
   workspaceId?: string
   userId?: string
   sessionId?: string
+  profileId?: string
+  sourceMessageIds?: string[]
   browserSessionId?: string
   mcpServers?: Record<string, unknown>
   timeoutMs?: number

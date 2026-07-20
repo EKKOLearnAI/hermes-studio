@@ -1,5 +1,5 @@
 import type { AgentTool, AgentToolContext, AgentToolResult } from '../tools/types'
-import type { MemoryForgetInput, MemoryNode, MemoryProposeUpdateInput, MemoryQuery, MemoryRuntimeIdentity } from './types'
+import { MEMORY_KINDS, type MemoryForgetInput, type MemoryNode, type MemoryProposeUpdateInput, type MemoryQuery, type MemoryRuntimeIdentity } from './types'
 import type { MemoryService } from './service'
 
 export function createMemoryTools(service: MemoryService): AgentTool[] {
@@ -14,12 +14,11 @@ export function createMemoryTools(service: MemoryService): AgentTool[] {
 class MemorySearchTool implements AgentTool {
   readonly definition = {
     name: 'memory_search',
-    description: 'Search Ekko Agent structured memory using scoped exact fields and optional keyword relevance.',
+    description: 'Search current profile memory. Results include the canonical key, id, revision, value, and content required for precise mutations.',
     parameters: {
       type: 'object',
       properties: {
         queryText: { type: 'string' },
-        scope: { type: 'string', enum: ['session', 'workspace', 'user', 'global'] },
         domain: { type: 'string' },
         categoryPathPrefix: { type: 'array', items: { type: 'string' } },
         types: { type: 'array', items: { type: 'string' } },
@@ -40,7 +39,6 @@ class MemorySearchTool implements AgentTool {
     if (!identity) return failure('memory_search requires a sessionId.')
     const query: MemoryQuery = {
       queryText: optionalString(input.queryText),
-      scopes: optionalString(input.scope) ? [optionalString(input.scope)! as MemoryNode['scope']] : undefined,
       domain: optionalString(input.domain),
       categoryPathPrefix: stringArray(input.categoryPathPrefix),
       types: stringArray(input.types) as MemoryNode['type'][] | undefined,
@@ -58,12 +56,11 @@ class MemorySearchTool implements AgentTool {
 class MemoryGetTool implements AgentTool {
   readonly definition = {
     name: 'memory_get',
-    description: 'Get one memory by id, or resolve an exact scoped memory query.',
+    description: 'Get one complete memory card by id, including its server canonical key and current revision.',
     parameters: {
       type: 'object',
       properties: {
         id: { type: 'string' },
-        scope: { type: 'string', enum: ['session', 'workspace', 'user', 'global'] },
         domain: { type: 'string' },
         type: { type: 'string' },
         key: { type: 'string' },
@@ -82,9 +79,8 @@ class MemoryGetTool implements AgentTool {
       if (!identity) return failure('memory_get requires a sessionId.')
       return success(await this.service.get(id, identity))
     }
-    if (!identity) return failure('memory_get requires a sessionId when id is not provided.')
+    if (!identity) return failure('memory_get requires a sessionId.')
     const result = await this.service.search(identity, {
-      scopes: optionalString(input.scope) ? [optionalString(input.scope)! as MemoryNode['scope']] : undefined,
       domain: optionalString(input.domain),
       types: optionalString(input.type) ? [optionalString(input.type)! as MemoryNode['type']] : undefined,
       key: optionalString(input.key),
@@ -99,28 +95,25 @@ class MemoryGetTool implements AgentTool {
 class MemoryProposeUpdateTool implements AgentTool {
   readonly definition = {
     name: 'memory_propose_update',
-    description: 'Propose a validated memory create, update, supersede, expire, or soft delete operation.',
+    description: (
+      'Create or revision-check a durable memory. For create, provide a controlled kind and optional itemKey; ' +
+      'the server generates the canonical key and automatically noops or replaces the active value in that slot. ' +
+      'For update/supersede, first search/get, then provide targetId and expectedRevision; the server preserves the key. ' +
+      'Use valuePatch/unsetValueFields for object fields. Never invent or submit a key. ' +
+      'Persist only cross-session durable state, not transient requests or retraction history; forget an exact invalidated memory when no durable replacement remains.'
+    ),
     parameters: {
       type: 'object',
-      required: ['operation', 'node', 'reason'],
+      required: ['operation', 'reason'],
       properties: {
         operation: { type: 'string', enum: ['create', 'update', 'supersede', 'expire', 'delete'] },
+        kind: { type: 'string', enum: [...MEMORY_KINDS], description: 'Required for create. Server maps this controlled kind to a canonical key.' },
+        itemKey: { type: 'string', description: 'Stable concept/entity discriminator required for itemized kinds, such as a preference dimension or entity name.' },
         targetId: { type: 'string' },
+        expectedRevision: { type: 'integer', minimum: 1, description: 'Required for update, supersede, expire, and delete.' },
         node: {
           type: 'object',
           properties: {
-            scope: {
-              type: 'string',
-              enum: ['session', 'workspace', 'user'],
-              description: 'Use user only for durable cross-workspace memory with explicit user intent; otherwise prefer workspace or session.',
-            },
-            domain: { type: 'string' },
-            categoryPath: { type: 'array', items: { type: 'string' } },
-            type: {
-              type: 'string',
-              enum: ['preference', 'fact', 'decision', 'task', 'recipe', 'skill', 'constraint', 'correction'],
-            },
-            key: { type: 'string' },
             valueJson: { description: 'Optional structured or scalar value. Use this exact field name, not value.' },
             title: { type: 'string', description: 'Short human-readable memory title.' },
             content: { type: 'string', description: 'Complete durable memory statement.' },
@@ -128,16 +121,16 @@ class MemoryProposeUpdateTool implements AgentTool {
             importance: { type: 'number', minimum: 0, maximum: 1 },
             tags: { type: 'array', items: { type: 'string' } },
             entities: { type: 'array', items: { type: 'string' } },
-            sourceMessageIds: { type: 'array', items: { type: 'string' } },
             expiresAt: { type: 'string', description: 'Optional ISO-8601 expiration timestamp.' },
           },
-          required: ['type', 'title', 'content'],
           additionalProperties: false,
         },
+        valuePatch: { type: 'object', description: 'Object fields to set while preserving unspecified fields in the current value.' },
+        unsetValueFields: { type: 'array', items: { type: 'string' }, description: 'Object fields to remove without deleting the whole memory.' },
         reason: { type: 'string' },
         explicitUserIntent: {
           type: 'boolean',
-          description: 'Set true only when the user clearly asked to remember or persist user-scoped information.',
+          description: 'Set true only when the user clearly asked to remember, change, correct, or delete durable information.',
         },
       },
       additionalProperties: false,
@@ -149,17 +142,24 @@ class MemoryProposeUpdateTool implements AgentTool {
   async execute(input: Record<string, unknown>, context?: AgentToolContext): Promise<AgentToolResult> {
     const identity = runtimeIdentity(context)
     if (!identity) return failure('memory_propose_update requires a sessionId.')
-    if (!input.node || typeof input.node !== 'object' || Array.isArray(input.node)) return failure('node must be an object.')
     const operation = optionalString(input.operation) as MemoryProposeUpdateInput['operation'] | undefined
     const reason = optionalString(input.reason)
     if (!operation || !reason) return failure('operation and reason are required.')
-    const node = normalizeToolMemoryNode(input.node as Record<string, unknown>)
-    const explicitUserIntent = input.explicitUserIntent === true || (
-      operation === 'supersede' && Boolean(optionalString(input.targetId)) && node.type === 'correction'
-    )
+    const rawNode = input.node && typeof input.node === 'object' && !Array.isArray(input.node)
+      ? input.node as Record<string, unknown>
+      : {}
+    if (operation === 'create' && !input.node) return failure('create requires node.')
+    const node = normalizeToolMemoryNode(rawNode)
+    node.sourceMessageIds = uniqueStrings(context?.sourceMessageIds || [])
+    const explicitUserIntent = input.explicitUserIntent === true
     const result = await this.service.proposeUpdate({
       operation,
+      kind: optionalString(input.kind) as MemoryProposeUpdateInput['kind'],
+      itemKey: optionalString(input.itemKey),
       targetId: optionalString(input.targetId),
+      expectedRevision: optionalNumber(input.expectedRevision),
+      valuePatch: recordValue(input.valuePatch),
+      unsetValueFields: stringArray(input.unsetValueFields),
       node,
       reason,
       explicitUserIntent,
@@ -173,13 +173,13 @@ class MemoryProposeUpdateTool implements AgentTool {
 class MemoryForgetTool implements AgentTool {
   readonly definition = {
     name: 'memory_forget',
-    description: 'Soft-delete or confirmed hard-delete matching Ekko Agent memories.',
+    description: 'Delete memory by id and expectedRevision. Exact soft deletion is immediate; broad or hard deletion requires confirmation.',
     parameters: {
       type: 'object',
       required: ['reason'],
       properties: {
         id: { type: 'string' },
-        scope: { type: 'string', enum: ['session', 'workspace', 'user', 'global'] },
+        expectedRevision: { type: 'integer', minimum: 1, description: 'Required when deleting by id.' },
         domain: { type: 'string' },
         categoryPathPrefix: { type: 'array', items: { type: 'string' } },
         type: { type: 'string' },
@@ -202,7 +202,7 @@ class MemoryForgetTool implements AgentTool {
     if (!reason) return failure('reason is required.')
     const request: MemoryForgetInput = {
       id: optionalString(input.id),
-      scope: optionalString(input.scope) as MemoryNode['scope'] | undefined,
+      expectedRevision: optionalNumber(input.expectedRevision),
       domain: optionalString(input.domain),
       categoryPathPrefix: stringArray(input.categoryPathPrefix),
       type: optionalString(input.type) as MemoryNode['type'] | undefined,
@@ -224,8 +224,7 @@ function runtimeIdentity(context?: AgentToolContext): MemoryRuntimeIdentity | un
   if (!context?.sessionId) return undefined
   return {
     sessionId: context.sessionId,
-    workspaceId: context.workspaceId || context.workspaceRoot || context.cwd,
-    userId: context.userId,
+    profileId: context.profileId || 'default',
   }
 }
 
@@ -249,6 +248,16 @@ function optionalNumber(value: unknown): number | undefined {
 function stringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined
   return value.map(item => String(item).trim()).filter(Boolean)
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values.map(value => String(value).trim()).filter(Boolean))]
 }
 
 function normalizeToolMemoryNode(input: Record<string, unknown>): Partial<MemoryNode> {

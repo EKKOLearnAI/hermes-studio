@@ -60,6 +60,7 @@ export class GlobalEkkoAgent {
     } else {
       try {
         const database = new EkkoDatabaseManager({ webUiHome: this.options.webUiHome })
+        // Opening the store recreates the current schema after an explicit memory reset.
         const store = new SqliteMemoryStore(database)
         this.memoryDatabasePath = store.databasePath
         this.memory = new MemoryService({ store })

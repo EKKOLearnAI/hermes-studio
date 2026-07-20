@@ -9,7 +9,6 @@ import {
   ModelMemoryExtractor,
   SqliteMemoryStore,
   createMemoryTools,
-  normalizeMemoryKey,
   resolveMemoryQuery,
   type MemoryNode,
   type MemoryMessage,
@@ -34,89 +33,89 @@ afterEach(async () => {
 })
 
 describe('MemoryService', () => {
-  it('normalizes controlled keys and requires explicit intent for user memory', async () => {
-    expect(normalizeMemoryKey('avoid-food')).toBe('avoid_ingredient')
-    const rejected = await service.proposeUpdate({
-      operation: 'create',
-      reason: 'inferred',
-      identity: { sessionId: 's1', userId: 'u1' },
-      node: userPreference('tofu'),
-    })
-    expect(rejected).toMatchObject({ accepted: false, reason: 'User-scoped memory requires explicit user intent.' })
-
+  it('generates canonical keys on the server and stores one profile memory shape', async () => {
     const accepted = await service.proposeUpdate({
       operation: 'create',
+      kind: 'food_avoidance',
+      itemKey: 'tofu',
       reason: 'explicit',
       explicitUserIntent: true,
-      identity: { sessionId: 's1', userId: 'u1' },
+      identity: { sessionId: 's1', profileId: 'work' },
       node: userPreference('tofu'),
     })
-    expect(accepted.accepted).toBe(true)
+    expect(accepted).toMatchObject({
+      accepted: true,
+      action: 'created',
+      node: { key: 'preference.food.avoid:tofu', revision: 1 },
+    })
     const exact = await service.search(
-      { sessionId: 's1', userId: 'u1' },
-      { domain: '生活技能', key: 'avoid_ingredient', valueJson: 'tofu' },
+      { sessionId: 's1', profileId: 'work' },
+      { domain: 'preference', key: 'preference.food.avoid:tofu', valueJson: 'tofu' },
     )
-    expect(exact.exact).toMatchObject([{ valueJson: 'tofu' }])
+    expect(exact.exact).toMatchObject([{ profileId: 'work', valueJson: 'tofu' }])
   })
 
-  it('prefers corrections and narrower scopes when resolving conflicts', () => {
+  it('prefers corrections when resolving unified-memory conflicts', () => {
     const nodes = [
-      memoryNode('user', { scope: 'user', userId: 'u1' }),
-      memoryNode('workspace', { scope: 'workspace', workspaceId: '/repo' }),
-      memoryNode('correction', { scope: 'user', userId: 'u1', type: 'correction' }),
+      memoryNode('older'),
+      memoryNode('newer', { updatedAt: '2026-01-02T00:00:00.000Z' }),
+      memoryNode('correction', { type: 'correction' }),
     ]
     const result = resolveMemoryQuery([], nodes, undefined, 10)
     expect(result.relevant.map(node => node.id)).toEqual(['correction'])
     expect(result.omitted).toEqual(expect.arrayContaining([
-      { nodeId: 'workspace', reason: 'conflict_lost' },
-      { nodeId: 'user', reason: 'conflict_lost' },
+      { nodeId: 'older', reason: 'conflict_lost' },
+      { nodeId: 'newer', reason: 'conflict_lost' },
     ]))
   })
 
-  it('keeps independent multi-value preferences and scopes id access', async () => {
+  it('keeps independent multi-value preferences and isolates profiles', async () => {
     for (const value of ['香菜', '芹菜']) {
       await service.proposeUpdate({
         operation: 'create',
+        kind: 'food_avoidance',
+        itemKey: value,
         reason: 'explicit',
         explicitUserIntent: true,
-        identity: { sessionId: 's1', userId: 'u1' },
+        identity: { sessionId: 's1', profileId: 'work' },
         node: userPreference(value),
       })
     }
-    const result = await service.search({ sessionId: 's1', userId: 'u1' }, { key: 'avoid_ingredient', limit: 10 })
+    const result = await service.search({ sessionId: 's1', profileId: 'work' }, { domain: 'preference', limit: 10 })
     const nodes = [...result.exact, ...result.relevant]
     expect(nodes.map(node => node.valueJson).sort()).toEqual(['芹菜', '香菜'])
-    await expect(service.get(nodes[0].id, { sessionId: 'other', userId: 'u2' })).resolves.toBeUndefined()
+    await expect(service.get(nodes[0].id, { sessionId: 'other', profileId: 'personal' })).resolves.toBeUndefined()
     await expect(service.forget({
       id: nodes[0].id,
-      reason: 'cross-user attempt',
-      identity: { sessionId: 'other', userId: 'u2' },
+      reason: 'cross-profile attempt',
+      identity: { sessionId: 'other', profileId: 'personal' },
     })).resolves.toMatchObject({ deletedIds: [], reason: 'No matching memory was found.' })
 
     await expect(service.proposeUpdate({
       operation: 'create',
-      reason: 'cross-user attempt',
+      kind: 'food_avoidance',
+      itemKey: '葱',
+      reason: 'cross-profile attempt',
       explicitUserIntent: true,
-      identity: { sessionId: 's1', userId: 'u1' },
-      node: { ...userPreference('葱'), userId: 'u2' },
+      identity: { sessionId: 's1', profileId: 'work' },
+      node: { ...userPreference('葱'), profileId: 'personal' },
     })).resolves.toMatchObject({
       accepted: false,
-      reason: 'Memory userId does not match the runtime identity.',
+      reason: 'Memory profileId does not match the runtime identity.',
     })
   })
 
   it('extracts explicit preferences asynchronously and builds chained summaries', async () => {
-    const identity = { sessionId: 's1', workspaceId: '/repo', userId: 'u1' }
+    const identity = { sessionId: 's1', profileId: 'default' }
     service.scheduleRunCompletion(identity, [
       { role: 'user', content: '以后做饭少油少辣' },
       { role: 'assistant', content: '好的，已记住。' },
     ])
     await service.drain()
 
-    const result = await service.search(identity, { domain: '生活技能', key: 'flavor_profile' })
+    const result = await service.search(identity, { domain: 'custom', key: 'custom.fact:food_flavor_profile' })
     expect([...result.exact, ...result.relevant]).toMatchObject([{
-      scope: 'user',
-      userId: 'u1',
+      profileId: 'default',
       valueJson: { oil: 'low', spicy: 'low' },
     }])
     await expect(store.getLatestSummary({ sessionId: 's1' })).resolves.toMatchObject({
@@ -134,7 +133,7 @@ describe('MemoryService', () => {
       reviewEveryUserMessages: 2,
       extractor: { extract },
     })
-    const identity = { sessionId: 'threshold-session', userId: 'u1' }
+    const identity = { sessionId: 'threshold-session', profileId: 'default' }
 
     gated.scheduleRunCompletion(identity, [
       { role: 'user', content: 'first question' },
@@ -165,6 +164,22 @@ describe('MemoryService', () => {
     })
   })
 
+  it('reviews every completed user turn by default and lets the curator decide noop', async () => {
+    const extract = vi.fn().mockResolvedValue({ summaryPatch: 'Default review.', nodes: [] })
+    const responsive = new MemoryService({ store, extractor: { extract } })
+
+    responsive.scheduleRunCompletion(
+      { sessionId: 'default-review-session', profileId: 'default' },
+      [
+        { role: 'user', content: '你好' },
+        { role: 'assistant', content: '你好！' },
+      ],
+    )
+    await responsive.drain()
+
+    expect(extract).toHaveBeenCalledTimes(1)
+  })
+
   it('allows a manual review to bypass the user-message threshold', async () => {
     const extract = vi.fn().mockResolvedValue({ summaryPatch: 'Manual review.', nodes: [] })
     const gated = new MemoryService({
@@ -172,7 +187,7 @@ describe('MemoryService', () => {
       reviewEveryUserMessages: 8,
       extractor: { extract },
     })
-    const identity = { sessionId: 'manual-review-session', userId: 'u1' }
+    const identity = { sessionId: 'manual-review-session', profileId: 'default' }
     await gated.captureMessages(identity, [{ role: 'user', content: 'one message' }])
 
     gated.scheduleExtraction(identity)
@@ -184,12 +199,44 @@ describe('MemoryService', () => {
     })
   })
 
+  it('reviews high-signal durable statements immediately without requiring a remember command', async () => {
+    const extract = vi.fn().mockResolvedValue({ summaryPatch: 'Memory candidate reviewed.', nodes: [] })
+    const responsive = new MemoryService({
+      store,
+      reviewEveryUserMessages: 8,
+      extractor: { extract },
+    })
+    const statements = [
+      '我是你老爷',
+      '我不喜欢长篇解释',
+      '我的工作流是 TypeScript 和 pnpm',
+      '其实我不住厦门，我现在住南宁',
+      '忘记我的住址',
+    ]
+
+    for (const [index, content] of statements.entries()) {
+      responsive.scheduleRunCompletion(
+        { sessionId: `high-signal-memory-${index}`, profileId: 'default' },
+        [
+          { role: 'user', content },
+          { role: 'assistant', content: '知道了。' },
+        ],
+      )
+    }
+    await responsive.drain()
+
+    expect(extract).toHaveBeenCalledTimes(statements.length)
+    expect(extract.mock.calls.map(call => call[0].messages[0].content)).toEqual(statements)
+  })
+
   it('injects retrieved memory and memory tools into runtime requests', async () => {
     await service.proposeUpdate({
       operation: 'create',
+      kind: 'food_avoidance',
+      itemKey: '香菜',
       reason: 'explicit',
       explicitUserIntent: true,
-      identity: { sessionId: 's1', userId: 'u1' },
+      identity: { sessionId: 's1', profileId: 'default' },
       node: userPreference('香菜'),
     })
     const client = modelClient()
@@ -197,16 +244,80 @@ describe('MemoryService', () => {
     const result = await runtime.run({
       messages: ['推荐一道菜'],
       contextKey: 's1',
-      toolContext: { sessionId: 's1', userId: 'u1' },
+      toolContext: { sessionId: 's1', profileId: 'default' },
     })
 
     const request = vi.mocked(client.create).mock.calls[0][0] as ModelRequest
     expect(request.messages[0].content).toContain('Retrieved Memory')
     expect(request.messages[0].content).toContain('Avoid 香菜')
+    expect(request.messages[0].content).toContain('key=preference.food.avoid:香菜 revision=1')
     expect(request.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining([
       'memory_search', 'memory_get', 'memory_propose_update', 'memory_forget',
     ]))
     expect(result.memoryContext?.usedMemoryIds).toHaveLength(1)
+  })
+
+  it('attaches the latest user message id to foreground memory writes', async () => {
+    const create = vi.fn()
+      .mockResolvedValueOnce({
+        content: '',
+        finishReason: 'tool_calls',
+        toolCalls: [{
+          id: 'foreground-memory-call',
+          name: 'memory_propose_update',
+          arguments: {
+            operation: 'create',
+            kind: 'home_location',
+            explicitUserIntent: true,
+            reason: '用户明确说明当前常住地。',
+            node: { valueJson: '贵阳' },
+          },
+        }],
+      })
+      .mockResolvedValueOnce({ content: '记住了。', finishReason: 'stop' })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          recentTopic: '更新常住地',
+          currentGoal: '',
+          constraints: [],
+          preferences: [],
+          decisions: [],
+          completedWork: [],
+          pendingWork: [],
+          knownIssues: [],
+        }),
+      })
+    const client: ModelClient = {
+      provider: 'test',
+      requestStyle: 'custom-runtime',
+      capabilities: { streaming: false, tools: true, vision: false, jsonMode: false, systemPrompt: true },
+      create,
+      stream: vi.fn(),
+    }
+    const runtime = new AgentRuntime({ modelClient: client, memory: service, toolDelayMs: 0 })
+
+    await runtime.run({
+      messages: ['我现在常住贵阳'],
+      contextKey: 'foreground-source-session',
+      toolContext: { sessionId: 'foreground-source-session', profileId: 'default' },
+    })
+
+    const result = await service.search(
+      { sessionId: 'foreground-source-session', profileId: 'default' },
+      { key: 'profile.location.home' },
+    )
+    expect(result.exact).toMatchObject([{
+      valueJson: '贵阳',
+      sourceMessageIds: [expect.any(String)],
+    }])
+    const sourceId = result.exact[0].sourceMessageIds[0]
+    await expect(store.listMessagesAfter({ sessionId: 'foreground-source-session', limit: 10 }))
+      .resolves.toEqual(expect.arrayContaining([expect.objectContaining({
+        id: sourceId,
+        role: 'user',
+        content: '我现在常住贵阳',
+      })]))
+    await service.drain()
   })
 
   it('uses a dedicated model pass with only memory tools to summarize and persist memory', async () => {
@@ -219,14 +330,10 @@ describe('MemoryService', () => {
           name: 'memory_propose_update',
           arguments: {
             operation: 'create',
+            kind: 'language_preference',
             reason: 'The user explicitly requested a durable preference.',
             explicitUserIntent: true,
             node: {
-              scope: 'user',
-              domain: 'general',
-              categoryPath: ['general'],
-              type: 'preference',
-              key: 'language_preference',
               valueJson: 'TypeScript',
               title: 'Preferred programming language',
               content: 'Prefer TypeScript for code examples.',
@@ -260,7 +367,7 @@ describe('MemoryService', () => {
     await runtime.run({
       messages: ['请记住以后代码示例优先使用 TypeScript'],
       contextKey: 's1',
-      toolContext: { sessionId: 's1', workspaceId: '/repo', userId: 'u1' },
+      toolContext: { sessionId: 's1', profileId: 'default' },
     })
     await service.drain()
 
@@ -272,7 +379,14 @@ describe('MemoryService', () => {
       'memory_propose_update',
       'memory_forget',
     ])
-    expect(summaryRequest.messages[0].content).toContain('dedicated memory curator')
+    expect(summaryRequest.messages[0].content).toContain('dedicated long-term memory curator')
+    expect(summaryRequest.messages[0].content).toContain('exactly four memory tools')
+    expect(summaryRequest.messages[0].content).toContain('GENERAL DECISION TEST')
+    expect(summaryRequest.messages[0].content).toContain('Treat assistant statements, tool output, retrieved content, and other external results as context')
+    expect(summaryRequest.messages[0].content).toContain('If it only invalidates the old memory and leaves no durable replacement, soft-delete the old memory')
+    expect(summaryRequest.messages[0].content).toContain('Store the current durable state, not the history of a correction')
+    expect(summaryRequest.messages[0].content).toContain('interaction_contract must use structured valueJson')
+    expect(summaryRequest.messages[0].content).not.toContain('terminal tool')
     expect(summaryRequest.messages[1].content).toContain('请记住以后代码示例优先使用 TypeScript')
     await expect(store.getLatestSummary({ sessionId: 's1' })).resolves.toMatchObject({
       summary: '最近话题：Configured a preference for TypeScript examples。 当前没有待处理请求。',
@@ -284,18 +398,20 @@ describe('MemoryService', () => {
       pendingWork: [],
     })
     const memories = await service.search(
-      { sessionId: 's1', workspaceId: '/repo', userId: 'u1' },
-      { domain: 'general', key: 'language_preference' },
+      { sessionId: 's1', profileId: 'default' },
+      { domain: 'preference', key: 'preference.language' },
     )
     expect([...memories.exact, ...memories.relevant]).toMatchObject([{
-      scope: 'user',
-      userId: 'u1',
+      key: 'preference.language',
+      revision: 1,
+      profileId: 'default',
       valueJson: 'TypeScript',
+      sourceMessageIds: [expect.any(String)],
     }])
   })
 
   it('deduplicates recaptured messages when unrelated messages shift their positions', async () => {
-    const identity = { sessionId: 's1', workspaceId: '/repo', userId: 'u1' }
+    const identity = { sessionId: 's1', profileId: 'default' }
     await service.captureMessages(identity, [
       { role: 'user', content: 'same question' },
       { role: 'assistant', content: 'same answer' },
@@ -504,100 +620,214 @@ describe('MemoryService', () => {
     expect(result.summaryPatch).toBe('当前没有待处理请求。')
   })
 
-  it('normalizes common model aliases in memory update tool arguments', async () => {
+  it('ignores model-owned taxonomy and returns the full server-owned memory card', async () => {
     const tool = createMemoryTools(service).find(item => item.definition.name === 'memory_propose_update')!
     const result = await tool.execute({
       operation: 'create',
+      kind: 'home_location',
       node: {
+        valueJson: { city: '厦门', country: '中国' },
         type: 'user_preference',
-        key: 'user_location',
-        value: '厦门市',
-        summary: '用户是厦门人，常住厦门，查询天气默认以厦门为准。',
+        key: 'model-invented-key',
+        summary: '这些字段应被服务端规则覆盖。',
+        sourceMessageIds: ['model-invented-source'],
       },
-      reason: '用户表明自己是厦门人。',
+      reason: '用户表明自己常住厦门。',
+      explicitUserIntent: true,
     }, {
       sessionId: 's1',
-      workspaceId: '/repo',
-      userId: 'u1',
+      profileId: 'default',
+      sourceMessageIds: ['location-message-1'],
     })
 
     expect(result.ok).toBe(true)
-    const memories = await service.search(
-      { sessionId: 's1', workspaceId: '/repo', userId: 'u1' },
-      { key: 'user_location', valueJson: '厦门市' },
-    )
-    expect(memories.exact).toMatchObject([{
-      scope: 'workspace',
-      type: 'preference',
-      valueJson: '厦门市',
-      title: 'user location: 厦门市',
-      content: '用户是厦门人，常住厦门，查询天气默认以厦门为准。',
-    }])
+    expect(result.data).toMatchObject({
+      action: 'created',
+      node: {
+        profileId: 'default',
+        domain: 'profile',
+        type: 'fact',
+        key: 'profile.location.home',
+        revision: 1,
+        valueJson: { city: '厦门', country: '中国' },
+        title: '用户常住地',
+        content: '用户明确表示常住在中国厦门。',
+        entities: ['厦门'],
+        sourceMessageIds: ['location-message-1'],
+      },
+    })
   })
 
-  it('treats a targeted user correction as explicit intent when superseding memory', async () => {
-    const identity = { sessionId: 's1', workspaceId: '/repo', userId: 'u1' }
+  it('updates an exact memory by id and revision and rejects stale writes', async () => {
+    const identity = { sessionId: 's1', profileId: 'default' }
     const original = await service.proposeUpdate({
       operation: 'create',
+      kind: 'home_location',
       explicitUserIntent: true,
       reason: 'The user explicitly asked to remember their location.',
       identity,
-      node: {
-        scope: 'user',
-        type: 'fact',
-        key: 'user_location',
-        valueJson: '厦门市',
-        title: '用户所在地',
-        content: '用户常住厦门。',
-      },
+      node: { valueJson: '厦门市' },
     })
     const tool = createMemoryTools(service).find(item => item.definition.name === 'memory_propose_update')!
 
     const result = await tool.execute({
-      operation: 'supersede',
+      operation: 'update',
       targetId: original.nodeId,
-      node: {
-        type: 'correction',
-        title: '用户所在地更正：广西南宁',
-        content: '用户是广西南宁人，常住南宁。',
-        scope: 'user',
-        key: 'user-location',
-        importance: 0.9,
-      },
+      expectedRevision: original.node?.revision,
+      node: { valueJson: '广西南宁', importance: 0.9 },
       reason: '用户主动更正所在地为广西南宁。',
     }, identity)
 
     expect(result.ok).toBe(true)
     await expect(store.getNode(original.nodeId!)).resolves.toMatchObject({ status: 'superseded' })
     await expect(store.getNode((result.data as { nodeId: string }).nodeId)).resolves.toMatchObject({
-      scope: 'user',
-      type: 'correction',
-      key: 'user_location',
+      profileId: 'default',
+      type: 'fact',
+      key: 'profile.location.home',
+      revision: 2,
+      valueJson: '广西南宁',
+      content: '用户明确表示常住在广西南宁。',
+      entities: ['广西南宁'],
       status: 'active',
     })
+    expect(store.databaseManager.connection.prepare(
+      "SELECT session_id FROM memory_audit_events WHERE event_type = 'supersede' ORDER BY row_id DESC LIMIT 1",
+    ).get()).toMatchObject({ session_id: 's1' })
+    await expect(service.proposeUpdate({
+      operation: 'update',
+      targetId: (result.data as { nodeId: string }).nodeId,
+      expectedRevision: 1,
+      node: { valueJson: '北京' },
+      reason: 'stale write',
+      identity,
+    })).resolves.toMatchObject({
+      accepted: false,
+      reason: 'Memory revision mismatch: expected 1, current 2. Search again before mutating.',
+    })
+  })
+
+  it('keeps one interaction contract and replaces duplicate relationship statements', async () => {
+    const identity = { sessionId: 's1', profileId: 'default' }
+    await expect(service.proposeUpdate({
+      operation: 'create',
+      kind: 'interaction_contract',
+      explicitUserIntent: true,
+      reason: '不允许只写自由文本。',
+      identity,
+      node: { title: '称呼关系', content: '用户是爸爸，助手是女儿。' },
+    })).resolves.toMatchObject({
+      accepted: false,
+      reason: 'interaction_contract requires structured valueJson with userRole, assistantRole, or addressUserAs.',
+    })
+    const first = await service.proposeUpdate({
+      operation: 'create',
+      kind: 'interaction_contract',
+      explicitUserIntent: true,
+      reason: '用户设定称呼。',
+      identity,
+      node: { valueJson: { userRole: '老爷', addressUserAs: '老爷' } },
+    })
+    const second = await service.proposeUpdate({
+      operation: 'create',
+      kind: 'interaction_contract',
+      explicitUserIntent: true,
+      reason: '用户更新了双方关系。',
+      identity,
+      node: { valueJson: { userRole: '爸爸', assistantRole: '女儿', addressUserAs: '爸爸' } },
+    })
+
+    expect(first).toMatchObject({ action: 'created', node: { key: 'interaction.relationship', revision: 1 } })
+    expect(second).toMatchObject({ action: 'updated', node: {
+      key: 'interaction.relationship',
+      revision: 2,
+      content: '用户设定双方关系：用户是爸爸，助手是女儿；助手应称呼用户为爸爸。',
+      entities: ['爸爸', '女儿'],
+    } })
+    await expect(store.getNode(first.nodeId!)).resolves.toMatchObject({ status: 'superseded' })
+    const active = await store.queryNodes({ profileId: 'default', key: 'interaction.relationship' })
+    expect(active).toHaveLength(1)
+    expect(active[0]).toMatchObject({ id: second.nodeId, revision: 2 })
+
+    const patched = await service.proposeUpdate({
+      operation: 'update',
+      targetId: second.nodeId,
+      expectedRevision: 2,
+      valuePatch: { addressUserAs: '父亲' },
+      unsetValueFields: ['userRole'],
+      node: {},
+      reason: '用户只修改称呼并删除自身角色设定。',
+      identity,
+    })
+    expect(patched).toMatchObject({ action: 'updated', node: {
+      key: 'interaction.relationship',
+      revision: 3,
+      valueJson: { assistantRole: '女儿', addressUserAs: '父亲' },
+      content: '用户将助手的互动角色设定为女儿；助手应称呼用户为父亲。',
+      entities: ['女儿', '父亲'],
+    } })
+    expect(await store.queryNodes({ profileId: 'default', key: 'interaction.relationship' })).toHaveLength(1)
+
+    await service.proposeUpdate({
+      operation: 'create',
+      kind: 'home_location',
+      explicitUserIntent: true,
+      reason: '用户明确说明常住地。',
+      identity,
+      node: { valueJson: '贵阳' },
+    })
+    const locationSearch = await service.search(identity, {
+      queryText: 'home location city 位置 城市',
+      limit: 10,
+    })
+    expect([...locationSearch.exact, ...locationSearch.relevant].map(node => node.key))
+      .toEqual(['profile.location.home'])
   })
 
   it('requires confirmation for broad or hard deletion', async () => {
     for (const value of ['香菜', '芹菜']) {
       await service.proposeUpdate({
         operation: 'create',
+        kind: 'food_avoidance',
+        itemKey: value,
         reason: 'explicit',
         explicitUserIntent: true,
-        identity: { sessionId: 's1', userId: 'u1' },
+        identity: { sessionId: 's1', profileId: 'default' },
         node: userPreference(value),
       })
     }
     await expect(service.forget({
-      scope: 'user', domain: '生活技能', reason: 'clear preferences', identity: { sessionId: 's1', userId: 'u1' },
+      domain: 'preference', reason: 'clear preferences', identity: { sessionId: 's1', profileId: 'default' },
     })).resolves.toMatchObject({ requiresConfirmation: true, deletedIds: [] })
-    const one = await service.search({ sessionId: 's1', userId: 'u1' }, { key: 'avoid_ingredient', limit: 10 })
-    const nodeId = [...one.exact, ...one.relevant][0].id
+    const one = await service.search({ sessionId: 's1', profileId: 'default' }, { domain: 'preference', limit: 10 })
+    const node = [...one.exact, ...one.relevant][0]
+    const nodeId = node.id
     await expect(service.forget({
       id: nodeId,
+      reason: 'missing revision',
+      identity: { sessionId: 's1', profileId: 'default' },
+    })).resolves.toMatchObject({
+      deletedIds: [],
+      reason: 'Mutation requires expectedRevision from memory_search, memory_get, or the injected memory card.',
+    })
+    await expect(service.forget({
+      id: nodeId,
+      expectedRevision: node.revision,
+      reason: 'forget one exact preference',
+      identity: { sessionId: 's1', profileId: 'default' },
+    })).resolves.toMatchObject({ deletedIds: [nodeId], mode: 'soft' })
+    const remaining = await service.search(
+      { sessionId: 's1', profileId: 'default' },
+      { domain: 'preference', limit: 10 },
+    )
+    const remainingNode = [...remaining.exact, ...remaining.relevant][0]
+    const remainingNodeId = remainingNode.id
+    await expect(service.forget({
+      id: remainingNodeId,
+      expectedRevision: remainingNode.revision,
       mode: 'hard',
       reason: 'erase',
       confirmed: false,
-      identity: { sessionId: 's1', userId: 'u1' },
+      identity: { sessionId: 's1', profileId: 'default' },
     }))
       .resolves.toMatchObject({ requiresConfirmation: true, deletedIds: [] })
   })
@@ -656,11 +886,6 @@ function memoryMessage(role: MemoryMessage['role'], content: string, id: string)
 
 function userPreference(value: string): Partial<MemoryNode> {
   return {
-    scope: 'user',
-    domain: '生活技能',
-    categoryPath: ['生活技能', '做饭', '饮食偏好'],
-    type: 'preference',
-    key: 'avoid_food',
     valueJson: value,
     title: `Avoid ${value}`,
     content: `Avoid ${value} in recommendations.`,
@@ -670,12 +895,12 @@ function userPreference(value: string): Partial<MemoryNode> {
 function memoryNode(id: string, overrides: Partial<MemoryNode> = {}): MemoryNode {
   return {
     id,
-    sessionId: 's1',
-    scope: 'session',
-    domain: '生活技能',
-    categoryPath: ['生活技能', '做饭'],
+    profileId: 'default',
+    domain: 'preference',
+    categoryPath: ['preference', 'food', 'avoid'],
     type: 'preference',
-    key: 'avoid_ingredient',
+    key: 'preference.food.avoid:香菜',
+    revision: 1,
     valueJson: '香菜',
     title: id,
     content: id,

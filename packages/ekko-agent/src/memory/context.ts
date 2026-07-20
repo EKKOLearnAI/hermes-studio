@@ -25,5 +25,10 @@ export function buildMemoryContextPrompt(context: MemoryContext): string {
 
 function appendNodes(sections: string[], title: string, nodes: MemoryNode[]): void {
   if (!nodes.length) return
-  sections.push(`${title}:\n${nodes.map(node => `- [${node.id}] ${node.content}`).join('\n')}`)
+  sections.push(`${title}:\n${nodes.map(formatMemoryCard).join('\n')}`)
+}
+
+function formatMemoryCard(node: MemoryNode): string {
+  const value = node.valueJson === undefined ? '' : ` value=${JSON.stringify(node.valueJson)}`
+  return `- id=${node.id} key=${node.key} revision=${node.revision}${value}\n  ${node.content}`
 }
