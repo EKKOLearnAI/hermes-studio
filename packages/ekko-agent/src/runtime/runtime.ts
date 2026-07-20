@@ -33,7 +33,9 @@ interface ModelResponseResult {
 
 export class AgentRuntime {
   private readonly modelClient?: AgentRuntimeOptions['modelClient']
+  private readonly toolsEnabled: boolean
   private readonly tools: AgentToolRegistry
+  private readonly skillsEnabled: boolean
   private readonly skills: AgentSkill[]
   private readonly systemPrompt?: string
   private readonly runtimeInstructions: string[]
@@ -49,8 +51,12 @@ export class AgentRuntime {
 
   constructor(options: AgentRuntimeOptions) {
     this.modelClient = options.modelClient
-    this.tools = options.tools ?? createDefaultToolRegistry()
-    this.skills = options.skills ?? []
+    this.toolsEnabled = options.toolsEnabled !== false
+    this.tools = this.toolsEnabled
+      ? options.tools ?? createDefaultToolRegistry()
+      : new AgentToolRegistry()
+    this.skillsEnabled = options.skillsEnabled !== false
+    this.skills = this.skillsEnabled ? options.skills ?? [] : []
     this.systemPrompt = options.systemPrompt
     this.runtimeInstructions = options.runtimeInstructions ?? []
     this.maxSteps = options.maxSteps ?? DEFAULT_AGENT_MAX_STEPS
@@ -62,10 +68,11 @@ export class AgentRuntime {
     this.defaultContextKey = options.contextKey
     this.memory = options.memory
     this.registerSkillTools(this.skills)
-    if (this.memory) this.tools.registerMany(createMemoryTools(this.memory))
+    if (this.toolsEnabled && this.memory) this.tools.registerMany(createMemoryTools(this.memory))
   }
 
   registerSkill(skill: AgentSkill): void {
+    if (!this.skillsEnabled) return
     this.skills.push(skill)
     this.registerSkillTools([skill])
   }
@@ -77,6 +84,7 @@ export class AgentRuntime {
   }
 
   async refreshTools(context?: AgentToolContext): Promise<void> {
+    if (!this.toolsEnabled) return
     await this.tools.refreshTools(context)
   }
 
@@ -97,8 +105,9 @@ export class AgentRuntime {
 
     emit({ type: 'run.started', runId, maxSteps })
 
-    const runSkills = [...this.skills, ...(input.skills ?? [])]
-    this.registerSkillTools(input.skills ?? [])
+    const inputSkills = this.skillsEnabled ? input.skills ?? [] : []
+    const runSkills = [...this.skills, ...inputSkills]
+    this.registerSkillTools(inputSkills)
     const memoryIdentity = this.memoryIdentityFor(input)
     const memoryContext = await this.prepareMemory(input, memoryIdentity)
     if (memoryContext) {
@@ -367,7 +376,7 @@ export class AgentRuntime {
       metadata: input.metadata ?? modelDefaults?.metadata,
       messages,
       signal: input.signal,
-      tools: this.tools.definitions(),
+      tools: this.toolsEnabled ? this.tools.definitions() : undefined,
       stream: modelClient.capabilities.streaming,
       context: input.context ?? (contextKey ? this.modelContexts.get(contextKey) : modelDefaults?.context),
     }
@@ -451,6 +460,7 @@ export class AgentRuntime {
   }
 
   private registerSkillTools(skills: AgentSkill[]): void {
+    if (!this.toolsEnabled || !this.skillsEnabled) return
     for (const skill of skills) {
       if (skill.tools?.length) {
         this.tools.registerMany(skill.tools)

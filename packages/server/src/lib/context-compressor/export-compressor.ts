@@ -22,7 +22,32 @@ import {
   buildConversationHistory,
   callSummarizer,
 } from './index'
-import { getCompressionSnapshot } from '../../db/hermes/compression-snapshot'
+import { deleteCompressionSnapshot, getCompressionSnapshot } from '../../db/hermes/compression-snapshot'
+import {
+  buildDbHistory,
+  readCursorSnapshotParts,
+} from '../../services/hermes/run-chat/context-history'
+
+export function buildDbExportHistory(sessionId: string): ChatMessage[] {
+  const snapshot = getCompressionSnapshot(sessionId)
+  if (snapshot?.compressedThroughMessageId != null) {
+    const cursorRead = readCursorSnapshotParts(sessionId, snapshot)
+    if (cursorRead.status === 'usable') {
+      // ExportCompressor supplies the previous summary separately, so only
+      // protected head and post-cursor messages belong in the incremental input.
+      return [...cursorRead.parts.head, ...cursorRead.parts.newMessages]
+    }
+    if (cursorRead.status === 'invalid') {
+      logger.warn(
+        '[export-compressor] session=%s: invalid cursor snapshot (%s); exporting from full history',
+        sessionId,
+        cursorRead.reason,
+      )
+      deleteCompressionSnapshot(sessionId)
+    }
+  }
+  return buildDbHistory(sessionId)
+}
 
 export class ExportCompressor {
   private config: CompressionConfig
@@ -54,8 +79,9 @@ export class ExportCompressor {
 
     if (snapshot) {
       logger.info(
-        '[export-compressor] session=%s: incremental compress with existing snapshot at index %d',
-        sessionId, snapshot.lastMessageIndex,
+        '[export-compressor] session=%s: incremental compress with existing snapshot boundary %s',
+        sessionId,
+        snapshot.compressedThroughMessageId ?? snapshot.lastMessageIndex,
       )
       return this.incrementalCompress(
         messages, snapshot, upstream, apiKey, meta, summarizer,
@@ -71,14 +97,16 @@ export class ExportCompressor {
 
   private async incrementalCompress(
     messages: ChatMessage[],
-    snapshot: { summary: string; lastMessageIndex: number },
+    snapshot: { summary: string; lastMessageIndex: number; compressedThroughMessageId?: number | null },
     upstream: string,
     apiKey: string | undefined,
     meta: CompressedResult['meta'],
     summarizer?: string | SummarizerOptions,
   ): Promise<CompressedResult> {
     const { summary: previousSummary, lastMessageIndex } = snapshot
-    const newMessages = messages.slice(lastMessageIndex + 1)
+    const newMessages = snapshot.compressedThroughMessageId != null
+      ? messages
+      : messages.slice(lastMessageIndex + 1)
 
     let summary: string | null = null
     try {

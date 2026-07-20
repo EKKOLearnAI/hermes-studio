@@ -127,6 +127,10 @@ const result = await runtime.run({
 })
 ```
 
+Set `toolsEnabled: false` to omit all tool sources (built-ins, MCP, memory,
+and skill tools). Set `skillsEnabled: false` to omit constructor and per-run
+skills. The switches are independent and default to `true`.
+
 ## Commands
 
 ```bash

@@ -6,10 +6,12 @@
 import {
   getSessionDetail,
 } from '../../../db/hermes/session-store'
-import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
+import { deleteCompressionSnapshot, getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
+import { getRecordedUsageTotals, getUsage } from '../../../db/hermes/usage-store'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { truncateToolResultForContext } from '../../../lib/tool-result-context'
 import { logger } from '../../logger'
+import { assembleCursorSnapshotHistory, readCursorSnapshotParts } from './context-history'
 import type { SessionState } from './types'
 
 type UsageTokenMessage = {
@@ -45,7 +47,10 @@ export async function calcAndUpdateUsage(
   sid: string,
   state: SessionState,
   emit: (event: string, payload: any) => void,
-  options: { truncateToolResultsForContext?: boolean } = {},
+  options: {
+    truncateToolResultsForContext?: boolean
+    nativeSource?: 'coding_agent'
+  } = {},
 ): Promise<{
   inputTokens: number
   outputTokens: number
@@ -53,10 +58,81 @@ export async function calcAndUpdateUsage(
   contextOutputTokens?: number
 }> {
   try {
+    if (options.nativeSource) {
+      const totals = getRecordedUsageTotals(sid, options.nativeSource)
+      const latest = getUsage(sid)
+      const usage = {
+        inputTokens: totals.inputTokens,
+        outputTokens: totals.outputTokens,
+      }
+      state.inputTokens = usage.inputTokens
+      state.outputTokens = usage.outputTokens
+      emit('usage.updated', {
+        event: 'usage.updated',
+        session_id: sid,
+        ...usage,
+      })
+      return {
+        ...usage,
+        ...(latest
+          ? {
+              contextInputTokens: Number(latest.input_tokens || 0),
+              contextOutputTokens: Number(latest.output_tokens || 0),
+            }
+          : {}),
+      }
+    }
+
+    const snapshot = getCompressionSnapshot(sid)
+    if (snapshot?.compressedThroughMessageId != null) {
+      const cursorRead = readCursorSnapshotParts(sid, snapshot, {
+        truncateToolResults: false,
+      })
+      if (cursorRead.status === 'usable') {
+        const messages = assembleCursorSnapshotHistory(snapshot, cursorRead.parts, SUMMARY_PREFIX)
+        const usage = estimateUsageTokensFromMessages(messages)
+        let contextUsage: { inputTokens: number; outputTokens: number } | undefined
+        if (options.truncateToolResultsForContext) {
+          const contextRead = readCursorSnapshotParts(sid, snapshot, {
+            truncateToolResults: true,
+          })
+          if (contextRead.status === 'usable') {
+            contextUsage = estimateUsageTokensFromMessages(
+              assembleCursorSnapshotHistory(snapshot, contextRead.parts, SUMMARY_PREFIX),
+            )
+          }
+        }
+        state.inputTokens = usage.inputTokens
+        state.outputTokens = usage.outputTokens
+        emit('usage.updated', {
+          event: 'usage.updated',
+          session_id: sid,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+        })
+        return {
+          ...usage,
+          ...(contextUsage
+            ? {
+                contextInputTokens: contextUsage.inputTokens,
+                contextOutputTokens: contextUsage.outputTokens,
+              }
+            : {}),
+        }
+      }
+      if (cursorRead.status === 'invalid') {
+        logger.warn(
+          '[chat-run-socket] invalid cursor snapshot while calculating usage for session %s (%s)',
+          sid,
+          cursorRead.reason,
+        )
+        deleteCompressionSnapshot(sid)
+      }
+    }
+
     const detail = getSessionDetail(sid)
     const storedMessages = detail?.messages
       ?.filter(m => m.role === 'user' || m.role === 'assistant' || m.role === 'tool') || []
-    const snapshot = getCompressionSnapshot(sid)
     const estimateSnapshotUsage = (messages: typeof storedMessages) => {
       if (snapshot && messages.length && snapshot.lastMessageIndex >= 0 && snapshot.lastMessageIndex < messages.length) {
         const newMessages = messages.slice(snapshot.lastMessageIndex + 1)

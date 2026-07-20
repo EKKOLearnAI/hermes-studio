@@ -1,7 +1,11 @@
 # Session Compression Cursor Plan
 
 Date: 2026-07-19
+Updated: 2026-07-20
 Issue: https://github.com/EKKOLearnAI/hermes-studio/issues/2138
+
+Status: Implemented on 2026-07-20. The legacy index fields remain available
+for compatibility and are upgraded only by a successful compression cycle.
 
 ## Context
 
@@ -29,7 +33,9 @@ prefix without losing or duplicating a model-visible message.
 ## Goals
 
 - Replace array-position compression boundaries with a stable database cursor.
-- Build an existing snapshot's effective model context from a bounded head,
+- Preserve existing index-based snapshots and upgrade them in place only when
+  that session next enters a real compression cycle.
+- Build a cursor snapshot's effective model context from a bounded head,
   its summary, and only messages after the cursor.
 - Keep the first compression accurate even though it must inspect the complete
   unsummarized history.
@@ -40,10 +46,10 @@ prefix without losing or duplicating a model-visible message.
 - Invalidate or remap snapshots correctly when history is cleared, deleted,
   edited, imported, or copied into a branch.
 - Keep the user-visible chat and History pagination behavior unchanged.
+- Keep Coding Agent execution independent from Web UI context compression.
 
 ## Non-Goals
 
-- Do not implement this plan as part of the planning change.
 - Do not replace `node:sqlite` solely for this optimization.
 - Do not move all persistence to a Worker Thread in the first implementation.
 - Do not archive or delete old messages after they are summarized.
@@ -51,6 +57,29 @@ prefix without losing or duplicating a model-visible message.
   thresholds unless required by a separate change.
 - Do not make the first summary without reading the content that must be
   summarized.
+- Do not invalidate all legacy compression snapshots during deployment or force
+  old sessions to regenerate summaries solely because the cursor schema was
+  added.
+- Do not send Web UI message history to Codex or Claude Code. Coding Agents own
+  their native session history and resume behavior.
+
+## Scope Boundary
+
+The compression cursor applies to Hermes Bridge chat sessions whose model
+context is assembled by the Web UI server. It does not apply to Coding Agent
+execution.
+
+Coding Agent runs send only the current input and system prompt to the selected
+agent. Claude Code resumes with its native session ID through `--resume`; Codex
+resumes through `codex exec resume`. Their native runtimes own context retention
+and any internal compaction.
+
+The current Coding Agent path still performs complete Web UI history reads on a
+cold UI resume and after a run to estimate local usage and `contextTokens`.
+Those reads are display/accounting work, not model input, and should be removed
+or replaced with persisted/native usage values. Reconstructing Web UI history
+does not accurately describe a Coding Agent's internal context after native
+compaction.
 
 ## Current Behavior
 
@@ -105,29 +134,77 @@ is conceptually:
 Only the current index-based representation requires the already summarized
 middle section to be loaded again.
 
+### Compression Execution
+
+Summary generation is not an in-process string transformation. Each actual
+full or incremental summary first creates a fresh Ekko Agent runtime. That
+runtime has tools, MCP, skills, and memory disabled, allows one model step, and
+does not retry a failed model request. It receives only the summary prompt and
+the fixed instruction to generate the checkpoint.
+
+If that Ekko call fails or returns no usable summary, compression immediately
+falls back to the previous Hermes `chat` run through Agent Bridge. The fallback
+uses a temporary `compress_*` session ID, receives the same summary prompt as
+conversation history, uses the dedicated
+`<profile>:compression:<source-session-id>` worker key, waits for the result,
+and destroys the temporary compression session afterward.
+
+The first compression therefore sends the complete selected historical range
+to a summarizer model. Incremental compression sends the previous summary and
+only the newly selected range. Preserving legacy summaries avoids an expensive
+and unnecessary full-history summarization after upgrade.
+
+For Hermes Bridge chat, complete history is not cached across runs. Every run
+currently calls `buildDbHistory()` again, and usage/context-token updates can
+perform additional complete reads during the same run. Cursor adoption must
+therefore update all of these consumers; optimizing only the initial context
+assembly would leave repeated full-history reads in place.
+
 ## Proposed Design
 
 ### Stable Message Cursor
 
-Add a stable boundary to the snapshot:
+Add a stable boundary to the snapshot and keep the current history revision on
+the session:
 
 ```sql
+ALTER TABLE sessions
+  ADD COLUMN history_revision INTEGER NOT NULL DEFAULT 0;
+
 ALTER TABLE chat_compression_snapshots
   ADD COLUMN compressed_through_message_id INTEGER;
 
 ALTER TABLE chat_compression_snapshots
   ADD COLUMN history_revision INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE chat_compression_snapshots
+  ADD COLUMN protected_head_through_message_id INTEGER;
 ```
 
 `compressed_through_message_id` is the ID of the last context message whose
-content is represented by `summary`. Message ordering must continue to use the
-same database order as context construction, currently message `id`, rather
-than timestamp.
+content is represented by `summary`. `protected_head_through_message_id` freezes
+the protected head selected when the snapshot was written so a later
+`protect_first_n` configuration change cannot duplicate or omit messages.
+Message ordering must continue to use the same database order as context
+construction, currently message `id`, rather than timestamp.
 
-Keep `last_message_index` temporarily for legacy snapshots and diagnostics. New
-snapshot writes should use the cursor as the source of truth. Keep
+Keep `last_message_index` for legacy snapshots, compatibility, diagnostics, and
+rollback. Do not clear or rewrite existing snapshots during schema migration.
+New snapshot writes should use the cursor as the source of truth while
+continuing to populate the legacy field where it is inexpensive to do so. Keep
 `message_count_at_time` as optional validation and observability data, but do
 not use a count as the boundary identity.
+
+Snapshot reads use this precedence:
+
+1. When `compressed_through_message_id` is present, use the cursor path.
+2. When the cursor is absent but `last_message_index` is present, use the
+   existing index-based path unchanged.
+3. When neither boundary exists, treat the session as having no snapshot.
+
+Opening, switching, reconnecting, or merely starting a run must not discard a
+legacy snapshot. A legacy snapshot remains valid under the same rules as before
+until a compression cycle upgrades it.
 
 ### Cursor-Carrying Context Entries
 
@@ -151,8 +228,8 @@ messages are rejected, or tool-call metadata is normalized.
 
 ### Snapshot-Aware Context Query
 
-For a valid cursor snapshot, query only the protected head and the range after
-the boundary:
+For a valid cursor snapshot, query only the protected head recorded by the
+snapshot and the range after the boundary:
 
 ```sql
 SELECT *
@@ -181,11 +258,22 @@ The model context becomes:
 ]
 ```
 
-The head query may need to read slightly more than `protect_first_n` raw rows
-until it obtains the requested number of valid context entries. This remains a
-small bounded query.
+For a new snapshot, the head query ends at
+`protected_head_through_message_id`; the current `protect_first_n` value is used
+only when creating a new protected-head boundary. The query may need to read
+slightly more raw rows until it obtains the requested number of valid context
+entries. This remains a small bounded query.
+
+Context construction must also preserve the current `excludeLastUser` behavior.
+When the latest persisted user message is supplied separately as the current
+run input, it must not also be included in the post-cursor history.
 
 ### Incremental Compression
+
+The compression semantics do not change. The current implementation also uses
+the previous summary plus messages after `last_message_index`; the cursor only
+replaces how that boundary is represented and queried so the summarized middle
+does not need to be loaded.
 
 When the snapshot-aware context exceeds the compression threshold:
 
@@ -232,14 +320,16 @@ not merely the row at a desired numeric tail size.
 Append-only writes do not invalidate a cursor. Destructive or rewriting
 operations must invalidate it transactionally.
 
-A snapshot is usable only when:
+A cursor snapshot is usable only when:
 
-- its `history_revision` matches the session revision;
+- its captured `history_revision` matches `sessions.history_revision`;
 - its cursor row still exists and belongs to the same session;
 - the cursor row still participates in the normalized context order;
 - the summary and cursor were committed together.
 
-Increment `history_revision`, or delete the snapshot, when an operation:
+Append-only message inserts do not increment `sessions.history_revision`.
+Increment the session revision and delete or invalidate its snapshot in the same
+transaction when an operation:
 
 - clears session messages;
 - deletes or edits a message at or before the cursor;
@@ -249,6 +339,13 @@ Increment `history_revision`, or delete the snapshot, when an operation:
 Deleting a session must also delete its snapshot. Clearing history must not
 leave an old summary available to future messages. This needs explicit coverage
 because the current clear path does not invalidate the compression snapshot.
+
+Compression calls the summarizer outside a database transaction. Snapshot save
+must therefore be compare-and-swap: it receives the revision observed when the
+compression input was read and writes only if the session still has that
+revision. A clear, edit, import, or delete that happens while summarization is in
+flight must prevent the old compression result from recreating a stale
+snapshot.
 
 ### Branched Sessions
 
@@ -267,25 +364,51 @@ The existing index can remain useful as a migration fallback because a 1:1
 branch copy preserves ordinal position, but the child snapshot must ultimately
 store its own message cursor.
 
-### Legacy Snapshot Migration
+### Legacy Snapshot Compatibility And Upgrade
 
-Existing snapshots have only `last_message_index`. Migrate them lazily when a
-run first needs compression context:
+Existing snapshots have only `last_message_index`. They must not be invalidated
+as a deployment migration and must not be forced through a new full-history
+summary. Until upgraded, they continue through the current index-based read and
+compression path.
 
-1. Load the legacy normalized history using the current behavior.
-2. Resolve `last_message_index` to the corresponding database message ID.
-3. Validate that the resolved boundary does not split a tool interaction.
-4. Persist the cursor and current history revision.
-5. Continue through the new cursor path on later runs.
+Upgrade a legacy snapshot only when that session next actually enters a
+compression cycle:
 
-This permits one final full read per legacy snapshot while keeping all future
-incremental loads bounded. If the legacy index cannot be resolved safely,
-invalidate the snapshot and perform a normal first compression rather than
-guessing a boundary.
+1. Load the legacy normalized history using the existing path. This is work the
+   old compression cycle already requires; do not add a separate full read on
+   resume, session open, or a run that does not compress.
+2. Carry each surviving context entry's database message ID through
+   normalization.
+3. Resolve the existing `last_message_index` to the corresponding database
+   message ID and resolve the protected-head boundary used for the new
+   snapshot.
+4. Validate that the resolved boundary belongs to the session and does not
+   split a tool interaction.
+5. Reuse the existing summary as the previous summary and summarize only the
+   incremental range selected by the normal compression algorithm. Do not
+   summarize the already compacted history again.
+6. Atomically save the resulting summary, cursor, protected-head boundary, and
+   captured session revision. Keep `last_message_index` populated for
+   compatibility and diagnostics.
+7. Use the new cursor path on later runs.
+
+If compression is not triggered, the legacy snapshot remains unchanged and the
+session continues to behave exactly as it does today. If summarization or the
+compare-and-swap save fails, retain the legacy snapshot rather than partially
+migrating it.
+
+If the legacy index cannot be resolved or would split a tool interaction, do
+not guess a cursor and do not discard the existing summary automatically. Log
+the reason and keep the snapshot on the legacy path. A separately designed
+repair or explicit invalidation path can handle irrecoverable snapshots without
+making normal upgrades destructive.
 
 Using SQL `OFFSET last_message_index` alone is not sufficient for the permanent
 design. It avoids materializing old content but still depends on a shifting
 ordinal and may not match the normalized context array when rows are filtered.
+The upgrade uses the already constructed cursor-carrying normalized history so
+the persisted cursor identifies the same model-visible boundary as the legacy
+index.
 
 ### Resume And Display Separation
 
@@ -312,12 +435,23 @@ getSessionMetadata(sessionId)
 getContextHead(sessionId, validLimit)
 getContextAfterCursor(sessionId, cursorId, batchOptions?)
 getContextHistoryForFirstCompression(sessionId)
-resolveLegacyCompressionCursor(sessionId, lastMessageIndex)
+resolveLegacyCompressionCursor(entries, lastMessageIndex)
 ```
 
 Routes and Socket.IO handlers should not select message bodies when they need
 only session metadata. Compression services should consume cursor-carrying
 context entries rather than generic session-detail objects.
+
+Inventory and migrate every Hermes snapshot consumer, including run-context
+assembly, usage calculation, Bridge compression events, forced compression,
+session commands, and export compression. Updating only the primary
+`buildCompressedHistory()` call would leave hidden complete-history reads in
+the runtime path.
+
+Coding Agent usage and resume paths are separate consumers. They should use the
+latest display page plus persisted or native-agent usage values and must not use
+compression snapshot helpers to reconstruct a model context that the Web UI
+does not send.
 
 ## Observability
 
@@ -358,8 +492,15 @@ second.
 
 ### Legacy Migration
 
-- A valid legacy index resolves once and persists a cursor.
-- An invalid, stale, or turn-splitting legacy index is rejected safely.
+- Deployment leaves legacy snapshots, summaries, and index fields unchanged.
+- Opening, switching, reconnecting, and non-compressing runs do not migrate or
+  invalidate a legacy snapshot.
+- The next actual compression cycle reuses the old summary, resolves the legacy
+  index, and persists a cursor without re-summarizing the compacted prefix.
+- A failed compression or revision compare-and-swap leaves the legacy snapshot
+  usable and does not partially migrate it.
+- An invalid or turn-splitting legacy index remains on the legacy path and is
+  reported without guessing a cursor.
 - Later loads use the cursor path without another full-history query.
 
 ### Resume And Performance
@@ -367,48 +508,64 @@ second.
 - Socket resume emits only the configured latest page.
 - Resume metadata does not call a full session-detail query.
 - Resume does not build or tokenize complete DB history.
+- A normal Hermes Bridge run with a cursor snapshot does not perform a complete
+  history read through usage or context-token helpers.
+- Coding Agent execution sends only current input through its native session;
+  cold resume and post-run usage calculation do not reconstruct complete Web UI
+  history.
 - A synthetic session with at least 15,000 mixed user, assistant, and tool rows
   remains responsive while opening and switching sessions.
-- A large session with an existing snapshot reads a bounded head plus only the
+- A large session with a cursor snapshot reads a bounded head plus only the
   uncompressed range when starting a run.
 
 ## Implementation Slices
 
 1. Add query instrumentation and focused metadata/context query helpers.
-2. Remove full-history work from pure resume and reconnect paths.
-3. Add cursor and history-revision fields while retaining legacy snapshot
-   reads.
-4. Carry database IDs through context normalization and update compressor
-   results to return a cursor.
-5. Switch incremental context construction to head plus post-cursor queries.
-6. Add transactional invalidation for clear, delete, edit, and import paths.
-7. Map snapshot cursors during branch creation.
-8. Add lazy legacy migration, performance regression coverage, and operational
-   timings.
-9. Profile the completed path before deciding whether tokenization or SQLite
-   work also needs a Worker Thread.
+2. Remove full-history work from pure resume and reconnect paths, including the
+   generic Coding Agent resume path.
+3. Add session revision, snapshot cursor, protected-head, and snapshot revision
+   fields without modifying existing snapshot rows or removing legacy fields.
+4. Add transactional invalidation for clear, delete, edit, and import paths,
+   plus compare-and-swap snapshot writes.
+5. Carry database IDs through context normalization and update compressor
+   results to return cursor boundaries.
+6. Map new-format snapshot cursors during branch creation while preserving the
+   current ordinal copy behavior for legacy snapshots.
+7. Add dual-read behavior: cursor-first with an unchanged legacy-index fallback.
+8. Switch new-format incremental context construction and all Hermes usage
+   consumers to protected head plus post-cursor queries.
+9. Remove complete-history Coding Agent context estimation and use
+   persisted/native-agent usage values.
+10. Upgrade a legacy snapshot only during its next actual compression cycle and
+    add compatibility, performance, and operational-timing coverage.
+11. Profile the completed path before deciding whether tokenization or SQLite
+    work also needs a Worker Thread.
 
 ## Acceptance Criteria
 
 - Opening, switching, or reconnecting to a session does not read or tokenize
   its complete message history.
 - The first compression remains complete and accurate.
-- After a snapshot exists, context construction does not load message bodies
-  already represented by the summary.
+- After a cursor snapshot exists, context construction does not load message
+  bodies already represented by the summary.
 - Incremental compression never loses, duplicates, or reorders a model-visible
   message.
 - Tool interactions remain structurally valid across every compression
   boundary.
 - Clear, delete, edit, import, and branch operations cannot reuse an invalid
   summary.
-- Legacy snapshots migrate safely or are invalidated without guessing.
+- Legacy snapshots remain usable until a successful compression cycle upgrades
+  them; their summaries are not discarded or regenerated solely because of the
+  schema upgrade.
+- A snapshot with both legacy and cursor fields always uses the cursor as the
+  read boundary while retaining the legacy field for compatibility.
+- Coding Agent runs never receive reconstructed Web UI history and do not use
+  Web UI compression snapshots.
 - Existing 150-message paging and live-chat rendering limits remain unchanged.
 - Focused tests cover a history of at least 15,000 mixed-role rows.
 
 ## Open Questions
 
-- Should `history_revision` live on `sessions` or only in the compression
-  snapshot lifecycle?
 - Should large post-cursor ranges stream from SQLite in batches or move to a
   Worker Thread after cursor adoption?
 - Should per-message token counts be completed and aggregated so resume can

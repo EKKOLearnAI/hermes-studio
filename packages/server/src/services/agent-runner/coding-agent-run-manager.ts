@@ -7,14 +7,13 @@ import type { ApiMode } from './types'
 import { logger } from '../logger'
 import { normalizeTokenUsage, recordSessionUsage } from '../usage-recorder'
 import { applyResponseStreamEvent, flushResponseRunToDb } from '../hermes/run-chat/response-stream'
-import { calcAndUpdateUsage, estimateUsageTokensFromMessages, updateContextTokenUsage } from '../hermes/run-chat/usage'
+import { calcAndUpdateUsage, updateContextTokenUsage } from '../hermes/run-chat/usage'
 import { extractResponseText } from '../hermes/run-chat/response-utils'
 import type { SessionState } from '../hermes/run-chat/types'
 import type { CanonicalResponsesEvent } from './adapters/responses-stream'
 import { mapCodingAgentResponseEvent } from './coding-agent-event-mapper'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell } from '../windows-command'
 import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from '../hermes/run-chat/workspace-diff-tracker'
-import { buildDbHistory, buildSnapshotAwareHistory } from '../hermes/run-chat/compression'
 
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
 const TERMINAL_OUTPUT_FLUSH_MS = 120
@@ -662,7 +661,6 @@ export class CodingAgentRunManager {
       run.assistantMessageId = flushResponseRunToDb(run.state, run.launch.sessionId)
       run.state.responseRun = undefined
       updateSessionStats(run.launch.sessionId)
-      run.terminalUsageRefresh = this.refreshCodingAgentUsage(run)
       const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
       if (run.launch.mode !== 'scoped' && final?.usage) {
         const usage = normalizeTokenUsage(final.usage)
@@ -681,6 +679,7 @@ export class CodingAgentRunManager {
           })
         }
       }
+      run.terminalUsageRefresh = this.refreshCodingAgentUsage(run)
       const finalText = extractResponseText(final)
       const terminalError = storageSafeResponseEvent.type === 'response.failed'
         ? responseErrorMessage(final?.error || (responseEvent.data as any).error) || 'Coding agent run failed'
@@ -706,29 +705,15 @@ export class CodingAgentRunManager {
     const emitUsage = (event: string, payload: any) => {
       this.emitToChat(run.launch.sessionId, event, payload)
     }
-    const usage = await calcAndUpdateUsage(run.launch.sessionId, run.state, emitUsage)
-    const contextTokens = await this.estimateCodingAgentContextTokens(run)
-    if (contextTokens != null) {
+    const usage = await calcAndUpdateUsage(run.launch.sessionId, run.state, emitUsage, {
+      nativeSource: 'coding_agent',
+    })
+    const contextTokens = usage.contextInputTokens != null || usage.contextOutputTokens != null
+      ? (usage.contextInputTokens || 0) + (usage.contextOutputTokens || 0)
+      : undefined
+    if (contextTokens != null && contextTokens > 0) {
       updateContextTokenUsage(run.launch.sessionId, run.state, emitUsage, contextTokens, usage)
     }
-  }
-
-  private async estimateCodingAgentContextTokens(run: ManagedCodingAgentRun): Promise<number | undefined> {
-    try {
-      const dbHistory = await buildDbHistory(run.launch.sessionId, { excludeLastUser: false })
-      const snapshotHistory = await buildSnapshotAwareHistory(
-        run.launch.sessionId,
-        run.launch.profile || 'default',
-        dbHistory,
-        { model: run.launch.model, provider: run.launch.provider },
-      )
-      const usage = estimateUsageTokensFromMessages(snapshotHistory)
-      const contextTokens = usage.inputTokens + usage.outputTokens
-      if (contextTokens > 0) return contextTokens
-    } catch (err) {
-      logger.warn(err, '[coding-agent-run] failed to calculate context tokens for session %s', run.launch.sessionId)
-    }
-    return undefined
   }
 
   private normalizeCodexChatTextEvent(run: ManagedCodingAgentRun, event: CanonicalResponsesEvent): CanonicalResponsesEvent | null {

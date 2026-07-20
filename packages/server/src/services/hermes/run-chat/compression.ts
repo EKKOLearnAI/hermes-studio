@@ -3,19 +3,20 @@
  * apply snapshot-aware compression and LLM summarization.
  */
 
-import {
-  getSessionDetail,
-  getSession,
-} from '../../../db/hermes/session-store'
-import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
+import { getSession } from '../../../db/hermes/session-store'
+import { deleteCompressionSnapshot, getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
 import { ChatContextCompressor, SUMMARY_PREFIX } from '../../../lib/context-compressor'
-import { truncateToolResultForContext } from '../../../lib/tool-result-context'
 import { getModelContextLength } from '../model-context'
 import { readConfigYamlForProfile } from '../../config-helpers'
 import { logger } from '../../logger'
 import { bridgeLogger } from '../../logger'
 import { calcAndUpdateUsage, estimateUsageTokensFromMessages, updateMessageContextTokenUsage } from './usage'
-import { isAssistantMessageSendable } from './message-format'
+import {
+  assembleCursorSnapshotHistory,
+  buildDbHistory as queryDbHistory,
+  readCursorSnapshotParts,
+  type CursorSnapshotParts,
+} from './context-history'
 import type { ChatMessage, CompressionConfig as CompressorConfig } from '../../../lib/context-compressor'
 import type { SessionState, BridgeCompressionResult } from './types'
 
@@ -83,6 +84,19 @@ export async function buildSnapshotAwareHistory(
 ): Promise<ChatMessage[]> {
   const snapshot = getCompressionSnapshot(sessionId)
   if (!snapshot) return history
+  const cursorRead = readCursorSnapshotParts(sessionId, snapshot)
+  if (cursorRead.status === 'usable') {
+    return assembleCursorSnapshotHistory(snapshot, cursorRead.parts, SUMMARY_PREFIX)
+  }
+  if (cursorRead.status === 'invalid') {
+    logger.warn(
+      '[context-compress] session=%s: invalid cursor snapshot (%s); rebuilding from full history',
+      sessionId,
+      cursorRead.reason,
+    )
+    deleteCompressionSnapshot(sessionId)
+    return history
+  }
   const contextLength = getModelContextLength({
     profile,
     model: modelContext.model,
@@ -90,6 +104,31 @@ export async function buildSnapshotAwareHistory(
   })
   const compressionConfig = await getRunChatCompressionConfig(profile, contextLength)
   return buildSnapshotHistory(snapshot, history, compressionConfig.compressor) || history
+}
+
+export async function buildDbSnapshotAwareHistory(
+  sessionId: string,
+  profile: string,
+  options: { excludeLastUser?: boolean; truncateToolResults?: boolean } = {},
+  modelContext: { model?: string | null; provider?: string | null } = {},
+): Promise<ChatMessage[]> {
+  const snapshot = getCompressionSnapshot(sessionId)
+  if (snapshot) {
+    const cursorRead = readCursorSnapshotParts(sessionId, snapshot, options)
+    if (cursorRead.status === 'usable') {
+      return assembleCursorSnapshotHistory(snapshot, cursorRead.parts, SUMMARY_PREFIX)
+    }
+    if (cursorRead.status === 'invalid') {
+      logger.warn(
+        '[context-compress] session=%s: invalid cursor snapshot (%s); invalidating it',
+        sessionId,
+        cursorRead.reason,
+      )
+      deleteCompressionSnapshot(sessionId)
+    }
+  }
+  const history = await buildDbHistory(sessionId, options)
+  return buildSnapshotAwareHistory(sessionId, profile, history, modelContext)
 }
 
 function clampRatio(value: unknown, fallback: number, min: number, max: number): number {
@@ -176,55 +215,9 @@ async function getRunChatCompressionConfig(profile: string, contextLength: numbe
  */
 export async function buildDbHistory(
   sessionId: string,
-  options: { excludeLastUser?: boolean } = {},
+  options: { excludeLastUser?: boolean; truncateToolResults?: boolean } = {},
 ): Promise<ChatMessage[]> {
-  const detail = getSessionDetail(sessionId)
-  if (!detail?.messages?.length) return []
-
-  const validMessages = detail.messages.filter(m =>
-    (m.role === 'user' || m.role === 'assistant' || m.role === 'tool') && m.content !== undefined,
-  )
-
-  const sourceMessages = options.excludeLastUser
-    ? (() => {
-      const lastUserMsgIndex = [...validMessages].reverse().findIndex(m => m.role === 'user')
-      return lastUserMsgIndex >= 0
-        ? validMessages.slice(0, validMessages.length - lastUserMsgIndex - 1)
-        : validMessages
-    })()
-    : validMessages
-
-  return sourceMessages.map((m, idx, arr) => {
-    const content = m.role === 'tool'
-      ? truncateToolResultForContext(m.content || '')
-      : m.content || ''
-    const msg: any = { role: m.role, content }
-    if (m.reasoning_content != null) msg.reasoning_content = m.reasoning_content
-    if (m.tool_calls?.length) {
-      const cleanedToolCalls = m.tool_calls
-        .filter((tc: any) => tc.id && tc.id.length > 0)
-        .map((tc: any) => ({ id: tc.id, type: tc.type, function: tc.function }))
-      if (cleanedToolCalls.length > 0) msg.tool_calls = cleanedToolCalls
-    }
-    if (m.role === 'tool') {
-      let callId = m.tool_call_id
-      if (!callId || callId.length === 0) {
-        const prevMsg = arr[idx - 1]
-        if (prevMsg?.role === 'assistant' && prevMsg.tool_calls?.length) {
-          const tc = prevMsg.tool_calls.find((t: any) => t.function?.name === m.tool_name)
-          if (tc?.id) callId = tc.id
-        }
-      }
-      if (!callId || callId.length === 0) return null
-      msg.tool_call_id = callId
-    }
-    if (m.tool_name) msg.name = m.tool_name
-    if (m.role === 'assistant' && !isAssistantMessageSendable(msg)) {
-      logger.warn('[chat-run-socket] skipped empty assistant message while building history for session %s', sessionId)
-      return null
-    }
-    return msg
-  }).filter((m): m is ChatMessage => m !== null)
+  return queryDbHistory(sessionId, options)
 }
 
 export function estimateSnapshotAwareHistoryUsage(
@@ -252,7 +245,27 @@ export async function buildCompressedHistory(
   currentInputTokens = 0,
 ): Promise<ChatMessage[]> {
   try {
-    let history = await buildDbHistory(sessionId, { excludeLastUser: true })
+    let snapshot = getCompressionSnapshot(sessionId)
+    let cursorParts: CursorSnapshotParts | null = null
+    let history: ChatMessage[]
+    if (snapshot?.compressedThroughMessageId != null) {
+      const cursorRead = readCursorSnapshotParts(sessionId, snapshot, { excludeLastUser: true })
+      if (cursorRead.status === 'usable') {
+        cursorParts = cursorRead.parts
+        history = assembleCursorSnapshotHistory(snapshot, cursorParts, SUMMARY_PREFIX)
+      } else {
+        logger.warn(
+          '[context-compress] session=%s: invalid cursor snapshot (%s); invalidating it before run',
+          sessionId,
+          cursorRead.status === 'invalid' ? cursorRead.reason : 'unexpected_legacy',
+        )
+        deleteCompressionSnapshot(sessionId)
+        snapshot = null
+        history = await buildDbHistory(sessionId, { excludeLastUser: true })
+      }
+    } else {
+      history = await buildDbHistory(sessionId, { excludeLastUser: true })
+    }
 
     const contextLength = getModelContextLength({
       profile,
@@ -309,9 +322,8 @@ export async function buildCompressedHistory(
     }
 
     const canCompressHistory = history.length > 4
-    const snapshot = getCompressionSnapshot(sessionId)
-    const staleSnapshot = snapshot && !isSnapshotUsable(snapshot, history)
-    if (staleSnapshot) {
+    const staleSnapshot = snapshot && snapshot.compressedThroughMessageId == null && !isSnapshotUsable(snapshot, history)
+    if (staleSnapshot && snapshot) {
       logger.warn('[context-compress] session=%s: stale snapshot index %d for %d history messages; using summary plus safe tail',
         sessionId, snapshot.lastMessageIndex, history.length)
       const staleHistory = buildSnapshotHistory(snapshot, history, compressionConfig.compressor) || history
@@ -332,7 +344,40 @@ export async function buildCompressedHistory(
       }, '[context-compress] threshold check')
     }
 
-    if (snapshot && !staleSnapshot) {
+    if (snapshot && cursorParts) {
+      const historyUsage = estimateUsageTokensFromMessages(history)
+      const historyMessageTokens = historyUsage.inputTokens + historyUsage.outputTokens
+      const runMessageTokens = Math.max(historyMessageTokens + currentRunInputTokens, messageOnlyTotalTokens)
+      totalTokens = await estimateLocalContextTokens(history, runMessageTokens)
+      emitContextUsage(totalTokens)
+      logger.info({
+        sessionId,
+        profile,
+        messages: history.length,
+        newMessages: cursorParts.newMessages.length,
+        messageOnlyTokens: runMessageTokens,
+        fullContextTokens: totalTokens,
+        triggerTokens,
+        decision: totalTokens > triggerTokens ? 'compress' : 'skip',
+        snapshot: 'cursor',
+      }, '[context-compress] threshold check')
+      if (totalTokens > triggerTokens) {
+        history = await compressHistory(
+          history,
+          cursorParts.newMessages,
+          sessionId,
+          upstream,
+          apiKey,
+          cState,
+          totalTokens,
+          emit,
+          sessionMap,
+          modelContext,
+          compressionConfig.compressor,
+          currentRunInputTokens,
+        )
+      }
+    } else if (snapshot && !staleSnapshot) {
       const newMessages = history.slice(snapshot.lastMessageIndex + 1)
       const snapshotHistory = buildSnapshotHistory(snapshot, history, compressionConfig.compressor) || history
       const snapshotUsage = estimateUsageTokensFromMessages(snapshotHistory)
@@ -435,6 +480,7 @@ export async function compressHistory(
       profile: summarizerProfile,
       model: summarizerModelContext.model,
       provider: summarizerModelContext.provider,
+      historyRevision: session?.history_revision ?? 0,
       workerKey: `${summarizerProfile}:compression:${sessionId}`,
     })
     const afterTokens = await calcAndUpdateUsage(sessionId, cState, emit, {
@@ -510,7 +556,16 @@ export async function forceCompressBridgeHistory(
   _messages: ChatMessage[],
   beforeTokenOverride?: number | null,
 ): Promise<BridgeCompressionResult> {
-  const history = await buildDbHistory(sessionId, { excludeLastUser: true })
+  const initialSnapshot = getCompressionSnapshot(sessionId)
+  const session = getSession(sessionId)
+  const history = initialSnapshot?.compressedThroughMessageId != null
+    ? await buildDbSnapshotAwareHistory(
+        sessionId,
+        profile,
+        { excludeLastUser: true },
+        { model: session?.model, provider: session?.provider },
+      )
+    : await buildDbHistory(sessionId, { excludeLastUser: true })
 
   if (history.length === 0) {
     return {
@@ -529,10 +584,14 @@ export async function forceCompressBridgeHistory(
 
   const upstream = ''
   const apiKey = undefined
-  const session = getSession(sessionId)
   const contextLength = getModelContextLength({ profile, model: session?.model, provider: session?.provider })
   const compressionConfig = await getRunChatCompressionConfig(session?.profile || profile, contextLength)
-  const beforeUsage = estimateSnapshotAwareHistoryUsage(sessionId, history)
+  const beforeUsage = initialSnapshot?.compressedThroughMessageId != null
+    ? (() => {
+        const usage = estimateUsageTokensFromMessages(history)
+        return { messageCount: history.length, tokenCount: usage.inputTokens + usage.outputTokens }
+      })()
+    : estimateSnapshotAwareHistoryUsage(sessionId, history)
   const totalTokens = typeof beforeTokenOverride === 'number' && Number.isFinite(beforeTokenOverride) && beforeTokenOverride > 0
     ? Math.floor(beforeTokenOverride)
     : beforeUsage.tokenCount
@@ -556,6 +615,7 @@ export async function forceCompressBridgeHistory(
     profile: summarizerProfile,
     model: summarizerModelContext.model,
     provider: summarizerModelContext.provider,
+    historyRevision: session?.history_revision ?? 0,
     workerKey: `${summarizerProfile}:compression:${sessionId}`,
   })
   const compressedMessages = result.messages.map(m => {

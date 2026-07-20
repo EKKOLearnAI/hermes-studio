@@ -13,6 +13,14 @@ const updateUsageMock = vi.fn()
 const buildCompressedHistoryMock = vi.fn()
 const buildDbHistoryMock = vi.fn()
 const buildSnapshotAwareHistoryMock = vi.fn(async (_sessionId: string, _profile: string, history: any[]) => history)
+const buildDbSnapshotAwareHistoryMock = vi.fn(async (sessionId: string, profile: string, options: any, modelContext: any) => (
+  buildSnapshotAwareHistoryMock(
+    sessionId,
+    profile,
+    await buildDbHistoryMock(sessionId, options),
+    modelContext,
+  )
+))
 const pushStateMock = vi.fn()
 const replaceStateMock = vi.fn()
 const forceCompressBridgeHistoryMock = vi.fn()
@@ -69,6 +77,7 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/compression', () => 
   buildCompressedHistory: buildCompressedHistoryMock,
   buildDbHistory: buildDbHistoryMock,
   buildSnapshotAwareHistory: buildSnapshotAwareHistoryMock,
+  buildDbSnapshotAwareHistory: buildDbSnapshotAwareHistoryMock,
   pushState: pushStateMock,
   replaceState: replaceStateMock,
   forceCompressBridgeHistory: forceCompressBridgeHistoryMock,

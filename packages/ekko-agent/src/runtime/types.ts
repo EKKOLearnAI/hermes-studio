@@ -20,7 +20,11 @@ export interface AgentRuntimeContextEstimate {
 
 export interface AgentRuntimeOptions {
   modelClient?: ModelClient
+  /** Disable every tool source, including built-ins, MCP, memory, and skill tools. */
+  toolsEnabled?: boolean
   tools?: AgentToolRegistry
+  /** Disable every skill source, including constructor and per-run skills. */
+  skillsEnabled?: boolean
   skills?: AgentSkill[]
   systemPrompt?: string
   runtimeInstructions?: string[]

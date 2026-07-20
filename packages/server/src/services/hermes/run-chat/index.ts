@@ -10,7 +10,7 @@
 import type { Server, Socket } from 'socket.io'
 import { logger } from '../../logger'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
-import { clearSessionMessages, getSession, getSessionDetail, listSessions } from '../../../db/hermes/session-store'
+import { clearSessionMessages, getSession, getSessionMetadata, listSessions } from '../../../db/hermes/session-store'
 import { getSessionCategory } from '../../../db/hermes/session-category-store'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../hermes-profile'
 import {
@@ -758,7 +758,7 @@ export class ChatRunSocket {
     const resumeEvents = state.isWorking
       ? state.events
       : (state.events || []).filter(evt => evt?.event === 'run.reattach_failed')
-    const sessionDetail = getSessionDetail(sid)
+    const sessionDetail = getSessionMetadata(sid)
     socket.emit('resumed', {
       session_id: sid,
       messages: state.messages,

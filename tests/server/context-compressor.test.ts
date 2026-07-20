@@ -5,6 +5,11 @@ const saveCompressionSnapshotMock = vi.fn()
 const deleteCompressionSnapshotMock = vi.fn()
 const bridgeRequestMock = vi.fn()
 const bridgeDestroyMock = vi.fn()
+const ekkoRuntimeOptionsMock = vi.fn()
+const ekkoRuntimeRunMock = vi.fn()
+const createModelClientMock = vi.fn()
+const resolveModelProviderConfigsMock = vi.fn()
+const resolveEkkoProviderRuntimeConfigMock = vi.fn()
 
 vi.mock('../../packages/server/src/services/logger', () => ({
   logger: {
@@ -28,6 +33,22 @@ vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
   },
 }))
 
+vi.mock('../../packages/server/src/services/ekko-agent/provider-runtime', () => ({
+  resolveEkkoProviderRuntimeConfig: resolveEkkoProviderRuntimeConfigMock,
+}))
+
+vi.mock('../../packages/ekko-agent/src', () => ({
+  AgentRuntime: class {
+    constructor(options: unknown) {
+      ekkoRuntimeOptionsMock(options)
+    }
+
+    run = ekkoRuntimeRunMock
+  },
+  createModelClient: createModelClientMock,
+  resolveModelProviderConfigs: resolveModelProviderConfigsMock,
+}))
+
 describe('ChatContextCompressor', () => {
   let originalFetch: typeof global.fetch
 
@@ -38,12 +59,113 @@ describe('ChatContextCompressor', () => {
     deleteCompressionSnapshotMock.mockReset()
     bridgeRequestMock.mockReset()
     bridgeDestroyMock.mockReset()
+    ekkoRuntimeOptionsMock.mockReset()
+    ekkoRuntimeRunMock.mockReset()
+    createModelClientMock.mockReset()
+    resolveModelProviderConfigsMock.mockReset()
+    resolveEkkoProviderRuntimeConfigMock.mockReset()
     bridgeRequestMock.mockRejectedValue(new Error('summarizer failed'))
     bridgeDestroyMock.mockResolvedValue(undefined)
+    ekkoRuntimeRunMock.mockRejectedValue(new Error('ekko summarizer failed'))
+    resolveEkkoProviderRuntimeConfigMock.mockResolvedValue({
+      provider: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'profile-key',
+      apiMode: 'chat_completions',
+    })
+    resolveModelProviderConfigsMock.mockReturnValue({
+      providerConfig: { id: 'openrouter', defaultModel: 'summary-model' },
+    })
+    createModelClientMock.mockReturnValue({
+      provider: 'openrouter',
+      requestStyle: 'openai-chat',
+      capabilities: {
+        streaming: true,
+        tools: true,
+        vision: false,
+        jsonMode: false,
+        systemPrompt: true,
+      },
+      create: vi.fn(),
+      stream: vi.fn(),
+    })
   })
 
   afterEach(() => {
     global.fetch = originalFetch
+  })
+
+  it('uses a fresh one-step tool-free and skill-free Ekko agent for summarization', async () => {
+    const { callSummarizer } = await import('../../packages/server/src/lib/context-compressor')
+    ekkoRuntimeRunMock.mockResolvedValue({
+      output: { role: 'assistant', content: 'ekko summary', finishReason: 'stop' },
+    })
+
+    const result = await callSummarizer(
+      '',
+      undefined,
+      'Summarize these turns.',
+      [],
+      12_000,
+      undefined,
+      { profile: 'work', model: 'summary-model', provider: 'openrouter' },
+    )
+
+    expect(result).toBe('ekko summary')
+    expect(ekkoRuntimeOptionsMock).toHaveBeenCalledWith(expect.objectContaining({
+      toolsEnabled: false,
+      skillsEnabled: false,
+      maxSteps: 1,
+      maxModelRetries: 0,
+      toolDelayMs: 0,
+      modelDefaults: expect.objectContaining({
+        model: 'summary-model',
+        toolChoice: 'none',
+      }),
+    }))
+    expect(ekkoRuntimeRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      memoryEnabled: false,
+      messages: [
+        { role: 'user', content: 'Summarize these turns.' },
+        { role: 'user', content: 'Generate the context checkpoint summary now.' },
+      ],
+    }))
+    expect(bridgeRequestMock).not.toHaveBeenCalled()
+    expect(bridgeDestroyMock).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the existing Hermes summarizer after the first Ekko failure', async () => {
+    const { callSummarizer } = await import('../../packages/server/src/lib/context-compressor')
+    ekkoRuntimeRunMock.mockRejectedValueOnce(new Error('provider unavailable'))
+    bridgeRequestMock.mockResolvedValue({
+      status: 'completed',
+      result: { final_response: 'hermes fallback summary' },
+    })
+
+    const result = await callSummarizer(
+      '',
+      undefined,
+      'Summarize these turns.',
+      [],
+      12_000,
+      undefined,
+      {
+        profile: 'default',
+        model: 'summary-model',
+        provider: 'openrouter',
+        workerKey: 'default:compression:session-1',
+      },
+    )
+
+    expect(result).toBe('hermes fallback summary')
+    expect(ekkoRuntimeRunMock).toHaveBeenCalledTimes(1)
+    expect(bridgeRequestMock).toHaveBeenCalledTimes(1)
+    expect(bridgeRequestMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'chat',
+      worker_key: 'default:compression:session-1',
+      model: 'summary-model',
+      provider: 'openrouter',
+    }), expect.any(Object))
   })
 
   it('keeps full history when full summarization fails', async () => {
@@ -498,6 +620,178 @@ describe('ChatContextCompressor', () => {
     expect(result.meta.verbatimCount).toBe(3)
     expect(result.meta.compressedStartIndex).toBe(22)
     expect(saveCompressionSnapshotMock).toHaveBeenCalledWith('s1', 'updated summary', 22, 23)
+  })
+
+  it('stores message cursors on the first successful compression', async () => {
+    const { ChatContextCompressor } = await import('../../packages/server/src/lib/context-compressor')
+    const compressor = new ChatContextCompressor({
+      config: { headMessageCount: 2, tailMessageCount: 2, summaryBudget: 1000 },
+    })
+    const messages = Array.from({ length: 8 }, (_, index) => ({
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      content: `message ${index}`,
+      cursorId: 101 + index,
+    }))
+    getCompressionSnapshotMock.mockReturnValue(null)
+    bridgeRequestMock.mockResolvedValue({
+      status: 'completed',
+      result: { final_response: 'cursor summary' },
+    })
+
+    const result = await compressor.compress(messages, '', undefined, 's1', {
+      profile: 'default',
+      historyRevision: 3,
+    })
+
+    expect(result.meta).toEqual(expect.objectContaining({
+      compressedThroughCursor: 106,
+      protectedHeadThroughCursor: 102,
+    }))
+    expect(saveCompressionSnapshotMock).toHaveBeenCalledWith(
+      's1',
+      'cursor summary',
+      5,
+      8,
+      {
+        compressedThroughMessageId: 106,
+        protectedHeadThroughMessageId: 102,
+        expectedHistoryRevision: 3,
+      },
+    )
+  })
+
+  it('does not advance a cursor when only the protected tail follows it', async () => {
+    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/lib/context-compressor')
+    const compressor = new ChatContextCompressor({ config: { tailMessageCount: 10 } })
+    getCompressionSnapshotMock.mockReturnValue({
+      summary: 'previous summary',
+      lastMessageIndex: 4,
+      messageCountAtTime: 5,
+      compressedThroughMessageId: 105,
+      protectedHeadThroughMessageId: 101,
+      historyRevision: 2,
+    })
+    const messages = [
+      { role: 'user', content: 'head', cursorId: 101 },
+      { role: 'user', content: `${SUMMARY_PREFIX}\n\nprevious summary` },
+      { role: 'assistant', content: 'new answer', cursorId: 106 },
+      { role: 'user', content: 'new question', cursorId: 107 },
+    ]
+
+    const result = await compressor.compress(messages, '', undefined, 's1')
+
+    expect(result.meta).toEqual(expect.objectContaining({
+      compressedThroughCursor: 105,
+      protectedHeadThroughCursor: 101,
+      llmCompressed: false,
+    }))
+    expect(saveCompressionSnapshotMock).not.toHaveBeenCalled()
+    expect(bridgeRequestMock).not.toHaveBeenCalled()
+  })
+
+  it('moves a cursor tail boundary backward instead of orphaning tool results', async () => {
+    const { ChatContextCompressor } = await import('../../packages/server/src/lib/context-compressor')
+    const compressor = new ChatContextCompressor({ config: { tailMessageCount: 3 } })
+    getCompressionSnapshotMock.mockReturnValue({
+      summary: 'previous summary',
+      lastMessageIndex: 3,
+      messageCountAtTime: 4,
+      compressedThroughMessageId: 104,
+      protectedHeadThroughMessageId: null,
+      historyRevision: 0,
+    })
+    const messages = [
+      {
+        role: 'assistant',
+        content: 'calling tool',
+        cursorId: 105,
+        tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'read', arguments: '{}' } }],
+      },
+      { role: 'tool', content: 'tool result', cursorId: 106, tool_call_id: 'call-1' },
+      { role: 'user', content: 'follow up', cursorId: 107 },
+      { role: 'assistant', content: 'answer', cursorId: 108 },
+    ]
+
+    const result = await compressor.compress(messages, '', undefined, 's1')
+
+    expect(result.messages.map(message => message.content)).toEqual([
+      expect.stringContaining('previous summary'),
+      'calling tool',
+      'tool result',
+      'follow up',
+      'answer',
+    ])
+    expect(saveCompressionSnapshotMock).not.toHaveBeenCalled()
+    expect(bridgeRequestMock).not.toHaveBeenCalled()
+  })
+
+  it('upgrades a legacy snapshot to a cursor only during a successful compression cycle', async () => {
+    const { ChatContextCompressor } = await import('../../packages/server/src/lib/context-compressor')
+    const compressor = new ChatContextCompressor({
+      config: { triggerTokens: 100, headMessageCount: 1, tailMessageCount: 1, summaryBudget: 100 },
+    })
+    const messages = Array.from({ length: 7 }, (_, index) => ({
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      content: `large ${index} ${'token '.repeat(80)}`,
+      cursorId: 201 + index,
+    }))
+    getCompressionSnapshotMock.mockReturnValue({
+      summary: 'legacy summary',
+      lastMessageIndex: 1,
+      messageCountAtTime: 2,
+      compressedThroughMessageId: null,
+      protectedHeadThroughMessageId: null,
+      historyRevision: 0,
+    })
+    bridgeRequestMock.mockResolvedValue({
+      status: 'completed',
+      result: { final_response: 'upgraded summary' },
+    })
+
+    await compressor.compress(messages, '', undefined, 's1', {
+      profile: 'default',
+      historyRevision: 4,
+    })
+
+    expect(saveCompressionSnapshotMock).toHaveBeenCalledWith(
+      's1',
+      'upgraded summary',
+      5,
+      7,
+      {
+        compressedThroughMessageId: 206,
+        protectedHeadThroughMessageId: 201,
+        expectedHistoryRevision: 4,
+      },
+    )
+  })
+
+  it('reuses a cursor summary for export without applying the legacy index to bounded input', async () => {
+    const { ExportCompressor } = await import('../../packages/server/src/lib/context-compressor/export-compressor')
+    const compressor = new ExportCompressor()
+    getCompressionSnapshotMock.mockReturnValue({
+      summary: 'existing cursor summary',
+      lastMessageIndex: 999,
+      messageCountAtTime: 1_000,
+      compressedThroughMessageId: 500,
+      protectedHeadThroughMessageId: 1,
+      historyRevision: 0,
+    })
+    bridgeRequestMock.mockResolvedValue({
+      status: 'completed',
+      result: { final_response: 'export summary' },
+    })
+
+    const result = await compressor.compress([
+      { role: 'user', content: 'protected head' },
+      { role: 'assistant', content: 'post cursor answer' },
+    ], '', undefined, 's1')
+
+    expect(result.messages).toEqual([{ role: 'user', content: 'export summary' }])
+    const serializedRequest = JSON.stringify(bridgeRequestMock.mock.calls[0]?.[0])
+    expect(serializedRequest).toContain('protected head')
+    expect(serializedRequest).toContain('post cursor answer')
+    expect(serializedRequest).toContain('existing cursor summary')
   })
 })
 

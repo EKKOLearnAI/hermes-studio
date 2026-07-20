@@ -13,7 +13,7 @@ import {
   updateSession as localUpdateSession,
   updateSessionStats as localUpdateSessionStats,
 } from '../../db/hermes/session-store'
-import { ExportCompressor } from '../../lib/context-compressor/export-compressor'
+import { buildDbExportHistory, ExportCompressor } from '../../lib/context-compressor/export-compressor'
 import { getLocalUsageStats, getRecordedUsageSessionIds, getUsage, getUsageBatch } from '../../db/hermes/usage-store'
 import {
   SESSION_CATEGORY_NAME_MAX_LENGTH,
@@ -1874,7 +1874,10 @@ export async function deleteWorkspaceFolder(ctx: any) {
 const exportCompressor = new ExportCompressor()
 
 export async function exportSession(ctx: any) {
-  const session = localGetSessionDetail(ctx.params.id)
+  const mode = (ctx.query.mode as string) || 'full'
+  const session = mode === 'compressed'
+    ? localGetSession(ctx.params.id)
+    : localGetSessionDetail(ctx.params.id)
 
   if (!session) {
     ctx.status = 404
@@ -1883,7 +1886,6 @@ export async function exportSession(ctx: any) {
   }
   if (denySessionAccess(ctx, session)) return
 
-  const mode = (ctx.query.mode as string) || 'full'
   const ext = (ctx.query.ext as string) || (mode === 'compressed' ? 'txt' : 'json')
   const title = session.title || 'session'
   const safeName = title.replace(/[^a-zA-Z0-9一-鿿_-]/g, '_').slice(0, 50)
@@ -1904,7 +1906,7 @@ export async function exportSession(ctx: any) {
     if (ext === 'txt') {
       ctx.set('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`)
       ctx.set('Content-Type', 'text/plain; charset=utf-8')
-      ctx.body = serializeAsText(session.title, session.messages || [])
+      ctx.body = serializeAsText(session.title, (session as any).messages || [])
     } else {
       ctx.set('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`)
       ctx.set('Content-Type', 'application/json')
@@ -1917,14 +1919,7 @@ async function compressSession(session: any) {
   const profile = session.profile || getActiveProfileName()
   const upstream = ''
   const apiKey = undefined
-  const messages = (session.messages || []).map((m: any) => ({
-    role: m.role,
-    content: m.content || '',
-    tool_calls: m.tool_calls,
-    tool_call_id: m.tool_call_id,
-    name: m.tool_name,
-    reasoning_content: m.reasoning,
-  }))
+  const messages = buildDbExportHistory(session.id)
 
   return exportCompressor.compress(messages, upstream, apiKey, session.id, {
     profile,

@@ -86,6 +86,7 @@ export const SESSIONS_SCHEMA: Record<string, string> = {
   is_archived: 'INTEGER NOT NULL DEFAULT 0',
   workspace: 'TEXT',
   category_id: 'INTEGER',
+  history_revision: 'INTEGER NOT NULL DEFAULT 0',
 }
 
 export const SESSIONS_INDEXES = {
@@ -288,6 +289,9 @@ export const COMPRESSION_SNAPSHOT_SCHEMA: Record<string, string> = {
   summary: 'TEXT NOT NULL DEFAULT \'\'',
   last_message_index: 'INTEGER NOT NULL DEFAULT 0',
   message_count_at_time: 'INTEGER NOT NULL DEFAULT 0',
+  compressed_through_message_id: 'INTEGER',
+  protected_head_through_message_id: 'INTEGER',
+  history_revision: 'INTEGER NOT NULL DEFAULT 0',
   updated_at: 'INTEGER NOT NULL',
 }
 

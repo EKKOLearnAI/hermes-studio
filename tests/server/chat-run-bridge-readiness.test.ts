@@ -57,6 +57,7 @@ vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
 
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   getSession: getSessionMock,
+  getSessionMetadata: getSessionMock,
   getSessionDetail: vi.fn(() => null),
 }))
 

@@ -57,6 +57,7 @@ vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   clearSessionMessages: sessionStoreMocks.clearSessionMessages,
   getSession: vi.fn(() => ({ id: 'session-1', profile: 'default', source: 'cli' })),
+  getSessionMetadata: vi.fn(() => ({ id: 'session-1', profile: 'default', source: 'cli' })),
   getSessionDetail: vi.fn(() => null),
 }))
 

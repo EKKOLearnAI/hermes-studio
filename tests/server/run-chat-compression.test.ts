@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getSessionDetailMock = vi.fn()
 const getSessionMock = vi.fn()
+const getSessionContextMessagesMock = vi.fn()
+const getSessionContextMessageMock = vi.fn()
 const getCompressionSnapshotMock = vi.fn()
 const getModelContextLengthMock = vi.fn()
 const calcAndUpdateUsageMock = vi.fn()
@@ -24,6 +26,8 @@ const compressorConstructorMock = vi.fn()
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   getSessionDetail: getSessionDetailMock,
   getSession: getSessionMock,
+  getSessionContextMessages: getSessionContextMessagesMock,
+  getSessionContextMessage: getSessionContextMessageMock,
 }))
 
 vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
@@ -77,6 +81,8 @@ describe('run chat compression trigger', () => {
   beforeEach(() => {
     getSessionDetailMock.mockReset()
     getSessionMock.mockReset()
+    getSessionContextMessagesMock.mockReset()
+    getSessionContextMessageMock.mockReset()
     getCompressionSnapshotMock.mockReset()
     getModelContextLengthMock.mockReset()
     calcAndUpdateUsageMock.mockReset()
@@ -86,7 +92,18 @@ describe('run chat compression trigger', () => {
     compressorConstructorMock.mockReset()
     readConfigYamlForProfileMock.mockReset()
 
-    getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default' })
+    getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', history_revision: 0 })
+    getSessionContextMessagesMock.mockImplementation((_sessionId: string, options: { afterId?: number; throughId?: number } = {}) => {
+      const rows = getSessionDetailMock()?.messages || []
+      return rows.filter((row: any) => (
+        ['user', 'assistant', 'tool'].includes(row.role) &&
+        (options.afterId == null || Number(row.id) > options.afterId) &&
+        (options.throughId == null || Number(row.id) <= options.throughId)
+      ))
+    })
+    getSessionContextMessageMock.mockImplementation((sessionId: string, messageId: number) => (
+      getSessionContextMessagesMock(sessionId).find((row: any) => Number(row.id) === messageId) || null
+    ))
     getModelContextLengthMock.mockReturnValue(256_000)
     calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 1_000, outputTokens: 0 })
     estimateUsageTokensFromMessagesMock.mockReturnValue({ inputTokens: 0, outputTokens: 0 })
@@ -137,6 +154,58 @@ describe('run chat compression trigger', () => {
     expect(history).toEqual([
       { role: 'assistant', content: 'called a tool', reasoning_content: '' },
     ])
+  })
+
+  it('builds a cursor snapshot run from protected head and post-cursor rows without a full-history read', async () => {
+    const rows = [
+      { id: 1, session_id: 'session-1', role: 'user', content: 'protected head', timestamp: 1 },
+      { id: 6, session_id: 'session-1', role: 'assistant', content: 'new answer', timestamp: 6 },
+      { id: 7, session_id: 'session-1', role: 'user', content: 'follow up', timestamp: 7 },
+      { id: 8, session_id: 'session-1', role: 'user', content: 'current input', timestamp: 8 },
+    ]
+    getSessionDetailMock.mockImplementation(() => {
+      throw new Error('full history must not be read')
+    })
+    getSessionContextMessagesMock.mockImplementation((_sessionId: string, options: { afterId?: number; throughId?: number } = {}) => (
+      rows.filter(row => (
+        (options.afterId == null || row.id > options.afterId) &&
+        (options.throughId == null || row.id <= options.throughId)
+      ))
+    ))
+    getSessionContextMessageMock.mockImplementation((_sessionId: string, messageId: number) => (
+      messageId === 5
+        ? { id: 5, session_id: 'session-1', role: 'assistant', content: 'cursor row', timestamp: 5 }
+        : rows.find(row => row.id === messageId) || null
+    ))
+    getCompressionSnapshotMock.mockReturnValue({
+      summary: 'previous summary',
+      lastMessageIndex: 4,
+      messageCountAtTime: 5,
+      compressedThroughMessageId: 5,
+      protectedHeadThroughMessageId: 1,
+      historyRevision: 0,
+    })
+    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 100, outputTokens: 100 })
+    estimateUsageTokensFromMessagesMock.mockReturnValue({ inputTokens: 100, outputTokens: 100 })
+
+    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const history = await buildCompressedHistory(
+      'session-1',
+      'default',
+      'http://upstream',
+      undefined,
+      vi.fn(),
+      new Map(),
+    )
+
+    expect(history).toEqual([
+      { role: 'user', content: 'protected head' },
+      { role: 'user', content: '[Previous context summary]\n\nprevious summary' },
+      { role: 'assistant', content: 'new answer' },
+      { role: 'user', content: 'follow up' },
+    ])
+    expect(getSessionDetailMock).not.toHaveBeenCalled()
+    expect(compressorCompressMock).not.toHaveBeenCalled()
   })
 
   it('excludes persisted MoA display rows from bridge history', async () => {

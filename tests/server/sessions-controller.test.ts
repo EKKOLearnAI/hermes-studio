@@ -38,6 +38,7 @@ const getRecordedUsageSessionIdsMock = vi.fn()
 const getActiveProfileNameMock = vi.fn()
 const loggerWarnMock = vi.fn()
 const getCompressionSnapshotMock = vi.fn()
+const buildDbExportHistoryMock = vi.fn()
 const listUserProfilesMock = vi.fn()
 const readConfigYamlForProfileMock = vi.fn()
 const bridgeSwitchSessionModelMock = vi.fn()
@@ -157,6 +158,7 @@ vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
 }))
 
 vi.mock('../../packages/server/src/lib/context-compressor/export-compressor', () => ({
+  buildDbExportHistory: buildDbExportHistoryMock,
   ExportCompressor: class {
     async compress(messages: any[]) {
       return {
@@ -225,6 +227,7 @@ describe('session conversations controller', () => {
     getActiveProfileNameMock.mockReturnValue('default')
     loggerWarnMock.mockReset()
     getCompressionSnapshotMock.mockReset()
+    buildDbExportHistoryMock.mockReset()
     listUserProfilesMock.mockReset()
     listUserProfilesMock.mockReturnValue([])
     readConfigYamlForProfileMock.mockReset()
@@ -2003,6 +2006,37 @@ describe('session conversations controller', () => {
       expect(ctx.body).toContain('hello')
       expect(ctx.body).toContain('[assistant]')
       expect(ctx.body).toContain('hi')
+    })
+
+    it('uses snapshot-aware DB history for compressed export without loading full session detail', async () => {
+      getSessionMock.mockReturnValue({
+        id: 'compressed-123',
+        title: 'Compressed Export',
+        profile: 'default',
+        model: 'gpt-test',
+        provider: 'openai',
+      })
+      buildDbExportHistoryMock.mockReturnValue([
+        { role: 'user', content: 'protected head' },
+        { role: 'assistant', content: 'post cursor' },
+      ])
+
+      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const ctx: any = {
+        params: { id: 'compressed-123' },
+        query: { mode: 'compressed', ext: 'json' },
+        set: vi.fn(),
+        body: null,
+      }
+
+      await mod.exportSession(ctx)
+
+      expect(localGetSessionDetailMock).not.toHaveBeenCalled()
+      expect(buildDbExportHistoryMock).toHaveBeenCalledWith('compressed-123')
+      expect(JSON.parse(ctx.body).messages).toEqual([
+        { role: 'user', content: 'protected head' },
+        { role: 'assistant', content: 'post cursor' },
+      ])
     })
 
     it('returns 404 when session not found', async () => {

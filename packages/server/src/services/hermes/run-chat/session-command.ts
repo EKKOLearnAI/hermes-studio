@@ -4,9 +4,9 @@ import { logger } from '../../logger'
 import type { AgentBridgeClient } from '../agent-bridge'
 import { readConfigYamlForProfile } from '../../config-helpers'
 import { flushBridgePendingToDb } from './bridge-message'
-import { buildDbHistory, estimateSnapshotAwareHistoryUsage, forceCompressBridgeHistory, getOrCreateSession, replaceState } from './compression'
+import { buildDbSnapshotAwareHistory, forceCompressBridgeHistory, getOrCreateSession, replaceState } from './compression'
 import { handleAbort } from './abort'
-import { calcAndUpdateUsage, contextTokensWithCachedOverhead, updateMessageContextTokenUsage } from './usage'
+import { calcAndUpdateUsage, contextTokensWithCachedOverhead, estimateUsageTokensFromMessages, updateMessageContextTokenUsage } from './usage'
 import { contentBlocksToString } from './content-blocks'
 import type { ChatRunSource, ContentBlock, QueuedRun, SessionState } from './types'
 
@@ -646,12 +646,19 @@ export async function handleSessionCommand(
       clearTransientRunState(state)
       const emit = (event: string, payload: any) => emitToSession(ctx.nsp, ctx.socket, sessionId, event, payload)
       try {
-        const history = await buildDbHistory(sessionId, { excludeLastUser: true })
-        const usageEstimate = estimateSnapshotAwareHistoryUsage(sessionId, history)
-        const beforeContextTokens = contextTokensWithCachedOverhead(state, usageEstimate.tokenCount)
+        const session = getSession(sessionId)
+        const history = await buildDbSnapshotAwareHistory(
+          sessionId,
+          ctx.profile,
+          { excludeLastUser: true },
+          { model: session?.model, provider: session?.provider },
+        )
+        const historyUsage = estimateUsageTokensFromMessages(history)
+        const beforeMessageTokens = historyUsage.inputTokens + historyUsage.outputTokens
+        const beforeContextTokens = contextTokensWithCachedOverhead(state, beforeMessageTokens)
         emit('compression.started', {
           event: 'compression.started',
-          message_count: usageEstimate.messageCount,
+          message_count: history.length,
           token_count: beforeContextTokens,
           source: 'command',
         })

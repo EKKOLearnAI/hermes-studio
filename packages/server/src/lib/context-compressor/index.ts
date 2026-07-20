@@ -2,7 +2,8 @@
  * Chat Context Compressor
  *
  * Compresses 1:1 chat conversation history before sending to upstream.
- * Uses the Hermes structured summary prompt for LLM-based compression.
+ * Uses the Hermes structured summary prompt with a clean Ekko runtime and
+ * falls back to the Hermes Agent Bridge when Ekko summarization fails.
  *
  * Algorithm:
  * 1. If total tokens < trigger threshold → return as-is
@@ -19,7 +20,14 @@ import { mkdir, writeFile } from 'fs/promises'
 import { resolve } from 'path'
 import { logger } from '../../services/logger'
 import { AgentBridgeClient, type AgentBridgeRunResult } from '../../services/hermes/agent-bridge'
+import { resolveEkkoProviderRuntimeConfig } from '../../services/ekko-agent/provider-runtime'
 import { truncateToolResultForContext } from '../tool-result-context'
+import {
+  AgentRuntime,
+  createModelClient,
+  resolveModelProviderConfigs,
+  type ModelClient,
+} from '../../../../ekko-agent/src'
 import {
   getCompressionSnapshot,
   saveCompressionSnapshot,
@@ -38,6 +46,8 @@ export interface ContentBlock {
 export interface ChatMessage {
   role: string
   content: string | ContentBlock[]
+  /** Internal database identity used for compression boundaries; never serialized to a model. */
+  cursorId?: number
   tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>
   tool_call_id?: string
   name?: string
@@ -75,6 +85,8 @@ export interface CompressedResult {
     summaryTokenEstimate: number
     verbatimCount: number
     compressedStartIndex: number
+    compressedThroughCursor?: number
+    protectedHeadThroughCursor?: number | null
   }
 }
 
@@ -82,10 +94,18 @@ export interface SummarizerOptions {
   profile?: string
   model?: string | null
   provider?: string | null
+  apiMode?: string | null
+  historyRevision?: number
   workerKey?: string
 }
 
+type SummarizerConversationMessage = {
+  role: 'user' | 'assistant'
+  content: string
+}
+
 const SUMMARIZER_TRIGGER_MESSAGE = 'Generate the context checkpoint summary now.'
+const EKKO_SUMMARIZER_SYSTEM_PROMPT = 'You are a context checkpoint summarizer. Follow the supplied instructions exactly and return only the updated summary.'
 const SUMMARIZER_DEBUG_DIR = 'logs/context-compressor'
 const SUMMARIZER_DEBUG_FILE = 'summarizer-debug.json'
 
@@ -490,14 +510,12 @@ export async function callSummarizer(
   previousSummary?: string,
   summarizer?: string | SummarizerOptions,
 ): Promise<string> {
-  void upstream
-  void apiKey
   const options: SummarizerOptions = typeof summarizer === 'string'
     ? { profile: summarizer }
     : summarizer || {}
   const profile = options.profile || 'default'
   void history
-  const convHistory: Array<{ role: string; content: string }> = []
+  const convHistory: SummarizerConversationMessage[] = []
 
   if (previousSummary) {
     convHistory.unshift(
@@ -509,6 +527,100 @@ export async function callSummarizer(
     convHistory.unshift({ role: 'user', content: prompt })
   }
 
+  try {
+    return await callEkkoSummarizer(upstream, apiKey, convHistory, timeoutMs, {
+      ...options,
+      profile,
+    })
+  } catch (err) {
+    logger.warn(err, '[context-compressor] clean Ekko summarizer failed; falling back to Hermes for profile %s', profile)
+    return callHermesSummarizer(convHistory, timeoutMs, {
+      ...options,
+      profile,
+    })
+  }
+}
+
+async function callEkkoSummarizer(
+  upstream: string,
+  apiKey: string | undefined,
+  convHistory: SummarizerConversationMessage[],
+  timeoutMs: number,
+  options: SummarizerOptions & { profile: string },
+): Promise<string> {
+  const model = String(options.model || '').trim()
+  const provider = String(options.provider || '').trim()
+  if (!model || !provider) throw new Error('Ekko summarization requires a model and provider')
+
+  const runtimeConfig = await resolveEkkoProviderRuntimeConfig({
+    profile: options.profile,
+    provider,
+    baseUrl: upstream,
+    apiKey,
+    apiMode: String(options.apiMode || '').trim() || undefined,
+  })
+  const { providerConfig } = resolveModelProviderConfigs({
+    provider: runtimeConfig.provider,
+    baseUrl: runtimeConfig.baseUrl,
+    apiKey: runtimeConfig.apiKey,
+    model,
+    apiMode: runtimeConfig.apiMode,
+    timeoutMs,
+  })
+  const providerClient = createModelClient(providerConfig)
+  const modelClient: ModelClient = {
+    provider: providerClient.provider,
+    requestStyle: providerClient.requestStyle,
+    capabilities: { ...providerClient.capabilities, streaming: false },
+    create: request => providerClient.create(request),
+    stream: request => providerClient.stream(request),
+  }
+  const runtime = new AgentRuntime({
+    modelClient,
+    toolsEnabled: false,
+    skillsEnabled: false,
+    systemPrompt: EKKO_SUMMARIZER_SYSTEM_PROMPT,
+    maxSteps: 1,
+    maxModelRetries: 0,
+    toolDelayMs: 0,
+    modelDefaults: {
+      model,
+      toolChoice: 'none',
+    },
+  })
+
+  await writeSummarizerDebugDump({
+    writtenAt: new Date().toISOString(),
+    engine: 'ekko-agent',
+    profile: options.profile,
+    model,
+    provider,
+    message: SUMMARIZER_TRIGGER_MESSAGE,
+    convHistory,
+  })
+
+  const result = await runtime.run({
+    messages: [
+      ...convHistory,
+      { role: 'user', content: SUMMARIZER_TRIGGER_MESSAGE },
+    ],
+    memoryEnabled: false,
+  })
+  const output = String(result.output.content || '').trim()
+  if (result.output.toolCalls?.length || result.output.finishReason === 'max_steps') {
+    throw new Error('Clean Ekko summarizer did not complete in one model step')
+  }
+  if (!output) throw new Error('Empty Ekko summarization response')
+  return output
+}
+
+async function callHermesSummarizer(
+  convHistory: SummarizerConversationMessage[],
+  timeoutMs: number,
+  options: SummarizerOptions & { profile: string },
+): Promise<string> {
+  const profile = options.profile
+
   const bridge = new AgentBridgeClient({ timeoutMs: timeoutMs + 15_000 })
   const sessionId = `compress_${Date.now().toString(36)}_${randomUUID().replace(/-/g, '').slice(0, 12)}`
   const workerKey = options.workerKey || `${profile}:compression:${sessionId}`
@@ -518,6 +630,7 @@ export async function callSummarizer(
     writtenAt: new Date().toISOString(),
     sessionId,
     workerKey,
+    engine: 'hermes-agent',
     profile,
     model: options.model || null,
     provider: options.provider || null,
@@ -600,6 +713,17 @@ export class ChatContextCompressor {
     // Check if we have a previous compression snapshot
     const snapshot = sessionId ? getCompressionSnapshot(sessionId) : null
 
+    if (snapshot?.compressedThroughMessageId != null) {
+      logger.info(
+        '[context-compressor] session=%s: incremental compress with cursor %d',
+        sessionId,
+        snapshot.compressedThroughMessageId,
+      )
+      return this.incrementalCompress(
+        messages, snapshot, upstream, apiKey, sessionId!, makeMeta(), summarizer,
+      )
+    }
+
     if (snapshot && snapshot.lastMessageIndex >= 0 && snapshot.lastMessageIndex < messages.length) {
       // Has snapshot → incremental compress (merge old summary with new messages)
       logger.info(
@@ -637,7 +761,13 @@ export class ChatContextCompressor {
 
   private async incrementalCompress(
     messages: ChatMessage[],
-    snapshot: { summary: string; lastMessageIndex: number },
+    snapshot: {
+      summary: string
+      lastMessageIndex: number
+      compressedThroughMessageId?: number | null
+      protectedHeadThroughMessageId?: number | null
+      historyRevision?: number
+    },
     upstream: string,
     apiKey: string | undefined,
     sessionId: string,
@@ -646,9 +776,17 @@ export class ChatContextCompressor {
   ): Promise<CompressedResult> {
     const { summary: previousSummary, lastMessageIndex } = snapshot
     const total = messages.length
-    const headCount = Math.min(this.config.headMessageCount, Math.max(0, lastMessageIndex + 1))
-    const head = messages.slice(0, headCount)
-    const newMessages = messages.slice(lastMessageIndex + 1)
+    const cursorSnapshot = snapshot.compressedThroughMessageId != null
+    const head = cursorSnapshot
+      ? messages.filter(message => (
+          message.cursorId != null &&
+          snapshot.protectedHeadThroughMessageId != null &&
+          message.cursorId <= snapshot.protectedHeadThroughMessageId
+        ))
+      : messages.slice(0, Math.min(this.config.headMessageCount, Math.max(0, lastMessageIndex + 1)))
+    const newMessages = cursorSnapshot
+      ? messages.filter(message => message.cursorId != null && message.cursorId > snapshot.compressedThroughMessageId!)
+      : messages.slice(lastMessageIndex + 1)
     const tailCount = this.config.tailMessageCount
     const previousSummaryMessage: ChatMessage = { role: 'user', content: SUMMARY_PREFIX + '\n\n' + previousSummary }
     const assembledWithPrevious = [
@@ -661,9 +799,10 @@ export class ChatContextCompressor {
 
     // If the new segment itself is too small to split but already over budget,
     // fold all new messages into the existing summary instead of preserving them verbatim.
-    const tailStart = assembledOverBudget && !canKeepTailWindow
+    const requestedTailStart = assembledOverBudget && !canKeepTailWindow
       ? newMessages.length
       : Math.max(0, newMessages.length - tailCount)
+    const tailStart = safeTailStart(newMessages, requestedTailStart)
     const toCompress = newMessages.slice(0, tailStart)
     const tail = newMessages.slice(tailStart)
 
@@ -677,6 +816,10 @@ export class ChatContextCompressor {
           summaryTokenEstimate: countTokens(SUMMARY_PREFIX + previousSummary),
           verbatimCount: head.length + newMessages.length,
           compressedStartIndex: lastMessageIndex,
+          ...(cursorSnapshot ? {
+            compressedThroughCursor: snapshot.compressedThroughMessageId!,
+            protectedHeadThroughCursor: snapshot.protectedHeadThroughMessageId ?? null,
+          } : {}),
         },
       }
     }
@@ -712,6 +855,10 @@ export class ChatContextCompressor {
           summaryTokenEstimate: countTokens(SUMMARY_PREFIX + previousSummary),
           verbatimCount: budgetedFallback.length === fallback.length ? head.length + newMessages.length : 0,
           compressedStartIndex: lastMessageIndex,
+          ...(cursorSnapshot ? {
+            compressedThroughCursor: snapshot.compressedThroughMessageId!,
+            protectedHeadThroughCursor: snapshot.protectedHeadThroughMessageId ?? null,
+          } : {}),
         },
       }
     }
@@ -724,8 +871,29 @@ export class ChatContextCompressor {
     result = enforceCompressedBudget(result, this.config.triggerTokens, head.length)
 
     const newLastIndex = lastMessageIndex + tailStart
+    const compressedThroughCursor = toCompress.at(-1)?.cursorId
+    const protectedHeadThroughCursor = cursorSnapshot
+      ? snapshot.protectedHeadThroughMessageId ?? null
+      : head.at(-1)?.cursorId ?? null
     if (sessionId) {
-      saveCompressionSnapshot(sessionId, summary, newLastIndex, total)
+      const legacyBoundarySafe = cursorSnapshot || isSafeCompressionBoundary(messages, lastMessageIndex + 1)
+      const canWriteCursor = compressedThroughCursor != null && legacyBoundarySafe
+      const saved = canWriteCursor
+        ? saveCompressionSnapshot(
+            sessionId,
+            summary,
+            newLastIndex,
+            total,
+            {
+              compressedThroughMessageId: compressedThroughCursor,
+              protectedHeadThroughMessageId: protectedHeadThroughCursor,
+              expectedHistoryRevision: cursorSnapshot
+                ? Number(snapshot.historyRevision || 0)
+                : Number((typeof summarizer === 'object' && summarizer?.historyRevision) || 0),
+            },
+          )
+        : saveCompressionSnapshot(sessionId, summary, newLastIndex, total)
+      if (saved === false) throw new Error('Compression snapshot changed while summarizing')
     }
 
     return {
@@ -737,6 +905,10 @@ export class ChatContextCompressor {
         summaryTokenEstimate: countTokens(SUMMARY_PREFIX + summary),
         verbatimCount: result.length === head.length + 1 + tail.length ? head.length + tail.length : 0,
         compressedStartIndex: newLastIndex,
+        ...(compressedThroughCursor != null ? {
+          compressedThroughCursor,
+          protectedHeadThroughCursor,
+        } : {}),
       },
     }
   }
@@ -753,10 +925,14 @@ export class ChatContextCompressor {
     const requestedHeadCount = Math.min(this.config.headMessageCount, total)
     const requestedTailCount = this.config.tailMessageCount
     const canKeepProtectedWindows = total > requestedHeadCount + requestedTailCount
-    const headCount = canKeepProtectedWindows ? requestedHeadCount : 0
+    let headCount = canKeepProtectedWindows ? safeHeadEnd(messages, requestedHeadCount) : 0
     const tailCount = canKeepProtectedWindows ? requestedTailCount : 0
 
-    const tailStart = total - tailCount
+    let tailStart = safeTailStart(messages, total - tailCount)
+    if (headCount >= tailStart) {
+      headCount = 0
+      tailStart = total
+    }
     const head = messages.slice(0, headCount)
     const toCompress = messages.slice(headCount, tailStart)
     const tail = messages.slice(tailStart)
@@ -786,8 +962,23 @@ export class ChatContextCompressor {
 
     result.push(...head)
     result.push({ role: 'user', content: SUMMARY_PREFIX + '\n\n' + summary })
+    const compressedThroughCursor = toCompress.at(-1)?.cursorId
+    const protectedHeadThroughCursor = head.at(-1)?.cursorId ?? null
     if (sessionId) {
-      saveCompressionSnapshot(sessionId, summary, tailStart - 1, total)
+      const saved = compressedThroughCursor != null
+        ? saveCompressionSnapshot(
+            sessionId,
+            summary,
+            tailStart - 1,
+            total,
+            {
+              compressedThroughMessageId: compressedThroughCursor,
+              protectedHeadThroughMessageId: protectedHeadThroughCursor,
+              expectedHistoryRevision: Number((typeof summarizer === 'object' && summarizer?.historyRevision) || 0),
+            },
+          )
+        : saveCompressionSnapshot(sessionId, summary, tailStart - 1, total)
+      if (saved === false) throw new Error('Compression snapshot changed while summarizing')
     }
 
     result.push(...tail)
@@ -802,6 +993,10 @@ export class ChatContextCompressor {
         summaryTokenEstimate: summary ? countTokens(SUMMARY_PREFIX + summary) : 0,
         verbatimCount: budgetedResult.length === result.length ? head.length + tail.length : 0,
         compressedStartIndex: tailStart - 1,
+        ...(compressedThroughCursor != null ? {
+          compressedThroughCursor,
+          protectedHeadThroughCursor,
+        } : {}),
       },
     }
   }
@@ -810,6 +1005,23 @@ export class ChatContextCompressor {
   static invalidateSnapshot(sessionId: string): void {
     deleteCompressionSnapshot(sessionId)
   }
+}
+
+function safeHeadEnd(messages: ChatMessage[], requestedExclusive: number): number {
+  let end = Math.max(0, Math.min(messages.length, requestedExclusive))
+  while (end < messages.length && messages[end]?.role === 'tool') end += 1
+  return end
+}
+
+function safeTailStart(messages: ChatMessage[], requestedStart: number): number {
+  let start = Math.max(0, Math.min(messages.length, requestedStart))
+  while (start > 0 && start < messages.length && messages[start]?.role === 'tool') start -= 1
+  return start
+}
+
+function isSafeCompressionBoundary(messages: ChatMessage[], boundaryExclusive: number): boolean {
+  if (boundaryExclusive <= 0 || boundaryExclusive >= messages.length) return true
+  return messages[boundaryExclusive]?.role !== 'tool'
 }
 
 async function* readSseFrames(stream: ReadableStream<Uint8Array>): AsyncGenerator<{ event?: string; data: string }> {
