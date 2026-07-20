@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync, statSync } from 'fs'
+import { tmpdir } from 'os'
+import { resolve } from 'path'
+
 import {
   claudeProxyMessages,
   registerClaudeCodeProxyTarget,
@@ -250,16 +254,68 @@ describe('Claude Code custom Anthropic continuation compatibility', () => {
     expect(ctx.status).toBe(400)
   })
 
-  it('does not retry when removing opaque blocks would leave an empty message', async () => {
+  it('retries after dropping a historical message that contains only opaque thinking', async () => {
     const target = registerClaudeCodeProxyTarget({
       provider: 'custom:empty-message-provider',
       model: 'review-model',
       baseUrl: 'https://provider.example',
-      apiKey: 'upstream-key',
+      apiKey: 'provider-key',
       apiMode: 'anthropic_messages',
     })
     const body = continuationBody()
     body.messages[1].content = [{ type: 'thinking', thinking: '', signature: 'opaque-signature' }]
+    const snapshot = structuredClone(body)
+    const logFile = resolve(tmpdir(), 'hermes-web-ui-test-logs', String(process.pid), 'server.log')
+    const logOffset = statSync(logFile).size
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(encryptedContentError())
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'msg_empty_history_retry_ok',
+        type: 'message',
+        role: 'assistant',
+        model: 'review-model',
+        content: [{ type: 'text', text: 'continued' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 10, output_tokens: 1 },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const ctx = makeProxyContext(target.routeKey, target.token, body)
+    await claudeProxyMessages(ctx)
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(body).toEqual(snapshot)
+    expect(requestBody(fetchMock, 0).messages).toEqual(snapshot.messages)
+    expect(requestBody(fetchMock, 1).messages).toEqual([
+      snapshot.messages[0],
+      snapshot.messages[2],
+    ])
+    expect(ctx.body.content).toEqual([{ type: 'text', text: 'continued' }])
+    const logDelta = readFileSync(logFile).subarray(logOffset).toString('utf8')
+    expect(logDelta).toContain('retrying without historical opaque thinking')
+    expect(logDelta).toContain('"provider":"custom:empty-message-provider"')
+    expect(logDelta).toContain('"status":400')
+    expect(logDelta).toContain('"removedBlocks":1')
+    expect(logDelta).toContain('"removedMessages":1')
+    expect(logDelta).toContain('"retryStarted":true')
+    expect(logDelta).not.toContain('opaque-signature')
+    expect(logDelta).not.toContain('provider-key')
+    expect(logDelta).not.toContain('Encrypted content')
+  })
+
+  it('does not retry when removing opaque-only messages would leave no history', async () => {
+    const target = registerClaudeCodeProxyTarget({
+      provider: 'custom:all-opaque-history-provider',
+      model: 'review-model',
+      baseUrl: 'https://provider.example',
+      apiKey: 'provider-key',
+      apiMode: 'anthropic_messages',
+    })
+    const body = continuationBody()
+    body.messages = [{
+      role: 'assistant',
+      content: [{ type: 'thinking', thinking: '', signature: 'opaque-signature' }],
+    }]
     const fetchMock = vi.fn(async () => encryptedContentError())
     vi.stubGlobal('fetch', fetchMock)
 
