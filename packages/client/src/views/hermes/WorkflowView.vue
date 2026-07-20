@@ -36,6 +36,7 @@ import {
   workflowLoopBodyNodeIds,
 } from '@/utils/workflow-edge-authoring'
 import WorkflowAgentNode from '@/components/hermes/workflow/WorkflowAgentNode.vue'
+import { isAuthModelProvider } from '@/utils/codingAgentProviders'
 import WorkflowFieldHelp from '@/components/hermes/workflow/WorkflowFieldHelp.vue'
 import WorkflowConditionEdge from '@/components/hermes/workflow/WorkflowConditionEdge.vue'
 import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
@@ -920,14 +921,18 @@ function defaultApiMode(provider: string) {
 }
 
 function normalizeNodeModel(data: WorkflowAgentNodeData): Pick<WorkflowAgentNodeData, 'provider' | 'model' | 'apiMode'> {
-  const currentGroup = modelGroups.value.find(group => group.provider === data.provider)
+  const availableGroups = data.agent === 'hermes'
+    ? modelGroups.value
+    : modelGroups.value.filter(group => !isAuthModelProvider(group.provider))
+  const currentGroup = availableGroups.find(group => group.provider === data.provider)
   if (currentGroup?.models.includes(data.model)) {
     return { provider: data.provider, model: data.model, apiMode: data.apiMode || defaultApiMode(data.provider) }
   }
+  const fallbackGroup = availableGroups.find(group => group.models.length > 0)
   return {
-    provider: defaultModelSelection.value.provider,
-    model: defaultModelSelection.value.model,
-    apiMode: defaultApiMode(defaultModelSelection.value.provider),
+    provider: fallbackGroup?.provider || '',
+    model: fallbackGroup?.models[0] || '',
+    apiMode: defaultApiMode(fallbackGroup?.provider || ''),
   }
 }
 
@@ -2230,19 +2235,22 @@ function initialRunNodeStatuses(sourceNodes: WorkflowNode[], sourceEdges: Workfl
 
 function updateNodeData(id: string, patch: Partial<WorkflowAgentNodeEditableData>) {
   if (selectedWorkflowRunId.value) return
-  nodes.value = nodes.value.map<WorkflowNode>(node => (
-    node.id === id
-      ? {
-          ...node,
-          style: patch.images ? expandNodeHeightForImages(node.style, patch.images.length) : node.style,
-          data: withRuntimeNodeData({
-            ...node.data,
-            ...patch,
-            skills: typeof patch.agent === 'string' && patch.agent !== node.data.agent ? [] : patch.skills ?? node.data.skills,
-          }),
-        }
-      : node
-  ))
+  nodes.value = nodes.value.map<WorkflowNode>((node) => {
+    if (node.id !== id) return node
+    const data = {
+      ...node.data,
+      ...patch,
+      skills: typeof patch.agent === 'string' && patch.agent !== node.data.agent ? [] : patch.skills ?? node.data.skills,
+    }
+    return {
+      ...node,
+      style: patch.images ? expandNodeHeightForImages(node.style, patch.images.length) : node.style,
+      data: withRuntimeNodeData({
+        ...data,
+        ...(typeof patch.agent === 'string' && patch.agent !== node.data.agent ? normalizeNodeModel(data) : {}),
+      }),
+    }
+  })
   if (typeof patch.agent === 'string') void ensureSkillOptionsForAgent(patch.agent)
 }
 

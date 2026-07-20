@@ -6,7 +6,7 @@ import {
 } from '../../packages/client/src/utils/codingAgentProviders'
 
 describe('coding agent provider visibility', () => {
-  it.each(['nous', 'openai-codex', 'xai-oauth', 'qwen-oauth'])(
+  it.each(['nous', 'openai-codex', 'copilot', 'xai-oauth', 'qwen-oauth', 'claude-oauth'])(
     'exposes %s to scoped Ekko Agent sessions',
     (provider) => {
       expect(isAuthModelProvider(provider)).toBe(true)

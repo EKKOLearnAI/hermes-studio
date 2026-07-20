@@ -10,6 +10,7 @@ import type { WorkflowAgentNodeData, WorkflowAgentNodeEditableData } from './typ
 import type { CodingAgentApiMode } from '@/api/coding-agents'
 import type { ProviderApiMode } from '@/api/hermes/system'
 import { getFileDownloadUrl } from '@/api/hermes/files'
+import { isAuthModelProvider } from '@/utils/codingAgentProviders'
 
 import '@vue-flow/node-resizer/dist/style.css'
 
@@ -29,6 +30,11 @@ const statusTip = computed(() => (
     : ''
 ))
 const isCodingAgent = computed(() => props.data.agent !== 'hermes')
+const selectableModelGroups = computed(() => (
+  isCodingAgent.value
+    ? props.data.modelGroups.filter(group => !isAuthModelProvider(group.provider))
+    : props.data.modelGroups
+))
 const apiModeOptions = computed(() => [
   { label: t('codingAgents.protocolOpenAiChat'), value: 'chat_completions' },
   { label: t('codingAgents.protocolOpenAiResponses'), value: 'codex_responses' },
@@ -175,7 +181,7 @@ async function uploadImages(files: File[]) {
       <WorkflowModelSelector
         :provider="data.provider"
         :model="data.model"
-        :groups="data.modelGroups"
+        :groups="selectableModelGroups"
         :disabled="data.readonly"
         @select="handleModelSelect"
       />

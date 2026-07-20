@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import { isScopedCodingAgentAuthProvider } from './coding-agent-provider-policy'
 
 interface CapabilityGroup { provider: string; models: string[]; api_mode?: string }
 
@@ -29,10 +30,12 @@ export function assertWorkflowImportCapabilities(nodes: unknown[], groups: Capab
     if (!provider && !model && !apiMode) continue
     const exact = `${provider}\u0000${model}\u0000${apiMode}`
     const scopedCodingAgent = agent === 'codex' || agent === 'claude-code'
+    const scopedCodingAgentProviderBlocked = scopedCodingAgent && isScopedCodingAgentAuthProvider(provider)
     const codingAgentTargetAvailable = scopedCodingAgent
+      && !scopedCodingAgentProviderBlocked
       && SCOPED_CODING_AGENT_API_MODES.has(apiMode)
       && configuredProviderModels.has(`${provider}\u0000${model}`)
-    if (!configured.has(exact) && !codingAgentTargetAvailable) {
+    if (scopedCodingAgentProviderBlocked || (!configured.has(exact) && !codingAgentTargetAvailable)) {
       throw Object.assign(new Error(`workflow node ${String(node.id || '?')} target capability is unavailable in profile`), { status: 409 })
     }
   }

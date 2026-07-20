@@ -33,6 +33,15 @@ describe('workflow import capabilities', () => {
     ], groups)).toThrow('unavailable')
   })
 
+  it.each(['openai-codex', 'copilot', 'xai-oauth', 'qwen-oauth', 'nous', 'claude-oauth'])(
+    'rejects scoped Coding Agent targets backed by auth provider %s',
+    (provider) => {
+      expect(() => assertWorkflowImportCapabilities([
+        node({ agent: 'codex', provider, model: 'model-a', apiMode: 'codex_responses' }),
+      ], [{ provider, models: ['model-a'], api_mode: 'codex_responses' }])).toThrow('unavailable')
+    },
+  )
+
   it('allows runtime-default nodes and revisions change with any target capability', () => {
     expect(() => assertWorkflowImportCapabilities([node({})], [])).not.toThrow()
     const one = workflowImportEnvironmentRevision([{ provider: 'p', models: ['a'], api_mode: 'chat_completions' }])

@@ -19,6 +19,7 @@ import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
 import { getSession, updateSession, type HermesSessionRow } from '../db/hermes/session-store'
 import type { SessionState } from './hermes/run-chat/types'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, type WindowsCommandExecution } from './windows-command'
+import { assertScopedCodingAgentProviderAllowed } from './coding-agent-provider-policy'
 
 const execFileAsync = promisify(execFile)
 const LAUNCH_API_MODES = new Set<ApiMode>(['chat_completions', 'codex_responses', 'anthropic_messages'])
@@ -28,7 +29,6 @@ const CODEX_CATALOG_BASE_INSTRUCTIONS = 'You are Codex, a coding agent. Be preci
 const NODE_ENVIRONMENT_MISSING_CODE = 'node_environment_missing'
 const POSIX_LAUNCHER_FILE = 'launch.sh'
 const WINDOWS_LAUNCHER_FILE = 'launch.ps1'
-const CODING_AGENT_SCOPED_AUTH_PROVIDERS = new Set(['openai-codex', 'copilot', 'xai-oauth', 'qwen-oauth', 'nous', 'claude-oauth'])
 const CLAUDE_CODE_SKIP_PERMISSIONS_ARGS = ['--dangerously-skip-permissions']
 const CLAUDE_CODE_ROOT_PERMISSION_ARGS = ['--permission-mode', 'auto']
 const HERMES_MCP_SERVERS = [
@@ -479,19 +479,6 @@ function belongsToDifferentBuiltinProvider(provider: string, baseUrl: string): b
     item.value !== providerKey &&
     providerPresetHost(item.base_url) === inputHost
   ))
-}
-
-function isScopedCodingAgentAuthProvider(provider: string, apiKey = ''): boolean {
-  const providerKey = String(provider || '').trim().toLowerCase()
-  return CODING_AGENT_SCOPED_AUTH_PROVIDERS.has(providerKey)
-}
-
-function assertScopedCodingAgentProviderAllowed(mode: CodingAgentLaunchResult['mode'], provider: string, apiKey = ''): void {
-  if (mode === 'global') return
-  if (!isScopedCodingAgentAuthProvider(provider, apiKey)) return
-  const err = new Error('Coding agent scoped mode does not support OAuth/subscription providers. Use global mode or select an API-key provider.')
-  ;(err as any).status = 400
-  throw err
 }
 
 async function resolveStoredProviderLaunchInput(
@@ -1649,7 +1636,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   const scope = normalizeConfigScope({ profile: input.profile, provider })
   const model = String(input.model || '').trim()
   const apiKey = String(input.apiKey || '').trim()
-  assertScopedCodingAgentProviderAllowed(mode, provider, apiKey)
+  assertScopedCodingAgentProviderAllowed(mode, provider)
   if (!model) {
     const err = new Error('Model is required')
     ;(err as any).status = 400
@@ -1858,11 +1845,7 @@ export async function startCodingAgentRun(
   const resolvedInput = await resolveStoredProviderLaunchInput(input, existingSession)
   const requestedMode = resolvedInput.mode === 'global' ? 'global' : 'scoped'
   const requestedProvider = String(resolvedInput.provider || '').trim().toLowerCase()
-  if (requestedMode !== 'global' && CODING_AGENT_SCOPED_AUTH_PROVIDERS.has(requestedProvider)) {
-    const err = new Error('Coding agent scoped mode does not support OAuth/subscription providers. Use global mode or select an API-key provider.')
-    ;(err as any).status = 400
-    throw err
-  }
+  assertScopedCodingAgentProviderAllowed(requestedMode, requestedProvider)
   if (requestedMode !== 'global' && (!String(resolvedInput.baseUrl || '').trim() || !String(resolvedInput.apiKey || '').trim())) {
     const err = new Error('Coding agent provider credentials are missing. Re-select the provider/model or update the provider API key before continuing this session.')
     ;(err as any).status = 400

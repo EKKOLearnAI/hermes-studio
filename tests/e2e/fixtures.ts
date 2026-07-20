@@ -40,6 +40,12 @@ interface MockHermesApiOptions {
   channelCredentials?: boolean
   channelConfig?: Record<string, unknown>
   providerEditor?: Record<string, unknown>
+  modelGroups?: Array<{
+    provider: string
+    label: string
+    models: string[]
+    [key: string]: unknown
+  }>
 }
 
 export const TEST_MODEL_GROUP = {
@@ -406,16 +412,18 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
     }
 
     if (pathname === '/api/hermes/available-models') {
+      const groups = options.modelGroups ?? [TEST_MODEL_GROUP]
+      const defaultGroup = groups.find(group => Array.isArray(group.models) && group.models.length > 0)
       await route.fulfill(jsonResponse({
-        default: 'test-model',
-        default_provider: 'test-provider',
-        groups: [TEST_MODEL_GROUP],
-        allProviders: [TEST_MODEL_GROUP],
+        default: defaultGroup?.models?.[0] || '',
+        default_provider: defaultGroup?.provider || '',
+        groups,
+        allProviders: groups,
         profiles: ['default', 'research'].map(profile => ({
           profile,
-          default: 'test-model',
-          default_provider: 'test-provider',
-          groups: [TEST_MODEL_GROUP],
+          default: defaultGroup?.models?.[0] || '',
+          default_provider: defaultGroup?.provider || '',
+          groups,
         })),
         model_aliases: {},
         model_visibility: {},

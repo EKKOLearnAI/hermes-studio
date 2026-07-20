@@ -1,6 +1,49 @@
 import { readFile } from 'fs/promises'
 import { expect, test } from '@playwright/test'
-import { authenticate, mockChatSocket, mockHermesApi, TEST_ACCESS_KEY } from './fixtures'
+import { authenticate, mockChatSocket, mockHermesApi, TEST_ACCESS_KEY, TEST_MODEL_GROUP } from './fixtures'
+
+test('workflow Coding Agent nodes hide auth providers and reset auth selections', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const authGroup = {
+    provider: 'openai-codex',
+    label: 'OpenAI Codex Subscription',
+    base_url: '',
+    models: ['gpt-5-codex'],
+    available_models: ['gpt-5-codex'],
+    api_key: '',
+    api_mode: 'codex_app_server',
+    builtin: true,
+  }
+  const api = await mockHermesApi(page, {
+    modelGroups: [authGroup, TEST_MODEL_GROUP],
+    workflows: [{
+      id: 'wf-auth-provider', name: 'Provider policy', profile: 'research', workspace: null,
+      nodes: [{
+        id: 'agent', type: 'agent', position: { x: 80, y: 80 },
+        data: {
+          title: 'Agent', agent: 'hermes', provider: 'openai-codex', model: 'gpt-5-codex',
+          apiMode: 'codex_responses', input: 'Run', skills: [], images: [], approvalRequired: false,
+        },
+      }],
+      edges: [], viewport: { x: 80, y: 80, zoom: .75 }, created_at: 1, updated_at: 1,
+    }],
+    workflowRuns: [],
+  })
+
+  await page.goto('/#/hermes/workflow')
+  const node = page.locator('.vue-flow__node[data-id="agent"]')
+  await expect(node.locator('.model-trigger')).toContainText('gpt-5-codex')
+
+  await node.locator('.n-select').first().click()
+  await page.getByText('Codex', { exact: true }).last().click()
+  await expect(node.locator('.model-trigger')).toContainText('test-model')
+
+  await node.locator('.model-trigger').click()
+  const modelDialog = page.getByRole('dialog')
+  await expect(modelDialog.getByText('Test Provider', { exact: true })).toBeVisible()
+  await expect(modelDialog.getByText('OpenAI Codex Subscription', { exact: true })).toHaveCount(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
 
 test('workflow canvas exposes orchestration editing and portability controls', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
