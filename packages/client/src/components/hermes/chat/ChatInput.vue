@@ -8,7 +8,6 @@ import { fetchContextLength } from '@/api/hermes/sessions'
 import { setModelContext } from '@/api/hermes/model-context'
 import { fetchSkills, type SkillCategory, type SkillInfo } from '@/api/hermes/skills'
 import { deleteSkillBundleApi, fetchSkillBundles, type SkillBundleInfo } from '@/api/hermes/skill-bundles'
-import { fetchSlashCommands } from '@/api/hermes/slash-commands'
 import { NButton, NTooltip, NModal, NInputNumber, NPopover, NSlider, NDropdown, useDialog, useMessage, type DropdownOption } from 'naive-ui'
 import { computed, ref, nextTick, onMounted, onUnmounted, watch, h } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -313,14 +312,11 @@ const slashActive = ref(false)
 const slashQuery = ref('')
 const slashActiveIndex = ref(0)
 const skillCategories = ref<SkillCategory[]>([])
-const bundleCommands = ref<{ name: string; description: string }[]>([])
 const showSkillPicker = ref(false)
 const skillSearch = ref('')
 const skillPickerLoading = ref(false)
 let skillsLoadedKey = ''
 let skillsLoadRequest: Promise<void> | null = null
-const isBridgeSession = computed(() => chatStore.activeSession?.source === 'cli')
-const isForkCommandSession = computed(() => !!chatStore.activeSession && chatStore.activeSession.source !== 'coding_agent')
 const bundles = ref<SkillBundleInfo[]>([])
 const showBundlePicker = ref(false)
 const showBundleCreator = ref(false)
