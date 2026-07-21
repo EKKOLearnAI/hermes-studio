@@ -18,6 +18,7 @@ describe('Windows installer shutdown hook', () => {
 
     expect(script).toContain("New-Object 'System.Collections.Generic.HashSet[int]'")
     expect(script).toContain('$$current.ParentProcessId')
+    expect(script).toContain('if ($$currentExe -and $$currentExe -ieq $$target) { break }')
     expect(script).toContain('$$protectedProcessIds.Contains([int]$$_.ProcessId)')
     expect(script.indexOf('$$protectedProcessIds.Contains')).toBeLessThan(script.indexOf('$$cmd.IndexOf($$installDir'))
   })
