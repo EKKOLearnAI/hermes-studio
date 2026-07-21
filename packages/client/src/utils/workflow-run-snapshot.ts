@@ -20,6 +20,29 @@ export interface WorkflowRunPlaybackEdge {
   data?: { orchestration?: WorkflowRunEdgeOrchestration; [key: string]: unknown }
 }
 
+export function normalizeWorkflowRunNodeTargets<
+  T extends { data: D },
+  D extends object,
+>(
+  nodes: T[],
+  frozen: boolean,
+  normalize: (data: D) => Partial<D>,
+): T[] {
+  if (frozen) return nodes
+  return nodes.map(node => ({
+    ...node,
+    data: { ...node.data, ...normalize(node.data) },
+  }))
+}
+
+export function workflowRunEdgeCanvasLabel(
+  authoredLabel: unknown,
+  derivedLabel: string,
+  frozen: boolean,
+): string {
+  return frozen && typeof authoredLabel === 'string' ? authoredLabel : derivedLabel
+}
+
 export function normalizeWorkflowRunEdge(raw: unknown): WorkflowRunPlaybackEdge | null {
   const record = raw && typeof raw === 'object' ? raw as Record<string, any> : {}
   if (typeof record.source !== 'string' || typeof record.target !== 'string') return null

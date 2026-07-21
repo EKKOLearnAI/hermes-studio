@@ -15,7 +15,11 @@ import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { useI18n } from 'vue-i18n'
 import { buildWorkflowEvidenceRows, latestWorkflowNodeSession, summarizeWorkflowEvidenceRows, workflowEdgePlaybackState, type WorkflowEvidenceRow } from '@/utils/workflow-history'
-import { normalizeWorkflowRunEdge } from '@/utils/workflow-run-snapshot'
+import {
+  normalizeWorkflowRunEdge,
+  normalizeWorkflowRunNodeTargets,
+  workflowRunEdgeCanvasLabel,
+} from '@/utils/workflow-run-snapshot'
 import {
   inferWorkflowConditionValueType,
   parseWorkflowConditionValue,
@@ -639,7 +643,14 @@ function workflowEdgeCanvasLabel(edge: WorkflowEdge): string {
 }
 
 function withWorkflowEdgeCanvasLabel(edge: WorkflowEdge): WorkflowEdge {
-  return { ...edge, label: workflowEdgeCanvasLabel(edge) }
+  return {
+    ...edge,
+    label: workflowRunEdgeCanvasLabel(
+      edge.label,
+      workflowEdgeCanvasLabel(edge),
+      Boolean(selectedWorkflowRunId.value),
+    ),
+  }
 }
 
 const renderedEdges = computed<WorkflowEdge[]>({
@@ -713,13 +724,11 @@ const workflowChatPanelPendingApproval = computed(() => {
 })
 
 watch([agentOptions, modelGroups], () => {
-  nodes.value = nodes.value.map<WorkflowNode>(node => ({
-    ...node,
-    data: {
-      ...node.data,
-      ...normalizeNodeModel(node.data),
-    },
-  }))
+  nodes.value = normalizeWorkflowRunNodeTargets(
+    nodes.value,
+    Boolean(selectedWorkflowRunId.value),
+    normalizeNodeModel,
+  )
   refreshWorkflowNodeSkillOptions()
 })
 
