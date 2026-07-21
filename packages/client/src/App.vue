@@ -210,7 +210,6 @@ useKeyboard()
 }
 
 .app-shell.desktop-platform-win32 {
-  border-radius: 10px;
   overflow: hidden;
 
   .app-main--card,
@@ -239,9 +238,6 @@ useKeyboard()
     }
   }
 
-  &.desktop-window-maximized {
-    border-radius: 0;
-  }
 }
 
 .app-shell.desktop-platform-darwin {

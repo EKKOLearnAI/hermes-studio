@@ -541,11 +541,10 @@ function installMicrophonePermissionHandler() {
 function splashHtml(label = t('desktop.startingLocalServices')): string {
   const startingLabel = escapeHtml(label)
   const pageBackground = process.platform === 'win32' ? 'transparent' : '#1a1a1a'
-  const winRound = process.platform === 'win32' ? 'border-radius:10px;overflow:hidden;' : ''
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Hermes Studio</title>
 <style>
   html,body{margin:0;height:100%;background:${pageBackground};color:#e5e5e5;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;-webkit-app-region:drag;}
-  .surface{height:100%;background:#1a1a1a;${winRound}}
+  .surface{height:100%;background:#1a1a1a}
   .wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:20px}
   .dot{width:10px;height:10px;border-radius:50%;background:#888;animation:pulse 1.2s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
@@ -617,7 +616,6 @@ function runtimeSourceHtml(errorMessage?: string): string {
   const safeError = errorMessage ? escapeHtml(errorMessage) : ''
   const logoUrl = runtimeSourceLogoDataUri()
   const pageBackground = process.platform === 'win32' ? 'transparent' : '#191919'
-  const winRound = process.platform === 'win32' ? 'border-radius:10px;overflow:hidden;' : ''
   const errorBlock = safeError
     ? `<section class="error" aria-live="polite">
         <div class="error-title">${escapeHtml(t('desktop.downloadFailed'))}</div>
@@ -630,7 +628,7 @@ function runtimeSourceHtml(errorMessage?: string): string {
   *{box-sizing:border-box}
   html,body{margin:0;width:100%;height:100%;background:${pageBackground};color:#f1f1f1;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;}
   body{min-height:100%;-webkit-app-region:drag;}
-  .surface{width:100%;height:100%;display:grid;place-items:center;padding:32px;background:#191919;${winRound}}
+  .surface{width:100%;height:100%;display:grid;place-items:center;padding:32px;background:#191919}
   .wrap{width:min(720px,100%);display:flex;flex-direction:column;align-items:center;gap:22px;text-align:center}
   .brand{display:flex;align-items:center;gap:10px;color:#f6f6f6}
   .mark{width:34px;height:34px;border-radius:8px;object-fit:contain;display:block}
@@ -772,10 +770,9 @@ async function bootstrap(source?: RuntimeDownloadSource) {
     if (mainWindow) {
       const msg = escapeHtml(String(err instanceof Error ? err.message : err))
       const pageBackground = process.platform === 'win32' ? 'transparent' : '#1a1a1a'
-      const winRound = process.platform === 'win32' ? 'border-radius:10px;overflow:hidden;' : ''
       mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
         `<html><body style="margin:0;font-family:system-ui;background:${pageBackground};color:#eee">
-         <main style="min-height:100vh;padding:32px;background:#1a1a1a;${winRound}">
+         <main style="min-height:100vh;padding:32px;background:#1a1a1a">
          <h2>${escapeHtml(t('desktop.failedStartServices'))}</h2><pre style="white-space:pre-wrap;color:#f88">${msg}</pre></main>
          </body></html>`,
       ))
