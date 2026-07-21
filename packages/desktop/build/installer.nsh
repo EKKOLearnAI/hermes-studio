@@ -11,6 +11,16 @@
     FileWrite $0 "$$target = [System.IO.Path]::GetFullPath($$env:HERMES_STUDIO_EXE)$\r$\n"
     FileWrite $0 "$$installDir = [System.IO.Path]::GetFullPath($$env:HERMES_STUDIO_INSTALL_DIR)$\r$\n"
     FileWrite $0 "$$webUiHome = Join-Path $$env:USERPROFILE '.hermes-web-ui'$\r$\n"
+    FileWrite $0 "$$protectedProcessIds = New-Object 'System.Collections.Generic.HashSet[int]'$\r$\n"
+    FileWrite $0 "$$cursorPid = [int]$$PID$\r$\n"
+    FileWrite $0 "for ($$depth = 0; $$depth -lt 8 -and $$cursorPid -gt 0; $$depth++) {$\r$\n"
+    FileWrite $0 "  $$protectedProcessIds.Add($$cursorPid) | Out-Null$\r$\n"
+    FileWrite $0 "  try {$\r$\n"
+    FileWrite $0 "    $$current = Get-CimInstance Win32_Process -Filter $\"ProcessId = $$cursorPid$\"$\r$\n"
+    FileWrite $0 "    if (-not $$current -or -not $$current.ParentProcessId) { break }$\r$\n"
+    FileWrite $0 "    $$cursorPid = [int]$$current.ParentProcessId$\r$\n"
+    FileWrite $0 "  } catch { break }$\r$\n"
+    FileWrite $0 "}$\r$\n"
     FileWrite $0 "function Normalize-Path([string]$$path) {$\r$\n"
     FileWrite $0 "  try { if ($$path) { return [System.IO.Path]::GetFullPath($$path) } } catch {}$\r$\n"
     FileWrite $0 "  return ''$\r$\n"
@@ -47,7 +57,7 @@
     FileWrite $0 "$$runtimeRoots = @(Get-DesktopRuntimeRoots)$\r$\n"
     FileWrite $0 "function Get-HermesStudioRelatedProcess {$\r$\n"
     FileWrite $0 "  Get-CimInstance Win32_Process | Where-Object {$\r$\n"
-    FileWrite $0 "    if ($$_.ProcessId -eq $$PID) { return $$false }$\r$\n"
+    FileWrite $0 "    if ($$protectedProcessIds.Contains([int]$$_.ProcessId)) { return $$false }$\r$\n"
     FileWrite $0 "    $$exe = Normalize-Path $$_.ExecutablePath$\r$\n"
     FileWrite $0 "    $$cmd = [string]$$_.CommandLine$\r$\n"
     FileWrite $0 "    if ($$exe -and $$exe -ieq $$target) { return $$true }$\r$\n"
@@ -87,8 +97,33 @@
   hermesStudioStopDone:
 !macroend
 
+!macro repairHermesStudioUninstaller
+  IfFileExists "$INSTDIR\${UNINSTALL_FILENAME}" 0 hermesStudioRepairDone
+    DetailPrint "Repairing Hermes Studio uninstaller..."
+    SetOutPath "$INSTDIR"
+    Delete "$INSTDIR\${UNINSTALL_FILENAME}.hermes-repair"
+    ClearErrors
+    File "/oname=${UNINSTALL_FILENAME}.hermes-repair" "${UNINSTALLER_OUT_FILE}"
+    IfErrors hermesStudioRepairDone
+
+    ClearErrors
+    Rename "$INSTDIR\${UNINSTALL_FILENAME}" "$INSTDIR\${UNINSTALL_FILENAME}.hermes-backup"
+    IfErrors hermesStudioRepairCleanup
+    Rename "$INSTDIR\${UNINSTALL_FILENAME}.hermes-repair" "$INSTDIR\${UNINSTALL_FILENAME}"
+    IfErrors hermesStudioRepairRestore
+    Delete "$INSTDIR\${UNINSTALL_FILENAME}.hermes-backup"
+    Goto hermesStudioRepairDone
+
+  hermesStudioRepairRestore:
+    Rename "$INSTDIR\${UNINSTALL_FILENAME}.hermes-backup" "$INSTDIR\${UNINSTALL_FILENAME}"
+  hermesStudioRepairCleanup:
+    Delete "$INSTDIR\${UNINSTALL_FILENAME}.hermes-repair"
+  hermesStudioRepairDone:
+!macroend
+
 !macro customInit
   !insertmacro stopHermesStudioProcesses
+  !insertmacro repairHermesStudioUninstaller
 !macroend
 
 !macro customCheckAppRunning
