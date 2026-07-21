@@ -139,6 +139,13 @@ body {
   background-color: transparent !important;
 }
 
+.hermes-desktop-windows,
+.hermes-desktop-windows body,
+.hermes-desktop-windows #app {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
 // Teleported overlays must remain clickable above Electron drag regions.
 .hermes-desktop-shell {
   .n-drawer,

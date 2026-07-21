@@ -39,6 +39,22 @@
       color: #f0f0f0;
     }
 
+    html.hermes-desktop-windows,
+    html.hermes-desktop-windows body,
+    html.hermes-desktop-windows #app {
+      background: transparent;
+    }
+
+    html.hermes-desktop-windows .boot-fallback {
+      background: #f7f7f4;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    html.hermes-desktop-windows.dark .boot-fallback {
+      background: #1a1a1a;
+    }
+
     .boot-fallback__logo-wrap {
       position: relative;
       display: block;
@@ -100,6 +116,17 @@
         }
         if (isComic) {
           document.documentElement.classList.add('comic');
+        }
+
+        const desktop = window.hermesDesktop;
+        if (desktop?.isDesktop) {
+          document.documentElement.classList.add('hermes-desktop-shell');
+        }
+        if (desktop?.isDesktop && desktop?.platform === 'win32') {
+          document.documentElement.classList.add('hermes-desktop-windows');
+        }
+        if (desktop?.windowKind === 'pet' || window.location.hash.startsWith('#/desktop-pet')) {
+          document.documentElement.classList.add('hermes-desktop-pet-window');
         }
       } catch (e) {
         console.warn('Failed to apply theme:', e);

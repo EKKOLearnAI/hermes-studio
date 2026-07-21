@@ -18,6 +18,7 @@ export interface HermesDesktopBridge {
   notifyCompletion: (payload: { title: string; body?: string; icon?: string; tag?: string }) => Promise<boolean>
   getWindowState: () => Promise<{ isMaximized: boolean }>
   windowControl: (action: 'minimize' | 'toggle-maximize' | 'close') => Promise<{ isMaximized: boolean }>
+  onWindowStateChange?: (callback: (state: { isMaximized: boolean }) => void) => () => void
   getPetWindowState?: () => Promise<DesktopPetWindowState>
   setPetWindowBounds?: (bounds: DesktopWindowBounds) => Promise<DesktopPetWindowState>
   setPetWindowVisible?: (visible: boolean) => Promise<DesktopPetWindowState>

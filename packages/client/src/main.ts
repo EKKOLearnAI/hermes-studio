@@ -30,6 +30,9 @@ if (isComic) {
 if (isDesktopShell) {
   document.documentElement.classList.add('hermes-desktop-shell')
 }
+if (isDesktopShell && bridge?.platform === 'win32') {
+  document.documentElement.classList.add('hermes-desktop-windows')
+}
 if (isDesktopPetWindow) {
   document.documentElement.classList.add('hermes-desktop-pet-window')
 }

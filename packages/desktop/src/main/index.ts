@@ -41,6 +41,7 @@ const PET_WINDOW_DEFAULT_HEIGHT = 320
 const PET_WINDOW_MIN_SIZE = 72
 const PET_WINDOW_MAX_SIZE = 1200
 const PET_WINDOW_REFRESH_CHANNEL = 'hermes-desktop:pet-window-refresh'
+const WINDOW_STATE_CHANGE_CHANNEL = 'hermes-desktop:window-state-change'
 type WindowControlAction = 'minimize' | 'toggle-maximize' | 'close'
 type DesktopWindowBounds = { x: number; y: number; width: number; height: number }
 
@@ -243,6 +244,11 @@ function windowState() {
   }
 }
 
+function notifyWindowStateChanged() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send(WINDOW_STATE_CHANGE_CHANNEL, windowState())
+}
+
 function handleWindowControl(action: WindowControlAction) {
   if (!mainWindow || mainWindow.isDestroyed()) return windowState()
   if (action === 'minimize') {
@@ -434,7 +440,7 @@ async function createWindow(): Promise<void> {
     minWidth: 960,
     minHeight: 600,
     title: 'Hermes Studio',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: process.platform === 'win32' ? '#00000000' : '#1a1a1a',
     autoHideMenuBar: true,
     show: false,
     ...(process.platform === 'darwin'
@@ -445,6 +451,7 @@ async function createWindow(): Promise<void> {
       : process.platform === 'win32'
         ? {
             frame: false,
+            transparent: true,
           }
         : {}),
     ...(process.platform === 'linux' ? { icon: desktopIcon() } : {}),
@@ -470,6 +477,9 @@ async function createWindow(): Promise<void> {
 
   mainWindow.on('show', updateTrayMenu)
   mainWindow.on('hide', updateTrayMenu)
+  mainWindow.on('maximize', notifyWindowStateChanged)
+  mainWindow.on('unmaximize', notifyWindowStateChanged)
+  mainWindow.on('restore', notifyWindowStateChanged)
 
   // External links → system browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -531,9 +541,12 @@ function installMicrophonePermissionHandler() {
 
 function splashHtml(label = t('desktop.startingLocalServices')): string {
   const startingLabel = escapeHtml(label)
+  const pageBackground = process.platform === 'win32' ? 'transparent' : '#1a1a1a'
+  const winRound = process.platform === 'win32' ? 'border-radius:10px;overflow:hidden;' : ''
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Hermes Studio</title>
 <style>
-  html,body{margin:0;height:100%;background:#1a1a1a;color:#e5e5e5;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;-webkit-app-region:drag;}
+  html,body{margin:0;height:100%;background:${pageBackground};color:#e5e5e5;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;-webkit-app-region:drag;}
+  .surface{height:100%;background:#1a1a1a;${winRound}}
   .wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:20px}
   .dot{width:10px;height:10px;border-radius:50%;background:#888;animation:pulse 1.2s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
@@ -546,13 +559,13 @@ function splashHtml(label = t('desktop.startingLocalServices')): string {
   .bar.indeterminate{width:40%;animation:progress 1.2s ease-in-out infinite;transition:none}
   @keyframes progress{0%{transform:translateX(-110%)}100%{transform:translateX(360%)}}
   h1{font-weight:500;margin:0;font-size:18px}
-</style></head><body><div class="wrap">
+</style></head><body><main class="surface"><div class="wrap">
 <h1>Hermes Studio</h1>
 <div class="row"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
 <div id="label" class="label">${startingLabel}</div>
 <div class="progress"><div id="bar" class="bar indeterminate"></div></div>
 <div id="detail" class="detail"></div>
-</div></body></html>`
+</div></main></body></html>`
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
 }
 
@@ -604,6 +617,8 @@ function runtimeSourceLogoDataUri(): string {
 function runtimeSourceHtml(errorMessage?: string): string {
   const safeError = errorMessage ? escapeHtml(errorMessage) : ''
   const logoUrl = runtimeSourceLogoDataUri()
+  const pageBackground = process.platform === 'win32' ? 'transparent' : '#191919'
+  const winRound = process.platform === 'win32' ? 'border-radius:10px;overflow:hidden;' : ''
   const errorBlock = safeError
     ? `<section class="error" aria-live="polite">
         <div class="error-title">${escapeHtml(t('desktop.downloadFailed'))}</div>
@@ -614,8 +629,9 @@ function runtimeSourceHtml(errorMessage?: string): string {
 <style>
   :root{color-scheme:dark}
   *{box-sizing:border-box}
-  html,body{margin:0;width:100%;height:100%;background:#191919;color:#f1f1f1;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;}
-  body{min-height:100%;display:grid;place-items:center;padding:32px;-webkit-app-region:drag;}
+  html,body{margin:0;width:100%;height:100%;background:${pageBackground};color:#f1f1f1;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;}
+  body{min-height:100%;-webkit-app-region:drag;}
+  .surface{width:100%;height:100%;display:grid;place-items:center;padding:32px;background:#191919;${winRound}}
   .wrap{width:min(720px,100%);display:flex;flex-direction:column;align-items:center;gap:22px;text-align:center}
   .brand{display:flex;align-items:center;gap:10px;color:#f6f6f6}
   .mark{width:34px;height:34px;border-radius:8px;object-fit:contain;display:block}
@@ -632,11 +648,11 @@ function runtimeSourceHtml(errorMessage?: string): string {
   .error-title{font-size:13px;font-weight:650;color:#ffc3c3;margin-bottom:8px}
   pre{width:100%;max-height:180px;overflow:auto;white-space:pre-wrap;margin:0;color:#ffaaaa;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;-webkit-app-region:no-drag}
   @media (max-width:560px){
-    body{padding:24px}
+    .surface{padding:24px}
     .actions{grid-template-columns:1fr}
     button{min-height:78px}
   }
-</style></head><body><main class="wrap">
+</style></head><body><main class="surface"><div class="wrap">
 <div class="brand">${logoUrl ? `<img class="mark" src="${logoUrl}" alt="Hermes Studio">` : ''}<h1>Hermes Studio</h1></div>
 <p class="label">${escapeHtml(t('desktop.selectRuntimeSource'))}</p>
 ${errorBlock}
@@ -658,7 +674,7 @@ ${errorBlock}
     window.hermesDesktop?.retryBootstrap?.('github')
   })
 </script>
-</main></body></html>`
+</div></main></body></html>`
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
 }
 
@@ -756,9 +772,12 @@ async function bootstrap(source?: RuntimeDownloadSource) {
     console.error('Failed to start Web UI server:', err)
     if (mainWindow) {
       const msg = escapeHtml(String(err instanceof Error ? err.message : err))
+      const pageBackground = process.platform === 'win32' ? 'transparent' : '#1a1a1a'
+      const winRound = process.platform === 'win32' ? 'border-radius:10px;overflow:hidden;' : ''
       mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
-        `<html><body style="font-family:system-ui;padding:32px;background:#1a1a1a;color:#eee">
-         <h2>${escapeHtml(t('desktop.failedStartServices'))}</h2><pre style="white-space:pre-wrap;color:#f88">${msg}</pre>
+        `<html><body style="margin:0;font-family:system-ui;background:${pageBackground};color:#eee">
+         <main style="min-height:100vh;padding:32px;background:#1a1a1a;${winRound}">
+         <h2>${escapeHtml(t('desktop.failedStartServices'))}</h2><pre style="white-space:pre-wrap;color:#f88">${msg}</pre></main>
          </body></html>`,
       ))
     }

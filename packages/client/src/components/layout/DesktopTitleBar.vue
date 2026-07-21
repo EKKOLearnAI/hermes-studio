@@ -99,6 +99,8 @@ onMounted(() => {
   color: $text-primary;
   user-select: none;
   overflow: hidden;
+  contain: paint;
+  clip-path: inset(0 round 12px);
   -webkit-app-region: drag;
 
   &::after {
@@ -118,6 +120,8 @@ onMounted(() => {
 
     .desktop-titlebar__controls {
       border-left: 0;
+      border-radius: inherit;
+      clip-path: inset(0 round 12px);
     }
   }
 }
@@ -144,11 +148,16 @@ onMounted(() => {
   height: 100%;
   display: flex;
   align-items: stretch;
+  overflow: hidden;
+  contain: paint;
   border-left: 1px solid $border-color;
+  border-radius: 0 12px 12px 0;
+  clip-path: inset(0 round 0 12px 12px 0);
   -webkit-app-region: no-drag;
 }
 
 .desktop-window-btn {
+  position: relative;
   width: 46px;
   height: 100%;
   border: 0;
@@ -158,9 +167,25 @@ onMounted(() => {
   place-items: center;
   color: $text-secondary;
   background: transparent;
+  background-clip: padding-box;
   cursor: default;
+  overflow: hidden;
+  isolation: isolate;
+  -webkit-app-region: no-drag;
+
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    border-radius: inherit;
+    background: transparent;
+    pointer-events: none;
+  }
 
   svg {
+    position: relative;
+    z-index: 1;
     width: 12px;
     height: 12px;
     fill: none;
@@ -168,16 +193,33 @@ onMounted(() => {
     stroke-width: 1.4;
     stroke-linecap: round;
     stroke-linejoin: round;
+    pointer-events: none;
   }
 
   &:hover {
     color: $text-primary;
-    background: rgba(var(--text-muted-rgb), 0.14);
+
+    &::before {
+      background: rgba(var(--text-muted-rgb), 0.14);
+    }
   }
 
   &.close:hover {
     color: #ffffff;
-    background: #c42b1c;
+
+    &::before {
+      background: #c42b1c;
+    }
+  }
+
+  &:last-child {
+    border-top-right-radius: 11px;
+    border-bottom-right-radius: 11px;
+  }
+
+  .standalone &:first-child {
+    border-top-left-radius: 11px;
+    border-bottom-left-radius: 11px;
   }
 }
 </style>

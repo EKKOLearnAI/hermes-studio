@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onUnmounted, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { darkTheme, NConfigProvider, NMessageProvider, NDialogProvider, NNotificationProvider } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
@@ -51,6 +51,8 @@ const desktopTitleBarLeft = computed(() => {
 const isDesktopPetRoute = computed(() => route.name === 'desktop.pet')
 const showWebPet = computed(() => !isLoginPage.value && !isDesktopShell.value && !isDesktopPetRoute.value)
 const desktopPlatformClass = computed(() => desktopPlatform.value ? `desktop-platform-${desktopPlatform.value}` : '')
+const isDesktopWindowMaximized = ref(false)
+let stopWindowStateListener: (() => void) | undefined
 
 function handleMobileMenuClick() {
   if (usesPageSidebar.value) {
@@ -71,7 +73,21 @@ watch(isLoginPage, (loginPage) => {
   immediate: true,
 })
 
+onMounted(() => {
+  const bridge = desktopBridge()
+  if (!bridge?.isDesktop || desktopPlatform.value !== 'win32') return
+  bridge.getWindowState?.()
+    .then(state => {
+      isDesktopWindowMaximized.value = !!state.isMaximized
+    })
+    .catch(() => undefined)
+  stopWindowStateListener = bridge.onWindowStateChange?.((state) => {
+    isDesktopWindowMaximized.value = !!state.isMaximized
+  })
+})
+
 onUnmounted(() => {
+  stopWindowStateListener?.()
   appStore.stopHealthPolling()
 })
 
@@ -85,7 +101,7 @@ useKeyboard()
       <NDialogProvider>
         <NNotificationProvider>
           <router-view v-if="isDesktopPetRoute" />
-          <div v-else class="app-shell" :class="[desktopPlatformClass, { desktop: isDesktopShell }]">
+          <div v-else class="app-shell" :class="[desktopPlatformClass, { desktop: isDesktopShell, 'desktop-window-maximized': isDesktopWindowMaximized }]">
             <DesktopTitleBar
               v-if="isDesktopWindows"
               :standalone="isLoginPage"
@@ -194,12 +210,37 @@ useKeyboard()
 }
 
 .app-shell.desktop-platform-win32 {
+  border-radius: 10px;
+  overflow: hidden;
+
   .app-main--card,
   :deep(.chat-panel > .chat-main),
   :deep(.history-panel > .chat-main),
   :deep(.workflow-view > .workflow-main),
   :deep(.group-chat-panel > .chat-main) {
     margin-top: 50px;
+  }
+
+  :deep(.chat-panel > .session-list > .page-sidebar-top),
+  :deep(.history-panel > .session-list > .page-sidebar-top),
+  :deep(.workflow-view > .workflow-sidebar > .page-sidebar-top),
+  :deep(.group-chat-panel > .room-sidebar > .sidebar-header) {
+    -webkit-app-region: drag;
+
+    button,
+    a,
+    input,
+    textarea,
+    select,
+    [role="button"],
+    [role="tab"],
+    .n-base-selection {
+      -webkit-app-region: no-drag;
+    }
+  }
+
+  &.desktop-window-maximized {
+    border-radius: 0;
   }
 }
 
