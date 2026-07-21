@@ -15,6 +15,7 @@ import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { useI18n } from 'vue-i18n'
 import { buildWorkflowEvidenceRows, latestWorkflowNodeSession, summarizeWorkflowEvidenceRows, workflowEdgePlaybackState, type WorkflowEvidenceRow } from '@/utils/workflow-history'
+import { normalizeWorkflowRunEdge } from '@/utils/workflow-run-snapshot'
 import {
   inferWorkflowConditionValueType,
   parseWorkflowConditionValue,
@@ -1057,19 +1058,7 @@ function normalizeStoredNode(raw: unknown, index: number): WorkflowNode {
 }
 
 function normalizeStoredEdge(raw: unknown): WorkflowEdge | null {
-  const record = raw && typeof raw === 'object' ? raw as Record<string, any> : {}
-  if (typeof record.source !== 'string' || typeof record.target !== 'string') return null
-  return {
-    id: typeof record.id === 'string' && record.id ? record.id : `${record.source}-${record.target}`,
-    source: record.source,
-    target: record.target,
-    sourceHandle: normalizeWorkflowHandleId(record.sourceHandle, 'source'),
-    targetHandle: normalizeWorkflowHandleId(record.targetHandle, 'target'),
-    type: workflowEdgeVisualType(record.source, record.target),
-    animated: false,
-    markerEnd: MarkerType.ArrowClosed,
-    data: record.data && typeof record.data === 'object' ? { ...record.data } : undefined,
-  }
+  return normalizeWorkflowRunEdge(raw) as WorkflowEdge | null
 }
 
 function nextIndexFromNodes(source: WorkflowNode[]): number {
@@ -3017,6 +3006,12 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
             <WorkflowConditionEdge v-bind="edgeProps" @edit="openEdgeEditor" />
           </template>
 
+          <div
+            v-if="selectedWorkflowRun" class="workflow-run-snapshot-indicator"
+            role="status"
+          >
+            {{ t('workflow.runs.snapshotIndicator') }}
+          </div>
           <Background :gap="24" :size="1.2" color="var(--border-color)" />
           <MiniMap pannable zoomable :node-color="nodeColor" />
           <Controls />
@@ -4039,10 +4034,30 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
 .workflow-import-input { display: none; }
 
 .workflow-canvas {
+  position: relative;
   min-width: 0;
   min-height: 0;
   background: $bg-primary;
   flex: 1;
+}
+
+.workflow-run-snapshot-indicator {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 8;
+  transform: translateX(-50%);
+  pointer-events: none;
+  padding: 5px 10px;
+  border: 1px solid rgba(var(--accent-info-rgb), 0.28);
+  border-radius: 999px;
+  background: $bg-card;
+  color: $text-secondary;
+  font-size: 11px;
+  line-height: 16px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(8px);
+  white-space: nowrap;
 }
 
 .workflow-runs-panel {

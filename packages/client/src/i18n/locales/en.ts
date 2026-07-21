@@ -1000,6 +1000,7 @@ export default {
       refresh: 'Refresh',
       empty: 'No run records',
       startNodes: '{count} start nodes',
+      snapshotIndicator: 'Immutable snapshot from this run’s launch',
       show: 'Show run records',
       hide: 'Hide run records',
       nodeSessionTitle: 'Node Session - {node}',

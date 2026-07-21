@@ -217,6 +217,61 @@ describe('workflow manager', () => {
     } finally { await manager.delete(workflow.id) }
   })
 
+  it('preserves authored visual graph fields in an immutable run snapshot', async () => {
+    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    initAllStores()
+    chatRunMock.sessionOutputs.clear()
+    chatRunMock.runAndWait.mockReset().mockImplementation(async (request: { session_id: string }) => {
+      const output = chatRunMock.runAndWait.mock.calls.length === 1 ? '{"decision":"READY"}' : 'delivered'
+      chatRunMock.sessionOutputs.set(request.session_id, output)
+      return { ok: true, output }
+    })
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: `Visual run snapshot ${Date.now()}`, profile: 'default',
+      nodes: [
+        { id: 'plan', type: 'agent', position: { x: -320, y: -40 }, data: { title: 'Plan', agent: 'hermes', input: 'plan' } },
+        { id: 'delivery', type: 'agent', position: { x: 1_860, y: 265 }, data: { title: 'Delivery', agent: 'hermes', input: 'deliver' } },
+      ],
+      edges: [{
+        id: 'plan-delivery-ready', source: 'plan', target: 'delivery',
+        sourceHandle: 'top', targetHandle: 'bottom', label: 'READY path', animated: true,
+        sourceNode: { id: 'plan', runtimeOnly: true }, targetNode: { id: 'delivery', runtimeOnly: true },
+        sourceX: 123, targetX: 456, events: { click: 'runtime-only' },
+        data: { orchestration: {
+          route: 'success', condition: { path: 'outputJson.decision', operator: 'equals', value: 'READY' },
+        } },
+      } as any],
+    })
+    try {
+      const result = await manager.runNow(workflow.id)
+      expect(result.run.status).toBe('completed')
+      expect(result.run.snapshot_nodes.map((node: any) => ({ id: node.id, position: node.position }))).toEqual([
+        { id: 'plan', position: { x: -320, y: -40 } },
+        { id: 'delivery', position: { x: 1_860, y: 265 } },
+      ])
+      expect(result.run.snapshot_edges).toEqual([expect.objectContaining({
+        id: 'plan-delivery-ready', source: 'plan', target: 'delivery',
+        sourceHandle: 'top', targetHandle: 'bottom', label: 'READY path', animated: true,
+        data: { orchestration: {
+          route: 'success', condition: { path: 'outputJson.decision', operator: 'equals', value: 'READY' },
+        } },
+      })])
+      expect(result.run.snapshot_edges[0]).not.toHaveProperty('sourceNode')
+      expect(result.run.snapshot_edges[0]).not.toHaveProperty('targetNode')
+      expect(result.run.snapshot_edges[0]).not.toHaveProperty('sourceX')
+      expect(result.run.snapshot_edges[0]).not.toHaveProperty('targetX')
+      expect(result.run.snapshot_edges[0]).not.toHaveProperty('events')
+      expect(result.run.snapshot_edges[0]).not.toHaveProperty('orchestration')
+      expect(chatRunMock.runAndWait).toHaveBeenCalledTimes(2)
+
+      const rerun = await manager.rerunFromNode(workflow.id, result.run.id, 'delivery')
+      expect(rerun.run.status).toBe('completed')
+      expect(chatRunMock.runAndWait).toHaveBeenCalledTimes(3)
+    } finally { await manager.delete(workflow.id) }
+  })
+
   it('continues forwarding api mode for coding-agent workflow nodes', async () => {
     const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
     const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')

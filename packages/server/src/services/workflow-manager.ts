@@ -147,6 +147,52 @@ export interface WorkflowEdgeSnapshot {
   orchestration: WorkflowEdgeOrchestration
 }
 
+function workflowRunSnapshotGraph(
+  rawNodes: unknown[],
+  rawEdges: unknown[],
+  compiled: CompiledWorkflowGraph,
+): { nodes: unknown[]; edges: unknown[] } {
+  const authoredNodeById = new Map(rawNodes.flatMap(raw => {
+    const record = raw && typeof raw === 'object' ? raw as Record<string, any> : null
+    return record && typeof record.id === 'string' ? [[record.id, record] as const] : []
+  }))
+  const authoredEdgeById = new Map(rawEdges.flatMap(raw => {
+    const record = raw && typeof raw === 'object' ? raw as Record<string, any> : null
+    if (!record || typeof record.source !== 'string' || typeof record.target !== 'string') return []
+    return [[typeof record.id === 'string' && record.id ? record.id : `${record.source}->${record.target}`, record] as const]
+  }))
+
+  const nodes = compiled.nodes.map(node => {
+    const authored = authoredNodeById.get(node.id) || {}
+    const position = authored.position && typeof authored.position === 'object'
+      && Number.isFinite(authored.position.x) && Number.isFinite(authored.position.y)
+      ? { x: Number(authored.position.x), y: Number(authored.position.y) }
+      : node.position
+    return {
+      ...node,
+      ...(position ? { position } : {}),
+      ...(typeof authored.dragHandle === 'string' ? { dragHandle: authored.dragHandle } : {}),
+      ...(authored.style && typeof authored.style === 'object' ? { style: { ...authored.style } } : {}),
+    }
+  })
+  const edges = compiled.edges.map(edge => {
+    const edgeId = edge.id || `${edge.source}->${edge.target}`
+    const authored = authoredEdgeById.get(edgeId) || {}
+    return {
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      ...(typeof authored.sourceHandle === 'string' ? { sourceHandle: authored.sourceHandle } : {}),
+      ...(typeof authored.targetHandle === 'string' ? { targetHandle: authored.targetHandle } : {}),
+      ...(typeof authored.type === 'string' ? { type: authored.type } : {}),
+      ...(typeof authored.animated === 'boolean' ? { animated: authored.animated } : {}),
+      ...(typeof authored.label === 'string' ? { label: authored.label } : {}),
+      data: { orchestration: edge.orchestration },
+    }
+  })
+  return { nodes, edges }
+}
+
 type WorkflowManagerEvents = {
   status: [WorkflowRuntimeStatus]
 }
@@ -2053,14 +2099,17 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     const runTimeoutMessage = input.timeoutMs && input.timeoutMs > 0
       ? `workflow run timed out after ${input.timeoutMs}ms`
       : null
+    const snapshot = workflowRunSnapshotGraph(workflow.nodes, workflow.edges, compiledGraph)
     const run = createWorkflowRun({
       workflow_id: workflow.id,
       profile,
       workspace: workflow.workspace,
       start_node_ids: startNodeIds,
       status: 'running',
-      snapshot_nodes: nodes,
-      snapshot_edges: edges,
+      // Freeze authored visual fields together with the validated execution
+      // target and canonical orchestration used by the scheduler below.
+      snapshot_nodes: snapshot.nodes,
+      snapshot_edges: snapshot.edges,
       compiled_loops: compiledGraph.loops,
       started_at: startedAt,
     })
