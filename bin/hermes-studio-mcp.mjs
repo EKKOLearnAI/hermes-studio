@@ -1272,7 +1272,7 @@ const tools = [
       }, ['workflow_id', 'run_id']),
   },
   {
-    name: 'hermes_studio_use_workflow_run_rerun_from_node',
+    name: 'hermes_studio_use_workflow_rerun_node',
     toolset: 'use',
     description: 'Rerun an existing workflow run from a node. Use preserve_start_node=true to keep the selected node message and only rerun downstream nodes; false clears the selected node and downstream sessions.',
     inputSchema: inputSchema({
@@ -1440,6 +1440,7 @@ const tools = [
 const TOOL_ALIASES = new Map([
   ['hermes_api_openapi_get', 'hermes_studio_api_openapi_get'],
   ['hermes_api_request', 'hermes_studio_api_request'],
+  ['hermes_studio_use_workflow_run_rerun_from_node', 'hermes_studio_use_workflow_rerun_node'],
   ['hermes_lan_devices_list', 'hermes_studio_lan_devices_list'],
   ['hermes_lan_devices_scan', 'hermes_studio_lan_devices_scan'],
   ['hermes_lan_peer_connect', 'hermes_studio_lan_peer_connect'],
@@ -1631,7 +1632,7 @@ async function callTool(name, args = {}) {
       return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}/runs/${encodeURIComponent(args.run_id)}/stop`, withAuthArgs(args, {
         method: 'POST',
       })))
-    case 'hermes_studio_use_workflow_run_rerun_from_node':
+    case 'hermes_studio_use_workflow_rerun_node':
       return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}/runs/${encodeURIComponent(args.run_id)}/rerun-from-node`, withAuthArgs(args, {
         method: 'POST',
         body: pickDefined(args, [

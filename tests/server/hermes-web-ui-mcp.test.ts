@@ -27,6 +27,14 @@ function waitForRpc(responses: Map<number, any>, id: number): Promise<any> {
   })
 }
 
+function expectProviderSafeToolNames(serverName: string, tools: Array<{ name: string }>) {
+  const safeServerName = serverName.replace(/[^A-Za-z0-9_]/g, '_')
+  const overlongNames = tools
+    .map(tool => `mcp__${safeServerName}__${tool.name}`)
+    .filter(name => name.length > 64)
+  expect(overlongNames).toEqual([])
+}
+
 describe('hermes-web-ui MCP server', () => {
   let child: ChildProcessWithoutNullStreams | null = null
   const homes: string[] = []
@@ -195,6 +203,7 @@ describe('hermes-web-ui MCP server', () => {
     expect(initialized.result.capabilities).toEqual({ tools: {} })
 
     const list = await waitForRpc(responses, 2)
+    expectProviderSafeToolNames('hermes-studio-api', list.result.tools)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_api_request')).toBe(true)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_lan_devices_list')).toBe(false)
 
@@ -644,6 +653,7 @@ describe('hermes-web-ui MCP server', () => {
     expect(initialized.result.serverInfo).toMatchObject({ toolset: 'use' })
 
     const list = await waitForRpc(responses, 2)
+    expectProviderSafeToolNames('hermes-studio-use', list.result.tools)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_chat_run')).toBe(true)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_sessions_count')).toBe(true)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_usage_stats')).toBe(true)
@@ -655,7 +665,8 @@ describe('hermes-web-ui MCP server', () => {
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_provider_delete')).toBe(true)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_worker_status')).toBe(true)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_workflows_list')).toBe(true)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_workflow_run_rerun_from_node')).toBe(true)
+    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_workflow_rerun_node')).toBe(true)
+    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_workflow_run_rerun_from_node')).toBe(false)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_api_request')).toBe(false)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_lan_devices_list')).toBe(false)
     expect(list.result.tools.find((tool: any) => tool.name === 'hermes_studio_use_chat_run')?.description).toContain('internal delegation')
@@ -834,6 +845,7 @@ describe('hermes-web-ui MCP server', () => {
     expect(initialized.result.serverInfo).toMatchObject({ toolset: 'devices' })
 
     const list = await waitForRpc(responses, 2)
+    expectProviderSafeToolNames('hermes-studio-devices', list.result.tools)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_lan_devices_list')).toBe(true)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_api_request')).toBe(false)
 
