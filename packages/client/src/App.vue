@@ -43,6 +43,11 @@ const nodeVersionLow = computed(() => {
 const isDesktopShell = computed(() => desktopBridge()?.isDesktop === true)
 const desktopPlatform = computed(() => desktopBridge()?.platform || '')
 const isDesktopWindows = computed(() => isDesktopShell.value && desktopPlatform.value === 'win32')
+const desktopTitleBarLeft = computed(() => {
+  if (isLoginPage.value) return 10
+  if (showAppSidebar.value && appStore.sidebarCollapsed) return 84
+  return 260
+})
 const isDesktopPetRoute = computed(() => route.name === 'desktop.pet')
 const showWebPet = computed(() => !isLoginPage.value && !isDesktopShell.value && !isDesktopPetRoute.value)
 const desktopPlatformClass = computed(() => desktopPlatform.value ? `desktop-platform-${desktopPlatform.value}` : '')
@@ -81,7 +86,11 @@ useKeyboard()
         <NNotificationProvider>
           <router-view v-if="isDesktopPetRoute" />
           <div v-else class="app-shell" :class="[desktopPlatformClass, { desktop: isDesktopShell }]">
-            <DesktopTitleBar v-if="isDesktopWindows" :standalone="isLoginPage" />
+            <DesktopTitleBar
+              v-if="isDesktopWindows"
+              :standalone="isLoginPage"
+              :left-offset="desktopTitleBarLeft"
+            />
             <div v-if="nodeVersionLow" class="node-warning-bar">
               {{ t('sidebar.nodeVersionWarning', { version: appStore.nodeVersion }) }}
             </div>
@@ -185,10 +194,12 @@ useKeyboard()
 }
 
 .app-shell.desktop-platform-win32 {
-  :deep(.page-header),
-  :deep(.chat-header),
-  :deep(.terminal-header) {
-    padding-right: 158px;
+  .app-main--card,
+  :deep(.chat-panel > .chat-main),
+  :deep(.history-panel > .chat-main),
+  :deep(.workflow-view > .workflow-main),
+  :deep(.group-chat-panel > .chat-main) {
+    margin-top: 50px;
   }
 }
 

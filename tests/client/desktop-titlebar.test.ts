@@ -52,7 +52,7 @@ describe('DesktopTitleBar', () => {
     expect(wrapper.find('.desktop-titlebar__brand').exists()).toBe(false)
   })
 
-  it('keeps Windows controls interactive after moving them into the page header', async () => {
+  it('keeps Windows controls interactive in the standalone control bar', async () => {
     const windowControl = vi.fn().mockResolvedValue({ isMaximized: true })
     setDesktopBridge({
       platform: 'win32',

@@ -49,11 +49,12 @@ async function openDesktopPageSidebar(page: Page, platform: DesktopPlatform, pat
   await page.goto(path)
 }
 
-test('places Windows controls inside the page header without a logo title bar', async ({ page }) => {
+test('places Windows controls in a dedicated bar above main content', async ({ page }) => {
   await openDesktopJobs(page, 'win32')
 
   const controls = page.locator('.desktop-titlebar')
   const header = page.locator('.page-header')
+  const sidebar = page.locator('aside.sidebar')
   await expect(controls).toBeVisible()
   await expect(controls.locator('.desktop-window-btn')).toHaveCount(3)
   await expect(controls.locator('img')).toHaveCount(0)
@@ -65,10 +66,11 @@ test('places Windows controls inside the page header without a logo title bar', 
   ])
   expect(controlsBox).not.toBeNull()
   expect(headerBox).not.toBeNull()
-  expect(headerBox!.y).toBe(11)
-  expect(controlsBox!.y).toBeGreaterThanOrEqual(headerBox!.y)
-  expect(controlsBox!.y + controlsBox!.height).toBeLessThanOrEqual(headerBox!.y + headerBox!.height)
-  await expect(header).toHaveCSS('padding-right', '158px')
+  expect(controlsBox!.y).toBe(10)
+  expect(headerBox!.y).toBe(51)
+  expect(controlsBox!.y + controlsBox!.height).toBeLessThan(headerBox!.y)
+  expect(controlsBox!.x).toBeGreaterThanOrEqual((await sidebar.boundingBox())!.x + (await sidebar.boundingBox())!.width)
+  await expect(header).toHaveCSS('padding-right', '20px')
   await expect.poll(() => topGutterDragRegion(page)).toEqual({ appRegion: 'drag', height: '10px' })
 
   await controls.locator('.desktop-window-btn').nth(1).click()
@@ -118,7 +120,13 @@ test('keeps the larger top gutter on macOS workflow pages', async ({ page }) => 
 test('does not reserve macOS traffic-light spacing in Windows chat sidebars', async ({ page }) => {
   await openDesktopPageSidebar(page, 'win32', '/#/hermes/chat')
 
+  const sidebar = page.locator('.chat-panel > .session-list')
+  const main = page.locator('.chat-panel > .chat-main')
+  const controls = page.locator('.desktop-titlebar')
   await expect(page.locator('.chat-panel > .session-list > .page-sidebar-top')).toHaveCSS('padding-top', '12px')
+  expect((await sidebar.boundingBox())?.y).toBe(10)
+  expect((await main.boundingBox())?.y).toBe(50)
+  expect((await controls.boundingBox())!.x).toBeGreaterThanOrEqual((await sidebar.boundingBox())!.x + (await sidebar.boundingBox())!.width)
 })
 
 test('keeps Linux on native chrome and preserves its original sidebar spacing', async ({ page }) => {

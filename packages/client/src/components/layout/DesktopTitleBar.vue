@@ -14,13 +14,13 @@ type WindowWithHermesDesktop = Window & typeof globalThis & {
 }
 
 const desktop = (window as WindowWithHermesDesktop).hermesDesktop
-const platform = desktop?.platform
-const showWindowButtons = computed(() => platform === 'win32')
-const isMaximized = ref(false)
-
-defineProps<{
+const props = defineProps<{
   standalone?: boolean
+  leftOffset?: number
 }>()
+const showWindowButtons = computed(() => desktop?.platform === 'win32')
+const titleBarStyle = computed(() => props.standalone ? undefined : { left: `${props.leftOffset ?? 260}px` })
+const isMaximized = ref(false)
 
 async function refreshWindowState() {
   if (!desktop?.getWindowState) return
@@ -48,8 +48,15 @@ onMounted(() => {
 </script>
 
 <template>
-  <div v-if="showWindowButtons" class="desktop-titlebar" :class="{ standalone }">
+  <div
+    v-if="showWindowButtons"
+    class="desktop-titlebar"
+    :class="{ standalone }"
+    :style="titleBarStyle"
+    @dblclick="controlWindow('toggle-maximize')"
+  >
     <div v-if="standalone" class="desktop-titlebar__standalone-drag" @dblclick="controlWindow('toggle-maximize')" />
+    <div v-else class="desktop-titlebar__drag" />
     <div class="desktop-titlebar__controls" @dblclick.stop>
       <button class="desktop-window-btn" type="button" aria-label="Minimize" @click.stop="controlWindow('minimize')">
         <svg viewBox="0 0 12 12" aria-hidden="true">
@@ -80,19 +87,45 @@ onMounted(() => {
 .desktop-titlebar {
   position: absolute;
   z-index: 1001;
-  top: 24px;
+  top: 10px;
   right: 10px;
   height: 36px;
   display: flex;
   align-items: center;
+  border: 0;
+  border-radius: 12px;
+  background: $bg-main-surface;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
   color: $text-primary;
   user-select: none;
-  pointer-events: none;
+  overflow: hidden;
+  -webkit-app-region: drag;
 
-  &.standalone {
-    top: 10px;
+  &::after {
+    content: "";
+    position: absolute;
+    z-index: 2;
+    inset: 0;
+    border: 1px solid $border-color;
+    border-radius: inherit;
+    pointer-events: none;
   }
 
+  &.standalone {
+    left: auto;
+    top: 10px;
+    width: 138px;
+
+    .desktop-titlebar__controls {
+      border-left: 0;
+    }
+  }
+}
+
+.desktop-titlebar__drag {
+  min-width: 0;
+  flex: 1;
+  height: 100%;
 }
 
 .desktop-titlebar__standalone-drag {
@@ -102,7 +135,6 @@ onMounted(() => {
   left: 0;
   right: 138px;
   height: 46px;
-  pointer-events: auto;
   -webkit-app-region: drag;
 }
 
@@ -112,7 +144,7 @@ onMounted(() => {
   height: 100%;
   display: flex;
   align-items: stretch;
-  pointer-events: auto;
+  border-left: 1px solid $border-color;
   -webkit-app-region: no-drag;
 }
 

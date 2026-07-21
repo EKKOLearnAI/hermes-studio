@@ -123,7 +123,7 @@ describe('App web pet mounting', () => {
     expect(wrapper.findComponent({ name: 'DesktopTitleBar' }).exists()).toBe(false)
   })
 
-  it('mounts custom window controls over Windows page headers', async () => {
+  it('mounts the standalone Windows control bar above main content', async () => {
     Object.defineProperty(window, 'hermesDesktop', {
       configurable: true,
       value: { isDesktop: true, platform: 'win32' },
