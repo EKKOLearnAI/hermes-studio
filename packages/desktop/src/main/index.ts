@@ -440,7 +440,7 @@ async function createWindow(): Promise<void> {
     ...(process.platform === 'darwin'
       ? {
           titleBarStyle: 'hiddenInset' as const,
-          trafficLightPosition: { x: 16, y: 12 },
+          trafficLightPosition: { x: 20, y: 16 },
         }
       : process.platform === 'win32'
         ? {

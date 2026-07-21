@@ -41,12 +41,11 @@ const nodeVersionLow = computed(() => {
 })
 
 const isDesktopShell = computed(() => desktopBridge()?.isDesktop === true)
+const desktopPlatform = computed(() => desktopBridge()?.platform || '')
+const isDesktopWindows = computed(() => isDesktopShell.value && desktopPlatform.value === 'win32')
 const isDesktopPetRoute = computed(() => route.name === 'desktop.pet')
 const showWebPet = computed(() => !isLoginPage.value && !isDesktopShell.value && !isDesktopPetRoute.value)
-const hasDesktopTitleBar = computed(() => {
-  const platform = desktopBridge()?.platform
-  return isDesktopShell.value && (platform === 'darwin' || platform === 'win32')
-})
+const desktopPlatformClass = computed(() => desktopPlatform.value ? `desktop-platform-${desktopPlatform.value}` : '')
 
 function handleMobileMenuClick() {
   if (usesPageSidebar.value) {
@@ -81,8 +80,8 @@ useKeyboard()
       <NDialogProvider>
         <NNotificationProvider>
           <router-view v-if="isDesktopPetRoute" />
-          <div v-else class="app-shell" :class="{ desktop: isDesktopShell, 'desktop-titlebar-host': hasDesktopTitleBar }">
-            <DesktopTitleBar v-if="isDesktopShell" />
+          <div v-else class="app-shell" :class="[desktopPlatformClass, { desktop: isDesktopShell }]">
+            <DesktopTitleBar v-if="isDesktopWindows" :standalone="isLoginPage" />
             <div v-if="nodeVersionLow" class="node-warning-bar">
               {{ t('sidebar.nodeVersionWarning', { version: appStore.nodeVersion }) }}
             </div>
@@ -111,6 +110,7 @@ useKeyboard()
 @use '@/styles/variables' as *;
 
 .app-shell {
+  position: relative;
   height: calc(100 * var(--vh));
   width: 100%;
   max-width: 100%;
@@ -134,10 +134,6 @@ useKeyboard()
   }
 }
 
-.app-shell.desktop-titlebar-host .app-layout {
-  --vh: calc(1vh - 0.36px);
-}
-
 .app-main {
   flex: 1;
   min-width: 0;
@@ -154,6 +150,77 @@ useKeyboard()
     border: 1px solid $border-color;
     border-radius: 14px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+  }
+}
+
+.app-shell.desktop-platform-darwin,
+.app-shell.desktop-platform-win32 {
+  &::before {
+    content: "";
+    position: absolute;
+    z-index: 1000;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 10px;
+    -webkit-app-region: drag;
+  }
+
+  :deep(.page-header),
+  :deep(.chat-header),
+  :deep(.terminal-header) {
+    -webkit-app-region: drag;
+
+    button,
+    a,
+    input,
+    textarea,
+    select,
+    [role="button"],
+    [role="tab"],
+    .n-base-selection {
+      -webkit-app-region: no-drag;
+    }
+  }
+}
+
+.app-shell.desktop-platform-win32 {
+  :deep(.page-header),
+  :deep(.chat-header),
+  :deep(.terminal-header) {
+    padding-right: 158px;
+  }
+}
+
+.app-shell.desktop-platform-darwin {
+  .app-layout > :deep(.sidebar),
+  :deep(.chat-panel > .session-list),
+  :deep(.history-panel > .session-list),
+  :deep(.workflow-view > .workflow-sidebar),
+  :deep(.group-chat-panel > .room-sidebar) {
+    position: relative;
+
+    &::before {
+      content: "";
+      position: absolute;
+      z-index: 1;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 32px;
+      -webkit-app-region: drag;
+    }
+  }
+
+  .app-layout > :deep(.sidebar) {
+    padding-top: 40px;
+  }
+
+  :deep(.chat-panel > .session-list > .page-sidebar-top),
+  :deep(.history-panel > .session-list > .page-sidebar-top),
+  :deep(.workflow-view > .workflow-sidebar > .page-sidebar-top),
+  :deep(.group-chat-panel > .room-sidebar > .sidebar-header) {
+    padding-top: 32px;
   }
 }
 

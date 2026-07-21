@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import DesktopTitleBar from '@/components/layout/DesktopTitleBar.vue'
 
 type DesktopBridge = {
@@ -30,6 +30,14 @@ describe('DesktopTitleBar', () => {
     expect(wrapper.find('.desktop-titlebar').exists()).toBe(false)
   })
 
+  it('does not render custom chrome on macOS because native traffic lights sit in the sidebar', () => {
+    setDesktopBridge({ platform: 'darwin' })
+
+    const wrapper = mount(DesktopTitleBar)
+
+    expect(wrapper.find('.desktop-titlebar').exists()).toBe(false)
+  })
+
   it('renders custom window controls on Windows frameless windows', () => {
     setDesktopBridge({
       platform: 'win32',
@@ -41,5 +49,23 @@ describe('DesktopTitleBar', () => {
 
     expect(wrapper.find('.desktop-titlebar').exists()).toBe(true)
     expect(wrapper.findAll('.desktop-window-btn')).toHaveLength(3)
+    expect(wrapper.find('.desktop-titlebar__brand').exists()).toBe(false)
+  })
+
+  it('keeps Windows controls interactive after moving them into the page header', async () => {
+    const windowControl = vi.fn().mockResolvedValue({ isMaximized: true })
+    setDesktopBridge({
+      platform: 'win32',
+      getWindowState: vi.fn().mockResolvedValue({ isMaximized: false }),
+      windowControl,
+    })
+
+    const wrapper = mount(DesktopTitleBar)
+    await flushPromises()
+    await wrapper.findAll('.desktop-window-btn')[1].trigger('click')
+    await flushPromises()
+
+    expect(windowControl).toHaveBeenCalledWith('toggle-maximize')
+    expect(wrapper.find('.desktop-window-btn[aria-label="Restore"]').exists()).toBe(true)
   })
 })

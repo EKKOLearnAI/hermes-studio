@@ -15,10 +15,12 @@ type WindowWithHermesDesktop = Window & typeof globalThis & {
 
 const desktop = (window as WindowWithHermesDesktop).hermesDesktop
 const platform = desktop?.platform
-const isMac = computed(() => platform === 'darwin')
-const showTitleBar = computed(() => platform === 'darwin' || platform === 'win32')
 const showWindowButtons = computed(() => platform === 'win32')
 const isMaximized = ref(false)
+
+defineProps<{
+  standalone?: boolean
+}>()
 
 async function refreshWindowState() {
   if (!desktop?.getWindowState) return
@@ -46,14 +48,9 @@ onMounted(() => {
 </script>
 
 <template>
-  <header v-if="showTitleBar" class="desktop-titlebar" :class="{ mac: isMac }" @dblclick="controlWindow('toggle-maximize')">
-    <div class="desktop-titlebar__drag">
-      <div class="desktop-titlebar__brand">
-        <img class="desktop-titlebar__logo" src="/logo.png" alt="" draggable="false">
-        <span class="desktop-titlebar__title">Hermes Studio</span>
-      </div>
-    </div>
-    <div v-if="showWindowButtons" class="desktop-titlebar__controls" @dblclick.stop>
+  <div v-if="showWindowButtons" class="desktop-titlebar" :class="{ standalone }">
+    <div v-if="standalone" class="desktop-titlebar__standalone-drag" @dblclick="controlWindow('toggle-maximize')" />
+    <div class="desktop-titlebar__controls" @dblclick.stop>
       <button class="desktop-window-btn" type="button" aria-label="Minimize" @click.stop="controlWindow('minimize')">
         <svg viewBox="0 0 12 12" aria-hidden="true">
           <path d="M2 6.5h8" />
@@ -74,65 +71,48 @@ onMounted(() => {
         </svg>
       </button>
     </div>
-  </header>
+  </div>
 </template>
 
 <style scoped lang="scss">
 @use "@/styles/variables" as *;
 
 .desktop-titlebar {
+  position: absolute;
+  z-index: 1001;
+  top: 24px;
+  right: 10px;
   height: 36px;
-  flex: 0 0 36px;
   display: flex;
   align-items: center;
-  border-bottom: 1px solid $border-color;
-  background: $bg-main-surface;
   color: $text-primary;
   user-select: none;
-  -webkit-app-region: drag;
+  pointer-events: none;
 
-  &.mac {
-    padding-left: 82px;
+  &.standalone {
+    top: 10px;
   }
+
 }
 
-.desktop-titlebar__drag {
-  min-width: 0;
-  flex: 1;
-  height: 100%;
-  display: flex;
-  align-items: center;
-}
-
-.desktop-titlebar__brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 0 12px;
-}
-
-.desktop-titlebar__logo {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
-  object-fit: contain;
-}
-
-.desktop-titlebar__title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0;
+.desktop-titlebar__standalone-drag {
+  position: fixed;
+  z-index: 0;
+  top: 0;
+  left: 0;
+  right: 138px;
+  height: 46px;
+  pointer-events: auto;
+  -webkit-app-region: drag;
 }
 
 .desktop-titlebar__controls {
+  position: relative;
+  z-index: 1;
   height: 100%;
   display: flex;
   align-items: stretch;
+  pointer-events: auto;
   -webkit-app-region: no-drag;
 }
 
