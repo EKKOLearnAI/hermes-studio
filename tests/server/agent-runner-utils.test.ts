@@ -156,6 +156,41 @@ describe('agent runner target registry', () => {
     expect(chat.routeKey).not.toBe(secondUrl.routeKey)
     expect(chat.token).not.toBe(secondUrl.token)
   })
+
+  it('keeps target tuples distinct when a key part contains the legacy delimiter', () => {
+    type SessionTargetInput = AgentTargetInput & {
+      agentSessionId: string
+      chatSessionId: string
+    }
+    const registry = new AgentTargetRegistry<SessionTargetInput>(
+      input => [input.provider, input.model, input.apiMode, input.baseUrl, input.agentSessionId, input.chatSessionId],
+    )
+    const common = {
+      provider: 'custom:compat-provider',
+      model: 'review-model',
+      baseUrl: 'https://provider.example',
+      apiMode: 'anthropic_messages' as const,
+    }
+
+    const first = registry.register({
+      ...common,
+      apiKey: 'sk-first',
+      agentSessionId: 'agent',
+      chatSessionId: 'chat\0tail',
+    })
+    const second = registry.register({
+      ...common,
+      apiKey: 'sk-second',
+      agentSessionId: 'agent\0chat',
+      chatSessionId: 'tail',
+    })
+
+    expect(first.key).not.toBe(second.key)
+    expect(first.routeKey).not.toBe(second.routeKey)
+    expect(first.token).not.toBe(second.token)
+    expect(registry.find(first.routeKey)?.apiKey).toBe('sk-first')
+    expect(registry.find(second.routeKey)?.apiKey).toBe('sk-second')
+  })
 })
 
 describe('agent runner stream tee', () => {

@@ -41,7 +41,7 @@ export class AgentTargetRegistry<T extends AgentTargetInput> {
       baseUrl: input.baseUrl.trim().replace(/\/+$/, ''),
       apiMode: input.apiMode || 'chat_completions',
     } as NormalizedAgentTargetInput<T>
-    const key = this.keyParts(normalized).join('\0')
+    const key = JSON.stringify(this.keyParts(normalized))
     const existing = this.targets.get(key)
     const routeKey = existing?.routeKey || Buffer.from(key, 'utf-8').toString('base64url')
     const token = existing?.token || `hwui_${randomBytes(24).toString('base64url')}`

@@ -385,6 +385,21 @@ function normalizeScopeSegment(value: string | undefined, fallback: string, labe
   return segment
 }
 
+function normalizeProviderIdentity(value: string | undefined): string {
+  const provider = String(value || '').trim() || 'default'
+  if (/[\x00-\x1f\x7f-\x9f]/.test(provider)) {
+    const err = new Error('Invalid provider')
+    ;(err as any).status = 400
+    throw err
+  }
+  if (provider.length > 128) {
+    const err = new Error('provider is too long')
+    ;(err as any).status = 400
+    throw err
+  }
+  return provider
+}
+
 function normalizeConfigScope(scope: CodingAgentConfigScope = {}): Required<CodingAgentConfigScope> {
   return {
     profile: normalizeScopeSegment(scope.profile, 'default', 'profile'),
@@ -1632,7 +1647,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     }
   }
 
-  const provider = normalizeScopeSegment(input.provider, 'default', 'provider')
+  const provider = normalizeProviderIdentity(input.provider)
   const scope = normalizeConfigScope({ profile: input.profile, provider })
   const model = String(input.model || '').trim()
   const apiKey = String(input.apiKey || '').trim()
@@ -1810,7 +1825,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     agentId: tool.id,
     mode,
     profile: scope.profile,
-    provider: scope.provider,
+    provider,
     model,
     apiMode,
     rootDir,

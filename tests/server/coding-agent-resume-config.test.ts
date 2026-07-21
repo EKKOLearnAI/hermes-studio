@@ -195,7 +195,7 @@ describe('coding agent resumed session config', () => {
 
     const config = readFileSync(join(home, 'coding-agent', 'model', 'default', 'deepseek', 'codex', 'config.toml'), 'utf-8')
     const routeKey = config.match(/\/api\/codex-proxy\/([^/]+)\/v1/)?.[1] || ''
-    const routeParts = Buffer.from(routeKey, 'base64url').toString('utf8').split('\0')
+    const routeParts = JSON.parse(Buffer.from(routeKey, 'base64url').toString('utf8'))
     expect(routeParts).toEqual(expect.arrayContaining([
       'deepseek',
       'deepseek-v4-pro',
