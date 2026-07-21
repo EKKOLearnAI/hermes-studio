@@ -517,6 +517,81 @@ describe('coding agent launch preparation', () => {
     expect(settings.env.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/claude-code-proxy\/.+$/)
   })
 
+  it('keeps canonical custom provider identity behind filesystem-safe Claude config paths', async () => {
+    const home = makeHome()
+    const provider = 'custom:compat-provider'
+    const result = await prepareCodingAgentLaunch('claude-code', {
+      profile: 'default',
+      provider,
+      model: 'review-model',
+      baseUrl: 'https://provider.example',
+      apiKey: 'provider-key',
+      apiMode: 'anthropic_messages',
+    })
+
+    expect(result.provider).toBe(provider)
+    expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'custom_compat-provider', 'claude-code'))
+    const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
+    const proxyUrl = new URL(settings.env.ANTHROPIC_BASE_URL)
+    const routeKey = proxyUrl.pathname.split('/').filter(Boolean).at(-1) || ''
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        type: 'api_error',
+        request_id: '',
+        error: {
+          type: 'api_error',
+          message: 'The encrypted content opaque-value could not be verified. Reason: Encrypted content could not be decrypted or parsed.',
+        },
+      }), { status: 400, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'msg_retry_ok',
+        type: 'message',
+        role: 'assistant',
+        model: 'review-model',
+        content: [{ type: 'text', text: 'continued' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 10, output_tokens: 1 },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const body = {
+      model: 'client-alias',
+      max_tokens: 64,
+      thinking: { type: 'adaptive' },
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'inspect the repository' }] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: '', signature: 'opaque-signature' },
+            { type: 'tool_use', id: 'tool-1', name: 'Read', input: { file_path: 'README.md' } },
+          ],
+        },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'contents' }] },
+      ],
+    }
+    const ctx = makeProxyContext(routeKey, settings.env.ANTHROPIC_API_KEY, body)
+    await claudeProxyMessages(ctx)
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(ctx.body.content).toEqual([{ type: 'text', text: 'continued' }])
+    const retryBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit | undefined)?.body))
+    expect(retryBody.messages[1].content.map((block: any) => block.type)).toEqual(['tool_use'])
+  })
+
+  it('rejects control characters in canonical provider identities before proxy registration', async () => {
+    makeHome()
+
+    await expect(prepareCodingAgentLaunch('claude-code', {
+      profile: 'default',
+      provider: 'custom:x\0y',
+      model: 'review-model',
+      baseUrl: 'https://provider.example',
+      apiKey: 'provider-key',
+      apiMode: 'anthropic_messages',
+    })).rejects.toThrow('Invalid provider')
+  })
+
   it('keeps Codex model selection on the CLI while isolating CODEX_HOME', async () => {
     const home = makeHome()
 
