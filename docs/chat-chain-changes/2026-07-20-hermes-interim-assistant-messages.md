@@ -1,6 +1,6 @@
 ---
 date: 2026-07-20
-pr: pending
+pr: 2160
 feature: Hermes interim assistant messages
 impact: Hermes 0.19 mid-turn commentary is preserved as authoritative, independently persisted assistant messages without duplicating streamed text.
 ---
