@@ -123,11 +123,11 @@ path. Hermes currently exposes this as its session-level async-delivery
 capability, so other detached-completion tools in that AgentSession also see it
 disabled.
 
-Hermes Web UI currently creates ordinary single-chat agents with this value set
-to `false`. Group-chat agents and Hermes workflow-node agents also set it to
-`false` at their own call sites and are intentionally kept disabled even if
-single chat is enabled in the future. Coding Agent and Ekko Agent calls do not
-receive this Hermes Bridge field.
+Hermes Web UI creates ordinary single-chat agents with this value set to
+`true`, enabling background task delivery by default. Group-chat agents and
+Hermes workflow-node agents set it to `false` at their own call sites and remain
+intentionally disabled. Coding Agent and Ekko Agent calls do not receive this
+Hermes Bridge field.
 
 The bridge instantiates `AIAgent` with `platform="cli"` by default so behavior
 matches CLI chat. Override it only if a caller intentionally needs a distinct

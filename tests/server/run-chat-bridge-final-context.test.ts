@@ -318,7 +318,7 @@ describe('bridge run final context usage', () => {
       expect.any(Array),
       expect.any(String),
       'default',
-      expect.objectContaining({ background_delegation_enabled: false }),
+      expect.objectContaining({ background_delegation_enabled: true }),
     )
     expect(bridge.contextEstimate.mock.calls[0][2]).toContain('system prompt')
     expect(bridge.contextEstimate.mock.calls[0][2]).toContain('X-Hermes-Profile')
@@ -458,6 +458,7 @@ describe('bridge run final context usage', () => {
           run_id: 'run-1',
           done: true,
           status: 'completed',
+          output: 'partialfinal answer',
           events: [{ event: 'stream.delta', delta: 'final answer' }],
         }
       }),
@@ -493,6 +494,9 @@ describe('bridge run final context usage', () => {
     expect(emit).toHaveBeenCalledWith('message.interim', expect.objectContaining({
       text: 'callback-only commentary',
       already_streamed: false,
+    }))
+    expect(emit).toHaveBeenCalledWith('run.completed', expect.objectContaining({
+      output: 'partial answercallback-only commentaryfinal answer',
     }))
   })
 

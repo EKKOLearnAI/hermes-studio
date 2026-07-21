@@ -407,10 +407,10 @@ export async function handleBridgeRun(
 ) {
   const { input, session_id, instructions } = data
   const runSource = normalizeBridgeRunSource(data.source, data.session_source)
-  // Web UI Hermes agents currently opt out at creation time. Workflow callers
-  // also pass false explicitly; a future single-chat setting can opt in with true
-  // without changing the permanently-disabled workflow and group-chat callers.
-  const backgroundDelegationEnabled = data.background_delegation_enabled === true
+  // Ordinary single-chat Hermes agents enable background delegation by default.
+  // Workflow and group-chat callers pass false explicitly at their own creation
+  // boundaries and remain disabled independently of this default.
+  const backgroundDelegationEnabled = data.background_delegation_enabled !== false
   if (!session_id) {
     socket.emit('run.failed', { event: 'run.failed', error: 'session_id is required for cli source' })
     return
@@ -1726,7 +1726,10 @@ function bridgeFinalResponse(chunk: AgentBridgeOutput, state: SessionState, useR
   const finalResponse = result && typeof result.final_response === 'string'
     ? result.final_response
     : ''
-  const streamedResponse = chunk.output || state.bridgeOutput || ''
+  // The reconciled state includes authoritative interim callbacks and filtered
+  // deltas. The bridge output is only the raw delta snapshot, so use it as a
+  // fallback when no reconciled output was produced locally.
+  const streamedResponse = state.bridgeOutput || chunk.output || ''
   return useResultFinalResponse ? finalResponse || streamedResponse : streamedResponse
 }
 
