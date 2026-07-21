@@ -255,6 +255,9 @@ function desktopAppPath(): string {
 }
 
 export function runtimeResourceDir(name: DesktopRuntimeResource, packaged: boolean, appPath = desktopAppPath()): string {
+  if (process.env.HERMES_DESKTOP_RUNTIME_DIR?.trim()) {
+    return join(desktopRuntimeDir(), name)
+  }
   return resolveRuntimeResourceDir(name, packaged, appPath, desktopRuntimeDir(), runtimePlatformKey())
 }
 

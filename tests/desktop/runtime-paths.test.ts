@@ -112,6 +112,18 @@ describe('desktop runtime paths', () => {
     expect(resolveRuntimeResourceDir('git', false, appPath, runtimeRoot)).toBe(join(appPath, 'resources', 'git', runtimePlatformKey()))
   })
 
+  it('uses explicit runtime override for development runtime paths', async () => {
+    const runtimeRoot = tempDir()
+    process.env.HERMES_DESKTOP_RUNTIME_DIR = runtimeRoot
+    createRuntime(runtimeRoot, '0.17.0')
+
+    const { pythonDir, nodeDir, gitDir } = await import('../../packages/desktop/src/main/paths')
+
+    expect(pythonDir()).toBe(join(runtimeRoot, 'python'))
+    expect(nodeDir()).toBe(join(runtimeRoot, 'node'))
+    expect(gitDir()).toBe(join(runtimeRoot, 'git'))
+  })
+
   it('uses active-version.json paths for startup while keeping the current target runtime path', async () => {
     const homeDir = tempDir()
     const appPath = tempDir()

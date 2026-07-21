@@ -57,7 +57,7 @@
     "desktop:install": "npm ci --prefix packages/desktop --no-audit --no-fund",
     "desktop:prepare-runtime": "npm --prefix packages/desktop run prepare:runtime",
     "desktop:prepare-python": "npm --prefix packages/desktop run prepare:python",
-    "desktop:dev": "HERMES_WEB_UI_DIR=\"$PWD\" npm --prefix packages/desktop run dev",
+    "desktop:dev": "node scripts/desktop-dev.mjs",
     "build:desktop": "npm run build && npm run desktop:install && npm --prefix packages/desktop run dist -- --publish never",
     "build:desktop:mac": "npm run build && npm run desktop:install && npm --prefix packages/desktop run dist -- --mac --publish never",
     "build:desktop:win": "npm run build && npm run desktop:install && npm --prefix packages/desktop run dist -- --win --publish never",
