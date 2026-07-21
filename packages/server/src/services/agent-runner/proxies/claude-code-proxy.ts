@@ -6,7 +6,7 @@ import {
   chatCompletionsUrl as resolveChatCompletionsUrl,
   responsesUrl as resolveResponsesUrl,
 } from '../endpoint-resolver'
-import { sseEvent } from '../sse'
+import { parseSseFrame, readSseFrameTexts, sseEvent } from '../sse'
 import { AgentTargetRegistry, type AgentTargetInput, type RegisteredAgentTarget } from '../target-registry'
 import type { ApiMode } from '../types'
 import {
@@ -136,52 +136,157 @@ function withoutOpaqueThinkingHistory(body: any): OpaqueThinkingSanitization | n
 const ENCRYPTED_CONTENT_MESSAGE = /^Encrypted content could not be decrypted or parsed\.?$/i
 const ENCRYPTED_CONTENT_VERIFICATION_MESSAGE = /^The encrypted content [^\r\n]+ could not be verified\. Reason: Encrypted content could not be decrypted or parsed\.?$/i
 
-function isCustomEncryptedContentFailure(target: ClaudeCodeProxyTarget, error: unknown): boolean {
+function isCustomEncryptedContentFailure(target: ClaudeCodeProxyTarget, error: unknown): error is ProviderApiError {
   if (!target.provider.startsWith('custom:') || !(error instanceof ProviderApiError) || error.status !== 400) return false
-  const providerError = error.providerError as any
-  if (providerError?.error?.code === 'invalid_encrypted_content') return true
-  const message = String(providerError?.error?.message || '')
+  return isEncryptedContentProviderError(error.providerError)
+}
+
+function isEncryptedContentProviderError(providerError: unknown): boolean {
+  const typedProviderError = providerError as any
+  if (typedProviderError?.error?.code === 'invalid_encrypted_content') return true
+  const message = String(typedProviderError?.error?.message || '')
   return ENCRYPTED_CONTENT_MESSAGE.test(message) || ENCRYPTED_CONTENT_VERIFICATION_MESSAGE.test(message)
+}
+
+function opaqueThinkingRetryBody(
+  target: ClaudeCodeProxyTarget,
+  body: any,
+  status: number,
+): any | null {
+  const sanitization = withoutOpaqueThinkingHistory(body)
+  if (!sanitization) {
+    loggerLikeWarn({
+      provider: target.provider,
+      status,
+      retryStarted: false,
+    }, '[claude-code-proxy] encrypted-thinking compatibility retry skipped')
+    return null
+  }
+  loggerLikeWarn({
+    provider: target.provider,
+    status,
+    removedBlocks: sanitization.removedBlocks,
+    removedMessages: sanitization.removedMessages,
+    retryStarted: true,
+  }, '[claude-code-proxy] retrying without historical opaque thinking')
+  return sanitization.body
+}
+
+function logEncryptedContentRetryFailure(target: ClaudeCodeProxyTarget, retryError: unknown) {
+  const providerError = retryError instanceof ProviderApiError ? retryError.providerError as any : null
+  loggerLikeWarn({
+    provider: target.provider,
+    status: retryError instanceof ProviderApiError ? retryError.status : null,
+    code: String(providerError?.error?.code || ''),
+    retryFailed: true,
+  }, '[claude-code-proxy] encrypted-thinking compatibility retry failed')
 }
 
 async function withCustomEncryptedContentRetry<T>(
   target: ClaudeCodeProxyTarget,
   body: any,
   request: (nextBody: any) => Promise<T>,
-): Promise<T> {
+): Promise<{ value: T; retried: boolean }> {
   try {
-    return await request(body)
+    return { value: await request(body), retried: false }
   } catch (error) {
     if (!isCustomEncryptedContentFailure(target, error)) throw error
-    const sanitization = withoutOpaqueThinkingHistory(body)
-    if (!sanitization) {
-      loggerLikeWarn({
-        provider: target.provider,
-        status: 400,
-        retryStarted: false,
-      }, '[claude-code-proxy] encrypted-thinking compatibility retry skipped')
-      throw error
-    }
-    loggerLikeWarn({
-      provider: target.provider,
-      status: 400,
-      removedBlocks: sanitization.removedBlocks,
-      removedMessages: sanitization.removedMessages,
-      retryStarted: true,
-    }, '[claude-code-proxy] retrying without historical opaque thinking')
+    const retryBody = opaqueThinkingRetryBody(target, body, error.status)
+    if (!retryBody) throw error
     try {
-      return await request(sanitization.body)
+      return { value: await request(retryBody), retried: true }
     } catch (retryError) {
-      const providerError = retryError instanceof ProviderApiError ? retryError.providerError as any : null
-      loggerLikeWarn({
-        provider: target.provider,
-        status: retryError instanceof ProviderApiError ? retryError.status : null,
-        code: String(providerError?.error?.code || ''),
-        retryFailed: true,
-      }, '[claude-code-proxy] encrypted-thinking compatibility retry failed')
+      logEncryptedContentRetryFailure(target, retryError)
       throw retryError
     }
   }
+}
+
+type SseProbeResult = {
+  stream: AsyncIterable<Uint8Array> | null
+  encryptedContentError: boolean
+}
+
+const SSE_ERROR_PROBE_LIMIT = 64 * 1024
+
+function replayAsyncIterator(
+  chunks: Uint8Array[],
+  iterator: AsyncIterator<Uint8Array>,
+): AsyncIterable<Uint8Array> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      try {
+        for (const chunk of chunks) yield chunk
+        while (true) {
+          const next = await iterator.next()
+          if (next.done) return
+          yield next.value
+        }
+      } finally {
+        await iterator.return?.()
+      }
+    },
+  }
+}
+
+function isEncryptedContentSseFrame(rawFrame: string): boolean {
+  const frame = parseSseFrame(rawFrame)
+  if (!frame) return false
+  let data: any
+  try {
+    data = JSON.parse(frame.data)
+  } catch {
+    return false
+  }
+  if (frame.event !== 'error' && data?.type !== 'error') return false
+  return isEncryptedContentProviderError(data)
+}
+
+function isIgnorableSsePreludeFrame(rawFrame: string): boolean {
+  const frame = parseSseFrame(rawFrame)
+  return !frame || frame.event === 'ping'
+}
+
+async function probeSseEncryptedContentError(
+  stream: AsyncIterable<Uint8Array>,
+): Promise<SseProbeResult> {
+  const iterator = stream[Symbol.asyncIterator]()
+  const decoder = new TextDecoder()
+  const chunks: Uint8Array[] = []
+  let decoded = ''
+  let byteLength = 0
+
+  while (byteLength <= SSE_ERROR_PROBE_LIMIT) {
+    const next = await iterator.next()
+    if (next.done) {
+      decoded += decoder.decode()
+      if (decoded && isEncryptedContentSseFrame(decoded)) {
+        await iterator.return?.()
+        return { stream: null, encryptedContentError: true }
+      }
+      return { stream: replayAsyncIterator(chunks, iterator), encryptedContentError: false }
+    }
+
+    chunks.push(next.value)
+    byteLength += next.value.byteLength
+    decoded += decoder.decode(next.value, { stream: true })
+    const parsed = readSseFrameTexts(decoded)
+    decoded = parsed.rest
+
+    let hasBusinessFrame = false
+    for (const rawFrame of parsed.frames) {
+      if (isEncryptedContentSseFrame(rawFrame)) {
+        await iterator.return?.()
+        return { stream: null, encryptedContentError: true }
+      }
+      if (!isIgnorableSsePreludeFrame(rawFrame)) hasBusinessFrame = true
+    }
+    if (hasBusinessFrame) {
+      return { stream: replayAsyncIterator(chunks, iterator), encryptedContentError: false }
+    }
+  }
+
+  return { stream: replayAsyncIterator(chunks, iterator), encryptedContentError: false }
 }
 
 async function callAnthropicMessages(target: ClaudeCodeProxyTarget, body: any): Promise<any> {
@@ -190,7 +295,7 @@ async function callAnthropicMessages(target: ClaudeCodeProxyTarget, body: any): 
     ;(err as any).status = 501
     throw err
   }
-  return withCustomEncryptedContentRetry(target, body, nextBody => agentRunGateway.completeJson({
+  const result = await withCustomEncryptedContentRetry(target, body, nextBody => agentRunGateway.completeJson({
     url: anthropicMessagesUrl(target),
     apiKey: target.apiKey,
     headers: {
@@ -199,6 +304,7 @@ async function callAnthropicMessages(target: ClaudeCodeProxyTarget, body: any): 
     },
     body: anthropicRequestBody(nextBody, target),
   }))
+  return result.value
 }
 
 async function callOpenAiChat(target: ClaudeCodeProxyTarget, body: any): Promise<any> {
@@ -277,7 +383,7 @@ async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: a
     throw err
   }
 
-  const stream = await withCustomEncryptedContentRetry(target, body, nextBody => agentRunGateway.streamBytes({
+  const request = (nextBody: any) => agentRunGateway.streamBytes({
     url: anthropicMessagesUrl(target),
     apiKey: target.apiKey,
     headers: {
@@ -285,7 +391,36 @@ async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: a
       'anthropic-version': '2023-06-01',
     },
     body: anthropicRequestBody(nextBody, target),
-  }))
+  })
+  const initial = await withCustomEncryptedContentRetry(target, body, request)
+  const stream = initial.value
+  // Only retry before a business event reaches Claude Code; replaying a partially
+  // delivered response would duplicate Anthropic stream events.
+  const canRetrySseError = target.provider.startsWith('custom:')
+    && !initial.retried
+    && withoutOpaqueThinkingHistory(body) !== null
+  if (canRetrySseError) {
+    const probe = await probeSseEncryptedContentError(stream)
+    if (probe.encryptedContentError) {
+      const retryBody = opaqueThinkingRetryBody(target, body, 200)
+      if (retryBody) {
+        try {
+          const retryStream = await request(retryBody)
+          const [clientStream, observerStream] = teeAsyncIterable(retryStream)
+          observeResponsesEvents(target, anthropicMessagesSseToResponsesEvents(observerStream, target))
+          return Readable.from(clientStream)
+        } catch (retryError) {
+          logEncryptedContentRetryFailure(target, retryError)
+          throw retryError
+        }
+      }
+    }
+    if (probe.stream) {
+      const [clientStream, observerStream] = teeAsyncIterable(probe.stream)
+      observeResponsesEvents(target, anthropicMessagesSseToResponsesEvents(observerStream, target))
+      return Readable.from(clientStream)
+    }
+  }
   const [clientStream, observerStream] = teeAsyncIterable(stream)
   observeResponsesEvents(target, anthropicMessagesSseToResponsesEvents(observerStream, target))
   return Readable.from(clientStream)

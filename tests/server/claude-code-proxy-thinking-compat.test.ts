@@ -41,6 +41,37 @@ function encryptedContentError(options: { code?: string | null; message?: string
   })
 }
 
+function eventStreamResponse(chunks: string[]): Response {
+  const encoder = new TextEncoder()
+  return new Response(new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+      controller.close()
+    },
+  }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+}
+
+function successfulEventStreamResponse(text = 'continued'): Response {
+  return eventStreamResponse([
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_stream_retry","type":"message","role":"assistant","model":"review-model","content":[],"usage":{"input_tokens":10,"output_tokens":0}}}\n\n',
+    'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+    `event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":${JSON.stringify(text)}}}\n\n`,
+    'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+    'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n',
+    'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+  ])
+}
+
+function encryptedContentEventStreamResponse(): Response {
+  return eventStreamResponse([
+    ': keep-alive\n\n',
+    'event: ping\ndata: {"type":"ping"}\n\n',
+    'event: er',
+    'ror\ndata: {"type":"error","error":{"type":"invalid_request_error","code":"invalid_',
+    'encrypted_content","message":"Encrypted content could not be decrypted or parsed."}}\n\n',
+  ])
+}
+
 function continuationBody(stream = false): any {
   return {
     model: 'client-alias',
@@ -159,6 +190,81 @@ describe('Claude Code custom Anthropic continuation compatibility', () => {
     const retryBody = requestBody(fetchMock, 1)
     expect(retryBody.messages[1].content.map((block: any) => block.type)).toEqual(['text', 'tool_use'])
     expect(chunks.join('')).toContain('continued')
+  })
+
+  it('retries when a successful HTTP response carries an encrypted-content SSE error', async () => {
+    const target = registerClaudeCodeProxyTarget({
+      provider: 'custom:sse-error-provider',
+      model: 'review-model',
+      baseUrl: 'https://provider.example',
+      apiKey: 'upstream-key',
+      apiMode: 'anthropic_messages',
+    })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(encryptedContentEventStreamResponse())
+      .mockResolvedValueOnce(successfulEventStreamResponse('continued after SSE retry'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const body = continuationBody(true)
+    const snapshot = structuredClone(body)
+    const ctx = makeProxyContext(target.routeKey, target.token, body)
+    await claudeProxyMessages(ctx)
+    const chunks: string[] = []
+    for await (const chunk of ctx.body) chunks.push(Buffer.from(chunk).toString('utf8'))
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(body).toEqual(snapshot)
+    expect(requestBody(fetchMock, 0).messages[1].content.map((block: any) => block.type)).toEqual([
+      'thinking', 'redacted_thinking', 'text', 'tool_use',
+    ])
+    expect(requestBody(fetchMock, 1).messages[1].content.map((block: any) => block.type)).toEqual(['text', 'tool_use'])
+    expect(chunks.join('')).toContain('continued after SSE retry')
+    expect(chunks.join('')).not.toContain('invalid_encrypted_content')
+  })
+
+  it('does not retry again when the SSE compatibility retry also returns the same error', async () => {
+    const target = registerClaudeCodeProxyTarget({
+      provider: 'custom:sse-retry-once-provider',
+      model: 'review-model',
+      baseUrl: 'https://provider.example',
+      apiKey: 'upstream-key',
+      apiMode: 'anthropic_messages',
+    })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(encryptedContentEventStreamResponse())
+      .mockResolvedValueOnce(encryptedContentEventStreamResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const ctx = makeProxyContext(target.routeKey, target.token, continuationBody(true))
+    await claudeProxyMessages(ctx)
+    const chunks: string[] = []
+    for await (const chunk of ctx.body) chunks.push(Buffer.from(chunk).toString('utf8'))
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(chunks.join('')).toContain('invalid_encrypted_content')
+  })
+
+  it('does not make a third request when an HTTP compatibility retry returns an SSE error', async () => {
+    const target = registerClaudeCodeProxyTarget({
+      provider: 'custom:http-then-sse-error-provider',
+      model: 'review-model',
+      baseUrl: 'https://provider.example',
+      apiKey: 'upstream-key',
+      apiMode: 'anthropic_messages',
+    })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(encryptedContentError())
+      .mockResolvedValueOnce(encryptedContentEventStreamResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const ctx = makeProxyContext(target.routeKey, target.token, continuationBody(true))
+    await claudeProxyMessages(ctx)
+    const chunks: string[] = []
+    for await (const chunk of ctx.body) chunks.push(Buffer.from(chunk).toString('utf8'))
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(requestBody(fetchMock, 1).messages[1].content.map((block: any) => block.type)).toEqual(['text', 'tool_use'])
+    expect(chunks.join('')).toContain('invalid_encrypted_content')
   })
 
   it('retries an exact encrypted-content message when the provider omits the error code', async () => {
