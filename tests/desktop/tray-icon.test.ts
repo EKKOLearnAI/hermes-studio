@@ -22,7 +22,7 @@ describe('desktop tray icon', () => {
   })
 
   it('preserves the macOS logo colors instead of applying template tinting', () => {
-    const mainSource = readFileSync(resolve('packages/desktop/src/main/index.ts'), 'utf8')
+    const mainSource = readFileSync(resolve('packages/desktop/src/main/index.ts'), 'utf8').replace(/\r\n/g, '\n')
     const pathsSource = readFileSync(resolve('packages/desktop/src/main/paths.ts'), 'utf8')
 
     expect(mainSource).toContain('? desktopMacTrayIcon()')

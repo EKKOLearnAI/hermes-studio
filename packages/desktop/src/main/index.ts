@@ -440,7 +440,7 @@ async function createWindow(): Promise<void> {
     minWidth: 960,
     minHeight: 600,
     title: 'Hermes Studio',
-    backgroundColor: process.platform === 'win32' ? '#00000000' : '#1a1a1a',
+    backgroundColor: '#1a1a1a',
     autoHideMenuBar: true,
     show: false,
     ...(process.platform === 'darwin'
@@ -451,7 +451,6 @@ async function createWindow(): Promise<void> {
       : process.platform === 'win32'
         ? {
             frame: false,
-            transparent: true,
           }
         : {}),
     ...(process.platform === 'linux' ? { icon: desktopIcon() } : {}),
