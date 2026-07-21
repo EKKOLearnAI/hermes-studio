@@ -257,6 +257,23 @@ describe('i18n locale coverage', () => {
     expect(missing).toEqual([])
   })
 
+  it('compiles every changelog message in every locale', () => {
+    for (const [locale, localeMessages] of Object.entries(rawMessages)) {
+      const i18n = createI18n({
+        legacy: false,
+        locale,
+        fallbackLocale: false,
+        messages: { [locale]: localeMessages },
+      })
+
+      for (const entry of changelog) {
+        for (const change of entry.changes) {
+          expect(() => i18n.global.t(change), `${locale}: ${change}`).not.toThrow()
+        }
+      }
+    }
+  })
+
   it('localizes Skills Usage page copy in every non-English locale instead of falling back to English', () => {
     const englishMessages = messages.en
     const untranslated = Object.entries(messages).flatMap(([locale, localeMessages]) => {

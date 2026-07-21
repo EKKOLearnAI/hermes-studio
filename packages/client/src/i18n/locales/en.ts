@@ -2711,6 +2711,16 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_32_1: 'This release covers all 14 PRs merged after 0.6.31, spanning session organization and compression, group chat, Workflow routing, Skill Bundles, Ekko memory, Hermes 0.19, and desktop chrome',
+    new_0_6_32_2: 'Group Chat mentions now work after CJK text, emoji, and punctuation, and room owners can view, generate, and rotate invite codes from room settings (#2133, #2141)',
+    new_0_6_32_3: 'Workflow preserves each Hermes Bridge run source across handoff and reattachment, while scoped Codex and Claude Code nodes can use launcher-supported protocols for valid API-key targets (#2137, #2154)',
+    new_0_6_32_4: 'Sessions gain global categories, more accurate Markdown-aware search ranking, and cursor-based compression that bounds history while remaining correct across edits, branches, and concurrent runs; the compression design is documented in full (#2139, #2143, #2145, #2146)',
+    new_0_6_32_5: 'Profile-scoped Skill Bundles can be created, browsed, run, and deleted directly from chat with clear visibility into their contained Skills (#2156)',
+    new_0_6_32_6: 'Ekko memory now uses one profile-isolated canonical model with revision-checked mutations, stronger source auditing, and stricter relevance filtering (#2159)',
+    new_0_6_32_7: 'Hermes 0.19 interim assistant messages are streamed and stored as distinct bubbles, and ordinary single chats can deliver durable background delegation results asynchronously (#2160)',
+    new_0_6_32_8: 'New desktop Runtime builds, fallback paths, and Windows CLI shims now default to Hermes Agent 0.19.0 (#2161)',
+    new_0_6_32_9: 'Desktop window controls are integrated into the page chrome: macOS traffic lights live in the sidebar, Windows controls sit above the main content, and Linux keeps native decorations (#2162)',
+    new_0_6_32_10: 'Developer documentation now supports both the current checkout and optional isolated Git worktrees (#2155)',
     new_0_6_31_1: 'This release covers all 25 PRs merged after 0.6.30, spanning Workflow routing and playback, generated-file previews, Provider editing, richer chats, and desktop update and visual polish',
     new_0_6_31_2: 'Workflow adds structured JSON conditions, clearer blocked-path evidence, full execution-record detail modals, and playback of the actual historical route (#2088, #2093, #2099, #2128)',
     new_0_6_31_3: 'Generated HTML, PDF, DOCX, PPTX, XLSX, CSV, image, Markdown, and source files can now be previewed safely across Profile files, session workspaces, and managed group workspaces (#2110, #2113)',
