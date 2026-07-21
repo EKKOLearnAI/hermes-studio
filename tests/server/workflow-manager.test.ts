@@ -12,6 +12,22 @@ const chatRunMock = vi.hoisted(() => ({
   sessionOutputs: new Map<string, string>(),
 }))
 
+const workflowSkillResolverMock = vi.hoisted(() => ({
+  resolve: null as null | ((args: { agent?: string; profile: string; skillName: string }) => Promise<any>),
+}))
+
+vi.mock('../../packages/server/src/services/workflow-skill-resolver', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../packages/server/src/services/workflow-skill-resolver')>()
+  return {
+    ...actual,
+    resolveWorkflowSkillContent: (args: { agent?: string; profile: string; skillName: string }) => (
+      workflowSkillResolverMock.resolve
+        ? workflowSkillResolverMock.resolve(args)
+        : actual.resolveWorkflowSkillContent(args)
+    ),
+  }
+})
+
 vi.mock('../../packages/server/src/routes/hermes/chat-run', () => ({
   getChatRunServer: () => chatRunMock,
 }))
@@ -602,6 +618,38 @@ describe('workflow manager', () => {
         'header@loop:retry:0', 'latch@loop:retry:0', 'header@loop:retry:1',
       ])
     } finally { nowSpy.mockRestore(); await manager.delete(workflow.id) }
+  })
+
+  it('bounds skill assembly by the same absolute Run deadline', async () => {
+    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    initAllStores()
+    const manager = new WorkflowManager()
+    chatRunMock.runAndWait.mockReset()
+    let resolutionCount = 0
+    workflowSkillResolverMock.resolve = async ({ skillName }) => {
+      resolutionCount += 1
+      if (resolutionCount === 1) return { name: skillName, content: 'preflight evidence' }
+      return new Promise(() => {})
+    }
+    const workflow = manager.create({
+      name: `Skill assembly deadline ${Date.now()}`,
+      profile: 'default',
+      nodes: [{ id: 'agent', type: 'agent', data: {
+        title: 'Agent', agent: 'hermes', input: 'work', skills: ['delayed-skill'],
+      } }],
+      edges: [],
+    })
+    try {
+      const result = await manager.runNow(workflow.id, { timeoutMs: 20 })
+      expect(result.run.status).toBe('failed')
+      expect(result.run.error).toBe('workflow run timed out after 20ms')
+      expect(result.nodeSessions).toEqual([])
+      expect(chatRunMock.runAndWait).not.toHaveBeenCalled()
+    } finally {
+      workflowSkillResolverMock.resolve = null
+      await manager.delete(workflow.id)
+    }
   })
 
   it('fails closed when run-deadline loop epoch evidence cannot be persisted', async () => {

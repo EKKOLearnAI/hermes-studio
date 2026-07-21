@@ -87,7 +87,11 @@ describe('workflow run time budget', () => {
   it('keeps the budget modal open until an accepted request and exposes accessible validation', () => {
     const view = readFileSync('packages/client/src/views/hermes/WorkflowView.vue', 'utf8')
     const confirm = view.slice(view.indexOf('async function confirmWorkflowRunBudget()'), view.indexOf('async function executeWorkflowWithBudget'))
-    expect(confirm.indexOf('await executeWorkflowWithBudget')).toBeLessThan(confirm.indexOf('closeWorkflowRunBudgetModal()'))
+    expect(confirm.indexOf('const accepted = action.kind')).toBeLessThan(confirm.indexOf('closeWorkflowRunBudgetModal(true)'))
+    expect(confirm).toContain('if (accepted) closeWorkflowRunBudgetModal(true)')
+    expect(view).toContain('if (workflowRunBudgetSubmitting.value && !force) return')
+    expect(view).toContain(':mask-closable="!workflowRunBudgetSubmitting"')
+    expect(view).toContain(':close-on-esc="!workflowRunBudgetSubmitting"')
     expect(view).toContain(':disabled="!workflowRunBudgetValid || workflowRunBudgetSubmitting"')
     expect(view).toContain(':aria-invalid="!workflowRunBudgetValid"')
     expect(view).toContain('aria-describedby="workflow-run-budget-error"')

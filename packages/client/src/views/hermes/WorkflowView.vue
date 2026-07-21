@@ -2196,7 +2196,8 @@ function startWorkflowExecution() {
   workflowRunBudgetModalVisible.value = true
 }
 
-function closeWorkflowRunBudgetModal() {
+function closeWorkflowRunBudgetModal(force = false) {
+  if (workflowRunBudgetSubmitting.value && !force) return
   workflowRunBudgetModalVisible.value = false
   pendingWorkflowRunBudgetAction.value = null
 }
@@ -2222,7 +2223,7 @@ async function confirmWorkflowRunBudget() {
     const accepted = action.kind === 'run'
       ? await executeWorkflowWithBudget(timeoutMs)
       : await rerunWorkflowFromNode(action.nodeId, action.preserveStartNode, timeoutMs)
-    if (accepted) closeWorkflowRunBudgetModal()
+    if (accepted) closeWorkflowRunBudgetModal(true)
   } finally {
     workflowRunBudgetSubmitting.value = false
   }
@@ -3018,6 +3019,9 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
       preset="card"
       :title="pendingWorkflowRunBudgetAction?.kind === 'rerun' ? t('workflow.budget.rerunTitle') : t('workflow.budget.runTitle')"
       :style="{ width: 'min(480px, calc(100vw - 32px))' }"
+      :mask-closable="!workflowRunBudgetSubmitting"
+      :close-on-esc="!workflowRunBudgetSubmitting"
+      :closable="!workflowRunBudgetSubmitting"
       @update:show="handleWorkflowRunBudgetVisibility"
     >
       <div class="workflow-run-budget-form">
@@ -3045,7 +3049,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
       </div>
       <template #footer>
         <NSpace justify="end">
-          <NButton :disabled="workflowRunBudgetSubmitting" @click="closeWorkflowRunBudgetModal">{{ t('common.cancel') }}</NButton>
+          <NButton :disabled="workflowRunBudgetSubmitting" @click="() => closeWorkflowRunBudgetModal()">{{ t('common.cancel') }}</NButton>
           <NButton
             type="primary"
             :disabled="!workflowRunBudgetValid || workflowRunBudgetSubmitting"

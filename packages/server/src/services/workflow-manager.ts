@@ -889,6 +889,30 @@ function isChatRunWaitTimeout(message: string, timeoutMs?: number): boolean {
   return typeof timeoutMs === 'number' && timeoutMs > 0 && message === `chat-run timed out after ${timeoutMs}ms`
 }
 
+export async function withinWorkflowRunDeadline<T>(
+  operation: () => Promise<T>,
+  deadlineAt: number | null,
+  timeoutError: string | null,
+): Promise<T> {
+  if (deadlineAt === null) return operation()
+  const remainingMs = deadlineAt - Date.now()
+  if (remainingMs <= 0) throw new Error(timeoutError || 'Workflow run timed out')
+  let timer: ReturnType<typeof setTimeout> | null = null
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(timeoutError || 'Workflow run timed out')),
+          remainingMs,
+        )
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 function withoutRemovedWorkflowNodePolicy(nodes: unknown[] | undefined): unknown[] | undefined {
   return nodes?.map(node => {
     if (!node || typeof node !== 'object' || Array.isArray(node)) return node
@@ -1328,18 +1352,18 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       const sessionId = randomUUID()
       const executionId = pathExecutionId(node.id, path)
       const target = resolveWorkflowNodeRunTarget(node.data.agent)
-      this.ensureWorkflowNodeSession({ sessionId, profile, workspace, node, target })
       const consumedIncoming = promptEdges.filter(edge => !ignoreHistoricalIncoming(edge) && edge.target === node.id && (
         (!activeIds.has(edge.source) && outputs.has(edge.source) && Boolean(evidenceForEdge(edge)))
         || latestEdgeDecisions.get(edge)?.status === 'taken'
       ))
-      const assembledInput = await this.buildNodeUserMessage({
+      const assembledInput = await withinWorkflowRunDeadline(() => this.buildNodeUserMessage({
         node, incomingEdges: consumedIncoming, nodeById, outputs,
         overrideInput: path.every(item => item.iteration === 0) && startNodeIds.includes(node.id) ? args.input : undefined, profile,
-      })
+      }), runDeadline, runTimeoutMessage)
       const nodeStartedAt = Date.now()
       const remainingTimeoutMs = runDeadline === null ? undefined : runDeadline - nodeStartedAt
       if (remainingTimeoutMs !== undefined && remainingTimeoutMs <= 0) throw new Error(runTimeoutMessage!)
+      this.ensureWorkflowNodeSession({ sessionId, profile, workspace, node, target })
       const nodeSession = createWorkflowRunNodeSession({
         run_id: run.id, workflow_id: workflowId, node_id: node.id, execution_id: executionId,
         iteration_path: path,
@@ -1816,24 +1840,24 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
           const nodeSessionId = randomUUID()
           runningOrDone.add(node.id)
           const target = resolveWorkflowNodeRunTarget(node.data.agent)
-          this.ensureWorkflowNodeSession({ sessionId: nodeSessionId, profile, workspace, node, target })
           const consumedIncoming = edges.filter(edge => edge.target === node.id && (
             (!activeIds.has(edge.source) && outputs.has(edge.source) && Boolean(evidenceForEdge(edge)))
             || edgeDecisions.get(edge)?.status === 'taken'
           ))
-          const assembledInput = await this.buildNodeUserMessage({
+          const assembledInput = await withinWorkflowRunDeadline(() => this.buildNodeUserMessage({
             node,
             incomingEdges: consumedIncoming,
             nodeById,
             outputs,
             overrideInput: startNodeIds.includes(node.id) ? args.input : undefined,
             profile,
-          })
+          }), runDeadline, runTimeoutMessage)
           const nodeStartedAt = Date.now()
           const remainingTimeoutMs = runDeadline === null ? undefined : runDeadline - nodeStartedAt
           if (remainingTimeoutMs !== undefined && remainingTimeoutMs <= 0) {
             return { node, ok: false, deadlineExceeded: true, error: runTimeoutMessage! }
           }
+          this.ensureWorkflowNodeSession({ sessionId: nodeSessionId, profile, workspace, node, target })
           const nodeSession = createWorkflowRunNodeSession({
             run_id: run.id,
             workflow_id: workflowId,
