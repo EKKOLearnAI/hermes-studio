@@ -54,6 +54,8 @@ export interface RunEvent {
   delta?: string
   /** Payload text for `reasoning.delta` / `thinking.delta` / `reasoning.available` events. */
   text?: string
+  /** Whether a `message.interim` payload was already delivered by message.delta. */
+  already_streamed?: boolean
   /** MoA reference metadata forwarded as display-only reasoning. */
   label?: string
   index?: number
@@ -172,6 +174,7 @@ const TRANSIENT_DISCONNECT_REASONS = new Set<string>([
  */
 const sessionEventHandlers = new Map<string, {
   onMessageDelta: (event: RunEvent) => void
+  onMessageInterim: (event: RunEvent) => void
   onReasoningDelta: (event: RunEvent) => void
   onThinkingDelta: (event: RunEvent) => void
   onReasoningAvailable: (event: RunEvent) => void
@@ -217,6 +220,13 @@ function globalMessageDeltaHandler(event: RunEvent): void {
   if (handlers?.onMessageDelta) {
     handlers.onMessageDelta(event)
   }
+}
+
+function globalMessageInterimHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  sessionEventHandlers.get(sid)?.onMessageInterim(event)
 }
 
 /**
@@ -573,6 +583,7 @@ export function registerSessionHandlers(
   sessionId: string,
   handlers: {
     onMessageDelta: (event: RunEvent) => void
+    onMessageInterim: (event: RunEvent) => void
     onReasoningDelta: (event: RunEvent) => void
     onThinkingDelta: (event: RunEvent) => void
     onReasoningAvailable: (event: RunEvent) => void
@@ -731,6 +742,7 @@ export function connectChatRun(requestedProfile?: string | null, transport: Chat
   if (!globalListenersRegistered) {
     // Message events
     chatRunSocket.on('message.delta', globalMessageDeltaHandler)
+    chatRunSocket.on('message.interim', globalMessageInterimHandler)
     chatRunSocket.on('reasoning.delta', globalReasoningDeltaHandler)
     chatRunSocket.on('thinking.delta', globalThinkingDeltaHandler)
     chatRunSocket.on('reasoning.available', globalReasoningAvailableHandler)
@@ -923,6 +935,10 @@ export function startRunViaSocket(
   // Define event handlers for this session
   const handlers = {
     onMessageDelta: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
+    onMessageInterim: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
     },

@@ -324,6 +324,7 @@ class AgentPool:
                     thinking_callback=self._make_thinking_callback(session_id),
                     reasoning_callback=self._text_event_callback(session_id, "reasoning.delta"),
                     stream_delta_callback=self._stream_delta_callback(session_id),
+                    interim_assistant_callback=self._interim_assistant_callback(session_id),
                     tool_progress_callback=self._tool_progress_callback(session_id),
                     tool_start_callback=self._tool_start_callback(session_id),
                     tool_complete_callback=self._tool_complete_callback(session_id),
@@ -1166,6 +1167,19 @@ class AgentPool:
             # Text deltas are already captured by the per-run stream_callback
             # passed to run_conversation.  Only consume boundary signals here
             # so registering this callback does not duplicate assistant text.
+
+        return callback
+
+    def _interim_assistant_callback(self, session_id: str):
+        def callback(text, *, already_streamed=False):
+            value = str(text or "")
+            if not value.strip():
+                return
+            self._append_event(session_id, {
+                "event": "message.interim",
+                "text": value,
+                "already_streamed": bool(already_streamed),
+            })
 
         return callback
 

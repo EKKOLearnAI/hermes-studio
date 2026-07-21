@@ -119,6 +119,18 @@ describe('chat-run socket reconnect handling', () => {
 
     socket.__trigger('message.delta', { event: 'message.delta', session_id: 'session-1', delta: 'after reconnect' })
     expect(onEvent).toHaveBeenCalledWith({ event: 'message.delta', session_id: 'session-1', delta: 'after reconnect' })
+    socket.__trigger('message.interim', {
+      event: 'message.interim',
+      session_id: 'session-1',
+      text: 'after reconnect',
+      already_streamed: true,
+    })
+    expect(onEvent).toHaveBeenCalledWith({
+      event: 'message.interim',
+      session_id: 'session-1',
+      text: 'after reconnect',
+      already_streamed: true,
+    })
     expect(onDone).not.toHaveBeenCalled()
   })
 

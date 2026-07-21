@@ -261,6 +261,44 @@ function processBridgeTextDelta(
   })
 }
 
+function processBridgeInterimMessage(
+  state: SessionState,
+  sessionId: string,
+  runMarker: string,
+  runId: string,
+  text: string,
+  alreadyStreamed: boolean,
+  emit: (event: string, payload: any) => void,
+): void {
+  if (!text.trim()) return
+
+  // Hermes treats the interim payload as authoritative. A provider may have
+  // streamed only a prefix, or may have delivered commentary solely through
+  // this callback, so replace the current segment instead of appending text.
+  const message = ensureOpenBridgeAssistantMessage(state, sessionId, runMarker)
+  const previous = message.content || state.bridgePendingAssistantContent || ''
+  const output = state.bridgeOutput || ''
+  if (previous && output.endsWith(previous)) {
+    state.bridgeOutput = output.slice(0, -previous.length) + text
+  } else if (!previous) {
+    state.bridgeOutput = output + text
+  } else if (!output.endsWith(text)) {
+    state.bridgeOutput = output + text
+  }
+  state.bridgePendingAssistantContent = text
+  message.content = text
+  syncBridgeReasoningToMessage(message, state.bridgePendingReasoningContent)
+  flushBridgePendingToDb(state, sessionId, runMarker)
+
+  emit('message.interim', {
+    event: 'message.interim',
+    run_id: runId,
+    text,
+    already_streamed: alreadyStreamed,
+    output: state.bridgeOutput,
+  })
+}
+
 function finiteToken(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? Math.floor(value)
@@ -1114,7 +1152,20 @@ async function applyBridgeChunkAsync(
       processBridgeTextDelta(state, sessionId, runMarker, chunk.run_id, String((ev as any).delta || ''), emit)
       continue
     }
-    if (evType === 'model.usage') {
+    if (evType === 'message.interim') {
+      // Release any partial markup prefix before replacing the segment with
+      // Hermes' authoritative interim text, then seal it as its own message.
+      flushPendingToolMarkupToAssistant(state, runMarker, chunk.run_id, emit)
+      processBridgeInterimMessage(
+        state,
+        sessionId,
+        runMarker,
+        chunk.run_id,
+        String((ev as any).text || ''),
+        Boolean((ev as any).already_streamed),
+        emit,
+      )
+    } else if (evType === 'model.usage') {
       recordBridgeModelUsage(sessionId, chunk.run_id, ev, profile, modelContext)
     } else if (evType === 'session.title.updated') {
       syncBridgeGeneratedTitle(sessionId, (ev as any).title, emit)

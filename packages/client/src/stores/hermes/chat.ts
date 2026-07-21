@@ -3322,6 +3322,33 @@ export const useChatStore = defineStore('chat', () => {
               break
             }
 
+            case 'message.interim': {
+              const text = String(evt.text || '')
+              if (!text.trim()) break
+              runProducedAssistantText = true
+              runProducedAssistantContent = true
+              const msgs = getSessionMsgs(sid)
+              const active = activeAssistantMessageId
+                ? msgs.find(m => m.id === activeAssistantMessageId)
+                : null
+              if (active?.role === 'assistant') {
+                active.content = text
+                active.isStreaming = false
+                if (active.reasoning) noteReasoningEnd(active.id)
+              } else {
+                addMessage(sid, {
+                  id: uid(),
+                  role: 'assistant',
+                  content: text,
+                  timestamp: Date.now(),
+                  isStreaming: false,
+                })
+              }
+              activeAssistantMessageId = null
+
+              break
+            }
+
             case 'session.title.updated': {
               applyGeneratedSessionTitle(evt)
               break
@@ -3956,6 +3983,33 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'message.interim': {
+          const text = String(evt.text || '')
+          if (!text.trim()) break
+          runProducedAssistantText = true
+          runProducedAssistantContent = true
+          const msgs = getSessionMsgs(sid)
+          const active = activeAssistantMessageId
+            ? msgs.find(m => m.id === activeAssistantMessageId)
+            : null
+          if (active?.role === 'assistant') {
+            active.content = text
+            active.isStreaming = false
+            if (active.reasoning) noteReasoningEnd(active.id)
+          } else {
+            addMessage(sid, {
+              id: uid(),
+              role: 'assistant',
+              content: text,
+              timestamp: Date.now(),
+              isStreaming: false,
+            })
+          }
+          activeAssistantMessageId = null
+
+          break
+        }
+
         case 'session.title.updated': {
           applyGeneratedSessionTitle(evt)
           break
@@ -4249,6 +4303,7 @@ export const useChatStore = defineStore('chat', () => {
     // Register handlers in global session map
     registerSessionHandlers(sid, {
       onMessageDelta: (evt) => handleEvent(evt),
+      onMessageInterim: (evt) => handleEvent(evt),
       onReasoningDelta: (evt) => handleEvent(evt),
       onThinkingDelta: (evt) => handleEvent(evt),
       onReasoningAvailable: (evt) => handleEvent(evt),

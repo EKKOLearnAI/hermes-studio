@@ -62,6 +62,7 @@ const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
 const CHAT_RUN_SERVER_EVENTS = [
   'run.started',
   'message.delta',
+  'message.interim',
   'reasoning.delta',
   'thinking.delta',
   'reasoning.available',
@@ -91,6 +92,7 @@ const CHAT_RUN_SERVER_EVENTS = [
 ]
 const NON_STREAMING_SUPPRESSED_EVENTS = new Set([
   'message.delta',
+  'message.interim',
   'reasoning.delta',
   'thinking.delta',
   'reasoning.available',

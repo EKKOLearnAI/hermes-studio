@@ -25,6 +25,7 @@ type ChatRunEvent = Record<string, unknown> & {
 const CHAT_RUN_EVENTS = [
   'run.started',
   'message.delta',
+  'message.interim',
   'reasoning.delta',
   'thinking.delta',
   'reasoning.available',

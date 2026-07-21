@@ -137,6 +137,39 @@ describe('chat store reasoning/tool boundaries', () => {
     }))
   })
 
+  it('uses interim assistant text as authoritative and seals each segment', async () => {
+    const store = useChatStore()
+    const session = makeSession()
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    await store.sendMessage('verify the result')
+
+    const onEvent = chatApi.startRunViaSocket.mock.calls[0][1] as (event: RunEvent) => void
+    onEvent({ event: 'run.started', session_id: 'session-1' })
+    onEvent({ event: 'message.delta', session_id: 'session-1', delta: 'partial' })
+    onEvent({
+      event: 'message.interim',
+      session_id: 'session-1',
+      text: 'partial answer',
+      already_streamed: true,
+    })
+    onEvent({
+      event: 'message.interim',
+      session_id: 'session-1',
+      text: 'callback-only commentary',
+      already_streamed: false,
+    })
+    onEvent({ event: 'message.delta', session_id: 'session-1', delta: 'final answer' })
+
+    expect(store.messages.filter(message => message.role === 'assistant')).toEqual([
+      expect.objectContaining({ content: 'partial answer', isStreaming: false }),
+      expect.objectContaining({ content: 'callback-only commentary', isStreaming: false }),
+      expect.objectContaining({ content: 'final answer', isStreaming: true }),
+    ])
+  })
+
   it('renders MoA reference and aggregating events as tools before the final assistant message', async () => {
     const store = useChatStore()
     const session = makeSession()

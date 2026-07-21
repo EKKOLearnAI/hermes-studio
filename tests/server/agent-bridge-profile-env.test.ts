@@ -544,6 +544,7 @@ class FakeAgent:
     def __init__(self, **kwargs):
         self.tools = []
         self.stream_delta_callback = kwargs.get("stream_delta_callback")
+        self.interim_assistant_callback = kwargs.get("interim_assistant_callback")
 
     def run_conversation(self, message, **kwargs):
         stream_callback = kwargs.get("stream_callback")
@@ -552,6 +553,9 @@ class FakeAgent:
         if self.stream_delta_callback:
             self.stream_delta_callback("ignored-duplicate-text")
             self.stream_delta_callback(None)
+        if self.interim_assistant_callback:
+            self.interim_assistant_callback("hello", already_streamed=True)
+            self.interim_assistant_callback("callback-only", already_streamed=False)
         return {
             "final_response": "hello",
             "messages": [
@@ -595,6 +599,8 @@ print(json.dumps({
     expect(result.events).toEqual(expect.arrayContaining([
       expect.objectContaining({ event: 'stream.delta', delta: 'hello' }),
       expect.objectContaining({ event: 'turn.boundary' }),
+      expect.objectContaining({ event: 'message.interim', text: 'hello', already_streamed: true }),
+      expect.objectContaining({ event: 'message.interim', text: 'callback-only', already_streamed: false }),
     ]))
     expect(result.events).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ event: 'stream.delta', delta: 'ignored-duplicate-text' }),

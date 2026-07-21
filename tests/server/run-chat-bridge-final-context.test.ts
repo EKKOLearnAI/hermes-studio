@@ -416,6 +416,86 @@ describe('bridge run final context usage', () => {
     )
   })
 
+  it('seals authoritative interim assistant messages without duplicating streamed text', async () => {
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    flushBridgePendingToDbMock.mockImplementation((targetState: any, _sessionId: string, runMarker: string) => {
+      const message = [...targetState.messages].reverse().find((candidate: any) => (
+        candidate.runMarker === runMarker
+        && candidate.role === 'assistant'
+        && candidate.finish_reason == null
+      ))
+      if (message && String(targetState.bridgePendingAssistantContent || '').trim()) {
+        message.finish_reason = 'stop'
+      }
+      targetState.bridgePendingAssistantContent = ''
+      targetState.bridgePendingReasoningContent = ''
+    })
+    const sessionMap = new Map([['session-1', state]])
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({
+        token_count: 12345,
+        fixed_context_tokens: 12327,
+        message_count: 2,
+        tool_count: 4,
+        system_prompt_chars: 13,
+      }),
+      streamOutput: vi.fn(async function* () {
+        yield {
+          run_id: 'run-1',
+          done: false,
+          status: 'running',
+          events: [
+            { event: 'stream.delta', delta: 'partial' },
+            { event: 'message.interim', text: 'partial answer', already_streamed: true },
+            { event: 'message.interim', text: 'callback-only commentary', already_streamed: false },
+          ],
+        }
+        yield {
+          run_id: 'run-1',
+          done: true,
+          status: 'completed',
+          events: [{ event: 'stream.delta', delta: 'final answer' }],
+        }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      { input: 'hello', session_id: 'session-1' },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    expect(state.messages.filter((message: any) => message.role === 'assistant').map((message: any) => message.content)).toEqual([
+      'partial answer',
+      'callback-only commentary',
+      'final answer',
+    ])
+    expect(state.bridgeOutput).toBe('partial answercallback-only commentaryfinal answer')
+    expect(emit.mock.calls.filter(([event]) => event === 'message.delta')).toEqual([
+      ['message.delta', expect.objectContaining({ delta: 'partial' })],
+      ['message.delta', expect.objectContaining({ delta: 'final answer' })],
+    ])
+    expect(emit).toHaveBeenCalledWith('message.interim', expect.objectContaining({
+      text: 'partial answer',
+      already_streamed: true,
+    }))
+    expect(emit).toHaveBeenCalledWith('message.interim', expect.objectContaining({
+      text: 'callback-only commentary',
+      already_streamed: false,
+    }))
+  })
+
   it('uses result.final_response for moa and records only its exact model-call event', async () => {
     resolveBridgeRunModelConfigMock.mockResolvedValueOnce({ model: 'default', provider: 'moa' })
     const emit = vi.fn()
