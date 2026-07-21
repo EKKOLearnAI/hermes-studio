@@ -15,6 +15,8 @@ export interface WorkflowRunRecord {
   snapshot_nodes: unknown[]
   snapshot_edges: unknown[]
   compiled_loops: unknown[]
+  requested_timeout_ms: number | null
+  deadline_at: number | null
   started_at: number | null
   finished_at: number | null
   created_at: number
@@ -52,6 +54,7 @@ export interface WorkflowRunNodeSessionRecord {
   agent_mode: string
   status: WorkflowRunNodeStatus
   sequence: number
+  remaining_timeout_ms_at_start: number | null
   started_at: number | null
   finished_at: number | null
   created_at: number
@@ -85,6 +88,8 @@ function rowToRunRecord(row: Record<string, any>): WorkflowRunRecord {
     snapshot_nodes: parseArrayJson(row.snapshot_nodes_json ?? row.snapshot_nodes),
     snapshot_edges: parseArrayJson(row.snapshot_edges_json ?? row.snapshot_edges),
     compiled_loops: parseArrayJson(row.compiled_loops_json ?? row.compiled_loops),
+    requested_timeout_ms: row.requested_timeout_ms == null ? null : Number(row.requested_timeout_ms),
+    deadline_at: row.deadline_at == null ? null : Number(row.deadline_at),
     started_at: row.started_at == null ? null : Number(row.started_at),
     finished_at: row.finished_at == null ? null : Number(row.finished_at),
     created_at: Number(row.created_at || 0),
@@ -107,6 +112,7 @@ function rowToNodeSessionRecord(row: Record<string, any>): WorkflowRunNodeSessio
     agent_mode: String(row.agent_mode || ''),
     status: String(row.status || 'queued') as WorkflowRunNodeStatus,
     sequence: Number(row.sequence || 0),
+    remaining_timeout_ms_at_start: row.remaining_timeout_ms_at_start == null ? null : Number(row.remaining_timeout_ms_at_start),
     started_at: row.started_at == null ? null : Number(row.started_at),
     finished_at: row.finished_at == null ? null : Number(row.finished_at),
     created_at: Number(row.created_at || 0),
@@ -195,6 +201,8 @@ export function createWorkflowRun(input: {
   snapshot_nodes?: unknown[]
   snapshot_edges?: unknown[]
   compiled_loops?: unknown[]
+  requested_timeout_ms?: number | null
+  deadline_at?: number | null
   started_at?: number | null
   error?: string | null
 }): WorkflowRunRecord {
@@ -209,6 +217,8 @@ export function createWorkflowRun(input: {
     snapshot_nodes: input.snapshot_nodes || [],
     snapshot_edges: input.snapshot_edges || [],
     compiled_loops: input.compiled_loops || [],
+    requested_timeout_ms: input.requested_timeout_ms ?? null,
+    deadline_at: input.deadline_at ?? null,
     started_at: input.started_at ?? null,
     finished_at: null,
     created_at: now,
@@ -224,6 +234,8 @@ export function createWorkflowRun(input: {
     snapshot_nodes_json: JSON.stringify(record.snapshot_nodes),
     snapshot_edges_json: JSON.stringify(record.snapshot_edges),
     compiled_loops_json: JSON.stringify(record.compiled_loops),
+    requested_timeout_ms: record.requested_timeout_ms,
+    deadline_at: record.deadline_at,
     started_at: record.started_at,
     finished_at: record.finished_at,
     created_at: record.created_at,
@@ -237,8 +249,9 @@ export function createWorkflowRun(input: {
   db.prepare(`
     INSERT INTO ${WORKFLOW_RUNS_TABLE} (
       id, workflow_id, profile, workspace, start_node_ids_json, status,
-      snapshot_nodes_json, snapshot_edges_json, compiled_loops_json, started_at, finished_at, created_at, error
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      snapshot_nodes_json, snapshot_edges_json, compiled_loops_json, requested_timeout_ms, deadline_at,
+      started_at, finished_at, created_at, error
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     row.id,
     row.workflow_id,
@@ -249,6 +262,8 @@ export function createWorkflowRun(input: {
     row.snapshot_nodes_json,
     row.snapshot_edges_json,
     row.compiled_loops_json,
+    row.requested_timeout_ms,
+    row.deadline_at,
     row.started_at,
     row.finished_at,
     row.created_at,
@@ -259,6 +274,8 @@ export function createWorkflowRun(input: {
 
 export function updateWorkflowRun(id: string, patch: {
   status?: WorkflowRunStatus
+  requested_timeout_ms?: number | null
+  deadline_at?: number | null
   started_at?: number | null
   finished_at?: number | null
   error?: string | null
@@ -271,6 +288,8 @@ export function updateWorkflowRun(id: string, patch: {
   const next: WorkflowRunRecord = {
     ...existing,
     status: patch.status ?? existing.status,
+    requested_timeout_ms: patch.requested_timeout_ms === undefined ? existing.requested_timeout_ms : patch.requested_timeout_ms,
+    deadline_at: patch.deadline_at === undefined ? existing.deadline_at : patch.deadline_at,
     started_at: patch.started_at === undefined ? existing.started_at : patch.started_at,
     finished_at: patch.finished_at === undefined ? existing.finished_at : patch.finished_at,
     error: patch.error === undefined ? existing.error : patch.error,
@@ -288,9 +307,9 @@ export function updateWorkflowRun(id: string, patch: {
   }
   db.prepare(`
     UPDATE ${WORKFLOW_RUNS_TABLE}
-    SET status = ?, started_at = ?, finished_at = ?, error = ?
+    SET status = ?, requested_timeout_ms = ?, deadline_at = ?, started_at = ?, finished_at = ?, error = ?
     WHERE id = ?
-  `).run(next.status, next.started_at, next.finished_at, next.error, id)
+  `).run(next.status, next.requested_timeout_ms, next.deadline_at, next.started_at, next.finished_at, next.error, id)
   return next
 }
 
@@ -419,6 +438,7 @@ export function createWorkflowRunNodeSession(input: {
   agent_mode?: string | null
   status?: WorkflowRunNodeStatus
   sequence?: number
+  remaining_timeout_ms_at_start?: number | null
   started_at?: number | null
   finished_at?: number | null
   error?: string | null
@@ -443,6 +463,7 @@ export function createWorkflowRunNodeSession(input: {
     agent_mode: input.agent_mode?.trim() || '',
     status: input.status || 'queued',
     sequence: input.sequence || 0,
+    remaining_timeout_ms_at_start: input.remaining_timeout_ms_at_start ?? null,
     started_at: input.started_at ?? null,
     finished_at: input.finished_at ?? null,
     created_at: now,
@@ -457,8 +478,8 @@ export function createWorkflowRunNodeSession(input: {
   db.prepare(`
     INSERT INTO ${WORKFLOW_RUN_NODE_SESSIONS_TABLE} (
       id, run_id, workflow_id, node_id, execution_id, iteration_path_json, consumed_edge_evaluation_ids_json, session_id, profile, agent, agent_mode,
-      status, sequence, started_at, finished_at, created_at, updated_at, error
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      status, sequence, remaining_timeout_ms_at_start, started_at, finished_at, created_at, updated_at, error
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     record.id,
     record.run_id,
@@ -473,6 +494,7 @@ export function createWorkflowRunNodeSession(input: {
     record.agent_mode,
     record.status,
     record.sequence,
+    record.remaining_timeout_ms_at_start,
     record.started_at,
     record.finished_at,
     record.created_at,

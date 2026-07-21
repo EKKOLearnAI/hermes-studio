@@ -2145,6 +2145,15 @@ export default {
       reasons: { evaluationFailed: '経路判定に失敗しました', conditionNotMatched: '条件が一致しませんでした', iterationLimitReached: '最大ループ回数に到達しました', routeNotMatched: '経路が一致しませんでした', pathSelected: 'この経路が選択されました。', sourceSkipped: '上流ノードが実行されなかったため、この経路は今回使用されませんでした。', failureRouteAfterSuccess: '上流ノードは正常に返答しました。この経路はノード実行失敗時のみ使用されます。', successRouteAfterFailure: '上流ノードの実行に失敗しました。この経路は正常返答時のみ使用されます。', businessBlocked: '「{source}」がワークフローを停止しました（{decision}）：{reason}。そのため「{target}」は実行されませんでした。', businessBlockedWithCondition: '「{source}」がワークフローを停止しました（{decision}）：{reason}。続行には「{expected}」が必要でしたが、上流の結果は「{actual}」だったため、「{target}」は実行されませんでした。', conditionMismatchDetail: '続行には「{expected}」が必要でしたが、上流の結果は「{actual}」だったため、「{target}」は実行されませんでした。' },
       loopOutcomes: { continued: '条件一致、次の回へ続行', iterationLimitReached: '最大回数で停止', conditionNotMatched: '条件不一致で終了', finished: 'ループ終了' },
     },
+    budget: {
+      runTitle: 'Run の時間予算を選択', rerunTitle: 'Rerun の時間予算を選択', totalLabel: 'Run 全体の予算',
+      customMinutes: 'カスタム分数', customPlaceholder: '分', invalidCustom: 'カスタム Run 予算は 0.1〜1440 分で指定してください',
+      help: 'Run 全体で共有する絶対期限です。各ノードには開始時点の残り時間だけが渡され、ループで予算はリセットされません。',
+      options: { unlimited: '期限なし', '30': '30 分', '60': '60 分', '90': '90 分', custom: 'カスタム' },
+      unlimitedSummary: '期限なし', unlimitedHelp: 'この Run には期限が設定されていません。',
+      summary: '合計 {total} · 経過 {elapsed} · 残り {remaining}', deadline: '期限：{deadline}',
+      nodeStartRemaining: 'ノード開始時の残り総予算：{remaining}',
+    },
     edgeEditor: {
       title: '接続を編集', guideIntro: 'まず上流ノードに必要な実行結果を選びます。次に、応答を確認しない、全文を文字列として確認する、または解析済み JSON の 1 フィールド値を比較する方法を選びます。',
       connectionSummary: '{source} → {target}', selfLoopDescription: '「{node}」自身を再実行します。',

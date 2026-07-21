@@ -749,6 +749,15 @@ export default {
       reasons: { evaluationFailed: 'Ошибка проверки маршрута', conditionNotMatched: 'Условие не совпало', iterationLimitReached: 'Достигнут предел проходов', routeNotMatched: 'Маршрут не совпал', pathSelected: 'Этот путь был выбран.', sourceSkipped: 'Исходный узел не запускался, поэтому этот путь не участвовал в запуске.', failureRouteAfterSuccess: 'Исходный узел завершился нормально; этот путь используется только при ошибке выполнения.', successRouteAfterFailure: 'Исходный узел завершился с ошибкой; этот путь используется только при нормальном ответе.', businessBlocked: '«{source}» остановил выполнение ({decision}): {reason}. Поэтому «{target}» не был запущен.', businessBlockedWithCondition: '«{source}» остановил выполнение ({decision}): {reason}. Для продолжения требовалось «{expected}», но предыдущий результат — «{actual}». Поэтому «{target}» не был запущен.', conditionMismatchDetail: 'Для продолжения требовалось «{expected}», но предыдущий результат — «{actual}». Поэтому «{target}» не был запущен.' },
       loopOutcomes: { continued: 'Условие совпало; начат следующий проход', iterationLimitReached: 'Остановлено на пределе проходов', conditionNotMatched: 'Остановлено из-за несовпадения условия', finished: 'Цикл завершён' },
     },
+    budget: {
+      runTitle: 'Выбрать бюджет времени Run', rerunTitle: 'Выбрать бюджет времени Rerun', totalLabel: 'Общий бюджет Run',
+      customMinutes: 'Произвольное число минут', customPlaceholder: 'Минуты', invalidCustom: 'Бюджет Run должен быть от 0,1 до 1440 минут',
+      help: 'Это единый абсолютный срок для всего Run. Каждый узел получает только оставшееся время, а циклы не сбрасывают бюджет.',
+      options: { unlimited: 'Без срока', '30': '30 минут', '60': '60 минут', '90': '90 минут', custom: 'Другой' },
+      unlimitedSummary: 'Без срока', unlimitedHelp: 'Для этого Run срок не задан.',
+      summary: 'Всего {total} · Прошло {elapsed} · Осталось {remaining}', deadline: 'Срок: {deadline}',
+      nodeStartRemaining: 'Оставшийся общий бюджет при запуске узла: {remaining}',
+    },
     edgeEditor: {
       title: 'Изменить соединение', guideIntro: 'Сначала выберите требуемый результат исходного узла. Затем не проверяйте ответ, проверьте весь текст буквально или сравните значение одного разобранного поля JSON.',
       connectionSummary: '{source} → {target}', selfLoopDescription: 'Узел «{node}» повторно запустит сам себя.',

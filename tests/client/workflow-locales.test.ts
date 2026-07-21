@@ -16,6 +16,22 @@ const localeMessages: Record<string, Record<string, unknown>> = {
 }
 const operatorKeys = ['equals', 'not_equals', 'contains', 'not_contains', 'exists', 'not_exists']
 const requiredPaths = [
+  'workflow.budget.runTitle',
+  'workflow.budget.rerunTitle',
+  'workflow.budget.totalLabel',
+  'workflow.budget.customMinutes',
+  'workflow.budget.invalidCustom',
+  'workflow.budget.help',
+  'workflow.budget.options.unlimited',
+  'workflow.budget.options.30',
+  'workflow.budget.options.60',
+  'workflow.budget.options.90',
+  'workflow.budget.options.custom',
+  'workflow.budget.unlimitedSummary',
+  'workflow.budget.unlimitedHelp',
+  'workflow.budget.summary',
+  'workflow.budget.deadline',
+  'workflow.budget.nodeStartRemaining',
   'workflow.edgeEditor.historyNode',
   'workflow.edgeEditor.historyNodePlaceholder',
   'workflow.edgeEditor.conditionSemantics',

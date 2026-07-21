@@ -202,6 +202,34 @@ describe('workflow controller', () => {
     expect(c.body).toBeUndefined()
   })
 
+  it('rejects invalid Run and Rerun budgets before asynchronous acceptance', async () => {
+    const user = { id: 'user-1', role: 'super_admin' }
+    managerMock.get.mockReturnValue({ id: 'workflow-1', profile: 'default', nodes: [], edges: [] })
+    getWorkflowRunWithEvidenceMock.mockReturnValue({
+      id: 'run-1', workflow_id: 'workflow-1', profile: 'default', status: 'completed',
+      snapshot_nodes: [], snapshot_edges: [], node_sessions: [], edge_evaluations: [], loop_epochs: [],
+    })
+    const mod = await import('../../packages/server/src/controllers/hermes/workflows')
+
+    for (const invalidTimeout of [0, 999, 1_000.5, Number.NaN, 86_400_001, {}, true]) {
+      const invalidRun = ctx({ params: { id: 'workflow-1' }, request: { body: { timeout_ms: invalidTimeout } }, state: { user } })
+      await mod.runNow(invalidRun)
+      expect(invalidRun.status).toBe(400)
+      expect(invalidRun.body).toEqual({ error: 'timeout_ms must be an integer from 1000 to 86400000 milliseconds' })
+    }
+
+    const invalidRerun = ctx({
+      params: { id: 'workflow-1', runId: 'run-1' },
+      request: { body: { node_id: 'node-1', timeout_ms: 86_400_001 } },
+      state: { user },
+    })
+    await mod.rerunFromNode(invalidRerun)
+    expect(invalidRerun.status).toBe(400)
+    expect(invalidRerun.body).toEqual({ error: 'timeout_ms must be an integer from 1000 to 86400000 milliseconds' })
+    expect(managerMock.runNow).not.toHaveBeenCalled()
+    expect(managerMock.rerunFromNode).not.toHaveBeenCalled()
+  })
+
   it('runs a workflow through the workflow manager', async () => {
     const user = { id: 'user-1', role: 'super_admin' }
     managerMock.get.mockReturnValue({ id: 'workflow-1', profile: 'default', nodes: [], edges: [] })

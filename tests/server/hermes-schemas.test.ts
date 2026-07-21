@@ -117,6 +117,37 @@ describe('Hermes schema initialization', () => {
     expect(indexes.some(index => index.name === 'idx_sessions_category_id')).toBe(true)
   })
 
+  it('adds nullable Workflow budget evidence columns without losing legacy rows', async () => {
+    const {
+      initAllHermesTables,
+      WORKFLOW_RUNS_SCHEMA,
+      WORKFLOW_RUNS_TABLE,
+      WORKFLOW_RUN_NODE_SESSIONS_SCHEMA,
+      WORKFLOW_RUN_NODE_SESSIONS_TABLE,
+    } = await import('../../packages/server/src/db/hermes/schemas')
+    const createLegacyTable = (table: string, schema: Record<string, string>, omitted: string[]) => {
+      const columns = Object.entries(schema)
+        .filter(([name]) => !omitted.includes(name))
+        .map(([name, definition]) => `"${name}" ${definition}`)
+        .join(', ')
+      db.exec(`CREATE TABLE "${table}" (${columns})`)
+    }
+    createLegacyTable(WORKFLOW_RUNS_TABLE, WORKFLOW_RUNS_SCHEMA, ['requested_timeout_ms', 'deadline_at'])
+    createLegacyTable(WORKFLOW_RUN_NODE_SESSIONS_TABLE, WORKFLOW_RUN_NODE_SESSIONS_SCHEMA, ['remaining_timeout_ms_at_start'])
+
+    db.prepare(`INSERT INTO "${WORKFLOW_RUNS_TABLE}" (id, workflow_id, profile, workspace, start_node_ids_json, status, snapshot_nodes_json, snapshot_edges_json, compiled_loops_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run('legacy-run', 'workflow-1', 'default', '', '[]', 'completed', '[]', '[]', '[]', 1)
+    db.prepare(`INSERT INTO "${WORKFLOW_RUN_NODE_SESSIONS_TABLE}" (id, run_id, workflow_id, node_id, execution_id, iteration_path_json, consumed_edge_evaluation_ids_json, session_id, profile, agent, agent_mode, status, sequence, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run('legacy-node', 'legacy-run', 'workflow-1', 'node-1', 'node-1', '[]', '[]', 'session-1', 'default', 'hermes', '', 'completed', 0, 1, 1)
+
+    expect(() => initAllHermesTables()).not.toThrow()
+    expect(() => initAllHermesTables()).not.toThrow()
+    const run = db.prepare(`SELECT requested_timeout_ms, deadline_at FROM "${WORKFLOW_RUNS_TABLE}" WHERE id = ?`).get('legacy-run')
+    const node = db.prepare(`SELECT remaining_timeout_ms_at_start FROM "${WORKFLOW_RUN_NODE_SESSIONS_TABLE}" WHERE id = ?`).get('legacy-node')
+    expect(run).toEqual({ requested_timeout_ms: null, deadline_at: null })
+    expect(node).toEqual({ remaining_timeout_ms_at_start: null })
+  })
+
   it('handles single-column primary key tables correctly', async () => {
     const { initAllHermesTables, GC_ROOM_AGENTS_TABLE } =
       await import('../../packages/server/src/db/hermes/schemas')

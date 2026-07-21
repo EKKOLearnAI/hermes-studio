@@ -2145,6 +2145,15 @@ export default {
       reasons: { evaluationFailed: '경로 판단 실패', conditionNotMatched: '조건이 일치하지 않음', iterationLimitReached: '최대 반복 횟수 도달', routeNotMatched: '경로가 일치하지 않음', pathSelected: '이 경로가 선택되었습니다.', sourceSkipped: '상위 노드가 실행되지 않아 이번 실행에서 이 경로를 사용하지 않았습니다.', failureRouteAfterSuccess: '상위 노드는 정상 응답했습니다. 이 경로는 노드 실행 실패 시에만 사용됩니다.', successRouteAfterFailure: '상위 노드 실행이 실패했습니다. 이 경로는 정상 응답 시에만 사용됩니다.', businessBlocked: '“{source}” 단계가 워크플로를 중단했습니다({decision}): {reason}. 따라서 “{target}” 단계는 실행되지 않았습니다.', businessBlockedWithCondition: '“{source}” 단계가 워크플로를 중단했습니다({decision}): {reason}. 계속하려면 “{expected}”이(가) 필요했지만 상위 결과는 “{actual}”이었으므로 “{target}” 단계는 실행되지 않았습니다.', conditionMismatchDetail: '계속하려면 “{expected}”이(가) 필요했지만 상위 결과는 “{actual}”이었으므로 “{target}” 단계는 실행되지 않았습니다.' },
       loopOutcomes: { continued: '조건 일치; 다음 회차로 계속', iterationLimitReached: '최대 횟수에서 중지', conditionNotMatched: '조건 불일치로 종료', finished: '루프 종료' },
     },
+    budget: {
+      runTitle: 'Run 시간 예산 선택', rerunTitle: 'Rerun 시간 예산 선택', totalLabel: '전체 Run 예산',
+      customMinutes: '사용자 지정 분', customPlaceholder: '분', invalidCustom: '사용자 지정 Run 예산은 0.1~1440분이어야 합니다',
+      help: '전체 Run이 공유하는 절대 마감 시간입니다. 각 노드는 시작 시점의 남은 시간만 받으며 반복은 예산을 재설정하지 않습니다.',
+      options: { unlimited: '마감 없음', '30': '30분', '60': '60분', '90': '90분', custom: '사용자 지정' },
+      unlimitedSummary: '마감 없음', unlimitedHelp: '이 Run에는 시간 마감이 설정되지 않았습니다.',
+      summary: '전체 {total} · 경과 {elapsed} · 남음 {remaining}', deadline: '마감: {deadline}',
+      nodeStartRemaining: '노드 시작 시 남은 전체 예산: {remaining}',
+    },
     edgeEditor: {
       title: '연결 편집', guideIntro: '먼저 상위 노드에 필요한 실행 결과를 선택합니다. 그런 다음 응답을 검사하지 않거나, 전체 텍스트를 문자 그대로 검사하거나, 파싱된 JSON 필드 하나의 값을 비교합니다.',
       connectionSummary: '{source} → {target}', selfLoopDescription: '“{node}” 노드가 자신을 다시 실행합니다.',

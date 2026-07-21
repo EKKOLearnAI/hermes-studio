@@ -89,6 +89,48 @@ describe('workflow store', () => {
     expect(getWorkflow(workflow.id)).toBeNull()
   })
 
+  it('persists the requested run deadline and each node start budget', async () => {
+    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
+    const {
+      createWorkflowRun,
+      createWorkflowRunNodeSession,
+      getWorkflowRun,
+      listWorkflowRunNodeSessions,
+    } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    const workflow = createWorkflow({ name: 'Budgeted run', profile: 'default' })
+
+    const run = createWorkflowRun({
+      workflow_id: workflow.id,
+      status: 'running',
+      started_at: 1_000,
+      requested_timeout_ms: 3_600_000,
+      deadline_at: 3_601_000,
+    })
+    createWorkflowRunNodeSession({
+      run_id: run.id,
+      workflow_id: workflow.id,
+      node_id: 'review',
+      session_id: 'session-budget',
+      status: 'running',
+      started_at: 2_000,
+      remaining_timeout_ms_at_start: 3_599_000,
+    })
+
+    expect(getWorkflowRun(run.id)).toMatchObject({
+      requested_timeout_ms: 3_600_000,
+      deadline_at: 3_601_000,
+    })
+    expect(listWorkflowRunNodeSessions(run.id)).toEqual([
+      expect.objectContaining({ remaining_timeout_ms_at_start: 3_599_000 }),
+    ])
+
+    const unlimited = createWorkflowRun({ workflow_id: workflow.id, status: 'queued' })
+    expect(getWorkflowRun(unlimited.id)).toMatchObject({
+      requested_timeout_ms: null,
+      deadline_at: null,
+    })
+  })
+
   it('lists workflow runs by workflow ordered newest first', async () => {
     const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
     const { createWorkflowRun, listWorkflowRuns, updateWorkflowRun } = await import('../../packages/server/src/db/hermes/workflow-run-store')

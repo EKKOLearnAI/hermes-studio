@@ -854,6 +854,15 @@ export default {
       importFailed: 'Workflow import failed',
       exportFailed: 'Workflow export failed',
     },
+    budget: {
+      runTitle: 'Choose Run time budget', rerunTitle: 'Choose Rerun time budget', totalLabel: 'Total Run budget',
+      customMinutes: 'Custom minutes', customPlaceholder: 'Minutes', invalidCustom: 'Custom Run budget must be from 0.1 to 1440 minutes',
+      help: 'This is one absolute deadline for the entire Run. Each node receives only the remaining time; loops do not reset it.',
+      options: { unlimited: 'No deadline', '30': '30 minutes', '60': '60 minutes', '90': '90 minutes', custom: 'Custom' },
+      unlimitedSummary: 'No deadline', unlimitedHelp: 'This Run has no configured time deadline.',
+      summary: 'Budget {total} · elapsed {elapsed} · remaining {remaining}', deadline: 'Deadline: {deadline}',
+      nodeStartRemaining: '{remaining} remaining at node start',
+    },
     evidence: {
       ariaLabel: 'Workflow execution details', title: 'Execution details', count: '{count} items',
       intro: 'Shows path decisions, loop passes, and exceptional nodes for this run.', empty: 'No execution details', loadFailed: 'Failed to load persisted execution details',

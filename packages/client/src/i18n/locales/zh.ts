@@ -854,6 +854,15 @@ export default {
       importFailed: 'Workflow 导入失败',
       exportFailed: 'Workflow 导出失败',
     },
+    budget: {
+      runTitle: '选择 Run 时间预算', rerunTitle: '选择 Rerun 时间预算', totalLabel: '整条 Run 总预算',
+      customMinutes: '自定义分钟数', customPlaceholder: '分钟', invalidCustom: '自定义 Run 预算必须介于 0.1 到 1440 分钟',
+      help: '这是整条 Run 共用的绝对截止时间。每个节点只获得当时的剩余时间，循环不会重置预算。',
+      options: { unlimited: '不设截止时间', '30': '30 分钟', '60': '60 分钟', '90': '90 分钟', custom: '自定义' },
+      unlimitedSummary: '不设截止时间', unlimitedHelp: '本次 Run 没有配置时间截止点。',
+      summary: '总预算 {total} · 已用 {elapsed} · 剩余 {remaining}', deadline: '截止时间：{deadline}',
+      nodeStartRemaining: '节点启动时剩余 {remaining}',
+    },
     evidence: {
       ariaLabel: 'Workflow 执行详情', title: '执行详情', count: '{count} 条',
       intro: '展示本次执行的路径选择、循环轮次和异常节点。', empty: '暂无执行详情', loadFailed: '读取持久化执行详情失败',

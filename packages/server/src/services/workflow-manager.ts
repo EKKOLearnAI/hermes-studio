@@ -1325,8 +1325,6 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       if (isCanceled()) throw new Error(getWorkflowRun(run.id)?.error || 'Workflow run canceled')
       executionCount += 1
       if (executionCount > MAX_WORKFLOW_RUN_EXECUTIONS) throw new Error(`workflow run execution budget exceeded: ${MAX_WORKFLOW_RUN_EXECUTIONS}`)
-      const remainingTimeoutMs = runDeadline === null ? undefined : runDeadline - Date.now()
-      if (remainingTimeoutMs !== undefined && remainingTimeoutMs <= 0) throw new Error(runTimeoutMessage!)
       const sessionId = randomUUID()
       const executionId = pathExecutionId(node.id, path)
       const target = resolveWorkflowNodeRunTarget(node.data.agent)
@@ -1335,21 +1333,25 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
         (!activeIds.has(edge.source) && outputs.has(edge.source) && Boolean(evidenceForEdge(edge)))
         || latestEdgeDecisions.get(edge)?.status === 'taken'
       ))
+      const assembledInput = await this.buildNodeUserMessage({
+        node, incomingEdges: consumedIncoming, nodeById, outputs,
+        overrideInput: path.every(item => item.iteration === 0) && startNodeIds.includes(node.id) ? args.input : undefined, profile,
+      })
+      const nodeStartedAt = Date.now()
+      const remainingTimeoutMs = runDeadline === null ? undefined : runDeadline - nodeStartedAt
+      if (remainingTimeoutMs !== undefined && remainingTimeoutMs <= 0) throw new Error(runTimeoutMessage!)
       const nodeSession = createWorkflowRunNodeSession({
         run_id: run.id, workflow_id: workflowId, node_id: node.id, execution_id: executionId,
         iteration_path: path,
         consumed_edge_evaluation_ids: consumedIncoming.flatMap(edge => evidenceForEdge(edge)?.id ? [evidenceForEdge(edge)!.id] : []),
         session_id: sessionId, profile, agent: target.agent,
         agent_mode: node.data.agent === 'hermes' ? '' : 'scoped', status: 'running',
-        sequence: historySequence++, started_at: Date.now(),
+        sequence: historySequence++, remaining_timeout_ms_at_start: remainingTimeoutMs ?? null,
+        started_at: nodeStartedAt,
       })
       nodeStatuses[node.id] = 'running'
       publishRunningStatus()
       try {
-        const assembledInput = await this.buildNodeUserMessage({
-          node, incomingEdges: consumedIncoming, nodeById, outputs,
-          overrideInput: path.every(item => item.iteration === 0) && startNodeIds.includes(node.id) ? args.input : undefined, profile,
-        })
         const runResult = await chatRun.runAndWait({
           session_id: sessionId, source: 'workflow', session_source: 'workflow', input: assembledInput,
           profile, workspace: workspace, model: node.data.model || undefined,
@@ -1811,10 +1813,6 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
 
         for (const node of ready) {
           const execution = (async () => {
-          const remainingTimeoutMs = runDeadline === null ? undefined : runDeadline - Date.now()
-          if (remainingTimeoutMs !== undefined && remainingTimeoutMs <= 0) {
-            return { node, ok: false, deadlineExceeded: true, error: runTimeoutMessage! }
-          }
           const nodeSessionId = randomUUID()
           runningOrDone.add(node.id)
           const target = resolveWorkflowNodeRunTarget(node.data.agent)
@@ -1823,6 +1821,19 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             (!activeIds.has(edge.source) && outputs.has(edge.source) && Boolean(evidenceForEdge(edge)))
             || edgeDecisions.get(edge)?.status === 'taken'
           ))
+          const assembledInput = await this.buildNodeUserMessage({
+            node,
+            incomingEdges: consumedIncoming,
+            nodeById,
+            outputs,
+            overrideInput: startNodeIds.includes(node.id) ? args.input : undefined,
+            profile,
+          })
+          const nodeStartedAt = Date.now()
+          const remainingTimeoutMs = runDeadline === null ? undefined : runDeadline - nodeStartedAt
+          if (remainingTimeoutMs !== undefined && remainingTimeoutMs <= 0) {
+            return { node, ok: false, deadlineExceeded: true, error: runTimeoutMessage! }
+          }
           const nodeSession = createWorkflowRunNodeSession({
             run_id: run.id,
             workflow_id: workflowId,
@@ -1836,17 +1847,10 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             agent_mode: node.data.agent === 'hermes' ? '' : 'scoped',
             status: 'running',
             sequence: historySequence++,
-            started_at: Date.now(),
+            remaining_timeout_ms_at_start: remainingTimeoutMs ?? null,
+            started_at: nodeStartedAt,
           })
           nodeSessionRecordIds.set(node.id, nodeSession.id)
-          const assembledInput = await this.buildNodeUserMessage({
-            node,
-            incomingEdges: consumedIncoming,
-            nodeById,
-            outputs,
-            overrideInput: startNodeIds.includes(node.id) ? args.input : undefined,
-            profile,
-          })
           const runResult = await chatRun.runAndWait({
             session_id: nodeSessionId,
             source: 'workflow',
@@ -2062,6 +2066,8 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       snapshot_nodes: nodes,
       snapshot_edges: edges,
       compiled_loops: compiledGraph.loops,
+      requested_timeout_ms: input.timeoutMs ?? null,
+      deadline_at: runDeadline,
       started_at: startedAt,
     })
     this.canceledRunIds.delete(run.id)
@@ -2186,6 +2192,8 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       : null
     const updatedRun = updateWorkflowRun(run.id, {
       status: 'running',
+      requested_timeout_ms: input.timeoutMs ?? null,
+      deadline_at: runDeadline,
       started_at: startedAt,
       finished_at: null,
       error: null,

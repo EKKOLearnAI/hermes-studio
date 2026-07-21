@@ -588,7 +588,16 @@ describe('workflow manager', () => {
       const result = await manager.runNow(workflow.id, { timeoutMs: 100 })
       expect(result.run.status).toBe('failed')
       expect(result.run.error).toBe('workflow run timed out after 100ms')
+      expect(result.run).toMatchObject({
+        requested_timeout_ms: 100,
+        deadline_at: 1100,
+      })
       expect(receivedTimeouts).toEqual([100, 60, 20])
+      expect(result.nodeSessions.map(session => [session.execution_id, session.remaining_timeout_ms_at_start])).toEqual([
+        ['header@loop:retry:0', 100],
+        ['latch@loop:retry:0', 60],
+        ['header@loop:retry:1', 20],
+      ])
       expect(result.nodeSessions.map(session => session.execution_id)).toEqual([
         'header@loop:retry:0', 'latch@loop:retry:0', 'header@loop:retry:1',
       ])
@@ -2644,6 +2653,14 @@ describe('workflow manager', () => {
     try {
       const result = await manager.rerunFromNode(workflow.id, run.id, 'first', { timeoutMs: 100 })
       expect(receivedTimeouts).toEqual([100, 30])
+      expect(result.run).toMatchObject({
+        requested_timeout_ms: 100,
+        deadline_at: 9100,
+      })
+      expect(result.nodeSessions.filter(session => session.started_at !== null && session.started_at >= 9000)
+        .map(session => [session.node_id, session.remaining_timeout_ms_at_start])).toEqual([
+        ['first', 100], ['second', 30],
+      ])
       expect({ status: result.run.status, error: result.run.error, startedAt: result.run.started_at }).toEqual({
         status: 'failed', error: 'workflow run timed out after 100ms', startedAt: 9000,
       })

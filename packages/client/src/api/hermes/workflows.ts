@@ -54,6 +54,8 @@ export interface WorkflowRunRecord {
   snapshot_nodes: unknown[]
   snapshot_edges: unknown[]
   compiled_loops: unknown[]
+  requested_timeout_ms?: number | null
+  deadline_at?: number | null
   started_at: number | null
   finished_at: number | null
   created_at: number
@@ -78,6 +80,7 @@ export interface WorkflowRunNodeSessionRecord {
   agent_mode: string
   status: WorkflowRunNodeStatus
   sequence: number
+  remaining_timeout_ms_at_start?: number | null
   started_at: number | null
   finished_at: number | null
   created_at: number

@@ -665,6 +665,14 @@ describe('hermes-web-ui MCP server', () => {
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_provider_delete')).toBe(true)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_worker_status')).toBe(true)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_workflows_list')).toBe(true)
+    const workflowRunStartTool = list.result.tools.find((tool: any) => tool.name === 'hermes_studio_use_workflow_run_start')
+    const workflowRerunTool = list.result.tools.find((tool: any) => tool.name === 'hermes_studio_use_workflow_rerun_node')
+    for (const tool of [workflowRunStartTool, workflowRerunTool]) {
+      expect(tool?.inputSchema?.properties?.timeout_ms).toMatchObject({
+        type: 'integer', minimum: 1000, maximum: 86400000,
+      })
+      expect(tool?.inputSchema?.properties?.timeout_ms?.description).toContain('total Workflow Run budget')
+    }
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_workflow_rerun_node')).toBe(true)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_workflow_run_rerun_from_node')).toBe(false)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_api_request')).toBe(false)

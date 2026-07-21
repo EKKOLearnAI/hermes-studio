@@ -102,10 +102,12 @@ function rejectBadRequest(ctx: Context, error?: string): boolean {
   return true
 }
 
-function optionalPositiveNumber(value: unknown, name: string): { value?: number; error?: string } {
+function optionalWorkflowTimeoutMs(value: unknown): { value?: number; error?: string } {
   if (value === undefined || value === null) return {}
   const numberValue = typeof value === 'number' ? value : Number(value)
-  if (!Number.isFinite(numberValue) || numberValue <= 0) return { error: `${name} must be a positive number` }
+  if (!Number.isSafeInteger(numberValue) || numberValue < 1_000 || numberValue > 86_400_000) {
+    return { error: 'timeout_ms must be an integer from 1000 to 86400000 milliseconds' }
+  }
   return { value: numberValue }
 }
 
@@ -358,7 +360,7 @@ export async function rerunFromNode(ctx: Context) {
     return
   }
   const preserveStartNode = optionalBoolean(body.preserve_start_node ?? body.preserveStartNode, 'preserve_start_node')
-  const timeoutMs = optionalPositiveNumber(body.timeout_ms ?? body.timeoutMs, 'timeout_ms')
+  const timeoutMs = optionalWorkflowTimeoutMs(body.timeout_ms ?? body.timeoutMs)
   if (rejectBadRequest(ctx, preserveStartNode.error || timeoutMs.error)) return
 
   const runInput: WorkflowRerunFromNodeInput = {
@@ -574,7 +576,7 @@ export async function runNow(ctx: Context) {
   const body = bodyRecord(ctx)
   const startNodeIds = optionalStringArray(body.start_node_ids ?? body.startNodeIds, 'start_node_ids')
   const input = optionalNullableString(body.input, 'input')
-  const timeoutMs = optionalPositiveNumber(body.timeout_ms ?? body.timeoutMs, 'timeout_ms')
+  const timeoutMs = optionalWorkflowTimeoutMs(body.timeout_ms ?? body.timeoutMs)
   if (rejectBadRequest(ctx, startNodeIds.error || input.error || timeoutMs.error)) return
 
   const runInput: WorkflowRunNowInput = {

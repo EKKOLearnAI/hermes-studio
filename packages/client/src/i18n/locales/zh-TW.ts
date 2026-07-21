@@ -870,6 +870,15 @@ export default {
       reasons: { evaluationFailed: '路徑判斷失敗', conditionNotMatched: '條件不符合', iterationLimitReached: '已達最大循環輪次', routeNotMatched: '目前結果不符合此路徑', pathSelected: '本次已採用此路徑。', sourceSkipped: '上游節點未執行，因此本次不經過此路徑。', failureRouteAfterSuccess: '上游節點已正常回傳；此路徑只在節點執行失敗時採用。', successRouteAfterFailure: '上游節點執行失敗；此路徑只在節點正常回傳時採用。', businessBlocked: '「{source}」已阻止繼續執行（{decision}）：{reason}。因此沒有執行「{target}」。', businessBlockedWithCondition: '「{source}」已阻止繼續執行（{decision}）：{reason}。繼續執行需要「{expected}」，但上游實際結果是「{actual}」，因此沒有執行「{target}」。', conditionMismatchDetail: '繼續執行需要「{expected}」，但上游實際結果是「{actual}」，因此沒有執行「{target}」。' },
       loopOutcomes: { continued: '條件符合，繼續下一輪', iterationLimitReached: '達到最大輪次後停止', conditionNotMatched: '條件不符合，循環結束', finished: '循環已結束' },
     },
+    budget: {
+      runTitle: '選擇 Run 時間預算', rerunTitle: '選擇 Rerun 時間預算', totalLabel: '整個 Run 總預算',
+      customMinutes: '自訂分鐘數', customPlaceholder: '分鐘', invalidCustom: '自訂 Run 預算必須介於 0.1 到 1440 分鐘',
+      help: '這是整個 Run 共用的絕對截止時間。每個節點只取得當時的剩餘時間，循環不會重設預算。',
+      options: { unlimited: '不設截止時間', '30': '30 分鐘', '60': '60 分鐘', '90': '90 分鐘', custom: '自訂' },
+      unlimitedSummary: '不設截止時間', unlimitedHelp: '本次 Run 未設定截止時間。',
+      summary: '總計 {total} · 已用 {elapsed} · 剩餘 {remaining}', deadline: '截止時間：{deadline}',
+      nodeStartRemaining: '節點啟動時剩餘總預算：{remaining}',
+    },
     edgeEditor: {
       title: '編輯連接線', guideIntro: '連接線只有在「路由」符合，而且可選的「條件」也符合時才會生效。不需要檢查內容時，選擇「只判斷路由」。',
       connectionSummary: '{source} → {target}', selfLoopDescription: '「{node}」會重新執行自身。',
