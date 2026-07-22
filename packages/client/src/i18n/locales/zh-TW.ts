@@ -823,6 +823,7 @@ export default {
     title: '工作流',
     profile: '設定檔',
     namePlaceholder: '工作流名稱',
+    canvasAriaLabel: '工作流畫布',
     workspace: {
       title: '選擇工作區',
       select: '選擇工作區',
@@ -995,6 +996,7 @@ export default {
       refresh: '重新整理',
       empty: '暫無執行記錄',
       startNodes: '{count} 個起始節點',
+      snapshotIndicator: '本次執行啟動時的凍結快照',
       show: '顯示執行記錄',
       hide: '隱藏執行記錄',
       nodeSessionTitle: '節點會話 - {node}',

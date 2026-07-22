@@ -823,6 +823,7 @@ export default {
     title: 'Workflow',
     profile: 'Profile',
     namePlaceholder: 'Workflow name',
+    canvasAriaLabel: 'Workflow canvas',
     workspace: {
       title: 'Select Workspace',
       select: 'Select workspace',

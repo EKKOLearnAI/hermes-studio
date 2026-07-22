@@ -2127,8 +2127,37 @@ export default {
   },
 
   workflow: {
-    actions: { importWorkflow: 'Workflow 가져오기', exportWorkflow: 'Workflow 내보내기', imported: 'Workflow를 가져왔습니다', exported: 'Workflow를 내보냈습니다', importFailed: 'Workflow 가져오기에 실패했습니다', exportFailed: 'Workflow 내보내기에 실패했습니다' },
+    title: '워크플로',
+    profile: '프로필',
+    namePlaceholder: '워크플로 이름',
+    canvasAriaLabel: '워크플로 캔버스',
+    workspace: { title: '작업 공간 선택', select: '작업 공간 선택', clear: '작업 공간 지우기' },
+    actions: {
+      newWorkflow: '새 워크플로', addNode: '노드 추가', createWorkflowFirst: '먼저 워크플로를 만들어 주세요', reset: '초기화',
+      startExecution: '실행 시작', executionPending: '워크플로 실행이 아직 연결되지 않았습니다', executionStarted: '워크플로 실행을 시작했습니다', executionCompleted: '워크플로 실행이 완료되었습니다', executionFailed: '워크플로 실행에 실패했습니다',
+      rerunDownstreamKeepNode: '이 노드를 유지하고 하위 노드 실행', rerunDownstreamClearNode: '이 노드를 지우고 하위 노드 실행', rerunDownstreamStarted: '하위 노드 재실행을 시작했습니다', rerunFromNodeStarted: '이 노드부터 재실행을 시작했습니다', rerunFailed: '워크플로 재실행에 실패했습니다',
+      deleteNode: '노드 삭제', deleteEdge: '연결 삭제', editEdge: '연결 편집', undo: '실행 취소',
+      importWorkflow: 'Workflow 가져오기', exportWorkflow: 'Workflow 내보내기', imported: 'Workflow를 가져왔습니다', exported: 'Workflow를 내보냈습니다', importFailed: 'Workflow 가져오기에 실패했습니다', exportFailed: 'Workflow 내보내기에 실패했습니다',
+    },
+    batch: { toggle: '일괄 선택', selectAll: '모두 선택', confirmDelete: '선택한 워크플로 {count}개를 삭제할까요?', deleteSuccess: '워크플로 {count}개를 삭제했습니다', deletePartial: '워크플로 {failed}개를 삭제하지 못했습니다', deleteFailed: '일괄 삭제에 실패했습니다' },
+    validation: {
+      nodesRequired: '노드를 하나 이상 추가해 주세요', nodeNameRequired: '노드 {node}에 이름이 필요합니다', providerRequired: '노드 {node}에 제공자가 필요합니다', modelRequired: '노드 {node}에 모델이 필요합니다', apiModeRequired: '노드 {node}에 API 모드가 필요합니다', inputRequired: '노드 {node}에 입력이 필요합니다',
+      invalidEdge: '연결이 존재하지 않는 노드를 참조합니다', invalidConnectionDirection: '연결은 오른쪽 출력에서 왼쪽 입력으로 이어져야 합니다', orphanNode: '노드 {node}가 워크플로에 연결되지 않았습니다', disconnectedFlow: '워크플로를 서로 분리된 여러 흐름으로 나눌 수 없습니다', cycle: '워크플로에 순환이 있습니다. 저장하기 전에 연결을 조정해 주세요.',
+    },
     stats: { nodes: '노드', edges: '연결' },
+    runs: {
+      title: '실행 기록', refresh: '새로 고침', empty: '실행 기록 없음', startNodes: '시작 노드 {count}개', snapshotIndicator: '이 실행이 시작된 시점의 고정 스냅샷', show: '실행 기록 표시', hide: '실행 기록 숨기기',
+      nodeSessionTitle: '노드 세션 - {node}', noNodeSession: '이 노드에는 아직 세션 기록이 없습니다', loadNodeSessionFailed: '노드 세션을 불러오지 못했습니다', stop: '실행 중지', stopRequested: '중지를 요청했습니다', stopFailed: '실행을 중지하지 못했습니다', delete: '기록 삭제', deleteSuccess: '실행 기록을 삭제했습니다',
+    },
+    inspector: { selected: '선택한 노드', none: '선택한 노드 없음' },
+    agents: { planner: '계획 담당', researcher: '조사 담당', builder: '구현 담당', reviewer: '검토 담당' },
+    models: { default: '기본 모델', fast: '빠른 모델', reasoning: '추론 모델' },
+    initialNodes: { node1: '노드 1', node2: '노드 2', node3: '노드 3', plan: '계획', execute: '실행', review: '검토' },
+    initialPrompts: {
+      node1: '이 노드의 입력을 작성하세요.', node2: '이 노드의 입력을 작성하세요.', node3: '이 노드의 입력을 작성하세요.',
+      plan: '요청을 실행 가능한 단계로 나누세요.', execute: '구현 단계를 실행하고 결과물을 만드세요.', review: '출력 품질을 검토하고 후속 작업을 식별하세요.',
+    },
+    newNodeTitle: '노드 {count}',
     evidence: {
       ariaLabel: 'Workflow 실행 세부 정보', title: '실행 세부 정보', count: '{count}개',
       intro: '이번 실행의 경로 결정, 반복 횟수, 예외 노드를 표시합니다.', empty: '실행 세부 정보 없음', loadFailed: '저장된 실행 세부 정보를 불러오지 못했습니다',
@@ -2193,13 +2222,13 @@ export default {
       loopId: '루프 식별자', loopIdPlaceholder: '자동 선택 또는 사용자 ID 입력', loopIdAutomatic: '자동 (권장) · {id}', loopIdHelp: '실행 기록에서 루프를 표시할 뿐 실행 조건은 바꾸지 않습니다. 보통 자동을 유지하세요.', invalidLoopId: '루프 ID 형식이 올바르지 않습니다',
     },
     node: {
-      approvalRequired: '완료 후 승인',
+      title: '노드 이름', agent: '에이전트', model: '모델', apiMode: 'API 모드', input: '입력', approvalRequired: '완료 후 승인',
       join: '합류 전략', joinAll: '모든 입력 경로', joinAny: '입력 경로 중 하나',
       joinAllHelp: '모든 입력 경로가 선택되어야 실행하며 하나라도 불일치하면 건너뜁니다.', joinAnyHelp: '첫 번째 입력 경로가 선택되면 한 번 실행하며 모두 불일치할 때만 건너뜁니다.',
+      promptPlaceholder: '이 에이전트가 수행할 작업을 설명하세요...', skillsPlaceholder: '스킬을 입력하고 Enter로 추가', uploadImages: '이미지 업로드',
     },
     status: {
-      pending_approval: '승인 대기',
-      approval_rejected: '승인 거부',
+      idle: '대기', queued: '대기열', running: '실행 중', pending_approval: '승인 대기', completed: '완료', skipped: '건너뜀', failed: '실패', approval_rejected: '승인 거부', canceled: '취소됨',
     },
   },
 

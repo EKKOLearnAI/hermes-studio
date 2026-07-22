@@ -2127,8 +2127,37 @@ export default {
   },
 
   workflow: {
-    actions: { importWorkflow: 'Workflow をインポート', exportWorkflow: 'Workflow をエクスポート', imported: 'Workflow をインポートしました', exported: 'Workflow をエクスポートしました', importFailed: 'Workflow のインポートに失敗しました', exportFailed: 'Workflow のエクスポートに失敗しました' },
+    title: 'ワークフロー',
+    profile: 'プロファイル',
+    namePlaceholder: 'ワークフロー名',
+    canvasAriaLabel: 'ワークフローキャンバス',
+    workspace: { title: 'ワークスペースを選択', select: 'ワークスペースを選択', clear: 'ワークスペースをクリア' },
+    actions: {
+      newWorkflow: '新しいワークフロー', addNode: 'ノードを追加', createWorkflowFirst: '先にワークフローを作成してください', reset: 'リセット',
+      startExecution: '実行を開始', executionPending: 'ワークフロー実行はまだ接続されていません', executionStarted: 'ワークフローの実行を開始しました', executionCompleted: 'ワークフローの実行が完了しました', executionFailed: 'ワークフローの実行に失敗しました',
+      rerunDownstreamKeepNode: 'このノードを保持して下流を再実行', rerunDownstreamClearNode: 'このノードをクリアして下流を再実行', rerunDownstreamStarted: '下流の再実行を開始しました', rerunFromNodeStarted: 'このノードから再実行を開始しました', rerunFailed: 'ワークフローの再実行に失敗しました',
+      deleteNode: 'ノードを削除', deleteEdge: '接続を削除', editEdge: '接続を編集', undo: '元に戻す',
+      importWorkflow: 'Workflow をインポート', exportWorkflow: 'Workflow をエクスポート', imported: 'Workflow をインポートしました', exported: 'Workflow をエクスポートしました', importFailed: 'Workflow のインポートに失敗しました', exportFailed: 'Workflow のエクスポートに失敗しました',
+    },
+    batch: { toggle: '一括選択', selectAll: 'すべて選択', confirmDelete: '選択した {count} 件のワークフローを削除しますか？', deleteSuccess: '{count} 件のワークフローを削除しました', deletePartial: '{failed} 件のワークフローを削除できませんでした', deleteFailed: '一括削除に失敗しました' },
+    validation: {
+      nodesRequired: 'ノードを1つ以上追加してください', nodeNameRequired: 'ノード {node} に名前が必要です', providerRequired: 'ノード {node} にプロバイダーが必要です', modelRequired: 'ノード {node} にモデルが必要です', apiModeRequired: 'ノード {node} に API モードが必要です', inputRequired: 'ノード {node} に入力が必要です',
+      invalidEdge: '接続が存在しないノードを参照しています', invalidConnectionDirection: '接続は右側の出力から左側の入力へ向ける必要があります', orphanNode: 'ノード {node} がワークフローに接続されていません', disconnectedFlow: 'ワークフローを複数の分断されたフローに分けることはできません', cycle: 'ワークフローに循環があります。保存前に接続を調整してください。',
+    },
     stats: { nodes: 'ノード', edges: '接続' },
+    runs: {
+      title: '実行記録', refresh: '更新', empty: '実行記録はありません', startNodes: '開始ノード {count} 件', snapshotIndicator: 'この実行の開始時点で固定されたスナップショット', show: '実行記録を表示', hide: '実行記録を隠す',
+      nodeSessionTitle: 'ノードセッション - {node}', noNodeSession: 'このノードにはまだセッション記録がありません', loadNodeSessionFailed: 'ノードセッションの読み込みに失敗しました', stop: '実行を停止', stopRequested: '停止を要求しました', stopFailed: '実行の停止に失敗しました', delete: '記録を削除', deleteSuccess: '実行記録を削除しました',
+    },
+    inspector: { selected: '選択中のノード', none: 'ノードが選択されていません' },
+    agents: { planner: '計画担当', researcher: '調査担当', builder: '実装担当', reviewer: 'レビュー担当' },
+    models: { default: '既定のモデル', fast: '高速モデル', reasoning: '推論モデル' },
+    initialNodes: { node1: 'ノード 1', node2: 'ノード 2', node3: 'ノード 3', plan: '計画', execute: '実行', review: 'レビュー' },
+    initialPrompts: {
+      node1: 'このノードの入力を記入してください。', node2: 'このノードの入力を記入してください。', node3: 'このノードの入力を記入してください。',
+      plan: '依頼を実行可能な手順に分解してください。', execute: '実装手順を実行して成果物を作成してください。', review: '出力品質を確認し、追加作業を特定してください。',
+    },
+    newNodeTitle: 'ノード {count}',
     evidence: {
       ariaLabel: 'Workflow 実行詳細', title: '実行詳細', count: '{count} 件',
       intro: 'この実行の経路判定、ループ回数、異常ノードを表示します。', empty: '実行詳細はありません', loadFailed: '保存済みの実行詳細を読み込めませんでした',
@@ -2193,13 +2222,13 @@ export default {
       loopId: 'ループ識別子', loopIdPlaceholder: '自動を選ぶかカスタム ID を入力', loopIdAutomatic: '自動（推奨）· {id}', loopIdHelp: '実行履歴でループを識別するだけで、実行条件は変わりません。通常は自動のままにします。', invalidLoopId: 'ループ ID の形式が正しくありません',
     },
     node: {
-      approvalRequired: '完了後承認',
+      title: 'ノード名', agent: 'エージェント', model: 'モデル', apiMode: 'API モード', input: '入力', approvalRequired: '完了後承認',
       join: '合流方法', joinAll: 'すべての入力ルート', joinAny: 'いずれかの入力ルート',
       joinAllHelp: 'すべての入力ルートが有効な場合のみ実行し、1つでも不一致ならスキップします。', joinAnyHelp: '最初の有効な入力ルートで1回実行し、すべて不一致の場合のみスキップします。',
+      promptPlaceholder: 'このエージェントが行う内容を入力してください...', skillsPlaceholder: 'スキルを入力し、Enter で追加', uploadImages: '画像をアップロード',
     },
     status: {
-      pending_approval: '承認待ち',
-      approval_rejected: '承認拒否',
+      idle: '待機中', queued: '待機列', running: '実行中', pending_approval: '承認待ち', completed: '完了', skipped: 'スキップ', failed: '失敗', approval_rejected: '承認拒否', canceled: 'キャンセル済み',
     },
   },
 

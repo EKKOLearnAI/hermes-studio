@@ -2975,7 +2975,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
           </div>
         </div>
       </aside>
-      <section ref="workflowCanvasRef" class="workflow-canvas" aria-label="Workflow canvas">
+      <section ref="workflowCanvasRef" class="workflow-canvas" :aria-label="t('workflow.canvasAriaLabel')">
         <VueFlow
           :key="workflowFlowKey"
           id="hermes-workflow"

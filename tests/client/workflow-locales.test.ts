@@ -16,6 +16,7 @@ const localeMessages: Record<string, Record<string, unknown>> = {
 }
 const operatorKeys = ['equals', 'not_equals', 'contains', 'not_contains', 'exists', 'not_exists']
 const requiredPaths = [
+  'workflow.canvasAriaLabel',
   'workflow.edgeEditor.historyNode',
   'workflow.edgeEditor.historyNodePlaceholder',
   'workflow.edgeEditor.conditionSemantics',
@@ -23,6 +24,7 @@ const requiredPaths = [
   'workflow.edgeEditor.canvasLabel.withoutValue',
   'workflow.edgeEditor.canvasLabel.join',
   'workflow.evidence.resizeConclusion',
+  'workflow.runs.snapshotIndicator',
   ...operatorKeys.flatMap(operator => [
     `workflow.edgeEditor.rawTextOperatorHelp.${operator}`,
     `workflow.edgeEditor.jsonFieldOperatorHelp.${operator}`,
@@ -35,7 +37,38 @@ function getPath(messages: Record<string, unknown>, path: string): unknown {
   ), messages)
 }
 
+function collectLeafPaths(value: unknown, prefix: string): string[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [prefix]
+  return Object.entries(value as Record<string, unknown>)
+    .flatMap(([key, child]) => collectLeafPaths(child, `${prefix}.${key}`))
+    .sort()
+}
+
 describe('Workflow locale coverage', () => {
+  it('defines every Workflow key directly in every locale without fallback', () => {
+    const englishPaths = collectLeafPaths(en.workflow, 'workflow')
+    for (const [locale, messages] of Object.entries(localeMessages)) {
+      expect(collectLeafPaths(messages.workflow, 'workflow'), `${locale} Workflow keys`).toEqual(englishPaths)
+    }
+  })
+
+  it('compiles every Workflow message in every locale', () => {
+    const paths = collectLeafPaths(en.workflow, 'workflow')
+    const values = {
+      count: 2, failed: 1, node: 'Node', nodes: 'Node A, Node B', gate: 'quality',
+      source: 'Source', target: 'Target', decision: 'blocked', reason: 'quality',
+      expected: 'ready', actual: 'blocked', path: 'outputJson.status', value: 'ready',
+      operator: 'equals', route: 'success', subject: 'status', id: 'loop-1',
+    }
+    for (const [locale, messages] of Object.entries(localeMessages)) {
+      const i18n = createI18n({ legacy: false, locale, fallbackLocale: false, messages: { [locale]: messages } })
+      for (const path of paths) {
+        expect(() => i18n.global.t(path, values), `${locale} failed to compile ${path}`).not.toThrow()
+        expect(i18n.global.t(path, values), `${locale} missing ${path}`).not.toBe(path)
+      }
+    }
+  })
+
   it('defines every new nested Workflow key at the correct path in every locale', () => {
     for (const [locale, messages] of Object.entries(localeMessages)) {
       for (const path of requiredPaths) {

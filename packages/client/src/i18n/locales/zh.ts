@@ -823,6 +823,7 @@ export default {
     title: '工作流',
     profile: '配置',
     namePlaceholder: '工作流名称',
+    canvasAriaLabel: '工作流画布',
     workspace: {
       title: '选择工作区',
       select: '选择工作区',
