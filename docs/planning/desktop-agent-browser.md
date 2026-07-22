@@ -674,7 +674,7 @@ Agent 操作的是当前可见 <code>WebContentsView</code>，所以桌面预览
 
 ### 13.4 Overlay 与清理
 
-- 使用隔离世界中的固定 Overlay 和带专用属性的编号标记；
+- 使用隔离世界中的固定 Overlay；持久编号和说明放入 Closed Shadow Root，远程页面脚本不能读取标注文本；
 - 不提供 Node、IPC、文件、Cookie、Storage 或 Clipboard 能力；
 - 单次选择完成后清理交互 Overlay 和 Pointer Listener，但保留不可交互的编号框；
 - 点击“发送/清除”、取消、导航、切换标签页、关闭标签页、页面崩溃时清理整个标注会话；
@@ -691,7 +691,7 @@ iframe 内部 DOM。
 4. 为选区绘制顺序编号并由 Electron 截取完整可见 Viewport，不裁成只有选区的小图。
 5. 保存 URL、标题、Tab ID、Viewport、缩放、编号、坐标和安全 DOM 元数据。
 6. 清理当前选择器、隐藏原生 View，并在冻结截图中把说明输入框定位到选区左下方；输入框标题使用相同编号。
-7. 输入框失焦或点击“完成”后，将说明保存到当前标注会话并恢复原生 View；编号框继续显示，用户可继续右键添加多个 DOM 或区域标注。
+7. 输入框失焦或点击“完成”后，将说明保存到当前标注会话并恢复原生 View；“编号 + 说明”气泡固定显示在框体外侧，用户可继续右键添加多个 DOM 或区域标注。
 8. 点击标注会话的“发送”后，Composer 只显示包含全部编号高亮的整页截图和折叠数据入口；说明写入 JSON，不追加到 Composer 文本输入框。
 9. JSON 中每条说明通过 <code>marker</code> 与截图编号关联。模型输入额外携带 <code>&lt;browser_selection_context format="json"&gt;</code>
    结构化文本，展示/存储输入使用独立 <code>display_input</code>，不把 JSON 混入正文。
@@ -992,7 +992,7 @@ browserSession.setDownloadPath(profile.downloadPath)
 - 跨域 iframe 只能选择外框；
 - 取消批注后无残留 Overlay 和 Listener；
 - 同一页面可连续添加多个编号标注，输入失焦后仍能继续选择；
-- 截图编号、折叠 JSON 的 <code>marker</code> 和说明一一对应；
+- 框体外的“编号 + 说明”、截图编号、折叠 JSON 的 <code>marker</code> 和说明一一对应；
 - 标注说明不写入 Composer 文本输入框；
 - Composer 收到真实图片和结构化批注；
 - “接管”能中止当前 Agent 操作。
@@ -1075,7 +1075,7 @@ browserSession.setDownloadPath(profile.downloadPath)
 - 用户可以在对话页“工作区 / 终端 / 浏览器”面板中浏览和操作网页。
 - 用户可以在“工具 → 浏览器”页面管理 Profile、下载、数据和站点权限，该页面不显示网页。
 - 用户能点击 DOM 元素或任意拖动矩形，并在同一页面连续添加多个编号批注。
-- 说明输入框显示在对应选区左下方；失焦后保存并恢复浏览器，直到用户统一发送。
+- 说明输入框显示在对应选区左下方；失焦后保存为框体外的标注气泡并恢复浏览器，直到用户统一发送。
 - 批注以带全部编号高亮的整页截图进入 Composer；说明不进入文本框，JSON 默认折叠可展开，并作为隐藏结构化模型上下文发送。
 - Screenshot 向视觉模型提供真实图片。
 - 普通 Web UI 和 VPS 没有入口、路由、Bridge、API、Stream、Broker 或浏览器

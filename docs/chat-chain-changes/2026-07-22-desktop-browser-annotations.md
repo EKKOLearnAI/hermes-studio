@@ -12,3 +12,8 @@ composer, with the JSON available through a collapsed disclosure. The model
 input receives the same JSON in a tagged context block, while `display_input`
 keeps it out of the visible message body. Ordinary Web UI and existing
 attachment flows are unchanged.
+
+Completed notes remain visible as numbered callouts outside their selection
+rectangles. The desktop main process stores those callouts in a closed shadow
+tree and refreshes the screenshot immediately before adding it to the composer,
+so the visible labels and structured JSON stay aligned.

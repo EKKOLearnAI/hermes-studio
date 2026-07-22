@@ -905,6 +905,12 @@ ipcMain.handle('hermes-desktop:browser-annotate', (event, tabId?: unknown, mode?
   return manager.annotate(String(tabId || ''), mode)
 })
 ipcMain.handle('hermes-desktop:browser-cancel-annotation', (event, tabId?: unknown) => browserForEvent(event).cancelAnnotation(String(tabId || '')))
+ipcMain.handle('hermes-desktop:browser-update-annotation-note', (event, tabId?: unknown, marker?: unknown, note?: unknown) => {
+  const value = Number(marker)
+  if (!Number.isInteger(value) || value < 1 || value > 100) throw new Error('Invalid browser annotation marker')
+  return browserForEvent(event).updateAnnotationNote(String(tabId || ''), value, String(note || '').slice(0, 500))
+})
+ipcMain.handle('hermes-desktop:browser-capture-annotations', (event, tabId?: unknown) => browserForEvent(event).captureAnnotations(String(tabId || '')))
 ipcMain.handle('hermes-desktop:browser-clear-annotations', (event, tabId?: unknown) => browserForEvent(event).clearAnnotations(String(tabId || '')))
 ipcMain.handle('hermes-desktop:select-runtime-directory', async (_event, defaultPath?: unknown) => {
   const options: OpenDialogOptions = {

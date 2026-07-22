@@ -47,6 +47,7 @@ const MAX_TABS = 8
 const CONSOLE_LIMIT = 500
 const ANNOTATION_WORLD_ID = 999
 const ANNOTATION_CANCEL_EVENT = '__hermes_browser_cancel_annotation__'
+const ANNOTATION_STATE_KEY = '__hermes_browser_annotation_state__'
 
 const RISK_DIALOG_COPY = {
   de: ['Agent-Aktion bestätigen', 'Diese Browser-Aktion kann eine wichtige Änderung ausführen:', 'Abbrechen', 'Einmal erlauben'],
@@ -398,20 +399,32 @@ export class BrowserManager {
       code: `new Promise((resolve, reject) => {
         const mode = ${JSON.stringify(mode)};
         const marker = ${marker};
+        const annotationStateKey = ${JSON.stringify(ANNOTATION_STATE_KEY)};
         const root = document.documentElement;
+        let annotationState = globalThis[annotationStateKey];
+        if (!annotationState || !annotationState.host?.isConnected) {
+          const host = document.createElement('div');
+          Object.assign(host.style, { position:'fixed', inset:'0', zIndex:'2147483646', pointerEvents:'none' });
+          root.appendChild(host);
+          annotationState = { host, root:host.attachShadow({ mode:'closed' }), marks:new Map() };
+          globalThis[annotationStateKey] = annotationState;
+        }
         const overlay = document.createElement('div');
         const box = document.createElement('div');
         const badge = document.createElement('span');
         Object.assign(overlay.style, { position:'fixed', inset:'0', zIndex:'2147483647', cursor:'crosshair', background:'rgba(59,130,246,.04)' });
-        Object.assign(box.style, { position:'fixed', display:'none', zIndex:'2147483647', pointerEvents:'none', border:'2px solid #3b82f6', background:'rgba(59,130,246,.14)', boxSizing:'border-box' });
-        Object.assign(badge.style, { position:'absolute', left:'-2px', top:'-2px', minWidth:'20px', height:'20px', padding:'0 5px', display:'grid', placeItems:'center', color:'#fff', background:'#2563eb', borderRadius:'0 0 6px 0', font:'600 12px/20px system-ui,sans-serif', boxSizing:'border-box' });
+        Object.assign(box.style, { position:'fixed', display:'none', pointerEvents:'none', border:'2px solid #3b82f6', background:'rgba(59,130,246,.14)', boxSizing:'border-box' });
+        Object.assign(badge.style, { position:'absolute', left:'-2px', top:'calc(100% + 4px)', maxWidth:'min(300px, calc(100vw - 16px))', maxHeight:'52px', padding:'3px 7px', overflow:'hidden', color:'#fff', background:'rgba(37,99,235,.96)', borderRadius:'6px', boxShadow:'0 3px 12px rgba(15,23,42,.28)', whiteSpace:'pre-wrap', overflowWrap:'anywhere', font:'600 12px/16px system-ui,sans-serif', boxSizing:'border-box' });
         badge.textContent = String(marker);
         box.setAttribute('data-hermes-browser-annotation-mark', String(marker));
         box.appendChild(badge);
-        root.append(overlay, box);
+        root.appendChild(overlay);
+        annotationState.root.appendChild(box);
+        annotationState.marks.set(marker, { box, badge });
         let start = null, moveHandler = null, clickHandler = null, finished = false;
-        const cleanup = removeMark => { overlay.remove(); if(removeMark)box.remove(); removeEventListener('keydown', onKey, true); removeEventListener(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}, onCancel, true); if(moveHandler)removeEventListener('mousemove',moveHandler,true); if(clickHandler)removeEventListener('click',clickHandler,true); };
-        const draw = r => Object.assign(box.style, { display:'block', left:r.x+'px', top:r.y+'px', width:r.width+'px', height:r.height+'px' });
+        const removePersistentMark = () => { box.remove(); annotationState.marks.delete(marker); if(!annotationState.marks.size){annotationState.host.remove();delete globalThis[annotationStateKey];} };
+        const cleanup = removeMark => { overlay.remove(); if(removeMark)removePersistentMark(); removeEventListener('keydown', onKey, true); removeEventListener(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}, onCancel, true); if(moveHandler)removeEventListener('mousemove',moveHandler,true); if(clickHandler)removeEventListener('click',clickHandler,true); };
+        const draw = r => { Object.assign(box.style, { display:'block', left:r.x+'px', top:r.y+'px', width:r.width+'px', height:r.height+'px' }); const below=innerHeight-(r.y+r.height)>=64; Object.assign(badge.style, below ? { top:'calc(100% + 4px)', bottom:'auto' } : { top:'auto', bottom:'calc(100% + 4px)' }); const alignRight=r.x+300>innerWidth; Object.assign(badge.style, alignRight ? { left:'auto', right:'-2px' } : { left:'-2px', right:'auto' }); };
         const finish = (region, element) => { if(finished)return; finished=true; draw(region); overlay.onpointerdown=null; overlay.onpointermove=null; overlay.onpointerup=null; cleanup(false); resolve({ region, element, viewport:{ width:innerWidth, height:innerHeight, scaleFactor:devicePixelRatio || 1 } }); };
         const onKey = event => { if (event.key === 'Escape') { event.preventDefault(); cleanup(true); reject(new Error('Annotation cancelled')); } };
         const onCancel = () => { cleanup(true); reject(new Error('Annotation cancelled')); };
@@ -465,7 +478,7 @@ export class BrowserManager {
       }
     } catch (error) {
       await record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
-        code: `document.querySelector('[data-hermes-browser-annotation-mark="${marker}"]')?.remove()`,
+        code: `(()=>{const state=globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}];const mark=state?.marks?.get(${marker});if(mark){mark.box.remove();state.marks.delete(${marker});if(!state.marks.size){state.host.remove();delete globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}]}}})()`,
       }], true).catch(() => undefined)
       throw error
     } finally {
@@ -490,13 +503,27 @@ export class BrowserManager {
     return true
   }
 
+  async updateAnnotationNote(tabId: string, marker: number, note: string): Promise<boolean> {
+    const record = this.requireTab(tabId)
+    if (!this.annotationMarkerCounts.has(tabId)) return false
+    const normalized = note.trim().slice(0, 500)
+    return record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
+      code: `(()=>{const mark=globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}]?.marks?.get(${marker});if(!mark)return false;mark.badge.textContent=${JSON.stringify(String(marker))}+(${JSON.stringify(normalized)}?' · '+${JSON.stringify(normalized)}:'');return true})()`,
+    }], true).then(Boolean).catch(() => false)
+  }
+
+  async captureAnnotations(tabId: string) {
+    if (!this.annotationMarkerCounts.has(tabId)) throw new Error('Browser annotation session not found')
+    return this.screenshot(tabId, false)
+  }
+
   async clearAnnotations(tabId: string): Promise<boolean> {
     const wasActive = this.activeAnnotationTabs.has(tabId)
     const hadMarks = this.annotationMarkerCounts.has(tabId)
     const record = this.records.get(tabId)
     if (record && !record.view.webContents.isDestroyed()) {
       await record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
-        code: `dispatchEvent(new CustomEvent(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}));document.querySelectorAll('[data-hermes-browser-annotation-mark]').forEach(node=>node.remove())`,
+        code: `dispatchEvent(new CustomEvent(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}));(()=>{const key=${JSON.stringify(ANNOTATION_STATE_KEY)};const state=globalThis[key];if(state){state.host.remove();delete globalThis[key]}})()`,
       }], true).catch(() => undefined)
     }
     this.activeAnnotationTabs.delete(tabId)

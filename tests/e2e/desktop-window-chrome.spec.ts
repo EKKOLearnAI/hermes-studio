@@ -27,6 +27,8 @@ async function installDesktopBridge(page: Page, platform: DesktopPlatform, withB
       viewportCalls: [] as Array<{ bounds: unknown; visible: boolean }>,
       annotationCount: 0,
       clearAnnotationCalls: 0,
+      captureAnnotationCalls: 0,
+      annotationNotes: {} as Record<number, string>,
       requestAnnotation: undefined as undefined | ((request: { tabId: string; mode: 'element' | 'region' }) => void),
     }
     ;(window as typeof window & { __PW_DESKTOP_BROWSER__?: typeof browserHarness }).__PW_DESKTOP_BROWSER__ = browserHarness
@@ -62,6 +64,14 @@ async function installDesktopBridge(page: Page, platform: DesktopPlatform, withB
         }
       },
       cancelAnnotation: async () => true,
+      updateAnnotationNote: async (_tabId: string, marker: number, note: string) => {
+        browserHarness.annotationNotes[marker] = note
+        return true
+      },
+      captureAnnotations: async () => {
+        browserHarness.captureAnnotationCalls += 1
+        return { mediaType: 'image/png', data: '', width: 800, height: 600 }
+      },
       clearAnnotations: async () => { browserHarness.clearAnnotationCalls += 1; return true },
       onAnnotationRequest: (callback: (request: { tabId: string; mode: 'element' | 'region' }) => void) => {
         browserHarness.requestAnnotation = callback
@@ -262,6 +272,15 @@ test('embeds the desktop browser beside workspace and terminal', async ({ page }
   await expect(selectionData.locator('pre')).toContainText('Make this button more prominent')
   await expect(selectionData.locator('pre')).toContainText('Keep this card aligned with annotation one')
   await expect(selectionData.locator('pre')).toContainText('"marker": 2')
+  await expect.poll(() => page.evaluate(() => {
+    const harness = (window as typeof window & {
+      __PW_DESKTOP_BROWSER__?: { annotationNotes: Record<number, string>; captureAnnotationCalls: number }
+    }).__PW_DESKTOP_BROWSER__
+    return { notes: harness?.annotationNotes, captures: harness?.captureAnnotationCalls }
+  })).toEqual({
+    notes: { 1: 'Make this button more prominent', 2: 'Keep this card aligned with annotation one' },
+    captures: 1,
+  })
 
   await toolPanel.getByRole('tab', { name: 'Workspace' }).click()
   await expect(toolPanel.locator('.browser-panel')).toHaveCount(0)

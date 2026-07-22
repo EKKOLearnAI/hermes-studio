@@ -15,7 +15,11 @@ describe('desktop browser security primitives', () => {
   it('keeps numbered marks for a multi-selection annotation session', async () => {
     const source = await readFile('packages/desktop/src/main/browser/browser-manager.ts', 'utf8')
     expect(source).toContain("box.setAttribute('data-hermes-browser-annotation-mark', String(marker))")
+    expect(source).toContain("host.attachShadow({ mode:'closed' })")
+    expect(source).toContain("top:'calc(100% + 4px)'")
     expect(source).toContain('this.annotationMarkerCounts.set(tabId, marker)')
+    expect(source).toContain('async updateAnnotationNote(tabId: string, marker: number, note: string)')
+    expect(source).toContain('async captureAnnotations(tabId: string)')
     expect(source).toContain('screenshot: whole')
     expect(source).toContain('async clearAnnotations(tabId: string)')
     expect(source).not.toContain('const cropped = image.crop')

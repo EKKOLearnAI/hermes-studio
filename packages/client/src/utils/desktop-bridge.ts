@@ -85,6 +85,8 @@ export interface DesktopBrowserBridge {
   takeOver: (tabId: string) => Promise<boolean>
   annotate: (tabId: string, mode: 'element' | 'region') => Promise<DesktopBrowserSelection>
   cancelAnnotation: (tabId: string) => Promise<boolean>
+  updateAnnotationNote: (tabId: string, marker: number, note: string) => Promise<boolean>
+  captureAnnotations: (tabId: string) => Promise<DesktopBrowserSelection['screenshot']>
   clearAnnotations: (tabId: string) => Promise<boolean>
   onAnnotationRequest: (callback: (request: { tabId: string; mode: 'element' | 'region' }) => void) => () => void
   onStateChange: (callback: (state: DesktopBrowserState) => void) => () => void
@@ -121,7 +123,8 @@ const DESKTOP_BROWSER_METHODS: ReadonlyArray<keyof DesktopBrowserBridge> = [
   'getState', 'setViewport', 'createTab', 'closeTab', 'activateTab', 'navigate',
   'navigationAction', 'createProfile', 'renameProfile', 'profileSwitchImpact',
   'switchProfile', 'updateProfile', 'deleteProfile', 'clearProfileData',
-  'chooseDirectory', 'takeOver', 'annotate', 'cancelAnnotation', 'clearAnnotations',
+  'chooseDirectory', 'takeOver', 'annotate', 'cancelAnnotation', 'updateAnnotationNote',
+  'captureAnnotations', 'clearAnnotations',
   'onAnnotationRequest', 'onStateChange',
 ]
 

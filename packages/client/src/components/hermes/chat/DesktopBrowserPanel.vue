@@ -47,19 +47,28 @@ let stopStateListener: (() => void) | undefined
 let stopAnnotationRequestListener: (() => void) | undefined
 let annotatingTabId: string | null = null
 let unmounting = false
+let annotationNoteUpdate: Promise<unknown> = Promise.resolve()
 
 const activeTab = computed(() => state.value?.tabs.find(tab => tab.id === state.value?.activeTabId))
 const annotationCount = computed(() => annotations.value.length + (pendingAnnotation.value ? 1 : 0))
 const hasAnnotationSession = computed(() => annotationCount.value > 0)
+const annotationAbove = computed(() => {
+  const pending = pendingAnnotation.value
+  if (!pending) return false
+  const spaceBelow = pending.viewport.height - pending.region.y - pending.region.height
+  return spaceBelow < 180 && pending.region.y >= 180
+})
 const annotationAnchorStyle = computed(() => {
   const pending = pendingAnnotation.value
   if (!pending) return undefined
   const viewportWidth = Math.max(1, pending.viewport.width)
   const viewportHeight = Math.max(1, pending.viewport.height)
   const left = Math.min(100, Math.max(0, pending.region.x / viewportWidth * 100))
+  const top = Math.min(100, Math.max(0, pending.region.y / viewportHeight * 100))
   const bottom = Math.min(100, Math.max(0, (pending.region.y + pending.region.height) / viewportHeight * 100))
   return {
     '--annotation-left': `${left}%`,
+    '--annotation-top': `${top}%`,
     '--annotation-bottom': `${bottom}%`,
   }
 })
@@ -159,19 +168,25 @@ function annotate(mode: 'element' | 'region', tabId?: string): void {
   })
 }
 
-function commitPendingAnnotation(restoreViewport = true): void {
+async function commitPendingAnnotation(restoreViewport = true): Promise<void> {
   const pending = pendingAnnotation.value
   if (!pending) return
+  const note = annotationNote.value.trim()
+  const tabId = annotationTabId.value
   annotations.value.push({
     marker: pending.marker,
     mode: pending.mode,
     region: pending.region,
     ...(pending.element ? { element: pending.element } : {}),
-    note: annotationNote.value.trim(),
+    note,
   })
   pendingAnnotation.value = null
   annotationNote.value = ''
-  if (restoreViewport) void nextTick(syncViewport)
+  annotationNoteUpdate = bridge && tabId
+    ? bridge.updateAnnotationNote(tabId, pending.marker, note).catch(() => false)
+    : Promise.resolve()
+  await annotationNoteUpdate
+  if (restoreViewport) await nextTick(syncViewport)
 }
 
 async function clearAnnotationSession(): Promise<void> {
@@ -185,13 +200,22 @@ async function clearAnnotationSession(): Promise<void> {
   await nextTick(syncViewport)
 }
 
-function sendAnnotations(): void {
-  commitPendingAnnotation(false)
+async function sendAnnotations(): Promise<void> {
+  await commitPendingAnnotation(false)
+  await annotationNoteUpdate
   const capture = annotationCapture.value
   const tabId = annotationTabId.value
   if (!capture || annotations.value.length === 0) return
+  let file = capture.file
+  if (bridge && tabId) {
+    const screenshot = await bridge.captureAnnotations(tabId).catch(() => null)
+    if (screenshot) {
+      const bytes = Uint8Array.from(atob(screenshot.data), character => character.charCodeAt(0))
+      file = new File([bytes], `browser-annotations-${Date.now()}.png`, { type: screenshot.mediaType })
+    }
+  }
   emit('attach', {
-    file: capture.file,
+    file,
     context: JSON.stringify({
       browser_selection: {
         tab_id: capture.tabId,
@@ -217,13 +241,13 @@ function handleAnnotationFocusout(event: FocusEvent): void {
   const container = event.currentTarget
   const next = event.relatedTarget
   if (container instanceof HTMLElement && next instanceof Node && container.contains(next)) return
-  commitPendingAnnotation()
+  void commitPendingAnnotation()
 }
 
 function handleAnnotationKeydown(event: KeyboardEvent): void {
   if (event.key !== 'Enter' || (!event.metaKey && !event.ctrlKey)) return
   event.preventDefault()
-  sendAnnotations()
+  void sendAnnotations()
 }
 
 function handleVisibility(): void {
@@ -313,7 +337,7 @@ onUnmounted(() => {
       <div v-if="pendingAnnotation" class="annotation-editor">
         <div class="annotation-preview" :style="annotationAnchorStyle">
           <img :src="annotationCapture?.previewUrl" alt="" />
-          <div class="annotation-popover" @focusout="handleAnnotationFocusout">
+          <div class="annotation-popover" :class="{ above: annotationAbove }" @focusout="handleAnnotationFocusout">
             <strong>{{ t('browser.annotationLabel', { index: pendingAnnotation.marker }) }} · {{ t(pendingAnnotation.mode === 'element' ? 'browser.selectElement' : 'browser.selectRegion') }}</strong>
             <NInput
               v-model:value="annotationNote"
@@ -355,7 +379,8 @@ onUnmounted(() => {
 .annotation-editor { flex: 1; min-height: 0; overflow: auto; padding: 12px; background: var(--card-color, #fff); }
 .annotation-preview { position: relative; width: 100%; margin-bottom: 168px; line-height: 0; }
 .annotation-preview > img { display: block; width: 100%; height: auto; border: 1px solid var(--border-color); border-radius: 8px; background: #fff; box-sizing: border-box; }
-.annotation-popover { position: absolute; z-index: 2; left: clamp(8px, var(--annotation-left), calc(100% - 328px)); top: calc(var(--annotation-bottom) + 8px); width: min(320px, calc(100% - 16px)); padding: 10px; display: flex; flex-direction: column; gap: 8px; line-height: normal; border: 1px solid rgba(59,130,246,.45); border-radius: 10px; background: var(--card-color, #fff); box-shadow: 0 8px 28px rgba(15,23,42,.22); box-sizing: border-box; }
+.annotation-popover { position: absolute; z-index: 2; left: clamp(8px, var(--annotation-left), calc(100% - 328px)); top: calc(var(--annotation-bottom) + 32px); width: min(320px, calc(100% - 16px)); padding: 10px; display: flex; flex-direction: column; gap: 8px; line-height: normal; border: 1px solid rgba(59,130,246,.45); border-radius: 10px; background: var(--card-color, #fff); box-shadow: 0 8px 28px rgba(15,23,42,.22); box-sizing: border-box; }
+.annotation-popover.above { top: auto; bottom: calc(100% - var(--annotation-top) + 8px); }
 .annotation-popover > strong { color: #3b82f6; font-size: 12px; }
 .annotation-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .unavailable { padding: 40px; text-align: center; color: var(--text-color-3); }

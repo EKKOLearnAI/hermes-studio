@@ -13,7 +13,8 @@ describe('desktop browser chat panel gate', () => {
       'getState', 'setViewport', 'createTab', 'closeTab', 'activateTab', 'navigate',
       'navigationAction', 'createProfile', 'renameProfile', 'profileSwitchImpact',
       'switchProfile', 'updateProfile', 'deleteProfile', 'clearProfileData',
-      'chooseDirectory', 'takeOver', 'annotate', 'cancelAnnotation', 'clearAnnotations',
+      'chooseDirectory', 'takeOver', 'annotate', 'cancelAnnotation', 'updateAnnotationNote',
+      'captureAnnotations', 'clearAnnotations',
       'onAnnotationRequest', 'onStateChange',
     ]
     return Object.fromEntries(methods.map(method => [method, vi.fn()]))
