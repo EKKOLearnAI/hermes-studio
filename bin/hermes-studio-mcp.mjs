@@ -576,6 +576,61 @@ function pickDefined(source, keys) {
   return picked
 }
 
+const CHAT_RUN_PAYLOAD_KEYS = [
+  'input',
+  'session_id',
+  'provider',
+  'model',
+  'model_groups',
+  'source',
+  'session_source',
+  'instructions',
+  'workspace',
+  'reasoning_effort',
+  'coding_agent_id',
+  'agent_id',
+  'mode',
+  'baseUrl',
+  'apiKey',
+  'apiMode',
+  'timeout_ms',
+  'include_events',
+]
+
+function startChatRun(args, overrides = {}) {
+  return request('/api/chat-run/runs', withAuthArgs(args, {
+    method: 'POST',
+    body: {
+      ...pickDefined(args, CHAT_RUN_PAYLOAD_KEYS),
+      ...overrides,
+    },
+  }))
+}
+
+function validateCodingAgentRunArgs(args) {
+  if (
+    (typeof args.input !== 'string' || !args.input.trim())
+    && (!Array.isArray(args.input) || args.input.length === 0)
+  ) {
+    return 'input must be a non-empty string or non-empty array'
+  }
+  if (args.mode !== undefined && !['scoped', 'global'].includes(args.mode)) {
+    return 'mode must be one of: scoped, global'
+  }
+  for (const key of ['provider', 'model', 'coding_agent_id']) {
+    if (typeof args[key] !== 'string' || !args[key].trim()) {
+      return `${key} must be a non-empty exact ${key === 'provider' ? 'provider key' : key === 'model' ? 'model id' : 'coding agent id'}`
+    }
+  }
+  if (!['claude-code', 'codex'].includes(args.coding_agent_id)) {
+    return 'coding_agent_id must be one of: claude-code, codex'
+  }
+  if (args.provider.trim().toLowerCase() === 'custom') {
+    return 'provider must not be the generic "custom" key; pass the exact configured provider key'
+  }
+  return ''
+}
+
 function boundedInteger(value, fallback, min, max) {
   const parsed = Number.parseInt(String(value ?? ''), 10)
   if (!Number.isFinite(parsed)) return fallback
@@ -828,7 +883,7 @@ const tools = [
   {
     name: 'hermes_studio_use_chat_run',
     toolset: 'use',
-    description: 'Start one user-requested Hermes Studio chat or coding-agent run through the HTTP bridge and wait for completion. Do not use this as an internal delegation or subtask mechanism.',
+    description: 'Start one user-requested regular Hermes Studio chat through the HTTP bridge and wait for completion. Coding tasks must use hermes_studio_use_coding_agent_run so the coding agent, provider, and model cannot silently fall back to CLI defaults. Do not use this as an internal delegation or subtask mechanism.',
     inputSchema: inputSchema({
         input: {
           oneOf: [
@@ -913,6 +968,76 @@ const tools = [
           description: 'Include recorded run events in the response.',
         },
       }, ['input']),
+  },
+  {
+    name: 'hermes_studio_use_coding_agent_run',
+    toolset: 'use',
+    description: 'Start one user-requested coding-agent run. Coding tasks must use this dedicated tool. The coding agent executor, provider, and model are inherited exactly as provided; source is fixed to coding_agent and mode defaults to scoped. Missing or ambiguous routing fields fail before any HTTP request. Do not use this as an internal delegation or subtask mechanism.',
+    inputSchema: inputSchema({
+        input: {
+          oneOf: [
+            { type: 'string' },
+            { type: 'array', items: { type: 'object', additionalProperties: true } },
+          ],
+          description: 'Coding task text or content blocks.',
+        },
+        coding_agent_id: {
+          type: 'string',
+          enum: ['claude-code', 'codex'],
+          description: 'Exact coding agent executor selected by the caller.',
+        },
+        provider: {
+          type: 'string',
+          description: 'Exact configured provider key. The generic custom key is rejected.',
+        },
+        model: {
+          type: 'string',
+          description: 'Exact model id for this coding-agent run.',
+        },
+        mode: {
+          type: 'string',
+          enum: ['scoped', 'global'],
+          default: 'scoped',
+          description: 'Optional coding-agent launch mode. Defaults to scoped.',
+        },
+        session_id: {
+          type: 'string',
+          description: 'Optional existing session id. Omit to create a new session.',
+        },
+        instructions: {
+          type: 'string',
+          description: 'Optional extra run instructions.',
+        },
+        workspace: {
+          type: ['string', 'null'],
+          description: 'Optional working directory for the run.',
+        },
+        reasoning_effort: {
+          type: 'string',
+          description: 'Optional per-run reasoning effort override.',
+        },
+        baseUrl: {
+          type: 'string',
+          description: 'Optional provider base URL for coding-agent runs.',
+        },
+        apiKey: {
+          type: 'string',
+          description: 'Optional provider API key for coding-agent runs.',
+        },
+        apiMode: {
+          type: 'string',
+          enum: ['chat_completions', 'codex_responses', 'anthropic_messages'],
+          description: 'Optional provider wire API mode for coding-agent runs.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'Maximum time to wait for a terminal run event.',
+        },
+        include_events: {
+          type: 'boolean',
+          description: 'Include recorded run events in the response.',
+        },
+      }, ['input', 'coding_agent_id', 'provider', 'model']),
   },
   {
     name: 'hermes_studio_use_sessions_list',
@@ -1497,29 +1622,16 @@ async function callTool(name, args = {}) {
       return jsonText(await requestEnvelope(path, options))
     }
     case 'hermes_studio_use_chat_run':
-      return jsonText(await request('/api/chat-run/runs', withAuthArgs(args, {
-        method: 'POST',
-        body: pickDefined(args, [
-          'input',
-          'session_id',
-          'provider',
-          'model',
-          'model_groups',
-          'source',
-          'session_source',
-          'instructions',
-          'workspace',
-          'reasoning_effort',
-          'coding_agent_id',
-          'agent_id',
-          'mode',
-          'baseUrl',
-          'apiKey',
-          'apiMode',
-          'timeout_ms',
-          'include_events',
-        ]),
-      })))
+      return jsonText(await startChatRun(args))
+    case 'hermes_studio_use_coding_agent_run': {
+      const validationError = validateCodingAgentRunArgs(args)
+      if (validationError) return errorText(validationError)
+      return jsonText(await startChatRun(args, {
+        source: 'coding_agent',
+        coding_agent_id: args.coding_agent_id,
+        mode: args.mode || 'scoped',
+      }))
+    }
     case 'hermes_studio_use_sessions_list':
       return jsonText(await request('/api/hermes/sessions', withAuthArgs(args, {
         query: pickDefined(args, ['limit', 'source']),

@@ -317,6 +317,249 @@ describe('hermes-web-ui MCP server', () => {
     expect(stdout.trim()).toBe(`hermes-studio-mcp v${pkg.version}`)
   })
 
+  it('exposes a fail-closed coding-agent run tool without changing generic chat runs', async () => {
+    const receivedBodies: Record<string, unknown>[] = []
+    const server = createServer((req, res) => {
+      if (req.url !== '/api/chat-run/runs') {
+        res.statusCode = 404
+        res.end('{}')
+        return
+      }
+      let raw = ''
+      req.on('data', chunk => { raw += chunk })
+      req.on('end', () => {
+        const body = raw ? JSON.parse(raw) : null
+        receivedBodies.push(body)
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ ok: true, body }))
+      })
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('expected TCP server address')
+
+    const responses = new Map<number, any>()
+    child = spawn(process.execPath, ['bin/hermes-studio-mcp.mjs', 'use'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HERMES_WEB_UI_URL: `http://127.0.0.1:${address.port}`,
+      },
+    })
+    child.stdout.on('data', (chunk) => {
+      for (const line of String(chunk).trim().split('\n')) {
+        if (!line) continue
+        const message = JSON.parse(line)
+        responses.set(message.id, message)
+      }
+    })
+
+    writeRpc(child, 1, 'tools/list')
+    writeRpc(child, 2, 'tools/call', {
+      name: 'hermes_studio_use_coding_agent_run',
+      arguments: {
+        input: 'fix the bug',
+        coding_agent_id: 'codex',
+        provider: 'openai',
+        model: 'gpt-5.1-codex',
+      },
+    })
+    writeRpc(child, 3, 'tools/call', {
+      name: 'hermes_studio_use_coding_agent_run',
+      arguments: {
+        input: 'empty provider',
+        coding_agent_id: 'codex',
+        provider: '',
+        model: 'gpt-5.1-codex',
+      },
+    })
+    writeRpc(child, 4, 'tools/call', {
+      name: 'hermes_studio_use_coding_agent_run',
+      arguments: {
+        input: 'missing provider',
+        coding_agent_id: 'codex',
+        model: 'gpt-5.1-codex',
+      },
+    })
+    writeRpc(child, 5, 'tools/call', {
+      name: 'hermes_studio_use_coding_agent_run',
+      arguments: {
+        input: 'empty model',
+        coding_agent_id: 'codex',
+        provider: 'openai',
+        model: ' ',
+      },
+    })
+    writeRpc(child, 6, 'tools/call', {
+      name: 'hermes_studio_use_coding_agent_run',
+      arguments: {
+        input: 'missing model',
+        coding_agent_id: 'codex',
+        provider: 'openai',
+      },
+    })
+    writeRpc(child, 7, 'tools/call', {
+      name: 'hermes_studio_use_coding_agent_run',
+      arguments: {
+        input: 'empty agent',
+        coding_agent_id: '',
+        provider: 'openai',
+        model: 'gpt-5.1-codex',
+      },
+    })
+    writeRpc(child, 8, 'tools/call', {
+      name: 'hermes_studio_use_coding_agent_run',
+      arguments: {
+        input: 'missing agent',
+        provider: 'openai',
+        model: 'gpt-5.1-codex',
+      },
+    })
+    writeRpc(child, 9, 'tools/call', {
+      name: 'hermes_studio_use_coding_agent_run',
+      arguments: {
+        input: 'generic custom is not exact',
+        coding_agent_id: 'codex',
+        provider: 'custom',
+        model: 'private-codex',
+      },
+    })
+    writeRpc(child, 10, 'tools/call', {
+      name: 'hermes_studio_use_chat_run',
+      arguments: { input: 'normal CLI chat' },
+    })
+    writeRpc(child, 11, 'tools/call', {
+      name: 'hermes_studio_use_coding_agent_run',
+      arguments: {
+        input: [{ type: 'text', text: 'fix with context' }],
+        coding_agent_id: 'codex',
+        provider: 'openai',
+        model: 'gpt-5.1-codex',
+        mode: 'global',
+      },
+    })
+    writeRpc(child, 12, 'tools/call', {
+      name: 'hermes_studio_use_coding_agent_run',
+      arguments: {
+        input: '',
+        coding_agent_id: 'codex',
+        provider: 'openai',
+        model: 'gpt-5.1-codex',
+      },
+    })
+    writeRpc(child, 13, 'tools/call', {
+      name: 'hermes_studio_use_coding_agent_run',
+      arguments: {
+        input: [],
+        coding_agent_id: 'codex',
+        provider: 'openai',
+        model: 'gpt-5.1-codex',
+      },
+    })
+    writeRpc(child, 14, 'tools/call', {
+      name: 'hermes_studio_use_coding_agent_run',
+      arguments: {
+        input: 'invalid mode',
+        coding_agent_id: 'codex',
+        provider: 'openai',
+        model: 'gpt-5.1-codex',
+        mode: 'evil',
+      },
+    })
+
+    const list = await waitForRpc(responses, 1)
+    const codingAgentTool = list.result.tools.find((tool: any) => tool.name === 'hermes_studio_use_coding_agent_run')
+    expect(codingAgentTool.inputSchema.required).toEqual([
+      'input',
+      'coding_agent_id',
+      'provider',
+      'model',
+    ])
+    expect(codingAgentTool.inputSchema.properties.mode).toEqual({
+      type: 'string',
+      enum: ['scoped', 'global'],
+      default: 'scoped',
+      description: 'Optional coding-agent launch mode. Defaults to scoped.',
+    })
+    expect(codingAgentTool.description).toContain('Coding tasks must use this dedicated tool')
+    expect(codingAgentTool.description).toContain('exactly as provided')
+
+    const codingAgentRun = JSON.parse((await waitForRpc(responses, 2)).result.content[0].text)
+    expect(codingAgentRun.body).toEqual({
+      input: 'fix the bug',
+      provider: 'openai',
+      model: 'gpt-5.1-codex',
+      source: 'coding_agent',
+      coding_agent_id: 'codex',
+      mode: 'scoped',
+    })
+
+    for (const id of [3, 4]) {
+      const invalidProvider = await waitForRpc(responses, id)
+      expect(invalidProvider.result.isError).toBe(true)
+      expect(invalidProvider.result.content[0].text).toContain('provider must be a non-empty exact provider key')
+    }
+    for (const id of [5, 6]) {
+      const invalidModel = await waitForRpc(responses, id)
+      expect(invalidModel.result.isError).toBe(true)
+      expect(invalidModel.result.content[0].text).toContain('model must be a non-empty exact model id')
+    }
+    for (const id of [7, 8]) {
+      const invalidAgent = await waitForRpc(responses, id)
+      expect(invalidAgent.result.isError).toBe(true)
+      expect(invalidAgent.result.content[0].text).toContain('coding_agent_id must be a non-empty exact coding agent id')
+    }
+
+    const genericCustom = await waitForRpc(responses, 9)
+    expect(genericCustom.result.isError).toBe(true)
+    expect(genericCustom.result.content[0].text).toContain('provider must not be the generic "custom" key')
+
+    const genericChatRun = JSON.parse((await waitForRpc(responses, 10)).result.content[0].text)
+    expect(genericChatRun.body).toEqual({ input: 'normal CLI chat' })
+
+    const contentBlockRun = JSON.parse((await waitForRpc(responses, 11)).result.content[0].text)
+    expect(contentBlockRun.body).toEqual({
+      input: [{ type: 'text', text: 'fix with context' }],
+      provider: 'openai',
+      model: 'gpt-5.1-codex',
+      source: 'coding_agent',
+      coding_agent_id: 'codex',
+      mode: 'global',
+    })
+
+    for (const id of [12, 13]) {
+      const invalidInput = await waitForRpc(responses, id)
+      expect(invalidInput.result.isError).toBe(true)
+      expect(invalidInput.result.content[0].text).toContain('input must be a non-empty string or non-empty array')
+    }
+
+    const invalidMode = await waitForRpc(responses, 14)
+    expect(invalidMode.result.isError).toBe(true)
+    expect(invalidMode.result.content[0].text).toContain('mode must be one of: scoped, global')
+
+    expect(receivedBodies).toEqual([
+      {
+        input: 'fix the bug',
+        provider: 'openai',
+        model: 'gpt-5.1-codex',
+        source: 'coding_agent',
+        coding_agent_id: 'codex',
+        mode: 'scoped',
+      },
+      { input: 'normal CLI chat' },
+      {
+        input: [{ type: 'text', text: 'fix with context' }],
+        provider: 'openai',
+        model: 'gpt-5.1-codex',
+        source: 'coding_agent',
+        coding_agent_id: 'codex',
+        mode: 'global',
+      },
+    ])
+
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  })
+
   it('exposes curated Hermes Studio use tools in the use toolset', async () => {
     const server = createServer((req, res) => {
       res.setHeader('content-type', 'application/json')

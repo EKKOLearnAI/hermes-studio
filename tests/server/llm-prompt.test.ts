@@ -10,6 +10,8 @@ describe('LLM prompt', () => {
     expect(prompt).toContain('hermes_studio_api_request')
     expect(prompt).toContain('OpenAPI requestBody')
     expect(prompt).toContain('do not add Authorization headers')
+    expect(prompt).toContain('Coding tasks must use hermes_studio_use_coding_agent_run')
+    expect(prompt).toContain('provider and model exactly')
     expect(prompt).toContain('Do not use hermes_studio_use_chat_run')
     expect(prompt).toContain('internal delegation mechanism')
     expect(prompt).toContain('return the delegated result in the current task instead')
