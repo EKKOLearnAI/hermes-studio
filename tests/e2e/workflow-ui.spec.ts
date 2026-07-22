@@ -96,10 +96,18 @@ test('workflow canvas exposes orchestration editing and portability controls', a
     nodes, edges, viewport: { x: 80, y: 80, zoom: .75 }, created_at: 1, updated_at: 1,
   }], workflowImportDocument: { name: 'Imported flow', nodes: [{ id: 'imported', type: 'agent', position: { x: 0, y: 0 }, data: { title: 'Imported', agent: 'hermes' } }], edges: [], viewport: null }, workflowRuns: [{
     id: 'run-1', workflow_id: 'wf-1', profile: 'research', workspace: null, start_node_ids: [], status: 'completed',
-    snapshot_nodes: legacySnapshotNodes, snapshot_edges: edges, compiled_loops: [], started_at: 1, finished_at: 2, created_at: 1, error: null,
-    node_sessions: [{ id: 'node-1', run_id: 'run-1', workflow_id: 'wf-1', node_id: 'a', execution_id: 'rerun:2:a', iteration_path: [{ executionScope: 'rerun:2', loopId: 'loop:a', iteration: 1 }], consumed_edge_evaluation_ids: [], session_id: 'session-a', profile: 'research', agent: 'hermes', agent_mode: '', status: 'completed', sequence: 3, started_at: 1, finished_at: 2, created_at: 1, updated_at: 2, error: null }],
-    edge_evaluations: Array.from({ length: 18 }, (_, index) => ({ id: `edge-${index + 1}`, run_id: 'run-1', workflow_id: 'wf-1', edge_id: 'a-b', source_node_id: 'a', source_execution_id: `rerun:2:a:${index + 1}`, iteration_path: [{ executionScope: 'rerun:2', loopId: 'loop:a', iteration: index + 1 }], target_node_id: 'b', source_outcome: 'success', status: 'taken', route: 'success', reason: null, sequence: 4 + index, orchestration: { route: 'success' }, condition_evaluation: null, evaluated_at: 2 })),
-    loop_epochs: [{ id: 'loop-1', run_id: 'run-1', workflow_id: 'wf-1', loop_id: 'loop:a', iteration: 18, iteration_path: [{ executionScope: 'rerun:2', loopId: 'loop:a', iteration: 18 }], status: 'completed', exit_reason: 'feedback_not_taken', sequence: 30, started_at: 1, finished_at: 2 }],
+    snapshot_nodes: legacySnapshotNodes, snapshot_edges: edges, compiled_loops: [], requested_timeout_ms: 3_600_000, deadline_at: 3_601_000, started_at: 1_000, finished_at: 3_520_000, created_at: 1, error: null,
+    node_sessions: Array.from({ length: 18 }, (_, index) => ({
+      id: `node-${index + 1}`, run_id: 'run-1', workflow_id: 'wf-1', node_id: index % 2 === 0 ? 'a' : 'b', execution_id: `rerun:2:node:${index + 1}`,
+      iteration_path: [{ executionScope: 'rerun:2', loopId: 'loop:a', iteration: index + 1 }], consumed_edge_evaluation_ids: [`edge-${index + 1}`],
+      session_id: `session-${index + 1}`, profile: 'research', agent: 'hermes', agent_mode: '', status: 'completed', sequence: 40 + index,
+      remaining_timeout_ms_at_start: 3_500_000 - (index * 180_000), started_at: 1_100 + index, finished_at: 1_150 + index, created_at: 1, updated_at: 2, error: null,
+    })),
+    edge_evaluations: [
+      ...Array.from({ length: 18 }, (_, index) => ({ id: `edge-${index + 1}`, run_id: 'run-1', workflow_id: 'wf-1', edge_id: 'a-b', source_node_id: 'a', source_execution_id: `rerun:2:a:${index + 1}`, iteration_path: [{ executionScope: 'rerun:2', loopId: 'loop:a', iteration: index + 1 }], target_node_id: 'b', source_outcome: 'success', status: 'taken', route: 'success', reason: null, sequence: 4 + index, orchestration: { route: 'success' }, condition_evaluation: null, evaluated_at: 1_050 + index })),
+      { id: 'delivery-candidate', run_id: 'run-1', workflow_id: 'wf-1', edge_id: 'b-a-candidate', source_node_id: 'b', source_execution_id: 'rerun:2:b:18', iteration_path: [{ executionScope: 'rerun:2', loopId: 'loop:a', iteration: 18 }], target_node_id: 'a', source_outcome: 'success', status: 'taken', route: 'success', reason: null, sequence: 22, orchestration: { route: 'success' }, condition_evaluation: null, evaluated_at: 1_080 },
+    ],
+    loop_epochs: [{ id: 'loop-1', run_id: 'run-1', workflow_id: 'wf-1', loop_id: 'loop:a', iteration: 18, iteration_path: [{ executionScope: 'rerun:2', loopId: 'loop:a', iteration: 18 }], status: 'completed', exit_reason: 'feedback_not_taken', sequence: 30, started_at: 1_090, finished_at: 1_095 }],
   }] })
   await page.goto('/#/hermes/workflow')
   await expect(page.locator('.header-workflow-title')).toHaveText('Loop workflow')
@@ -158,18 +166,41 @@ test('workflow canvas exposes orchestration editing and portability controls', a
   const evidence = page.getByLabel('Workflow execution details')
   const evidenceToggle = evidence.getByRole('button', { name: /Path checks/ })
   await expect(evidenceToggle).toContainText('18 used')
-  await expect(evidenceToggle).toContainText('0 not used')
+  await expect(evidenceToggle).toContainText('1 not used')
   await expect(evidenceToggle).toContainText('1 event')
   await expect(evidenceToggle).toHaveAttribute('aria-expanded', 'true')
-  await expect(evidence.getByTestId('workflow-actual-path')).toContainText('Agent A → Agent B')
+  await expect(evidenceToggle).toBeVisible()
+  await expect(evidence.getByTestId('workflow-actual-path-compact')).toContainText('Agent A → Agent B')
+  await expect(evidence.getByTestId('workflow-actual-path-compact')).not.toContainText('Agent B → Agent A')
+  await expect(evidence.getByTestId('workflow-run-budget-compact')).toContainText('Budget 1h · elapsed 58m 39s · remaining 1m 21s')
+  await expect(evidence.getByText('remaining at node start')).toHaveCount(0)
   await expect(evidence.getByText('a-b', { exact: true })).toHaveCount(0)
   await expect(evidence.getByText('Agent A → Agent B', { exact: true }).first()).toBeVisible()
   await expect(evidence.getByText('This path was selected.', { exact: true }).first()).toBeVisible()
-  await expect(evidence.getByText('Loop pass 19', { exact: true })).toBeVisible()
   await expect(evidence.getByText('a-b', { exact: true }).first()).toBeHidden()
   const evidenceList = evidence.locator('.workflow-evidence-list')
   await expect(evidenceList).toHaveCSS('overflow-y', 'auto')
   expect(await evidenceList.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+  await expect(evidence.getByRole('button', { name: 'Show other details (2)' })).toBeVisible()
+  await evidence.getByRole('button', { name: 'Show other details (2)' }).click()
+  await expect(evidence.getByText('Loop pass 19', { exact: true })).toBeVisible()
+  const candidateRow = evidence.locator('.workflow-evidence-row').filter({ hasText: 'Agent B → Agent A' })
+  await expect(candidateRow).toContainText('Not used')
+  await expect(candidateRow).toContainText('evaluated as a candidate')
+  await candidateRow.click()
+  const candidateDetail = page.getByTestId('workflow-evidence-detail-modal')
+  await expect(candidateDetail).toContainText('evaluated as a candidate')
+  await expect(candidateDetail.getByText('This connection was not used', { exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(candidateDetail).toBeHidden()
+  await page.getByTestId('workflow-run-evidence-details-trigger').click()
+  const runDetails = page.getByTestId('workflow-run-evidence-details-modal')
+  await expect(runDetails).toBeVisible()
+  await expect(runDetails.getByText('Actual path steps', { exact: true })).toBeVisible()
+  await expect(runDetails.getByText('Time budget details', { exact: true })).toBeVisible()
+  await expect(runDetails.getByText('remaining at node start')).toHaveCount(18)
+  await page.keyboard.press('Escape')
+  await expect(runDetails).toBeHidden()
   await evidence.locator('.workflow-evidence-row').first().click()
   const evidenceDetailModal = page.getByTestId('workflow-evidence-detail-modal')
   await expect(evidenceDetailModal).toBeVisible()
@@ -723,6 +754,9 @@ test('workflow execution details explain an upstream business blocker before raw
   await expect(overview).not.toContainText('BLOCKED')
   await expect(overview.getByText('The release lock was missing before publication.', { exact: true })).toHaveCount(0)
   await expect(evidence.getByRole('button', { name: /Path checks/ })).toHaveAttribute('aria-expanded', 'true')
+  const otherDetails = evidence.getByRole('button', { name: 'Show other details (2)' })
+  await expect(otherDetails).toBeVisible()
+  await otherDetails.click()
   await expect(evidence.getByRole('button', { name: 'Hide other details' })).toBeVisible()
 
   const blockerText = 'Publish release stopped the workflow (Blocked): The release lock was missing before publication. Continuing required “PUBLISHED”, but the upstream result was “Blocked”, so “Verify release” was not run.'
@@ -813,6 +847,7 @@ test('workflow history localizes structured decision field values without hiding
   await page.goto('/#/hermes/workflow')
   await page.locator('.workflow-run-item').click()
   const evidence = page.getByLabel('Workflow execution details')
+  await evidence.getByRole('button', { name: 'Show other details (2)' }).click()
   const decisionRow = evidence.locator('.workflow-evidence-row').filter({ hasText: 'Source → Target' })
   await expect(decisionRow.getByText('Parsed business decision', { exact: true })).toBeVisible()
   await expect(decisionRow.getByText('Blocked', { exact: true })).toBeVisible()
@@ -903,6 +938,7 @@ test('workflow history explains raw-text and JSON-field existence checks separat
   await page.goto('/#/hermes/workflow')
   await page.locator('.workflow-run-item').click()
   const evidence = page.getByLabel('Workflow execution details')
+  await evidence.getByRole('button', { name: 'Show other details (2)' }).click()
   const row = (title: string) => evidence.locator('.workflow-evidence-row').filter({ hasText: `Source → ${title}` })
   await expect(row('raw-exists')).toContainText('Matches when the complete reply text is available. It does not check whether any JSON key exists.')
   await expect(row('raw-missing')).toContainText('Matches when no complete reply text is available. It does not check whether a JSON key is missing.')
@@ -963,7 +999,7 @@ test('workflow execution details lead with the business outcome, chosen path, an
   await expect(overview).not.toContainText('BLOCKED')
   await expect(overview).not.toContainText('quality-container-setup')
   await expect(overview).not.toContainText('The container workdir did not exist before the first command.')
-  const actualPath = overview.getByTestId('workflow-actual-path')
+  const actualPath = overview.getByTestId('workflow-actual-path-compact')
   await expect(actualPath).toContainText('Build and publish → Blocked outcome')
   await expect(actualPath).toContainText('Blocked outcome → Plain-language summary')
   await expect(actualPath).not.toContainText('Verify release')
@@ -993,8 +1029,10 @@ test('workflow execution details lead with the business outcome, chosen path, an
   await expect(selectedPaths).not.toContainText('Continued after success')
   await expect(selectedPaths.getByText('Build and publish → Verify release', { exact: true })).toHaveCount(0)
 
-  const alternativesToggle = evidence.getByRole('button', { name: 'Hide other details' })
+  const alternativesToggle = evidence.getByRole('button', { name: 'Show other details (3)' })
   await expect(alternativesToggle).toBeVisible()
+  await alternativesToggle.click()
+  await expect(evidence.getByRole('button', { name: 'Hide other details' })).toBeVisible()
   const otherPaths = evidence.getByTestId('workflow-other-paths')
   await expect(otherPaths.locator('.workflow-evidence-row')).toHaveCount(3)
   const verifyPath = otherPaths.locator('.workflow-evidence-row').filter({ hasText: 'Build and publish → Verify release' })
@@ -1074,11 +1112,11 @@ test('workflow canvas animates the active route and preserves the completed rout
     snapshot_nodes: nodes, snapshot_edges: edges, compiled_loops: [], started_at: 1, finished_at: status === 'completed' ? 2 : null, created_at: 1, error: null,
     node_sessions: [
       { id: `${id}-prepare`, run_id: id, workflow_id: 'wf-playback', node_id: 'prepare', execution_id: 'prepare', iteration_path: [], consumed_edge_evaluation_ids: [], session_id: `${id}-prepare-session`, profile: 'research', agent: 'hermes', agent_mode: '', status: 'completed', sequence: 1, started_at: 1, finished_at: 2, created_at: 1, updated_at: 2, error: null },
-      { id: `${id}-publish`, run_id: id, workflow_id: 'wf-playback', node_id: 'publish', execution_id: 'publish', iteration_path: [], consumed_edge_evaluation_ids: [], session_id: `${id}-publish-session`, profile: 'research', agent: 'hermes', agent_mode: '', status: targetStatus, sequence: 2, started_at: 2, finished_at: targetStatus === 'completed' ? 3 : null, created_at: 2, updated_at: 3, error: null },
+      { id: `${id}-publish`, run_id: id, workflow_id: 'wf-playback', node_id: 'publish', execution_id: 'publish', iteration_path: [], consumed_edge_evaluation_ids: [`${id}-prepare-publish`], session_id: `${id}-publish-session`, profile: 'research', agent: 'hermes', agent_mode: '', status: targetStatus, sequence: 2, started_at: 2, finished_at: targetStatus === 'completed' ? 3 : null, created_at: 2, updated_at: 3, error: null },
     ],
     edge_evaluations: [
       edgeEvaluation(id, 'prepare-publish', 'publish', 'taken', 3),
-      edgeEvaluation(id, 'prepare-fallback', 'fallback', 'not_taken', 4),
+      edgeEvaluation(id, 'prepare-fallback', 'fallback', 'taken', 4),
     ],
     loop_epochs: [],
   })
@@ -1095,11 +1133,15 @@ test('workflow canvas animates the active route and preserves the completed rout
   await expect(selectedEdge).toHaveClass(/workflow-edge--flowing/)
   await expect(selectedEdge).toHaveClass(/animated/)
   await expect(unusedEdge).toHaveClass(/workflow-edge--inactive/)
+  await expect(unusedEdge).not.toHaveClass(/workflow-edge--completed/)
+  await expect(unusedEdge).not.toHaveClass(/animated/)
 
   await runs.nth(1).click()
   await expect(selectedEdge).toHaveClass(/workflow-edge--completed/)
   await expect(selectedEdge).not.toHaveClass(/animated/)
   await expect(unusedEdge).toHaveClass(/workflow-edge--inactive/)
+  await expect(unusedEdge).not.toHaveClass(/workflow-edge--completed/)
+  await expect(unusedEdge).not.toHaveClass(/animated/)
 })
 
 

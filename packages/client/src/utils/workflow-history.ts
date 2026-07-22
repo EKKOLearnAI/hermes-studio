@@ -5,6 +5,8 @@ export interface WorkflowEvidenceRow {
   kind: WorkflowEvidenceKind
   sequence: number
   technicalId: string
+  evaluationId?: string
+  consumed?: boolean
   status: string
   iterationPath: string
   nodeTitle?: string
@@ -171,21 +173,34 @@ function businessReason(result: Record<string, unknown> | null): string | undefi
 
 export function buildWorkflowEvidenceRows(
   run: Pick<WorkflowRunRecord, 'snapshot_nodes' | 'node_sessions' | 'edge_evaluations' | 'loop_epochs'>
-    & Partial<Pick<WorkflowRunRecord, 'compiled_loops'>>,
+    & Partial<Pick<WorkflowRunRecord, 'compiled_loops' | 'started_at'>>,
 ): WorkflowEvidenceRow[] {
   const rows: WorkflowEvidenceRow[] = []
   const nodeTitles = workflowNodeTitleMap(run.snapshot_nodes)
   const loopTitles = workflowLoopTitleMap(run.snapshot_nodes, run.compiled_loops)
   const nodeTitle = (nodeId: string) => nodeTitles.get(nodeId)
+  const currentEpochSessions = (run.node_sessions || []).filter(session => (
+    run.started_at == null || (session.started_at != null && session.started_at >= run.started_at)
+  ))
+  const consumedEdgeEvaluationIds = new Set(currentEpochSessions.flatMap(
+    session => session.consumed_edge_evaluation_ids || [],
+  ))
+  const hasConsumptionEvidence = consumedEdgeEvaluationIds.size > 0
   const exceptionalNodeStatuses = new Set(['failed', 'blocked', 'approval_rejected', 'canceled'])
-  for (const node of run.node_sessions || []) {
+  for (const node of currentEpochSessions) {
     if (!exceptionalNodeStatuses.has(node.status)) continue
     rows.push({
       kind: 'node', sequence: node.sequence, technicalId: node.execution_id, status: node.status,
       nodeTitle: nodeTitle(node.node_id), error: node.error, iterationPath: formatIterationPath(node.iteration_path, loopTitles),
     })
   }
-  for (const edge of run.edge_evaluations || []) {
+  const currentEpochEdges = (run.edge_evaluations || []).filter(edge => (
+    consumedEdgeEvaluationIds.has(edge.id)
+    || run.started_at == null
+    || edge.evaluated_at == null
+    || edge.evaluated_at >= run.started_at
+  ))
+  for (const edge of currentEpochEdges) {
     const orchestration = recordValue(edge.orchestration)
     const condition = recordValue(orchestration?.condition)
     const evaluation = recordValue(edge.condition_evaluation)
@@ -200,6 +215,14 @@ export function buildWorkflowEvidenceRows(
     const evaluationStatus = nonEmptyText(evaluation?.status)
     rows.push({
       kind: 'edge', sequence: edge.sequence, technicalId: edge.edge_id, status: edge.status,
+      evaluationId: edge.id,
+      consumed: edge.id && hasConsumptionEvidence
+        ? consumedEdgeEvaluationIds.has(edge.id)
+        : currentEpochSessions.length > 0 && !currentEpochSessions.some(session => (
+            session.node_id === edge.target_node_id
+          ))
+          ? false
+          : undefined,
       sourceTitle: nodeTitle(edge.source_node_id), targetTitle: nodeTitle(edge.target_node_id),
       route: edge.route, reason: edge.reason, sourceOutcome: edge.source_outcome,
       conditionPath, conditionOperator: nonEmptyText(condition?.operator),
@@ -212,7 +235,10 @@ export function buildWorkflowEvidenceRows(
       iterationPath: formatIterationPath(edge.iteration_path, loopTitles),
     })
   }
-  for (const loop of run.loop_epochs || []) rows.push({
+  const currentEpochLoops = (run.loop_epochs || []).filter(loop => (
+    run.started_at == null || loop.started_at == null || loop.started_at >= run.started_at
+  ))
+  for (const loop of currentEpochLoops) rows.push({
     kind: 'loop', sequence: loop.sequence, technicalId: loop.loop_id, status: loop.status,
     loopTitle: loopTitles.get(loop.loop_id), iteration: loop.iteration, exitReason: loop.exit_reason,
     iterationPath: formatIterationPath(loop.iteration_path, loopTitles),
@@ -221,14 +247,11 @@ export function buildWorkflowEvidenceRows(
 }
 
 export function summarizeWorkflowEvidenceRows(rows: WorkflowEvidenceRow[]): WorkflowEvidenceSummary {
-  const takenEdges = rows.filter(row => row.kind === 'edge' && row.status === 'taken')
-  const notTakenEdges = rows.filter(row => row.kind === 'edge' && row.status !== 'taken')
+  const edgeRows = rows.filter(row => row.kind === 'edge')
+  const takenEdges = edgeRows.filter(row => row.consumed === true || (row.consumed === undefined && row.status === 'taken'))
+  const notTakenEdges = edgeRows.filter(row => !takenEdges.includes(row))
   const nonEdgeRows = rows.filter(row => row.kind !== 'edge')
-  const actualPathEdges = takenEdges.filter((row, index) => takenEdges.findIndex(candidate => (
-    candidate.technicalId === row.technicalId
-      && candidate.sourceTitle === row.sourceTitle
-      && candidate.targetTitle === row.targetTitle
-  )) === index)
+  const actualPathEdges = takenEdges
   const businessRow = takenEdges.find(row => row.businessDecision || row.businessGate || row.businessReason)
     || notTakenEdges.find(row => row.businessDecision || row.businessGate || row.businessReason)
     || nonEdgeRows.find(row => row.businessDecision || row.businessGate || row.businessReason)
@@ -252,7 +275,7 @@ export function workflowEdgePlaybackState(
 ): WorkflowEdgePlaybackState {
   const evidenceRows = rows.filter(row => row.kind === 'edge' && row.technicalId === edgeId)
   if (evidenceRows.length === 0) return 'idle'
-  const takenRows = evidenceRows.filter(row => row.status === 'taken')
+  const takenRows = evidenceRows.filter(row => row.consumed === true || (row.consumed === undefined && row.status === 'taken'))
   if (takenRows.length === 0) return evidenceRows.some(row => row.status === 'error') ? 'failed' : 'inactive'
 
   const latestTaken = takenRows[takenRows.length - 1]
