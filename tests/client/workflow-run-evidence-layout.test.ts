@@ -39,6 +39,7 @@ describe('Workflow run explainer horizontal pages', () => {
     const source = view()
 
     expect(source).toContain('data-testid="workflow-run-back"')
+    expect(source).toContain('ref="workflowRunsPanelRef"')
     expect(source).toContain('@click="showWorkflowRunHistory"')
     expect(source).toContain('@pointerdown="startWorkflowRunPageSwipe"')
     expect(source).toContain('@pointerup="finishWorkflowRunPageSwipe"')

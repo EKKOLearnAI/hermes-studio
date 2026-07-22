@@ -3235,6 +3235,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
         />
       </section>
       <aside
+        ref="workflowRunsPanelRef"
         v-if="showWorkflowRunsPanel"
         class="workflow-runs-panel"
         @pointerdown="startWorkflowRunPageSwipe"
