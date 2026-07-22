@@ -2159,11 +2159,12 @@ export default {
     },
     newNodeTitle: '노드 {count}',
     evidence: {
+      historyPage: '실행 기록', detailsPage: '실행 상세', backToRuns: '실행 기록으로 돌아가기', resultStatus: '상태', duration: '소요 시간', budgetLabel: '예산', actualExecution: '실제 실행', otherJudgments: '기타 판단', loopEvents: '루프 이벤트', evaluatedNotExecuted: '판단됨, 실행 안 됨',
       ariaLabel: 'Workflow 실행 세부 정보', title: '실행 세부 정보', count: '{count}개',
       intro: '이번 실행의 경로 결정, 반복 횟수, 예외 노드를 표시합니다.', empty: '실행 세부 정보 없음', loadFailed: '저장된 실행 세부 정보를 불러오지 못했습니다',
       summaryTitle: '실행 결과', blockedAt: '{gate}에서 차단됨', actualPath: '실제 경로', noActualPath: '선택된 경로 없음', pathChecks: '경로 판단', selectedPaths: '사용된 경로', otherPaths: '기타 판단 및 이벤트', selectedCount: '{count}개 사용', otherCount: '{count}개 미사용', eventCount: '이벤트 {count}개', showOtherPaths: '기타 세부 정보 보기 ({count})', hideOtherPaths: '기타 세부 정보 숨기기', runDetails: '실행 세부 정보', actualPathSteps: '실제 경로 단계', nodeBudgetDetails: '시간 예산 세부 정보',
       condition: '조건', conditionMatched: '일치', conditionNotMatched: '불일치', sourceOutcome: '노드 결과', sourceReturned: '정상 응답', sourceFailed: '실행 실패', sourceSkippedStatus: '실행 안 됨',
-      checkedData: '검사한 데이터', entireReplyText: '전체 응답 텍스트', errorText: '오류 텍스트', jsonFieldValue: 'JSON 필드 하나의 값', advancedPathValue: '고급 경로 값', comparison: '비교 방법', textToFind: '찾을 텍스트', expectedFieldValue: '예상 필드 값', parsedBusinessDecision: '파싱한 비즈니스 결론', failedGateLabel: '실패 단계(failed_gate 필드 값)', failedGateValue: '실패 단계(failed_gate 필드 값): {gate}', resizeConclusion: '드래그하여 실행 결론 높이 조정', decisions: { blocked: '차단됨', released: '게시됨', verified: '검증됨', skipped: '조치 불필요' },
+      checkedData: '검사한 데이터', entireReplyText: '전체 응답 텍스트', errorText: '오류 텍스트', jsonFieldValue: 'JSON 필드 하나의 값', advancedPathValue: '고급 경로 값', comparison: '비교 방법', textToFind: '찾을 텍스트', expectedFieldValue: '예상 필드 값', parsedBusinessDecision: '파싱한 비즈니스 결론', failedGateLabel: '실패 단계(failed_gate 필드 값)', failedGateValue: '실패 단계(failed_gate 필드 값): {gate}', decisions: { blocked: '차단됨', released: '게시됨', verified: '검증됨', skipped: '조치 불필요' },
       node: '예외 노드', edge: '경로', loop: '루프', unknownNode: '알 수 없는 노드', pathTitle: '{source} → {target}', loopPass: '루프 {count}회차', exceptionalNode: '이 노드는 정상적으로 완료되지 않았습니다.',
       loopPassNamed: '{node} · {count}회차',
       technical: '기술 정보', recordId: '기록 ID', sequence: '순서', rawStatus: '원시 상태', rawRoute: '경로', rawReason: '사유', iterationPath: '반복 경로', expectedValue: '필요한 결과', actualValue: '상위 단계 실제 결과',

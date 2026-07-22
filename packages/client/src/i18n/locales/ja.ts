@@ -2159,11 +2159,12 @@ export default {
     },
     newNodeTitle: 'ノード {count}',
     evidence: {
+      historyPage: '実行履歴', detailsPage: '実行詳細', backToRuns: '実行履歴に戻る', resultStatus: 'ステータス', duration: '所要時間', budgetLabel: '予算', actualExecution: '実行済み', otherJudgments: 'その他の判定', loopEvents: 'ループイベント', evaluatedNotExecuted: '判定済み・未実行',
       ariaLabel: 'Workflow 実行詳細', title: '実行詳細', count: '{count} 件',
       intro: 'この実行の経路判定、ループ回数、異常ノードを表示します。', empty: '実行詳細はありません', loadFailed: '保存済みの実行詳細を読み込めませんでした',
       summaryTitle: '実行結果', blockedAt: '{gate} でブロック', actualPath: '実際の経路', noActualPath: '選択された経路はありません', pathChecks: '経路判定', selectedPaths: '使用した経路', otherPaths: 'その他の判定とイベント', selectedCount: '{count} 件使用', otherCount: '{count} 件未使用', eventCount: 'イベント {count} 件', showOtherPaths: 'その他の詳細を表示（{count}）', hideOtherPaths: 'その他の詳細を隠す', runDetails: '実行の詳細', actualPathSteps: '実際の経路ステップ', nodeBudgetDetails: '時間予算の詳細',
       condition: '条件', conditionMatched: '一致', conditionNotMatched: '不一致', sourceOutcome: 'ノード結果', sourceReturned: '正常に返答', sourceFailed: '実行失敗', sourceSkippedStatus: '未実行',
-      checkedData: '確認したデータ', entireReplyText: '応答全文', errorText: 'エラーテキスト', jsonFieldValue: '1 つの JSON フィールド値', advancedPathValue: '高度なパスの値', comparison: '比較方法', textToFind: '検索する文字列', expectedFieldValue: '期待するフィールド値', parsedBusinessDecision: '解析した業務判定', failedGateLabel: '失敗した工程（failed_gate フィールドの値）', failedGateValue: '失敗した工程（failed_gate フィールドの値）：{gate}', resizeConclusion: 'ドラッグして実行結果の高さを変更', decisions: { blocked: 'ブロック済み', released: '公開済み', verified: '検証済み', skipped: '対応不要' },
+      checkedData: '確認したデータ', entireReplyText: '応答全文', errorText: 'エラーテキスト', jsonFieldValue: '1 つの JSON フィールド値', advancedPathValue: '高度なパスの値', comparison: '比較方法', textToFind: '検索する文字列', expectedFieldValue: '期待するフィールド値', parsedBusinessDecision: '解析した業務判定', failedGateLabel: '失敗した工程（failed_gate フィールドの値）', failedGateValue: '失敗した工程（failed_gate フィールドの値）：{gate}', decisions: { blocked: 'ブロック済み', released: '公開済み', verified: '検証済み', skipped: '対応不要' },
       node: '異常ノード', edge: '経路', loop: 'ループ', unknownNode: '不明なノード', pathTitle: '{source} → {target}', loopPass: 'ループ {count} 回目', exceptionalNode: 'このノードは正常に完了しませんでした。',
       loopPassNamed: '{node} · {count} 回目',
       technical: '技術情報', recordId: '記録 ID', sequence: '順序', rawStatus: '元の状態', rawRoute: '経路', rawReason: '理由', iterationPath: '反復経路', expectedValue: '必要な結果', actualValue: '上流の実際の結果',

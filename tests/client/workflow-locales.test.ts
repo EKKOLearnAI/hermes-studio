@@ -39,7 +39,6 @@ const requiredPaths = [
   'workflow.edgeEditor.canvasLabel.withValue',
   'workflow.edgeEditor.canvasLabel.withoutValue',
   'workflow.edgeEditor.canvasLabel.join',
-  'workflow.evidence.resizeConclusion',
   'workflow.runs.snapshotIndicator',
   ...operatorKeys.flatMap(operator => [
     `workflow.edgeEditor.rawTextOperatorHelp.${operator}`,
