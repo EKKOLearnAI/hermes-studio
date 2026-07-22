@@ -247,6 +247,11 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (/^\/api\/hermes\/workflows\/[^/]+\/run$/.test(pathname) && request.method() === 'POST') {
+      await route.fulfill(jsonResponse({ ok: true, status: 'accepted' }, 202))
+      return
+    }
+
     if (/^\/api\/hermes\/workflows\/[^/]+\/runs$/.test(pathname)) {
       await route.fulfill(jsonResponse({ runs: options.workflowRuns ?? [] }))
       return

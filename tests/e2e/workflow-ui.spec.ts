@@ -2,6 +2,44 @@ import { readFile } from 'fs/promises'
 import { expect, test } from '@playwright/test'
 import { authenticate, mockChatSocket, mockHermesApi, TEST_ACCESS_KEY, TEST_MODEL_GROUP } from './fixtures'
 
+test('workflow Run sends the selected total time budget', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page, {
+    workflows: [{
+      id: 'wf-budget', name: 'Budget workflow', profile: 'research', workspace: null,
+      nodes: [{
+        id: 'agent', type: 'agent', position: { x: 80, y: 80 },
+        data: {
+          title: 'Agent', agent: 'hermes', input: 'Run', skills: [], images: [], approvalRequired: false,
+        },
+      }],
+      edges: [], viewport: { x: 80, y: 80, zoom: .75 }, created_at: 1, updated_at: 1,
+    }],
+    workflowRuns: [],
+  })
+
+  await page.goto('/#/hermes/workflow')
+  await page.getByRole('button', { name: 'Start Execution' }).click()
+  const modal = page.getByTestId('workflow-run-budget-modal')
+  await expect(modal).toBeVisible()
+  await expect(modal).toContainText('Choose Run time budget')
+
+  await modal.locator('.n-select').click()
+  await page.getByText('Custom', { exact: true }).last().click()
+  await modal.locator('.n-input-number input').fill('12.5')
+  await modal.getByRole('button', { name: 'Confirm' }).click()
+
+  await expect.poll(() => api.requests.filter(request => (
+    request.method === 'POST' && request.pathname === '/api/hermes/workflows/wf-budget/run'
+  )).length).toBe(1)
+  const runRequest = api.requests.find(request => (
+    request.method === 'POST' && request.pathname === '/api/hermes/workflows/wf-budget/run'
+  ))!
+  expect(JSON.parse(runRequest.postData || '{}')).toEqual({ timeout_ms: 750_000 })
+  await expect(modal).toBeHidden()
+  expect(api.unexpectedRequests).toEqual([])
+})
+
 test('workflow Coding Agent nodes hide auth providers and reset auth selections', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   const authGroup = {
