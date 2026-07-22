@@ -28,7 +28,20 @@ function formatSize(bytes: number): string {
 function formatDate(iso: string): string {
   if (!iso) return '—'
   const d = new Date(iso)
-  return d.toLocaleString()
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString(undefined, {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
+function formatDateTitle(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString()
 }
 
 function getFileIcon(entry: FileEntry): string {
@@ -109,7 +122,7 @@ async function handleDownload(entry: FileEntry) {
             <span class="file-label" :title="entry.name">{{ entry.name }}</span>
           </div>
           <div class="file-size">{{ entry.isDir ? '—' : formatSize(entry.size) }}</div>
-          <div class="file-date">{{ formatDate(entry.modTime) }}</div>
+          <div class="file-date" :title="formatDateTitle(entry.modTime)">{{ formatDate(entry.modTime) }}</div>
           <div class="file-actions">
             <NButton v-if="isPreviewableFile(entry.name) && !entry.isDir" size="tiny" quaternary @click.stop="handlePreview(entry)" :title="t('files.preview')">👁️</NButton>
             <NButton v-if="isTextFile(entry.name) && !entry.isDir" size="tiny" quaternary @click.stop="filesStore.openEditor(entry.path)" :title="t('files.edit')">✏️</NButton>
@@ -130,9 +143,9 @@ async function handleDownload(entry: FileEntry) {
 
 .file-list-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 80px 160px 60px;
+  grid-template-columns: minmax(0, 1fr) 72px 104px 60px;
   align-items: center;
-  column-gap: 16px;
+  column-gap: 8px;
 }
 
 .file-list-header {

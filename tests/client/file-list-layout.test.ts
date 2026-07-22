@@ -38,5 +38,10 @@ describe('FileList layout', () => {
     expect(wrapper.find('.file-list-header').classes()).toContain('file-list-grid')
     expect(wrapper.find('.file-list-row').classes()).toContain('file-list-grid')
     expect(wrapper.find('.file-name .file-label').exists()).toBe(true)
+
+    const date = wrapper.find('.file-list-row .file-date')
+    expect(date.text()).not.toContain('2026')
+    expect(date.text()).not.toMatch(/:\d{2}:\d{2}/)
+    expect(date.attributes('title')).toBe(new Date('2026-06-06T08:00:00.000Z').toLocaleString())
   })
 })
