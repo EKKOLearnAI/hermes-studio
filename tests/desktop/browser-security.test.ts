@@ -12,6 +12,15 @@ afterEach(async () => {
 })
 
 describe('desktop browser security primitives', () => {
+  it('keeps numbered marks for a multi-selection annotation session', async () => {
+    const source = await readFile('packages/desktop/src/main/browser/browser-manager.ts', 'utf8')
+    expect(source).toContain("box.setAttribute('data-hermes-browser-annotation-mark', String(marker))")
+    expect(source).toContain('this.annotationMarkerCounts.set(tabId, marker)')
+    expect(source).toContain('screenshot: whole')
+    expect(source).toContain('async clearAnnotations(tabId: string)')
+    expect(source).not.toContain('const cropped = image.crop')
+  })
+
   it('allows normal web pages but blocks privileged schemes, credentials, and metadata endpoints', () => {
     expect(normalizeBrowserUrl('example.com')).toBe('https://example.com/')
     expect(normalizeBrowserUrl('about:blank', { allowBlank: true })).toBe('about:blank')

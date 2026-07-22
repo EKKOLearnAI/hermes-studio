@@ -107,6 +107,7 @@ export interface BrowserConsoleEntry {
 
 export interface BrowserSelection {
   tabId: string
+  marker: number
   mode: 'element' | 'region'
   url: string
   title: string

@@ -2,7 +2,7 @@ export default {
   browser: {
     title: 'Browser', settings: 'Browser-Einstellungen', desktopOnly: 'Der integrierte Browser ist nur in Hermes Studio Desktop verfügbar.', newTab: 'Neuer Tab',
     back: 'Zurück', forward: 'Vor', reload: 'Neu laden', stop: 'Stopp', addressPlaceholder: 'Suchen oder Adresse eingeben',
-    selectElement: 'Element wählen', selectRegion: 'Bereich wählen', annotationAdded: 'Screenshot wurde zum Chat hinzugefügt',
+    selectElement: 'Element wählen', selectRegion: 'Bereich wählen', annotationPlaceholder: 'Beschreibe, was der Agent prüfen oder ändern soll…', selectionData: 'Browser-Auswahldaten', annotationAdded: 'Screenshot wurde zum Chat hinzugefügt', annotationCount: '{count} Markierung(en)', annotationLabel: 'Markierung {index}', clearAnnotations: 'Markierungen löschen', finishAnnotation: 'Fertig',
     agent: 'Agent', agentControlling: '{agent} steuert diesen Tab', agentWaiting: '{agent} wartet auf deine Bestätigung', takeOver: 'Übernehmen', tabCrashed: 'Dieser Tab ist abgestürzt.', recoverTab: 'Tab neu laden', profiles: 'Profile', profileName: 'Profilname',
     profileDirectory: 'Profildatenordner', profileMovePending: 'Der Ordner wird nach einem Neustart verschoben.', downloadDirectory: 'Downloadordner',
     askBeforeDownload: 'Speicherort immer nachfragen', downloadConflictPolicy: 'Doppelte Dateinamen', uniquifyDownloads: 'Eindeutigen Namen erstellen', askOnConflict: 'Bei Konflikt nachfragen', downloads: 'Downloads', permissions: 'Berechtigungen', permissionsHint: 'Berechtigungen externer Seiten werden standardmäßig verweigert und hier protokolliert.', blocked: 'Blockiert',

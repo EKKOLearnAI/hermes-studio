@@ -5,8 +5,8 @@ import type { ProviderApiMode } from './system'
 
 export type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'image'; name: string; path: string; media_type: string }
-  | { type: 'file'; name: string; path: string; media_type?: string }
+  | { type: 'image'; name: string; path: string; media_type: string; context?: string }
+  | { type: 'file'; name: string; path: string; media_type?: string; context?: string }
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
@@ -15,6 +15,8 @@ export interface ChatMessage {
 
 export interface StartRunRequest {
   input: string | ContentBlock[]
+  /** Optional UI/storage representation when model input carries hidden metadata. */
+  display_input?: string | ContentBlock[] | null
   instructions?: string
   session_id?: string
   profile?: string

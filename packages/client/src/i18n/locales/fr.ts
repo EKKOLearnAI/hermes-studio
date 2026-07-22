@@ -2,7 +2,7 @@ export default {
   browser: {
     title: 'Navigateur', settings: 'Paramètres du navigateur', desktopOnly: 'Le navigateur intégré est disponible uniquement dans Hermes Studio Desktop.', newTab: 'Nouvel onglet',
     back: 'Précédent', forward: 'Suivant', reload: 'Actualiser', stop: 'Arrêter', addressPlaceholder: 'Rechercher ou saisir une adresse',
-    selectElement: 'Sélectionner un élément', selectRegion: 'Sélectionner une zone', annotationAdded: 'Capture ajoutée à la zone de discussion',
+    selectElement: 'Sélectionner un élément', selectRegion: 'Sélectionner une zone', annotationPlaceholder: 'Décrivez ce que l’Agent doit examiner ou modifier…', selectionData: 'Données de sélection du navigateur', annotationAdded: 'Capture ajoutée à la zone de discussion', annotationCount: '{count} annotation(s)', annotationLabel: 'Annotation {index}', clearAnnotations: 'Effacer les annotations', finishAnnotation: 'Terminé',
     agent: 'Agent', agentControlling: '{agent} contrôle cet onglet', agentWaiting: '{agent} attend votre confirmation', takeOver: 'Reprendre', tabCrashed: 'Cet onglet a planté.', recoverTab: 'Recharger', profiles: 'Profils', profileName: 'Nom du profil',
     profileDirectory: 'Dossier du profil', profileMovePending: 'Le dossier sera déplacé après redémarrage.', downloadDirectory: 'Dossier de téléchargement',
     askBeforeDownload: 'Demander où enregistrer', downloadConflictPolicy: 'Noms de fichier en double', uniquifyDownloads: 'Créer un nom unique', askOnConflict: 'Demander en cas de conflit', downloads: 'Téléchargements', permissions: 'Autorisations', permissionsHint: 'Les autorisations des pages distantes sont refusées par défaut et consignées ici.', blocked: 'Bloqué',

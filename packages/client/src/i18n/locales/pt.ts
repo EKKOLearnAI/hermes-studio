@@ -2,7 +2,7 @@ export default {
   browser: {
     title: 'Navegador', settings: 'Configurações do navegador', desktopOnly: 'O navegador integrado está disponível apenas no Hermes Studio Desktop.', newTab: 'Nova aba',
     back: 'Voltar', forward: 'Avançar', reload: 'Recarregar', stop: 'Parar', addressPlaceholder: 'Pesquisar ou inserir endereço',
-    selectElement: 'Selecionar elemento', selectRegion: 'Selecionar área', annotationAdded: 'Captura adicionada ao chat',
+    selectElement: 'Selecionar elemento', selectRegion: 'Selecionar área', annotationPlaceholder: 'Descreva o que o Agent deve verificar ou alterar…', selectionData: 'Dados da seleção do navegador', annotationAdded: 'Captura adicionada ao chat', annotationCount: '{count} anotação(ões)', annotationLabel: 'Anotação {index}', clearAnnotations: 'Limpar anotações', finishAnnotation: 'Concluído',
     agent: 'Agent', agentControlling: '{agent} está controlando esta aba', agentWaiting: '{agent} aguarda sua confirmação', takeOver: 'Assumir controle', tabCrashed: 'Esta aba falhou.', recoverTab: 'Recarregar aba', profiles: 'Perfis', profileName: 'Nome do perfil',
     profileDirectory: 'Diretório do perfil', profileMovePending: 'O diretório será movido após reiniciar.', downloadDirectory: 'Diretório de downloads',
     askBeforeDownload: 'Perguntar onde salvar', downloadConflictPolicy: 'Nomes duplicados', uniquifyDownloads: 'Criar nome único', askOnConflict: 'Perguntar se existir', downloads: 'Downloads', permissions: 'Permissões', permissionsHint: 'Permissões de páginas remotas são negadas por padrão e registradas aqui.', blocked: 'Bloqueado',

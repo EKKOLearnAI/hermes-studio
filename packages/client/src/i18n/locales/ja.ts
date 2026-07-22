@@ -2,7 +2,7 @@ export default {
   browser: {
     title: 'ブラウザー', settings: 'ブラウザー設定', desktopOnly: '内蔵ブラウザーは Hermes Studio Desktop でのみ利用できます。', newTab: '新しいタブ',
     back: '戻る', forward: '進む', reload: '再読み込み', stop: '停止', addressPlaceholder: '検索またはアドレスを入力',
-    selectElement: '要素を選択', selectRegion: '範囲を選択', annotationAdded: 'スクリーンショットをチャット入力欄に追加しました',
+    selectElement: '要素を選択', selectRegion: '範囲を選択', annotationPlaceholder: 'Agent に確認または変更してほしい内容を入力…', selectionData: 'ブラウザー選択データ', annotationAdded: 'スクリーンショットをチャット入力欄に追加しました', annotationCount: '{count} 件の注釈', annotationLabel: '注釈 {index}', clearAnnotations: '注釈を消去', finishAnnotation: '完了',
     agent: 'Agent', agentControlling: '{agent} がこのタブを操作中', agentWaiting: '{agent} が確認を待っています', takeOver: '引き継ぐ', tabCrashed: 'このタブはクラッシュしました。', recoverTab: '再読み込み', profiles: 'プロファイル', profileName: 'プロファイル名',
     profileDirectory: 'プロファイルデータ', profileMovePending: 'Desktop の再起動後に移動します。', downloadDirectory: 'ダウンロード先',
     askBeforeDownload: '保存先を毎回確認', downloadConflictPolicy: '重複ファイル名', uniquifyDownloads: '一意の名前を作成', askOnConflict: '既存時に確認', downloads: 'ダウンロード', permissions: '権限', permissionsHint: 'リモートページの権限は既定で拒否され、監査用に表示されます。', blocked: 'ブロック済み',

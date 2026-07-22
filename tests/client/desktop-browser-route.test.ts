@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 afterEach(() => {
@@ -6,37 +7,61 @@ afterEach(() => {
   vi.resetModules()
 })
 
-describe('desktop browser route gate', () => {
+describe('desktop browser chat panel gate', () => {
   function browserBridge() {
     const methods = [
       'getState', 'setViewport', 'createTab', 'closeTab', 'activateTab', 'navigate',
       'navigationAction', 'createProfile', 'renameProfile', 'profileSwitchImpact',
       'switchProfile', 'updateProfile', 'deleteProfile', 'clearProfileData',
-      'chooseDirectory', 'takeOver', 'annotate', 'cancelAnnotation', 'onStateChange',
+      'chooseDirectory', 'takeOver', 'annotate', 'cancelAnnotation', 'clearAnnotations',
+      'onAnnotationRequest', 'onStateChange',
     ]
     return Object.fromEntries(methods.map(method => [method, vi.fn()]))
   }
 
-  it('does not register the browser route in an ordinary Web UI', async () => {
+  it('does not register the settings route in an ordinary Web UI', async () => {
     const router = (await import('../../packages/client/src/router')).default
     expect(router.hasRoute('hermes.browser')).toBe(false)
   })
 
-  it('registers the browser route only with the trusted desktop bridge', async () => {
+  it('registers the settings route only with the complete desktop bridge', async () => {
     ;(window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = { isDesktop: true, browser: browserBridge() }
     const router = (await import('../../packages/client/src/router')).default
     expect(router.hasRoute('hermes.browser')).toBe(true)
   })
 
-  it('does not register from an incomplete browser bridge', async () => {
+  it('accepts only the complete trusted desktop bridge', async () => {
+    const { hasDesktopBrowserBridge } = await import('../../packages/client/src/utils/desktop-bridge')
+    ;(window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = { isDesktop: true, browser: browserBridge() }
+    expect(hasDesktopBrowserBridge()).toBe(true)
+
     ;(window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = { isDesktop: true, browser: { getState: vi.fn() } }
-    const router = (await import('../../packages/client/src/router')).default
-    expect(router.hasRoute('hermes.browser')).toBe(false)
+    expect(hasDesktopBrowserBridge()).toBe(false)
+
+    ;(window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = { isDesktop: true }
+    expect(hasDesktopBrowserBridge()).toBe(false)
   })
 
-  it('does not register from the desktop marker without the browser bridge', async () => {
-    ;(window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = { isDesktop: true }
-    const router = (await import('../../packages/client/src/router')).default
-    expect(router.hasRoute('hermes.browser')).toBe(false)
+  it('separates the pure browser panel from the settings-only page', () => {
+    const chatPanel = readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8')
+    const browserPanel = readFileSync('packages/client/src/components/hermes/chat/DesktopBrowserPanel.vue', 'utf8')
+    const settingsPage = readFileSync('packages/client/src/views/hermes/DesktopBrowserView.vue', 'utf8')
+    const sidebar = readFileSync('packages/client/src/components/layout/AppSidebar.vue', 'utf8')
+    expect(chatPanel).toContain("const DesktopBrowserPanel = defineAsyncComponent")
+    expect(chatPanel).toContain('v-if="desktopBrowserAvailable"')
+    expect(chatPanel).toContain("activeToolPanel === 'browser'")
+    expect(chatPanel).toContain('@attach="handleBrowserAttachment"')
+    expect(browserPanel).toContain('onAnnotationRequest')
+    expect(browserPanel).toContain('class="annotation-editor"')
+    expect(browserPanel).toContain('class="annotation-popover"')
+    expect(browserPanel).toContain('annotations: annotations.value')
+    expect(browserPanel).not.toContain('appendText')
+    expect(browserPanel).toContain("'--annotation-left'")
+    expect(browserPanel).toContain("'--annotation-bottom'")
+    expect(browserPanel).not.toContain('profile-select')
+    expect(settingsPage).toContain('class="browser-settings-page"')
+    expect(settingsPage).not.toContain('native-viewport')
+    expect(settingsPage).not.toContain('navigationAction')
+    expect(sidebar).toContain("hermes.browser")
   })
 })

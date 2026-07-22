@@ -47,6 +47,7 @@ const PET_WINDOW_MAX_SIZE = 1200
 const PET_WINDOW_REFRESH_CHANNEL = 'hermes-desktop:pet-window-refresh'
 const WINDOW_STATE_CHANGE_CHANNEL = 'hermes-desktop:window-state-change'
 const BROWSER_STATE_CHANGE_CHANNEL = 'hermes-desktop:browser-state-change'
+const BROWSER_ANNOTATION_REQUEST_CHANNEL = 'hermes-desktop:browser-annotation-request'
 const DESKTOP_DISABLED_CHROMIUM_FEATURES = ['CompressionDictionaryTransport', 'CompressionDictionaryTransportBackend']
 type WindowControlAction = 'minimize' | 'toggle-maximize' | 'close'
 type DesktopWindowBounds = { x: number; y: number; width: number; height: number }
@@ -523,7 +524,16 @@ async function createWindow(): Promise<void> {
 async function initializeDesktopBrowser(): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed() || browserManager) return
   const root = join(webUiHome(), 'desktop-browser')
-  const manager = new BrowserManager(mainWindow, root, join(app.getPath('downloads'), 'Hermes Studio'))
+  const manager = new BrowserManager(mainWindow, root, join(app.getPath('downloads'), 'Hermes Studio'), {
+    selectElementLabel: t('browser.selectElement'),
+    selectRegionLabel: t('browser.selectRegion'),
+    onAnnotationRequest: (tabId, mode) => {
+      browserBroker?.revokeTab(tabId)
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(BROWSER_ANNOTATION_REQUEST_CHANNEL, { tabId, mode })
+      }
+    },
+  })
   const broker = new BrowserBroker(manager, root)
   try {
     await manager.initialize()
@@ -895,6 +905,7 @@ ipcMain.handle('hermes-desktop:browser-annotate', (event, tabId?: unknown, mode?
   return manager.annotate(String(tabId || ''), mode)
 })
 ipcMain.handle('hermes-desktop:browser-cancel-annotation', (event, tabId?: unknown) => browserForEvent(event).cancelAnnotation(String(tabId || '')))
+ipcMain.handle('hermes-desktop:browser-clear-annotations', (event, tabId?: unknown) => browserForEvent(event).clearAnnotations(String(tabId || '')))
 ipcMain.handle('hermes-desktop:select-runtime-directory', async (_event, defaultPath?: unknown) => {
   const options: OpenDialogOptions = {
     properties: ['openDirectory'],

@@ -5,8 +5,8 @@ import type { ChatMessage } from '../../../lib/context-compressor'
  */
 export type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'image'; name: string; path: string; media_type: string }
-  | { type: 'file'; name: string; path: string; media_type?: string }
+  | { type: 'image'; name: string; path: string; media_type: string; context?: string }
+  | { type: 'file'; name: string; path: string; media_type?: string; context?: string }
 
 export interface SessionMessage {
   id: number | string

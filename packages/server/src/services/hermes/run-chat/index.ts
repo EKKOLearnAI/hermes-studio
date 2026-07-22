@@ -282,6 +282,9 @@ export class ChatRunSocket {
           state.queue.push({
             queue_id: queueId,
             input: data.input,
+            displayInput: data.display_input,
+            displayRole: data.display_role,
+            storageMessage: data.storage_message,
             model: data.model,
             provider: data.provider,
             model_groups: data.model_groups,

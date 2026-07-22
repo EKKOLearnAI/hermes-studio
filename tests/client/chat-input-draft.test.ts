@@ -131,6 +131,20 @@ describe('ChatInput draft persistence', () => {
     expect(wrapper.get('.attachment-file').text()).toContain('notes.txt')
   })
 
+  it('accepts a browser selection directly into the current composer', async () => {
+    const wrapper = mountForSession('session-browser-selection')
+    const image = new File(['png'], 'browser-element.png', { type: 'image/png' })
+    const context = '{"browser_selection":{"annotations":[{"marker":1,"mode":"element","note":"Make this element clearer"}]}}'
+
+    ;(wrapper.vm as unknown as { addBrowserAttachment: (file: File, context: string) => void }).addBrowserAttachment(image, context)
+    await nextTick()
+
+    expect(wrapper.get('.attachment-thumb').attributes('alt')).toBe('browser-element.png')
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('')
+    expect(wrapper.get('.attachment-context').attributes('open')).toBeUndefined()
+    expect(wrapper.get('.attachment-context pre').text()).toBe(context)
+  })
+
   it('restores unsent text for the active session after the chat view is remounted', async () => {
     const wrapper = mountForSession('session-a')
     const textarea = wrapper.get('textarea')

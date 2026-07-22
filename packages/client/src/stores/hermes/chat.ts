@@ -55,6 +55,8 @@ export interface Attachment {
   size: number
   url: string
   file?: File
+  /** Structured context sent to the model but rendered collapsed in the UI. */
+  context?: string
 }
 
 export interface Message {
@@ -514,10 +516,11 @@ async function uploadFiles(attachments: Attachment[]): Promise<{ name: string; p
   return data.files
 }
 
-async function buildContentBlocks(
+export async function buildContentBlocks(
   content: string,
   attachments?: Attachment[],
-  uploadedFiles?: { name: string; path: string }[]
+  uploadedFiles?: { name: string; path: string }[],
+  includeContextText = true,
 ): Promise<ContentBlock[]> {
   const blocks: ContentBlock[] = []
 
@@ -539,6 +542,7 @@ async function buildContentBlocks(
           name: uploaded.name,
           path: uploaded.path,
           media_type: attachment.type,
+          ...(attachment.context?.trim() ? { context: attachment.context.trim() } : {}),
         })
       } else {
         // Other files
@@ -547,6 +551,13 @@ async function buildContentBlocks(
           name: uploaded.name,
           path: uploaded.path,
           media_type: attachment?.type,
+          ...(attachment?.context?.trim() ? { context: attachment.context.trim() } : {}),
+        })
+      }
+      if (includeContextText && attachment?.context?.trim()) {
+        blocks.push({
+          type: 'text',
+          text: `<browser_selection_context format="json">\n${attachment.context.trim()}\n</browser_selection_context>`,
         })
       }
     }
@@ -2826,6 +2837,7 @@ export const useChatStore = defineStore('chat', () => {
 
       // Build input in Anthropic format
       let input: string | ContentBlock[]
+      let displayInput: string | ContentBlock[] | undefined
       if (attachments && attachments.length > 0) {
         // Has attachments: upload first, then build content blocks
         const uploaded = await uploadFiles(attachments)
@@ -2853,6 +2865,9 @@ export const useChatStore = defineStore('chat', () => {
 
         // Build content blocks with uploaded file paths
         input = await buildContentBlocks(submittedContent, attachments, uploaded)
+        if (attachments.some(attachment => attachment.context?.trim())) {
+          displayInput = await buildContentBlocks(submittedContent, attachments, uploaded, false)
+        }
       } else {
         // No attachments: use plain text format
         input = submittedContent
@@ -2895,6 +2910,7 @@ export const useChatStore = defineStore('chat', () => {
         : undefined
       const runPayload: StartRunRequest = {
         input,
+        ...(displayInput ? { display_input: displayInput } : {}),
         session_id: sid,
         profile: sessionProfile,
         model: isCodingAgentExecution

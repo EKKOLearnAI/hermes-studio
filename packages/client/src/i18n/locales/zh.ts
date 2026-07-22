@@ -2,7 +2,7 @@ export default {
   browser: {
     title: '浏览器', settings: '浏览器设置', desktopOnly: '内置浏览器仅在 Hermes Studio 桌面端可用。', newTab: '新标签页',
     back: '后退', forward: '前进', reload: '刷新', stop: '停止', addressPlaceholder: '搜索或输入网址',
-    selectElement: '选择元素', selectRegion: '框选区域', annotationAdded: '截图已添加到对话输入框',
+    selectElement: '选择元素', selectRegion: '框选区域', annotationPlaceholder: '描述希望 Agent 检查或修改的内容…', selectionData: '浏览器选区数据', annotationAdded: '截图已添加到对话输入框', annotationCount: '已标注 {count} 处', annotationLabel: '标注 {index}', clearAnnotations: '清除标注', finishAnnotation: '完成',
     agent: 'Agent', agentControlling: '{agent} 正在控制此标签页', agentWaiting: '{agent} 正在等待你的确认', takeOver: '接管', tabCrashed: '此标签页已崩溃。', recoverTab: '重新加载', profiles: '配置档案', profileName: '配置名称',
     profileDirectory: 'Profile 数据目录', profileMovePending: '桌面端重启后将移动 Profile 目录。', downloadDirectory: '下载目录',
     askBeforeDownload: '每次下载前询问保存位置', downloadConflictPolicy: '文件重名处理', uniquifyDownloads: '自动生成唯一文件名', askOnConflict: '文件已存在时询问', downloads: '下载记录', permissions: '网站权限', permissionsHint: '远程页面权限默认全部拒绝，并在此处保留审计记录。', blocked: '已阻止',

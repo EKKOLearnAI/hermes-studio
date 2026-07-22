@@ -2,7 +2,7 @@ export default {
   browser: {
     title: 'Браузер', settings: 'Настройки браузера', desktopOnly: 'Встроенный браузер доступен только в Hermes Studio Desktop.', newTab: 'Новая вкладка',
     back: 'Назад', forward: 'Вперёд', reload: 'Обновить', stop: 'Остановить', addressPlaceholder: 'Поиск или адрес',
-    selectElement: 'Выбрать элемент', selectRegion: 'Выбрать область', annotationAdded: 'Снимок добавлен в поле чата',
+    selectElement: 'Выбрать элемент', selectRegion: 'Выбрать область', annotationPlaceholder: 'Опишите, что Agent должен проверить или изменить…', selectionData: 'Данные выбора браузера', annotationAdded: 'Снимок добавлен в поле чата', annotationCount: 'Аннотаций: {count}', annotationLabel: 'Аннотация {index}', clearAnnotations: 'Очистить аннотации', finishAnnotation: 'Готово',
     agent: 'Agent', agentControlling: '{agent} управляет вкладкой', agentWaiting: '{agent} ожидает вашего подтверждения', takeOver: 'Перехватить', tabCrashed: 'Эта вкладка аварийно завершилась.', recoverTab: 'Перезагрузить', profiles: 'Профили', profileName: 'Имя профиля',
     profileDirectory: 'Каталог профиля', profileMovePending: 'Каталог будет перемещён после перезапуска.', downloadDirectory: 'Каталог загрузок',
     askBeforeDownload: 'Всегда спрашивать место', downloadConflictPolicy: 'Повторяющиеся имена', uniquifyDownloads: 'Создать уникальное имя', askOnConflict: 'Спросить при конфликте', downloads: 'Загрузки', permissions: 'Разрешения', permissionsHint: 'Разрешения удалённых страниц по умолчанию запрещены и записываются здесь.', blocked: 'Заблокировано',

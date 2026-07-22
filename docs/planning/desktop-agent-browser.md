@@ -326,26 +326,17 @@ packages/desktop/src/main/browser/browser-types.ts
 ### 8.3 Client
 
 ~~~text
-packages/client/src/components/desktop-browser/
-  标签栏、地址栏、控制按钮、批注编辑和错误状态。
-
 packages/client/src/views/hermes/DesktopBrowserView.vue
-  “工具 → 浏览器”独立页面；包含浏览器工作台和配置管理。
+  “工具 → 浏览器”纯配置页面；只管理 Profile、下载、权限和数据清理，不显示网页。
 
-packages/client/src/components/desktop-browser/BrowserProfilesPanel.vue
-  Profile、存储目录和切换管理。
+packages/client/src/components/hermes/chat/DesktopBrowserPanel.vue
+  对话右栏里的纯浏览器面板；只包含标签页、地址栏、网页、接管和多选区批注会话。
 
-packages/client/src/components/desktop-browser/BrowserDownloadsPanel.vue
-  下载目录、策略、任务和进度。
+packages/client/src/components/hermes/chat/ChatPanel.vue
+  在“工作区 / 终端”右侧工具面板中按需加载浏览器第三个 Tab；确认后的截图与隐藏结构化批注写入当前 Composer。
 
-packages/client/src/components/desktop-browser/BrowserPrivacyPanel.vue
-  数据清理和站点权限。
-
-packages/client/src/stores/desktop-browser.ts
-  浏览器 UI 状态；只在 Desktop Bridge 存在时创建。
-
-packages/client/src/router/
-  桌面浏览器路由守卫；普通 Web UI 不能进入。
+packages/client/src/utils/desktop-bridge.ts
+  完整 Bridge 能力检测；普通 Web UI 不创建浏览器 Tab，也不加载面板 Chunk。
 ~~~
 
 具体文件名实现时可根据现有 Client 目录结构调整，但职责边界不能改变。
@@ -498,20 +489,28 @@ Vue 页面提供一个布局占位容器，通过 <code>ResizeObserver</code> �
 原生 View 会盖住 Vue 的 Popover 和 Modal，不能只依赖 CSS
 <code>z-index</code>。
 
-### 10.3 “工具 → 浏览器”独立页面
+### 10.3 对话页浏览器 Tab
 
-不放在 <code>/hermes/settings</code> 中。在现有侧边栏“工具”分组下新增：
+实际网页放在对话页右侧工具面板中，与“工作区 / 终端”并列：
 
 ~~~vue
-<RouteLinkItem
-  v-if="hasRoute('hermes.browser') && hasDesktopBrowserBridge"
-  :to="{ name: 'hermes.browser' }"
+<button
+  v-if="hasDesktopBrowserBridge()"
+  @click="activeToolPanel = 'browser'"
 >
-  {{ t('sidebar.browser') }}
-</RouteLinkItem>
+  {{ t('browser.title') }}
+</button>
+
+<DesktopBrowserPanel
+  v-if="hasDesktopBrowserBridge() && activeToolPanel === 'browser'"
+  @attach="handleBrowserAttachment"
+/>
 ~~~
 
-桌面启动时，只有完整可信的 Desktop Browser Bridge 存在，才动态注册路由：
+面板使用异步组件；只有完整可信的 Desktop Browser Bridge 存在时才显示并加载。
+面板只负责标签页、地址栏、网页操作、Agent 接管和批注，不出现 Profile、下载或权限配置。
+
+左侧“工具 → 浏览器”保留桌面专属动态路由，但该页面只负责配置：
 
 ~~~ts
 {
@@ -521,38 +520,31 @@ Vue 页面提供一个布局占位容器，通过 <code>ResizeObserver</code> �
 }
 ~~~
 
-不要把该路由静态写入所有环境的 Router。普通 Web UI 中：
+普通 Web UI 中：
 
 - <code>router.hasRoute('hermes.browser')</code> 为 <code>false</code>；
-- “工具”分组不显示浏览器入口；
-- 直接访问 <code>#/hermes/browser</code> 命中安全的 Not Found/默认跳转；
+- “工作区 / 终端”面板不显示浏览器 Tab；
+- 左侧“工具”分组不显示浏览器入口；
 - 不加载 <code>DesktopBrowserView</code> Chunk；
-- 不创建 Browser Store；
 - 不调用 Profile、下载或浏览器 Bridge。
 
-<code>DesktopBrowserView</code> 是浏览器工作台和配置中心，页面内分四个 Tab：
+<code>DesktopBrowserView</code> 是纯配置中心：
 
-1. **浏览器**
-   - 标签栏、地址栏和页面控制；
-   - 原生 <code>WebContentsView</code> 布局占位；
-   - 当前 Profile 选择；
-   - Agent 操作状态、停止和接管；
-   - DOM/区域批注入口。
-2. **Profile**
+1. **Profile 设置**
    - Profile 列表、当前活动标记和存储占用；
    - 新建、重命名、切换和删除；
    - 显示规范化后的 Profile 目录；
    - 新建时选择默认目录或自定义目录；
    - 已有 Profile 迁移目录；
    - 打开 Profile 目录。
-3. **下载**
+2. **下载设置**
    - 当前 Profile 下载目录；
    - 选择目录；
    - 下载前始终询问；
    - 重名处理策略；
    - 当前下载任务和进度；
    - 打开下载目录。
-4. **隐私与权限**
+3. **隐私与权限**
    - 清除 Cookie；
    - 清除 Cache；
    - 清除站点数据；
@@ -563,8 +555,8 @@ Vue 页面提供一个布局占位容器，通过 <code>ResizeObserver</code> �
    - 全部撤销；
    - 第一版没有允许列表时保持默认拒绝。
 
-切换到 Profile、下载或隐私 Tab 时隐藏原生 <code>WebContentsView</code>，
-避免它盖住 Vue 管理界面。切回浏览器 Tab 后重新同步 Bounds 并显示当前活动 View。
+进入配置路由时，对话页浏览器面板卸载并隐藏原生 <code>WebContentsView</code>，
+配置页自身从不设置 View Bounds，也不显示网页。
 
 该页面不使用普通 <code>settingsStore.saveSection()</code>，也不调用 Web UI
 Server。所有数据来自 Typed Preload Bridge，并由 Electron 主进程落盘。
@@ -652,9 +644,9 @@ Agent 操作的是当前可见 <code>WebContentsView</code>，所以桌面预览
 
 ### 13.1 代码归属
 
-- Electron Desktop：注入脚本、页面选择、清理、截图和坐标转换；
-- Client：批注按钮、冻结截图、评论编辑和 Composer Attachment；
-- Preload：只提供 start/cancel/result Typed IPC；
+- Electron Desktop：注入脚本、页面选择、编号标记、清理、截图和坐标转换，并通过远程网页原生右键菜单提供“选择 DOM / 框选区域”；
+- Client：冻结的整页标注截图、贴近选区左下方的说明输入框、多标注会话、发送确认和 Composer Attachment；
+- Preload：只提供 start/cancel/clear/result Typed IPC；
 - Agent/MCP：只负责截图和模型图片输入，不负责用户批注交互。
 
 注入实现不能放进普通 Web UI Bundle，也不能接受 Renderer 传入的 JavaScript
@@ -682,54 +674,53 @@ Agent 操作的是当前可见 <code>WebContentsView</code>，所以桌面预览
 
 ### 13.4 Overlay 与清理
 
-- 使用唯一 Overlay Host；
-- 使用隔离的 Shadow Root；
+- 使用隔离世界中的固定 Overlay 和带专用属性的编号标记；
 - 不提供 Node、IPC、文件、Cookie、Storage 或 Clipboard 能力；
-- 选择完成、取消、超时、导航、切换标签页、关闭标签页、页面崩溃时都要清理；
-- 同一个标签页重复开始批注时，先取消上一轮；
-- 清理 Pointer Listener、Animation Frame、Overlay DOM 和隔离世界状态。
+- 单次选择完成后清理交互 Overlay 和 Pointer Listener，但保留不可交互的编号框；
+- 点击“发送/清除”、取消、导航、切换标签页、关闭标签页、页面崩溃时清理整个标注会话；
+- 同一个标签页可以顺序添加多个 DOM 或区域标注，不能并发启动两个选择器。
 
 第一版只选择顶层 Document。跨域 iframe 可以作为一个矩形元素选择，但不能读取
 iframe 内部 DOM。
 
 ### 13.5 批注流程
 
-1. 在当前标签页注入元素或区域选择器。
-2. 用户点击元素或拖动矩形。
-3. 保留高亮并由 Electron 截取当前 Viewport。
-4. 保存 URL、标题、Tab ID、Viewport、缩放、滚动位置和安全元数据。
-5. 清理选择器并隐藏原生 View。
-6. 在 Vue Canvas 中显示冻结截图。
-7. 用户输入或修改评论。
-8. 把图片和结构化批注添加到当前 Composer，但不自动发送。
-9. 关闭批注或发送消息后恢复原生 View。
+1. 用户在远程网页右键菜单选择“选择 DOM”或“框选区域”。
+2. 主进程通知当前浏览器面板，并在当前标签页注入对应选择器。
+3. 用户点击元素或拖动矩形。
+4. 为选区绘制顺序编号并由 Electron 截取完整可见 Viewport，不裁成只有选区的小图。
+5. 保存 URL、标题、Tab ID、Viewport、缩放、编号、坐标和安全 DOM 元数据。
+6. 清理当前选择器、隐藏原生 View，并在冻结截图中把说明输入框定位到选区左下方；输入框标题使用相同编号。
+7. 输入框失焦或点击“完成”后，将说明保存到当前标注会话并恢复原生 View；编号框继续显示，用户可继续右键添加多个 DOM 或区域标注。
+8. 点击标注会话的“发送”后，Composer 只显示包含全部编号高亮的整页截图和折叠数据入口；说明写入 JSON，不追加到 Composer 文本输入框。
+9. JSON 中每条说明通过 <code>marker</code> 与截图编号关联。模型输入额外携带 <code>&lt;browser_selection_context format="json"&gt;</code>
+   结构化文本，展示/存储输入使用独立 <code>display_input</code>，不把 JSON 混入正文。
+10. 截图进入 Composer 后，真正发送消息仍由 Composer 的发送按钮决定。
 
 ~~~ts
-interface BrowserAnnotation {
+interface BrowserAnnotationSession {
   tabId: string
-  mode: 'element' | 'region'
   url: string
   title: string
-  comment: string
   viewport: {
     width: number
     height: number
     scaleFactor: number
   }
-  region: {
-    x: number
-    y: number
-    width: number
-    height: number
-  }
-  element?: {
-    role?: string
-    name?: string
-    tag?: string
-    id?: string
-    classNames?: string[]
-    selectorHint?: string
-  }
+  annotations: Array<{
+    marker: number
+    mode: 'element' | 'region'
+    note: string
+    region: { x: number; y: number; width: number; height: number }
+    element?: {
+      role?: string
+      name?: string
+      tag?: string
+      id?: string
+      classNames?: string[]
+      selectorHint?: string
+    }
+  }>
 }
 ~~~
 
@@ -891,7 +882,7 @@ browserSession.setDownloadPath(profile.downloadPath)
 - 密码和 Cookie 可能使用安装相关加密；
 - 直接复用有数据损坏风险。
 
-“工具 → 浏览器”的 Profile、下载和隐私 Tab 提供：
+“工具 → 浏览器”配置页面提供：
 
 - Profile 创建、重命名、切换和删除；
 - Profile 目录选择；
@@ -991,7 +982,7 @@ browserSession.setDownloadPath(profile.downloadPath)
 - 切换 Profile 时验证 Agent 操作、租约、批注和下载处理；
 - 修改 Profile 目录后验证 Session 使用新路径；
 - 下载前确认、重名处理、目录限制和进度状态正确；
-- “工具 → 浏览器”的所有操作只经过 Preload IPC，不产生 Koa 或
+- 浏览器 Tab 的所有操作只经过 Preload IPC，不产生 Koa 或
   Socket.IO 浏览器请求；
 - 所有 Locale 都包含新增 Browser Page 文案；
 - 窗口缩放、最大化、恢复后 Bounds 对齐；
@@ -1000,6 +991,9 @@ browserSession.setDownloadPath(profile.downloadPath)
 - 四个方向的矩形拖动正确；
 - 跨域 iframe 只能选择外框；
 - 取消批注后无残留 Overlay 和 Listener；
+- 同一页面可连续添加多个编号标注，输入失焦后仍能继续选择；
+- 截图编号、折叠 JSON 的 <code>marker</code> 和说明一一对应；
+- 标注说明不写入 Composer 文本输入框；
 - Composer 收到真实图片和结构化批注；
 - “接管”能中止当前 Agent 操作。
 
@@ -1033,7 +1027,8 @@ browserSession.setDownloadPath(profile.downloadPath)
 - 实现独立 Profile 和权限策略；
 - 实现可配置 Profile/下载目录和多 Profile 切换；
 - 动态注册桌面专属 Browser Route，并在侧边栏“工具”分组增加入口；
-- 实现包含浏览器、Profile、下载、隐私与权限的独立页面；
+- 实现只包含 Profile、下载、隐私与权限的独立配置页面；
+- 在对话页“工作区 / 终端”旁增加纯浏览器 Tab；
 - 完成桌面端专属 Gate；
 - 先支持用户手动浏览。
 
@@ -1051,7 +1046,7 @@ browserSession.setDownloadPath(profile.downloadPath)
 - 实现隔离世界 DOM 元素选择；
 - 实现任意区域框选；
 - 实现清理机制；
-- 实现截图冻结和评论编辑；
+- 实现截图冻结、选区左下方评论编辑和多标注会话；
 - 接入 Composer；
 - 实现标准 MCP Image Content；
 - 修复非桌面 <code>browser_vision</code> 只返回路径的问题。
@@ -1077,9 +1072,11 @@ browserSession.setDownloadPath(profile.downloadPath)
 - 浏览器登录状态只保存在 Hermes Browser Profile。
 - 用户可以创建和切换多个 Profile，各 Profile 的登录状态和下载目录隔离。
 - 用户可以通过桌面原生目录选择器配置 Profile 数据目录和下载目录。
-- 用户可以在“工具 → 浏览器”中浏览网页并管理 Profile、下载、数据和站点权限。
-- 用户能点击 DOM 元素或任意拖动矩形进行批注。
-- 批注以图片和安全结构化信息进入 Composer，且不自动发送。
+- 用户可以在对话页“工作区 / 终端 / 浏览器”面板中浏览和操作网页。
+- 用户可以在“工具 → 浏览器”页面管理 Profile、下载、数据和站点权限，该页面不显示网页。
+- 用户能点击 DOM 元素或任意拖动矩形，并在同一页面连续添加多个编号批注。
+- 说明输入框显示在对应选区左下方；失焦后保存并恢复浏览器，直到用户统一发送。
+- 批注以带全部编号高亮的整页截图进入 Composer；说明不进入文本框，JSON 默认折叠可展开，并作为隐藏结构化模型上下文发送。
 - Screenshot 向视觉模型提供真实图片。
 - 普通 Web UI 和 VPS 没有入口、路由、Bridge、API、Stream、Broker 或浏览器
   MCP Toolset。

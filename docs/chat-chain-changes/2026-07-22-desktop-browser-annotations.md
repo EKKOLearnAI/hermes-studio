@@ -1,12 +1,14 @@
 ---
 date: 2026-07-22
-pr: pending
+pr: 2182
 feature: Desktop browser annotations
-impact: Element and region selections from the desktop browser are added to the chat composer as an image plus structured page context without sending automatically.
+impact: Numbered element and region annotations are added to the current composer as one screenshot with hidden structured context, while annotation notes stay out of the visible text input.
 ---
 
-The desktop-only browser keeps its pending annotation payload in renderer memory
-while routing back to Chat. The next composer consumes the screenshot and safe
-selection metadata exactly once; ordinary Web UI and existing attachment flows
-are unchanged. Pending images expire after five minutes if no composer consumes
-them.
+The desktop browser supports multiple annotations in one page-level session.
+Each note is linked to its highlighted DOM element or region by a numeric marker.
+Clicking the browser panel's Send button adds one image attachment to the active
+composer, with the JSON available through a collapsed disclosure. The model
+input receives the same JSON in a tagged context block, while `display_input`
+keeps it out of the visible message body. Ordinary Web UI and existing
+attachment flows are unchanged.

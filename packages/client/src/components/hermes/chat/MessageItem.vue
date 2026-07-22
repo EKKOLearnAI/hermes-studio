@@ -74,6 +74,7 @@ type DisplayContentFile = {
   name: string
   path?: string
   url?: string
+  context?: string
 }
 
 function getBlockText(block: any): string {
@@ -171,6 +172,7 @@ const contentFiles = computed<DisplayContentFile[] | null>(() => {
         type: 'image' as const,
         name: String((block as any).name || `image-${index + 1}`),
         path: String((block as any).path || ''),
+        context: typeof (block as any).context === 'string' ? (block as any).context : undefined,
       }].filter(file => file.path)
     }
     if (block.type === 'file') {
@@ -178,6 +180,7 @@ const contentFiles = computed<DisplayContentFile[] | null>(() => {
         type: 'file' as const,
         name: String((block as any).name || `file-${index + 1}`),
         path: String((block as any).path || ''),
+        context: typeof (block as any).context === 'string' ? (block as any).context : undefined,
       }].filter(file => file.path)
     }
     const imageUrl = getImageUrlFromBlock(block)
@@ -975,7 +978,7 @@ onBeforeUnmount(() => {
                 v-for="att in message.attachments"
                 :key="att.id"
                 class="msg-attachment"
-                :class="{ image: isImage(att.type) }"
+                :class="{ image: isImage(att.type), 'has-context': !!att.context }"
               >
                 <template v-if="isImage(att.type) && att.url">
                   <img
@@ -1009,6 +1012,10 @@ onBeforeUnmount(() => {
                     </svg>
                   </div>
                 </template>
+                <details v-if="att.context" class="msg-attachment-context">
+                  <summary>{{ t('browser.selectionData') }}</summary>
+                  <pre>{{ att.context }}</pre>
+                </details>
               </div>
             </div>
             <div
@@ -1063,7 +1070,7 @@ onBeforeUnmount(() => {
                     v-for="(file, idx) in contentFiles"
                     :key="idx"
                     class="msg-attachment"
-                    :class="{ image: file.type === 'image' }"
+                    :class="{ image: file.type === 'image', 'has-context': !!file.context }"
                   >
                     <template v-if="file.type === 'image'">
                       <img
@@ -1087,6 +1094,10 @@ onBeforeUnmount(() => {
                         <span class="att-name">{{ file.name }}</span>
                       </div>
                     </template>
+                    <details v-if="file.context" class="msg-attachment-context">
+                      <summary>{{ t('browser.selectionData') }}</summary>
+                      <pre>{{ file.context }}</pre>
+                    </details>
                   </div>
                 </div>
               </template>
@@ -1507,6 +1518,10 @@ onBeforeUnmount(() => {
   &.image {
     max-width: 200px;
   }
+
+  &.image.has-context {
+    max-width: 420px;
+  }
 }
 
 .msg-attachment-thumb {
@@ -1515,6 +1530,22 @@ onBeforeUnmount(() => {
   max-height: 160px;
   object-fit: contain;
   cursor: pointer;
+}
+
+.msg-attachment.has-context .msg-attachment-thumb {
+  max-width: 420px;
+  max-height: 280px;
+}
+
+.msg-attachment-context {
+  max-width: 420px;
+  padding: 7px 9px;
+  border-top: 1px solid $border-light;
+  color: $text-secondary;
+  font-size: 11px;
+
+  summary { cursor: pointer; user-select: none; }
+  pre { max-height: 200px; margin: 8px 0 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 10px/1.45 monospace; }
 }
 
 .msg-attachment-file {

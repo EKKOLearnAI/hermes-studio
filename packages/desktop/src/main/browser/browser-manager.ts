@@ -6,7 +6,7 @@ import {
   BrowserWindow,
   app,
   dialog,
-  nativeImage,
+  Menu,
   session,
   shell,
   WebContentsView,
@@ -35,6 +35,12 @@ interface TabRecord {
   tab: DesktopBrowserTab
   view: WebContentsView
   console: BrowserConsoleEntry[]
+}
+
+interface BrowserManagerOptions {
+  selectElementLabel: string
+  selectRegionLabel: string
+  onAnnotationRequest: (tabId: string, mode: 'element' | 'region') => void
 }
 
 const MAX_TABS = 8
@@ -88,6 +94,7 @@ export class BrowserManager {
   private readonly configuredSessions = new Set<string>()
   private readonly automationVisibleTabs = new Set<string>()
   private readonly activeAnnotationTabs = new Set<string>()
+  private readonly annotationMarkerCounts = new Map<string, number>()
   private readonly agentDownloadGuardUntil = new Map<string, number>()
   private readonly stateListeners = new Set<(state: DesktopBrowserState) => void>()
   private activeProfileId = ''
@@ -95,7 +102,7 @@ export class BrowserManager {
   private visible = false
   private bounds: BrowserBounds = { x: 0, y: 0, width: 800, height: 600 }
 
-  constructor(private readonly window: BrowserWindow, stateRoot: string, downloadsRoot: string) {
+  constructor(private readonly window: BrowserWindow, stateRoot: string, downloadsRoot: string, private readonly options?: BrowserManagerOptions) {
     this.profileStore = new BrowserProfileStore(stateRoot, downloadsRoot)
   }
 
@@ -165,7 +172,7 @@ export class BrowserManager {
 
   async closeTab(tabId: string): Promise<DesktopBrowserState> {
     const record = this.requireTab(tabId)
-    await this.cancelAnnotation(tabId)
+    await this.clearAnnotations(tabId)
     const ids = [...this.records.keys()]
     const index = ids.indexOf(tabId)
     this.window.contentView.removeChildView(record.view)
@@ -220,7 +227,7 @@ export class BrowserManager {
   }
 
   profileSwitchImpact(): BrowserProfileSwitchImpact {
-    const pendingAnnotations = this.activeAnnotationTabs.size
+    const pendingAnnotations = new Set([...this.activeAnnotationTabs, ...this.annotationMarkerCounts.keys()]).size
     return {
       activeAgentRuns: [...this.records.values()].filter(record => record.tab.agentControl !== 'idle').length,
       activeDownloads: this.downloads.filter(item => item.state === 'progressing').length,
@@ -234,7 +241,7 @@ export class BrowserManager {
     if (profileId === this.activeProfileId) return this.state()
     const impact = this.profileSwitchImpact()
     if (impact.requiresConfirmation && !force) throw new Error('Profile switch requires confirmation while an Agent or download is active')
-    await Promise.all([...this.activeAnnotationTabs].map(tabId => this.cancelAnnotation(tabId)))
+    await Promise.all([...new Set([...this.activeAnnotationTabs, ...this.annotationMarkerCounts.keys()])].map(tabId => this.clearAnnotations(tabId)))
     await this.persistTabs()
     this.destroyViews()
     const profile = await this.profileStore.setActive(profileId)
@@ -380,6 +387,7 @@ export class BrowserManager {
   async annotate(tabId: string, mode: 'element' | 'region'): Promise<BrowserSelection> {
     const record = this.requireTab(tabId)
     if (this.activeAnnotationTabs.has(tabId)) throw new Error('An annotation is already active in this tab')
+    const marker = (this.annotationMarkerCounts.get(tabId) || 0) + 1
     this.visible = true
     this.activeTabId = tabId
     this.syncViews()
@@ -389,28 +397,36 @@ export class BrowserManager {
       const selected = await record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
       code: `new Promise((resolve, reject) => {
         const mode = ${JSON.stringify(mode)};
+        const marker = ${marker};
         const root = document.documentElement;
         const overlay = document.createElement('div');
         const box = document.createElement('div');
+        const badge = document.createElement('span');
         Object.assign(overlay.style, { position:'fixed', inset:'0', zIndex:'2147483647', cursor:'crosshair', background:'rgba(59,130,246,.04)' });
         Object.assign(box.style, { position:'fixed', display:'none', zIndex:'2147483647', pointerEvents:'none', border:'2px solid #3b82f6', background:'rgba(59,130,246,.14)', boxSizing:'border-box' });
+        Object.assign(badge.style, { position:'absolute', left:'-2px', top:'-2px', minWidth:'20px', height:'20px', padding:'0 5px', display:'grid', placeItems:'center', color:'#fff', background:'#2563eb', borderRadius:'0 0 6px 0', font:'600 12px/20px system-ui,sans-serif', boxSizing:'border-box' });
+        badge.textContent = String(marker);
+        box.setAttribute('data-hermes-browser-annotation-mark', String(marker));
+        box.appendChild(badge);
         root.append(overlay, box);
-        let start = null, moveHandler = null, clickHandler = null;
-        const cleanup = () => { overlay.remove(); box.remove(); removeEventListener('keydown', onKey, true); removeEventListener(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}, onCancel, true); if(moveHandler)removeEventListener('mousemove',moveHandler,true); if(clickHandler)removeEventListener('click',clickHandler,true); };
+        let start = null, moveHandler = null, clickHandler = null, finished = false;
+        const cleanup = removeMark => { overlay.remove(); if(removeMark)box.remove(); removeEventListener('keydown', onKey, true); removeEventListener(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}, onCancel, true); if(moveHandler)removeEventListener('mousemove',moveHandler,true); if(clickHandler)removeEventListener('click',clickHandler,true); };
         const draw = r => Object.assign(box.style, { display:'block', left:r.x+'px', top:r.y+'px', width:r.width+'px', height:r.height+'px' });
-        const finish = (region, element) => { cleanup(); resolve({ region, element, viewport:{ width:innerWidth, height:innerHeight, scaleFactor:devicePixelRatio || 1 } }); };
-        const onKey = event => { if (event.key === 'Escape') { event.preventDefault(); cleanup(); reject(new Error('Annotation cancelled')); } };
-        const onCancel = () => { cleanup(); reject(new Error('Annotation cancelled')); };
+        const finish = (region, element) => { if(finished)return; finished=true; draw(region); overlay.onpointerdown=null; overlay.onpointermove=null; overlay.onpointerup=null; cleanup(false); resolve({ region, element, viewport:{ width:innerWidth, height:innerHeight, scaleFactor:devicePixelRatio || 1 } }); };
+        const onKey = event => { if (event.key === 'Escape') { event.preventDefault(); cleanup(true); reject(new Error('Annotation cancelled')); } };
+        const onCancel = () => { cleanup(true); reject(new Error('Annotation cancelled')); };
         addEventListener('keydown', onKey, true);
         addEventListener(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}, onCancel, true);
         if (mode === 'element') {
           const elementBelow = (x, y) => { overlay.style.visibility='hidden'; box.style.visibility='hidden'; const target=document.elementFromPoint(x,y); overlay.style.visibility=''; box.style.visibility=''; return target; };
           moveHandler = event => {
+            if(finished)return;
             const target = elementBelow(event.clientX, event.clientY);
             if (!target || target === overlay || target === box) return;
             const r = target.getBoundingClientRect(); draw({ x:r.left, y:r.top, width:r.width, height:r.height });
           };
           clickHandler = event => {
+            if(finished)return;
             event.preventDefault(); event.stopImmediatePropagation();
             const target = elementBelow(event.clientX, event.clientY);
             if (!target) return;
@@ -421,28 +437,17 @@ export class BrowserManager {
           addEventListener('mousemove', moveHandler, true);
           addEventListener('click', clickHandler, true);
         } else {
-          overlay.onpointerdown = event => { start = { x:event.clientX, y:event.clientY }; overlay.setPointerCapture(event.pointerId); };
-          overlay.onpointermove = event => { if (!start) return; const x=Math.min(start.x,event.clientX), y=Math.min(start.y,event.clientY); draw({x,y,width:Math.abs(event.clientX-start.x),height:Math.abs(event.clientY-start.y)}); };
-          overlay.onpointerup = event => { if (!start) return; const region={x:Math.min(start.x,event.clientX),y:Math.min(start.y,event.clientY),width:Math.abs(event.clientX-start.x),height:Math.abs(event.clientY-start.y)}; if(region.width<4||region.height<4){cleanup();reject(new Error('Selection is too small'));return;} finish(region); };
+          overlay.onpointerdown = event => { if(finished)return; start = { x:event.clientX, y:event.clientY }; overlay.setPointerCapture(event.pointerId); };
+          overlay.onpointermove = event => { if (finished || !start) return; const x=Math.min(start.x,event.clientX), y=Math.min(start.y,event.clientY); draw({x,y,width:Math.abs(event.clientX-start.x),height:Math.abs(event.clientY-start.y)}); };
+          overlay.onpointerup = event => { if (finished || !start) return; const region={x:Math.min(start.x,event.clientX),y:Math.min(start.y,event.clientY),width:Math.abs(event.clientX-start.x),height:Math.abs(event.clientY-start.y)}; if(region.width<4||region.height<4){cleanup(true);reject(new Error('Selection is too small'));return;} finish(region); };
         }
       })`,
       }], true) as { region: BrowserBounds; element?: BrowserSelection['element']; viewport: BrowserSelection['viewport'] }
       const whole = await this.automation.screenshot(tabId, record.view.webContents, false)
-      const image = nativeImage.createFromDataURL(`data:${whole.mediaType};base64,${whole.data}`)
-      const imageSize = image.getSize()
-      const scaleX = imageSize.width / Math.max(1, selected.viewport.width)
-      const scaleY = imageSize.height / Math.max(1, selected.viewport.height)
-      const crop = {
-        x: Math.max(0, Math.round(selected.region.x * scaleX)),
-        y: Math.max(0, Math.round(selected.region.y * scaleY)),
-        width: Math.max(1, Math.min(imageSize.width, Math.round(selected.region.width * scaleX))),
-        height: Math.max(1, Math.min(imageSize.height, Math.round(selected.region.height * scaleY))),
-      }
-      crop.width = Math.min(crop.width, imageSize.width - crop.x)
-      crop.height = Math.min(crop.height, imageSize.height - crop.y)
-      const cropped = image.crop(crop)
+      this.annotationMarkerCounts.set(tabId, marker)
       return {
         tabId,
+        marker,
         mode,
         url: publicBrowserUrl(record.tab.url),
         title: redactBrowserText(record.tab.title),
@@ -453,9 +458,20 @@ export class BrowserManager {
           role: selected.element.role ? redactBrowserText(selected.element.role, 40) : undefined,
           name: selected.element.name ? redactBrowserText(selected.element.name, 120) : undefined,
         } : undefined,
-        screenshot: { ...whole, data: cropped.toPNG().toString('base64'), width: crop.width, height: crop.height },
+        // Keep the full visible browser viewport. Completed numbered marks stay
+        // rendered until the annotation session is sent or cleared, so one
+        // screenshot can explain multiple selections to the vision model.
+        screenshot: whole,
       }
+    } catch (error) {
+      await record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
+        code: `document.querySelector('[data-hermes-browser-annotation-mark="${marker}"]')?.remove()`,
+      }], true).catch(() => undefined)
+      throw error
     } finally {
+      await record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
+        code: `dispatchEvent(new CustomEvent(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}))`,
+      }], true).catch(() => undefined)
       this.activeAnnotationTabs.delete(tabId)
       this.emitState()
     }
@@ -472,6 +488,21 @@ export class BrowserManager {
       code: `dispatchEvent(new CustomEvent(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}))`,
     }], true).catch(() => undefined)
     return true
+  }
+
+  async clearAnnotations(tabId: string): Promise<boolean> {
+    const wasActive = this.activeAnnotationTabs.has(tabId)
+    const hadMarks = this.annotationMarkerCounts.has(tabId)
+    const record = this.records.get(tabId)
+    if (record && !record.view.webContents.isDestroyed()) {
+      await record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
+        code: `dispatchEvent(new CustomEvent(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}));document.querySelectorAll('[data-hermes-browser-annotation-mark]').forEach(node=>node.remove())`,
+      }], true).catch(() => undefined)
+    }
+    this.activeAnnotationTabs.delete(tabId)
+    this.annotationMarkerCounts.delete(tabId)
+    if (wasActive || hadMarks) this.emitState()
+    return wasActive || hadMarks
   }
 
   destroy(): void {
@@ -514,6 +545,14 @@ export class BrowserManager {
         console.warn('[desktop-browser] failed to open popup:', error)
       })
       return { action: 'deny' }
+    })
+    contents.on('context-menu', event => {
+      event.preventDefault()
+      if (!this.options || contents.isDestroyed()) return
+      Menu.buildFromTemplate([
+        { label: this.options.selectElementLabel, click: () => this.options?.onAnnotationRequest(id, 'element') },
+        { label: this.options.selectRegionLabel, click: () => this.options?.onAnnotationRequest(id, 'region') },
+      ]).popup({ window: this.window })
     })
     contents.on('will-navigate', details => {
       if (!isAllowedBrowserRequest(details.url)) details.preventDefault()
@@ -664,6 +703,7 @@ export class BrowserManager {
     this.records.clear()
     this.automationVisibleTabs.clear()
     this.activeAnnotationTabs.clear()
+    this.annotationMarkerCounts.clear()
     this.agentDownloadGuardUntil.clear()
     this.activeTabId = undefined
   }

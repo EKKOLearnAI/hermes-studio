@@ -54,6 +54,12 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     takeOver: (tabId: string): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:browser-take-over', tabId),
     annotate: (tabId: string, mode: 'element' | 'region'): Promise<BrowserSelection> => ipcRenderer.invoke('hermes-desktop:browser-annotate', tabId, mode),
     cancelAnnotation: (tabId: string): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:browser-cancel-annotation', tabId),
+    clearAnnotations: (tabId: string): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:browser-clear-annotations', tabId),
+    onAnnotationRequest: (callback: (request: { tabId: string; mode: 'element' | 'region' }) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, request: { tabId: string; mode: 'element' | 'region' }) => callback(request)
+      ipcRenderer.on('hermes-desktop:browser-annotation-request', listener)
+      return () => ipcRenderer.removeListener('hermes-desktop:browser-annotation-request', listener)
+    },
     onStateChange: (callback: (state: DesktopBrowserState) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, state: DesktopBrowserState) => callback(state)
       ipcRenderer.on('hermes-desktop:browser-state-change', listener)

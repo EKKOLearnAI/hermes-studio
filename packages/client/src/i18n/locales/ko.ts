@@ -2,7 +2,7 @@ export default {
   browser: {
     title: '브라우저', settings: '브라우저 설정', desktopOnly: '내장 브라우저는 Hermes Studio Desktop에서만 사용할 수 있습니다.', newTab: '새 탭',
     back: '뒤로', forward: '앞으로', reload: '새로고침', stop: '중지', addressPlaceholder: '검색 또는 주소 입력',
-    selectElement: '요소 선택', selectRegion: '영역 선택', annotationAdded: '스크린샷을 채팅 입력창에 추가했습니다',
+    selectElement: '요소 선택', selectRegion: '영역 선택', annotationPlaceholder: 'Agent가 확인하거나 변경할 내용을 입력하세요…', selectionData: '브라우저 선택 데이터', annotationAdded: '스크린샷을 채팅 입력창에 추가했습니다', annotationCount: '주석 {count}개', annotationLabel: '주석 {index}', clearAnnotations: '주석 지우기', finishAnnotation: '완료',
     agent: 'Agent', agentControlling: '{agent}가 이 탭을 제어 중', agentWaiting: '{agent}가 확인을 기다리는 중', takeOver: '제어권 가져오기', tabCrashed: '이 탭이 비정상 종료되었습니다.', recoverTab: '탭 새로고침', profiles: '프로필', profileName: '프로필 이름',
     profileDirectory: '프로필 데이터 경로', profileMovePending: 'Desktop을 다시 시작하면 이동됩니다.', downloadDirectory: '다운로드 경로',
     askBeforeDownload: '저장 위치 항상 묻기', downloadConflictPolicy: '중복 파일 이름', uniquifyDownloads: '고유 이름 만들기', askOnConflict: '파일이 있으면 묻기', downloads: '다운로드', permissions: '권한', permissionsHint: '원격 페이지 권한은 기본적으로 거부되며 감사용으로 표시됩니다.', blocked: '차단됨',

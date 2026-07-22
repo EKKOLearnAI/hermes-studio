@@ -55,10 +55,12 @@ import { isStoredSuperAdmin } from "@/api/client";
 import { useDefaultWorkspace } from "@/composables/useDefaultWorkspace";
 import { canScopedCodingAgentUseProvider, usesServerManagedProviderAuth } from "@/utils/codingAgentProviders";
 import { OPEN_SUBAGENT_STREAM_EVENT, type OpenSubagentStreamDetail } from "@/utils/hermes/subagent-stream";
+import { hasDesktopBrowserBridge } from "@/utils/desktop-bridge";
 
 const FilesPanel = defineAsyncComponent(async () => (await import('./FilesPanel.vue')).default);
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default);
 const WorkspaceDiffPreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/WorkspaceDiffPreview.vue')).default);
+const DesktopBrowserPanel = defineAsyncComponent(async () => (await import('./DesktopBrowserPanel.vue')).default);
 
 const chatStore = useChatStore();
 const appStore = useAppStore();
@@ -74,14 +76,18 @@ const isSuperAdmin = computed(() => isStoredSuperAdmin());
 const showOutline = ref(false);
 const showRealtimeVoice = ref(false);
 const messageListRef = ref<InstanceType<typeof MessageList> | null>(null);
-const chatInputRef = ref<(InstanceType<typeof ChatInput> & { addFiles?: (files: File[]) => void }) | null>(null);
+const chatInputRef = ref<(InstanceType<typeof ChatInput> & {
+  addFiles?: (files: File[]) => void;
+  addBrowserAttachment?: (file: File, context: string) => void;
+}) | null>(null);
 const chatContentWrapperRef = ref<HTMLElement | null>(null);
 const chatMainContentRef = ref<HTMLElement | null>(null);
 let sessionFadeAnimation: Animation | null = null;
 const chatDropCounter = ref(0);
 const isChatDropActive = ref(false);
 const showToolPanel = ref(false);
-const activeToolPanel = ref<"files" | "terminal">("files");
+const activeToolPanel = ref<"files" | "terminal" | "browser">("files");
+const desktopBrowserAvailable = hasDesktopBrowserBridge();
 const selectedSubagent = ref<OpenSubagentStreamDetail | null>(null);
 const selectedSubagentStream = computed(() => {
   const selected = selectedSubagent.value;
@@ -266,6 +272,10 @@ function handleChatDrop(event: DragEvent) {
 
 function handleWorkspaceFileAttach(file: File) {
   chatInputRef.value?.addFiles?.([file]);
+}
+
+function handleBrowserAttachment(payload: { file: File; context: string }) {
+  chatInputRef.value?.addBrowserAttachment?.(payload.file, payload.context);
 }
 
 async function handleSessionClick(sessionId: string) {
@@ -2528,7 +2538,7 @@ async function handleSessionModelCustomSubmit() {
                   </template>
                 </NButton>
               </template>
-              {{ t("drawer.files") }} / {{ t("drawer.terminal") }}
+              {{ desktopBrowserAvailable ? `${t("drawer.files")} / ${t("drawer.terminal")} / ${t("browser.title")}` : `${t("drawer.files")} / ${t("drawer.terminal")}` }}
             </NTooltip>
             <NTooltip trigger="hover">
               <template #trigger>
@@ -2657,6 +2667,17 @@ async function handleSessionModelCustomSubmit() {
                   >
                     {{ t("drawer.terminal") }}
                   </button>
+                  <button
+                    v-if="desktopBrowserAvailable"
+                    class="chat-tool-tab"
+                    :class="{ active: activeToolPanel === 'browser' }"
+                    type="button"
+                    role="tab"
+                    :aria-selected="activeToolPanel === 'browser'"
+                    @click="activeToolPanel = 'browser'"
+                  >
+                    {{ t("browser.title") }}
+                  </button>
                 </div>
                 <div class="chat-tool-content">
                   <FilesPanel
@@ -2668,6 +2689,10 @@ async function handleSessionModelCustomSubmit() {
                   <TerminalPanel
                     v-show="activeToolPanel === 'terminal'"
                     :visible="showToolPanel && activeToolPanel === 'terminal'"
+                  />
+                  <DesktopBrowserPanel
+                    v-if="desktopBrowserAvailable && activeToolPanel === 'browser'"
+                    @attach="handleBrowserAttachment"
                   />
                 </div>
               </template>

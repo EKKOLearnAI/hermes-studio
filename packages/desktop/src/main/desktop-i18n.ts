@@ -47,6 +47,8 @@ type TranslationKey =
   | 'runtime.ready'
   | 'common.ok'
   | 'common.cancel'
+  | 'browser.selectElement'
+  | 'browser.selectRegion'
   | 'loginReset.confirmTitle'
   | 'loginReset.confirmMessage'
   | 'loginReset.confirmDetail'
@@ -104,6 +106,8 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'runtime.ready': 'Hermes runtime ready.',
     'common.ok': 'OK',
     'common.cancel': 'Cancel',
+    'browser.selectElement': 'Select DOM element',
+    'browser.selectRegion': 'Select region',
     'loginReset.confirmTitle': 'Reset login',
     'loginReset.confirmMessage': 'Reset the login to admin / 123456?',
     'loginReset.confirmDetail': 'Hermes Studio will restart its local Web UI service, clear login locks, and return to the login page.',
@@ -158,6 +162,8 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'runtime.ready': 'Hermes 运行时已就绪。',
     'common.ok': '确定',
     'common.cancel': '取消',
+    'browser.selectElement': '选择 DOM 元素',
+    'browser.selectRegion': '框选区域',
     'loginReset.confirmTitle': '重置登录',
     'loginReset.confirmMessage': '确认将登录重置为 admin / 123456？',
     'loginReset.confirmDetail': 'Hermes Studio 会重启本地 Web UI 服务、清除登录失败锁，然后回到登录页。',
@@ -212,6 +218,8 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'runtime.ready': 'Hermes 運行時已就緒。',
     'common.ok': '確定',
     'common.cancel': '取消',
+    'browser.selectElement': '選擇 DOM 元素',
+    'browser.selectRegion': '框選區域',
     'loginReset.confirmTitle': '重置登入',
     'loginReset.confirmMessage': '確認將登入重置為 admin / 123456？',
     'loginReset.confirmDetail': 'Hermes Studio 會重新啟動本地 Web UI 服務、清除登入失敗鎖，然後回到登入頁。',
@@ -266,6 +274,8 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'runtime.ready': 'Hermes ランタイムの準備ができました。',
     'common.ok': 'OK',
     'common.cancel': 'Cancel',
+    'browser.selectElement': 'DOM 要素を選択',
+    'browser.selectRegion': '領域を選択',
     'loginReset.confirmTitle': 'Reset login',
     'loginReset.confirmMessage': 'Reset the login to admin / 123456?',
     'loginReset.confirmDetail': 'Hermes Studio will restart its local Web UI service, clear login locks, and return to the login page.',
@@ -320,6 +330,8 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'runtime.ready': 'Hermes 런타임이 준비되었습니다.',
     'common.ok': '확인',
     'common.cancel': 'Cancel',
+    'browser.selectElement': 'DOM 요소 선택',
+    'browser.selectRegion': '영역 선택',
     'loginReset.confirmTitle': 'Reset login',
     'loginReset.confirmMessage': 'Reset the login to admin / 123456?',
     'loginReset.confirmDetail': 'Hermes Studio will restart its local Web UI service, clear login locks, and return to the login page.',
@@ -374,6 +386,8 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'runtime.ready': 'Runtime Hermes pret.',
     'common.ok': 'OK',
     'common.cancel': 'Cancel',
+    'browser.selectElement': 'Sélectionner un élément DOM',
+    'browser.selectRegion': 'Sélectionner une zone',
     'loginReset.confirmTitle': 'Reset login',
     'loginReset.confirmMessage': 'Reset the login to admin / 123456?',
     'loginReset.confirmDetail': 'Hermes Studio will restart its local Web UI service, clear login locks, and return to the login page.',
@@ -428,6 +442,8 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'runtime.ready': 'Runtime de Hermes listo.',
     'common.ok': 'Aceptar',
     'common.cancel': 'Cancel',
+    'browser.selectElement': 'Seleccionar elemento DOM',
+    'browser.selectRegion': 'Seleccionar región',
     'loginReset.confirmTitle': 'Reset login',
     'loginReset.confirmMessage': 'Reset the login to admin / 123456?',
     'loginReset.confirmDetail': 'Hermes Studio will restart its local Web UI service, clear login locks, and return to the login page.',
@@ -482,6 +498,8 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'runtime.ready': 'Hermes Runtime ist bereit.',
     'common.ok': 'OK',
     'common.cancel': 'Cancel',
+    'browser.selectElement': 'DOM-Element auswählen',
+    'browser.selectRegion': 'Bereich auswählen',
     'loginReset.confirmTitle': 'Reset login',
     'loginReset.confirmMessage': 'Reset the login to admin / 123456?',
     'loginReset.confirmDetail': 'Hermes Studio will restart its local Web UI service, clear login locks, and return to the login page.',
@@ -536,6 +554,8 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'runtime.ready': 'Runtime Hermes pronto.',
     'common.ok': 'OK',
     'common.cancel': 'Cancel',
+    'browser.selectElement': 'Selecionar elemento DOM',
+    'browser.selectRegion': 'Selecionar região',
     'loginReset.confirmTitle': 'Reset login',
     'loginReset.confirmMessage': 'Reset the login to admin / 123456?',
     'loginReset.confirmDetail': 'Hermes Studio will restart its local Web UI service, clear login locks, and return to the login page.',

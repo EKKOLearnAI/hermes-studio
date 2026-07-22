@@ -2,7 +2,7 @@ export default {
   browser: {
     title: 'Browser', settings: 'Browser Settings', desktopOnly: 'The embedded browser is available only in Hermes Studio Desktop.', newTab: 'New Tab',
     back: 'Back', forward: 'Forward', reload: 'Reload', stop: 'Stop', addressPlaceholder: 'Search or enter an address',
-    selectElement: 'Select element', selectRegion: 'Select region', annotationAdded: 'Screenshot added to the chat composer',
+    selectElement: 'Select element', selectRegion: 'Select region', annotationPlaceholder: 'Describe what the Agent should inspect or change…', selectionData: 'Browser selection data', annotationAdded: 'Screenshot added to the chat composer', annotationCount: '{count} annotation(s)', annotationLabel: 'Annotation {index}', clearAnnotations: 'Clear annotations', finishAnnotation: 'Done',
     agent: 'Agent', agentControlling: '{agent} is controlling this tab', agentWaiting: '{agent} is waiting for your confirmation', takeOver: 'Take over', tabCrashed: 'This tab crashed.', recoverTab: 'Reload tab', profiles: 'Profiles', profileName: 'Profile name',
     profileDirectory: 'Profile data directory', profileMovePending: 'The profile directory will move after Desktop restarts.', downloadDirectory: 'Download directory',
     askBeforeDownload: 'Ask where to save each file', downloadConflictPolicy: 'Duplicate file names', uniquifyDownloads: 'Create a unique file name', askOnConflict: 'Ask when a file exists', downloads: 'Downloads', permissions: 'Permissions', permissionsHint: 'Remote page permissions are denied by default and listed here for audit.', blocked: 'Blocked',

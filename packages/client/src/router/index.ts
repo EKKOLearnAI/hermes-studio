@@ -175,8 +175,8 @@ const router = createRouter({
   ],
 })
 
-// The native browser route is registered only inside the Electron shell. A normal
-// Web UI never downloads the view or exposes a non-functional navigation entry.
+// Desktop exposes a dedicated settings page. Actual browsing stays inside the
+// chat tool panel so this route never creates or positions a WebContentsView.
 if (hasDesktopBrowserBridge()) {
   router.addRoute({
     path: '/hermes/browser',
