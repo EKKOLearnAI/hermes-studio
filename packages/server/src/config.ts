@@ -64,6 +64,11 @@ const appHome = getWebUiHome()
 const remoteRelay = {
   url: 'https://api.hermes-studio.ai',
 }
+const appRelay = {
+  url: process.env.NODE_ENV === 'production'
+    ? 'https://api.hermes-studio.ai'
+    : 'http://127.0.0.1:8077',
+}
 
 export const config = {
   port: parseInt(process.env.PORT || '8648', 10),
@@ -74,4 +79,5 @@ export const config = {
   dataDir: resolve(__dirname, '..', 'data'),
   corsOrigins: getCorsOrigins(),
   remoteRelay,
+  appRelay,
 }

@@ -85,6 +85,14 @@ function hasPath(messages: Record<string, unknown>, key: string): boolean {
   return typeof getPath(messages, key) !== 'undefined'
 }
 
+function collectMessagePaths(value: unknown, prefix: string): string[] {
+  if (typeof value === 'string') return [prefix]
+  if (!value || typeof value !== 'object') return []
+  return Object.entries(value).flatMap(([key, child]) =>
+    collectMessagePaths(child, prefix ? `${prefix}.${key}` : key),
+  )
+}
+
 const SKILLS_USAGE_LOCALIZED_KEYS = [
   'sidebar.skillsUsage',
   'skillsUsage.title',
@@ -283,6 +291,25 @@ describe('i18n locale coverage', () => {
           expect(() => i18n.global.t(change), `${locale}: ${change}`).not.toThrow()
         }
       }
+    }
+  })
+
+  it('compiles every APP Relay message in every locale', () => {
+    for (const [locale, localeMessages] of Object.entries(rawMessages)) {
+      const i18n = createI18n({
+        legacy: false,
+        locale,
+        fallbackLocale: false,
+        messages: { [locale]: localeMessages },
+      })
+
+      for (const key of collectMessagePaths(localeMessages.appRelay, 'appRelay')) {
+        expect(() => i18n.global.t(key, {
+          minutes: '10',
+          seconds: '30',
+        }), `${locale}: ${key}`).not.toThrow()
+      }
+      expect(i18n.global.t('appRelay.emailPlaceholder')).toContain('@')
     }
   })
 

@@ -9,6 +9,7 @@ import { authPublicRoutes, authProtectedRoutes } from './auth'
 import { devicePublicRoutes, deviceRoutes } from './devices'
 import { mcuDeviceRoutes } from './mcu-devices'
 import { codingAgentRoutes } from './coding-agents'
+import { appRelayRoutes } from './app-relay'
 import { apiDocsRoutes } from './api-docs'
 import { themeRoutes } from './theme'
 import { claudeCodeProxyRoutes } from './claude-code-proxy'
@@ -79,6 +80,7 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(updateRoutes.routes())           // Must be before proxy (proxy catch-all matches everything)
   app.use(codingAgentRoutes.routes())
   app.use(themeRoutes.routes())
+  app.use(appRelayRoutes.routes())
   app.use(sessionRoutes.routes())
   app.use(profileRoutes.routes())
   app.use(skillRoutes.routes())

@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useSessionSearch } from '@/composables/useSessionSearch'
 
-type ActiveSection = 'chat' | 'history' | 'group' | 'global' | 'workflow'
+type ActiveSection = 'chat' | 'history' | 'group' | 'global' | 'workflow' | 'app'
 
 const props = defineProps<{
   active: ActiveSection
@@ -53,6 +53,11 @@ function openWorkflow() {
 function openApiRelay() {
   if (typeof window === 'undefined') return
   window.open('https://apikey.fun/register?aff=LIBAPI', '_blank', 'noopener,noreferrer')
+}
+
+function openAppRelay() {
+  if (props.active === 'app') return
+  void router.push({ name: 'hermes.appRelay' })
 }
 </script>
 
@@ -139,6 +144,29 @@ function openApiRelay() {
           <line x1="10" y1="14" x2="21" y2="3" />
         </svg>
         <span>{{ t('sidebar.apiRelay') }}</span>
+      </button>
+      <button
+        class="page-sidebar-tab"
+        :class="{ active: active === 'app' }"
+        type="button"
+        :aria-current="active === 'app' ? 'page' : undefined"
+        @click="openAppRelay"
+      >
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect x="6" y="2.5" width="12" height="19" rx="2.5" />
+          <line x1="10" y1="5.5" x2="14" y2="5.5" />
+          <circle cx="12" cy="18" r=".8" fill="currentColor" stroke="none" />
+        </svg>
+        <span>{{ t('sidebar.app') }}</span>
       </button>
     </div>
     <div v-if="showModeSwitch" class="conversation-switch conversation-switch--three" role="tablist" aria-label="Conversation type">
