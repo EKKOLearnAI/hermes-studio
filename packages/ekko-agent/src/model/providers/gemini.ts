@@ -39,6 +39,7 @@ type GeminiPart =
   | { text: string }
   | { functionCall: { name: string; args: Record<string, unknown> } }
   | { functionResponse: { name: string; response: Record<string, unknown> } }
+  | { inlineData: { mimeType: string; data: string } }
 
 interface GeminiResponse {
   candidates?: Array<{
@@ -157,12 +158,15 @@ function toGeminiContent(message: AgentMessage): GeminiPayload['contents'][numbe
   if (message.role === 'tool') {
     return {
       role: 'function',
-      parts: [{
-        functionResponse: {
-          name: message.name ?? message.toolCallId ?? 'tool',
-          response: { content: message.content },
+      parts: [
+        {
+          functionResponse: {
+            name: message.name ?? message.toolCallId ?? 'tool',
+            response: { content: message.content },
+          },
         },
-      }],
+        ...(message.contentParts?.filter(part => part.type === 'image').map(image => ({ inlineData: { mimeType: image.mimeType, data: image.data } })) ?? []),
+      ],
     }
   }
 

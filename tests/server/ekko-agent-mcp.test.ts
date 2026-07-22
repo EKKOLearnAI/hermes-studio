@@ -73,6 +73,14 @@ describe('Ekko MCP server context', () => {
     expect(servers?.['hermes-studio-use']).toBeDefined()
   })
 
+  it('injects the browser toolset only for the Electron desktop runtime', async () => {
+    process.env.HERMES_DESKTOP = 'true'
+    const { buildManagedEkkoMcpServers } = await import('../../packages/server/src/services/ekko-agent/mcp')
+    const browser = buildManagedEkkoMcpServers('default')['hermes-studio-browser'] as any
+    expect(browser.args).toEqual([join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'browser'])
+    expect(browser.env.HERMES_MCP_TOOLSET).toBe('browser')
+  })
+
   it('does not add managed MCP servers when startup autoinject is disabled or skipped', async () => {
     process.env.HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT = '1'
     let mod = await import('../../packages/server/src/services/ekko-agent/mcp')

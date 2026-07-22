@@ -1,4 +1,14 @@
 export default {
+  browser: {
+    title: 'Navegador', settings: 'Configurações do navegador', desktopOnly: 'O navegador integrado está disponível apenas no Hermes Studio Desktop.', newTab: 'Nova aba',
+    back: 'Voltar', forward: 'Avançar', reload: 'Recarregar', stop: 'Parar', addressPlaceholder: 'Pesquisar ou inserir endereço',
+    selectElement: 'Selecionar elemento', selectRegion: 'Selecionar área', annotationAdded: 'Captura adicionada ao chat',
+    agent: 'Agent', agentControlling: '{agent} está controlando esta aba', agentWaiting: '{agent} aguarda sua confirmação', takeOver: 'Assumir controle', tabCrashed: 'Esta aba falhou.', recoverTab: 'Recarregar aba', profiles: 'Perfis', profileName: 'Nome do perfil',
+    profileDirectory: 'Diretório do perfil', profileMovePending: 'O diretório será movido após reiniciar.', downloadDirectory: 'Diretório de downloads',
+    askBeforeDownload: 'Perguntar onde salvar', downloadConflictPolicy: 'Nomes duplicados', uniquifyDownloads: 'Criar nome único', askOnConflict: 'Perguntar se existir', downloads: 'Downloads', permissions: 'Permissões', permissionsHint: 'Permissões de páginas remotas são negadas por padrão e registradas aqui.', blocked: 'Bloqueado',
+    profileSwitchTitle: 'Trocar perfil?', profileSwitchWarning: '{agents} operação(ões) Agent, {downloads} download(s) e {annotations} anotação(ões) podem ser interrompidos.',
+    deleteProfileTitle: 'Excluir perfil?', deleteProfileWarning: 'Dados gerenciados irão para a Lixeira. Diretórios personalizados serão mantidos.', clearCache: 'Limpar cache', clearPermissionAudit: 'Limpar registro de permissões', clearSiteData: 'Limpar dados de sites', clearSiteDataWarning: 'Remove logins, cookies e armazenamento local do perfil selecionado.', dataCleared: 'Dados do navegador limpos', loadFailed: 'Não foi possível iniciar o navegador integrado',
+  },
   // Login
   login: {
     title: 'Hermes Studio',
@@ -201,6 +211,7 @@ export default {
     skillsUsage: 'Uso de habilidades',
     channels: 'Canais',
     terminal: 'Terminal',
+    browser: 'Navegador',
     singleChat: 'Chat',
     globalAgent: 'Global Agent',
     files: 'Arquivos',

@@ -1,4 +1,4 @@
-import type { AgentMessage, AgentMessageRole, AgentToolCall, ModelEvent, ModelResponse, ModelUsage } from './types'
+import type { AgentMessage, AgentMessageContentPart, AgentMessageRole, AgentToolCall, ModelEvent, ModelResponse, ModelUsage } from './types'
 
 export type AgentMessageInput =
   | string
@@ -16,6 +16,7 @@ interface AgentMessageLike {
   tool_call_id?: string
   toolCalls?: AgentToolCall[]
   tool_calls?: AgentToolCall[]
+  contentParts?: AgentMessageContentPart[]
 }
 
 export interface AgentOutputMessage extends AgentMessage {
@@ -52,6 +53,7 @@ export function normalizeAgentMessage(input: AgentMessageInput, fallbackRole: Ag
     name: message.name,
     toolCallId: message.toolCallId ?? message.tool_call_id,
     toolCalls: message.toolCalls ?? message.tool_calls,
+    contentParts: message.contentParts,
   }
 }
 
@@ -71,12 +73,13 @@ export function createAssistantMessage(content: string, toolCalls?: AgentToolCal
   return { role: 'assistant', content, toolCalls }
 }
 
-export function createToolResultMessage(toolCallId: string, content: string, name?: string): AgentMessage {
+export function createToolResultMessage(toolCallId: string, content: string, name?: string, contentParts?: AgentMessageContentPart[]): AgentMessage {
   return {
     role: 'tool',
     content,
     toolCallId,
     name,
+    contentParts,
   }
 }
 

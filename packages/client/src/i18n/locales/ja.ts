@@ -1,4 +1,14 @@
 export default {
+  browser: {
+    title: 'ブラウザー', settings: 'ブラウザー設定', desktopOnly: '内蔵ブラウザーは Hermes Studio Desktop でのみ利用できます。', newTab: '新しいタブ',
+    back: '戻る', forward: '進む', reload: '再読み込み', stop: '停止', addressPlaceholder: '検索またはアドレスを入力',
+    selectElement: '要素を選択', selectRegion: '範囲を選択', annotationAdded: 'スクリーンショットをチャット入力欄に追加しました',
+    agent: 'Agent', agentControlling: '{agent} がこのタブを操作中', agentWaiting: '{agent} が確認を待っています', takeOver: '引き継ぐ', tabCrashed: 'このタブはクラッシュしました。', recoverTab: '再読み込み', profiles: 'プロファイル', profileName: 'プロファイル名',
+    profileDirectory: 'プロファイルデータ', profileMovePending: 'Desktop の再起動後に移動します。', downloadDirectory: 'ダウンロード先',
+    askBeforeDownload: '保存先を毎回確認', downloadConflictPolicy: '重複ファイル名', uniquifyDownloads: '一意の名前を作成', askOnConflict: '既存時に確認', downloads: 'ダウンロード', permissions: '権限', permissionsHint: 'リモートページの権限は既定で拒否され、監査用に表示されます。', blocked: 'ブロック済み',
+    profileSwitchTitle: 'プロファイルを切り替えますか？', profileSwitchWarning: '{agents} 件の Agent 操作、{downloads} 件のダウンロード、{annotations} 件の注釈が中断される可能性があります。',
+    deleteProfileTitle: 'プロファイルを削除しますか？', deleteProfileWarning: '管理対象データはゴミ箱へ移動します。カスタムディレクトリは残ります。', clearCache: 'キャッシュを消去', clearPermissionAudit: '権限ログを消去', clearSiteData: 'サイトデータを消去', clearSiteDataWarning: '選択したプロファイルのログイン、Cookie、ローカルストレージを消去します。', dataCleared: 'ブラウザーデータを消去しました', loadFailed: '内蔵ブラウザーを起動できませんでした',
+  },
   // ログイン
   login: {
     title: 'Hermes Studio',
@@ -201,6 +211,7 @@ export default {
     skillsUsage: 'スキル使用状況',
     channels: 'チャンネル',
     terminal: 'ターミナル',
+    browser: 'ブラウザー',
     singleChat: 'チャット',
     globalAgent: 'Global Agent',
     files: 'ファイル',

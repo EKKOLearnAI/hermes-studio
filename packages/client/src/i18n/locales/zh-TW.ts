@@ -1,4 +1,14 @@
 export default {
+  browser: {
+    title: '瀏覽器', settings: '瀏覽器設定', desktopOnly: '內建瀏覽器僅在 Hermes Studio 桌面版可用。', newTab: '新分頁',
+    back: '上一頁', forward: '下一頁', reload: '重新整理', stop: '停止', addressPlaceholder: '搜尋或輸入網址',
+    selectElement: '選取元素', selectRegion: '框選區域', annotationAdded: '截圖已加入對話輸入框',
+    agent: 'Agent', agentControlling: '{agent} 正在控制此分頁', agentWaiting: '{agent} 正在等待你的確認', takeOver: '接管', tabCrashed: '此分頁已崩潰。', recoverTab: '重新載入', profiles: '設定檔', profileName: '設定檔名稱',
+    profileDirectory: 'Profile 資料目錄', profileMovePending: '桌面版重新啟動後將移動 Profile 目錄。', downloadDirectory: '下載目錄',
+    askBeforeDownload: '每次下載前詢問儲存位置', downloadConflictPolicy: '檔名重複處理', uniquifyDownloads: '自動產生唯一檔名', askOnConflict: '檔案已存在時詢問', downloads: '下載記錄', permissions: '網站權限', permissionsHint: '遠端頁面權限預設全部拒絕，並在此保留稽核記錄。', blocked: '已封鎖',
+    profileSwitchTitle: '切換瀏覽器 Profile？', profileSwitchWarning: '可能中斷 {agents} 個 Agent 操作、{downloads} 個下載工作和 {annotations} 個批註工作。',
+    deleteProfileTitle: '刪除瀏覽器 Profile？', deleteProfileWarning: '受管理的 Profile 資料將移至系統垃圾桶，自訂目錄不會被刪除。', clearCache: '清除快取', clearPermissionAudit: '清除權限記錄', clearSiteData: '清除網站資料', clearSiteDataWarning: '這會登出所選 Profile 的網站並清除 Cookie 與本機儲存。', dataCleared: '瀏覽器資料已清除', loadFailed: '內建瀏覽器啟動失敗',
+  },
   // 登入
   login: {
     title: 'Hermes Studio',
@@ -204,6 +214,7 @@ export default {
     channels: '頻道',
     gateways: '閘道',
     terminal: '終端機',
+    browser: '瀏覽器',
     singleChat: '單聊',
     globalAgent: '全局',
     groupChat: '群聊',

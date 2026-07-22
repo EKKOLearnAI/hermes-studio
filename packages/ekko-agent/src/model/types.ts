@@ -19,11 +19,16 @@ export type AgentMessageRole = 'system' | 'user' | 'assistant' | 'tool'
 export interface AgentMessage {
   role: AgentMessageRole
   content: string
+  contentParts?: AgentMessageContentPart[]
   reasoning?: string
   name?: string
   toolCallId?: string
   toolCalls?: AgentToolCall[]
 }
+
+export type AgentMessageContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string }
 
 export interface AgentToolDefinition {
   name: string

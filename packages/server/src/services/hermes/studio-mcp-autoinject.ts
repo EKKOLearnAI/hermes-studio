@@ -8,11 +8,14 @@ import { isPathWithin } from './hermes-path'
 import { listProfileNamesFromDisk } from './hermes-profile'
 
 const LEGACY_SERVER_NAME = 'hermes-studio'
-const MANAGED_SERVERS = [
+const MANAGED_SERVERS: ReadonlyArray<{ name: string; toolset: string }> = [
   { name: 'hermes-studio-api', toolset: 'api' },
+  ...(String(process.env.HERMES_DESKTOP || '').trim().toLowerCase() === 'true'
+    ? [{ name: 'hermes-studio-browser', toolset: 'browser' }]
+    : []),
   { name: 'hermes-studio-devices', toolset: 'devices' },
   { name: 'hermes-studio-use', toolset: 'use' },
-] as const
+]
 const MANAGED_SERVER_NAMES: Set<string> = new Set(MANAGED_SERVERS.map(server => server.name))
 const LEGACY_SERVER_NAMES = new Set([
   LEGACY_SERVER_NAME,

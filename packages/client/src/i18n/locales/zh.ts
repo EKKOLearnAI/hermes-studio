@@ -1,4 +1,14 @@
 export default {
+  browser: {
+    title: '浏览器', settings: '浏览器设置', desktopOnly: '内置浏览器仅在 Hermes Studio 桌面端可用。', newTab: '新标签页',
+    back: '后退', forward: '前进', reload: '刷新', stop: '停止', addressPlaceholder: '搜索或输入网址',
+    selectElement: '选择元素', selectRegion: '框选区域', annotationAdded: '截图已添加到对话输入框',
+    agent: 'Agent', agentControlling: '{agent} 正在控制此标签页', agentWaiting: '{agent} 正在等待你的确认', takeOver: '接管', tabCrashed: '此标签页已崩溃。', recoverTab: '重新加载', profiles: '配置档案', profileName: '配置名称',
+    profileDirectory: 'Profile 数据目录', profileMovePending: '桌面端重启后将移动 Profile 目录。', downloadDirectory: '下载目录',
+    askBeforeDownload: '每次下载前询问保存位置', downloadConflictPolicy: '文件重名处理', uniquifyDownloads: '自动生成唯一文件名', askOnConflict: '文件已存在时询问', downloads: '下载记录', permissions: '网站权限', permissionsHint: '远程页面权限默认全部拒绝，并在此处保留审计记录。', blocked: '已阻止',
+    profileSwitchTitle: '切换浏览器 Profile？', profileSwitchWarning: '可能中断 {agents} 个 Agent 操作、{downloads} 个下载任务和 {annotations} 个批注任务。',
+    deleteProfileTitle: '删除浏览器 Profile？', deleteProfileWarning: '托管的 Profile 数据将移入系统废纸篓，自定义目录不会被删除。', clearCache: '清除缓存', clearPermissionAudit: '清除权限记录', clearSiteData: '清除站点数据', clearSiteDataWarning: '这会退出所选 Profile 中的网站登录，并清除 Cookie 和本地存储。', dataCleared: '浏览器数据已清除', loadFailed: '内置浏览器启动失败',
+  },
   // 登录
   login: {
     title: 'Hermes Studio',
@@ -204,6 +214,7 @@ export default {
     channels: '频道',
     gateways: '网关',
     terminal: '终端',
+    browser: '浏览器',
     singleChat: '单聊',
     globalAgent: '全局',
     groupChat: '群聊',

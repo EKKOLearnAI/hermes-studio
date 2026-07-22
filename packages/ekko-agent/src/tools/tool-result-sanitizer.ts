@@ -3,7 +3,7 @@ import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { AgentToolResult } from './types'
+import type { AgentToolContentPart, AgentToolResult } from './types'
 
 const DATA_URL_RE = /data:([a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+);base64,([a-zA-Z0-9+/=\r\n]+)/g
 const BASE64_FIELD_RE = /^(?:base64|b64|bodyBase64|dataUrl|image_base64|audio_base64)$/i
@@ -31,6 +31,15 @@ export async function sanitizeAgentToolResult(
     content: String(await sanitizeStructuredText(result.content, sanitize)),
     data: result.data === undefined ? undefined : await sanitize(result.data),
     error: result.error === undefined ? undefined : String(await sanitizeStructuredText(result.error, sanitize)),
+    contentParts: result.contentParts?.reduce<AgentToolContentPart[]>((parts, part) => {
+      if (part.type === 'text') parts.push({ type: 'text', text: part.text.slice(0, 100_000) })
+      else if (/^image\/(?:png|jpeg|webp|gif)$/i.test(part.mimeType)
+        && looksLikeBase64(part.data)
+        && Buffer.byteLength(part.data, 'base64') <= (options.maxBytes ?? DEFAULT_MAX_BYTES)) {
+        parts.push({ type: 'image', data: part.data, mimeType: part.mimeType.toLowerCase() })
+      }
+      return parts
+    }, []),
   }
 }
 

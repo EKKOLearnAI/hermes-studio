@@ -13,11 +13,12 @@ import {
   Tray,
   type MessageBoxOptions,
   type OpenDialogOptions,
+  type IpcMainInvokeEvent,
 } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { startWebUiServer, stopWebUiServer, getToken } from './webui-server'
-import { bundledNode, desktopIcon, desktopMacTrayIcon, desktopRuntimeVersion, desktopWindowsTrayIcon, hermesBinExists, hermesBin, runtimeStorageRoot, webuiDir } from './paths'
+import { bundledNode, desktopIcon, desktopMacTrayIcon, desktopRuntimeVersion, desktopWindowsTrayIcon, hermesBinExists, hermesBin, runtimeStorageRoot, webuiDir, webUiHome } from './paths'
 import { checkForDesktopUpdates, initAutoUpdater } from './updater'
 import { t } from './desktop-i18n'
 import { resetDesktopDefaultLogin } from './desktop-login-reset'
@@ -31,6 +32,9 @@ import {
   type RuntimeDownloadSource,
   type RuntimeProgress,
 } from './runtime-manager'
+import { BrowserManager } from './browser/browser-manager'
+import { BrowserBroker } from './browser/browser-broker'
+import type { BrowserBounds } from './browser/browser-types'
 
 const PORT = Number(process.env.HERMES_DESKTOP_PORT) || 8748
 const START_HIDDEN = process.argv.includes('--hidden')
@@ -42,6 +46,8 @@ const PET_WINDOW_MIN_SIZE = 72
 const PET_WINDOW_MAX_SIZE = 1200
 const PET_WINDOW_REFRESH_CHANNEL = 'hermes-desktop:pet-window-refresh'
 const WINDOW_STATE_CHANGE_CHANNEL = 'hermes-desktop:window-state-change'
+const BROWSER_STATE_CHANGE_CHANNEL = 'hermes-desktop:browser-state-change'
+const DESKTOP_DISABLED_CHROMIUM_FEATURES = ['CompressionDictionaryTransport', 'CompressionDictionaryTransportBackend']
 type WindowControlAction = 'minimize' | 'toggle-maximize' | 'close'
 type DesktopWindowBounds = { x: number; y: number; width: number; height: number }
 
@@ -55,7 +61,17 @@ let appShutdownPromise: Promise<void> | null = null
 let isBootstrapping = false
 let isResettingLogin = false
 let windowFadeTimer: NodeJS.Timeout | null = null
+let browserManager: BrowserManager | null = null
+let browserBroker: BrowserBroker | null = null
 const activeNotifications = new Set<Notification>()
+
+// Custom Session paths do not need Chromium's optional compression-dictionary
+// disk cache; disabling it leaves the normal HTTP cache enabled and isolated.
+const existingDisabledFeatures = app.commandLine.getSwitchValue('disable-features')
+  .split(',')
+  .map(value => value.trim())
+  .filter(Boolean)
+app.commandLine.appendSwitch('disable-features', [...new Set([...existingDisabledFeatures, ...DESKTOP_DISABLED_CHROMIUM_FEATURES])].join(','))
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_USER_MODEL_ID)
@@ -118,6 +134,10 @@ async function prepareAppShutdown(): Promise<void> {
     appShutdownPromise = (async () => {
       cancelWindowFade()
       await showShutdownSplash()
+      await browserBroker?.stop().catch(() => undefined)
+      browserManager?.destroy()
+      browserBroker = null
+      browserManager = null
       await stopWebUiServer().catch(() => undefined)
     })()
   }
@@ -500,6 +520,26 @@ async function createWindow(): Promise<void> {
   updateTrayMenu()
 }
 
+async function initializeDesktopBrowser(): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed() || browserManager) return
+  const root = join(webUiHome(), 'desktop-browser')
+  const manager = new BrowserManager(mainWindow, root, join(app.getPath('downloads'), 'Hermes Studio'))
+  const broker = new BrowserBroker(manager, root)
+  try {
+    await manager.initialize()
+    manager.onStateChange(state => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(BROWSER_STATE_CHANGE_CHANNEL, state)
+    })
+    await broker.start()
+    browserManager = manager
+    browserBroker = broker
+  } catch (error) {
+    await broker.stop().catch(() => undefined)
+    manager.destroy()
+    throw error
+  }
+}
+
 function installMicrophonePermissionHandler() {
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
     const isMainRenderer = !!mainWindow
@@ -783,6 +823,78 @@ async function bootstrap(source?: RuntimeDownloadSource) {
 }
 
 ipcMain.handle('hermes-desktop:get-token', () => getToken())
+
+function browserForEvent(event: IpcMainInvokeEvent): BrowserManager {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) throw new Error('Desktop browser IPC is only available to the main window')
+  if (!browserManager) throw new Error('Desktop browser is still starting')
+  return browserManager
+}
+
+ipcMain.handle('hermes-desktop:browser-get-state', event => browserForEvent(event).state())
+ipcMain.handle('hermes-desktop:browser-set-viewport', (event, bounds?: unknown, visible?: unknown) => {
+  const input = bounds && typeof bounds === 'object' ? bounds as Partial<BrowserBounds> : {}
+  const sanitized: BrowserBounds = {
+    x: Number.isFinite(input.x) ? Number(input.x) : 0,
+    y: Number.isFinite(input.y) ? Number(input.y) : 0,
+    width: Number.isFinite(input.width) ? Number(input.width) : 1,
+    height: Number.isFinite(input.height) ? Number(input.height) : 1,
+  }
+  return browserForEvent(event).setViewport(sanitized, visible === true)
+})
+ipcMain.handle('hermes-desktop:browser-create-tab', (event, url?: unknown, activate?: unknown) => browserForEvent(event).createTab(typeof url === 'string' ? url : 'about:blank', activate !== false))
+ipcMain.handle('hermes-desktop:browser-close-tab', (event, tabId?: unknown) => browserForEvent(event).closeTab(String(tabId || '')))
+ipcMain.handle('hermes-desktop:browser-activate-tab', (event, tabId?: unknown) => browserForEvent(event).activateTab(String(tabId || '')))
+ipcMain.handle('hermes-desktop:browser-navigate', (event, tabId?: unknown, url?: unknown) => {
+  const manager = browserForEvent(event)
+  browserBroker?.revokeTab(String(tabId || ''))
+  return manager.navigate(String(tabId || ''), String(url || ''))
+})
+ipcMain.handle('hermes-desktop:browser-navigation-action', (event, tabId?: unknown, action?: unknown) => {
+  if (action !== 'back' && action !== 'forward' && action !== 'reload' && action !== 'stop') throw new Error('Invalid browser navigation action')
+  const manager = browserForEvent(event)
+  browserBroker?.revokeTab(String(tabId || ''))
+  return manager.navigationAction(String(tabId || ''), action)
+})
+ipcMain.handle('hermes-desktop:browser-create-profile', (event, name?: unknown) => browserForEvent(event).createProfile(String(name || '')))
+ipcMain.handle('hermes-desktop:browser-rename-profile', (event, profileId?: unknown, name?: unknown) => browserForEvent(event).renameProfile(String(profileId || ''), String(name || '')))
+ipcMain.handle('hermes-desktop:browser-profile-switch-impact', event => browserForEvent(event).profileSwitchImpact())
+ipcMain.handle('hermes-desktop:browser-switch-profile', (event, profileId?: unknown, force?: unknown) => {
+  const manager = browserForEvent(event)
+  browserBroker?.revokeAll()
+  return manager.switchProfile(String(profileId || ''), force === true)
+})
+ipcMain.handle('hermes-desktop:browser-update-profile', (event, profileId?: unknown, input?: unknown) => {
+  const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
+  return browserForEvent(event).updateProfile(String(profileId || ''), {
+    ...(typeof value.askBeforeDownload === 'boolean' ? { askBeforeDownload: value.askBeforeDownload } : {}),
+    ...(value.downloadConflictPolicy === 'ask' || value.downloadConflictPolicy === 'uniquify'
+      ? { downloadConflictPolicy: value.downloadConflictPolicy }
+      : {}),
+  })
+})
+ipcMain.handle('hermes-desktop:browser-delete-profile', (event, profileId?: unknown) => browserForEvent(event).deleteProfile(String(profileId || '')))
+ipcMain.handle('hermes-desktop:browser-clear-profile-data', (event, profileId?: unknown, kind?: unknown) => {
+  if (kind !== 'cache' && kind !== 'site-data' && kind !== 'permission-audit') throw new Error('Invalid browser data type')
+  const manager = browserForEvent(event)
+  browserBroker?.revokeAll()
+  return manager.clearProfileData(String(profileId || ''), kind)
+})
+ipcMain.handle('hermes-desktop:browser-choose-directory', (event, kind?: unknown, profileId?: unknown) => {
+  if (kind !== 'download' && kind !== 'session') throw new Error('Invalid browser directory kind')
+  return browserForEvent(event).chooseDirectory(kind, String(profileId || ''))
+})
+ipcMain.handle('hermes-desktop:browser-take-over', (event, tabId?: unknown) => {
+  browserForEvent(event)
+  browserBroker?.revokeTab(String(tabId || ''))
+  return true
+})
+ipcMain.handle('hermes-desktop:browser-annotate', (event, tabId?: unknown, mode?: unknown) => {
+  if (mode !== 'element' && mode !== 'region') throw new Error('Invalid browser annotation mode')
+  const manager = browserForEvent(event)
+  browserBroker?.revokeTab(String(tabId || ''))
+  return manager.annotate(String(tabId || ''), mode)
+})
+ipcMain.handle('hermes-desktop:browser-cancel-annotation', (event, tabId?: unknown) => browserForEvent(event).cancelAnnotation(String(tabId || '')))
 ipcMain.handle('hermes-desktop:select-runtime-directory', async (_event, defaultPath?: unknown) => {
   const options: OpenDialogOptions = {
     properties: ['openDirectory'],
@@ -932,6 +1044,9 @@ function runDesktopApp() {
     }
     createTray()
     await createWindow()
+    await initializeDesktopBrowser().catch(error => {
+      console.error('[desktop-browser] failed to initialize:', error)
+    })
     void bootstrap()
     initAutoUpdater({ beforeQuitAndInstall: prepareAppShutdown })
     app.on('activate', () => {

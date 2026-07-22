@@ -137,7 +137,7 @@ export class ModelMemoryExtractor implements MemoryExtractor {
       }
       for (const toolCall of toolCalls) {
         const result = await tools.execute(toolCall.name, toolCall.arguments, toolContext)
-        messages.push(createToolResultMessage(toolCall.id, result.content, toolCall.name))
+        messages.push(createToolResultMessage(toolCall.id, result.content, toolCall.name, result.contentParts))
       }
     }
     throw new Error('Memory summarizer exceeded its tool step limit.')

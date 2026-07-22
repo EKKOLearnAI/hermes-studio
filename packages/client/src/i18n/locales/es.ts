@@ -1,4 +1,14 @@
 export default {
+  browser: {
+    title: 'Navegador', settings: 'Ajustes del navegador', desktopOnly: 'El navegador integrado solo está disponible en Hermes Studio Desktop.', newTab: 'Nueva pestaña',
+    back: 'Atrás', forward: 'Adelante', reload: 'Recargar', stop: 'Detener', addressPlaceholder: 'Buscar o escribir una dirección',
+    selectElement: 'Seleccionar elemento', selectRegion: 'Seleccionar región', annotationAdded: 'Captura añadida al cuadro de chat',
+    agent: 'Agent', agentControlling: '{agent} controla esta pestaña', agentWaiting: '{agent} espera tu confirmación', takeOver: 'Tomar control', tabCrashed: 'Esta pestaña falló.', recoverTab: 'Recargar pestaña', profiles: 'Perfiles', profileName: 'Nombre del perfil',
+    profileDirectory: 'Directorio del perfil', profileMovePending: 'El directorio se moverá tras reiniciar.', downloadDirectory: 'Directorio de descargas',
+    askBeforeDownload: 'Preguntar dónde guardar', downloadConflictPolicy: 'Nombres duplicados', uniquifyDownloads: 'Crear un nombre único', askOnConflict: 'Preguntar si existe', downloads: 'Descargas', permissions: 'Permisos', permissionsHint: 'Los permisos de páginas remotas se deniegan por defecto y se registran aquí.', blocked: 'Bloqueado',
+    profileSwitchTitle: '¿Cambiar de perfil?', profileSwitchWarning: 'Pueden interrumpirse {agents} operación(es) Agent, {downloads} descarga(s) y {annotations} anotación(es).',
+    deleteProfileTitle: '¿Eliminar perfil?', deleteProfileWarning: 'Los datos gestionados irán a la papelera. Los directorios personalizados se conservan.', clearCache: 'Borrar caché', clearPermissionAudit: 'Borrar registro de permisos', clearSiteData: 'Borrar datos de sitios', clearSiteDataWarning: 'Borra sesiones, cookies y almacenamiento local del perfil seleccionado.', dataCleared: 'Datos del navegador borrados', loadFailed: 'No se pudo iniciar el navegador integrado',
+  },
   // Login
   login: {
     title: 'Hermes Studio',
@@ -201,6 +211,7 @@ export default {
     skillsUsage: 'Uso de habilidades',
     channels: 'Canales',
     terminal: 'Terminal',
+    browser: 'Navegador',
     singleChat: 'Chat',
     globalAgent: 'Global Agent',
     files: 'Archivos',

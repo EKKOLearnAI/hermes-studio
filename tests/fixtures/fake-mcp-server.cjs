@@ -33,12 +33,33 @@ rl.on('line', line => {
               additionalProperties: false,
             },
           },
+          {
+            name: 'fake_image',
+            description: 'Return an MCP image.',
+            inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+          },
+          {
+            name: 'fake_pid',
+            description: 'Return the persistent MCP process id.',
+            inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+          },
         ],
       },
     })}\n`)
     return
   }
   if (message.method === 'tools/call') {
+    if (message.params?.name === 'fake_image') {
+      process.stdout.write(`${JSON.stringify({
+        jsonrpc: '2.0', id: message.id,
+        result: { content: [{ type: 'text', text: 'image result' }, { type: 'image', mimeType: 'image/png', data: 'aGVsbG8=' }] },
+      })}\n`)
+      return
+    }
+    if (message.params?.name === 'fake_pid') {
+      process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: String(process.pid) }] } })}\n`)
+      return
+    }
     process.stdout.write(`${JSON.stringify({
       jsonrpc: '2.0',
       id: message.id,

@@ -1,4 +1,14 @@
 export default {
+  browser: {
+    title: 'Browser', settings: 'Browser Settings', desktopOnly: 'The embedded browser is available only in Hermes Studio Desktop.', newTab: 'New Tab',
+    back: 'Back', forward: 'Forward', reload: 'Reload', stop: 'Stop', addressPlaceholder: 'Search or enter an address',
+    selectElement: 'Select element', selectRegion: 'Select region', annotationAdded: 'Screenshot added to the chat composer',
+    agent: 'Agent', agentControlling: '{agent} is controlling this tab', agentWaiting: '{agent} is waiting for your confirmation', takeOver: 'Take over', tabCrashed: 'This tab crashed.', recoverTab: 'Reload tab', profiles: 'Profiles', profileName: 'Profile name',
+    profileDirectory: 'Profile data directory', profileMovePending: 'The profile directory will move after Desktop restarts.', downloadDirectory: 'Download directory',
+    askBeforeDownload: 'Ask where to save each file', downloadConflictPolicy: 'Duplicate file names', uniquifyDownloads: 'Create a unique file name', askOnConflict: 'Ask when a file exists', downloads: 'Downloads', permissions: 'Permissions', permissionsHint: 'Remote page permissions are denied by default and listed here for audit.', blocked: 'Blocked',
+    profileSwitchTitle: 'Switch browser profile?', profileSwitchWarning: '{agents} Agent operation(s), {downloads} download(s), and {annotations} annotation(s) may be interrupted.',
+    deleteProfileTitle: 'Delete browser profile?', deleteProfileWarning: 'Managed profile data will be moved to the system Trash. Custom directories are left untouched.', clearCache: 'Clear cache', clearPermissionAudit: 'Clear permission log', clearSiteData: 'Clear site data', clearSiteDataWarning: 'This signs the selected profile out of websites and clears cookies and local storage.', dataCleared: 'Browser data cleared', loadFailed: 'Failed to start the embedded browser',
+  },
   // Login
   login: {
     title: 'Hermes Studio',
@@ -204,6 +214,7 @@ export default {
     channels: 'Channels',
     gateways: 'Gateways',
     terminal: 'Terminal',
+    browser: 'Browser',
     singleChat: 'Chat',
     globalAgent: 'Global Agent',
     groupChat: 'Group Chat',

@@ -1,4 +1,14 @@
 export default {
+  browser: {
+    title: 'Браузер', settings: 'Настройки браузера', desktopOnly: 'Встроенный браузер доступен только в Hermes Studio Desktop.', newTab: 'Новая вкладка',
+    back: 'Назад', forward: 'Вперёд', reload: 'Обновить', stop: 'Остановить', addressPlaceholder: 'Поиск или адрес',
+    selectElement: 'Выбрать элемент', selectRegion: 'Выбрать область', annotationAdded: 'Снимок добавлен в поле чата',
+    agent: 'Agent', agentControlling: '{agent} управляет вкладкой', agentWaiting: '{agent} ожидает вашего подтверждения', takeOver: 'Перехватить', tabCrashed: 'Эта вкладка аварийно завершилась.', recoverTab: 'Перезагрузить', profiles: 'Профили', profileName: 'Имя профиля',
+    profileDirectory: 'Каталог профиля', profileMovePending: 'Каталог будет перемещён после перезапуска.', downloadDirectory: 'Каталог загрузок',
+    askBeforeDownload: 'Всегда спрашивать место', downloadConflictPolicy: 'Повторяющиеся имена', uniquifyDownloads: 'Создать уникальное имя', askOnConflict: 'Спросить при конфликте', downloads: 'Загрузки', permissions: 'Разрешения', permissionsHint: 'Разрешения удалённых страниц по умолчанию запрещены и записываются здесь.', blocked: 'Заблокировано',
+    profileSwitchTitle: 'Сменить профиль?', profileSwitchWarning: 'Могут прерваться операции Agent: {agents}, загрузки: {downloads}, аннотации: {annotations}.',
+    deleteProfileTitle: 'Удалить профиль?', deleteProfileWarning: 'Управляемые данные будут перемещены в корзину. Пользовательские каталоги сохранятся.', clearCache: 'Очистить кэш', clearPermissionAudit: 'Очистить журнал разрешений', clearSiteData: 'Очистить данные сайтов', clearSiteDataWarning: 'Удаляет входы, cookie и локальное хранилище выбранного профиля.', dataCleared: 'Данные браузера очищены', loadFailed: 'Не удалось запустить встроенный браузер',
+  },
 
   login: {
     title: 'Hermes Studio',
@@ -129,6 +139,7 @@ export default {
     channels: 'Каналы',
     gateways: 'Шлюзы',
     terminal: 'Терминал',
+    browser: 'Браузер',
     singleChat: 'Чат',
     globalAgent: 'Global Agent',
     groupChat: 'Групповой чат',

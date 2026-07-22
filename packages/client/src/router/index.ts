@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { hasApiKey, isStoredSuperAdmin } from '@/api/client'
+import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -173,6 +174,16 @@ const router = createRouter({
     },
   ],
 })
+
+// The native browser route is registered only inside the Electron shell. A normal
+// Web UI never downloads the view or exposes a non-functional navigation entry.
+if (hasDesktopBrowserBridge()) {
+  router.addRoute({
+    path: '/hermes/browser',
+    name: 'hermes.browser',
+    component: () => import('@/views/hermes/DesktopBrowserView.vue'),
+  })
+}
 
 async function ensureDesktopAuth(): Promise<void> {
   if (hasApiKey()) return

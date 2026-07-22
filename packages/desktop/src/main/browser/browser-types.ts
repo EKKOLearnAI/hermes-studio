@@ -1,0 +1,150 @@
+export type BrowserAgentControl = 'idle' | 'active' | 'waiting-for-user'
+
+export interface BrowserBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface DesktopBrowserTab {
+  id: string
+  profileId: string
+  title: string
+  url: string
+  faviconUrl?: string
+  loading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+  crashed: boolean
+  agentControl: BrowserAgentControl
+  agentLabel?: string
+  agentAction?: string
+}
+
+export interface DesktopBrowserProfile {
+  id: string
+  name: string
+  sessionPath: string
+  pendingSessionPath?: string
+  downloadPath: string
+  askBeforeDownload: boolean
+  downloadConflictPolicy: 'ask' | 'uniquify'
+  createdAt: string
+  lastUsedAt: string
+  tabs: string[]
+}
+
+export interface DesktopBrowserDownload {
+  id: string
+  profileId: string
+  fileName: string
+  sourceUrl: string
+  savePath?: string
+  receivedBytes: number
+  totalBytes: number
+  state: 'blocked' | 'progressing' | 'completed' | 'cancelled' | 'interrupted'
+  startedAt: string
+}
+
+export interface BrowserSitePermission {
+  id: string
+  profileId: string
+  origin: string
+  permission: string
+  allowed: boolean
+  lastRequestedAt: string
+}
+
+export interface DesktopBrowserState {
+  available: boolean
+  activeProfileId: string
+  activeTabId?: string
+  tabs: DesktopBrowserTab[]
+  profiles: DesktopBrowserProfile[]
+  downloads: DesktopBrowserDownload[]
+  permissions: BrowserSitePermission[]
+  visible: boolean
+  maxTabs: number
+}
+
+export interface BrowserSnapshotNode {
+  ref: string
+  role: string
+  name: string
+  value?: string
+  description?: string
+  disabled?: boolean
+  focused?: boolean
+}
+
+export interface BrowserSnapshot {
+  tabId: string
+  snapshotId: string
+  url: string
+  title: string
+  nodes: BrowserSnapshotNode[]
+  text: string
+}
+
+export interface BrowserScreenshot {
+  tabId: string
+  url: string
+  title: string
+  mediaType: 'image/png' | 'image/jpeg'
+  data: string
+  width: number
+  height: number
+}
+
+export interface BrowserConsoleEntry {
+  level: number
+  message: string
+  sourceId: string
+  line: number
+  timestamp: string
+}
+
+export interface BrowserSelection {
+  tabId: string
+  mode: 'element' | 'region'
+  url: string
+  title: string
+  viewport: {
+    width: number
+    height: number
+    scaleFactor: number
+  }
+  region: BrowserBounds
+  element?: {
+    role?: string
+    name?: string
+    tag?: string
+    id?: string
+    classNames?: string[]
+  }
+  screenshot: BrowserScreenshot
+}
+
+export interface BrowserProfileSwitchImpact {
+  activeAgentRuns: number
+  activeDownloads: number
+  pendingAnnotations: number
+  openTabs: number
+  requiresConfirmation: boolean
+}
+
+export interface BrowserBrokerDescriptor {
+  schema: 1
+  desktopPid: number
+  endpoint: string
+  token: string
+  instanceId: string
+  createdAt: string
+}
+
+export type BrowserInteractAction =
+  | { action: 'click'; ref: string; snapshot_id: string }
+  | { action: 'type'; ref: string; snapshot_id: string; text: string }
+  | { action: 'press'; key: string }
+  | { action: 'scroll'; direction: 'up' | 'down' | 'left' | 'right'; pixels?: number }

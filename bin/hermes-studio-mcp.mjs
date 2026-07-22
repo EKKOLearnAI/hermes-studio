@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createInterface } from 'node:readline'
-import { readFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,7 +10,7 @@ const DEFAULT_PORT = process.env.HERMES_WEB_UI_PORT || process.env.PORT || '8648
 const DEFAULT_BASE_URL = `http://127.0.0.1:${DEFAULT_PORT}`
 const DISPLAY_COMMAND = 'hermes-studio-mcp'
 const SERVER_NAME = process.env.HERMES_MCP_SERVER_NAME || DISPLAY_COMMAND
-const TOOLSETS = new Set(['api', 'devices', 'use'])
+const TOOLSETS = new Set(['api', 'browser', 'devices', 'use'])
 const ALLOWED_PUBLIC_REQUEST_HEADERS = new Set([
   'accept',
   'accept-language',
@@ -44,7 +45,7 @@ function printHelp() {
 Hermes Studio MCP stdio server.
 
 Usage:
-  ${DISPLAY_COMMAND} [api|devices|use]
+  ${DISPLAY_COMMAND} [api|browser|devices|use]
   ${DISPLAY_COMMAND} --help
   ${DISPLAY_COMMAND} --version
 
@@ -55,7 +56,7 @@ Environment:
   HERMES_WEB_UI_PROFILE   Default Hermes profile when a tool call omits profile.
   HERMES_WEB_UI_TOKEN     Optional explicit API token.
   AUTH_TOKEN              Optional explicit API token fallback.
-  HERMES_MCP_TOOLSET      Tool category to expose: api, devices, or use. Default: api.
+  HERMES_MCP_TOOLSET      Tool category to expose: api, browser, devices, or use. Default: api.
 
 When run without options, this process waits for MCP JSON-RPC messages on stdin.
 `)
@@ -568,6 +569,89 @@ function withAuthArgs(args, options = {}) {
   }
 }
 
+const BROWSER_CLIENT_ID = `${SERVER_NAME}:${process.pid}:${randomUUID()}`
+let cachedBrowserSession = null
+
+function browserInputSchema(properties = {}, required = []) {
+  return {
+    type: 'object',
+    properties,
+    ...(required.length ? { required } : {}),
+    additionalProperties: false,
+  }
+}
+
+function browserDescriptor() {
+  let descriptor
+  const descriptorPath = join(appHome(), 'desktop-browser', 'broker.json')
+  try {
+    const info = statSync(descriptorPath)
+    if (process.platform !== 'win32' && (info.mode & 0o077) !== 0) throw new Error('unsafe descriptor permissions')
+    const directoryInfo = statSync(join(appHome(), 'desktop-browser'))
+    if (process.platform !== 'win32' && (directoryInfo.mode & 0o077) !== 0) throw new Error('unsafe descriptor directory permissions')
+    descriptor = JSON.parse(readFileSync(descriptorPath, 'utf8'))
+  } catch {
+    throw new Error('Hermes Studio Desktop Browser is not running. Open the Desktop app and try again.')
+  }
+  const endpoint = String(descriptor?.endpoint || '')
+  const token = String(descriptor?.token || '')
+  const parsed = new URL(endpoint)
+  if (descriptor?.schema !== 1 || parsed.protocol !== 'http:' || parsed.hostname !== '127.0.0.1' || parsed.pathname !== '/v1' || !token) {
+    throw new Error('Desktop Browser Broker descriptor is invalid')
+  }
+  if (!Number.isInteger(descriptor.desktopPid) || descriptor.desktopPid <= 0) throw new Error('Desktop Browser Broker PID is invalid')
+  try { process.kill(descriptor.desktopPid, 0) } catch { throw new Error('Hermes Studio Desktop Browser is no longer running') }
+  return { endpoint, token, instanceId: String(descriptor.instanceId || '') }
+}
+
+async function browserSession(descriptor) {
+  if (cachedBrowserSession?.instanceId === descriptor.instanceId) return cachedBrowserSession
+  const sessionUrl = new URL(descriptor.endpoint)
+  sessionUrl.pathname = '/v1/session'
+  const response = await fetch(sessionUrl, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${descriptor.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client: BROWSER_CLIENT_ID }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  const payload = await response.json().catch(() => null)
+  if (!response.ok || !payload?.client_id || !payload?.session_token) throw new Error(payload?.error || 'Desktop Browser Broker session failed')
+  cachedBrowserSession = { instanceId: descriptor.instanceId, clientId: payload.client_id, token: payload.session_token }
+  return cachedBrowserSession
+}
+
+async function browserRequest(method, params = {}) {
+  const descriptor = browserDescriptor()
+  const session = await browserSession(descriptor)
+  const operationId = randomUUID()
+  const response = await fetch(descriptor.endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${session.token}`,
+      'Content-Type': 'application/json',
+      'X-Hermes-Browser-Client': session.clientId,
+    },
+    body: JSON.stringify({ method, params, operation_id: operationId }),
+    signal: AbortSignal.timeout(45_000),
+  })
+  const payload = await response.json().catch(() => null)
+  if (!response.ok) throw new Error(payload?.error || `Browser Broker HTTP ${response.status}`)
+  return payload
+}
+
+function browserScreenshotContent(envelope) {
+  const screenshot = envelope?.result
+  if (!screenshot?.data || !screenshot?.mediaType) throw new Error('Browser Broker returned an invalid screenshot')
+  const metadata = { ...screenshot }
+  delete metadata.data
+  return {
+    content: [
+      { type: 'text', text: JSON.stringify({ operation_id: envelope.operation_id, ...metadata }, null, 2) },
+      { type: 'image', data: screenshot.data, mimeType: screenshot.mediaType },
+    ],
+  }
+}
+
 function pickDefined(source, keys) {
   const picked = {}
   for (const key of keys) {
@@ -769,6 +853,56 @@ function compactAvailableModelsPayload(payload, args = {}) {
 }
 
 const tools = [
+  {
+    name: 'hermes_studio_browser_tabs',
+    toolset: 'browser',
+    description: 'List, create, activate, close, or release control of Hermes Studio Desktop browser tabs. Reuse explicit tab_id values across calls.',
+    inputSchema: browserInputSchema({
+      action: { type: 'string', enum: ['list', 'create', 'activate', 'close', 'release'] },
+      tab_id: { type: 'string', description: 'Required for activate, close, and release.' },
+      url: { type: 'string', description: 'Optional HTTP/HTTPS URL for a new tab.' },
+      activate: { type: 'boolean', description: 'Whether a newly created tab becomes visible. Defaults to true.' },
+    }, ['action']),
+  },
+  {
+    name: 'hermes_studio_browser_navigate',
+    toolset: 'browser',
+    description: 'Open an HTTP/HTTPS URL or move back, forward, reload, or stop one Hermes Studio Desktop browser tab.',
+    inputSchema: browserInputSchema({
+      tab_id: { type: 'string' },
+      action: { type: 'string', enum: ['open', 'back', 'forward', 'reload', 'stop'], description: 'Defaults to open when url is provided.' },
+      url: { type: 'string', description: 'Required when action is open.' },
+    }, ['tab_id']),
+  },
+  {
+    name: 'hermes_studio_browser_snapshot',
+    toolset: 'browser',
+    description: 'Return a bounded accessibility snapshot with stable element refs. Pass its snapshot_id to click or type; stale snapshots are rejected.',
+    inputSchema: browserInputSchema({ tab_id: { type: 'string' } }, ['tab_id']),
+  },
+  {
+    name: 'hermes_studio_browser_interact',
+    toolset: 'browser',
+    description: 'Click, type, press a key, or scroll in one Desktop browser tab. Click/type require a ref and snapshot_id from the latest snapshot.',
+    inputSchema: browserInputSchema({
+      tab_id: { type: 'string' },
+      action: { type: 'string', enum: ['click', 'type', 'press', 'scroll'] },
+      ref: { type: 'string' }, snapshot_id: { type: 'string' }, text: { type: 'string' }, key: { type: 'string' },
+      direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] }, pixels: { type: 'number' },
+    }, ['tab_id', 'action']),
+  },
+  {
+    name: 'hermes_studio_browser_screenshot',
+    toolset: 'browser',
+    description: 'Capture the visible viewport or bounded full page as a real MCP image content block for visual reasoning.',
+    inputSchema: browserInputSchema({ tab_id: { type: 'string' }, full_page: { type: 'boolean' } }, ['tab_id']),
+  },
+  {
+    name: 'hermes_studio_browser_console',
+    toolset: 'browser',
+    description: 'Read or clear the bounded console log for one Desktop browser tab.',
+    inputSchema: browserInputSchema({ tab_id: { type: 'string' }, action: { type: 'string', enum: ['read', 'clear'] } }, ['tab_id', 'action']),
+  },
   {
     name: 'hermes_studio_api_openapi_get',
     toolset: 'api',
@@ -1466,6 +1600,13 @@ function resolveToolName(name) {
 }
 
 function visibleTools() {
+  if (ACTIVE_TOOLSET === 'browser') {
+    try {
+      browserDescriptor()
+    } catch {
+      return []
+    }
+  }
   const visible = tools.filter(tool => tool.toolset === ACTIVE_TOOLSET)
   return visible.map(({ toolset, ...tool }) => tool)
 }
@@ -1479,6 +1620,46 @@ async function callTool(name, args = {}) {
     return errorText(`Tool is not available in the active '${ACTIVE_TOOLSET}' MCP toolset: ${name}`)
   }
   switch (resolveToolName(name)) {
+    case 'hermes_studio_browser_tabs': {
+      if (args.action === 'list') return jsonText(await browserRequest('tabs.list'))
+      if (args.action === 'create') return jsonText(await browserRequest('tabs.create', { url: args.url, activate: args.activate }))
+      if (args.action === 'activate') return jsonText(await browserRequest('tabs.activate', { tab_id: args.tab_id }))
+      if (args.action === 'close') return jsonText(await browserRequest('tabs.close', { tab_id: args.tab_id }))
+      if (args.action === 'release') return jsonText(await browserRequest('lease.release', { tab_id: args.tab_id }))
+      return errorText('Invalid browser tab action')
+    }
+    case 'hermes_studio_browser_navigate': {
+      const action = args.action || 'open'
+      if (action === 'open') {
+        if (!args.url) return errorText('url is required when browser navigation action is open')
+        return jsonText(await browserRequest('navigate', { tab_id: args.tab_id, url: args.url }))
+      }
+      return jsonText(await browserRequest('navigation.action', { tab_id: args.tab_id, action }))
+    }
+    case 'hermes_studio_browser_snapshot':
+      return jsonText(await browserRequest('snapshot', { tab_id: args.tab_id }))
+    case 'hermes_studio_browser_interact': {
+      const action = { action: args.action }
+      for (const key of ['ref', 'snapshot_id', 'text', 'key', 'direction', 'pixels']) {
+        if (args[key] !== undefined) action[key] = args[key]
+      }
+      return jsonText(await browserRequest('interact', { tab_id: args.tab_id, action }))
+    }
+    case 'hermes_studio_browser_screenshot': {
+      try {
+        return browserScreenshotContent(await browserRequest('screenshot', { tab_id: args.tab_id, full_page: args.full_page === true }))
+      } catch (error) {
+        const snapshot = await browserRequest('snapshot', { tab_id: args.tab_id }).catch(() => null)
+        if (!snapshot) throw error
+        return jsonText({
+          screenshot_error: error instanceof Error ? error.message : String(error),
+          fallback: 'Accessibility snapshot',
+          snapshot: snapshot.result,
+        })
+      }
+    }
+    case 'hermes_studio_browser_console':
+      return jsonText(await browserRequest(args.action === 'clear' ? 'console.clear' : 'console.read', { tab_id: args.tab_id }))
     case 'hermes_studio_api_openapi_get':
       return jsonText(compactOpenApiDocument(await openApiDocument(withAuthArgs(args)), args))
     case 'hermes_studio_api_request': {

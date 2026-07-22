@@ -178,7 +178,7 @@ export class AgentRuntime {
             input.signal,
           )
           throwIfAborted(input.signal)
-          messages.push(createToolResultMessage(toolCall.id, result.content, toolCall.name))
+          messages.push(createToolResultMessage(toolCall.id, result.content, toolCall.name, result.contentParts))
           steps.push({ type: 'tool', step, toolCallId: toolCall.id, toolName: toolCall.name, result })
           consecutiveToolFailures = result.ok ? 0 : consecutiveToolFailures + 1
           if (maxConsecutiveToolFailures > 0 && consecutiveToolFailures >= maxConsecutiveToolFailures) {

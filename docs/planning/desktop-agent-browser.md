@@ -2,6 +2,10 @@
 
 日期：2026-07-22
 
+实现状态：已确定并实现首版架构。嵌入式浏览器直接使用
+<code>webContents.debugger</code>，不通过 <code>agent-browser</code>，也不开放
+远程调试端口。
+
 ## 一、结论
 
 Hermes Studio 桌面端新增一个基于 Electron <code>WebContentsView</code> 的内置浏览器。
@@ -30,12 +34,11 @@ MCP 只是 Agent 的统一工具协议，不直接控制 Electron。真正控制
 Electron API 和 CDP：
 
 - 标签页、导航、前进、后退、刷新：Electron <code>webContents</code> API；
-- DOM 快照、点击、输入、滚动、截图：优先复用 <code>agent-browser</code>
-  连接指定页面的 CDP Target；
+- DOM 快照、点击、输入、滚动、截图：由每个标签页自己的
+  <code>webContents.debugger</code> 直接发送固定 CDP 命令；
 - DOM 元素选择和任意区域框选：
   <code>executeJavaScriptInIsolatedWorld()</code>；
-- 如果 <code>agent-browser</code> 无法严格锁定指定页面，则改用
-  <code>webContents.debugger</code> 直接发送 CDP 命令。
+- 不创建 Browser 级 CDP Endpoint，不在进程参数、文件或 RPC 中传递 CDP URL。
 
 ## 二、目标
 
@@ -43,7 +46,7 @@ Electron API 和 CDP：
 - 支持多个标签页，并保留每个标签页独立的导航状态。
 - 用户与 Agent 操作同一个可见页面，而不是另外启动隐藏浏览器。
 - Ekko Agent、Hermes Agent、Codex、Claude Code 共用同一套浏览器工具。
-- 复用现有 <code>agent-browser@0.26.0</code> 的可访问性树、元素引用和基础操作。
+- 复用 CDP Accessibility/DOM/Input/Page 协议，并由桌面端维护短期元素引用。
 - 用户可以实时看到 Agent 的点击、输入、滚动和跳转。
 - 用户可以随时停止 Agent 并接管当前标签页。
 - 支持点击 DOM 元素进行批注。
@@ -160,7 +163,7 @@ browser_screenshot
   返回视口或整页截图
 
 browser_console
-  action: read | clear | evaluate-safe-expression
+  action: read | clear
 ~~~
 
 选择 6 个工具的原因：
@@ -170,9 +173,10 @@ browser_console
 - Action 枚举较小，参数校验更明确；
 - 后续容易单独限制高风险操作。
 
-所有标签页相关操作都携带 <code>tab_id</code>，结果也必须返回
-<code>tab_id</code>。第一次导航没有指定标签页时，Broker 可以为调用者创建或
-绑定一个标签页，但以后不能跟随用户当前激活标签页自动切换。
+所有页面操作都携带明确的 <code>tab_id</code>，结果也必须返回
+<code>tab_id</code>。创建标签页只能通过 <code>browser_tabs</code>，其他操作不会
+隐式跟随用户当前标签页。Snapshot 返回 <code>snapshot_id</code>，click/type 必须
+回传该 ID；页面变化后旧引用立即失效。
 
 ### 6.3 MCP 只在桌面端注入
 
@@ -187,8 +191,7 @@ args: [browser]
 只有满足以下条件时才注入：
 
 - 当前是 Hermes Studio Desktop；
-- Electron Browser Broker 描述文件有效；
-- Browser Broker 健康检查通过。
+- 当前是 Electron 启动的 Desktop Web UI Server。
 
 普通 Web UI、VPS 或 Broker 已失效时不提供这 6 个工具。
 
@@ -254,10 +257,10 @@ $HERMES_WEB_UI_HOME/desktop-browser/broker.json
 {
   "schema": 1,
   "desktopPid": 12345,
-  "endpoint": "http://127.0.0.1:49152",
+  "endpoint": "http://127.0.0.1:49152/v1",
   "token": "<random-per-launch-token>",
-  "createdAt": "2026-07-22T00:00:00.000Z",
-  "expiresAt": "2026-07-23T00:00:00.000Z"
+  "instanceId": "<random-per-launch-instance>",
+  "createdAt": "2026-07-22T00:00:00.000Z"
 }
 ~~~
 
@@ -267,24 +270,25 @@ $HERMES_WEB_UI_HOME/desktop-browser/broker.json
 - 文件权限为 owner-only；
 - 启动时清理旧文件；
 - 退出时删除；
-- MCP 校验 PID、地址、有效期和文件权限；
+- MCP 严格校验 schema、loopback 地址和固定 RPC 路径；Broker Token 每次启动更新；
 - 文件内容不进入日志、聊天记录或模型上下文；
 - 这是临时发现信息，不是用户配置。
 
 ### 7.4 调用者身份与控制租约
 
-调用者 ID 由 Hermes Studio 启动 Agent 时注入，不能作为模型参数传入：
+MCP 进程可以跨多个 Run 复用，因此不能把 Run ID 当成调用者身份。每个
+<code>hermes-studio-mcp browser</code> 进程先用启动发现 Token 向 Broker 注册，
+由 Broker 签发不可由模型传入的 <code>client_session_id</code> 和独立会话令牌；
+每次 RPC 再生成独立 <code>operation_id</code>。
+Run ID 只允许作为可选审计元数据，不参与授权。
 
-- Ekko：run/session ID；
-- Hermes：worker/run ID；
-- Codex/Claude Code：coding-agent run ID。
-
-Browser Broker 使用 <code>caller_id + tab_id</code> 管理控制租约：
+Browser Broker 使用 <code>client_session_id + tab_id</code> 管理控制租约：
 
 - 同一标签页同一时间只能有一个 Agent 控制；
 - 用户点击“接管”时先中止当前 Agent 操作；
 - 另一个 Agent 需要显式申请控制权；
 - 用户切换 UI 标签页不会改变 Agent 绑定的标签页。
+- 同一标签页内部操作排队，不同标签页可并发执行，并设置全局并发上限。
 
 ## 八、代码文件规划
 
@@ -310,10 +314,7 @@ packages/desktop/src/main/browser/browser-broker.ts
   启停本地 RPC、认证、参数校验、调用者身份和控制租约。
 
 packages/desktop/src/main/browser/browser-automation.ts
-  通过 agent-browser 或 webContents.debugger 执行快照、交互、截图和 Console。
-
-packages/desktop/src/main/browser/browser-annotation.ts
-  隔离世界 JS 注入、DOM 选择、区域框选和清理。
+  仅通过 webContents.debugger 执行快照、交互和截图；不接受任意 JS。
 
 packages/desktop/src/main/browser/browser-profile-store.ts
   Profile 元数据、Session 目录、下载目录、切换和清理。
@@ -360,7 +361,7 @@ packages/client/src/router/
 - 管理 URL、标题、图标、加载状态、前进和后退状态；
 - 管理多个 Hermes Browser Profile 和对应 Session；
 - 管理权限、弹窗、下载和崩溃；
-- 发现每个标签页准确的 CDP Target；
+- 为每个标签页维护独立 Debugger 会话和 Snapshot 引用；
 - 保存仅 Electron 内部可见的 Target Record；
 - 向 Vue 和 Browser Broker 发布状态。
 
@@ -602,27 +603,18 @@ interface BrowserProfileSwitchImpact {
 
 ## 十一、Agent 自动化
 
-### 11.1 CDP Target 隔离验证
+### 11.1 CDP 标签页隔离
 
-完整开发前必须先做 Spike：
-
-1. Electron 使用仅 loopback 的随机远程调试端口启动。
-2. 创建多个 <code>WebContentsView</code> 测试标签页。
-3. 获取每个标签页准确的 Page WebSocket URL。
-4. 由桌面自动化执行器运行 <code>agent-browser --cdp &lt;page-url&gt;</code>。
-5. 验证 snapshot、click、fill、press、scroll、screenshot、console 和导航。
-6. 用户切换活动标签页后，Agent 仍然控制原标签页。
-7. Agent 不能切换到其他标签页或 Hermes Studio 主 Renderer。
-8. 验证导航、崩溃、关闭标签页、重启后的 Target 重建行为。
-
-如果 <code>agent-browser</code> 需要 Browser 级 CDP Endpoint，或者能逃离指定
-Page Target，则不能按此方案发布，必须改用
-<code>webContents.debugger.sendCommand()</code>。
+每个 <code>WebContentsView.webContents</code> 拥有自己的 Debugger 会话。自动化层
+只接收已由 BrowserManager 解析出的标签页对象，并在该对象上调用
+<code>debugger.sendCommand()</code>。它没有枚举或切换其他 Target 的能力。不同标签页
+可以并行，同一个标签页必须经过 Broker 队列串行执行。
 
 ### 11.2 CDP 凭据
 
-每个标签页的 Target ID 和 Page WebSocket URL 只保存在 Electron 内存中。
-它们不能写入 <code>broker.json</code>，也不能返回给：
+实现不创建 Target WebSocket URL，也不调用
+<code>app.commandLine.appendSwitch('remote-debugging-port')</code>。因此不存在可写入
+<code>broker.json</code> 或返回给下列进程的 CDP 凭据：
 
 - Web UI Server；
 - MCP 进程；
@@ -631,13 +623,12 @@ Page Target，则不能按此方案发布，必须改用
 - coding agent；
 - 模型。
 
-Browser Broker 先校验调用者和标签页租约，再由桌面自动化执行器把准确 Page URL
-传给 <code>agent-browser</code> 子进程。
+Browser Broker 先校验 MCP 客户端身份和标签页租约，再把语义化操作交给桌面自动化
+执行器；Broker 响应永远不包含 Electron 对象或 CDP 信息。
 
 ## 十二、实时查看和接管
 
-Agent 操作的是当前可见 <code>WebContentsView</code>，所以桌面预览不需要
-<code>agent-browser</code> JPEG Stream。
+Agent 操作的是当前可见 <code>WebContentsView</code>，所以桌面预览不需要额外画面流。
 
 界面显示：
 
@@ -940,9 +931,9 @@ browserSession.setDownloadPath(profile.downloadPath)
 ## 十七、失败处理
 
 - View 崩溃：显示可恢复错误，用户确认后重建。
-- CDP Target 变化：先作废内部 Target Record，再接受新操作。
+- 页面导航或 DOM 操作：先作废 Snapshot 引用，再接受新的元素操作。
 - Broker 描述文件过期：MCP 返回明确的桌面浏览器不可用错误。
-- <code>agent-browser</code> 断开：保留页面，控制权返回用户。
+- Debugger 断开：保留页面，作废引用并把控制权返回用户。
 - 单个工具超时：只中止本次操作，不破坏页面。
 - 截图失败：返回可访问性快照和本地化说明。
 - 关闭被控制标签页：中止该标签页操作，不影响其他标签页。
@@ -950,7 +941,7 @@ browserSession.setDownloadPath(profile.downloadPath)
   View。
 - Profile 目录不可用：保留配置并显示修复入口，不能自动回退到另一个目录造成
   用户误以为数据丢失。
-- 应用重启：保留 Profile，不恢复旧租约、Broker Token 或 CDP Target。
+- 应用重启：保留 Profile，不恢复旧租约、Broker Token 或 Snapshot 引用。
 
 ## 十八、测试
 
@@ -1025,13 +1016,12 @@ browserSession.setDownloadPath(profile.downloadPath)
 
 ## 十九、实施阶段
 
-### Phase 0：CDP Target 隔离 Spike
+### Phase 0：CDP 标签页隔离（已完成方案选择）
 
 - 创建最小 <code>WebContentsView</code>；
-- 验证 <code>agent-browser</code> 连接准确 Page Target；
+- 验证 <code>webContents.debugger</code> 仅操作所属标签页；
 - 验证多标签页隔离；
-- 决定使用 <code>agent-browser</code> 还是
-  <code>webContents.debugger</code>。
+- 确定使用 <code>webContents.debugger</code>，不开放调试端口。
 
 ### Phase 1：可见浏览器 MVP
 
@@ -1095,14 +1085,9 @@ browserSession.setDownloadPath(profile.downloadPath)
   MCP Toolset。
 - macOS、Windows、Linux 的安全和集成测试通过。
 
-## 二十一、待确认问题
+## 二十一、后续增强
 
-- <code>agent-browser@0.26.0</code> 使用 Page WebSocket URL 时是否始终严格
-  限定 Target？
 - 标签页是否永久独立于 Chat，还是后续按 Chat 分组？
-- 用户手动点击时自动暂停 Agent，还是必须点击“接管”？
-- 第一版是否完全禁用下载？
 - 哪些高风险站点或操作必须二次确认？
 - 各模型 Provider 对 MCP Image Content 的兼容方式是什么？
-- 随机 loopback CDP 暴露是否可以接受，还是应直接使用
-  <code>webContents.debugger</code>？
+- 是否在当前明确“接管”按钮之外，增加用户在页面内点击时自动接管。

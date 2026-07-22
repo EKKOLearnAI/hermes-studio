@@ -17,9 +17,14 @@ export interface AgentToolContext {
 export interface AgentToolResult {
   ok: boolean
   content: string
+  contentParts?: AgentToolContentPart[]
   data?: unknown
   error?: string
 }
+
+export type AgentToolContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string }
 
 export interface AgentTool<TInput extends Record<string, unknown> = Record<string, unknown>> {
   definition: AgentToolDefinition

@@ -1,4 +1,14 @@
 export default {
+  browser: {
+    title: 'Navigateur', settings: 'Paramètres du navigateur', desktopOnly: 'Le navigateur intégré est disponible uniquement dans Hermes Studio Desktop.', newTab: 'Nouvel onglet',
+    back: 'Précédent', forward: 'Suivant', reload: 'Actualiser', stop: 'Arrêter', addressPlaceholder: 'Rechercher ou saisir une adresse',
+    selectElement: 'Sélectionner un élément', selectRegion: 'Sélectionner une zone', annotationAdded: 'Capture ajoutée à la zone de discussion',
+    agent: 'Agent', agentControlling: '{agent} contrôle cet onglet', agentWaiting: '{agent} attend votre confirmation', takeOver: 'Reprendre', tabCrashed: 'Cet onglet a planté.', recoverTab: 'Recharger', profiles: 'Profils', profileName: 'Nom du profil',
+    profileDirectory: 'Dossier du profil', profileMovePending: 'Le dossier sera déplacé après redémarrage.', downloadDirectory: 'Dossier de téléchargement',
+    askBeforeDownload: 'Demander où enregistrer', downloadConflictPolicy: 'Noms de fichier en double', uniquifyDownloads: 'Créer un nom unique', askOnConflict: 'Demander en cas de conflit', downloads: 'Téléchargements', permissions: 'Autorisations', permissionsHint: 'Les autorisations des pages distantes sont refusées par défaut et consignées ici.', blocked: 'Bloqué',
+    profileSwitchTitle: 'Changer de profil ?', profileSwitchWarning: '{agents} opération(s) Agent, {downloads} téléchargement(s) et {annotations} annotation(s) peuvent être interrompus.',
+    deleteProfileTitle: 'Supprimer le profil ?', deleteProfileWarning: 'Les données gérées seront placées dans la corbeille. Les dossiers personnalisés sont conservés.', clearCache: 'Vider le cache', clearPermissionAudit: 'Effacer le journal des autorisations', clearSiteData: 'Effacer les données des sites', clearSiteDataWarning: 'Efface les connexions, cookies et le stockage local du profil sélectionné.', dataCleared: 'Données du navigateur effacées', loadFailed: 'Impossible de démarrer le navigateur intégré',
+  },
   // Login
   login: {
     title: 'Hermes Studio',
@@ -201,6 +211,7 @@ export default {
     skillsUsage: 'Utilisation des compétences',
     channels: 'Canaux',
     terminal: 'Terminal',
+    browser: 'Navigateur',
     singleChat: 'Discussion',
     globalAgent: 'Global Agent',
     files: 'Fichiers',

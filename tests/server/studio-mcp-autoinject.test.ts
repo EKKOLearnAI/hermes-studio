@@ -161,6 +161,18 @@ describe('studio MCP autoinject', () => {
     expect(updateConfigYamlForProfileMock).not.toHaveBeenCalled()
   })
 
+  it('injects browser MCP only in desktop mode', async () => {
+    process.env.HERMES_DESKTOP = 'true'
+    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const result = await injectBundledMcpServer()
+    const injected = await updateConfigYamlForProfileMock.mock.calls[0][1]({})
+    expect(injected.data.mcp_servers['hermes-studio-browser']).toMatchObject({
+      args: [stableLauncher, 'browser'],
+      env: { HERMES_MCP_SERVER_NAME: 'hermes-studio-browser', HERMES_MCP_TOOLSET: 'browser' },
+    })
+    expect(result.serverNames).toContain('hermes-studio-browser')
+  })
+
   it('skips autoinject for a transient bundled launcher even with a stable app home', async () => {
     process.env.HERMES_WEB_UI_MCP_BIN = createLauncherFixture(tmpdir())
     const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')

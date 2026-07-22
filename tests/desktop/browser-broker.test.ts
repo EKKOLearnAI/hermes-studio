@@ -1,0 +1,166 @@
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { BrowserBroker } from '../../packages/desktop/src/main/browser/browser-broker'
+import type { BrowserManager } from '../../packages/desktop/src/main/browser/browser-manager'
+
+const roots: string[] = []
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+})
+
+describe('Desktop Browser Broker', () => {
+  it('authenticates loopback MCP clients and enforces per-tab leases', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-browser-broker-'))
+    roots.push(root)
+    const tabs = [{ id: 'tab-1', agentControl: 'idle' }]
+    const manager = {
+      state: () => ({ tabs, activeTabId: 'tab-1', maxTabs: 8, profiles: [{ sessionPath: '/private/profile' }], downloads: [{ savePath: '/private/download' }] }),
+      snapshot: async (tabId: string) => ({ tabId, snapshotId: 'snapshot-1' }),
+      setAgentControl: (tabId: string, control: string) => { const tab = tabs.find(item => item.id === tabId); if (tab) tab.agentControl = control },
+      revokeAgentControl: (tabId: string) => { const tab = tabs.find(item => item.id === tabId); if (tab) tab.agentControl = 'idle' },
+      cancelAgentOperation: (tabId: string) => { const tab = tabs.find(item => item.id === tabId); if (tab) tab.agentControl = 'idle' },
+    } as unknown as BrowserManager
+    const broker = new BrowserBroker(manager, root)
+    const descriptor = await broker.start()
+
+    try {
+      const unauthorized = await fetch(descriptor.endpoint, { method: 'POST', body: '{}' })
+      expect(unauthorized.status).toBe(401)
+
+      const browserOrigin = await fetch(descriptor.endpoint, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${descriptor.token}`, Origin: 'https://evil.example', 'X-Hermes-Browser-Client': 'client-a' },
+        body: JSON.stringify({ method: 'snapshot', params: { tab_id: 'tab-1' } }),
+      })
+      expect(browserOrigin.status).toBe(403)
+
+      const register = async () => {
+        const response = await fetch(`${descriptor.endpoint}/session`, {
+          method: 'POST', headers: { Authorization: `Bearer ${descriptor.token}`, 'Content-Type': 'application/json' }, body: '{}',
+        })
+        return await response.json() as { client_id: string; session_token: string }
+      }
+      const clientA = await register()
+      const clientB = await register()
+      const listResponse = await fetch(descriptor.endpoint, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${clientA.session_token}`, 'Content-Type': 'application/json', 'X-Hermes-Browser-Client': clientA.client_id },
+        body: JSON.stringify({ method: 'tabs.list', params: {} }),
+      })
+      const listBody = await listResponse.json()
+      expect(listBody.result.tabs).toHaveLength(1)
+      expect(JSON.stringify(listBody)).not.toContain('/private/')
+      const invoke = (client: { client_id: string; session_token: string }) => fetch(descriptor.endpoint, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${client.session_token}`, 'Content-Type': 'application/json', 'X-Hermes-Browser-Client': client.client_id },
+        body: JSON.stringify({ method: 'snapshot', params: { tab_id: 'tab-1' } }),
+      })
+      expect((await invoke(clientA)).status).toBe(200)
+      expect((await invoke(clientB)).status).toBe(409)
+      broker.revokeTab('tab-1')
+      expect((await invoke(clientB)).status).toBe(200)
+
+      const stored = JSON.parse(await readFile(join(root, 'broker.json'), 'utf8'))
+      expect(stored.endpoint).toBe(descriptor.endpoint)
+      expect(stored.token).toBe(descriptor.token)
+      if (process.platform !== 'win32') expect((await stat(join(root, 'broker.json'))).mode & 0o077).toBe(0)
+    } finally {
+      await broker.stop()
+    }
+  })
+
+  it('cancels queued work and does not restore control after user takeover', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-browser-broker-cancel-'))
+    roots.push(root)
+    const tabs = [{ id: 'tab-1', agentControl: 'idle' }]
+    let releaseSnapshot!: () => void
+    let markStarted!: () => void
+    const started = new Promise<void>(resolve => { markStarted = resolve })
+    const snapshotGate = new Promise<void>(resolve => { releaseSnapshot = resolve })
+    const manager = {
+      state: () => ({ tabs }),
+      snapshot: async (tabId: string) => { markStarted(); await snapshotGate; return { tabId, snapshotId: 'snapshot-1' } },
+      setAgentControl: (tabId: string, control: string) => { const tab = tabs.find(item => item.id === tabId); if (tab) tab.agentControl = control },
+      revokeAgentControl: (tabId: string) => { const tab = tabs.find(item => item.id === tabId); if (tab) tab.agentControl = 'idle' },
+      cancelAgentOperation: (tabId: string) => { const tab = tabs.find(item => item.id === tabId); if (tab) tab.agentControl = 'idle' },
+    } as unknown as BrowserManager
+    const broker = new BrowserBroker(manager, root)
+    const descriptor = await broker.start()
+
+    try {
+      const registration = await fetch(`${descriptor.endpoint}/session`, {
+        method: 'POST', headers: { Authorization: `Bearer ${descriptor.token}`, 'Content-Type': 'application/json' }, body: '{}',
+      })
+      const client = await registration.json() as { client_id: string; session_token: string }
+      const invoke = () => fetch(descriptor.endpoint, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${client.session_token}`, 'Content-Type': 'application/json', 'X-Hermes-Browser-Client': client.client_id },
+        body: JSON.stringify({ method: 'snapshot', params: { tab_id: 'tab-1' } }),
+      })
+      const running = invoke()
+      await started
+      const queued = invoke()
+      await new Promise(resolve => setTimeout(resolve, 20))
+      broker.revokeTab('tab-1')
+      releaseSnapshot()
+
+      expect((await running).status).toBe(409)
+      expect((await queued).status).toBe(409)
+      expect(tabs[0].agentControl).toBe('idle')
+    } finally {
+      releaseSnapshot()
+      await broker.stop()
+    }
+  })
+
+  it('runs different tabs concurrently while enforcing the global limit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-browser-broker-capacity-'))
+    roots.push(root)
+    const tabs = Array.from({ length: 5 }, (_, index) => ({ id: `tab-${index + 1}`, agentControl: 'idle' }))
+    let active = 0
+    let maximum = 0
+    let releaseSnapshots!: () => void
+    let capacityReached!: () => void
+    const gate = new Promise<void>(resolve => { releaseSnapshots = resolve })
+    const reached = new Promise<void>(resolve => { capacityReached = resolve })
+    const manager = {
+      state: () => ({ tabs }),
+      snapshot: async (tabId: string) => {
+        active += 1
+        maximum = Math.max(maximum, active)
+        if (active === 4) capacityReached()
+        await gate
+        active -= 1
+        return { tabId, snapshotId: `snapshot-${tabId}` }
+      },
+      setAgentControl: (tabId: string, control: string) => { const tab = tabs.find(item => item.id === tabId); if (tab) tab.agentControl = control },
+      revokeAgentControl: (tabId: string) => { const tab = tabs.find(item => item.id === tabId); if (tab) tab.agentControl = 'idle' },
+      cancelAgentOperation: (tabId: string) => { const tab = tabs.find(item => item.id === tabId); if (tab) tab.agentControl = 'idle' },
+    } as unknown as BrowserManager
+    const broker = new BrowserBroker(manager, root)
+    const descriptor = await broker.start()
+
+    try {
+      const registration = await fetch(`${descriptor.endpoint}/session`, {
+        method: 'POST', headers: { Authorization: `Bearer ${descriptor.token}`, 'Content-Type': 'application/json' }, body: '{}',
+      })
+      const client = await registration.json() as { client_id: string; session_token: string }
+      const calls = tabs.map(tab => fetch(descriptor.endpoint, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${client.session_token}`, 'Content-Type': 'application/json', 'X-Hermes-Browser-Client': client.client_id },
+        body: JSON.stringify({ method: 'snapshot', params: { tab_id: tab.id } }),
+      }))
+      await reached
+      expect(maximum).toBe(4)
+      releaseSnapshots()
+      expect((await Promise.all(calls)).every(response => response.status === 200)).toBe(true)
+      expect(maximum).toBe(4)
+    } finally {
+      releaseSnapshots()
+      await broker.stop()
+    }
+  })
+})

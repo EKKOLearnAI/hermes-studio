@@ -27,6 +27,7 @@ import { BRIDGE_SESSION_COMMAND_DEFINITIONS } from '@/utils/hermes/bridge-sessio
 import { clampChatInputHeight, isMobileChatInputViewport } from '@/utils/chat-input-height'
 import { isDesktopShell } from '@/utils/desktop-bridge'
 import { isMobileDevice } from '@/utils/device'
+import { takeBrowserAttachments } from '@/utils/pending-browser-attachments'
 
 const chatStore = useChatStore()
 const appStore = useAppStore()
@@ -1165,6 +1166,11 @@ function onDocumentMousedown(e: MouseEvent) {
 
 onMounted(() => {
   document.addEventListener('mousedown', onDocumentMousedown)
+  const browserAttachments = takeBrowserAttachments()
+  addFiles(browserAttachments.files)
+  if (browserAttachments.context.length > 0) {
+    inputText.value = [inputText.value.trim(), ...browserAttachments.context].filter(Boolean).join('\n\n')
+  }
 })
 
 onUnmounted(() => {

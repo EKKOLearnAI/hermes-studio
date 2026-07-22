@@ -1,4 +1,14 @@
 export default {
+  browser: {
+    title: '브라우저', settings: '브라우저 설정', desktopOnly: '내장 브라우저는 Hermes Studio Desktop에서만 사용할 수 있습니다.', newTab: '새 탭',
+    back: '뒤로', forward: '앞으로', reload: '새로고침', stop: '중지', addressPlaceholder: '검색 또는 주소 입력',
+    selectElement: '요소 선택', selectRegion: '영역 선택', annotationAdded: '스크린샷을 채팅 입력창에 추가했습니다',
+    agent: 'Agent', agentControlling: '{agent}가 이 탭을 제어 중', agentWaiting: '{agent}가 확인을 기다리는 중', takeOver: '제어권 가져오기', tabCrashed: '이 탭이 비정상 종료되었습니다.', recoverTab: '탭 새로고침', profiles: '프로필', profileName: '프로필 이름',
+    profileDirectory: '프로필 데이터 경로', profileMovePending: 'Desktop을 다시 시작하면 이동됩니다.', downloadDirectory: '다운로드 경로',
+    askBeforeDownload: '저장 위치 항상 묻기', downloadConflictPolicy: '중복 파일 이름', uniquifyDownloads: '고유 이름 만들기', askOnConflict: '파일이 있으면 묻기', downloads: '다운로드', permissions: '권한', permissionsHint: '원격 페이지 권한은 기본적으로 거부되며 감사용으로 표시됩니다.', blocked: '차단됨',
+    profileSwitchTitle: '프로필을 전환할까요?', profileSwitchWarning: 'Agent 작업 {agents}개, 다운로드 {downloads}개, 주석 {annotations}개가 중단될 수 있습니다.',
+    deleteProfileTitle: '프로필을 삭제할까요?', deleteProfileWarning: '관리 데이터는 휴지통으로 이동하며 사용자 지정 경로는 유지됩니다.', clearCache: '캐시 지우기', clearPermissionAudit: '권한 기록 지우기', clearSiteData: '사이트 데이터 지우기', clearSiteDataWarning: '선택한 프로필의 로그인, 쿠키 및 로컬 저장소를 지웁니다.', dataCleared: '브라우저 데이터를 지웠습니다', loadFailed: '내장 브라우저를 시작하지 못했습니다',
+  },
   // 로그인
   login: {
     title: 'Hermes Studio',
@@ -201,6 +211,7 @@ export default {
     skillsUsage: '스킬 사용량',
     channels: '채널',
     terminal: '터미널',
+    browser: '브라우저',
     singleChat: '채팅',
     globalAgent: 'Global Agent',
     files: '파일',
