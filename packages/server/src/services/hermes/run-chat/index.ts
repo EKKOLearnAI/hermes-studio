@@ -237,6 +237,7 @@ export class ChatRunSocket {
         socket.emit('run.failed', {
           event: 'run.failed',
           session_id: data.session_id,
+          queue_id: data.queue_id,
           error: err instanceof Error ? err.message : String(err),
         })
         return
@@ -331,6 +332,7 @@ export class ChatRunSocket {
         socket.emit('run.failed', {
           event: 'run.failed',
           session_id: data.session_id,
+          queue_id: data.queue_id,
           error: err instanceof Error ? err.message : String(err),
         })
       }
@@ -479,11 +481,13 @@ export class ChatRunSocket {
         const payload: {
           event: 'run.failed'
           session_id?: string
+          queue_id?: string
           error: string
           queue_remaining?: number
         } = {
           event: 'run.failed',
           session_id: data.session_id,
+          queue_id: data.queue_id,
           error: `Agent Bridge is not reachable: ${bridgeReady.error}`,
         }
         if (queueRemaining > 0) payload.queue_remaining = queueRemaining

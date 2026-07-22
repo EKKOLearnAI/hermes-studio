@@ -379,6 +379,7 @@ describe('ChatRunSocket bridge readiness gating', () => {
     expect(socket.emit).toHaveBeenCalledWith('run.failed', {
       event: 'run.failed',
       session_id: 'session-1',
+      queue_id: 'queue-failed',
       error: 'Agent Bridge is not reachable: bridge offline',
       queue_remaining: 1,
     })

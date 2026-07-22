@@ -206,6 +206,17 @@ interface McuVoiceMeta {
   profile: string
 }
 
+interface RelayMcuBackgroundListener {
+  socket: Socket
+  close: () => void
+}
+
+interface PendingRelayMcuBackgroundSpeech {
+  profile: string
+  delegationId?: string
+  text: string
+}
+
 interface EnqueuedMcuSpeechSegment {
   playbackDone: Promise<void>
 }
@@ -230,6 +241,9 @@ class McuSocketIoRelayClient {
   private readonly audioWaiters = new Map<string, { resolve: () => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>()
   private readonly activeRuns = new Map<string, { socket: Socket; sessionId: string }>()
   private readonly sessionRuns = new Map<string, { interactionId: string; socket: Socket }>()
+  private readonly backgroundListeners = new Map<string, RelayMcuBackgroundListener>()
+  private readonly pendingBackgroundSpeech = new Map<string, PendingRelayMcuBackgroundSpeech[]>()
+  private readonly backgroundSpeechRuns = new Set<string>()
   private readonly interruptedInteractions = new Set<string>()
   private readonly ttsAbortControllers = new Map<string, Set<AbortController>>()
   private readonly recentlyInterruptedSessions = new Map<string, number>()
@@ -249,6 +263,9 @@ class McuSocketIoRelayClient {
 
   stop(): void {
     this.stopped = true
+    for (const listener of [...this.backgroundListeners.values()]) listener.close()
+    this.backgroundListeners.clear()
+    this.pendingBackgroundSpeech.clear()
     this.socket?.disconnect()
     this.socket = null
     this.localAgentSocket?.disconnect()
@@ -317,6 +334,7 @@ class McuSocketIoRelayClient {
     socket.on('connect', () => {
       logger.info({ relayUrl: this.redactedRelayUrl() }, '[outbound-relay:mcu-sio] connected')
       this.connectLocalAgentSocket()
+      for (const sessionId of this.pendingBackgroundSpeech.keys()) void this.flushBackgroundSpeech(sessionId)
     })
 
     socket.on('connect_error', (err: Error) => {
@@ -814,6 +832,7 @@ class McuSocketIoRelayClient {
         })
         return
       }
+      if (payload.accepted === true) return
       const transcript = typeof payload.transcript === 'string' ? payload.transcript : ''
       if (!transcript.trim()) {
         this.sendJson({
@@ -842,6 +861,7 @@ class McuSocketIoRelayClient {
   ): Promise<void> {
     await new Promise<void>((resolve) => {
       const sessionId = this.mcuSessionId(voice.profile)
+      const primaryQueueId = `mcu_${randomUUID()}`
       this.interruptedInteractions.delete(voice.interactionId)
       const socket: Socket = io(`${this.options.localBaseUrl.replace(/\/$/, '')}/chat-run`, {
         auth: this.options.userToken ? { token: this.options.userToken } : {},
@@ -856,7 +876,19 @@ class McuSocketIoRelayClient {
       const playbackQueue: Promise<void>[] = []
       let previousPlaybackDone = Promise.resolve()
       let settled = false
+      let primaryFinished = false
+      let primaryResolved = false
+      let primaryTerminalReceived = false
+      let currentRunPrimary = false
+      let currentRunAutonomous = false
+      let currentDelegationId: string | undefined
+      let backgroundOutput = ''
+      let backgroundPending = 0
       const speechSegmenter = createMcuSpeechSegmenter()
+      const ownsBackgroundEvents = () => {
+        const listener = this.backgroundListeners.get(sessionId)
+        return primaryTerminalReceived || listener?.socket === socket
+      }
       const enqueueSpeech = (text: string) => {
         if (this.interruptedInteractions.has(voice.interactionId)) return
         const segmentText = normalizeMcuSpeechText(text)
@@ -917,16 +949,46 @@ class McuSocketIoRelayClient {
         const text = speechSegmenter.flush()
         if (text) enqueueSpeech(text)
       }
+      const resolvePrimary = () => {
+        if (primaryResolved) return
+        primaryResolved = true
+        resolve()
+      }
+      const releasePrimaryRun = () => {
+        if (primaryFinished) return
+        primaryFinished = true
+        this.activeRuns.delete(voice.interactionId)
+        const sessionRun = this.sessionRuns.get(sessionId)
+        if (sessionRun?.socket === socket) this.sessionRuns.delete(sessionId)
+        this.interruptedInteractions.delete(voice.interactionId)
+        clearTimeout(timer)
+        resolvePrimary()
+        void this.flushBackgroundSpeech(sessionId)
+      }
       const finish = () => {
         if (settled) return
         settled = true
-        this.activeRuns.delete(voice.interactionId)
-        this.sessionRuns.delete(sessionId)
-        this.interruptedInteractions.delete(voice.interactionId)
-        clearTimeout(timer)
+        releasePrimaryRun()
+        const listener = this.backgroundListeners.get(sessionId)
+        if (listener?.socket === socket) this.backgroundListeners.delete(sessionId)
         socket.removeAllListeners()
         socket.disconnect()
-        resolve()
+      }
+      const keepBackgroundListener = () => {
+        if (settled) return
+        releasePrimaryRun()
+        const existing = this.backgroundListeners.get(sessionId)
+        if (existing && existing.socket !== socket) existing.close()
+        this.backgroundListeners.set(sessionId, { socket, close: finish })
+        logger.info({
+          interactionId: voice.interactionId,
+          sessionId,
+          backgroundPending,
+        }, '[outbound-relay:ws] keeping MCU session listener for background delivery')
+      }
+      const finishPrimaryRun = () => {
+        if (backgroundPending > 0) keepBackgroundListener()
+        else finish()
       }
       const fail = (message: string) => {
         this.sendJson({
@@ -944,6 +1006,15 @@ class McuSocketIoRelayClient {
       socket.on('connect_error', (err: Error) => {
         fail(err.message || 'chat-run connection failed')
       })
+      socket.on('disconnect', (reason: string) => {
+        if (settled) return
+        if (primaryFinished) {
+          logger.warn({ sessionId, reason }, '[outbound-relay:ws] MCU background session listener disconnected')
+          finish()
+          return
+        }
+        fail(`chat-run disconnected: ${reason}`)
+      })
       socket.on('connect', () => {
         logger.info({
           interactionId: voice.interactionId,
@@ -956,6 +1027,7 @@ class McuSocketIoRelayClient {
         const runPayload = {
           input: transcript,
           session_id: sessionId,
+          queue_id: primaryQueueId,
           profile: voice.profile,
           source: 'global_agent',
           session_source: 'global_agent',
@@ -969,19 +1041,36 @@ class McuSocketIoRelayClient {
         }
         socket.emit('run', runPayload)
       })
-      socket.on('run.started', () => {
+      socket.on('run.started', (event: Record<string, unknown> = {}) => {
+        const queueId = typeof event.queue_id === 'string' ? event.queue_id : undefined
+        const autonomous = event.autonomous === true
+        currentRunPrimary = !autonomous && queueId === primaryQueueId
+        currentRunAutonomous = autonomous && ownsBackgroundEvents()
+        currentDelegationId = currentRunAutonomous && typeof event.delegation_id === 'string' && event.delegation_id.trim()
+          ? event.delegation_id.trim()
+          : undefined
+        backgroundOutput = ''
+        if (!currentRunPrimary) return
         this.sendJson({ type: 'interaction.status', interactionId: voice.interactionId, status: 'thinking' })
       })
-      socket.on('run.queued', () => {
+      socket.on('run.queued', (event: Record<string, unknown> = {}) => {
+        const queuedMessages = Array.isArray(event.queued_messages) ? event.queued_messages : []
+        const ownsQueueEvent = event.dequeued_queue_id === primaryQueueId || queuedMessages.some((message) => (
+          typeof message === 'object' && message !== null && (message as Record<string, unknown>).id === primaryQueueId
+        ))
+        if (!ownsQueueEvent) return
+        currentRunPrimary = false
         this.sendJson({ type: 'interaction.status', interactionId: voice.interactionId, status: 'thinking' })
       })
       socket.on('tool.started', (event: Record<string, unknown> = {}) => {
+        if (!currentRunPrimary) return
         flushCompletedAssistantMessage()
         const tool = typeof event.tool === 'string' ? event.tool : typeof event.name === 'string' ? event.name : 'tool'
         const preview = typeof event.preview === 'string' ? event.preview : undefined
         this.sendJson({ type: 'tool.started', interactionId: voice.interactionId, tool, preview })
       })
       const handleToolFinished = (event: Record<string, unknown> = {}, failed = false) => {
+        if (!currentRunPrimary) return
         const tool = typeof event.tool === 'string' ? event.tool : typeof event.name === 'string' ? event.name : 'tool'
         const preview = typeof event.preview === 'string' ? event.preview : undefined
         const error = typeof event.error === 'string'
@@ -995,6 +1084,11 @@ class McuSocketIoRelayClient {
       socket.on('tool.failed', (event: Record<string, unknown> = {}) => handleToolFinished(event, true))
       socket.on('message.delta', (event: Record<string, unknown> = {}) => {
         if (typeof event.delta === 'string') {
+          if (currentRunAutonomous) {
+            backgroundOutput += event.delta
+            return
+          }
+          if (!currentRunPrimary) return
           output += event.delta
           for (const segment of speechSegmenter.pushDelta(event.delta)) {
             enqueueSpeech(segment)
@@ -1002,6 +1096,36 @@ class McuSocketIoRelayClient {
         }
       })
       socket.on('run.completed', (event: Record<string, unknown> = {}) => {
+        backgroundPending = Math.max(0, Number(event.background_pending) || 0)
+        const autonomous = event.autonomous === true || currentRunAutonomous
+        if (autonomous) {
+          const text = typeof event.output === 'string' && event.output.trim()
+            ? event.output
+            : backgroundOutput
+          if (ownsBackgroundEvents() && text.trim()) {
+            this.queueBackgroundSpeech(sessionId, {
+              profile: voice.profile,
+              delegationId: typeof event.delegation_id === 'string' && event.delegation_id.trim()
+                ? event.delegation_id.trim()
+                : currentDelegationId,
+              text,
+            })
+          }
+          currentRunAutonomous = false
+          currentRunPrimary = false
+          currentDelegationId = undefined
+          backgroundOutput = ''
+          if (primaryFinished && backgroundPending === 0) finish()
+          return
+        }
+        const queueId = typeof event.queue_id === 'string' ? event.queue_id : undefined
+        const isPrimary = currentRunPrimary || queueId === primaryQueueId
+        if (!isPrimary || primaryTerminalReceived) {
+          if (primaryFinished && backgroundPending === 0) finish()
+          return
+        }
+        primaryTerminalReceived = true
+        currentRunPrimary = false
         if (typeof event.output === 'string' && event.output.trim()) {
           if (!output) {
             output = event.output
@@ -1029,7 +1153,7 @@ class McuSocketIoRelayClient {
               interactionId: voice.interactionId,
               status: 'completed',
             })
-            finish()
+            finishPrimaryRun()
           })
           .catch((err) => {
             if (this.interruptedInteractions.has(voice.interactionId) || (err instanceof Error && err.message === 'audio.interrupted')) {
@@ -1040,9 +1164,34 @@ class McuSocketIoRelayClient {
           })
       })
       socket.on('run.failed', (event: Record<string, unknown> = {}) => {
-        fail(typeof event.error === 'string' ? event.error : 'chat-run failed')
+        backgroundPending = Math.max(0, Number(event.background_pending) || 0)
+        const autonomous = event.autonomous === true || currentRunAutonomous
+        const queueId = typeof event.queue_id === 'string' ? event.queue_id : undefined
+        const isPrimary = currentRunPrimary || queueId === primaryQueueId
+        currentRunAutonomous = false
+        currentRunPrimary = false
+        currentDelegationId = undefined
+        backgroundOutput = ''
+        if (autonomous || !isPrimary || primaryTerminalReceived) {
+          if (primaryFinished && backgroundPending === 0) finish()
+          return
+        }
+        primaryTerminalReceived = true
+        this.sendJson({
+          type: 'interaction.status',
+          interactionId: voice.interactionId,
+          status: 'failed',
+          text: typeof event.error === 'string' ? event.error : 'chat-run failed',
+        })
+        finishPrimaryRun()
+      })
+      socket.on('delegation.updated', (event: Record<string, unknown> = {}) => {
+        if (event.background_pending == null) return
+        backgroundPending = Math.max(0, Number(event.background_pending) || 0)
+        if (primaryFinished && backgroundPending === 0) finish()
       })
       socket.on('approval.requested', (event: Record<string, unknown> = {}) => {
+        if (!currentRunPrimary && !currentRunAutonomous) return
         const approvalId = typeof event.approval_id === 'string' ? event.approval_id : ''
         const choice = chooseMcuApprovalChoice(event)
         if (!approvalId || !choice) {
@@ -1055,12 +1204,14 @@ class McuSocketIoRelayClient {
           approvalId,
           choice,
         }, '[outbound-relay:ws] auto-approving MCU chat-run approval')
-        this.sendJson({
-          type: 'tool.started',
-          interactionId: voice.interactionId,
-          tool: 'approval',
-          preview: choice,
-        })
+        if (!currentRunAutonomous) {
+          this.sendJson({
+            type: 'tool.started',
+            interactionId: voice.interactionId,
+            tool: 'approval',
+            preview: choice,
+          })
+        }
         socket.emit('approval.respond', {
           session_id: sessionId,
           approval_id: approvalId,
@@ -1068,6 +1219,7 @@ class McuSocketIoRelayClient {
         })
       })
       socket.on('approval.resolved', (event: Record<string, unknown> = {}) => {
+        if (!currentRunPrimary) return
         const resolved = event.resolved !== false
         this.sendJson({
           type: 'tool.completed',
@@ -1077,9 +1229,87 @@ class McuSocketIoRelayClient {
         })
       })
       socket.on('clarify.requested', () => {
+        if (!currentRunPrimary) return
         fail('clarification required')
       })
     })
+  }
+
+  private queueBackgroundSpeech(sessionId: string, item: PendingRelayMcuBackgroundSpeech): void {
+    const text = item.text.trim()
+    if (!text) return
+    const queue = this.pendingBackgroundSpeech.get(sessionId) || []
+    if (item.delegationId && queue.some(queued => queued.delegationId === item.delegationId)) return
+    queue.push({ ...item, text })
+    this.pendingBackgroundSpeech.set(sessionId, queue)
+    void this.flushBackgroundSpeech(sessionId)
+  }
+
+  private async flushBackgroundSpeech(sessionId: string): Promise<void> {
+    if (
+      this.stopped
+      || !this.socket?.connected
+      || this.backgroundSpeechRuns.has(sessionId)
+      || this.sessionRuns.has(sessionId)
+    ) return
+    const queue = this.pendingBackgroundSpeech.get(sessionId)
+    if (!queue?.length) return
+
+    this.backgroundSpeechRuns.add(sessionId)
+    try {
+      while (queue.length > 0 && !this.sessionRuns.has(sessionId) && this.socket?.connected) {
+        const item = queue.shift()
+        if (!item) break
+        await this.playBackgroundSpeech(item)
+      }
+    } catch (err) {
+      if (!(err instanceof Error && err.message === 'audio.interrupted')) {
+        logger.warn({ err, sessionId }, '[outbound-relay:ws] failed to deliver MCU background speech')
+      }
+    } finally {
+      this.backgroundSpeechRuns.delete(sessionId)
+      if (queue.length === 0) this.pendingBackgroundSpeech.delete(sessionId)
+    }
+  }
+
+  private async playBackgroundSpeech(item: PendingRelayMcuBackgroundSpeech): Promise<void> {
+    const suffix = (item.delegationId || randomUUID())
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 96) || randomUUID()
+    const interactionId = `mcu-background-${suffix}`
+    const segmenter = createMcuSpeechSegmenter()
+    const segments = segmenter.pushDelta(item.text)
+    const tail = segmenter.flush()
+    if (tail) segments.push(tail)
+
+    let segmentIndex = 0
+    try {
+      for (const rawText of segments) {
+        const text = normalizeMcuSpeechText(rawText)
+        if (!text) continue
+        const segmentId = `${interactionId}-tts-${++segmentIndex}`
+        const controller = this.registerTtsAbortController(interactionId)
+        const audioResult: Promise<McuSpeechSynthesisResult> = this.synthesizeMcuSpeech(
+          text,
+          item.profile,
+          controller.signal,
+        )
+          .then(audio => ({ ok: true as const, audio }))
+          .catch(err => ({ ok: false as const, err, aborted: controller.signal.aborted }))
+          .finally(() => this.releaseTtsAbortController(interactionId, controller))
+        const audio = await this.enqueueMcuSpeechSegment(interactionId, segmentId, text, audioResult)
+        await audio.playbackDone
+        if (this.interruptedInteractions.has(interactionId)) throw new Error('audio.interrupted')
+      }
+
+      if (segmentIndex > 0) {
+        this.sendJson({ type: 'interaction.status', interactionId, status: 'completed' })
+      }
+    } finally {
+      this.interruptedInteractions.delete(interactionId)
+    }
   }
 
   private async enqueuePromptAudioFromVoiceTurn(interactionId: string, payload: Record<string, unknown>): Promise<boolean> {
@@ -1159,6 +1389,8 @@ class McuSocketIoRelayClient {
   }
 
   private forgetMcuSessionRun(sessionId: string, interactionId?: string): void {
+    this.pendingBackgroundSpeech.delete(sessionId)
+    this.backgroundListeners.get(sessionId)?.close()
     const sessionRun = this.sessionRuns.get(sessionId)
     if (sessionRun) {
       this.interruptedInteractions.add(sessionRun.interactionId)
@@ -1179,13 +1411,15 @@ class McuSocketIoRelayClient {
 
   private interruptMcuSession(profile: string, interactionId?: string): void {
     const sessionId = this.mcuSessionId(profile)
-    this.recentlyInterruptedSessions.set(sessionId, Date.now())
-    if (interactionId) {
+    const sessionRun = this.sessionRuns.get(sessionId)
+    const active = interactionId ? this.activeRuns.get(interactionId) : undefined
+    const hasActiveTts = interactionId ? this.ttsAbortControllers.has(interactionId) : false
+    if (interactionId && (sessionRun || active || hasActiveTts)) {
       this.interruptedInteractions.add(interactionId)
       this.abortTts(interactionId)
     }
-    const sessionRun = this.sessionRuns.get(sessionId)
     if (sessionRun) {
+      this.recentlyInterruptedSessions.set(sessionId, Date.now())
       this.interruptedInteractions.add(sessionRun.interactionId)
       this.abortTts(sessionRun.interactionId)
       logger.info({
@@ -1197,7 +1431,10 @@ class McuSocketIoRelayClient {
       this.sessionRuns.delete(sessionId)
       return
     }
-    if (interactionId) this.abortActiveRun(interactionId)
+    if (interactionId && active?.sessionId === sessionId) {
+      this.recentlyInterruptedSessions.set(sessionId, Date.now())
+      this.abortActiveRun(interactionId)
+    }
   }
 
   private registerTtsAbortController(interactionId: string): AbortController {

@@ -239,7 +239,7 @@ describe('bridge run final context usage', () => {
     await handleBridgeRun(
       nsp,
       socket,
-      { input: 'hello again', session_id: 'session-1' },
+      { input: 'hello again', session_id: 'session-1', queue_id: 'mcu-test-run' },
       'default',
       sessionMap,
       bridge,
@@ -263,8 +263,12 @@ describe('bridge run final context usage', () => {
     expect(reopenCallIndex).toBeGreaterThanOrEqual(0)
     expect(endedCallIndex).toBeGreaterThanOrEqual(0)
     expect(reopenCallIndex).toBeLessThan(endedCallIndex)
+    expect(emit).toHaveBeenCalledWith('run.started', expect.objectContaining({
+      queue_id: 'mcu-test-run',
+    }))
     expect(emit).toHaveBeenCalledWith('run.completed', expect.objectContaining({
       output: 'done',
+      queue_id: 'mcu-test-run',
     }))
   })
 
