@@ -15,5 +15,6 @@ attachment flows are unchanged.
 
 Completed notes remain visible as numbered callouts outside their selection
 rectangles. The desktop main process stores those callouts in a closed shadow
-tree and refreshes the screenshot immediately before adding it to the composer,
-so the visible labels and structured JSON stay aligned.
+tree. DOM callouts follow their live element bounds, region callouts follow page
+coordinates, and both are refreshed immediately before adding the screenshot to
+the composer, so scrolling cannot detach visible labels from their page targets.

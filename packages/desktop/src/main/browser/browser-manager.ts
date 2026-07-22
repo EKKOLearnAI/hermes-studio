@@ -406,8 +406,33 @@ export class BrowserManager {
           const host = document.createElement('div');
           Object.assign(host.style, { position:'fixed', inset:'0', zIndex:'2147483646', pointerEvents:'none' });
           root.appendChild(host);
-          annotationState = { host, root:host.attachShadow({ mode:'closed' }), marks:new Map() };
+          const shadowRoot = host.attachShadow({ mode:'closed' });
+          const marks = new Map();
+          let refreshFrame = 0;
+          const positionMark = mark => {
+            let r;
+            if (mark.target?.isConnected) {
+              const rect=mark.target.getBoundingClientRect();
+              r={x:rect.left,y:rect.top,width:rect.width,height:rect.height};
+            } else if (mark.documentRegion) {
+              r={x:mark.documentRegion.x-scrollX,y:mark.documentRegion.y-scrollY,width:mark.documentRegion.width,height:mark.documentRegion.height};
+            } else return;
+            Object.assign(mark.box.style, { display:'block', left:r.x+'px', top:r.y+'px', width:r.width+'px', height:r.height+'px' });
+            const below=innerHeight-(r.y+r.height)>=64;
+            Object.assign(mark.badge.style, below ? { top:'calc(100% + 4px)', bottom:'auto' } : { top:'auto', bottom:'calc(100% + 4px)' });
+            const alignRight=r.x+300>innerWidth;
+            Object.assign(mark.badge.style, alignRight ? { left:'auto', right:'-2px' } : { left:'-2px', right:'auto' });
+          };
+          const refresh = () => { marks.forEach(positionMark); };
+          const track = () => { refresh(); refreshFrame=requestAnimationFrame(track); };
+          const destroy = () => {
+            if(refreshFrame)cancelAnimationFrame(refreshFrame);
+            host.remove();
+            delete globalThis[annotationStateKey];
+          };
+          annotationState = { host, root:shadowRoot, marks, positionMark, refresh, destroy };
           globalThis[annotationStateKey] = annotationState;
+          refreshFrame=requestAnimationFrame(track);
         }
         const overlay = document.createElement('div');
         const box = document.createElement('div');
@@ -420,12 +445,13 @@ export class BrowserManager {
         box.appendChild(badge);
         root.appendChild(overlay);
         annotationState.root.appendChild(box);
-        annotationState.marks.set(marker, { box, badge });
+        const mark = { box, badge, target:null, documentRegion:null };
+        annotationState.marks.set(marker, mark);
         let start = null, moveHandler = null, clickHandler = null, finished = false;
-        const removePersistentMark = () => { box.remove(); annotationState.marks.delete(marker); if(!annotationState.marks.size){annotationState.host.remove();delete globalThis[annotationStateKey];} };
+        const removePersistentMark = () => { box.remove(); annotationState.marks.delete(marker); if(!annotationState.marks.size)annotationState.destroy(); };
         const cleanup = removeMark => { overlay.remove(); if(removeMark)removePersistentMark(); removeEventListener('keydown', onKey, true); removeEventListener(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}, onCancel, true); if(moveHandler)removeEventListener('mousemove',moveHandler,true); if(clickHandler)removeEventListener('click',clickHandler,true); };
         const draw = r => { Object.assign(box.style, { display:'block', left:r.x+'px', top:r.y+'px', width:r.width+'px', height:r.height+'px' }); const below=innerHeight-(r.y+r.height)>=64; Object.assign(badge.style, below ? { top:'calc(100% + 4px)', bottom:'auto' } : { top:'auto', bottom:'calc(100% + 4px)' }); const alignRight=r.x+300>innerWidth; Object.assign(badge.style, alignRight ? { left:'auto', right:'-2px' } : { left:'-2px', right:'auto' }); };
-        const finish = (region, element) => { if(finished)return; finished=true; draw(region); overlay.onpointerdown=null; overlay.onpointermove=null; overlay.onpointerup=null; cleanup(false); resolve({ region, element, viewport:{ width:innerWidth, height:innerHeight, scaleFactor:devicePixelRatio || 1 } }); };
+        const finish = (region, element, target) => { if(finished)return; finished=true; mark.target=target || null; mark.documentRegion={x:region.x+scrollX,y:region.y+scrollY,width:region.width,height:region.height}; annotationState.positionMark(mark); overlay.onpointerdown=null; overlay.onpointermove=null; overlay.onpointerup=null; cleanup(false); resolve({ region, element, viewport:{ width:innerWidth, height:innerHeight, scaleFactor:devicePixelRatio || 1 } }); };
         const onKey = event => { if (event.key === 'Escape') { event.preventDefault(); cleanup(true); reject(new Error('Annotation cancelled')); } };
         const onCancel = () => { cleanup(true); reject(new Error('Annotation cancelled')); };
         addEventListener('keydown', onKey, true);
@@ -445,7 +471,7 @@ export class BrowserManager {
             if (!target) return;
             const r = target.getBoundingClientRect();
             const safeIdentifier = value => { const text=String(value||'').slice(0,80); return text && /^[A-Za-z0-9_-]+$/.test(text) && !/(token|secret|password|auth|session|key)/i.test(text) ? text : undefined; };
-            finish({ x:r.left, y:r.top, width:r.width, height:r.height }, { role:String(target.getAttribute('role') || '').slice(0,40) || undefined, name:String(target.getAttribute('aria-label') || target.textContent || '').trim().slice(0,120) || undefined, tag:target.tagName.toLowerCase(), id:safeIdentifier(target.id), classNames:[...target.classList].map(safeIdentifier).filter(Boolean).slice(0,8) });
+            finish({ x:r.left, y:r.top, width:r.width, height:r.height }, { role:String(target.getAttribute('role') || '').slice(0,40) || undefined, name:String(target.getAttribute('aria-label') || target.textContent || '').trim().slice(0,120) || undefined, tag:target.tagName.toLowerCase(), id:safeIdentifier(target.id), classNames:[...target.classList].map(safeIdentifier).filter(Boolean).slice(0,8) }, target);
           };
           addEventListener('mousemove', moveHandler, true);
           addEventListener('click', clickHandler, true);
@@ -478,7 +504,7 @@ export class BrowserManager {
       }
     } catch (error) {
       await record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
-        code: `(()=>{const state=globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}];const mark=state?.marks?.get(${marker});if(mark){mark.box.remove();state.marks.delete(${marker});if(!state.marks.size){state.host.remove();delete globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}]}}})()`,
+        code: `(()=>{const state=globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}];const mark=state?.marks?.get(${marker});if(mark){mark.box.remove();state.marks.delete(${marker});if(!state.marks.size)state.destroy()}})()`,
       }], true).catch(() => undefined)
       throw error
     } finally {
@@ -508,12 +534,16 @@ export class BrowserManager {
     if (!this.annotationMarkerCounts.has(tabId)) return false
     const normalized = note.trim().slice(0, 500)
     return record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
-      code: `(()=>{const mark=globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}]?.marks?.get(${marker});if(!mark)return false;mark.badge.textContent=${JSON.stringify(String(marker))}+(${JSON.stringify(normalized)}?' · '+${JSON.stringify(normalized)}:'');return true})()`,
+      code: `(()=>{const state=globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}];const mark=state?.marks?.get(${marker});if(!mark)return false;mark.badge.textContent=${JSON.stringify(String(marker))}+(${JSON.stringify(normalized)}?' · '+${JSON.stringify(normalized)}:'');state.positionMark(mark);return true})()`,
     }], true).then(Boolean).catch(() => false)
   }
 
   async captureAnnotations(tabId: string) {
     if (!this.annotationMarkerCounts.has(tabId)) throw new Error('Browser annotation session not found')
+    const record = this.requireTab(tabId)
+    await record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
+      code: `globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}]?.refresh?.()`,
+    }], true).catch(() => undefined)
     return this.screenshot(tabId, false)
   }
 
@@ -523,7 +553,7 @@ export class BrowserManager {
     const record = this.records.get(tabId)
     if (record && !record.view.webContents.isDestroyed()) {
       await record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
-        code: `dispatchEvent(new CustomEvent(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}));(()=>{const key=${JSON.stringify(ANNOTATION_STATE_KEY)};const state=globalThis[key];if(state){state.host.remove();delete globalThis[key]}})()`,
+        code: `dispatchEvent(new CustomEvent(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}));globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}]?.destroy?.()`,
       }], true).catch(() => undefined)
     }
     this.activeAnnotationTabs.delete(tabId)

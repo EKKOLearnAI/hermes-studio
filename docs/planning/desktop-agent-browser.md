@@ -697,6 +697,8 @@ iframe 内部 DOM。
    结构化文本，展示/存储输入使用独立 <code>display_input</code>，不把 JSON 混入正文。
 10. 截图进入 Composer 后，真正发送消息仍由 Composer 的发送按钮决定。
 
+持久标注不能停留在浏览器视口中的旧坐标。DOM 标注保留所选元素引用，并在标注会话的渲染帧中重新读取 `getBoundingClientRect()`；自由框选转换为页面坐标，再换算为当前视口坐标。这样页面滚动、内部滚动容器滚动、窗口尺寸变化或 DOM 布局变化时，标注都能跟随目标；清空标注会同时停止跟踪循环。
+
 ~~~ts
 interface BrowserAnnotationSession {
   tabId: string
