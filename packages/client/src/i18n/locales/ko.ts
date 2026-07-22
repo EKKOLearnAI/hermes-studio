@@ -2254,6 +2254,7 @@ export default {
   },
 
   files: {
+    attachToChat: '채팅에 추가', attachFailed: '파일을 채팅에 추가하지 못했습니다',
     previewMode: '미리보기', sourceMode: '소스', tableMode: '표', worksheet: '워크시트',
     htmlPreviewTitle: '격리된 HTML 미리보기', previewLoading: '미리보기 불러오는 중...', previewFailed: '미리보기를 사용할 수 없음',
     previewMimeMismatch: '파일 형식이 미리보기 형식과 일치하지 않습니다.', downloadInstead: '대신 다운로드',

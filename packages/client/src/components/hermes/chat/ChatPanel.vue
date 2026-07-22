@@ -264,6 +264,10 @@ function handleChatDrop(event: DragEvent) {
   chatInputRef.value?.addFiles?.(files);
 }
 
+function handleWorkspaceFileAttach(file: File) {
+  chatInputRef.value?.addFiles?.([file]);
+}
+
 async function handleSessionClick(sessionId: string) {
   chatStore.clearSessionCompletedUnread(sessionId);
   await router.push({
@@ -2659,6 +2663,7 @@ async function handleSessionModelCustomSubmit() {
                     v-show="activeToolPanel === 'files'"
                     :workspace-session-id="activeWorkspaceSessionId"
                     :workspace="activeWorkspacePath"
+                    @attach="handleWorkspaceFileAttach"
                   />
                   <TerminalPanel
                     v-show="activeToolPanel === 'terminal'"

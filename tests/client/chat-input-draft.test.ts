@@ -103,6 +103,32 @@ describe('ChatInput draft persistence', () => {
     deleteSkillBundleApiMock.mockReset()
     deleteSkillBundleApiMock.mockResolvedValue(undefined)
     dialogWarningMock.mockReset()
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:chat-attachment'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: vi.fn(),
+    })
+  })
+
+  it('adds a pasted non-image file to the attachment list', async () => {
+    const wrapper = mountForSession('session-file-paste')
+    const file = new File(['hello'], 'notes.txt', { type: 'text/plain' })
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', {
+      value: {
+        items: [{ kind: 'file', type: file.type, getAsFile: () => file }],
+        files: [file],
+      },
+    })
+
+    wrapper.get('textarea').element.dispatchEvent(paste)
+    await nextTick()
+
+    expect(paste.defaultPrevented).toBe(true)
+    expect(wrapper.get('.attachment-file').text()).toContain('notes.txt')
   })
 
   it('restores unsent text for the active session after the chat view is remounted', async () => {

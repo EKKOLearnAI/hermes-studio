@@ -2617,6 +2617,8 @@ export default {
     preview: '預覽',
     download: '下載',
     copyPath: '複製路徑',
+    attachToChat: '加入輸入框',
+    attachFailed: '加入檔案失敗',
     rename: '重新命名',
     delete: '刪除',
     name: '名稱',

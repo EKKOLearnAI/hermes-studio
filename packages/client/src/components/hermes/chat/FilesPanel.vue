@@ -2,7 +2,7 @@
 import { defineAsyncComponent, ref, onMounted, watch } from 'vue'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useI18n } from 'vue-i18n'
-import { NButton } from 'naive-ui'
+import { NButton, useMessage } from 'naive-ui'
 import FileTree from '@/components/hermes/files/FileTree.vue'
 import FileBreadcrumb from '@/components/hermes/files/FileBreadcrumb.vue'
 import FileToolbar from '@/components/hermes/files/FileToolbar.vue'
@@ -11,16 +11,23 @@ import FileContextMenu from '@/components/hermes/files/FileContextMenu.vue'
 import FileUploadModal from '@/components/hermes/files/FileUploadModal.vue'
 import FileRenameModal from '@/components/hermes/files/FileRenameModal.vue'
 import type { FileEntry } from '@/api/hermes/files'
+import { fetchSessionWorkspaceAttachmentBlob } from '@/api/hermes/sessions'
+import { fetchGroupWorkspaceAttachmentBlob } from '@/api/hermes/group-chat'
 
 const FileEditor = defineAsyncComponent(async () => (await import('@/components/hermes/files/FileEditor.vue')).default)
 
 const filesStore = useFilesStore()
 const { t } = useI18n()
+const message = useMessage()
 
 const props = defineProps<{
   workspaceSessionId?: string | null
   workspaceRoomId?: string | null
   workspace?: string | null
+}>()
+
+const emit = defineEmits<{
+  (e: 'attach', file: File): void
 }>()
 
 const contextMenuRef = ref<InstanceType<typeof FileContextMenu> | null>(null)
@@ -62,6 +69,24 @@ function handleRename(entry: FileEntry) {
   renameEntry.value = entry
   renameTargetPath.value = null
   showRenameModal.value = true
+}
+
+async function handleAttach(entry: FileEntry) {
+  if (entry.isDir) return
+  try {
+    const blob = props.workspaceSessionId
+      ? await fetchSessionWorkspaceAttachmentBlob(props.workspaceSessionId, entry.path)
+      : props.workspaceRoomId
+        ? await fetchGroupWorkspaceAttachmentBlob(props.workspaceRoomId, entry.path)
+        : null
+    if (!blob) return
+    emit('attach', new File([blob], entry.name, {
+      type: blob.type || 'application/octet-stream',
+      lastModified: Date.parse(entry.modTime) || Date.now(),
+    }))
+  } catch {
+    message.error(t('files.attachFailed'))
+  }
 }
 
 watch(
@@ -136,6 +161,8 @@ onMounted(() => {
     </div>
     <FileContextMenu
       ref="contextMenuRef"
+      :allow-attach="Boolean(workspaceSessionId || workspaceRoomId)"
+      @attach="handleAttach"
       @rename="handleRename"
       @new-folder="handleContextNewFolder"
     />

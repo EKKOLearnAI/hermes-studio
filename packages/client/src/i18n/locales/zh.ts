@@ -2658,6 +2658,8 @@ export default {
     preview: '预览',
     download: '下载',
     copyPath: '复制路径',
+    attachToChat: '添加到输入框',
+    attachFailed: '添加文件失败',
     rename: '重命名',
     delete: '删除',
     name: '名称',

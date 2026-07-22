@@ -264,6 +264,10 @@ function handleChatDrop(event: DragEvent) {
     groupChatInputRef.value?.addFiles?.(files)
 }
 
+function handleWorkspaceFileAttach(file: File) {
+    groupChatInputRef.value?.addFiles?.([file])
+}
+
 function generateCode(): string {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
     let code = ''
@@ -903,6 +907,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                 <FilesPanel
                                     :workspace-room-id="store.currentRoomId"
                                     :workspace="currentRoom.workspace"
+                                    @attach="handleWorkspaceFileAttach"
                                 />
                             </div>
                         </template>

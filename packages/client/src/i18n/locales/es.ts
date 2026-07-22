@@ -2255,6 +2255,7 @@ jobTriggered: 'Job ejecutado',
   },
 
   files: {
+    attachToChat: 'Añadir al chat', attachFailed: 'No se pudo añadir el archivo al chat',
     previewMode: 'Vista previa', sourceMode: 'Código fuente', tableMode: 'Tabla', worksheet: 'Hoja',
     htmlPreviewTitle: 'Vista previa HTML aislada', previewLoading: 'Cargando vista previa...', previewFailed: 'Vista previa no disponible',
     previewMimeMismatch: 'El tipo de archivo no coincide con el formato de vista previa.', downloadInstead: 'Descargar en su lugar',

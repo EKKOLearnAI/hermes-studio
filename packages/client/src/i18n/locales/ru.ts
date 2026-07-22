@@ -2312,6 +2312,8 @@ export default {
     preview: 'Предпросмотр',
     download: 'Скачать',
     copyPath: 'Копировать путь',
+    attachToChat: 'Добавить в чат',
+    attachFailed: 'Не удалось добавить файл в чат',
     rename: 'Переименовать',
     delete: 'Удалить',
     name: 'Имя',

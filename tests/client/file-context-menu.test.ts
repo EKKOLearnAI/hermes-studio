@@ -133,4 +133,23 @@ describe('FileContextMenu', () => {
     expect(keys).not.toContain('edit')
     expect(keys).toContain('download')
   })
+
+  it('offers workspace files as chat attachments only when enabled', async () => {
+    const entry: FileEntry = {
+      name: 'report.pdf',
+      path: 'reports/report.pdf',
+      isDir: false,
+      size: 128,
+      modTime: '2026-06-02T00:00:00.000Z',
+    }
+    const regularWrapper = mount(FileContextMenu)
+    await showMenu(regularWrapper, entry)
+    expect(regularWrapper.find('[data-key="attach"]').exists()).toBe(false)
+
+    const workspaceWrapper = mount(FileContextMenu, { props: { allowAttach: true } })
+    await showMenu(workspaceWrapper, entry)
+    await workspaceWrapper.get('[data-key="attach"]').trigger('click')
+
+    expect(workspaceWrapper.emitted('attach')).toEqual([[entry]])
+  })
 })

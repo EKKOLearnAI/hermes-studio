@@ -12,6 +12,7 @@ import { NButton, NTooltip, NModal, NInputNumber, NPopover, NSlider, NDropdown, 
 import { computed, ref, nextTick, onMounted, onUnmounted, watch, h } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
+import { extractClipboardFiles } from '@/utils/clipboard-files'
 import VoiceDialogueControls from './VoiceDialogueControls.vue'
 import BundleCreateModal from './BundleCreateModal.vue'
 import { useMicRecorder } from '@/composables/useMicRecorder'
@@ -920,20 +921,13 @@ function handleFileChange(e: Event) {
   input.value = ''
 }
 
-// --- Paste image ---
+// --- Paste files ---
 
 function handlePaste(e: ClipboardEvent) {
-  const items = Array.from(e.clipboardData?.items || [])
-  const imageItems = items.filter(i => i.type.startsWith('image/'))
-  if (!imageItems.length) return
+  const files = extractClipboardFiles(e.clipboardData)
+  if (!files.length) return
   e.preventDefault()
-  for (const item of imageItems) {
-    const blob = item.getAsFile()
-    if (!blob) continue
-    const ext = item.type.split('/')[1] || 'png'
-    const file = new File([blob], `pasted-${Date.now()}.${ext}`, { type: item.type })
-    addFiles([file])
-  }
+  addFiles(files)
 }
 
 // --- Drag and drop ---

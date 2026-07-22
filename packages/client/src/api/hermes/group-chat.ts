@@ -306,6 +306,14 @@ export async function fetchGroupWorkspaceFileBlob(roomId: string, path: string, 
     )
 }
 
+export async function fetchGroupWorkspaceAttachmentBlob(roomId: string, path: string, signal?: AbortSignal): Promise<Blob> {
+    const params = new URLSearchParams({ path, download: '1' })
+    return fetchAuthenticatedBlob(
+        `/api/hermes/group-chat/rooms/${encodeURIComponent(roomId)}/workspace-file/content?${params}`,
+        { signal },
+    )
+}
+
 export async function fetchGroupWorkspaceFileText(roomId: string, path: string): Promise<{ content: string; size: number }> {
     const params = new URLSearchParams({ path, text: '1' })
     const blob = await fetchAuthenticatedBlob(

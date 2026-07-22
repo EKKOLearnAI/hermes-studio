@@ -2255,6 +2255,7 @@ jobTriggered: 'Job ausgelost',
   },
 
   files: {
+    attachToChat: 'Zum Chat hinzufügen', attachFailed: 'Datei konnte nicht zum Chat hinzugefügt werden',
     previewMode: 'Vorschau', sourceMode: 'Quelltext', tableMode: 'Tabelle', worksheet: 'Arbeitsblatt',
     htmlPreviewTitle: 'Isolierte HTML-Vorschau', previewLoading: 'Vorschau wird geladen...', previewFailed: 'Vorschau nicht verfügbar',
     previewMimeMismatch: 'Der Dateityp stimmt nicht mit dem Vorschauformat überein.', downloadInstead: 'Stattdessen herunterladen',

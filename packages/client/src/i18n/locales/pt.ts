@@ -2255,6 +2255,7 @@ jobTriggered: 'Job acionado',
   },
 
   files: {
+    attachToChat: 'Adicionar ao chat', attachFailed: 'Falha ao adicionar arquivo ao chat',
     previewMode: 'Prévia', sourceMode: 'Código-fonte', tableMode: 'Tabela', worksheet: 'Planilha',
     htmlPreviewTitle: 'Prévia HTML isolada', previewLoading: 'Carregando prévia...', previewFailed: 'Prévia indisponível',
     previewMimeMismatch: 'O tipo do arquivo não corresponde ao formato da prévia.', downloadInstead: 'Baixar em vez disso',

@@ -2255,6 +2255,7 @@ jobTriggered: 'Job declenche',
   },
 
   files: {
+    attachToChat: 'Ajouter au chat', attachFailed: 'Impossible d’ajouter le fichier au chat',
     previewMode: 'Aperçu', sourceMode: 'Source', tableMode: 'Tableau', worksheet: 'Feuille',
     htmlPreviewTitle: 'Aperçu HTML isolé', previewLoading: 'Chargement de l’aperçu...', previewFailed: 'Aperçu indisponible',
     previewMimeMismatch: 'Le type du fichier ne correspond pas au format d’aperçu.', downloadInstead: 'Télécharger à la place',

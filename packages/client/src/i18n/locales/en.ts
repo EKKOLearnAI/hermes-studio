@@ -2656,6 +2656,8 @@ export default {
     preview: 'Preview',
     download: 'Download',
     copyPath: 'Copy Path',
+    attachToChat: 'Add to Chat',
+    attachFailed: 'Failed to add file to chat',
     rename: 'Rename',
     delete: 'Delete',
     name: 'Name',

@@ -248,6 +248,18 @@ export async function fetchSessionWorkspaceFileBlob(
   )
 }
 
+export async function fetchSessionWorkspaceAttachmentBlob(
+  sessionId: string,
+  path: string,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const params = new URLSearchParams({ path, download: '1' })
+  return fetchAuthenticatedBlob(
+    `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-file/content?${params}`,
+    { signal },
+  )
+}
+
 export async function fetchSessionWorkspaceFileText(
   sessionId: string,
   path: string,

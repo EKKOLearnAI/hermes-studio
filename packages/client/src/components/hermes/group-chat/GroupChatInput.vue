@@ -5,6 +5,7 @@ import { NButton, NDropdown, NTooltip, type DropdownOption } from 'naive-ui'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
+import { extractClipboardFiles } from '@/utils/clipboard-files'
 import { buildMentionOptions, type MentionOption } from './mention-options'
 import type { Attachment } from '@/stores/hermes/chat'
 import { clampChatInputHeight, isMobileChatInputViewport } from '@/utils/chat-input-height'
@@ -411,16 +412,10 @@ function handleFileChange(e: Event) {
 }
 
 function handlePaste(e: ClipboardEvent) {
-    const items = Array.from(e.clipboardData?.items || [])
-    const imageItems = items.filter(i => i.type.startsWith('image/'))
-    if (!imageItems.length) return
+    const files = extractClipboardFiles(e.clipboardData)
+    if (!files.length) return
     e.preventDefault()
-    for (const item of imageItems) {
-        const blob = item.getAsFile()
-        if (!blob) continue
-        const ext = item.type.split('/')[1] || 'png'
-        addFiles([new File([blob], `pasted-${Date.now()}.${ext}`, { type: item.type })])
-    }
+    addFiles(files)
 }
 
 function handleDragOver(e: DragEvent) {
