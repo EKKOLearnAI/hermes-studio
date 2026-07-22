@@ -236,6 +236,23 @@ test('embeds the desktop browser beside workspace and terminal', async ({ page }
   })).toBe(true)
 
   await page.evaluate(() => {
+    const overlay = document.createElement('div')
+    overlay.className = 'n-modal-body-wrapper'
+    overlay.dataset.browserOverlayTest = 'true'
+    Object.assign(overlay.style, { position: 'fixed', inset: '0' })
+    document.body.appendChild(overlay)
+  })
+  await expect.poll(() => page.evaluate(() => {
+    const calls = (window as typeof window & { __PW_DESKTOP_BROWSER__?: { viewportCalls: Array<{ visible: boolean }> } }).__PW_DESKTOP_BROWSER__?.viewportCalls || []
+    return calls.at(-1)?.visible
+  })).toBe(false)
+  await page.evaluate(() => document.querySelector('[data-browser-overlay-test]')?.remove())
+  await expect.poll(() => page.evaluate(() => {
+    const calls = (window as typeof window & { __PW_DESKTOP_BROWSER__?: { viewportCalls: Array<{ visible: boolean }> } }).__PW_DESKTOP_BROWSER__?.viewportCalls || []
+    return calls.at(-1)?.visible
+  })).toBe(true)
+
+  await page.evaluate(() => {
     const harness = (window as typeof window & {
       __PW_DESKTOP_BROWSER__?: { requestAnnotation?: (request: { tabId: string; mode: 'element' | 'region' }) => void }
     }).__PW_DESKTOP_BROWSER__

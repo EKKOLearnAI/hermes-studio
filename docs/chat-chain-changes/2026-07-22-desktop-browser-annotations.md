@@ -18,3 +18,10 @@ rectangles. The desktop main process stores those callouts in a closed shadow
 tree. DOM callouts follow their live element bounds, region callouts follow page
 coordinates, and both are refreshed immediately before adding the screenshot to
 the composer, so scrolling cannot detach visible labels from their page targets.
+
+The annotation editor always uses a light input surface so its text remains
+readable in either application theme. Active browser tabs now use the shared
+theme background and text tokens. Because an Electron `WebContentsView` renders
+above Web UI DOM, the browser view is temporarily hidden when an intersecting
+modal, drawer, menu, or other supported overlay opens, then restored when that
+overlay closes.

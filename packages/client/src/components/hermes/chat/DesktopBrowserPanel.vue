@@ -11,12 +11,31 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const message = useMessage()
 const bridge = desktopBridge()?.browser
+const EXTERNAL_OVERLAY_SELECTOR = [
+  '.n-modal-body-wrapper',
+  '.n-drawer-container',
+  '.n-popover',
+  '.n-dropdown-menu',
+  '.n-base-select-menu',
+  '.n-select-menu',
+  '.n-date-panel',
+  '.n-time-picker-panel',
+  '.n-color-picker-panel',
+  '.n-cascader-menu',
+  '.n-message',
+  '.n-notification',
+  '.drawer-overlay',
+  '.drawer-panel',
+  '.workspace-dropdown-menu',
+  '[role="dialog"]',
+  '[role="menu"]',
+].join(',')
 const state = ref<DesktopBrowserState | null>(null)
 const address = ref('')
 const viewport = ref<HTMLElement>()
 const busy = ref(false)
 const loadError = ref('')
-const externalModalOpen = ref(false)
+const externalOverlayOpen = ref(false)
 const annotationNote = ref('')
 const annotations = ref<Array<{
   marker: number
@@ -48,6 +67,7 @@ let stopAnnotationRequestListener: (() => void) | undefined
 let annotatingTabId: string | null = null
 let unmounting = false
 let annotationNoteUpdate: Promise<unknown> = Promise.resolve()
+let overlayCheckFrame = 0
 
 const activeTab = computed(() => state.value?.tabs.find(tab => tab.id === state.value?.activeTabId))
 const annotationCount = computed(() => annotations.value.length + (pendingAnnotation.value ? 1 : 0))
@@ -74,7 +94,7 @@ const annotationAnchorStyle = computed(() => {
 })
 
 watch(() => activeTab.value?.url, value => { address.value = value || '' }, { immediate: true })
-watch(externalModalOpen, () => { void nextTick(syncViewport) })
+watch(externalOverlayOpen, () => { void nextTick(syncViewport) })
 
 function applyState(next: DesktopBrowserState): void {
   state.value = next
@@ -83,7 +103,7 @@ function applyState(next: DesktopBrowserState): void {
 async function syncViewport(): Promise<void> {
   if (!bridge || !viewport.value) return
   const rect = viewport.value.getBoundingClientRect()
-  const visible = !externalModalOpen.value && !pendingAnnotation.value
+  const visible = !externalOverlayOpen.value && !pendingAnnotation.value
     && rect.width > 0 && rect.height > 0 && document.visibilityState === 'visible'
   await bridge.setViewport({ x: rect.left, y: rect.top, width: rect.width, height: rect.height }, visible).catch(() => undefined)
 }
@@ -251,11 +271,30 @@ function handleAnnotationKeydown(event: KeyboardEvent): void {
 }
 
 function handleVisibility(): void {
+  scheduleExternalOverlayCheck()
   void syncViewport()
 }
 
-function detectExternalModal(): void {
-  externalModalOpen.value = !!document.querySelector('.n-modal-container')
+function detectExternalOverlay(): void {
+  overlayCheckFrame = 0
+  const browserRect = viewport.value?.getBoundingClientRect()
+  if (!browserRect || browserRect.width <= 0 || browserRect.height <= 0) {
+    externalOverlayOpen.value = false
+    return
+  }
+  externalOverlayOpen.value = [...document.querySelectorAll<HTMLElement>(EXTERNAL_OVERLAY_SELECTOR)].some(element => {
+    if (element.closest('.browser-panel')) return false
+    const style = window.getComputedStyle(element)
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false
+    const rect = element.getBoundingClientRect()
+    return rect.width > 0 && rect.height > 0
+      && rect.right > browserRect.left && rect.left < browserRect.right
+      && rect.bottom > browserRect.top && rect.top < browserRect.bottom
+  })
+}
+
+function scheduleExternalOverlayCheck(): void {
+  if (!overlayCheckFrame) overlayCheckFrame = window.requestAnimationFrame(detectExternalOverlay)
 }
 
 onMounted(async () => {
@@ -266,11 +305,11 @@ onMounted(async () => {
     stopAnnotationRequestListener = bridge.onAnnotationRequest(request => {
       if (state.value?.tabs.some(tab => tab.id === request.tabId)) annotate(request.mode, request.tabId)
     })
-    resizeObserver = new ResizeObserver(() => { void syncViewport() })
+    resizeObserver = new ResizeObserver(() => { scheduleExternalOverlayCheck(); void syncViewport() })
     if (viewport.value) resizeObserver.observe(viewport.value)
-    modalObserver = new MutationObserver(detectExternalModal)
-    modalObserver.observe(document.body, { childList: true, subtree: true })
-    detectExternalModal()
+    modalObserver = new MutationObserver(scheduleExternalOverlayCheck)
+    modalObserver.observe(document.body, { attributes: true, attributeFilter: ['class', 'style', 'aria-hidden'], childList: true, subtree: true })
+    detectExternalOverlay()
     document.addEventListener('visibilitychange', handleVisibility)
     window.addEventListener('resize', handleVisibility)
     await nextTick(syncViewport)
@@ -288,6 +327,7 @@ onUnmounted(() => {
   stopAnnotationRequestListener?.()
   resizeObserver?.disconnect()
   modalObserver?.disconnect()
+  if (overlayCheckFrame) window.cancelAnimationFrame(overlayCheckFrame)
   document.removeEventListener('visibilitychange', handleVisibility)
   window.removeEventListener('resize', handleVisibility)
   if (bridge) void bridge.setViewport({ x: 0, y: 0, width: 1, height: 1 }, false)
@@ -341,6 +381,7 @@ onUnmounted(() => {
             <strong>{{ t('browser.annotationLabel', { index: pendingAnnotation.marker }) }} · {{ t(pendingAnnotation.mode === 'element' ? 'browser.selectElement' : 'browser.selectRegion') }}</strong>
             <NInput
               v-model:value="annotationNote"
+              class="annotation-note-input"
               type="textarea"
               :rows="3"
               autofocus
@@ -364,10 +405,10 @@ onUnmounted(() => {
 </template>
 
 <style scoped lang="scss">
-.browser-panel { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; color: var(--text-color); }
+.browser-panel { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; color: var(--text-primary, #1a1a1a); }
 .tab-strip { height: 38px; flex: 0 0 38px; display: flex; align-items: flex-end; gap: 2px; padding: 4px 8px 0; overflow-x: auto; background: rgba(127,127,127,.06); }
 .tab { width: 190px; min-width: 100px; height: 34px; border: 0; border-radius: 8px 8px 0 0; background: transparent; color: inherit; display: flex; align-items: center; gap: 7px; padding: 0 9px; cursor: pointer; }
-.tab.active { background: var(--card-color, #fff); }
+.tab.active { color: var(--text-primary, #1a1a1a); background: var(--bg-card, #fff); box-shadow: inset 0 0 0 1px var(--border-color, #e0e0e0); }
 .tab img { width: 16px; height: 16px; }.tab span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: left; }.tab i { color: #3b82f6; font-size: 9px; }.tab b { font: 18px/1 sans-serif; font-weight: 400; }
 .new-tab, .toolbar > button { border: 0; background: transparent; color: inherit; cursor: pointer; border-radius: 6px; }.new-tab { width: 34px; height: 34px; font-size: 20px; }.toolbar > button { width: 30px; height: 30px; font-size: 18px; }.toolbar > button:hover, .new-tab:hover { background: rgba(127,127,127,.15); }.toolbar > button:disabled { opacity: .35; }
 .toolbar { height: 46px; flex: 0 0 46px; padding: 7px 10px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 8px; }
@@ -379,9 +420,12 @@ onUnmounted(() => {
 .annotation-editor { flex: 1; min-height: 0; overflow: auto; padding: 12px; background: var(--card-color, #fff); }
 .annotation-preview { position: relative; width: 100%; margin-bottom: 168px; line-height: 0; }
 .annotation-preview > img { display: block; width: 100%; height: auto; border: 1px solid var(--border-color); border-radius: 8px; background: #fff; box-sizing: border-box; }
-.annotation-popover { position: absolute; z-index: 2; left: clamp(8px, var(--annotation-left), calc(100% - 328px)); top: calc(var(--annotation-bottom) + 32px); width: min(320px, calc(100% - 16px)); padding: 10px; display: flex; flex-direction: column; gap: 8px; line-height: normal; border: 1px solid rgba(59,130,246,.45); border-radius: 10px; background: var(--card-color, #fff); box-shadow: 0 8px 28px rgba(15,23,42,.22); box-sizing: border-box; }
+.annotation-popover { position: absolute; z-index: 2; left: clamp(8px, var(--annotation-left), calc(100% - 328px)); top: calc(var(--annotation-bottom) + 32px); width: min(320px, calc(100% - 16px)); padding: 10px; display: flex; flex-direction: column; gap: 8px; line-height: normal; color: #1f2937; color-scheme: light; border: 1px solid rgba(59,130,246,.45); border-radius: 10px; background: #fff; box-shadow: 0 8px 28px rgba(15,23,42,.22); box-sizing: border-box; }
 .annotation-popover.above { top: auto; bottom: calc(100% - var(--annotation-top) + 8px); }
 .annotation-popover > strong { color: #3b82f6; font-size: 12px; }
+.annotation-popover :deep(.annotation-note-input.n-input) { --n-color: #fff !important; --n-color-focus: #fff !important; --n-text-color: #1f2937 !important; --n-placeholder-color: #9ca3af !important; --n-border: 1px solid #d1d5db !important; --n-border-hover: 1px solid #60a5fa !important; --n-border-focus: 1px solid #3b82f6 !important; --n-box-shadow-focus: 0 0 0 2px rgba(59,130,246,.18) !important; }
+.annotation-popover :deep(.annotation-note-input .n-input__textarea-el) { color: #1f2937 !important; caret-color: #2563eb; }
+.annotation-popover :deep(.annotation-note-input .n-input__textarea-el::placeholder) { color: #9ca3af !important; }
 .annotation-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .unavailable { padding: 40px; text-align: center; color: var(--text-color-3); }
 </style>
