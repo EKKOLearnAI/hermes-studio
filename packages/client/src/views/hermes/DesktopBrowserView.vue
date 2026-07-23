@@ -326,7 +326,7 @@ onUnmounted(() => {
 
           <NTabPane name="permissions" :tab="t('browser.permissions')">
             <label class="profile-filter">{{ t('browser.profiles') }}<NSelect v-model:value="settingsProfileId" :options="profileOptions" /></label>
-            <p class="hint">{{ t('browser.permissionsHint') }}</p>
+            <p class="hint permissions-hint">{{ t('browser.permissionsHint') }}</p>
             <div class="form-actions">
               <NButton @click="clearProfileData('cache')">{{ t('browser.clearCache') }}</NButton>
               <NButton @click="clearProfileData('permission-audit')">{{ t('browser.clearPermissionAudit') }}</NButton>
@@ -419,6 +419,7 @@ onUnmounted(() => {
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .switch-row { display: flex !important; align-items: center; justify-content: space-between; }
 .hint { color: var(--text-color-3); font-size: 12px; }.record { display: grid; gap: 3px; padding: 10px 0; border-bottom: 1px solid var(--border-color); }.record span { color: var(--text-color-3); font-size: 12px; overflow-wrap: anywhere; }.empty, .unavailable { padding: 40px; text-align: center; color: var(--text-color-3); }
+.permissions-hint { margin: 0 0 14px; }
 .download-record { gap: 7px; }
 .download-record-heading { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .download-record-heading strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
