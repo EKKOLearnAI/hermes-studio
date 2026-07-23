@@ -3,7 +3,6 @@
     DetailPrint "Stopping Hermes Studio..."
     nsExec::ExecToLog '"$INSTDIR\Hermes Studio.exe" --quit'
     Pop $0
-    Sleep 1500
 
     InitPluginsDir
     FileOpen $0 "$PLUGINSDIR\stop-hermes-studio.ps1" w
@@ -77,13 +76,18 @@
     FileWrite $0 "    if ($$process) { $$process.CloseMainWindow() | Out-Null }$\r$\n"
     FileWrite $0 "  } catch {}$\r$\n"
     FileWrite $0 "}$\r$\n"
-    FileWrite $0 "Start-Sleep -Milliseconds 750$\r$\n"
-    FileWrite $0 "$$deadline = (Get-Date).AddSeconds(30)$\r$\n"
-    FileWrite $0 "while ((Get-Date) -lt $$deadline) {$\r$\n"
+    FileWrite $0 "$$gracefulDeadline = (Get-Date).AddSeconds(30)$\r$\n"
+    FileWrite $0 "while ((Get-Date) -lt $$gracefulDeadline) {$\r$\n"
+    FileWrite $0 "  $$processes = @(Get-HermesStudioRelatedProcess)$\r$\n"
+    FileWrite $0 "  if ($$processes.Count -eq 0) { exit 0 }$\r$\n"
+    FileWrite $0 "  Start-Sleep -Milliseconds 500$\r$\n"
+    FileWrite $0 "}$\r$\n"
+    FileWrite $0 "$$forceDeadline = (Get-Date).AddSeconds(5)$\r$\n"
+    FileWrite $0 "while ((Get-Date) -lt $$forceDeadline) {$\r$\n"
     FileWrite $0 "  $$processes = @(Get-HermesStudioRelatedProcess)$\r$\n"
     FileWrite $0 "  if ($$processes.Count -eq 0) { exit 0 }$\r$\n"
     FileWrite $0 "  $$processes | ForEach-Object { try { Stop-Process -Id $$_.ProcessId -Force } catch {} }$\r$\n"
-    FileWrite $0 "  Start-Sleep -Milliseconds 500$\r$\n"
+    FileWrite $0 "  Start-Sleep -Milliseconds 250$\r$\n"
     FileWrite $0 "}$\r$\n"
     FileWrite $0 "if (@(Get-HermesStudioRelatedProcess).Count -eq 0) { exit 0 }$\r$\n"
     FileWrite $0 "exit 1$\r$\n"

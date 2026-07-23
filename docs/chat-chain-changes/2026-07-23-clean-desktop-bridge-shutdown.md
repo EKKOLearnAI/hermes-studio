@@ -17,3 +17,7 @@ process exit as a last-resort safeguard, unless
 `HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN=0` explicitly preserves the Bridge.
 Windows process-tree termination commands also have a fixed timeout so the
 fallback itself cannot block application exit indefinitely.
+
+Windows installer upgrades send the same `--quit` request used by the tray
+action and wait up to 30 seconds for the visible shutdown flow to finish.
+Only processes that remain after that grace period are force-stopped.

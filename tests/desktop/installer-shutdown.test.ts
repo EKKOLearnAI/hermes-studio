@@ -23,6 +23,19 @@ describe('Windows installer shutdown hook', () => {
     expect(script.indexOf('$$protectedProcessIds.Contains')).toBeLessThan(script.indexOf('$$cmd.IndexOf($$installDir'))
   })
 
+  it('waits for graceful app shutdown before force-stopping remaining processes', () => {
+    const script = readFileSync(resolve('packages/desktop/build/installer.nsh'), 'utf8')
+    const gracefulDeadline = script.indexOf('$$gracefulDeadline = (Get-Date).AddSeconds(30)')
+    const forceDeadline = script.indexOf('$$forceDeadline = (Get-Date).AddSeconds(5)', gracefulDeadline)
+    const forceStop = script.indexOf('Stop-Process -Id $$_.ProcessId -Force', gracefulDeadline)
+
+    expect(script).toContain(`nsExec::ExecToLog '"$INSTDIR\\Hermes Studio.exe" --quit'`)
+    expect(gracefulDeadline).toBeGreaterThan(-1)
+    expect(forceDeadline).toBeGreaterThan(gracefulDeadline)
+    expect(forceStop).toBeGreaterThan(forceDeadline)
+    expect(script.slice(gracefulDeadline, forceDeadline)).not.toContain('Stop-Process')
+  })
+
   it('replaces the broken installed uninstaller before upgrading', () => {
     const script = readFileSync(resolve('packages/desktop/build/installer.nsh'), 'utf8')
 
