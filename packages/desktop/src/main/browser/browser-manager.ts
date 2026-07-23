@@ -103,13 +103,25 @@ function proxyConfig(profile: DesktopBrowserProfile): ProxyConfig {
 const browserCookieCrypto: BrowserCookieCrypto = {
   isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
   async encryptString(value) {
-    if (await safeStorage.isAsyncEncryptionAvailable().catch(() => false)) {
+    let asyncEncryptionAvailable = false
+    try {
+      asyncEncryptionAvailable = await safeStorage.isAsyncEncryptionAvailable()
+    } catch {
+      // Fall back to the synchronous OS encryption API.
+    }
+    if (asyncEncryptionAvailable) {
       return safeStorage.encryptStringAsync(value)
     }
     return safeStorage.encryptString(value)
   },
   async decryptString(value) {
-    if (await safeStorage.isAsyncEncryptionAvailable().catch(() => false)) {
+    let asyncEncryptionAvailable = false
+    try {
+      asyncEncryptionAvailable = await safeStorage.isAsyncEncryptionAvailable()
+    } catch {
+      // Fall back to the synchronous OS encryption API.
+    }
+    if (asyncEncryptionAvailable) {
       return (await safeStorage.decryptStringAsync(value)).result
     }
     return safeStorage.decryptString(value)

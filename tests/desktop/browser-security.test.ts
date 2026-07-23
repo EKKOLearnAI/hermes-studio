@@ -61,6 +61,8 @@ describe('desktop browser security primitives', () => {
     expect(source).toContain("browserSession.cookies.on('changed', listener)")
     expect(source).toContain('await this.persistSessionCookies(profile, browserSession)')
     expect(source).toContain('browser session shutdown exceeded')
+    expect(source).toContain('asyncEncryptionAvailable = await safeStorage.isAsyncEncryptionAvailable()')
+    expect(source).not.toContain('isAsyncEncryptionAvailable().catch')
     expect(source).toContain('cancelDownload(downloadId: string)')
     expect(source).toContain('this.downloadItems.set(download.id, item)')
     expect(source).toContain('item.cancel()')
