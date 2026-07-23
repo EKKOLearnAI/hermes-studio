@@ -71,5 +71,9 @@ inherits the active theme instead of forcing a white background.
 
 Browser sessions are now retained per profile for the lifetime of the manager.
 Before profile switches or active-profile rebuilds, Electron DOM storage and the
-cookie store are explicitly flushed to that profile's `data/` directory. Switching
-away and back therefore preserves authenticated sites such as Gmail.
+cookie store are explicitly flushed to that profile's `data/` directory. Electron
+session cookies are also encrypted with the operating system credential store and
+snapshotted after cookie changes, then restored before the profile's first request.
+This preserves authenticated sites such as Gmail across both profile switches and
+Desktop restarts without relying only on the quit path. Final shutdown persistence
+is bounded to two seconds so a stuck storage backend cannot block process exit.

@@ -136,7 +136,7 @@ async function prepareAppShutdown(): Promise<void> {
       cancelWindowFade()
       await showShutdownSplash()
       await browserBroker?.stop().catch(() => undefined)
-      browserManager?.destroy()
+      await browserManager?.destroy()
       browserBroker = null
       browserManager = null
       await stopWebUiServer().catch(() => undefined)
@@ -545,7 +545,7 @@ async function initializeDesktopBrowser(): Promise<void> {
     browserBroker = broker
   } catch (error) {
     await broker.stop().catch(() => undefined)
-    manager.destroy()
+    await manager.destroy()
     throw error
   }
 }
