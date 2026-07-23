@@ -121,6 +121,9 @@ const showSessions = ref(
   typeof window === "undefined" ||
     !window.matchMedia("(max-width: 768px)").matches,
 );
+const pageSidebarExpanded = computed(
+  () => currentMode.value === "chat" && showSessions.value,
+);
 let mobileQuery: MediaQueryList | null = null;
 const isMobile = ref(false);
 const toolPanelStyle = computed(() => ({
@@ -301,6 +304,12 @@ function handleMobileChange(e: MediaQueryListEvent | MediaQueryList) {
 function openPageSidebar() {
   showSessions.value = true;
 }
+
+watch(
+  pageSidebarExpanded,
+  (expanded) => appStore.setPageSidebarExpanded(expanded),
+  { immediate: true },
+);
 
 function workspacePreviewPath(filePath: string): string | null {
   const workspace = activeWorkspacePath.value?.replace(/\\/g, "/").replace(/\/+$/, "");

@@ -27,6 +27,8 @@ export const useAppStore = defineStore('app', () => {
   const sidebarOpen = ref(false)
   // Desktop-only collapsed state (icon-rail mode). Persisted to localStorage.
   const sidebarCollapsed = ref(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1')
+  // Expanded state of route-owned sidebars, used by the Windows title bar.
+  const pageSidebarExpanded = ref(true)
 
   const connected = ref(false)
   const serverVersion = ref(WEB_UI_VERSION)
@@ -335,12 +337,18 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  function setPageSidebarExpanded(expanded: boolean) {
+    pageSidebarExpanded.value = expanded
+  }
+
   return {
     sidebarOpen,
     sidebarCollapsed,
+    pageSidebarExpanded,
     toggleSidebar,
     closeSidebar,
     toggleSidebarCollapsed,
+    setPageSidebarExpanded,
     connected,
     serverVersion,
     latestVersion,

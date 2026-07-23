@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber, NDropdown, NModal, type DropdownOption } from 'naive-ui'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
+import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { updateRoomConfig, forceCompress } from '@/api/hermes/group-chat'
 import GroupMessageList from './GroupMessageList.vue'
@@ -28,12 +29,18 @@ const DesktopBrowserPanel = defineAsyncComponent(async () => (await import('@/co
 const { t } = useI18n()
 const router = useRouter()
 const message = useMessage()
+const appStore = useAppStore()
 const store = useGroupChatStore()
 const profilesStore = useProfilesStore()
 const filesStore = useFilesStore()
 const toolPanelStore = useToolPanelStore()
 
 const showSidebar = ref(window.innerWidth > 768)
+watch(
+    showSidebar,
+    expanded => appStore.setPageSidebarExpanded(expanded),
+    { immediate: true },
+)
 const showCreateModal = ref(false)
 const showCloneModal = ref(false)
 const showAddAgentModal = ref(false)

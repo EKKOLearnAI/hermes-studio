@@ -294,6 +294,11 @@ const activeWorkflowId = ref('')
 const showWorkflowSidebar = ref(
   typeof window === 'undefined' || !window.matchMedia('(max-width: 768px)').matches,
 )
+watch(
+  showWorkflowSidebar,
+  expanded => appStore.setPageSidebarExpanded(expanded),
+  { immediate: true },
+)
 const isMobile = ref(false)
 const workflowsLoading = ref(false)
 const workflowProfileFilter = ref<string | null>(null)

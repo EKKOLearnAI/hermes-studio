@@ -45,8 +45,8 @@ const desktopPlatform = computed(() => desktopBridge()?.platform || '')
 const isDesktopWindows = computed(() => isDesktopShell.value && desktopPlatform.value === 'win32')
 const desktopTitleBarLeft = computed(() => {
   if (isLoginPage.value) return 10
-  if (showAppSidebar.value && appStore.sidebarCollapsed) return 84
-  return 260
+  if (showAppSidebar.value) return appStore.sidebarCollapsed ? 84 : 260
+  return appStore.pageSidebarExpanded ? 260 : 10
 })
 const isDesktopPetRoute = computed(() => route.name === 'desktop.pet')
 const showWebPet = computed(() => !isLoginPage.value && !isDesktopShell.value && !isDesktopPetRoute.value)

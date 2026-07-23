@@ -6,6 +6,8 @@ const routeMock = vi.hoisted(() => ({ name: 'hermes.chat' as string }))
 const appStoreMock = vi.hoisted(() => ({
   nodeVersion: '23.0.0',
   sidebarOpen: true,
+  sidebarCollapsed: false,
+  pageSidebarExpanded: true,
   toggleSidebar: vi.fn(),
   closeSidebar: vi.fn(),
   loadModels: vi.fn(),
@@ -68,7 +70,11 @@ vi.mock('@/components/layout/AppSidebar.vue', () => ({
 }))
 
 vi.mock('@/components/layout/DesktopTitleBar.vue', () => ({
-  default: { name: 'DesktopTitleBar', template: '<div />' },
+  default: {
+    name: 'DesktopTitleBar',
+    props: ['standalone', 'leftOffset'],
+    template: '<div />',
+  },
 }))
 
 import App from '@/App.vue'
@@ -92,7 +98,6 @@ function mountApp() {
         NNotificationProvider: { template: '<div><slot /></div>' },
         AuthEventListener: true,
         AppSidebar: true,
-        DesktopTitleBar: true,
         SessionSearchModal: true,
         DefaultCredentialPrompt: true,
         RouterView: { template: '<div class="router-view-test" />' },
@@ -105,6 +110,8 @@ describe('App web pet mounting', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     routeMock.name = 'hermes.chat'
+    appStoreMock.sidebarCollapsed = false
+    appStoreMock.pageSidebarExpanded = true
     delete (window as WindowWithDesktop).hermesDesktop
   })
 
@@ -139,6 +146,19 @@ describe('App web pet mounting', () => {
 
     expect(wrapper.find('.app-shell').classes()).toContain('desktop-platform-win32')
     expect(wrapper.findComponent({ name: 'DesktopTitleBar' }).exists()).toBe(true)
+  })
+
+  it('expands the Windows control bar when a page-owned sidebar is collapsed', async () => {
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: { isDesktop: true, platform: 'win32' },
+    })
+    appStoreMock.pageSidebarExpanded = false
+
+    const wrapper = mountApp()
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'DesktopTitleBar' }).props('leftOffset')).toBe(10)
   })
 
   it('marks Windows desktop shell as maximized when the native window state changes', async () => {

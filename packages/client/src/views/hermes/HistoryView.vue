@@ -103,6 +103,11 @@ async function loadHermesSessions() {
 const showSessions = ref(
   typeof window === 'undefined' || !window.matchMedia('(max-width: 768px)').matches,
 )
+watch(
+  showSessions,
+  expanded => appStore.setPageSidebarExpanded(expanded),
+  { immediate: true },
+)
 let mobileQuery: MediaQueryList | null = null
 const isMobile = ref(false)
 

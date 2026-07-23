@@ -45,6 +45,15 @@ describe('App Store', () => {
     expect(window.localStorage.getItem('hermes_sidebar_collapsed')).toBe('0')
   })
 
+  it('tracks route-owned sidebar state for desktop chrome layout', () => {
+    const store = useAppStore()
+
+    expect(store.pageSidebarExpanded).toBe(true)
+
+    store.setPageSidebarExpanded(false)
+    expect(store.pageSidebarExpanded).toBe(false)
+  })
+
   it('loads model visibility and falls back when the configured default is hidden', async () => {
     mockSystemApi.fetchAvailableModels.mockResolvedValue({
       default: 'deepseek-chat',

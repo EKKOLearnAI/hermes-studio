@@ -438,9 +438,43 @@ onUnmounted(() => {
       </div>
 
       <div class="toolbar">
-        <button :disabled="hasAnnotationSession || !activeTab?.canGoBack" :title="t('browser.back')" @click="navigationAction('back')">←</button>
-        <button :disabled="hasAnnotationSession || !activeTab?.canGoForward" :title="t('browser.forward')" @click="navigationAction('forward')">→</button>
-        <button :disabled="hasAnnotationSession" :title="activeTab?.loading ? t('browser.stop') : t('browser.reload')" @click="navigationAction(activeTab?.loading ? 'stop' : 'reload')">{{ activeTab?.loading ? '×' : '↻' }}</button>
+        <button
+          type="button"
+          :disabled="hasAnnotationSession || !activeTab?.canGoBack"
+          :title="t('browser.back')"
+          :aria-label="t('browser.back')"
+          @click="navigationAction('back')"
+        >
+          <svg class="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          :disabled="hasAnnotationSession || !activeTab?.canGoForward"
+          :title="t('browser.forward')"
+          :aria-label="t('browser.forward')"
+          @click="navigationAction('forward')"
+        >
+          <svg class="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="m9 18 6-6-6-6" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          :disabled="hasAnnotationSession"
+          :title="activeTab?.loading ? t('browser.stop') : t('browser.reload')"
+          :aria-label="activeTab?.loading ? t('browser.stop') : t('browser.reload')"
+          @click="navigationAction(activeTab?.loading ? 'stop' : 'reload')"
+        >
+          <svg v-if="activeTab?.loading" class="toolbar-icon toolbar-stop-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <rect x="7" y="7" width="10" height="10" rx="1" />
+          </svg>
+          <svg v-else class="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M20 12a8 8 0 1 1-2.34-5.66L20 8" />
+            <path d="M20 4v4h-4" />
+          </svg>
+        </button>
         <NInput v-model:value="address" size="small" :placeholder="t('browser.addressPlaceholder')" :disabled="busy || hasAnnotationSession" @keydown.enter="navigate" />
         <NSelect
           class="profile-switcher"
@@ -531,8 +565,10 @@ onUnmounted(() => {
 .tab { width: 190px; min-width: 100px; height: 34px; border: 0; border-radius: 8px 8px 0 0; background: transparent; color: inherit; display: flex; align-items: center; gap: 7px; padding: 0 9px; cursor: pointer; }
 .tab.active { color: var(--text-primary, #1a1a1a); background: var(--bg-card, #fff); box-shadow: inset 0 0 0 1px var(--border-color, #e0e0e0); }
 .tab img { width: 16px; height: 16px; }.tab span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: left; }.tab i { color: #3b82f6; font-size: 9px; }.tab b { font: 18px/1 sans-serif; font-weight: 400; }
-.new-tab, .toolbar > button, .download-trigger { border: 0; background: transparent; color: inherit; cursor: pointer; border-radius: 6px; }.new-tab { width: 34px; height: 34px; font-size: 20px; }.toolbar > button, .download-trigger { width: 30px; height: 30px; font-size: 18px; }.toolbar > button:hover, .download-trigger:hover, .new-tab:hover { background: rgba(127,127,127,.15); }.toolbar > button:disabled { opacity: .35; }
+.new-tab, .toolbar > button, .download-trigger { border: 0; background: transparent; color: inherit; cursor: pointer; border-radius: 6px; }.new-tab { width: 34px; height: 34px; font-size: 20px; }.toolbar > button, .download-trigger { width: 30px; height: 30px; font-size: 18px; }.toolbar > button { display: inline-grid; place-items: center; padding: 0; }.toolbar > button:hover, .download-trigger:hover, .new-tab:hover { background: rgba(127,127,127,.15); }.toolbar > button:disabled { opacity: .35; }
 .toolbar { height: 46px; flex: 0 0 46px; padding: 7px 10px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 8px; }
+.toolbar-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.toolbar-stop-icon { fill: currentColor; stroke: none; }
 .profile-switcher { width: 136px; flex: 0 0 136px; }
 .download-trigger { position: relative; flex: 0 0 30px; padding: 0; }
 .download-trigger > b { position: absolute; top: -3px; right: -4px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px; background: #ef4444; color: #fff; font: 10px/15px sans-serif; text-align: center; }
