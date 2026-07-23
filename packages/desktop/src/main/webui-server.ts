@@ -28,6 +28,7 @@ const DEFAULT_READY_TIMEOUT_MS = 120_000
 const DEFAULT_FULL_STARTUP_WAIT_MS = 0
 const DEFAULT_STOP_TIMEOUT_MS = 20_000
 const DEFAULT_GRACEFUL_STOP_TIMEOUT_MS = 18_000
+const FORCE_KILL_COMMAND_TIMEOUT_MS = 5_000
 const AGENT_BRIDGE_STARTED_MARKER = '[bootstrap] agent bridge started'
 const AGENT_BRIDGE_FAILED_MARKER = '[bootstrap] agent bridge failed to start'
 const execFileAsync = promisify(execFile)
@@ -70,6 +71,7 @@ function killProcessTree(proc: ChildProcess): void {
     try {
       execFileSync('taskkill.exe', ['/PID', String(proc.pid), '/T', '/F'], {
         encoding: 'utf-8',
+        timeout: FORCE_KILL_COMMAND_TIMEOUT_MS,
         windowsHide: true,
       })
       return

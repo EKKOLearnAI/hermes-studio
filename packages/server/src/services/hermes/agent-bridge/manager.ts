@@ -13,6 +13,7 @@ const DEFAULT_AGENT_BRIDGE_RECOVERY_EXIT_TIMEOUT_MS = 5000
 const DEFAULT_AGENT_BRIDGE_RECOVERY_SIGKILL_WAIT_MS = 250
 const DEFAULT_AGENT_BRIDGE_SHUTDOWN_TIMEOUT_MS = 10_000
 const DEFAULT_AGENT_BRIDGE_FORCE_KILL_WAIT_MS = 2_000
+const FORCE_KILL_COMMAND_TIMEOUT_MS = 5_000
 const OPENROUTER_WEB_UI_ATTRIBUTION_ENV = {
   HERMES_OPENROUTER_APP_REFERER: 'https://hermes-studio.ai',
   HERMES_OPENROUTER_APP_TITLE: 'Hermes Studio',
@@ -537,6 +538,7 @@ function forceKillBridgeEndpointProcesses(endpoint: string): void {
       if (process.platform === 'win32') {
         execFileSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
           encoding: 'utf-8',
+          timeout: FORCE_KILL_COMMAND_TIMEOUT_MS,
           windowsHide: true,
         })
       } else {
@@ -959,6 +961,7 @@ export class AgentBridgeManager {
       try {
         execFileSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
           encoding: 'utf-8',
+          timeout: FORCE_KILL_COMMAND_TIMEOUT_MS,
           windowsHide: true,
         })
         return

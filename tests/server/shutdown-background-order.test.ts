@@ -93,4 +93,24 @@ describe('graceful shutdown background delivery ordering', () => {
     expect(agentBridgeManager.forceStop).toHaveBeenCalledOnce()
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
+
+  it('preserves the configured bridge across the forced shutdown deadline', async () => {
+    process.env.HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN = '0'
+    stopPreviewRuntimeMock.mockImplementationOnce(() => new Promise<void>(() => {}))
+    const agentBridgeManager = {
+      stop: vi.fn(async () => {}),
+      forceStop: vi.fn(),
+    }
+    const httpServer = { close: vi.fn() }
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+    const { createShutdownHandler, getShutdownForceExitMs } = await import('../../packages/server/src/services/shutdown')
+
+    void createShutdownHandler(httpServer, undefined, undefined, agentBridgeManager)('desktop-request')
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(getShutdownForceExitMs())
+
+    expect(agentBridgeManager.stop).not.toHaveBeenCalled()
+    expect(agentBridgeManager.forceStop).not.toHaveBeenCalled()
+    expect(exitSpy).toHaveBeenCalledWith(0)
+  })
 })

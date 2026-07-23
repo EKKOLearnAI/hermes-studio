@@ -13,4 +13,7 @@ MCP subprocesses do not remain after the app exits.
 The Desktop browser broker also has a bounded shutdown path, ensuring an active
 browser operation cannot prevent Web UI and Agent Bridge cleanup from running.
 The Web UI shutdown deadline repeats the bridge force-stop before its final
-process exit as a last-resort safeguard.
+process exit as a last-resort safeguard, unless
+`HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN=0` explicitly preserves the Bridge.
+Windows process-tree termination commands also have a fixed timeout so the
+fallback itself cannot block application exit indefinitely.
