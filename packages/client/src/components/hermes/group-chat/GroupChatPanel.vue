@@ -17,10 +17,13 @@ import type { Attachment } from '@/stores/hermes/chat'
 import type { RoomAgent, RoomInfo } from '@/api/hermes/group-chat'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
+import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
+import { OPEN_DESKTOP_BROWSER_PANEL_EVENT } from '@/utils/desktop-browser'
 
 const FilesPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/FilesPanel.vue')).default)
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)
 const WorkspaceDiffPreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/WorkspaceDiffPreview.vue')).default)
+const DesktopBrowserPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/DesktopBrowserPanel.vue')).default)
 
 const { t } = useI18n()
 const router = useRouter()
@@ -54,6 +57,8 @@ const chatDropCounter = ref(0)
 const isChatDropActive = ref(false)
 const groupChatContentWrapperRef = ref<HTMLElement | null>(null)
 const showWorkspacePanel = ref(false)
+const activeWorkspacePanel = ref<'files' | 'browser'>('files')
+const desktopBrowserAvailable = hasDesktopBrowserBridge()
 const workspacePanelMobile = ref(window.innerWidth <= 768)
 const WORKSPACE_PANEL_MIN_WIDTH = 360
 const WORKSPACE_PANEL_DEFAULT_WIDTH = 560
@@ -185,8 +190,35 @@ function closeWorkspacePanel(): void {
 
 function toggleWorkspacePanel(): void {
     if (!currentRoom.value?.workspace) return
-    if (showWorkspacePanel.value) closeWorkspacePanel()
-    else showWorkspacePanel.value = true
+    if (showWorkspacePanel.value && activeWorkspacePanel.value === 'files') {
+        closeWorkspacePanel()
+        return
+    }
+    activeWorkspacePanel.value = 'files'
+    showWorkspacePanel.value = true
+}
+
+function selectWorkspacePanel(panel: 'files' | 'browser'): void {
+    if (panel === 'browser') {
+        if (!desktopBrowserAvailable) return
+        if (toolPanelStore.workspaceDiff?.editable && filesStore.hasUnsavedChanges) {
+            message.warning(t('files.unsavedChanges'))
+            return
+        }
+        if (toolPanelStore.workspaceDiff?.editable && filesStore.editingFile) filesStore.closeEditor()
+        filesStore.closePreview()
+        toolPanelStore.closeWorkspaceDiff()
+    }
+    activeWorkspacePanel.value = panel
+    showWorkspacePanel.value = true
+}
+
+function handleOpenDesktopBrowserPanelRequest(): void {
+    selectWorkspacePanel('browser')
+}
+
+function handleBrowserAttachment(payload: { file: File }): void {
+    groupChatInputRef.value?.addFiles?.([payload.file])
 }
 
 function groupWorkspacePreviewPath(filePath: string): string | null {
@@ -444,6 +476,7 @@ async function handleAddAgent() {
 onMounted(() => {
     window.addEventListener('hermes:open-page-sidebar', openPageSidebar)
     window.addEventListener('hermes:preview-workspace-file', handleWorkspaceFilePreviewRequest)
+    window.addEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
     window.addEventListener('resize', handleWorkspacePanelResize)
     handleWorkspacePanelResize()
     if (profilesStore.profiles.length === 0) {
@@ -454,6 +487,7 @@ onMounted(() => {
 onUnmounted(() => {
     window.removeEventListener('hermes:open-page-sidebar', openPageSidebar)
     window.removeEventListener('hermes:preview-workspace-file', handleWorkspaceFilePreviewRequest)
+    window.removeEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
     window.removeEventListener('resize', handleWorkspacePanelResize)
     stopWorkspaceResize()
     if (showWorkspacePanel.value) closeWorkspacePanel()
@@ -465,11 +499,17 @@ watch(() => store.currentRoomId, (roomId, previousRoomId) => {
 })
 
 watch(() => filesStore.previewFile, previewFile => {
-    if (previewFile?.workspaceRoomId === store.currentRoomId) showWorkspacePanel.value = true
+    if (previewFile?.workspaceRoomId === store.currentRoomId) {
+        activeWorkspacePanel.value = 'files'
+        showWorkspacePanel.value = true
+    }
 })
 
 watch(() => toolPanelStore.workspaceDiff, workspaceDiff => {
-    if (workspaceDiff) showWorkspacePanel.value = true
+    if (workspaceDiff) {
+        activeWorkspacePanel.value = 'files'
+        showWorkspacePanel.value = true
+    }
 })
 
 watch(showWorkspacePanel, async visible => {
@@ -879,14 +919,49 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     <GroupChatInput ref="groupChatInputRef" @send="handleSendMessage" />
                 </div>
                 <aside
-                    v-if="showWorkspacePanel && (toolPanelStore.workspaceDiff || currentRoom?.workspace || filesStore.previewFile?.workspaceRoomId === store.currentRoomId)"
+                    v-if="showWorkspacePanel && (activeWorkspacePanel === 'browser' ? desktopBrowserAvailable : (toolPanelStore.workspaceDiff || currentRoom?.workspace || filesStore.previewFile?.workspaceRoomId === store.currentRoomId))"
                     class="group-workspace-panel"
                     :style="workspacePanelStyle"
                 >
                     <div class="group-workspace-resize-handle" @pointerdown="startWorkspaceResize" />
                     <div class="group-workspace-panel-inner">
+                        <div
+                            v-if="desktopBrowserAvailable && !toolPanelStore.workspaceDiff && !filesStore.previewFile"
+                            class="group-workspace-panel-tabs"
+                            role="tablist"
+                        >
+                            <button
+                                type="button"
+                                role="tab"
+                                :class="{ active: activeWorkspacePanel === 'files' }"
+                                :aria-selected="activeWorkspacePanel === 'files'"
+                                @click="selectWorkspacePanel('files')"
+                            >
+                                {{ t('drawer.files') }}
+                            </button>
+                            <button
+                                type="button"
+                                role="tab"
+                                :class="{ active: activeWorkspacePanel === 'browser' }"
+                                :aria-selected="activeWorkspacePanel === 'browser'"
+                                @click="selectWorkspacePanel('browser')"
+                            >
+                                {{ t('browser.title') }}
+                            </button>
+                            <button class="group-workspace-panel-close" type="button" :title="t('files.closePreview')" @click="closeWorkspacePanel">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                </svg>
+                            </button>
+                        </div>
+                        <DesktopBrowserPanel
+                            class="group-browser-panel"
+                            v-if="desktopBrowserAvailable && activeWorkspacePanel === 'browser'"
+                            @attach="handleBrowserAttachment"
+                        />
                         <WorkspaceDiffPreview
-                            v-if="toolPanelStore.workspaceDiff"
+                            v-else-if="toolPanelStore.workspaceDiff"
                             :custom-close="closeWorkspacePanel"
                         />
                         <FilePreview
@@ -894,7 +969,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             :custom-close="closeWorkspacePanel"
                         />
                         <template v-else-if="currentRoom?.workspace">
-                            <div class="group-workspace-panel-header">
+                            <div v-if="!desktopBrowserAvailable" class="group-workspace-panel-header">
                                 <span>{{ t('drawer.files') }}</span>
                                 <button type="button" :title="t('files.closePreview')" @click="closeWorkspacePanel">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1691,6 +1766,46 @@ export default defineComponent({ components: { CreateRoomForm } })
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+}
+
+.group-workspace-panel-tabs {
+    height: 47px;
+    padding: 8px 12px;
+    border-bottom: 1px solid $border-color;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    box-sizing: border-box;
+
+    button {
+        height: 30px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: $radius-sm;
+        color: $text-secondary;
+        background: transparent;
+        cursor: pointer;
+
+        &:hover,
+        &.active {
+            color: var(--accent-primary);
+            background: rgba(var(--accent-primary-rgb), 0.1);
+        }
+    }
+
+    .group-workspace-panel-close {
+        width: 30px;
+        padding: 0;
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+}
+
+.group-browser-panel {
+    flex: 1;
+    min-height: 0;
 }
 
 .group-workspace-panel-header {

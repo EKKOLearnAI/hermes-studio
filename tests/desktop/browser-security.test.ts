@@ -71,6 +71,11 @@ describe('desktop browser security primitives', () => {
     expect(source).toContain('if (!this.downloadItems.has(download.id)) return')
     expect(source).not.toContain('item.pause()')
     expect(source).not.toContain('dialog.showSaveDialog(this.window')
+    expect(source).toContain('async createHtmlPreviewTab(html: string, title: string')
+    expect(source).toContain('if (size > HTML_PREVIEW_MAX_BYTES)')
+    expect(source).toContain('record.ephemeral = true')
+    expect(source).toContain("filter(record => !record.ephemeral)")
+    expect(source).toContain("record.tab.url = isHtmlPreview ? 'about:blank' : currentUrl")
   })
 
   it('persists owner-only isolated profile roots and rejects overlapping or non-empty directories', async () => {

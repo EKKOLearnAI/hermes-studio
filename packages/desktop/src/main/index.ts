@@ -852,6 +852,13 @@ ipcMain.handle('hermes-desktop:browser-set-viewport', (event, bounds?: unknown, 
   return browserForEvent(event).setViewport(sanitized, visible === true)
 })
 ipcMain.handle('hermes-desktop:browser-create-tab', (event, url?: unknown, activate?: unknown) => browserForEvent(event).createTab(typeof url === 'string' ? url : 'about:blank', activate !== false))
+ipcMain.handle('hermes-desktop:browser-create-html-preview-tab', (event, html?: unknown, title?: unknown, activate?: unknown) => (
+  browserForEvent(event).createHtmlPreviewTab(
+    typeof html === 'string' ? html : '',
+    typeof title === 'string' ? title : '',
+    activate !== false,
+  )
+))
 ipcMain.handle('hermes-desktop:browser-close-tab', (event, tabId?: unknown) => browserForEvent(event).closeTab(String(tabId || '')))
 ipcMain.handle('hermes-desktop:browser-activate-tab', (event, tabId?: unknown) => browserForEvent(event).activateTab(String(tabId || '')))
 ipcMain.handle('hermes-desktop:browser-navigate', (event, tabId?: unknown, url?: unknown) => {

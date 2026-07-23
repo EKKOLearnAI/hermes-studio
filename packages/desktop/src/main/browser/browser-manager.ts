@@ -39,6 +39,8 @@ interface TabRecord {
   tab: DesktopBrowserTab
   view: WebContentsView
   console: BrowserConsoleEntry[]
+  htmlPreviewTitle?: string
+  ephemeral?: boolean
 }
 
 interface BrowserManagerOptions {
@@ -54,6 +56,7 @@ const ANNOTATION_CANCEL_EVENT = '__hermes_browser_cancel_annotation__'
 const ANNOTATION_STATE_KEY = '__hermes_browser_annotation_state__'
 const SESSION_COOKIE_PERSIST_DELAY_MS = 750
 const SESSION_SHUTDOWN_TIMEOUT_MS = 2_000
+const HTML_PREVIEW_MAX_BYTES = 10 * 1024 * 1024
 
 const RISK_DIALOG_COPY = {
   de: ['Agent-Aktion bestätigen', 'Diese Browser-Aktion kann eine wichtige Änderung ausführen:', 'Abbrechen', 'Einmal erlauben'],
@@ -202,16 +205,34 @@ export class BrowserManager {
     return this.openTab(url, activate, true)
   }
 
-  private async openTab(url: string, activate: boolean, waitForLoad: boolean): Promise<DesktopBrowserTab> {
+  async createHtmlPreviewTab(html: string, title: string, activate = true): Promise<DesktopBrowserTab> {
+    const size = Buffer.byteLength(html, 'utf8')
+    if (size > HTML_PREVIEW_MAX_BYTES) throw new Error('HTML preview is too large')
+    const previewTitle = String(title || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 256) || 'HTML Preview'
+    const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`
+    return this.openTab('about:blank', activate, true, { dataUrl, title: previewTitle })
+  }
+
+  private async openTab(
+    url: string,
+    activate: boolean,
+    waitForLoad: boolean,
+    htmlPreview?: { dataUrl: string; title: string },
+  ): Promise<DesktopBrowserTab> {
     if (this.records.size >= MAX_TABS) throw new Error(`Browser supports at most ${MAX_TABS} tabs per profile`)
     const normalizedUrl = normalizeBrowserUrl(url, { allowBlank: true })
     const profile = this.requireProfile(this.activeProfileId)
     const record = await this.buildTab(profile, normalizedUrl)
+    if (htmlPreview) {
+      record.htmlPreviewTitle = htmlPreview.title
+      record.ephemeral = true
+      record.tab.title = htmlPreview.title
+    }
     this.records.set(record.tab.id, record)
     this.window.contentView.addChildView(record.view)
     if (activate || !this.activeTabId) this.activeTabId = record.tab.id
     this.syncViews()
-    const loading = record.view.webContents.loadURL(normalizedUrl).catch(() => {
+    const loading = record.view.webContents.loadURL(htmlPreview?.dataUrl || normalizedUrl).catch(() => {
       record.tab.loading = false
       this.refreshTab(record)
       this.emitState()
@@ -727,6 +748,7 @@ export class BrowserManager {
       ]).popup({ window: this.window })
     })
     contents.on('will-navigate', details => {
+      if (record.htmlPreviewTitle && details.url.startsWith('data:text/html')) return
       if (!isAllowedBrowserRequest(details.url)) details.preventDefault()
     })
     contents.on('did-start-loading', () => { tab.loading = true; this.automation.invalidate(id); this.emitState() })
@@ -735,7 +757,11 @@ export class BrowserManager {
     const persistNavigation = () => { void this.persistTabs().catch(error => console.warn('[desktop-browser] failed to persist tabs:', error)) }
     contents.on('did-navigate', () => { this.refreshTab(record); this.automation.invalidate(id); persistNavigation(); this.emitState() })
     contents.on('did-navigate-in-page', () => { this.refreshTab(record); this.automation.invalidate(id); persistNavigation(); this.emitState() })
-    contents.on('page-title-updated', (_event, title) => { tab.title = title || tab.url; this.emitState() })
+    contents.on('page-title-updated', (_event, title) => {
+      const isHtmlPreview = !!record.htmlPreviewTitle && contents.getURL().startsWith('data:text/html')
+      tab.title = title || (isHtmlPreview ? record.htmlPreviewTitle || 'HTML Preview' : tab.url)
+      this.emitState()
+    })
     contents.on('page-favicon-updated', (_event, favicons) => { tab.faviconUrl = favicons[0]; this.emitState() })
     contents.on('render-process-gone', () => { tab.crashed = true; tab.loading = false; this.emitState() })
     contents.debugger.on('detach', () => {
@@ -933,13 +959,19 @@ export class BrowserManager {
 
   private async persistTabs(): Promise<void> {
     if (!this.activeProfileId) return
-    await this.profileStore.setTabs(this.activeProfileId, [...this.records.values()].map(record => record.tab.url))
+    await this.profileStore.setTabs(
+      this.activeProfileId,
+      [...this.records.values()].filter(record => !record.ephemeral).map(record => record.tab.url),
+    )
   }
 
   private refreshTab(record: TabRecord): void {
     const contents = record.view.webContents
-    record.tab.url = contents.getURL() || 'about:blank'
-    record.tab.title = contents.getTitle() || record.tab.url
+    const currentUrl = contents.getURL() || 'about:blank'
+    const isHtmlPreview = !!record.htmlPreviewTitle && currentUrl.startsWith('data:text/html')
+    if (record.htmlPreviewTitle) record.ephemeral = isHtmlPreview
+    record.tab.url = isHtmlPreview ? 'about:blank' : currentUrl
+    record.tab.title = contents.getTitle() || (isHtmlPreview ? record.htmlPreviewTitle || 'HTML Preview' : record.tab.url)
     record.tab.canGoBack = contents.navigationHistory.canGoBack()
     record.tab.canGoForward = contents.navigationHistory.canGoForward()
     record.tab.crashed = false

@@ -108,7 +108,7 @@ describe('chat workspace diff turn association', () => {
     ])
   })
 
-  it('preserves tool-call workspace change restoration alongside turn associations', async () => {
+  it('does not restore a tool-call workspace card when the change has no assistant message id', async () => {
     chatApi.resumePayload.messages.splice(3, 0, {
       id: 5,
       session_id: 'session-1',
@@ -122,18 +122,21 @@ describe('chat workspace diff turn association', () => {
     const store = useChatStore()
     await store.loadSessions()
 
-    expect(store.activeSession?.messages.find(message => message.toolCallId === 'tool-change')?.toolChange?.change_id)
-      .toBe('tool-change')
+    expect(store.activeSession?.messages.find(message => message.toolCallId === 'tool-change')?.toolChange)
+      .toBeUndefined()
   })
 
-  it('keeps a standalone timestamp fallback for legacy changes without an assistant id', async () => {
-    sessionApi.fetchWorkspaceRunChangesForSession.mockResolvedValue([change('legacy-change')])
+  it('does not render a standalone fallback for legacy changes without an assistant message id', async () => {
+    sessionApi.fetchWorkspaceRunChangesForSession.mockResolvedValue([
+      change('legacy-change-1'),
+      change('legacy-change-2'),
+    ])
 
     const store = useChatStore()
     await store.loadSessions()
 
-    const legacy = store.activeSession?.messages.find(message => message.id === 'workspace-run-change:legacy-change')
-    expect(legacy).toMatchObject({ role: 'tool', toolChange: { change_id: 'legacy-change' } })
+    const legacy = store.activeSession?.messages.filter(message => message.id.startsWith('workspace-run-change:'))
+    expect(legacy).toEqual([])
   })
 
   it('aligns a live assistant temporary id with the persisted attribution id', () => {
@@ -163,6 +166,15 @@ describe('chat workspace diff turn association', () => {
     messages.unshift({ id: '2', role: 'assistant', content: 'older', timestamp: 2 })
     expect(attachWorkspaceChangesToExactTurns(messages, [unresolved])).toEqual([])
     expect(messages[0].workspaceChanges?.map(item => item.change_id)).toEqual(['change-page-1'])
+  })
+
+  it('drops unattributed changes instead of returning them as standalone fallbacks', () => {
+    const messages = [
+      { id: '4', role: 'assistant' as const, content: 'newer', timestamp: 4 },
+    ]
+
+    expect(attachWorkspaceChangesToExactTurns(messages, [change('legacy-change')])).toEqual([])
+    expect(messages[0].workspaceChanges).toEqual([])
   })
 
   it('does not overwrite existing tool-message change metadata while recomputing turn associations', () => {

@@ -19,6 +19,7 @@ import {
 } from './mermaidRenderer'
 import { downloadFile, getDownloadUrl, inferDownloadFileName } from '@/api/hermes/download'
 import { isPreviewableFile } from '@/utils/hermes/file-preview'
+import { openUrlInDesktopBrowser } from '@/utils/desktop-browser'
 
 const LATEX_FENCE_LANGS = new Set(['latex', 'tex', 'math', 'katex'])
 function getFenceLanguage(info: string): string {
@@ -444,10 +445,16 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
   const href = link.getAttribute('href')
   if (!href) return
 
-  // Let http(s) links behave normally — use window.open to prevent
-  // the hash-based router from intercepting the click
+  // Desktop chat links stay inside the embedded browser. Web deployments keep
+  // using a separate browser tab so the hash-based router cannot intercept.
   if (href.startsWith('http://') || href.startsWith('https://')) {
     event.preventDefault()
+    try {
+      if (await openUrlInDesktopBrowser(href)) return
+    } catch (error) {
+      message.error(`${t('browser.loadFailed')}: ${error instanceof Error ? error.message : String(error)}`)
+      return
+    }
     window.open(href, '_blank', 'noopener,noreferrer')
     return
   }

@@ -84,6 +84,7 @@ export interface DesktopBrowserBridge {
   getState: () => Promise<DesktopBrowserState>
   setViewport: (bounds: DesktopWindowBounds, visible: boolean) => Promise<DesktopBrowserState>
   createTab: (url?: string, activate?: boolean) => Promise<DesktopBrowserTab>
+  createHtmlPreviewTab?: (html: string, title: string, activate?: boolean) => Promise<DesktopBrowserTab>
   closeTab: (tabId: string) => Promise<DesktopBrowserState>
   activateTab: (tabId: string) => Promise<DesktopBrowserState>
   navigate: (tabId: string, url: string) => Promise<DesktopBrowserTab>

@@ -451,6 +451,7 @@ export function attachWorkspaceChangesToExactTurns(
   const fallback: WorkspaceRunChangeSummary[] = []
   for (const change of changes) {
     const assistantMessageId = String(change.assistant_message_id || '').trim()
+    if (!assistantMessageId) continue
     const target = assistantMessageId ? assistantById.get(assistantMessageId) : undefined
     if (target) target.workspaceChanges!.push(change)
     else fallback.push(change)
@@ -1240,7 +1241,8 @@ export const useChatStore = defineStore('chat', () => {
     target.messages = target.messages.filter(message => !message.id.startsWith(WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX))
     for (const message of target.messages) {
       if (message.role === 'tool' && message.toolCallId) {
-        message.toolChange = changes?.get(message.toolCallId)
+        const change = changes?.get(message.toolCallId)
+        message.toolChange = String(change?.assistant_message_id || '').trim() ? change : undefined
       }
     }
     if (!changes) {
@@ -1248,8 +1250,8 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
     const runChanges = [...changes.values()].filter(change => change?.source === 'run')
-    const legacyChanges = attachWorkspaceChangesToExactTurns(target.messages, runChanges)
-    insertWorkspaceRunChangeMessages(target, legacyChanges, existingById)
+    const unresolvedAttributedChanges = attachWorkspaceChangesToExactTurns(target.messages, runChanges)
+    insertWorkspaceRunChangeMessages(target, unresolvedAttributedChanges, existingById)
   }
 
   function workspaceRunChangeMessageId(changeId: string): string {

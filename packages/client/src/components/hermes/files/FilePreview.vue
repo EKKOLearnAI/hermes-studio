@@ -9,6 +9,7 @@ import { downloadSessionWorkspaceFile, fetchSessionWorkspaceFileBlob } from '@/a
 import { downloadGroupWorkspaceFile, fetchGroupWorkspaceFileBlob } from '@/api/hermes/group-chat'
 import { handleCodeBlockCopyClick, renderHighlightedCodeBlock } from '@/components/hermes/chat/highlight'
 import { previewMimeMatches } from '@/utils/hermes/file-preview'
+import { openHtmlInDesktopBrowser } from '@/utils/desktop-browser'
 
 const MarkdownRenderer = defineAsyncComponent(async () => (await import('@/components/hermes/chat/MarkdownRenderer.vue')).default)
 const HtmlFilePreview = defineAsyncComponent(async () => (await import('./HtmlFilePreview.vue')).default)
@@ -68,6 +69,7 @@ async function loadPreview(): Promise<void> {
       const text = await blob.text()
       if (generation !== requestGeneration) return
       previewText.value = text
+      if (file.type === 'html' && await openHtmlInDesktopBrowser(text, file.name)) return
     } else {
       const buffer = await blob.arrayBuffer()
       if (generation !== requestGeneration) return

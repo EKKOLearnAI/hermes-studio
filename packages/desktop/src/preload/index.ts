@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     getState: (): Promise<DesktopBrowserState> => ipcRenderer.invoke('hermes-desktop:browser-get-state'),
     setViewport: (bounds: BrowserBounds, visible: boolean): Promise<DesktopBrowserState> => ipcRenderer.invoke('hermes-desktop:browser-set-viewport', bounds, visible),
     createTab: (url?: string, activate?: boolean): Promise<DesktopBrowserTab> => ipcRenderer.invoke('hermes-desktop:browser-create-tab', url, activate),
+    createHtmlPreviewTab: (html: string, title: string, activate?: boolean): Promise<DesktopBrowserTab> => ipcRenderer.invoke('hermes-desktop:browser-create-html-preview-tab', html, title, activate),
     closeTab: (tabId: string): Promise<DesktopBrowserState> => ipcRenderer.invoke('hermes-desktop:browser-close-tab', tabId),
     activateTab: (tabId: string): Promise<DesktopBrowserState> => ipcRenderer.invoke('hermes-desktop:browser-activate-tab', tabId),
     navigate: (tabId: string, url: string): Promise<DesktopBrowserTab> => ipcRenderer.invoke('hermes-desktop:browser-navigate', tabId, url),

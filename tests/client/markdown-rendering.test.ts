@@ -16,8 +16,16 @@ const downloadApiMock = vi.hoisted(() => ({
   getDownloadUrl: vi.fn((path: string) => `http://test.local/api/hermes/download?path=${encodeURIComponent(path)}`),
 }))
 
+const desktopBrowserMock = vi.hoisted(() => ({
+  openUrlInDesktopBrowser: vi.fn(() => Promise.resolve(false)),
+}))
+
 vi.mock('mermaid', () => ({
   default: mermaidMock,
+}))
+
+vi.mock('@/utils/desktop-browser', () => ({
+  openUrlInDesktopBrowser: desktopBrowserMock.openUrlInDesktopBrowser,
 }))
 
 async function flushMermaidRender(): Promise<void> {
@@ -81,6 +89,8 @@ describe('MarkdownRenderer', () => {
     downloadApiMock.downloadFile.mockClear()
     downloadApiMock.fetchFileText.mockClear()
     downloadApiMock.getDownloadUrl.mockClear()
+    desktopBrowserMock.openUrlInDesktopBrowser.mockReset()
+    desktopBrowserMock.openUrlInDesktopBrowser.mockResolvedValue(false)
     mermaidMock.render.mockImplementation(async (id: string, source: string) => ({
       svg: `<svg id="${id}" data-testid="mermaid-svg"><text>${source}</text></svg>`,
     }))
@@ -98,6 +108,37 @@ describe('MarkdownRenderer', () => {
         writeText: vi.fn().mockResolvedValue(undefined),
       },
     })
+  })
+
+  it('opens message links in the embedded browser when the desktop bridge is available', async () => {
+    desktopBrowserMock.openUrlInDesktopBrowser.mockResolvedValue(true)
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[Hermes](https://example.com/docs)',
+      },
+    })
+
+    await wrapper.get('a').trigger('click')
+
+    expect(desktopBrowserMock.openUrlInDesktopBrowser).toHaveBeenCalledWith('https://example.com/docs')
+    expect(open).not.toHaveBeenCalled()
+    open.mockRestore()
+  })
+
+  it('keeps opening message links in a new tab in the Web UI', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[Hermes](https://example.com/docs)',
+      },
+    })
+
+    await wrapper.get('a').trigger('click')
+
+    expect(desktopBrowserMock.openUrlInDesktopBrowser).toHaveBeenCalledWith('https://example.com/docs')
+    expect(open).toHaveBeenCalledWith('https://example.com/docs', '_blank', 'noopener,noreferrer')
+    open.mockRestore()
   })
 
   it('highlights vue fenced blocks instead of rendering them as plain text', () => {
