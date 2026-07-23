@@ -16,12 +16,21 @@ async function installDesktopBridge(page: Page, platform: DesktopPlatform, withB
         loading: false, canGoBack: false, canGoForward: false, crashed: false, agentControl: 'idle',
       }],
       profiles: [{
-        id: 'profile-default', name: 'Default', sessionPath: '/tmp/hermes-browser',
-        downloadPath: '/tmp/hermes-downloads', askBeforeDownload: true,
+        id: 'profile-default', name: 'Default', rootPath: '/tmp/hermes-browser', sessionPath: '/tmp/hermes-browser/data',
+        downloadPath: '/tmp/hermes-browser/download', proxyMode: 'direct', proxyRules: '', askBeforeDownload: true,
         downloadConflictPolicy: 'uniquify', createdAt: '2026-01-01T00:00:00.000Z',
         lastUsedAt: '2026-01-01T00:00:00.000Z', tabs: ['tab-1'],
+      }, {
+        id: 'profile-work', name: 'Work', rootPath: '/tmp/hermes-browser-work', sessionPath: '/tmp/hermes-browser-work/data',
+        downloadPath: '/tmp/hermes-browser-work/download', proxyMode: 'system', proxyRules: '', askBeforeDownload: false,
+        downloadConflictPolicy: 'uniquify', createdAt: '2026-01-02T00:00:00.000Z',
+        lastUsedAt: '2026-01-02T00:00:00.000Z', tabs: [],
       }],
-      downloads: [], permissions: [], visible: false, maxTabs: 8,
+      downloads: [{
+        id: 'download-1', profileId: 'profile-default', fileName: 'report.pdf', sourceUrl: 'https://example.test/report.pdf',
+        savePath: '/tmp/hermes-browser/download/report.pdf', receivedBytes: 25, totalBytes: 100,
+        state: 'progressing', startedAt: '2026-01-03T00:00:00.000Z',
+      }], permissions: [], visible: false, maxTabs: 8,
     }
     const browserHarness = {
       viewportCalls: [] as Array<{ bounds: unknown; visible: boolean }>,
@@ -45,13 +54,18 @@ async function installDesktopBridge(page: Page, platform: DesktopPlatform, withB
       navigate: async () => browserState.tabs[0],
       navigationAction: async () => browserState.tabs[0],
       createProfile: async () => browserState.profiles[0],
+      chooseProfileRootDirectory: async () => '/tmp/hermes-browser-new',
       renameProfile: async () => browserState.profiles[0],
       profileSwitchImpact: async () => ({ activeAgentRuns: 0, activeDownloads: 0, pendingAnnotations: 0, openTabs: 1, requiresConfirmation: false }),
-      switchProfile: async () => browserState,
+      switchProfile: async (profileId: string) => { browserState.activeProfileId = profileId; return { ...browserState } },
       updateProfile: async () => browserState.profiles[0],
       deleteProfile: async () => browserState,
       clearProfileData: async () => browserState,
-      chooseDirectory: async () => browserState.profiles[0],
+      cancelDownload: async (downloadId: string) => {
+        const download = browserState.downloads.find(item => item.id === downloadId)
+        if (download) download.state = 'cancelled'
+        return { ...browserState, downloads: browserState.downloads.map(item => ({ ...item })) }
+      },
       takeOver: async () => true,
       annotate: async (_tabId: string, mode: 'element' | 'region') => {
         browserHarness.annotationCount += 1
@@ -235,6 +249,54 @@ test('embeds the desktop browser beside workspace and terminal', async ({ page }
     return calls.at(-1)?.visible
   })).toBe(true)
 
+  const profileSwitcher = toolPanel.getByTestId('browser-profile-switcher')
+  await expect(profileSwitcher).toContainText('Default')
+  await toolPanel.getByRole('button', { name: 'Downloads' }).click()
+  const downloadPopover = page.locator('.download-popover')
+  await expect(downloadPopover).toContainText('report.pdf')
+  await expect(downloadPopover).toContainText('25%')
+  await downloadPopover.getByRole('button', { name: 'Cancel' }).click()
+  await expect(downloadPopover).toContainText('Cancelled')
+  await expect(downloadPopover.getByRole('button', { name: 'Cancel' })).toHaveCount(0)
+  await toolPanel.getByRole('button', { name: 'Downloads' }).click()
+
+  await profileSwitcher.click()
+  await page.locator('.n-base-select-option').filter({ hasText: 'Work' }).click()
+  await expect(profileSwitcher).toContainText('Work')
+  await profileSwitcher.click()
+  await page.locator('.n-base-select-option').filter({ hasText: 'Default' }).click()
+  await expect(profileSwitcher).toContainText('Default')
+
+  await page.getByRole('button', { name: 'New Chat', exact: true }).click()
+  await expect(page.locator('.new-chat-drawer')).toBeVisible()
+  await expect.poll(() => page.evaluate(() => {
+    const calls = (window as typeof window & { __PW_DESKTOP_BROWSER__?: { viewportCalls: Array<{ visible: boolean }> } }).__PW_DESKTOP_BROWSER__?.viewportCalls || []
+    return calls.at(-1)?.visible
+  })).toBe(false)
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.new-chat-drawer')).not.toBeVisible()
+  await expect.poll(() => page.evaluate(() => {
+    const calls = (window as typeof window & { __PW_DESKTOP_BROWSER__?: { viewportCalls: Array<{ visible: boolean }> } }).__PW_DESKTOP_BROWSER__?.viewportCalls || []
+    return calls.at(-1)?.visible
+  })).toBe(true)
+
+  await page.evaluate(() => {
+    const overlay = document.createElement('div')
+    overlay.className = 'image-preview-overlay'
+    overlay.dataset.browserImagePreviewTest = 'true'
+    Object.assign(overlay.style, { position: 'fixed', inset: '0' })
+    document.body.appendChild(overlay)
+  })
+  await expect.poll(() => page.evaluate(() => {
+    const calls = (window as typeof window & { __PW_DESKTOP_BROWSER__?: { viewportCalls: Array<{ visible: boolean }> } }).__PW_DESKTOP_BROWSER__?.viewportCalls || []
+    return calls.at(-1)?.visible
+  })).toBe(false)
+  await page.evaluate(() => document.querySelector('[data-browser-image-preview-test]')?.remove())
+  await expect.poll(() => page.evaluate(() => {
+    const calls = (window as typeof window & { __PW_DESKTOP_BROWSER__?: { viewportCalls: Array<{ visible: boolean }> } }).__PW_DESKTOP_BROWSER__?.viewportCalls || []
+    return calls.at(-1)?.visible
+  })).toBe(true)
+
   await page.evaluate(() => {
     const overlay = document.createElement('div')
     overlay.className = 'n-modal-body-wrapper'
@@ -309,4 +371,32 @@ test('embeds the desktop browser beside workspace and terminal', async ({ page }
   await page.goto('/#/hermes/browser')
   await expect(page.locator('.browser-settings-page')).toBeVisible()
   await expect(page.locator('.browser-settings-page .native-viewport')).toHaveCount(0)
+})
+
+test('manages desktop browser profiles with switchable cards and editor modals', async ({ page }) => {
+  await installDesktopBridge(page, 'darwin', true)
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await mockHermesApi(page)
+  await page.goto('/#/hermes/browser')
+
+  await expect(page.getByRole('heading', { name: 'Browser' })).toBeVisible()
+  const profileCard = page.locator('.profile-card')
+  await expect(profileCard).toHaveCount(2)
+  await expect(profileCard.first()).toContainText('Default')
+  await expect(profileCard.first()).toContainText('Active profile')
+
+  await profileCard.first().getByRole('button', { name: 'Edit' }).click()
+  await expect(page.getByRole('dialog')).toContainText('Edit profile')
+  await expect(page.getByRole('dialog').locator('input').first()).toHaveValue('Default')
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click()
+
+  await page.getByRole('button', { name: 'Add profile' }).click()
+  await expect(page.getByRole('dialog')).toContainText('Add profile')
+  await page.getByRole('dialog').getByPlaceholder('Profile name').fill('Work')
+  const createButton = page.getByRole('dialog').getByRole('button', { name: 'Create' })
+  await expect(createButton).toBeDisabled()
+  await page.getByRole('dialog').getByTestId('choose-browser-profile-root').click()
+  await expect(page.getByRole('dialog')).toContainText('/tmp/hermes-browser-new/data')
+  await expect(page.getByRole('dialog')).toContainText('/tmp/hermes-browser-new/download')
+  await expect(createButton).toBeEnabled()
 })

@@ -3,6 +3,7 @@ export interface ResponsesAdapterTarget {
 }
 
 const HERMES_STUDIO_NAMESPACE = 'mcp__hermes_studio'
+const TOOL_SEARCH_NAME = 'tool_search'
 
 const HERMES_STUDIO_MCP_TOOLS = [
   {
@@ -113,7 +114,53 @@ const HERMES_STUDIO_MCP_TOOLS = [
   },
 ]
 
-const HERMES_STUDIO_MCP_TOOL_NAMES = new Set(HERMES_STUDIO_MCP_TOOLS.map(tool => tool.name))
+const HERMES_STUDIO_SPLIT_MCP_TOOLS = new Map([
+  ['mcp__hermes_studio_api', [
+    {
+      name: 'hermes_studio_api_openapi_get',
+      description: 'Return the compact Hermes Studio API module index or filtered endpoint documentation. Call without filters first, then filter by tag, path, or method.',
+      inputSchema: inputSchema({
+        path: { type: 'string', description: 'Optional exact endpoint path filter.' },
+        method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'] },
+        tag: { type: 'string', description: 'Optional module or tag filter.' },
+        full: { type: 'boolean', description: 'Return the raw full OpenAPI JSON.' },
+      }),
+    },
+    {
+      name: 'hermes_studio_api_request',
+      description: 'Call a documented Hermes Studio API endpoint using its relative path and structured JSON fields.',
+      inputSchema: inputSchema({
+        method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'] },
+        path: { type: 'string', description: 'Relative /api/... or /health path. Full URLs are rejected.' },
+        body: { type: ['object', 'array', 'string', 'number', 'boolean', 'null'] },
+        query: { type: 'object', additionalProperties: true },
+        headers: {
+          type: 'object',
+          additionalProperties: { type: ['string', 'number', 'boolean', 'array'] },
+        },
+      }, ['path']),
+    },
+  ]],
+  ['mcp__hermes_studio_browser', [categoryToolset(
+    'hermes_studio_browser_toolset',
+    'Discover and invoke Hermes Studio Desktop browser operations. Covers tabs and leases, navigation, accessibility snapshots, interaction, screenshots, and console logs.',
+  )]],
+  ['mcp__hermes_studio_devices', [categoryToolset(
+    'hermes_studio_devices_toolset',
+    'Discover and invoke Hermes Studio LAN and remote-device operations. Covers discovery, peer connections, terminals, structured commands, and file transfer.',
+  )]],
+  ['mcp__hermes_studio_use', [categoryToolset(
+    'hermes_studio_use_toolset',
+    'Discover and invoke high-level Hermes Studio operations for explicit user-requested runs, sessions, usage, profiles, models, providers, workers, and workflows.',
+  )]],
+])
+
+const HERMES_STUDIO_MCP_TOOL_NAMESPACES = new Map<string, string>(
+  HERMES_STUDIO_MCP_TOOLS.map(tool => [tool.name, HERMES_STUDIO_NAMESPACE]),
+)
+for (const [namespace, tools] of HERMES_STUDIO_SPLIT_MCP_TOOLS) {
+  for (const tool of tools) HERMES_STUDIO_MCP_TOOL_NAMESPACES.set(tool.name, namespace)
+}
 
 function inputSchema(properties: Record<string, unknown> = {}, required: string[] = []) {
   return {
@@ -131,6 +178,32 @@ function inputSchema(properties: Record<string, unknown> = {}, required: string[
     },
     ...(required.length ? { required } : {}),
     additionalProperties: false,
+  }
+}
+
+function categoryToolset(name: string, description: string) {
+  return {
+    name,
+    description: `${description} Use action=list for the compact catalog, action=describe for one full schema, then action=call with that tool name and arguments.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['list', 'describe', 'call'],
+          description: 'List operations, describe one operation, or call one operation.',
+        },
+        query: { type: 'string', description: 'Optional operation filter for action=list.' },
+        tool: { type: 'string', description: 'Exact operation name required by describe and call.' },
+        arguments: {
+          type: 'object',
+          description: 'Arguments matching the described operation schema.',
+          additionalProperties: true,
+        },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
   }
 }
 
@@ -159,17 +232,39 @@ function expandedResponseTools(tools: unknown): any[] {
       addFunctionTool(tool)
       continue
     }
-    if (tool?.type === 'namespace' && normalizedNamespaceName(tool?.name) === HERMES_STUDIO_NAMESPACE) {
-      for (const mcpTool of HERMES_STUDIO_MCP_TOOLS) {
-        addFunctionTool({
-          type: 'function',
-          name: mcpTool.name,
-          description: `${mcpTool.description} MCP namespace: ${HERMES_STUDIO_NAMESPACE}.`,
-          parameters: mcpTool.inputSchema,
-          namespace: HERMES_STUDIO_NAMESPACE,
-        })
-      }
+    if (tool?.type === 'tool_search') {
+      addFunctionTool({
+        type: 'function',
+        name: TOOL_SEARCH_NAME,
+        description: tool.description,
+        parameters: tool.parameters,
+      })
       continue
+    }
+    if (tool?.type === 'namespace') {
+      const namespace = normalizedNamespaceName(tool?.name)
+      if (Array.isArray(tool?.tools)) {
+        for (const nestedTool of tool.tools) {
+          if (nestedTool?.type !== 'function') continue
+          addFunctionTool({ ...nestedTool, namespace })
+        }
+        continue
+      }
+      const namespaceTools = namespace === HERMES_STUDIO_NAMESPACE
+        ? HERMES_STUDIO_MCP_TOOLS
+        : HERMES_STUDIO_SPLIT_MCP_TOOLS.get(namespace)
+      if (namespaceTools) {
+        for (const mcpTool of namespaceTools) {
+          addFunctionTool({
+            type: 'function',
+            name: mcpTool.name,
+            description: `${mcpTool.description} MCP namespace: ${namespace}.`,
+            parameters: mcpTool.inputSchema,
+            namespace,
+          })
+        }
+        continue
+      }
     }
     if (tool?.type === 'namespace') {
       const namespace = normalizedNamespaceName(tool?.name)
@@ -202,8 +297,71 @@ function expandedResponseTools(tools: unknown): any[] {
   return mapped
 }
 
+function responseInputItems(body: any): any[] {
+  return Array.isArray(body?.input) ? body.input : []
+}
+
+function responsesAvailableTools(body: any): any[] {
+  const tools = Array.isArray(body?.tools) ? [...body.tools] : []
+  if (Array.isArray(body?.additional_tools)) tools.push(...body.additional_tools)
+  for (const item of responseInputItems(body)) {
+    if ((item?.type === 'tool_search_output' || item?.type === 'additional_tools') && Array.isArray(item.tools)) {
+      tools.push(...item.tools)
+    }
+  }
+  return tools
+}
+
+function toolSearchOutputText(item: any): string {
+  const names: string[] = []
+  for (const tool of Array.isArray(item?.tools) ? item.tools : []) {
+    if (tool?.type === 'namespace') {
+      const namespace = String(tool.name || '').trim()
+      for (const nestedTool of Array.isArray(tool.tools) ? tool.tools : []) {
+        const name = String(nestedTool?.name || '').trim()
+        if (name) names.push(namespace ? `${namespace}.${name}` : name)
+      }
+      if (!Array.isArray(tool.tools) || !tool.tools.length) names.push(namespace)
+      continue
+    }
+    const name = String(tool?.name || '').trim()
+    if (name) names.push(name)
+  }
+  return names.length
+    ? `Loaded deferred tools: ${names.join(', ')}`
+    : 'No deferred tools matched the search.'
+}
+
+function toolSearchArguments(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>
+  return safeJsonParse(String(value || '{}'))
+}
+
+function responseToolCall(name: unknown, argumentsValue: unknown, id: unknown, index: number): any {
+  const rawName = String(name || 'tool')
+  const callId = String(id || `call_${index}`)
+  if (rawName === TOOL_SEARCH_NAME) {
+    return {
+      type: 'tool_search_call',
+      call_id: callId,
+      status: 'completed',
+      execution: 'client',
+      arguments: toolSearchArguments(argumentsValue),
+    }
+  }
+  const rawArguments = typeof argumentsValue === 'string'
+    ? argumentsValue
+    : JSON.stringify(argumentsValue || {})
+  return {
+    type: 'function_call',
+    id: String(id || `fc_${index}`),
+    call_id: callId,
+    ...normalizeResponseFunctionCall(rawName, rawArguments),
+  }
+}
+
 export function responseToolNamespaceForName(name: unknown): string | undefined {
-  return HERMES_STUDIO_MCP_TOOL_NAMES.has(String(name || '')) ? HERMES_STUDIO_NAMESPACE : undefined
+  return HERMES_STUDIO_MCP_TOOL_NAMESPACES.get(String(name || ''))
 }
 
 export function normalizeResponseFunctionCall(name: unknown, argumentsValue: unknown): { name: string; arguments: string; namespace?: string } {
@@ -320,22 +478,26 @@ function responsesInputToChatMessages(body: any): any[] {
 
   for (const item of Array.isArray(input) ? input : []) {
     if (!item || typeof item !== 'object') continue
-    if (item.type === 'function_call') {
+    if (item.type === 'function_call' || item.type === 'tool_search_call') {
       const callId = String(item.call_id || item.id || `call_${messages.length}`)
       pendingToolCalls.push({
         id: callId,
         type: 'function',
         function: {
-          name: String(item.name || 'tool'),
-          arguments: String(item.arguments || '{}'),
+          name: item.type === 'tool_search_call' ? TOOL_SEARCH_NAME : String(item.name || 'tool'),
+          arguments: item.type === 'tool_search_call'
+            ? JSON.stringify(toolSearchArguments(item.arguments))
+            : String(item.arguments || '{}'),
         },
       })
       continue
     }
-    if (item.type === 'function_call_output') {
+    if (item.type === 'function_call_output' || item.type === 'tool_search_output') {
       const callId = String(item.call_id || '')
       if (pendingToolCalls.some(call => call.id === callId)) {
-        pendingToolOutputs.set(callId, item)
+        pendingToolOutputs.set(callId, item.type === 'tool_search_output'
+          ? { output: toolSearchOutputText(item) }
+          : item)
         if (pendingToolCalls.every(call => pendingToolOutputs.has(call.id))) {
           flushCompletedToolCalls()
         }
@@ -371,7 +533,7 @@ function responsesToolsToChatTools(tools: unknown): any[] | undefined {
 }
 
 export function responsesToOpenAiChat(body: any, target: ResponsesAdapterTarget, stream = false): any {
-  const tools = responsesToolsToChatTools(body?.tools)
+  const tools = responsesToolsToChatTools(responsesAvailableTools(body))
   const reasoningEffort = targetReasoningEffort(target)
   return {
     model: target.model,
@@ -408,25 +570,29 @@ function responsesInputToAnthropicMessages(body: any): any[] {
 
   for (const item of Array.isArray(input) ? input : []) {
     if (!item || typeof item !== 'object') continue
-    if (item.type === 'function_call') {
+    if (item.type === 'function_call' || item.type === 'tool_search_call') {
       messages.push({
         role: 'assistant',
         content: [{
           type: 'tool_use',
           id: String(item.call_id || item.id || `toolu_${messages.length}`),
-          name: String(item.name || 'tool'),
-          input: safeJsonParse(String(item.arguments || '{}')),
+          name: item.type === 'tool_search_call' ? TOOL_SEARCH_NAME : String(item.name || 'tool'),
+          input: item.type === 'tool_search_call'
+            ? toolSearchArguments(item.arguments)
+            : safeJsonParse(String(item.arguments || '{}')),
         }],
       })
       continue
     }
-    if (item.type === 'function_call_output') {
+    if (item.type === 'function_call_output' || item.type === 'tool_search_output') {
       messages.push({
         role: 'user',
         content: [{
           type: 'tool_result',
           tool_use_id: String(item.call_id || ''),
-          content: stringifyContent(item.output),
+          content: item.type === 'tool_search_output'
+            ? toolSearchOutputText(item)
+            : stringifyContent(item.output),
         }],
       })
       continue
@@ -456,7 +622,7 @@ function responsesToolsToAnthropicTools(tools: unknown): any[] | undefined {
 }
 
 export function responsesToAnthropicMessages(body: any, target: ResponsesAdapterTarget, stream = false): any {
-  const tools = responsesToolsToAnthropicTools(body?.tools)
+  const tools = responsesToolsToAnthropicTools(responsesAvailableTools(body))
   const reasoningEffort = targetReasoningEffort(target)
   return {
     model: target.model,
@@ -517,13 +683,12 @@ export function openAiChatToResponses(data: any, target: ResponsesAdapterTarget)
   }
 
   for (const call of Array.isArray(message.tool_calls) ? message.tool_calls : []) {
-    const normalizedCall = normalizeResponseFunctionCall(call.function?.name || 'tool', call.function?.arguments || '{}')
-    output.push({
-      type: 'function_call',
-      id: String(call.id || `fc_${output.length}`),
-      call_id: String(call.id || `call_${output.length}`),
-      ...normalizedCall,
-    })
+    output.push(responseToolCall(
+      call.function?.name || 'tool',
+      call.function?.arguments || '{}',
+      call.id,
+      output.length,
+    ))
   }
 
   return {
@@ -546,13 +711,12 @@ export function anthropicMessageToResponses(data: any, target: ResponsesAdapterT
     if (block?.type === 'thinking' && block.thinking) reasoningParts.push(String(block.thinking))
     if (block?.type === 'redacted_thinking') reasoningParts.push('[redacted thinking]')
     if (block?.type === 'tool_use') {
-      const normalizedCall = normalizeResponseFunctionCall(block.name || 'tool', JSON.stringify(block.input || {}))
-      output.push({
-        type: 'function_call',
-        id: String(block.id || `fc_${output.length}`),
-        call_id: String(block.id || `call_${output.length}`),
-        ...normalizedCall,
-      })
+      output.push(responseToolCall(
+        block.name || 'tool',
+        block.input || {},
+        block.id,
+        output.length,
+      ))
     }
   }
   if (textParts.length) {

@@ -25,7 +25,17 @@ function functionCallItem(input: {
   name: string
   arguments: string
   annotateNamespace?: boolean
+  status?: 'in_progress' | 'completed'
 }) {
+  if (input.name === 'tool_search') {
+    return {
+      type: 'tool_search_call',
+      call_id: input.callId || input.id,
+      status: input.status || 'completed',
+      execution: 'client',
+      arguments: safeJsonParse(input.arguments || '{}'),
+    }
+  }
   const normalized = input.annotateNamespace
     ? normalizeResponseFunctionCall(input.name, input.arguments)
     : { name: input.name, arguments: input.arguments, namespace: undefined }
@@ -187,21 +197,23 @@ export async function* openAiChatSseToResponsesEvents(
               data: {
                 type: 'response.output_item.added',
                 output_index: textStarted ? index + 1 : index,
-                item: functionCallItem({ id: call.id, name: call.name, arguments: '', annotateNamespace: target.annotateMcpToolNamespaces }),
+                item: functionCallItem({ id: call.id, name: call.name, arguments: '', annotateNamespace: target.annotateMcpToolNamespaces, status: 'in_progress' }),
               },
             }
           }
           const argsDelta = toolCall.function?.arguments
           if (typeof argsDelta === 'string' && argsDelta) {
             call.arguments += argsDelta
-            yield {
-              type: 'response.function_call_arguments.delta',
-              data: {
+            if (call.name !== 'tool_search') {
+              yield {
                 type: 'response.function_call_arguments.delta',
-                item_id: call.id,
-                output_index: textStarted ? index + 1 : index,
-                delta: argsDelta,
-              },
+                data: {
+                  type: 'response.function_call_arguments.delta',
+                  item_id: call.id,
+                  output_index: textStarted ? index + 1 : index,
+                  delta: argsDelta,
+                },
+              }
             }
           }
         }
@@ -371,7 +383,7 @@ export async function* anthropicMessagesSseToResponsesEvents(
         data: {
           type: 'response.output_item.added',
           output_index: textStarted ? index + 1 : index,
-          item: functionCallItem({ id: block.id, name: block.name, arguments: '', annotateNamespace: target.annotateMcpToolNamespaces }),
+          item: functionCallItem({ id: block.id, name: block.name, arguments: '', annotateNamespace: target.annotateMcpToolNamespaces, status: 'in_progress' }),
         },
       }
     }
@@ -444,14 +456,16 @@ export async function* anthropicMessagesSseToResponsesEvents(
             const block = yield* ensureTool(index)
             const argsDelta = String(delta.partial_json)
             block.arguments += argsDelta
-            yield {
-              type: 'response.function_call_arguments.delta',
-              data: {
+            if (block.name !== 'tool_search') {
+              yield {
                 type: 'response.function_call_arguments.delta',
-                item_id: block.id,
-                output_index: textStarted ? index + 1 : index,
-                delta: argsDelta,
-              },
+                data: {
+                  type: 'response.function_call_arguments.delta',
+                  item_id: block.id,
+                  output_index: textStarted ? index + 1 : index,
+                  delta: argsDelta,
+                },
+              }
             }
           }
         }

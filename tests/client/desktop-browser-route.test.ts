@@ -11,9 +11,9 @@ describe('desktop browser chat panel gate', () => {
   function browserBridge() {
     const methods = [
       'getState', 'setViewport', 'createTab', 'closeTab', 'activateTab', 'navigate',
-      'navigationAction', 'createProfile', 'renameProfile', 'profileSwitchImpact',
-      'switchProfile', 'updateProfile', 'deleteProfile', 'clearProfileData',
-      'chooseDirectory', 'takeOver', 'annotate', 'cancelAnnotation', 'updateAnnotationNote',
+      'navigationAction', 'createProfile', 'chooseProfileRootDirectory', 'renameProfile', 'profileSwitchImpact',
+      'switchProfile', 'updateProfile', 'deleteProfile', 'clearProfileData', 'cancelDownload',
+      'takeOver', 'annotate', 'cancelAnnotation', 'updateAnnotationNote',
       'captureAnnotations', 'clearAnnotations',
       'onAnnotationRequest', 'onStateChange',
     ]
@@ -55,11 +55,17 @@ describe('desktop browser chat panel gate', () => {
     expect(browserPanel).toContain('onAnnotationRequest')
     expect(browserPanel).toContain('EXTERNAL_OVERLAY_SELECTOR')
     expect(browserPanel).toContain("'.n-modal-body-wrapper'")
-    expect(browserPanel).toContain("'.n-drawer-container'")
+    expect(browserPanel).toContain("'.n-drawer-mask'")
+    expect(browserPanel).toContain("'.image-preview-overlay'")
+    expect(browserPanel).toContain('OVERLAY_RECHECK_DELAYS')
     expect(browserPanel).toContain('scheduleExternalOverlayCheck')
     expect(browserPanel).toContain('class="annotation-editor"')
     expect(browserPanel).toContain('class="annotation-popover"')
     expect(browserPanel).toContain('class="annotation-note-input"')
+    expect(browserPanel).toContain('data-testid="browser-profile-switcher"')
+    expect(browserPanel).toContain('class="download-popover"')
+    expect(browserPanel).toContain('cancelDownload(item.id)')
+    expect(browserPanel).toContain('background: var(--n-color, var(--bg-card))')
     expect(browserPanel).toContain('color-scheme: light')
     expect(browserPanel).toContain('--n-color: #fff !important')
     expect(browserPanel).toContain('color: var(--text-primary, #1a1a1a)')
@@ -71,6 +77,17 @@ describe('desktop browser chat panel gate', () => {
     expect(browserPanel).toContain("'--annotation-bottom'")
     expect(browserPanel).not.toContain('profile-select')
     expect(settingsPage).toContain('class="browser-settings-page"')
+    expect(settingsPage).toContain('class="profiles-grid"')
+    expect(settingsPage).toContain('class="profile-card"')
+    expect(settingsPage).toContain('v-for="profile in state.profiles"')
+    expect(settingsPage).toContain('@click="openCreateProfile"')
+    expect(settingsPage).toContain('@click="openEditProfile(profile)"')
+    expect(settingsPage).toContain("profileModalMode === 'create'")
+    expect(settingsPage).toContain('choose-browser-profile-root')
+    expect(settingsPage).toContain("profilePath(selected, 'data')")
+    expect(settingsPage).toContain("profilePath(selected, 'download')")
+    expect(settingsPage).toContain("profileProxyMode === 'fixed_servers'")
+    expect(settingsPage).not.toContain('class="active-profile-select"')
     expect(settingsPage).not.toContain('native-viewport')
     expect(settingsPage).not.toContain('navigationAction')
     expect(sidebar).toContain("hermes.browser")

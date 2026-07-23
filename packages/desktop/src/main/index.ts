@@ -524,7 +524,7 @@ async function createWindow(): Promise<void> {
 async function initializeDesktopBrowser(): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed() || browserManager) return
   const root = join(webUiHome(), 'desktop-browser')
-  const manager = new BrowserManager(mainWindow, root, join(app.getPath('downloads'), 'Hermes Studio'), {
+  const manager = new BrowserManager(mainWindow, root, {
     selectElementLabel: t('browser.selectElement'),
     selectRegionLabel: t('browser.selectRegion'),
     onAnnotationRequest: (tabId, mode) => {
@@ -865,7 +865,19 @@ ipcMain.handle('hermes-desktop:browser-navigation-action', (event, tabId?: unkno
   browserBroker?.revokeTab(String(tabId || ''))
   return manager.navigationAction(String(tabId || ''), action)
 })
-ipcMain.handle('hermes-desktop:browser-create-profile', (event, name?: unknown) => browserForEvent(event).createProfile(String(name || '')))
+ipcMain.handle('hermes-desktop:browser-create-profile', (event, input?: unknown) => {
+  const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
+  const proxyMode = value.proxyMode === 'system' || value.proxyMode === 'fixed_servers' ? value.proxyMode : 'direct'
+  return browserForEvent(event).createProfile({
+    name: String(value.name || ''),
+    rootDirectory: String(value.rootDirectory || ''),
+    proxyMode,
+    proxyRules: String(value.proxyRules || ''),
+  })
+})
+ipcMain.handle('hermes-desktop:browser-choose-profile-root-directory', (event, defaultPath?: unknown) => (
+  browserForEvent(event).chooseProfileRootDirectory(typeof defaultPath === 'string' ? defaultPath : undefined)
+))
 ipcMain.handle('hermes-desktop:browser-rename-profile', (event, profileId?: unknown, name?: unknown) => browserForEvent(event).renameProfile(String(profileId || ''), String(name || '')))
 ipcMain.handle('hermes-desktop:browser-profile-switch-impact', event => browserForEvent(event).profileSwitchImpact())
 ipcMain.handle('hermes-desktop:browser-switch-profile', (event, profileId?: unknown, force?: unknown) => {
@@ -876,6 +888,11 @@ ipcMain.handle('hermes-desktop:browser-switch-profile', (event, profileId?: unkn
 ipcMain.handle('hermes-desktop:browser-update-profile', (event, profileId?: unknown, input?: unknown) => {
   const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
   return browserForEvent(event).updateProfile(String(profileId || ''), {
+    ...(typeof value.rootDirectory === 'string' ? { rootDirectory: value.rootDirectory } : {}),
+    ...(value.proxyMode === 'direct' || value.proxyMode === 'system' || value.proxyMode === 'fixed_servers'
+      ? { proxyMode: value.proxyMode }
+      : {}),
+    ...(typeof value.proxyRules === 'string' ? { proxyRules: value.proxyRules } : {}),
     ...(typeof value.askBeforeDownload === 'boolean' ? { askBeforeDownload: value.askBeforeDownload } : {}),
     ...(value.downloadConflictPolicy === 'ask' || value.downloadConflictPolicy === 'uniquify'
       ? { downloadConflictPolicy: value.downloadConflictPolicy }
@@ -889,10 +906,9 @@ ipcMain.handle('hermes-desktop:browser-clear-profile-data', (event, profileId?: 
   browserBroker?.revokeAll()
   return manager.clearProfileData(String(profileId || ''), kind)
 })
-ipcMain.handle('hermes-desktop:browser-choose-directory', (event, kind?: unknown, profileId?: unknown) => {
-  if (kind !== 'download' && kind !== 'session') throw new Error('Invalid browser directory kind')
-  return browserForEvent(event).chooseDirectory(kind, String(profileId || ''))
-})
+ipcMain.handle('hermes-desktop:browser-cancel-download', (event, downloadId?: unknown) => (
+  browserForEvent(event).cancelDownload(String(downloadId || ''))
+))
 ipcMain.handle('hermes-desktop:browser-take-over', (event, tabId?: unknown) => {
   browserForEvent(event)
   browserBroker?.revokeTab(String(tabId || ''))

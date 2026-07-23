@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   anthropicMessageToResponses,
+  normalizeResponseFunctionCall,
   openAiChatToResponses,
+  responseToolNamespaceForName,
   responsesToAnthropicMessages,
   responsesToOpenAiChat,
 } from '../../packages/server/src/services/agent-runner/adapters/responses'
@@ -159,6 +161,92 @@ describe('agent runner Responses adapters', () => {
     })
   })
 
+  it('round-trips Codex deferred tool discovery through Anthropic tools', () => {
+    const toolSearch = {
+      type: 'tool_search',
+      execution: 'client',
+      description: 'Search deferred MCP tools.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+          limit: { type: 'number' },
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+    }
+
+    expect(responsesToAnthropicMessages({
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'open the browser' }] }],
+      tools: [toolSearch],
+    }, target).tools).toEqual([{
+      name: 'tool_search',
+      description: 'Search deferred MCP tools.',
+      input_schema: toolSearch.parameters,
+    }])
+
+    const followup = responsesToAnthropicMessages({
+      input: [
+        { role: 'user', content: [{ type: 'input_text', text: 'open the browser' }] },
+        {
+          type: 'tool_search_call',
+          call_id: 'call_search',
+          status: 'completed',
+          execution: 'client',
+          arguments: { query: 'Hermes Studio browser tabs navigation' },
+        },
+        {
+          type: 'tool_search_output',
+          call_id: 'call_search',
+          status: 'completed',
+          execution: 'client',
+          tools: [{
+            type: 'namespace',
+            name: 'mcp__hermes_studio_browser',
+            description: 'Hermes browser tools.',
+            tools: [{
+              type: 'function',
+              name: 'hermes_studio_browser_toolset',
+              description: 'Discover browser operations.',
+              parameters: { type: 'object', properties: { action: { type: 'string' } }, required: ['action'] },
+            }],
+          }],
+        },
+      ],
+      tools: [toolSearch],
+    }, target)
+
+    expect(followup.messages).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'open the browser' }] },
+      {
+        role: 'assistant',
+        content: [{
+          type: 'tool_use',
+          id: 'call_search',
+          name: 'tool_search',
+          input: { query: 'Hermes Studio browser tabs navigation' },
+        }],
+      },
+      {
+        role: 'user',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'call_search',
+          content: 'Loaded deferred tools: mcp__hermes_studio_browser.hermes_studio_browser_toolset',
+        }],
+      },
+    ])
+    expect(followup.tools).toEqual([
+      expect.objectContaining({ name: 'tool_search' }),
+      {
+        name: 'hermes_studio_browser_toolset',
+        description: 'Discover browser operations.',
+        input_schema: { type: 'object', properties: { action: { type: 'string' } }, required: ['action'] },
+      },
+    ])
+  })
+
   it('expands Hermes MCP namespace tools for Chat and Anthropic providers', () => {
     const body = {
       input: [{ role: 'user', content: [{ type: 'input_text', text: 'list devices' }] }],
@@ -191,6 +279,43 @@ describe('agent runner Responses adapters', () => {
         }),
       }),
     ]))
+  })
+
+  it('expands split Hermes MCP namespaces and routes returned calls to the right server', () => {
+    const body = {
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'open a browser' }] }],
+      tools: [
+        { type: 'namespace', name: 'mcp__hermes_studio_api' },
+        { type: 'namespace', name: 'mcp__hermes_studio_browser' },
+        { type: 'namespace', name: 'mcp__hermes_studio_devices' },
+        { type: 'namespace', name: 'mcp__hermes_studio_use' },
+      ],
+    }
+
+    const anthropicTools = responsesToAnthropicMessages(body, target).tools
+    expect(anthropicTools.map((tool: any) => tool.name)).toEqual([
+      'hermes_studio_api_openapi_get',
+      'hermes_studio_api_request',
+      'hermes_studio_browser_toolset',
+      'hermes_studio_devices_toolset',
+      'hermes_studio_use_toolset',
+    ])
+    expect(anthropicTools.find((tool: any) => tool.name === 'hermes_studio_browser_toolset')).toMatchObject({
+      input_schema: {
+        required: ['action'],
+        properties: {
+          action: { enum: ['list', 'describe', 'call'] },
+          tool: { type: 'string' },
+          arguments: { type: 'object' },
+        },
+      },
+    })
+    expect(responseToolNamespaceForName('hermes_studio_browser_toolset')).toBe('mcp__hermes_studio_browser')
+    expect(normalizeResponseFunctionCall('hermes_studio_browser_toolset', '{"action":"list"}')).toEqual({
+      name: 'hermes_studio_browser_toolset',
+      arguments: '{"action":"list"}',
+      namespace: 'mcp__hermes_studio_browser',
+    })
   })
 
   it('keeps unknown MCP namespaces callable through a generic function fallback', () => {
@@ -308,6 +433,27 @@ describe('agent runner Responses adapters', () => {
 	        { type: 'function_call', call_id: 'toolu_1', name: 'lookup', arguments: '{"id":1}' },
       ],
       usage: { input_tokens: 4, output_tokens: 5, total_tokens: 9 },
+    })
+  })
+
+  it('returns Anthropic tool_search calls using the Codex-native response item', () => {
+    expect(anthropicMessageToResponses({
+      id: 'msg_search',
+      content: [{
+        type: 'tool_use',
+        id: 'call_search',
+        name: 'tool_search',
+        input: { query: 'Hermes Studio browser', limit: 5 },
+      }],
+      usage: { input_tokens: 2, output_tokens: 3 },
+    }, target)).toMatchObject({
+      output: [{
+        type: 'tool_search_call',
+        call_id: 'call_search',
+        status: 'completed',
+        execution: 'client',
+        arguments: { query: 'Hermes Studio browser', limit: 5 },
+      }],
     })
   })
 
@@ -482,6 +628,42 @@ describe('agent runner Responses stream adapters', () => {
             name: 'hermes_studio_lan_devices_list',
             namespace: 'mcp__hermes_studio',
           }),
+        }),
+      }),
+    ]))
+  })
+
+  it('streams Anthropic tool_search calls as Codex-native response items', async () => {
+    const events = await collectEvents(anthropicMessagesSseToResponsesEvents(encodedChunks([
+      'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_search"}}\n\n',
+      'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_search","name":"tool_search","input":{}}}\n\n',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"query\\":\\"Hermes Studio browser\\"}"}}\n\n',
+      'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+    ]), codexTarget))
+
+    expect(events.some(event => event.type === 'response.function_call_arguments.delta')).toBe(false)
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'response.output_item.added',
+        data: expect.objectContaining({
+          item: expect.objectContaining({
+            type: 'tool_search_call',
+            call_id: 'call_search',
+            status: 'in_progress',
+            execution: 'client',
+          }),
+        }),
+      }),
+      expect.objectContaining({
+        type: 'response.output_item.done',
+        data: expect.objectContaining({
+          item: {
+            type: 'tool_search_call',
+            call_id: 'call_search',
+            status: 'completed',
+            execution: 'client',
+            arguments: { query: 'Hermes Studio browser' },
+          },
         }),
       }),
     ]))

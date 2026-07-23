@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import {
   BrowserWindow,
@@ -11,6 +10,7 @@ import {
   shell,
   WebContentsView,
   type DownloadItem,
+  type ProxyConfig,
   type Session,
   type WebContents,
 } from 'electron'
@@ -21,7 +21,9 @@ import type {
   BrowserBounds,
   BrowserConsoleEntry,
   BrowserInteractAction,
+  BrowserProfileCreateInput,
   BrowserProfileSwitchImpact,
+  BrowserProfileUpdateInput,
   BrowserSelection,
   BrowserSitePermission,
   DesktopBrowserDownload,
@@ -86,13 +88,24 @@ function nextDownloadPath(directory: string, fileName: string): string {
   return join(directory, `${stem}-${Date.now()}${extension}`)
 }
 
+function proxyConfig(profile: DesktopBrowserProfile): ProxyConfig {
+  if (profile.proxyMode === 'system') return { mode: 'system' }
+  if (profile.proxyMode === 'fixed_servers') {
+    return { mode: 'fixed_servers', proxyRules: profile.proxyRules }
+  }
+  return { mode: 'direct' }
+}
+
 export class BrowserManager {
   readonly automation = new BrowserAutomation()
   private readonly profileStore: BrowserProfileStore
   private readonly records = new Map<string, TabRecord>()
   private readonly downloads: DesktopBrowserDownload[] = []
+  private readonly downloadItems = new Map<string, DownloadItem>()
   private readonly permissions: BrowserSitePermission[] = []
+  private readonly browserSessions = new Map<string, Session>()
   private readonly configuredSessions = new Set<string>()
+  private readonly configuredSessionProxies = new Map<string, string>()
   private readonly automationVisibleTabs = new Set<string>()
   private readonly activeAnnotationTabs = new Set<string>()
   private readonly annotationMarkerCounts = new Map<string, number>()
@@ -103,8 +116,8 @@ export class BrowserManager {
   private visible = false
   private bounds: BrowserBounds = { x: 0, y: 0, width: 800, height: 600 }
 
-  constructor(private readonly window: BrowserWindow, stateRoot: string, downloadsRoot: string, private readonly options?: BrowserManagerOptions) {
-    this.profileStore = new BrowserProfileStore(stateRoot, downloadsRoot)
+  constructor(private readonly window: BrowserWindow, stateRoot: string, private readonly options?: BrowserManagerOptions) {
+    this.profileStore = new BrowserProfileStore(stateRoot)
   }
 
   async initialize(): Promise<void> {
@@ -155,7 +168,7 @@ export class BrowserManager {
     if (this.records.size >= MAX_TABS) throw new Error(`Browser supports at most ${MAX_TABS} tabs per profile`)
     const normalizedUrl = normalizeBrowserUrl(url, { allowBlank: true })
     const profile = this.requireProfile(this.activeProfileId)
-    const record = this.buildTab(profile, normalizedUrl)
+    const record = await this.buildTab(profile, normalizedUrl)
     this.records.set(record.tab.id, record)
     this.window.contentView.addChildView(record.view)
     if (activate || !this.activeTabId) this.activeTabId = record.tab.id
@@ -173,7 +186,7 @@ export class BrowserManager {
 
   async closeTab(tabId: string): Promise<DesktopBrowserState> {
     const record = this.requireTab(tabId)
-    await this.clearAnnotations(tabId)
+    await this.clearAnnotations(tabId, false)
     const ids = [...this.records.keys()]
     const index = ids.indexOf(tabId)
     this.window.contentView.removeChildView(record.view)
@@ -183,7 +196,6 @@ export class BrowserManager {
     record.view.webContents.close()
     this.records.delete(tabId)
     if (this.activeTabId === tabId) this.activeTabId = [...this.records.keys()][Math.max(0, index - 1)]
-    if (this.records.size === 0) await this.createTab('about:blank', true)
     await this.persistTabs()
     this.syncViews()
     this.emitState()
@@ -215,10 +227,18 @@ export class BrowserManager {
     return copyTab(record.tab)
   }
 
-  async createProfile(name: string): Promise<DesktopBrowserProfile> {
-    const profile = await this.profileStore.create(name)
+  async createProfile(input: BrowserProfileCreateInput): Promise<DesktopBrowserProfile> {
+    const profile = await this.profileStore.create(input)
     this.emitState()
     return profile
+  }
+
+  async chooseProfileRootDirectory(defaultPath?: string): Promise<string | null> {
+    const result = await dialog.showOpenDialog(this.window, {
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: String(defaultPath || '').trim() || app.getPath('documents'),
+    })
+    return result.canceled ? null : result.filePaths[0] || null
   }
 
   async renameProfile(profileId: string, name: string): Promise<DesktopBrowserProfile> {
@@ -244,6 +264,7 @@ export class BrowserManager {
     if (impact.requiresConfirmation && !force) throw new Error('Profile switch requires confirmation while an Agent or download is active')
     await Promise.all([...new Set([...this.activeAnnotationTabs, ...this.annotationMarkerCounts.keys()])].map(tabId => this.clearAnnotations(tabId)))
     await this.persistTabs()
+    await this.flushProfileSession(this.requireProfile(this.activeProfileId))
     this.destroyViews()
     const profile = await this.profileStore.setActive(profileId)
     this.activeProfileId = profile.id
@@ -252,8 +273,28 @@ export class BrowserManager {
     return this.state()
   }
 
-  async updateProfile(profileId: string, input: { askBeforeDownload?: boolean; downloadConflictPolicy?: 'ask' | 'uniquify' }): Promise<DesktopBrowserProfile> {
-    const profile = await this.profileStore.setDownloadPreferences(profileId, input)
+  async updateProfile(profileId: string, input: BrowserProfileUpdateInput): Promise<DesktopBrowserProfile> {
+    const previous = { ...this.requireProfile(profileId), tabs: [...this.requireProfile(profileId).tabs] }
+    const nextRoot = String(input.rootDirectory || previous.rootPath).trim()
+    const nextProxyMode = input.proxyMode || previous.proxyMode
+    const nextProxyRules = nextProxyMode === 'fixed_servers'
+      ? String(input.proxyRules ?? previous.proxyRules).trim()
+      : ''
+    const rootChanged = resolve(nextRoot) !== resolve(previous.rootPath)
+    const connectionChanged = rootChanged
+      || nextProxyMode !== previous.proxyMode
+      || nextProxyRules !== previous.proxyRules
+    const rebuildActiveProfile = profileId === this.activeProfileId && connectionChanged
+    if (rebuildActiveProfile) {
+      await this.persistTabs()
+      await this.flushProfileSession(previous)
+    }
+    const profile = await this.profileStore.update(profileId, input)
+    if (rebuildActiveProfile) {
+      this.destroyViews()
+      if (rootChanged) this.releaseProfileSession(previous.sessionPath)
+      await this.restoreTabs(profile)
+    }
     this.emitState()
     return profile
   }
@@ -276,7 +317,7 @@ export class BrowserManager {
         if (this.permissions[index].profileId === profileId) this.permissions.splice(index, 1)
       }
     } else {
-      const browserSession = session.fromPath(profile.sessionPath)
+      const browserSession = this.profileSession(profile)
       if (kind === 'cache') await browserSession.clearCache()
       else await browserSession.clearStorageData()
       if (profileId === this.activeProfileId) {
@@ -287,22 +328,17 @@ export class BrowserManager {
     return this.state()
   }
 
-  async chooseDirectory(kind: 'download' | 'session', profileId: string): Promise<DesktopBrowserProfile | null> {
-    const profile = this.requireProfile(profileId)
-    const result = await dialog.showOpenDialog(this.window, {
-      properties: ['openDirectory', 'createDirectory'],
-      defaultPath: kind === 'download' ? profile.downloadPath : profile.sessionPath,
-    })
-    const pathname = result.canceled ? '' : result.filePaths[0] || ''
-    if (!pathname) return null
-    const updated = kind === 'download'
-      ? await this.profileStore.setDownloadDirectory(profileId, pathname)
-      : await this.profileStore.scheduleSessionDirectory(profileId, pathname)
-    if (kind === 'download' && profileId === this.activeProfileId) {
-      session.fromPath(profile.sessionPath).setDownloadPath(updated.downloadPath)
-    }
+  cancelDownload(downloadId: string): DesktopBrowserState {
+    const download = this.downloads.find(item => item.id === downloadId)
+    if (!download) throw new Error('Browser download not found')
+    if (download.state !== 'progressing') return this.state()
+    const item = this.downloadItems.get(downloadId)
+    if (!item) throw new Error('Browser download is no longer active')
+    download.state = 'cancelled'
+    this.downloadItems.delete(downloadId)
+    item.cancel()
     this.emitState()
-    return updated
+    return this.state()
   }
 
   async snapshot(tabId: string) {
@@ -547,14 +583,17 @@ export class BrowserManager {
     return this.screenshot(tabId, false)
   }
 
-  async clearAnnotations(tabId: string): Promise<boolean> {
+  async clearAnnotations(tabId: string, waitForPage = true): Promise<boolean> {
     const wasActive = this.activeAnnotationTabs.has(tabId)
     const hadMarks = this.annotationMarkerCounts.has(tabId)
+    if (!wasActive && !hadMarks) return false
     const record = this.records.get(tabId)
     if (record && !record.view.webContents.isDestroyed()) {
-      await record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
+      const cleanup = record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
         code: `dispatchEvent(new CustomEvent(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}));globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}]?.destroy?.()`,
       }], true).catch(() => undefined)
+      if (waitForPage) await cleanup
+      else void cleanup
     }
     this.activeAnnotationTabs.delete(tabId)
     this.annotationMarkerCounts.delete(tabId)
@@ -563,14 +602,21 @@ export class BrowserManager {
   }
 
   destroy(): void {
+    for (const item of this.downloadItems.values()) item.cancel()
+    this.downloadItems.clear()
+    for (const browserSession of this.browserSessions.values()) {
+      browserSession.flushStorageData()
+      void browserSession.cookies.flushStore().catch(() => undefined)
+    }
+    this.browserSessions.clear()
     this.destroyViews()
     this.stateListeners.clear()
   }
 
-  private buildTab(profile: DesktopBrowserProfile, url: string): TabRecord {
+  private async buildTab(profile: DesktopBrowserProfile, url: string): Promise<TabRecord> {
     const id = randomUUID()
-    const browserSession = session.fromPath(profile.sessionPath, { cache: true })
-    this.configureSession(profile, browserSession)
+    const browserSession = this.profileSession(profile)
+    await this.configureSession(profile, browserSession)
     const view = new WebContentsView({
       webPreferences: {
         session: browserSession,
@@ -638,7 +684,34 @@ export class BrowserManager {
     return record
   }
 
-  private configureSession(profile: DesktopBrowserProfile, browserSession: Session): void {
+  private profileSession(profile: DesktopBrowserProfile): Session {
+    const existing = this.browserSessions.get(profile.sessionPath)
+    if (existing) return existing
+    const browserSession = session.fromPath(profile.sessionPath, { cache: true })
+    this.browserSessions.set(profile.sessionPath, browserSession)
+    return browserSession
+  }
+
+  private async flushProfileSession(profile: DesktopBrowserProfile): Promise<void> {
+    const browserSession = this.profileSession(profile)
+    browserSession.flushStorageData()
+    await browserSession.cookies.flushStore()
+  }
+
+  private releaseProfileSession(sessionPath: string): void {
+    this.browserSessions.delete(sessionPath)
+    this.configuredSessions.delete(sessionPath)
+    this.configuredSessionProxies.delete(sessionPath)
+  }
+
+  private async configureSession(profile: DesktopBrowserProfile, browserSession: Session): Promise<void> {
+    const proxy = proxyConfig(profile)
+    const proxySignature = JSON.stringify(proxy)
+    if (this.configuredSessionProxies.get(profile.sessionPath) !== proxySignature) {
+      await browserSession.setProxy(proxy)
+      await browserSession.closeAllConnections()
+      this.configuredSessionProxies.set(profile.sessionPath, proxySignature)
+    }
     if (this.configuredSessions.has(profile.sessionPath)) return
     this.configuredSessions.add(profile.sessionPath)
     browserSession.setDownloadPath(profile.downloadPath)
@@ -654,41 +727,56 @@ export class BrowserManager {
     browserSession.setDisplayMediaRequestHandler((_request, callback) => callback({}))
     browserSession.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !isAllowedBrowserSubresource(details.url) }))
     browserSession.on('will-download', (_event, item, contents) => {
-      item.pause()
-      void this.handleDownload(this.requireProfile(profile.id), item, contents).catch(error => {
+      try {
+        this.handleDownload(this.requireProfile(profile.id), item, contents)
+      } catch (error) {
         item.cancel()
         console.warn('[desktop-browser] failed to prepare download:', error)
-      })
+      }
     })
   }
 
-  private async handleDownload(profile: DesktopBrowserProfile, item: DownloadItem, contents: WebContents): Promise<void> {
+  private handleDownload(profile: DesktopBrowserProfile, item: DownloadItem, contents: WebContents): void {
     const record = [...this.records.values()].find(candidate => candidate.view.webContents === contents)
     if (!record || record.tab.profileId !== profile.id) { item.cancel(); return }
-    await mkdir(profile.downloadPath, { recursive: true, mode: 0o700 })
     const safeFileName = basename(item.getFilename()).replace(/[\u0000-\u001f]/g, '_') || 'download'
     const basePath = join(profile.downloadPath, safeFileName)
-    let savePath = profile.downloadConflictPolicy === 'uniquify' ? nextDownloadPath(profile.downloadPath, safeFileName) : basePath
-    if ((this.agentDownloadGuardUntil.get(record.tab.id) || 0) > Date.now() || profile.askBeforeDownload || (profile.downloadConflictPolicy === 'ask' && existsSync(basePath))) {
-      const result = await dialog.showSaveDialog(this.window, { defaultPath: savePath })
-      if (result.canceled || !result.filePath) { item.cancel(); return }
-      savePath = result.filePath
-    }
-    item.setSavePath(savePath)
+    const savePath = profile.downloadConflictPolicy === 'uniquify' ? nextDownloadPath(profile.downloadPath, safeFileName) : basePath
+    const askForPath = (this.agentDownloadGuardUntil.get(record.tab.id) || 0) > Date.now()
+      || profile.askBeforeDownload
+      || (profile.downloadConflictPolicy === 'ask' && existsSync(basePath))
+    // Electron only supports configuring the destination while will-download is
+    // running. Its own dialog must handle prompted downloads; awaiting a separate
+    // dialog here leaves macOS temporary files that never reach the selected path.
+    if (askForPath) item.setSaveDialogOptions({ defaultPath: savePath })
+    else item.setSavePath(savePath)
     const download: DesktopBrowserDownload = {
-      id: randomUUID(), profileId: profile.id, fileName: item.getFilename(), sourceUrl: item.getURL(), savePath,
+      id: randomUUID(), profileId: profile.id, fileName: item.getFilename(), sourceUrl: item.getURL(),
+      ...(askForPath ? {} : { savePath }),
       receivedBytes: 0, totalBytes: item.getTotalBytes(), state: 'progressing', startedAt: new Date().toISOString(),
     }
     this.downloads.unshift(download)
+    this.downloadItems.set(download.id, item)
     item.on('updated', (_event, state) => {
+      if (!this.downloadItems.has(download.id)) return
       download.receivedBytes = item.getReceivedBytes()
       download.totalBytes = item.getTotalBytes()
-      download.state = state === 'interrupted' ? 'interrupted' : 'progressing'
+      download.savePath = item.getSavePath() || download.savePath
+      const currentState = item.getState()
+      download.state = currentState === 'progressing'
+        ? (state === 'interrupted' ? 'interrupted' : 'progressing')
+        : currentState
       this.emitState()
     })
-    item.once('done', (_event, state) => { download.receivedBytes = item.getReceivedBytes(); download.state = state; this.emitState() })
+    item.once('done', (_event, state) => {
+      this.downloadItems.delete(download.id)
+      download.receivedBytes = item.getReceivedBytes()
+      download.totalBytes = item.getTotalBytes()
+      download.savePath = item.getSavePath() || download.savePath
+      download.state = state
+      this.emitState()
+    })
     this.emitState()
-    item.resume()
   }
 
   private async restoreTabs(profile: DesktopBrowserProfile): Promise<void> {

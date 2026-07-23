@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
-import type { DesktopBrowserProfile } from './browser-types'
+import type { BrowserProfileCreateInput, BrowserProfileUpdateInput, BrowserProxyMode, DesktopBrowserProfile } from './browser-types'
 
 interface BrowserProfilesDocument {
   schema: 1
@@ -25,13 +25,24 @@ function safeName(input: string): string {
   return name
 }
 
+function safeProxyMode(input: unknown): BrowserProxyMode {
+  return input === 'system' || input === 'fixed_servers' ? input : 'direct'
+}
+
+function safeProxyRules(input: unknown, mode: BrowserProxyMode): string {
+  const rules = String(input || '').trim().replace(/[\u0000-\u001f]/g, '')
+  if (rules.length > 2_048) throw new Error('Proxy rules are too long')
+  if (mode === 'fixed_servers' && !rules) throw new Error('Proxy server is required')
+  return mode === 'fixed_servers' ? rules : ''
+}
+
 export class BrowserProfileStore {
   readonly root: string
   readonly profilesFile: string
   private document: BrowserProfilesDocument | null = null
   private persistQueue: Promise<void> = Promise.resolve()
 
-  constructor(root: string, private readonly downloadsRoot: string) {
+  constructor(root: string) {
     this.root = resolve(root)
     this.profilesFile = join(this.root, 'profiles.json')
   }
@@ -42,7 +53,6 @@ export class BrowserProfileStore {
     await mkdir(join(this.root, 'profiles'), { recursive: true, mode: 0o700 })
     await chmod(join(this.root, 'profiles'), 0o700)
     this.document = await this.readDocument()
-    await this.migratePendingProfiles()
     for (const profile of this.document.profiles) {
       await mkdir(profile.sessionPath, { recursive: true, mode: 0o700 })
       await mkdir(profile.downloadPath, { recursive: true, mode: 0o700 })
@@ -63,24 +73,31 @@ export class BrowserProfileStore {
     return this.requireDocument().profiles.find(profile => profile.id === profileId)
   }
 
-  async create(name: string): Promise<DesktopBrowserProfile> {
+  async create(input: BrowserProfileCreateInput): Promise<DesktopBrowserProfile> {
     const document = this.requireDocument()
+    const profileName = safeName(input.name)
+    const profileRoot = await this.validateProfileRoot(input.rootDirectory)
+    const proxyMode = safeProxyMode(input.proxyMode)
+    const proxyRules = safeProxyRules(input.proxyRules, proxyMode)
     const id = randomUUID()
     const createdAt = now()
     const profile: DesktopBrowserProfile = {
       id,
-      name: safeName(name),
-      sessionPath: join(this.root, 'profiles', id, 'session'),
-      downloadPath: join(this.downloadsRoot, id),
+      name: profileName,
+      rootPath: profileRoot,
+      sessionPath: join(profileRoot, 'data'),
+      downloadPath: join(profileRoot, 'download'),
+      proxyMode,
+      proxyRules,
       askBeforeDownload: true,
       downloadConflictPolicy: 'uniquify',
       createdAt,
       lastUsedAt: createdAt,
       tabs: ['about:blank'],
     }
-    document.profiles.push(profile)
     await mkdir(profile.sessionPath, { recursive: true, mode: 0o700 })
     await mkdir(profile.downloadPath, { recursive: true, mode: 0o700 })
+    document.profiles.push(profile)
     await this.persist()
     return { ...profile, tabs: [...profile.tabs] }
   }
@@ -104,37 +121,31 @@ export class BrowserProfileStore {
   async setTabs(profileId: string, tabs: string[]): Promise<void> {
     const profile = this.requireProfile(profileId)
     profile.tabs = tabs.slice(0, 8).map(url => String(url || 'about:blank'))
-    if (profile.tabs.length === 0) profile.tabs = ['about:blank']
     await this.persist()
   }
 
-  async setDownloadDirectory(profileId: string, pathname: string): Promise<DesktopBrowserProfile> {
+  async update(profileId: string, input: BrowserProfileUpdateInput): Promise<DesktopBrowserProfile> {
     const profile = this.requireProfile(profileId)
-    const normalized = await this.validateDirectory(profileId, pathname, 'download')
-    profile.downloadPath = normalized
-    await mkdir(normalized, { recursive: true, mode: 0o700 })
-    await this.persist()
-    return { ...profile, tabs: [...profile.tabs] }
-  }
-
-  async setDownloadPreferences(
-    profileId: string,
-    preferences: { askBeforeDownload?: boolean; downloadConflictPolicy?: 'ask' | 'uniquify' },
-  ): Promise<DesktopBrowserProfile> {
-    const profile = this.requireProfile(profileId)
-    if (typeof preferences.askBeforeDownload === 'boolean') profile.askBeforeDownload = preferences.askBeforeDownload
-    if (preferences.downloadConflictPolicy === 'ask' || preferences.downloadConflictPolicy === 'uniquify') {
-      profile.downloadConflictPolicy = preferences.downloadConflictPolicy
+    const proxyMode = input.proxyMode === undefined ? profile.proxyMode : safeProxyMode(input.proxyMode)
+    const proxyRules = input.proxyRules === undefined && proxyMode === profile.proxyMode
+      ? profile.proxyRules
+      : safeProxyRules(input.proxyRules, proxyMode)
+    const requestedRoot = String(input.rootDirectory || profile.rootPath).trim()
+    let profileRoot = profile.rootPath
+    if (resolve(requestedRoot) !== resolve(profile.rootPath)) {
+      profileRoot = await this.validateProfileRoot(requestedRoot, profileId)
+      await mkdir(join(profileRoot, 'data'), { recursive: true, mode: 0o700 })
+      await mkdir(join(profileRoot, 'download'), { recursive: true, mode: 0o700 })
+      profile.rootPath = profileRoot
+      profile.sessionPath = join(profileRoot, 'data')
+      profile.downloadPath = join(profileRoot, 'download')
     }
-    await this.persist()
-    return { ...profile, tabs: [...profile.tabs] }
-  }
-
-  async scheduleSessionDirectory(profileId: string, pathname: string): Promise<DesktopBrowserProfile> {
-    const profile = this.requireProfile(profileId)
-    const normalized = await this.validateDirectory(profileId, pathname, 'session')
-    if (normalized === resolve(profile.sessionPath)) return { ...profile, tabs: [...profile.tabs] }
-    profile.pendingSessionPath = normalized
+    profile.proxyMode = proxyMode
+    profile.proxyRules = proxyRules
+    if (typeof input.askBeforeDownload === 'boolean') profile.askBeforeDownload = input.askBeforeDownload
+    if (input.downloadConflictPolicy === 'ask' || input.downloadConflictPolicy === 'uniquify') {
+      profile.downloadConflictPolicy = input.downloadConflictPolicy
+    }
     await this.persist()
     return { ...profile, tabs: [...profile.tabs] }
   }
@@ -154,7 +165,19 @@ export class BrowserProfileStore {
     try {
       const parsed = JSON.parse(await readFile(this.profilesFile, 'utf8')) as BrowserProfilesDocument
       if (parsed?.schema === 1 && Array.isArray(parsed.profiles) && parsed.profiles.length > 0) {
-        parsed.profiles = parsed.profiles.map(profile => ({ ...profile, tabs: Array.isArray(profile.tabs) ? profile.tabs : ['about:blank'] }))
+        parsed.profiles = parsed.profiles.map((profile) => {
+          const rootPath = resolve(String(profile.rootPath || dirname(profile.sessionPath)))
+          const proxyMode = safeProxyMode(profile.proxyMode)
+          return {
+            ...profile,
+            rootPath,
+            sessionPath: join(rootPath, 'data'),
+            downloadPath: join(rootPath, 'download'),
+            proxyMode,
+            proxyRules: safeProxyRules(profile.proxyRules, proxyMode),
+            tabs: Array.isArray(profile.tabs) ? profile.tabs : ['about:blank'],
+          }
+        })
         if (!parsed.profiles.some(profile => profile.id === parsed.activeProfileId)) parsed.activeProfileId = parsed.profiles[0].id
         return parsed
       }
@@ -169,8 +192,11 @@ export class BrowserProfileStore {
       profiles: [{
         id,
         name: 'Default',
-        sessionPath: join(this.root, 'profiles', id, 'session'),
-        downloadPath: join(this.downloadsRoot, id),
+        rootPath: join(this.root, 'profiles', id),
+        sessionPath: join(this.root, 'profiles', id, 'data'),
+        downloadPath: join(this.root, 'profiles', id, 'download'),
+        proxyMode: 'direct',
+        proxyRules: '',
         askBeforeDownload: true,
         downloadConflictPolicy: 'uniquify',
         createdAt,
@@ -203,51 +229,33 @@ export class BrowserProfileStore {
     return profile
   }
 
-  private async validateDirectory(profileId: string, pathname: string, kind: 'session' | 'download'): Promise<string> {
-    const normalized = resolve(String(pathname || '').trim())
-    if (!isAbsolute(String(pathname || '').trim())) throw new Error('Directory must be an absolute path')
-    if (dirname(normalized) === normalized) throw new Error('A filesystem root cannot be used as a browser directory')
-    if (normalized === this.root) throw new Error('The browser data root cannot be used directly')
-    for (const profile of this.requireDocument().profiles) {
-      for (const [otherKind, other] of [['session', profile.sessionPath], ['download', profile.downloadPath]] as const) {
-        if (profile.id === profileId && otherKind === kind) continue
-        if (isPathWithin(normalized, other) || isPathWithin(other, normalized)) {
-          throw new Error('Browser profile directories cannot overlap')
-        }
-      }
-    }
+  private async validateProfileRoot(pathname: string, excludedProfileId?: string): Promise<string> {
+    const input = String(pathname || '').trim()
+    if (!isAbsolute(input)) throw new Error('Profile root directory must be an absolute path')
+    const requested = resolve(input)
+    let normalized: string
     try {
-      const info = await stat(normalized)
-      if (!info.isDirectory()) throw new Error('Selected path is not a directory')
-      if (kind === 'session' && (await readdir(normalized)).length > 0) throw new Error('The new profile directory must be empty')
+      const info = await stat(requested)
+      if (!info.isDirectory()) throw new Error('Selected profile path is not a directory')
+      normalized = await realpath(requested)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('Selected profile directory does not exist')
+      throw error
     }
-    return normalized
-  }
-
-  private async migratePendingProfiles(): Promise<void> {
+    if (dirname(normalized) === normalized) throw new Error('A filesystem root cannot be used as a browser profile directory')
+    const browserRoot = await realpath(this.root).catch(() => this.root)
+    if (isPathWithin(normalized, browserRoot) || isPathWithin(browserRoot, normalized)) {
+      throw new Error('The selected profile directory cannot overlap the browser data root')
+    }
     for (const profile of this.requireDocument().profiles) {
-      if (!profile.pendingSessionPath) continue
-      const destination = resolve(profile.pendingSessionPath)
-      const tempPath = `${destination}.hermes-migration-${process.pid}`
-      await rm(tempPath, { recursive: true, force: true })
-      try {
-        await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
-        await cp(profile.sessionPath, tempPath, { recursive: true, force: false, errorOnExist: true })
-        try {
-          if ((await readdir(destination)).length > 0) throw new Error('migration destination is no longer empty')
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-        }
-        await rm(destination, { recursive: true, force: true })
-        await rename(tempPath, destination)
-        profile.sessionPath = destination
-        delete profile.pendingSessionPath
-      } catch (error) {
-        await rm(tempPath, { recursive: true, force: true })
-        console.warn(`[desktop-browser] profile migration failed for ${profile.id}: ${error instanceof Error ? error.message : String(error)}`)
+      if (profile.id === excludedProfileId) continue
+      const otherRoot = await realpath(profile.rootPath).catch(() => profile.rootPath)
+      if (isPathWithin(normalized, otherRoot) || isPathWithin(otherRoot, normalized)) {
+        throw new Error('Browser profile directories cannot overlap')
       }
     }
+    if ((await readdir(normalized)).length > 0) throw new Error('The selected profile directory must be empty')
+
+    return normalized
   }
 }

@@ -611,7 +611,7 @@ async function browserSession(descriptor) {
   const response = await fetch(sessionUrl, {
     method: 'POST',
     headers: { Authorization: `Bearer ${descriptor.token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client: BROWSER_CLIENT_ID }),
+    body: JSON.stringify({ client: BROWSER_CLIENT_ID, client_pid: process.pid }),
     signal: AbortSignal.timeout(10_000),
   })
   const payload = await response.json().catch(() => null)
@@ -1595,8 +1595,84 @@ const TOOL_ALIASES = new Map([
   ['hermes_lan_file_upload', 'hermes_studio_lan_file_upload'],
 ])
 
+const CATEGORY_TOOLSETS = {
+  browser: {
+    name: 'hermes_studio_browser_toolset',
+    coverage: 'Hermes Studio Desktop browser tabs and leases; HTTP/HTTPS navigation; accessibility snapshots with stable refs; click, type, key press, and scroll interaction; viewport or full-page screenshots; bounded console log read and clear.',
+    description: 'Discover and invoke Hermes Studio Desktop browser operations without loading every browser tool schema into the model context. Covers tab list/create/activate/close/release, navigation back/forward/reload/stop/open, accessibility snapshots, click/type/key/scroll interaction, screenshots, and console logs. Use action=list for the compact operation catalog, action=describe for one full input schema, then action=call with that exact tool name and arguments.',
+  },
+  devices: {
+    name: 'hermes_studio_devices_toolset',
+    coverage: 'LAN and remote device discovery and status; paired peer connect/disconnect; interactive terminal create/list/input/read/resize/close; structured remote command execution; file upload and download.',
+    description: 'Discover and invoke Hermes Studio LAN/remote-device operations without loading every device tool schema into the model context. Covers device list/scan, paired peer connections, interactive terminal lifecycle and I/O, structured command execution using command plus argument arrays, and remote file upload/download. Use action=list for the compact operation catalog, action=describe for one full input schema, then action=call with that exact tool name and arguments.',
+  },
+  use: {
+    name: 'hermes_studio_use_toolset',
+    coverage: 'Explicit user-requested Studio chat/coding runs; session list/count/detail/messages/context/rename/delete; usage statistics; profiles and available models; provider add/delete; worker status; workflow CRUD and workflow run list/start/stop/rerun/delete.',
+    description: 'Discover and invoke high-level Hermes Studio operations without loading every Studio-use tool schema into the model context. Covers explicit user-requested chat or coding runs, session management and clean context, usage statistics, profiles/models/providers, worker status, workflow CRUD, and workflow run lifecycle. Never use chat/session operations as an internal delegation mechanism. Use action=list for the compact operation catalog, action=describe for one full input schema, then action=call with that exact tool name and arguments.',
+  },
+}
+
+function categoryToolsetDefinition(toolset) {
+  const category = CATEGORY_TOOLSETS[toolset]
+  if (!category) return null
+  return {
+    name: category.name,
+    description: category.description,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['list', 'describe', 'call'],
+          description: 'list returns the compact category catalog; describe returns one full tool schema; call invokes one catalog tool.',
+        },
+        query: {
+          type: 'string',
+          description: 'Optional case-insensitive filter for action=list, matched against tool names and descriptions.',
+        },
+        tool: {
+          type: 'string',
+          description: 'Exact tool name returned by list. Required for describe and call.',
+        },
+        arguments: {
+          type: 'object',
+          description: 'Arguments matching the described tool schema. Required for call; use an empty object when the target takes no arguments.',
+          additionalProperties: true,
+        },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+  }
+}
+
 function resolveToolName(name) {
   return TOOL_ALIASES.get(name) || name
+}
+
+function activeToolsetTools() {
+  return tools.filter(tool => tool.toolset === ACTIVE_TOOLSET)
+}
+
+function categoryToolCatalog(query = '') {
+  const normalizedQuery = String(query || '').trim().toLowerCase()
+  return activeToolsetTools()
+    .filter(tool => !normalizedQuery || `${tool.name} ${tool.description}`.toLowerCase().includes(normalizedQuery))
+    .map(tool => ({ name: tool.name, description: tool.description }))
+}
+
+function categoryToolByName(name) {
+  const resolved = resolveToolName(String(name || '').trim())
+  return activeToolsetTools().find(tool => tool.name === resolved) || null
+}
+
+function serverInstructions() {
+  if (ACTIVE_TOOLSET === 'api') {
+    return 'Hermes Studio API operations. Use hermes_studio_api_openapi_get without filters for the compact module index, call it again with tag/path/method filters for endpoint details, then call hermes_studio_api_request with the documented relative path and JSON fields.'
+  }
+  const category = CATEGORY_TOOLSETS[ACTIVE_TOOLSET]
+  return category ? `${category.description} Coverage: ${category.coverage}` : ''
 }
 
 function visibleTools() {
@@ -1607,19 +1683,57 @@ function visibleTools() {
       return []
     }
   }
-  const visible = tools.filter(tool => tool.toolset === ACTIVE_TOOLSET)
+  const categoryToolset = categoryToolsetDefinition(ACTIVE_TOOLSET)
+  if (categoryToolset) return [categoryToolset]
+  const visible = activeToolsetTools()
   return visible.map(({ toolset, ...tool }) => tool)
 }
 
-function isToolVisible(name) {
-  return visibleTools().some(tool => tool.name === resolveToolName(name))
+function isToolCallable(name) {
+  const resolved = resolveToolName(name)
+  const categoryToolset = categoryToolsetDefinition(ACTIVE_TOOLSET)
+  if (categoryToolset?.name === resolved) return true
+  return activeToolsetTools().some(tool => tool.name === resolved)
+}
+
+async function callCategoryToolset(args = {}) {
+  const category = CATEGORY_TOOLSETS[ACTIVE_TOOLSET]
+  if (!category) return errorText(`No compact category toolset is available for '${ACTIVE_TOOLSET}'.`)
+  if (args.action === 'list') {
+    const catalog = categoryToolCatalog(args.query)
+    return jsonText({
+      toolset: ACTIVE_TOOLSET,
+      coverage: category.coverage,
+      operation_count: catalog.length,
+      operations: catalog,
+      next: `Call ${category.name} with action=describe and an exact tool name before action=call when its parameters are not already known.`,
+    })
+  }
+  const target = categoryToolByName(args.tool)
+  if (!target) return errorText(`Unknown '${ACTIVE_TOOLSET}' tool: ${String(args.tool || '')}. Call ${category.name} with action=list first.`)
+  if (args.action === 'describe') {
+    return jsonText({
+      toolset: ACTIVE_TOOLSET,
+      name: target.name,
+      description: target.description,
+      inputSchema: target.inputSchema,
+    })
+  }
+  if (args.action === 'call') {
+    if (!isRecord(args.arguments)) return errorText('arguments must be an object when action=call.')
+    return await callTool(target.name, args.arguments)
+  }
+  return errorText('Invalid category toolset action. Allowed: list, describe, call.')
 }
 
 async function callTool(name, args = {}) {
-  if (!isToolVisible(name)) {
+  if (!isToolCallable(name)) {
     return errorText(`Tool is not available in the active '${ACTIVE_TOOLSET}' MCP toolset: ${name}`)
   }
-  switch (resolveToolName(name)) {
+  const resolvedName = resolveToolName(name)
+  const categoryToolset = categoryToolsetDefinition(ACTIVE_TOOLSET)
+  if (resolvedName === categoryToolset?.name) return await callCategoryToolset(args)
+  switch (resolvedName) {
     case 'hermes_studio_browser_tabs': {
       if (args.action === 'list') return jsonText(await browserRequest('tabs.list'))
       if (args.action === 'create') return jsonText(await browserRequest('tabs.create', { url: args.url, activate: args.activate }))
@@ -1894,6 +2008,7 @@ async function handle(message) {
             protocolVersion: message.params?.protocolVersion || '2024-11-05',
             capabilities: { tools: {} },
             serverInfo: { name: SERVER_NAME, version: VERSION, toolset: ACTIVE_TOOLSET },
+            instructions: serverInstructions(),
           },
         }
       case 'tools/list':

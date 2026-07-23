@@ -231,6 +231,14 @@ describe('coding agent launch preparation', () => {
         HERMES_WEB_UI_MANAGED_MCP: '1',
       },
     })
+    expect(mcp.mcpServers['hermes-studio-browser']).toMatchObject({
+      command: process.execPath,
+      args: [join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'browser'],
+      env: {
+        HERMES_MCP_SERVER_NAME: 'hermes-studio-browser',
+        HERMES_MCP_TOOLSET: 'browser',
+      },
+    })
     expect(mcp.mcpServers['hermes-studio-devices']).toMatchObject({
       command: process.execPath,
       args: [join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'devices'],
@@ -276,6 +284,7 @@ describe('coding agent launch preparation', () => {
       },
     })
     expect(mcp.mcpServers['hermes-studio-devices'].command).toBe('/runtime/node')
+    expect(mcp.mcpServers['hermes-studio-browser'].command).toBe('/runtime/node')
     expect(mcp.mcpServers['hermes-studio-use'].command).toBe('/runtime/node')
   })
 
@@ -312,6 +321,7 @@ describe('coding agent launch preparation', () => {
     expect(claudeMcp.mcpServers['hermes-web-ui-mcp']).toBeUndefined()
     expect(claudeMcp.mcpServers.custom).toEqual({ command: 'custom-mcp' })
     expect(claudeMcp.mcpServers['hermes-studio-api']).toBeDefined()
+    expect(claudeMcp.mcpServers['hermes-studio-browser']).toBeDefined()
     expect(claudeMcp.mcpServers['hermes-studio-devices']).toBeDefined()
     expect(claudeMcp.mcpServers['hermes-studio-use']).toBeDefined()
 
@@ -337,6 +347,7 @@ describe('coding agent launch preparation', () => {
     expect(codexConfig).not.toContain('[mcp_servers.hermes-studio]')
     expect(codexConfig).not.toContain('[mcp_servers.hermes-web-ui-mcp]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-api]')
+    expect(codexConfig).toContain('[mcp_servers.hermes-studio-browser]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-devices]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-use]')
   })
@@ -435,6 +446,7 @@ describe('coding agent launch preparation', () => {
     expect(codexConfig).not.toContain('command = "stale-managed"')
     expect(codexConfig).not.toContain('[model_providers.unrelated]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-api]')
+    expect(codexConfig).toContain('[mcp_servers.hermes-studio-browser]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-devices]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-use]')
   })
@@ -614,6 +626,9 @@ describe('coding agent launch preparation', () => {
     expect(config).toContain('model_reasoning_summary = "auto"')
     expect(config).toContain('developer_instructions = """')
     expect(config).toContain('Hermes Studio MCP usage')
+    expect(config).toContain('hermes_studio_browser_toolset is available')
+    expect(config).toContain('call it with action=list')
+    expect(config).toContain('Browser MCP exposes a compact toolset rather than resources')
     expect(config).toContain('# 输出格式规范')
     expect(config).toContain('[mcp_servers.hermes-studio-api]')
     expect(config).toContain('[mcp_servers.hermes-studio-devices]')
@@ -896,6 +911,188 @@ describe('coding agent launch preparation', () => {
       arguments: '{"query":"repo"}',
     })
     expect(ctx.body.usage).toMatchObject({ input_tokens: 5, output_tokens: 2, total_tokens: 7 })
+  })
+
+  it('preserves deferred MCP discovery through the Codex Anthropic proxy', async () => {
+    makeHome()
+    const launch = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'anthropic-compatible',
+      model: 'claude-sonnet-4-6',
+      baseUrl: 'https://api.example.com',
+      apiKey: 'sk-upstream',
+      apiMode: 'anthropic_messages',
+    })
+    const config = readFileSync(join(launch.rootDir, 'config.toml'), 'utf-8')
+    const routeKey = config.match(/\/api\/codex-proxy\/([^/]+)\/v1/)?.[1] || ''
+    const token = config.match(/experimental_bearer_token = "([^"]+)"/)?.[1] || ''
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'msg_search',
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-sonnet-4-6',
+        content: [{
+          type: 'tool_use',
+          id: 'call_search',
+          name: 'tool_search',
+          input: { query: 'Hermes Studio browser tabs' },
+        }],
+        stop_reason: 'tool_use',
+        usage: { input_tokens: 3, output_tokens: 1 },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'msg_browser',
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-sonnet-4-6',
+        content: [{
+          type: 'tool_use',
+          id: 'call_browser',
+          name: 'hermes_studio_browser_toolset',
+          input: { action: 'list' },
+        }],
+        stop_reason: 'tool_use',
+        usage: { input_tokens: 4, output_tokens: 1 },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const toolSearch = {
+      type: 'tool_search',
+      execution: 'client',
+      description: 'Search deferred MCP tools.',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+        additionalProperties: false,
+      },
+    }
+    const firstCtx = makeProxyContext(routeKey, token, {
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'open a browser' }] }],
+      tools: [toolSearch],
+    })
+
+    await codexProxyResponses(firstCtx)
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).tools).toEqual([{
+      name: 'tool_search',
+      description: 'Search deferred MCP tools.',
+      input_schema: toolSearch.parameters,
+    }])
+    expect(firstCtx.body.output).toEqual([{
+      type: 'tool_search_call',
+      call_id: 'call_search',
+      status: 'completed',
+      execution: 'client',
+      arguments: { query: 'Hermes Studio browser tabs' },
+    }])
+
+    const secondCtx = makeProxyContext(routeKey, token, {
+      input: [
+        { role: 'user', content: [{ type: 'input_text', text: 'open a browser' }] },
+        {
+          type: 'tool_search_call',
+          call_id: 'call_search',
+          status: 'completed',
+          execution: 'client',
+          arguments: { query: 'Hermes Studio browser tabs' },
+        },
+        {
+          type: 'tool_search_output',
+          call_id: 'call_search',
+          status: 'completed',
+          execution: 'client',
+          tools: [{
+            type: 'namespace',
+            name: 'mcp__hermes_studio_browser',
+            tools: [{
+              type: 'function',
+              name: 'hermes_studio_browser_toolset',
+              description: 'Discover browser operations.',
+              parameters: { type: 'object', properties: { action: { type: 'string' } }, required: ['action'] },
+            }],
+          }],
+        },
+      ],
+      tools: [toolSearch],
+    })
+
+    await codexProxyResponses(secondCtx)
+
+    const secondRequestBody = JSON.parse(fetchMock.mock.calls[1][1].body)
+    expect(secondRequestBody.tools.map((tool: any) => tool.name)).toEqual([
+      'tool_search',
+      'hermes_studio_browser_toolset',
+    ])
+    expect(secondRequestBody.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: 'user',
+        content: [expect.objectContaining({ type: 'tool_result', tool_use_id: 'call_search' })],
+      }),
+    ]))
+    expect(secondCtx.body.output[0]).toMatchObject({
+      type: 'function_call',
+      call_id: 'call_browser',
+      name: 'hermes_studio_browser_toolset',
+      namespace: 'mcp__hermes_studio_browser',
+    })
+  })
+
+  it('exposes split Hermes MCP tools to Anthropic Codex runs and restores their namespace', async () => {
+    makeHome()
+    const launch = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'anthropic-compatible',
+      model: 'claude-sonnet-4-6',
+      baseUrl: 'https://api.example.com',
+      apiKey: 'sk-upstream',
+      apiMode: 'anthropic_messages',
+    })
+    const config = readFileSync(join(launch.rootDir, 'config.toml'), 'utf-8')
+    const routeKey = config.match(/\/api\/codex-proxy\/([^/]+)\/v1/)?.[1] || ''
+    const token = config.match(/experimental_bearer_token = "([^"]+)"/)?.[1] || ''
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      id: 'msg_browser',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-sonnet-4-6',
+      content: [{
+        type: 'tool_use',
+        id: 'toolu_browser',
+        name: 'hermes_studio_browser_toolset',
+        input: { action: 'list' },
+      }],
+      stop_reason: 'tool_use',
+      usage: { input_tokens: 4, output_tokens: 1 },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const ctx = makeProxyContext(routeKey, token, {
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'open a browser' }] }],
+      tools: [{
+        type: 'namespace',
+        name: 'mcp__hermes_studio_browser',
+        description: 'Hermes Studio browser tools',
+      }],
+    })
+
+    await codexProxyResponses(ctx)
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(requestBody.tools).toEqual([expect.objectContaining({
+      name: 'hermes_studio_browser_toolset',
+      input_schema: expect.objectContaining({
+        required: ['action'],
+      }),
+    })])
+    expect(ctx.body.output[0]).toMatchObject({
+      type: 'function_call',
+      call_id: 'toolu_browser',
+      name: 'hermes_studio_browser_toolset',
+      arguments: '{"action":"list"}',
+      namespace: 'mcp__hermes_studio_browser',
+    })
   })
 
   it('streams Codex proxy text as complete Responses message events', async () => {

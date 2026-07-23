@@ -1,4 +1,20 @@
 export type BrowserAgentControl = 'idle' | 'active' | 'waiting-for-user'
+export type BrowserProxyMode = 'direct' | 'system' | 'fixed_servers'
+
+export interface BrowserProfileCreateInput {
+  name: string
+  rootDirectory: string
+  proxyMode?: BrowserProxyMode
+  proxyRules?: string
+}
+
+export interface BrowserProfileUpdateInput {
+  rootDirectory?: string
+  proxyMode?: BrowserProxyMode
+  proxyRules?: string
+  askBeforeDownload?: boolean
+  downloadConflictPolicy?: 'ask' | 'uniquify'
+}
 
 export interface BrowserBounds {
   x: number
@@ -25,9 +41,11 @@ export interface DesktopBrowserTab {
 export interface DesktopBrowserProfile {
   id: string
   name: string
+  rootPath: string
   sessionPath: string
-  pendingSessionPath?: string
   downloadPath: string
+  proxyMode: BrowserProxyMode
+  proxyRules: string
   askBeforeDownload: boolean
   downloadConflictPolicy: 'ask' | 'uniquify'
   createdAt: string

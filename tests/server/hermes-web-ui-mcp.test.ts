@@ -201,9 +201,11 @@ describe('hermes-web-ui MCP server', () => {
       version: pkg.version,
     })
     expect(initialized.result.capabilities).toEqual({ tools: {} })
+    expect(initialized.result.instructions).toContain('hermes_studio_api_openapi_get')
 
     const list = await waitForRpc(responses, 2)
     expectProviderSafeToolNames('hermes-studio-api', list.result.tools)
+    expect(list.result.tools).toHaveLength(2)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_api_request')).toBe(true)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_lan_devices_list')).toBe(false)
 
@@ -317,7 +319,7 @@ describe('hermes-web-ui MCP server', () => {
     expect(stdout.trim()).toBe(`hermes-studio-mcp v${pkg.version}`)
   })
 
-  it('exposes curated Hermes Studio use tools in the use toolset', async () => {
+  it('exposes the curated Hermes Studio use catalog through one compact category tool', async () => {
     const server = createServer((req, res) => {
       res.setHeader('content-type', 'application/json')
       if (req.url === '/api/chat-run/runs') {
@@ -518,6 +520,26 @@ describe('hermes-web-ui MCP server', () => {
 
     writeRpc(child, 1, 'initialize', {})
     writeRpc(child, 2, 'tools/list')
+    writeRpc(child, 32, 'tools/call', {
+      name: 'hermes_studio_use_toolset',
+      arguments: { action: 'list' },
+    })
+    writeRpc(child, 33, 'tools/call', {
+      name: 'hermes_studio_use_toolset',
+      arguments: { action: 'describe', tool: 'hermes_studio_use_workflow_run_start' },
+    })
+    writeRpc(child, 34, 'tools/call', {
+      name: 'hermes_studio_use_toolset',
+      arguments: { action: 'describe', tool: 'hermes_studio_use_workflow_rerun_node' },
+    })
+    writeRpc(child, 35, 'tools/call', {
+      name: 'hermes_studio_use_toolset',
+      arguments: {
+        action: 'call',
+        tool: 'hermes_studio_use_sessions_count',
+        arguments: { source: 'coding_agent' },
+      },
+    })
     writeRpc(child, 3, 'tools/call', {
       name: 'hermes_studio_use_chat_run',
       arguments: { input: 'hello', session_id: 'session-1', include_events: true },
@@ -651,34 +673,38 @@ describe('hermes-web-ui MCP server', () => {
 
     const initialized = await waitForRpc(responses, 1)
     expect(initialized.result.serverInfo).toMatchObject({ toolset: 'use' })
+    expect(initialized.result.instructions).toContain('session management')
 
     const list = await waitForRpc(responses, 2)
     expectProviderSafeToolNames('hermes-studio-use', list.result.tools)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_chat_run')).toBe(true)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_sessions_count')).toBe(true)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_usage_stats')).toBe(true)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_session_context')).toBe(true)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_session_delete')).toBe(true)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_session_rename')).toBe(true)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_model_provider_get')).toBe(true)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_provider_add')).toBe(true)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_provider_delete')).toBe(true)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_worker_status')).toBe(true)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_workflows_list')).toBe(true)
-    const workflowRunStartTool = list.result.tools.find((tool: any) => tool.name === 'hermes_studio_use_workflow_run_start')
-    const workflowRerunTool = list.result.tools.find((tool: any) => tool.name === 'hermes_studio_use_workflow_rerun_node')
+    expect(list.result.tools).toHaveLength(1)
+    expect(list.result.tools[0].name).toBe('hermes_studio_use_toolset')
+    expect(list.result.tools[0].description).toContain('workflow run lifecycle')
+    expect(list.result.tools[0].description).toContain('internal delegation')
+
+    const catalog = JSON.parse((await waitForRpc(responses, 32)).result.content[0].text)
+    expect(catalog).toMatchObject({ toolset: 'use', operation_count: 25 })
+    expect(catalog.operations.map((tool: any) => tool.name)).toEqual(expect.arrayContaining([
+      'hermes_studio_use_chat_run',
+      'hermes_studio_use_sessions_count',
+      'hermes_studio_use_usage_stats',
+      'hermes_studio_use_session_context',
+      'hermes_studio_use_provider_add',
+      'hermes_studio_use_worker_status',
+      'hermes_studio_use_workflows_list',
+      'hermes_studio_use_workflow_rerun_node',
+    ]))
+    expect(catalog.operations.some((tool: any) => tool.name === 'hermes_studio_use_workflow_run_rerun_from_node')).toBe(false)
+    const workflowRunStartTool = JSON.parse((await waitForRpc(responses, 33)).result.content[0].text)
+    const workflowRerunTool = JSON.parse((await waitForRpc(responses, 34)).result.content[0].text)
     for (const tool of [workflowRunStartTool, workflowRerunTool]) {
       expect(tool?.inputSchema?.properties?.timeout_ms).toMatchObject({
         type: 'integer', minimum: 1000, maximum: 86400000,
       })
       expect(tool?.inputSchema?.properties?.timeout_ms?.description).toContain('total Workflow Run budget')
     }
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_workflow_rerun_node')).toBe(true)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_use_workflow_run_rerun_from_node')).toBe(false)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_api_request')).toBe(false)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_lan_devices_list')).toBe(false)
-    expect(list.result.tools.find((tool: any) => tool.name === 'hermes_studio_use_chat_run')?.description).toContain('internal delegation')
-    expect(list.result.tools.find((tool: any) => tool.name === 'hermes_studio_use_session_context')?.description).toContain('internal delegation')
+    const gatewaySessionCount = JSON.parse((await waitForRpc(responses, 35)).result.content[0].text)
+    expect(gatewaySessionCount.count).toBe(7)
 
     const chatRun = JSON.parse((await waitForRpc(responses, 3)).result.content[0].text)
     expect(chatRun.body).toMatchObject({ input: 'hello', session_id: 'session-1', include_events: true })
@@ -848,14 +874,39 @@ describe('hermes-web-ui MCP server', () => {
       name: 'hermes_lan_devices_list',
       arguments: {},
     })
+    writeRpc(child, 5, 'tools/call', {
+      name: 'hermes_studio_devices_toolset',
+      arguments: { action: 'list' },
+    })
+    writeRpc(child, 6, 'tools/call', {
+      name: 'hermes_studio_devices_toolset',
+      arguments: {
+        action: 'call',
+        tool: 'hermes_studio_lan_devices_list',
+        arguments: {},
+      },
+    })
 
     const initialized = await waitForRpc(responses, 1)
     expect(initialized.result.serverInfo).toMatchObject({ toolset: 'devices' })
+    expect(initialized.result.instructions).toContain('interactive terminal lifecycle')
 
     const list = await waitForRpc(responses, 2)
     expectProviderSafeToolNames('hermes-studio-devices', list.result.tools)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_lan_devices_list')).toBe(true)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_api_request')).toBe(false)
+    expect(list.result.tools).toHaveLength(1)
+    expect(list.result.tools[0].name).toBe('hermes_studio_devices_toolset')
+    expect(list.result.tools[0].description).toContain('remote file upload/download')
+
+    const catalog = JSON.parse((await waitForRpc(responses, 5)).result.content[0].text)
+    expect(catalog).toMatchObject({ toolset: 'devices', operation_count: 14 })
+    expect(catalog.operations.map((tool: any) => tool.name)).toEqual(expect.arrayContaining([
+      'hermes_studio_lan_devices_list',
+      'hermes_studio_lan_command_exec',
+      'hermes_studio_lan_terminal_create',
+      'hermes_studio_lan_terminal_read',
+      'hermes_studio_lan_file_download',
+      'hermes_studio_lan_file_upload',
+    ]))
 
     const hiddenCall = await waitForRpc(responses, 3)
     expect(hiddenCall.result.isError).toBe(true)
@@ -864,6 +915,10 @@ describe('hermes-web-ui MCP server', () => {
     const legacyDevicesCall = await waitForRpc(responses, 4)
     const legacyDevicesPayload = JSON.parse(legacyDevicesCall.result.content[0].text)
     expect(legacyDevicesPayload.devices[0].id).toBe('device-1')
+
+    const gatewayDevicesCall = await waitForRpc(responses, 6)
+    const gatewayDevicesPayload = JSON.parse(gatewayDevicesCall.result.content[0].text)
+    expect(gatewayDevicesPayload.devices[0].id).toBe('device-1')
 
     await new Promise<void>(resolve => server.close(() => resolve()))
   })

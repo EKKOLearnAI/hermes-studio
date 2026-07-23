@@ -6,9 +6,7 @@ import { config } from '../../config'
 const MANAGED_ENV_KEY = 'HERMES_WEB_UI_MANAGED_MCP'
 const MANAGED_SERVERS: ReadonlyArray<{ name: string; toolset: string }> = [
   { name: 'hermes-studio-api', toolset: 'api' },
-  ...(String(process.env.HERMES_DESKTOP || '').trim().toLowerCase() === 'true'
-    ? [{ name: 'hermes-studio-browser', toolset: 'browser' }]
-    : []),
+  { name: 'hermes-studio-browser', toolset: 'browser' },
   { name: 'hermes-studio-devices', toolset: 'devices' },
   { name: 'hermes-studio-use', toolset: 'use' },
 ]

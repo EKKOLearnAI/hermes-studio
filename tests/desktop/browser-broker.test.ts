@@ -37,14 +37,16 @@ describe('Desktop Browser Broker', () => {
       })
       expect(browserOrigin.status).toBe(403)
 
-      const register = async () => {
+      const register = async (clientPid?: number) => {
         const response = await fetch(`${descriptor.endpoint}/session`, {
-          method: 'POST', headers: { Authorization: `Bearer ${descriptor.token}`, 'Content-Type': 'application/json' }, body: '{}',
+          method: 'POST',
+          headers: { Authorization: `Bearer ${descriptor.token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(clientPid === undefined ? {} : { client_pid: clientPid }),
         })
         return await response.json() as { client_id: string; session_token: string }
       }
-      const clientA = await register()
-      const clientB = await register()
+      const clientA = await register(process.pid)
+      const clientB = await register(process.pid)
       const listResponse = await fetch(descriptor.endpoint, {
         method: 'POST',
         headers: { Authorization: `Bearer ${clientA.session_token}`, 'Content-Type': 'application/json', 'X-Hermes-Browser-Client': clientA.client_id },
@@ -67,6 +69,44 @@ describe('Desktop Browser Broker', () => {
       expect(stored.endpoint).toBe(descriptor.endpoint)
       expect(stored.token).toBe(descriptor.token)
       if (process.platform !== 'win32') expect((await stat(join(root, 'broker.json'))).mode & 0o077).toBe(0)
+    } finally {
+      await broker.stop()
+    }
+  })
+
+  it('reclaims a tab lease when its registered MCP process has exited', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-browser-broker-stale-client-'))
+    roots.push(root)
+    const tabs = [{ id: 'tab-1', agentControl: 'idle' }]
+    const manager = {
+      state: () => ({ tabs }),
+      snapshot: async (tabId: string) => ({ tabId, snapshotId: 'snapshot-1' }),
+      setAgentControl: (tabId: string, control: string) => { const tab = tabs.find(item => item.id === tabId); if (tab) tab.agentControl = control },
+      revokeAgentControl: (tabId: string) => { const tab = tabs.find(item => item.id === tabId); if (tab) tab.agentControl = 'idle' },
+      cancelAgentOperation: (tabId: string) => { const tab = tabs.find(item => item.id === tabId); if (tab) tab.agentControl = 'idle' },
+    } as unknown as BrowserManager
+    const broker = new BrowserBroker(manager, root)
+    const descriptor = await broker.start()
+
+    try {
+      const register = async (clientPid: number) => {
+        const response = await fetch(`${descriptor.endpoint}/session`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${descriptor.token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_pid: clientPid }),
+        })
+        return await response.json() as { client_id: string; session_token: string }
+      }
+      const staleClient = await register(2_147_483_647)
+      const activeClient = await register(process.pid)
+      const invoke = (client: { client_id: string; session_token: string }) => fetch(descriptor.endpoint, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${client.session_token}`, 'Content-Type': 'application/json', 'X-Hermes-Browser-Client': client.client_id },
+        body: JSON.stringify({ method: 'snapshot', params: { tab_id: 'tab-1' } }),
+      })
+
+      expect((await invoke(staleClient)).status).toBe(200)
+      expect((await invoke(activeClient)).status).toBe(200)
     } finally {
       await broker.stop()
     }

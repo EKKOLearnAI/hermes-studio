@@ -48,9 +48,35 @@ function rpcClient(process: ChildProcessWithoutNullStreams) {
 }
 
 describe('hermes-studio browser MCP toolset', () => {
-  it('exposes six bounded tools and returns screenshots as MCP image content', async () => {
+  it('stays healthy and returns bounded unavailable results without a Desktop Browser Broker', async () => {
+    root = await mkdtemp(join(tmpdir(), 'hermes-browser-mcp-no-broker-'))
+    child = spawn(process.execPath, [join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'browser'], {
+      env: { ...process.env, HERMES_WEB_UI_HOME: root },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    const rpc = rpcClient(child)
+
+    const initialized = await rpc(1, 'initialize', { protocolVersion: '2024-11-05' })
+    expect(initialized.result.serverInfo.toolset).toBe('browser')
+    expect((await rpc(2, 'tools/list')).result.tools).toEqual([])
+
+    const unavailable = await rpc(3, 'tools/call', {
+      name: 'hermes_studio_browser_toolset',
+      arguments: {
+        action: 'call',
+        tool: 'hermes_studio_browser_tabs',
+        arguments: { action: 'list' },
+      },
+    })
+    expect(unavailable.result.isError).toBe(true)
+    expect(unavailable.result.content[0].text).toContain('Desktop Browser is not running')
+    expect(child.exitCode).toBeNull()
+  })
+
+  it('exposes one compact category tool and preserves browser MCP image results', async () => {
     root = await mkdtemp(join(tmpdir(), 'hermes-browser-mcp-'))
     const clients: string[] = []
+    const registeredPids: number[] = []
     let failScreenshot = false
     server = createServer(async (request, response) => {
       const chunks: Buffer[] = []
@@ -58,6 +84,7 @@ describe('hermes-studio browser MCP toolset', () => {
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
       response.setHeader('Content-Type', 'application/json')
       if (request.url === '/v1/session') {
+        registeredPids.push(body.client_pid)
         response.end(JSON.stringify({ client_id: 'broker-client-1', session_token: 'session-token' }))
         return
       }
@@ -91,26 +118,51 @@ describe('hermes-studio browser MCP toolset', () => {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     const rpc = rpcClient(child)
-    await rpc(1, 'initialize', { protocolVersion: '2024-11-05' })
+    const initialized = await rpc(1, 'initialize', { protocolVersion: '2024-11-05' })
     const listed = await rpc(2, 'tools/list')
-    expect(listed.result.tools).toHaveLength(6)
-    expect(listed.result.tools.map((tool: any) => tool.name)).toContain('hermes_studio_browser_screenshot')
-    expect(listed.result.tools.every((tool: any) => !tool.inputSchema.properties.token && !tool.inputSchema.properties.profile)).toBe(true)
+    expect(initialized.result.instructions).toContain('tab list/create/activate/close/release')
+    expect(listed.result.tools).toHaveLength(1)
+    expect(listed.result.tools[0].name).toBe('hermes_studio_browser_toolset')
+    expect(listed.result.tools[0].description).toContain('screenshots')
 
-    await rpc(3, 'tools/call', { name: 'hermes_studio_browser_tabs', arguments: { action: 'list' } })
-    const screenshot = await rpc(4, 'tools/call', { name: 'hermes_studio_browser_screenshot', arguments: { tab_id: 'tab-1' } })
+    const catalog = await rpc(3, 'tools/call', {
+      name: 'hermes_studio_browser_toolset',
+      arguments: { action: 'list' },
+    })
+    expect(JSON.parse(catalog.result.content[0].text)).toMatchObject({
+      toolset: 'browser',
+      operation_count: 6,
+    })
+    const described = await rpc(4, 'tools/call', {
+      name: 'hermes_studio_browser_toolset',
+      arguments: { action: 'describe', tool: 'hermes_studio_browser_screenshot' },
+    })
+    expect(JSON.parse(described.result.content[0].text).inputSchema.required).toContain('tab_id')
+
+    await rpc(5, 'tools/call', {
+      name: 'hermes_studio_browser_toolset',
+      arguments: { action: 'call', tool: 'hermes_studio_browser_tabs', arguments: { action: 'list' } },
+    })
+    const screenshot = await rpc(6, 'tools/call', {
+      name: 'hermes_studio_browser_toolset',
+      arguments: { action: 'call', tool: 'hermes_studio_browser_screenshot', arguments: { tab_id: 'tab-1' } },
+    })
     expect(screenshot.result.content[1]).toEqual({ type: 'image', data: 'AA==', mimeType: 'image/png' })
     expect(clients).toHaveLength(2)
     expect(clients[0]).toBeTruthy()
     expect(clients[0]).toBe(clients[1])
+    expect(registeredPids).toEqual([child.pid])
 
     failScreenshot = true
-    const fallback = await rpc(5, 'tools/call', { name: 'hermes_studio_browser_screenshot', arguments: { tab_id: 'tab-1' } })
+    const fallback = await rpc(7, 'tools/call', {
+      name: 'hermes_studio_browser_toolset',
+      arguments: { action: 'call', tool: 'hermes_studio_browser_screenshot', arguments: { tab_id: 'tab-1' } },
+    })
     expect(fallback.result.content[0].text).toContain('Accessibility snapshot')
     expect(fallback.result.content[0].text).toContain('snapshot-1')
 
     await rm(join(brokerRoot, 'broker.json'))
-    const unavailable = await rpc(6, 'tools/list')
+    const unavailable = await rpc(8, 'tools/list')
     expect(unavailable.result.tools).toEqual([])
   })
 })

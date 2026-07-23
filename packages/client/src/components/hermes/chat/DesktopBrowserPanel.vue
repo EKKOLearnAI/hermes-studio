@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { NButton, NInput, useMessage } from 'naive-ui'
+import { NButton, NInput, NPopover, NSelect, useDialog, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import { desktopBridge, type DesktopBrowserSelection, type DesktopBrowserState } from '@/utils/desktop-bridge'
+import { desktopBridge, type DesktopBrowserDownload, type DesktopBrowserSelection, type DesktopBrowserState } from '@/utils/desktop-bridge'
 
 const emit = defineEmits<{
   attach: [payload: { file: File; context: string }]
@@ -10,10 +10,14 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const message = useMessage()
+const dialog = useDialog()
 const bridge = desktopBridge()?.browser
 const EXTERNAL_OVERLAY_SELECTOR = [
+  '[data-desktop-browser-overlay]',
+  '.n-modal-mask',
   '.n-modal-body-wrapper',
-  '.n-drawer-container',
+  '.n-drawer-mask',
+  '.n-drawer[aria-modal="true"]',
   '.n-popover',
   '.n-dropdown-menu',
   '.n-base-select-menu',
@@ -27,9 +31,13 @@ const EXTERNAL_OVERLAY_SELECTOR = [
   '.drawer-overlay',
   '.drawer-panel',
   '.workspace-dropdown-menu',
+  '.image-preview-overlay',
+  '.voice-stage',
+  '.modal-backdrop',
   '[role="dialog"]',
   '[role="menu"]',
 ].join(',')
+const OVERLAY_RECHECK_DELAYS = [60, 180, 360]
 const state = ref<DesktopBrowserState | null>(null)
 const address = ref('')
 const viewport = ref<HTMLElement>()
@@ -68,8 +76,14 @@ let annotatingTabId: string | null = null
 let unmounting = false
 let annotationNoteUpdate: Promise<unknown> = Promise.resolve()
 let overlayCheckFrame = 0
+const overlayCheckTimers = new Map<number, number>()
 
 const activeTab = computed(() => state.value?.tabs.find(tab => tab.id === state.value?.activeTabId))
+const profileOptions = computed(() => state.value?.profiles.map(profile => ({ label: profile.name, value: profile.id })) || [])
+const activeProfileDownloads = computed(() => state.value?.downloads
+  .filter(item => item.profileId === state.value?.activeProfileId)
+  .slice(0, 20) || [])
+const activeDownloadCount = computed(() => activeProfileDownloads.value.filter(item => item.state === 'progressing').length)
 const annotationCount = computed(() => annotations.value.length + (pendingAnnotation.value ? 1 : 0))
 const hasAnnotationSession = computed(() => annotationCount.value > 0)
 const annotationAbove = computed(() => {
@@ -127,6 +141,72 @@ function navigate(): void {
 
 function navigationAction(action: 'back' | 'forward' | 'reload' | 'stop'): void {
   if (activeTab.value) void run(() => bridge!.navigationAction(activeTab.value!.id, action))
+}
+
+function resetAnnotationSession(): void {
+  pendingAnnotation.value = null
+  annotations.value = []
+  annotationCapture.value = null
+  annotationTabId.value = null
+  annotationNote.value = ''
+}
+
+function switchProfile(profileId: string): void {
+  if (!bridge || profileId === state.value?.activeProfileId) return
+  const applyProfile = (force = false) => run(async () => {
+    const next = await bridge.switchProfile(profileId, force)
+    resetAnnotationSession()
+    applyState(next)
+    await nextTick(syncViewport)
+  })
+  void bridge.profileSwitchImpact().then(impact => {
+    if (!impact.requiresConfirmation) return applyProfile()
+    dialog.warning({
+      title: t('browser.profileSwitchTitle'),
+      content: t('browser.profileSwitchWarning', {
+        agents: impact.activeAgentRuns,
+        downloads: impact.activeDownloads,
+        annotations: impact.pendingAnnotations,
+      }),
+      positiveText: t('common.confirm'),
+      negativeText: t('common.cancel'),
+      onPositiveClick: () => applyProfile(true),
+    })
+  }).catch(error => message.error(error instanceof Error ? error.message : String(error)))
+}
+
+function cancelDownload(downloadId: string): void {
+  void run(async () => applyState(await bridge!.cancelDownload(downloadId)))
+}
+
+function formatBytes(input: number): string {
+  const bytes = Number.isFinite(input) ? Math.max(0, input) : 0
+  if (bytes < 1024) return `${Math.round(bytes)} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes / 1024
+  let unit = units[0]
+  for (let index = 1; index < units.length && value >= 1024; index += 1) {
+    value /= 1024
+    unit = units[index]
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${unit}`
+}
+
+function downloadPercent(item: DesktopBrowserDownload): number | null {
+  if (item.totalBytes <= 0) return null
+  return Math.min(100, Math.max(0, Math.round(item.receivedBytes / item.totalBytes * 100)))
+}
+
+function downloadStateLabel(stateValue: DesktopBrowserDownload['state']): string {
+  return t(`browser.downloadState${stateValue[0].toUpperCase()}${stateValue.slice(1)}`)
+}
+
+function downloadSummary(item: DesktopBrowserDownload): string {
+  const percent = downloadPercent(item)
+  const transferred = item.totalBytes > 0
+    ? `${formatBytes(item.receivedBytes)} / ${formatBytes(item.totalBytes)}`
+    : formatBytes(item.receivedBytes)
+  return `${downloadStateLabel(item.state)}${percent === null ? '' : ` · ${percent}%`} · ${transferred}`
 }
 
 function createTab(): void {
@@ -211,11 +291,7 @@ async function commitPendingAnnotation(restoreViewport = true): Promise<void> {
 
 async function clearAnnotationSession(): Promise<void> {
   const tabId = annotationTabId.value
-  pendingAnnotation.value = null
-  annotations.value = []
-  annotationCapture.value = null
-  annotationTabId.value = null
-  annotationNote.value = ''
+  resetAnnotationSession()
   if (bridge && tabId) await bridge.clearAnnotations(tabId).catch(() => undefined)
   await nextTick(syncViewport)
 }
@@ -285,7 +361,10 @@ function detectExternalOverlay(): void {
   externalOverlayOpen.value = [...document.querySelectorAll<HTMLElement>(EXTERNAL_OVERLAY_SELECTOR)].some(element => {
     if (element.closest('.browser-panel')) return false
     const style = window.getComputedStyle(element)
-    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false
+    // Entering overlays often start at opacity 0 or outside the viewport. They
+    // still need to hide the native WebContentsView before their CSS transition
+    // makes them visible, because renderer z-index cannot cover a native view.
+    if (style.display === 'none' || style.visibility === 'hidden') return false
     const rect = element.getBoundingClientRect()
     return rect.width > 0 && rect.height > 0
       && rect.right > browserRect.left && rect.left < browserRect.right
@@ -295,6 +374,14 @@ function detectExternalOverlay(): void {
 
 function scheduleExternalOverlayCheck(): void {
   if (!overlayCheckFrame) overlayCheckFrame = window.requestAnimationFrame(detectExternalOverlay)
+  for (const delay of OVERLAY_RECHECK_DELAYS) {
+    if (overlayCheckTimers.has(delay)) continue
+    const timer = window.setTimeout(() => {
+      overlayCheckTimers.delete(delay)
+      detectExternalOverlay()
+    }, delay)
+    overlayCheckTimers.set(delay, timer)
+  }
 }
 
 onMounted(async () => {
@@ -328,6 +415,8 @@ onUnmounted(() => {
   resizeObserver?.disconnect()
   modalObserver?.disconnect()
   if (overlayCheckFrame) window.cancelAnimationFrame(overlayCheckFrame)
+  for (const timer of overlayCheckTimers.values()) window.clearTimeout(timer)
+  overlayCheckTimers.clear()
   document.removeEventListener('visibilitychange', handleVisibility)
   window.removeEventListener('resize', handleVisibility)
   if (bridge) void bridge.setViewport({ x: 0, y: 0, width: 1, height: 1 }, false)
@@ -353,6 +442,38 @@ onUnmounted(() => {
         <button :disabled="hasAnnotationSession || !activeTab?.canGoForward" :title="t('browser.forward')" @click="navigationAction('forward')">→</button>
         <button :disabled="hasAnnotationSession" :title="activeTab?.loading ? t('browser.stop') : t('browser.reload')" @click="navigationAction(activeTab?.loading ? 'stop' : 'reload')">{{ activeTab?.loading ? '×' : '↻' }}</button>
         <NInput v-model:value="address" size="small" :placeholder="t('browser.addressPlaceholder')" :disabled="busy || hasAnnotationSession" @keydown.enter="navigate" />
+        <NSelect
+          class="profile-switcher"
+          size="small"
+          :value="state?.activeProfileId"
+          :options="profileOptions"
+          :disabled="busy"
+          :consistent-menu-width="false"
+          :title="t('browser.currentProfile')"
+          data-testid="browser-profile-switcher"
+          @update:value="switchProfile"
+        />
+        <NPopover trigger="click" placement="bottom-end" :width="380">
+          <template #trigger>
+            <button class="download-trigger" :title="t('browser.downloads')" :aria-label="t('browser.downloads')">
+              <span aria-hidden="true">⇩</span>
+              <b v-if="activeDownloadCount">{{ activeDownloadCount }}</b>
+            </button>
+          </template>
+          <section class="download-popover" data-desktop-browser-overlay>
+            <header>{{ t('browser.downloads') }}</header>
+            <div v-if="!activeProfileDownloads.length" class="download-empty">{{ t('common.noData') }}</div>
+            <article v-for="item in activeProfileDownloads" :key="item.id" class="download-item">
+              <div class="download-item-heading">
+                <strong :title="item.fileName">{{ item.fileName }}</strong>
+                <NButton v-if="item.state === 'progressing'" size="tiny" text type="error" @click="cancelDownload(item.id)">{{ t('common.cancel') }}</NButton>
+              </div>
+              <progress v-if="item.state === 'progressing' && item.totalBytes > 0" :value="item.receivedBytes" :max="item.totalBytes" />
+              <progress v-else-if="item.state === 'progressing'" />
+              <span>{{ downloadSummary(item) }}</span>
+            </article>
+          </section>
+        </NPopover>
       </div>
 
       <div v-if="activeTab?.agentControl !== 'idle'" class="agent-banner">
@@ -410,8 +531,20 @@ onUnmounted(() => {
 .tab { width: 190px; min-width: 100px; height: 34px; border: 0; border-radius: 8px 8px 0 0; background: transparent; color: inherit; display: flex; align-items: center; gap: 7px; padding: 0 9px; cursor: pointer; }
 .tab.active { color: var(--text-primary, #1a1a1a); background: var(--bg-card, #fff); box-shadow: inset 0 0 0 1px var(--border-color, #e0e0e0); }
 .tab img { width: 16px; height: 16px; }.tab span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: left; }.tab i { color: #3b82f6; font-size: 9px; }.tab b { font: 18px/1 sans-serif; font-weight: 400; }
-.new-tab, .toolbar > button { border: 0; background: transparent; color: inherit; cursor: pointer; border-radius: 6px; }.new-tab { width: 34px; height: 34px; font-size: 20px; }.toolbar > button { width: 30px; height: 30px; font-size: 18px; }.toolbar > button:hover, .new-tab:hover { background: rgba(127,127,127,.15); }.toolbar > button:disabled { opacity: .35; }
+.new-tab, .toolbar > button, .download-trigger { border: 0; background: transparent; color: inherit; cursor: pointer; border-radius: 6px; }.new-tab { width: 34px; height: 34px; font-size: 20px; }.toolbar > button, .download-trigger { width: 30px; height: 30px; font-size: 18px; }.toolbar > button:hover, .download-trigger:hover, .new-tab:hover { background: rgba(127,127,127,.15); }.toolbar > button:disabled { opacity: .35; }
 .toolbar { height: 46px; flex: 0 0 46px; padding: 7px 10px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 8px; }
+.profile-switcher { width: 136px; flex: 0 0 136px; }
+.download-trigger { position: relative; flex: 0 0 30px; padding: 0; }
+.download-trigger > b { position: absolute; top: -3px; right: -4px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px; background: #ef4444; color: #fff; font: 10px/15px sans-serif; text-align: center; }
+.download-popover { max-height: min(420px, 65vh); overflow: auto; color: var(--text-primary, #1a1a1a); }
+.download-popover > header { position: sticky; top: 0; z-index: 1; padding: 2px 0 9px; border-bottom: 1px solid var(--border-color, #e5e7eb); background: var(--n-color, var(--bg-card)); font-size: 14px; font-weight: 600; }
+.download-item { display: grid; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--border-color, #e5e7eb); }
+.download-item:last-child { border-bottom: 0; }
+.download-item-heading { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.download-item-heading > strong { min-width: 0; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.download-item progress { width: 100%; height: 5px; accent-color: #3b82f6; }
+.download-item > span, .download-empty { color: var(--text-color-3, #6b7280); font-size: 11px; }
+.download-empty { padding: 24px 8px; text-align: center; }
 .agent-banner, .crash-banner { min-height: 34px; display: flex; align-items: center; justify-content: space-between; padding: 4px 12px; font-size: 12px; }
 .agent-banner { background: rgba(59,130,246,.12); color: #3b82f6; }.crash-banner { background: rgba(239,68,68,.12); color: #dc2626; }
 .annotation-session-bar { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 10px; color: #2563eb; background: rgba(59,130,246,.1); font-size: 12px; }

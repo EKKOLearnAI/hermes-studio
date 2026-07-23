@@ -28,14 +28,28 @@ export interface DesktopBrowserTab {
 export interface DesktopBrowserProfile {
   id: string
   name: string
+  rootPath: string
   sessionPath: string
-  pendingSessionPath?: string
   downloadPath: string
+  proxyMode: 'direct' | 'system' | 'fixed_servers'
+  proxyRules: string
   askBeforeDownload: boolean
   downloadConflictPolicy: 'ask' | 'uniquify'
   createdAt: string
   lastUsedAt: string
   tabs: string[]
+}
+
+export interface DesktopBrowserDownload {
+  id: string
+  profileId: string
+  fileName: string
+  sourceUrl: string
+  savePath?: string
+  receivedBytes: number
+  totalBytes: number
+  state: 'blocked' | 'progressing' | 'completed' | 'cancelled' | 'interrupted'
+  startedAt: string
 }
 
 export interface DesktopBrowserState {
@@ -44,7 +58,7 @@ export interface DesktopBrowserState {
   activeTabId?: string
   tabs: DesktopBrowserTab[]
   profiles: DesktopBrowserProfile[]
-  downloads: Array<{ id: string; profileId: string; fileName: string; savePath?: string; receivedBytes: number; totalBytes: number; state: string; startedAt: string }>
+  downloads: DesktopBrowserDownload[]
   permissions: Array<{ id: string; profileId: string; origin: string; permission: string; allowed: boolean; lastRequestedAt: string }>
   visible: boolean
   maxTabs: number
@@ -74,14 +88,26 @@ export interface DesktopBrowserBridge {
   activateTab: (tabId: string) => Promise<DesktopBrowserState>
   navigate: (tabId: string, url: string) => Promise<DesktopBrowserTab>
   navigationAction: (tabId: string, action: 'back' | 'forward' | 'reload' | 'stop') => Promise<DesktopBrowserTab>
-  createProfile: (name: string) => Promise<DesktopBrowserProfile>
+  createProfile: (input: {
+    name: string
+    rootDirectory: string
+    proxyMode?: 'direct' | 'system' | 'fixed_servers'
+    proxyRules?: string
+  }) => Promise<DesktopBrowserProfile>
+  chooseProfileRootDirectory: (defaultPath?: string) => Promise<string | null>
   renameProfile: (profileId: string, name: string) => Promise<DesktopBrowserProfile>
   profileSwitchImpact: () => Promise<{ activeAgentRuns: number; activeDownloads: number; pendingAnnotations: number; openTabs: number; requiresConfirmation: boolean }>
   switchProfile: (profileId: string, force?: boolean) => Promise<DesktopBrowserState>
-  updateProfile: (profileId: string, input: { askBeforeDownload?: boolean; downloadConflictPolicy?: 'ask' | 'uniquify' }) => Promise<DesktopBrowserProfile>
+  updateProfile: (profileId: string, input: {
+    rootDirectory?: string
+    proxyMode?: 'direct' | 'system' | 'fixed_servers'
+    proxyRules?: string
+    askBeforeDownload?: boolean
+    downloadConflictPolicy?: 'ask' | 'uniquify'
+  }) => Promise<DesktopBrowserProfile>
   deleteProfile: (profileId: string) => Promise<DesktopBrowserState>
   clearProfileData: (profileId: string, kind: 'cache' | 'site-data' | 'permission-audit') => Promise<DesktopBrowserState>
-  chooseDirectory: (kind: 'download' | 'session', profileId: string) => Promise<DesktopBrowserProfile | null>
+  cancelDownload: (downloadId: string) => Promise<DesktopBrowserState>
   takeOver: (tabId: string) => Promise<boolean>
   annotate: (tabId: string, mode: 'element' | 'region') => Promise<DesktopBrowserSelection>
   cancelAnnotation: (tabId: string) => Promise<boolean>
@@ -121,9 +147,9 @@ export function desktopBridge(): HermesDesktopBridge | undefined {
 
 const DESKTOP_BROWSER_METHODS: ReadonlyArray<keyof DesktopBrowserBridge> = [
   'getState', 'setViewport', 'createTab', 'closeTab', 'activateTab', 'navigate',
-  'navigationAction', 'createProfile', 'renameProfile', 'profileSwitchImpact',
-  'switchProfile', 'updateProfile', 'deleteProfile', 'clearProfileData',
-  'chooseDirectory', 'takeOver', 'annotate', 'cancelAnnotation', 'updateAnnotationNote',
+  'navigationAction', 'createProfile', 'chooseProfileRootDirectory', 'renameProfile', 'profileSwitchImpact',
+  'switchProfile', 'updateProfile', 'deleteProfile', 'clearProfileData', 'cancelDownload',
+  'takeOver', 'annotate', 'cancelAnnotation', 'updateAnnotationNote',
   'captureAnnotations', 'clearAnnotations',
   'onAnnotationRequest', 'onStateChange',
 ]

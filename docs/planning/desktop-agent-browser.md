@@ -102,7 +102,8 @@ devices
 use
 ~~~
 
-本功能新增第四个仅桌面端可用的 toolset：
+本功能新增第四个 toolset；配置在所有 Web UI 运行方式下统一存在，但能力只有本机
+Desktop Browser Broker 有效时可用：
 
 ~~~text
 browser
@@ -142,9 +143,19 @@ MCP 是这些 Agent 都能接入的统一协议，比为每一种 Agent 单独�
 MCP 不负责创建 <code>WebContentsView</code>，也不持有 Electron 权限；
 它只把经过校验的语义化操作转发给 Electron Browser Broker。
 
-### 6.2 控制工具数量
+### 6.2 按类目加载工具
 
-不要为每一个按钮提供一个 MCP 工具。第一版只暴露 6 个聚合工具：
+<code>tools/list</code> 只暴露一个类目入口
+<code>hermes_studio_browser_toolset</code>，避免把所有浏览器 Schema 长期放入
+模型上下文。入口支持三个动作：
+
+~~~text
+list      返回紧凑的操作名称和说明
+describe  按名称返回一个操作的完整 Input Schema
+call      按名称和 arguments 调用该操作
+~~~
+
+类目内部保留 6 个聚合操作：
 
 ~~~text
 browser_tabs
@@ -166,10 +177,11 @@ browser_console
   action: read | clear
 ~~~
 
-选择 6 个工具的原因：
+选择 1 个类目入口和 6 个内部聚合操作的原因：
 
-- 比十几个细粒度工具更节省上下文；
-- 比一个巨型万能工具更容易让模型正确调用；
+- 常驻上下文只有类目说明和入口 Schema；
+- 模型只在需要时读取一个具体操作的完整 Schema；
+- 6 个语义操作仍比十几个按钮级操作更稳定；
 - Action 枚举较小，参数校验更明确；
 - 后续容易单独限制高风险操作。
 
@@ -178,7 +190,7 @@ browser_console
 隐式跟随用户当前标签页。Snapshot 返回 <code>snapshot_id</code>，click/type 必须
 回传该 ID；页面变化后旧引用立即失效。
 
-### 6.3 MCP 只在桌面端注入
+### 6.3 MCP 配置统一注入，能力由桌面 Broker 决定
 
 新增托管 MCP Server：
 
@@ -188,12 +200,13 @@ command: hermes-studio-mcp
 args: [browser]
 ~~~
 
-只有满足以下条件时才注入：
+Web UI、Ekko Agent、Hermes Agent 和 coding agent 都注册相同的
+<code>hermes-studio-browser</code> 托管配置，不再根据
+<code>HERMES_DESKTOP</code> 增删配置，避免多个 Web UI 进程反复改写同一份 Profile。
 
-- 当前是 Hermes Studio Desktop；
-- 当前是 Electron 启动的 Desktop Web UI Server。
-
-普通 Web UI、VPS 或 Broker 已失效时不提供这 6 个工具。
+实际能力仍由本机 Browser Broker 决定：存在有效 Broker 时，
+<code>tools/list</code> 返回 browser 类目入口；普通 Web UI、VPS 或 Broker 已失效时
+返回空工具列表，强行调用只返回明确的不可用错误，不影响 Web UI 主进程。
 
 桌面模式下 Ekko Agent 也使用这套 MCP 工具。原有 Ekko 浏览器工具只作为
 非桌面环境或桌面 Browser Broker 不可用时的独立浏览器回退方案。工具注册器
@@ -285,6 +298,7 @@ Run ID 只允许作为可选审计元数据，不参与授权。
 Browser Broker 使用 <code>client_session_id + tab_id</code> 管理控制租约：
 
 - 同一标签页同一时间只能有一个 Agent 控制；
+- MCP 注册自身进程 PID；进程退出后 Broker 立即回收其租约，旧版客户端仍按租约 TTL 回收；
 - 用户点击“接管”时先中止当前 Agent 操作；
 - 另一个 Agent 需要显式申请控制权；
 - 用户切换 UI 标签页不会改变 Agent 绑定的标签页。
@@ -299,7 +313,7 @@ bin/hermes-studio-mcp.mjs
   现有 MCP stdio 入口；识别新的 browser toolset。
 
 bin/mcp/browser-tools.mjs
-  6 个 MCP 工具 Schema、参数规范化、Broker 描述文件读取、
+  1 个类目入口、6 个内部操作 Schema、参数规范化、Broker 描述文件读取、
   Broker RPC Client 和 MCP 图片结果转换。
   这里不包含 Electron 或 CDP 权限。
 ~~~
@@ -401,6 +415,7 @@ interface DesktopBrowserTab {
 - 释放租约；
 - 删除临时截图和未完成批注；
 - 不影响其他标签页。
+- 允许关闭最后一个标签页并保持空标签栏，用户可通过“+”重新创建标签页。
 
 ## 十、Web UI 与桌面端 IPC
 
@@ -413,20 +428,20 @@ interface DesktopBrowserTab {
 interface DesktopBrowserBridge {
   open(): Promise<DesktopBrowserState>
   listProfiles(): Promise<DesktopBrowserProfile[]>
-  createProfile(name: string): Promise<DesktopBrowserProfile>
+  createProfile(input: BrowserProfileCreateInput): Promise<DesktopBrowserProfile>
+  chooseProfileRootDirectory(defaultPath?: string): Promise<string | null>
   inspectProfileSwitch(profileId: string): Promise<BrowserProfileSwitchImpact>
   switchProfile(
     profileId: string,
     confirmationId?: string,
   ): Promise<DesktopBrowserState>
   renameProfile(profileId: string, name: string): Promise<DesktopBrowserProfile>
-  chooseProfileDirectory(profileId: string): Promise<DesktopBrowserProfile>
-  chooseDownloadDirectory(profileId: string): Promise<DesktopBrowserProfile>
-  setDownloadPreferences(
+  updateProfile(
     profileId: string,
-    preferences: BrowserDownloadPreferences,
+    input: BrowserProfileUpdateInput,
   ): Promise<DesktopBrowserProfile>
   listDownloads(profileId: string): Promise<DesktopBrowserDownload[]>
+  cancelDownload(downloadId: string): Promise<DesktopBrowserState>
   openProfileDirectory(profileId: string): Promise<void>
   openDownloadDirectory(profileId: string): Promise<void>
   clearProfileData(
@@ -508,7 +523,9 @@ Vue 页面提供一个布局占位容器，通过 <code>ResizeObserver</code> �
 ~~~
 
 面板使用异步组件；只有完整可信的 Desktop Browser Bridge 存在时才显示并加载。
-面板只负责标签页、地址栏、网页操作、Agent 接管和批注，不出现 Profile、下载或权限配置。
+面板负责标签页、地址栏、网页操作、Agent 接管和批注，并在工具栏显示当前 Profile
+选择器和下载入口。Profile 可在面板内立即切换；下载入口显示实时进度并允许取消。
+目录、代理和权限等完整配置仍放在独立配置页。
 
 左侧“工具 → 浏览器”保留桌面专属动态路由，但该页面只负责配置：
 
@@ -531,18 +548,20 @@ Vue 页面提供一个布局占位容器，通过 <code>ResizeObserver</code> �
 <code>DesktopBrowserView</code> 是纯配置中心：
 
 1. **Profile 设置**
-   - Profile 列表、当前活动标记和存储占用；
-   - 新建、重命名、切换和删除；
+   - Profile 使用与模型配置一致的响应式卡片网格，展示当前活动状态、目录和下载策略；
+   - 每张卡片可直接切换、编辑和删除；
+   - 新建与编辑使用独立 Modal，避免配置表单长期挤占列表空间；
    - 显示规范化后的 Profile 目录；
-   - 新建时选择默认目录或自定义目录；
-   - 已有 Profile 迁移目录；
+   - 新建时选择空的 Profile 根目录；
+   - 已有 Profile 实时切换到新的空根目录；
+   - 每个 Profile 独立配置直连、系统代理或固定代理；
    - 打开 Profile 目录。
 2. **下载设置**
    - 当前 Profile 下载目录；
-   - 选择目录；
    - 下载前始终询问；
    - 重名处理策略；
    - 当前下载任务和进度；
+   - 取消进行中的下载；
    - 打开下载目录。
 3. **隐私与权限**
    - 清除 Cookie；
@@ -561,8 +580,9 @@ Vue 页面提供一个布局占位容器，通过 <code>ResizeObserver</code> �
 该页面不使用普通 <code>settingsStore.saveSection()</code>，也不调用 Web UI
 Server。所有数据来自 Typed Preload Bridge，并由 Electron 主进程落盘。
 
-新建 Profile 使用 Electron 生成的 UUID，用户只输入显示名称。所有目录选择都由
-主进程打开原生目录选择器，不能使用普通文本框直接编辑路径。
+新建 Profile 使用 Electron 生成的 UUID。用户输入显示名称，并通过主进程原生
+目录选择器选择一个空的 Profile 根目录，不能使用普通文本框直接编辑路径。根目
+录下固定创建 <code>data/</code> 和 <code>download/</code>。
 
 切换 Profile 前，界面展示 BrowserManager 返回的影响摘要：
 
@@ -579,16 +599,10 @@ interface BrowserProfileSwitchImpact {
 如果存在 Agent 操作、下载或未完成批注，必须先确认或处理，不能直接强制切换。
 主进程负责最终判断，Renderer 中的确认状态不能绕过 Broker 租约和下载检查。
 
-已有 Profile 更换存储位置不是简单修改字符串。第一版采用“安排迁移并重启”：
-
-1. 用户选择新目录。
-2. 主进程验证目录和冲突。
-3. 写入 <code>pendingSessionPath</code>，提示需要重启。
-4. 下次 Electron 启动且 Session 尚未创建时复制到临时目录。
-5. 校验后原子切换 Profile 元数据。
-6. 迁移成功前保留旧目录，以便恢复。
-
-这样避免移动仍被 Chromium 占用的 Cookie、Cache 和数据库文件。
+已有 Profile 更换存储位置时也必须选择空目录，不迁移或删除旧数据。主进程先
+保存标签页 URL，销毁该 Profile 的全部 <code>WebContentsView</code>，更新为新
+根目录下的 <code>data/</code> 和 <code>download/</code>，然后立即重建标签页。
+目录修改和 Profile 切换都不要求重启 Electron。
 
 侧边栏名称、页面标题、4 个 Tab 和所有操作文案必须补齐
 <code>en/zh/zh-TW/ja/ko/pt/es/ru/de/fr</code> 等全部现有 Locale。
@@ -786,7 +800,8 @@ session.fromPath('<absolute-profile-path>')
 默认 Profile 目录：
 
 ~~~text
-$HERMES_WEB_UI_HOME/desktop-browser/profiles/<profile-id>/session
+$HERMES_WEB_UI_HOME/desktop-browser/profiles/<profile-id>/data
+$HERMES_WEB_UI_HOME/desktop-browser/profiles/<profile-id>/download
 ~~~
 
 用户可以通过 Electron 原生目录选择器修改某个 Profile 的存储位置。要求：
@@ -799,14 +814,17 @@ $HERMES_WEB_UI_HOME/desktop-browser/profiles/<profile-id>/session
 - 不能直接选择系统 Chrome 的 <code>User Data</code> 或
   <code>Default</code>；
 - 路径变更后不能继续复用旧 Session 对象。
+- 用户选择的根目录必须为空；不复制旧目录内容。
 
 ~~~ts
 interface DesktopBrowserProfile {
   id: string
   name: string
+  rootPath: string
   sessionPath: string
-  pendingSessionPath?: string
   downloadPath: string
+  proxyMode: 'direct' | 'system' | 'fixed_servers'
+  proxyRules: string
   askBeforeDownload: boolean
   downloadConflictPolicy: 'ask' | 'uniquify'
   createdAt: string
@@ -821,7 +839,8 @@ $HERMES_WEB_UI_HOME/desktop-browser/profiles.json
 ~~~
 
 它只保存 Profile ID、名称和规范化后的目录，不保存 Cookie、密码或 Broker
-Token。Session 数据保存在各自的 <code>sessionPath</code> 中。
+Token。Session 数据保存在各自根目录的 <code>data/</code> 中，下载保存在同一
+根目录的 <code>download/</code> 中。
 
 ### 15.2 多 Profile 切换
 
@@ -839,6 +858,12 @@ Session。Session 必须在创建 View 时确定。
 7. 使用新 Session 重建该 Profile 的标签页。
 8. 恢复该 Profile 自己的标签页状态。
 
+切换或重建活动 Profile 前必须调用 <code>Session.flushStorageData()</code> 和
+<code>Session.cookies.flushStore()</code>，确保 Cookie、登录态和 DOM Storage 已
+写入该 Profile 的 <code>data/</code>。<code>BrowserManager</code> 在运行期间持续持有
+每个已打开 Profile 的 Session，切回时复用同一实例，不能只保存 Session 路径后
+立即释放对象。
+
 不要为了快速切换而长期保留多个 Profile 的全部隐藏 View，避免内存占用和
 Agent 误操作。所有 Tab、Target、截图、下载和租约都必须带
 <code>profileId</code>。
@@ -848,10 +873,10 @@ Profile 切换、创建、删除和路径修改只能由用户在桌面 UI 中�
 
 ### 15.3 下载位置
 
-下载目录属于 Profile，可以独立配置。默认建议：
+下载目录属于 Profile，固定为 Profile 根目录下的：
 
 ~~~text
-<系统 Downloads>/Hermes Studio/<profile-name>
+<profile-root>/download
 ~~~
 
 创建 Session 后调用：
@@ -862,17 +887,28 @@ browserSession.setDownloadPath(profile.downloadPath)
 
 同时监听 Session 的 <code>will-download</code>：
 
-- 第一版默认下载前确认；
+- 下载前确认使用 Electron 自带保存对话框，并在 <code>will-download</code> 回调内
+  同步调用 <code>setSaveDialogOptions()</code>；
 - 可使用 <code>DownloadItem.setSavePath()</code> 设置单个文件位置；
+- 不能暂停后等待独立异步对话框再设置路径，否则 macOS 可能留下无法完成重命名的
+  <code>.com.github.Electron.*</code> 临时文件；
 - 处理重名、非法文件名、目录逃逸和覆盖；
 - 显示来源域名、文件名、类型和大小；
+- 工具栏下载入口与配置页都显示实时字节数、百分比和任务状态；
+- 进行中的任务可以通过主进程持有的 <code>DownloadItem</code> 取消；
 - Agent 发起的下载必须获得用户确认；
 - Profile 切换或删除前处理进行中的下载。
 
-下载目录也必须通过 Electron 原生目录选择器配置，远程网页和 Agent 不能指定
-任意本地路径。
+远程网页和 Agent 不能指定任意本地下载路径。
 
-### 15.4 隔离与清理
+### 15.4 Profile 代理
+
+每个 Profile 独立保存代理模式：直连、系统代理或自定义固定代理。自定义代理规则
+传给该 Profile 的 <code>Session.setProxy()</code>，支持 HTTP/HTTPS/SOCKS 规则。
+创建、编辑或切换 Profile 时，在加载页面前完成代理设置；编辑活动 Profile 的代理
+会立即销毁并重建其页面视图，不影响 Web UI、Hermes 或其他 Profile 的网络请求。
+
+### 15.5 隔离与清理
 
 每个 Profile 与 Web UI Session、Hermes Agent 状态、其他 Browser Profile 和
 系统 Chrome Profile 完全隔离。
@@ -886,9 +922,11 @@ browserSession.setDownloadPath(profile.downloadPath)
 
 “工具 → 浏览器”配置页面提供：
 
+- 与模型配置一致的 Profile 卡片列表和当前活动标记；
 - Profile 创建、重命名、切换和删除；
-- Profile 目录选择；
-- 每个 Profile 的下载目录选择；
+- Profile 新增与编辑 Modal；
+- Profile 空根目录选择；
+- 每个 Profile 的代理配置；
 - 清除 Cookie 和站点数据；
 - 清除缓存；
 - 重置当前 Profile；
@@ -913,7 +951,7 @@ browserSession.setDownloadPath(profile.downloadPath)
   Clipboard、屏幕捕获和文件权限。
 - 显式处理 Popup、新窗口、协议处理和下载。
 - Browser Broker 不支持 CORS，拒绝网页 Origin，所有请求必须认证。
-- MCP 只能调用固定 6 个语义工具。
+- MCP 类目入口只能发现和调用固定 6 个浏览器语义操作。
 - MCP 和模型不能看到 Broker Token、CDP URL、Cookie、Storage、IndexedDB、
   Authorization Header 或密码。
 - 注入脚本固定在 Desktop 代码中，IPC 只允许 element/region 枚举。
@@ -958,10 +996,12 @@ browserSession.setDownloadPath(profile.downloadPath)
 - 权限默认拒绝；
 - Broker 文件 PID、Token、地址、过期时间和权限校验；
 - Broker 拒绝非法 Origin 和未认证请求；
-- MCP 仅在有效 Desktop Broker 存在时暴露 6 个工具；
+- MCP 仅在有效 Desktop Broker 存在时暴露 1 个 browser 类目入口；
+- browser 类目只能列出、描述和调用固定 6 个内部操作；
 - 模型参数不能覆盖 Launcher 注入的 Caller ID；
 - MCP 结果不包含 Token 和 CDP 地址；
 - 同一标签页并发租约冲突；
+- MCP 进程退出后，其标签页租约可被下一客户端立即回收；
 - Agent 操作不跟随 UI 标签页切换；
 - Annotation IPC 拒绝任意脚本和 Selector；
 - 元素元数据敏感信息过滤；
@@ -1038,8 +1078,9 @@ browserSession.setDownloadPath(profile.downloadPath)
 
 - 实现 Browser Broker；
 - 实现 Broker 描述文件和认证；
-- 实现 6 个 Browser MCP 工具；
-- 向 Ekko、Hermes、Codex、Claude Code 仅桌面注入；
+- 实现 1 个 Browser MCP 类目入口和 6 个内部操作；
+- 向 Web UI、Ekko、Hermes、Codex、Claude Code 统一注入 browser MCP 配置；
+- 没有有效 Desktop Browser Broker 时返回空工具列表；
 - 实现 Caller ID、Tab Binding、Lease、Abort 和 Action Status；
 - Agent 操作同一个可见 View。
 

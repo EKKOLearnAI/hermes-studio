@@ -11,6 +11,7 @@ interface BrokerRequest {
   params?: unknown
   operation_id?: unknown
   run_metadata?: unknown
+  client_pid?: unknown
 }
 
 interface Lease {
@@ -21,6 +22,7 @@ interface Lease {
 interface BrokerClient {
   token: string
   lastSeenAt: number
+  pid?: number
 }
 
 const BODY_LIMIT = 1024 * 1024
@@ -130,10 +132,14 @@ export class BrowserBroker {
       const providedToken = authorization.startsWith('Bearer ') ? authorization.slice(7) : ''
       if (request.url === '/v1/session') {
         if (!providedToken || !safeEqual(providedToken, this.token)) return this.send(response, 401, { error: 'Unauthorized' })
-        await this.readBody(request)
+        const registration = await this.readBody(request)
+        const clientPid = registration.client_pid
+        if (clientPid !== undefined && (typeof clientPid !== 'number' || !Number.isSafeInteger(clientPid) || clientPid <= 0)) {
+          throw new Error('client_pid must be a positive integer')
+        }
         const clientId = randomUUID()
         const clientToken = randomBytes(32).toString('base64url')
-        this.clients.set(clientId, { token: clientToken, lastSeenAt: Date.now() })
+        this.clients.set(clientId, { token: clientToken, lastSeenAt: Date.now(), ...(clientPid === undefined ? {} : { pid: clientPid }) })
         return this.send(response, 200, { client_id: clientId, session_token: clientToken })
       }
       if (!providedToken) return this.send(response, 401, { error: 'Unauthorized' })
@@ -259,7 +265,14 @@ export class BrowserBroker {
   private claimLease(tabId: string, clientId: string, method: string): void {
     const lease = this.leases.get(tabId)
     if (lease && lease.expiresAt > Date.now() && lease.clientId !== clientId) {
-      throw new Error(`Browser tab is controlled by another MCP client; user takeover is required before ${method}`)
+      if (this.clientProcessIsAlive(lease.clientId)) {
+        throw new Error(`Browser tab is controlled by another MCP client; user takeover is required before ${method}`)
+      }
+      const staleTimer = this.leaseTimers.get(tabId)
+      if (staleTimer) clearTimeout(staleTimer)
+      this.leaseTimers.delete(tabId)
+      this.leases.delete(tabId)
+      this.clients.delete(lease.clientId)
     }
     const expiresAt = Date.now() + LEASE_TTL_MS
     this.leases.set(tabId, { clientId, expiresAt })
@@ -274,6 +287,18 @@ export class BrowserBroker {
     }, LEASE_TTL_MS + 25)
     timer.unref?.()
     this.leaseTimers.set(tabId, timer)
+  }
+
+  private clientProcessIsAlive(clientId: string): boolean {
+    const pid = this.clients.get(clientId)?.pid
+    // Older clients do not report a PID, so retain the TTL-based behavior for them.
+    if (!pid) return true
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'EPERM'
+    }
   }
 
   private releaseLease(tabId: string, clientId: string): void {

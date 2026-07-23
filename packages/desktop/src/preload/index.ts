@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { BrowserBounds, BrowserProfileSwitchImpact, BrowserSelection, DesktopBrowserProfile, DesktopBrowserState, DesktopBrowserTab } from '../main/browser/browser-types'
+import type { BrowserBounds, BrowserProfileCreateInput, BrowserProfileSwitchImpact, BrowserProfileUpdateInput, BrowserSelection, DesktopBrowserProfile, DesktopBrowserState, DesktopBrowserTab } from '../main/browser/browser-types'
 
 type DesktopWindowKind = 'main' | 'pet'
 
@@ -43,14 +43,15 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     activateTab: (tabId: string): Promise<DesktopBrowserState> => ipcRenderer.invoke('hermes-desktop:browser-activate-tab', tabId),
     navigate: (tabId: string, url: string): Promise<DesktopBrowserTab> => ipcRenderer.invoke('hermes-desktop:browser-navigate', tabId, url),
     navigationAction: (tabId: string, action: 'back' | 'forward' | 'reload' | 'stop'): Promise<DesktopBrowserTab> => ipcRenderer.invoke('hermes-desktop:browser-navigation-action', tabId, action),
-    createProfile: (name: string): Promise<DesktopBrowserProfile> => ipcRenderer.invoke('hermes-desktop:browser-create-profile', name),
+    createProfile: (input: BrowserProfileCreateInput): Promise<DesktopBrowserProfile> => ipcRenderer.invoke('hermes-desktop:browser-create-profile', input),
+    chooseProfileRootDirectory: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('hermes-desktop:browser-choose-profile-root-directory', defaultPath),
     renameProfile: (profileId: string, name: string): Promise<DesktopBrowserProfile> => ipcRenderer.invoke('hermes-desktop:browser-rename-profile', profileId, name),
     profileSwitchImpact: (): Promise<BrowserProfileSwitchImpact> => ipcRenderer.invoke('hermes-desktop:browser-profile-switch-impact'),
     switchProfile: (profileId: string, force?: boolean): Promise<DesktopBrowserState> => ipcRenderer.invoke('hermes-desktop:browser-switch-profile', profileId, force),
-    updateProfile: (profileId: string, input: { askBeforeDownload?: boolean; downloadConflictPolicy?: 'ask' | 'uniquify' }): Promise<DesktopBrowserProfile> => ipcRenderer.invoke('hermes-desktop:browser-update-profile', profileId, input),
+    updateProfile: (profileId: string, input: BrowserProfileUpdateInput): Promise<DesktopBrowserProfile> => ipcRenderer.invoke('hermes-desktop:browser-update-profile', profileId, input),
     deleteProfile: (profileId: string): Promise<DesktopBrowserState> => ipcRenderer.invoke('hermes-desktop:browser-delete-profile', profileId),
     clearProfileData: (profileId: string, kind: 'cache' | 'site-data' | 'permission-audit'): Promise<DesktopBrowserState> => ipcRenderer.invoke('hermes-desktop:browser-clear-profile-data', profileId, kind),
-    chooseDirectory: (kind: 'download' | 'session', profileId: string): Promise<DesktopBrowserProfile | null> => ipcRenderer.invoke('hermes-desktop:browser-choose-directory', kind, profileId),
+    cancelDownload: (downloadId: string): Promise<DesktopBrowserState> => ipcRenderer.invoke('hermes-desktop:browser-cancel-download', downloadId),
     takeOver: (tabId: string): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:browser-take-over', tabId),
     annotate: (tabId: string, mode: 'element' | 'region'): Promise<BrowserSelection> => ipcRenderer.invoke('hermes-desktop:browser-annotate', tabId, mode),
     cancelAnnotation: (tabId: string): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:browser-cancel-annotation', tabId),
