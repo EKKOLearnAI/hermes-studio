@@ -842,12 +842,12 @@ $HERMES_WEB_UI_HOME/desktop-browser/profiles.json
 Token。Session 数据保存在各自根目录的 <code>data/</code> 中，下载保存在同一
 根目录的 <code>download/</code> 中。
 
-Chromium 的普通持久 Cookie 由 Session 自己写入 <code>data/</code>。Electron
-不会跨应用启动保留没有过期时间的 session cookie，因此 Desktop 额外监听每个
-Profile 的 Cookie 变化，将这部分 Cookie 用 Electron <code>safeStorage</code>
-加密后保存到该 Profile 的 <code>data/</code> 中，并在恢复标签页之前写回。若
-操作系统加密不可用，则不得回退为明文保存。日志、IPC 和 MCP 结果都不能包含
-Cookie 名称或值。
+Chromium 的普通持久 Cookie 仍由 Session 自己写入 <code>data/</code>。为覆盖
+Electron 不跨应用启动保留 session cookie，以及自定义 Session 未及时生成 Cookie
+数据库的情况，Desktop 额外监听每个 Profile 的 Cookie 变化，将该 Profile 的全部
+Cookie（包含原过期时间）用 Electron <code>safeStorage</code> 加密镜像到
+<code>data/</code>，并在恢复标签页之前写回。若操作系统加密不可用，则不得回退
+为明文保存。日志、IPC 和 MCP 结果都不能包含 Cookie 名称或值。
 
 ### 15.2 多 Profile 切换
 
@@ -1029,7 +1029,7 @@ browserSession.setDownloadPath(profile.downloadPath)
 - UI 切换标签页后，Agent 仍绑定原标签页；
 - Agent 不能访问 Hermes Studio 主 Renderer；
 - Profile Cookie 持久化且与 Web UI 隔离；
-- session cookie 使用操作系统安全存储加密、运行期保存，并在重启后于首个请求前恢复；
+- 全部 Profile Cookie 使用操作系统安全存储加密镜像、运行期保存，并在重启后于首个请求前恢复；
 - 退出时的 Profile 保存超过 2 秒会继续退出，不会无限等待；
 - 创建两个 Profile，验证登录状态、标签页和下载目录互不共享；
 - 切换 Profile 时验证 Agent 操作、租约、批注和下载处理；

@@ -27,9 +27,10 @@ afterEach(async () => {
 })
 
 describe('desktop browser session cookie store', () => {
-  it('encrypts session cookies and restores their host/domain semantics without persisting normal cookies twice', async () => {
+  it('encrypts all profile cookies and restores their host/domain and expiration semantics', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hermes-browser-session-cookies-'))
     roots.push(root)
+    const persistentExpiration = Date.now() / 1_000 + 86_400
     const sourceCookies: Cookie[] = [{
       name: '__Host-session',
       value: 'host-session-secret',
@@ -58,11 +59,11 @@ describe('desktop browser session cookie store', () => {
       secure: true,
       sameSite: 'lax',
       session: false,
-      expirationDate: Date.now() / 1_000 + 86_400,
+      expirationDate: persistentExpiration,
     }]
     const source: BrowserCookies = {
-      async get(filter) {
-        return sourceCookies.filter(cookie => cookie.session === filter.session)
+      async get() {
+        return sourceCookies
       },
       async set() {},
     }
@@ -84,7 +85,7 @@ describe('desktop browser session cookie store', () => {
         restored.push(details)
       },
     }
-    await expect(store.restore(root, destination)).resolves.toEqual({ restored: 2, failed: 0 })
+    await expect(store.restore(root, destination)).resolves.toEqual({ restored: 3, failed: 0 })
     expect(restored).toEqual([
       {
         url: 'https://accounts.google.com/',
@@ -105,8 +106,19 @@ describe('desktop browser session cookie store', () => {
         httpOnly: true,
         sameSite: 'no_restriction',
       },
+      {
+        url: 'https://google.com/',
+        name: 'persistent',
+        value: 'normal-cookie-secret',
+        domain: '.google.com',
+        path: '/',
+        secure: true,
+        httpOnly: false,
+        sameSite: 'lax',
+        expirationDate: persistentExpiration,
+      },
     ])
-    expect(restored.every(cookie => cookie.expirationDate === undefined)).toBe(true)
+    expect(restored.slice(0, 2).every(cookie => cookie.expirationDate === undefined)).toBe(true)
   })
 
   it('removes a stale snapshot after the last session cookie is deleted', async () => {

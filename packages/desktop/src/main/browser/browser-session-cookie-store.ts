@@ -1,6 +1,6 @@
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Cookie, CookiesSetDetails } from 'electron'
+import type { Cookie, CookiesGetFilter, CookiesSetDetails } from 'electron'
 
 const SNAPSHOT_SCHEMA = 1
 const SNAPSHOT_FILE = '.hermes-session-cookies.enc'
@@ -15,6 +15,7 @@ interface StoredSessionCookie {
   httpOnly: boolean
   secure: boolean
   sameSite: Cookie['sameSite']
+  expirationDate?: number
 }
 
 interface StoredSessionCookies {
@@ -34,7 +35,7 @@ export interface BrowserCookieCrypto {
 }
 
 export interface BrowserCookies {
-  get(filter: { session: boolean }): Promise<Cookie[]>
+  get(filter: CookiesGetFilter): Promise<Cookie[]>
   set(details: CookiesSetDetails): Promise<void>
 }
 
@@ -56,10 +57,14 @@ function storedCookie(value: unknown): StoredSessionCookie | null {
     httpOnly: cookie.httpOnly === true,
     secure: cookie.secure === true,
     sameSite: cookie.sameSite,
+    ...(typeof cookie.expirationDate === 'number' && Number.isFinite(cookie.expirationDate)
+      ? { expirationDate: cookie.expirationDate }
+      : {}),
   }
 }
 
 function cookieDetails(cookie: StoredSessionCookie): CookiesSetDetails | null {
+  if (cookie.expirationDate !== undefined && cookie.expirationDate <= Date.now() / 1_000) return null
   const hostname = cookie.domain.trim().replace(/^\./, '')
   if (!hostname) return null
   const path = cookie.path.startsWith('/') ? cookie.path : '/'
@@ -78,6 +83,7 @@ function cookieDetails(cookie: StoredSessionCookie): CookiesSetDetails | null {
     secure: cookie.secure,
     httpOnly: cookie.httpOnly,
     sameSite: cookie.sameSite,
+    ...(cookie.expirationDate === undefined ? {} : { expirationDate: cookie.expirationDate }),
   }
 }
 
@@ -120,7 +126,7 @@ export class BrowserSessionCookieStore {
 
   async persist(sessionPath: string, cookies: BrowserCookies): Promise<boolean> {
     if (!this.crypto.isEncryptionAvailable()) return false
-    const current = await cookies.get({ session: true })
+    const current = await cookies.get({})
     const sessionCookies: StoredSessionCookie[] = current.filter(cookie => !!cookie.domain).map(cookie => ({
       name: cookie.name,
       value: cookie.value,
@@ -130,6 +136,9 @@ export class BrowserSessionCookieStore {
       httpOnly: cookie.httpOnly === true,
       secure: cookie.secure === true,
       sameSite: cookie.sameSite,
+      ...(typeof cookie.expirationDate === 'number' && Number.isFinite(cookie.expirationDate)
+        ? { expirationDate: cookie.expirationDate }
+        : {}),
     }))
     const pathname = this.filePath(sessionPath)
     if (sessionCookies.length === 0) {
