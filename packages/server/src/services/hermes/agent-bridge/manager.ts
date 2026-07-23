@@ -11,6 +11,8 @@ const DEFAULT_AGENT_BRIDGE_RESTART_DELAY_MS = 1000
 const MAX_AGENT_BRIDGE_RESTART_DELAY_MS = 30000
 const DEFAULT_AGENT_BRIDGE_RECOVERY_EXIT_TIMEOUT_MS = 5000
 const DEFAULT_AGENT_BRIDGE_RECOVERY_SIGKILL_WAIT_MS = 250
+const DEFAULT_AGENT_BRIDGE_SHUTDOWN_TIMEOUT_MS = 10_000
+const DEFAULT_AGENT_BRIDGE_FORCE_KILL_WAIT_MS = 2_000
 const OPENROUTER_WEB_UI_ATTRIBUTION_ENV = {
   HERMES_OPENROUTER_APP_REFERER: 'https://hermes-studio.ai',
   HERMES_OPENROUTER_APP_TITLE: 'Hermes Studio',
@@ -478,6 +480,83 @@ async function killStaleIpcBridgeProcesses(endpoint: string): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 500))
 }
 
+function bridgePidsForEndpoint(endpoint: string): number[] {
+  if (process.platform === 'win32') {
+    const port = tcpEndpointPort(endpoint)
+    return port ? windowsListeningPidsOnPort(port) : []
+  }
+  try {
+    const output = execFileSync('ps', ['-ax', '-o', 'pid=,command='], {
+      encoding: 'utf-8',
+      timeout: 5_000,
+    })
+    return output.split(/\r?\n/).flatMap(line => {
+      const match = line.trim().match(/^(\d+)\s+(.+)$/)
+      if (!match || !match[2].includes('hermes_bridge.py') || !match[2].includes(endpoint)) return []
+      const pid = Number(match[1])
+      return Number.isSafeInteger(pid) && pid > 0 && pid !== process.pid ? [pid] : []
+    })
+  } catch {
+    return []
+  }
+}
+
+function posixDescendantPids(rootPid: number): number[] {
+  try {
+    const output = execFileSync('ps', ['-ax', '-o', 'pid=,ppid='], {
+      encoding: 'utf-8',
+      timeout: 5_000,
+    })
+    const children = new Map<number, number[]>()
+    for (const line of output.split(/\r?\n/)) {
+      const match = line.trim().match(/^(\d+)\s+(\d+)$/)
+      if (!match) continue
+      const pid = Number(match[1])
+      const parentPid = Number(match[2])
+      const siblings = children.get(parentPid) || []
+      siblings.push(pid)
+      children.set(parentPid, siblings)
+    }
+    const descendants: number[] = []
+    const visit = (parentPid: number) => {
+      for (const pid of children.get(parentPid) || []) {
+        visit(pid)
+        descendants.push(pid)
+      }
+    }
+    visit(rootPid)
+    return descendants
+  } catch {
+    return []
+  }
+}
+
+function forceKillBridgeEndpointProcesses(endpoint: string): void {
+  for (const pid of bridgePidsForEndpoint(endpoint)) {
+    try {
+      if (process.platform === 'win32') {
+        execFileSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
+          encoding: 'utf-8',
+          windowsHide: true,
+        })
+      } else {
+        for (const descendantPid of posixDescendantPids(pid)) {
+          try {
+            process.kill(descendantPid, 'SIGKILL')
+          } catch {}
+        }
+        try {
+          process.kill(-pid, 'SIGKILL')
+        } catch {
+          process.kill(pid, 'SIGKILL')
+        }
+      }
+    } catch (err) {
+      logger.warn(err, '[agent-bridge] failed to force-kill bridge endpoint process pid=%s', pid)
+    }
+  }
+}
+
 export class AgentBridgeManager {
   endpoint: string
   private readonly options: AgentBridgeManagerOptions
@@ -873,6 +952,57 @@ export class AgentBridgeManager {
     })
   }
 
+  private forceKillManagedChildTree(child: ChildProcess): void {
+    const pid = child.pid
+    if (!pid) return
+    if (process.platform === 'win32') {
+      try {
+        execFileSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
+          encoding: 'utf-8',
+          windowsHide: true,
+        })
+        return
+      } catch (err) {
+        logger.warn(err, '[agent-bridge] failed to force-kill managed bridge tree pid=%s', pid)
+      }
+    } else {
+      for (const descendantPid of posixDescendantPids(pid)) {
+        try {
+          process.kill(descendantPid, 'SIGKILL')
+        } catch {}
+      }
+      try {
+        // Managed bridges are detached process-group leaders on POSIX. Killing
+        // the group also covers profile workers and their MCP subprocesses.
+        process.kill(-pid, 'SIGKILL')
+        return
+      } catch (err) {
+        logger.warn(err, '[agent-bridge] failed to force-kill managed bridge process group pgid=%s', pid)
+      }
+    }
+    try {
+      child.kill('SIGKILL')
+    } catch (err) {
+      logger.warn(err, '[agent-bridge] failed to force-kill managed bridge pid=%s', pid)
+    }
+  }
+
+  forceStop(): void {
+    this.stopGeneration += 1
+    this.stopping = true
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer)
+      this.restartTimer = null
+    }
+    const child = this.child
+    const attached = this.attached
+    this.ready = false
+    this.attached = false
+    this.child = null
+    if (child) this.forceKillManagedChildTree(child)
+    else if (attached) forceKillBridgeEndpointProcesses(this.endpoint)
+  }
+
   private async startProcess(): Promise<void> {
     if (await this.attachExistingBridge()) {
       return
@@ -1055,6 +1185,7 @@ export class AgentBridgeManager {
     const child = this.child
     if (!child) {
       if (this.attached || this.ready) {
+        let shutdownRequested = false
         try {
           const client = new AgentBridgeClient({
             endpoint: this.endpoint,
@@ -1062,9 +1193,11 @@ export class AgentBridgeManager {
             connectRetryMs: 0,
           })
           await client.shutdown()
+          shutdownRequested = true
         } catch (err) {
           logger.warn(err, '[agent-bridge] failed to request attached bridge shutdown')
         }
+        if (!shutdownRequested) forceKillBridgeEndpointProcesses(this.endpoint)
       }
       this.ready = false
       this.attached = false
@@ -1073,27 +1206,48 @@ export class AgentBridgeManager {
     }
     this.ready = false
     this.attached = false
-    this.child = null
 
-    await new Promise<void>((resolveStop) => {
-      // Allow enough time for the broker to gracefully stop its worker
-      // subprocesses (WorkerProcess.stop uses a 3s timeout per worker).
-      const timeout = setTimeout(() => {
-        // `child.killed` only means a signal was sent. Escalate on shutdown
-        // timeout even if SIGTERM was already sent by recovery.
-        try {
-          child.kill('SIGKILL')
-        } catch {}
-        resolveStop()
-      }, 10_000)
-      child.once('exit', () => {
-        clearTimeout(timeout)
-        resolveStop()
+    const startedAt = Date.now()
+    let observedExit = child.exitCode != null || child.signalCode != null
+    const exited = observedExit
+      ? Promise.resolve()
+      : new Promise<void>(resolveExit => {
+          child.once('exit', () => {
+            observedExit = true
+            resolveExit()
+          })
+        })
+    const shutdownTimeoutMs = envPositiveInt('HERMES_AGENT_BRIDGE_SHUTDOWN_TIMEOUT_MS')
+      ?? DEFAULT_AGENT_BRIDGE_SHUTDOWN_TIMEOUT_MS
+
+    if (process.platform === 'win32') {
+      // Node's SIGTERM emulation on Windows terminates only the broker. Ask the
+      // broker to stop its workers first, then use taskkill /T as the fallback.
+      const client = new AgentBridgeClient({
+        endpoint: this.endpoint,
+        timeoutMs: Math.min(5_000, shutdownTimeoutMs),
+        connectRetryMs: 0,
       })
-      if (!child.killed) {
-        child.kill('SIGTERM')
-      }
-    })
+      await client.shutdown().catch(err => {
+        logger.warn(err, '[agent-bridge] managed bridge graceful shutdown request failed')
+      })
+    } else if (!child.killed) {
+      child.kill('SIGTERM')
+    }
+
+    const remainingMs = Math.max(0, shutdownTimeoutMs - (Date.now() - startedAt))
+    const exitedGracefully = observedExit
+      || (remainingMs > 0 && await this.waitForPromiseSettlementWithin(exited, remainingMs))
+    if (!exitedGracefully) {
+      logger.warn(
+        '[agent-bridge] managed bridge tree pid=%s did not exit within %dms; force-killing descendants',
+        child.pid,
+        shutdownTimeoutMs,
+      )
+      this.forceKillManagedChildTree(child)
+      await this.waitForPromiseSettlementWithin(exited, DEFAULT_AGENT_BRIDGE_FORCE_KILL_WAIT_MS)
+    }
+    if (this.child === child) this.child = null
     this.stopping = false
   }
 }

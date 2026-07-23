@@ -136,7 +136,7 @@ async function prepareAppShutdown(): Promise<void> {
       cancelWindowFade()
       await showShutdownSplash()
       await browserBroker?.stop().catch(() => undefined)
-      await browserManager?.destroy()
+      await browserManager?.destroy().catch(() => undefined)
       browserBroker = null
       browserManager = null
       await stopWebUiServer().catch(() => undefined)
@@ -1103,8 +1103,11 @@ function runDesktopApp() {
       return
     }
     e.preventDefault()
-    await prepareAppShutdown()
-    app.exit(0)
+    try {
+      await prepareAppShutdown()
+    } finally {
+      app.exit(0)
+    }
   })
 }
 

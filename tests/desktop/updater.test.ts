@@ -42,7 +42,7 @@ describe('desktop updater helpers', () => {
     expect(mainSource).toContain('async function prepareAppShutdown(): Promise<void>')
     expect(mainSource).toContain('await stopWebUiServer().catch(() => undefined)')
     expect(mainSource).toContain('initAutoUpdater({ beforeQuitAndInstall: prepareAppShutdown })')
-    expect(mainSource).toContain('await prepareAppShutdown()\n    app.exit(0)')
+    expect(mainSource).toContain('try {\n      await prepareAppShutdown()\n    } finally {\n      app.exit(0)')
 
     const prepareCurrentInstance = updaterSource.indexOf('await options.beforeQuitAndInstall?.()')
     const stopOtherInstances = updaterSource.indexOf('await stopOtherWindowsAppInstances()', prepareCurrentInstance)

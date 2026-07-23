@@ -203,4 +203,50 @@ describe('Desktop Browser Broker', () => {
       await broker.stop()
     }
   })
+
+  it('bounds shutdown and cancels an active browser operation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-browser-broker-stop-'))
+    roots.push(root)
+    const tabs = [{ id: 'tab-1', agentControl: 'idle' }]
+    let markStarted!: () => void
+    let releaseSnapshot!: () => void
+    let cancelled = 0
+    const started = new Promise<void>(resolve => { markStarted = resolve })
+    const gate = new Promise<void>(resolve => { releaseSnapshot = resolve })
+    const manager = {
+      state: () => ({ tabs }),
+      snapshot: async () => {
+        markStarted()
+        await gate
+        return { tabId: 'tab-1', snapshotId: 'snapshot-1' }
+      },
+      setAgentControl: () => {},
+      revokeAgentControl: () => {},
+      cancelAgentOperation: () => { cancelled += 1 },
+    } as unknown as BrowserManager
+    const broker = new BrowserBroker(manager, root)
+    const descriptor = await broker.start()
+
+    const registration = await fetch(`${descriptor.endpoint}/session`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${descriptor.token}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    const client = await registration.json() as { client_id: string; session_token: string }
+    const running = fetch(descriptor.endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${client.session_token}`,
+        'Content-Type': 'application/json',
+        'X-Hermes-Browser-Client': client.client_id,
+      },
+      body: JSON.stringify({ method: 'snapshot', params: { tab_id: 'tab-1' } }),
+    }).catch(() => null)
+
+    await started
+    await broker.stop(25)
+    expect(cancelled).toBe(1)
+    releaseSnapshot()
+    await running
+  })
 })

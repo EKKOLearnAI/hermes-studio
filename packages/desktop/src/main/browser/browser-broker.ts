@@ -27,6 +27,7 @@ interface BrokerClient {
 
 const BODY_LIMIT = 1024 * 1024
 const LEASE_TTL_MS = 60_000
+const STOP_TIMEOUT_MS = 2_000
 
 function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
@@ -91,7 +92,8 @@ export class BrowserBroker {
     }
   }
 
-  async stop(): Promise<void> {
+  async stop(timeoutMs = STOP_TIMEOUT_MS): Promise<void> {
+    this.revokeAll()
     for (const timer of this.leaseTimers.values()) clearTimeout(timer)
     this.leaseTimers.clear()
     this.leases.clear()
@@ -102,7 +104,25 @@ export class BrowserBroker {
     this.server = null
     this.descriptor = null
     this.token = ''
-    await new Promise<void>(resolve => server ? server.close(() => resolve()) : resolve())
+    await new Promise<void>((resolve) => {
+      if (!server) {
+        resolve()
+        return
+      }
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        resolve()
+      }
+      const timeout = setTimeout(() => {
+        server.closeAllConnections?.()
+        finish()
+      }, Math.max(0, timeoutMs))
+      server.close(finish)
+      server.closeIdleConnections?.()
+    })
     await rm(join(this.brokerRoot, 'broker.json'), { force: true }).catch(() => undefined)
   }
 

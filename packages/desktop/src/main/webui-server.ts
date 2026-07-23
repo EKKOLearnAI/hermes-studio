@@ -1,4 +1,4 @@
-import { ChildProcess, execFile, spawn } from 'node:child_process'
+import { ChildProcess, execFile, execFileSync, spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync, readdirSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
@@ -36,18 +36,53 @@ let serverProc: ChildProcess | null = null
 let cachedToken: string | null = null
 let currentServerPort = DEFAULT_PORT
 
+function posixDescendantPids(rootPid: number): number[] {
+  try {
+    const output = execFileSync('ps', ['-ax', '-o', 'pid=,ppid='], {
+      encoding: 'utf-8',
+      timeout: 5_000,
+    })
+    const children = new Map<number, number[]>()
+    for (const line of output.split(/\r?\n/)) {
+      const match = line.trim().match(/^(\d+)\s+(\d+)$/)
+      if (!match) continue
+      const pid = Number(match[1])
+      const parentPid = Number(match[2])
+      children.set(parentPid, [...(children.get(parentPid) || []), pid])
+    }
+    const descendants: number[] = []
+    const visit = (parentPid: number) => {
+      for (const pid of children.get(parentPid) || []) {
+        visit(pid)
+        descendants.push(pid)
+      }
+    }
+    visit(rootPid)
+    return descendants
+  } catch {
+    return []
+  }
+}
+
 function killProcessTree(proc: ChildProcess): void {
-  if (!proc.pid || proc.killed) return
+  if (!proc.pid) return
   if (process.platform === 'win32') {
     try {
-      const killer = spawn('taskkill.exe', ['/PID', String(proc.pid), '/T', '/F'], {
-        stdio: 'ignore',
+      execFileSync('taskkill.exe', ['/PID', String(proc.pid), '/T', '/F'], {
+        encoding: 'utf-8',
         windowsHide: true,
       })
-      killer.once('error', () => undefined)
       return
     } catch {
       /* fall through */
+    }
+  } else {
+    for (const pid of posixDescendantPids(proc.pid)) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        /* already exited */
+      }
     }
   }
   try {
@@ -529,7 +564,7 @@ async function requestGracefulShutdown(port: number, token: string): Promise<voi
 }
 
 export async function stopWebUiServer(): Promise<void> {
-  if (!serverProc || serverProc.killed) return
+  if (!serverProc) return
 
   const proc = serverProc
   const exited = new Promise<void>(resolve => {

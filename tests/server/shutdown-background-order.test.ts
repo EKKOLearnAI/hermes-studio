@@ -75,4 +75,22 @@ describe('graceful shutdown background delivery ordering', () => {
     expect(closeDbMock).toHaveBeenCalledOnce()
     expect(process.exit).toHaveBeenCalledWith(0)
   })
+
+  it('force-kills the bridge before the shutdown deadline exits the server', async () => {
+    stopPreviewRuntimeMock.mockImplementationOnce(() => new Promise<void>(() => {}))
+    const agentBridgeManager = {
+      stop: vi.fn(async () => {}),
+      forceStop: vi.fn(),
+    }
+    const httpServer = { close: vi.fn() }
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+    const { createShutdownHandler, getShutdownForceExitMs } = await import('../../packages/server/src/services/shutdown')
+
+    void createShutdownHandler(httpServer, undefined, undefined, agentBridgeManager)('desktop-request')
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(getShutdownForceExitMs())
+
+    expect(agentBridgeManager.forceStop).toHaveBeenCalledOnce()
+    expect(exitSpy).toHaveBeenCalledWith(0)
+  })
 })

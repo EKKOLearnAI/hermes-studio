@@ -50,7 +50,14 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
 
     // Force exit only if graceful cleanup hangs. The bridge can take up to 10s
     // to stop worker subprocesses, so this cap must be longer than that.
-    setTimeout(() => process.exit(0), getShutdownForceExitMs())
+    const forceExitTimer = setTimeout(() => {
+      try {
+        agentBridgeManager?.forceStop?.()
+      } catch (err) {
+        logger.warn(err, 'Failed to force-stop agent bridge during shutdown timeout')
+      }
+      process.exit(0)
+    }, getShutdownForceExitMs())
 
     logger.info('Shutting down (%s)...', signal)
     console.log(`[shutdown] Received signal: ${signal}`)
@@ -122,6 +129,7 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
     }
 
     closeDb()
+    clearTimeout(forceExitTimer)
     process.exit(0)
   }
 }
