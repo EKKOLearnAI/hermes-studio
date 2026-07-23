@@ -110,6 +110,16 @@ describe('MarkdownRenderer', () => {
     })
   })
 
+  it('preserves ASCII quotes in prose without disabling other typographic replacements', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: `Men's "quoted" -- ... (c)`,
+      },
+    })
+
+    expect(wrapper.get('.markdown-body').text()).toBe(`Men's "quoted" – … ©`)
+  })
+
   it('opens message links in the embedded browser when the desktop bridge is available', async () => {
     desktopBrowserMock.openUrlInDesktopBrowser.mockResolvedValue(true)
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
