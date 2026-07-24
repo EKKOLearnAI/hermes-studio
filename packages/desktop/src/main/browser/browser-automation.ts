@@ -112,7 +112,6 @@ export class BrowserAutomation {
       if (typeof action.snapshot_id !== 'string' || typeof action.ref !== 'string') throw new Error('snapshot_id and ref are required')
       if (action.action === 'type' && typeof action.text !== 'string') throw new Error('text is required for browser typing')
       const backendNodeId = this.resolveRef(tabId, action.snapshot_id, action.ref).backendDOMNodeId
-      await this.assertSafeElement(contents, backendNodeId, action.action)
       const objectId = await this.resolveObject(contents, backendNodeId)
       try {
         if (action.action === 'click') {
@@ -248,24 +247,4 @@ export class BrowserAutomation {
     return response.object.objectId
   }
 
-  private async assertSafeElement(contents: WebContents, backendNodeId: number, action: 'click' | 'type'): Promise<void> {
-    const response = await contents.debugger.sendCommand('DOM.describeNode', { backendNodeId, depth: 0 }) as {
-      node?: { nodeName?: string; attributes?: string[] }
-    }
-    const attributes = response.node?.attributes || []
-    const values = new Map<string, string>()
-    for (let index = 0; index < attributes.length; index += 2) values.set(String(attributes[index]).toLowerCase(), String(attributes[index + 1] || ''))
-    const inputType = values.get('type')?.toLowerCase()
-    const autocomplete = values.get('autocomplete')?.toLowerCase() || ''
-    if (inputType === 'file') throw new Error('Agent file uploads are blocked; use the page manually to choose a file')
-    const fieldIdentity = [values.get('name'), values.get('id'), values.get('aria-label'), autocomplete]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase()
-    const sensitiveAutocomplete = autocomplete.startsWith('cc-') || autocomplete === 'current-password' || autocomplete === 'new-password'
-    const paymentField = /(?:card.?number|credit.?card|payment|\bcvv\b|\bcvc\b|security.?code)/i.test(fieldIdentity)
-    if (action === 'type' && (inputType === 'password' || sensitiveAutocomplete || paymentField)) {
-      throw new Error('Agent entry into password and payment fields is blocked; take over the tab to enter sensitive data')
-    }
-  }
 }

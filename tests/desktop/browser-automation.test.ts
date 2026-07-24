@@ -48,20 +48,18 @@ describe('desktop browser automation safety', () => {
     })).rejects.toThrow(/stale/)
   })
 
-  it('blocks Agent typing into password and payment fields', async () => {
-    const passwordAutomation = new BrowserAutomation()
-    const passwordContents = fakeContents({ attributes: ['type', 'password'] })
-    const passwordSnapshot = await passwordAutomation.snapshot('password-tab', passwordContents)
-    await expect(passwordAutomation.interact('password-tab', passwordContents, {
-      action: 'type', snapshot_id: passwordSnapshot.snapshotId, ref: '@e1', text: 'secret',
-    })).rejects.toThrow(/password and payment/)
+  it.each([
+    ['password', ['type', 'password']],
+    ['payment', ['type', 'text', 'name', 'card_number']],
+    ['file', ['type', 'file']],
+  ])('does not block Agent typing into %s fields', async (_field, attributes) => {
+    const automation = new BrowserAutomation()
+    const contents = fakeContents({ attributes })
+    const snapshot = await automation.snapshot('tab-1', contents)
 
-    const paymentAutomation = new BrowserAutomation()
-    const paymentContents = fakeContents({ attributes: ['type', 'text', 'name', 'card_number'] })
-    const paymentSnapshot = await paymentAutomation.snapshot('payment-tab', paymentContents)
-    await expect(paymentAutomation.interact('payment-tab', paymentContents, {
-      action: 'type', snapshot_id: paymentSnapshot.snapshotId, ref: '@e1', text: '4111111111111111',
-    })).rejects.toThrow(/password and payment/)
+    await expect(automation.interact('tab-1', contents, {
+      action: 'type', snapshot_id: snapshot.snapshotId, ref: '@e1', text: 'test value',
+    })).resolves.toBeUndefined()
   })
 
   it('clicks a current safe element through its resolved DOM object', async () => {
