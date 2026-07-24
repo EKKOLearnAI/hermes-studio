@@ -2745,6 +2745,15 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_33_1: 'This release covers all 16 PRs merged after 0.6.32, spanning the desktop Agent Browser, Workflow run evidence and deadlines, file and chat interactions, Provider model refresh, and reliability fixes',
+    new_0_6_33_2: 'Desktop adds a visible multi-tab Agent Browser with isolated Profiles, proxy, storage, and download controls, encrypted persistent cookies, guarded Agent actions, and lazy MCP tool discovery (#2177, #2182)',
+    new_0_6_33_3: 'Single and Group Chat links and authenticated HTML previews open in the embedded browser; permission spacing, cross-platform navigation icons, and Windows sidebar/title-bar alignment are also refined (#2191, #2194, #2198)',
+    new_0_6_33_4: 'Workflow Runs preserve immutable launch-time visuals, expose one total Run or Rerun deadline with elapsed and remaining evidence, and present history and details as paged, consumption-aware views (#2171, #2173, #2180)',
+    new_0_6_33_5: 'Files can be pasted directly into single or group chats or attached from the workspace context menu; compact metadata columns leave more room for file names (#2175, #2176)',
+    new_0_6_33_6: 'Each configured Provider can refresh its model catalog independently, confirm removals, preserve unavailable defaults, and restore once; OAuth Providers, complete localization, and form autofill behavior are covered (#2115)',
+    new_0_6_33_7: 'Abort and pause status is isolated per chat session so background conversations cannot change the active stop control; Desktop text selections and inputs also gain native right-click actions (#2203, #2204)',
+    new_0_6_33_8: 'Desktop quit, update, and install flows use bounded graceful shutdown and force-stop remaining Agent Bridge, MCP, browser, and Web UI process trees only after cleanup deadlines (#2193)',
+    new_0_6_33_9: 'MCU voice sessions isolate foreground and background results, while MiniMax-compatible MCP tool names stay within provider length limits without breaking existing callers (#2181, #2169)',
     new_0_6_32_1: 'This release covers all 14 PRs merged after 0.6.31, spanning session organization and compression, group chat, Workflow routing, Skill Bundles, Ekko memory, Hermes 0.19, and desktop chrome',
     new_0_6_32_2: 'Group Chat mentions now work after CJK text, emoji, and punctuation, and room owners can view, generate, and rotate invite codes from room settings (#2133, #2141)',
     new_0_6_32_3: 'Workflow preserves each Hermes Bridge run source across handoff and reattachment, while scoped Codex and Claude Code nodes can use launcher-supported protocols for valid API-key targets (#2137, #2154)',
