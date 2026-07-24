@@ -830,4 +830,159 @@ describe('Group Chat member/agent identity sync', () => {
     server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all too deep', role: 'assistant', mentionDepth: 4, agentSessionId }, vi.fn())
     expect(server.agentClients.processMentions).not.toHaveBeenCalled()
   })
+
+  it('preserves per-room member name on rejoin when global userInfoMap has a different name', () => {
+    // Reproduces hermes-agent #54774 / hermes-studio per-room member name bug:
+    // switching rooms should not overwrite a member's per-room display name.
+    const emit = vi.fn()
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map()
+    server.socketUserMap = new Map([['socket-1', 'auth:42']])
+    server.socketRequestedSourceMap = new Map([['socket-1', 'human']])
+    server.socketAuthUserIdMap = new Map([['socket-1', 42]])
+    // User joined room B last, so global userInfoMap has "郑工" (work name).
+    // But room A's DB record has "爸爸" (family name).
+    server.userInfoMap = new Map([['auth:42', { name: '郑工', description: '' }]])
+    server.typingState = new Map()
+    server.contextStatusState = new Map()
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Family Room', inviteCode: 'secret' })),
+      getRoomAgentByAgentId: vi.fn(() => null),
+      // Room A's existing DB record has "爸爸" (per-room name)
+      getMemberByUserId: vi.fn(() => ({
+        id: 'member-1',
+        userId: 'auth:42',
+        name: '爸爸',
+        description: 'family persona',
+        joinedAt: 1000,
+        avatar: '',
+        authUserId: 42,
+      })),
+      getMemberByAuthUserId: vi.fn(() => null),
+      getRoomsForProfiles: vi.fn(() => []),
+      saveRoom: vi.fn(),
+      addRoomMember: vi.fn(),
+      getRecentMessagesForUI: vi.fn(() => []),
+      getRoomAgents: vi.fn(() => []),
+    }
+    const socket = {
+      id: 'socket-1',
+      join: vi.fn(),
+      to: vi.fn(() => ({ emit })),
+    }
+    const ack = vi.fn()
+
+    server.handleJoin(socket, { roomId: 'room-1' }, ack)
+
+    // Per-room DB name ("爸爸") must be preserved, NOT overwritten by
+    // the global userInfoMap entry ("郑工").
+    expect(server.storage.addRoomMember).toHaveBeenCalledWith(
+      'room-1',
+      'auth:42',
+      '爸爸',
+      'family persona',
+      expect.any(String),
+      42,
+    )
+  })
+
+  it('uses requestedName on first join when no existing member record exists', () => {
+    const emit = vi.fn()
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map()
+    server.socketUserMap = new Map([['socket-1', 'auth:42']])
+    server.socketRequestedSourceMap = new Map([['socket-1', 'human']])
+    server.socketAuthUserIdMap = new Map([['socket-1', 42]])
+    server.userInfoMap = new Map([['auth:42', { name: 'default-name', description: '' }]])
+    server.typingState = new Map()
+    server.contextStatusState = new Map()
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-2', name: 'Work Room', inviteCode: 'work123' })),
+      getRoomAgentByAgentId: vi.fn(() => null),
+      getMemberByUserId: vi.fn(() => null), // no existing member → first join
+      getMemberByAuthUserId: vi.fn(() => null),
+      getRoomsForProfiles: vi.fn(() => []),
+      saveRoom: vi.fn(),
+      addRoomMember: vi.fn(),
+      getRecentMessagesForUI: vi.fn(() => []),
+      getRoomAgents: vi.fn(() => []),
+    }
+    const socket = {
+      id: 'socket-1',
+      join: vi.fn(),
+      to: vi.fn(() => ({ emit })),
+    }
+    const ack = vi.fn()
+
+    // Client passes name from the create-room form, plus invite code to pass
+    // canSocketJoinRoom gate.
+    server.handleJoin(socket, {
+      roomId: 'room-2',
+      inviteCode: 'work123',
+      name: '郑工',
+      description: 'work persona',
+    }, ack)
+
+    // On first join, requestedName is used
+    expect(server.storage.addRoomMember).toHaveBeenCalledWith(
+      'room-2',
+      'auth:42',
+      '郑工',
+      'work persona',
+      expect.any(String),
+      42,
+    )
+  })
+
+  it('preserves per-room member description on rejoin when global userInfoMap has stale description', () => {
+    const emit = vi.fn()
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map()
+    server.socketUserMap = new Map([['socket-1', 'auth:42']])
+    server.socketRequestedSourceMap = new Map([['socket-1', 'human']])
+    server.socketAuthUserIdMap = new Map([['socket-1', 42]])
+    server.userInfoMap = new Map([['auth:42', {
+      name: 'global-stale-name',
+      description: 'global-stale-desc',
+    }]])
+    server.typingState = new Map()
+    server.contextStatusState = new Map()
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room' })),
+      getRoomAgentByAgentId: vi.fn(() => null),
+      getMemberByUserId: vi.fn(() => ({
+        id: 'member-1',
+        userId: 'auth:42',
+        name: '爸爸',
+        description: 'per-room-family-desc',
+        joinedAt: 1000,
+        avatar: '',
+        authUserId: 42,
+      })),
+      getMemberByAuthUserId: vi.fn(() => null),
+      getRoomsForProfiles: vi.fn(() => []),
+      saveRoom: vi.fn(),
+      addRoomMember: vi.fn(),
+      getRecentMessagesForUI: vi.fn(() => []),
+      getRoomAgents: vi.fn(() => []),
+    }
+    const socket = {
+      id: 'socket-1',
+      join: vi.fn(),
+      to: vi.fn(() => ({ emit })),
+    }
+    const ack = vi.fn()
+
+    server.handleJoin(socket, { roomId: 'room-1' }, ack)
+
+    expect(server.storage.addRoomMember).toHaveBeenCalledWith(
+      'room-1',
+      'auth:42',
+      '爸爸',
+      'per-room-family-desc',
+      expect.any(String),
+      42,
+    )
+  })
+
 })

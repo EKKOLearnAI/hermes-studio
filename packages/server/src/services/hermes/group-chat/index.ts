@@ -1275,13 +1275,17 @@ export class GroupChatServer {
             return
         }
         const userInfo = this.userInfoMap.get(userId) || {
-            name: existingMember?.name || `User-${userId.slice(0, 6)}`,
-            description: existingMember?.description || '',
+            name: `User-${userId.slice(0, 6)}`,
+            description: '',
         }
         const requestedName = typeof data.name === 'string' ? data.name.trim() : ''
         const requestedDescription = typeof data.description === 'string' ? data.description.trim() : ''
-        const userName = requestedName || existingMember?.name || userInfo.name
-        const description = requestedDescription || existingMember?.description || userInfo.description
+        // On rejoin, prefer the per-room DB record over the join-request name
+        // so switching rooms doesn't overwrite a member's per-room identity.
+        // The DB is authoritative for existing members; requestedName only
+        // applies on first join (when there's no DB record yet).
+        const userName = existingMember?.name || requestedName || userInfo.name
+        const description = existingMember?.description || requestedDescription || userInfo.description
 
         // Update stored user info
         this.userInfoMap.set(userId, { name: userName, description })

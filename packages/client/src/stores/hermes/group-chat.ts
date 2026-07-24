@@ -326,16 +326,21 @@ const currentUserAvatar = ref('')
         return connectedSocket
     }
 
-    async function joinRealtimeRoom(roomId: string, options: { syncMessages?: boolean; inviteCode?: string } = {}) {
+    async function joinRealtimeRoom(roomId: string, options: { syncMessages?: boolean; inviteCode?: string; profileName?: string; profileDescription?: string } = {}) {
         const socket = await ensureRealtimeSocket()
-        const storedName = getStoredGroupUserName()
+        // Use explicitly passed profile name (from create-room form) first;
+        // fall back to localStorage so first-time joins still pick up the
+        // last-entered name. On rejoin the server prefers the per-room DB
+        // record, so a stale stored name is harmless.
+        const storedName = options.profileName || getStoredGroupUserName()
+        const storedDescription = options.profileDescription || localStorage.getItem('gc_user_description')
 
         await new Promise<void>((resolve) => {
             socket.emit('join', {
                 roomId,
                 inviteCode: options.inviteCode,
                 name: storedName || undefined,
-                description: localStorage.getItem('gc_user_description') || undefined,
+                description: storedDescription || undefined,
             }, (res: any) => {
                 if (currentRoomId.value !== roomId) {
                     resolve()
