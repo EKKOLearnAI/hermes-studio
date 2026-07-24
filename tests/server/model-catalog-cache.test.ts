@@ -10,6 +10,7 @@ const {
   mockGetProfileDir,
   mockReadAppConfig,
   mockResolveCopilotOAuthToken,
+  mockFetchCopilotModelsWithOAuthToken,
   mockGlobalFetch,
 } = vi.hoisted(() => ({
   mockReadFile: vi.fn(),
@@ -21,6 +22,7 @@ const {
   mockGetProfileDir: vi.fn(),
   mockReadAppConfig: vi.fn(),
   mockResolveCopilotOAuthToken: vi.fn(),
+  mockFetchCopilotModelsWithOAuthToken: vi.fn(),
   mockGlobalFetch: vi.fn(),
 }))
 
@@ -99,6 +101,7 @@ vi.mock('../../packages/server/src/services/app-config', () => ({
 
 vi.mock('../../packages/server/src/services/hermes/copilot-models', () => ({
   resolveCopilotOAuthToken: mockResolveCopilotOAuthToken,
+  fetchCopilotModelsWithOAuthToken: mockFetchCopilotModelsWithOAuthToken,
 }))
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
@@ -134,6 +137,7 @@ describe('model catalog cache', () => {
     })
     mockReadAppConfig.mockResolvedValue({})
     mockResolveCopilotOAuthToken.mockResolvedValue('')
+    mockFetchCopilotModelsWithOAuthToken.mockResolvedValue([])
     mockFetchProviderModels.mockResolvedValue([])
     mockGlobalFetch.mockResolvedValue({ ok: false, status: 404, json: async () => ({}) })
     vi.stubGlobal('fetch', mockGlobalFetch)
@@ -336,6 +340,10 @@ describe('model catalog cache', () => {
     mockListProfileNamesFromDisk.mockReturnValue(['default'])
     mockReadAppConfig.mockResolvedValue({ copilotEnabled: true })
     mockResolveCopilotOAuthToken.mockResolvedValue('gho-copilot')
+    mockFetchCopilotModelsWithOAuthToken.mockResolvedValue([
+      { id: 'gpt-5.6-copilot', preview: false, disabled: false },
+      { id: 'claude-sonnet-4.6', preview: false, disabled: false },
+    ])
     mockGlobalFetch.mockImplementation(async (url: string) => {
       if (url === 'https://chatgpt.com/backend-api/codex/models?client_version=1.0.0') {
         return {
@@ -387,15 +395,26 @@ describe('model catalog cache', () => {
     })
     mockReadConfigYamlForProfile.mockResolvedValue({})
 
-    const { refreshConfiguredProviderModelCatalogs, providerModelCatalogKey } = await import(
+    const {
+      providerModelCatalogKey,
+      refreshConfiguredProviderModelCatalogs,
+      resolveProviderCatalogRefreshTarget,
+    } = await import(
       '../../packages/server/src/services/hermes/model-catalog-cache'
     )
 
     await refreshConfiguredProviderModelCatalogs({ force: true })
 
+    await expect(resolveProviderCatalogRefreshTarget('default', 'openai-codex')).resolves.toMatchObject({
+      provider: 'openai-codex',
+      api_key: 'codex-token',
+      credential_kind: 'oauth',
+      profile: 'default',
+    })
     expect(mockFetchProviderModels).toHaveBeenCalledTimes(2)
     expect(mockFetchProviderModels).toHaveBeenCalledWith('https://inference-api.nousresearch.com/v1', 'nous-agent-key', false)
     expect(mockFetchProviderModels).toHaveBeenCalledWith('https://api.x.ai/v1', 'xai-access-token', false)
+    expect(mockFetchCopilotModelsWithOAuthToken).toHaveBeenCalledWith('gho-copilot')
     const cache = JSON.parse(cacheText)
     expect(cache.providers[providerModelCatalogKey('openai-codex', 'https://chatgpt.com/backend-api/codex')]).toMatchObject({
       provider: 'openai-codex',
@@ -411,8 +430,8 @@ describe('model catalog cache', () => {
     })
     expect(cache.providers[providerModelCatalogKey('copilot', 'https://api.githubcopilot.com')]).toMatchObject({
       provider: 'copilot',
-      models: ['gpt-5.5', 'claude-sonnet-4.6'],
-      source: 'fallback',
+      models: ['gpt-5.6-copilot', 'claude-sonnet-4.6'],
+      source: 'live',
       profiles: ['default'],
     })
     expect(cache.providers[providerModelCatalogKey('nous', 'https://inference-api.nousresearch.com/v1')]).toMatchObject({

@@ -61,11 +61,12 @@ vi.mock('naive-ui', () => {
   const NInput = defineComponent({
     name: 'NInput',
     inheritAttrs: false,
-    props: { value: [String, Number], type: String, placeholder: String, disabled: Boolean },
+    props: { value: [String, Number], type: String, placeholder: String, disabled: Boolean, inputProps: Object },
     emits: ['update:value'],
     setup(props, { attrs, emit }) {
       return () => h(props.type === 'textarea' ? 'textarea' : 'input', {
         ...attrs,
+        ...(props.inputProps || {}),
         value: props.value ?? '',
         type: props.type === 'password' ? 'password' : 'text',
         placeholder: props.placeholder,
@@ -212,7 +213,11 @@ describe('ProviderEditorModal', () => {
 
     expect(wrapper.text()).toContain('Configured')
     expect(wrapper.html()).not.toContain(credential)
-    expect(wrapper.find('input[type="password"]').element.getAttribute('value') || '').toBe('')
+    const passwordInput = wrapper.find('input[type="password"]')
+    expect(passwordInput.element.getAttribute('value') || '').toBe('')
+    expect(passwordInput.attributes('autocomplete')).toBe('new-password')
+    expect(passwordInput.attributes('name')).toBe('provider-api-key-replacement')
+    expect(passwordInput.attributes('data-1p-ignore')).toBe('true')
   })
 
   it('keeps the existing credential when the password field is blank', async () => {

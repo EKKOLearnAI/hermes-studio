@@ -412,7 +412,7 @@ async function buildAvailableForProfile(
       ...(extra?.provider_key ? { provider_key: extra.provider_key } : {}),
       provider_editable: editor.editable,
       editable_fields: editor.editable_fields,
-      model_refreshable: editor.editable && refresh.refreshable,
+      model_refreshable: refresh.refreshable,
       ...(refresh.refresh_reason ? { model_refresh_reason: refresh.refresh_reason } : {}),
       model_restore_available: !!(catalogEntry?.previous_models?.length),
     })

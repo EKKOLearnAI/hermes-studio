@@ -8,6 +8,10 @@ test('opens the provider form when model settings are entered from setup guidanc
   await page.goto('/#/hermes/models?addProvider=1')
 
   await expect(page.getByText('Provider Type')).toBeVisible()
+  const apiKeyInput = page.locator('input[type="password"]')
+  await expect(apiKeyInput).toHaveAttribute('autocomplete', 'new-password')
+  await expect(apiKeyInput).toHaveAttribute('name', 'new-provider-api-key')
+  await expect(apiKeyInput).toHaveAttribute('data-1p-ignore', 'true')
   await expect(page).toHaveURL(/#\/hermes\/models$/)
 })
 
@@ -59,6 +63,8 @@ test('edits a provider without rendering its existing credential', async ({ page
   await expect(editor.getByText('Configured', { exact: true })).toBeVisible()
   await expect(editor.getByText('list-response-credential')).toHaveCount(0)
   await expect(editor.locator('input[type="password"]')).toHaveValue('')
+  await expect(editor.locator('input[type="password"]')).toHaveAttribute('autocomplete', 'new-password')
+  await expect(editor.locator('input[type="password"]')).toHaveAttribute('name', 'provider-api-key-replacement')
 
   await editor.getByLabel('Display name').fill('Edited Provider')
   await editor.getByLabel('Base URL').fill('https://edited.example/v1')

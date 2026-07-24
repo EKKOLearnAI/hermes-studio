@@ -215,6 +215,11 @@ async function loadModelsWithToken(oauth: string): Promise<CopilotModelMeta[]> {
   return models
 }
 
+/** Fetch a fresh catalog with an already-resolved OAuth token. */
+export async function fetchCopilotModelsWithOAuthToken(oauthToken: string): Promise<CopilotModelMeta[]> {
+  return loadModelsWithToken(oauthToken)
+}
+
 /**
  * 获取 GitHub Copilot 当前账号可用的 chat 模型列表（含 preview/disabled meta）。
  * - 缓存按 oauth token 隔离（profile 切换不会串

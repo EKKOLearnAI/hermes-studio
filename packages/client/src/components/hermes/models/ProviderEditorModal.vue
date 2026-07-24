@@ -55,6 +55,34 @@ const requestTimeoutSeconds = ref<number | null>(null)
 const staleTimeoutSeconds = ref<number | null>(null)
 const extraBodyText = ref('')
 
+const providerLabelInputProps = {
+  name: 'provider-display-name',
+  autocomplete: 'off',
+  spellcheck: false,
+  'data-form-type': 'other',
+}
+const providerBaseUrlInputProps = {
+  name: 'provider-base-url',
+  autocomplete: 'off',
+  spellcheck: false,
+  'data-form-type': 'other',
+}
+const providerModelInputProps = {
+  name: 'provider-preferred-model',
+  autocomplete: 'off',
+  spellcheck: false,
+  'data-form-type': 'other',
+}
+const providerCredentialInputProps = {
+  name: 'provider-api-key-replacement',
+  autocomplete: 'new-password',
+  autocapitalize: 'none',
+  spellcheck: false,
+  'data-form-type': 'other',
+  'data-1p-ignore': 'true',
+  'data-lpignore': 'true',
+}
+
 const API_MODE_OPTIONS = [
   { label: 'Chat Completions', value: 'chat_completions' },
   { label: 'Codex Responses', value: 'codex_responses' },
@@ -294,13 +322,18 @@ async function clearCredentialNow() {
 
         <label v-if="can('label')" class="field">
           <span>{{ t('models.providerDisplayName') }}</span>
-          <NInput v-model:value="label" maxlength="100" show-count />
+          <NInput v-model:value="label" :input-props="providerLabelInputProps" maxlength="100" show-count />
           <small>{{ t('models.providerIdStableHint') }}</small>
         </label>
 
         <label class="field">
           <span>{{ t('models.baseUrl') }}</span>
-          <NInput v-model:value="baseUrl" :disabled="!can('base_url')" placeholder="https://api.example.com/v1" />
+          <NInput
+            v-model:value="baseUrl"
+            :disabled="!can('base_url')"
+            :input-props="providerBaseUrlInputProps"
+            placeholder="https://api.example.com/v1"
+          />
         </label>
 
         <label v-if="can('api_mode')" class="field">
@@ -313,6 +346,7 @@ async function clearCredentialNow() {
           <NSelect
             v-model:value="preferredModel"
             :options="modelOptions"
+            :input-props="providerModelInputProps"
             filterable
             tag
             :placeholder="t('models.selectOrEnterModel')"
@@ -332,6 +366,7 @@ async function clearCredentialNow() {
             v-model:value="newApiKey"
             type="password"
             show-password-on="click"
+            :input-props="providerCredentialInputProps"
             :placeholder="detail.credential_configured ? t('models.leaveBlankKeepCredential') : t('models.enterCredential')"
           />
           <div class="credential-actions">
