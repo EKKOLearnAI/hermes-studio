@@ -1,6 +1,6 @@
 ---
 date: 2026-07-24
-pr: pending
+pr: 2203
 feature: Session-scoped chat abort state
 impact: Pausing one conversation no longer shows a pause state or disables stop controls in another conversation.
 ---
