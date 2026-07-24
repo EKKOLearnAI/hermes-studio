@@ -28,11 +28,12 @@ const themeOverrides = computed(() => getThemeOverrides(isDark.value, isComic.va
 const naiveTheme = computed(() => isDark.value ? darkTheme : null)
 
 const isLoginPage = computed(() => route.name === 'login')
+const isStandaloneChatPage = computed(() => route.meta?.standaloneChat === true)
 const usesPageSidebar = computed(() =>
   ['hermes.chat', 'hermes.session', 'hermes.history', 'hermes.historySession', 'hermes.globalAgent', 'hermes.globalAgentSession', 'hermes.groupChat', 'hermes.groupChatRoom', 'hermes.workflow'].includes(route.name as string),
 )
-const showAppSidebar = computed(() => !isLoginPage.value && !usesPageSidebar.value)
-const showMobileMenuButton = computed(() => !isLoginPage.value && (showAppSidebar.value || usesPageSidebar.value))
+const showAppSidebar = computed(() => !isLoginPage.value && !isStandaloneChatPage.value && !usesPageSidebar.value)
+const showMobileMenuButton = computed(() => !isLoginPage.value && !isStandaloneChatPage.value && (showAppSidebar.value || usesPageSidebar.value))
 
 const nodeVersionLow = computed(() => {
   const v = appStore.nodeVersion
@@ -43,13 +44,15 @@ const nodeVersionLow = computed(() => {
 const isDesktopShell = computed(() => desktopBridge()?.isDesktop === true)
 const desktopPlatform = computed(() => desktopBridge()?.platform || '')
 const isDesktopWindows = computed(() => isDesktopShell.value && desktopPlatform.value === 'win32')
+const isDesktopChatWindow = computed(() => desktopBridge()?.windowKind === 'chat')
+const showDesktopTitleBar = computed(() => isDesktopWindows.value && !isDesktopChatWindow.value)
 const desktopTitleBarLeft = computed(() => {
   if (isLoginPage.value) return 10
   if (showAppSidebar.value) return appStore.sidebarCollapsed ? 84 : 260
   return appStore.pageSidebarExpanded ? 260 : 10
 })
 const isDesktopPetRoute = computed(() => route.name === 'desktop.pet')
-const showWebPet = computed(() => !isLoginPage.value && !isDesktopShell.value && !isDesktopPetRoute.value)
+const showWebPet = computed(() => !isLoginPage.value && !isStandaloneChatPage.value && !isDesktopShell.value && !isDesktopPetRoute.value)
 const desktopPlatformClass = computed(() => desktopPlatform.value ? `desktop-platform-${desktopPlatform.value}` : '')
 const isDesktopWindowMaximized = ref(false)
 let stopWindowStateListener: (() => void) | undefined
@@ -75,7 +78,7 @@ watch(isLoginPage, (loginPage) => {
 
 onMounted(() => {
   const bridge = desktopBridge()
-  if (!bridge?.isDesktop || desktopPlatform.value !== 'win32') return
+  if (!bridge?.isDesktop || (desktopPlatform.value !== 'win32' && bridge.windowKind !== 'chat')) return
   bridge.getWindowState?.()
     .then(state => {
       isDesktopWindowMaximized.value = !!state.isMaximized
@@ -101,13 +104,13 @@ useKeyboard()
       <NDialogProvider>
         <NNotificationProvider>
           <router-view v-if="isDesktopPetRoute" />
-          <div v-else class="app-shell" :class="[desktopPlatformClass, { desktop: isDesktopShell, 'desktop-window-maximized': isDesktopWindowMaximized }]">
+          <div v-else class="app-shell" :class="[desktopPlatformClass, { desktop: isDesktopShell, 'desktop-chat-window': isDesktopChatWindow, 'desktop-window-maximized': isDesktopWindowMaximized }]">
             <DesktopTitleBar
-              v-if="isDesktopWindows"
-              :standalone="isLoginPage"
+              v-if="showDesktopTitleBar"
+              :standalone="isLoginPage || isDesktopChatWindow"
               :left-offset="desktopTitleBarLeft"
             />
-            <div v-if="nodeVersionLow" class="node-warning-bar">
+            <div v-if="nodeVersionLow && !isStandaloneChatPage" class="node-warning-bar">
               {{ t('sidebar.nodeVersionWarning', { version: appStore.nodeVersion }) }}
             </div>
             <div class="app-layout" :class="{ 'no-sidebar': isLoginPage || !showAppSidebar }">
@@ -122,9 +125,9 @@ useKeyboard()
             </div>
           </div>
           <WebPet v-if="showWebPet" />
-          <SessionSearchModal v-if="!isDesktopPetRoute && sessionSearchOpen" />
-          <DefaultCredentialPrompt v-if="!isDesktopPetRoute" />
-          <ProviderConfigurationPrompt v-if="!isDesktopPetRoute" />
+          <SessionSearchModal v-if="!isDesktopPetRoute && !isStandaloneChatPage && sessionSearchOpen" />
+          <DefaultCredentialPrompt v-if="!isDesktopPetRoute && !isStandaloneChatPage" />
+          <ProviderConfigurationPrompt v-if="!isDesktopPetRoute && !isStandaloneChatPage" />
         </NNotificationProvider>
       </NDialogProvider>
     </NMessageProvider>
@@ -269,6 +272,28 @@ useKeyboard()
   :deep(.workflow-view > .workflow-sidebar > .page-sidebar-top),
   :deep(.group-chat-panel > .room-sidebar > .sidebar-header) {
     padding-top: 32px;
+  }
+}
+
+.app-shell.desktop-chat-window {
+  :deep(.chat-panel--standalone > .chat-main) {
+    margin: 10px;
+  }
+}
+
+.app-shell.desktop-chat-window.desktop-platform-darwin,
+.app-shell.desktop-chat-window.desktop-platform-win32 {
+  &::before {
+    top: 0;
+    height: 46px;
+  }
+
+  .app-layout {
+    padding-top: 46px;
+  }
+
+  :deep(.chat-panel--standalone > .chat-main) {
+    margin-top: 0;
   }
 }
 

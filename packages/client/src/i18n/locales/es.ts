@@ -689,6 +689,7 @@ export default {
     monitorRoleAssistant: 'Asistente',
     copySessionLink: 'Copiar enlace de sesión',
     openSessionInNewTab: 'Abrir en una nueva pestaña',
+    openSessionInNewWindow: 'Abrir en una nueva ventana',
     sessionLinkCopied: 'Session link copied',
     copySessionId: 'Copiar ID de sesión',
     export: 'Exportar',

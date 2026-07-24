@@ -2,7 +2,10 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const routeMock = vi.hoisted(() => ({ name: 'hermes.chat' as string }))
+const routeMock = vi.hoisted(() => ({
+  name: 'hermes.chat' as string,
+  meta: {} as Record<string, unknown>,
+}))
 const appStoreMock = vi.hoisted(() => ({
   nodeVersion: '23.0.0',
   sidebarOpen: true,
@@ -83,6 +86,7 @@ type WindowWithDesktop = typeof window & {
   hermesDesktop?: {
     isDesktop?: boolean
     platform?: string
+    windowKind?: 'main' | 'pet' | 'chat'
     getWindowState?: () => Promise<{ isMaximized: boolean }>
     onWindowStateChange?: (callback: (state: { isMaximized: boolean }) => void) => () => void
   }
@@ -110,6 +114,7 @@ describe('App web pet mounting', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     routeMock.name = 'hermes.chat'
+    routeMock.meta = {}
     appStoreMock.sidebarCollapsed = false
     appStoreMock.pageSidebarExpanded = true
     delete (window as WindowWithDesktop).hermesDesktop
@@ -191,6 +196,23 @@ describe('App web pet mounting', () => {
 
     const wrapper = mountApp()
 
+    expect(wrapper.findComponent({ name: 'WebPet' }).exists()).toBe(false)
+  })
+
+  it('leaves chat window controls to native chrome without mounting the application sidebar', async () => {
+    routeMock.name = 'desktop.chat'
+    routeMock.meta = { standaloneChat: true }
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: { isDesktop: true, platform: 'darwin', windowKind: 'chat' },
+    })
+
+    const wrapper = mountApp()
+    await flushPromises()
+
+    expect(wrapper.find('.app-shell').classes()).toContain('desktop-chat-window')
+    expect(wrapper.findComponent({ name: 'DesktopTitleBar' }).exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'AppSidebar' }).exists()).toBe(false)
     expect(wrapper.findComponent({ name: 'WebPet' }).exists()).toBe(false)
   })
 })

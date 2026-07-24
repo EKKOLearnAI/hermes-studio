@@ -2,10 +2,15 @@ import { expect, test, type Page } from '@playwright/test'
 import { authenticate, mockChatSocket, mockHermesApi, TEST_ACCESS_KEY } from './fixtures'
 
 type DesktopPlatform = 'darwin' | 'linux' | 'win32'
+type DesktopWindowKind = 'main' | 'chat'
 
-async function installDesktopBridge(page: Page, platform: DesktopPlatform, withBrowser = false) {
-  await page.addInitScript(({ desktopPlatform, includeBrowser }) => {
-    const state = { actions: [] as string[], isMaximized: false }
+async function installDesktopBridge(page: Page, platform: DesktopPlatform, withBrowser = false, windowKind: DesktopWindowKind = 'main') {
+  await page.addInitScript(({ desktopPlatform, includeBrowser, desktopWindowKind }) => {
+    const state = {
+      actions: [] as string[],
+      isMaximized: false,
+      chatWindows: [] as Array<{ sessionId: string; profile?: string }>,
+    }
     ;(window as typeof window & { __PW_DESKTOP_WINDOW__?: typeof state }).__PW_DESKTOP_WINDOW__ = state
     const browserState = {
       available: true,
@@ -98,16 +103,20 @@ async function installDesktopBridge(page: Page, platform: DesktopPlatform, withB
       value: {
         isDesktop: true,
         platform: desktopPlatform,
+        windowKind: desktopWindowKind,
         getWindowState: async () => ({ isMaximized: state.isMaximized }),
         windowControl: async (action: string) => {
           state.actions.push(action)
           if (action === 'toggle-maximize') state.isMaximized = !state.isMaximized
           return { isMaximized: state.isMaximized }
         },
+        openChatWindow: async (sessionId: string, profile?: string) => {
+          state.chatWindows.push({ sessionId, profile })
+        },
         ...(browser ? { browser } : {}),
       },
     })
-  }, { desktopPlatform: platform, includeBrowser: withBrowser })
+  }, { desktopPlatform: platform, includeBrowser: withBrowser, desktopWindowKind: windowKind })
 }
 
 async function openDesktopJobs(page: Page, platform: DesktopPlatform) {
@@ -192,6 +201,87 @@ test('keeps chat gutters while placing New below macOS traffic lights', async ({
   await expect(newRoom).toBeVisible()
   expect((await groupSidebar.boundingBox())?.y).toBe(10)
   expect((await newRoom.boundingBox())?.y).toBeGreaterThanOrEqual(43)
+})
+
+test('renders a native-chrome desktop chat route with only messages and input', async ({ page }) => {
+  const session = {
+    id: 'desktop-chat-1',
+    title: 'Focused Desktop Chat',
+    source: 'cli',
+    model: 'test-model',
+    provider: 'test-provider',
+    profile: 'research',
+    started_at: 1_800_000_000,
+    ended_at: null,
+    last_active: 1_800_000_100,
+    message_count: 0,
+  }
+  await installDesktopBridge(page, 'darwin', false, 'chat')
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await page.addInitScript(() => {
+    ;(window as typeof window & { __PW_CHAT_SOCKET_RESUMES__?: Record<string, unknown> }).__PW_CHAT_SOCKET_RESUMES__ = {
+      'desktop-chat-1': {
+        session_id: 'desktop-chat-1',
+        messages: [],
+        isWorking: false,
+        messageLoadedCount: 0,
+        messageTotal: 0,
+      },
+    }
+  })
+  await mockChatSocket(page)
+  await mockHermesApi(page, { sessions: [session] })
+  await page.goto('/#/desktop-chat/desktop-chat-1?profile=research')
+
+  await expect(page.locator('.desktop-titlebar')).toHaveCount(0)
+  await expect.poll(() => topGutterDragRegion(page)).toEqual({ appRegion: 'drag', height: '46px' })
+  await expect(page.locator('.message-list-shell')).toBeVisible()
+  await expect(page.locator('.chat-input-area')).toBeVisible()
+  await expect(page.locator('.session-list')).toHaveCount(0)
+  await expect(page.locator('.chat-header')).toHaveCount(0)
+  await expect(page.locator('aside.sidebar')).toHaveCount(0)
+})
+
+test('routes the desktop session popup action to the native chat window bridge', async ({ page }) => {
+  const session = {
+    id: 'desktop-popup-1',
+    title: 'Popup Session',
+    source: 'cli',
+    model: 'test-model',
+    provider: 'test-provider',
+    profile: 'research',
+    started_at: 1_800_000_000,
+    ended_at: null,
+    last_active: 1_800_000_100,
+    message_count: 0,
+  }
+  await installDesktopBridge(page, 'darwin')
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await page.addInitScript(() => {
+    ;(window as typeof window & { __PW_CHAT_SOCKET_RESUMES__?: Record<string, unknown> }).__PW_CHAT_SOCKET_RESUMES__ = {
+      'desktop-popup-1': {
+        session_id: 'desktop-popup-1',
+        messages: [],
+        isWorking: false,
+        messageLoadedCount: 0,
+        messageTotal: 0,
+      },
+    }
+  })
+  await mockChatSocket(page)
+  await mockHermesApi(page, { sessions: [session] })
+  await page.goto('/#/hermes/chat')
+
+  await page.locator('.session-item').first().click({ button: 'right' })
+  await page.getByText('Open in new window', { exact: true }).click()
+
+  await expect.poll(() => page.evaluate(() => (
+    window as typeof window & {
+      __PW_DESKTOP_WINDOW__?: { chatWindows: Array<{ sessionId: string; profile?: string }> }
+    }
+  ).__PW_DESKTOP_WINDOW__?.chatWindows)).toEqual([
+    { sessionId: 'desktop-popup-1', profile: 'research' },
+  ])
 })
 
 test('keeps the larger top gutter on macOS workflow pages', async ({ page }) => {

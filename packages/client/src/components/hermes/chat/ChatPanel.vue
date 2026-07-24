@@ -55,8 +55,14 @@ import { isStoredSuperAdmin } from "@/api/client";
 import { useDefaultWorkspace } from "@/composables/useDefaultWorkspace";
 import { canScopedCodingAgentUseProvider, usesServerManagedProviderAuth } from "@/utils/codingAgentProviders";
 import { OPEN_SUBAGENT_STREAM_EVENT, type OpenSubagentStreamDetail } from "@/utils/hermes/subagent-stream";
-import { hasDesktopBrowserBridge } from "@/utils/desktop-bridge";
+import { desktopBridge, hasDesktopBrowserBridge } from "@/utils/desktop-bridge";
 import { OPEN_DESKTOP_BROWSER_PANEL_EVENT } from "@/utils/desktop-browser";
+
+const props = withDefaults(defineProps<{
+  standalone?: boolean;
+}>(), {
+  standalone: false,
+});
 
 const FilesPanel = defineAsyncComponent(async () => (await import('./FilesPanel.vue')).default);
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default);
@@ -89,6 +95,8 @@ const isChatDropActive = ref(false);
 const showToolPanel = ref(false);
 const activeToolPanel = ref<"files" | "terminal" | "browser">("files");
 const desktopBrowserAvailable = hasDesktopBrowserBridge();
+const desktopChatWindowAvailable = desktopBridge()?.isDesktop === true
+  && typeof desktopBridge()?.openChatWindow === "function";
 const selectedSubagent = ref<OpenSubagentStreamDetail | null>(null);
 const selectedSubagentStream = computed(() => {
   const selected = selectedSubagent.value;
@@ -118,11 +126,13 @@ const isBatchDeleting = ref(false);
 // where the session list covers the chat content ("auto-fixes after a
 // moment" — that was the race).
 const showSessions = ref(
-  typeof window === "undefined" ||
-    !window.matchMedia("(max-width: 768px)").matches,
+  !props.standalone && (
+    typeof window === "undefined" ||
+    !window.matchMedia("(max-width: 768px)").matches
+  )
 );
 const pageSidebarExpanded = computed(
-  () => currentMode.value === "chat" && showSessions.value,
+  () => !props.standalone && currentMode.value === "chat" && showSessions.value,
 );
 let mobileQuery: MediaQueryList | null = null;
 const isMobile = ref(false);
@@ -148,6 +158,11 @@ function sessionHref(sessionId: string) {
 
 function openSessionInNewTab(sessionId: string) {
   if (typeof window === "undefined") return;
+  const bridge = desktopBridge();
+  if (bridge?.isDesktop && bridge.openChatWindow) {
+    void bridge.openChatWindow(sessionId, sessionProfile(sessionId) || undefined);
+    return;
+  }
   window.open(sessionHref(sessionId), "_blank", "noopener,noreferrer");
 }
 
@@ -388,7 +403,7 @@ onMounted(() => {
   if (profilesStore.profiles.length === 0) {
     void profilesStore.fetchProfiles();
   }
-  void loadSessionCategories();
+  if (!props.standalone) void loadSessionCategories();
 });
 
 watch(
@@ -1374,7 +1389,12 @@ const contextMenuOptions = computed(() => {
       },
     ],
   })
-  options.push({ label: t("chat.openSessionInNewTab"), key: "open-link" })
+  options.push({
+    label: t(desktopChatWindowAvailable
+      ? "chat.openSessionInNewWindow"
+      : "chat.openSessionInNewTab"),
+    key: "open-link",
+  })
   options.push({ label: t("chat.copySessionLink"), key: "copy-link" })
   options.push({ label: t("chat.copySessionId"), key: "copy-id" })
   return options
@@ -1786,15 +1806,15 @@ async function handleSessionModelCustomSubmit() {
 </script>
 
 <template>
-  <div class="chat-panel">
+  <div class="chat-panel" :class="{ 'chat-panel--standalone': standalone }">
     <div
-      v-if="currentMode === 'chat'"
+      v-if="currentMode === 'chat' && !standalone"
       class="session-backdrop"
       :class="{ active: showSessions }"
       @click="showSessions = false"
     />
     <aside
-      v-if="currentMode === 'chat'"
+      v-if="currentMode === 'chat' && !standalone"
       class="session-list"
       :class="{ collapsed: !showSessions }"
     >
@@ -1952,7 +1972,9 @@ async function handleSessionModelCustomSubmit() {
             :selected="isSessionSelected(s)"
             :show-profile="true"
             :to="sessionHref(s.id)"
+            :intercept-modified-navigation="desktopChatWindowAvailable"
             @select="handleSessionClick(s.id)"
+            @open-new="openSessionInNewTab(s.id)"
             @contextmenu="handleContextMenu($event, s.id)"
             @delete="handleDeleteSession(s.id)"
             @toggle-select="toggleSessionSelection(s)"
@@ -1997,7 +2019,9 @@ async function handleSessionModelCustomSubmit() {
               :selected="isSessionSelected(s)"
               :show-profile="true"
               :to="sessionHref(s.id)"
+              :intercept-modified-navigation="desktopChatWindowAvailable"
               @select="handleSessionClick(s.id)"
+              @open-new="openSessionInNewTab(s.id)"
               @contextmenu="handleContextMenu($event, s.id)"
               @delete="handleDeleteSession(s.id)"
               @toggle-select="toggleSessionSelection(s)"
@@ -2490,7 +2514,7 @@ async function handleSessionModelCustomSubmit() {
       class="chat-main"
       :class="{ 'chat-main--sidebar-collapsed': currentMode !== 'chat' || !showSessions }"
     >
-      <header class="chat-header">
+      <header v-if="!standalone" class="chat-header">
         <div class="header-left">
           <NButton
             v-if="currentMode === 'chat'"

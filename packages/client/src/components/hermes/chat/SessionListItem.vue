@@ -19,6 +19,7 @@ const props = withDefaults(defineProps<{
   selected?: boolean
   showProfile?: boolean
   to?: string
+  interceptModifiedNavigation?: boolean
 }>(), {
   showProfile: true,
 })
@@ -28,6 +29,7 @@ const emit = defineEmits<{
   contextmenu: [event: MouseEvent]
   delete: []
   'toggle-select': []
+  'open-new': []
 }>()
 
 const { t } = useI18n()
@@ -97,7 +99,13 @@ function onClick(event?: MouseEvent) {
     event?.preventDefault()
     return
   }
-  if (isModifiedNavigation(event)) return
+  if (isModifiedNavigation(event)) {
+    if (props.interceptModifiedNavigation) {
+      event?.preventDefault()
+      emit('open-new')
+    }
+    return
+  }
   if (props.to && !props.selectable) event?.preventDefault()
   emit('select')
 }

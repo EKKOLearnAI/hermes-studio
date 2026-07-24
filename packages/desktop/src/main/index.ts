@@ -56,6 +56,7 @@ type DesktopWindowBounds = { x: number; y: number; width: number; height: number
 let mainWindow: BrowserWindow | null = null
 let petWindow: BrowserWindow | null = null
 let petWindowLoadPromise: Promise<void> | null = null
+const chatWindows = new Map<string, BrowserWindow>()
 let serverUrl: string | null = null
 let tray: Tray | null = null
 let isQuitting = false
@@ -194,6 +195,11 @@ function petRouteUrl(): string | null {
   return webUiHashUrl('/desktop-pet')
 }
 
+function chatRouteUrl(sessionId: string, profile?: string): string | null {
+  const query = profile ? `?profile=${encodeURIComponent(profile)}` : ''
+  return webUiHashUrl(`/desktop-chat/${encodeURIComponent(sessionId)}${query}`)
+}
+
 function ensurePetWindow(): BrowserWindow {
   if (petWindow && !petWindow.isDestroyed()) return petWindow
 
@@ -260,28 +266,28 @@ async function loadPetWindowRoute(): Promise<void> {
   await petWindowLoadPromise
 }
 
-function windowState() {
+function windowState(target: BrowserWindow | null = mainWindow) {
   return {
-    isMaximized: !!mainWindow?.isMaximized(),
+    isMaximized: !!target && !target.isDestroyed() && target.isMaximized(),
   }
 }
 
-function notifyWindowStateChanged() {
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  mainWindow.webContents.send(WINDOW_STATE_CHANGE_CHANNEL, windowState())
+function notifyWindowStateChanged(target: BrowserWindow | null) {
+  if (!target || target.isDestroyed()) return
+  target.webContents.send(WINDOW_STATE_CHANGE_CHANNEL, windowState(target))
 }
 
-function handleWindowControl(action: WindowControlAction) {
-  if (!mainWindow || mainWindow.isDestroyed()) return windowState()
+function handleWindowControl(target: BrowserWindow | null, action: WindowControlAction) {
+  if (!target || target.isDestroyed()) return windowState(target)
   if (action === 'minimize') {
-    mainWindow.minimize()
+    target.minimize()
   } else if (action === 'toggle-maximize') {
-    if (mainWindow.isMaximized()) mainWindow.unmaximize()
-    else mainWindow.maximize()
+    if (target.isMaximized()) target.unmaximize()
+    else target.maximize()
   } else if (action === 'close') {
-    mainWindow.close()
+    target.close()
   }
-  return windowState()
+  return windowState(target)
 }
 
 function hasQuitRequest(data: unknown): boolean {
@@ -498,9 +504,9 @@ async function createWindow(): Promise<void> {
 
   mainWindow.on('show', updateTrayMenu)
   mainWindow.on('hide', updateTrayMenu)
-  mainWindow.on('maximize', notifyWindowStateChanged)
-  mainWindow.on('unmaximize', notifyWindowStateChanged)
-  mainWindow.on('restore', notifyWindowStateChanged)
+  mainWindow.on('maximize', () => notifyWindowStateChanged(mainWindow))
+  mainWindow.on('unmaximize', () => notifyWindowStateChanged(mainWindow))
+  mainWindow.on('restore', () => notifyWindowStateChanged(mainWindow))
 
   installSelectionContextMenu(mainWindow)
 
@@ -522,6 +528,84 @@ async function createWindow(): Promise<void> {
     await mainWindow.loadURL(splashHtml(t('runtime.checking')))
   }
   updateTrayMenu()
+}
+
+function normalizeChatWindowValue(value: unknown, maxLength: number): string | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  if (!normalized || normalized.length > maxLength || /[\u0000-\u001f\u007f]/.test(normalized)) return null
+  return normalized
+}
+
+async function openChatWindow(sessionIdInput: unknown, profileInput?: unknown): Promise<void> {
+  const sessionId = normalizeChatWindowValue(sessionIdInput, 512)
+  if (!sessionId) throw new Error('Invalid chat session ID')
+  const profile = profileInput == null ? undefined : normalizeChatWindowValue(profileInput, 200) || undefined
+  const windowKey = `${profile || ''}\u0000${sessionId}`
+
+  const existing = chatWindows.get(windowKey)
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore()
+    existing.show()
+    existing.focus()
+    return
+  }
+
+  const url = chatRouteUrl(sessionId, profile)
+  if (!url) throw new Error('Desktop Web UI is not ready')
+
+  const chatWindow = new BrowserWindow({
+    width: 620,
+    height: 760,
+    minWidth: 620,
+    minHeight: 480,
+    title: 'Hermes Studio',
+    backgroundColor: '#1a1a1a',
+    autoHideMenuBar: true,
+    show: false,
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 20, y: 16 },
+        }
+      : process.platform === 'win32'
+        ? {
+            titleBarStyle: 'hidden' as const,
+            titleBarOverlay: { height: 46 },
+          }
+        : {}),
+    ...(process.platform === 'linux' ? { icon: desktopIcon() } : {}),
+    webPreferences: {
+      preload: join(__dirname, '..', 'preload', 'index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      additionalArguments: ['--hermes-window-kind=chat'],
+    },
+  })
+  chatWindows.set(windowKey, chatWindow)
+
+  chatWindow.once('ready-to-show', () => {
+    if (chatWindow.isDestroyed()) return
+    chatWindow.show()
+    chatWindow.focus()
+  })
+  chatWindow.on('maximize', () => notifyWindowStateChanged(chatWindow))
+  chatWindow.on('unmaximize', () => notifyWindowStateChanged(chatWindow))
+  chatWindow.on('restore', () => notifyWindowStateChanged(chatWindow))
+  chatWindow.on('closed', () => {
+    if (chatWindows.get(windowKey) === chatWindow) chatWindows.delete(windowKey)
+  })
+
+  installSelectionContextMenu(chatWindow)
+  chatWindow.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
+    if (/^(https?:|mailto:)/i.test(targetUrl)) {
+      shell.openExternal(targetUrl).catch(() => undefined)
+    }
+    return { action: 'deny' }
+  })
+
+  await chatWindow.loadURL(url)
 }
 
 async function initializeDesktopBrowser(): Promise<void> {
@@ -558,15 +642,19 @@ function installMicrophonePermissionHandler() {
     const isMainRenderer = !!mainWindow
       && !mainWindow.isDestroyed()
       && webContents === mainWindow.webContents
+    const isChatRenderer = [...chatWindows.values()].some(window => (
+      !window.isDestroyed() && webContents === window.webContents
+    ))
+    const isTrustedRenderer = isMainRenderer || isChatRenderer
     if (permission !== 'media') {
-      callback(isMainRenderer)
+      callback(isTrustedRenderer)
       return
     }
 
     const mediaTypes = ('mediaTypes' in details ? details.mediaTypes : undefined) ?? []
     const requestsAudio = mediaTypes.length ? mediaTypes.includes('audio') : true
 
-    if (!isMainRenderer || !requestsAudio) {
+    if (!isTrustedRenderer || !requestsAudio) {
       callback(false)
       return
     }
@@ -836,6 +924,12 @@ async function bootstrap(source?: RuntimeDownloadSource) {
 }
 
 ipcMain.handle('hermes-desktop:get-token', () => getToken())
+ipcMain.handle('hermes-desktop:open-chat-window', (event, sessionId?: unknown, profile?: unknown) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+    throw new Error('Chat windows can only be opened from the main window')
+  }
+  return openChatWindow(sessionId, profile)
+})
 
 function browserForEvent(event: IpcMainInvokeEvent): BrowserManager {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) throw new Error('Desktop browser IPC is only available to the main window')
@@ -950,10 +1044,13 @@ ipcMain.handle('hermes-desktop:select-runtime-directory', async (_event, default
     : await dialog.showOpenDialog(options)
   return result.canceled ? null : result.filePaths[0] || null
 })
-ipcMain.handle('hermes-desktop:get-window-state', () => windowState())
-ipcMain.handle('hermes-desktop:window-control', (_event, action?: unknown) => {
-  if (action !== 'minimize' && action !== 'toggle-maximize' && action !== 'close') return windowState()
-  return handleWindowControl(action)
+ipcMain.handle('hermes-desktop:get-window-state', event => {
+  return windowState(BrowserWindow.fromWebContents(event.sender))
+})
+ipcMain.handle('hermes-desktop:window-control', (event, action?: unknown) => {
+  const target = BrowserWindow.fromWebContents(event.sender)
+  if (action !== 'minimize' && action !== 'toggle-maximize' && action !== 'close') return windowState(target)
+  return handleWindowControl(target, action)
 })
 ipcMain.handle('hermes-desktop:get-pet-window-state', () => petWindowState())
 ipcMain.handle('hermes-desktop:set-pet-window-bounds', (_event, bounds?: unknown) => {

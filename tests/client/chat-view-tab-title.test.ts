@@ -10,13 +10,18 @@ import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSettingsStore } from '@/stores/hermes/settings'
 
 vi.mock('@/components/hermes/chat/ChatPanel.vue', () => ({
-  default: { template: '<div data-testid="chat-panel" />' },
+  default: {
+    name: 'ChatPanel',
+    props: { standalone: Boolean },
+    template: '<div data-testid="chat-panel" />',
+  },
 }))
 
 const mockRoute = {
-  name: 'hermes.session',
-  params: {},
-  query: {},
+  name: 'hermes.session' as string,
+  params: {} as Record<string, string>,
+  query: {} as Record<string, string>,
+  meta: {} as Record<string, unknown>,
 }
 
 vi.mock('vue-router', () => ({
@@ -81,6 +86,10 @@ describe('ChatView tab title', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     document.title = 'Hermes Studio'
+    mockRoute.name = 'hermes.session'
+    mockRoute.params = {}
+    mockRoute.query = {}
+    mockRoute.meta = {}
     setActivePinia(createPinia())
 
     const appStore = useAppStore()
@@ -117,6 +126,22 @@ describe('ChatView tab title', () => {
     const wrapper = mount(ChatView)
 
     expect(document.title).toBe('Hermes Studio')
+    wrapper.unmount()
+  })
+
+  it('renders the desktop chat route in standalone mode without forking chat logic', () => {
+    mockRoute.name = 'desktop.chat'
+    mockRoute.params = { sessionId: 'session-1' }
+    mockRoute.meta = { standaloneChat: true }
+
+    const chatStore = useChatStore()
+    chatStore.activeSession = makeSession('Desktop Chat')
+
+    const wrapper = mount(ChatView)
+
+    expect(wrapper.getComponent({ name: 'ChatPanel' }).props('standalone')).toBe(true)
+    expect(wrapper.get('.chat-view').classes()).toContain('chat-view--standalone')
+    expect(document.title).toBe('Desktop Chat')
     wrapper.unmount()
   })
 })

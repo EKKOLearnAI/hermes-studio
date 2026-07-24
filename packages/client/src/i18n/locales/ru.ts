@@ -634,6 +634,7 @@ export default {
     monitorRoleUser: 'Пользователь',
     monitorRoleAssistant: 'Ассистент',
     copySessionLink: 'Копировать ссылку на сеанс',
+    openSessionInNewWindow: 'Открыть в новом окне',
     copySessionId: 'Копировать ID сеанса',
     export: 'Экспорт',
     editConfig: 'Редактировать конфигурацию',

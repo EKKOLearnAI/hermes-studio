@@ -689,6 +689,7 @@ export default {
     monitorRoleAssistant: 'Assistent',
     copySessionLink: 'Sitzungslink kopieren',
     openSessionInNewTab: 'In neuem Tab öffnen',
+    openSessionInNewWindow: 'In neuem Fenster öffnen',
     sessionLinkCopied: 'Session link copied',
     copySessionId: 'Sitzungs-ID kopieren',
     export: 'Exportieren',

@@ -133,6 +133,30 @@ describe('SessionListItem', () => {
     link.element.addEventListener('click', event => event.preventDefault())
     await link.trigger('click', { ctrlKey: true })
     expect(wrapper.emitted('select')).toBeUndefined()
+    expect(wrapper.emitted('open-new')).toBeUndefined()
+  })
+
+  it('routes modified clicks through the desktop window handler when requested', async () => {
+    const wrapper = mount(SessionListItem, {
+      props: {
+        session,
+        active: false,
+        pinned: false,
+        canDelete: true,
+        to: '/session/s1',
+        interceptModifiedNavigation: true,
+      },
+      global: {
+        stubs: {
+          ProfileAvatar: true,
+        },
+      },
+    })
+
+    await wrapper.get('a.session-item').trigger('click', { ctrlKey: true })
+
+    expect(wrapper.emitted('open-new')).toHaveLength(1)
+    expect(wrapper.emitted('select')).toBeUndefined()
   })
 
   it('renders the Hermes logo for Hermes sessions', () => {

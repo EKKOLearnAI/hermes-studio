@@ -689,6 +689,7 @@ export default {
     monitorRoleAssistant: 'アシスタント',
     copySessionLink: 'セッションリンクをコピー',
     openSessionInNewTab: '新しいタブで開く',
+    openSessionInNewWindow: '新しいウィンドウで開く',
     sessionLinkCopied: 'Session link copied',
     copySessionId: 'セッション ID をコピー',
     export: 'エクスポート',

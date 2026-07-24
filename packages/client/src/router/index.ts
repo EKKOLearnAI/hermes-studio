@@ -28,6 +28,12 @@ const router = createRouter({
       component: () => import('@/views/hermes/ChatView.vue'),
     },
     {
+      path: '/desktop-chat/:sessionId',
+      name: 'desktop.chat',
+      component: () => import('@/views/hermes/ChatView.vue'),
+      meta: { standaloneChat: true },
+    },
+    {
       path: '/hermes/history',
       name: 'hermes.history',
       component: () => import('@/views/hermes/HistoryView.vue'),
