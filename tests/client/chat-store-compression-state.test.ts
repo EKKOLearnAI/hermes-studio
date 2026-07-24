@@ -8,6 +8,7 @@ const chatApi = vi.hoisted(() => ({
   resumeSession: vi.fn(),
   registerSessionHandlers: vi.fn(),
   unregisterSessionHandlers: vi.fn(),
+  socketEmit: vi.fn(),
 }))
 
 vi.mock('@/api/hermes/chat', () => ({
@@ -15,7 +16,7 @@ vi.mock('@/api/hermes/chat', () => ({
   resumeSession: chatApi.resumeSession,
   registerSessionHandlers: chatApi.registerSessionHandlers,
   unregisterSessionHandlers: chatApi.unregisterSessionHandlers,
-  getChatRunSocket: vi.fn(() => ({ emit: vi.fn() })),
+  getChatRunSocket: vi.fn(() => ({ emit: chatApi.socketEmit })),
   respondToolApproval: vi.fn(),
   respondClarify: vi.fn(),
   onPeerUserMessage: vi.fn(() => vi.fn()),
@@ -119,6 +120,61 @@ describe('chat store compression state', () => {
       messageCount: 6,
       beforeTokens: 1234,
     }))
+  })
+
+  it('keeps abort lifecycle and stop handling scoped to each session', async () => {
+    chatApi.resumeSession.mockImplementation((sessionId: string, onResumed: (data: any) => void) => {
+      onResumed({
+        session_id: sessionId,
+        messages: [],
+        isWorking: true,
+        events: [],
+      })
+      return {} as any
+    })
+
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1'), makeSession('session-2')]
+
+    await store.switchSession('session-1')
+    const session1Handlers = chatApi.registerSessionHandlers.mock.calls.find(call => call[0] === 'session-1')?.[1]
+    expect(session1Handlers).toBeTruthy()
+
+    await store.switchSession('session-2')
+    const session2Handlers = chatApi.registerSessionHandlers.mock.calls.find(call => call[0] === 'session-2')?.[1]
+    expect(session2Handlers).toBeTruthy()
+
+    session1Handlers.onAbortStarted({
+      event: 'abort.started',
+      session_id: 'session-1',
+    })
+
+    expect(store.activeSessionId).toBe('session-2')
+    expect(store.abortState).toBeNull()
+    expect(store.isAborting).toBe(false)
+
+    store.stopStreaming()
+
+    expect(chatApi.socketEmit).toHaveBeenCalledWith('abort', { session_id: 'session-2' })
+    expect(store.abortState).toEqual(expect.objectContaining({ aborting: true }))
+
+    session2Handlers.onRunStarted({
+      event: 'run.started',
+      session_id: 'session-2',
+    })
+    expect(store.abortState).toBeNull()
+
+    await store.switchSession('session-1')
+    expect(store.abortState).toEqual(expect.objectContaining({ aborting: true }))
+    expect(store.isAborting).toBe(true)
+
+    session1Handlers.onAbortCompleted({
+      event: 'abort.completed',
+      session_id: 'session-1',
+      synced: true,
+    })
+    expect(store.abortState).toBeNull()
+    expect(store.isAborting).toBe(false)
   })
 
   it('does not create a duplicate placeholder card for delegation lifecycle updates', async () => {

@@ -412,6 +412,14 @@ interface CompressionState {
   error?: string
 }
 
+interface AbortState {
+  aborting: boolean
+  synced: boolean | null
+  timedOut?: boolean
+  message?: string
+  error?: string
+}
+
 function uid(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
@@ -1135,6 +1143,7 @@ export const useChatStore = defineStore('chat', () => {
     serverWorking.value = new Set()
     pendingForkCommands.value = new Set()
     workspaceRunChangesBySession.value = new Map()
+    abortStates.value = new Map()
     sessionsLoaded.value = false
     clearActiveSession()
   }
@@ -1155,18 +1164,26 @@ export const useChatStore = defineStore('chat', () => {
     compressionStates.value = next
   }
 
-  const abortState = ref<{
-    aborting: boolean
-    synced: boolean | null
-    timedOut?: boolean
-    message?: string
-    error?: string
-  } | null>(null)
-  const isAborting = computed(() => abortState.value?.aborting === true)
+  // Abort state is scoped per session because background sockets remain active
+  // while another conversation is selected.
+  const abortStates = ref<Map<string, AbortState>>(new Map())
 
-  function setAbortState(state: typeof abortState.value) {
-    abortState.value = state
+  function setAbortState(sessionId: string | null | undefined, state: AbortState | null) {
+    if (!sessionId) return
+    const next = new Map(abortStates.value)
+    if (state) next.set(sessionId, state)
+    else next.delete(sessionId)
+    abortStates.value = next
   }
+
+  const abortState = computed<AbortState | null>({
+    get: () => {
+      const sid = activeSessionId.value
+      return sid ? abortStates.value.get(sid) || null : null
+    },
+    set: state => setAbortState(activeSessionId.value, state),
+  })
+  const isAborting = computed(() => abortState.value?.aborting === true)
 
   const activeSession = ref<Session | null>(null)
   const messages = computed<Message[]>(() => activeSession.value?.messages || [])
@@ -1224,7 +1241,7 @@ export const useChatStore = defineStore('chat', () => {
     activeSessionId.value = null
     activeSession.value = null
     focusMessageId.value = null
-    setAbortState(null)
+    setAbortState(sid, null)
     setCompressionState(sid, null)
     removeItem(storageKey())
   }
@@ -1664,9 +1681,9 @@ export const useChatStore = defineStore('chat', () => {
             replaceQueuedUserMessages(sessionId, [])
           }
           if ((data as any).isAborting) {
-            setAbortState({ aborting: true, synced: null })
+            setAbortState(sessionId, { aborting: true, synced: null })
           } else if (!data.isWorking) {
-            setAbortState(null)
+            setAbortState(sessionId, null)
           }
           if (!data.isWorking) setCompressionState(sessionId, null)
           if (data.inputTokens != null) target.inputTokens = data.inputTokens
@@ -1721,11 +1738,11 @@ export const useChatStore = defineStore('chat', () => {
                 })
                 if (e.contextTokens != null) target.contextTokens = e.contextTokens
               } else if (e.event === 'abort.started') {
-                setAbortState({ aborting: true, synced: null })
+                setAbortState(sessionId, { aborting: true, synced: null })
               } else if (e.event === 'abort.timeout') {
-                setAbortState({ aborting: true, synced: false, timedOut: true, message: (e as any).message })
+                setAbortState(sessionId, { aborting: true, synced: false, timedOut: true, message: (e as any).message })
               } else if (e.event === 'abort.completed') {
-                setAbortState({ aborting: false, synced: e.synced ?? false })
+                setAbortState(sessionId, { aborting: false, synced: e.synced ?? false })
                 settleInterruptedSubagents(sessionId)
               } else if (e.event === 'approval.requested') {
                 setPendingApproval({ ...e, session_id: sessionId } as RunEvent)
@@ -1943,6 +1960,7 @@ export const useChatStore = defineStore('chat', () => {
     if (!ok) return false
     sessions.value = sessions.value.filter(s => s.id !== sessionId)
     clearMessageReference(sessionId)
+    setAbortState(sessionId, null)
     if (activeSessionId.value === sessionId) {
       if (sessions.value.length > 0) {
         await switchSession(sessions.value[0].id)
@@ -1960,6 +1978,7 @@ export const useChatStore = defineStore('chat', () => {
     if (!ok) return false
     sessions.value = sessions.value.filter(s => s.id !== sessionId)
     clearMessageReference(sessionId)
+    setAbortState(sessionId, null)
     if (completedUnreadSessions.value.has(sessionId)) {
       const next = new Set(completedUnreadSessions.value)
       next.delete(sessionId)
@@ -2316,7 +2335,7 @@ export const useChatStore = defineStore('chat', () => {
       queueLengths.value.delete(sid)
       queuedUserMessages.value.delete(sid)
       clearMessageReference(sid)
-      setAbortState(null)
+      setAbortState(sid, null)
       const msgs = getSessionMsgs(sid)
       msgs.forEach(m => {
         if (m.isStreaming) updateMessage(sid, m.id, { isStreaming: false })
@@ -3004,9 +3023,9 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         if (data.isAborting) {
-          setAbortState({ aborting: true, synced: null })
+          setAbortState(sid, { aborting: true, synced: null })
         } else if (!data.isWorking) {
-          setAbortState(null)
+          setAbortState(sid, null)
         }
         if (!data.isWorking) setCompressionState(sid, null)
 
@@ -3085,13 +3104,13 @@ export const useChatStore = defineStore('chat', () => {
                 break
               }
               case 'abort.started':
-                setAbortState({ aborting: true, synced: null })
+                setAbortState(sid, { aborting: true, synced: null })
                 break
               case 'abort.timeout':
-                setAbortState({ aborting: true, synced: false, timedOut: true, message: (e as any).message })
+                setAbortState(sid, { aborting: true, synced: false, timedOut: true, message: (e as any).message })
                 break
               case 'abort.completed':
-                setAbortState({ aborting: false, synced: (e as any).synced ?? false })
+                setAbortState(sid, { aborting: false, synced: (e as any).synced ?? false })
                 settleInterruptedSubagents(sid)
                 break
               case 'approval.requested':
@@ -3138,7 +3157,7 @@ export const useChatStore = defineStore('chat', () => {
               clearSessionCompletedUnread(sid)
               serverWorking.value.add(sid)
               clearAgentEventMessages(sid)
-              setAbortState(null)
+              setAbortState(sid, null)
               setCompressionState(sid, null)
               runProducedAssistantText = false
               runProducedAssistantContent = false
@@ -3213,22 +3232,22 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'abort.started': {
-              setAbortState({ aborting: true, synced: null })
+              setAbortState(sid, { aborting: true, synced: null })
               break
             }
 
             case 'abort.timeout': {
-              setAbortState({ aborting: true, synced: false, timedOut: true, message: (evt as any).message })
+              setAbortState(sid, { aborting: true, synced: false, timedOut: true, message: (evt as any).message })
               break
             }
 
             case 'abort.completed': {
-              setAbortState({ aborting: false, synced: (evt as any).synced ?? false })
+              setAbortState(sid, { aborting: false, synced: (evt as any).synced ?? false })
               settleInterruptedSubagents(sid)
               clearPendingInteractions(sid)
               if ((evt as any).queue_length > 0) {
                 queueLengths.value.set(sid, (evt as any).queue_length)
-                setAbortState(null)
+                setAbortState(sid, null)
                 break
               }
               const msgs = getSessionMsgs(sid)
@@ -3242,7 +3261,7 @@ export const useChatStore = defineStore('chat', () => {
                 }
               })
               cleanup()
-              setAbortState(null)
+              setAbortState(sid, null)
               break
             }
 
@@ -3833,7 +3852,7 @@ export const useChatStore = defineStore('chat', () => {
           serverWorking.value.add(sid)
           ensureAbortHandle()
           clearAgentEventMessages(sid)
-          setAbortState(null)
+          setAbortState(sid, null)
           setCompressionState(sid, null)
           runProducedAssistantText = false
           runProducedAssistantContent = false
@@ -3882,22 +3901,22 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'abort.started': {
-          setAbortState({ aborting: true, synced: null })
+          setAbortState(sid, { aborting: true, synced: null })
           break
         }
 
         case 'abort.timeout': {
-          setAbortState({ aborting: true, synced: false, timedOut: true, message: (evt as any).message })
+          setAbortState(sid, { aborting: true, synced: false, timedOut: true, message: (evt as any).message })
           break
         }
 
         case 'abort.completed': {
-          setAbortState({ aborting: false, synced: (evt as any).synced ?? false })
+          setAbortState(sid, { aborting: false, synced: (evt as any).synced ?? false })
           settleInterruptedSubagents(sid)
           clearPendingInteractions(sid)
           if ((evt as any).queue_length > 0) {
             queueLengths.value.set(sid, (evt as any).queue_length)
-            setAbortState(null)
+            setAbortState(sid, null)
             break
           }
           const msgs = getSessionMsgs(sid)
@@ -3911,7 +3930,7 @@ export const useChatStore = defineStore('chat', () => {
             }
           })
           cleanup()
-          setAbortState(null)
+          setAbortState(sid, null)
           break
         }
 
@@ -4430,7 +4449,7 @@ export const useChatStore = defineStore('chat', () => {
     clearPendingInteractions(sid)
     const ctrl = streamStates.value.get(sid)
     if (ctrl) {
-      setAbortState({ aborting: true, synced: null })
+      setAbortState(sid, { aborting: true, synced: null })
       ctrl.abort()
       const msgs = getSessionMsgs(sid)
       const lastMsg = msgs[msgs.length - 1]
@@ -4440,7 +4459,7 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
     if (serverWorking.value.has(sid)) {
-      setAbortState({ aborting: true, synced: null })
+      setAbortState(sid, { aborting: true, synced: null })
       getChatRunSocket(runtimeTransport())?.emit('abort', { session_id: sid })
       const msgs = getSessionMsgs(sid)
       const lastMsg = msgs[msgs.length - 1]
@@ -4469,9 +4488,9 @@ export const useChatStore = defineStore('chat', () => {
               serverWorking.value.delete(sid)
             }
             if (data.isAborting) {
-              setAbortState({ aborting: true, synced: null })
+              setAbortState(sid, { aborting: true, synced: null })
             } else if (!data.isWorking) {
-              setAbortState(null)
+              setAbortState(sid, null)
             }
             if (!data.isWorking) setCompressionState(sid, null)
             if (data.messages?.length && activeSession.value) {
