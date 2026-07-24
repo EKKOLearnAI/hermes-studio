@@ -142,6 +142,18 @@ const JOURNEY_DISTINCT_LOCALIZED_KEYS = [
   'journey.nodeKinds',
 ]
 
+const PROVIDER_MODEL_REFRESH_LOCALIZED_KEYS = [
+  'models.refreshModels',
+  'models.restoreModels',
+  'models.refreshModelsConfirmTitle',
+  'models.refreshModelsConfirmContent',
+  'models.refreshModelsConfirmAction',
+  'models.refreshModelsSuccess',
+  'models.refreshModelsFailed',
+  'models.restoreModelsSuccess',
+  'models.restoreModelsFailed',
+]
+
 const PLATFORM_SETTINGS_LOCALE_SPECIFIC_LOCALIZED_KEYS: Record<string, string[]> = {
   de: ['platform.qqAppId', 'platform.qqAppSecret'],
   ja: ['platform.homeserver', 'platform.accountId'],
@@ -309,6 +321,20 @@ describe('i18n locale coverage', () => {
       if (locale === 'en') return []
 
       return JOURNEY_DISTINCT_LOCALIZED_KEYS.flatMap((key) => {
+        const localeValue = getPath(localeMessages, key)
+        if (typeof localeValue === 'undefined') return [`${locale}: ${key} missing`]
+        return localeValue === getPath(en, key) ? [`${locale}: ${key}`] : []
+      })
+    })
+
+    expect(untranslated).toEqual([])
+  })
+
+  it('localizes provider model refresh copy in every raw non-English locale', () => {
+    const untranslated = Object.entries(rawMessages).flatMap(([locale, localeMessages]) => {
+      if (locale === 'en') return []
+
+      return PROVIDER_MODEL_REFRESH_LOCALIZED_KEYS.flatMap((key) => {
         const localeValue = getPath(localeMessages, key)
         if (typeof localeValue === 'undefined') return [`${locale}: ${key} missing`]
         return localeValue === getPath(en, key) ? [`${locale}: ${key}`] : []

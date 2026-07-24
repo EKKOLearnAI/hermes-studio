@@ -1512,7 +1512,6 @@ export default {
     refreshModelCacheLoading: '正在刷新模型缓存...',
     refreshModelCacheSuccess: '模型缓存已刷新',
     refreshModelCacheFailed: '刷新模型缓存失败',
-    refreshPerProviderHint: '请在每个 Provider 卡片上使用“刷新模型”',
     refreshModels: '刷新模型',
     restoreModels: '恢复上一份列表',
     refreshModelsConfirmTitle: '确认更新模型列表',

@@ -1512,7 +1512,6 @@ export default {
     refreshModelCacheLoading: 'Refreshing model cache...',
     refreshModelCacheSuccess: 'Model cache refreshed',
     refreshModelCacheFailed: 'Failed to refresh model cache',
-    refreshPerProviderHint: 'Use Refresh models on each provider card',
     refreshModels: 'Refresh models',
     restoreModels: 'Restore previous models',
     refreshModelsConfirmTitle: 'Confirm model list changes',

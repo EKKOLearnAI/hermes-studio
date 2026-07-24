@@ -266,10 +266,10 @@ async function handleRefreshModels(confirm = false) {
         unavailable: result.unavailable_models.length,
       }))
     } else {
-      message.error(result.message || t('models.refreshModelsFailed'))
+      message.error(t('models.refreshModelsFailed'))
     }
-  } catch (e: any) {
-    message.error(e?.message || t('models.refreshModelsFailed'))
+  } catch {
+    message.error(t('models.refreshModelsFailed'))
   } finally {
     refreshingModels.value = false
   }
@@ -282,10 +282,10 @@ async function handleRestoreModels() {
     if (result.applied) {
       message.success(t('models.restoreModelsSuccess', { count: result.models.length }))
     } else {
-      message.error(result.message || t('models.restoreModelsFailed'))
+      message.error(t('models.restoreModelsFailed'))
     }
-  } catch (e: any) {
-    message.error(e?.message || t('models.restoreModelsFailed'))
+  } catch {
+    message.error(t('models.restoreModelsFailed'))
   } finally {
     restoringModels.value = false
   }
@@ -370,7 +370,7 @@ async function handleRestoreModels() {
         size="tiny"
         quaternary
         :loading="refreshingModels"
-        :title="provider.model_refresh_reason || t('models.refreshModels')"
+        :title="t('models.refreshModels')"
         @click="handleRefreshModels(false)"
       >
         {{ t('models.refreshModels') }}
