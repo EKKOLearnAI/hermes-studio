@@ -24,6 +24,7 @@ import { t } from './desktop-i18n'
 import { resetDesktopDefaultLogin } from './desktop-login-reset'
 import { installHermesStudioCliShim, installHermesStudioMcpShim } from './cli-shim'
 import { parseHermesCliArgs, runBundledHermesCli } from './hermes-cli'
+import { installSelectionContextMenu } from './selection-context-menu'
 import {
   ensureDesktopRuntime,
   isDesktopRuntimeReady,
@@ -500,6 +501,8 @@ async function createWindow(): Promise<void> {
   mainWindow.on('maximize', notifyWindowStateChanged)
   mainWindow.on('unmaximize', notifyWindowStateChanged)
   mainWindow.on('restore', notifyWindowStateChanged)
+
+  installSelectionContextMenu(mainWindow)
 
   // External links → system browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
