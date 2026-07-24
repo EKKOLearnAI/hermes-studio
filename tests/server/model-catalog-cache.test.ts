@@ -289,6 +289,49 @@ describe('model catalog cache', () => {
     })
   })
 
+  it('clears a stale profile catalog after a successful global refresh', async () => {
+    mockListProfileNamesFromDisk.mockReturnValue(['default'])
+    mockFetchProviderModels.mockImplementation(async (baseUrl: string) => (
+      baseUrl === 'https://openrouter.ai/api/v1'
+        ? ['openrouter/fresh-from-global']
+        : []
+    ))
+    const {
+      providerModelCatalogKey,
+      refreshConfiguredProviderModelCatalogs,
+      resolveProviderCatalogModels,
+      writeProviderModelCatalogEntry,
+    } = await import('../../packages/server/src/services/hermes/model-catalog-cache')
+    const scopedKey = providerModelCatalogKey(
+      'openrouter',
+      'https://openrouter.ai/api/v1',
+      true,
+      'default',
+    )
+    await writeProviderModelCatalogEntry({
+      provider: 'openrouter',
+      label: 'OpenRouter',
+      base_url: 'https://openrouter.ai/api/v1',
+      models: ['openrouter/stale-from-card'],
+      source: 'live',
+      free_only: true,
+      profile: 'default',
+      profiles: ['default'],
+    })
+
+    await refreshConfiguredProviderModelCatalogs({ force: true })
+
+    const cache = JSON.parse(cacheText)
+    expect(cache.providers[scopedKey]).toBeUndefined()
+    expect(resolveProviderCatalogModels(
+      cache,
+      'openrouter',
+      'https://openrouter.ai/api/v1',
+      [],
+      { freeOnly: true, profile: 'default' },
+    )).toEqual(['openrouter/fresh-from-global'])
+  })
+
   it('adds authorized providers to the catalog cache and fetches live models for compatible auth providers', async () => {
     mockListProfileNamesFromDisk.mockReturnValue(['default'])
     mockReadAppConfig.mockResolvedValue({ copilotEnabled: true })

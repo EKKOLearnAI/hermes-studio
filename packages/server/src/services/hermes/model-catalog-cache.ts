@@ -185,6 +185,7 @@ export async function writeProviderModelCatalogEntry(input: {
   previous_unavailable_models?: string[] | null
   previous_updated_at?: string | null
   overwriteExistingModels?: boolean
+  clear_profiles?: string[]
 }): Promise<ProviderModelCatalogEntry> {
   const provider = input.provider.trim()
   const baseUrl = normalizeCatalogBaseUrl(input.base_url)
@@ -236,6 +237,11 @@ export async function writeProviderModelCatalogEntry(input: {
     } else {
       cache.providers[key] = entry
     }
+    if (!profile) {
+      for (const scopedProfile of uniqueModels(input.clear_profiles)) {
+        delete cache.providers[providerModelCatalogKey(provider, baseUrl, input.free_only === true, scopedProfile)]
+      }
+    }
     cache.updated_at = now
     return JSON.stringify(cache, null, 2) + '\n'
   })
@@ -266,6 +272,7 @@ export async function refreshProviderModelCatalog(input: {
       source: 'live',
       free_only: input.free_only,
       profiles: input.profiles,
+      clear_profiles: input.profiles,
     })
   }
 
