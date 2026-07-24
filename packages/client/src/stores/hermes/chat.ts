@@ -1107,8 +1107,27 @@ export const useChatStore = defineStore('chat', () => {
   })
   const isLoadingSessions = ref(false)
   const sessionsLoaded = ref(false)
-  const isLoadingMessages = ref(false)
+  const messageLoadRequests = ref<Map<string, number>>(new Map())
+  const isLoadingMessages = computed(() => {
+    const sid = activeSessionId.value
+    return sid ? messageLoadRequests.value.has(sid) : false
+  })
   const isRunActive = computed(() => isStreaming.value)
+  let loadSessionsRequestSequence = 0
+  let switchSessionRequestSequence = 0
+
+  function beginMessageLoad(sessionId: string, requestSequence: number) {
+    const next = new Map(messageLoadRequests.value)
+    next.set(sessionId, requestSequence)
+    messageLoadRequests.value = next
+  }
+
+  function endMessageLoad(sessionId: string, requestSequence: number) {
+    if (messageLoadRequests.value.get(sessionId) !== requestSequence) return
+    const next = new Map(messageLoadRequests.value)
+    next.delete(sessionId)
+    messageLoadRequests.value = next
+  }
 
   async function fetchRuntimeSessions(profile?: string | null): Promise<SessionSummary[]> {
     const scopedProfile = profile || undefined
@@ -1408,9 +1427,11 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function loadSessions(profile?: string | null, preferredSessionId?: string | null) {
+    const requestSequence = ++loadSessionsRequestSequence
     isLoadingSessions.value = true
     try {
       const list = await fetchRuntimeSessions(profile)
+      if (requestSequence !== loadSessionsRequestSequence) return
       const fresh = list.map(mapHermesSession)
       // Preserve already-loaded messages for sessions that are still present,
       // so we don't blow away the active session's messages on refresh.
@@ -1447,10 +1468,14 @@ export const useChatStore = defineStore('chat', () => {
         clearActiveSession()
       }
     } catch (err) {
-      console.error('Failed to load sessions:', err)
+      if (requestSequence === loadSessionsRequestSequence) {
+        console.error('Failed to load sessions:', err)
+      }
     } finally {
-      isLoadingSessions.value = false
-      sessionsLoaded.value = true
+      if (requestSequence === loadSessionsRequestSequence) {
+        isLoadingSessions.value = false
+        sessionsLoaded.value = true
+      }
     }
   }
 
@@ -1635,6 +1660,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function switchSession(sessionId: string, focusId?: string | null) {
+    const requestSequence = ++switchSessionRequestSequence
     clearThinkingObservationFor(sessionId)
     activeSessionId.value = sessionId
     focusMessageId.value = focusId ?? null
@@ -1646,7 +1672,7 @@ export const useChatStore = defineStore('chat', () => {
 
     if (!activeSession.value) return
 
-    isLoadingMessages.value = true
+    beginMessageLoad(sessionId, requestSequence)
     let backgroundPendingOnResume = 0
 
     try {
@@ -1655,7 +1681,11 @@ export const useChatStore = defineStore('chat', () => {
         const timeout = setTimeout(() => reject(new Error('resume timeout')), 15_000)
         resumeSession(sessionId, (data) => {
           clearTimeout(timeout)
-          if (data.session_id !== sessionId || activeSessionId.value !== sessionId) {
+          if (
+            data.session_id !== sessionId
+            || activeSessionId.value !== sessionId
+            || requestSequence !== switchSessionRequestSequence
+          ) {
             resolve()
             return
           }
@@ -1837,17 +1867,17 @@ export const useChatStore = defineStore('chat', () => {
           resolve()
         }, activeSession.value?.profile, runtimeTransport())
       })
-      if (activeSessionId.value === sessionId) {
+      if (activeSessionId.value === sessionId && requestSequence === switchSessionRequestSequence) {
         await loadWorkspaceRunChangesForSession(sessionId)
       }
     } catch (err) {
       console.error('Failed to load session messages via resume:', err)
     } finally {
-      isLoadingMessages.value = false
+      endMessageLoad(sessionId, requestSequence)
     }
 
     // Resume in-flight run event listeners if needed
-    if (activeSessionId.value === sessionId) {
+    if (activeSessionId.value === sessionId && requestSequence === switchSessionRequestSequence) {
       resumeServerWorkingRun(sessionId, backgroundPendingOnResume > 0, !serverWorking.value.has(sessionId))
     }
   }

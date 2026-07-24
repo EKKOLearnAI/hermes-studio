@@ -139,4 +139,25 @@ describe('chat session ordering', () => {
     expect(store.activeSessionId).toBeNull()
     expect(store.activeSession).toBeNull()
   })
+
+  it('ignores a stale session-list response after a newer route load completes', async () => {
+    const pending: Array<(sessions: any[]) => void> = []
+    vi.mocked(fetchSessions).mockImplementation(() => new Promise(resolve => pending.push(resolve)))
+
+    const store = useChatStore()
+    const first = store.loadSessions(null, 'session-a')
+    const second = store.loadSessions(null, 'session-b')
+
+    pending[2]([makeSession('session-b', { started_at: 2000, last_active: 2000 })])
+    pending[3]([])
+    await second
+
+    pending[0]([makeSession('session-a', { started_at: 1000, last_active: 1000 })])
+    pending[1]([])
+    await first
+
+    expect(store.sessions.map(session => session.id)).toEqual(['session-b'])
+    expect(store.activeSessionId).toBe('session-b')
+    expect(store.activeSession?.id).toBe('session-b')
+  })
 })

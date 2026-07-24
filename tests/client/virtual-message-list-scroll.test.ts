@@ -50,16 +50,26 @@ function setScrollerMetrics(el: HTMLElement, metrics: { scrollHeight: number; cl
 
 describe('VirtualMessageList scroll behavior', () => {
   let rafCallbacks: FrameRequestCallback[]
+  let resizeCallbacks: ResizeObserverCallback[]
 
   beforeEach(() => {
     vi.clearAllMocks()
     rafCallbacks = []
+    resizeCallbacks = []
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       rafCallbacks.push(callback)
       return rafCallbacks.length
     })
     vi.stubGlobal('cancelAnimationFrame', (id: number) => {
       rafCallbacks[id - 1] = () => undefined
+    })
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback)
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
     })
   })
 
@@ -213,5 +223,34 @@ describe('VirtualMessageList scroll behavior', () => {
 
     expect(dynamicScrollToBottomMock).not.toHaveBeenCalled()
     expect(scroller.element.scrollTop).toBe(800)
+  })
+
+  it('keeps a bottom-following transcript pinned when rendered content grows later', async () => {
+    const wrapper = mount(VirtualMessageList, {
+      props: {
+        messages: [{ id: 'message-1' }],
+        virtualized: false,
+      },
+      slots: {
+        item: '<div>message</div>',
+      },
+    })
+    await nextTick()
+
+    const scroller = wrapper.find<HTMLElement>('.virtual-message-list')
+    setScrollerMetrics(scroller.element, {
+      scrollHeight: 1000,
+      clientHeight: 400,
+      scrollTop: 600,
+    })
+    await scroller.trigger('scroll')
+
+    Object.defineProperty(scroller.element, 'scrollHeight', { configurable: true, value: 1400 })
+    resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+    while (rafCallbacks.length > 0) {
+      rafCallbacks.shift()?.(performance.now())
+    }
+
+    expect(scroller.element.scrollTop).toBe(1000)
   })
 })

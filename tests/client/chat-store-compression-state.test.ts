@@ -122,6 +122,87 @@ describe('chat store compression state', () => {
     }))
   })
 
+  it('keeps message loading scoped to the active session during rapid switches', async () => {
+    const callbacks = new Map<string, (data: any) => void>()
+    chatApi.resumeSession.mockImplementation((sessionId: string, onResumed: (data: any) => void) => {
+      callbacks.set(sessionId, onResumed)
+      return {} as any
+    })
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1'), makeSession('session-2')]
+
+    const firstSwitch = store.switchSession('session-1')
+    const secondSwitch = store.switchSession('session-2')
+    expect(store.activeSessionId).toBe('session-2')
+    expect(store.isLoadingMessages).toBe(true)
+
+    callbacks.get('session-1')?.({
+      session_id: 'session-1',
+      messages: [],
+      isWorking: false,
+      events: [],
+    })
+    await firstSwitch
+    expect(store.isLoadingMessages).toBe(true)
+
+    callbacks.get('session-2')?.({
+      session_id: 'session-2',
+      messages: [],
+      isWorking: false,
+      events: [],
+    })
+    await secondSwitch
+    expect(store.isLoadingMessages).toBe(false)
+  })
+
+  it('ignores an obsolete response after switching away and back to the same session', async () => {
+    const callbacks: Array<{ sessionId: string; callback: (data: any) => void }> = []
+    chatApi.resumeSession.mockImplementation((sessionId: string, callback: (data: any) => void) => {
+      callbacks.push({ sessionId, callback })
+      return {} as any
+    })
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1'), makeSession('session-2')]
+
+    const firstSessionOne = store.switchSession('session-1')
+    const sessionTwo = store.switchSession('session-2')
+    const secondSessionOne = store.switchSession('session-1')
+
+    callbacks[2].callback({
+      session_id: 'session-1',
+      messages: [{ id: 'fresh', role: 'user', content: 'fresh response', timestamp: 2 }],
+      isWorking: false,
+      events: [],
+    })
+    await secondSessionOne
+
+    expect(store.isLoadingMessages).toBe(false)
+    expect(store.activeSessionId).toBe('session-1')
+    expect(store.activeSession?.messages).toEqual([
+      expect.objectContaining({ id: 'fresh', content: 'fresh response' }),
+    ])
+
+    callbacks[0].callback({
+      session_id: 'session-1',
+      messages: [{ id: 'stale', role: 'user', content: 'stale response', timestamp: 1 }],
+      isWorking: false,
+      events: [],
+    })
+    await firstSessionOne
+    callbacks[1].callback({
+      session_id: 'session-2',
+      messages: [],
+      isWorking: false,
+      events: [],
+    })
+    await sessionTwo
+
+    expect(store.isLoadingMessages).toBe(false)
+    expect(store.activeSession?.messages).toEqual([
+      expect.objectContaining({ id: 'fresh', content: 'fresh response' }),
+    ])
+  })
+
   it('keeps abort lifecycle and stop handling scoped to each session', async () => {
     chatApi.resumeSession.mockImplementation((sessionId: string, onResumed: (data: any) => void) => {
       onResumed({

@@ -61,6 +61,7 @@ defineSlots<{
 }>();
 
 const hostRef = ref<HTMLElement | null>(null);
+const contentRef = ref<HTMLElement | null>(null);
 const scrollerRef = ref<DynamicScrollerExposed<VirtualItem> | null>(null);
 const scrollTop = ref(0);
 const viewportHeight = ref(0);
@@ -139,7 +140,9 @@ function handleWheel(event: WheelEvent) {
 
 function handleResize() {
   syncViewport();
-  if (Date.now() < keepBottomUntil || isNearBottom(64)) scheduleScrollToBottom(2);
+  if (!userDetachedFromBottom || Date.now() < keepBottomUntil || isNearBottom(64)) {
+    scheduleScrollToBottom(2);
+  }
   if (activeAnchorTarget) scheduleAnchorAlignment(activeAnchorTarget.token, 4);
 }
 
@@ -421,6 +424,9 @@ onMounted(() => {
     if (el && typeof ResizeObserver !== "undefined") {
       resizeObserver = new ResizeObserver(handleResize);
       resizeObserver.observe(el);
+      const content = contentRef.value
+        ?? el.querySelector<HTMLElement>(".vue-recycle-scroller__item-wrapper");
+      if (content) resizeObserver.observe(content);
     }
   });
 });
@@ -495,16 +501,18 @@ defineExpose({
       @scroll.passive="handleScroll"
       @wheel.passive="handleWheel"
     >
-      <slot v-if="messages.length > 0" name="before" />
-      <div
-        v-for="(item, index) in messages"
-        :key="messageKey(item)"
-        class="virtual-row"
-        :data-virtual-index="index"
-      >
-        <slot name="item" :message="item" />
+      <div ref="contentRef" class="virtual-message-list-content">
+        <slot v-if="messages.length > 0" name="before" />
+        <div
+          v-for="(item, index) in messages"
+          :key="messageKey(item)"
+          class="virtual-row"
+          :data-virtual-index="index"
+        >
+          <slot name="item" :message="item" />
+        </div>
+        <slot v-if="messages.length > 0" name="after" />
       </div>
-      <slot v-if="messages.length > 0" name="after" />
     </div>
     <div v-if="messages.length === 0 && $slots.empty" class="virtual-message-list-empty">
       <slot name="empty" />
@@ -542,6 +550,11 @@ defineExpose({
   min-width: 0;
   max-width: 100%;
   padding-bottom: var(--virtual-row-gap);
+}
+
+.virtual-message-list-content {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .virtual-message-list-empty {
