@@ -114,6 +114,8 @@ constexpr int kMaxProfiles = 8;
 constexpr int kMaxMcuAudioQueue = 4;
 constexpr uint32_t kMcuInteractionIdleDelayMs = 3500;
 constexpr uint32_t kMcuFailureIdleDelayMs = 20000;
+constexpr uint8_t kDefaultIdlePowerSaveMinutes = 3;
+constexpr uint8_t kMaxIdlePowerSaveMinutes = 60;
 constexpr uint32_t kMcuAudioDefaultDurationMs = 1800;
 constexpr uint32_t kMcuAudioMaxDurationMs = 9000;
 constexpr uint32_t kMcuAudioHttpTimeoutMs = 30000;
@@ -187,6 +189,7 @@ bool bootLongPressHandled = false;
 bool bootClickPending = false;
 bool bootSecondClickStarted = false;
 bool bootInputArmed = false;
+bool idlePowerSaveActive = false;
 uint32_t lastOledAtMs = 0;
 uint32_t oledStatusReturnAtMs = 0;
 uint32_t restartAtMs = 0;
@@ -200,6 +203,7 @@ uint32_t bootReleaseStartedAtMs = 0;
 uint32_t audioInterruptPressStartedAtMs = 0;
 uint32_t wifiDisconnectedSinceMs = 0;
 uint32_t lastBatteryReadAtMs = 0;
+uint32_t lastMcuActivityAtMs = 0;
 uint32_t batteryVoltageMv = 0;
 uint8_t oledProgress = 0;
 uint8_t batteryLevelPercent = 0;
@@ -247,6 +251,7 @@ uint32_t voiceRecordRms = 0;
 uint32_t voiceRecordPeak = 0;
 uint32_t voiceRecordActiveSamples = 0;
 uint8_t outputVolumePercent = kDefaultOutputVolumePercent;
+uint8_t idlePowerSaveMinutes = kDefaultIdlePowerSaveMinutes;
 
 struct McuAudioSegment {
   String interactionId;
@@ -282,6 +287,8 @@ void clearMcuSessionByButton();
 void disconnectMcuSocketClient();
 void connectMcuSocketClient();
 void mcuSocketLoop();
+void noteMcuActivity();
+void tickIdlePowerSave();
 bool waitForMcuSocketReady(uint32_t timeoutMs);
 void enqueueNoDevicePrompt(const String &interactionId);
 void enqueueTokenInvalidPromptAndClearActive(const String &interactionId, const String &url = "");
@@ -406,6 +413,50 @@ bool oledCommand(uint8_t command) {
   Wire.write(0x00);
   Wire.write(command);
   return Wire.endTransmission() == 0;
+}
+
+void leaveIdlePowerSave() {
+  if (!idlePowerSaveActive) return;
+  idlePowerSaveActive = false;
+  WiFi.setSleep(false);
+  if (oledReady && !oledCommand(0xAF)) {
+    Serial.println(F("Idle power save wake: OLED display-on failed"));
+  }
+  oledDirty = true;
+  Serial.println(F("Idle power save disabled"));
+}
+
+void noteMcuActivity() {
+  lastMcuActivityAtMs = millis();
+  leaveIdlePowerSave();
+}
+
+void tickIdlePowerSave() {
+  uint32_t now = millis();
+  if (lastMcuActivityAtMs == 0) {
+    lastMcuActivityAtMs = now;
+    return;
+  }
+
+  bool busy = mcuInteractionActive || mcuAudioPlaying || mcuAudioCount > 0 || audioBusy;
+  bool bootPressed = digitalRead(kPinBoot) == LOW;
+  bool canPowerSave = wifiReady && WiFi.status() == WL_CONNECTED && !setupApMode &&
+                      !restartPending && !busy && !bootPressed;
+  if (!canPowerSave) {
+    if (idlePowerSaveActive) noteMcuActivity();
+    return;
+  }
+  if (idlePowerSaveMinutes == 0) return;
+  uint32_t idleDelayMs = static_cast<uint32_t>(idlePowerSaveMinutes) * 60UL * 1000UL;
+  if (idlePowerSaveActive || now - lastMcuActivityAtMs < idleDelayMs) return;
+
+  idlePowerSaveActive = true;
+  WiFi.setSleep(true);
+  if (paEnabled) setPowerAmp(false);
+  if (oledReady && !oledCommand(0xAE)) {
+    Serial.println(F("Idle power save: OLED display-off failed"));
+  }
+  Serial.printf("Idle power save enabled after %u minutes\n", idlePowerSaveMinutes);
 }
 
 bool oledData(const uint8_t *data, size_t len) {
@@ -694,7 +745,7 @@ void drawOledFrame() {
 }
 
 void refreshOled(bool force = false) {
-  if (!oledReady) return;
+  if (!oledReady || idlePowerSaveActive) return;
   uint32_t now = millis();
   if (!force && !oledDirty && now - lastOledAtMs < kOledRefreshIntervalMs) return;
   oledDirty = false;
@@ -705,6 +756,7 @@ void refreshOled(bool force = false) {
 }
 
 void setOledStatus(OledMode mode, const String &title, const String &hint, uint8_t progress = 0) {
+  noteMcuActivity();
   String nextTitle = fitOledText(title, 10);
   String nextHint = fitOledText(hint, 20);
   oledMode = mode;
@@ -905,6 +957,9 @@ void loadAudioPreferences() {
   outputVolumePercent = clampUiValue(
       static_cast<uint32_t>(prefs.getUChar("volume", kDefaultOutputVolumePercent)),
       kMaxOutputVolumePercent);
+  idlePowerSaveMinutes = clampUiValue(
+      static_cast<uint32_t>(prefs.getUChar("idle_min", kDefaultIdlePowerSaveMinutes)),
+      kMaxIdlePowerSaveMinutes);
   prefs.end();
 }
 
@@ -913,6 +968,14 @@ void saveOutputVolume(uint8_t volume) {
   prefs.begin("mcu", false);
   prefs.putUChar("volume", outputVolumePercent);
   prefs.end();
+}
+
+void saveIdlePowerSaveMinutes(uint8_t minutes) {
+  idlePowerSaveMinutes = clampUiValue(minutes, kMaxIdlePowerSaveMinutes);
+  prefs.begin("mcu", false);
+  prefs.putUChar("idle_min", idlePowerSaveMinutes);
+  prefs.end();
+  noteMcuActivity();
 }
 
 String currentIp() {
@@ -2056,6 +2119,9 @@ void cleanupMcuPreferences() {
   uint8_t volume = clampUiValue(
       static_cast<uint32_t>(prefs.getUChar("volume", kDefaultOutputVolumePercent)),
       kMaxOutputVolumePercent);
+  uint8_t idleMinutes = clampUiValue(
+      static_cast<uint32_t>(prefs.getUChar("idle_min", kDefaultIdlePowerSaveMinutes)),
+      kMaxIdlePowerSaveMinutes);
   String activeKey = prefs.getString("active_key", "");
   String activeAddr = prefs.getString("active_addr", "");
   String activeUrl = prefs.getString("active_url", "");
@@ -2090,6 +2156,7 @@ void cleanupMcuPreferences() {
   prefs.clear();
   if (deviceCode.length() > 0) prefs.putString("device_code", deviceCode);
   prefs.putUChar("volume", volume);
+  prefs.putUChar("idle_min", idleMinutes);
   if (activeKey.length() > 0) prefs.putString("active_key", activeKey);
   if (activeAddr.length() > 0) prefs.putString("active_addr", activeAddr);
   if (activeUrl.length() > 0) prefs.putString("active_url", activeUrl);
@@ -2555,6 +2622,7 @@ void sendStatusPage() {
   }
   appendInfoRow(html, F("音频硬件"), String(es8311Ready && i2sReady ? F("就绪") : F("未就绪")) + F(" · ") + lastAudioDetail);
   appendInfoRow(html, F("音量"), String(outputVolumePercent) + F("%"));
+  appendInfoRow(html, F("自动待机"), idlePowerSaveMinutes == 0 ? String(F("关闭")) : String(idlePowerSaveMinutes) + F(" 分钟"));
   appendInfoRow(html, F("电量"), F("未启用"));
   if (selectedProfile.length() > 0) {
     appendInfoRow(html, F("最近 Profile"), selectedProfile);
@@ -2579,6 +2647,17 @@ void sendStatusPage() {
   html += F("' oninput=\"document.getElementById('volume-output').textContent=this.value+'%'\"></div>");
   html += F("<div class='btn-row'><button class='btn primary' type='submit'>保存音量</button></div>");
   html += F("<p class='hint'>只影响 MCU 播放输出，不影响麦克风录音。</p></form></section>");
+
+  html += F("<section class='card'><h2>省电</h2>");
+  html += F("<form method='post' action='/device/power-save'><div class='field'><span class='label'>无交互后自动待机 <output id='idle-output'>");
+  html += idlePowerSaveMinutes;
+  html += F(" 分钟</output></span><input name='minutes' type='range' min='0' max='");
+  html += String(kMaxIdlePowerSaveMinutes);
+  html += F("' step='1' value='");
+  html += idlePowerSaveMinutes;
+  html += F("' oninput=\"document.getElementById('idle-output').textContent=this.value+' 分钟'\"></div>");
+  html += F("<div class='btn-row'><button class='btn primary' type='submit'>保存待机时间</button></div>");
+  html += F("<p class='hint'>默认 3 分钟；设为 0 可关闭自动待机。待机不会断开 Wi-Fi、登录或 Socket。</p></form></section>");
 
   html += F("<section class='card'><h2>手动添加机器</h2>");
   html += F("<form method='post' action='/device/manual'><div class='field'><span class='label'>地址</span>");
@@ -2758,6 +2837,21 @@ void handleDeviceAudio() {
   if (volume > kMaxOutputVolumePercent) volume = kMaxOutputVolumePercent;
   saveOutputVolume(static_cast<uint8_t>(volume));
   lastAudioDetail = String(F("output volume ")) + String(outputVolumePercent) + F("%");
+  server.sendHeader(F("Location"), F("/device"), true);
+  server.send(302, F("text/plain"), F(""));
+}
+
+void handleDevicePowerSave() {
+  String rawMinutes = server.arg(F("minutes"));
+  rawMinutes.trim();
+  if (rawMinutes.length() == 0) {
+    server.send(400, F("text/plain; charset=utf-8"), F("缺少待机时间"));
+    return;
+  }
+  int minutes = rawMinutes.toInt();
+  if (minutes < 0) minutes = 0;
+  if (minutes > kMaxIdlePowerSaveMinutes) minutes = kMaxIdlePowerSaveMinutes;
+  saveIdlePowerSaveMinutes(static_cast<uint8_t>(minutes));
   server.sendHeader(F("Location"), F("/device"), true);
   server.send(302, F("text/plain"), F(""));
 }
@@ -3112,7 +3206,7 @@ void logoutDevice() {
 String mcuStatusJson() {
   updateBatteryReading();
   String json;
-  json.reserve(340);
+  json.reserve(380);
   json += F("{\"type\":\"mcu.status\",\"interactionId\":\"");
   json += escapeJson(mcuInteractionId);
   json += F("\",\"status\":\"");
@@ -3125,6 +3219,10 @@ String mcuStatusJson() {
   json += mcuSocketNamespaceReady ? 1 : 0;
   json += F(",\"socketConnected\":");
   json += mcuSocketNamespaceReady ? F("true") : F("false");
+  json += F(",\"powerSaveActive\":");
+  json += idlePowerSaveActive ? F("true") : F("false");
+  json += F(",\"powerSaveMinutes\":");
+  json += idlePowerSaveMinutes;
   json += F(",\"active_device\":\"");
   json += escapeJson(activeDeviceKey);
   json += F("\",\"profile\":\"");
@@ -4047,6 +4145,7 @@ bool broadcastMcuSessionClear(const String &interactionId) {
 }
 
 void markMcuInteraction(const String &interactionId, const String &status, const String &text) {
+  noteMcuActivity();
   if (interactionId.length() > 0) mcuInteractionId = interactionId;
   if (status.length() > 0) mcuInteractionStatus = status;
   mcuInteractionText = compactDetail(text);
@@ -4066,6 +4165,7 @@ bool shouldPreserveMcuToolStatus(const String &interactionId) {
 }
 
 void touchMcuInteraction(const String &interactionId) {
+  noteMcuActivity();
   if (interactionId.length() > 0) mcuInteractionId = interactionId;
   mcuInteractionActive = true;
   mcuInteractionUpdatedAtMs = millis();
@@ -5114,6 +5214,7 @@ void triggerBootRecordPlaybackTest() {
 void handleBootButton() {
   bool bootPressed = digitalRead(kPinBoot) == LOW;
   uint32_t now = millis();
+  if (bootPressed) noteMcuActivity();
 
   if (!bootInputArmed) {
     bootWasPressed = false;
@@ -5703,6 +5804,10 @@ void handleHealth() {
   json += mcuAudioPlaying ? F("true") : F("false");
   json += F(",\"queue_length\":");
   json += mcuAudioCount;
+  json += F(",\"power_save_active\":");
+  json += idlePowerSaveActive ? F("true") : F("false");
+  json += F(",\"power_save_minutes\":");
+  json += idlePowerSaveMinutes;
   json += F("},\"audio\":{\"i2s_ready\":");
   json += i2sReady ? F("true") : F("false");
   json += F(",\"es8311_ready\":");
@@ -5786,6 +5891,7 @@ void setupRoutes() {
   server.on(F("/device"), HTTP_GET, scanAndSendStatusPage);
   server.on(F("/device/scan"), HTTP_GET, scanAndSendStatusPage);
   server.on(F("/device/audio"), HTTP_POST, handleDeviceAudio);
+  server.on(F("/device/power-save"), HTTP_POST, handleDevicePowerSave);
   server.on(F("/device/manual"), HTTP_POST, addManualDevice);
   server.on(F("/device/login"), HTTP_GET, sendMcuLoginPage);
   server.on(F("/device/login"), HTTP_POST, handleMcuLogin);
@@ -5855,8 +5961,9 @@ void loop() {
   if (wsReady) mcuSocketLoop();
   tickMcuInteraction();
   tickOledStatusReturn();
-  refreshOled();
   handleBootButton();
+  tickIdlePowerSave();
+  refreshOled();
   if (kAutoOtaEnabled && static_cast<int32_t>(millis() - nextMcuOtaCheckAtMs) >= 0) {
     McuOtaResult otaResult = checkMcuFirmwareUpdate(false);
     nextMcuOtaCheckAtMs = millis() + (otaResult == McuOtaResult::Failed ? kMcuOtaRetryMs : kMcuOtaIntervalMs);

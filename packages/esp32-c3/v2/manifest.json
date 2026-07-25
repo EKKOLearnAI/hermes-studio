@@ -2,7 +2,7 @@
   "name": "HStudio ESP32-C3 Wi-Fi Setup Firmware v2",
   "firmwareVersion": "v2",
   "version": "v2-esp32-c3-wifi-setup-oled",
-  "buildDate": "2026-07-12",
+  "buildDate": "2026-07-25",
   "chip": "esp32c3",
   "flashSize": "16MB",
   "flashMode": "dio",
@@ -37,6 +37,7 @@
     "ES8311 microphone and speaker audio",
     "IMA-ADPCM voice uplink",
     "OLED status UI",
-    "Version-isolated OTA updates"
+    "Version-isolated OTA updates",
+    "Configurable connected standby with a three-minute default"
   ]
 }

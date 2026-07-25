@@ -57,6 +57,19 @@ begins.
 
 Use `/clear` from the device page to clear saved Wi-Fi and return to setup mode.
 
+## Idle Power Saving
+
+After three minutes by default without a voice, audio, or status interaction,
+the firmware turns off the OLED and power amplifier and enables Wi-Fi modem
+power saving. The device page can set this timeout from 1 to 60 minutes, or set
+it to 0 to disable automatic standby. Wi-Fi, the selected profile, and the
+Socket.IO session stay connected. Pressing the Listen/BOOT button or receiving a
+new MCU interaction immediately restores the low-latency Wi-Fi mode and turns
+the OLED back on.
+
+This is connected standby, not ESP32 deep sleep, so waking does not require a
+Wi-Fi reconnect or a new login.
+
 ## LAN Device Discovery
 
 After Wi-Fi is connected, open the device page and use the `设备` tab. The
