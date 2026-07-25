@@ -1,9 +1,8 @@
 import type { Context } from 'koa'
 import { readFile } from 'fs/promises'
-import { resolve, normalize } from 'path'
-import { homedir } from 'os'
+import { join, resolve } from 'path'
 import * as kanbanCli from '../../services/hermes/hermes-kanban'
-import { isPathWithin } from '../../services/hermes/hermes-path'
+import { detectHermesRootHome, isRealPathWithin } from '../../services/hermes/hermes-path'
 import { listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
 import {
   searchSessionSummariesWithProfile,
@@ -53,6 +52,68 @@ function filterTasksByVisibleProfiles(ctx: Context, tasks: kanbanCli.KanbanTask[
   const visible = visibleProfileSet(ctx)
   if (!visible) return tasks
   return tasks.filter(task => visible.has(taskAssigneeProfile(task)))
+}
+
+async function getAuthorizedTask(
+  ctx: Context,
+  board: string,
+  taskId: string,
+): Promise<kanbanCli.KanbanTaskDetail | null> {
+  const detail = await kanbanCli.getTask(taskId, { board })
+  if (!detail || !filterTasksByVisibleProfiles(ctx, [detail.task]).length) {
+    ctx.status = 404
+    ctx.body = { error: 'Task not found' }
+    return null
+  }
+  return detail
+}
+
+async function authorizeTaskIds(
+  ctx: Context,
+  board: string,
+  taskIds: string[],
+  allowedStatuses?: ReadonlySet<kanbanCli.KanbanTaskStatus>,
+  action = 'update',
+): Promise<boolean> {
+  const visible = visibleProfileSet(ctx)
+  if (!visible && !allowedStatuses) return true
+  const ids = [...new Set(taskIds.map(id => id.trim()).filter(Boolean))]
+  const details = await Promise.all(ids.map(id => kanbanCli.getTask(id, { board })))
+  if (details.some(detail => !detail || (visible && !filterTasksByVisibleProfiles(ctx, [detail.task]).length))) {
+    ctx.status = 404
+    ctx.body = { error: 'Task not found' }
+    return false
+  }
+  const invalid = allowedStatuses
+    ? details.find(detail => detail && !allowedStatuses.has(detail.task.status))
+    : null
+  if (invalid) {
+    ctx.status = 409
+    ctx.body = { error: `Cannot ${action} task "${invalid.task.id}" from status "${invalid.task.status}"` }
+    return false
+  }
+  return true
+}
+
+function attachmentRoot(board: string): string {
+  const override = process.env.HERMES_KANBAN_ATTACHMENTS_ROOT?.trim()
+  if (override) return resolve(override)
+  const kanbanHome = resolve(process.env.HERMES_KANBAN_HOME?.trim() || detectHermesRootHome())
+  return board === 'default'
+    ? join(kanbanHome, 'kanban', 'attachments')
+    : join(kanbanHome, 'kanban', 'boards', board, 'attachments')
+}
+
+function contentDispositionFilename(filename: string): string {
+  const encoded = encodeURIComponent(filename)
+    .replace(/[!'()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
+  return `attachment; filename*=UTF-8''${encoded}`
+}
+
+function safeAttachmentContentType(value: string | null): string {
+  return value && /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i.test(value)
+    ? value
+    : 'application/octet-stream'
 }
 
 function statsForTasks(tasks: kanbanCli.KanbanTask[]): kanbanCli.KanbanStats {
@@ -444,7 +505,14 @@ export async function complete(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
-    await kanbanCli.completeTasks(taskIds.value!, summary.value, { board })
+    if (!await authorizeTaskIds(
+      ctx,
+      board,
+      taskIds.value!,
+      new Set<kanbanCli.KanbanTaskStatus>(['running', 'ready', 'blocked']),
+      'complete',
+    )) return
+    await kanbanCli.completeTasks(taskIds.value!, summary.value, { board, operatorOverride: true })
     ctx.body = { ok: true }
   } catch (err: any) {
     ctx.status = 500
@@ -460,6 +528,13 @@ export async function block(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
+    if (!await authorizeTaskIds(
+      ctx,
+      board,
+      [ctx.params.id],
+      new Set<kanbanCli.KanbanTaskStatus>(['running', 'ready']),
+      'block',
+    )) return
     await kanbanCli.blockTask(ctx.params.id, reason.value!, { board })
     ctx.body = { ok: true }
   } catch (err: any) {
@@ -476,6 +551,13 @@ export async function unblock(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
+    if (!await authorizeTaskIds(
+      ctx,
+      board,
+      taskIds.value!,
+      new Set<kanbanCli.KanbanTaskStatus>(['blocked', 'scheduled']),
+      'unblock',
+    )) return
     await kanbanCli.unblockTasks(taskIds.value!, { board })
     ctx.body = { ok: true }
   } catch (err: any) {
@@ -493,6 +575,7 @@ export async function assign(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
+    if (!await authorizeTaskIds(ctx, board, [ctx.params.id])) return
     await kanbanCli.assignTask(ctx.params.id, profile.value!, { board })
     ctx.body = { ok: true }
   } catch (err: any) {
@@ -511,6 +594,7 @@ export async function addComment(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
+    if (!await authorizeTaskIds(ctx, board, [ctx.params.id])) return
     ctx.body = await kanbanCli.addComment(ctx.params.id, body.value!, { board, author: author.value })
   } catch (err: any) {
     ctx.status = 500
@@ -527,6 +611,7 @@ export async function linkTasks(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
+    if (!await authorizeTaskIds(ctx, board, [parentId.value!, childId.value!])) return
     ctx.body = await kanbanCli.linkTasks(parentId.value!.trim(), childId.value!.trim(), { board })
   } catch (err: any) {
     ctx.status = 500
@@ -541,6 +626,7 @@ export async function unlinkTasks(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
+    if (!await authorizeTaskIds(ctx, board, [parentId.value!, childId.value!])) return
     ctx.body = await kanbanCli.unlinkTasks(parentId.value!.trim(), childId.value!.trim(), { board })
   } catch (err: any) {
     ctx.status = 500
@@ -578,6 +664,14 @@ export async function bulkUpdateTasks(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
+    const allowedStatuses = status.value === 'done'
+      ? new Set<kanbanCli.KanbanTaskStatus>(['running', 'ready', 'blocked'])
+      : status.value === 'blocked'
+        ? new Set<kanbanCli.KanbanTaskStatus>(['running', 'ready'])
+        : status.value === 'ready'
+          ? new Set<kanbanCli.KanbanTaskStatus>(['blocked', 'scheduled'])
+          : undefined
+    if (!await authorizeTaskIds(ctx, board, ids.value!, allowedStatuses, `set status to "${status.value}"`)) return
     ctx.body = await kanbanCli.bulkUpdateTasks({
       board,
       ids: ids.value!.map(id => id.trim()),
@@ -586,6 +680,7 @@ export async function bulkUpdateTasks(ctx: Context) {
       archive: archive.value,
       summary: summary.value,
       reason: reason.value,
+      operatorOverride: true,
     })
   } catch (err: any) {
     ctx.status = 500
@@ -600,6 +695,7 @@ export async function taskLog(ctx: Context) {
   const tail = optionalPositiveIntegerQuery(tailRaw, 'tail', MAX_LOG_TAIL_BYTES)
   if (rejectBadRequest(ctx, tail.error)) return
   try {
+    if (!await authorizeTaskIds(ctx, board, [ctx.params.id])) return
     ctx.body = await kanbanCli.getTaskLog(ctx.params.id, { board, tail: tail.value })
   } catch (err: any) {
     ctx.status = err.message?.includes('not found') ? 404 : 500
@@ -618,7 +714,17 @@ export async function diagnostics(ctx: Context) {
     return
   }
   try {
+    if (task && !await authorizeTaskIds(ctx, board, [task])) return
     const diagnostics = await kanbanCli.getDiagnostics({ board, task, severity })
+    if (!task && visibleProfileSet(ctx)) {
+      const visibleTaskIds = new Set(
+        (await getVisibleTasksForBoard(ctx, board, { includeArchived: true })).map(item => item.id),
+      )
+      ctx.body = {
+        diagnostics: diagnostics.filter((item: any) => visibleTaskIds.has(String(item?.task_id || ''))),
+      }
+      return
+    }
     ctx.body = { diagnostics }
   } catch (err: any) {
     ctx.status = 500
@@ -635,6 +741,7 @@ export async function reclaim(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
+    if (!await authorizeTaskIds(ctx, board, [ctx.params.id])) return
     ctx.body = await kanbanCli.reclaimTask(ctx.params.id, { board, reason: reason.value })
   } catch (err: any) {
     ctx.status = 500
@@ -654,6 +761,7 @@ export async function reassign(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
+    if (!await authorizeTaskIds(ctx, board, [ctx.params.id])) return
     ctx.body = await kanbanCli.reassignTask(ctx.params.id, profile.value!, { board, reclaim: reclaim.value, reason: reason.value })
   } catch (err: any) {
     ctx.status = 500
@@ -670,6 +778,7 @@ export async function specify(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
+    if (!await authorizeTaskIds(ctx, board, [ctx.params.id])) return
     const results = await kanbanCli.specifyTask(ctx.params.id, { board, author: author.value })
     ctx.body = { results }
   } catch (err: any) {
@@ -688,6 +797,11 @@ export async function dispatch(ctx: Context) {
   if (rejectBadRequest(ctx, dryRun.error || max.error || failureLimit.error)) return
   const board = requestBoard(ctx)
   if (!board) return
+  if (visibleProfileSet(ctx)) {
+    ctx.status = 403
+    ctx.body = { error: 'Only super administrators can dispatch an entire kanban board' }
+    return
+  }
   try {
     const result = await kanbanCli.dispatch({ board, dryRun: dryRun.value, max: max.value, failureLimit: failureLimit.value })
     ctx.body = { result }
@@ -724,24 +838,95 @@ export async function assignees(ctx: Context) {
   }
 }
 
+export async function listAttachments(ctx: Context) {
+  const board = requestBoard(ctx)
+  if (!board) return
+  try {
+    if (!await getAuthorizedTask(ctx, board, ctx.params.id)) return
+    const attachments = await kanbanCli.listAttachments(ctx.params.id, { board })
+    ctx.body = {
+      attachments: attachments.map(attachment => ({
+        id: attachment.id,
+        filename: attachment.filename,
+        content_type: attachment.content_type,
+        size: attachment.size,
+        uploaded_by: attachment.uploaded_by,
+        created_at: attachment.created_at,
+      })),
+    }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function readAttachment(ctx: Context) {
+  const board = requestBoard(ctx)
+  if (!board) return
+  const attachmentId = Number(ctx.params.attachmentId)
+  if (!Number.isSafeInteger(attachmentId) || attachmentId <= 0) {
+    ctx.status = 400
+    ctx.body = { error: 'invalid attachment id' }
+    return
+  }
+  try {
+    const detail = await getAuthorizedTask(ctx, board, ctx.params.id)
+    if (!detail) return
+    const attachments = await kanbanCli.listAttachments(detail.task.id, { board })
+    const attachment = attachments.find(item => item.id === attachmentId)
+    if (!attachment) {
+      ctx.status = 404
+      ctx.body = { error: 'Attachment not found' }
+      return
+    }
+    const storedPath = resolve(attachment.stored_path)
+    const allowedRoot = join(attachmentRoot(board), detail.task.id)
+    if (!await isRealPathWithin(storedPath, allowedRoot)) {
+      ctx.status = 403
+      ctx.body = { error: 'Attachment path is outside the task attachment directory' }
+      return
+    }
+    ctx.type = safeAttachmentContentType(attachment.content_type)
+    ctx.set('Content-Disposition', contentDispositionFilename(attachment.filename))
+    ctx.set('Cache-Control', 'private, no-store')
+    ctx.set('X-Content-Type-Options', 'nosniff')
+    ctx.body = await readFile(storedPath)
+  } catch (err: any) {
+    if (err.code === 'ENOENT') {
+      ctx.status = 404
+      ctx.body = { error: 'Attachment file not found' }
+    } else {
+      ctx.status = 500
+      ctx.body = { error: err.message }
+    }
+  }
+}
+
 export async function readArtifact(ctx: Context) {
   const filePath = ctx.query.path as string | undefined
-  if (!filePath) {
+  const taskId = ctx.query.task_id as string | undefined
+  if (!filePath || !taskId) {
     ctx.status = 400
-    ctx.body = { error: 'path is required' }
+    ctx.body = { error: 'path and task_id are required' }
     return
   }
-
-  const kanbanDir = resolve(homedir(), '.hermes', 'kanban', 'workspaces')
-  const resolved = resolve(normalize(filePath))
-
-  if (!isPathWithin(resolved, kanbanDir)) {
-    ctx.status = 403
-    ctx.body = { error: 'Path must be within kanban workspaces' }
-    return
-  }
-
+  const board = requestBoard(ctx)
+  if (!board) return
   try {
+    const detail = await getAuthorizedTask(ctx, board, taskId)
+    if (!detail) return
+    const workspacePath = detail.task.workspace_path
+    if (!workspacePath) {
+      ctx.status = 404
+      ctx.body = { error: 'Task workspace is not available' }
+      return
+    }
+    const resolved = resolve(filePath)
+    if (!await isRealPathWithin(resolved, resolve(workspacePath))) {
+      ctx.status = 403
+      ctx.body = { error: 'Path must be within the task workspace' }
+      return
+    }
     const data = await readFile(resolved, 'utf-8')
     ctx.body = { content: data, path: filePath }
   } catch (err: any) {

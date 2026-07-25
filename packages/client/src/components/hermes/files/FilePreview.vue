@@ -4,6 +4,7 @@ import { NAlert, NButton, NIcon, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useFilesStore } from '@/stores/hermes/files'
 import { fetchFilePreviewBlob } from '@/api/hermes/files'
+import { fetchAuthenticatedBlob, saveBlob } from '@/api/hermes/binary-content'
 import { downloadFile } from '@/api/hermes/download'
 import { downloadSessionWorkspaceFile, fetchSessionWorkspaceFileBlob } from '@/api/hermes/sessions'
 import { downloadGroupWorkspaceFile, fetchGroupWorkspaceFileBlob } from '@/api/hermes/group-chat'
@@ -54,11 +55,13 @@ async function loadPreview(): Promise<void> {
   requestController = new AbortController()
   loading.value = true
   try {
-    const blob = file.workspaceRoomId
-      ? await fetchGroupWorkspaceFileBlob(file.workspaceRoomId, file.path, requestController.signal)
-      : file.workspaceSessionId
-        ? await fetchSessionWorkspaceFileBlob(file.workspaceSessionId, file.path, requestController.signal)
-        : await fetchFilePreviewBlob(file.path, file.profile, requestController.signal)
+    const blob = file.sourceUrl
+      ? await fetchAuthenticatedBlob(file.sourceUrl, { profile: null, signal: requestController.signal })
+      : file.workspaceRoomId
+        ? await fetchGroupWorkspaceFileBlob(file.workspaceRoomId, file.path, requestController.signal)
+        : file.workspaceSessionId
+          ? await fetchSessionWorkspaceFileBlob(file.workspaceSessionId, file.path, requestController.signal)
+          : await fetchFilePreviewBlob(file.path, file.profile, requestController.signal)
     if (generation !== requestGeneration) return
     if (!previewMimeMatches(file.type, blob.type)) {
       throw new Error(t('files.previewMimeMismatch'))
@@ -93,7 +96,9 @@ async function handleDownload(): Promise<void> {
   if (!file || downloading.value) return
   downloading.value = true
   try {
-    if (file.workspaceRoomId) {
+    if (file.sourceUrl) {
+      saveBlob(await fetchAuthenticatedBlob(file.sourceUrl, { profile: null }), file.name)
+    } else if (file.workspaceRoomId) {
       await downloadGroupWorkspaceFile(file.workspaceRoomId, file.path, file.name)
     } else if (file.workspaceSessionId) {
       await downloadSessionWorkspaceFile(file.workspaceSessionId, file.path, file.name)

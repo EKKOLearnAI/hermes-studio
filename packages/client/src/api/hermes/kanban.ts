@@ -20,6 +20,7 @@ export interface KanbanTask {
   tenant: string | null
   result: string | null
   skills: string[] | null
+  goal_mode?: boolean
 }
 
 export interface KanbanRun {
@@ -37,7 +38,7 @@ export interface KanbanRun {
 }
 
 export interface KanbanComment {
-  id: number
+  id: number | string
   task_id: string
   author: string
   body: string
@@ -45,7 +46,7 @@ export interface KanbanComment {
 }
 
 export interface KanbanEvent {
-  id: number
+  id: number | string
   task_id: string
   kind: string
   payload: Record<string, unknown> | null
@@ -86,6 +87,15 @@ export interface KanbanTaskDetail {
   runs: KanbanRun[]
   parents?: string[]
   children?: string[]
+}
+
+export interface KanbanAttachment {
+  id: number
+  filename: string
+  content_type: string | null
+  size: number
+  uploaded_by: string | null
+  created_at: number
 }
 
 export interface KanbanStats {
@@ -326,6 +336,20 @@ export async function listTasks(opts?: KanbanListOptions): Promise<KanbanTask[]>
 
 export async function getTask(id: string, opts?: KanbanBoardOptions): Promise<KanbanTaskDetail> {
   return request<KanbanTaskDetail>(appendQuery(`/api/hermes/kanban/${encodeURIComponent(id)}`, boardParams(opts?.board)))
+}
+
+export async function listAttachments(taskId: string, opts?: KanbanBoardOptions): Promise<KanbanAttachment[]> {
+  const res = await request<{ attachments: KanbanAttachment[] }>(
+    appendQuery(`/api/hermes/kanban/${encodeURIComponent(taskId)}/attachments`, boardParams(opts?.board)),
+  )
+  return res.attachments
+}
+
+export function getAttachmentContentPath(taskId: string, attachmentId: number, opts?: KanbanBoardOptions): string {
+  return appendQuery(
+    `/api/hermes/kanban/${encodeURIComponent(taskId)}/attachments/${encodeURIComponent(String(attachmentId))}`,
+    boardParams(opts?.board),
+  )
 }
 
 export async function createTask(data: KanbanCreateRequest, opts?: KanbanBoardOptions): Promise<KanbanTask> {

@@ -27,6 +27,7 @@ import {
   getTextPreviewLanguage,
   type FilePreviewKind,
 } from '@/utils/hermes/file-preview'
+import { fetchAuthenticatedBlob } from '@/api/hermes/binary-content'
 
 export { isImageFile, isMarkdownFile, isPreviewableFile, isTextFile } from '@/utils/hermes/file-preview'
 
@@ -76,6 +77,7 @@ export const useFilesStore = defineStore('files', () => {
     profile?: string | null
     workspaceSessionId?: string | null
     workspaceRoomId?: string | null
+    sourceUrl?: string
     type: FilePreviewKind
     content?: string
     language?: string
@@ -338,6 +340,29 @@ export const useFilesStore = defineStore('files', () => {
     previewFile.value = common
   }
 
+  async function openRemotePreview(sourceUrl: string, fileName: string, size = -1): Promise<boolean> {
+    const type = getFilePreviewKind(fileName)
+    if (!type) return false
+    const common = {
+      path: fileName,
+      name: fileName,
+      size,
+      profile: null,
+      sourceUrl,
+      type,
+    }
+    if (type === 'markdown' || type === 'text') {
+      const blob = await fetchAuthenticatedBlob(sourceUrl, { profile: null })
+      const content = await blob.text()
+      previewFile.value = type === 'markdown'
+        ? { ...common, content }
+        : { ...common, content, language: getLanguageFromPath(fileName) }
+      return true
+    }
+    previewFile.value = common
+    return true
+  }
+
   function closePreview() { previewFile.value = null }
 
   async function createDir(name: string, targetPath = currentPath.value) {
@@ -426,7 +451,7 @@ export const useFilesStore = defineStore('files', () => {
     pathSegments, sortedEntries, hasUnsavedChanges,
     fetchEntries, listEntries, fetchDirectory, navigateTo, navigateUp,
     openEditor, openSessionWorkspaceEditor, openGroupWorkspaceEditor, saveEditor, closeEditor,
-    openPreview, openSessionWorkspacePreview, openGroupWorkspacePreview, closePreview,
+    openPreview, openSessionWorkspacePreview, openGroupWorkspacePreview, openRemotePreview, closePreview,
     createDir, createFile, deleteEntry, renameEntry, copyEntry,
     uploadFiles, setSort,
   }

@@ -4,6 +4,9 @@ import { defineComponent } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 
 const mockGetTask = vi.hoisted(() => vi.fn())
+const mockListAttachments = vi.hoisted(() => vi.fn())
+const mockOpenRemotePreview = vi.hoisted(() => vi.fn())
+const mockClosePreview = vi.hoisted(() => vi.fn())
 const mockRequest = vi.hoisted(() => vi.fn())
 const mockCompleteTasks = vi.hoisted(() => vi.fn())
 const mockBlockTask = vi.hoisted(() => vi.fn())
@@ -39,6 +42,28 @@ vi.mock('@/api/client', () => ({
 
 vi.mock('@/api/hermes/kanban', () => ({
   getTask: mockGetTask,
+  listAttachments: mockListAttachments,
+  getAttachmentContentPath: (taskId: string, attachmentId: number) => `/attachments/${taskId}/${attachmentId}`,
+}))
+
+vi.mock('@/stores/hermes/files', () => ({
+  useFilesStore: () => ({
+    previewFile: null,
+    openRemotePreview: mockOpenRemotePreview,
+    closePreview: mockClosePreview,
+  }),
+}))
+
+vi.mock('@/api/hermes/binary-content', () => ({
+  fetchAuthenticatedBlob: vi.fn(),
+  saveBlob: vi.fn(),
+}))
+
+vi.mock('@/components/hermes/files/FilePreview.vue', () => ({
+  default: defineComponent({
+    name: 'FilePreview',
+    template: '<div class="file-preview-stub" />',
+  }),
 }))
 
 vi.mock('@/stores/hermes/kanban', () => ({
@@ -114,6 +139,8 @@ describe('KanbanTaskDrawer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockRequest.mockResolvedValue({ results: [] })
+    mockListAttachments.mockResolvedValue([])
+    mockOpenRemotePreview.mockResolvedValue(true)
     mockCompleteTasks.mockResolvedValue(undefined)
     mockBlockTask.mockResolvedValue(undefined)
     mockUnblockTasks.mockResolvedValue(undefined)
@@ -288,7 +315,7 @@ describe('KanbanTaskDrawer', () => {
         title: 'Next task',
         body: null,
         assignee: 'bob',
-        status: 'todo',
+        status: 'ready',
         priority: 1,
         created_at: 200,
         started_at: null,
@@ -336,6 +363,51 @@ describe('KanbanTaskDrawer', () => {
     expect(wrapper.text()).not.toContain('kanban.action.assign')
   })
 
+  it('uses the 0.19 transition matrix and opens durable attachments in the shared preview', async () => {
+    mockGetTask.mockResolvedValueOnce({
+      task: {
+        id: 'task-scheduled',
+        title: 'Scheduled task',
+        body: null,
+        assignee: 'alice',
+        status: 'scheduled',
+        priority: 1,
+        created_at: 100,
+        started_at: null,
+        completed_at: null,
+        tenant: null,
+        result: null,
+      },
+      latest_summary: null,
+      comments: [],
+      events: [],
+      runs: [],
+    })
+    mockListAttachments.mockResolvedValueOnce([{
+      id: 7,
+      filename: 'report.html',
+      content_type: 'text/html',
+      size: 42,
+      uploaded_by: 'alice',
+      created_at: 101,
+    }])
+
+    const wrapper = mount(KanbanTaskDrawer, { props: { taskId: 'task-scheduled' } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('kanban.action.unblock')
+    expect(wrapper.text()).not.toContain('kanban.action.complete')
+    expect(wrapper.text()).not.toContain('kanban.action.block')
+
+    await wrapper.get('.attachment-item').trigger('click')
+    await flushPromises()
+    expect(mockOpenRemotePreview).toHaveBeenCalledWith(
+      '/attachments/task-scheduled/7',
+      'report.html',
+      42,
+    )
+  })
+
   it('executes complete, block, unblock, and assign actions', async () => {
     mockGetTask.mockResolvedValueOnce({
       task: {
@@ -343,7 +415,7 @@ describe('KanbanTaskDrawer', () => {
         title: 'Todo task',
         body: null,
         assignee: null,
-        status: 'todo',
+        status: 'ready',
         priority: 1,
         created_at: 100,
         started_at: null,
@@ -398,7 +470,7 @@ describe('KanbanTaskDrawer', () => {
         title: 'Todo task',
         body: null,
         assignee: null,
-        status: 'todo',
+        status: 'ready',
         priority: 1,
         created_at: 100,
         started_at: null,

@@ -1,6 +1,10 @@
-import type { ChildProcess } from 'child_process'
+import type { ChildProcess, ExecFileOptions } from 'child_process'
+import { mkdtemp, rm, writeFile } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { logger } from '../logger'
 import { execHermes, spawnHermes } from './hermes-process'
+import { detectHermesRootHome } from './hermes-path'
 
 const execOpts = { windowsHide: true }
 const BOARD_SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/
@@ -43,6 +47,7 @@ export interface KanbanTask {
   tenant: string | null
   result: string | null
   skills: string[] | null
+  goal_mode?: boolean
 }
 
 export interface KanbanRun {
@@ -58,7 +63,7 @@ export interface KanbanRun {
 }
 
 export interface KanbanComment {
-  id: number
+  id: number | string
   task_id: string
   author: string
   body: string
@@ -66,7 +71,7 @@ export interface KanbanComment {
 }
 
 export interface KanbanEvent {
-  id: number
+  id: number | string
   task_id: string
   kind: string
   payload: Record<string, unknown> | null
@@ -91,6 +96,16 @@ export interface KanbanAssignee {
   name: string
   on_disk: boolean
   counts: Record<string, number> | null
+}
+
+export interface KanbanAttachment {
+  id: number
+  filename: string
+  content_type: string | null
+  size: number
+  uploaded_by: string | null
+  stored_path: string
+  created_at: number
 }
 
 export interface KanbanBoard {
@@ -156,6 +171,7 @@ export interface KanbanBulkTaskUpdateOptions extends KanbanBoardOptions {
   archive?: boolean
   summary?: string
   reason?: string
+  operatorOverride?: boolean
 }
 
 export interface KanbanBulkTaskResult {
@@ -243,6 +259,7 @@ export async function getCapabilities(): Promise<KanbanCapabilities> {
     { key: 'commentsWrite', status: 'supported', canonicalRoute: '/tasks/{task_id}/comments', canonicalCommand: 'comment', requiresBoard: true },
     { key: 'commentsRead', status: 'supported', reason: 'Comments are returned on task detail responses', canonicalRoute: '/tasks/{task_id}', canonicalCommand: 'show --json', requiresBoard: true },
     { key: 'taskLog', status: 'supported', canonicalRoute: '/tasks/{task_id}/log', canonicalCommand: 'log', requiresBoard: true },
+    { key: 'attachments', status: 'supported', canonicalRoute: '/tasks/{task_id}/attachments', canonicalCommand: 'attachments --json', requiresBoard: true },
     { key: 'diagnostics', status: 'supported', canonicalRoute: '/diagnostics', canonicalCommand: 'diagnostics', requiresBoard: true },
     { key: 'reclaim', status: 'supported', canonicalRoute: '/tasks/{task_id}/reclaim', canonicalCommand: 'reclaim', requiresBoard: true },
     { key: 'reassign', status: 'supported', canonicalRoute: '/tasks/{task_id}/reassign', canonicalCommand: 'reassign', requiresBoard: true },
@@ -284,12 +301,18 @@ function textFromExecValue(value: unknown): string {
   return value === undefined || value === null ? '' : String(value)
 }
 
-async function execKanbanMutation(args: string[], logMessage: string, errorPrefix: string): Promise<string> {
+async function execKanbanMutation(
+  args: string[],
+  logMessage: string,
+  errorPrefix: string,
+  options: ExecFileOptions = {},
+): Promise<string> {
   try {
     const { stdout, stderr } = await execHermes(args, {
       maxBuffer: 50 * 1024 * 1024,
       timeout: 30000,
       ...execOpts,
+      ...options,
     })
     const stderrText = textFromExecValue(stderr).trim()
     if (stderrText) throw new Error(stderrText)
@@ -500,7 +523,19 @@ export async function getTask(taskId: string, opts?: KanbanBoardOptions): Promis
       timeout: 30000,
       ...execOpts,
     })
-    return JSON.parse(stdout)
+    const detail = JSON.parse(stdout) as KanbanTaskDetail
+    const resolvedTaskId = detail.task?.id || taskId
+    detail.comments = (detail.comments || []).map((comment, index) => ({
+      ...comment,
+      id: comment.id ?? `${resolvedTaskId}:comment:${index}`,
+      task_id: comment.task_id || resolvedTaskId,
+    }))
+    detail.events = (detail.events || []).map((event, index) => ({
+      ...event,
+      id: event.id ?? `${resolvedTaskId}:event:${index}`,
+      task_id: event.task_id || resolvedTaskId,
+    }))
+    return detail
   } catch (err: any) {
     if (err.code === 1 || err.status === 1) return null
     logger.error(err, 'Hermes CLI: kanban show failed')
@@ -555,11 +590,48 @@ export async function createTask(
   }
 }
 
-export async function completeTasks(taskIds: string[], summary?: string, opts?: KanbanBoardOptions): Promise<void> {
+export async function completeTasks(
+  taskIds: string[],
+  summary?: string,
+  opts?: KanbanBoardOptions & { operatorOverride?: boolean },
+): Promise<void> {
   const args = [...boardArgs(opts?.board), 'complete', ...taskIds]
   if (summary) args.push('--summary', summary)
 
-  await execKanbanMutation(args, 'Hermes CLI: kanban complete failed', 'Failed to complete kanban tasks')
+  if (!opts?.operatorOverride) {
+    await execKanbanMutation(args, 'Hermes CLI: kanban complete failed', 'Failed to complete kanban tasks')
+    return
+  }
+
+  // The canonical dashboard treats a human completion as an explicit
+  // operator override. The CLI applies the goal judge to every goal-mode
+  // completion, so run it with an isolated config that disables only the
+  // auxiliary judge while keeping the real shared kanban home.
+  const isolatedHome = await mkdtemp(join(tmpdir(), 'hermes-kanban-operator-'))
+  try {
+    await writeFile(
+      join(isolatedHome, 'config.yaml'),
+      'auxiliary:\n  goal_judge:\n    provider: __operator_override_disabled__\n',
+      'utf8',
+    )
+    const kanbanHome = process.env.HERMES_KANBAN_HOME?.trim() || detectHermesRootHome()
+    await execKanbanMutation(
+      args,
+      'Hermes CLI: kanban operator completion failed',
+      'Failed to complete kanban tasks',
+      {
+        env: {
+          ...process.env,
+          HERMES_HOME: isolatedHome,
+          HERMES_KANBAN_HOME: kanbanHome,
+        },
+      },
+    )
+  } finally {
+    await rm(isolatedHome, { recursive: true, force: true }).catch(err => {
+      logger.error(err, 'Hermes CLI: failed to clean up operator completion config')
+    })
+  }
 }
 
 export async function blockTask(taskId: string, reason: string, opts?: KanbanBoardOptions): Promise<void> {
@@ -634,16 +706,55 @@ export async function getStats(opts?: KanbanBoardOptions): Promise<KanbanStats> 
       timeout: 30000,
       ...execOpts,
     })
-    const stats = JSON.parse(stdout) as KanbanStats
+    const raw = JSON.parse(stdout) as {
+      by_status?: Record<string, unknown>
+      by_assignee?: Record<string, unknown>
+    }
+    const byStatus: Record<string, number> = {}
+    for (const [status, value] of Object.entries(raw.by_status || {})) {
+      const count = Number(value)
+      if (Number.isFinite(count) && count >= 0) byStatus[status] = count
+    }
+    const byAssignee: Record<string, number> = {}
+    for (const [assignee, value] of Object.entries(raw.by_assignee || {})) {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        byAssignee[assignee] = value
+        continue
+      }
+      if (value && typeof value === 'object') {
+        byAssignee[assignee] = Object.values(value as Record<string, unknown>)
+          .reduce<number>((total, count) => total + (Number.isFinite(Number(count)) ? Number(count) : 0), 0)
+      }
+    }
     const archivedTasks = await listTasks({ board: opts?.board, status: 'archived', includeArchived: true })
-    const existingArchived = stats.by_status?.archived || 0
-    const archivedCount = archivedTasks.length
-    stats.by_status = { ...(stats.by_status || {}), archived: archivedCount }
-    stats.total = (stats.total || 0) + Math.max(0, archivedCount - existingArchived)
-    return stats
+    byStatus.archived = archivedTasks.length
+    for (const task of archivedTasks) {
+      const assignee = task.assignee?.trim() || 'default'
+      byAssignee[assignee] = (byAssignee[assignee] || 0) + 1
+    }
+    return {
+      by_status: byStatus,
+      by_assignee: byAssignee,
+      total: Object.values(byStatus).reduce((total, count) => total + count, 0),
+    }
   } catch (err: any) {
     logger.error(err, 'Hermes CLI: kanban stats failed')
     throw new Error(`Failed to get kanban stats: ${err.message}`)
+  }
+}
+
+export async function listAttachments(taskId: string, opts?: KanbanBoardOptions): Promise<KanbanAttachment[]> {
+  try {
+    const { stdout } = await execHermes([...boardArgs(opts?.board), 'attachments', taskId, '--json'], {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 30000,
+      ...execOpts,
+    })
+    const attachments = JSON.parse(stdout)
+    return Array.isArray(attachments) ? attachments : []
+  } catch (err: any) {
+    logger.error(err, 'Hermes CLI: kanban attachments failed')
+    throw new Error(`Failed to list kanban attachments: ${err.message}`)
   }
 }
 

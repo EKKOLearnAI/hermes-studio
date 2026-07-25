@@ -99,6 +99,19 @@ describe('Kanban store', () => {
     mockKanbanApi.assignTask.mockResolvedValue({ ok: true })
     mockKanbanApi.getStats.mockResolvedValue({ total: 2, by_status: { done: 1 }, by_assignee: {} })
     mockKanbanApi.getAssignees.mockResolvedValue([{ name: 'bob', on_disk: true, counts: { ready: 1 } }])
+    mockKanbanApi.listTasks
+      .mockResolvedValueOnce([
+        { id: 'task-2', status: 'todo', assignee: null },
+        { id: 'task-1', status: 'done', assignee: null },
+      ])
+      .mockResolvedValueOnce([
+        { id: 'task-2', status: 'blocked', assignee: null },
+        { id: 'task-1', status: 'done', assignee: null },
+      ])
+      .mockResolvedValueOnce([
+        { id: 'task-2', status: 'ready', assignee: null },
+        { id: 'task-1', status: 'done', assignee: null },
+      ])
 
     const store = useKanbanStore()
     store.setSelectedBoard('project-a')

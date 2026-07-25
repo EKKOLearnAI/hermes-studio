@@ -51,6 +51,7 @@ describe('hermes kanban service', () => {
       missing: expect.arrayContaining(['cliCurrentSwitch', 'bulk', 'homeSubscriptions']),
       capabilities: expect.arrayContaining([
         expect.objectContaining({ key: 'commentsWrite', status: 'supported', canonicalCommand: 'comment', requiresBoard: true }),
+        expect.objectContaining({ key: 'attachments', status: 'supported', canonicalCommand: 'attachments --json', requiresBoard: true }),
         expect.objectContaining({ key: 'links', status: 'supported', canonicalRoute: '/links', canonicalCommand: 'link/unlink', requiresBoard: true }),
         expect.objectContaining({ key: 'bulk', status: 'partial', canonicalRoute: '/tasks/bulk', requiresBoard: true }),
         expect.objectContaining({ key: 'events', status: 'partial', canonicalRoute: '/events', canonicalCommand: 'watch', requiresBoard: true }),
@@ -167,8 +168,8 @@ describe('hermes kanban service', () => {
       .mockResolvedValueOnce({ stdout: JSON.stringify([{ id: 'task-1' }]) })
       .mockResolvedValueOnce({ stdout: JSON.stringify({ id: 'task-2' }) })
       .mockResolvedValueOnce({ stdout: JSON.stringify({ id: 'task-3' }) })
-      .mockResolvedValueOnce({ stdout: JSON.stringify({ total: 1, by_status: {}, by_assignee: {} }) })
-      .mockResolvedValueOnce({ stdout: JSON.stringify([{ id: 'archived-1', status: 'archived' }, { id: 'archived-2', status: 'archived' }]) })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ by_status: { ready: 1 }, by_assignee: { alice: { ready: 1 } } }) })
+      .mockResolvedValueOnce({ stdout: JSON.stringify([{ id: 'archived-1', status: 'archived', assignee: null }, { id: 'archived-2', status: 'archived', assignee: null }]) })
 
     await expect(service.listTasks({ board: 'project-a', status: 'todo', assignee: 'alice', tenant: 'ops', includeArchived: true })).resolves.toEqual([{ id: 'task-1' }])
     await expect(service.createTask('Ship', { board: 'project-a', body: 'write', assignee: 'alice', priority: 3, tenant: 'ops' })).resolves.toEqual({ id: 'task-2' })
@@ -183,7 +184,11 @@ describe('hermes kanban service', () => {
       goalMode: true,
       goalMaxTurns: 12,
     })).resolves.toEqual({ id: 'task-3' })
-    await expect(service.getStats({ board: 'project-a' })).resolves.toEqual({ total: 3, by_status: { archived: 2 }, by_assignee: {} })
+    await expect(service.getStats({ board: 'project-a' })).resolves.toEqual({
+      total: 3,
+      by_status: { ready: 1, archived: 2 },
+      by_assignee: { alice: 1, default: 2 },
+    })
 
     expect(mockExecFileAsync.mock.calls[0][1]).toEqual(['kanban', '--board', 'project-a', 'list', '--json', '--archived', '--status', 'todo', '--assignee', 'alice', '--tenant', 'ops'])
     expect(mockExecFileAsync.mock.calls[1][1]).toEqual(['kanban', '--board', 'project-a', 'create', 'Ship', '--json', '--body', 'write', '--assignee', 'alice', '--priority', '3', '--tenant', 'ops'])
@@ -228,6 +233,56 @@ describe('hermes kanban service', () => {
     expect(mockExecFileAsync.mock.calls[3][1]).toEqual(['kanban', '--board', 'default', 'unblock', 'task-1'])
     expect(mockExecFileAsync.mock.calls[4][1]).toEqual(['kanban', '--board', 'default', 'assign', 'task-1', 'alice'])
     expect(mockExecFileAsync.mock.calls[5][1]).toEqual(['kanban', '--board', 'default', 'assignees', '--json'])
+  })
+
+  it('normalizes 0.19 detail ids and lists durable attachments', async () => {
+    mockExecFileAsync
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          task: { id: 'task-1' },
+          comments: [{ author: 'alice', body: 'hi', created_at: 1 }],
+          events: [{ kind: 'created', created_at: 1 }],
+          runs: [],
+        }),
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([{
+          id: 7,
+          filename: 'report.html',
+          content_type: 'text/html',
+          size: 42,
+          uploaded_by: 'alice',
+          stored_path: '/tmp/report.html',
+          created_at: 2,
+        }]),
+      })
+
+    await expect(service.getTask('task-1', { board: 'project-a' })).resolves.toMatchObject({
+      comments: [{ id: 'task-1:comment:0', task_id: 'task-1' }],
+      events: [{ id: 'task-1:event:0', task_id: 'task-1' }],
+    })
+    await expect(service.listAttachments('task-1', { board: 'project-a' })).resolves.toEqual([
+      expect.objectContaining({ id: 7, filename: 'report.html' }),
+    ])
+    expect(mockExecFileAsync.mock.calls[1][1]).toEqual([
+      'kanban', '--board', 'project-a', 'attachments', 'task-1', '--json',
+    ])
+  })
+
+  it('isolates the goal judge for explicit operator completions', async () => {
+    mockExecFileAsync.mockResolvedValueOnce({ stdout: 'Completed task-1\n', stderr: '' })
+
+    await service.completeTasks(['task-1'], 'human approved', {
+      board: 'project-a',
+      operatorOverride: true,
+    })
+
+    expect(mockExecFileAsync.mock.calls[0][1]).toEqual([
+      'kanban', '--board', 'project-a', 'complete', 'task-1', '--summary', 'human approved',
+    ])
+    const options = mockExecFileAsync.mock.calls[0][2] as any
+    expect(options.env.HERMES_HOME).toContain('hermes-kanban-operator-')
+    expect(options.env.HERMES_KANBAN_HOME).toBeTruthy()
   })
 
   it('rejects invalid board slugs before shelling out', async () => {

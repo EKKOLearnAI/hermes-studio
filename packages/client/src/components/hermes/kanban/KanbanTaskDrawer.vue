@@ -4,12 +4,15 @@ import { NDrawer, NDrawerContent, NButton, NSelect, NInput, NSpin, NModal, useMe
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { request } from '@/api/client'
-import { getTask } from '@/api/hermes/kanban'
+import { getAttachmentContentPath, getTask, listAttachments } from '@/api/hermes/kanban'
 import { useKanbanStore } from '@/stores/hermes/kanban'
+import { useFilesStore } from '@/stores/hermes/files'
 import { withDefaultAssignee } from '@/utils/hermes/kanban-assignees'
 import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
+import FilePreview from '@/components/hermes/files/FilePreview.vue'
+import { fetchAuthenticatedBlob, saveBlob } from '@/api/hermes/binary-content'
 import type { Session, Message } from '@/stores/hermes/chat'
-import type { KanbanTaskDetail } from '@/api/hermes/kanban'
+import type { KanbanAttachment, KanbanTaskDetail } from '@/api/hermes/kanban'
 
 const RUN_HISTORY_PAGE_SIZE = 10
 
@@ -27,6 +30,7 @@ const { t } = useI18n()
 const router = useRouter()
 const message = useMessage()
 const kanbanStore = useKanbanStore()
+const filesStore = useFilesStore()
 
 const detail = ref<KanbanTaskDetail | null>(null)
 const loading = ref(false)
@@ -43,6 +47,8 @@ const diagnostics = ref<unknown[] | null>(null)
 const diagnosticsLoading = ref(false)
 const recoveryReason = ref('')
 const runHistoryPage = ref(1)
+const attachments = ref<KanbanAttachment[]>([])
+const showAttachmentPreview = ref(false)
 
 const completionSummary = computed(() => {
   if (!detail.value) return ''
@@ -58,6 +64,13 @@ const canMutateTask = computed(() => {
   const status = detail.value?.task.status
   return status !== 'done' && status !== 'archived'
 })
+const canCompleteTask = computed(() => ['running', 'ready', 'blocked'].includes(detail.value?.task.status || ''))
+const canBlockTask = computed(() => ['running', 'ready'].includes(detail.value?.task.status || ''))
+const canUnblockTask = computed(() => ['blocked', 'scheduled'].includes(detail.value?.task.status || ''))
+const canAssignTask = computed(() => canMutateTask.value && detail.value?.task.status !== 'running')
+const canReclaimTask = computed(() => detail.value?.task.status === 'running')
+const canReassignTask = computed(() => canMutateTask.value)
+const canSpecifyTask = computed(() => detail.value?.task.status === 'triage')
 
 const sessionResults = ref<any[]>([])
 const sessionLoading = ref(false)
@@ -89,6 +102,11 @@ function resetTaskScopedState() {
   sessionResults.value = []
   sessionLoading.value = false
   showSessions.value = false
+  attachments.value = []
+  if (showAttachmentPreview.value) {
+    showAttachmentPreview.value = false
+    filesStore.closePreview()
+  }
 }
 
 async function searchTaskSessions() {
@@ -173,9 +191,13 @@ watch(() => [props.taskId, kanbanStore.selectedBoard] as const, async ([id, boar
   }
   loading.value = true
   try {
-    const nextDetail = await getTask(id, { board })
+    const [nextDetail, nextAttachments] = await Promise.all([
+      getTask(id, { board }),
+      listAttachments(id, { board }).catch(() => []),
+    ])
     if (isActiveTask(id, board)) {
       detail.value = nextDetail
+      attachments.value = nextAttachments
     }
   } catch (err: any) {
     if (isActiveTask(id, board)) {
@@ -197,6 +219,33 @@ watch(() => detail.value?.runs.length || 0, () => {
 function formatTime(ts: number | null) {
   if (!ts) return '—'
   return new Date(ts * 1000).toLocaleString()
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+async function handleAttachment(attachment: KanbanAttachment) {
+  if (!detail.value) return
+  const sourceUrl = getAttachmentContentPath(detail.value.task.id, attachment.id, {
+    board: kanbanStore.selectedBoard,
+  })
+  try {
+    if (await filesStore.openRemotePreview(sourceUrl, attachment.filename, attachment.size)) {
+      showAttachmentPreview.value = true
+      return
+    }
+    saveBlob(await fetchAuthenticatedBlob(sourceUrl, { profile: null }), attachment.filename)
+  } catch (err: any) {
+    message.error(err.message)
+  }
+}
+
+function closeAttachmentPreview() {
+  showAttachmentPreview.value = false
+  filesStore.closePreview()
 }
 
 async function handleComplete() {
@@ -434,20 +483,20 @@ function handleNavigateTask(taskId: string) {
           <div v-if="canMutateTask" class="detail-section">
             <div class="section-title">{{ t('kanban.action.title') }}</div>
             <div class="action-group">
-              <template v-if="!showCompleteInput">
+              <template v-if="canCompleteTask && !showCompleteInput">
                 <NButton size="small" @click="showCompleteInput = true">
                   {{ t('kanban.action.complete') }}
                 </NButton>
               </template>
-              <div v-else class="complete-input">
+              <div v-else-if="canCompleteTask" class="complete-input">
                 <NInput v-model:value="completeSummary" size="small" :placeholder="t('kanban.action.completeSummary')" />
                 <NButton size="small" type="primary" @click="handleComplete">{{ t('common.ok') }}</NButton>
                 <NButton size="small" @click="showCompleteInput = false; completeSummary = ''">{{ t('common.cancel') }}</NButton>
               </div>
-              <template v-if="detail.task.status === 'blocked'">
+              <template v-if="canUnblockTask">
                 <NButton size="small" @click="handleUnblock">{{ t('kanban.action.unblock') }}</NButton>
               </template>
-              <template v-else>
+              <template v-else-if="canBlockTask">
                 <NButton v-if="!showBlockInput" size="small" @click="showBlockInput = true">{{ t('kanban.action.block') }}</NButton>
                 <div v-else class="block-input">
                   <NInput v-model:value="blockReason" size="small" :placeholder="t('kanban.action.blockReason')" />
@@ -455,16 +504,31 @@ function handleNavigateTask(taskId: string) {
                 </div>
               </template>
             </div>
-            <div v-if="detail.task.status !== 'running'" class="assign-group">
+            <div v-if="canAssignTask" class="assign-group">
               <NSelect v-model:value="assignProfile" :options="assigneeOptions" size="small" :placeholder="t('kanban.action.assignTo')" style="flex: 1;" />
               <NButton size="small" :disabled="!assignProfile" @click="handleAssign">{{ t('kanban.action.assign') }}</NButton>
             </div>
-            <div class="recovery-group">
+            <div v-if="canReclaimTask || canReassignTask || canSpecifyTask" class="recovery-group">
               <NInput v-model:value="recoveryReason" size="small" :placeholder="t('kanban.action.recoveryReason')" />
-              <NButton size="small" secondary @click="handleReclaim">{{ t('kanban.action.reclaim') }}</NButton>
-              <NButton size="small" secondary :disabled="!assignProfile" @click="handleReassign">{{ t('kanban.action.reassign') }}</NButton>
-              <NButton v-if="detail.task.status === 'triage'" size="small" secondary @click="handleSpecify">{{ t('kanban.action.specify') }}</NButton>
+              <NButton v-if="canReclaimTask" size="small" secondary @click="handleReclaim">{{ t('kanban.action.reclaim') }}</NButton>
+              <NButton v-if="canReassignTask" size="small" secondary :disabled="!assignProfile" @click="handleReassign">{{ t('kanban.action.reassign') }}</NButton>
+              <NButton v-if="canSpecifyTask" size="small" secondary @click="handleSpecify">{{ t('kanban.action.specify') }}</NButton>
             </div>
+          </div>
+
+          <!-- Durable task attachments -->
+          <div v-if="attachments.length > 0" class="detail-section">
+            <div class="section-title">{{ t('kanban.detail.artifacts') }}</div>
+            <button
+              v-for="attachment in attachments"
+              :key="attachment.id"
+              type="button"
+              class="attachment-item"
+              @click="handleAttachment(attachment)"
+            >
+              <span class="attachment-name">{{ attachment.filename }}</span>
+              <span class="attachment-size">{{ formatSize(attachment.size) }}</span>
+            </button>
           </div>
 
           <!-- Related Sessions -->
@@ -555,6 +619,17 @@ function handleNavigateTask(taskId: string) {
       <HistoryMessageList :session="historySession" />
     </div>
   </NModal>
+
+  <NModal
+    :show="showAttachmentPreview"
+    preset="card"
+    :title="filesStore.previewFile?.name || ''"
+    :style="{ width: 'min(1100px, calc(100vw - 48px))', height: 'min(820px, calc(100vh - 48px))' }"
+    content-style="padding: 0; height: 100%; overflow: hidden;"
+    @close="closeAttachmentPreview"
+  >
+    <FilePreview v-if="filesStore.previewFile" :custom-close="closeAttachmentPreview" />
+  </NModal>
 </template>
 
 <style scoped lang="scss">
@@ -562,6 +637,39 @@ function handleNavigateTask(taskId: string) {
 
 .detail-section {
   margin-bottom: 20px;
+}
+
+.attachment-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  margin-top: 6px;
+  border: 1px solid $border-color;
+  border-radius: 6px;
+  color: $text-primary;
+  background: $bg-secondary;
+  cursor: pointer;
+  text-align: left;
+
+  &:hover {
+    border-color: $accent-primary;
+  }
+}
+
+.attachment-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-size {
+  flex: 0 0 auto;
+  color: $text-muted;
+  font-size: 12px;
 }
 
 .section-title {

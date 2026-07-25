@@ -6107,7 +6107,23 @@
         },
         "parameters": [
           {
+            "name": "board",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task_id",
             "in": "query",
             "required": true,
             "schema": {
@@ -6905,6 +6921,102 @@
             }
           }
         }
+      }
+    },
+    "/api/hermes/kanban/{id}/attachments": {
+      "get": {
+        "tags": [
+          "Kanban"
+        ],
+        "summary": "Get attachments",
+        "description": "GET /api/hermes/kanban/:id/attachments",
+        "operationId": "listAttachments",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "board",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/kanban/{id}/attachments/{attachmentId}": {
+      "get": {
+        "tags": [
+          "Kanban"
+        ],
+        "summary": "Get :attachmentId",
+        "description": "GET /api/hermes/kanban/:id/attachments/:attachmentId",
+        "operationId": "readAttachment",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "attachmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "board",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/hermes/kanban/{id}/block": {

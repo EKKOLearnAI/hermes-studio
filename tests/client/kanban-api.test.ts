@@ -18,6 +18,8 @@ import {
   getCapabilities,
   listTasks,
   getTask,
+  listAttachments,
+  getAttachmentContentPath,
   createTask,
   completeTasks,
   blockTask,
@@ -105,6 +107,20 @@ describe('Kanban API', () => {
       ['/api/hermes/kanban/unblock?board=project-a', { method: 'POST', body: JSON.stringify({ task_ids: ['task-1'] }) }],
       ['/api/hermes/kanban/task-1/assign?board=project-a', { method: 'POST', body: JSON.stringify({ profile: 'bob' }) }],
     ])
+  })
+
+  it('lists attachments and builds their authenticated content path', async () => {
+    mockRequest.mockResolvedValueOnce({
+      attachments: [{ id: 7, filename: 'report.html', size: 42 }],
+    })
+
+    await expect(listAttachments('task 1', { board: 'project-a' })).resolves.toEqual([
+      { id: 7, filename: 'report.html', size: 42 },
+    ])
+    expect(mockRequest).toHaveBeenCalledWith('/api/hermes/kanban/task%201/attachments?board=project-a')
+    expect(getAttachmentContentPath('task 1', 7, { board: 'project-a' })).toBe(
+      '/api/hermes/kanban/task%201/attachments/7?board=project-a',
+    )
   })
 
   it('lists and manages boards through explicit board endpoints', async () => {

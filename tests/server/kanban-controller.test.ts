@@ -24,13 +24,15 @@ const mockSpecifyTask = vi.hoisted(() => vi.fn())
 const mockDispatch = vi.hoisted(() => vi.fn())
 const mockGetStats = vi.hoisted(() => vi.fn())
 const mockGetAssignees = vi.hoisted(() => vi.fn())
+const mockListAttachments = vi.hoisted(() => vi.fn())
 const mockSearchSessions = vi.hoisted(() => vi.fn())
 const mockGetSessionDetail = vi.hoisted(() => vi.fn())
 const mockGetExactSessionDetail = vi.hoisted(() => vi.fn())
 const mockFindLatestExactSessionId = vi.hoisted(() => vi.fn())
 const mockListUserProfiles = vi.hoisted(() => vi.fn())
 
-vi.mock('fs/promises', () => ({
+vi.mock('fs/promises', async importOriginal => ({
+  ...await importOriginal<typeof import('fs/promises')>(),
   readFile: mockReadFile,
 }))
 
@@ -67,6 +69,7 @@ vi.mock('../../packages/server/src/services/hermes/hermes-kanban', () => ({
   dispatch: mockDispatch,
   getStats: mockGetStats,
   getAssignees: mockGetAssignees,
+  listAttachments: mockListAttachments,
 }))
 
 vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
@@ -97,6 +100,12 @@ describe('kanban controller', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockListUserProfiles.mockReturnValue([{ profile_name: 'research' }])
+    mockGetTask.mockImplementation(async (id: string) => ({
+      task: { id, assignee: null, status: 'ready' },
+      comments: [],
+      events: [],
+      runs: [],
+    }))
   })
 
   it('lists boards and tasks with explicit/default board context', async () => {
@@ -214,6 +223,84 @@ describe('kanban controller', () => {
     expect(mockAssignTask).not.toHaveBeenCalled()
   })
 
+  it('prevents profile-scoped users from mutating or inspecting hidden tasks', async () => {
+    const state = { user: { id: 7, role: 'admin' }, profile: { name: 'research' } }
+    mockGetTask.mockResolvedValue({
+      task: { id: 'task-hidden', assignee: 'travel', status: 'ready' },
+      comments: [],
+      events: [],
+      runs: [],
+    })
+
+    const cases = [
+      { invoke: ctrl.complete, context: ctx({ state, request: { body: { task_ids: ['task-hidden'] } } }), mock: mockCompleteTasks },
+      { invoke: ctrl.block, context: ctx({ state, params: { id: 'task-hidden' }, request: { body: { reason: 'wait' } } }), mock: mockBlockTask },
+      { invoke: ctrl.unblock, context: ctx({ state, request: { body: { task_ids: ['task-hidden'] } } }), mock: mockUnblockTasks },
+      { invoke: ctrl.assign, context: ctx({ state, params: { id: 'task-hidden' }, request: { body: { profile: 'research' } } }), mock: mockAssignTask },
+      { invoke: ctrl.addComment, context: ctx({ state, params: { id: 'task-hidden' }, request: { body: { body: 'secret' } } }), mock: mockAddComment },
+      { invoke: ctrl.bulkUpdateTasks, context: ctx({ state, request: { body: { ids: ['task-hidden'], status: 'done' } } }), mock: mockBulkUpdateTasks },
+      { invoke: ctrl.taskLog, context: ctx({ state, params: { id: 'task-hidden' } }), mock: mockGetTaskLog },
+      { invoke: ctrl.reclaim, context: ctx({ state, params: { id: 'task-hidden' } }), mock: mockReclaimTask },
+      { invoke: ctrl.reassign, context: ctx({ state, params: { id: 'task-hidden' }, request: { body: { profile: 'research' } } }), mock: mockReassignTask },
+      { invoke: ctrl.specify, context: ctx({ state, params: { id: 'task-hidden' } }), mock: mockSpecifyTask },
+    ]
+
+    for (const testCase of cases) {
+      vi.clearAllMocks()
+      mockListUserProfiles.mockReturnValue([{ profile_name: 'research' }])
+      mockGetTask.mockResolvedValue({
+        task: { id: 'task-hidden', assignee: 'travel', status: 'ready' },
+        comments: [],
+        events: [],
+        runs: [],
+      })
+      await testCase.invoke(testCase.context)
+      expect(testCase.context.status).toBe(404)
+      expect(testCase.mock).not.toHaveBeenCalled()
+    }
+
+    const dispatchCtx = ctx({ state, request: { body: { dryRun: true } } })
+    await ctrl.dispatch(dispatchCtx)
+    expect(dispatchCtx.status).toBe(403)
+    expect(mockDispatch).not.toHaveBeenCalled()
+  })
+
+  it('lists and reads only attachments belonging to an authorized task', async () => {
+    const storedPath = '/Users/tester/.hermes/kanban/attachments/task-1/report.html'
+    mockGetTask.mockResolvedValue({
+      task: { id: 'task-1', assignee: null, status: 'done' },
+      comments: [],
+      events: [],
+      runs: [],
+    })
+    mockListAttachments.mockResolvedValue([{
+      id: 7,
+      filename: 'report.html',
+      content_type: 'text/html',
+      size: 42,
+      uploaded_by: 'default',
+      stored_path: storedPath,
+      created_at: 1,
+    }])
+    mockReadFile.mockResolvedValue(Buffer.from('<h1>report</h1>'))
+
+    const listCtx = ctx({ params: { id: 'task-1' } })
+    await ctrl.listAttachments(listCtx)
+    expect(listCtx.body.attachments[0]).toMatchObject({ id: 7, filename: 'report.html' })
+    expect(listCtx.body.attachments[0]).not.toHaveProperty('stored_path')
+
+    const headers: Record<string, string> = {}
+    const readCtx = ctx({
+      params: { id: 'task-1', attachmentId: '7' },
+      set: (name: string, value: string) => { headers[name] = value },
+    })
+    await ctrl.readAttachment(readCtx)
+    expect(readCtx.body).toEqual(Buffer.from('<h1>report</h1>'))
+    expect(readCtx.type).toBe('text/html')
+    expect(headers['Content-Disposition']).toBe("attachment; filename*=UTF-8''report.html")
+    expect(headers['X-Content-Type-Options']).toBe('nosniff')
+  })
+
   it('proxies comment/log/diagnostics with explicit board context', async () => {
     const taskLog = { task_id: 'task-1', path: null, exists: true, size_bytes: 10, content: 'worker log', truncated: false }
     mockAddComment.mockResolvedValue({ ok: true, output: 'commented' })
@@ -253,7 +340,7 @@ describe('kanban controller', () => {
 
     const bulkCtx = ctx({ query: { board: 'project-a' }, request: { body: { ids: ['task-1'], status: 'done', assignee: null, summary: 'closed' } } })
     await ctrl.bulkUpdateTasks(bulkCtx)
-    expect(mockBulkUpdateTasks).toHaveBeenCalledWith({ board: 'project-a', ids: ['task-1'], status: 'done', assignee: null, archive: undefined, summary: 'closed', reason: undefined })
+    expect(mockBulkUpdateTasks).toHaveBeenCalledWith({ board: 'project-a', ids: ['task-1'], status: 'done', assignee: null, archive: undefined, summary: 'closed', reason: undefined, operatorOverride: true })
     expect(bulkCtx.body).toEqual({ results: [{ id: 'task-1', ok: true }] })
   })
 
@@ -452,7 +539,7 @@ describe('kanban controller', () => {
 
     const fileCtx = ctx({ query: { path: '/tmp/outside.txt' } })
     await ctrl.readArtifact(fileCtx)
-    expect(fileCtx.status).toBe(403)
+    expect(fileCtx.status).toBe(400)
   })
 
   it('reads workspace artifacts and proxies action routes', async () => {
@@ -490,7 +577,17 @@ describe('kanban controller', () => {
       thread_session_count: 1,
     })
 
-    const fileCtx = ctx({ query: { path: '/Users/tester/.hermes/kanban/workspaces/task/out.txt' } })
+    mockGetTask.mockResolvedValueOnce({
+      task: {
+        id: 'task-1',
+        assignee: null,
+        workspace_path: '/Users/tester/.hermes/kanban/workspaces/task',
+      },
+      comments: [],
+      events: [],
+      runs: [],
+    })
+    const fileCtx = ctx({ query: { path: '/Users/tester/.hermes/kanban/workspaces/task/out.txt', task_id: 'task-1' } })
     await ctrl.readArtifact(fileCtx)
     expect(fileCtx.body).toEqual({
       content: 'artifact-content',
@@ -534,12 +631,18 @@ describe('kanban controller', () => {
 
     const completeCtx = ctx({ query: { board: 'project-a' }, request: { body: { task_ids: ['task-1'], summary: 'done' } } })
     await ctrl.complete(completeCtx)
-    expect(mockCompleteTasks).toHaveBeenCalledWith(['task-1'], 'done', { board: 'project-a' })
+    expect(mockCompleteTasks).toHaveBeenCalledWith(['task-1'], 'done', { board: 'project-a', operatorOverride: true })
 
     const blockCtx = ctx({ query: { board: 'project-a' }, params: { id: 'task-1' }, request: { body: { reason: 'wait' } } })
     await ctrl.block(blockCtx)
     expect(mockBlockTask).toHaveBeenCalledWith('task-1', 'wait', { board: 'project-a' })
 
+    mockGetTask.mockResolvedValueOnce({
+      task: { id: 'task-1', assignee: null, status: 'blocked' },
+      comments: [],
+      events: [],
+      runs: [],
+    })
     const unblockCtx = ctx({ query: { board: 'project-a' }, request: { body: { task_ids: ['task-1'] } } })
     await ctrl.unblock(unblockCtx)
     expect(mockUnblockTasks).toHaveBeenCalledWith(['task-1'], { board: 'project-a' })
@@ -565,5 +668,24 @@ describe('kanban controller', () => {
     const exactSearchCtx = ctx({ query: { task_id: 'task-1', profile: 'alice' } })
     await ctrl.searchSessions(exactSearchCtx)
     expect(exactSearchCtx.body.results[0]).toMatchObject({ id: 'session-2', title: 'Matched session' })
+  })
+
+  it('rejects invalid transitions before invoking mutating CLI commands', async () => {
+    mockGetTask.mockResolvedValue({
+      task: { id: 'task-1', assignee: null, status: 'todo' },
+      comments: [],
+      events: [],
+      runs: [],
+    })
+
+    const blockCtx = ctx({
+      params: { id: 'task-1' },
+      request: { body: { reason: 'wait' } },
+    })
+    await ctrl.block(blockCtx)
+
+    expect(blockCtx.status).toBe(409)
+    expect(blockCtx.body).toEqual({ error: 'Cannot block task "task-1" from status "todo"' })
+    expect(mockBlockTask).not.toHaveBeenCalled()
   })
 })
