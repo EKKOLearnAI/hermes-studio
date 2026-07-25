@@ -74,6 +74,7 @@ export const VOICE_API_PRESETS: VoiceApiPreset[] = [
     isSecretRequired: true,
     capabilities: {
       models: true,
+      voices: true,
     },
   },
 

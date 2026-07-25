@@ -87,6 +87,7 @@ export function useVoiceApiConnections() {
 
     if (connection.provider === 'custom') {
       vs.setCustomUrl(connection.baseUrl || stringSetting(settings, 'baseUrl'))
+      vs.setCustomVoice(connection.voice || stringSetting(settings, 'voice') || vs.customVoice.value)
       return
     }
 

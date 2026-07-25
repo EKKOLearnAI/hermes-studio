@@ -19,6 +19,7 @@ export interface VoiceSettingsData {
   // Custom endpoint (OpenAI-compatible)
   customUrl: string
   customApiKey: string
+  customVoice: string
 
   // Edge TTS
   edgeUrl: string
@@ -83,6 +84,7 @@ const DEFAULT: VoiceSettingsData = {
 
   customUrl: '',
   customApiKey: '',
+  customVoice: 'alloy',
 
   edgeUrl: '',
   edgeVoice: 'zh-CN-XiaoxiaoNeural',
@@ -147,6 +149,7 @@ const openaiVoice = ref<string>(load().openaiVoice)
 // Custom
 const customUrl = ref<string>(load().customUrl)
 const customApiKey = ref<string>(load().customApiKey)
+const customVoice = ref<string>(load().customVoice)
 
 // Edge TTS
 const edgeUrl = ref<string>(load().edgeUrl)
@@ -176,7 +179,7 @@ const doubaoStylePrompt = ref<string>(load().doubaoStylePrompt)
 // Auto-persist on change
 watch(
   [provider, webspeechVoice, openaiApiKey, openaiBaseUrl, openaiModel, openaiVoice,
-   customUrl, customApiKey, edgeUrl, edgeVoice, edgeRate, edgePitchHz,
+   customUrl, customApiKey, customVoice, edgeUrl, edgeVoice, edgeRate, edgePitchHz,
    mimoApiKey, mimoAuthMode, mimoBaseUrl, mimoModel, mimoVoice, mimoVoiceDesignDesc,
    mimoVoiceCloneDataUri, mimoVoiceCloneFileName, mimoVoiceCloneFormat, mimoStylePrompt,
    doubaoApiKey, doubaoBaseUrl, doubaoModel, doubaoVoice, doubaoStylePrompt],
@@ -191,6 +194,7 @@ watch(
         openaiVoice: openaiVoice.value,
         customUrl: customUrl.value,
         customApiKey: customApiKey.value,
+        customVoice: customVoice.value,
         edgeUrl: edgeUrl.value,
         edgeVoice: edgeVoice.value,
         edgeRate: edgeRate.value,
@@ -227,6 +231,7 @@ export function useVoiceSettings() {
     openaiVoice,
     customUrl,
     customApiKey,
+    customVoice,
     edgeUrl,
     edgeVoice,
     edgeRate,
@@ -255,6 +260,7 @@ export function useVoiceSettings() {
     setOpenaiVoice(v: string) { openaiVoice.value = v },
     setCustomUrl(v: string) { customUrl.value = v },
     setCustomApiKey(v: string) { customApiKey.value = v },
+    setCustomVoice(v: string) { customVoice.value = v },
     setEdgeUrl(v: string) { edgeUrl.value = v },
     setEdgeVoice(v: string) { edgeVoice.value = v },
     setEdgeRate(v: number) { edgeRate.value = v },
@@ -284,6 +290,7 @@ export function useVoiceSettings() {
       openaiVoice.value = DEFAULT.openaiVoice
       customUrl.value = DEFAULT.customUrl
       customApiKey.value = DEFAULT.customApiKey
+      customVoice.value = DEFAULT.customVoice
       edgeUrl.value = DEFAULT.edgeUrl
       edgeVoice.value = DEFAULT.edgeVoice
       edgeRate.value = DEFAULT.edgeRate
