@@ -179,6 +179,8 @@ export function disconnectGroupChat(): void {
 export async function createRoom(data: {
     name: string
     inviteCode: string
+    memberName?: string
+    memberDescription?: string
     agents?: { profile: string; name?: string; description?: string; invited?: boolean }[]
     compression?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }
     workspace?: string

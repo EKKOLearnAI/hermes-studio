@@ -45,6 +45,10 @@ const showCreateModal = ref(false)
 const showCloneModal = ref(false)
 const showAddAgentModal = ref(false)
 const showCompressionModal = ref(false)
+const showUserProfileModal = ref(false)
+const userProfileName = ref('')
+const userProfileDescription = ref('')
+const isSavingUserProfile = ref(false)
 const compressionConfig = ref({ triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10 })
 const isCompressing = ref(false)
 const inviteCodeDraft = ref('')
@@ -341,7 +345,14 @@ function extractApiErrorMessage(err: any): string {
 async function handleCreateRoom(name: string, inviteCode: string, userName: string, description: string, compression: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number }, workspace: string) {
     try {
         store.setUserInfo(userName, description)
-        const res = await store.createNewRoom(name, inviteCode, undefined, compression, workspace)
+        const res = await store.createNewRoom(
+            name,
+            inviteCode,
+            undefined,
+            compression,
+            workspace,
+            { name: userName, description },
+        )
         showCreateModal.value = false
         const failureMessage = formatAgentFailures(res.agentResults)
         if (failureMessage) message.warning(failureMessage)
@@ -580,6 +591,28 @@ async function handleClearWorkspace() {
     await handleSaveWorkspace()
 }
 
+function handleOpenUserProfile() {
+    const member = store.members.find(item => item.userId === store.userId)
+    userProfileName.value = member?.name || store.userName || ''
+    userProfileDescription.value = member?.description || ''
+    showUserProfileModal.value = true
+}
+
+async function handleSaveUserProfile() {
+    const name = userProfileName.value.trim()
+    if (!name || isSavingUserProfile.value) return
+    isSavingUserProfile.value = true
+    try {
+        await store.updateCurrentMemberProfile(name, userProfileDescription.value)
+        showUserProfileModal.value = false
+        message.success(t('common.saved'))
+    } catch {
+        message.error(t('common.saveFailed'))
+    } finally {
+        isSavingUserProfile.value = false
+    }
+}
+
 function handleOpenRoomSettings() {
     if (!currentRoomCanManage.value) return
     const room = store.rooms.find(r => r.id === store.currentRoomId)
@@ -814,6 +847,12 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :avatar="userMemberAvatar" :size="24" />
                         </span>
                     </div>
+                    <button v-if="hasRoom" class="icon-btn" :title="t('groupChat.yourName')" @click="handleOpenUserProfile">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 20h9" />
+                            <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z" />
+                        </svg>
+                    </button>
                     <button v-if="currentRoomCanManage" class="icon-btn" :title="t('groupChat.addAgent')" @click="handleAddAgent">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                     </button>
@@ -1100,6 +1139,45 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         <NButton @click="showWorkspaceModal = false">{{ t('common.cancel') }}</NButton>
                         <NButton @click="handleClearWorkspace">{{ t('workflow.workspace.clear') }}</NButton>
                         <NButton type="primary" @click="handleSaveWorkspace">{{ t('common.save') }}</NButton>
+                    </NSpace>
+                </template>
+            </NModal>
+            <NModal
+                v-model:show="showUserProfileModal"
+                preset="dialog"
+                :title="t('groupChat.yourName')"
+                style="width: 460px; max-width: 92vw"
+            >
+                <div class="form-group">
+                    <label class="form-label">{{ t('groupChat.yourName') }}</label>
+                    <NInput
+                        v-model:value="userProfileName"
+                        :placeholder="t('groupChat.yourNamePlaceholder')"
+                        :maxlength="120"
+                        @keyup.enter="handleSaveUserProfile"
+                    />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ t('groupChat.yourDescription') }}</label>
+                    <NInput
+                        v-model:value="userProfileDescription"
+                        type="textarea"
+                        :rows="3"
+                        :maxlength="2000"
+                        :placeholder="t('groupChat.yourDescriptionPlaceholder')"
+                    />
+                </div>
+                <template #action>
+                    <NSpace justify="end">
+                        <NButton @click="showUserProfileModal = false">{{ t('common.cancel') }}</NButton>
+                        <NButton
+                            type="primary"
+                            :disabled="!userProfileName.trim()"
+                            :loading="isSavingUserProfile"
+                            @click="handleSaveUserProfile"
+                        >
+                            {{ t('common.save') }}
+                        </NButton>
                     </NSpace>
                 </template>
             </NModal>

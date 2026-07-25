@@ -68,11 +68,17 @@ function serializeRoom(room: any, includeManageFields: boolean) {
     return serialized
 }
 
-function persistRoomCreator(storage: ReturnType<GroupChatServer['getStorage']>, roomId: string, user: any): void {
+function persistRoomCreator(
+    storage: ReturnType<GroupChatServer['getStorage']>,
+    roomId: string,
+    user: any,
+    memberName?: string,
+    memberDescription?: string,
+): void {
     if (typeof user?.id !== 'number' || user.id <= 0) return
     storage.setRoomOwnerAuthUserId?.(roomId, user.id)
-    const username = String(user.username || `User-${user.id}`)
-    storage.addRoomMember(roomId, `auth:${user.id}`, username, '', '', user.id)
+    const username = memberName?.trim() || String(user.username || `User-${user.id}`)
+    storage.addRoomMember(roomId, `auth:${user.id}`, username, memberDescription?.trim() || '', '', user.id)
 }
 
 function visibleRoomsForUser(storage: ReturnType<GroupChatServer['getStorage']>, user: any) {
@@ -131,16 +137,31 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         return
     }
 
-    const { name, inviteCode, agents, compression, workspace } = ctx.request.body as {
+    const { name, inviteCode, agents, compression, workspace, memberName, memberDescription } = ctx.request.body as {
         name?: string
         inviteCode?: string
         agents?: { profile: string; name?: string; description?: string; invited?: boolean }[]
         compression?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }
         workspace?: string
+        memberName?: string
+        memberDescription?: string
     }
     if (!name || !inviteCode) {
         ctx.status = 400
         ctx.body = { error: 'name and inviteCode are required' }
+        return
+    }
+    if (
+        (memberName !== undefined && typeof memberName !== 'string') ||
+        (memberDescription !== undefined && typeof memberDescription !== 'string')
+    ) {
+        ctx.status = 400
+        ctx.body = { error: 'memberName and memberDescription must be strings' }
+        return
+    }
+    if ((memberName?.trim().length || 0) > 120 || (memberDescription?.trim().length || 0) > 2000) {
+        ctx.status = 400
+        ctx.body = { error: 'Member profile is too long' }
         return
     }
     const reservedAgent = (agents || []).find(a => isReservedMentionName(a.name || a.profile))
@@ -177,7 +198,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         workspace: normalizedWorkspace,
     } : { workspace: normalizedWorkspace }
     storage.saveRoom(roomId, name, inviteCode, compressionConfig)
-    persistRoomCreator(storage, roomId, ctx.state?.user)
+    persistRoomCreator(storage, roomId, ctx.state?.user, memberName, memberDescription)
 
     const addedAgents = []
     const agentResults = []

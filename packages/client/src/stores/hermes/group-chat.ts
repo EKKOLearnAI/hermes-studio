@@ -326,14 +326,12 @@ const currentUserAvatar = ref('')
         return connectedSocket
     }
 
-    async function joinRealtimeRoom(roomId: string, options: { syncMessages?: boolean; inviteCode?: string; profileName?: string; profileDescription?: string } = {}) {
+    async function joinRealtimeRoom(roomId: string, options: { syncMessages?: boolean; inviteCode?: string } = {}) {
         const socket = await ensureRealtimeSocket()
-        // Use explicitly passed profile name (from create-room form) first;
-        // fall back to localStorage so first-time joins still pick up the
-        // last-entered name. On rejoin the server prefers the per-room DB
-        // record, so a stale stored name is harmless.
-        const storedName = options.profileName || getStoredGroupUserName()
-        const storedDescription = options.profileDescription || localStorage.getItem('gc_user_description')
+        // Browser storage is only a first-join default. Once the member row
+        // exists, the server keeps the room-specific profile authoritative.
+        const storedName = getStoredGroupUserName()
+        const storedDescription = localStorage.getItem('gc_user_description')
 
         await new Promise<void>((resolve) => {
             socket.emit('join', {
@@ -526,6 +524,14 @@ const currentUserAvatar = ref('')
             }
         })
 
+        socket.on('member_updated', (data: { roomId: string; members: MemberInfo[] }) => {
+            if (data.roomId === currentRoomId.value) {
+                members.value = data.members
+                const currentMember = members.value.find(member => member.userId === userId.value)
+                if (currentMember?.name) userName.value = currentMember.name
+            }
+        })
+
         socket.on('typing', (data: { roomId: string; userId: string; userName: string }) => {
             if (data.roomId === currentRoomId.value && !typingUsers.value.has(data.userId)) {
                 const timer = setTimeout(() => typingUsers.value.delete(data.userId), 5000)
@@ -635,6 +641,32 @@ const currentUserAvatar = ref('')
         localStorage.setItem('gc_user_description', description)
     }
 
+    async function updateCurrentMemberProfile(name: string, description = '') {
+        const roomId = currentRoomId.value
+        const socket = getSocket()
+        const normalizedName = name.trim()
+        const normalizedDescription = description.trim()
+        if (!roomId || !socket) throw new Error('Join a room before updating your profile')
+        if (!normalizedName) throw new Error('Name is required')
+
+        await new Promise<void>((resolve, reject) => {
+            socket.emit('update_member_profile', {
+                roomId,
+                name: normalizedName,
+                description: normalizedDescription,
+            }, (res: { error?: string; members?: MemberInfo[] }) => {
+                if (res?.error) {
+                    reject(new Error(res.error))
+                    return
+                }
+                if (res?.members) members.value = res.members
+                userName.value = normalizedName
+                setUserInfo(normalizedName, normalizedDescription)
+                resolve()
+            })
+        })
+    }
+
     // ─── Room Actions ──────────────────────────────────────
     async function joinRoom(roomId: string) {
         isJoining.value = true
@@ -738,11 +770,20 @@ const currentUserAvatar = ref('')
         }
     }
 
-    async function createNewRoom(name: string, inviteCode: string, agentList?: { profile: string; name?: string; description?: string; invited?: boolean }[], compression?: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number }, workspace?: string) {
+    async function createNewRoom(
+        name: string,
+        inviteCode: string,
+        agentList?: { profile: string; name?: string; description?: string; invited?: boolean }[],
+        compression?: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number },
+        workspace?: string,
+        memberProfile?: { name: string; description?: string },
+    ) {
         try {
             const res = await createRoom({
                 name,
                 inviteCode,
+                memberName: memberProfile?.name,
+                memberDescription: memberProfile?.description,
                 agents: agentList,
                 compression: compression || { triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10 },
                 workspace: workspace || undefined,
@@ -962,6 +1003,7 @@ const currentUserAvatar = ref('')
         connect,
         disconnect,
         setUserInfo,
+        updateCurrentMemberProfile,
         setAutoPlaySpeech,
         setMessageReference,
         clearMessageReference,

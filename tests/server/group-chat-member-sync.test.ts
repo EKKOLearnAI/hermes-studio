@@ -731,6 +731,113 @@ describe('Group Chat member/agent identity sync', () => {
     ])
   })
 
+  it('persists the room creator profile from the create form before realtime join', async () => {
+    const addRoomMember = vi.fn()
+    const storage = {
+      setRoomOwnerAuthUserId: vi.fn(),
+      addRoomMember,
+      saveRoom: vi.fn(),
+      getRoom: vi.fn((roomId: string) => ({
+        id: roomId,
+        name: 'Family Room',
+        inviteCode: 'secret',
+        ownerAuthUserId: 42,
+      })),
+    }
+    setGroupChatServer({
+      getStorage: () => storage,
+      agentClients: {},
+    } as any)
+
+    const handler = routeHandler('/api/hermes/group-chat/rooms', 'POST')
+    const ctx: any = {
+      state: { user: { id: 42, username: 'alice-login', role: 'admin' } },
+      request: {
+        body: {
+          name: 'Family Room',
+          inviteCode: 'secret',
+          memberName: '妈妈',
+          memberDescription: 'family profile',
+        },
+      },
+      status: 200,
+      body: undefined,
+    }
+    await handler(ctx, async () => {})
+
+    expect(addRoomMember).toHaveBeenCalledWith(
+      expect.any(String),
+      'auth:42',
+      '妈妈',
+      'family profile',
+      '',
+      42,
+    )
+    expect(ctx.body.room).toEqual(expect.objectContaining({ name: 'Family Room' }))
+  })
+
+  it('updates an explicitly requested human profile only in the joined room', () => {
+    const emit = vi.fn()
+    const liveMember: any = {
+      id: 'socket-1',
+      userId: 'auth:42',
+      name: 'alice-login',
+      description: '',
+      source: 'human',
+      avatar: 'avatar-data',
+      online: true,
+      socketId: 'socket-1',
+    }
+    const room = {
+      getOnlineMemberBySocketId: vi.fn(() => liveMember),
+      addOrUpdateMember: vi.fn((
+        _socketId: string,
+        _userId: string,
+        name: string,
+        description: string,
+      ) => {
+        liveMember.name = name
+        liveMember.description = description
+        return liveMember
+      }),
+      getMembersList: vi.fn(() => [liveMember]),
+    }
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map([['room-family', room]])
+    server.socketAuthUserIdMap = new Map([['socket-1', 42]])
+    server.userInfoMap = new Map([['auth:42', { name: 'alice-login', description: '' }]])
+    server.storage = { addRoomMember: vi.fn() }
+    server.nsp = { to: vi.fn(() => ({ emit })) }
+    const socket = { id: 'socket-1' }
+    const ack = vi.fn()
+
+    server.handleUpdateMemberProfile(socket, {
+      roomId: 'room-family',
+      name: '妈妈',
+      description: 'family profile',
+    }, ack)
+
+    expect(server.storage.addRoomMember).toHaveBeenCalledWith(
+      'room-family',
+      'auth:42',
+      '妈妈',
+      'family profile',
+      'avatar-data',
+      42,
+    )
+    expect(server.userInfoMap.get('auth:42')).toEqual({
+      name: '妈妈',
+      description: 'family profile',
+    })
+    expect(emit).toHaveBeenCalledWith('member_updated', expect.objectContaining({
+      roomId: 'room-family',
+      memberName: '妈妈',
+    }))
+    expect(ack).toHaveBeenCalledWith(expect.objectContaining({
+      member: expect.objectContaining({ name: '妈妈' }),
+    }))
+  })
+
   it('filters room list to rooms containing one of the regular admin profiles', async () => {
     const allRooms = [
       { id: 'room-default', name: 'Default', inviteCode: null },

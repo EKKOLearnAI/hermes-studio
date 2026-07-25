@@ -4605,6 +4605,12 @@
                   "inviteCode": {
                     "type": "string"
                   },
+                  "memberDescription": {
+                    "type": "string"
+                  },
+                  "memberName": {
+                    "type": "string"
+                  },
                   "name": {
                     "type": "string"
                   },

@@ -57,6 +57,7 @@ function focusRoomInput() {
             <NInput
                 v-model:value="userName"
                 :placeholder="t('groupChat.yourNamePlaceholder')"
+                :maxlength="120"
                 @keyup.enter="focusRoomInput"
             />
         </div>
@@ -66,6 +67,7 @@ function focusRoomInput() {
                 v-model:value="description"
                 type="textarea"
                 :rows="2"
+                :maxlength="2000"
                 :placeholder="t('groupChat.yourDescriptionPlaceholder')"
             />
         </div>
