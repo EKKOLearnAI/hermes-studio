@@ -53,7 +53,7 @@ export class AgentRuntime {
     this.modelClient = options.modelClient
     this.toolsEnabled = options.toolsEnabled !== false
     this.tools = this.toolsEnabled
-      ? options.tools ?? createDefaultToolRegistry()
+      ? options.tools ?? createDefaultToolRegistry({ skillDirectory: options.skillDirectory })
       : new AgentToolRegistry()
     this.skillsEnabled = options.skillsEnabled !== false
     this.skills = this.skillsEnabled ? options.skills ?? [] : []
@@ -106,7 +106,6 @@ export class AgentRuntime {
     emit({ type: 'run.started', runId, maxSteps })
 
     const inputSkills = this.skillsEnabled ? input.skills ?? [] : []
-    const runSkills = [...this.skills, ...inputSkills]
     this.registerSkillTools(inputSkills)
     const memoryIdentity = this.memoryIdentityFor(input)
     const memoryPreparation = await this.prepareMemory(input, memoryIdentity)
@@ -120,7 +119,7 @@ export class AgentRuntime {
         memoryIds: memoryContext.usedMemoryIds,
       })
     }
-    const messages = this.prepareMessages(input, runSkills, memoryContext ? this.memory?.contextPrompt(memoryContext) : undefined)
+    const messages = this.prepareMessages(input, memoryContext ? this.memory?.contextPrompt(memoryContext) : undefined)
     let output: AgentOutputMessage = {
       role: 'assistant',
       content: '',
@@ -291,7 +290,7 @@ export class AgentRuntime {
     }
   }
 
-  private prepareMessages(input: AgentRuntimeRunInput, skills: AgentSkill[], memoryContext?: string): AgentMessage[] {
+  private prepareMessages(input: AgentRuntimeRunInput, memoryContext?: string): AgentMessage[] {
     const normalized = normalizeAgentMessages(input.messages)
     const userSystemMessages = normalized.filter(message => message.role === 'system').map(message => message.content)
     const nonSystemMessages = normalized.filter(message => message.role !== 'system')
@@ -301,8 +300,10 @@ export class AgentRuntime {
       basePrompt: input.systemPrompt ?? this.systemPrompt,
       runtimeInstructions: this.runtimeInstructions,
       userSystemMessages,
-      skills,
       memoryContext,
+      skillDiscoveryEnabled: this.toolsEnabled &&
+        !!this.tools.get('skill_list') &&
+        !!this.tools.get('skill_view'),
       context: {
         provider: modelClient.provider,
         model: input.model ?? input.modelDefaults?.model ?? this.modelDefaults?.model,

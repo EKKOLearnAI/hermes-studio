@@ -21,6 +21,12 @@ const toolImage: AgentMessage = {
   contentParts: [{ type: 'image', mimeType: 'image/png', data: 'aGVsbG8=' }],
 }
 
+const userImage: AgentMessage = {
+  role: 'user',
+  content: 'Describe this image.',
+  contentParts: [{ type: 'image', mimeType: 'image/png', data: 'aGVsbG8=' }],
+}
+
 describe('Ekko MCP multimodal results', () => {
   it('reuses one MCP process and preserves image content blocks', async () => {
     const provider = createMcpToolProvider()
@@ -53,6 +59,20 @@ describe('Ekko MCP multimodal results', () => {
     expect(JSON.stringify(anthropic.messages)).toContain('"type":"image"')
 
     const gemini = toGeminiContentsPayload({ ...config, type: 'gemini' }, { messages: [toolImage] })
+    expect(JSON.stringify(gemini.contents)).toContain('inlineData')
+  })
+
+  it('maps user images into each visual provider wire format', () => {
+    const openai = toOpenAIChatPayload(config, { messages: [userImage] })
+    expect(JSON.stringify(openai.messages[0])).toContain('data:image/png;base64,aGVsbG8=')
+
+    const responses = toOpenAIResponsesPayload(config, { messages: [userImage] })
+    expect(JSON.stringify(responses.input)).toContain('input_image')
+
+    const anthropic = toAnthropicMessagesPayload({ ...config, type: 'anthropic' }, { messages: [userImage] })
+    expect(JSON.stringify(anthropic.messages)).toContain('"type":"image"')
+
+    const gemini = toGeminiContentsPayload({ ...config, type: 'gemini' }, { messages: [userImage] })
     expect(JSON.stringify(gemini.contents)).toContain('inlineData')
   })
 })

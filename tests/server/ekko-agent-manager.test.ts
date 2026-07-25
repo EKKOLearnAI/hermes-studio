@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -53,6 +53,50 @@ describe('GlobalEkkoAgent', () => {
     const request = vi.mocked(client.create).mock.calls[0]?.[0] as ModelRequest
     expect(request.model).toBe('test-model')
     expect(request.metadata).toEqual({ session_id: 'session-1' })
+    expect(request.messages[0].content).toContain('## Image and File Output')
+    expect(request.messages[0].content).toContain('![description](/absolute/path/image.png)')
+    expect(request.messages[0].content).toContain('![description](<C:/absolute/path/image.png>)')
+  })
+
+  it('binds skill tools to the directory provided when the agent is created', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'global-ekko-agent-skills-'))
+    const skillDirectory = join(root, 'skills')
+    await mkdir(join(skillDirectory, 'demo-skill'), { recursive: true })
+    await writeFile(join(skillDirectory, 'demo-skill', 'SKILL.md'), '# Demo\nInstance-bound instructions.\n')
+    let call = 0
+    const client: ModelClient = {
+      provider: 'test',
+      requestStyle: 'custom-runtime',
+      capabilities: {
+        streaming: false,
+        tools: true,
+        vision: false,
+        jsonMode: false,
+        systemPrompt: true,
+      },
+      create: vi.fn(async () => {
+        call += 1
+        return call === 1
+          ? {
+              content: '',
+              toolCalls: [{ id: 'skill-call', name: 'skill_list', arguments: {} }],
+              finishReason: 'tool_calls',
+            }
+          : { content: 'done' }
+      }),
+      stream: vi.fn(),
+    }
+    const agent = new GlobalEkkoAgent({ memory: false, skillDirectory })
+
+    try {
+      const result = await agent.run({ messages: ['find skills'], modelClient: client, toolDelayMs: 0 })
+
+      expect(result.messages.find(message => message.role === 'tool')?.content).toContain('demo-skill')
+      expect(agent.status()).toMatchObject({ skillDirectory })
+    } finally {
+      agent.close()
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('owns a persistent Ekko database under the configured Web UI home', async () => {

@@ -158,6 +158,8 @@ describe('ekko-agent tools', () => {
       'browser_type',
       'browser_vision',
       'read_file',
+      'skill_list',
+      'skill_view',
       'terminal_exec',
       'write_file',
     ])

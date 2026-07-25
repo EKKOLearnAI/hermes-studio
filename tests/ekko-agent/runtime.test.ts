@@ -447,7 +447,7 @@ describe('ekko-agent runtime', () => {
     expect(events.at(-1)).toBe('run.failed')
   })
 
-  it('builds a system prompt from runtime, skills, tools, and user system messages', async () => {
+  it('builds a system prompt from runtime context and user system messages without skill instructions', async () => {
     const requests: ModelRequest[] = []
     const client = modelClient((request) => {
       requests.push(request)
@@ -475,19 +475,20 @@ describe('ekko-agent runtime', () => {
 
     expect(requests[0].messages[0].content).toContain('Base prompt.')
     expect(requests[0].messages[0].content).toContain('Use tools carefully.')
-    expect(requests[0].messages[0].content).toContain('Review for correctness.')
+    expect(requests[0].messages[0].content).not.toContain('Review for correctness.')
+    expect(requests[0].messages[0].content).not.toContain('## Skills')
     expect(requests[0].messages[0].content).toContain('User system.')
     expect(requests[0].messages[0].content).toContain('## Runtime Context\nprovider: test\nmodel: test-model')
     expect(requests[0].messages.filter(message => message.role === 'system')).toHaveLength(1)
   })
 
-  it('disables all tools without disabling skill instructions', async () => {
+  it('does not inject skill instructions when all tools are disabled', async () => {
     const listTools = vi.fn(async () => [])
     const tools = new AgentToolRegistry()
     tools.registerProvider({ id: 'dynamic', listTools })
     const client = modelClient((request) => {
       expect(request.tools).toBeUndefined()
-      expect(request.messages[0].content).toContain('Keep this skill instruction.')
+      expect(request.messages[0].content).not.toContain('Keep this skill instruction.')
       return { content: 'ok' }
     })
 
@@ -503,6 +504,17 @@ describe('ekko-agent runtime', () => {
     }).run({ messages: ['hi'] })
 
     expect(listTools).not.toHaveBeenCalled()
+  })
+
+  it('injects the skill discovery constraint when both skill tools are available', async () => {
+    const client = modelClient((request) => {
+      expect(request.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining(['skill_list', 'skill_view']))
+      expect(request.messages[0].content).toContain('## Skill Discovery')
+      expect(request.messages[0].content).toContain('call skill_list before proceeding')
+      return { content: 'ok' }
+    })
+
+    await new AgentRuntime({ modelClient: client }).run({ messages: ['hi'] })
   })
 
   it('disables constructor and per-run skills without disabling regular tools', async () => {
@@ -635,5 +647,26 @@ describe('ekko-agent runtime', () => {
       'model: anthropic/claude-sonnet-4',
       'workspaceRoot: /tmp/workspace',
     ].join('\n'))
+  })
+
+  it('buildSystemPrompt adds the on-demand skill discovery constraint', () => {
+    const prompt = buildSystemPrompt({
+      basePrompt: 'Base',
+      skillDiscoveryEnabled: true,
+    })
+
+    expect(prompt).toContain('## Skill Discovery')
+    expect(prompt).toContain('call skill_list before proceeding')
+    expect(prompt).toContain('call skill_view with its exact name')
+    expect(prompt).not.toContain('## Skills')
+  })
+
+  it('buildSystemPrompt always includes Ekko image and file output guidance', () => {
+    const prompt = buildSystemPrompt({ basePrompt: 'Base' })
+
+    expect(prompt).toContain('## Image and File Output')
+    expect(prompt).toContain('![description](/absolute/path/image.png)')
+    expect(prompt).toContain('![description](<C:/absolute/path/image.png>)')
+    expect(prompt).toContain('Do not use relative paths or `file://` URLs.')
   })
 })

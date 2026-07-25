@@ -1,5 +1,6 @@
 import type { Server, Socket } from 'socket.io'
 import { createHash, randomUUID } from 'crypto'
+import { join } from 'node:path'
 import { inspect } from 'util'
 import {
   createModelClient,
@@ -21,7 +22,7 @@ import { logger } from '../../logger'
 import { recordSessionUsage } from '../../usage-recorder'
 import { getProfileDir } from '../hermes-profile'
 import { observeRunChatPetEvent } from '../pet-state-socket'
-import { contentBlocksToString, extractTextForPreview } from './content-blocks'
+import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview } from './content-blocks'
 import { getOrCreateSession } from './compression'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { estimateUsageTokensFromMessages } from './usage'
@@ -108,17 +109,85 @@ function normalizeStoredToolCalls(value: unknown): AgentToolCall[] | undefined {
   return calls.length ? calls : undefined
 }
 
-function toAgentMessages(messages: SessionState['messages']): AgentMessage[] {
+function parseStoredContentBlocks(value: unknown): ContentBlock[] | null {
+  let parsed = value
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed.startsWith('[')) return null
+    try {
+      parsed = JSON.parse(trimmed)
+    } catch {
+      return null
+    }
+  }
+  if (!Array.isArray(parsed)) return null
+  const valid = parsed.every((block) => {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) return false
+    const candidate = block as Record<string, unknown>
+    if (candidate.type === 'text') return typeof candidate.text === 'string'
+    if (candidate.type === 'image') {
+      return typeof candidate.name === 'string' &&
+        typeof candidate.path === 'string' &&
+        typeof candidate.media_type === 'string'
+    }
+    if (candidate.type === 'file') {
+      return typeof candidate.name === 'string' && typeof candidate.path === 'string'
+    }
+    return false
+  })
+  return valid ? parsed as ContentBlock[] : null
+}
+
+function imagePartFromDataUri(dataUri: string): NonNullable<AgentMessage['contentParts']>[number] | null {
+  const match = /^data:(image\/[^;,]+);base64,([\s\S]+)$/i.exec(dataUri)
+  if (!match) return null
+  return {
+    type: 'image',
+    mimeType: match[1].toLowerCase(),
+    data: match[2],
+  }
+}
+
+async function toUserAgentContent(value: unknown): Promise<Pick<AgentMessage, 'content' | 'contentParts'>> {
+  const blocks = parseStoredContentBlocks(value)
+  if (!blocks) {
+    return { content: contentBlocksToString(value as string | ContentBlock[]) }
+  }
+
+  const converted = await convertContentBlocksForAgent(blocks)
+  const text: string[] = []
+  const contentParts: NonNullable<AgentMessage['contentParts']> = []
+  for (const part of converted) {
+    if (part.type === 'text' && typeof part.text === 'string') {
+      text.push(part.text)
+      continue
+    }
+    if (part.type === 'image_url' && typeof part.image_url?.url === 'string') {
+      const imagePart = imagePartFromDataUri(part.image_url.url)
+      if (imagePart) contentParts.push(imagePart)
+    }
+  }
+  return {
+    content: text.join('\n'),
+    contentParts: contentParts.length ? contentParts : undefined,
+  }
+}
+
+async function toAgentMessages(messages: SessionState['messages']): Promise<AgentMessage[]> {
   const toolCallIds = new Set<string>()
   const result: AgentMessage[] = []
 
   for (const message of messages) {
     if (message.role === 'user' || message.role === 'command' || message.role === 'system') {
-      const content = contentBlocksToString(message.content as any)
+      const normalized = message.role === 'system'
+        ? { content: contentBlocksToString(message.content as any) }
+        : await toUserAgentContent(message.content)
+      const content = normalized.content
       if (content.trim()) {
         result.push({
           role: message.role === 'system' ? 'system' : 'user',
           content,
+          contentParts: normalized.contentParts,
         })
       }
       continue
@@ -205,6 +274,21 @@ function consolePayload(value: unknown): string {
   })
 }
 
+function modelRequestDebugInfo(request: ModelRequest): ModelRequest {
+  return {
+    ...request,
+    messages: request.messages.map(message => ({
+      ...message,
+      contentParts: message.contentParts?.map(part => part.type === 'image'
+        ? {
+            ...part,
+            data: `[base64 omitted length=${part.data.length}]`,
+          }
+        : part),
+    })),
+  }
+}
+
 function errorPayload(err: unknown): unknown {
   if (!(err instanceof Error)) return err
   const withDetails = err as Error & {
@@ -275,7 +359,7 @@ function createConsoleModelClient(
       console.log('[ekko-agent] model request', consolePayload({
         session_id: context.sessionId,
         provider_config: redactProviderConfig(context.providerConfig),
-        request: providerRequest,
+        request: modelRequestDebugInfo(providerRequest),
       }))
       try {
         const response = await client.create(providerRequest)
@@ -300,7 +384,7 @@ function createConsoleModelClient(
             from_request_style: context.providerConfig.requestStyle,
             to_request_style: context.fallback.providerConfig.requestStyle,
             provider_config: redactProviderConfig(context.fallback.providerConfig),
-            request: fallbackRequest,
+            request: modelRequestDebugInfo(fallbackRequest),
           }))
           try {
             const response = await context.fallback.client.create(fallbackRequest)
@@ -328,7 +412,7 @@ function createConsoleModelClient(
       console.log('[ekko-agent] model stream request', consolePayload({
         session_id: context.sessionId,
         provider_config: redactProviderConfig(context.providerConfig),
-        request: providerRequest,
+        request: modelRequestDebugInfo(providerRequest),
       }))
       try {
         for await (const event of client.stream(providerRequest)) {
@@ -353,7 +437,7 @@ function createConsoleModelClient(
             from_request_style: context.providerConfig.requestStyle,
             to_request_style: context.fallback.providerConfig.requestStyle,
             provider_config: redactProviderConfig(context.fallback.providerConfig),
-            request: fallbackRequest,
+            request: modelRequestDebugInfo(fallbackRequest),
           }))
           try {
             for await (const event of context.fallback.client.stream(fallbackRequest)) {
@@ -420,6 +504,8 @@ export async function handleEkkoAgentRun(
     preferRequested: true,
   })
   const workspace = data.workspace || storedSession?.workspace || getProfileDir(profile)
+  const shouldEmitWorkspaceUpdate = Boolean(workspace && !storedSession?.workspace)
+  if (storedSession && !storedSession.workspace) updateSession(sessionId, { workspace })
   const displayInput = data.display_input === undefined ? data.input : data.display_input
   const inputText = contentBlocksToString(data.input)
   const displayText = displayInput == null ? '' : contentBlocksToString(displayInput)
@@ -451,6 +537,12 @@ export async function handleEkkoAgentRun(
       title,
       workspace,
       category_id: data.category_id,
+    })
+  }
+  if (shouldEmitWorkspaceUpdate) {
+    emit('session.workspace.updated', {
+      event: 'session.workspace.updated',
+      workspace,
     })
   }
   try {
@@ -520,7 +612,7 @@ export async function handleEkkoAgentRun(
         }
       : undefined,
   })
-  const agent = getGlobalEkkoAgent()
+  const agent = getGlobalEkkoAgent(join(getProfileDir(profile), 'skills'))
   const memoryUsageBatchId = randomUUID()
 
   let assistantText = ''
@@ -638,7 +730,7 @@ export async function handleEkkoAgentRun(
       modelDefaults: {
         model: modelConfig.model,
       },
-      messages: toAgentMessages(state.messages),
+      messages: await toAgentMessages(state.messages),
       signal: abortController.signal,
       onEvent: handleRuntimeEvent,
       onMemoryUsage: event => {

@@ -6,12 +6,14 @@ import {
   type AgentRuntimeRunInput,
   type AgentRuntimeRunResult,
 } from '../../../../ekko-agent/src'
+import { resolve } from 'node:path'
 import { config } from '../../config'
 import { logger } from '../logger'
 
 export interface GlobalEkkoAgentOptions {
   webUiHome?: string
   memory?: MemoryService | false
+  skillDirectory?: string
 }
 
 export class GlobalEkkoAgent {
@@ -46,13 +48,14 @@ export class GlobalEkkoAgent {
       runCount: this.runCount,
       memoryEnabled: this.memory?.isEnabled ?? false,
       memoryDatabasePath: this.memoryDatabasePath,
+      skillDirectory: this.options.skillDirectory,
     }
   }
 
   private runtimeInstance(): AgentRuntime {
     if (this.runtime) return this.runtime
     if (this.options.memory === false) {
-      this.runtime = new AgentRuntime({})
+      this.runtime = new AgentRuntime({ skillDirectory: this.options.skillDirectory })
       return this.runtime
     }
     if (this.options.memory) {
@@ -70,7 +73,10 @@ export class GlobalEkkoAgent {
         this.memory = new MemoryService({ enabled: false, warning })
       }
     }
-    this.runtime = new AgentRuntime({ memory: this.memory })
+    this.runtime = new AgentRuntime({
+      memory: this.memory,
+      skillDirectory: this.options.skillDirectory,
+    })
     return this.runtime
   }
 }
@@ -85,8 +91,17 @@ export function createGlobalEkkoAgent(
   })
 }
 
-const globalEkkoAgent = createGlobalEkkoAgent({ webUiHome: config.appHome })
+const globalEkkoAgents = new Map<string, GlobalEkkoAgent>()
 
-export function getGlobalEkkoAgent(): GlobalEkkoAgent {
-  return globalEkkoAgent
+export function getGlobalEkkoAgent(skillDirectory?: string): GlobalEkkoAgent {
+  const normalizedDirectory = skillDirectory ? resolve(skillDirectory) : ''
+  let agent = globalEkkoAgents.get(normalizedDirectory)
+  if (!agent) {
+    agent = createGlobalEkkoAgent({
+      webUiHome: config.appHome,
+      skillDirectory: normalizedDirectory || undefined,
+    })
+    globalEkkoAgents.set(normalizedDirectory, agent)
+  }
+  return agent
 }

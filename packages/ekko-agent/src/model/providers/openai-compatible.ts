@@ -116,7 +116,7 @@ interface OpenAIChatResponse {
 const defaultCapabilities: ModelCapabilities = {
   streaming: true,
   tools: true,
-  vision: false,
+  vision: true,
   jsonMode: false,
   systemPrompt: true,
 }
@@ -312,6 +312,15 @@ function toOpenAIChatMessages(message: AgentMessage, qwenOAuth = false): OpenAIC
     tool_calls: message.toolCalls?.map(toOpenAIToolCall),
   }
   const images = message.contentParts?.filter(part => part.type === 'image') ?? []
+  if (message.role === 'user' && images.length > 0) {
+    return [{
+      ...base,
+      content: [
+        ...(message.content ? [{ type: 'text' as const, text: message.content }] : []),
+        ...images.map(image => ({ type: 'image_url' as const, image_url: { url: `data:${image.mimeType};base64,${image.data}` } })),
+      ],
+    }]
+  }
   if (message.role !== 'tool' || images.length === 0) return [base]
   return [base, {
     role: 'user',

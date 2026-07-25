@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 const getSessionMock = vi.hoisted(() => vi.fn())
 const createSessionMock = vi.hoisted(() => vi.fn())
@@ -7,6 +9,9 @@ const updateSessionMock = vi.hoisted(() => vi.fn())
 const updateSessionStatsMock = vi.hoisted(() => vi.fn())
 const resolveBridgeRunModelConfigMock = vi.hoisted(() => vi.fn())
 const agentRunMock = vi.hoisted(() => vi.fn())
+const getGlobalEkkoAgentMock = vi.hoisted(() => vi.fn(() => ({
+  run: agentRunMock,
+})))
 const recordSessionUsageMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
@@ -22,9 +27,7 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/model-config', () =>
 }))
 
 vi.mock('../../packages/server/src/services/ekko-agent/manager', () => ({
-  getGlobalEkkoAgent: vi.fn(() => ({
-    run: agentRunMock,
-  })),
+  getGlobalEkkoAgent: getGlobalEkkoAgentMock,
 }))
 
 vi.mock('../../packages/server/src/services/ekko-agent/mcp', () => ({
@@ -206,6 +209,7 @@ describe('ekko-agent context usage events', () => {
       isEstimated: false,
     })
     const runInput = agentRunMock.mock.calls[0][0]
+    expect(getGlobalEkkoAgentMock).toHaveBeenCalledWith('/tmp/hermes-default/skills')
     runInput.onMemoryUsage({
       purpose: 'ekko-memory-summary',
       usage: { inputTokens: 21, outputTokens: 4, cacheReadTokens: 7 },
@@ -235,6 +239,82 @@ describe('ekko-agent context usage events', () => {
       ended_at: expect.any(Number),
       end_reason: 'complete',
     }))
+  })
+
+  it('publishes the workspace when a new Ekko session is persisted', async () => {
+    getSessionMock.mockReturnValueOnce(null)
+    agentRunMock.mockResolvedValueOnce({
+      runId: 'run-1',
+      output: { role: 'assistant', content: 'done', usage: { inputTokens: 3, outputTokens: 2 } },
+      steps: [],
+      messages: [],
+      events: [],
+      contextEstimate: { contextTokens: 12_000 },
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'create a file',
+      coding_agent_id: 'ekko-agent',
+      workspace: '/tmp/new-workspace',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(createSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'session-1',
+      agent: 'ekko-agent',
+      workspace: '/tmp/new-workspace',
+    }))
+    expect(events).toContainEqual({
+      event: 'session.workspace.updated',
+      payload: {
+        event: 'session.workspace.updated',
+        session_id: 'session-1',
+        workspace: '/tmp/new-workspace',
+      },
+    })
+  })
+
+  it('loads frontend image blocks into ephemeral model content parts without storing base64', async () => {
+    const imagePath = join(process.cwd(), 'packages/client/public/coding-agents/ekko-agent.png')
+    const expectedBase64 = (await readFile(imagePath)).toString('base64')
+    agentRunMock.mockResolvedValueOnce({
+      runId: 'run-1',
+      output: { role: 'assistant', content: 'image understood', usage: { inputTokens: 3, outputTokens: 2 } },
+      steps: [],
+      messages: [],
+      events: [],
+      contextEstimate: { contextTokens: 12_000 },
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: [
+        { type: 'text', text: 'Describe this image.' },
+        { type: 'image', name: 'ekko-agent.png', path: imagePath, media_type: 'image/png' },
+      ],
+      coding_agent_id: 'ekko-agent',
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    const runInput = agentRunMock.mock.calls[0][0]
+    expect(runInput.messages).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: expect.stringContaining('Describe this image.'),
+        contentParts: [{
+          type: 'image',
+          mimeType: 'image/png',
+          data: expectedBase64,
+        }],
+      }),
+    ])
+    const storedUserMessage = addMessageMock.mock.calls.find(call => call[0]?.role === 'user')?.[0]
+    expect(storedUserMessage?.content).toContain(imagePath)
+    expect(storedUserMessage?.content).not.toContain(expectedBase64)
   })
 
   it('includes paired tool results in Ekko history for follow-up turns', async () => {

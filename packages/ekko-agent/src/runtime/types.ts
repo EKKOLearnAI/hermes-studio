@@ -26,6 +26,8 @@ export interface AgentRuntimeOptions {
   /** Disable every skill source, including constructor and per-run skills. */
   skillsEnabled?: boolean
   skills?: AgentSkill[]
+  /** Fixed directory used by this agent instance for skill_list and skill_view. */
+  skillDirectory?: string
   systemPrompt?: string
   runtimeInstructions?: string[]
   maxSteps?: number

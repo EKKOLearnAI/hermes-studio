@@ -60,7 +60,7 @@ interface GeminiResponse {
 const capabilities: ModelCapabilities = {
   streaming: true,
   tools: true,
-  vision: false,
+  vision: true,
   jsonMode: true,
   systemPrompt: true,
 }
@@ -170,7 +170,15 @@ function toGeminiContent(message: AgentMessage): GeminiPayload['contents'][numbe
     }
   }
 
-  return { role: 'user', parts: [{ text: message.content }] }
+  return {
+    role: 'user',
+    parts: [
+      ...(message.content ? [{ text: message.content }] : []),
+      ...(message.contentParts?.filter(part => part.type === 'image').map(image => ({
+        inlineData: { mimeType: image.mimeType, data: image.data },
+      })) ?? []),
+    ],
+  }
 }
 
 function toGeminiTool(tool: AgentToolDefinition): NonNullable<NonNullable<GeminiPayload['tools']>[number]['functionDeclarations']>[number] {
