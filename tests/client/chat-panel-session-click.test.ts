@@ -66,6 +66,14 @@ describe('ChatPanel session clicks', () => {
     expect(source).toContain('selectedGroup?.models.includes(selectedModel)')
   })
 
+  it('offers Ekko Agent when creating chats in production builds', () => {
+    const source = readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8')
+
+    expect(source).toContain('{ label: "Ekko Agent", value: "ekko-agent" }')
+    expect(source).not.toContain('showEkkoAgentEntry')
+    expect(source).not.toContain('import.meta.env.DEV')
+  })
+
   it('uses a create action in the new chat drawer instead of duplicating the new chat trigger label', () => {
     const source = readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8')
 

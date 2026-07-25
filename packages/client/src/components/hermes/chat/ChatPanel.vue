@@ -783,16 +783,12 @@ const hiddenDefaultWorkspaces = computed(() => {
   return defaultWorkspaces.value.filter(ws => !visible.has(ws));
 });
 
-const showEkkoAgentEntry = import.meta.env.DEV;
-const newChatAgentOptions = computed(() => {
-  const options = [
-    { label: "Hermes", value: "hermes" },
-    { label: "Claude Code", value: "claude-code" },
-    { label: "Codex", value: "codex" },
-  ];
-  if (showEkkoAgentEntry) options.push({ label: "Ekko Agent", value: "ekko-agent" });
-  return options;
-});
+const newChatAgentOptions = computed(() => [
+  { label: "Hermes", value: "hermes" },
+  { label: "Claude Code", value: "claude-code" },
+  { label: "Codex", value: "codex" },
+  { label: "Ekko Agent", value: "ekko-agent" },
+]);
 
 const newChatApiModeOptions = computed(() => [
   { label: t("codingAgents.protocolOpenAiChat"), value: "chat_completions" },
