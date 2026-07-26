@@ -117,7 +117,7 @@ export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
   agentNativeSessionId?: string
   isolateSettings?: boolean
   runtimeContext?: 'group_chat'
-  sessionSource?: 'global_agent' | 'workflow'
+  sessionSource?: 'global_agent' | 'workflow' | 'group_chat'
 }
 
 export interface CodingAgentLaunchResult {
@@ -1877,11 +1877,13 @@ export async function startCodingAgentRun(
     throw err
   }
   const existingSession = getSession(sessionId)
-  const sessionSource = input.sessionSource === 'global_agent'
-    ? 'global_agent'
-    : input.sessionSource === 'workflow'
-      ? 'workflow'
-      : 'coding_agent'
+  const sessionSource = input.runtimeContext === 'group_chat'
+    ? 'group_chat'
+    : input.sessionSource === 'global_agent'
+      ? 'global_agent'
+      : input.sessionSource === 'workflow'
+        ? 'workflow'
+        : 'coding_agent'
   const existingAgentSessionId = existingSession?.agent_session_id || ''
   const resolvedInput = await resolveStoredProviderLaunchInput(input, existingSession)
   const requestedMode = resolvedInput.mode === 'global' ? 'global' : 'scoped'
@@ -1936,7 +1938,7 @@ export async function startCodingAgentRun(
     env: runtimeEnv,
     state,
     reasoningEffort: launch.reasoningEffort,
-    sessionSource: sessionSource === 'global_agent' || sessionSource === 'workflow' ? sessionSource : undefined,
+    sessionSource: sessionSource === 'coding_agent' ? undefined : sessionSource,
     runtimeContext: input.runtimeContext,
   })
   updateSession(sessionId, {

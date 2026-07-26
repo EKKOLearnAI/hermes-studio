@@ -238,7 +238,7 @@ describe('session conversations controller', () => {
     codingAgentRunManagerMock.stop.mockReset()
   })
 
-  it('lists conversations from the local session store', async () => {
+  it('lists conversations from the local session store without internal Group Chat participant sessions', async () => {
     localListSessionsMock.mockReturnValue([{
       id: 'local-conversation',
       source: 'cli',
@@ -260,6 +260,28 @@ describe('session conversations controller', () => {
       cost_status: '',
       preview: 'preview',
       workspace: null,
+    }, {
+      id: 'gc-room-1-codex-0',
+      source: 'group_chat',
+      agent: 'codex',
+      model: 'gpt-5',
+      title: 'Internal Group Chat participant session',
+      started_at: 1,
+      ended_at: null,
+      last_active: Math.floor(Date.now() / 1000),
+      message_count: 2,
+      tool_call_count: 0,
+      input_tokens: 1,
+      output_tokens: 2,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      billing_provider: null,
+      estimated_cost_usd: 0,
+      actual_cost_usd: null,
+      cost_status: '',
+      preview: 'group-only preview',
+      workspace: null,
     }])
 
     const mod = await import('../../packages/server/src/controllers/hermes/sessions')
@@ -268,7 +290,9 @@ describe('session conversations controller', () => {
 
     expect(localListSessionsMock).toHaveBeenCalledWith(undefined, undefined, 5)
     expect(listConversationSummariesMock).not.toHaveBeenCalled()
-    expect(ctx.body.sessions[0]).toMatchObject({ id: 'local-conversation', source: 'cli', title: 'Local' })
+    expect(ctx.body.sessions).toEqual([
+      expect.objectContaining({ id: 'local-conversation', source: 'cli', title: 'Local' }),
+    ])
   })
 
   it('serves bounded workspace preview bytes and blocks traversal, escaped links, and unauthorized profiles', async () => {
@@ -939,6 +963,25 @@ describe('session conversations controller', () => {
     expect(workflowCtx.body.sessions).toEqual([expect.objectContaining({ id: 'workflow-1', source: 'workflow' })])
   })
 
+  it('hides internal Group Chat participant sessions from single-chat lists and counts', async () => {
+    localListSessionsMock.mockReturnValue([
+      { id: 'gc-room-1-codex-0', profile: 'default', source: 'group_chat', agent: 'codex' },
+      { id: 'gc-room-1-claude-0', profile: 'default', source: 'group_chat', agent: 'claude' },
+      { id: 'chat-1', profile: 'default', source: 'coding_agent', agent: 'codex' },
+    ])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const listCtx: any = { query: {}, state: {}, body: null }
+    await mod.list(listCtx)
+    expect(listCtx.body.sessions).toEqual([
+      expect.objectContaining({ id: 'chat-1', source: 'coding_agent' }),
+    ])
+
+    const countCtx: any = { query: {}, state: {}, body: null }
+    await mod.count(countCtx)
+    expect(countCtx.body).toEqual({ count: 1 })
+  })
+
   it('counts visible single-chat sessions with the same filters as the list endpoint', async () => {
     listUserProfilesMock.mockReturnValue([{ profile_name: 'default' }, { profile_name: 'travel' }])
     localListSessionsMock.mockReturnValue([
@@ -1131,6 +1174,19 @@ describe('session conversations controller', () => {
       ],
       included: [expect.objectContaining({ id: 'cli-pinned', profile: 'travel' })],
     })
+  })
+
+  it('hides internal Group Chat participant sessions from Hermes history groups', async () => {
+    localListSessionsMock.mockReturnValue([
+      { id: 'gc-room-1-codex-0', profile: 'travel', source: 'group_chat', agent: 'codex', is_archived: 1 },
+    ])
+    listSessionSummaryGroupsMock.mockResolvedValue({ groups: [], included: [] })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { query: { profile: 'travel', limit: '20' }, state: {}, body: null }
+    await mod.listHermesSessionGroups(ctx)
+
+    expect(ctx.body).toEqual({ groups: [], included: [] })
   })
 
   it('paginates one Hermes history source without mixing other local sources', async () => {
