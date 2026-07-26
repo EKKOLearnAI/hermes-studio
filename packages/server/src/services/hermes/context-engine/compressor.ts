@@ -119,7 +119,14 @@ export class ContextEngine {
             summaryTokenEstimate: 0,
         }
 
-        const snapshot = this.messageFetcher.getContextSnapshot(input.roomId)
+        // Participant delivery is a bounded sequence window. A shared Room snapshot may
+        // summarize messages beyond that window (for example when an older queued trigger
+        // runs after a newer Room compression), and legacy snapshots do not carry a
+        // verifiable roomSeq anchor. Fail closed: participant windows build from their
+        // explicit sequence range and never consume the shared Room snapshot.
+        const snapshot = usesParticipantSequence
+            ? null
+            : this.messageFetcher.getContextSnapshot(input.roomId)
         logger.debug({
             roomId: input.roomId,
             agentName: input.agentName,
@@ -381,7 +388,9 @@ export class ContextEngine {
             const tail = messages.length > tailMessageCount ? messages.slice(-tailMessageCount) : []
             const lastCompressedMsg = toCompress[toCompress.length - 1]
 
-            this.messageFetcher.saveContextSnapshot(input.roomId, result.summary, lastCompressedMsg.id, lastCompressedMsg.timestamp)
+            if (!usesParticipantSequence) {
+                this.messageFetcher.saveContextSnapshot(input.roomId, result.summary, lastCompressedMsg.id, lastCompressedMsg.timestamp)
+            }
 
             meta.summaryTokenEstimate = this.countTokens(result.summary)
             const history = this.buildHistory(result.summary, tail, input.agentId, input.agentSocketId, input.agentName)
