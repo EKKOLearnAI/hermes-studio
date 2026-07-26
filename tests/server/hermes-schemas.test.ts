@@ -137,7 +137,12 @@ describe('Hermes schema initialization', () => {
       { id: 'ordinary-codex-chat', source: 'coding_agent' },
     ])
     const { listSessions } = await import('../../packages/server/src/db/hermes/session-store')
+    expect(listSessions('default', undefined, 1).map(session => session.id)).toEqual(['ordinary-codex-chat'])
     expect(listSessions('default', 'coding_agent', 1).map(session => session.id)).toEqual(['ordinary-codex-chat'])
+    expect(listSessions('default', 'group_chat', 10).map(session => session.id)).toEqual([
+      'gc_room-1_codex-1_0',
+      'gc_deleted-room_claude-1_2',
+    ])
   })
 
   it('adds nullable Workflow budget evidence columns without losing legacy rows', async () => {
