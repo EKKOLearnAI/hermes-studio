@@ -14,6 +14,7 @@ import {
   openAiChatToResponses,
   responsesToAnthropicMessages,
   responsesToOpenAiChat,
+  truncateResponsesToolOutputs,
 } from '../adapters/responses'
 import {
   anthropicMessagesSseToResponsesEvents,
@@ -120,7 +121,7 @@ async function callOpenAiResponses(target: CodexProxyTarget, body: any): Promise
     ;(err as any).status = 501
     throw err
   }
-  const responsesBody = { ...body, model: target.model }
+  const responsesBody = truncateResponsesToolOutputs({ ...body, model: target.model })
   return agentRunGateway.completeJson({
     url: resolveResponsesUrl(target.baseUrl),
     apiKey: target.apiKey,
@@ -212,7 +213,7 @@ async function openAiResponsesSseStream(target: CodexProxyTarget, body: any): Pr
     throw err
   }
 
-  const responsesBody = { ...body, model: target.model, stream: true }
+  const responsesBody = truncateResponsesToolOutputs({ ...body, model: target.model, stream: true })
   const stream = await agentRunGateway.streamBytes({
     url: resolveResponsesUrl(target.baseUrl),
     apiKey: target.apiKey,

@@ -6,6 +6,7 @@ import {
   responseToolNamespaceForName,
   responsesToAnthropicMessages,
   responsesToOpenAiChat,
+  truncateResponsesToolOutputs,
 } from '../../packages/server/src/services/agent-runner/adapters/responses'
 import {
   anthropicToOpenAiChat,
@@ -39,6 +40,29 @@ describe('agent runner Responses adapters', () => {
     expect(responsesToAnthropicMessages({ input: [] }, maxTarget)).toMatchObject({
       reasoning_effort: 'max',
     })
+  })
+
+  it('truncates oversized Responses function-call outputs before provider forwarding', () => {
+    const largeOutput = `${'A'.repeat(33 * 1024)}TAIL_MARKER`
+    const body = {
+      input: [
+        { role: 'user', content: [{ type: 'input_text', text: 'continue' }] },
+        { type: 'function_call_output', call_id: 'call_big', output: largeOutput },
+        { type: 'function_call_output', call_id: 'call_small', output: 'ok' },
+      ],
+    }
+
+    const sanitized = truncateResponsesToolOutputs(body)
+    const output = sanitized.input[1].output
+
+    expect(sanitized).not.toBe(body)
+    expect(output.length).toBeLessThan(largeOutput.length)
+    expect(output.length).toBeLessThanOrEqual(32 * 1024)
+    expect(output).toContain('truncated before provider request')
+    expect(output).toContain(`original_chars=${largeOutput.length}`)
+    expect(output.endsWith('TAIL_MARKER')).toBe(true)
+    expect(sanitized.input[2]).toBe(body.input[2])
+    expect(body.input[1].output).toBe(largeOutput)
   })
 
   it('converts Responses input to OpenAI Chat messages and tools', () => {

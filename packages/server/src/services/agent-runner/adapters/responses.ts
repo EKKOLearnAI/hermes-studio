@@ -6,6 +6,9 @@ export interface ResponsesAdapterTarget {
 
 const HERMES_STUDIO_NAMESPACE = 'mcp__hermes_studio'
 const TOOL_SEARCH_NAME = 'tool_search'
+const RESPONSES_TOOL_OUTPUT_FORWARD_LIMIT = 32 * 1024
+const RESPONSES_TOOL_OUTPUT_HEAD_CHARS = 24 * 1024
+const RESPONSES_TOOL_OUTPUT_TAIL_CHARS = 7 * 1024
 
 const HERMES_STUDIO_MCP_TOOLS = [
   {
@@ -301,6 +304,38 @@ function expandedResponseTools(tools: unknown): any[] {
 
 function responseInputItems(body: any): any[] {
   return Array.isArray(body?.input) ? body.input : []
+}
+
+function truncateResponsesToolOutputText(output: string): string {
+  if (output.length <= RESPONSES_TOOL_OUTPUT_FORWARD_LIMIT) return output
+  const head = output.slice(0, RESPONSES_TOOL_OUTPUT_HEAD_CHARS)
+  const tail = output.slice(-RESPONSES_TOOL_OUTPUT_TAIL_CHARS)
+  const omitted = output.length - head.length - tail.length
+  return [
+    head,
+    '',
+    `[Hermes Web UI: coding-agent tool output truncated before provider request; original_chars=${output.length}; omitted_chars=${omitted}]`,
+    '',
+    tail,
+  ].join('\n')
+}
+
+export function truncateResponsesToolOutputs(body: any): any {
+  const input = responseInputItems(body)
+  if (!input.length) return body
+
+  let changed = false
+  const nextInput = input.map((item: any) => {
+    if (!item || typeof item !== 'object' || item.type !== 'function_call_output' || typeof item.output !== 'string') {
+      return item
+    }
+    const nextOutput = truncateResponsesToolOutputText(item.output)
+    if (nextOutput === item.output) return item
+    changed = true
+    return { ...item, output: nextOutput }
+  })
+
+  return changed ? { ...body, input: nextInput } : body
 }
 
 function responsesAvailableTools(body: any): any[] {
