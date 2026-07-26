@@ -312,6 +312,39 @@ describe('workflow manager', () => {
     } finally { await manager.delete(workflow.id) }
   })
 
+  it('forwards workflow images to coding-agent nodes as ContentBlock input', async () => {
+    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    initAllStores()
+    chatRunMock.runAndWait.mockReset().mockResolvedValue({ ok: true, output: 'done' })
+    const manager = new WorkflowManager()
+    const imagePath = '/tmp/workflow-reference.png'
+    const workflow = manager.create({
+      name: `Coding Agent image input ${Date.now()}`,
+      profile: 'default',
+      nodes: [{ id: 'agent', type: 'agent', data: {
+        title: 'Agent', agent: 'codex', provider: 'custom:test', model: 'model-a',
+        apiMode: 'codex_responses', input: 'inspect the reference', images: [imagePath],
+      } }],
+      edges: [],
+    })
+    try {
+      await manager.runNow(workflow.id)
+      expect(chatRunMock.runAndWait).toHaveBeenCalledWith(expect.objectContaining({
+        coding_agent_id: 'codex',
+        input: [
+          { type: 'text', text: '[Current task]\ninspect the reference' },
+          {
+            type: 'image',
+            name: 'workflow-reference.png',
+            path: imagePath,
+            media_type: 'image/png',
+          },
+        ],
+      }), expect.any(Object))
+    } finally { await manager.delete(workflow.id) }
+  })
+
   it('rejects unsupported execution tuples before persisting a run', async () => {
     const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
     const { listWorkflowRuns } = await import('../../packages/server/src/db/hermes/workflow-run-store')

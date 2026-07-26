@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
 const testState = vi.hoisted(() => {
   class TestEmitter {
@@ -26,6 +29,8 @@ const testState = vi.hoisted(() => {
 vi.mock('child_process', () => ({
   spawn: vi.fn((command: string, args: string[], options: any) => {
     const child = new testState.TestEmitter() as any
+    child.stdin = new testState.TestEmitter()
+    child.stdin.end = vi.fn()
     child.stdout = new testState.TestEmitter()
     child.stderr = new testState.TestEmitter()
     child.pid = 1234
@@ -151,6 +156,107 @@ describe('coding agent Windows process launch', () => {
     })
 
     const run = (manager as any).runs.get('agent-session-codex-1')
+    if (run?.idleTimer) clearTimeout(run.idleTimer)
+    ;(manager as any).runs.clear()
+    ;(manager as any).sessionIndex.clear()
+  })
+
+  it('pipes image content to hidden Claude Code turns using stream-json', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'hermes-claude-image-'))
+    const imagePath = join(tempDir, 'sample image.png')
+    writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+
+    try {
+      const manager = new CodingAgentRunManager()
+      ;(manager as any).ensureDbSession = () => {}
+      ;(manager as any).addUserMessage = () => {}
+      ;(manager as any).emitToChat = () => {}
+      ;(manager as any).markChatRunCompleted = () => {}
+
+      manager.start({
+        agentSessionId: 'agent-session-claude-image-1',
+        agentId: 'claude-code',
+        mode: 'scoped',
+        profile: 'default',
+        provider: 'test-provider',
+        model: 'claude-test',
+        sessionId: 'chat-session-claude-image-1',
+        command: 'C:\\Users\\Administrator\\AppData\\Roaming\\npm\\claude.cmd',
+        args: [],
+        shellCommand: 'claude',
+        workspaceDir: process.cwd(),
+        state: { messages: [], isWorking: false, events: [], queue: [] },
+      })
+
+      manager.send('chat-session-claude-image-1', 'inspect this image', {
+        images: [{ name: 'sample image.png', path: imagePath, mediaType: 'image/png' }],
+      })
+
+      const call = testState.spawnCalls[0]
+      expect(call.args[3]).toContain('^"--input-format^"')
+      expect(call.args[3]).toContain('^"stream-json^"')
+      expect(call.args[3]).not.toContain('^"inspect^ this^ image^"')
+      expect(call.options.stdio).toEqual(['pipe', 'pipe', 'pipe'])
+      expect(call.child.stdin.end).toHaveBeenCalledOnce()
+
+      const input = JSON.parse(call.child.stdin.end.mock.calls[0][0].trim())
+      expect(input.message.content).toEqual([
+        { type: 'text', text: 'inspect this image' },
+        {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: 'image/png',
+            data: 'iVBORw==',
+          },
+        },
+      ])
+
+      const run = (manager as any).runs.get('agent-session-claude-image-1')
+      if (run?.idleTimer) clearTimeout(run.idleTimer)
+      ;(manager as any).runs.clear()
+      ;(manager as any).sessionIndex.clear()
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('passes image paths to hidden Codex turns with --image', () => {
+    const manager = new CodingAgentRunManager()
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).addUserMessage = () => {}
+    ;(manager as any).emitToChat = () => {}
+    ;(manager as any).markChatRunCompleted = () => {}
+
+    manager.start({
+      agentSessionId: 'agent-session-codex-image-1',
+      agentId: 'codex',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'gpt-test',
+      sessionId: 'chat-session-codex-image-1',
+      command: 'C:\\Users\\Administrator\\AppData\\Roaming\\npm\\codex.cmd',
+      args: [],
+      shellCommand: 'codex',
+      workspaceDir: process.cwd(),
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+    })
+
+    manager.send('chat-session-codex-image-1', 'inspect this image', {
+      images: [{
+        name: 'sample image.png',
+        path: 'C:\\Users\\Administrator\\Pictures\\sample image.png',
+        mediaType: 'image/png',
+      }],
+    })
+
+    const call = testState.spawnCalls[0]
+    expect(call.args[3]).toContain('^"--image^"')
+    expect(call.args[3]).toContain('C:\\Users\\Administrator\\Pictures\\sample^ image.png')
+    expect(call.options.stdio).toEqual(['ignore', 'pipe', 'pipe'])
+
+    const run = (manager as any).runs.get('agent-session-codex-image-1')
     if (run?.idleTimer) clearTimeout(run.idleTimer)
     ;(manager as any).runs.clear()
     ;(manager as any).sessionIndex.clear()

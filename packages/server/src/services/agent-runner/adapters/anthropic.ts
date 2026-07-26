@@ -1,3 +1,5 @@
+import { anthropicImageSourceToUrl } from './multimodal'
+
 export interface AnthropicAdapterTarget {
   provider: string
   model: string
@@ -77,13 +79,31 @@ function anthropicContentToOpenAiMessages(message: any, preserveReasoningContent
   }
 
   const messages: any[] = []
-  const textParts: string[] = []
+  const contentParts: any[] = []
+  let hasImage = false
+  const flushUserContent = () => {
+    if (!contentParts.length) return
+    messages.push({
+      role: message.role || 'user',
+      content: hasImage
+        ? contentParts.splice(0)
+        : contentParts.splice(0).map(part => String(part.text || '')).filter(Boolean).join('\n'),
+    })
+    hasImage = false
+  }
   for (const block of content) {
-    if (block?.type === 'text') textParts.push(String(block.text || ''))
-    if (block?.type === 'tool_result') {
-      if (textParts.length) {
-        messages.push({ role: 'user', content: textParts.splice(0).join('\n') })
+    if (block?.type === 'text') {
+      contentParts.push({ type: 'text', text: String(block.text || '') })
+    }
+    if (block?.type === 'image') {
+      const url = anthropicImageSourceToUrl(block.source)
+      if (url) {
+        hasImage = true
+        contentParts.push({ type: 'image_url', image_url: { url } })
       }
+    }
+    if (block?.type === 'tool_result') {
+      flushUserContent()
       messages.push({
         role: 'tool',
         tool_call_id: String(block.tool_use_id || ''),
@@ -91,7 +111,7 @@ function anthropicContentToOpenAiMessages(message: any, preserveReasoningContent
       })
     }
   }
-  if (textParts.length) messages.push({ role: message.role || 'user', content: textParts.join('\n') })
+  flushUserContent()
   return messages.length ? messages : [{ role: message.role || 'user', content: '' }]
 }
 
@@ -153,13 +173,31 @@ function anthropicToOpenAiResponsesInput(message: any): any[] {
   }
 
   const items: any[] = []
-  const textParts: string[] = []
+  const contentParts: any[] = []
+  let hasImage = false
+  const flushUserContent = () => {
+    if (!contentParts.length) return
+    items.push({
+      role: message.role || 'user',
+      content: hasImage
+        ? contentParts.splice(0)
+        : contentParts.splice(0).map(part => String(part.text || '')).filter(Boolean).join('\n'),
+    })
+    hasImage = false
+  }
   for (const block of content) {
-    if (block?.type === 'text') textParts.push(String(block.text || ''))
-    if (block?.type === 'tool_result') {
-      if (textParts.length) {
-        items.push({ role: 'user', content: textParts.splice(0).join('\n') })
+    if (block?.type === 'text') {
+      contentParts.push({ type: 'input_text', text: String(block.text || '') })
+    }
+    if (block?.type === 'image') {
+      const url = anthropicImageSourceToUrl(block.source)
+      if (url) {
+        hasImage = true
+        contentParts.push({ type: 'input_image', image_url: url })
       }
+    }
+    if (block?.type === 'tool_result') {
+      flushUserContent()
       items.push({
         type: 'function_call_output',
         call_id: String(block.tool_use_id || ''),
@@ -167,7 +205,7 @@ function anthropicToOpenAiResponsesInput(message: any): any[] {
       })
     }
   }
-  if (textParts.length) items.push({ role: message.role || 'user', content: textParts.join('\n') })
+  flushUserContent()
   return items.length ? items : [{ role: message.role || 'user', content: '' }]
 }
 

@@ -1,3 +1,5 @@
+import { imageUrlToAnthropicSource, openAiImageUrl } from './multimodal'
+
 export interface ResponsesAdapterTarget {
   model: string
 }
@@ -422,16 +424,33 @@ function safeJsonParse(value: string): any {
     return {}
   }
 }
-function responseContentToText(content: unknown): string {
+function responseContentToOpenAiChat(content: unknown): string | any[] {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return stringifyContent(content)
-  return content.map((part: any) => {
-    if (typeof part === 'string') return part
-    if (part?.type === 'input_text' || part?.type === 'output_text' || part?.type === 'text') {
-      return String(part.text || '')
+  const parts: any[] = []
+  let hasImage = false
+  for (const part of content) {
+    if (typeof part === 'string') {
+      parts.push({ type: 'text', text: part })
+      continue
     }
-    return stringifyContent(part)
-  }).filter(Boolean).join('\n')
+    if (part?.type === 'input_text' || part?.type === 'output_text' || part?.type === 'text') {
+      parts.push({ type: 'text', text: String(part.text || '') })
+      continue
+    }
+    if (part?.type === 'input_image') {
+      const url = openAiImageUrl(part)
+      if (url) {
+        hasImage = true
+        parts.push({ type: 'image_url', image_url: { url } })
+      }
+      continue
+    }
+    const text = stringifyContent(part)
+    if (text) parts.push({ type: 'text', text })
+  }
+  if (hasImage) return parts
+  return parts.map(part => String(part.text || '')).filter(Boolean).join('\n')
 }
 
 function chatRoleForResponsesRole(role: unknown): string {
@@ -508,7 +527,7 @@ function responsesInputToChatMessages(body: any): any[] {
     if (item.role) {
       messages.push({
         role: chatRoleForResponsesRole(item.role),
-        content: responseContentToText(item.content),
+        content: responseContentToOpenAiChat(item.content),
       })
     }
   }
@@ -557,6 +576,11 @@ function responsesContentToAnthropicContent(content: unknown, role: 'user' | 'as
     if (typeof part === 'string') return { type: 'text', text: part }
     if (part?.type === 'input_text' || part?.type === 'output_text' || part?.type === 'text') {
       return { type: 'text', text: String(part.text || '') }
+    }
+    if (part?.type === 'input_image') {
+      const url = openAiImageUrl(part)
+      const source = url ? imageUrlToAnthropicSource(url) : null
+      return source ? { type: 'image', source } : null
     }
     return null
   }).filter(Boolean)

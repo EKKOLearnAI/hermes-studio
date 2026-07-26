@@ -10,7 +10,7 @@ import { PROVIDER_ENV_MAP, readConfigYamlForProfile, safeReadFile } from './conf
 import { getCompatibleCustomProviders } from './hermes/custom-providers-compat'
 import { registerClaudeCodeProxyTarget } from './agent-runner/proxies/claude-code-proxy'
 import { registerCodexProxyTarget } from './agent-runner/proxies/codex-proxy'
-import type { ApiMode } from './agent-runner/types'
+import type { ApiMode, CodingAgentImageInput } from './agent-runner/types'
 import { PROVIDER_PRESETS } from '../shared/providers'
 import { getModelContextLength } from './hermes/model-context'
 import { getProfileDir } from './hermes/hermes-profile'
@@ -698,7 +698,7 @@ function codexCatalogEntry(input: {
     max_context_window: input.contextWindow,
     effective_context_window_percent: 95,
     experimental_supported_tools: [],
-    input_modalities: ['text'],
+    input_modalities: ['text', 'image'],
     supports_search_tool: true,
   }
 }
@@ -1933,8 +1933,13 @@ export async function startCodingAgentRun(
   }
 }
 
-export function sendCodingAgentRunInput(sessionId: string, input: string, systemPrompt?: string): { runId: string } {
-  return codingAgentRunManager.send(sessionId, input, { systemPrompt })
+export function sendCodingAgentRunInput(
+  sessionId: string,
+  input: string,
+  systemPrompt?: string,
+  images: CodingAgentImageInput[] = [],
+): { runId: string } {
+  return codingAgentRunManager.send(sessionId, input, { systemPrompt, images })
 }
 
 export function stopCodingAgentRun(sessionId: string): { stopped: boolean } {

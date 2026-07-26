@@ -6,3 +6,9 @@ export type AgentApiMode =
   | 'codex_app_server'
 
 export type ApiMode = AgentApiMode
+
+export interface CodingAgentImageInput {
+  name: string
+  path: string
+  mediaType: string
+}

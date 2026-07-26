@@ -3,7 +3,7 @@ import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSy
 import { homedir } from 'os'
 import { spawn, type ChildProcess } from 'child_process'
 import { createSession, addMessage, getSession, updateSession, updateSessionStats } from '../../db/hermes/session-store'
-import type { ApiMode } from './types'
+import type { ApiMode, CodingAgentImageInput } from './types'
 import { logger } from '../logger'
 import { normalizeTokenUsage, recordSessionUsage } from '../usage-recorder'
 import { applyResponseStreamEvent, flushResponseRunToDb } from '../hermes/run-chat/response-stream'
@@ -117,6 +117,7 @@ interface ManagedCodingAgentRun {
 
 interface CodingAgentRunSendOptions {
   systemPrompt?: string
+  images?: CodingAgentImageInput[]
 }
 
 function nowSeconds(): number {
@@ -249,6 +250,45 @@ function normalizeCliPromptArgument(prompt: string): string {
     .join(' / ')
 }
 
+function normalizedImageMediaType(image: CodingAgentImageInput): string {
+  const mediaType = String(image.mediaType || '').trim().toLowerCase()
+  if (mediaType === 'image/jpg') return 'image/jpeg'
+  return mediaType.startsWith('image/') ? mediaType : 'image/png'
+}
+
+export function codexImageArgs(images: CodingAgentImageInput[]): string[] {
+  return images.flatMap((image) => {
+    const path = String(image.path || '').trim()
+    return path ? ['--image', path] : []
+  })
+}
+
+export function buildClaudeStreamJsonInput(input: string, images: CodingAgentImageInput[]): string {
+  const content: any[] = []
+  const text = String(input || '').trim()
+  if (text) content.push({ type: 'text', text })
+  for (const image of images) {
+    const path = String(image.path || '').trim()
+    if (!path) continue
+    content.push({
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: normalizedImageMediaType(image),
+        data: readFileSync(path).toString('base64'),
+      },
+    })
+  }
+  return JSON.stringify({
+    type: 'user',
+    message: {
+      role: 'user',
+      content,
+    },
+    parent_tool_use_id: null,
+  })
+}
+
 function hasArg(args: string[], name: string): boolean {
   return args.includes(name)
 }
@@ -266,6 +306,7 @@ function decodeChildChunk(chunk: Buffer): string {
 function spawnCodingAgentChild(command: string, args: string[], options: {
   cwd: string
   env: NodeJS.ProcessEnv
+  pipeStdin?: boolean
 }): ChildProcess {
   const normalizedCommand = process.platform === 'win32' ? normalizeWindowsCommandPath(command) : command
   if (process.platform === 'win32' && windowsCommandNeedsShell(command)) {
@@ -273,7 +314,7 @@ function spawnCodingAgentChild(command: string, args: string[], options: {
     return spawn(execution.command, execution.args, {
       cwd: options.cwd,
       env: options.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: options.pipeStdin ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
       windowsVerbatimArguments: execution.windowsVerbatimArguments,
       windowsHide: true,
     })
@@ -282,7 +323,7 @@ function spawnCodingAgentChild(command: string, args: string[], options: {
   return spawn(normalizedCommand, args, {
     cwd: options.cwd,
     env: options.env,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: options.pipeStdin ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
     detached: process.platform !== 'win32',
     windowsHide: process.platform === 'win32',
   })
@@ -547,7 +588,8 @@ export class CodingAgentRunManager {
     const run = this.getBySession(sessionId)
     if (!run) throw new Error('Coding agent session not found')
     const text = String(input || '').trim()
-    if (!text) throw new Error('Input is required')
+    const images = Array.isArray(options.images) ? options.images : []
+    if (!text && images.length === 0) throw new Error('Input is required')
     const systemPrompt = String(options.systemPrompt || '').trim()
     this.ensureDbSession(run)
     run.assistantMessageId = undefined
@@ -556,11 +598,11 @@ export class CodingAgentRunManager {
     this.emitTerminalStatus(run, 'Input sent to coding agent.')
     this.startWorkspaceRunDiff(run)
     if (run.launch.agentId === 'claude-code') {
-      this.startClaudePrintTurn(run, text, systemPrompt)
+      this.startClaudePrintTurn(run, text, systemPrompt, images)
       return { runId: run.id }
     }
     if (run.launch.agentId === 'codex') {
-      this.startCodexExecTurn(run, text, systemPrompt)
+      this.startCodexExecTurn(run, text, systemPrompt, images)
       return { runId: run.id }
     }
     if (!run.pty) throw new Error('Coding agent terminal is not available')
@@ -830,7 +872,12 @@ export class CodingAgentRunManager {
     }
   }
 
-  private startClaudePrintTurn(run: ManagedCodingAgentRun, input: string, systemPrompt = '') {
+  private startClaudePrintTurn(
+    run: ManagedCodingAgentRun,
+    input: string,
+    systemPrompt = '',
+    images: CodingAgentImageInput[] = [],
+  ) {
     if (childIsRunning(run.currentChild)) {
       throw new Error('Claude Code is still processing the previous input')
     }
@@ -864,16 +911,18 @@ export class CodingAgentRunManager {
     const promptArgument = hasArg(run.launch.args, '--append-system-prompt-file')
       ? ''
       : normalizeCliPromptArgument(systemPrompt)
+    const streamInput = images.length > 0 ? buildClaudeStreamJsonInput(input, images) : ''
     const args = [
       ...run.launch.args,
       ...nativeSessionArgs,
       ...(promptArgument ? ['--append-system-prompt', promptArgument] : []),
       '-p',
+      ...(streamInput ? ['--input-format', 'stream-json'] : []),
       '--output-format',
       'stream-json',
       '--include-partial-messages',
       '--verbose',
-      input,
+      ...(streamInput ? [] : [input]),
     ]
     const child = spawnCodingAgentChild(run.launch.command, args, {
       cwd: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
@@ -881,6 +930,7 @@ export class CodingAgentRunManager {
         ...process.env,
         ...(run.launch.env || {}),
       },
+      pipeStdin: Boolean(streamInput),
     })
     run.currentChild = child
 
@@ -898,6 +948,13 @@ export class CodingAgentRunManager {
       const text = appendChildStderr(run, chunk)
       if (text) logger.debug({ runId: run.id, sessionId: run.launch.sessionId, text }, '[coding-agent-run] claude print stderr')
     })
+
+    if (streamInput && child.stdin) {
+      child.stdin.on('error', (err) => {
+        logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] claude stream input failed')
+      })
+      child.stdin.end(`${streamInput}\n`)
+    }
 
     child.on('error', (err) => {
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
@@ -1273,7 +1330,12 @@ export class CodingAgentRunManager {
     })
   }
 
-  private startCodexExecTurn(run: ManagedCodingAgentRun, input: string, systemPrompt = '') {
+  private startCodexExecTurn(
+    run: ManagedCodingAgentRun,
+    input: string,
+    systemPrompt = '',
+    images: CodingAgentImageInput[] = [],
+  ) {
     if (childIsRunning(run.currentChild)) {
       throw new Error('Codex is still processing the previous input')
     }
@@ -1307,6 +1369,7 @@ export class CodingAgentRunManager {
       ...CODEX_REASONING_SUMMARY_ARGS,
       ...(promptArgument ? ['-c', `developer_instructions=${JSON.stringify(promptArgument)}`] : []),
       ...run.launch.args,
+      ...codexImageArgs(images),
       '--skip-git-repo-check',
       '--dangerously-bypass-approvals-and-sandbox',
     ]

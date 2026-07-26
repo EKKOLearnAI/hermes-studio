@@ -11,7 +11,13 @@ import {
 import { parseSseFrame, readSseFrames, readSseFrameTexts, sseEvent } from '../../packages/server/src/services/agent-runner/sse'
 import { AgentTargetRegistry, type AgentTargetInput } from '../../packages/server/src/services/agent-runner/target-registry'
 import { teeAsyncIterable } from '../../packages/server/src/services/agent-runner/stream-tee'
-import { CodingAgentRunManager, codingAgentGatewayErrorMessage, sanitizeCodingAgentTerminalOutput } from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
+import {
+  buildClaudeStreamJsonInput,
+  codexImageArgs,
+  CodingAgentRunManager,
+  codingAgentGatewayErrorMessage,
+  sanitizeCodingAgentTerminalOutput,
+} from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
 import { mapCodingAgentResponseEvent } from '../../packages/server/src/services/agent-runner/coding-agent-event-mapper'
 import { applyResponseStreamEvent } from '../../packages/server/src/services/hermes/run-chat/response-stream'
 import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
@@ -57,6 +63,40 @@ describe('coding agent completion errors', () => {
     expect(codingAgentGatewayErrorMessage(`  ${error}\n`)).toBe(error)
     expect(codingAgentGatewayErrorMessage('Provider returned HTTP 502')).toBe('Provider returned HTTP 502')
     expect(codingAgentGatewayErrorMessage('Here is a normal answer mentioning API Error: 529 as an example')).toBeNull()
+  })
+})
+
+describe('coding agent image inputs', () => {
+  it('builds native Codex image arguments and Claude stream-json image blocks', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'coding-agent-image-'))
+    const imagePath = join(tempDir, 'screen.png')
+    writeFileSync(imagePath, Buffer.from([1, 2, 3]))
+    try {
+      const image = { name: 'screen.png', path: imagePath, mediaType: 'image/png' }
+      expect(codexImageArgs([image])).toEqual(['--image', imagePath])
+
+      const payload = JSON.parse(buildClaudeStreamJsonInput('inspect this', [image]))
+      expect(payload).toEqual({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'inspect this' },
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: 'image/png',
+                data: Buffer.from([1, 2, 3]).toString('base64'),
+              },
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+      })
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 })
 

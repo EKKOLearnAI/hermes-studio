@@ -109,9 +109,12 @@ describe('coding-agent dispatch baseline', () => {
     }), runState)
   })
 
-  it('stringifies ContentBlock input before sending it to the coding agent', async () => {
+  it('passes ContentBlock images as native coding-agent attachments', async () => {
     const { handleCodingAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-coding-agent-run')
-    const blocks = [{ type: 'text', text: 'hello blocks' }]
+    const blocks = [
+      { type: 'text', text: 'hello blocks' },
+      { type: 'image', name: 'screen.png', path: '/tmp/screen.png', media_type: 'image/png' },
+    ]
 
     await handleCodingAgentRun({} as any, socket() as any, {
       session_id: 'session-1',
@@ -119,7 +122,12 @@ describe('coding-agent dispatch baseline', () => {
       coding_agent_id: 'claude-code',
     }, 'default', new Map([['session-1', state()]]) as any)
 
-    expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith('session-1', JSON.stringify(blocks), 'system prompt')
+    expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith(
+      'session-1',
+      'hello blocks\n\n[Attached image: screen.png]\nLocal image path for tools: /tmp/screen.png',
+      'system prompt',
+      [{ name: 'screen.png', path: '/tmp/screen.png', mediaType: 'image/png' }],
+    )
   })
 
   it('fails fast when session_id is missing', async () => {

@@ -84,6 +84,34 @@ describe('agent runner Responses adapters', () => {
     })
   })
 
+  it('preserves Responses image inputs for Chat and Anthropic providers', () => {
+    const imageUrl = 'data:image/png;base64,AQID'
+    const body = {
+      input: [{
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'inspect this' },
+          { type: 'input_image', image_url: imageUrl },
+        ],
+      }],
+    }
+
+    expect(responsesToOpenAiChat(body, target).messages).toEqual([{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'inspect this' },
+        { type: 'image_url', image_url: { url: imageUrl } },
+      ],
+    }])
+    expect(responsesToAnthropicMessages(body, target).messages).toEqual([{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'inspect this' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AQID' } },
+      ],
+    }])
+  })
+
   it('groups parallel Responses function calls before Chat tool results', () => {
     const body = {
       input: [
@@ -745,6 +773,37 @@ describe('agent runner Anthropic adapters', () => {
         function: { name: 'lookup', description: 'Lookup', parameters: { type: 'object' } },
       }],
     })
+  })
+
+  it('preserves Anthropic image inputs for Chat and Responses providers', () => {
+    const body = {
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'inspect this' },
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: 'AQID' },
+          },
+        ],
+      }],
+    }
+    const imageUrl = 'data:image/png;base64,AQID'
+
+    expect(anthropicToOpenAiChat(body, anthropicTarget).messages).toEqual([{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'inspect this' },
+        { type: 'image_url', image_url: { url: imageUrl } },
+      ],
+    }])
+    expect(anthropicToOpenAiResponses(body, anthropicTarget).input).toEqual([{
+      role: 'user',
+      content: [
+        { type: 'input_text', text: 'inspect this' },
+        { type: 'input_image', image_url: imageUrl },
+      ],
+    }])
   })
 
   it('converts Anthropic messages to Responses input', () => {

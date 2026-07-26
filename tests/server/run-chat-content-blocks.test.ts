@@ -2,7 +2,11 @@ import { mkdtemp, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { convertContentBlocks, convertContentBlocksForAgent } from '../../packages/server/src/services/hermes/run-chat/content-blocks'
+import {
+  convertContentBlocks,
+  convertContentBlocksForAgent,
+  convertContentBlocksForCodingAgent,
+} from '../../packages/server/src/services/hermes/run-chat/content-blocks'
 
 let tempDir = ''
 
@@ -48,5 +52,26 @@ describe('run chat content blocks', () => {
     })
     expect(parts[2].type).toBe('image_url')
     expect(parts[2].image_url?.url).toMatch(/^data:image\/png;base64,/)
+  })
+
+  it('separates coding-agent prompt text from native image attachments', () => {
+    const imagePath = join(tempDir, 'image.png')
+
+    expect(convertContentBlocksForCodingAgent([
+      { type: 'text', text: '  inspect this  ' },
+      { type: 'image', name: 'image.png', path: imagePath, media_type: 'image/png' },
+      { type: 'file', name: 'notes.txt', path: join(tempDir, 'notes.txt'), media_type: 'text/plain' },
+    ])).toEqual({
+      text: [
+        'inspect this',
+        `[Attached image: image.png]\nLocal image path for tools: ${imagePath}`,
+        `[Attached file: notes.txt]\nLocal file path for tools: ${join(tempDir, 'notes.txt')}`,
+      ].join('\n\n'),
+      images: [{
+        name: 'image.png',
+        path: imagePath,
+        mediaType: 'image/png',
+      }],
+    })
   })
 })

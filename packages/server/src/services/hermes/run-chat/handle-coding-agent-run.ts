@@ -6,7 +6,7 @@ import {
   type CodingAgentId as ExternalCodingAgentId,
 } from '../../coding-agents'
 import { getOrCreateSession } from './compression'
-import { contentBlocksToString } from './content-blocks'
+import { convertContentBlocksForCodingAgent } from './content-blocks'
 import type { ContentBlock, SessionState } from './types'
 import type { ChatCodingAgentId } from './types'
 import { writeModelRunProfileToken } from './model-run-prompt'
@@ -112,14 +112,18 @@ export async function handleCodingAgentRun(
   }
 
   try {
-    const inputText = contentBlocksToString(data.input)
+    const codingInput = convertContentBlocksForCodingAgent(data.input)
     const socketUser = socket.data?.user as AuthenticatedUser | undefined
     await writeModelRunProfileToken(socketUser, profile)
     const includeBaseSystemPrompt = agentId === 'claude-code' || agentId === 'codex'
     const runPrompt = [
       includeBaseSystemPrompt ? getSystemPrompt(undefined, { source: data.session_source || data.source }) : '',
     ].filter(Boolean).join('\n')
-    await sendCodingAgentRunInput(sessionId, inputText, runPrompt)
+    if (codingInput.images.length > 0) {
+      await sendCodingAgentRunInput(sessionId, codingInput.text, runPrompt, codingInput.images)
+    } else {
+      await sendCodingAgentRunInput(sessionId, codingInput.text, runPrompt)
+    }
   } catch (err) {
     if (!codingAgentRunManager.isSessionProcessing(sessionId)) {
       state.isWorking = false
