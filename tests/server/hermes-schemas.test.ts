@@ -148,6 +148,54 @@ describe('Hermes schema initialization', () => {
     expect(node).toEqual({ remaining_timeout_ms_at_start: null })
   })
 
+  it('upgrades legacy group chat agents to backward-compatible participant bindings', async () => {
+    const {
+      GC_ROOM_AGENTS_SCHEMA,
+      GC_ROOM_AGENTS_TABLE,
+      initAllHermesTables,
+    } = await import('../../packages/server/src/db/hermes/schemas')
+    const legacyColumns = Object.entries(GC_ROOM_AGENTS_SCHEMA)
+      .filter(([name]) => ![
+        'runtime',
+        'codingAgentId',
+        'sessionId',
+        'sessionGeneration',
+        'mode',
+        'provider',
+        'model',
+        'apiMode',
+        'reasoningEffort',
+        'lastSeenRoomSeq',
+        'lastSuccessfulRunId',
+        'checkpoint',
+        'checkpointSourceMessageIds',
+      ].includes(name))
+      .map(([name, definition]) => `"${name}" ${definition}`)
+      .join(', ')
+    db.exec(`CREATE TABLE "${GC_ROOM_AGENTS_TABLE}" (${legacyColumns})`)
+    db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run('row-1', 'room-1', 'agent-1', 'default', 'Legacy Hermes', '', 0)
+
+    expect(() => initAllHermesTables()).not.toThrow()
+
+    const row = db.prepare(`SELECT * FROM "${GC_ROOM_AGENTS_TABLE}" WHERE id = ?`).get('row-1') as Record<string, unknown>
+    expect(row).toMatchObject({
+      runtime: 'hermes',
+      codingAgentId: '',
+      sessionId: '',
+      sessionGeneration: 0,
+      mode: 'scoped',
+      provider: '',
+      model: '',
+      apiMode: '',
+      reasoningEffort: '',
+      lastSeenRoomSeq: 0,
+      lastSuccessfulRunId: '',
+      checkpoint: '',
+      checkpointSourceMessageIds: '[]',
+    })
+  })
+
   it('handles single-column primary key tables correctly', async () => {
     const { initAllHermesTables, GC_ROOM_AGENTS_TABLE } =
       await import('../../packages/server/src/db/hermes/schemas')

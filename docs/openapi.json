@@ -4597,7 +4597,7 @@
                 "type": "object",
                 "properties": {
                   "agents": {
-                    "type": "boolean"
+                    "type": "string"
                   },
                   "compression": {
                     "type": "number"
@@ -4812,22 +4812,74 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "profile": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
                   "description": {
                     "type": "string"
                   },
                   "invited": {
                     "type": "boolean"
                   },
-                  "name": {
+                  "runtime": {
+                    "type": "string",
+                    "enum": [
+                      "hermes",
+                      "coding_agent"
+                    ]
+                  },
+                  "codingAgentId": {
+                    "type": "string",
+                    "enum": [
+                      "",
+                      "claude-code",
+                      "codex"
+                    ]
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "scoped",
+                      "global"
+                    ]
+                  },
+                  "provider": {
                     "type": "string"
                   },
-                  "profile": {
+                  "model": {
                     "type": "string"
+                  },
+                  "apiMode": {
+                    "type": "string",
+                    "enum": [
+                      "",
+                      "chat_completions",
+                      "codex_responses",
+                      "anthropic_messages"
+                    ]
+                  },
+                  "reasoningEffort": {
+                    "type": "string",
+                    "enum": [
+                      "",
+                      "default",
+                      "none",
+                      "minimal",
+                      "low",
+                      "medium",
+                      "high",
+                      "xhigh",
+                      "max"
+                    ]
                   }
                 },
                 "required": [
                   "profile"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -4869,6 +4921,103 @@
       }
     },
     "/api/hermes/group-chat/rooms/{roomId}/agents/{agentId}": {
+      "patch": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Update :agentId",
+        "description": "PATCH /api/hermes/group-chat/rooms/:roomId/agents/:agentId",
+        "operationId": "patchAgents",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "scoped",
+                      "global"
+                    ]
+                  },
+                  "provider": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "apiMode": {
+                    "type": "string",
+                    "enum": [
+                      "",
+                      "chat_completions",
+                      "codex_responses",
+                      "anthropic_messages"
+                    ]
+                  },
+                  "reasoningEffort": {
+                    "type": "string",
+                    "enum": [
+                      "",
+                      "default",
+                      "none",
+                      "minimal",
+                      "low",
+                      "medium",
+                      "high",
+                      "xhigh",
+                      "max"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "Group Chat"

@@ -13,6 +13,7 @@ import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import SettingsCircuitBadge from '@/components/layout/SettingsCircuitBadge.vue'
+import WorkflowModelSelector from '@/components/hermes/workflow/WorkflowModelSelector.vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
 import type { RoomAgent, RoomInfo } from '@/api/hermes/group-chat'
@@ -44,6 +45,7 @@ watch(
 const showCreateModal = ref(false)
 const showCloneModal = ref(false)
 const showAddAgentModal = ref(false)
+const showEditAgentModal = ref(false)
 const showCompressionModal = ref(false)
 const showUserProfileModal = ref(false)
 const userProfileName = ref('')
@@ -56,6 +58,14 @@ const isSavingInviteCode = ref(false)
 const selectedProfile = ref<string | null>(null)
 const agentName = ref('')
 const agentDescription = ref('')
+const editingAgentId = ref('')
+const participantRuntime = ref<'hermes' | 'coding_agent'>('hermes')
+const participantCodingAgentId = ref<'' | 'claude-code' | 'codex'>('')
+const participantMode = ref<'scoped' | 'global'>('scoped')
+const participantProvider = ref('')
+const participantModel = ref('')
+const participantApiMode = ref('')
+const participantReasoningEffort = ref('default')
 const cloneSourceRoomId = ref<string | null>(null)
 const cloneRoomName = ref('')
 const cloneInviteCode = ref('')
@@ -83,6 +93,58 @@ const workspacePanelStyle = computed(() => ({
 const profileOptions = computed(() =>
     profilesStore.profiles.map(p => ({ label: p.name, value: p.name }))
 )
+
+const participantRuntimeOptions = computed(() => [
+    { label: 'Hermes', value: 'hermes' },
+    { label: 'Codex', value: 'codex' },
+    { label: 'Claude Code', value: 'claude-code' },
+])
+const participantModeOptions = computed(() => [
+    { label: t('codingAgents.launchModeScoped'), value: 'scoped' },
+])
+const participantApiModeOptions = computed(() => [
+    { label: t('codingAgents.protocolOpenAiChat'), value: 'chat_completions' },
+    { label: t('codingAgents.protocolOpenAiResponses'), value: 'codex_responses' },
+    { label: t('codingAgents.protocolAnthropicMessages'), value: 'anthropic_messages' },
+])
+const participantReasoningOptions = computed(() => ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+    .map(value => ({ label: t(`chat.reasoningEffort.options.${value}`), value })))
+const participantModelGroups = computed(() => (
+    appStore.profileModelGroups.find(entry => entry.profile === selectedProfile.value)?.groups || appStore.modelGroups
+))
+
+function setParticipantRuntime(value: string) {
+    participantRuntime.value = value === 'hermes' ? 'hermes' : 'coding_agent'
+    participantCodingAgentId.value = value === 'codex' || value === 'claude-code' ? value : ''
+    if (value === 'codex' && !participantApiMode.value) participantApiMode.value = 'codex_responses'
+    if (value === 'claude-code' && !participantApiMode.value) participantApiMode.value = 'anthropic_messages'
+}
+
+function participantRuntimeValue(): string {
+    return participantRuntime.value === 'hermes' ? 'hermes' : participantCodingAgentId.value
+}
+
+function handleParticipantModelSelect(selection: { provider: string; model: string; apiMode?: string }) {
+    participantProvider.value = selection.provider
+    participantModel.value = selection.model
+    if (selection.apiMode === 'chat_completions' || selection.apiMode === 'codex_responses' || selection.apiMode === 'anthropic_messages') {
+        participantApiMode.value = selection.apiMode
+    }
+}
+
+function resetParticipantForm() {
+    editingAgentId.value = ''
+    selectedProfile.value = null
+    agentName.value = ''
+    agentDescription.value = ''
+    participantRuntime.value = 'hermes'
+    participantCodingAgentId.value = ''
+    participantMode.value = 'scoped'
+    participantProvider.value = ''
+    participantModel.value = ''
+    participantApiMode.value = ''
+    participantReasoningEffort.value = 'default'
+}
 
 function profileAvatarFor(profileName?: string) {
     if (!profileName) return null
@@ -488,7 +550,30 @@ async function handleSendMessage(content: string, attachments?: Attachment[]) {
 async function handleAddAgent() {
     if (!currentRoomCanManage.value) return
     await profilesStore.fetchProfiles()
+    await appStore.reloadModels({ preserveSelection: true })
+    resetParticipantForm()
     showAddAgentModal.value = true
+}
+
+function handleEditAgent(agent: RoomAgent) {
+    if (!currentRoomCanManage.value) return
+    editingAgentId.value = agent.agentId
+    selectedProfile.value = agent.profile
+    agentName.value = agent.name
+    agentDescription.value = agent.description
+    participantRuntime.value = agent.runtime
+    participantCodingAgentId.value = agent.codingAgentId
+    participantMode.value = agent.mode
+    participantProvider.value = agent.provider
+    participantModel.value = agent.model
+    participantApiMode.value = agent.apiMode
+    participantReasoningEffort.value = agent.reasoningEffort || 'default'
+    showEditAgentModal.value = true
+}
+
+function participantRuntimeLabel(agent: RoomAgent): string {
+    if (agent.runtime !== 'coding_agent') return 'Hermes'
+    return agent.codingAgentId === 'claude-code' ? 'Claude Code' : 'Codex'
 }
 
 onMounted(() => {
@@ -547,11 +632,16 @@ async function confirmAddAgent() {
             profile: selectedProfile.value,
             name: agentName.value.trim() || undefined,
             description: agentDescription.value.trim() || undefined,
+            runtime: participantRuntime.value,
+            codingAgentId: participantCodingAgentId.value,
+            mode: participantMode.value,
+            provider: participantMode.value === 'scoped' ? participantProvider.value : '',
+            model: participantMode.value === 'scoped' ? participantModel.value : '',
+            apiMode: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantApiMode.value : '',
+            reasoningEffort: participantMode.value === 'scoped' ? participantReasoningEffort.value : '',
         })
         showAddAgentModal.value = false
-        selectedProfile.value = null
-        agentName.value = ''
-        agentDescription.value = ''
+        resetParticipantForm()
         message.success(t('groupChat.agentAdded'))
     } catch (err: any) {
         if (err.message?.includes('already')) {
@@ -559,6 +649,26 @@ async function confirmAddAgent() {
         } else {
             message.error(extractApiErrorMessage(err))
         }
+    }
+}
+
+async function confirmEditAgent() {
+    if (!store.currentRoomId || !editingAgentId.value || !agentName.value.trim()) return
+    try {
+        await store.updateAgentInRoom(store.currentRoomId, editingAgentId.value, {
+            name: agentName.value.trim(),
+            description: agentDescription.value.trim(),
+            mode: participantMode.value,
+            provider: participantMode.value === 'scoped' ? participantProvider.value : '',
+            model: participantMode.value === 'scoped' ? participantModel.value : '',
+            apiMode: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantApiMode.value : '',
+            reasoningEffort: participantMode.value === 'scoped' ? participantReasoningEffort.value : '',
+        })
+        showEditAgentModal.value = false
+        resetParticipantForm()
+        message.success(t('common.saved'))
+    } catch (err: any) {
+        message.error(extractApiErrorMessage(err))
     }
 }
 
@@ -684,10 +794,10 @@ async function handleRemoveAgent(agentId: string) {
     }
 }
 
-async function handleInterruptAgent(agentName: string) {
+async function handleInterruptAgent(agentId: string) {
     if (!currentRoomCanManage.value) return
     try {
-        await store.interruptAgent(agentName)
+        await store.interruptAgent(agentId)
     } catch (err: any) {
         message.error(err.message || t('common.saveFailed'))
     }
@@ -824,7 +934,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             <div class="agent-popover-item" style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--n-border-color, #efeff5);">
                                 <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :avatar="userMemberAvatar" :size="28" />
                                 <div class="agent-popover-info">
-                                    <span class="agent-popover-name">{{ store.userName || 'You' }}</span>
+                                    <span class="agent-popover-name">{{ store.userName || t('groupChat.you') }}</span>
                                     <span class="agent-popover-profile">{{ t('groupChat.you') }}</span>
                                 </div>
                             </div>
@@ -833,9 +943,12 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                 <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="profileAvatarFor(agent.profile)" :size="28" />
                                 <div class="agent-popover-info">
                                     <span class="agent-popover-name">{{ agent.name }}</span>
-                                    <span class="agent-popover-profile">{{ agent.profile }}</span>
+                                    <span class="agent-popover-profile">{{ participantRuntimeLabel(agent) }} · {{ agent.profile }} · {{ t('groupChat.sessionGeneration', { generation: agent.sessionGeneration }) }}</span>
                                 </div>
-                                <button v-if="currentRoomCanManage" class="agent-popover-remove" @click="handleRemoveAgent(agent.id)">
+                                <button v-if="currentRoomCanManage" class="agent-popover-remove" :title="t('common.edit')" @click="handleEditAgent(agent)">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>
+                                </button>
+                                <button v-if="currentRoomCanManage" class="agent-popover-remove" @click="handleRemoveAgent(agent.agentId)">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                 </button>
                             </div>
@@ -947,7 +1060,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                 <span v-else>
                                     @{{ status.agentName }} {{ t('groupChat.agentReplying') }}
                                 </span>
-                                <button v-if="currentRoomCanManage" class="context-stop-btn" :title="t('common.cancel')" @click="handleInterruptAgent(status.agentName)">
+                                <button v-if="currentRoomCanManage" class="context-stop-btn" :title="t('common.cancel')" @click="handleInterruptAgent(status.agentId)">
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                                         <line x1="18" y1="6" x2="6" y2="18" />
                                         <line x1="6" y1="6" x2="18" y2="18" />
@@ -1061,6 +1174,14 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                 <div class="modal">
                     <h3>{{ t('groupChat.addAgent') }}</h3>
                     <div class="form-group">
+                        <label class="form-label">{{ t('groupChat.participantRuntime') }}</label>
+                        <NSelect
+                            :value="participantRuntimeValue()"
+                            :options="participantRuntimeOptions"
+                            @update:value="setParticipantRuntime"
+                        />
+                    </div>
+                    <div class="form-group">
                         <NSelect
                             v-model:value="selectedProfile"
                             :options="profileOptions"
@@ -1084,10 +1205,75 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             :placeholder="t('groupChat.agentDescPlaceholder')"
                         />
                     </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ t('groupChat.participantMode') }}</label>
+                        <NSelect v-model:value="participantMode" :options="participantModeOptions" />
+                    </div>
+                    <div v-if="participantMode === 'scoped'" class="form-group">
+                        <label class="form-label">{{ t('groupChat.participantModel') }}</label>
+                        <WorkflowModelSelector
+                            :provider="participantProvider"
+                            :model="participantModel"
+                            :groups="participantModelGroups"
+                            @select="handleParticipantModelSelect"
+                        />
+                    </div>
+                    <div v-if="participantRuntime === 'coding_agent' && participantMode === 'scoped'" class="form-group">
+                        <label class="form-label">{{ t('groupChat.participantApiMode') }}</label>
+                        <NSelect v-model:value="participantApiMode" :options="participantApiModeOptions" />
+                    </div>
+                    <div v-if="participantMode === 'scoped'" class="form-group">
+                        <label class="form-label">{{ t('groupChat.participantReasoningEffort') }}</label>
+                        <NSelect v-model:value="participantReasoningEffort" :options="participantReasoningOptions" />
+                    </div>
                     <div class="modal-actions">
                         <NSpace justify="end">
                             <NButton @click="showAddAgentModal = false">{{ t('common.cancel') }}</NButton>
                             <NButton type="primary" :disabled="!selectedProfile" @click="confirmAddAgent">{{ t('common.add') }}</NButton>
+                        </NSpace>
+                    </div>
+                </div>
+            </div>
+            <div v-if="showEditAgentModal" class="modal-backdrop" @click.self="showEditAgentModal = false">
+                <div class="modal">
+                    <h3>{{ t('groupChat.editParticipant') }}</h3>
+                    <div class="form-group">
+                        <label class="form-label">{{ t('groupChat.participantRuntime') }}</label>
+                        <NInput :value="participantRuntimeValue()" disabled />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ t('groupChat.agentName') }}</label>
+                        <NInput v-model:value="agentName" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ t('groupChat.agentDesc') }}</label>
+                        <NInput v-model:value="agentDescription" type="textarea" :rows="2" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ t('groupChat.participantMode') }}</label>
+                        <NSelect v-model:value="participantMode" :options="participantModeOptions" />
+                    </div>
+                    <div v-if="participantMode === 'scoped'" class="form-group">
+                        <label class="form-label">{{ t('groupChat.participantModel') }}</label>
+                        <WorkflowModelSelector
+                            :provider="participantProvider"
+                            :model="participantModel"
+                            :groups="participantModelGroups"
+                            @select="handleParticipantModelSelect"
+                        />
+                    </div>
+                    <div v-if="participantRuntime === 'coding_agent' && participantMode === 'scoped'" class="form-group">
+                        <label class="form-label">{{ t('groupChat.participantApiMode') }}</label>
+                        <NSelect v-model:value="participantApiMode" :options="participantApiModeOptions" />
+                    </div>
+                    <div v-if="participantMode === 'scoped'" class="form-group">
+                        <label class="form-label">{{ t('groupChat.participantReasoningEffortNextRun') }}</label>
+                        <NSelect v-model:value="participantReasoningEffort" :options="participantReasoningOptions" />
+                    </div>
+                    <div class="modal-actions">
+                        <NSpace justify="end">
+                            <NButton @click="showEditAgentModal = false">{{ t('common.cancel') }}</NButton>
+                            <NButton type="primary" :disabled="!agentName.trim()" @click="confirmEditAgent">{{ t('common.save') }}</NButton>
                         </NSpace>
                     </div>
                 </div>

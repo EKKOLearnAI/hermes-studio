@@ -2267,6 +2267,14 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   groupChat: {
+    participantRuntime: 'Laufzeit',
+    participantMode: 'Modus',
+    participantModel: 'Modell',
+    participantApiMode: 'API-Modus',
+    participantReasoningEffort: 'Reasoning-Stufe',
+    participantReasoningEffortNextRun: 'Reasoning-Stufe (ab nächstem Lauf)',
+    editParticipant: 'Teilnehmer bearbeiten',
+    sessionGeneration: 'Sitzungsgeneration {generation}',
     roomSettings: 'Raumeinstellungen',
     inviteCodeSettings: 'Einladungscode-Einstellungen',
     inviteCodePlaceholder: 'Neuen Einladungscode eingeben',

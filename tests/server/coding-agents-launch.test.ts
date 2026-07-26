@@ -149,6 +149,22 @@ describe('coding agent launch preparation', () => {
     expect(claudePrompt.match(/BEGIN HERMES WEB UI PROMPT/g)).toHaveLength(1)
   })
 
+  it('writes fail-closed sandbox settings for scoped Claude Code Group Chat runs', async () => {
+    const home = makeHome()
+    const result = await prepareCodingAgentLaunch('claude-code', {
+      mode: 'scoped', profile: 'default', provider: 'anthropic', model: 'claude-sonnet', runtimeContext: 'group_chat',
+    })
+    const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
+
+    expect(settings.permissions).toEqual({ defaultMode: 'dontAsk', allow: ['Read', 'Edit', 'Write', 'Bash'] })
+    expect(settings.sandbox).toEqual({
+      enabled: true,
+      failIfUnavailable: true,
+      allowUnsandboxedCommands: false,
+      autoAllowBashIfSandboxed: true,
+    })
+  })
+
   it('uses a selected workspace directory when launching a coding agent', async () => {
     const home = makeHome()
     const workspace = join(home, 'selected workspace')

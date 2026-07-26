@@ -116,6 +116,7 @@ export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
   agentSessionId?: string
   agentNativeSessionId?: string
   isolateSettings?: boolean
+  runtimeContext?: 'group_chat'
   sessionSource?: 'global_agent' | 'workflow'
 }
 
@@ -1699,8 +1700,23 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const modelName = displayNameForModel(model)
     const globalSettingsPath = getLiveConfigFileDefinition(tool.id, 'settings')?.absolutePath
     const inheritedSettings = inheritClaudeSettings(globalSettingsPath ? await safeReadFile(globalSettingsPath) : '')
+    const groupChatSafetySettings = input.runtimeContext === 'group_chat'
+      ? {
+          permissions: {
+            defaultMode: 'dontAsk',
+            allow: ['Read', 'Edit', 'Write', 'Bash'],
+          },
+          sandbox: {
+            enabled: true,
+            failIfUnavailable: true,
+            allowUnsandboxedCommands: false,
+            autoAllowBashIfSandboxed: true,
+          },
+        }
+      : {}
     const settings = {
       ...inheritedSettings,
+      ...groupChatSafetySettings,
       model,
       env: {
         ...(claudeApiKey ? { ANTHROPIC_API_KEY: claudeApiKey } : {}),
@@ -1912,6 +1928,7 @@ export async function startCodingAgentRun(
     state,
     reasoningEffort: launch.reasoningEffort,
     sessionSource: sessionSource === 'global_agent' || sessionSource === 'workflow' ? sessionSource : undefined,
+    runtimeContext: input.runtimeContext,
   })
   updateSession(sessionId, {
     source: sessionSource,

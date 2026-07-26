@@ -2555,6 +2555,14 @@ export default {
 
   // 群聊
   groupChat: {
+    participantRuntime: '运行时',
+    participantMode: '模式',
+    participantModel: '模型',
+    participantApiMode: 'API 模式',
+    participantReasoningEffort: '推理强度',
+    participantReasoningEffortNextRun: '推理强度（下次运行生效）',
+    editParticipant: '编辑参与者',
+    sessionGeneration: '第 {generation} 代会话',
     title: '群聊',
     createRoom: '创建房间',
     joinByCode: '通过邀请码加入',

@@ -6,6 +6,12 @@ import { countTokens } from '../../../lib/context-compressor'
 import { AgentBridgeClient, type AgentBridgeContextEstimate, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
 import { convertContentBlocksForAgent, isContentBlockArray } from '../run-chat/content-blocks'
 import { resolveBridgeRunModelConfig } from '../run-chat/model-config'
+import { getSystemPrompt } from '../../../lib/llm-prompt'
+import {
+    sendCodingAgentRunInput,
+    startCodingAgentRun,
+} from '../../coding-agents'
+import { codingAgentRunManager } from '../../agent-runner/coding-agent-run-manager'
 import {
     completeWorkspaceRunCheckpointDraft,
     discardWorkspaceRunCheckpoint,
@@ -99,6 +105,27 @@ interface BridgeContextCache {
     provider?: string
 }
 
+type PersistedParticipantBinding = {
+    agentId: string
+    profile: string
+    name: string
+    description: string
+    runtime?: 'hermes' | 'coding_agent'
+    codingAgentId?: '' | 'claude-code' | 'codex'
+    sessionId?: string
+    sessionGeneration?: number
+    mode?: 'scoped' | 'global'
+    provider?: string
+    model?: string
+    apiMode?: string
+    reasoningEffort?: string
+    lastSeenRoomSeq?: number
+    lastSuccessfulRunId?: string
+}
+
+const GROUP_CODING_AGENT_RUN_TIMEOUT_MS = 30 * 60 * 1000
+const GROUP_CODING_AGENT_INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000
+
 export async function resolveGroupAgentModelContext(profile: string): Promise<GroupModelContext> {
     return resolveBridgeRunModelConfig({ profile })
 }
@@ -160,8 +187,8 @@ export interface AgentEventHandler {
 class AgentClient {
     readonly agentId: string
     readonly profile: string
-    readonly name: string
-    readonly description: string
+    private _name: string
+    private _description: string
     private readonly backgroundDelegationEnabled: false
     private socket: Socket | null = null
     private joinedRooms = new Set<string>()
@@ -174,13 +201,14 @@ class AgentClient {
     private bridgeContextCache = new Map<string, BridgeContextCache>()
     private workspaceDiffRuns = new Map<string, WorkspaceDiffRunState>()
     private interruptVersions = new Map<string, number>()
+    private codingAgentReplyCancels = new Map<string, () => void>()
     private workspaceDiffBroadcaster: WorkspaceDiffBroadcaster | null = null
 
     constructor(config: AgentConfig, handlers: AgentEventHandler = {}) {
         this.agentId = config.agentId || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
         this.profile = config.profile
-        this.name = config.name
-        this.description = config.description
+        this._name = config.name
+        this._description = config.description
         this.backgroundDelegationEnabled = config.backgroundDelegationEnabled ?? false
         this.handlers = handlers
     }
@@ -191,6 +219,19 @@ class AgentClient {
 
     get id(): string | undefined {
         return this.socket?.id
+    }
+
+    get name(): string {
+        return this._name
+    }
+
+    get description(): string {
+        return this._description
+    }
+
+    updateIdentity(name: string, description: string): void {
+        this._name = name
+        this._description = description
     }
 
     setContextEngine(engine: any): void {
@@ -308,8 +349,21 @@ class AgentClient {
     }
 
     async interrupt(roomId: string): Promise<boolean> {
-        const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
-        const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed)
+        const binding = this.participantBinding(roomId)
+        const sessionId = this.currentSessionId(roomId)
+        if (binding?.runtime === 'coding_agent') {
+            const hadPendingReply = this.codingAgentReplyCancels.has(sessionId)
+            this.markSessionInterrupted(sessionId)
+            this.codingAgentReplyCancels.get(sessionId)?.()
+            const stopped = await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false, graceMs: 15_000 })
+            try {
+                this.stopTyping(roomId)
+                this.emitContextStatus(roomId, 'ready', undefined, sessionId)
+            } catch (err: any) {
+                logger.warn(`[AgentClients] ${this.name}: failed to publish coding-agent interrupt state: ${err.message || err}`)
+            }
+            return hadPendingReply || stopped
+        }
         let result: Awaited<ReturnType<AgentBridgeClient['interrupt']>> | null = null
         try {
             result = await new AgentBridgeClient().interrupt(sessionId, 'Interrupted by group chat user', this.profile)
@@ -509,10 +563,19 @@ class AgentClient {
     }
 
     private roomSessionIsCurrent(roomId: string, sessionId: string): boolean {
-        const room = this.storage?.getRoom?.(roomId)
-        if (!room) return false
-        const seed = String(room.sessionSeed || '0')
-        return groupBridgeSessionId(roomId, this.profile, this.name, seed) === sessionId
+        return this.currentSessionId(roomId) === sessionId
+    }
+
+    private participantBinding(roomId: string): PersistedParticipantBinding | null {
+        return this.storage?.getRoomAgentByAgentId?.(roomId, this.agentId) || null
+    }
+
+    private currentSessionId(roomId: string): string {
+        const binding = this.participantBinding(roomId)
+        const persisted = String(binding?.sessionId || '').trim()
+        if (persisted) return persisted
+        const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
+        return groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed)
     }
 
     private markWorkspaceDiffAborted(roomId: string): WorkspaceDiffRunState[] {
@@ -586,6 +649,10 @@ class AgentClient {
         msg: MentionMessage,
         onStatus?: (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => void,
     ): Promise<void> {
+        if (this.participantBinding(roomId)?.runtime === 'coding_agent') {
+            await this.replyToCodingAgentMention(roomId, msg, onStatus)
+            return
+        }
         logger.debug(`[AgentClients] ${this.name} mentioned by ${msg.senderName}: "${msg.content.slice(0, 50)}"`)
         const runMessageId = groupMessageId(roomId, this.profile, this.name)
         let partIndex = 0
@@ -608,8 +675,7 @@ class AgentClient {
             let conversationHistory: Array<{ role: string; content: string }> = []
             let instructions: string | undefined
             const bridge = new AgentBridgeClient()
-            const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
-            const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed)
+            const sessionId = this.currentSessionId(roomId)
             const replyInterruptVersion = this.interruptVersion(sessionId)
             const reportStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
                 onStatus?.(status, { ...extra, agentSessionId: sessionId })
@@ -652,7 +718,12 @@ class AgentClient {
                 }
                 reportStatus('ready')
             }
-            const modelContext = await resolveGroupAgentModelContext(this.profile)
+            const participantSnapshot = { ...(this.participantBinding(roomId) || {}) }
+            const profileModelContext = await resolveGroupAgentModelContext(this.profile)
+            const modelContext = {
+                model: String(participantSnapshot.model || profileModelContext.model || '').trim(),
+                provider: String(participantSnapshot.provider || profileModelContext.provider || '').trim(),
+            }
 
             if (this.contextEngine && this.storage) {
                 try {
@@ -740,7 +811,7 @@ class AgentClient {
             const bridgeInput: AgentBridgeMessage = isContentBlockArray(input)
                 ? await convertContentBlocksForAgent(input)
                 : input
-            if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+            if (!this.storage?.getRoom?.(roomId) || !this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
                 await stopStaleStartedRun?.()
                 return
             }
@@ -756,6 +827,9 @@ class AgentClient {
                 {
                     ...(modelContext.model ? { model: modelContext.model } : {}),
                     ...(modelContext.provider ? { provider: modelContext.provider } : {}),
+                    ...(participantSnapshot.reasoningEffort && participantSnapshot.reasoningEffort !== 'default'
+                        ? { reasoning_effort: String(participantSnapshot.reasoningEffort) }
+                        : {}),
                     source: 'api_server',
                     ...(roomWorkspace ? { workspace: roomWorkspace } : {}),
                     // Used only if this operation creates the cached AgentSession.
@@ -892,6 +966,263 @@ class AgentClient {
             } else {
                 onStatus?.('ready')
             }
+        }
+    }
+
+    private async replyToCodingAgentMention(
+        roomId: string,
+        msg: MentionMessage,
+        onStatus?: (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => void,
+    ): Promise<void> {
+        const binding = this.participantBinding(roomId)
+        const codingAgentId = binding?.codingAgentId
+        if (!binding || binding.runtime !== 'coding_agent' || (codingAgentId !== 'claude-code' && codingAgentId !== 'codex')) {
+            throw new Error(`Coding agent participant "${this.name}" is not configured`)
+        }
+
+        const sessionId = this.currentSessionId(roomId)
+        const replyInterruptVersion = this.interruptVersion(sessionId)
+        const roomWorkspace = String(this.storage?.getRoom?.(roomId)?.workspace || '').trim()
+        const messageId = groupMessagePartId(groupMessageId(roomId, this.profile, this.name), 0)
+        let output = ''
+        let reasoning = ''
+        let settled = false
+        let inactivityTimer: ReturnType<typeof setTimeout> | undefined
+        let runTimer: ReturnType<typeof setTimeout> | undefined
+        let unsubscribe = () => {}
+        let resolveRun: () => void = () => {}
+        let roomContextInstructions = ''
+        let contextRevision = 0
+
+        const runDone = new Promise<void>((resolve) => { resolveRun = resolve })
+        const reportStatus = (status: 'compressing' | 'replying' | 'ready') => {
+            onStatus?.(status, { agentSessionId: sessionId })
+        }
+        const cleanup = () => {
+            if (settled) return
+            settled = true
+            if (inactivityTimer) clearTimeout(inactivityTimer)
+            if (runTimer) clearTimeout(runTimer)
+            unsubscribe()
+            this.codingAgentReplyCancels.delete(sessionId)
+            resolveRun()
+        }
+        this.codingAgentReplyCancels.set(sessionId, cleanup)
+        const stopForTimeout = async (reason: string) => {
+            if (settled) return
+            await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false, graceMs: 15_000 })
+            if (this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+                await this.sendAgentErrorMessage(roomId, messageId, reason, msg, reasoning, sessionId)
+                this.emitMessageStreamEnd(roomId, messageId, sessionId)
+            }
+            this.stopTyping(roomId)
+            reportStatus('ready')
+            cleanup()
+        }
+        const armInactivityTimer = () => {
+            if (inactivityTimer) clearTimeout(inactivityTimer)
+            inactivityTimer = setTimeout(() => {
+                void stopForTimeout('Coding agent run stopped after 5 minutes without output')
+            }, GROUP_CODING_AGENT_INACTIVITY_TIMEOUT_MS)
+        }
+
+        try {
+            this.startTyping(roomId)
+            reportStatus('replying')
+            this.emitMessageStreamStart(roomId, messageId, sessionId)
+
+            const canonicalMessages = this.storage?.getMessagesForContext?.(roomId, { throughMessageId: msg.messageId }) || []
+            contextRevision = canonicalMessages.length
+            if (this.contextEngine && this.storage) {
+                const roomInfo = this.storage.getRoom(roomId)
+                const roomMembers: Array<{ userId: string; name: string; description: string }> = this.storage.getRoomMembers(roomId) || []
+                const context = await this.contextEngine.buildContext({
+                    roomId,
+                    agentId: this.agentId,
+                    agentName: this.name,
+                    agentDescription: this.description,
+                    agentSocketId: this.socket?.id || '',
+                    roomName: String(roomInfo?.name || roomId),
+                    memberNames: roomMembers.map(member => member.name),
+                    members: roomMembers,
+                    upstream: '',
+                    apiKey: null,
+                    currentMessage: mentionMessageToStoredContextMessage(roomId, msg),
+                    compression: roomInfo ? {
+                        triggerTokens: roomInfo.triggerTokens,
+                        maxHistoryTokens: roomInfo.maxHistoryTokens,
+                        tailMessageCount: roomInfo.tailMessageCount,
+                    } : undefined,
+                    profile: this.profile,
+                    participantCursor: Number(binding.lastSeenRoomSeq || 0),
+                    onProgress: (event: { messageCount: number; tokenCount: number }) => {
+                        onStatus?.('compressing', { agentSessionId: sessionId, messageCount: event.messageCount, totalTokens: event.tokenCount })
+                    },
+                })
+                roomContextInstructions = [
+                    context.instructions,
+                    context.conversationHistory.length
+                        ? `Canonical Room context through the triggering message:\n${context.conversationHistory.map((entry: { role: string; content: string }) => `${entry.role.toUpperCase()}: ${entry.content}`).join('\n')}`
+                        : '',
+                ].filter(Boolean).join('\n\n')
+            }
+
+            if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) return
+
+            unsubscribe = codingAgentRunManager.subscribe(sessionId, (event, payload) => {
+                if (settled || !this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) return
+                armInactivityTimer()
+                if (event === 'message.delta') {
+                    const delta = String(payload?.delta || '')
+                    if (!delta) return
+                    output += delta
+                    this.emitMessageStreamDelta(roomId, messageId, delta, sessionId)
+                    return
+                }
+                if (event === 'reasoning.delta' || event === 'thinking.delta') {
+                    const delta = String(payload?.delta || payload?.text || '')
+                    if (!delta) return
+                    reasoning += delta
+                    this.emitMessageReasoningDelta(roomId, messageId, delta, sessionId)
+                    return
+                }
+                if (event === 'tool.started') {
+                    this.recordToolStarted(roomId, sessionId, payload || {}, messageId)
+                    return
+                }
+                if (event === 'tool.completed' || event === 'tool.failed') {
+                    this.recordToolCompleted(roomId, sessionId, payload || {})
+                    return
+                }
+                if (event === 'usage.updated') {
+                    const totalTokens = Number(payload?.contextTokens ?? ((payload?.inputTokens || 0) + (payload?.outputTokens || 0)))
+                    if (Number.isFinite(totalTokens) && totalTokens >= 0) {
+                        this.storage?.updateRoomTotalTokens?.(roomId, Math.floor(totalTokens))
+                        reportStatus('replying')
+                    }
+                    return
+                }
+                if (event !== 'run.completed' && event !== 'run.failed') return
+                void (async () => {
+                    const finalOutput = String(payload?.output || '').trim()
+                    if (!output && finalOutput) {
+                        output = finalOutput
+                        this.emitMessageStreamDelta(roomId, messageId, finalOutput, sessionId)
+                    }
+                    if (event === 'run.failed') {
+                        await this.persistCodingAgentWorkspaceDiff(roomId, sessionId, payload, 'failed', messageId, roomWorkspace)
+                        await this.sendAgentErrorMessage(roomId, messageId, payload?.error || 'Coding agent run failed', msg, reasoning, sessionId)
+                    } else if (output) {
+                        this.stopTyping(roomId)
+                        await this.sendMessage(roomId, output, messageId, {
+                            role: 'assistant',
+                            mentionDepth: nextMentionDepth(msg),
+                            reasoning: reasoning || null,
+                            reasoning_content: reasoning || null,
+                        }, sessionId)
+                        await this.persistCodingAgentWorkspaceDiff(roomId, sessionId, payload, 'completed', messageId, roomWorkspace)
+                    } else {
+                        await this.persistCodingAgentWorkspaceDiff(roomId, sessionId, payload, 'completed', messageId, roomWorkspace)
+                    }
+                    if (event === 'run.completed' && this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+                        this.storage?.updateRoomAgentContinuity?.(roomId, this.agentId, {
+                            lastSeenRoomSeq: contextRevision,
+                            lastSuccessfulRunId: String(payload?.run_id || codingAgentRunManager.runIdForSession(sessionId) || ''),
+                        })
+                    }
+                    this.emitMessageStreamEnd(roomId, messageId, sessionId)
+                    this.stopTyping(roomId)
+                    reportStatus('ready')
+                    cleanup()
+                })().catch(async (err) => {
+                    logger.error(`[AgentClients] ${this.name}: failed to publish coding-agent result: ${err.message || err}`)
+                    await stopForTimeout(err?.message || 'Failed to publish coding agent result')
+                })
+            })
+
+            const launch = {
+                agentId: codingAgentId,
+                mode: binding.mode || 'scoped',
+                provider: binding.provider,
+                model: binding.model,
+                apiMode: binding.apiMode as any,
+                reasoningEffort: binding.reasoningEffort,
+            }
+            let runId = codingAgentRunManager.runIdForSession(sessionId)
+            if (runId && !codingAgentRunManager.isSessionLaunchCompatible(sessionId, launch)) {
+                codingAgentRunManager.stop(sessionId, { reportClosed: false })
+                runId = undefined
+            }
+            if (!runId) {
+                await startCodingAgentRun(codingAgentId, {
+                    sessionId,
+                    mode: binding.mode || 'scoped',
+                    profile: binding.profile || this.profile,
+                    provider: binding.provider,
+                    model: binding.model,
+                    apiMode: binding.apiMode as any,
+                    reasoningEffort: binding.reasoningEffort,
+                    workspace: roomWorkspace || null,
+                    runtimeContext: 'group_chat',
+                })
+                if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+                    await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false, graceMs: 15_000 })
+                    return
+                }
+            }
+
+            if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) return
+            const routedInput = stripMentionRoutingTokens(msg.content, this.name) || msg.content
+            const systemPrompt = [
+                getSystemPrompt(undefined, { source: 'coding_agent' }),
+                `You are ${this.name}, a participant in Group Chat room ${roomId}. Reply to the triggering message for the shared room.`,
+                roomContextInstructions,
+            ].filter(Boolean).join('\n\n')
+            sendCodingAgentRunInput(sessionId, routedInput, systemPrompt)
+            armInactivityTimer()
+            runTimer = setTimeout(() => {
+                void stopForTimeout('Coding agent run exceeded the 30 minute deadline')
+            }, GROUP_CODING_AGENT_RUN_TIMEOUT_MS)
+            await runDone
+        } catch (err: any) {
+            if (!settled) {
+                if (this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+                    await this.sendAgentErrorMessage(roomId, messageId, err, msg, reasoning, sessionId)
+                    this.emitMessageStreamEnd(roomId, messageId, sessionId)
+                }
+                this.stopTyping(roomId)
+                reportStatus('ready')
+                cleanup()
+            }
+        }
+    }
+
+    private async persistCodingAgentWorkspaceDiff(
+        roomId: string,
+        sessionId: string,
+        payload: any,
+        status: 'completed' | 'failed' | 'aborted',
+        parentMessageId: string,
+        workspace: string,
+    ): Promise<void> {
+        const draft = payload?.workspace_run_change
+        if (!draft || !workspace || !this.storage?.saveWorkspaceDiffMessageForRun) return
+        if (!this.roomSessionIsCurrent(roomId, sessionId)) return
+        try {
+            const saved = this.storage.saveWorkspaceDiffMessageForRun({
+                roomId,
+                senderId: this.agentId,
+                senderName: this.name,
+                sessionId,
+                runId: String(payload?.run_id || draft.run_id || codingAgentRunManager.runIdForSession(sessionId) || 'run'),
+                status,
+                workspace,
+                draft,
+                parentMessageId,
+            })
+            if (saved?.message) this.workspaceDiffBroadcaster?.(roomId, saved.message, saved.totalTokens)
+        } catch (err) {
+            logger.warn({ err, roomId, sessionId }, '[GroupChat] failed to persist coding-agent workspace diff')
         }
     }
 
@@ -1278,6 +1609,13 @@ export class AgentClients {
         return this.rooms.get(roomId)?.get(agentId)
     }
 
+    updateAgentIdentity(roomId: string, agentId: string, name: string, description: string): boolean {
+        const client = this.getAgent(roomId, agentId)
+        if (!client) return false
+        client.updateIdentity(name, description)
+        return true
+    }
+
     /**
      * Get all room IDs that have agents.
      */
@@ -1327,12 +1665,16 @@ export class AgentClients {
         queue.push({ agent, msg })
     }
 
-    async interruptAgent(roomId: string, agentName: string): Promise<void> {
-        const agent = this.getAgents(roomId).find(a => a.name === agentName)
-        if (!agent) throw new Error(`Agent "${agentName}" not found in room "${roomId}"`)
+    private agentQueueKey(roomId: string, agent: Pick<AgentClient, 'agentId'>): string {
+        return `${roomId}:${agent.agentId}`
+    }
+
+    async interruptAgent(roomId: string, agentRef: string): Promise<void> {
+        const agent = this.getAgents(roomId).find(a => a.agentId === agentRef || a.id === agentRef || a.name === agentRef)
+        if (!agent) throw new Error(`Agent "${agentRef}" not found in room "${roomId}"`)
         const synced = await agent.interrupt(roomId)
         if (!synced) throw this.buildUnsyncedInterruptError(roomId)
-        this._mentionQueue.delete(`${roomId}:${agent.name}`)
+        this._mentionQueue.delete(this.agentQueueKey(roomId, agent))
     }
 
     async interruptRoom(roomId: string): Promise<void> {
@@ -1451,7 +1793,7 @@ export class AgentClients {
         agent: AgentClient,
         msg: MentionMessage,
     ): Promise<void> {
-        const agentKey = `${roomId}:${agent.name}`
+        const agentKey = this.agentQueueKey(roomId, agent)
         if (this._pausedRooms.has(roomId)) {
             this.queueMention(agentKey, agent, msg)
             logger.debug(`[AgentClients] room ${roomId} is interrupting, queued mention for agent ${agent.name}`)

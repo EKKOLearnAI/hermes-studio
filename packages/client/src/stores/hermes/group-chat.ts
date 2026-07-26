@@ -13,6 +13,8 @@ import {
     getStoredUserName,
     type RoomInfo,
     type RoomAgent,
+    type RoomAgentBindingInput,
+    type RoomAgentUpdateInput,
     type ChatMessage,
     type GroupWorkspaceDiffPayload,
     type MemberInfo,
@@ -21,6 +23,7 @@ import {
     getRoomDetail,
     joinRoomByCode,
     addAgent,
+    updateAgent,
     listAgents,
     removeAgent,
     cloneRoom as cloneRoomApi,
@@ -150,7 +153,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const isJoining = ref(false)
     const error = ref<string | null>(null)
     const typingUsers = ref<Map<string, { name: string; timer: ReturnType<typeof setTimeout> }>>(new Map())
-    const contextStatuses = ref<Map<string, { agentName: string; status: string }>>(new Map())
+    const contextStatuses = ref<Map<string, { agentId: string; agentName: string; status: string }>>(new Map())
     const autoPlaySpeechEnabled = ref(false)
     const pendingApprovals = ref<Map<string, GroupPendingApproval>>(new Map())
     const totalMessages = ref(0)
@@ -283,7 +286,11 @@ const currentUserAvatar = ref('')
         // Restore context statuses from server
         if (res.contextStatuses) {
             contextStatuses.value = new Map(
-                res.contextStatuses.map((s: any) => [s.agentName, s])
+                res.contextStatuses.map((s: any) => [String(s.agentId || s.agentName), {
+                    agentId: String(s.agentId || s.agentName),
+                    agentName: String(s.agentName || ''),
+                    status: String(s.status || ''),
+                }])
             )
         } else {
             contextStatuses.value.clear()
@@ -547,24 +554,25 @@ const currentUserAvatar = ref('')
             }
         })
 
-        socket.on('context_status', (data: { roomId: string; agentName: string; status: string }) => {
+        socket.on('context_status', (data: { roomId: string; agentId?: string; agentName: string; status: string }) => {
             if (data.roomId === currentRoomId.value) {
+                const agentId = String(data.agentId || data.agentName)
                 if (data.status === 'ready') {
-                    contextStatuses.value.delete(data.agentName)
+                    contextStatuses.value.delete(agentId)
                     messages.value = messages.value
                         .map(m => (
-                            m.senderName === data.agentName && m.isStreaming
+                            (m.senderId === agentId || (!data.agentId && m.senderName === data.agentName)) && m.isStreaming
                                 ? { ...m, isStreaming: false }
                                 : m
                         ))
                         .filter(m => !(
-                            m.senderName === data.agentName &&
+                            (m.senderId === agentId || (!data.agentId && m.senderName === data.agentName)) &&
                             !m.content?.trim() &&
                             !m.reasoning?.trim() &&
                             !m.tool_calls?.length
                         ))
                 } else {
-                    contextStatuses.value.set(data.agentName, { agentName: data.agentName, status: data.status })
+                    contextStatuses.value.set(agentId, { agentId, agentName: data.agentName, status: data.status })
                 }
                 // Trigger reactivity
                 contextStatuses.value = new Map(contextStatuses.value)
@@ -773,7 +781,7 @@ const currentUserAvatar = ref('')
     async function createNewRoom(
         name: string,
         inviteCode: string,
-        agentList?: { profile: string; name?: string; description?: string; invited?: boolean }[],
+        agentList?: RoomAgentBindingInput[],
         compression?: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number },
         workspace?: string,
         memberProfile?: { name: string; description?: string },
@@ -854,6 +862,7 @@ const currentUserAvatar = ref('')
             contextStatuses.value.clear()
             const idx = rooms.value.findIndex(r => r.id === currentRoomId.value)
             if (idx >= 0 && res.room) rooms.value[idx] = res.room
+            await loadAgents(roomId)
             return res
         } catch (err: any) {
             error.value = err.message
@@ -866,7 +875,10 @@ const currentUserAvatar = ref('')
             const res = await updateRoomWorkspaceApi(roomId, workspace)
             if (res.room) {
                 upsertRoom(res.room)
-                if (currentRoomId.value === roomId) roomName.value = res.room.name
+                if (currentRoomId.value === roomId) {
+                    roomName.value = res.room.name
+                    await loadAgents(roomId)
+                }
             }
             return res.room
         } catch (err: any) {
@@ -900,10 +912,24 @@ const currentUserAvatar = ref('')
         } catch { /* ignore */ }
     }
 
-    async function addAgentToRoom(roomId: string, data: { profile: string; name?: string; description?: string; invited?: boolean }) {
+    async function addAgentToRoom(roomId: string, data: RoomAgentBindingInput) {
         try {
             const res = await addAgent(roomId, data)
             agents.value.push(res.agent)
+            return res.agent
+        } catch (err: any) {
+            error.value = err.message
+            throw err
+        }
+    }
+
+    async function updateAgentInRoom(roomId: string, agentId: string, data: RoomAgentUpdateInput) {
+        try {
+            const res = await updateAgent(roomId, agentId, data)
+            const index = agents.value.findIndex(agent => agent.id === agentId || agent.agentId === agentId)
+            if (index >= 0) agents.value[index] = res.agent
+            else agents.value.push(res.agent)
+            agents.value = [...agents.value]
             return res.agent
         } catch (err: any) {
             error.value = err.message
@@ -940,11 +966,11 @@ const currentUserAvatar = ref('')
         if (_typingTimer) { clearTimeout(_typingTimer); _typingTimer = null }
     }
 
-    async function interruptAgent(agentName: string) {
+    async function interruptAgent(agentId: string) {
         const socket = getSocket()
         if (!socket || !currentRoomId.value) return
         await new Promise<void>((resolve, reject) => {
-            socket.emit('interrupt_agent', { roomId: currentRoomId.value, agentName }, (res: any) => {
+            socket.emit('interrupt_agent', { roomId: currentRoomId.value, agentId }, (res: any) => {
                 if (res?.error) reject(new Error(res.error))
                 else resolve()
             })
@@ -1024,6 +1050,7 @@ const currentUserAvatar = ref('')
         setRoomInviteCode,
         loadAgents,
         addAgentToRoom,
+        updateAgentInRoom,
         removeAgentFromRoom,
     }
 })

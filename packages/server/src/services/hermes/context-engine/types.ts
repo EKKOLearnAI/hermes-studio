@@ -127,6 +127,8 @@ export interface BuildContextInput {
     currentMessage: StoredMessage
     compression?: Partial<CompressionConfig>
     profile?: string
+    /** Number of canonical Room events already delivered to this participant's native session. */
+    participantCursor?: number
     contextTokenEstimator?: (
         history: Array<{ role: 'user' | 'assistant'; content: string }>,
         instructions: string,

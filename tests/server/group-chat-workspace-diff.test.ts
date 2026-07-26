@@ -196,6 +196,48 @@ describe('group chat workspace diff persistence', () => {
     server.getIO().close()
   })
 
+  it('rotates every persisted participant session when room context is cleared', async () => {
+    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const server = new GroupChatServer(httpServer)
+    const storage = server.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    storage.addRoomAgent('room-1', 'hermes-1', 'default', 'Hermes', '', 0, {
+      runtime: 'hermes',
+      sessionId: 'gc_room-1_hermes-1_0',
+      sessionGeneration: 0,
+      lastSeenRoomSeq: 42,
+      lastSuccessfulRunId: 'run-old',
+      checkpoint: 'old checkpoint',
+      checkpointSourceMessageIds: '["message-old"]',
+    })
+    storage.addRoomAgent('room-1', 'codex-1', 'default', 'Codex', '', 0, {
+      runtime: 'coding_agent',
+      codingAgentId: 'codex',
+      sessionId: 'gc_room-1_codex-1_3',
+      sessionGeneration: 3,
+    })
+
+    storage.clearRoomContext('room-1')
+
+    expect(storage.getRoomAgents('room-1')).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agentId: 'hermes-1',
+        sessionId: 'gc_room-1_hermes-1_1',
+        sessionGeneration: 1,
+        lastSeenRoomSeq: 0,
+        lastSuccessfulRunId: '',
+        checkpoint: '',
+        checkpointSourceMessageIds: '[]',
+      }),
+      expect.objectContaining({
+        agentId: 'codex-1',
+        sessionId: 'gc_room-1_codex-1_4',
+        sessionGeneration: 4,
+      }),
+    ]))
+    server.getIO().close()
+  })
+
   it('does not delete unrelated workspace changes from spoofed workspace_diff message content', async () => {
     const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
     const server = new GroupChatServer(httpServer)

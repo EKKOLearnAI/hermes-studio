@@ -52,6 +52,7 @@ const groupChatApiMock = vi.hoisted(() => {
     getRoomDetail: vi.fn(),
     joinRoomByCode: vi.fn(),
     addAgent: vi.fn(),
+    updateAgent: vi.fn(),
     listAgents: vi.fn(),
     removeAgent: vi.fn(),
     cloneRoom: vi.fn(),
@@ -160,6 +161,52 @@ describe('group chat store baseline lifecycle', () => {
     groupChatApiMock.socket.disconnect.mockClear()
   })
 
+  it('adds and updates full participant bindings while preserving stable identity', async () => {
+    const store = await loadStore()
+    const codexParticipant = {
+      ...agent,
+      runtime: 'coding_agent',
+      codingAgentId: 'codex',
+      sessionId: 'gc_room-1_agent-1_0',
+      sessionGeneration: 0,
+      mode: 'scoped',
+      provider: 'openai',
+      model: 'gpt-5-codex',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'medium',
+    } as RoomAgent
+    groupChatApiMock.addAgent.mockResolvedValue({ agent: codexParticipant })
+    groupChatApiMock.updateAgent.mockResolvedValue({
+      agent: { ...codexParticipant, reasoningEffort: 'high' },
+    })
+
+    await store.addAgentToRoom('room-1', {
+      profile: 'default',
+      name: 'Agent',
+      runtime: 'coding_agent',
+      codingAgentId: 'codex',
+      mode: 'scoped',
+      provider: 'openai',
+      model: 'gpt-5-codex',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'medium',
+    })
+    await store.updateAgentInRoom('room-1', 'agent-1', { reasoningEffort: 'high' })
+
+    expect(groupChatApiMock.addAgent).toHaveBeenCalledWith('room-1', expect.objectContaining({
+      runtime: 'coding_agent',
+      codingAgentId: 'codex',
+      reasoningEffort: 'medium',
+    }))
+    expect(groupChatApiMock.updateAgent).toHaveBeenCalledWith('room-1', 'agent-1', { reasoningEffort: 'high' })
+    expect(store.agents[0]).toMatchObject({
+      agentId: 'agent-1',
+      sessionId: 'gc_room-1_agent-1_0',
+      sessionGeneration: 0,
+      reasoningEffort: 'high',
+    })
+  })
+
   it('connects with stored user data and registers realtime handlers', async () => {
     const store = await loadStore()
 
@@ -192,7 +239,7 @@ describe('group chat store baseline lifecycle', () => {
         members: [{ ...member, name: 'Realtime User' }],
         agents: [agent],
         typingUsers: [],
-        contextStatuses: [{ agentName: 'Agent', status: 'replying' }],
+        contextStatuses: [{ agentId: 'agent-1', agentName: 'Agent', status: 'replying' }],
       })
       return groupChatApiMock.socket
     })
@@ -209,7 +256,7 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.agents.map((a: RoomAgent) => a.agentId)).toEqual(['agent-1'])
     expect(store.totalMessages).toBe(5)
     expect(store.hasMoreBefore).toBe(true)
-    expect(store.contextStatuses.get('Agent')).toEqual({ agentName: 'Agent', status: 'replying' })
+    expect(store.contextStatuses.get('agent-1')).toEqual({ agentId: 'agent-1', agentName: 'Agent', status: 'replying' })
   })
 
   it('persists the create-form member profile with a new room', async () => {

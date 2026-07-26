@@ -244,7 +244,9 @@ function addEndpoint(paths, method, path, controllerMethod, tagInfo, content, ma
   const parameters = generateParameters(openapiPath, controllerSource)
   if (parameters.length) operation.parameters = parameters
 
-  const requestBody = generateRequestBody(method, controllerSource)
+  let requestBody = generateRequestBody(method, controllerSource)
+  const groupChatParticipantBody = groupChatParticipantRequestBody(path, method)
+  if (groupChatParticipantBody) requestBody = groupChatParticipantBody
   if (requestBody) operation.requestBody = requestBody
 
   paths[openapiPath][method] = operation
@@ -252,6 +254,47 @@ function addEndpoint(paths, method, path, controllerMethod, tagInfo, content, ma
 
 function isInternalProxyRoute(path) {
   return path.startsWith('/api/codex-proxy/') || path.startsWith('/api/claude-code-proxy/')
+}
+
+function groupChatParticipantRequestBody(path, method) {
+  const collectionPath = '/api/hermes/group-chat/rooms/:roomId/agents'
+  const itemPath = '/api/hermes/group-chat/rooms/:roomId/agents/:agentId'
+  if (!((path === collectionPath && method === 'post') || (path === itemPath && method === 'patch'))) return null
+
+  const isCreate = method === 'post'
+  const properties = {
+    profile: { type: 'string' },
+    name: { type: 'string' },
+    description: { type: 'string' },
+    invited: { type: 'boolean' },
+    runtime: { type: 'string', enum: ['hermes', 'coding_agent'] },
+    codingAgentId: { type: 'string', enum: ['', 'claude-code', 'codex'] },
+    mode: { type: 'string', enum: ['scoped', 'global'] },
+    provider: { type: 'string' },
+    model: { type: 'string' },
+    apiMode: { type: 'string', enum: ['', 'chat_completions', 'codex_responses', 'anthropic_messages'] },
+    reasoningEffort: { type: 'string', enum: ['', 'default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  }
+  if (!isCreate) {
+    delete properties.profile
+    delete properties.invited
+    delete properties.runtime
+    delete properties.codingAgentId
+  }
+
+  return {
+    required: true,
+    content: {
+      'application/json': {
+        schema: {
+          type: 'object',
+          properties,
+          ...(isCreate ? { required: ['profile'] } : {}),
+          additionalProperties: false,
+        },
+      },
+    },
+  }
 }
 
 function generateParameters(openapiPath, source) {
