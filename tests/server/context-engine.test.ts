@@ -19,6 +19,7 @@ function makeMessage(overrides: Partial<StoredMessage> = {}): StoredMessage {
         senderName: 'Alice',
         content: 'Hello world',
         timestamp: 1000,
+        roomSeq: 1,
         ...overrides,
     }
 }
@@ -31,6 +32,7 @@ function makeMessages(count: number, roomId = 'room-1', startTimestamp = 1000): 
         senderName: i % 3 === 0 ? 'Claude' : `User${i}`,
         content: `Message ${i} with some content`,
         timestamp: startTimestamp + i * 1000,
+        roomSeq: i + 1,
     }))
 }
 
@@ -219,14 +221,40 @@ describe('ContextEngine.buildContext', () => {
             upstream: 'http://localhost:8642',
             apiKey: null,
             currentMessage: messages[messages.length - 1],
-            participantCursor: messages[3].timestamp,
+            participantCursor: messages[3].roomSeq,
         })
 
         expect(mockFetcher.getMessagesForContext).toHaveBeenCalledWith('room-1', { throughMessageId: 'msg-5' })
         expect(result.meta.totalMessages).toBe(2)
         expect(result.conversationHistory).toHaveLength(2)
         expect(result.conversationHistory.map(message => message.content).join('\n')).toContain('Message 4')
-        expect(result.conversationHistory.map(message => message.content).join('\n')).not.toContain('Message 3')
+    })
+
+    it('uses stable Room sequence instead of timestamps when filtering a participant cursor', async () => {
+        const messages = [
+            makeMessage({ id: 'older-clock', roomSeq: 41, timestamp: 9_999, content: 'already delivered' }),
+            makeMessage({ id: 'newer-seq', roomSeq: 42, timestamp: 1, content: 'new despite clock rollback' }),
+        ]
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
+
+        const result = await engine.buildContext({
+            roomId: 'room-1',
+            agentId: 'agent-1',
+            agentName: 'Bot',
+            agentDescription: '',
+            agentSocketId: 'socket-1',
+            roomName: 'general',
+            memberNames: [],
+            members: [],
+            upstream: 'http://localhost:8642',
+            apiKey: null,
+            currentMessage: messages[1],
+            participantCursor: 41,
+        })
+
+        expect(result.meta.totalMessages).toBe(1)
+        expect(result.conversationHistory.map(message => message.content).join('\n')).toContain('new despite clock rollback')
+        expect(result.conversationHistory.map(message => message.content).join('\n')).not.toContain('already delivered')
     })
 
     it('records full context token estimates without compressing when under threshold', async () => {

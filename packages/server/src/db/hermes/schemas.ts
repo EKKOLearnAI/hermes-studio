@@ -563,6 +563,7 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   tailMessageCount: 'INTEGER NOT NULL DEFAULT 10',
   totalTokens: 'INTEGER NOT NULL DEFAULT 0',
   sessionSeed: "TEXT NOT NULL DEFAULT '0'",
+  messageSeq: 'INTEGER NOT NULL DEFAULT 0',
   workspace: "TEXT NOT NULL DEFAULT ''",
   ownerAuthUserId: 'INTEGER',
 }
@@ -736,6 +737,48 @@ function createIndexes(
   for (const indexSQL of Object.values(indexes)) {
     db.exec(indexSQL)
   }
+}
+
+function backfillGroupMessageRoomSequences(
+  db: NonNullable<ReturnType<typeof getDb>>,
+): void {
+  if (!tableExists(db, GC_MESSAGES_TABLE) || !tableHasColumn(db, GC_MESSAGES_TABLE, 'roomSeq')) return
+  db.exec(
+    `UPDATE ${quoteIdentifier(GC_MESSAGES_TABLE)} ` +
+    `SET ${quoteIdentifier('roomSeq')} = rowid ` +
+    `WHERE ${quoteIdentifier('roomSeq')} <= 0`
+  )
+  if (tableExists(db, GC_ROOMS_TABLE) && tableHasColumn(db, GC_ROOMS_TABLE, 'messageSeq')) {
+    db.exec(
+      `UPDATE ${quoteIdentifier(GC_ROOMS_TABLE)} AS room ` +
+      `SET ${quoteIdentifier('messageSeq')} = MAX(` +
+        `${quoteIdentifier('messageSeq')}, ` +
+        `(SELECT COALESCE(MAX(message.${quoteIdentifier('roomSeq')}), 0) ` +
+         `FROM ${quoteIdentifier(GC_MESSAGES_TABLE)} AS message ` +
+         `WHERE message.${quoteIdentifier('roomId')} = room.${quoteIdentifier('id')})` +
+      `)`
+    )
+  }
+}
+
+function resetLegacyTimestampGroupAgentCursors(
+  db: NonNullable<ReturnType<typeof getDb>>,
+): void {
+  if (!tableExists(db, GC_MESSAGES_TABLE) || !tableExists(db, GC_ROOM_AGENTS_TABLE) || !tableExists(db, GC_ROOMS_TABLE)) return
+  if (
+    !tableHasColumn(db, GC_MESSAGES_TABLE, 'roomSeq') ||
+    !tableHasColumn(db, GC_ROOM_AGENTS_TABLE, 'lastSeenRoomSeq') ||
+    !tableHasColumn(db, GC_ROOMS_TABLE, 'messageSeq')
+  ) return
+  db.exec(
+    `UPDATE ${quoteIdentifier(GC_ROOM_AGENTS_TABLE)} AS agent ` +
+    `SET ${quoteIdentifier('lastSeenRoomSeq')} = 0 ` +
+    `WHERE ${quoteIdentifier('lastSeenRoomSeq')} > COALESCE((` +
+      `SELECT room.${quoteIdentifier('messageSeq')} ` +
+      `FROM ${quoteIdentifier(GC_ROOMS_TABLE)} AS room ` +
+      `WHERE room.${quoteIdentifier('id')} = agent.${quoteIdentifier('roomId')}` +
+    `), 0)`
+  )
 }
 
 function indexExists(
@@ -1171,6 +1214,7 @@ export function initAllHermesTables(): void {
     // Group chat - basic tables
     syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)
     syncTable(GC_MESSAGES_TABLE, GC_MESSAGES_SCHEMA)
+    backfillGroupMessageRoomSequences(db)
     syncTable(GC_CONTEXT_SNAPSHOTS_TABLE, GC_CONTEXT_SNAPSHOTS_SCHEMA)
     syncTable(GC_PENDING_SESSION_DELETES_TABLE, GC_PENDING_SESSION_DELETES_SCHEMA)
     syncTable(GC_SESSION_PROFILES_TABLE, GC_SESSION_PROFILES_SCHEMA)
@@ -1181,6 +1225,7 @@ export function initAllHermesTables(): void {
         idx_gc_room_agents_profile: 'CREATE INDEX idx_gc_room_agents_profile ON gc_room_agents(profile)',
       }
     })
+    resetLegacyTimestampGroupAgentCursors(db)
 
     syncTable(GC_ROOM_MEMBERS_TABLE, GC_ROOM_MEMBERS_SCHEMA, {
       indexes: {

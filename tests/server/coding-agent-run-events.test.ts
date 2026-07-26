@@ -50,6 +50,110 @@ describe('CodingAgentRunManager external event subscriptions', () => {
     manager.shutdown()
   })
 
+  it('fences listeners with the token captured when the event was produced', () => {
+    const manager = new CodingAgentRunManager()
+    const listener = vi.fn()
+    manager.subscribe('session-fenced', listener, 'turn-2')
+
+    ;(manager as any).emitToChat('session-fenced', 'message.delta', { delta: 'late turn one' }, 'turn-1')
+    ;(manager as any).emitToChat('session-fenced', 'message.delta', { delta: 'current turn two' }, 'turn-2')
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledWith('message.delta', expect.objectContaining({
+      delta: 'current turn two',
+      event_token: 'turn-2',
+    }))
+    manager.shutdown()
+  })
+
+  it('rejects overlapping input before rotating the active event token', () => {
+    const manager = new CodingAgentRunManager()
+    const currentChild = {
+      exitCode: null,
+      signalCode: null,
+      killed: false,
+    } as any
+    const run = {
+      id: 'runner-overlap',
+      launch: {
+        agentId: 'codex',
+        sessionId: 'session-overlap',
+      },
+      state: { messages: [], isWorking: true, events: [], queue: [] },
+      startedAt: Date.now(),
+      lastActiveAt: Date.now(),
+      exited: false,
+      currentChild,
+      activeEventToken: 'turn-1',
+      pendingChatCompletionEvent: 'run.completed',
+    }
+    ;(manager as any).runs.set(run.id, run)
+    ;(manager as any).sessionIndex.set(run.launch.sessionId, run.id)
+
+    expect(() => manager.send(run.launch.sessionId, 'second input', { eventToken: 'turn-2' } as any))
+      .toThrow('Codex is still processing the previous input')
+    expect(run.activeEventToken).toBe('turn-1')
+    expect(run.pendingChatCompletionEvent).toBe('run.completed')
+    manager.shutdown()
+  })
+
+  it('drops stale response events before they mutate the active turn', () => {
+    const manager = new CodingAgentRunManager()
+    const listener = vi.fn()
+    const run = {
+      id: 'runner-stale-event',
+      launch: {
+        agentId: 'codex',
+        mode: 'scoped',
+        profile: 'default',
+        provider: 'openai',
+        model: 'gpt-test',
+        sessionId: 'session-stale-event',
+      },
+      state: { messages: [], isWorking: true, events: [], queue: [] },
+      startedAt: Date.now(),
+      lastActiveAt: Date.now(),
+      exited: false,
+      activeEventToken: 'turn-2',
+    }
+    ;(manager as any).runs.set(run.id, run)
+    ;(manager as any).sessionIndex.set(run.launch.sessionId, run.id)
+    manager.subscribe(run.launch.sessionId, listener, 'turn-2')
+
+    manager.handleResponseEvent(run.id, {
+      type: 'response.output_text.delta',
+      data: { delta: 'late turn one' },
+    }, 'turn-1')
+
+    expect(listener).not.toHaveBeenCalled()
+    expect(run.state.messages).toEqual([])
+    manager.shutdown()
+  })
+
+  it('preserves the active turn token on a reported session-close event', () => {
+    const manager = new CodingAgentRunManager()
+    const listener = vi.fn()
+    const run = {
+      id: 'runner-close-token',
+      launch: { sessionId: 'session-close-token' },
+      state: { messages: [], isWorking: true, events: [], queue: [] },
+      startedAt: Date.now(),
+      lastActiveAt: Date.now(),
+      exited: false,
+      activeEventToken: 'turn-close',
+    }
+    ;(manager as any).runs.set(run.id, run)
+    ;(manager as any).sessionIndex.set(run.launch.sessionId, run.id)
+    manager.subscribe(run.launch.sessionId, listener, 'turn-close')
+
+    ;(manager as any).cleanupRun(run, { kill: false })
+
+    expect(listener).toHaveBeenCalledWith('run.failed', expect.objectContaining({
+      error: 'Coding agent session closed',
+      event_token: 'turn-close',
+    }))
+  })
+
   it('isolates listener failures from the coding-agent run', () => {
     const manager = new CodingAgentRunManager()
     const healthy = vi.fn()

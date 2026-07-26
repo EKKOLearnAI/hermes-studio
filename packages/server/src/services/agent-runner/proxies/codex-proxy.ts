@@ -153,11 +153,12 @@ function responseEventForCodexClient(target: CodexProxyTarget, event: CanonicalR
 }
 
 function observableResponsesEvents(target: CodexProxyTarget, events: AsyncIterable<CanonicalResponsesEvent>): AsyncIterable<CanonicalResponsesEvent> {
+  const eventToken = codingAgentRunManager.eventTokenForAgentSession(target.agentSessionId)
   async function* observe() {
     for await (const event of events) {
-      codingAgentRunManager.handleProxyUsageEvent(target.agentSessionId, event)
+      codingAgentRunManager.handleProxyUsageEvent(target.agentSessionId, event, eventToken)
       const clientEvent = responseEventForCodexClient(target, event)
-      codingAgentRunManager.handleResponseEvent(target.agentSessionId, clientEvent)
+      codingAgentRunManager.handleResponseEvent(target.agentSessionId, clientEvent, eventToken)
       yield clientEvent
     }
   }

@@ -148,6 +148,61 @@ describe('Hermes schema initialization', () => {
     expect(node).toEqual({ remaining_timeout_ms_at_start: null })
   })
 
+  it('backfills stable group message sequences for an existing table', async () => {
+    const {
+      GC_MESSAGES_SCHEMA,
+      GC_MESSAGES_TABLE,
+      GC_ROOM_AGENTS_SCHEMA,
+      GC_ROOM_AGENTS_TABLE,
+      GC_ROOMS_SCHEMA,
+      GC_ROOMS_TABLE,
+      initAllHermesTables,
+    } = await import('../../packages/server/src/db/hermes/schemas')
+    const legacyColumns = Object.entries(GC_MESSAGES_SCHEMA)
+      .filter(([name]) => name !== 'roomSeq')
+      .map(([name, definition]) => `"${name}" ${definition}`)
+      .join(', ')
+    db.exec(`CREATE TABLE "${GC_MESSAGES_TABLE}" (${legacyColumns})`)
+    const insert = db.prepare(
+      `INSERT INTO "${GC_MESSAGES_TABLE}" (id, roomId, senderId, senderName, content, timestamp, role) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    insert.run('msg-a', 'room-1', 'u1', 'Alice', 'a', 100, 'user')
+    insert.run('msg-b', 'room-1', 'u1', 'Alice', 'b', 1, 'user')
+
+    const roomColumns = Object.entries(GC_ROOMS_SCHEMA)
+      .map(([name, definition]) => `"${name}" ${definition}`)
+      .join(', ')
+    db.exec(`CREATE TABLE "${GC_ROOMS_TABLE}" (${roomColumns})`)
+    db.prepare(
+      `INSERT INTO "${GC_ROOMS_TABLE}" (id, name, messageSeq) VALUES (?, ?, ?)`,
+    ).run('room-1', 'Room 1', 50)
+
+    const legacyAgentColumns = Object.entries(GC_ROOM_AGENTS_SCHEMA)
+      .map(([name, definition]) => `"${name}" ${definition}`)
+      .join(', ')
+    db.exec(`CREATE TABLE "${GC_ROOM_AGENTS_TABLE}" (${legacyAgentColumns})`)
+    db.prepare(
+      `INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, description, invited, lastSeenRoomSeq) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('legacy-agent-row', 'room-1', 'agent-1', 'default', 'Legacy Agent', '', 1, 1_790_000_000)
+    db.prepare(
+      `INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, description, invited, lastSeenRoomSeq) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('valid-agent-row', 'room-1', 'agent-2', 'default', 'Valid Agent', '', 1, 50)
+
+    expect(() => initAllHermesTables()).not.toThrow()
+    expect(db.prepare(
+      `SELECT id, roomSeq FROM "${GC_MESSAGES_TABLE}" ORDER BY roomSeq ASC`,
+    ).all()).toEqual([
+      { id: 'msg-a', roomSeq: 1 },
+      { id: 'msg-b', roomSeq: 2 },
+    ])
+    expect(db.prepare(
+      `SELECT id, lastSeenRoomSeq FROM "${GC_ROOM_AGENTS_TABLE}" ORDER BY id`,
+    ).all()).toEqual([
+      { id: 'legacy-agent-row', lastSeenRoomSeq: 0 },
+      { id: 'valid-agent-row', lastSeenRoomSeq: 50 },
+    ])
+  })
+
   it('upgrades legacy group chat agents to backward-compatible participant bindings', async () => {
     const {
       GC_ROOM_AGENTS_SCHEMA,

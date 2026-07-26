@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const { runtimeListeners, managerMock, startCodingAgentRunMock, sendCodingAgentRunInputMock, stopCodingAgentRunMock, socket } = vi.hoisted(() => {
   const runtimeListeners = new Map<string, (event: string, payload: any) => void>()
   const managerMock = {
-    subscribe: vi.fn((sessionId: string, listener: (event: string, payload: any) => void) => {
+    subscribe: vi.fn((sessionId: string, listener: (event: string, payload: any) => void, _eventToken?: string) => {
       runtimeListeners.set(sessionId, listener)
       return () => runtimeListeners.delete(sessionId)
     }),
@@ -86,7 +86,7 @@ describe('Group Chat coding-agent participant runtime', () => {
       getRoom: vi.fn(() => ({ id: 'room-1', workspace: '/workspace/project' })),
       getRoomAgentByAgentId: vi.fn(() => participant),
       getRoomMembers: vi.fn(() => []),
-      getMessagesForContext: vi.fn(() => [{ id: 'human-message-1', timestamp: 1_790_000_000 }]),
+      getMessagesForContext: vi.fn(() => [{ id: 'human-message-1', timestamp: 1_790_000_000, roomSeq: 27 }]),
       updateRoomTotalTokens,
       updateRoomAgentContinuity,
       saveWorkspaceDiffMessageForRun,
@@ -115,6 +115,9 @@ describe('Group Chat coding-agent participant runtime', () => {
     expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith(
       participant.sessionId,
       expect.stringContaining('implement the API'),
+      expect.any(String),
+      [],
+      undefined,
       expect.any(String),
     )
 
@@ -160,7 +163,7 @@ describe('Group Chat coding-agent participant runtime', () => {
       roomId: 'room-1', sessionId: participant.sessionId, runId: 'runner-1', status: 'completed',
     }))
     expect(updateRoomAgentContinuity).toHaveBeenCalledWith('room-1', participant.agentId, {
-      lastSeenRoomSeq: 1_790_000_000,
+      lastSeenRoomSeq: 27,
       lastSuccessfulRunId: 'runner-1',
     })
   })
@@ -259,6 +262,9 @@ describe('Group Chat coding-agent participant runtime', () => {
       participant.sessionId,
       expect.stringContaining('continue'),
       expect.stringContaining('[Claude Review]: concern'),
+      [],
+      undefined,
+      expect.any(String),
     )
     runtimeListeners.get(participant.sessionId)?.('run.completed', { output: 'Done' })
     await reply

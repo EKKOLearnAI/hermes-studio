@@ -1010,6 +1010,7 @@ class AgentClient {
         let resolveRun: () => void = () => {}
         let roomContextInstructions = ''
         let contextRevision = 0
+        const eventToken = `${sessionId}:${messageId}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`
 
         const runDone = new Promise<void>((resolve) => { resolveRun = resolve })
         const reportStatus = (status: 'compressing' | 'replying' | 'ready') => {
@@ -1050,7 +1051,7 @@ class AgentClient {
 
             const canonicalMessages = this.storage?.getMessagesForContext?.(roomId, { throughMessageId: msg.messageId }) || []
             contextRevision = canonicalMessages.reduce(
-                (latest: number, entry: { timestamp?: number }) => Math.max(latest, Number(entry.timestamp || 0)),
+                (latest: number, entry: { roomSeq?: number }) => Math.max(latest, Number(entry.roomSeq || 0)),
                 Number(binding.lastSeenRoomSeq || 0),
             )
             if (this.contextEngine && this.storage) {
@@ -1158,7 +1159,7 @@ class AgentClient {
                     logger.error(`[AgentClients] ${this.name}: failed to publish coding-agent result: ${err.message || err}`)
                     await stopForTimeout(err?.message || 'Failed to publish coding agent result')
                 })
-            })
+            }, eventToken)
 
             const launch = {
                 agentId: codingAgentId,
@@ -1199,7 +1200,7 @@ class AgentClient {
                 `You are ${this.name}, a participant in Group Chat room ${roomId}. Reply to the triggering message for the shared room.`,
                 roomContextInstructions,
             ].filter(Boolean).join('\n\n')
-            sendCodingAgentRunInput(sessionId, routedInput, systemPrompt)
+            sendCodingAgentRunInput(sessionId, routedInput, systemPrompt, [], undefined, eventToken)
             armInactivityTimer()
             runTimer = setTimeout(() => {
                 void stopForTimeout('Coding agent run exceeded the 30 minute deadline')
