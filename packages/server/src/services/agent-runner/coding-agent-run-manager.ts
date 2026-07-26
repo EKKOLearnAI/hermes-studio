@@ -118,6 +118,7 @@ interface ManagedCodingAgentRun {
 interface CodingAgentRunSendOptions {
   systemPrompt?: string
   images?: CodingAgentImageInput[]
+  storageInput?: string
 }
 
 function nowSeconds(): number {
@@ -593,7 +594,7 @@ export class CodingAgentRunManager {
     const systemPrompt = String(options.systemPrompt || '').trim()
     this.ensureDbSession(run)
     run.assistantMessageId = undefined
-    this.addUserMessage(run, text)
+    this.addUserMessage(run, options.storageInput ?? text)
     this.touch(run)
     this.emitTerminalStatus(run, 'Input sent to coding agent.')
     this.startWorkspaceRunDiff(run)

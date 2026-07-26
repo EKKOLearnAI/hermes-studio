@@ -127,6 +127,7 @@ describe('coding-agent dispatch baseline', () => {
       'hello blocks\n\n[Attached image: screen.png]\nLocal image path for tools: /tmp/screen.png',
       'system prompt',
       [{ name: 'screen.png', path: '/tmp/screen.png', mediaType: 'image/png' }],
+      JSON.stringify(blocks),
     )
   })
 

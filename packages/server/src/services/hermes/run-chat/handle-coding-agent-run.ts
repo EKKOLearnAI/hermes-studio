@@ -6,7 +6,7 @@ import {
   type CodingAgentId as ExternalCodingAgentId,
 } from '../../coding-agents'
 import { getOrCreateSession } from './compression'
-import { convertContentBlocksForCodingAgent } from './content-blocks'
+import { contentBlocksToString, convertContentBlocksForCodingAgent } from './content-blocks'
 import type { ContentBlock, SessionState } from './types'
 import type { ChatCodingAgentId } from './types'
 import { writeModelRunProfileToken } from './model-run-prompt'
@@ -119,8 +119,14 @@ export async function handleCodingAgentRun(
     const runPrompt = [
       includeBaseSystemPrompt ? getSystemPrompt(undefined, { source: data.session_source || data.source }) : '',
     ].filter(Boolean).join('\n')
-    if (codingInput.images.length > 0) {
-      await sendCodingAgentRunInput(sessionId, codingInput.text, runPrompt, codingInput.images)
+    if (Array.isArray(data.input)) {
+      await sendCodingAgentRunInput(
+        sessionId,
+        codingInput.text,
+        runPrompt,
+        codingInput.images,
+        contentBlocksToString(data.input),
+      )
     } else {
       await sendCodingAgentRunInput(sessionId, codingInput.text, runPrompt)
     }

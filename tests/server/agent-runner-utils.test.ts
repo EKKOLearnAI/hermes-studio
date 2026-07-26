@@ -268,6 +268,52 @@ describe('coding agent terminal output sanitizer', () => {
 })
 
 describe('coding agent run state', () => {
+  it('stores structured display input separately from the CLI prompt', () => {
+    const manager = new CodingAgentRunManager()
+    const addUserMessage = vi.fn()
+    const startClaudePrintTurn = vi.fn()
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).emitToChat = () => {}
+    ;(manager as any).addUserMessage = addUserMessage
+    ;(manager as any).startClaudePrintTurn = startClaudePrintTurn
+
+    manager.start({
+      agentSessionId: 'agent-session-storage-1',
+      agentId: 'claude-code',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'test-model',
+      sessionId: 'chat-session-storage-1',
+      command: 'claude',
+      args: [],
+      shellCommand: 'claude',
+      workspaceDir: process.cwd(),
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+    })
+
+    const storageInput = JSON.stringify([
+      { type: 'text', text: 'inspect' },
+      { type: 'image', name: 'screen.png', path: '/tmp/screen.png', media_type: 'image/png' },
+    ])
+    manager.send('chat-session-storage-1', 'inspect\n\nLocal image path for tools: /tmp/screen.png', {
+      images: [{ name: 'screen.png', path: '/tmp/screen.png', mediaType: 'image/png' }],
+      storageInput,
+    })
+
+    expect(addUserMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'agent-session-storage-1' }),
+      storageInput,
+    )
+    expect(startClaudePrintTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'agent-session-storage-1' }),
+      'inspect\n\nLocal image path for tools: /tmp/screen.png',
+      '',
+      [{ name: 'screen.png', path: '/tmp/screen.png', mediaType: 'image/png' }],
+    )
+    manager.shutdown()
+  })
+
   it('marks existing scoped Codex runners incompatible when Hermes MCP config is missing', () => {
     const codexHome = mkdtempSync(join(tmpdir(), 'hwui-codex-mcp-compat-'))
     try {

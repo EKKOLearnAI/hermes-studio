@@ -1938,8 +1938,9 @@ export function sendCodingAgentRunInput(
   input: string,
   systemPrompt?: string,
   images: CodingAgentImageInput[] = [],
+  storageInput?: string,
 ): { runId: string } {
-  return codingAgentRunManager.send(sessionId, input, { systemPrompt, images })
+  return codingAgentRunManager.send(sessionId, input, { systemPrompt, images, storageInput })
 }
 
 export function stopCodingAgentRun(sessionId: string): { stopped: boolean } {
