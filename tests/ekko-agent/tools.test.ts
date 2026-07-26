@@ -145,8 +145,9 @@ describe('ekko-agent tools', () => {
 
   it('registers default tools and exposes model definitions', async () => {
     const registry = createDefaultToolRegistry()
+    const definitions = registry.definitions()
 
-    expect(registry.definitions().map(definition => definition.name).sort()).toEqual([
+    expect(definitions.map(definition => definition.name).sort()).toEqual([
       'browser_back',
       'browser_click',
       'browser_console',
@@ -163,6 +164,12 @@ describe('ekko-agent tools', () => {
       'terminal_exec',
       'write_file',
     ])
+    for (const definition of definitions) {
+      expect(definition.description, definition.name).toMatch(/[\p{Script=Han}]/u)
+      for (const description of collectDescriptions(definition.parameters)) {
+        expect(description, definition.name).toMatch(/[\p{Script=Han}]/u)
+      }
+    }
 
     await expect(registry.execute('write_file', {
       path: 'from-registry.txt',
@@ -177,3 +184,13 @@ describe('ekko-agent tools', () => {
     })
   })
 })
+
+function collectDescriptions(value: unknown): string[] {
+  if (!value || typeof value !== 'object') return []
+  if (Array.isArray(value)) return value.flatMap(collectDescriptions)
+  const record = value as Record<string, unknown>
+  return [
+    ...(typeof record.description === 'string' ? [record.description] : []),
+    ...Object.values(record).flatMap(collectDescriptions),
+  ]
+}

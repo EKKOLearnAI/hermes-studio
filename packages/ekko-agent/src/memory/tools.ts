@@ -14,7 +14,7 @@ export function createMemoryTools(service: MemoryService): AgentTool[] {
 class MemorySearchTool implements AgentTool {
   readonly definition = {
     name: 'memory_search',
-    description: 'Search current profile memory. Results include the canonical key, id, revision, value, and content required for precise mutations.',
+    description: '搜索当前 profile 的长期记忆。结果包含规范 key、id、revision、value 和 content，可用于准确读取或修改记忆。自动召回已有直接且无冲突的答案时不必重复搜索；否则在询问个人信息、记忆内容，或准备回答“不知道”“不记得”时，应调用本工具核实。已知类别时优先使用 kinds，开放性问题再使用 queryText。',
     parameters: {
       type: 'object',
       properties: {
@@ -22,6 +22,11 @@ class MemorySearchTool implements AgentTool {
         domain: { type: 'string' },
         categoryPathPrefix: { type: 'array', items: { type: 'string' } },
         types: { type: 'array', items: { type: 'string' } },
+        kinds: {
+          type: 'array',
+          items: { type: 'string', enum: [...MEMORY_KINDS] },
+          description: '按一个或多个受控记忆类别精确查询。询问姓名、常住地、关系、偏好、习惯、目标等已知类别时，优先使用本字段，不要依赖自然语言关键词。',
+        },
         key: { type: 'string' },
         valueJson: {},
         tags: { type: 'array', items: { type: 'string' } },
@@ -42,6 +47,7 @@ class MemorySearchTool implements AgentTool {
       domain: optionalString(input.domain),
       categoryPathPrefix: stringArray(input.categoryPathPrefix),
       types: stringArray(input.types) as MemoryNode['type'][] | undefined,
+      kinds: validMemoryKinds(input.kinds),
       key: optionalString(input.key),
       valueJson: input.valueJson,
       tags: stringArray(input.tags),
@@ -53,10 +59,15 @@ class MemorySearchTool implements AgentTool {
   }
 }
 
+function validMemoryKinds(value: unknown): MemoryQuery['kinds'] {
+  const allowed = new Set<string>(MEMORY_KINDS)
+  return stringArray(value)?.filter(kind => allowed.has(kind)) as MemoryQuery['kinds']
+}
+
 class MemoryGetTool implements AgentTool {
   readonly definition = {
     name: 'memory_get',
-    description: 'Get one complete memory card by id, including its server canonical key and current revision.',
+    description: '根据 id 获取一张完整记忆卡片，包括服务端生成的规范 key 和当前 revision。',
     parameters: {
       type: 'object',
       properties: {
@@ -96,41 +107,41 @@ class MemoryProposeUpdateTool implements AgentTool {
   readonly definition = {
     name: 'memory_propose_update',
     description: (
-      'Create or revision-check a durable memory. For create, provide a controlled kind and optional itemKey; ' +
-      'the server generates the canonical key and automatically noops or replaces the active value in that slot. ' +
-      'For update/supersede, first search/get, then provide targetId and expectedRevision; the server preserves the key. ' +
-      'Use valuePatch/unsetValueFields for object fields. Never invent or submit a key. ' +
-      'Persist only cross-session durable state, not transient requests or retraction history; forget an exact invalidated memory when no durable replacement remains.'
+      '创建或按 revision 校验并修改持久记忆。创建时提供受控 kind 和可选 itemKey；' +
+      '服务端会生成规范 key，并对同一槽位自动执行 noop 或替换 active 值。' +
+      '执行 update/supersede 前先搜索或读取卡片，再提供 targetId 和 expectedRevision；服务端会保留原 key。' +
+      '修改对象字段时使用 valuePatch/unsetValueFields。绝不能自行编造或提交 key。' +
+      '只保存跨会话仍有用的持久状态，不保存临时请求或撤回历史；旧记忆失效且没有持久替代值时，应精确忘记旧记忆。'
     ),
     parameters: {
       type: 'object',
       required: ['operation', 'reason'],
       properties: {
         operation: { type: 'string', enum: ['create', 'update', 'supersede', 'expire', 'delete'] },
-        kind: { type: 'string', enum: [...MEMORY_KINDS], description: 'Required for create. Server maps this controlled kind to a canonical key.' },
-        itemKey: { type: 'string', description: 'Stable concept/entity discriminator required for itemized kinds, such as a preference dimension or entity name.' },
+        kind: { type: 'string', enum: [...MEMORY_KINDS], description: '创建记忆时必填。服务端会把受控 kind 映射为规范 key。' },
+        itemKey: { type: 'string', description: '条目化 kind 必填的稳定概念或实体标识，例如偏好维度或实体名称。' },
         targetId: { type: 'string' },
-        expectedRevision: { type: 'integer', minimum: 1, description: 'Required for update, supersede, expire, and delete.' },
+        expectedRevision: { type: 'integer', minimum: 1, description: '执行 update、supersede、expire 或 delete 时必填。' },
         node: {
           type: 'object',
           properties: {
-            valueJson: { description: 'Optional structured or scalar value. Use this exact field name, not value.' },
-            title: { type: 'string', description: 'Short human-readable memory title.' },
-            content: { type: 'string', description: 'Complete durable memory statement.' },
+            valueJson: { description: '可选的结构化值或标量值。必须使用 valueJson 这个字段名，不能写成 value。' },
+            title: { type: 'string', description: '简短、便于理解的记忆标题。' },
+            content: { type: 'string', description: '完整、独立的持久记忆陈述。' },
             confidence: { type: 'number', minimum: 0, maximum: 1 },
             importance: { type: 'number', minimum: 0, maximum: 1 },
             tags: { type: 'array', items: { type: 'string' } },
             entities: { type: 'array', items: { type: 'string' } },
-            expiresAt: { type: 'string', description: 'Optional ISO-8601 expiration timestamp.' },
+            expiresAt: { type: 'string', description: '可选的 ISO-8601 过期时间。' },
           },
           additionalProperties: false,
         },
-        valuePatch: { type: 'object', description: 'Object fields to set while preserving unspecified fields in the current value.' },
-        unsetValueFields: { type: 'array', items: { type: 'string' }, description: 'Object fields to remove without deleting the whole memory.' },
+        valuePatch: { type: 'object', description: '要设置的对象字段；当前值中未指定的字段会保留。' },
+        unsetValueFields: { type: 'array', items: { type: 'string' }, description: '要移除的对象字段，不会删除整条记忆。' },
         reason: { type: 'string' },
         explicitUserIntent: {
           type: 'boolean',
-          description: 'Set true only when the user clearly asked to remember, change, correct, or delete durable information.',
+          description: '只有用户明确要求记住、更改、纠正或删除持久信息时，才设置为 true。',
         },
       },
       additionalProperties: false,
@@ -173,13 +184,13 @@ class MemoryProposeUpdateTool implements AgentTool {
 class MemoryForgetTool implements AgentTool {
   readonly definition = {
     name: 'memory_forget',
-    description: 'Delete memory by id and expectedRevision. Exact soft deletion is immediate; broad or hard deletion requires confirmation.',
+    description: '使用 id 和 expectedRevision 删除记忆。精确软删除可立即执行；宽泛删除或硬删除需要确认。',
     parameters: {
       type: 'object',
       required: ['reason'],
       properties: {
         id: { type: 'string' },
-        expectedRevision: { type: 'integer', minimum: 1, description: 'Required when deleting by id.' },
+        expectedRevision: { type: 'integer', minimum: 1, description: '按 id 删除时必填。' },
         domain: { type: 'string' },
         categoryPathPrefix: { type: 'array', items: { type: 'string' } },
         type: { type: 'string' },

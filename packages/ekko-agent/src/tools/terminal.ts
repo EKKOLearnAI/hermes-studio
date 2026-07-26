@@ -12,14 +12,14 @@ export interface TerminalExecInput extends Record<string, unknown> {
 export class TerminalExecTool implements AgentTool<TerminalExecInput> {
   readonly definition = {
     name: 'terminal_exec',
-    description: 'Run a terminal command. Prefer command as the executable and args as the argument array; shell string execution is not used.',
+    description: '运行终端命令。command 应传入可执行文件，args 应传入参数数组；本工具不会把整段字符串交给 shell 执行。',
     parameters: {
       type: 'object',
       properties: {
-        command: { type: 'string', description: 'Executable command to run. Prefer a bare executable such as "node", "ls", or "/bin/sh".' },
-        args: { type: 'array', items: { type: 'string' }, description: 'Command arguments.' },
-        cwd: { type: 'string', description: 'Working directory relative to the workspace.' },
-        timeoutMs: { type: 'number', description: 'Timeout in milliseconds.' },
+        command: { type: 'string', description: '要运行的可执行文件，优先使用 "node"、"ls" 或 "/bin/sh" 这类独立命令。' },
+        args: { type: 'array', items: { type: 'string' }, description: '命令参数数组。' },
+        cwd: { type: 'string', description: '相对于工作区的工作目录。' },
+        timeoutMs: { type: 'number', description: '超时时间，单位为毫秒。' },
       },
       required: ['command'],
       additionalProperties: false,

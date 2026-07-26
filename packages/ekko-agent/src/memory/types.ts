@@ -14,12 +14,18 @@ export const MEMORY_KINDS = [
   'profile_name',
   'home_location',
   'occupation',
+  'timezone_preference',
   'language_preference',
   'accessibility_need',
   'communication_preference',
+  'general_preference',
   'workflow_preference',
+  'tool_preference',
+  'personal_relationship',
+  'habit_routine',
   'environment_fact',
   'project_context',
+  'long_term_goal',
   'durable_decision',
   'hard_constraint',
   'food_avoidance',
@@ -99,6 +105,7 @@ export interface MemoryQuery {
   domain?: string
   categoryPathPrefix?: string[]
   types?: MemoryNodeType[]
+  kinds?: MemoryKind[]
   key?: string
   valueJson?: unknown
   tags?: string[]

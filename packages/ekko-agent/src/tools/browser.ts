@@ -49,11 +49,11 @@ const BROWSER_PASSTHROUGH_ENV = [
 const browserToolDefinitions: AgentTool['definition'][] = [
   {
     name: 'browser_navigate',
-    description: 'Navigate to a URL in a browser session. Use this before other browser tools. Returns page metadata and a compact accessibility snapshot with refs.',
+    description: '在浏览器会话中打开 URL。使用其他浏览器工具前先调用本工具。返回页面元数据，以及带元素 ref 的精简无障碍快照。',
     parameters: {
       type: 'object',
       properties: {
-        url: { type: 'string', description: 'URL to open.' },
+        url: { type: 'string', description: '要打开的 URL。' },
       },
       required: ['url'],
       additionalProperties: false,
@@ -61,22 +61,22 @@ const browserToolDefinitions: AgentTool['definition'][] = [
   },
   {
     name: 'browser_snapshot',
-    description: 'Get an accessibility-tree snapshot of the current page. The snapshot includes refs such as @e1 for browser_click and browser_type.',
+    description: '获取当前页面的无障碍树快照。快照包含 @e1 这类元素 ref，可供 browser_click 和 browser_type 使用。',
     parameters: {
       type: 'object',
       properties: {
-        full: { type: 'boolean', description: 'Return the full snapshot instead of the compact interactive view.' },
+        full: { type: 'boolean', description: '返回完整快照，而不是精简的可交互视图。' },
       },
       additionalProperties: false,
     },
   },
   {
     name: 'browser_click',
-    description: 'Click an element by ref from browser_snapshot, for example @e5.',
+    description: '使用 browser_snapshot 返回的 ref 点击元素，例如 @e5。',
     parameters: {
       type: 'object',
       properties: {
-        ref: { type: 'string', description: 'Element ref, for example @e5.' },
+        ref: { type: 'string', description: '元素 ref，例如 @e5。' },
       },
       required: ['ref'],
       additionalProperties: false,
@@ -84,12 +84,12 @@ const browserToolDefinitions: AgentTool['definition'][] = [
   },
   {
     name: 'browser_type',
-    description: 'Clear and type text into an input element by ref from browser_snapshot.',
+    description: '使用 browser_snapshot 返回的 ref 定位输入元素，清空后输入文本。',
     parameters: {
       type: 'object',
       properties: {
-        ref: { type: 'string', description: 'Element ref, for example @e3.' },
-        text: { type: 'string', description: 'Text to type.' },
+        ref: { type: 'string', description: '元素 ref，例如 @e3。' },
+        text: { type: 'string', description: '要输入的文本。' },
       },
       required: ['ref', 'text'],
       additionalProperties: false,
@@ -97,11 +97,11 @@ const browserToolDefinitions: AgentTool['definition'][] = [
   },
   {
     name: 'browser_scroll',
-    description: 'Scroll the current page up or down.',
+    description: '向上或向下滚动当前页面。',
     parameters: {
       type: 'object',
       properties: {
-        direction: { type: 'string', enum: ['up', 'down'], description: 'Scroll direction.' },
+        direction: { type: 'string', enum: ['up', 'down'], description: '滚动方向：up 向上，down 向下。' },
       },
       required: ['direction'],
       additionalProperties: false,
@@ -109,7 +109,7 @@ const browserToolDefinitions: AgentTool['definition'][] = [
   },
   {
     name: 'browser_back',
-    description: 'Go back in browser history.',
+    description: '返回浏览器历史记录中的上一页。',
     parameters: {
       type: 'object',
       properties: {},
@@ -118,11 +118,11 @@ const browserToolDefinitions: AgentTool['definition'][] = [
   },
   {
     name: 'browser_press',
-    description: 'Press a keyboard key in the browser, such as Enter, Tab, Escape, ArrowDown, or Meta+K.',
+    description: '在浏览器中按下键盘按键或组合键，例如 Enter、Tab、Escape、ArrowDown 或 Meta+K。',
     parameters: {
       type: 'object',
       properties: {
-        key: { type: 'string', description: 'Key or key chord to press.' },
+        key: { type: 'string', description: '要按下的按键或组合键。' },
       },
       required: ['key'],
       additionalProperties: false,
@@ -130,7 +130,7 @@ const browserToolDefinitions: AgentTool['definition'][] = [
   },
   {
     name: 'browser_get_images',
-    description: 'List images on the current page, including src, alt text, and natural dimensions.',
+    description: '列出当前页面中的图片，包括 src、alt 文本和原始尺寸。',
     parameters: {
       type: 'object',
       properties: {},
@@ -139,12 +139,12 @@ const browserToolDefinitions: AgentTool['definition'][] = [
   },
   {
     name: 'browser_vision',
-    description: 'Capture a screenshot of the current page and return its file path for visual inspection.',
+    description: '截取当前页面并返回截图文件路径，用于视觉检查。',
     parameters: {
       type: 'object',
       properties: {
-        question: { type: 'string', description: 'What to inspect visually on the page.' },
-        annotate: { type: 'boolean', description: 'Overlay numeric labels on interactive elements if supported.' },
+        question: { type: 'string', description: '需要从视觉上检查页面中的什么内容。' },
+        annotate: { type: 'boolean', description: '如果支持，在可交互元素上叠加数字标签。' },
       },
       required: ['question'],
       additionalProperties: false,
@@ -152,12 +152,12 @@ const browserToolDefinitions: AgentTool['definition'][] = [
   },
   {
     name: 'browser_console',
-    description: 'Read browser console messages and JavaScript errors. Optionally evaluate a small JavaScript expression in the page context.',
+    description: '读取浏览器控制台消息和 JavaScript 错误；也可以在页面上下文中执行一小段 JavaScript 表达式。',
     parameters: {
       type: 'object',
       properties: {
-        clear: { type: 'boolean', description: 'Clear console and error buffers after reading.' },
-        expression: { type: 'string', description: 'Optional JavaScript expression to evaluate.' },
+        clear: { type: 'boolean', description: '读取后清空控制台和错误缓冲区。' },
+        expression: { type: 'string', description: '可选的 JavaScript 表达式。' },
       },
       additionalProperties: false,
     },

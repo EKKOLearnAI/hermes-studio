@@ -113,7 +113,7 @@ export class MemoryService {
         this.store.listRecentMessages({ sessionId: identity.sessionId, limit: this.recentMessageLimit }),
         this.store.queryNodes({ ...baseQuery, limit: 100 }),
       ])
-      const exactCandidates = overrides.key || overrides.valueJson !== undefined
+      const exactCandidates = overrides.key || overrides.kinds?.length || overrides.valueJson !== undefined
         ? await this.store.queryNodes({ ...baseQuery, queryText: undefined, limit: 100 })
         : []
       const result = resolveMemoryQuery(
@@ -151,7 +151,7 @@ export class MemoryService {
     if (!this.isEnabled || !this.store) return { exact: [], relevant: [], omitted: [] }
     const scoped = memoryQuery(identity, query)
     const candidates = await this.store.queryNodes({ ...scoped, queryText: undefined, limit: 150 })
-    const exactCandidates = query.key || query.valueJson !== undefined ? candidates : []
+    const exactCandidates = query.key || query.kinds?.length || query.valueJson !== undefined ? candidates : []
     return resolveMemoryQuery(exactCandidates, candidates, query.queryText, query.limit ?? this.nodeLimit)
   }
 

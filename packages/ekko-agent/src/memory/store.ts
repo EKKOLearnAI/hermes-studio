@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import { EkkoDatabaseManager, type EkkoDatabaseMigration } from '../database'
+import { memorySlotForKind } from './schema'
 import type {
   MemoryAuditEvent,
   MemoryMessage,
@@ -296,6 +297,20 @@ export class SqliteMemoryStore implements MemoryStore {
       params.push(query.domain)
     }
     if (query.types?.length) addInClause(clauses, params, 'type', query.types)
+    if (query.kinds?.length) {
+      const kindClauses: string[] = []
+      for (const kind of query.kinds) {
+        const slot = memorySlotForKind(kind)
+        if (slot.itemized) {
+          kindClauses.push("(key = ? OR key LIKE ? ESCAPE '\\')")
+          params.push(slot.key, `${escapeLike(slot.key)}:%`)
+        } else {
+          kindClauses.push('key = ?')
+          params.push(slot.key)
+        }
+      }
+      clauses.push(`(${kindClauses.join(' OR ')})`)
+    }
     if (query.key) {
       clauses.push('key = ?')
       params.push(query.key)

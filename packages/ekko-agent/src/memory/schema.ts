@@ -7,7 +7,7 @@ export interface NormalizeMemoryNodeInput {
   now?: string
 }
 
-interface MemorySlot {
+export interface MemorySlot {
   key: string
   domain: string
   categoryPath: string[]
@@ -20,16 +20,26 @@ const MEMORY_SLOTS: Record<MemoryKind, MemorySlot> = {
   profile_name: { key: 'profile.identity.name', domain: 'profile', categoryPath: ['profile', 'identity'], type: 'fact' },
   home_location: { key: 'profile.location.home', domain: 'profile', categoryPath: ['profile', 'location'], type: 'fact' },
   occupation: { key: 'profile.occupation', domain: 'profile', categoryPath: ['profile', 'occupation'], type: 'fact' },
+  timezone_preference: { key: 'preference.timezone', domain: 'preference', categoryPath: ['preference', 'timezone'], type: 'preference' },
   language_preference: { key: 'preference.language', domain: 'preference', categoryPath: ['preference', 'language'], type: 'preference' },
   accessibility_need: { key: 'constraint.accessibility', domain: 'constraint', categoryPath: ['constraint', 'accessibility'], type: 'constraint', itemized: true },
   communication_preference: { key: 'preference.communication', domain: 'preference', categoryPath: ['preference', 'communication'], type: 'preference', itemized: true },
+  general_preference: { key: 'preference.general', domain: 'preference', categoryPath: ['preference', 'general'], type: 'preference', itemized: true },
   workflow_preference: { key: 'preference.workflow', domain: 'preference', categoryPath: ['preference', 'workflow'], type: 'preference', itemized: true },
+  tool_preference: { key: 'preference.tool', domain: 'preference', categoryPath: ['preference', 'tool'], type: 'preference', itemized: true },
+  personal_relationship: { key: 'profile.relationship', domain: 'profile', categoryPath: ['profile', 'relationship'], type: 'fact', itemized: true },
+  habit_routine: { key: 'profile.habit', domain: 'profile', categoryPath: ['profile', 'habit'], type: 'fact', itemized: true },
   environment_fact: { key: 'environment.fact', domain: 'environment', categoryPath: ['environment'], type: 'fact', itemized: true },
   project_context: { key: 'project.context', domain: 'project', categoryPath: ['project'], type: 'fact', itemized: true },
+  long_term_goal: { key: 'goal.long_term', domain: 'goal', categoryPath: ['goal', 'long_term'], type: 'task', itemized: true },
   durable_decision: { key: 'decision.durable', domain: 'decision', categoryPath: ['decision'], type: 'decision', itemized: true },
   hard_constraint: { key: 'constraint.hard', domain: 'constraint', categoryPath: ['constraint'], type: 'constraint', itemized: true },
   food_avoidance: { key: 'preference.food.avoid', domain: 'preference', categoryPath: ['preference', 'food', 'avoid'], type: 'preference', itemized: true },
   custom_fact: { key: 'custom.fact', domain: 'custom', categoryPath: ['custom'], type: 'fact', itemized: true },
+}
+
+export function memorySlotForKind(kind: MemoryKind): Readonly<MemorySlot> {
+  return MEMORY_SLOTS[kind]
 }
 
 export type NormalizeMemoryNodeResult =
