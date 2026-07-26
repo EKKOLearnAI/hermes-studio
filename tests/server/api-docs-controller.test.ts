@@ -31,5 +31,24 @@ describe('api docs controller', () => {
     expect(
       ctx.body.paths['/api/chat-run/runs'].post.requestBody.content['application/json'].schema.properties.source.enum,
     ).toEqual(['cli', 'coding_agent', 'global_agent'])
+
+    const participantCollectionSchema = ctx.body.paths['/api/hermes/group-chat/rooms/{roomId}/agents']
+      .post.requestBody.content['application/json'].schema
+    expect(participantCollectionSchema.required).toEqual(['profile'])
+    expect(participantCollectionSchema.properties).toMatchObject({
+      runtime: { type: 'string', enum: ['hermes', 'coding_agent'] },
+      codingAgentId: { type: 'string', enum: ['', 'claude-code', 'codex'] },
+      mode: { type: 'string', enum: ['scoped', 'global'] },
+      apiMode: { type: 'string', enum: ['', 'chat_completions', 'codex_responses', 'anthropic_messages'] },
+    })
+
+    const participantPatchSchema = ctx.body.paths['/api/hermes/group-chat/rooms/{roomId}/agents/{agentId}']
+      .patch.requestBody.content['application/json'].schema
+    expect(participantPatchSchema.required).toBeUndefined()
+    expect(participantPatchSchema.properties).not.toHaveProperty('profile')
+    expect(participantPatchSchema.properties).not.toHaveProperty('runtime')
+    expect(participantPatchSchema.properties.reasoningEffort.enum).toEqual([
+      '', 'default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
+    ])
   })
 })

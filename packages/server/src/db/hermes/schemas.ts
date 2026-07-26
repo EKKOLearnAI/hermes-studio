@@ -596,6 +596,19 @@ export const GC_ROOM_AGENTS_SCHEMA: Record<string, string> = {
   name: 'TEXT NOT NULL',
   description: "TEXT NOT NULL DEFAULT ''",
   invited: 'INTEGER NOT NULL DEFAULT 0',
+  runtime: "TEXT NOT NULL DEFAULT 'hermes'",
+  codingAgentId: "TEXT NOT NULL DEFAULT ''",
+  sessionId: "TEXT NOT NULL DEFAULT ''",
+  sessionGeneration: 'INTEGER NOT NULL DEFAULT 0',
+  mode: "TEXT NOT NULL DEFAULT 'scoped'",
+  provider: "TEXT NOT NULL DEFAULT ''",
+  model: "TEXT NOT NULL DEFAULT ''",
+  apiMode: "TEXT NOT NULL DEFAULT ''",
+  reasoningEffort: "TEXT NOT NULL DEFAULT ''",
+  lastSeenRoomSeq: 'INTEGER NOT NULL DEFAULT 0',
+  lastSuccessfulRunId: "TEXT NOT NULL DEFAULT ''",
+  checkpoint: "TEXT NOT NULL DEFAULT ''",
+  checkpointSourceMessageIds: "TEXT NOT NULL DEFAULT '[]'",
 }
 
 export const GC_CONTEXT_SNAPSHOTS_TABLE = 'gc_context_snapshots'

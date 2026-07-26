@@ -24,6 +24,13 @@ const CODING_AGENT_TOOL_OUTPUT_HEAD_CHARS = 24 * 1024
 const CODING_AGENT_TOOL_OUTPUT_TAIL_CHARS = 8 * 1024
 const CODEX_REASONING_SUMMARY_ARGS = ['-c', 'model_reasoning_summary="auto"']
 const HERMES_MCP_SERVER_NAME = 'hermes-studio'
+const GROUP_CHAT_CODEX_SAFETY_ARGS = [
+  '--sandbox',
+  'workspace-write',
+  '-c',
+  'approval_policy="never"',
+]
+const GROUP_CHAT_CLAUDE_PERMISSION_ARGS = ['--permission-mode', 'dontAsk']
 
 let pty: any = null
 
@@ -75,6 +82,7 @@ export interface CodingAgentRunLaunch {
   env?: NodeJS.ProcessEnv
   state?: SessionState
   sessionSource?: 'global_agent' | 'workflow'
+  runtimeContext?: 'group_chat'
   reasoningEffort?: string
 }
 
@@ -120,6 +128,8 @@ interface CodingAgentRunSendOptions {
   images?: CodingAgentImageInput[]
   storageInput?: string
 }
+
+export type CodingAgentRunEventListener = (event: string, payload: any) => void
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000)
@@ -424,6 +434,35 @@ function defaultShell(): string {
   return '/bin/sh'
 }
 
+function stripCliFlagWithValue(args: string[], flag: string): string[] {
+  const result: string[] = []
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === flag) {
+      index += 1
+      continue
+    }
+    result.push(args[index])
+  }
+  return result
+}
+
+export function groupChatClaudePrintArgs(runtimeContext: CodingAgentRunLaunch['runtimeContext'], args: string[]): string[] {
+  if (runtimeContext !== 'group_chat') return args
+  return [
+    ...GROUP_CHAT_CLAUDE_PERMISSION_ARGS,
+    ...stripCliFlagWithValue(
+      args.filter(arg => arg !== '--dangerously-skip-permissions' && arg !== '--allow-dangerously-skip-permissions'),
+      '--permission-mode',
+    ),
+  ]
+}
+
+export function groupChatCodexExecSafetyArgs(runtimeContext: CodingAgentRunLaunch['runtimeContext']): string[] {
+  return runtimeContext === 'group_chat'
+    ? [...GROUP_CHAT_CODEX_SAFETY_ARGS]
+    : ['--dangerously-bypass-approvals-and-sandbox']
+}
+
 export function sanitizeCodingAgentTerminalOutput(value: string): string {
   return String(value || '')
     .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g, '')
@@ -437,6 +476,7 @@ export function sanitizeCodingAgentTerminalOutput(value: string): string {
 export class CodingAgentRunManager {
   private runs = new Map<string, ManagedCodingAgentRun>()
   private sessionIndex = new Map<string, string>()
+  private eventListeners = new Map<string, Set<CodingAgentRunEventListener>>()
 
   constructor(private readonly idleMs = DEFAULT_IDLE_MS) {}
 
@@ -457,6 +497,22 @@ export class CodingAgentRunManager {
   runIdForSession(sessionId: string): string | undefined {
     const run = this.getBySession(sessionId)
     return run && !run.exited ? run.id : undefined
+  }
+
+  subscribe(sessionId: string, listener: CodingAgentRunEventListener): () => void {
+    const key = String(sessionId || '').trim()
+    if (!key) throw new Error('sessionId is required')
+    let listeners = this.eventListeners.get(key)
+    if (!listeners) {
+      listeners = new Set()
+      this.eventListeners.set(key, listeners)
+    }
+    listeners.add(listener)
+    return () => {
+      const current = this.eventListeners.get(key)
+      current?.delete(listener)
+      if (!current?.size) this.eventListeners.delete(key)
+    }
   }
 
   isSessionLaunchCompatible(sessionId: string, launch: {
@@ -611,11 +667,58 @@ export class CodingAgentRunManager {
     return { runId: run.id }
   }
 
-  stop(sessionId: string, options: { reportClosed?: boolean } = {}): boolean {
+  async stopAndWait(
+    sessionId: string,
+    options: { reportClosed?: boolean; graceMs?: number } = {},
+  ): Promise<boolean> {
+    const run = this.getBySession(sessionId)
+    if (!run) return false
+    const child = run.currentChild
+    const stopped = this.stop(sessionId, {
+      reportClosed: options.reportClosed,
+      childKillGraceMs: options.graceMs ?? 15_000,
+    })
+    if (!stopped || !child || !childIsRunning(child)) return stopped
+
+    const graceMs = Math.max(0, options.graceMs ?? 15_000)
+    const waitForExit = (timeoutMs: number) => new Promise<boolean>((resolve) => {
+      if (!childIsRunning(child)) {
+        resolve(true)
+        return
+      }
+      let settled = false
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const finish = (confirmed: boolean) => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        child.off('exit', onExit)
+        child.off('close', onExit)
+        resolve(confirmed)
+      }
+      const onExit = () => finish(true)
+      child.once('exit', onExit)
+      child.once('close', onExit)
+      timer = setTimeout(() => finish(!childIsRunning(child)), timeoutMs)
+    })
+
+    if (await waitForExit(graceMs)) return true
+    forceKillChildProcess(child)
+    return waitForExit(Math.min(5_000, Math.max(1_000, graceMs)))
+  }
+
+  stop(
+    sessionId: string,
+    options: { reportClosed?: boolean; childKillGraceMs?: number } = {},
+  ): boolean {
     const run = this.getBySession(sessionId)
     if (!run) return false
     if (options.reportClosed === false) run.stoppedByUser = true
-    this.cleanupRun(run, { kill: true, reportClosed: options.reportClosed ?? true })
+    this.cleanupRun(run, {
+      kill: true,
+      reportClosed: options.reportClosed ?? true,
+      childKillGraceMs: options.childKillGraceMs,
+    })
     return true
   }
 
@@ -789,6 +892,7 @@ export class CodingAgentRunManager {
 
   shutdown() {
     for (const run of [...this.runs.values()]) this.cleanupRun(run, { kill: true })
+    this.eventListeners.clear()
   }
 
   private getBySession(sessionId: string): ManagedCodingAgentRun | null {
@@ -848,7 +952,10 @@ export class CodingAgentRunManager {
     }, this.idleMs)
   }
 
-  private cleanupRun(run: ManagedCodingAgentRun, options: { kill: boolean; reportClosed?: boolean }) {
+  private cleanupRun(
+    run: ManagedCodingAgentRun,
+    options: { kill: boolean; reportClosed?: boolean; childKillGraceMs?: number },
+  ) {
     const shouldReportClosed = options.reportClosed !== false && (run.state.isWorking || Boolean(run.currentChild && !run.currentChild.killed))
     if (run.idleTimer) clearTimeout(run.idleTimer)
     if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
@@ -860,7 +967,10 @@ export class CodingAgentRunManager {
       try { run.pty?.kill() } catch {}
       terminateChildProcess(run.currentChild)
       if (childIsRunning(run.currentChild)) {
-        run.currentChildKillTimer = setTimeout(() => forceKillChildProcess(run.currentChild), 1500)
+        run.currentChildKillTimer = setTimeout(
+          () => forceKillChildProcess(run.currentChild),
+          Math.max(0, options.childKillGraceMs ?? 1_500),
+        )
       }
     }
     run.exited = true
@@ -917,7 +1027,7 @@ export class CodingAgentRunManager {
       : normalizeCliPromptArgument(systemPrompt)
     const streamInput = images.length > 0 ? buildClaudeStreamJsonInput(input, images) : ''
     const args = [
-      ...run.launch.args,
+      ...groupChatClaudePrintArgs(run.launch.runtimeContext, run.launch.args),
       ...nativeSessionArgs,
       ...(promptArgument ? ['--append-system-prompt', promptArgument] : []),
       '-p',
@@ -1375,7 +1485,7 @@ export class CodingAgentRunManager {
       ...run.launch.args,
       ...codexImageArgs(images),
       '--skip-git-repo-check',
-      '--dangerously-bypass-approvals-and-sandbox',
+      ...groupChatCodexExecSafetyArgs(run.launch.runtimeContext),
     ]
     const args = run.launch.agentNativeSessionId && run.nativeResumeReady
       ? ['exec', 'resume', ...commonArgs, run.launch.agentNativeSessionId, input]
@@ -1989,6 +2099,13 @@ export class CodingAgentRunManager {
   }
 
   private emitToChat(sessionId: string, event: string, payload: any) {
+    for (const listener of this.eventListeners.get(sessionId) || []) {
+      try {
+        listener(event, payload)
+      } catch (err) {
+        logger.warn({ err, sessionId, event }, '[coding-agent-run] external event listener failed')
+      }
+    }
     try {
       // Lazy require avoids coupling the service to bootstrap order.
       // eslint-disable-next-line @typescript-eslint/no-require-imports

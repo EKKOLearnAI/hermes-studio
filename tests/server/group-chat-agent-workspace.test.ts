@@ -241,6 +241,37 @@ describe('group chat agent workspace bridge runs', () => {
     return client as any
   }
 
+  it('snapshots Hermes participant model and reasoning before launch', async () => {
+    let releaseContext!: () => void
+    const client = await createClient('')
+    const binding = {
+      agentId: 'agent-1', profile: 'default', name: 'Worker', runtime: 'hermes', sessionId: 'session-stable',
+      model: 'model-old', provider: 'provider-old', reasoningEffort: 'medium',
+    }
+    client.__testStorage.getRoomAgentByAgentId = vi.fn(() => binding)
+    client.__testStorage.getRoomMembers = vi.fn(() => [])
+    client.setContextEngine({
+      buildContext: vi.fn(async () => {
+        await new Promise<void>(resolve => { releaseContext = resolve })
+        return { conversationHistory: [], instructions: 'ctx', meta: {} }
+      }),
+    })
+
+    const reply = client.replyToMention('room-1', {
+      content: '@Worker hi', senderName: 'Alice', senderId: 'user-1', timestamp: 1,
+    })
+    await vi.waitFor(() => expect(releaseContext).toBeTypeOf('function'))
+    binding.model = 'model-new'
+    binding.provider = 'provider-new'
+    binding.reasoningEffort = 'high'
+    releaseContext()
+    await reply
+
+    expect((bridgeMock.chat.mock.calls[0] as any)?.[5]).toMatchObject({
+      model: 'model-old', provider: 'provider-old', reasoning_effort: 'medium',
+    })
+  })
+
   it('omits workspace when the room has no workspace', async () => {
     const client = await createClient('')
 
@@ -467,6 +498,7 @@ describe('group chat agent workspace bridge runs', () => {
     bridgeMock.interrupt.mockResolvedValueOnce({ ok: true, synced: false })
     const client = await createClient('/tmp/workspace')
     client.__testStorage.getRoom
+      .mockReturnValueOnce({ sessionSeed: 'seed-1', workspace: '/tmp/workspace' })
       .mockReturnValueOnce({ sessionSeed: 'seed-1', workspace: '/tmp/workspace' })
       .mockReturnValueOnce({ sessionSeed: 'seed-1', workspace: '/tmp/workspace' })
       .mockReturnValue({ sessionSeed: 'seed-2', workspace: '/tmp/workspace' })

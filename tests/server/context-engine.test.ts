@@ -203,6 +203,32 @@ describe('ContextEngine.buildContext', () => {
         expect(mockSummarize).not.toHaveBeenCalled()
     })
 
+    it('projects only canonical events after a persisted participant cursor', async () => {
+        const messages = makeMessages(6)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
+
+        const result = await engine.buildContext({
+            roomId: 'room-1',
+            agentId: 'agent-1',
+            agentName: 'Claude',
+            agentDescription: 'Helper',
+            agentSocketId: 'agent-socket',
+            roomName: 'general',
+            memberNames: ['Alice'],
+            members: [{ userId: 'u1', name: 'Alice', description: '' }],
+            upstream: 'http://localhost:8642',
+            apiKey: null,
+            currentMessage: messages[messages.length - 1],
+            participantCursor: 4,
+        })
+
+        expect(mockFetcher.getMessagesForContext).toHaveBeenCalledWith('room-1', { throughMessageId: 'msg-5' })
+        expect(result.meta.totalMessages).toBe(2)
+        expect(result.conversationHistory).toHaveLength(2)
+        expect(result.conversationHistory.map(message => message.content).join('\n')).toContain('Message 4')
+        expect(result.conversationHistory.map(message => message.content).join('\n')).not.toContain('Message 3')
+    })
+
     it('records full context token estimates without compressing when under threshold', async () => {
         const messages = makeMessages(3)
         mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)

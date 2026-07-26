@@ -3,16 +3,16 @@ import { buildMentionOptions } from '@/components/hermes/group-chat/mention-opti
 
 describe('group chat mention options', () => {
   const agents = [
-    { name: 'Alice', profile: 'alice-profile' },
-    { name: 'Bob', profile: 'bob-profile' },
-    { name: 'all', profile: 'literal-all-agent' },
+    { id: 'row-alice', agentId: 'participant-alice', name: 'Alice', profile: 'alice-profile', runtime: 'hermes' as const },
+    { id: 'row-bob', agentId: 'participant-bob', name: 'Bob', profile: 'bob-profile', runtime: 'coding_agent' as const, codingAgentId: 'codex' as const },
+    { id: 'row-all', agentId: 'participant-all', name: 'all', profile: 'literal-all-agent', runtime: 'hermes' as const },
   ]
 
   it('offers @all before agent mentions when the mention query is empty', () => {
     expect(buildMentionOptions(agents, '').map(option => option.key)).toEqual([
       'special:all',
-      'agent:Alice',
-      'agent:Bob',
+      'agent:participant-alice',
+      'agent:participant-bob',
     ])
   })
 
@@ -29,6 +29,13 @@ describe('group chat mention options', () => {
   })
 
   it('filters normal agent mentions without showing @all for unrelated queries', () => {
-    expect(buildMentionOptions(agents, 'bo').map(option => option.key)).toEqual(['agent:Bob'])
+    expect(buildMentionOptions(agents, 'bo')).toEqual([
+      expect.objectContaining({
+        key: 'agent:participant-bob',
+        participantId: 'participant-bob',
+        name: 'Bob',
+        description: 'Codex · bob-profile',
+      }),
+    ])
   })
 })

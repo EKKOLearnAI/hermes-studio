@@ -2589,6 +2589,14 @@ export default {
 
   // 群聊
   groupChat: {
+    participantRuntime: '執行階段',
+    participantMode: '模式',
+    participantModel: '模型',
+    participantApiMode: 'API 模式',
+    participantReasoningEffort: '推理強度',
+    participantReasoningEffortNextRun: '推理強度（下次執行生效）',
+    editParticipant: '編輯參與者',
+    sessionGeneration: '第 {generation} 代工作階段',
     title: '群聊',
     createRoom: '建立房間',
     joinByCode: '透過邀請碼加入',

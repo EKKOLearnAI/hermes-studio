@@ -55,7 +55,7 @@ describe('group chat approval and context baseline', () => {
 
     agent.emit('context_status', { roomId: 'room-1', agentName: 'Agent', status: 'replying', totalTokens: 123, agentSessionId })
 
-    expect(await statusEvent).toEqual({ roomId: 'room-1', agentName: 'Agent', status: 'replying' })
+    expect(await statusEvent).toEqual({ roomId: 'room-1', agentId: 'agent-1', agentName: 'Agent', status: 'replying' })
     expect(await roomUpdated).toEqual({ roomId: 'room-1', totalTokens: 123 })
     expect(groupServer.getStorage().getRoom('room-1')).toMatchObject({ totalTokens: 123 })
   })
@@ -149,8 +149,12 @@ describe('group chat approval and context baseline', () => {
 
   it('relays approval resolved with normalized choice', async () => {
     const { agent, human, agentSessionId } = await joinPair()
+    const requested = once<any>(human, 'approval.requested')
+    agent.emit('approval.requested', {
+      roomId: 'room-1', agentName: 'Agent', agentSessionId, approval_id: 'approval-1', description: 'needs approval',
+    })
+    await requested
     const resolved = once<any>(human, 'approval.resolved')
-
     agent.emit('approval.resolved', { roomId: 'room-1', agentName: 'Agent', agentSessionId, approval_id: 'approval-1', choice: 'deny' })
 
     expect(await resolved).toEqual({
@@ -167,6 +171,14 @@ describe('group chat approval and context baseline', () => {
     harness.sockets.push(outsider)
 
     await expect(emitAck(outsider, 'approval.respond', { roomId: 'room-1', approval_id: 'approval-1', choice: 'deny' })).resolves.toEqual({ error: 'Not in room' })
+  })
+
+  it('rejects approval ids that were not emitted by the current Hermes participant session', async () => {
+    const { human } = await joinPair()
+
+    await expect(emitAck(human, 'approval.respond', {
+      roomId: 'room-1', approval_id: 'forged-or-coding-agent-approval', choice: 'once',
+    })).resolves.toEqual({ error: 'Approval is not pending for this room' })
   })
 
   it('emits room_cleared and room_updated when runtime state is cleared', async () => {

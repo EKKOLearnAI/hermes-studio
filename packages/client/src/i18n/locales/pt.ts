@@ -2351,6 +2351,14 @@ jobTriggered: 'Job acionado',
 
   // Registro de alteracoes
   groupChat: {
+    participantRuntime: 'Ambiente de execução',
+    participantMode: 'Modo',
+    participantModel: 'Modelo',
+    participantApiMode: 'Modo da API',
+    participantReasoningEffort: 'Nível de raciocínio',
+    participantReasoningEffortNextRun: 'Nível de raciocínio (próxima execução)',
+    editParticipant: 'Editar participante',
+    sessionGeneration: 'geração da sessão {generation}',
     roomSettings: 'Configurações da sala',
     inviteCodeSettings: 'Configurações do código de convite',
     inviteCodePlaceholder: 'Insira um novo código de convite',

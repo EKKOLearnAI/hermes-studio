@@ -76,9 +76,11 @@ export class ContextEngine {
 
     private async _buildContextImpl(input: BuildContextInput): Promise<CompressedContext> {
         const config = { ...this.config, ...input.compression }
-        const messages = this.messageFetcher.getMessagesForContext(input.roomId, {
+        const allMessages = this.messageFetcher.getMessagesForContext(input.roomId, {
             throughMessageId: input.currentMessage.id,
         })
+        const cursor = Math.max(0, Math.floor(Number(input.participantCursor || 0)))
+        const messages = cursor > 0 ? allMessages.slice(Math.min(cursor, allMessages.length)) : allMessages
         const total = messages.length
 
         logger.debug({

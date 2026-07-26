@@ -215,7 +215,19 @@ describe('Group Chat member/agent identity sync', () => {
       profile: 'default',
       reason: 'join failed',
     })
-    expect(addRoomAgent).toHaveBeenCalledWith('room-1', expect.any(String), 'default', 'Worker', '', 0)
+    expect(addRoomAgent).toHaveBeenCalledWith(
+      'room-1',
+      expect.any(String),
+      'default',
+      'Worker',
+      '',
+      0,
+      expect.objectContaining({
+        runtime: 'hermes',
+        sessionGeneration: 0,
+        sessionId: expect.stringMatching(/^gc_room-1_.+_0$/),
+      }),
+    )
     expect(removeRoomAgent).toHaveBeenCalledWith('room-1', 'row-1')
     expect(chatServer.agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'agent-stable-1')
   })
@@ -248,7 +260,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     const chatServer = {
       getStorage: () => storage,
-      agentClients: { removeAgentFromRoom: vi.fn() },
+      agentClients: { interruptAgent: vi.fn(async () => {}), removeAgentFromRoom: vi.fn() },
     }
     setGroupChatServer(chatServer as any)
 
@@ -260,6 +272,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     await handler(ctx, async () => {})
 
+    expect(chatServer.agentClients.interruptAgent).toHaveBeenCalledWith('room-1', 'agent-stable-1')
     expect(chatServer.agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'agent-stable-1')
     expect(storage.removeRoomMembersForAgent).toHaveBeenCalledWith('room-1', agentsBefore[0])
     expect(storage.removeRoomAgent).toHaveBeenCalledWith('room-1', 'row-1')
@@ -419,6 +432,60 @@ describe('Group Chat member/agent identity sync', () => {
     expect(broadcastEmit).toHaveBeenCalledWith('message_stream_start', expect.objectContaining({ id: 'current-stream', senderName: 'Worker' }))
   })
 
+  it('uses the persisted participant session as the authority for runtime events', () => {
+    const broadcastEmit = vi.fn()
+    const roomEmit = vi.fn()
+    const updateRoomTotalTokens = vi.fn()
+    const member = {
+      id: 'agent-socket-1',
+      userId: 'participant-1',
+      name: 'Codex A',
+      description: '',
+      joinedAt: Date.now(),
+      online: true,
+      socketId: 'agent-socket-1',
+      source: 'agent',
+      avatar: '',
+    }
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map([['room-1', { getOnlineMemberBySocketId: vi.fn(() => member) }]])
+    server.contextStatusState = new Map()
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', sessionSeed: 'legacy-seed' })),
+      getRoomAgentByAgentId: vi.fn(() => ({
+        id: 'row-1',
+        roomId: 'room-1',
+        agentId: 'participant-1',
+        profile: 'default',
+        name: 'Codex A',
+        runtime: 'coding_agent',
+        sessionId: 'participant-session-2',
+      })),
+      updateRoomTotalTokens,
+    }
+    server.nsp = { to: vi.fn(() => ({ emit: broadcastEmit })) }
+    const socket = { id: 'agent-socket-1', to: vi.fn(() => ({ emit: roomEmit })) }
+
+    server.handleContextStatus(socket, {
+      roomId: 'room-1',
+      agentName: 'Codex A',
+      status: 'replying',
+      totalTokens: 111,
+      agentSessionId: groupBridgeSessionId('room-1', 'default', 'Codex A', 'legacy-seed'),
+    })
+    expect(updateRoomTotalTokens).not.toHaveBeenCalled()
+
+    server.handleContextStatus(socket, {
+      roomId: 'room-1',
+      agentName: 'Codex A',
+      status: 'replying',
+      totalTokens: 222,
+      agentSessionId: 'participant-session-2',
+    })
+    expect(updateRoomTotalTokens).toHaveBeenCalledWith('room-1', 222)
+    expect(roomEmit).toHaveBeenCalledWith('context_status', expect.objectContaining({ agentName: 'Codex A' }))
+  })
+
   it('does not drop queued mentions when room interrupt is not synchronized', async () => {
     const clients = new AgentClients() as any
     const agent = { name: 'Worker', interrupt: vi.fn(async () => false) }
@@ -472,6 +539,33 @@ describe('Group Chat member/agent identity sync', () => {
     expect(ack).toHaveBeenCalledWith({ error: 'Stale room session' })
     expect(saveMessageAndRefreshRoom).not.toHaveBeenCalled()
     expect(emit).not.toHaveBeenCalled()
+  })
+
+  it('fences persisted participant sessions before clearing runtime state', async () => {
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.typingState = new Map()
+    server.contextStatusState = new Map()
+    server.fencedRoomAgentSessions = new Map()
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', sessionSeed: 'seed-1' })),
+      getRoomAgents: vi.fn(() => [
+        {
+          agentId: 'agent-1',
+          profile: 'default',
+          name: 'Worker',
+          sessionId: 'gc_room-1_agent-1_2',
+        },
+      ]),
+    }
+    server.agentClients = {
+      interruptRoom: vi.fn(async () => {
+        expect(server.fencedRoomAgentSessions.get('room-1')).toContain('gc_room-1_agent-1_2')
+      }),
+      resetRoomContext: vi.fn(),
+    }
+    server.nsp = { to: vi.fn(() => ({ emit: vi.fn() })) }
+
+    await server.clearRoomRuntimeState('room-1')
   })
 
   it('clears runtime state before rotating persisted room context', async () => {

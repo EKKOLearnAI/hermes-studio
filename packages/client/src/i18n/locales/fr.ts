@@ -2351,6 +2351,14 @@ jobTriggered: 'Job declenche',
 
   // Journal des modifications
   groupChat: {
+    participantRuntime: 'Environnement d’exécution',
+    participantMode: 'Mode',
+    participantModel: 'Modèle',
+    participantApiMode: 'Mode API',
+    participantReasoningEffort: 'Niveau de raisonnement',
+    participantReasoningEffortNextRun: 'Niveau de raisonnement (prochaine exécution)',
+    editParticipant: 'Modifier le participant',
+    sessionGeneration: 'génération de session {generation}',
     roomSettings: 'Paramètres du salon',
     inviteCodeSettings: 'Paramètres du code d’invitation',
     inviteCodePlaceholder: 'Saisir un nouveau code d’invitation',

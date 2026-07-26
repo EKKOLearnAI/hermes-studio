@@ -1,5 +1,5 @@
 import Router from '@koa/router'
-import type { GroupChatServer } from '../../services/hermes/group-chat'
+import { participantSessionId, type GroupChatServer } from '../../services/hermes/group-chat'
 import { isReservedMentionName } from '../../services/hermes/group-chat/mention-routing'
 import { assertAllowedWorkspaceFolder } from '../../services/hermes/workspace-path'
 import {
@@ -36,7 +36,82 @@ function generateInviteCode(): string {
     return code
 }
 
-type AgentInput = { profile: string; name?: string; description?: string; invited?: boolean | number }
+type ParticipantRuntime = 'hermes' | 'coding_agent'
+type ParticipantCodingAgentId = '' | 'claude-code' | 'codex'
+
+type AgentInput = {
+    profile: string
+    name?: string
+    description?: string
+    invited?: boolean | number
+    runtime?: ParticipantRuntime
+    codingAgentId?: ParticipantCodingAgentId
+    mode?: 'scoped' | 'global'
+    provider?: string
+    model?: string
+    apiMode?: string
+    reasoningEffort?: string
+}
+
+const PARTICIPANT_REASONING_EFFORTS = new Set(['', 'default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+const PARTICIPANT_API_MODES = new Set(['', 'chat_completions', 'codex_responses', 'anthropic_messages'])
+
+function serializeRoomAgent(agent: any) {
+    if (!agent) return agent
+    const {
+        lastSeenRoomSeq: _lastSeenRoomSeq,
+        lastSuccessfulRunId: _lastSuccessfulRunId,
+        checkpoint: _checkpoint,
+        checkpointSourceMessageIds: _checkpointSourceMessageIds,
+        ...publicAgent
+    } = agent
+    return publicAgent
+}
+
+function normalizeAgentInput(input: AgentInput): AgentInput {
+    const runtime = input.runtime || 'hermes'
+    if (runtime !== 'hermes' && runtime !== 'coding_agent') {
+        throw Object.assign(new Error('runtime must be hermes or coding_agent'), { status: 400 })
+    }
+    const codingAgentId = input.codingAgentId || ''
+    if (runtime === 'coding_agent' && !codingAgentId) {
+        throw Object.assign(new Error('codingAgentId is required for coding_agent participants'), { status: 400 })
+    }
+    if (codingAgentId && codingAgentId !== 'claude-code' && codingAgentId !== 'codex') {
+        throw Object.assign(new Error('codingAgentId must be claude-code or codex'), { status: 400 })
+    }
+    if (runtime === 'hermes' && codingAgentId) {
+        throw Object.assign(new Error('codingAgentId is only valid for coding_agent participants'), { status: 400 })
+    }
+    const mode = input.mode || 'scoped'
+    if (mode !== 'scoped' && mode !== 'global') {
+        throw Object.assign(new Error('mode must be scoped or global'), { status: 400 })
+    }
+    if (runtime === 'coding_agent' && mode !== 'scoped') {
+        throw Object.assign(new Error('Group Chat coding-agent participants require scoped mode'), { status: 400 })
+    }
+    const apiMode = String(input.apiMode || '').trim()
+    if (!PARTICIPANT_API_MODES.has(apiMode)) {
+        throw Object.assign(new Error('apiMode is invalid'), { status: 400 })
+    }
+    const reasoningEffort = String(input.reasoningEffort || '').trim()
+    if (!PARTICIPANT_REASONING_EFFORTS.has(reasoningEffort)) {
+        throw Object.assign(new Error('reasoningEffort is invalid'), { status: 400 })
+    }
+    return {
+        ...input,
+        profile: String(input.profile || '').trim(),
+        name: String(input.name || '').trim(),
+        description: String(input.description || '').trim(),
+        runtime,
+        codingAgentId,
+        mode,
+        provider: String(input.provider || '').trim(),
+        model: String(input.model || '').trim(),
+        apiMode,
+        reasoningEffort,
+    }
+}
 
 function sanitizeAgentConnectReason(reason?: string): string {
     return (reason || 'agent runtime connection failed')
@@ -102,10 +177,12 @@ function visibleRoomsForUser(storage: ReturnType<GroupChatServer['getStorage']>,
 }
 
 async function connectAndPersistRoomAgent(server: GroupChatServer, roomId: string, input: AgentInput, agentId = generateId()) {
-    const profile = input.profile
-    const name = input.name || profile
-    const description = input.description || ''
-    const invited = input.invited ? 1 : 0
+    const normalized = normalizeAgentInput(input)
+    const profile = normalized.profile
+    const name = normalized.name || profile
+    const description = normalized.description || ''
+    const invited = normalized.invited ? 1 : 0
+    const sessionId = participantSessionId(roomId, agentId)
     const client = await server.agentClients.createAgent({
         agentId,
         profile,
@@ -118,7 +195,17 @@ async function connectAndPersistRoomAgent(server: GroupChatServer, roomId: strin
     const storage = server.getStorage()
     let persisted: any
     try {
-        persisted = storage.addRoomAgent(roomId, agentId, profile, name, description, invited)
+        persisted = storage.addRoomAgent(roomId, agentId, profile, name, description, invited, {
+            runtime: normalized.runtime,
+            codingAgentId: normalized.codingAgentId,
+            sessionId,
+            sessionGeneration: 0,
+            mode: normalized.mode,
+            provider: normalized.provider,
+            model: normalized.model,
+            apiMode: normalized.apiMode,
+            reasoningEffort: normalized.reasoningEffort,
+        })
         await server.agentClients.addAgentToRoom(roomId, client)
         return persisted
     } catch (err) {
@@ -140,7 +227,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
     const { name, inviteCode, agents, compression, workspace, memberName, memberDescription } = ctx.request.body as {
         name?: string
         inviteCode?: string
-        agents?: { profile: string; name?: string; description?: string; invited?: boolean }[]
+        agents?: AgentInput[]
         compression?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }
         workspace?: string
         memberName?: string
@@ -164,10 +251,26 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         ctx.body = { error: 'Member profile is too long' }
         return
     }
-    const reservedAgent = (agents || []).find(a => isReservedMentionName(a.name || a.profile))
-    if (reservedAgent) {
-        ctx.status = 400
-        ctx.body = { error: '`all` is reserved for @all mentions' }
+    const initialAgents: AgentInput[] = []
+    const initialNames = new Set<string>()
+    try {
+        for (const rawAgent of agents || []) {
+            const normalized = normalizeAgentInput(rawAgent)
+            if (!normalized.profile) throw Object.assign(new Error('profile is required'), { status: 400 })
+            const participantName = normalized.name || normalized.profile
+            if (isReservedMentionName(participantName)) {
+                throw Object.assign(new Error('`all` is reserved for @all mentions'), { status: 400 })
+            }
+            const nameKey = participantName.trim().toLowerCase()
+            if (initialNames.has(nameKey)) {
+                throw Object.assign(new Error('Participant name already exists in this room'), { status: 409 })
+            }
+            initialNames.add(nameKey)
+            initialAgents.push({ ...normalized, name: participantName })
+        }
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 400)
+        ctx.body = { error: err?.message || 'Invalid participant configuration' }
         return
     }
 
@@ -202,14 +305,9 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
 
     const addedAgents = []
     const agentResults = []
-    for (const a of agents || []) {
+    for (const a of initialAgents) {
         try {
-            const agent = await connectAndPersistRoomAgent(chatServer, roomId, {
-                profile: a.profile,
-                name: a.name || a.profile,
-                description: a.description || '',
-                invited: a.invited,
-            })
+            const agent = await connectAndPersistRoomAgent(chatServer, roomId, a)
             addedAgents.push(agent)
             agentResults.push({ profile: a.profile, ok: true, agent })
         } catch (err: any) {
@@ -219,7 +317,11 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
     }
 
     const room = storage.getRoom(roomId)
-    ctx.body = { room: serializeRoom(room, true), agents: addedAgents, agentResults }
+    ctx.body = {
+        room: serializeRoom(room, true),
+        agents: addedAgents.map(serializeRoomAgent),
+        agentResults: agentResults.map(result => result.agent ? { ...result, agent: serializeRoomAgent(result.agent) } : result),
+    }
 })
 
 // Clone room roles/config without copying the conversation context.
@@ -263,6 +365,13 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
                 name: sourceAgent.name,
                 description: sourceAgent.description,
                 invited: sourceAgent.invited,
+                runtime: sourceAgent.runtime,
+                codingAgentId: sourceAgent.codingAgentId,
+                mode: sourceAgent.mode,
+                provider: sourceAgent.provider,
+                model: sourceAgent.model,
+                apiMode: sourceAgent.apiMode,
+                reasoningEffort: sourceAgent.reasoningEffort,
             })
             addedAgents.push(agent)
             agentResults.push({ profile: sourceAgent.profile, ok: true, agent })
@@ -273,7 +382,11 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
     }
 
     const room = storage.getRoom(roomId)
-    ctx.body = { room: serializeRoom(room, true), agents: addedAgents, agentResults }
+    ctx.body = {
+        room: serializeRoom(room, true),
+        agents: addedAgents.map(serializeRoomAgent),
+        agentResults: agentResults.map(result => result.agent ? { ...result, agent: serializeRoomAgent(result.agent) } : result),
+    }
 })
 
 // Get room detail and messages
@@ -302,7 +415,7 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
     const limit = ctx.query.limit ? Math.max(1, parseInt(ctx.query.limit as string, 10) || 150) : 150
     const messages = storage.getRecentMessagesForUI(ctx.params.roomId, limit, offset)
     const total = storage.getMessageCount(ctx.params.roomId)
-    const agents = storage.getRoomAgents(ctx.params.roomId)
+    const agents = storage.getRoomAgents(ctx.params.roomId).map(serializeRoomAgent)
     const members = storage.getRoomMembers(ctx.params.roomId)
     ctx.body = { room: serializeRoom(room, canManage), messages, agents, members, total, offset, limit, hasMore: offset + messages.length < total }
 })
@@ -392,7 +505,9 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) 
         return
     }
 
-    const { profile, name, description, invited } = ctx.request.body as { profile?: string; name?: string; description?: string; invited?: boolean }
+    const input = ctx.request.body as Partial<AgentInput>
+    const profile = String(input.profile || '').trim()
+    const name = String(input.name || '').trim()
     if (!profile) {
         ctx.status = 400
         ctx.body = { error: 'profile is required' }
@@ -401,6 +516,14 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) 
     if (isReservedMentionName(name || profile)) {
         ctx.status = 400
         ctx.body = { error: '`all` is reserved for @all mentions' }
+        return
+    }
+    let normalizedInput: AgentInput
+    try {
+        normalizedInput = normalizeAgentInput({ ...input, profile })
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 400)
+        ctx.body = { error: err?.message || 'Invalid participant configuration' }
         return
     }
 
@@ -415,23 +538,18 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) 
         ctx.body = { error: 'Access denied' }
         return
     }
-
-    // Prevent duplicate agent in same room
-    const existing = storage.getRoomAgents(ctx.params.roomId)
-    if (existing.find(a => a.profile === profile)) {
+    const participantName = normalizedInput.name || profile
+    const duplicateName = storage.getRoomAgents(ctx.params.roomId)
+        .some(agent => agent.name.trim().toLowerCase() === participantName.trim().toLowerCase())
+    if (duplicateName) {
         ctx.status = 409
-        ctx.body = { error: 'Agent already in room' }
+        ctx.body = { error: 'Participant name already exists in this room' }
         return
     }
 
     try {
-        const agent = await connectAndPersistRoomAgent(chatServer, ctx.params.roomId, {
-            profile,
-            name: name || profile,
-            description: description || '',
-            invited,
-        })
-        ctx.body = { agent }
+        const agent = await connectAndPersistRoomAgent(chatServer, ctx.params.roomId, normalizedInput)
+        ctx.body = { agent: serializeRoomAgent(agent) }
     } catch (err: any) {
         console.error(`[GroupChat] Failed to connect agent ${profile} to room ${ctx.params.roomId}: ${sanitizeAgentConnectReason(err.message)}`)
         ctx.status = 502
@@ -459,8 +577,91 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) =
         return
     }
 
-    const agents = storage.getRoomAgents(ctx.params.roomId)
+    const agents = storage.getRoomAgents(ctx.params.roomId).map(serializeRoomAgent)
     ctx.body = { agents }
+})
+
+// Update next-run participant settings without rotating the stable session.
+groupChatRoutes.patch('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', async (ctx) => {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return
+    }
+
+    const storage = chatServer.getStorage()
+    const roomId = ctx.params.roomId
+    if (!storage.getRoom(roomId)) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return
+    }
+    if (!canManageRoom(storage, roomId, ctx.state?.user)) {
+        ctx.status = 403
+        ctx.body = { error: 'Access denied' }
+        return
+    }
+    const existing = storage.getRoomAgent(roomId, ctx.params.agentId)
+    if (!existing) {
+        ctx.status = 404
+        ctx.body = { error: 'Agent not found' }
+        return
+    }
+
+    const requested = ctx.request.body as Partial<AgentInput>
+    const name = requested.name === undefined ? existing.name : String(requested.name || '').trim()
+    if (!name) {
+        ctx.status = 400
+        ctx.body = { error: 'name is required' }
+        return
+    }
+    if (isReservedMentionName(name)) {
+        ctx.status = 400
+        ctx.body = { error: '`all` is reserved for @all mentions' }
+        return
+    }
+
+    const duplicateName = storage.getRoomAgents(roomId)
+        .some(agent => agent.agentId !== existing.agentId && agent.name.trim().toLowerCase() === name.trim().toLowerCase())
+    if (duplicateName) {
+        ctx.status = 409
+        ctx.body = { error: 'Participant name already exists in this room' }
+        return
+    }
+
+    let normalized: AgentInput
+    try {
+        normalized = normalizeAgentInput({
+            profile: existing.profile,
+            name,
+            description: requested.description === undefined ? existing.description : requested.description,
+            runtime: existing.runtime,
+            codingAgentId: existing.codingAgentId,
+            mode: requested.mode === undefined ? existing.mode : requested.mode,
+            provider: requested.provider === undefined ? existing.provider : requested.provider,
+            model: requested.model === undefined ? existing.model : requested.model,
+            apiMode: requested.apiMode === undefined ? existing.apiMode : requested.apiMode,
+            reasoningEffort: requested.reasoningEffort === undefined ? existing.reasoningEffort : requested.reasoningEffort,
+        })
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 400)
+        ctx.body = { error: err?.message || 'Invalid participant configuration' }
+        return
+    }
+
+    const agent = storage.updateRoomAgent(roomId, ctx.params.agentId, {
+        name: normalized.name || existing.name,
+        description: normalized.description || '',
+        mode: normalized.mode || 'scoped',
+        provider: normalized.provider || '',
+        model: normalized.model || '',
+        apiMode: normalized.apiMode || '',
+        reasoningEffort: normalized.reasoningEffort || '',
+    })
+    if (agent) {
+        chatServer.agentClients.updateAgentIdentity(roomId, agent.agentId, agent.name, agent.description)
+    }
+    ctx.body = { agent: serializeRoomAgent(agent) }
 })
 
 // Remove agent from room
@@ -486,12 +687,19 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', a
         return
     }
 
+    try {
+        await chatServer.agentClients.interruptAgent(roomId, agent.agentId)
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 409)
+        ctx.body = { error: err?.message || 'Participant runtime did not stop' }
+        return
+    }
     storage.removeRoomMembersForAgent(roomId, agent)
     storage.removeRoomAgent(roomId, requestedAgentId)
     chatServer.agentClients.removeAgentFromRoom(roomId, agent.agentId)
     ctx.body = {
         success: true,
-        agents: storage.getRoomAgents(roomId),
+        agents: storage.getRoomAgents(roomId).map(serializeRoomAgent),
         members: storage.getRoomMembers(roomId),
     }
 })
