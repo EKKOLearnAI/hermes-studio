@@ -1117,7 +1117,8 @@ describe('Group Chat member/agent identity sync', () => {
     server.socketAuthUserIdMap = new Map([['socket-1', 42]])
     server.userInfoMap = new Map([['auth:42', { name: 'alice-login', description: '' }]])
     server.storage = { addRoomMember: vi.fn() }
-    server.nsp = { to: vi.fn(() => ({ emit })) }
+    server.socketAccessPolicy = vi.fn(() => ({ canRead: true, canWrite: true }))
+    server.emitToRoomReaders = vi.fn((_roomId: string, _event: string, payload: any) => emit('member_updated', payload))
     const socket = { id: 'socket-1' }
     const ack = vi.fn()
 
@@ -1146,6 +1147,91 @@ describe('Group Chat member/agent identity sync', () => {
     expect(ack).toHaveBeenCalledWith(expect.objectContaining({
       member: expect.objectContaining({ name: '妈妈' }),
     }))
+  })
+
+  it('rejects stale sockets when profile authority is revoked before member profile persistence', () => {
+    const liveMember = {
+      userId: 'auth:42',
+      name: 'alice-login',
+      description: '',
+      avatar: 'avatar-data',
+      source: 'human',
+      online: true,
+      socketId: 'socket-1',
+    }
+    const room = {
+      getOnlineMemberBySocketId: vi.fn(() => liveMember),
+      addOrUpdateMember: vi.fn(),
+      hasOnlineUser: vi.fn(() => false),
+      getMembersList: vi.fn(() => []),
+    }
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map([['room-family', room]])
+    server.socketAuthUserIdMap = new Map([['socket-1', 42]])
+    server.userInfoMap = new Map([['auth:42', { name: 'alice-login', description: '' }]])
+    server.storage = { addRoomMember: vi.fn() }
+    server.socketAccessPolicy = vi.fn(() => ({ canRead: false, canWrite: false }))
+    server.removeUnauthorizedRoomSocket = vi.fn(() => liveMember)
+    server.emitToRoomReaders = vi.fn()
+    const socket = { id: 'socket-1' }
+    const ack = vi.fn()
+
+    server.handleUpdateMemberProfile(socket, {
+      roomId: 'room-family',
+      name: 'Revived member',
+      description: 'should not persist',
+    }, ack)
+
+    expect(server.removeUnauthorizedRoomSocket).toHaveBeenCalledWith(socket, 'room-family')
+    expect(server.storage.addRoomMember).not.toHaveBeenCalled()
+    expect(room.addOrUpdateMember).not.toHaveBeenCalled()
+    expect(server.emitToRoomReaders).toHaveBeenCalledWith('room-family', 'member_left', {
+      roomId: 'room-family',
+      memberId: 'auth:42',
+      memberName: 'alice-login',
+      members: [],
+    }, 'socket-1')
+    expect(ack).toHaveBeenCalledWith({ error: 'Access denied' })
+  })
+
+  it('rejects read-only member profile updates without evicting the still-authorized reader', () => {
+    const liveMember = {
+      userId: 'auth:42',
+      name: 'alice-login',
+      description: '',
+      avatar: 'avatar-data',
+      source: 'human',
+      online: true,
+      socketId: 'socket-1',
+    }
+    const room = {
+      getOnlineMemberBySocketId: vi.fn(() => liveMember),
+      addOrUpdateMember: vi.fn(),
+      hasOnlineUser: vi.fn(() => true),
+      getMembersList: vi.fn(() => [liveMember]),
+    }
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map([['room-family', room]])
+    server.socketAuthUserIdMap = new Map([['socket-1', 42]])
+    server.userInfoMap = new Map([['auth:42', { name: 'alice-login', description: '' }]])
+    server.storage = { addRoomMember: vi.fn() }
+    server.socketAccessPolicy = vi.fn(() => ({ canRead: true, canWrite: false }))
+    server.removeUnauthorizedRoomSocket = vi.fn()
+    server.emitToRoomReaders = vi.fn()
+    const socket = { id: 'socket-1' }
+    const ack = vi.fn()
+
+    server.handleUpdateMemberProfile(socket, {
+      roomId: 'room-family',
+      name: 'Read Only',
+      description: 'should reject without eviction',
+    }, ack)
+
+    expect(server.removeUnauthorizedRoomSocket).not.toHaveBeenCalled()
+    expect(server.storage.addRoomMember).not.toHaveBeenCalled()
+    expect(room.addOrUpdateMember).not.toHaveBeenCalled()
+    expect(server.emitToRoomReaders).not.toHaveBeenCalled()
+    expect(ack).toHaveBeenCalledWith({ error: 'Access denied' })
   })
 
   it('does not expose rooms to regular admins solely because an agent profile matches', async () => {

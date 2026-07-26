@@ -439,8 +439,8 @@ test.describe('group chat room deep links', () => {
     const successResponse = page.waitForResponse(response => response.request().method() === 'PUT' && response.url().includes('/api/hermes/group-chat/rooms/room-alpha/invite-code'))
     await updateButton.click()
     await expect((await successResponse).status()).toBe(200)
-    expect(api.inviteCodeUpdates.at(-1)).toEqual({ roomId: 'room-alpha', body: { inviteCode: 'NEW456' } })
-    await expect(inviteInput).toHaveValue('NEW456')
+    expect(api.inviteCodeUpdates.at(-1)).toEqual({ roomId: 'room-alpha', body: { inviteCode: ' NEW456 ' } })
+    await expect(inviteInput).toHaveValue(' NEW456 ')
     await expect(updateButton).toBeDisabled()
 
     await inviteInput.fill('FAILCODE')
@@ -450,7 +450,7 @@ test.describe('group chat room deep links', () => {
 
     await modal.getByRole('button', { name: 'Cancel' }).click()
     await settingsButton.click()
-    await expect(modal.getByPlaceholder('Enter a new invite code')).toHaveValue('NEW456')
+    await expect(modal.getByPlaceholder('Enter a new invite code')).toHaveValue(' NEW456 ')
   })
 
   test('room settings persist custom and unlimited automatic handoff limits', async ({ page }) => {

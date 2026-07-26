@@ -19,6 +19,7 @@ vi.mock('../../packages/client/src/api/hermes/binary-content', () => ({
 }))
 
 import {
+  fetchGroupWorkspaceAttachmentBlob,
   fetchGroupWorkspaceFileBlob,
   joinRoomByCode,
   listRooms,
@@ -55,12 +56,20 @@ describe('group chat invite REST client', () => {
 
     await listRooms()
     await fetchGroupWorkspaceFileBlob('room/one', 'folder/file.txt', signal)
+    await fetchGroupWorkspaceAttachmentBlob('room/one', 'folder/file.txt', signal)
 
     expect(apiMock.request).toHaveBeenCalledWith('/api/hermes/group-chat/rooms', {
       headers: { 'X-Group-Chat-Local-Credential': 'signed-local-credential' },
     })
     expect(apiMock.fetchAuthenticatedBlob).toHaveBeenCalledWith(
       '/api/hermes/group-chat/rooms/room%2Fone/workspace-file/content?path=folder%2Ffile.txt',
+      {
+        signal,
+        headers: { 'X-Group-Chat-Local-Credential': 'signed-local-credential' },
+      },
+    )
+    expect(apiMock.fetchAuthenticatedBlob).toHaveBeenCalledWith(
+      '/api/hermes/group-chat/rooms/room%2Fone/workspace-file/content?path=folder%2Ffile.txt&download=1',
       {
         signal,
         headers: { 'X-Group-Chat-Local-Credential': 'signed-local-credential' },

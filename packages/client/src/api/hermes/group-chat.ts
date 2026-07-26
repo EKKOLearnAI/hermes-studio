@@ -406,7 +406,7 @@ export async function fetchGroupWorkspaceAttachmentBlob(roomId: string, path: st
     const params = new URLSearchParams({ path, download: '1' })
     return fetchAuthenticatedBlob(
         `/api/hermes/group-chat/rooms/${encodeURIComponent(roomId)}/workspace-file/content?${params}`,
-        { signal },
+        groupChatBlobOptions(signal),
     )
 }
 

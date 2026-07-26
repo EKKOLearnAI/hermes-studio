@@ -51,145 +51,11 @@ function generateInviteCode(): string {
     return Array.from(randomBytes(16), value => chars[value & 31]).join('')
 }
 
-type ParticipantRuntime = 'hermes' | 'coding_agent'
-type ParticipantCodingAgentId = '' | 'claude-code' | 'codex'
-
-type AgentInput = {
-    profile: string
-    name?: string
-    description?: string
-    invited?: boolean | number
-    runtime?: ParticipantRuntime
-    codingAgentId?: ParticipantCodingAgentId
-    mode?: 'scoped' | 'global'
-    provider?: string
-    model?: string
-    apiMode?: string
-    reasoningEffort?: string
-    avatar?: unknown
+function isBlankInviteCode(value: string | undefined): boolean {
+    return value === undefined || !value.trim()
 }
 
-const PARTICIPANT_REASONING_EFFORTS = new Set(['', 'default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
-const PARTICIPANT_API_MODES = new Set(['', 'chat_completions', 'codex_responses', 'anthropic_messages'])
-const PARTICIPANT_AVATAR_ASSETS = new Set([
-    '/coding-agents/hermes.png',
-    '/coding-agents/codex-openai.png',
-    '/coding-agents/claude-code.svg',
-])
-const MAX_PARTICIPANT_AVATAR_LENGTH = 1_500_000
-
-function defaultParticipantAvatar(runtime: ParticipantRuntime, codingAgentId: ParticipantCodingAgentId): string {
-    const assetUrl = runtime === 'coding_agent'
-        ? (codingAgentId === 'claude-code' ? '/coding-agents/claude-code.svg' : '/coding-agents/codex-openai.png')
-        : '/coding-agents/hermes.png'
-    return JSON.stringify({ type: 'asset', assetUrl })
-}
-
-function normalizeParticipantAvatar(value: unknown, runtime: ParticipantRuntime, codingAgentId: ParticipantCodingAgentId): string {
-    if (value == null || value === '') return defaultParticipantAvatar(runtime, codingAgentId)
-    let avatar: any = value
-    if (typeof avatar === 'string') {
-        try { avatar = JSON.parse(avatar) } catch {
-            throw Object.assign(new Error('avatar is invalid'), { status: 400 })
-        }
-    }
-    if (!avatar || typeof avatar !== 'object') {
-        throw Object.assign(new Error('avatar is invalid'), { status: 400 })
-    }
-    if (avatar.type === 'asset' && PARTICIPANT_AVATAR_ASSETS.has(String(avatar.assetUrl || ''))) {
-        return JSON.stringify({ type: 'asset', assetUrl: String(avatar.assetUrl) })
-    }
-    if (avatar.type === 'generated') {
-        const seed = String(avatar.seed || '').trim().slice(0, 200)
-        if (!seed) throw Object.assign(new Error('generated avatar seed is required'), { status: 400 })
-        return JSON.stringify({ type: 'generated', seed })
-    }
-    if (avatar.type === 'image') {
-        const dataUrl = String(avatar.dataUrl || '')
-        if (!/^data:image\/(?:png|jpeg|webp);base64,[a-zA-Z0-9+/=]+$/.test(dataUrl) || dataUrl.length > MAX_PARTICIPANT_AVATAR_LENGTH) {
-            throw Object.assign(new Error('image avatar is invalid or too large'), { status: 400 })
-        }
-        return JSON.stringify({ type: 'image', dataUrl })
-    }
-    throw Object.assign(new Error('avatar is invalid'), { status: 400 })
-}
-
-function publicParticipantAvatar(value: unknown): Record<string, string> | null {
-    if (!value) return null
-    try {
-        const avatar = typeof value === 'string' ? JSON.parse(value) : value
-        return avatar && typeof avatar === 'object' ? avatar : null
-    } catch {
-        return null
-    }
-}
-
-function serializeRoomAgent(agent: any) {
-    if (!agent) return agent
-    const {
-        lastSeenRoomSeq: _lastSeenRoomSeq,
-        lastSuccessfulRunId: _lastSuccessfulRunId,
-        checkpoint: _checkpoint,
-        checkpointSourceMessageIds: _checkpointSourceMessageIds,
-        ...publicAgent
-    } = agent
-    return { ...publicAgent, avatar: publicParticipantAvatar(publicAgent.avatar) }
-}
-
-function normalizeAgentInput(input: AgentInput): AgentInput {
-    const runtime = input.runtime || 'hermes'
-    if (runtime !== 'hermes' && runtime !== 'coding_agent') {
-        throw Object.assign(new Error('runtime must be hermes or coding_agent'), { status: 400 })
-    }
-    const codingAgentId = input.codingAgentId || ''
-    if (runtime === 'coding_agent' && !codingAgentId) {
-        throw Object.assign(new Error('codingAgentId is required for coding_agent participants'), { status: 400 })
-    }
-    if (codingAgentId && codingAgentId !== 'claude-code' && codingAgentId !== 'codex') {
-        throw Object.assign(new Error('codingAgentId must be claude-code or codex'), { status: 400 })
-    }
-    if (runtime === 'hermes' && codingAgentId) {
-        throw Object.assign(new Error('codingAgentId is only valid for coding_agent participants'), { status: 400 })
-    }
-    const mode = input.mode || 'scoped'
-    if (mode !== 'scoped' && mode !== 'global') {
-        throw Object.assign(new Error('mode must be scoped or global'), { status: 400 })
-    }
-    if (runtime === 'coding_agent' && mode !== 'scoped') {
-        throw Object.assign(new Error('Group Chat coding-agent participants require scoped mode'), { status: 400 })
-    }
-    const apiMode = String(input.apiMode || '').trim()
-    if (!PARTICIPANT_API_MODES.has(apiMode)) {
-        throw Object.assign(new Error('apiMode is invalid'), { status: 400 })
-    }
-    const provider = String(input.provider || '').trim()
-    const model = String(input.model || '').trim()
-    if (runtime === 'coding_agent' && (!provider || !model || !apiMode)) {
-        throw Object.assign(new Error('provider, model, and apiMode are required for coding_agent participants'), { status: 400 })
-    }
-    if (runtime === 'coding_agent') {
-        assertScopedCodingAgentProviderAllowed(mode, provider)
-    }
-    const requestedReasoningEffort = String(input.reasoningEffort || '').trim()
-    const reasoningEffort = requestedReasoningEffort === 'default' ? '' : requestedReasoningEffort
-    if (!PARTICIPANT_REASONING_EFFORTS.has(reasoningEffort)) {
-        throw Object.assign(new Error('reasoningEffort is invalid'), { status: 400 })
-    }
-    return {
-        ...input,
-        profile: String(input.profile || '').trim(),
-        name: String(input.name || '').trim(),
-        description: String(input.description || '').trim(),
-        runtime,
-        codingAgentId,
-        mode,
-        provider,
-        model,
-        apiMode,
-        reasoningEffort,
-        avatar: normalizeParticipantAvatar(input.avatar, runtime, codingAgentId),
-    }
-}
+type AgentInput = { profile: string; name?: string; description?: string; invited?: boolean | number }
 
 function sanitizeAgentConnectReason(reason?: string): string {
     return (reason || 'agent runtime connection failed')
@@ -553,7 +419,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         ctx.body = { error: 'inviteCode must be a string' }
         return
     }
-    const resolvedInviteCode = inviteCode === undefined || inviteCode === ''
+    const resolvedInviteCode = isBlankInviteCode(inviteCode)
         ? generateInviteCode()
         : inviteCode
     if (agents !== undefined && !Array.isArray(agents)) {
@@ -771,7 +637,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
         ctx.body = { error: 'inviteCode must be a string' }
         return
     }
-    const code = inviteCode === undefined || inviteCode === '' ? generateInviteCode() : inviteCode
+    const code = isBlankInviteCode(inviteCode) ? generateInviteCode() : inviteCode
     const cloneConfig = {
         triggerTokens: sourceRoom.triggerTokens,
         maxHistoryTokens: sourceRoom.maxHistoryTokens,
@@ -976,7 +842,7 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/invite-code', async (c
     }
 
     const { inviteCode } = ctx.request.body as { inviteCode?: string }
-    if (!inviteCode) {
+    if (typeof inviteCode !== 'string' || !inviteCode.trim()) {
         ctx.status = 400
         ctx.body = { error: 'inviteCode is required' }
         return
