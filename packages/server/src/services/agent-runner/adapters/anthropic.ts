@@ -42,7 +42,51 @@ export function shouldPreserveReasoningContent(target: AnthropicAdapterTarget): 
   ].some(part => identifier.includes(part))
 }
 
-function anthropicContentToOpenAiMessages(message: any, preserveReasoningContent = false): any[] {
+function anthropicToolResultToOpenAiChat(
+  content: unknown,
+  toolUseId: string,
+): { toolContent: string; imageMessageContent: any[] } {
+  if (!Array.isArray(content)) {
+    return { toolContent: stringifyContent(content), imageMessageContent: [] }
+  }
+
+  const textParts: string[] = []
+  const imageParts: any[] = []
+  for (const block of content) {
+    if (typeof block === 'string') {
+      textParts.push(block)
+      continue
+    }
+    if (block?.type === 'text' || (block && typeof block === 'object' && 'text' in block)) {
+      textParts.push(String(block.text || ''))
+      continue
+    }
+    if (block?.type === 'image') {
+      const url = anthropicImageSourceToUrl(block.source)
+      if (url) imageParts.push({ type: 'image_url', image_url: { url } })
+      continue
+    }
+    const text = stringifyContent(block)
+    if (text) textParts.push(text)
+  }
+
+  const text = textParts.filter(Boolean).join('\n')
+  if (!imageParts.length) {
+    return { toolContent: text, imageMessageContent: [] }
+  }
+  return {
+    toolContent: text || '[Image output attached.]',
+    imageMessageContent: [
+      { type: 'text', text: `[Image output from tool ${toolUseId}]` },
+      ...imageParts,
+    ],
+  }
+}
+
+function anthropicContentToOpenAiMessages(
+  message: any,
+  preserveReasoningContent = false,
+): any[] {
   const content = message?.content
   if (!Array.isArray(content)) {
     return [{ role: message.role, content: stringifyContent(content) }]
@@ -80,6 +124,7 @@ function anthropicContentToOpenAiMessages(message: any, preserveReasoningContent
 
   const messages: any[] = []
   const contentParts: any[] = []
+  const toolImageContent: any[] = []
   let hasImage = false
   const flushUserContent = () => {
     if (!contentParts.length) return
@@ -104,14 +149,18 @@ function anthropicContentToOpenAiMessages(message: any, preserveReasoningContent
     }
     if (block?.type === 'tool_result') {
       flushUserContent()
+      const toolUseId = String(block.tool_use_id || '')
+      const converted = anthropicToolResultToOpenAiChat(block.content, toolUseId)
       messages.push({
         role: 'tool',
-        tool_call_id: String(block.tool_use_id || ''),
-        content: stringifyContent(block.content),
+        tool_call_id: toolUseId,
+        content: converted.toolContent,
       })
+      toolImageContent.push(...converted.imageMessageContent)
     }
   }
   flushUserContent()
+  if (toolImageContent.length) messages.push({ role: 'user', content: toolImageContent })
   return messages.length ? messages : [{ role: message.role || 'user', content: '' }]
 }
 
@@ -201,12 +250,41 @@ function anthropicToOpenAiResponsesInput(message: any): any[] {
       items.push({
         type: 'function_call_output',
         call_id: String(block.tool_use_id || ''),
-        output: stringifyContent(block.content),
+        output: anthropicToolResultToResponsesOutput(block.content),
       })
     }
   }
   flushUserContent()
   return items.length ? items : [{ role: message.role || 'user', content: '' }]
+}
+
+function anthropicToolResultToResponsesOutput(content: unknown): string | any[] {
+  if (!Array.isArray(content)) return stringifyContent(content)
+
+  const parts: any[] = []
+  let hasImage = false
+  for (const block of content) {
+    if (typeof block === 'string') {
+      parts.push({ type: 'input_text', text: block })
+      continue
+    }
+    if (block?.type === 'text' || (block && typeof block === 'object' && 'text' in block)) {
+      parts.push({ type: 'input_text', text: String(block.text || '') })
+      continue
+    }
+    if (block?.type === 'image') {
+      const url = anthropicImageSourceToUrl(block.source)
+      if (url) {
+        hasImage = true
+        parts.push({ type: 'input_image', image_url: url })
+      }
+      continue
+    }
+    const text = stringifyContent(block)
+    if (text) parts.push({ type: 'input_text', text })
+  }
+  if (hasImage) return parts
+  return parts.map(part => String(part.text || '')).filter(Boolean).join('\n')
 }
 
 export function anthropicToOpenAiResponses(body: any, target: AnthropicAdapterTarget, stream = false): any {
