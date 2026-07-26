@@ -37,6 +37,11 @@ export interface ClaudeCodeProxyTargetInput extends AgentTargetInput {}
 
 type ClaudeCodeProxyTarget = RegisteredAgentTarget<ClaudeCodeProxyTargetInput>
 
+type ProxyRunIdentity = {
+  eventToken?: string
+  incarnationToken?: string
+}
+
 const targetRegistry = new AgentTargetRegistry<ClaudeCodeProxyTargetInput>(
   input => [input.provider, input.model, input.apiMode, input.baseUrl, input.agentSessionId || '', input.chatSessionId || ''],
 )
@@ -342,13 +347,16 @@ function anthropicEventStream(events: AsyncIterable<AnthropicStreamEvent>): Read
   return Readable.from(generate())
 }
 
-function observeResponsesEvents(target: ClaudeCodeProxyTarget, events: AsyncIterable<CanonicalResponsesEvent>) {
-  const eventToken = codingAgentRunManager.eventTokenForAgentSession(target.agentSessionId)
+function observeResponsesEvents(
+  target: ClaudeCodeProxyTarget,
+  events: AsyncIterable<CanonicalResponsesEvent>,
+  identity: ProxyRunIdentity,
+) {
   void (async () => {
     try {
       for await (const event of events) {
-        codingAgentRunManager.handleProxyUsageEvent(target.agentSessionId, event, eventToken)
-        codingAgentRunManager.handleResponseEvent(target.agentSessionId, event, eventToken)
+        codingAgentRunManager.handleProxyUsageEvent(target.agentSessionId, event, identity.eventToken, identity.incarnationToken)
+        codingAgentRunManager.handleResponseEvent(target.agentSessionId, event, identity.eventToken, identity.incarnationToken)
       }
     } catch (err) {
       loggerLikeWarn(err, '[claude-code-proxy] failed to observe provider stream')
@@ -360,7 +368,7 @@ function loggerLikeWarn(err: unknown, message: string) {
   logger.warn(err, message)
 }
 
-async function openAiChatToAnthropicSseStream(target: ClaudeCodeProxyTarget, body: any): Promise<Readable> {
+async function openAiChatToAnthropicSseStream(target: ClaudeCodeProxyTarget, body: any, identity: ProxyRunIdentity): Promise<Readable> {
   if (target.apiMode !== 'chat_completions') {
     const err = new Error(`Claude proxy MVP only supports chat_completions targets, got ${target.apiMode}`)
     ;(err as any).status = 501
@@ -373,11 +381,11 @@ async function openAiChatToAnthropicSseStream(target: ClaudeCodeProxyTarget, bod
     body: anthropicToOpenAiChat(body, target, true),
   })
   const [clientStream, observerStream] = teeAsyncIterable(stream)
-  observeResponsesEvents(target, openAiChatSseToResponsesEvents(observerStream, target))
+  observeResponsesEvents(target, openAiChatSseToResponsesEvents(observerStream, target), identity)
   return anthropicEventStream(openAiChatSseToAnthropicEvents(clientStream, target))
 }
 
-async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: any): Promise<Readable> {
+async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: any, identity: ProxyRunIdentity): Promise<Readable> {
   if (target.apiMode !== 'anthropic_messages') {
     const err = new Error(`Claude proxy Anthropic adapter only supports anthropic_messages targets, got ${target.apiMode}`)
     ;(err as any).status = 501
@@ -408,7 +416,7 @@ async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: a
         try {
           const retryStream = await request(retryBody)
           const [clientStream, observerStream] = teeAsyncIterable(retryStream)
-          observeResponsesEvents(target, anthropicMessagesSseToResponsesEvents(observerStream, target))
+          observeResponsesEvents(target, anthropicMessagesSseToResponsesEvents(observerStream, target), identity)
           return Readable.from(clientStream)
         } catch (retryError) {
           logEncryptedContentRetryFailure(target, retryError)
@@ -418,16 +426,16 @@ async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: a
     }
     if (probe.stream) {
       const [clientStream, observerStream] = teeAsyncIterable(probe.stream)
-      observeResponsesEvents(target, anthropicMessagesSseToResponsesEvents(observerStream, target))
+      observeResponsesEvents(target, anthropicMessagesSseToResponsesEvents(observerStream, target), identity)
       return Readable.from(clientStream)
     }
   }
   const [clientStream, observerStream] = teeAsyncIterable(stream)
-  observeResponsesEvents(target, anthropicMessagesSseToResponsesEvents(observerStream, target))
+  observeResponsesEvents(target, anthropicMessagesSseToResponsesEvents(observerStream, target), identity)
   return Readable.from(clientStream)
 }
 
-async function openAiResponsesToAnthropicSseStream(target: ClaudeCodeProxyTarget, body: any): Promise<Readable> {
+async function openAiResponsesToAnthropicSseStream(target: ClaudeCodeProxyTarget, body: any, identity: ProxyRunIdentity): Promise<Readable> {
   if (target.apiMode !== 'codex_responses') {
     const err = new Error(`Claude proxy responses adapter only supports codex_responses targets, got ${target.apiMode}`)
     ;(err as any).status = 501
@@ -440,7 +448,7 @@ async function openAiResponsesToAnthropicSseStream(target: ClaudeCodeProxyTarget
     body: anthropicToOpenAiResponses(body, target, true),
   })
   const [clientStream, observerStream] = teeAsyncIterable(stream)
-  observeResponsesEvents(target, openAiResponsesSseToResponsesEvents(observerStream))
+  observeResponsesEvents(target, openAiResponsesSseToResponsesEvents(observerStream), identity)
   return anthropicEventStream(openAiResponsesSseToAnthropicEvents(clientStream, target))
 }
 
@@ -464,14 +472,18 @@ export async function claudeProxyModels(ctx: Context) {
 export async function claudeProxyMessages(ctx: Context) {
   const target = requireTarget(ctx)
   if (!target) return
+  const identity: ProxyRunIdentity = {
+    eventToken: codingAgentRunManager.eventTokenForAgentSession(target.agentSessionId),
+    incarnationToken: codingAgentRunManager.incarnationTokenForAgentSession(target.agentSessionId),
+  }
   try {
     const requestBody = ctx.request.body || {}
     if ((requestBody as any).stream === true) {
       const stream = target.apiMode === 'anthropic_messages'
-        ? await anthropicMessagesSseStream(target, requestBody)
+        ? await anthropicMessagesSseStream(target, requestBody, identity)
         : target.apiMode === 'codex_responses'
-          ? await openAiResponsesToAnthropicSseStream(target, requestBody)
-          : await openAiChatToAnthropicSseStream(target, requestBody)
+          ? await openAiResponsesToAnthropicSseStream(target, requestBody, identity)
+          : await openAiChatToAnthropicSseStream(target, requestBody, identity)
       ctx.set('Content-Type', 'text/event-stream; charset=utf-8')
       ctx.set('Cache-Control', 'no-cache')
       ctx.body = stream

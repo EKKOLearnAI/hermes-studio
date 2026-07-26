@@ -61,6 +61,18 @@ type MentionMessage = {
     mentionDepth?: number
 }
 
+export function participantContextRevision(
+    participantCursor: number,
+    triggerRoomSeq: number,
+    messages: Array<{ roomSeq?: number }>,
+): number {
+    return Math.max(
+        Math.max(0, Math.floor(Number(participantCursor || 0))),
+        Math.max(0, Math.floor(Number(triggerRoomSeq || 0))),
+        ...messages.map(message => Math.max(0, Math.floor(Number(message.roomSeq || 0)))),
+    )
+}
+
 export function mentionMessageToStoredContextMessage(roomId: string, msg: MentionMessage): StoredMessage {
     return {
         id: msg.messageId || '',
@@ -1049,11 +1061,24 @@ class AgentClient {
             reportStatus('replying')
             this.emitMessageStreamStart(roomId, messageId, sessionId)
 
-            const canonicalMessages = this.storage?.getMessagesForContext?.(roomId, { throughMessageId: msg.messageId }) || []
-            contextRevision = canonicalMessages.reduce(
-                (latest: number, entry: { roomSeq?: number }) => Math.max(latest, Number(entry.roomSeq || 0)),
-                Number(binding.lastSeenRoomSeq || 0),
-            )
+            const participantCursor = Math.max(0, Math.floor(Number(binding.lastSeenRoomSeq || 0)))
+            const canResolveStoredTrigger = typeof this.storage?.getMessage === 'function'
+            const storedTriggerMessage = this.storage?.getMessage?.(msg.messageId)
+            if (canResolveStoredTrigger && !storedTriggerMessage) {
+                throw new Error('The triggering Room message is no longer available; refusing to advance Coding Agent continuity')
+            }
+            const triggerMessage = storedTriggerMessage || mentionMessageToStoredContextMessage(roomId, msg)
+            const triggerRoomSeq = Math.max(0, Math.floor(Number(triggerMessage.roomSeq || 0)))
+            if (canResolveStoredTrigger && triggerRoomSeq <= 0) {
+                throw new Error('The triggering Room message has no persisted sequence; refusing to advance Coding Agent continuity')
+            }
+            const canonicalMessages = this.storage?.getMessagesForContext?.(roomId, triggerRoomSeq > 0
+                ? {
+                    throughRoomSeq: triggerRoomSeq,
+                    ...(participantCursor > 0 ? { afterRoomSeq: participantCursor } : {}),
+                }
+                : { throughMessageId: msg.messageId }) || []
+            contextRevision = participantContextRevision(participantCursor, triggerRoomSeq, canonicalMessages)
             if (this.contextEngine && this.storage) {
                 const roomInfo = this.storage.getRoom(roomId)
                 const roomMembers: Array<{ userId: string; name: string; description: string }> = this.storage.getRoomMembers(roomId) || []
@@ -1068,7 +1093,7 @@ class AgentClient {
                     members: roomMembers,
                     upstream: '',
                     apiKey: null,
-                    currentMessage: mentionMessageToStoredContextMessage(roomId, msg),
+                    currentMessage: triggerMessage,
                     compression: roomInfo ? {
                         triggerTokens: roomInfo.triggerTokens,
                         maxHistoryTokens: roomInfo.maxHistoryTokens,

@@ -1,11 +1,18 @@
 export interface CanonicalGroupMessage {
     id: string
     timestamp: number
+    roomSeq?: number
 }
 
 export interface GroupMessageCursorCutoff {
+    /** Presentation-order anchor used by persisted summary snapshots and legacy callers. */
     throughMessageId?: string
+    /** Presentation-order anchor used by persisted summary snapshots and legacy callers. */
     afterMessageId?: string
+    /** Inclusive persisted Room sequence upper bound for participant continuity. */
+    throughRoomSeq?: number
+    /** Exclusive persisted Room sequence lower bound for participant continuity. */
+    afterRoomSeq?: number
 }
 
 export interface GroupMessageCursorSlice<T extends CanonicalGroupMessage> {
@@ -64,7 +71,17 @@ export function sliceGroupMessagesCanonical<T extends CanonicalGroupMessage>(
     messages: readonly T[],
     cutoff?: GroupMessageCursorCutoff,
 ): GroupMessageCursorSlice<T> {
-    const ordered = sortGroupMessagesCanonical(messages)
+    const throughRoomSeq = Math.max(0, Math.floor(Number(cutoff?.throughRoomSeq || 0)))
+    const afterRoomSeq = Math.max(0, Math.floor(Number(cutoff?.afterRoomSeq || 0)))
+    const hasSequenceBounds = throughRoomSeq > 0 || afterRoomSeq > 0
+    const sequenceBounded = messages.filter((message) => {
+        const roomSeq = Number(message.roomSeq || 0)
+        if (hasSequenceBounds && roomSeq <= 0) return false
+        if (throughRoomSeq > 0 && roomSeq > throughRoomSeq) return false
+        if (afterRoomSeq > 0 && roomSeq <= afterRoomSeq) return false
+        return true
+    })
+    const ordered = sortGroupMessagesCanonical(sequenceBounded)
     let throughMessageFound = !cutoff?.throughMessageId
     let afterMessageFound = !cutoff?.afterMessageId
     let sliced = ordered

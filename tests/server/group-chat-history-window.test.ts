@@ -111,6 +111,33 @@ describe('group chat history windows', () => {
     expect(storage.getMessagesForContext('room-1').map(message => message.roomSeq)).toEqual([2, 1])
   })
 
+  it('selects a context window by room sequence before applying presentation order', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+
+    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'z-prior', timestamp: 100, content: 'prior despite later clock' }) as any)
+    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'a-trigger', timestamp: 1, content: 'trigger after clock rollback' }) as any)
+    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'z-same-ms-prior', timestamp: 200, content: 'same-ms prior' }) as any)
+    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'a-same-ms-trigger', timestamp: 200, content: 'same-ms trigger' }) as any)
+    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'later', timestamp: 0, content: 'must stay after trigger' }) as any)
+    dbMock.current?.prepare(
+      `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, role, roomSeq)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('legacy-unknown-seq', 'room-1', 'user-1', 'Alice', 'unknown sequence', 50, 'user', 0)
+
+    expect(storage.getMessagesForContext('room-1', { throughRoomSeq: 2 } as any).map(message => message.id)).toEqual([
+      'a-trigger',
+      'z-prior',
+    ])
+    expect(storage.getMessagesForContext('room-1', { throughRoomSeq: 4 } as any).map(message => message.id)).toEqual([
+      'a-trigger',
+      'z-prior',
+      'a-same-ms-trigger',
+      'z-same-ms-prior',
+    ])
+    expect(storage.getMessagesForContext('room-1').map(message => message.id)).toContain('legacy-unknown-seq')
+  })
+
   it('does not reuse a pruned high room sequence after timestamp rollback', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')

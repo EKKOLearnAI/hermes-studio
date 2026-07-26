@@ -31,6 +31,11 @@ export interface CodexProxyTargetInput extends AgentTargetInput {
 
 type CodexProxyTarget = RegisteredAgentTarget<CodexProxyTargetInput>
 
+type ProxyRunIdentity = {
+  eventToken?: string
+  incarnationToken?: string
+}
+
 const targetRegistry = new AgentTargetRegistry<CodexProxyTargetInput>(
   input => [input.profile.trim(), input.provider, input.model, input.apiMode, input.baseUrl, input.agentSessionId || '', input.chatSessionId || ''],
 )
@@ -152,20 +157,23 @@ function responseEventForCodexClient(target: CodexProxyTarget, event: CanonicalR
   }
 }
 
-function observableResponsesEvents(target: CodexProxyTarget, events: AsyncIterable<CanonicalResponsesEvent>): AsyncIterable<CanonicalResponsesEvent> {
-  const eventToken = codingAgentRunManager.eventTokenForAgentSession(target.agentSessionId)
+function observableResponsesEvents(
+  target: CodexProxyTarget,
+  events: AsyncIterable<CanonicalResponsesEvent>,
+  identity: ProxyRunIdentity,
+): AsyncIterable<CanonicalResponsesEvent> {
   async function* observe() {
     for await (const event of events) {
-      codingAgentRunManager.handleProxyUsageEvent(target.agentSessionId, event, eventToken)
+      codingAgentRunManager.handleProxyUsageEvent(target.agentSessionId, event, identity.eventToken, identity.incarnationToken)
       const clientEvent = responseEventForCodexClient(target, event)
-      codingAgentRunManager.handleResponseEvent(target.agentSessionId, clientEvent, eventToken)
+      codingAgentRunManager.handleResponseEvent(target.agentSessionId, clientEvent, identity.eventToken, identity.incarnationToken)
       yield clientEvent
     }
   }
   return observe()
 }
 
-async function openAiChatToResponsesSseStream(target: CodexProxyTarget, body: any): Promise<Readable> {
+async function openAiChatToResponsesSseStream(target: CodexProxyTarget, body: any, identity: ProxyRunIdentity): Promise<Readable> {
   if (target.apiMode !== 'chat_completions') {
     const err = new Error(`Codex proxy only supports chat_completions targets, got ${target.apiMode}`)
     ;(err as any).status = 501
@@ -181,10 +189,10 @@ async function openAiChatToResponsesSseStream(target: CodexProxyTarget, body: an
   return responsesEventStream(observableResponsesEvents(target, openAiChatSseToResponsesEvents(stream, {
     ...target,
     annotateMcpToolNamespaces: true,
-  })))
+  }), identity))
 }
 
-async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, body: any): Promise<Readable> {
+async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, body: any, identity: ProxyRunIdentity): Promise<Readable> {
   if (target.apiMode !== 'anthropic_messages') {
     const err = new Error(`Codex proxy Anthropic adapter only supports anthropic_messages targets, got ${target.apiMode}`)
     ;(err as any).status = 501
@@ -204,10 +212,10 @@ async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, b
   return responsesEventStream(observableResponsesEvents(target, anthropicMessagesSseToResponsesEvents(stream, {
     ...target,
     annotateMcpToolNamespaces: true,
-  })))
+  }), identity))
 }
 
-async function openAiResponsesSseStream(target: CodexProxyTarget, body: any): Promise<Readable> {
+async function openAiResponsesSseStream(target: CodexProxyTarget, body: any, identity: ProxyRunIdentity): Promise<Readable> {
   if (target.apiMode !== 'codex_responses') {
     const err = new Error(`Codex proxy Responses adapter only supports codex_responses targets, got ${target.apiMode}`)
     ;(err as any).status = 501
@@ -220,20 +228,24 @@ async function openAiResponsesSseStream(target: CodexProxyTarget, body: any): Pr
     apiKey: target.apiKey,
     body: responsesBody,
   })
-  return responsesEventStream(observableResponsesEvents(target, openAiResponsesSseToResponsesEvents(stream)))
+  return responsesEventStream(observableResponsesEvents(target, openAiResponsesSseToResponsesEvents(stream), identity))
 }
 
 export async function codexProxyResponses(ctx: Context) {
   const target = requireTarget(ctx)
   if (!target) return
+  const identity: ProxyRunIdentity = {
+    eventToken: codingAgentRunManager.eventTokenForAgentSession(target.agentSessionId),
+    incarnationToken: codingAgentRunManager.incarnationTokenForAgentSession(target.agentSessionId),
+  }
   try {
     const requestBody = ctx.request.body || {}
     if ((requestBody as any).stream === true) {
       const stream = target.apiMode === 'anthropic_messages'
-        ? await anthropicMessagesToResponsesSseStream(target, requestBody)
+        ? await anthropicMessagesToResponsesSseStream(target, requestBody, identity)
         : target.apiMode === 'codex_responses'
-          ? await openAiResponsesSseStream(target, requestBody)
-          : await openAiChatToResponsesSseStream(target, requestBody)
+          ? await openAiResponsesSseStream(target, requestBody, identity)
+          : await openAiChatToResponsesSseStream(target, requestBody, identity)
       ctx.set('Content-Type', 'text/event-stream; charset=utf-8')
       ctx.set('Cache-Control', 'no-cache')
       ctx.body = stream
