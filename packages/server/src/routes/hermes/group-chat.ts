@@ -50,6 +50,10 @@ function generateInviteCode(): string {
     return Array.from(randomBytes(16), value => chars[value & 31]).join('')
 }
 
+function isBlankInviteCode(value: string | undefined): boolean {
+    return value === undefined || !value.trim()
+}
+
 type AgentInput = { profile: string; name?: string; description?: string; invited?: boolean | number }
 
 function sanitizeAgentConnectReason(reason?: string): string {
@@ -414,7 +418,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         ctx.body = { error: 'inviteCode must be a string' }
         return
     }
-    const resolvedInviteCode = inviteCode === undefined || inviteCode === ''
+    const resolvedInviteCode = isBlankInviteCode(inviteCode)
         ? generateInviteCode()
         : inviteCode
     if (agents !== undefined && !Array.isArray(agents)) {
@@ -610,7 +614,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
         ctx.body = { error: 'inviteCode must be a string' }
         return
     }
-    const code = inviteCode === undefined || inviteCode === '' ? generateInviteCode() : inviteCode
+    const code = isBlankInviteCode(inviteCode) ? generateInviteCode() : inviteCode
     const cloneConfig = {
         triggerTokens: sourceRoom.triggerTokens,
         maxHistoryTokens: sourceRoom.maxHistoryTokens,
@@ -770,7 +774,7 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/invite-code', async (c
     }
 
     const { inviteCode } = ctx.request.body as { inviteCode?: string }
-    if (!inviteCode) {
+    if (typeof inviteCode !== 'string' || !inviteCode.trim()) {
         ctx.status = 400
         ctx.body = { error: 'inviteCode is required' }
         return

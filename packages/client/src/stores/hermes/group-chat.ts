@@ -1092,8 +1092,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     }
 
     async function setRoomInviteCode(roomId: string, inviteCode: string) {
-        const nextCode = inviteCode.trim()
-        if (!nextCode) throw new Error('inviteCode is required')
+        const nextCode = inviteCode
+        if (!nextCode.trim()) throw new Error('inviteCode is required')
         try {
             await updateInviteCodeApi(roomId, nextCode)
             const room = rooms.value.find(r => r.id === roomId)

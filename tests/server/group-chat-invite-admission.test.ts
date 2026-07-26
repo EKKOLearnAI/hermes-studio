@@ -724,6 +724,48 @@ describe('group chat invite admission', () => {
     expect(cloneCtx.body.room.inviteCode).not.toBe(createCtx.body.room.inviteCode)
   })
 
+  it('treats whitespace-only invite code input as blank without trimming nonblank codes', async () => {
+    seedAuthenticatedUser(harness.db, { id: 1, username: 'root', role: 'super_admin' })
+    const admin = { id: 1, username: 'root', role: 'super_admin', profiles: [] }
+    const create = await routeHandler('/api/hermes/group-chat/rooms', 'POST')
+    const clone = await routeHandler('/api/hermes/group-chat/rooms/:roomId/clone', 'POST')
+    const update = await routeHandler('/api/hermes/group-chat/rooms/:roomId/invite-code', 'PUT')
+
+    const createCtx: any = {
+      request: { body: { name: 'Whitespace Create', inviteCode: '   ', agents: [] } },
+      state: { user: admin },
+      status: 200,
+      body: undefined,
+    }
+    await create(createCtx, async () => {})
+    expect(createCtx.body.room.inviteCode).toMatch(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{16}$/)
+
+    const cloneCtx: any = {
+      params: { roomId: createCtx.body.room.id },
+      request: { body: { name: 'Whitespace Clone', inviteCode: '\t  ' } },
+      state: { user: admin },
+      status: 200,
+      body: undefined,
+    }
+    await clone(cloneCtx, async () => {})
+    expect(cloneCtx.body.room.inviteCode).toMatch(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{16}$/)
+    expect(cloneCtx.body.room.inviteCode).not.toBe(createCtx.body.room.inviteCode)
+
+    const updateCtx: any = {
+      params: { roomId: cloneCtx.body.room.id },
+      request: { body: { inviteCode: '  ' } },
+      state: { user: admin },
+      status: 200,
+      body: undefined,
+    }
+    await update(updateCtx, async () => {})
+    expect(updateCtx.status).toBe(400)
+    expect(updateCtx.body).toEqual({ error: 'inviteCode is required' })
+    expect(groupServer.getStorage().getRoom(cloneCtx.body.room.id)).toEqual(
+      expect.objectContaining({ inviteCode: cloneCtx.body.room.inviteCode }),
+    )
+  })
+
   it('returns the same invite lookup miss for stale and unknown codes without echoing raw codes', async () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1', 'ROOM1')

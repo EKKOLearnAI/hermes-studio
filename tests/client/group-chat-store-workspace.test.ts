@@ -117,8 +117,8 @@ describe('group chat store workspace', () => {
 
     await store.setRoomInviteCode('room-1', ' NEW456 ')
 
-    expect(groupChatApiMock.updateInviteCode).toHaveBeenCalledWith('room-1', 'NEW456')
-    expect(store.rooms[0].inviteCode).toBe('NEW456')
+    expect(groupChatApiMock.updateInviteCode).toHaveBeenCalledWith('room-1', ' NEW456 ')
+    expect(store.rooms[0].inviteCode).toBe(' NEW456 ')
   })
 
   it('does not mutate local invite code when the API rejects', async () => {

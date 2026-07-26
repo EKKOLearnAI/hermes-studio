@@ -2499,6 +2499,24 @@ export class GroupChatServer {
             ack?.({ error: 'Access denied' })
             return
         }
+        const access = this.socketAccessPolicy(socket, roomId)
+        if (!access.canRead) {
+            const removed = this.removeUnauthorizedRoomSocket(socket, roomId)
+            if (removed && !joined.room.hasOnlineUser(removed.userId)) {
+                this.emitToRoomReaders(roomId, 'member_left', {
+                    roomId,
+                    memberId: removed.userId,
+                    memberName: removed.name,
+                    members: joined.room.getMembersList(),
+                }, socket.id)
+            }
+            ack?.({ error: 'Access denied' })
+            return
+        }
+        if (!access.canWrite) {
+            ack?.({ error: 'Access denied' })
+            return
+        }
 
         try {
             const userId = joined.member.userId
@@ -2509,12 +2527,13 @@ export class GroupChatServer {
             this.userInfoMap.set(userId, { name, description })
 
             const members = joined.room.getMembersList()
-            this.nsp.to(roomId).emit('member_updated', {
+            const payload = {
                 roomId,
                 memberId: userId,
                 memberName: name,
                 members,
-            })
+            }
+            this.emitToRoomReaders(roomId, 'member_updated', payload)
             ack?.({ member: joined.room.getOnlineMemberBySocketId(socket.id), members })
         } catch (err) {
             logger.error(`[GroupChat] Failed to update member profile: ${(err as Error).message}`)

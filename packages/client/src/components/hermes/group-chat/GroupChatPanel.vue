@@ -111,8 +111,8 @@ const currentRoomCanApprove = computed(() => canApproveRoom(currentRoom.value))
 const visibleApproval = computed(() => currentRoomCanApprove.value ? store.activePendingApproval : null)
 const currentWorkspaceLabel = computed(() => workspaceBasename(currentRoom.value?.workspace || ''))
 const canUpdateInviteCode = computed(() => {
-    const nextCode = inviteCodeDraft.value.trim()
-    return currentRoomCanManage.value && !isSavingInviteCode.value && !!nextCode && nextCode !== (currentRoom.value?.inviteCode || '')
+    const nextCode = inviteCodeDraft.value
+    return currentRoomCanManage.value && !isSavingInviteCode.value && !!nextCode.trim() && nextCode !== (currentRoom.value?.inviteCode || '')
 })
 const canJoinByInviteCode = computed(() => !!joinInviteCode.value.trim() && !isJoiningByInviteCode.value)
 function isLeavingRoom(roomId: string): boolean {
@@ -371,8 +371,8 @@ async function handleCreateRoom(name: string, inviteCode: string, userName: stri
 }
 
 async function handleJoinByInviteCode() {
-    const code = joinInviteCode.value.trim()
-    if (!code || isJoiningByInviteCode.value) return
+    const code = joinInviteCode.value
+    if (!code.trim() || isJoiningByInviteCode.value) return
     isJoiningByInviteCode.value = true
     try {
         const room = await store.joinByCode(code)
@@ -431,8 +431,8 @@ async function copyRoomLink(roomId: string) {
 }
 
 async function handleCopyInviteCode() {
-    const code = inviteCodeDraft.value.trim()
-    if (!code) return
+    const code = inviteCodeDraft.value
+    if (!code.trim()) return
     const ok = await copyToClipboard(code)
     if (ok) message.success(t('groupChat.inviteCodeCopied'))
     else message.error(t('groupChat.inviteCodeCopyFailed'))
@@ -679,7 +679,7 @@ function handleOpenRoomSettings() {
 
 async function handleSaveInviteCode() {
     if (!store.currentRoomId || !currentRoomCanManage.value || isSavingInviteCode.value || !canUpdateInviteCode.value) return
-    const nextCode = inviteCodeDraft.value.trim()
+    const nextCode = inviteCodeDraft.value
     isSavingInviteCode.value = true
     try {
         await store.setRoomInviteCode(store.currentRoomId, nextCode)
