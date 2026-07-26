@@ -507,7 +507,7 @@ export function listSessions(profile?: string, source?: string, limit = 2000): H
     LEFT JOIN ${SESSIONS_TABLE} p ON p.id = s.parent_session_id
     WHERE 1 = 1
       ${profileFilter ? 'AND s.profile = ?' : ''}
-      ${source ? 'AND s.source = ?' : ''}
+      ${source ? 'AND s.source = ?' : "AND s.source <> 'group_chat'"}
     ORDER BY s.last_active DESC
     LIMIT ?
   `
