@@ -16,6 +16,7 @@ import {
   codexImageArgs,
   CodingAgentRunManager,
   codingAgentGatewayErrorMessage,
+  isCurrentCodingAgentChildTurn,
   sanitizeCodingAgentTerminalOutput,
 } from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
 import { mapCodingAgentResponseEvent } from '../../packages/server/src/services/agent-runner/coding-agent-event-mapper'
@@ -250,6 +251,18 @@ describe('agent runner stream tee', () => {
       ['a', 'b'],
       ['a', 'b'],
     ])
+  })
+})
+
+describe('coding agent child turn fencing', () => {
+  it('accepts only callbacks from the current child and captured turn token', () => {
+    const oldChild = { pid: 1 } as any
+    const currentChild = { pid: 2 } as any
+    const run = { currentChild, activeEventToken: 'turn-2' }
+
+    expect(isCurrentCodingAgentChildTurn(run, currentChild, 'turn-2')).toBe(true)
+    expect(isCurrentCodingAgentChildTurn(run, oldChild, 'turn-2')).toBe(false)
+    expect(isCurrentCodingAgentChildTurn(run, currentChild, 'turn-1')).toBe(false)
   })
 })
 

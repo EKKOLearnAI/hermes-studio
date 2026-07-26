@@ -343,11 +343,12 @@ function anthropicEventStream(events: AsyncIterable<AnthropicStreamEvent>): Read
 }
 
 function observeResponsesEvents(target: ClaudeCodeProxyTarget, events: AsyncIterable<CanonicalResponsesEvent>) {
+  const eventToken = codingAgentRunManager.eventTokenForAgentSession(target.agentSessionId)
   void (async () => {
     try {
       for await (const event of events) {
-        codingAgentRunManager.handleProxyUsageEvent(target.agentSessionId, event)
-        codingAgentRunManager.handleResponseEvent(target.agentSessionId, event)
+        codingAgentRunManager.handleProxyUsageEvent(target.agentSessionId, event, eventToken)
+        codingAgentRunManager.handleResponseEvent(target.agentSessionId, event, eventToken)
       }
     } catch (err) {
       loggerLikeWarn(err, '[claude-code-proxy] failed to observe provider stream')

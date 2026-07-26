@@ -119,14 +119,26 @@ interface ManagedCodingAgentRun {
   stoppedByUser?: boolean
   pendingChatCompletionEvent?: 'run.completed' | 'run.failed'
   pendingChatCompletionPayload?: Record<string, unknown>
+  pendingChatCompletionEventToken?: string
   memoryExportStarted?: boolean
   assistantMessageId?: string
+  /** Per-input fence used to reject delayed events from a previous turn on the same session. */
+  activeEventToken?: string
 }
 
 interface CodingAgentRunSendOptions {
   systemPrompt?: string
   images?: CodingAgentImageInput[]
   storageInput?: string
+  eventToken?: string
+}
+
+export function isCurrentCodingAgentChildTurn(
+  run: Pick<ManagedCodingAgentRun, 'currentChild' | 'activeEventToken'>,
+  child: ChildProcess,
+  eventToken?: string,
+): boolean {
+  return run.currentChild === child && (!eventToken || eventToken === run.activeEventToken)
 }
 
 export type CodingAgentRunEventListener = (event: string, payload: any) => void
@@ -499,12 +511,16 @@ export class CodingAgentRunManager {
     return run && !run.exited ? run.id : undefined
   }
 
+  eventTokenForAgentSession(agentSessionId?: string): string | undefined {
+    return agentSessionId ? this.runs.get(agentSessionId)?.activeEventToken : undefined
+  }
+
   completeWorkspaceDiffForSession(sessionId: string) {
     const run = this.getBySession(sessionId)
     return run ? this.completeWorkspaceRunDiff(run) : null
   }
 
-  subscribe(sessionId: string, listener: CodingAgentRunEventListener): () => void {
+  subscribe(sessionId: string, listener: CodingAgentRunEventListener, eventToken?: string): () => void {
     const key = String(sessionId || '').trim()
     if (!key) throw new Error('sessionId is required')
     let listeners = this.eventListeners.get(key)
@@ -512,10 +528,16 @@ export class CodingAgentRunManager {
       listeners = new Set()
       this.eventListeners.set(key, listeners)
     }
-    listeners.add(listener)
+    const fencedListener: CodingAgentRunEventListener = eventToken
+      ? (event, payload) => {
+          if (payload?.event_token !== eventToken) return
+          listener(event, payload)
+        }
+      : listener
+    listeners.add(fencedListener)
     return () => {
       const current = this.eventListeners.get(key)
-      current?.delete(listener)
+      current?.delete(fencedListener)
       if (!current?.size) this.eventListeners.delete(key)
     }
   }
@@ -653,7 +675,16 @@ export class CodingAgentRunManager {
     const text = String(input || '').trim()
     const images = Array.isArray(options.images) ? options.images : []
     if (!text && images.length === 0) throw new Error('Input is required')
+    if (childIsRunning(run.currentChild)) {
+      const runnerName = run.launch.agentId === 'codex' ? 'Codex' : 'Claude Code'
+      throw new Error(`${runnerName} is still processing the previous input`)
+    }
     const systemPrompt = String(options.systemPrompt || '').trim()
+    run.activeEventToken = String(options.eventToken || '').trim() || undefined
+    run.pendingChatCompletionEvent = undefined
+    run.pendingChatCompletionPayload = undefined
+    run.pendingChatCompletionEventToken = undefined
+    run.terminalUsageRefresh = undefined
     this.ensureDbSession(run)
     run.assistantMessageId = undefined
     this.addUserMessage(run, options.storageInput ?? text)
@@ -734,10 +765,11 @@ export class CodingAgentRunManager {
     if (run) this.touch(run)
   }
 
-  handleProxyUsageEvent(agentSessionId: string | undefined, event: CanonicalResponsesEvent) {
+  handleProxyUsageEvent(agentSessionId: string | undefined, event: CanonicalResponsesEvent, eventToken?: string) {
     if (!agentSessionId || event.type !== 'response.completed') return
     const run = this.runs.get(agentSessionId)
     if (!run || run.launch.mode !== 'scoped') return
+    if (eventToken && eventToken !== run.activeEventToken) return
     const final = (event.data as any).response || event.data
     if (!final?.usage) return
     const usage = normalizeTokenUsage(final.usage, {}, {
@@ -768,10 +800,12 @@ export class CodingAgentRunManager {
     })
   }
 
-  handleResponseEvent(agentSessionId: string | undefined, event: CanonicalResponsesEvent) {
+  handleResponseEvent(agentSessionId: string | undefined, event: CanonicalResponsesEvent, eventToken?: string) {
     if (!agentSessionId) return
     const run = this.runs.get(agentSessionId)
     if (!run) return
+    const producedEventToken = eventToken || run.activeEventToken
+    if (eventToken && eventToken !== run.activeEventToken) return
     if (run.launch.agentId === 'codex' && isCodexProxyExecToolEvent(event)) return
     const responseEvent = this.normalizeCodexChatTextEvent(run, event)
     if (!responseEvent) return
@@ -803,11 +837,11 @@ export class CodingAgentRunManager {
     run.state.source = run.launch.sessionSource === 'workflow' ? 'workflow' : 'coding_agent'
     run.state.runId = run.id
     for (const mappedEvent of mapCodingAgentResponseEvent(storageSafeResponseEvent)) {
-      this.emitToChat(run.launch.sessionId, mappedEvent.event, mappedEvent.payload)
+      this.emitToChat(run.launch.sessionId, mappedEvent.event, mappedEvent.payload, producedEventToken)
     }
     const mapped = applyResponseStreamEvent(run.state, run.launch.sessionId, run.runMarker, storageSafeResponseEvent.type, storageSafeResponseEvent.data)
     if (mapped) {
-      this.emitToChat(run.launch.sessionId, mapped.event, mapped.payload)
+      this.emitToChat(run.launch.sessionId, mapped.event, mapped.payload, producedEventToken)
     }
     if (isTerminalEvent) {
       run.assistantMessageId = flushResponseRunToDb(run.state, run.launch.sessionId)
@@ -831,7 +865,7 @@ export class CodingAgentRunManager {
           })
         }
       }
-      run.terminalUsageRefresh = this.refreshCodingAgentUsage(run)
+      run.terminalUsageRefresh = this.refreshCodingAgentUsage(run, producedEventToken)
       const finalText = extractResponseText(final)
       const terminalError = storageSafeResponseEvent.type === 'response.failed'
         ? responseErrorMessage(final?.error || (responseEvent.data as any).error) || 'Coding agent run failed'
@@ -847,15 +881,16 @@ export class CodingAgentRunManager {
       if (childIsRunning(run.currentChild)) {
         run.pendingChatCompletionEvent = chatCompletionEvent
         run.pendingChatCompletionPayload = chatCompletionPayload
+        run.pendingChatCompletionEventToken = producedEventToken
       } else {
-        void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, chatCompletionEvent, chatCompletionPayload)
+        void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, chatCompletionEvent, chatCompletionPayload, producedEventToken)
       }
     }
   }
 
-  private async refreshCodingAgentUsage(run: ManagedCodingAgentRun) {
+  private async refreshCodingAgentUsage(run: ManagedCodingAgentRun, eventToken?: string) {
     const emitUsage = (event: string, payload: any) => {
-      this.emitToChat(run.launch.sessionId, event, payload)
+      this.emitToChat(run.launch.sessionId, event, payload, eventToken)
     }
     const usage = await calcAndUpdateUsage(run.launch.sessionId, run.state, emitUsage, {
       nativeSource: 'coding_agent',
@@ -984,7 +1019,7 @@ export class CodingAgentRunManager {
         event: 'run.failed',
         error: 'Coding agent session closed',
         workspace_run_change: workspaceRunChange,
-      })
+      }, run.activeEventToken)
       this.markChatRunCompleted(run.launch.sessionId, 'run.failed')
     }
   }
@@ -1049,10 +1084,12 @@ export class CodingAgentRunManager {
       },
       pipeStdin: Boolean(streamInput),
     })
+    const eventToken = run.activeEventToken
     run.currentChild = child
 
     let stdoutBuffer = ''
     child.stdout?.on('data', (chunk: Buffer) => {
+      if (!isCurrentCodingAgentChildTurn(run, child, eventToken)) return
       this.touch(run)
       stdoutBuffer += chunk.toString('utf8')
       const lines = stdoutBuffer.split(/\r?\n/)
@@ -1061,6 +1098,7 @@ export class CodingAgentRunManager {
     })
 
     child.stderr?.on('data', (chunk: Buffer) => {
+      if (!isCurrentCodingAgentChildTurn(run, child, eventToken)) return
       this.touch(run)
       const text = appendChildStderr(run, chunk)
       if (text) logger.debug({ runId: run.id, sessionId: run.launch.sessionId, text }, '[coding-agent-run] claude print stderr')
@@ -1074,6 +1112,7 @@ export class CodingAgentRunManager {
     }
 
     child.on('error', (err) => {
+      if (!isCurrentCodingAgentChildTurn(run, child, eventToken)) return
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
       run.currentChildKillTimer = undefined
       run.currentChild = undefined
@@ -1095,6 +1134,7 @@ export class CodingAgentRunManager {
     })
 
     child.on('exit', (code) => {
+      if (!isCurrentCodingAgentChildTurn(run, child, eventToken)) return
       if (stdoutBuffer.trim()) this.handleClaudePrintLine(run, stdoutBuffer)
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
       run.currentChildKillTimer = undefined
@@ -1102,7 +1142,12 @@ export class CodingAgentRunManager {
       logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] claude print exited')
       if (run.stoppedByUser) return
       if (run.pendingChatCompletionEvent) {
-        void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
+        void this.emitAndMarkPrintChatRunCompletedAfterUsage(
+          run,
+          run.pendingChatCompletionEvent,
+          run.pendingChatCompletionPayload,
+          run.pendingChatCompletionEventToken,
+        )
         return
       }
       if (code === 0) {
@@ -1501,10 +1546,12 @@ export class CodingAgentRunManager {
         ...(run.launch.env || {}),
       },
     })
+    const eventToken = run.activeEventToken
     run.currentChild = child
 
     let stdoutBuffer = ''
     child.stdout?.on('data', (chunk: Buffer) => {
+      if (!isCurrentCodingAgentChildTurn(run, child, eventToken)) return
       this.touch(run)
       stdoutBuffer += chunk.toString('utf8')
       const lines = stdoutBuffer.split(/\r?\n/)
@@ -1513,12 +1560,14 @@ export class CodingAgentRunManager {
     })
 
     child.stderr?.on('data', (chunk: Buffer) => {
+      if (!isCurrentCodingAgentChildTurn(run, child, eventToken)) return
       this.touch(run)
       const text = appendChildStderr(run, chunk)
       if (text) logger.debug({ runId: run.id, sessionId: run.launch.sessionId, text }, '[coding-agent-run] codex exec stderr')
     })
 
     child.on('error', (err) => {
+      if (!isCurrentCodingAgentChildTurn(run, child, eventToken)) return
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
       run.currentChildKillTimer = undefined
       run.currentChild = undefined
@@ -1540,6 +1589,7 @@ export class CodingAgentRunManager {
     })
 
     child.on('exit', (code) => {
+      if (!isCurrentCodingAgentChildTurn(run, child, eventToken)) return
       if (stdoutBuffer.trim()) this.handleCodexExecLine(run, stdoutBuffer)
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
       run.currentChildKillTimer = undefined
@@ -1547,7 +1597,12 @@ export class CodingAgentRunManager {
       logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] codex exec exited')
       if (run.stoppedByUser) return
       if (run.pendingChatCompletionEvent) {
-        void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
+        void this.emitAndMarkPrintChatRunCompletedAfterUsage(
+          run,
+          run.pendingChatCompletionEvent,
+          run.pendingChatCompletionPayload,
+          run.pendingChatCompletionEventToken,
+        )
         return
       }
       if (code === 0) {
@@ -1938,7 +1993,9 @@ export class CodingAgentRunManager {
     run: ManagedCodingAgentRun,
     event: 'run.completed' | 'run.failed',
     payload?: Record<string, unknown>,
+    eventToken?: string,
   ) {
+    if (eventToken && eventToken !== run.activeEventToken) return
     const usageRefresh = run.terminalUsageRefresh
     run.terminalUsageRefresh = undefined
     if (usageRefresh) {
@@ -1948,19 +2005,26 @@ export class CodingAgentRunManager {
         logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] terminal usage refresh failed before completion')
       }
     }
-    this.emitAndMarkPrintChatRunCompleted(run, event, payload)
+    this.emitAndMarkPrintChatRunCompleted(run, event, payload, eventToken)
   }
 
-  private emitAndMarkPrintChatRunCompleted(run: ManagedCodingAgentRun, event: 'run.completed' | 'run.failed', payload?: Record<string, unknown>) {
+  private emitAndMarkPrintChatRunCompleted(
+    run: ManagedCodingAgentRun,
+    event: 'run.completed' | 'run.failed',
+    payload?: Record<string, unknown>,
+    eventToken?: string,
+  ) {
+    if (eventToken && eventToken !== run.activeEventToken) return
     run.pendingChatCompletionEvent = undefined
     run.pendingChatCompletionPayload = undefined
+    run.pendingChatCompletionEventToken = undefined
     const queueRemaining = run.state.queue.length
     const workspaceRunChange = this.completeWorkspaceRunDiff(run)
     this.emitToChat(run.launch.sessionId, event, {
       ...(payload || { event }),
       ...(queueRemaining > 0 ? { queue_remaining: queueRemaining } : {}),
       workspace_run_change: workspaceRunChange,
-    })
+    }, eventToken)
     if (queueRemaining === 0) {
       try {
         updateSession(run.launch.sessionId, {
@@ -2101,10 +2165,12 @@ export class CodingAgentRunManager {
     }
   }
 
-  private emitToChat(sessionId: string, event: string, payload: any) {
+  private emitToChat(sessionId: string, event: string, payload: any, eventToken?: string) {
+    const emittedEventToken = eventToken || this.getBySession(sessionId)?.activeEventToken
+    const fencedPayload = emittedEventToken ? { ...(payload || {}), event_token: emittedEventToken } : payload
     for (const listener of this.eventListeners.get(sessionId) || []) {
       try {
-        listener(event, payload)
+        listener(event, fencedPayload)
       } catch (err) {
         logger.warn({ err, sessionId, event }, '[coding-agent-run] external event listener failed')
       }

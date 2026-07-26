@@ -93,6 +93,41 @@ describe('group chat history windows', () => {
     dbMock.current = null
   })
 
+  it('persists a monotonic room sequence and preserves it across message upserts', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+
+    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'msg-a', timestamp: 100 }) as any)
+    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'msg-b', timestamp: 1 }) as any)
+    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'msg-a', timestamp: 999, content: 'updated' }) as any)
+
+    const rows = dbMock.current?.prepare(
+      'SELECT id, roomSeq, timestamp, content FROM gc_messages WHERE roomId = ? ORDER BY roomSeq ASC',
+    ).all('room-1') as Array<{ id: string; roomSeq: number; timestamp: number; content: string }>
+    expect(rows).toEqual([
+      { id: 'msg-a', roomSeq: 1, timestamp: 999, content: 'updated' },
+      { id: 'msg-b', roomSeq: 2, timestamp: 1, content: 'hello' },
+    ])
+    expect(storage.getMessagesForContext('room-1').map(message => message.roomSeq)).toEqual([2, 1])
+  })
+
+  it('does not reuse a pruned high room sequence after timestamp rollback', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+
+    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'msg-a', timestamp: 100 }) as any)
+    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'msg-b', timestamp: 1 }) as any)
+    storage.pruneMessages('room-1', 1)
+    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'msg-c', timestamp: 101 }) as any)
+
+    expect(dbMock.current?.prepare(
+      'SELECT id, roomSeq FROM gc_messages WHERE roomId = ? ORDER BY roomSeq ASC',
+    ).all('room-1')).toEqual([
+      { id: 'msg-a', roomSeq: 1 },
+      { id: 'msg-c', roomSeq: 3 },
+    ])
+  })
+
   it('returns a bounded recent UI page while context reads the full retained transcript in canonical order', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')

@@ -25,6 +25,7 @@ interface ChatMessage {
     senderName: string
     content: string
     timestamp: number
+    roomSeq?: number
     role?: string
     tool_call_id?: string | null
     tool_calls?: any[] | null
@@ -487,14 +488,14 @@ class ChatStorage {
 
     getRecentMessagesForUI(roomId: string, limit = 150, offset = 0): ChatMessage[] {
         const rows = (this.db()?.prepare(
-            'SELECT id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE roomId = ?'
+            'SELECT roomSeq, id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE roomId = ?'
         ).all(roomId) || []) as any[]
         return paginateRecentGroupMessagesCanonical(rows.map(row => this.mapStoredMessageRow(row)), { limit, offset })
     }
 
     getMessagesForContext(roomId: string, cutoff?: GroupMessageCursorCutoff): ChatMessage[] {
         const rows = (this.db()?.prepare(
-            `SELECT id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content
+            `SELECT roomSeq, id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content
              FROM gc_messages
              WHERE roomId = ? AND COALESCE(tool_name, '') <> 'workspace_diff'`
         ).all(roomId) || []) as any[]
@@ -510,7 +511,7 @@ class ChatStorage {
 
     getMessage(messageId: string): ChatMessage | null {
         const row = this.db()?.prepare(
-            'SELECT id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE id = ?'
+            'SELECT roomSeq, id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE id = ?'
         ).get(messageId) as any
         if (!row) return null
         return this.mapStoredMessageRow(row)
@@ -521,35 +522,56 @@ class ChatStorage {
     }
 
     upsertMessage(msg: ChatMessage): void {
+        const db = this.db()
+        if (!db) return
         const toolCallsJson = msg.tool_calls ? JSON.stringify(msg.tool_calls) : null
-        this.db()?.prepare(
-            `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-            + ` ON CONFLICT(id) DO UPDATE SET
-                roomId = excluded.roomId,
-                senderId = excluded.senderId,
-                senderName = excluded.senderName,
-                content = excluded.content,
-                timestamp = excluded.timestamp,
-                role = excluded.role,
-                tool_call_id = excluded.tool_call_id,
-                tool_calls = excluded.tool_calls,
-                tool_name = excluded.tool_name,
-                finish_reason = excluded.finish_reason,
-                reasoning = excluded.reasoning,
-                reasoning_details = excluded.reasoning_details,
-                reasoning_content = excluded.reasoning_content`
-        ).run(
-            msg.id, msg.roomId, msg.senderId, msg.senderName, messageContentForStorage(msg.role, msg.content), msg.timestamp,
-            msg.role || 'user',
-            msg.tool_call_id ?? null,
-            toolCallsJson,
-            msg.tool_name ?? null,
-            msg.finish_reason ?? null,
-            msg.reasoning ?? null,
-            msg.reasoning_details ?? null,
-            msg.reasoning_content ?? null,
-        )
+        this.withImmediateTransaction(db, () => {
+            const existing = db.prepare('SELECT roomId, roomSeq FROM gc_messages WHERE id = ?').get(msg.id) as { roomId: string; roomSeq: number } | undefined
+            let roomSeq = existing?.roomId === msg.roomId ? Number(existing.roomSeq || 0) : 0
+            if (roomSeq <= 0) {
+                const allocated = db.prepare(
+                    `UPDATE gc_rooms
+                     SET messageSeq = MAX(
+                       messageSeq,
+                       (SELECT COALESCE(MAX(roomSeq), 0) FROM gc_messages WHERE roomId = ?)
+                     ) + 1
+                     WHERE id = ?
+                     RETURNING messageSeq`
+                ).get(msg.roomId, msg.roomId) as { messageSeq: number } | undefined
+                if (!allocated) throw new Error(`Cannot persist group message for missing room ${msg.roomId}`)
+                roomSeq = Number(allocated.messageSeq)
+            }
+            db.prepare(
+                `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content, roomSeq)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                + ` ON CONFLICT(id) DO UPDATE SET
+                    roomId = excluded.roomId,
+                    senderId = excluded.senderId,
+                    senderName = excluded.senderName,
+                    content = excluded.content,
+                    timestamp = excluded.timestamp,
+                    role = excluded.role,
+                    tool_call_id = excluded.tool_call_id,
+                    tool_calls = excluded.tool_calls,
+                    tool_name = excluded.tool_name,
+                    finish_reason = excluded.finish_reason,
+                    reasoning = excluded.reasoning,
+                    reasoning_details = excluded.reasoning_details,
+                    reasoning_content = excluded.reasoning_content,
+                    roomSeq = excluded.roomSeq`
+            ).run(
+                msg.id, msg.roomId, msg.senderId, msg.senderName, messageContentForStorage(msg.role, msg.content), msg.timestamp,
+                msg.role || 'user',
+                msg.tool_call_id ?? null,
+                toolCallsJson,
+                msg.tool_name ?? null,
+                msg.finish_reason ?? null,
+                msg.reasoning ?? null,
+                msg.reasoning_details ?? null,
+                msg.reasoning_content ?? null,
+                roomSeq,
+            )
+        })
     }
 
     saveWorkspaceDiffMessageForRun(args: SaveWorkspaceDiffMessageArgs): { message: ChatMessage; totalTokens: number; change: WorkspaceRunChangeSummary } | null {

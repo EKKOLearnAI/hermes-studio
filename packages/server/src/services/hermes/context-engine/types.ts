@@ -10,6 +10,8 @@ export interface StoredMessage {
     senderName: string
     content: string
     timestamp: number
+    /** Stable, persisted monotonic Room event sequence, independent of timestamps and retention pruning. */
+    roomSeq?: number
     role?: string
     tool_call_id?: string | null
     tool_calls?: Array<{ id?: string; type?: string; function?: { name?: string; arguments?: string } }> | null
@@ -127,7 +129,7 @@ export interface BuildContextInput {
     currentMessage: StoredMessage
     compression?: Partial<CompressionConfig>
     profile?: string
-    /** Number of canonical Room events already delivered to this participant's native session. */
+    /** Stable canonical Room event sequence already delivered to this participant's native session. */
     participantCursor?: number
     contextTokenEstimator?: (
         history: Array<{ role: 'user' | 'assistant'; content: string }>,

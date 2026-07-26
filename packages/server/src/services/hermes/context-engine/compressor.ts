@@ -81,7 +81,7 @@ export class ContextEngine {
         })
         const cursor = Math.max(0, Math.floor(Number(input.participantCursor || 0)))
         const messages = cursor > 0
-            ? allMessages.filter(message => Number((message as any).timestamp || 0) > cursor)
+            ? allMessages.filter(message => Number(message.roomSeq || 0) > cursor)
             : allMessages
         const total = messages.length
 
