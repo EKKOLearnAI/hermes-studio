@@ -13,6 +13,7 @@ import type { ChatRunSource, ContentBlock, QueuedRun, SessionState } from './typ
 type CommandName =
   | 'usage'
   | 'status'
+  | 'yolo'
   | 'abort'
   | 'queue'
   | 'skill'
@@ -79,6 +80,7 @@ interface MoaPresetInfo {
 const COMMAND_ALIASES: Record<string, CommandName> = {
   usage: 'usage',
   status: 'status',
+  yolo: 'yolo',
   abort: 'abort',
   queue: 'queue',
   skill: 'skill',
@@ -424,6 +426,38 @@ export async function handleSessionCommand(
         runId,
         bridgeStatus,
       })
+      return
+    }
+
+    case 'yolo': {
+      try {
+        const result = await ctx.bridge.command(sessionId, 'yolo', ctx.profile)
+        if (!result.handled) {
+          emitCommand({
+            ok: false,
+            action: 'yolo',
+            terminal: !state.isWorking,
+            message: result.message || 'YOLO mode is not available in the running Hermes Agent runtime.',
+          })
+          return
+        }
+        const enabled = result.enabled === true
+        emitCommand({
+          action: 'yolo',
+          terminal: !state.isWorking,
+          enabled,
+          message: result.message || (enabled
+            ? '⚡ YOLO mode ON for this session — all commands auto-approved. Use with caution.'
+            : '⚠️ YOLO mode OFF for this session — dangerous commands will require approval.'),
+        })
+      } catch (err) {
+        emitCommand({
+          ok: false,
+          action: 'yolo',
+          terminal: !state.isWorking,
+          message: `YOLO command failed: ${err instanceof Error ? err.message : String(err)}`,
+        })
+      }
       return
     }
 

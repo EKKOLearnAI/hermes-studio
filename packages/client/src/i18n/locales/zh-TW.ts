@@ -572,6 +572,7 @@ export default {
     slashCommands: {
       usage: '計算目前會話用量',
       status: '查看會話狀態和佇列',
+      yolo: '切換目前會話 YOLO 模式並略過危險命令審批',
       abort: '停止目前 Bridge 執行',
       queue: '將訊息加入目前執行後的佇列',
       learn: '從描述的來源學習可重用技能',

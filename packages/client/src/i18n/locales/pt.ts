@@ -544,6 +544,7 @@ export default {
     slashCommands: {
       usage: 'Calcular o uso da sessão atual',
       status: 'Mostrar status da sessão e fila',
+      yolo: 'Alternar o modo YOLO da sessão e ignorar aprovações de comandos perigosos',
       abort: 'Parar a execução ativa do Bridge',
       queue: 'Enfileirar uma mensagem após a execução ativa',
       learn: 'Aprender uma skill reutilizável a partir de fontes descritas',

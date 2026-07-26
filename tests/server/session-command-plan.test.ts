@@ -272,6 +272,74 @@ describe('plan session command', () => {
     }))
   })
 
+  it('enables session YOLO before the first agent chat creates a bridge session', async () => {
+    getSessionMock.mockReturnValueOnce(null)
+    const state = { messages: [], isWorking: false, events: [], queue: [] }
+    const { bridge, namespaceEmit, nsp, runQueuedItem, sessionMap, socket } = makeContext(state, {
+      handled: true,
+      type: 'yolo',
+      action: 'yolo',
+      enabled: true,
+      message: '⚡ YOLO mode ON for this session — all commands auto-approved. Use with caution.',
+    })
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+    const command = parseSessionCommand('/yolo')!
+
+    await handleSessionCommand('session-1', command, {
+      nsp: nsp as any,
+      socket: socket as any,
+      sessionMap,
+      bridge: bridge as any,
+      profile: 'work',
+      runQueuedItem,
+    })
+
+    expect(createSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'session-1',
+      profile: 'work',
+      source: 'cli',
+      title: '[yolo]',
+    }))
+    expect(bridge.command).toHaveBeenCalledWith('session-1', 'yolo', 'work')
+    expect(runQueuedItem).not.toHaveBeenCalled()
+    expect(namespaceEmit).toHaveBeenCalledWith('session.command', expect.objectContaining({
+      command: 'yolo',
+      action: 'yolo',
+      enabled: true,
+      terminal: true,
+    }))
+  })
+
+  it('toggles session YOLO immediately while an agent run is active', async () => {
+    const state = { messages: [], isWorking: true, events: [], queue: [] }
+    const { bridge, namespaceEmit, nsp, runQueuedItem, sessionMap, socket } = makeContext(state, {
+      handled: true,
+      type: 'yolo',
+      action: 'yolo',
+      enabled: false,
+      message: '⚠️ YOLO mode OFF for this session — dangerous commands will require approval.',
+    })
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+
+    await handleSessionCommand('session-1', parseSessionCommand('/yolo')!, {
+      nsp: nsp as any,
+      socket: socket as any,
+      sessionMap,
+      bridge: bridge as any,
+      profile: 'default',
+      runQueuedItem,
+    })
+
+    expect(bridge.command).toHaveBeenCalledWith('session-1', 'yolo', 'default')
+    expect(state.queue).toEqual([])
+    expect(runQueuedItem).not.toHaveBeenCalled()
+    expect(namespaceEmit).toHaveBeenCalledWith('session.command', expect.objectContaining({
+      action: 'yolo',
+      enabled: false,
+      terminal: false,
+    }))
+  })
+
   it('starts an idle /skill command with expanded storage and visible command display', async () => {
     const state = { messages: [], isWorking: false, events: [], queue: [] }
     const { bridge, namespaceEmit, nsp, runQueuedItem, sessionMap, socket } = makeContext(state, {

@@ -76,6 +76,8 @@ describe('skill bundle service', () => {
       .rejects.toBeInstanceOf(SkillBundleValidationError)
     await expect(createSkillBundle('default', { name: 'create', skills: ['one'] }))
       .rejects.toBeInstanceOf(SkillBundleValidationError)
+    await expect(createSkillBundle('default', { name: 'yolo', skills: ['one'] }))
+      .rejects.toBeInstanceOf(SkillBundleValidationError)
     await expect(createSkillBundle('default', { name: 'Review', skills: [] }))
       .rejects.toBeInstanceOf(SkillBundleValidationError)
 

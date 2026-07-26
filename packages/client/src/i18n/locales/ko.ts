@@ -544,6 +544,7 @@ export default {
     slashCommands: {
       usage: '현재 세션 사용량 계산',
       status: '세션 상태와 대기열 표시',
+      yolo: '세션 YOLO 모드를 전환하고 위험한 명령 승인을 건너뛰기',
       abort: '활성 Bridge 실행 중지',
       queue: '활성 실행 뒤에 메시지 대기열 추가',
       learn: '설명한 소스에서 재사용 가능한 스킬 학습',

@@ -573,6 +573,7 @@ export default {
     slashCommands: {
       usage: 'Calculate current session usage',
       status: 'Show session status and queue',
+      yolo: 'Toggle session YOLO mode and skip dangerous command approvals',
       abort: 'Stop the active bridge run',
       queue: 'Queue a message behind the active run',
       learn: 'Learn a reusable skill from described sources',

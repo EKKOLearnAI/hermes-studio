@@ -1893,6 +1893,45 @@ class AgentPool:
                 return self._dispatch_goal_command(session_id, arg)
             if name == "subgoal":
                 return self._dispatch_subgoal_command(session_id, arg)
+            if name == "yolo":
+                try:
+                    from tools.approval import (
+                        disable_session_yolo,
+                        enable_session_yolo,
+                        is_session_yolo_enabled,
+                    )
+                except ImportError:
+                    return {
+                        "session_id": session_id,
+                        "command": name,
+                        "handled": False,
+                        "type": "yolo",
+                        "message": (
+                            "/yolo requires a newer Hermes Agent runtime with "
+                            "session-scoped YOLO support."
+                        ),
+                    }
+
+                enabled = not is_session_yolo_enabled(session_id)
+                if enabled:
+                    enable_session_yolo(session_id)
+                else:
+                    disable_session_yolo(session_id)
+                return {
+                    "session_id": session_id,
+                    "command": name,
+                    "handled": True,
+                    "type": "yolo",
+                    "action": "yolo",
+                    "enabled": enabled,
+                    "message": (
+                        "⚡ YOLO mode ON for this session — all commands "
+                        "auto-approved. Use with caution."
+                        if enabled
+                        else "⚠️ YOLO mode OFF for this session — dangerous "
+                        "commands will require approval."
+                    ),
+                }
             if name == "learn":
                 try:
                     from agent.learn_prompt import build_learn_prompt

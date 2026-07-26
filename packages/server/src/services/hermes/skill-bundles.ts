@@ -43,6 +43,7 @@ const RESERVED_BUNDLE_COMMANDS = new Set([
   'subgoal',
   'title',
   'usage',
+  'yolo',
 ])
 
 function stringValue(value: unknown): string {

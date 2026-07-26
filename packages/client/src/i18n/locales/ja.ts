@@ -544,6 +544,7 @@ export default {
     slashCommands: {
       usage: '現在のセッション使用量を計算',
       status: 'セッション状態とキューを表示',
+      yolo: 'セッションの YOLO モードを切り替え、危険なコマンドの承認を省略',
       abort: '実行中の Bridge を停止',
       queue: '実行中の処理の後ろにメッセージをキュー追加',
       learn: '説明されたソースから再利用可能なスキルを学習',

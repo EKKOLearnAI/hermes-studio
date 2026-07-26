@@ -544,6 +544,7 @@ export default {
     slashCommands: {
       usage: 'Nutzung der aktuellen Sitzung berechnen',
       status: 'Sitzungsstatus und Warteschlange anzeigen',
+      yolo: 'YOLO-Modus der Sitzung umschalten und Freigaben für gefährliche Befehle überspringen',
       abort: 'Aktiven Bridge-Lauf stoppen',
       queue: 'Nachricht hinter dem aktiven Lauf einreihen',
       learn: 'Wiederverwendbaren Skill aus beschriebenen Quellen lernen',

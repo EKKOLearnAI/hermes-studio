@@ -1,6 +1,7 @@
 export type BridgeSessionCommandName =
   | 'usage'
   | 'status'
+  | 'yolo'
   | 'abort'
   | 'queue'
   | 'skill'
@@ -34,6 +35,7 @@ export interface BridgeSessionCommandDefinition {
 export const BRIDGE_SESSION_COMMAND_DEFINITIONS: BridgeSessionCommandDefinition[] = [
   { key: 'command:usage', name: 'usage', args: '', descriptionKey: 'chat.slashCommands.usage' },
   { key: 'command:status', name: 'status', args: '', descriptionKey: 'chat.slashCommands.status' },
+  { key: 'command:yolo', name: 'yolo', args: '', descriptionKey: 'chat.slashCommands.yolo' },
   { key: 'command:abort', name: 'abort', args: '', descriptionKey: 'chat.slashCommands.abort' },
   { key: 'command:queue', name: 'queue', argsKey: 'chat.slashCommandArgs.message', descriptionKey: 'chat.slashCommands.queue' },
   { key: 'command:skill', name: 'skill', args: '', descriptionKey: 'skills.title', opensSkillPicker: true },
