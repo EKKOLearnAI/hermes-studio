@@ -7,6 +7,7 @@ let hermesHome = ''
 let webUiHome = ''
 const originalHermesHome = process.env.HERMES_HOME
 const originalWebUiHome = process.env.HERMES_WEB_UI_HOME
+const originalWebUiTestDbDir = process.env.HERMES_WEB_UI_TEST_DB_DIR
 
 function profileDir(profile: string): string {
   return profile === 'default' ? hermesHome : join(hermesHome, 'profiles', profile)
@@ -29,6 +30,7 @@ beforeEach(() => {
   webUiHome = mkdtempSync(join(tmpdir(), 'provider-refresh-webui-'))
   process.env.HERMES_HOME = hermesHome
   process.env.HERMES_WEB_UI_HOME = webUiHome
+  process.env.HERMES_WEB_UI_TEST_DB_DIR = webUiHome
   vi.resetModules()
 })
 
@@ -41,6 +43,8 @@ afterEach(() => {
   else process.env.HERMES_HOME = originalHermesHome
   if (originalWebUiHome === undefined) delete process.env.HERMES_WEB_UI_HOME
   else process.env.HERMES_WEB_UI_HOME = originalWebUiHome
+  if (originalWebUiTestDbDir === undefined) delete process.env.HERMES_WEB_UI_TEST_DB_DIR
+  else process.env.HERMES_WEB_UI_TEST_DB_DIR = originalWebUiTestDbDir
 })
 
 describe('provider model refresh', () => {
