@@ -1102,15 +1102,19 @@ function migrateLegacyGroupChatCodingAgentSessions(
   db: NonNullable<ReturnType<typeof getDb>>,
 ): void {
   if (!tableExists(db, SESSIONS_TABLE)) return
-  // Group Chat owns the gc_ session namespace. Match the reserved prefix so
-  // rotated generations and sessions from rooms deleted before this migration
-  // are hidden too, while ordinary coding-agent chats remain untouched.
+  if (!tableExists(db, GC_SESSION_PROFILES_TABLE)) return
+  // Migrate only sessions with durable Group Chat ownership. Session IDs are
+  // caller-controlled for ordinary Coding Agent runs, so a gc_ prefix alone
+  // is not sufficient evidence that a session belongs to Group Chat.
   db.prepare(
     `UPDATE ${quoteIdentifier(SESSIONS_TABLE)} ` +
     `SET source = 'group_chat' ` +
     `WHERE source = 'coding_agent' ` +
     `AND agent IN ('codex', 'claude') ` +
-    `AND id GLOB 'gc_*'`,
+    `AND EXISTS (` +
+      `SELECT 1 FROM ${quoteIdentifier(GC_SESSION_PROFILES_TABLE)} ownership ` +
+      `WHERE ownership.session_id = ${quoteIdentifier(SESSIONS_TABLE)}.id` +
+    `)`,
   ).run()
 }
 
