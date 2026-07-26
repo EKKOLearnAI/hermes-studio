@@ -1,3 +1,4 @@
+import { EventEmitter } from 'events'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -6,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const testState = vi.hoisted(() => ({
   profileDir: '',
   execFile: vi.fn(),
+  spawn: vi.fn(),
   resolvedProfiles: [] as string[],
 }))
 
@@ -23,6 +25,7 @@ vi.mock('../../packages/server/src/services/hermes/hermes-path', () => ({
 
 vi.mock('child_process', () => ({
   execFile: testState.execFile,
+  spawn: testState.spawn,
 }))
 
 const mockFetch = vi.fn()
@@ -76,7 +79,17 @@ describe('Hermes jobs controller', () => {
     tempDir = mkdtempSync(join(tmpdir(), 'hermes-web-ui-jobs-test-'))
     testState.profileDir = tempDir
     testState.execFile.mockImplementation((_bin, _args, _opts, cb) => {
-      cb(null, { stdout: '', stderr: '' })
+      cb(null, '', '')
+    })
+    testState.spawn.mockImplementation(() => {
+      const child = new EventEmitter() as EventEmitter & {
+        pid: number
+        unref: ReturnType<typeof vi.fn>
+      }
+      child.pid = 12345
+      child.unref = vi.fn()
+      queueMicrotask(() => child.emit('spawn'))
+      return child
     })
   })
 
@@ -139,12 +152,12 @@ describe('Hermes jobs controller', () => {
 
     const createCtx = createMockCtx({
       state: profileState,
-      request: { body: { schedule: '0 9 * * *', prompt: 'daily summary' } },
+      request: { body: { name: 'daily', schedule: '0 9 * * *', prompt: 'daily summary' } },
     })
     await create(createCtx)
     expect(testState.execFile).toHaveBeenLastCalledWith(
       '/fake/bin/hermes',
-      ['cron', 'create', '--profile', 'research', '0 9 * * *', 'daily summary'],
+      ['cron', 'create', '--profile', 'research', '--name', 'daily', '0 9 * * *', 'daily summary'],
       expect.any(Object),
       expect.any(Function),
     )
@@ -170,11 +183,6 @@ describe('Hermes jobs controller', () => {
         body: {},
         args: ['cron', 'resume', '--profile', 'research', 'abc123abc123'],
       },
-      {
-        handler: runJob,
-        body: {},
-        args: ['cron', 'run', '--profile', 'research', 'abc123abc123'],
-      },
     ]
 
     for (const command of commands) {
@@ -193,6 +201,68 @@ describe('Hermes jobs controller', () => {
         expect.any(Function),
       )
     }
+
+    writeExistingJob(tempDir)
+    const runCtx = createMockCtx({
+      state: profileState,
+      request: { body: {} },
+    })
+    await runJob(runCtx)
+
+    expect(testState.spawn).toHaveBeenLastCalledWith(
+      '/fake/bin/hermes',
+      ['cron', 'run', '--profile', 'research', 'abc123abc123'],
+      expect.objectContaining({
+        detached: true,
+        env: expect.objectContaining({ HERMES_HOME: tempDir }),
+        stdio: 'ignore',
+        windowsHide: true,
+      }),
+    )
+    expect(testState.spawn.mock.results.at(-1)?.value.unref).toHaveBeenCalled()
+    expect(runCtx.status).toBe(202)
+  })
+
+  it('returns as soon as a background cron run starts without buffering its output', async () => {
+    writeExistingJob(tempDir)
+    const ctx = createMockCtx()
+
+    await runJob(ctx)
+
+    expect(testState.execFile).not.toHaveBeenCalled()
+    expect(testState.spawn).toHaveBeenCalledWith(
+      '/fake/bin/hermes',
+      ['cron', 'run', '--profile', 'default', 'abc123abc123'],
+      expect.objectContaining({
+        detached: true,
+        stdio: 'ignore',
+      }),
+    )
+    expect(ctx.status).toBe(202)
+    expect(ctx.body.job).toEqual(expect.objectContaining({
+      id: 'abc123abc123',
+      job_id: 'abc123abc123',
+    }))
+  })
+
+  it('returns an API error when the background cron process cannot start', async () => {
+    writeExistingJob(tempDir)
+    testState.spawn.mockImplementationOnce(() => {
+      const child = new EventEmitter() as EventEmitter & {
+        pid: number
+        unref: ReturnType<typeof vi.fn>
+      }
+      child.pid = 0
+      child.unref = vi.fn()
+      queueMicrotask(() => child.emit('error', new Error('spawn failed')))
+      return child
+    })
+    const ctx = createMockCtx()
+
+    await runJob(ctx)
+
+    expect(ctx.status).toBe(500)
+    expect(ctx.body).toEqual({ error: { message: 'spawn failed' } })
   })
 
   it('persists selected provider and model after creating a job without unsupported CLI flags', async () => {
@@ -212,7 +282,7 @@ describe('Hermes jobs controller', () => {
           repeat: { times: null, completed: 0 },
         }],
       }))
-      cb(null, { stdout: '', stderr: '' })
+      cb(null, '', '')
     })
 
     const ctx = createMockCtx({
@@ -226,6 +296,78 @@ describe('Hermes jobs controller', () => {
     const persisted = JSON.parse(readFileSync(join(tempDir, 'cron', 'jobs.json'), 'utf-8'))
     expect(persisted.jobs[0].provider).toBe('openai')
     expect(persisted.jobs[0].model).toBe('gpt-4.1-mini')
+  })
+
+  it.each([
+    {
+      body: { schedule: '0 9 * * *', prompt: 'daily summary' },
+      message: 'Name is required',
+    },
+    {
+      body: { name: 'daily', prompt: 'daily summary' },
+      message: 'Schedule is required',
+    },
+    {
+      body: { name: 'daily', schedule: '0 9 * * *' },
+      message: 'Prompt, skill, or script is required',
+    },
+  ])('rejects an invalid create request before invoking Hermes', async ({ body, message }) => {
+    const ctx = createMockCtx({ request: { body } })
+
+    await create(ctx)
+
+    expect(ctx.status).toBe(400)
+    expect(ctx.body).toEqual({ error: { message } })
+    expect(testState.execFile).not.toHaveBeenCalled()
+  })
+
+  it('returns an error when Hermes exits successfully without creating a new job', async () => {
+    writeExistingJob(tempDir)
+    const ctx = createMockCtx({
+      request: {
+        body: {
+          name: 'daily duplicate',
+          schedule: '0 9 * * *',
+          prompt: 'daily summary',
+        },
+      },
+    })
+
+    await create(ctx)
+
+    expect(ctx.status).toBe(500)
+    expect(ctx.body).toEqual({
+      error: { message: 'Hermes cron command completed without creating a job' },
+    })
+    expect(ctx.body.job).toBeUndefined()
+  })
+
+  it('returns the Hermes validation message when create exits zero without creating a job', async () => {
+    testState.execFile.mockImplementationOnce((_bin, _args, _opts, cb) => {
+      cb(
+        null,
+        [
+          "Failed to create job: Invalid schedule 'bad schedule'. Use:",
+          "  - Cron: '0 9 * * *' (cron expression)",
+        ].join('\n'),
+        '',
+      )
+    })
+    const ctx = createMockCtx({
+      request: {
+        body: {
+          name: 'invalid schedule',
+          schedule: 'bad schedule',
+          prompt: 'daily summary',
+        },
+      },
+    })
+
+    await create(ctx)
+
+    expect(ctx.status).toBe(400)
+    expect(ctx.body.error.message).toContain("Invalid schedule 'bad schedule'")
+    expect(ctx.body.job).toBeUndefined()
   })
 
   it('persists selected provider and model after editing a job', async () => {

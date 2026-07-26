@@ -1245,6 +1245,7 @@ export default {
     jobUpdated: '任務已更新',
     nameRequired: '名稱為必填項',
     scheduleRequired: '排程運算式為必填項',
+    promptRequired: '提示詞為必填項',
     loadFailed: '載入任務失敗',
     jobPaused: '任務已暫停',
     jobResumed: '任務已恢復',

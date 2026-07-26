@@ -216,6 +216,10 @@ async function handleSave() {
     message.warning(t('jobs.scheduleRequired'))
     return
   }
+  if (!formData.value.prompt.trim()) {
+    message.warning(t('jobs.promptRequired'))
+    return
+  }
 
   loading.value = true
   try {

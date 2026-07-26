@@ -846,6 +846,7 @@ export default {
     jobUpdated: 'Tarefa atualizada',
     nameRequired: 'O nome é obrigatório',
     scheduleRequired: 'O agendamento é obrigatório',
+    promptRequired: 'O prompt é obrigatório',
     loadFailed: 'Falha ao carregar a tarefa',
     jobPaused: 'Tarefa pausada',
     jobResumed: 'Tarefa retomada',

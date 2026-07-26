@@ -184,6 +184,23 @@ describe('JobFormModal deliver targets', () => {
     })
   })
 
+  it('requires a prompt before creating a job', async () => {
+    const wrapper = mount(JobFormModal, {
+      props: { jobId: null },
+    })
+
+    await flushPromises()
+    const inputs = wrapper.findAll('.n-input-stub')
+    await inputs[0].setValue('Daily research')
+    await inputs[1].setValue('0 9 * * *')
+    await wrapper.findAll('.n-button-stub')[1].trigger('click')
+    await flushPromises()
+
+    expect(mockMessage.warning).toHaveBeenCalledWith('jobs.promptRequired')
+    expect(mockJobsStore.createJob).not.toHaveBeenCalled()
+    expect(mockMessage.success).not.toHaveBeenCalled()
+  })
+
   it('submits selected provider and model when creating a job', async () => {
     mockJobsStore.createJob.mockResolvedValue({ id: 'job-1' })
     const wrapper = mount(JobFormModal, {

@@ -846,6 +846,7 @@ export default {
     jobUpdated: 'ジョブを更新しました',
     nameRequired: '名前は必須です',
     scheduleRequired: 'スケジュールは必須です',
+    promptRequired: 'プロンプトは必須です',
     loadFailed: 'ジョブの読み込みに失敗しました',
     jobPaused: 'ジョブを一時停止しました',
     jobResumed: 'ジョブを再開しました',

@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { getHermesBin } from '../../services/hermes/hermes-path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
-import { execHermesWithBin } from '../../services/hermes/hermes-process'
+import { execHermesWithBin, spawnHermesWithBin } from '../../services/hermes/hermes-process'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
 
 const TIMEOUT_MS = 60_000
@@ -250,10 +250,10 @@ function getSkills(body: Record<string, any>): string[] | null {
   return null
 }
 
-async function runHermesCron(profile: string, args: string[]): Promise<void> {
+async function runHermesCron(profile: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   const profileDir = resolveProfileDir(profile)
   try {
-    await execHermesWithBin(getHermesBin(), args, {
+    return await execHermesWithBin(getHermesBin(), args, {
       cwd: process.cwd(),
       env: { ...process.env, HERMES_HOME: profileDir },
       timeout: TIMEOUT_MS,
@@ -265,6 +265,33 @@ async function runHermesCron(profile: string, args: string[]): Promise<void> {
     const stdout = String(error?.stdout || '').trim()
     throw new Error(stderr || stdout || error?.message || 'Hermes cron command failed')
   }
+}
+
+function reportedCommandFailure(result: { stdout: string; stderr: string }): string | null {
+  for (const output of [result.stderr, result.stdout]) {
+    const message = String(output || '').trim()
+    if (/^(?:failed|error)\b/im.test(message)) return message
+  }
+  return null
+}
+
+async function startHermesCronInBackground(profile: string, args: string[]): Promise<void> {
+  const profileDir = resolveProfileDir(profile)
+  const child = spawnHermesWithBin(getHermesBin(), args, {
+    cwd: process.cwd(),
+    env: { ...process.env, HERMES_HOME: profileDir },
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  })
+
+  await new Promise<void>((resolve, reject) => {
+    child.once('error', reject)
+    child.once('spawn', () => {
+      child.unref()
+      resolve()
+    })
+  })
 }
 
 function getCronArgs(profile: string, command: string, ...args: string[]): string[] {
@@ -283,14 +310,7 @@ function sendCommandError(ctx: Context, error: any): void {
 
 function findCreatedJob(beforeJobs: JobRecord[], afterJobs: JobRecord[]): JobRecord | null {
   const beforeIds = new Set(beforeJobs.map((job) => job.job_id || job.id))
-  const created = afterJobs.find((job) => !beforeIds.has(job.job_id || job.id))
-  if (created) return created
-
-  return [...afterJobs].sort((a, b) => {
-    const aTime = Date.parse(a.created_at || '') || 0
-    const bTime = Date.parse(b.created_at || '') || 0
-    return bTime - aTime
-  })[0] ?? null
+  return afterJobs.find((job) => !beforeIds.has(job.job_id || job.id)) ?? null
 }
 
 export async function list(ctx: Context) {
@@ -315,19 +335,31 @@ export async function get(ctx: Context) {
 export async function create(ctx: Context) {
   const profile = resolveProfile(ctx)
   const body = getBody(ctx)
+  const name = String(body.name || '').trim()
   const schedule = String(body.schedule || body.schedule_display || '').trim()
   const prompt = String(body.prompt || '').trim()
+  const skills = getSkills(body)
+  const script = String(body.script || '').trim()
 
+  if (!name) {
+    ctx.status = 400
+    ctx.body = { error: { message: 'Name is required' } }
+    return
+  }
   if (!schedule) {
     ctx.status = 400
     ctx.body = { error: { message: 'Schedule is required' } }
     return
   }
+  if (!prompt && !skills?.length && !script) {
+    ctx.status = 400
+    ctx.body = { error: { message: 'Prompt, skill, or script is required' } }
+    return
+  }
 
   const beforeJobs = readJobs(profile, true)
   const args = getCronArgs(profile, 'create')
-  const name = String(body.name || '').trim()
-  if (name) args.push('--name', name)
+  args.push('--name', name)
   if (body.deliver != null && String(body.deliver).trim()) args.push('--deliver', String(body.deliver).trim())
 
   const repeat = getRepeatValue(body.repeat)
@@ -338,10 +370,9 @@ export async function create(ctx: Context) {
     args.push('--repeat', '0')
   }
 
-  const skills = getSkills(body)
   for (const skill of skills || []) args.push('--skill', skill)
 
-  if (body.script != null && String(body.script).trim()) args.push('--script', String(body.script).trim())
+  if (script) args.push('--script', script)
   if (body.workdir != null) args.push('--workdir', String(body.workdir))
   if (body.no_agent === true) args.push('--no-agent')
 
@@ -349,10 +380,19 @@ export async function create(ctx: Context) {
   if (prompt) args.push(prompt)
 
   try {
-    await runHermesCron(profile, args)
+    const result = await runHermesCron(profile, args)
     const job = findCreatedJob(beforeJobs, readJobs(profile, true))
+    if (!job) {
+      const reportedFailure = reportedCommandFailure(result)
+      if (reportedFailure) {
+        ctx.status = 400
+        ctx.body = { error: { message: reportedFailure } }
+        return
+      }
+      throw new Error('Hermes cron command completed without creating a job')
+    }
     const inferenceUpdates = buildInferenceUpdates(body)
-    const patchedJob = job ? patchJobFields(profile, job.job_id || job.id, inferenceUpdates) : null
+    const patchedJob = patchJobFields(profile, job.job_id || job.id, inferenceUpdates)
     ctx.body = { job: patchedJob || job }
   } catch (error: any) {
     sendCommandError(ctx, error)
@@ -452,8 +492,9 @@ export async function run(ctx: Context) {
   if (!findJob(profile, ctx.params.id)) return sendJobNotFound(ctx)
 
   try {
-    await runHermesCron(profile, getCronArgs(profile, 'run', ctx.params.id))
+    await startHermesCronInBackground(profile, getCronArgs(profile, 'run', ctx.params.id))
     const job = findJob(profile, ctx.params.id)
+    ctx.status = 202
     ctx.body = { job }
   } catch (error: any) {
     sendCommandError(ctx, error)

@@ -111,8 +111,12 @@ export interface JobDeliveryTargetsResponse {
   targets: JobDeliveryTarget[]
 }
 
-function unwrap(res: { job: Job }): Job {
-  return res.job
+function unwrap(res: { job?: Job | null }): Job {
+  const job = res?.job
+  if (!job || typeof job !== 'object' || !String(job.job_id || job.id || '').trim()) {
+    throw new Error('Job response did not include a valid job')
+  }
+  return job
 }
 
 function isScheduleObject(schedule: JobSchedule | null | undefined): schedule is Exclude<JobSchedule, string> {

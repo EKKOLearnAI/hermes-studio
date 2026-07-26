@@ -846,6 +846,7 @@ export default {
     jobUpdated: 'Aufgabe aktualisiert',
     nameRequired: 'Name ist erforderlich',
     scheduleRequired: 'Zeitplan ist erforderlich',
+    promptRequired: 'Eingabeaufforderung ist erforderlich',
     loadFailed: 'Laden der Aufgabe fehlgeschlagen',
     jobPaused: 'Aufgabe pausiert',
     jobResumed: 'Aufgabe fortgesetzt',

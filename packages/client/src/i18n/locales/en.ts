@@ -1250,6 +1250,7 @@ export default {
     jobUpdated: 'Job updated',
     nameRequired: 'Name is required',
     scheduleRequired: 'Schedule is required',
+    promptRequired: 'Prompt is required',
     loadFailed: 'Failed to load job',
     jobPaused: 'Job paused',
     jobResumed: 'Job resumed',

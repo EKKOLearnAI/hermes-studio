@@ -1250,6 +1250,7 @@ export default {
     jobUpdated: '任务已更新',
     nameRequired: '名称为必填项',
     scheduleRequired: '调度表达式为必填项',
+    promptRequired: '提示词为必填项',
     loadFailed: '加载任务失败',
     jobPaused: '任务已暂停',
     jobResumed: '任务已恢复',

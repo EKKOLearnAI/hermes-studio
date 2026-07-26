@@ -846,6 +846,7 @@ export default {
     jobUpdated: '작업이 업데이트되었습니다',
     nameRequired: '이름을 입력해 주세요',
     scheduleRequired: '스케줄을 입력해 주세요',
+    promptRequired: '프롬프트를 입력해 주세요',
     loadFailed: '작업을 불러오지 못했습니다',
     jobPaused: '작업이 일시 정지되었습니다',
     jobResumed: '작업이 재개되었습니다',

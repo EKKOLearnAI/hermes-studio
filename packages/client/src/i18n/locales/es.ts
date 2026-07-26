@@ -846,6 +846,7 @@ export default {
     jobUpdated: 'Tarea actualizada',
     nameRequired: 'El nombre es obligatorio',
     scheduleRequired: 'La programacion es obligatoria',
+    promptRequired: 'El prompt es obligatorio',
     loadFailed: 'Error al cargar la tarea',
     jobPaused: 'Tarea en pausa',
     jobResumed: 'Tarea reanudada',

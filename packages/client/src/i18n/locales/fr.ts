@@ -846,6 +846,7 @@ export default {
     jobUpdated: 'Tache mise a jour',
     nameRequired: 'Le nom est requis',
     scheduleRequired: 'La planification est requise',
+    promptRequired: "L'invite est requise",
     loadFailed: 'Echec du chargement de la tache',
     jobPaused: 'Tache en pause',
     jobResumed: 'Tache reprise',

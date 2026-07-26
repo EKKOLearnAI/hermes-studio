@@ -13,6 +13,7 @@ vi.mock('@/router', () => ({
 
 import {
   buildJobUpdateRequest,
+  createJob,
   scheduleToDisplayText,
   scheduleToEditableInput,
   updateJob,
@@ -135,6 +136,20 @@ describe('Hermes jobs edit payloads', () => {
       name: 'artifact cleanup renamed',
       schedule: 'every 14400m',
     })
+  })
+
+  it('rejects a successful create response that does not contain a job', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ job: null }),
+    })
+
+    await expect(createJob({
+      name: 'Daily research',
+      schedule: '0 9 * * *',
+      prompt: 'summarize updates',
+    })).rejects.toThrow('Job response did not include a valid job')
   })
 
   it('sends active profile header when loading job run history', async () => {
