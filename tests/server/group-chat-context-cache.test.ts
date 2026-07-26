@@ -119,6 +119,19 @@ describe('group chat context cursors', () => {
     ])
   })
 
+  it('keeps snapshot tails anchored in canonical presentation order when room sequence differs', () => {
+    const messages = [
+      makeMessage({ id: 'presentation-first', roomSeq: 2, content: 'first by time', timestamp: 1 }),
+      makeMessage({ id: 'snapshot-anchor', roomSeq: 1, content: 'anchor by time', timestamp: 2 }),
+      makeMessage({ id: 'presentation-tail', roomSeq: 3, content: 'tail by time', timestamp: 3 }),
+    ]
+
+    const snapshotTail = sliceGroupMessagesForSnapshotTail(messages, 'snapshot-anchor')
+
+    expect(snapshotTail.snapshotCursorFound).toBe(true)
+    expect(snapshotTail.messages.map(message => message.id)).toEqual(['presentation-tail'])
+  })
+
   it('uses the current message id as the same-timestamp context boundary', async () => {
     const messages = sortGroupMessagesCanonical([
       makeMessage({ id: 'm1', content: 'first', timestamp: 1_000 }),

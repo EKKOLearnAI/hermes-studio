@@ -224,7 +224,10 @@ describe('ContextEngine.buildContext', () => {
             participantCursor: messages[3].roomSeq,
         })
 
-        expect(mockFetcher.getMessagesForContext).toHaveBeenCalledWith('room-1', { throughMessageId: 'msg-5' })
+        expect(mockFetcher.getMessagesForContext).toHaveBeenCalledWith('room-1', {
+            afterRoomSeq: 4,
+            throughRoomSeq: 6,
+        })
         expect(result.meta.totalMessages).toBe(2)
         expect(result.conversationHistory).toHaveLength(2)
         expect(result.conversationHistory.map(message => message.content).join('\n')).toContain('Message 4')

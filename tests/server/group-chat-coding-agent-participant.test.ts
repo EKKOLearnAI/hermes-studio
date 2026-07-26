@@ -51,14 +51,52 @@ vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
   },
 }))
 
-import { AgentClients } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { AgentClients, participantContextRevision } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 
 describe('Group Chat coding-agent participant runtime', () => {
+  it('never regresses a persisted participant Room cursor', () => {
+    expect(participantContextRevision(30, 27, [{ roomSeq: 27 }])).toBe(30)
+    expect(participantContextRevision(20, 27, [{ roomSeq: 21 }, { roomSeq: 27 }])).toBe(27)
+    expect(participantContextRevision(20, 0, [{ roomSeq: 21 }, { roomSeq: 24 }])).toBe(24)
+  })
   beforeEach(() => {
     vi.clearAllMocks()
     runtimeListeners.clear()
     managerMock.runIdForSession.mockReturnValue(undefined)
     managerMock.isSessionLaunchCompatible.mockReturnValue(false)
+  })
+
+  it.each([
+    ['missing trigger', null],
+    ['trigger without a persisted sequence', { id: 'missing-trigger', roomId: 'room-1', senderId: 'human-1', senderName: 'Customer', content: '@Codex A run', timestamp: 1, roomSeq: 0, role: 'user' }],
+  ])('fails closed for %s', async (_case, storedTrigger) => {
+    const participant = {
+      agentId: 'participant-codex', profile: 'default', name: 'Codex A', description: '',
+      runtime: 'coding_agent', codingAgentId: 'codex', sessionId: 'gc-room-1-participant-codex-0',
+      sessionGeneration: 0, mode: 'scoped', provider: 'openai', model: 'gpt-5-codex',
+      apiMode: 'codex_responses', reasoningEffort: 'high', lastSeenRoomSeq: 20, invited: 1,
+    }
+    const updateRoomAgentContinuity = vi.fn()
+    const clients = new AgentClients()
+    clients.setStorage({
+      getRoom: vi.fn(() => ({ id: 'room-1', workspace: '/workspace/project' })),
+      getRoomAgentByAgentId: vi.fn(() => participant),
+      getRoomMembers: vi.fn(() => []),
+      getMessage: vi.fn(() => storedTrigger),
+      getMessagesForContext: vi.fn(() => [{ id: 'future', roomSeq: 99, timestamp: 0 }]),
+      updateRoomTotalTokens: vi.fn(),
+      updateRoomAgentContinuity,
+      saveWorkspaceDiffMessageForRun: vi.fn(),
+    })
+    const client = await clients.createAgent({ ...participant, backgroundDelegationEnabled: false } as any)
+
+    await client.replyToMention('room-1', {
+      messageId: 'missing-trigger', content: '@Codex A run', senderName: 'Customer', senderId: 'human-1', timestamp: 1,
+    })
+
+    expect(startCodingAgentRunMock).not.toHaveBeenCalled()
+    expect(sendCodingAgentRunInputMock).not.toHaveBeenCalled()
+    expect(updateRoomAgentContinuity).not.toHaveBeenCalled()
   })
 
   it('runs a Codex participant through the existing coding-agent lifecycle and persists its Room reply', async () => {
@@ -76,17 +114,20 @@ describe('Group Chat coding-agent participant runtime', () => {
       model: 'gpt-5-codex',
       apiMode: 'codex_responses',
       reasoningEffort: 'high',
+      lastSeenRoomSeq: 20,
       invited: 1,
     }
     const clients = new AgentClients()
     const updateRoomTotalTokens = vi.fn()
     const updateRoomAgentContinuity = vi.fn()
+    const getMessagesForContext = vi.fn(() => [{ id: 'human-message-1', timestamp: 1_790_000_000, roomSeq: 27 }])
     const saveWorkspaceDiffMessageForRun = vi.fn(() => ({ message: { id: 'diff-message' }, totalTokens: 42 }))
     clients.setStorage({
       getRoom: vi.fn(() => ({ id: 'room-1', workspace: '/workspace/project' })),
       getRoomAgentByAgentId: vi.fn(() => participant),
       getRoomMembers: vi.fn(() => []),
-      getMessagesForContext: vi.fn(() => [{ id: 'human-message-1', timestamp: 1_790_000_000, roomSeq: 27 }]),
+      getMessage: vi.fn(() => ({ id: 'human-message-1', roomId: 'room-1', senderId: 'human-1', senderName: 'Customer', content: '@Codex A implement the API', timestamp: 1, roomSeq: 27, role: 'user' })),
+      getMessagesForContext,
       updateRoomTotalTokens,
       updateRoomAgentContinuity,
       saveWorkspaceDiffMessageForRun,
@@ -112,6 +153,10 @@ describe('Group Chat coding-agent participant runtime', () => {
       reasoningEffort: 'high',
       workspace: '/workspace/project',
     }))
+    expect(getMessagesForContext).toHaveBeenCalledWith('room-1', {
+      afterRoomSeq: 20,
+      throughRoomSeq: 27,
+    })
     expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith(
       participant.sessionId,
       expect.stringContaining('implement the API'),

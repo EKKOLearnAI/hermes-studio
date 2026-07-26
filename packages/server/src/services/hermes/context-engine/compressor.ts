@@ -76,13 +76,23 @@ export class ContextEngine {
 
     private async _buildContextImpl(input: BuildContextInput): Promise<CompressedContext> {
         const config = { ...this.config, ...input.compression }
-        const allMessages = this.messageFetcher.getMessagesForContext(input.roomId, {
-            throughMessageId: input.currentMessage.id,
-        })
         const cursor = Math.max(0, Math.floor(Number(input.participantCursor || 0)))
-        const messages = cursor > 0
-            ? allMessages.filter(message => Number(message.roomSeq || 0) > cursor)
-            : allMessages
+        const usesParticipantSequence = input.participantCursor != null
+        const triggerRoomSeq = usesParticipantSequence
+            ? Math.max(0, Math.floor(Number(input.currentMessage.roomSeq || 0)))
+            : 0
+        const allMessages = this.messageFetcher.getMessagesForContext(input.roomId, triggerRoomSeq > 0
+            ? {
+                throughRoomSeq: triggerRoomSeq,
+                ...(cursor > 0 ? { afterRoomSeq: cursor } : {}),
+            }
+            : { throughMessageId: input.currentMessage.id })
+        const messages = allMessages.filter((message) => {
+            const roomSeq = Number(message.roomSeq || 0)
+            if (cursor > 0 && roomSeq > 0 && roomSeq <= cursor) return false
+            if (triggerRoomSeq > 0 && roomSeq > 0 && roomSeq > triggerRoomSeq) return false
+            return true
+        })
         const total = messages.length
 
         logger.debug({

@@ -501,6 +501,10 @@ describe('coding agent run state', () => {
       workspaceDir: process.cwd(),
       state,
     })
+    const run = (manager as any).runs.get(agentSessionId)
+    run.activeEventToken = 'turn-proxy-usage'
+    run.turnFenceInitialized = true
+    const incarnationToken = run.incarnationToken
 
     const proxyCompleted = {
       type: 'response.completed',
@@ -518,8 +522,8 @@ describe('coding agent run state', () => {
         },
       },
     }
-    manager.handleProxyUsageEvent(agentSessionId, proxyCompleted)
-    manager.handleProxyUsageEvent(agentSessionId, proxyCompleted)
+    manager.handleProxyUsageEvent(agentSessionId, proxyCompleted, 'turn-proxy-usage', incarnationToken)
+    manager.handleProxyUsageEvent(agentSessionId, proxyCompleted, 'turn-proxy-usage', incarnationToken)
     manager.handleResponseEvent(agentSessionId, {
       type: 'response.completed',
       data: {
@@ -530,7 +534,17 @@ describe('coding agent run state', () => {
           usage: { input_tokens: 120, output_tokens: 7 },
         },
       },
-    })
+    }, 'turn-proxy-usage', incarnationToken)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    manager.handleProxyUsageEvent(agentSessionId, {
+      ...proxyCompleted,
+      data: {
+        response: {
+          ...proxyCompleted.data.response,
+          id: `late-provider-call-${suffix}`,
+        },
+      },
+    }, 'turn-proxy-usage', incarnationToken)
 
     expect(getRecordedUsageTotals(chatSessionId, 'coding_agent')).toEqual({
       inputTokens: 90,
