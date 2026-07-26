@@ -4,15 +4,21 @@ import { createServer, type Server as HttpServer } from 'http'
 import { mkdir, mkdtemp, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { claimTestHermesDbOwnership } from './db-test-helpers'
 
 const dbState = vi.hoisted(() => ({
   db: null as DatabaseSync | null,
 }))
 
-vi.mock('../../packages/server/src/db/index', () => ({
-  getDb: () => dbState.db,
-  isSqliteAvailable: () => Boolean(dbState.db),
-}))
+vi.mock('../../packages/server/src/db/index', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../packages/server/src/db/index')>()
+  return {
+    ...actual,
+    getDb: () => dbState.db,
+    getStoragePath: () => ':memory:',
+    isSqliteAvailable: () => Boolean(dbState.db),
+  }
+})
 
 vi.mock('socket.io-client', () => ({
   io: vi.fn(() => ({
@@ -33,7 +39,37 @@ async function routeHandler(path: string, method: string) {
   const { groupChatRoutes } = await import('../../packages/server/src/routes/hermes/group-chat')
   const layer = (groupChatRoutes as any).stack.find((item: any) => item.path === path && item.methods.includes(method))
   if (!layer) throw new Error(`Route not found: ${method} ${path}`)
-  return layer.stack[0]
+  const handler = layer.stack[0]
+  return async (ctx: any, next: () => Promise<void>) => {
+    ctx.state ??= { user: { id: 1, username: 'root', role: 'super_admin', profiles: [] } }
+    return handler(ctx, next)
+  }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
+function seedWorkspaceTestUser(
+  db: DatabaseSync,
+  input: { id: number; username: string; role: 'super_admin' | 'admin'; profiles?: string[] },
+): void {
+  const now = Date.now()
+  db.prepare(`
+    INSERT INTO users (id, username, password_hash, role, status, created_at, updated_at, last_login_at, avatar)
+    VALUES (?, ?, 'test-only', ?, 'active', ?, ?, NULL, '')
+  `).run(input.id, input.username, input.role, now, now)
+  const insertProfile = db.prepare(`
+    INSERT INTO user_profiles (user_id, profile_name, is_default, created_at)
+    VALUES (?, ?, ?, ?)
+  `)
+  ;(input.profiles || []).forEach((profile, index) => {
+    insertProfile.run(input.id, profile, index === 0 ? 1 : 0, now)
+  })
 }
 
 describe('group chat room workspace', () => {
@@ -44,11 +80,15 @@ describe('group chat room workspace', () => {
   beforeEach(async () => {
     vi.resetModules()
     dbState.db = new DatabaseSync(':memory:')
+    await claimTestHermesDbOwnership(dbState.db)
     root = await mkdtemp(join(tmpdir(), 'hermes-gc-workspace-'))
     originalWorkspaceBase = process.env.WORKSPACE_BASE
     process.env.WORKSPACE_BASE = root
     const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
     initAllHermesTables()
+    seedWorkspaceTestUser(dbState.db, { id: 1, username: 'root', role: 'super_admin' })
+    seedWorkspaceTestUser(dbState.db, { id: 2, username: 'bob', role: 'admin', profiles: ['default'] })
+    seedWorkspaceTestUser(dbState.db, { id: 7, username: 'alice', role: 'admin', profiles: ['default'] })
     httpServer = createServer()
   })
 
@@ -161,6 +201,41 @@ describe('group chat room workspace', () => {
     expect(interruptRoom).toHaveBeenCalledWith('room-1')
     expect(events).toEqual(['fence', 'interrupt'])
     expect(storage.getRoom('room-1')?.workspace).toBe(workspace)
+    server.getIO().close()
+  })
+
+  it('rechecks durable requester status after interrupting agents and before replacing workspace', async () => {
+    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const server = new GroupChatServer(httpServer)
+    const storage = server.getStorage()
+    const workspace = join(root, 'repo')
+    await mkdir(workspace)
+    storage.saveRoom('room-1', 'Room 1', null, { ownerAuthUserId: 1 })
+    setGroupChatServer(server)
+    const releaseSessionFence = vi.fn()
+    vi.spyOn(server, 'fenceCurrentRoomAgentSessions').mockReturnValue(releaseSessionFence)
+    const interrupt = deferred<void>()
+    const interruptRoom = vi.spyOn(server.agentClients, 'interruptRoom').mockReturnValue(interrupt.promise)
+
+    const handler = await routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace', 'PUT')
+    const ctx: any = {
+      params: { roomId: 'room-1' },
+      request: { body: { workspace } },
+      status: 200,
+      body: undefined,
+    }
+
+    const pending = handler(ctx, async () => {})
+    await vi.waitFor(() => expect(interruptRoom).toHaveBeenCalledWith('room-1'))
+    dbState.db?.prepare("UPDATE users SET status = 'disabled', updated_at = ? WHERE id = 1").run(Date.now())
+    interrupt.resolve()
+    await pending
+
+    expect(ctx.status).toBe(404)
+    expect(ctx.body).toEqual({ error: 'Room not found' })
+    expect(releaseSessionFence).toHaveBeenCalledOnce()
+    expect(storage.getRoom('room-1')?.workspace).toBe('')
     server.getIO().close()
   })
 
@@ -312,7 +387,7 @@ describe('group chat room workspace', () => {
     server.getIO().close()
   })
 
-  it('rejects workspace updates for rooms outside a regular admin profile scope', async () => {
+  it('returns the missing-room shape for workspace updates outside a regular admin profile scope', async () => {
     const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
     const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
     const server = new GroupChatServer(httpServer)
@@ -334,13 +409,13 @@ describe('group chat room workspace', () => {
 
     await handler(ctx, async () => {})
 
-    expect(ctx.status).toBe(403)
-    expect(ctx.body).toEqual({ error: 'Access denied' })
+    expect(ctx.status).toBe(404)
+    expect(ctx.body).toEqual({ error: 'Room not found' })
     expect(storage.getRoom('room-private')?.workspace).toBe('')
     server.getIO().close()
   })
 
-  it('rejects room detail and clone reads outside a regular admin profile scope', async () => {
+  it('uses the missing-room shape for stranger detail and clone access outside a regular admin profile scope', async () => {
     const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
     const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
     const server = new GroupChatServer(httpServer)
@@ -356,14 +431,14 @@ describe('group chat room workspace', () => {
     const detail = await routeHandler('/api/hermes/group-chat/rooms/:roomId', 'GET')
     const detailCtx: any = { params: { roomId: 'room-private' }, query: {}, state: { user }, status: 200, body: undefined }
     await detail(detailCtx, async () => {})
-    expect(detailCtx.status).toBe(403)
-    expect(detailCtx.body).toEqual({ error: 'Access denied' })
+    expect(detailCtx.status).toBe(404)
+    expect(detailCtx.body).toEqual({ error: 'Room not found' })
 
     const clone = await routeHandler('/api/hermes/group-chat/rooms/:roomId/clone', 'POST')
     const cloneCtx: any = { params: { roomId: 'room-private' }, request: { body: { name: 'Copy' } }, state: { user }, status: 200, body: undefined }
     await clone(cloneCtx, async () => {})
-    expect(cloneCtx.status).toBe(403)
-    expect(cloneCtx.body).toEqual({ error: 'Access denied' })
+    expect(cloneCtx.status).toBe(404)
+    expect(cloneCtx.body).toEqual({ error: 'Room not found' })
     expect(storage.getAllRooms()).toHaveLength(1)
     server.getIO().close()
   })
@@ -385,8 +460,12 @@ describe('group chat room workspace', () => {
     const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
     initAllHermesTables()
 
-    const row = dbState.db?.prepare('SELECT workspace FROM gc_rooms WHERE id = ?').get('old-room') as { workspace: string }
+    const row = dbState.db?.prepare('SELECT workspace, inviteGeneration FROM gc_rooms WHERE id = ?').get('old-room') as {
+      workspace: string
+      inviteGeneration: number
+    }
     expect(row.workspace).toBe('')
+    expect(row.inviteGeneration).toBe(0)
   })
 
   it('validates workspace updates through the group room REST route', async () => {

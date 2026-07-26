@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createServer, type Server as HttpServer } from 'http'
+import { claimTestHermesDbOwnership } from './db-test-helpers'
 
 describe('group chat member avatars', () => {
   let db: any = null
@@ -11,6 +12,7 @@ describe('group chat member avatars', () => {
     vi.stubEnv('AUTH_JWT_SECRET', 'test-secret')
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
+    await claimTestHermesDbOwnership(db)
     vi.doMock('../../packages/server/src/db/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',

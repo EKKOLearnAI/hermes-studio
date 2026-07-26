@@ -8,10 +8,11 @@ function errorMessage(value: unknown, fallback: string): string {
 
 export async function fetchAuthenticatedBlob(
   path: string,
-  options: { signal?: AbortSignal; profile?: string | null } = {},
+  options: { signal?: AbortSignal; profile?: string | null; headers?: HeadersInit } = {},
 ): Promise<Blob> {
   await ensureDesktopAuthReady()
   const headers: Record<string, string> = {}
+  if (options.headers) new Headers(options.headers).forEach((value, name) => { headers[name] = value })
   const apiKey = getApiKey()
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`
   const profile = typeof options.profile === 'string' && options.profile.trim()

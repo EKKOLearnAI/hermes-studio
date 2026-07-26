@@ -157,6 +157,8 @@ describe('group chat context projection', () => {
       members: [],
       upstream: '',
       apiKey: null,
+      authorizationGuard: () => true,
+      summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
       currentMessage: messages[messages.length - 1],
     })
 

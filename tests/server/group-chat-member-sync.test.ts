@@ -26,6 +26,16 @@ vi.mock('../../packages/server/src/services/auth', () => ({
   getToken: vi.fn(async () => 'test-token'),
 }))
 
+vi.mock('../../packages/server/src/middleware/user-auth', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../packages/server/src/middleware/user-auth')>()
+  return {
+    ...actual,
+    loadActiveAuthenticatedUser: vi.fn((id: number | string) => Number(id) === 2
+      ? { id: 2, username: 'ops', role: 'admin', profiles: ['default', 'research'] }
+      : { id: Number(id), username: 'root', role: 'super_admin', profiles: [] }),
+  }
+})
+
 import { AgentClients, groupBridgeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
@@ -33,13 +43,51 @@ import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/r
 function routeHandler(path: string, method: string) {
   const layer = (groupChatRoutes as any).stack.find((item: any) => item.path === path && item.methods.includes(method))
   if (!layer) throw new Error(`Route not found: ${method} ${path}`)
-  return layer.stack[0]
+  const handler = layer.stack[0]
+  return async (ctx: any, next: () => Promise<void>) => {
+    ctx.state ??= { user: { id: 1, username: 'root', role: 'super_admin', profiles: [] } }
+    return handler(ctx, next)
+  }
 }
 
 describe('Group Chat member/agent identity sync', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     socketHandlers.clear()
+  })
+
+  it('does not promote runtime members when canonical actor lookups are unavailable', () => {
+    for (const subject of [
+      { source: 'agent', userId: 'agent-1', localSubjectId: null },
+      { source: 'human', userId: 'local-1', localSubjectId: 'local-subject-1' },
+    ]) {
+      const server: any = Object.create(GroupChatServer.prototype)
+      server.storage = { getRoom: vi.fn(() => ({ id: 'room-1', authorizationRevision: 0 })) }
+      server.rooms = new Map([['room-1', {
+        getOnlineMemberBySocketId: vi.fn(() => ({
+          socketId: 'socket-1',
+          userId: subject.userId,
+          name: 'Runtime member',
+          source: subject.source,
+          online: true,
+        })),
+      }]])
+      server.socketRequestedSourceMap = new Map([['socket-1', subject.source]])
+      server.socketUserMap = new Map([['socket-1', subject.userId]])
+      server.socketLocalSubjectIdMap = new Map(subject.localSubjectId ? [['socket-1', subject.localSubjectId]] : [])
+
+      const decision = server.socketAccessPolicy({ id: 'socket-1', data: {} }, 'room-1')
+      expect(decision).toMatchObject({
+        canDiscover: false,
+        canJoin: false,
+        canRead: false,
+        canWrite: false,
+        canType: false,
+        canManage: false,
+        canInvokeAgents: false,
+        canApprove: false,
+      })
+    }
   })
 
   it('uses the persisted group-chat agent id as the runtime agent id and socket user id', async () => {
@@ -76,6 +124,7 @@ describe('Group Chat member/agent identity sync', () => {
     })
     const chatServer = {
       getStorage: () => ({
+        getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room 1' })),
         getRoomAgents: vi.fn(() => []),
         addRoomAgent,
         removeRoomAgent: vi.fn(),
@@ -110,6 +159,7 @@ describe('Group Chat member/agent identity sync', () => {
     const addRoomAgent = vi.fn()
     const chatServer = {
       getStorage: () => ({
+        getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room 1' })),
         getRoomAgents: vi.fn(() => []),
         addRoomAgent,
       }),
@@ -148,6 +198,7 @@ describe('Group Chat member/agent identity sync', () => {
     })
     const chatServer = {
       getStorage: () => ({
+        getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room 1' })),
         getRoomAgents: vi.fn(() => []),
         addRoomAgent,
         removeRoomAgent: vi.fn(),
@@ -182,13 +233,14 @@ describe('Group Chat member/agent identity sync', () => {
 
   it('does not leave a persisted agent row and disconnects runtime state when room join fails', async () => {
     const addRoomAgent = vi.fn((roomId: string, agentId: string, profile: string, name: string, description: string, invited: number) => ({ id: 'row-1', roomId, agentId, profile, name, description, invited }))
-    const removeRoomAgent = vi.fn()
+    const removeAgentActorWithRetention = vi.fn()
     const runtimeClient = { agentId: 'agent-stable-1' }
     const chatServer = {
       getStorage: () => ({
+        getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room 1' })),
         getRoomAgents: vi.fn(() => []),
         addRoomAgent,
-        removeRoomAgent,
+        removeAgentActorWithRetention,
       }),
       agentClients: {
         createAgent: vi.fn(async () => runtimeClient),
@@ -216,7 +268,7 @@ describe('Group Chat member/agent identity sync', () => {
       reason: 'join failed',
     })
     expect(addRoomAgent).toHaveBeenCalledWith('room-1', expect.any(String), 'default', 'Worker', '', 0)
-    expect(removeRoomAgent).toHaveBeenCalledWith('room-1', 'row-1')
+    expect(removeAgentActorWithRetention).toHaveBeenCalledWith('room-1', 'row-1')
     expect(chatServer.agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'agent-stable-1')
   })
 
@@ -239,16 +291,20 @@ describe('Group Chat member/agent identity sync', () => {
 
   it('removes the runtime agent by persisted agentId and returns synchronized room state', async () => {
     const agentsBefore = [{ id: 'row-1', roomId: 'room-1', agentId: 'agent-stable-1', profile: 'default', name: 'Worker', description: '', invited: 0 }]
+    const removal = { agent: agentsBefore[0], actorId: 'actor-1', sessionProfiles: [] }
     const storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room 1' })),
       getRoomAgent: vi.fn(() => agentsBefore[0]),
       getRoomAgents: vi.fn(() => []),
-      removeRoomMembersForAgent: vi.fn(),
-      removeRoomAgent: vi.fn(),
+      removeAgentActorWithRetention: vi.fn(() => removal),
       getRoomMembers: vi.fn(() => [{ id: 'member-1', userId: 'human-1', name: 'Han', description: '', joinedAt: 1 }]),
     }
     const chatServer = {
       getStorage: () => storage,
       agentClients: { removeAgentFromRoom: vi.fn() },
+      cleanupRemovedAgentRuntime: vi.fn(async (retained: typeof removal) => {
+        chatServer.agentClients.removeAgentFromRoom(retained.agent.roomId, retained.agent.agentId)
+      }),
     }
     setGroupChatServer(chatServer as any)
 
@@ -260,9 +316,9 @@ describe('Group Chat member/agent identity sync', () => {
     }
     await handler(ctx, async () => {})
 
+    expect(storage.removeAgentActorWithRetention).toHaveBeenCalledWith('room-1', 'row-1')
+    expect(chatServer.cleanupRemovedAgentRuntime).toHaveBeenCalledWith(removal)
     expect(chatServer.agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'agent-stable-1')
-    expect(storage.removeRoomMembersForAgent).toHaveBeenCalledWith('room-1', agentsBefore[0])
-    expect(storage.removeRoomAgent).toHaveBeenCalledWith('room-1', 'row-1')
     expect(ctx.body).toEqual({
       success: true,
       agents: [],
@@ -278,7 +334,10 @@ describe('Group Chat member/agent identity sync', () => {
     }
     const chatServer = {
       getStorage: () => storage,
-      deleteRoomRuntimeState: vi.fn(async () => { calls.push('runtime-delete') }),
+      deleteRoomRuntimeState: vi.fn(async (_roomId: string, assertAuthorized: () => void) => {
+        assertAuthorized()
+        calls.push('runtime-delete')
+      }),
     }
     setGroupChatServer(chatServer as any)
 
@@ -292,7 +351,7 @@ describe('Group Chat member/agent identity sync', () => {
     await handler(ctx, async () => {})
 
     expect(calls).toEqual(['runtime-delete', 'storage-delete'])
-    expect(chatServer.deleteRoomRuntimeState).toHaveBeenCalledWith('room-1')
+    expect(chatServer.deleteRoomRuntimeState).toHaveBeenCalledWith('room-1', expect.any(Function))
     expect(ctx.body).toEqual({ success: true })
   })
 
@@ -329,6 +388,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.rooms = new Map([['room-1', { hasOnlineMember: vi.fn(() => true) }]])
     server.typingState = new Map([['room-1', new Map([['human-1', { userName: 'Human', timer: setTimeout(() => {}, 1000) }]])]])
     server.contextStatusState = new Map([['room-1', new Map([['Worker', { agentName: 'Worker', status: 'replying' }]])]])
+    server.pendingApprovals = new Map()
     server.agentClients = {
       interruptRoom: vi.fn(async () => { calls.push('interrupt') }),
       disconnectRoom: vi.fn(() => { calls.push('disconnect') }),
@@ -339,7 +399,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     server.storage = { saveMessageAndRefreshRoom }
 
-    await server.deleteRoomRuntimeState('room-1')
+    await server.deleteRoomRuntimeState('room-1', () => {})
     const ack = vi.fn()
     server.handleMessage({ id: 'socket-1' }, { roomId: 'room-1', content: 'late', role: 'user' }, ack)
 
@@ -352,10 +412,46 @@ describe('Group Chat member/agent identity sync', () => {
     expect(ack).toHaveBeenCalledWith({ error: 'Not in room' })
   })
 
+  it('fails closed before deriving a Bridge session from a weak room seed', () => {
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', sessionSeed: '0' })),
+      getRoomAgents: vi.fn(() => ([{
+        id: 'row-1',
+        roomId: 'room-1',
+        agentId: 'agent-1',
+        profile: 'default',
+        name: 'Worker',
+      }])),
+      findActiveActorByAgentIdentity: vi.fn(() => null),
+    }
+
+    expect(() => server.fenceCurrentRoomAgentSessions('room-1')).toThrow(/cryptographic session seed/i)
+  })
+
   it('rejects stale agent context and stream side-channel events after session rotation', () => {
     const broadcastEmit = vi.fn()
     const roomEmit = vi.fn()
     const updateRoomTotalTokens = vi.fn()
+    const getActorCapabilities = vi.fn((): string[] => ['room.read', 'room.write'])
+    const agentActor = {
+      id: 'actor-agent-1',
+      roomId: 'room-1',
+      actorType: 'agent',
+      active: 1,
+      authUserId: null,
+      agentId: 'agent-stable-1',
+      localSubjectId: null,
+      systemKey: null,
+      name: 'Worker',
+      description: '',
+      avatar: '',
+      authorizationRevision: 0,
+      contextRevision: 0,
+      tombstonedAt: null,
+      createdAt: 1,
+      updatedAt: 1,
+    }
     const agentMember = {
       id: 'agent-socket-1',
       userId: 'agent-stable-1',
@@ -371,16 +467,30 @@ describe('Group Chat member/agent identity sync', () => {
     server.rooms = new Map([['room-1', {
       getOnlineMemberBySocketId: vi.fn(() => agentMember),
     }]])
+    server.socketUserMap = new Map([['agent-socket-1', 'agent-stable-1']])
+    server.socketRequestedSourceMap = new Map([['agent-socket-1', 'agent']])
     server.contextStatusState = new Map()
     server.storage = {
-      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: 'seed-2' })),
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: '22222222222222222222222222222222', authorizationRevision: 0 })),
       getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-stable-1', profile: 'default', name: 'Worker' })),
+      findActiveActorByAgentIdentity: vi.fn(() => agentActor),
+      getActorCapabilities,
+      getRoomsForProfiles: vi.fn(() => []),
       updateRoomTotalTokens,
     }
     server.nsp = { to: vi.fn(() => ({ emit: broadcastEmit })) }
-    const socket = { id: 'agent-socket-1', to: vi.fn(() => ({ emit: roomEmit })) }
-    const staleSessionId = groupBridgeSessionId('room-1', 'default', 'Worker', 'seed-1')
-    const currentSessionId = groupBridgeSessionId('room-1', 'default', 'Worker', 'seed-2')
+    server.emitToRoomReaders = vi.fn((_roomId: string, event: string, payload: unknown, excludeSocketId?: string) => {
+      ;(excludeSocketId ? roomEmit : broadcastEmit)(event, payload)
+    })
+    const socket = { id: 'agent-socket-1', data: {}, to: vi.fn(() => ({ emit: roomEmit })) }
+    const sessionIdentity = {
+      actorId: agentActor.id,
+      roomAuthorizationRevision: 0,
+      actorAuthorizationRevision: 0,
+      actorContextRevision: 0,
+    }
+    const staleSessionId = groupBridgeSessionId('room-1', 'default', 'Worker', '11111111111111111111111111111111', sessionIdentity)
+    const currentSessionId = groupBridgeSessionId('room-1', 'default', 'Worker', '22222222222222222222222222222222', sessionIdentity)
 
     server.handleContextStatus(socket, {
       roomId: 'room-1',
@@ -417,6 +527,25 @@ describe('Group Chat member/agent identity sync', () => {
     expect(roomEmit).toHaveBeenCalledWith('context_status', expect.objectContaining({ roomId: 'room-1', agentName: 'Worker', status: 'replying' }))
     expect(broadcastEmit).toHaveBeenCalledWith('room_updated', { roomId: 'room-1', totalTokens: 456 })
     expect(broadcastEmit).toHaveBeenCalledWith('message_stream_start', expect.objectContaining({ id: 'current-stream', senderName: 'Worker' }))
+
+    getActorCapabilities.mockReturnValue([])
+    expect(server.socketAccessPolicy(socket, 'room-1').canWrite).toBe(false)
+    server.handleContextStatus(socket, {
+      roomId: 'room-1',
+      agentName: 'Worker',
+      status: 'ready',
+      totalTokens: 789,
+      agentSessionId: currentSessionId,
+    })
+    server.handleMessageStreamStart(socket, {
+      roomId: 'room-1',
+      id: 'revoked-stream',
+      agentSessionId: currentSessionId,
+    })
+
+    expect(updateRoomTotalTokens).not.toHaveBeenCalledWith('room-1', 789)
+    expect(roomEmit).not.toHaveBeenCalledWith('context_status', expect.objectContaining({ status: 'ready' }))
+    expect(broadcastEmit).not.toHaveBeenCalledWith('message_stream_start', expect.objectContaining({ id: 'revoked-stream' }))
   })
 
   it('does not drop queued mentions when room interrupt is not synchronized', async () => {
@@ -454,13 +583,13 @@ describe('Group Chat member/agent identity sync', () => {
       getOnlineMemberBySocketId: vi.fn(() => agentMember),
     }]])
     server.storage = {
-      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: 'seed-2' })),
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: '22222222222222222222222222222222' })),
       getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-stable-1', profile: 'default', name: 'Worker' })),
       saveMessageAndRefreshRoom,
     }
     server.nsp = { to: vi.fn(() => ({ emit })) }
     const ack = vi.fn()
-    const staleSessionId = groupBridgeSessionId('room-1', 'default', 'Worker', 'seed-1')
+    const staleSessionId = groupBridgeSessionId('room-1', 'default', 'Worker', '11111111111111111111111111111111')
 
     server.handleMessage({ id: 'agent-socket-1' }, {
       roomId: 'room-1',
@@ -483,7 +612,10 @@ describe('Group Chat member/agent identity sync', () => {
     }
     const chatServer = {
       getStorage: () => storage,
-      clearRoomRuntimeState: vi.fn(async () => { calls.push('runtime-clear') }),
+      clearRoomRuntimeState: vi.fn(async (_roomId: string, assertAuthorized: () => void) => {
+        assertAuthorized()
+        calls.push('runtime-clear')
+      }),
     }
     setGroupChatServer(chatServer as any)
 
@@ -497,7 +629,7 @@ describe('Group Chat member/agent identity sync', () => {
     await handler(ctx, async () => {})
 
     expect(calls).toEqual(['runtime-clear', 'storage-clear'])
-    expect(chatServer.clearRoomRuntimeState).toHaveBeenCalledWith('room-1')
+    expect(chatServer.clearRoomRuntimeState).toHaveBeenCalledWith('room-1', expect.any(Function))
     expect(ctx.body).toEqual({ success: true, room: expect.objectContaining({ id: 'room-1', workspace: '/tmp/workspace' }) })
   })
 
@@ -538,19 +670,15 @@ describe('Group Chat member/agent identity sync', () => {
     server.typingState = new Map()
     server.contextStatusState = new Map()
     server.storage = {
-      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: 'secret', ownerAuthUserId: 7 })),
+      admitHumanMember: vi.fn(() => ({ status: 'not_found' })),
       getRoomAgentByAgentId: vi.fn(() => null),
-      getMemberByUserId: vi.fn(() => null),
-      getMemberByAuthUserId: vi.fn(() => null),
-      getRoomsForProfiles: vi.fn(() => []),
-      saveRoom: vi.fn(),
-      addRoomMember: vi.fn(),
       getRecentMessagesForUI: vi.fn(() => []),
       getRoomAgents: vi.fn(() => []),
     }
+    server.currentAuthenticatedSocketUser = vi.fn(() => ({ id: 42, username: 'alice', role: 'admin', profiles: ['other'] }))
     const socket = {
       id: 'socket-1',
-      data: { authUser: { id: 42, username: 'alice', role: 'admin', profiles: ['other'] } },
+      data: {},
       join: vi.fn(),
       to: vi.fn(() => ({ emit })),
     }
@@ -558,8 +686,12 @@ describe('Group Chat member/agent identity sync', () => {
 
     server.handleJoin(socket, { roomId: 'room-1' }, ack)
 
-    expect(ack).toHaveBeenCalledWith({ error: 'Access denied' })
-    expect(server.storage.addRoomMember).not.toHaveBeenCalled()
+    expect(server.storage.admitHumanMember).toHaveBeenCalledWith(expect.objectContaining({
+      roomId: 'room-1',
+      userId: 'auth:42',
+      inviteCode: undefined,
+    }))
+    expect(ack).toHaveBeenCalledWith({ error: 'Room not found' })
     expect(socket.join).not.toHaveBeenCalled()
   })
 
@@ -573,9 +705,11 @@ describe('Group Chat member/agent identity sync', () => {
     }
     server.agentClients = { interruptAgent: vi.fn() }
     server.nsp = { to: vi.fn(() => ({ emit })) }
+    server.removeUnauthorizedRoomSocket = vi.fn()
+    server.currentAuthenticatedSocketUser = vi.fn(() => ({ id: 42, username: 'member', role: 'admin', profiles: ['other'] }))
     const socket = {
       id: 'socket-1',
-      data: { authUser: { id: 42, username: 'member', role: 'admin', profiles: ['other'] } },
+      data: {},
     }
     const interruptAck = vi.fn()
     const approvalAck = vi.fn()
@@ -585,6 +719,7 @@ describe('Group Chat member/agent identity sync', () => {
 
     expect(interruptAck).toHaveBeenCalledWith({ error: 'Access denied' })
     expect(approvalAck).toHaveBeenCalledWith({ error: 'Access denied' })
+    expect(server.removeUnauthorizedRoomSocket).toHaveBeenCalledWith(socket, 'room-1')
     expect(server.agentClients.interruptAgent).not.toHaveBeenCalled()
   })
 
@@ -599,6 +734,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     server.agentClients = { interruptAgent: vi.fn() }
     server.nsp = { to: vi.fn(() => ({ emit })) }
+    server.removeUnauthorizedRoomSocket = vi.fn()
     const socket = { id: 'agent-socket', data: {} }
     const interruptAck = vi.fn()
     const approvalAck = vi.fn()
@@ -608,10 +744,12 @@ describe('Group Chat member/agent identity sync', () => {
 
     expect(interruptAck).toHaveBeenCalledWith({ error: 'Access denied' })
     expect(approvalAck).toHaveBeenCalledWith({ error: 'Access denied' })
+    expect(server.removeUnauthorizedRoomSocket).toHaveBeenCalledWith(socket, 'room-1')
     expect(server.agentClients.interruptAgent).not.toHaveBeenCalled()
   })
 
-  it('allows pre-persisted agent sockets to join without creating human membership', () => {
+  it('requires a persisted read grant before pre-persisted agent sockets can join', () => {
+    const getActorCapabilities = vi.fn((): string[] => [])
     const server = Object.create(GroupChatServer.prototype) as any
     server.rooms = new Map()
     server.socketUserMap = new Map([['socket-agent', 'agent-stable-1']])
@@ -623,6 +761,14 @@ describe('Group Chat member/agent identity sync', () => {
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: 'secret', ownerAuthUserId: 7 })),
       getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-stable-1', profile: 'default', name: 'Worker', description: '', invited: 0 })),
+      findActiveActorByAgentIdentity: vi.fn(() => ({
+        id: 'actor-agent-1', roomId: 'room-1', actorType: 'agent', active: 1,
+        authUserId: null, agentId: 'agent-stable-1', localSubjectId: null, systemKey: null,
+        name: 'Worker', description: '', avatar: '', authorizationRevision: 0,
+        contextRevision: 0, tombstonedAt: null, createdAt: 1, updatedAt: 1,
+      })),
+      getActorCapabilities,
+      getRoomsForProfiles: vi.fn(() => []),
       getMemberByUserId: vi.fn(() => null),
       getMemberByAuthUserId: vi.fn(() => null),
       saveRoom: vi.fn(),
@@ -638,6 +784,12 @@ describe('Group Chat member/agent identity sync', () => {
     }
     const ack = vi.fn()
 
+    server.handleJoin(socket, { roomId: 'room-1' }, ack)
+    expect(ack).toHaveBeenLastCalledWith({ error: 'Room not found' })
+    expect(socket.join).not.toHaveBeenCalled()
+
+    getActorCapabilities.mockReturnValue(['room.read'])
+    ack.mockClear()
     server.handleJoin(socket, { roomId: 'room-1' }, ack)
 
     expect(server.storage.getRoomAgentByAgentId).toHaveBeenCalledWith('room-1', 'agent-stable-1')
@@ -658,18 +810,29 @@ describe('Group Chat member/agent identity sync', () => {
     server.contextStatusState = new Map()
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: 'secret', ownerAuthUserId: 7 })),
+      admitHumanMember: vi.fn(() => ({
+        status: 'admitted',
+        room: { id: 'room-1', name: 'Room', inviteCode: 'secret', inviteGeneration: 0, ownerAuthUserId: 7 },
+        userName: 'alice',
+        description: '',
+        avatar: '',
+      })),
       getRoomAgentByAgentId: vi.fn(() => null),
-      getMemberByUserId: vi.fn(() => null),
-      getMemberByAuthUserId: vi.fn(() => null),
+      findActiveActorByAuthUserId: vi.fn(() => ({
+        id: 'actor-human-42', roomId: 'room-1', actorType: 'authenticated_human', active: 1,
+        authUserId: 42, agentId: null, localSubjectId: null, systemKey: null,
+        name: 'alice', description: '', avatar: '', authorizationRevision: 0,
+        contextRevision: 0, tombstonedAt: null, createdAt: 1, updatedAt: 1,
+      })),
+      getActorCapabilities: vi.fn(() => ['room.read']),
       getRoomsForProfiles: vi.fn(() => []),
-      saveRoom: vi.fn(),
-      addRoomMember: vi.fn(),
       getRecentMessagesForUI: vi.fn(() => []),
       getRoomAgents: vi.fn(() => []),
     }
+    server.currentAuthenticatedSocketUser = vi.fn(() => ({ id: 42, username: 'alice', role: 'admin', profiles: ['other'] }))
     const socket = {
       id: 'socket-1',
-      data: { authUser: { id: 42, username: 'alice', role: 'admin', profiles: ['other'] } },
+      data: {},
       join: vi.fn(),
       to: vi.fn(() => ({ emit })),
     }
@@ -677,7 +840,12 @@ describe('Group Chat member/agent identity sync', () => {
 
     server.handleJoin(socket, { roomId: 'room-1', inviteCode: 'secret' }, ack)
 
-    expect(server.storage.addRoomMember).toHaveBeenCalledWith('room-1', 'auth:42', 'alice', '', expect.any(String), 42)
+    expect(server.storage.admitHumanMember).toHaveBeenCalledWith(expect.objectContaining({
+      roomId: 'room-1',
+      userId: 'auth:42',
+      inviteCode: 'secret',
+      requestedName: 'alice',
+    }))
     expect(socket.join).toHaveBeenCalledWith('room-1')
     expect(ack.mock.calls[0][0]).toEqual(expect.objectContaining({ roomId: 'room-1', messages: [], agents: [] }))
   })
@@ -693,24 +861,30 @@ describe('Group Chat member/agent identity sync', () => {
     server.typingState = new Map()
     server.contextStatusState = new Map()
     server.storage = {
-      getRoomAgentByAgentId: vi.fn(() => null),
-      getMemberByUserId: vi.fn(() => null),
-      getMemberByAuthUserId: vi.fn(() => ({
-        id: 'member-old',
-        userId: 'browser-local-id',
-        name: 'Alice Display',
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: 'secret', ownerAuthUserId: 7 })),
+      admitHumanMember: vi.fn(() => ({
+        status: 'admitted',
+        room: { id: 'room-1', name: 'Room', inviteCode: 'secret', inviteGeneration: 0, ownerAuthUserId: 7 },
+        userName: 'Alice Display',
         description: 'saved description',
-        joinedAt: 1,
         avatar: '',
-        authUserId: 42,
       })),
-      saveRoom: vi.fn(),
-      addRoomMember: vi.fn(),
+      getRoomAgentByAgentId: vi.fn(() => null),
+      findActiveActorByAuthUserId: vi.fn(() => ({
+        id: 'actor-human-42', roomId: 'room-1', actorType: 'authenticated_human', active: 1,
+        authUserId: 42, agentId: null, localSubjectId: null, systemKey: null,
+        name: 'Alice Display', description: 'saved description', avatar: '', authorizationRevision: 0,
+        contextRevision: 0, tombstonedAt: null, createdAt: 1, updatedAt: 1,
+      })),
+      getActorCapabilities: vi.fn(() => ['room.read']),
+      getRoomsForProfiles: vi.fn(() => []),
       getRecentMessagesForUI: vi.fn(() => []),
       getRoomAgents: vi.fn(() => []),
     }
+    server.currentAuthenticatedSocketUser = vi.fn(() => ({ id: 42, username: 'alice-login', role: 'admin', profiles: ['other'] }))
     const socket = {
       id: 'socket-1',
+      data: {},
       join: vi.fn(),
       to: vi.fn(() => ({ emit })),
     }
@@ -718,14 +892,12 @@ describe('Group Chat member/agent identity sync', () => {
 
     server.handleJoin(socket, { roomId: 'room-1' }, ack)
 
-    expect(server.storage.addRoomMember).toHaveBeenCalledWith(
-      'room-1',
-      'auth:42',
-      'Alice Display',
-      'saved description',
-      '',
-      42,
-    )
+    expect(server.storage.admitHumanMember).toHaveBeenCalledWith(expect.objectContaining({
+      roomId: 'room-1',
+      userId: 'auth:42',
+      requestedName: 'alice-login',
+      requestedDescription: '',
+    }))
     expect(ack.mock.calls[0][0].members).toEqual([
       expect.objectContaining({ userId: 'auth:42', name: 'Alice Display' }),
     ])
@@ -838,15 +1010,21 @@ describe('Group Chat member/agent identity sync', () => {
     }))
   })
 
-  it('filters room list to rooms containing one of the regular admin profiles', async () => {
+  it('does not expose rooms to regular admins solely because an agent profile matches', async () => {
     const allRooms = [
       { id: 'room-default', name: 'Default', inviteCode: null },
       { id: 'room-private', name: 'Private', inviteCode: null },
     ]
-    const visibleRooms = [allRooms[0]]
     const storage = {
       getAllRooms: vi.fn(() => allRooms),
-      getRoomsForProfiles: vi.fn(() => visibleRooms),
+      getRoom: vi.fn((roomId: string) => allRooms.find(room => room.id === roomId) || null),
+      getRoomAgents: vi.fn((roomId: string) => roomId === 'room-default'
+        ? [{ profile: 'default' }]
+        : [{ profile: 'private' }]),
+      getRoomsForProfiles: vi.fn(() => [allRooms[0]]),
+      findActiveActorByAuthUserId: vi.fn(() => null),
+      getMemberByAuthUserId: vi.fn(() => null),
+      getActorCapabilities: vi.fn(() => []),
     }
     setGroupChatServer({ getStorage: () => storage } as any)
 
@@ -858,15 +1036,16 @@ describe('Group Chat member/agent identity sync', () => {
     }
     await handler(ctx, async () => {})
 
-    expect(storage.getRoomsForProfiles).toHaveBeenCalledWith(['default', 'research'])
-    expect(storage.getAllRooms).not.toHaveBeenCalled()
-    expect(ctx.body).toEqual({ rooms: [expect.objectContaining({ id: 'room-default', inviteCode: null, canManage: true })] })
+    expect(storage.getAllRooms).toHaveBeenCalledOnce()
+    expect(storage.getRoomsForProfiles).not.toHaveBeenCalled()
+    expect(ctx.body).toEqual({ rooms: [] })
   })
 
   it('keeps room list unrestricted for super admins', async () => {
     const rooms = [{ id: 'room-1', name: 'All', inviteCode: null }]
     const storage = {
       getAllRooms: vi.fn(() => rooms),
+      getRoom: vi.fn((roomId: string) => rooms.find(room => room.id === roomId) || null),
       getRoomsForProfiles: vi.fn(() => []),
     }
     setGroupChatServer({ getStorage: () => storage } as any)
@@ -903,14 +1082,47 @@ describe('Group Chat member/agent identity sync', () => {
       ['human-socket', 'human'],
       ['agent-socket', 'agent'],
     ])
+    server.socketLocalSubjectIdMap = new Map([
+      ['human-socket', 'local-subject-1'],
+    ])
     server.userInfoMap = new Map([
       ['human-1', { name: 'Human', description: '' }],
       ['agent-1', { name: '丫鬟', description: '' }],
     ])
     server.agentClients = { processMentions: vi.fn(async () => undefined) }
-    const agentSessionId = groupBridgeSessionId('room-1', 'default', '丫鬟', 'seed-1')
+    const agentSessionId = groupBridgeSessionId(
+      'room-1',
+      'default',
+      '丫鬟',
+      '11111111111111111111111111111111',
+      {
+        actorId: 'actor-agent-1',
+        roomAuthorizationRevision: 0,
+        actorAuthorizationRevision: 0,
+        actorContextRevision: 0,
+      },
+    )
     server.storage = {
-      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: 'seed-1' })),
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: '11111111111111111111111111111111', authorizationRevision: 0 })),
+      findActiveActorByLocalSubjectId: vi.fn(() => ({
+        id: 'actor-human-1',
+        roomId: 'room-1',
+        actorType: 'local',
+        localSubjectId: 'local-subject-1',
+        active: true,
+        authorizationRevision: 0,
+        contextRevision: 0,
+      })),
+      findActiveActorByAgentIdentity: vi.fn(() => ({
+        id: 'actor-agent-1',
+        roomId: 'room-1',
+        actorType: 'agent',
+        agentId: 'agent-1',
+        active: true,
+        authorizationRevision: 0,
+        contextRevision: 0,
+      })),
+      getActorCapabilities: vi.fn(() => ['room.read', 'room.write', 'agent.invoke']),
       getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: '丫鬟' })),
       saveMessageAndRefreshRoom: vi.fn((msg: any) => ({ message: msg, totalTokens: 123 })),
     }
@@ -932,6 +1144,17 @@ describe('Group Chat member/agent identity sync', () => {
       senderId: 'agent-1',
       mentionDepth: 1,
     }))
+
+    server.agentClients.processMentions.mockClear()
+    server.storage.getActorCapabilities.mockReturnValue(['room.read', 'room.write'])
+    server.handleMessage({ id: 'agent-socket' }, {
+      roomId: 'room-1',
+      content: '@all no invoke authority',
+      role: 'assistant',
+      mentionDepth: 1,
+      agentSessionId,
+    }, vi.fn())
+    expect(server.agentClients.processMentions).not.toHaveBeenCalled()
 
     server.agentClients.processMentions.mockClear()
     server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all too deep', role: 'assistant', mentionDepth: 4, agentSessionId }, vi.fn())

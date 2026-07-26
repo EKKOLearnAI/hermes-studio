@@ -156,26 +156,47 @@ function responseErrorMessage(text: string, statusText: string): string {
   }
 }
 
+function setHeaderCaseInsensitive(headers: Record<string, string>, name: string, value: string): void {
+  const normalizedName = name.toLowerCase()
+  for (const existingName of Object.keys(headers)) {
+    if (existingName !== name && existingName.toLowerCase() === normalizedName) {
+      delete headers[existingName]
+    }
+  }
+  headers[name] = value
+}
+
+function mergeRequestHeaders(headers: Record<string, string>, source?: HeadersInit): void {
+  if (!source) return
+  if (source instanceof Headers) {
+    source.forEach((value, name) => setHeaderCaseInsensitive(headers, name, value))
+    return
+  }
+  const entries = Array.isArray(source) ? source : Object.entries(source)
+  for (const [name, value] of entries) {
+    setHeaderCaseInsensitive(headers, name, value)
+  }
+}
+
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   await ensureDesktopAuthReady()
   const base = getBaseUrl()
   const url = `${base}${path}`
   const isFormDataBody = typeof FormData !== 'undefined' && options.body instanceof FormData
-  const headers: Record<string, string> = {
-    ...(isFormDataBody ? {} : { 'Content-Type': 'application/json' }),
-    ...options.headers as Record<string, string>,
-  }
+  const headers: Record<string, string> = {}
+  if (!isFormDataBody) setHeaderCaseInsensitive(headers, 'Content-Type', 'application/json')
+  mergeRequestHeaders(headers, options.headers)
 
   const apiKey = getApiKey()
   if (apiKey) {
-    headers['Authorization'] = `Bearer ${apiKey}`
+    setHeaderCaseInsensitive(headers, 'Authorization', `Bearer ${apiKey}`)
   }
 
   // Inject active profile header for request-scoped endpoints. Explicit profile
   // selectors in the URL/body and profile-name routes are validated directly.
   const profileName = getActiveProfileName()
   if (profileName && shouldAttachProfileHeader(path, options)) {
-    headers['X-Hermes-Profile'] = profileName
+    setHeaderCaseInsensitive(headers, 'X-Hermes-Profile', profileName)
   }
 
   const res = await fetch(url, { ...options, headers })

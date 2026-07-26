@@ -544,13 +544,15 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   id: 'TEXT PRIMARY KEY',
   name: 'TEXT NOT NULL',
   inviteCode: 'TEXT UNIQUE',
+  inviteGeneration: 'INTEGER NOT NULL DEFAULT 0',
   triggerTokens: 'INTEGER NOT NULL DEFAULT 100000',
   maxHistoryTokens: 'INTEGER NOT NULL DEFAULT 32000',
   tailMessageCount: 'INTEGER NOT NULL DEFAULT 10',
   totalTokens: 'INTEGER NOT NULL DEFAULT 0',
-  sessionSeed: "TEXT NOT NULL DEFAULT '0'",
+  sessionSeed: 'TEXT NOT NULL',
   workspace: "TEXT NOT NULL DEFAULT ''",
   ownerAuthUserId: 'INTEGER',
+  authorizationRevision: 'INTEGER NOT NULL DEFAULT 0',
 }
 
 export const GC_MESSAGES_TABLE = 'gc_messages'
@@ -582,6 +584,7 @@ export const GC_ROOM_AGENTS_SCHEMA: Record<string, string> = {
   name: 'TEXT NOT NULL',
   description: "TEXT NOT NULL DEFAULT ''",
   invited: 'INTEGER NOT NULL DEFAULT 0',
+  createdAt: 'INTEGER NOT NULL DEFAULT 0',
 }
 
 export const GC_CONTEXT_SNAPSHOTS_TABLE = 'gc_context_snapshots'
@@ -606,6 +609,39 @@ export const GC_ROOM_MEMBERS_SCHEMA: Record<string, string> = {
   updatedAt: 'INTEGER NOT NULL',
   avatar: "TEXT NOT NULL DEFAULT ''",
   authUserId: 'INTEGER',
+}
+
+export const GC_ROOM_ACTORS_TABLE = 'gc_room_actors'
+
+export const GC_ROOM_ACTORS_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  roomId: 'TEXT NOT NULL',
+  actorType: 'TEXT NOT NULL',
+  authUserId: 'INTEGER',
+  agentId: 'TEXT',
+  localSubjectId: 'TEXT',
+  systemKey: 'TEXT',
+  name: "TEXT NOT NULL DEFAULT ''",
+  description: "TEXT NOT NULL DEFAULT ''",
+  avatar: "TEXT NOT NULL DEFAULT ''",
+  active: 'INTEGER NOT NULL DEFAULT 1',
+  authorizationRevision: 'INTEGER NOT NULL DEFAULT 0',
+  contextRevision: 'INTEGER NOT NULL DEFAULT 0',
+  tombstonedAt: 'INTEGER',
+  createdAt: 'INTEGER NOT NULL',
+  updatedAt: 'INTEGER NOT NULL',
+}
+
+export const GC_ROOM_ACTOR_CAPABILITIES_TABLE = 'gc_room_actor_capabilities'
+
+export const GC_ROOM_ACTOR_CAPABILITIES_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  roomId: 'TEXT NOT NULL',
+  actorId: 'TEXT NOT NULL',
+  capability: 'TEXT NOT NULL',
+  active: 'INTEGER NOT NULL DEFAULT 1',
+  createdAt: 'INTEGER NOT NULL',
+  updatedAt: 'INTEGER NOT NULL',
 }
 
 export const GC_PENDING_SESSION_DELETES_TABLE = 'gc_pending_session_deletes'
@@ -636,6 +672,16 @@ export const GC_SESSION_PROFILES_SCHEMA: Record<string, string> = {
 // ============================================================================
 
 import { getDb, getStoragePath } from '../index'
+import { assertHermesDatabaseOwnership } from '../ownership'
+import {
+  assertGroupChatIdentityReaderEpochPreflight,
+  runGroupChatIdentityV1Migration,
+} from './group-chat-identity-migration'
+
+type TransactionalDatabase = NonNullable<ReturnType<typeof getDb>> & {
+  readonly inTransaction?: boolean
+  readonly isTransaction?: boolean
+}
 
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`
@@ -1036,6 +1082,9 @@ export function initAllHermesTables(): void {
   if (!db) return
 
   try {
+    assertHermesDatabaseOwnership(db)
+    assertGroupChatIdentityReaderEpochPreflight(db)
+
     // Usage store
     syncTable(USAGE_TABLE, USAGE_SCHEMA, { primaryKey: 'id' })
     db.exec(USAGE_RUN_INDEX)
@@ -1139,28 +1188,45 @@ export function initAllHermesTables(): void {
     copyLegacyProviderSettingsToDefaultProfile(db, TTS_PROVIDER_SETTINGS_TABLE, TTS_PROFILE_PROVIDER_SETTINGS_TABLE)
     copyLegacyActiveSettingsToDefaultProfile(db, TTS_USER_SETTINGS_TABLE, TTS_PROFILE_SETTINGS_TABLE)
 
-    // Group chat - basic tables
-    syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)
-    syncTable(GC_MESSAGES_TABLE, GC_MESSAGES_SCHEMA)
-    syncTable(GC_CONTEXT_SNAPSHOTS_TABLE, GC_CONTEXT_SNAPSHOTS_SCHEMA)
-    syncTable(GC_PENDING_SESSION_DELETES_TABLE, GC_PENDING_SESSION_DELETES_SCHEMA)
-    syncTable(GC_SESSION_PROFILES_TABLE, GC_SESSION_PROFILES_SCHEMA)
+    const transactionalDb = db as TransactionalDatabase
+    const runGroupChatInitialization = () => {
+      syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)
+      syncTable(GC_MESSAGES_TABLE, GC_MESSAGES_SCHEMA)
+      syncTable(GC_CONTEXT_SNAPSHOTS_TABLE, GC_CONTEXT_SNAPSHOTS_SCHEMA)
+      syncTable(GC_PENDING_SESSION_DELETES_TABLE, GC_PENDING_SESSION_DELETES_SCHEMA)
+      syncTable(GC_SESSION_PROFILES_TABLE, GC_SESSION_PROFILES_SCHEMA)
+      syncTable(GC_ROOM_AGENTS_TABLE, GC_ROOM_AGENTS_SCHEMA, {
+        indexes: {
+          idx_gc_room_agents_profile: 'CREATE INDEX idx_gc_room_agents_profile ON gc_room_agents(profile)',
+        },
+      })
+      syncTable(GC_ROOM_MEMBERS_TABLE, GC_ROOM_MEMBERS_SCHEMA, {
+        indexes: {
+          idx_gc_room_members_user: 'CREATE INDEX idx_gc_room_members_user ON gc_room_members(userId)',
+        },
+      })
+      runGroupChatIdentityV1Migration(db)
+    }
 
-    // Group chat - single-column primary key tables (PRIMARY KEY in column definition)
-    syncTable(GC_ROOM_AGENTS_TABLE, GC_ROOM_AGENTS_SCHEMA, {
-      indexes: {
-        idx_gc_room_agents_profile: 'CREATE INDEX idx_gc_room_agents_profile ON gc_room_agents(profile)',
+    if (transactionalDb.inTransaction || transactionalDb.isTransaction) {
+      runGroupChatInitialization()
+    } else {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        runGroupChatInitialization()
+        db.exec('COMMIT')
+      } catch (error) {
+        try {
+          db.exec('ROLLBACK')
+        } catch {
+          // best effort rollback
+        }
+        throw error
       }
-    })
-
-    syncTable(GC_ROOM_MEMBERS_TABLE, GC_ROOM_MEMBERS_SCHEMA, {
-      indexes: {
-        idx_gc_room_members_user: 'CREATE INDEX idx_gc_room_members_user ON gc_room_members(userId)',
-      }
-    })
+    }
   } catch (e) {
     console.error('Error initializing Hermes SQLite tables:', e)
-    console.error(`[Schema] Database initialization failed. Existing database was left untouched: ${getStoragePath()}`)
+    console.error(`[Schema] Database initialization aborted for: ${getStoragePath()}`)
     throw e
   }
 }

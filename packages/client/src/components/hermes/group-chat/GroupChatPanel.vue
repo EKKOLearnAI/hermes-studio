@@ -14,6 +14,7 @@ import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import SettingsCircuitBadge from '@/components/layout/SettingsCircuitBadge.vue'
 import { copyToClipboard } from '@/utils/clipboard'
+import { generateGroupChatInviteCode, groupChatInviteCodeForClone } from '@/utils/group-chat-invite'
 import type { Attachment } from '@/stores/hermes/chat'
 import type { RoomAgent, RoomInfo } from '@/api/hermes/group-chat'
 import { useFilesStore } from '@/stores/hermes/files'
@@ -49,6 +50,9 @@ const showUserProfileModal = ref(false)
 const userProfileName = ref('')
 const userProfileDescription = ref('')
 const isSavingUserProfile = ref(false)
+const joinInviteCode = ref('')
+const isJoiningByInviteCode = ref(false)
+const leavingRoomIds = ref<Set<string>>(new Set())
 const compressionConfig = ref({ triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10 })
 const isCompressing = ref(false)
 const inviteCodeDraft = ref('')
@@ -99,13 +103,21 @@ const contextRoom = computed(() => store.rooms.find(room => room.id === contextR
 function canManageRoom(room: Pick<RoomInfo, 'canManage'> | null | undefined): boolean {
     return room?.canManage === true
 }
+function canApproveRoom(room: Pick<RoomInfo, 'canApprove'> | null | undefined): boolean {
+    return room?.canApprove === true
+}
 const currentRoomCanManage = computed(() => canManageRoom(currentRoom.value))
-const visibleApproval = computed(() => currentRoomCanManage.value ? store.activePendingApproval : null)
+const currentRoomCanApprove = computed(() => canApproveRoom(currentRoom.value))
+const visibleApproval = computed(() => currentRoomCanApprove.value ? store.activePendingApproval : null)
 const currentWorkspaceLabel = computed(() => workspaceBasename(currentRoom.value?.workspace || ''))
 const canUpdateInviteCode = computed(() => {
     const nextCode = inviteCodeDraft.value.trim()
     return currentRoomCanManage.value && !isSavingInviteCode.value && !!nextCode && nextCode !== (currentRoom.value?.inviteCode || '')
 })
+const canJoinByInviteCode = computed(() => !!joinInviteCode.value.trim() && !isJoiningByInviteCode.value)
+function isLeavingRoom(roomId: string): boolean {
+    return leavingRoomIds.value.has(roomId)
+}
 const showWorkspaceModal = ref(false)
 const workspaceRoomId = ref<string | null>(null)
 const workspaceValue = ref('')
@@ -312,12 +324,7 @@ function handleWorkspaceFileAttach(file: File) {
 }
 
 function generateCode(): string {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-    let code = ''
-    for (let i = 0; i < 6; i++) {
-        code += chars[Math.floor(Math.random() * chars.length)]
-    }
-    return code
+    return generateGroupChatInviteCode()
 }
 
 function formatAgentFailures(results?: Array<{ ok: boolean; profile: string; error?: string; reason?: string }>): string | null {
@@ -363,6 +370,22 @@ async function handleCreateRoom(name: string, inviteCode: string, userName: stri
     }
 }
 
+async function handleJoinByInviteCode() {
+    const code = joinInviteCode.value.trim()
+    if (!code || isJoiningByInviteCode.value) return
+    isJoiningByInviteCode.value = true
+    try {
+        const room = await store.joinByCode(code)
+        joinInviteCode.value = ''
+        message.success(t('groupChat.joined'))
+        await router.push({ name: 'hermes.groupChatRoom', params: { roomId: room.id } })
+    } catch (err: any) {
+        message.error(err?.message || t('groupChat.joinFailed'))
+    } finally {
+        isJoiningByInviteCode.value = false
+    }
+}
+
 async function handleDeleteRoom(roomId: string) {
     const room = store.rooms.find(r => r.id === roomId)
     if (!canManageRoom(room)) return
@@ -377,6 +400,25 @@ async function handleDeleteRoom(roomId: string) {
     }
 }
 
+async function handleLeaveRoom(roomId: string) {
+    if (isLeavingRoom(roomId)) return
+    const wasCurrentRoom = store.currentRoomId === roomId
+    leavingRoomIds.value = new Set([...leavingRoomIds.value, roomId])
+    try {
+        await store.leaveRoom(roomId)
+        if (wasCurrentRoom) {
+            await router.replace({ name: 'hermes.groupChat' })
+        }
+        message.success(t('groupChat.roomLeft'))
+    } catch (err: any) {
+        message.error(err?.message || t('groupChat.leaveRoomFailed'))
+    } finally {
+        const next = new Set(leavingRoomIds.value)
+        next.delete(roomId)
+        leavingRoomIds.value = next
+    }
+}
+
 function buildRoomUrl(roomId: string) {
     const href = router.resolve({ name: 'hermes.groupChatRoom', params: { roomId } }).href
     return `${window.location.origin}${window.location.pathname}${href}`
@@ -386,6 +428,14 @@ async function copyRoomLink(roomId: string) {
     const ok = await copyToClipboard(buildRoomUrl(roomId))
     if (ok) message.success(t('common.copied'))
     else message.error(t('common.copied') + ' ✗')
+}
+
+async function handleCopyInviteCode() {
+    const code = inviteCodeDraft.value.trim()
+    if (!code) return
+    const ok = await copyToClipboard(code)
+    if (ok) message.success(t('groupChat.inviteCodeCopied'))
+    else message.error(t('groupChat.inviteCodeCopyFailed'))
 }
 
 const roomContextMenuOptions = computed<DropdownOption[]>(() => {
@@ -438,7 +488,7 @@ async function confirmCloneRoom() {
     try {
         const res = await store.cloneRoom(cloneSourceRoomId.value, {
             name: cloneRoomName.value.trim(),
-            inviteCode: cloneInviteCode.value.trim() || undefined,
+            inviteCode: groupChatInviteCodeForClone(cloneInviteCode.value),
         })
         showCloneModal.value = false
         cloneSourceRoomId.value = null
@@ -694,7 +744,7 @@ async function handleInterruptAgent(agentName: string) {
 }
 
 async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
-    if (!currentRoomCanManage.value) return
+    if (!currentRoomCanApprove.value) return
     try {
         await store.respondApproval(choice)
     } catch (err: any) {
@@ -717,6 +767,23 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     @primary="showCreateModal = true"
                 />
             </div>
+            <form class="invite-join-form" @submit.prevent="handleJoinByInviteCode">
+                <NInput
+                    v-model:value="joinInviteCode"
+                    size="small"
+                    :placeholder="t('groupChat.enterCode')"
+                    :disabled="isJoiningByInviteCode"
+                />
+                <NButton
+                    attr-type="submit"
+                    size="small"
+                    type="primary"
+                    :disabled="!canJoinByInviteCode"
+                    :loading="isJoiningByInviteCode"
+                >
+                    {{ t('groupChat.joinByCode') }}
+                </NButton>
+            </form>
             <div class="room-list">
                 <div
                     v-for="room in store.rooms"
@@ -734,9 +801,28 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         <span v-if="room.inviteCode" class="room-code">{{ room.inviteCode }}</span>
                         <span class="room-tokens">{{ formatTokens(room.totalTokens || 0) }}</span>
                     </div>
+                    <NPopconfirm v-if="room.canLeave !== false" @positive-click="handleLeaveRoom(room.id)">
+                        <template #trigger>
+                            <button
+                                class="room-action-btn leave"
+                                type="button"
+                                :title="t('groupChat.leaveRoom')"
+                                :aria-label="t('groupChat.leaveRoom')"
+                                :disabled="isLeavingRoom(room.id)"
+                                @click.stop
+                            >
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                                    <polyline points="16 17 21 12 16 7" />
+                                    <line x1="21" y1="12" x2="9" y2="12" />
+                                </svg>
+                            </button>
+                        </template>
+                        {{ t('groupChat.leaveRoomConfirm') }}
+                    </NPopconfirm>
                     <NPopconfirm v-if="canManageRoom(room)" @positive-click="handleDeleteRoom(room.id)">
                         <template #trigger>
-                            <button class="room-action-btn danger" @click.stop>
+                            <button class="room-action-btn danger" type="button" :title="t('groupChat.deleteRoomConfirm')" :aria-label="t('groupChat.deleteRoomConfirm')" @click.stop>
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                             </button>
                         </template>
@@ -1200,6 +1286,12 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                         <polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                                     </svg>
                                 </NButton>
+                                <NButton size="small" :disabled="!inviteCodeDraft.trim()" :title="t('groupChat.copyInviteCode')" @click="handleCopyInviteCode">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                    </svg>
+                                </NButton>
                                 <NButton
                                     type="primary"
                                     :disabled="!canUpdateInviteCode"
@@ -1531,6 +1623,14 @@ export default defineComponent({ components: { CreateRoomForm } })
     flex-shrink: 0;
 }
 
+.invite-join-form {
+    flex-shrink: 0;
+    display: grid;
+    gap: 6px;
+    padding: 0 12px 10px;
+    border-bottom: 1px solid $border-color;
+}
+
 .page-sidebar-tab {
     width: 100%;
     min-width: 0;
@@ -1679,6 +1779,15 @@ export default defineComponent({ components: { CreateRoomForm } })
             background-color: rgba(var(--accent-primary-rgb), 0.08);
         }
 
+        &:disabled {
+            cursor: not-allowed;
+            opacity: 0.35;
+        }
+
+        &.leave {
+            opacity: 0.72;
+        }
+
         &.danger:hover {
             color: $error;
             background-color: rgba(var(--error-rgb), 0.1);
@@ -1687,6 +1796,10 @@ export default defineComponent({ components: { CreateRoomForm } })
 
     &:hover .room-action-btn {
         opacity: 1;
+    }
+
+    &:hover .room-action-btn:disabled {
+        opacity: 0.35;
     }
 }
 

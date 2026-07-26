@@ -2,6 +2,10 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs'
 import { resolve } from 'path'
 import { config } from '../config'
+import {
+  acquireHermesDatabaseOwnership,
+  releaseHermesDatabaseOwnership,
+} from './ownership'
 
 const isDev = process.env.NODE_ENV !== 'production'
 const isTest = process.env.VITEST === 'true' || process.env.NODE_ENV === 'test'
@@ -12,7 +16,11 @@ const testDbDirOverride = process.env.HERMES_WEB_UI_TEST_DB_DIR?.trim()
 const DB_DIR = isTest
   ? testDbDirOverride
     ? resolve(testDbDirOverride)
-    : resolve(process.cwd(), 'packages/server/data/test-runtime')
+    : resolve(
+      process.cwd(),
+      'packages/server/data/test-runtime',
+      `${process.pid}-${process.env.VITEST_POOL_ID || 'main'}`,
+    )
   : isDev
   ? resolve(process.cwd(), 'packages/server/data')
   : config.appHome
@@ -34,24 +42,50 @@ export function isSqliteAvailable(): boolean {
 
 let _db: DatabaseSync | null = null
 
+function applyJournalModePragmas(db: DatabaseSync): void {
+  if (isTest) {
+    db.exec('PRAGMA journal_mode=WAL')
+    db.exec('PRAGMA synchronous=NORMAL')
+    return
+  }
+  if (isDev) {
+    db.exec('PRAGMA journal_mode=DELETE')
+    return
+  }
+  db.exec('PRAGMA journal_mode=WAL')
+  db.exec('PRAGMA synchronous=NORMAL')
+}
+
+function applyPostOwnershipPragmas(db: DatabaseSync): void {
+  if (isTest) {
+    db.exec('PRAGMA busy_timeout=5000')
+    db.exec('PRAGMA foreign_keys=ON')
+    return
+  }
+  if (!isDev) {
+    db.exec('PRAGMA busy_timeout=5000')
+    db.exec('PRAGMA foreign_keys=ON')
+  }
+}
+
 export function getDb(): DatabaseSync | null {
   if (!SQLITE_AVAILABLE) return null
   if (!_db) {
     mkdirSync(DB_DIR, { recursive: true })
-    _db = new DatabaseSync(DB_PATH)
-    // Use WAL mode for better concurrency and WSL compatibility
-    if (isTest) {
-      _db.exec('PRAGMA journal_mode=WAL')
-      _db.exec('PRAGMA synchronous=NORMAL')
-      _db.exec('PRAGMA busy_timeout=5000')
-      _db.exec('PRAGMA foreign_keys=ON')
-    } else if (isDev) {
-      _db.exec('PRAGMA journal_mode=DELETE')
-    } else {
-      _db.exec('PRAGMA journal_mode=WAL')
-      _db.exec('PRAGMA synchronous=NORMAL')
-      _db.exec('PRAGMA busy_timeout=5000')
-      _db.exec('PRAGMA foreign_keys=ON')
+    const candidate = new DatabaseSync(DB_PATH)
+    try {
+      acquireHermesDatabaseOwnership(candidate, DB_PATH)
+      applyJournalModePragmas(candidate)
+      applyPostOwnershipPragmas(candidate)
+      _db = candidate
+    } catch (error) {
+      try {
+        candidate.close()
+      } catch {
+        // best effort cleanup
+      }
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new Error(`Hermes Web UI database ownership failed for ${DB_PATH}: ${detail}`)
     }
   }
   return _db
@@ -129,9 +163,14 @@ export function getStoragePath(): string {
  */
 export function closeDb(): void {
   if (_db) {
-    try {
-      _db.close()
-    } catch { /* best-effort */ }
+    const db = _db
     _db = null
+    try {
+      db.close()
+    } catch {
+      // best effort
+    } finally {
+      releaseHermesDatabaseOwnership(db)
+    }
   }
 }

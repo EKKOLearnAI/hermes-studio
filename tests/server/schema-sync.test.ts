@@ -77,7 +77,7 @@ describe('Database Schema Synchronization', () => {
     }
   })
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Clean up any existing test database
     try { unlinkSync(TEST_DB_PATH) } catch {}
     try { unlinkSync(TEST_DB_PATH + '-wal') } catch {}
@@ -90,6 +90,8 @@ describe('Database Schema Synchronization', () => {
 
     // Reset modules to ensure fresh imports
     vi.resetModules()
+    const ownership = await import('../../packages/server/src/db/ownership')
+    ownership.acquireHermesDatabaseOwnership(testDbInstance, TEST_DB_PATH)
   })
 
   afterEach(() => {

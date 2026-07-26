@@ -891,6 +891,39 @@ assert [(msg["role"], msg["content"]) for msg in messages] == [
 `)
   })
 
+  it('fails closed when a Bridge approval response was not offered by the request', () => {
+    runPython(String.raw`
+${harness}
+
+pool, _fake_db = make_pool()
+events = []
+pool._append_event = lambda session_id, event: events.append((session_id, event))
+result = {}
+
+callback = pool._approval_callback("session-no-permanent")
+thread = threading.Thread(
+    target=lambda: result.setdefault("choice", callback("touch file", "needs approval", allow_permanent=False)),
+    daemon=True,
+)
+thread.start()
+assert wait_for(lambda: bool(pool._approval_requests))
+approval_id = next(iter(pool._approval_requests.keys()))
+requested = next(event for _session_id, event in events if event.get("event") == "approval.requested")
+assert requested["choices"] == ["once", "session", "deny"]
+assert requested["allow_permanent"] is False
+
+response = pool.respond_approval(approval_id, "always")
+assert response == {"approval_id": approval_id, "resolved": True, "choice": "deny"}
+thread.join(timeout=2)
+assert not thread.is_alive()
+assert result["choice"] == "deny"
+assert approval_id not in pool._approval_requests
+assert approval_id not in pool._approval_allowed_choices
+resolved = next(event for _session_id, event in events if event.get("event") == "approval.resolved")
+assert resolved["choice"] == "deny"
+`)
+  })
+
   it('remembers execute_code approvals inside the bridge without patching upstream files', () => {
     runPython(String.raw`
 ${harness}
