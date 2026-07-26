@@ -291,6 +291,7 @@ describe('group chat agent workspace bridge runs', () => {
       'default',
       expect.objectContaining({
         background_delegation_enabled: false,
+        source: 'group_chat',
       }),
     )
     expect(bridgeMock.chat.mock.calls[0]?.[5]).not.toHaveProperty('workspace')

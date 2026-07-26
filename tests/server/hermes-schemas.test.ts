@@ -118,8 +118,8 @@ describe('Hermes schema initialization', () => {
     expect(indexes.some(index => index.name === 'idx_sessions_category_id')).toBe(true)
   })
 
-  it('migrates current and rotated leaked Group Chat coding-agent sessions without hiding ordinary coding-agent chats', async () => {
-    const { initAllHermesTables, SESSIONS_TABLE } =
+  it('migrates only Group Chat-owned coding-agent sessions without hiding ordinary gc_-prefixed chats', async () => {
+    const { GC_SESSION_PROFILES_TABLE, initAllHermesTables, SESSIONS_TABLE } =
       await import('../../packages/server/src/db/hermes/schemas')
 
     expect(() => initAllHermesTables()).not.toThrow()
@@ -131,6 +131,12 @@ describe('Hermes schema initialization', () => {
     insert.run('GC_ordinary-codex', 'default', 'coding_agent', 'codex', 1, 3)
     insert.run('gC_mixed-claude', 'default', 'coding_agent', 'claude', 1, 2)
     insert.run('ordinary-codex-chat', 'default', 'coding_agent', 'codex', 1, 1)
+    insert.run('gc_user-selected-id', 'default', 'coding_agent', 'codex', 1, 6)
+    const markGroupChatOwned = db.prepare(
+      `INSERT INTO "${GC_SESSION_PROFILES_TABLE}" (session_id, room_id, agent_id, profile_name, created_at) VALUES (?, ?, ?, ?, ?)`,
+    )
+    markGroupChatOwned.run('gc_room-1_codex-1_0', 'room-1', 'codex-1', 'default', 1)
+    markGroupChatOwned.run('gc_deleted-room_claude-1_2', 'deleted-room', 'claude-1', 'default', 1)
 
     expect(() => initAllHermesTables()).not.toThrow()
     expect(db.prepare(`SELECT id, source FROM "${SESSIONS_TABLE}" ORDER BY id`).all()).toEqual([
@@ -138,15 +144,18 @@ describe('Hermes schema initialization', () => {
       { id: 'gC_mixed-claude', source: 'coding_agent' },
       { id: 'gc_deleted-room_claude-1_2', source: 'group_chat' },
       { id: 'gc_room-1_codex-1_0', source: 'group_chat' },
+      { id: 'gc_user-selected-id', source: 'coding_agent' },
       { id: 'ordinary-codex-chat', source: 'coding_agent' },
     ])
     const { listSessions } = await import('../../packages/server/src/db/hermes/session-store')
-    expect(listSessions('default', undefined, 3).map(session => session.id)).toEqual([
+    expect(listSessions('default', undefined, 4).map(session => session.id)).toEqual([
+      'gc_user-selected-id',
       'GC_ordinary-codex',
       'gC_mixed-claude',
       'ordinary-codex-chat',
     ])
-    expect(listSessions('default', 'coding_agent', 3).map(session => session.id)).toEqual([
+    expect(listSessions('default', 'coding_agent', 4).map(session => session.id)).toEqual([
+      'gc_user-selected-id',
       'GC_ordinary-codex',
       'gC_mixed-claude',
       'ordinary-codex-chat',

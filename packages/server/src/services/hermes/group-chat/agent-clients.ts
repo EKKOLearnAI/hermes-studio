@@ -849,7 +849,7 @@ class AgentClient {
                     ...(participantSnapshot.reasoningEffort && participantSnapshot.reasoningEffort !== 'default'
                         ? { reasoning_effort: String(participantSnapshot.reasoningEffort) }
                         : {}),
-                    source: 'api_server',
+                    source: 'group_chat',
                     ...(roomWorkspace ? { workspace: roomWorkspace } : {}),
                     // Used only if this operation creates the cached AgentSession.
                     background_delegation_enabled: this.backgroundDelegationEnabled,
