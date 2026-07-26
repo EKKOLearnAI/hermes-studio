@@ -25,17 +25,17 @@ export class SkillListTool implements AgentTool<SkillListInput> {
 
   readonly definition = {
     name: 'skill_list',
-    description: '列出或搜索当前 Ekko Agent 实例已配置的技能。任务可能需要专门指令时，先使用本工具，再调用 skill_view。',
+    description: 'List or search skills in this Ekko Agent instance\'s configured skill directory. Use this before skill_view when a task may benefit from specialized instructions.',
     parameters: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: '可选关键词；在技能名称和说明中进行不区分大小写的搜索。',
+          description: 'Optional case-insensitive search across skill names and descriptions.',
         },
         limit: {
           type: 'number',
-          description: `最多返回多少条结果。默认 ${DEFAULT_SKILL_LIST_LIMIT}，最大 ${MAX_SKILL_LIST_LIMIT}。`,
+          description: `Maximum results to return. Defaults to ${DEFAULT_SKILL_LIST_LIMIT}, maximum ${MAX_SKILL_LIST_LIMIT}.`,
         },
       },
       additionalProperties: false,
@@ -59,8 +59,8 @@ export class SkillListTool implements AgentTool<SkillListInput> {
       total: discovered.length,
       skills: matches,
       next: matches.length
-        ? '使用准确的技能名称调用 skill_view，加载完整指令。'
-        : '请尝试更宽泛的关键词，或不带 query 调用 skill_list。',
+        ? 'Call skill_view with an exact skill name to load its instructions.'
+        : 'Try a broader query or call skill_list without a query.',
     }
 
     return {
@@ -76,13 +76,13 @@ export class SkillViewTool implements AgentTool<SkillViewInput> {
 
   readonly definition = {
     name: 'skill_view',
-    description: '加载当前 Ekko Agent 实例中某个技能的完整 SKILL.md 指令。先使用 skill_list 获取准确的技能名称。',
+    description: 'Load the complete SKILL.md instructions for one skill in this Ekko Agent instance\'s configured skill directory. Use skill_list first to discover the exact skill name.',
     parameters: {
       type: 'object',
       properties: {
         name: {
           type: 'string',
-          description: 'skill_list 返回的准确技能名称。',
+          description: 'Exact skill name returned by skill_list.',
         },
       },
       required: ['name'],

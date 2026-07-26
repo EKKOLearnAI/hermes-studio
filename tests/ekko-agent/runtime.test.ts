@@ -478,7 +478,7 @@ describe('ekko-agent runtime', () => {
     expect(requests[0].messages[0].content).not.toContain('Review for correctness.')
     expect(requests[0].messages[0].content).not.toContain('## Skills')
     expect(requests[0].messages[0].content).toContain('User system.')
-    expect(requests[0].messages[0].content).toContain('## 运行时上下文\nprovider: test\nmodel: test-model')
+    expect(requests[0].messages[0].content).toContain('## Runtime Context\nprovider: test\nmodel: test-model')
     expect(requests[0].messages.filter(message => message.role === 'system')).toHaveLength(1)
   })
 
@@ -509,8 +509,8 @@ describe('ekko-agent runtime', () => {
   it('injects the skill discovery constraint when both skill tools are available', async () => {
     const client = modelClient((request) => {
       expect(request.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining(['skill_list', 'skill_view']))
-      expect(request.messages[0].content).toContain('## 技能发现')
-      expect(request.messages[0].content).toContain('先调用 skill_list')
+      expect(request.messages[0].content).toContain('## Skill Discovery')
+      expect(request.messages[0].content).toContain('call skill_list before proceeding')
       return { content: 'ok' }
     })
 
@@ -642,7 +642,7 @@ describe('ekko-agent runtime', () => {
     })
 
     expect(prompt).toContain([
-      '## 运行时上下文',
+      '## Runtime Context',
       'provider: openrouter',
       'model: anthropic/claude-sonnet-4',
       'workspaceRoot: /tmp/workspace',
@@ -655,18 +655,18 @@ describe('ekko-agent runtime', () => {
       skillDiscoveryEnabled: true,
     })
 
-    expect(prompt).toContain('## 技能发现')
-    expect(prompt).toContain('先调用 skill_list')
-    expect(prompt).toContain('使用其准确名称调用 skill_view')
+    expect(prompt).toContain('## Skill Discovery')
+    expect(prompt).toContain('call skill_list before proceeding')
+    expect(prompt).toContain('call skill_view with its exact name')
     expect(prompt).not.toContain('## Skills')
   })
 
   it('buildSystemPrompt always includes Ekko image and file output guidance', () => {
     const prompt = buildSystemPrompt({ basePrompt: 'Base' })
 
-    expect(prompt).toContain('## 图片与文件输出')
-    expect(prompt).toContain('![说明](/absolute/path/image.png)')
-    expect(prompt).toContain('![说明](<C:/absolute/path/image.png>)')
-    expect(prompt).toContain('不要使用相对路径或 `file://` URL。')
+    expect(prompt).toContain('## Image and File Output')
+    expect(prompt).toContain('![description](/absolute/path/image.png)')
+    expect(prompt).toContain('![description](<C:/absolute/path/image.png>)')
+    expect(prompt).toContain('Do not use relative paths or `file://` URLs.')
   })
 })

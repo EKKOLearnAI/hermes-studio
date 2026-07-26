@@ -12,19 +12,19 @@ export interface SystemPromptInput {
   }
 }
 
-const DEFAULT_BASE_PROMPT = '你是 Ekko Agent，一个务实的 AI 助手。你能够进行推理、使用工具，并给出简洁、准确的结果。'
+const DEFAULT_BASE_PROMPT = 'You are Ekko Agent, a pragmatic AI agent that can reason, use tools, and return concise results.'
 
-export const EKKO_OUTPUT_FORMAT_GUIDELINES = `## 图片与文件输出
-向用户返回图片、视频或文件时，使用 Markdown 引用一个真实存在的本地绝对路径。
+export const EKKO_OUTPUT_FORMAT_GUIDELINES = `## Image and File Output
+When returning an image, video, or file to the user, use Markdown with an existing local absolute path.
 
-- Unix/macOS/WSL 图片：\`![说明](/absolute/path/image.png)\`
-- Windows 图片：\`![说明](<C:/absolute/path/image.png>)\`
-- Unix/macOS/WSL 文件：\`[文件名](/absolute/path/file.pdf)\`
-- Windows 文件：\`[文件名](<C:/absolute/path/file.pdf>)\`
-- Windows 路径使用正斜杠。
-- 路径包含空格、非 ASCII 字符或特殊字符时，用尖括号包裹路径。
-- 不要使用相对路径或 \`file://\` URL。
-- 返回前确认引用的文件确实存在。`
+- Unix/macOS/WSL image: \`![description](/absolute/path/image.png)\`
+- Windows image: \`![description](<C:/absolute/path/image.png>)\`
+- Unix/macOS/WSL file: \`[filename](/absolute/path/file.pdf)\`
+- Windows file: \`[filename](<C:/absolute/path/file.pdf>)\`
+- Use forward slashes for Windows paths.
+- Wrap paths containing spaces, non-ASCII characters, or special characters in angle brackets.
+- Do not use relative paths or \`file://\` URLs.
+- Verify that the referenced file exists before returning it.`
 
 export function buildSystemPrompt(input: SystemPromptInput = {}): string {
   const sections: string[] = []
@@ -32,7 +32,7 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
   sections.push(EKKO_OUTPUT_FORMAT_GUIDELINES)
 
   if (input.runtimeInstructions?.length) {
-    sections.push(section('运行时指令', input.runtimeInstructions.filter(Boolean).join('\n')))
+    sections.push(section('Runtime Instructions', input.runtimeInstructions.filter(Boolean).join('\n')))
   }
 
   if (input.context?.provider || input.context?.model || input.context?.workspaceRoot || input.context?.cwd) {
@@ -42,13 +42,13 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
       input.context.workspaceRoot ? `workspaceRoot: ${input.context.workspaceRoot}` : '',
       input.context.cwd ? `cwd: ${input.context.cwd}` : '',
     ].filter(Boolean)
-    sections.push(section('运行时上下文', lines.join('\n')))
+    sections.push(section('Runtime Context', lines.join('\n')))
   }
 
   if (input.skillDiscoveryEnabled) {
     sections.push(section(
-      '技能发现',
-      '当你不确定当前能力是否足以完成任务时，先调用 skill_list 查找相关技能。找到合适技能后，使用其准确名称调用 skill_view，并遵循加载到的指令。',
+      'Skill Discovery',
+      'When you are not sure whether your current capabilities are sufficient for a task, call skill_list before proceeding to look for a relevant skill. If a suitable skill is available, call skill_view with its exact name, then follow those instructions.',
     ))
   }
 
@@ -57,7 +57,7 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
   }
 
   if (input.userSystemMessages?.length) {
-    sections.push(section('用户系统消息', input.userSystemMessages.filter(Boolean).join('\n\n')))
+    sections.push(section('User System Messages', input.userSystemMessages.filter(Boolean).join('\n\n')))
   }
 
   return sections.filter(Boolean).join('\n\n')

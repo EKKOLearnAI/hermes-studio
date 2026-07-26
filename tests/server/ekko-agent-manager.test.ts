@@ -53,9 +53,9 @@ describe('GlobalEkkoAgent', () => {
     const request = vi.mocked(client.create).mock.calls[0]?.[0] as ModelRequest
     expect(request.model).toBe('test-model')
     expect(request.metadata).toEqual({ session_id: 'session-1' })
-    expect(request.messages[0].content).toContain('## 图片与文件输出')
-    expect(request.messages[0].content).toContain('![说明](/absolute/path/image.png)')
-    expect(request.messages[0].content).toContain('![说明](<C:/absolute/path/image.png>)')
+    expect(request.messages[0].content).toContain('## Image and File Output')
+    expect(request.messages[0].content).toContain('![description](/absolute/path/image.png)')
+    expect(request.messages[0].content).toContain('![description](<C:/absolute/path/image.png>)')
   })
 
   it('binds skill tools to the directory provided when the agent is created', async () => {

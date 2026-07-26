@@ -225,7 +225,7 @@ class McpTool implements AgentTool {
   ) {
     this.definition = {
       name: String(tool.name || remoteName),
-      description: String(tool.description || `来自 ${serverName} 的 MCP 工具 ${remoteName}`),
+      description: String(tool.description || `MCP tool ${remoteName} from ${serverName}`),
       parameters: isRecord(tool.inputSchema) ? tool.inputSchema : { type: 'object', properties: {} },
     }
   }

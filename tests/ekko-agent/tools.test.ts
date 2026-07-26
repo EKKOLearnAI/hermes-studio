@@ -165,9 +165,9 @@ describe('ekko-agent tools', () => {
       'write_file',
     ])
     for (const definition of definitions) {
-      expect(definition.description, definition.name).toMatch(/[\p{Script=Han}]/u)
+      expect(definition.description, definition.name).not.toMatch(/[\p{Script=Han}]/u)
       for (const description of collectDescriptions(definition.parameters)) {
-        expect(description, definition.name).toMatch(/[\p{Script=Han}]/u)
+        expect(description, definition.name).not.toMatch(/[\p{Script=Han}]/u)
       }
     }
 

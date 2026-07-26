@@ -295,8 +295,8 @@ describe('MemoryService', () => {
     })
 
     const request = vi.mocked(client.create).mock.calls[0][0] as ModelRequest
-    expect(request.messages[0].content).toContain('## 记忆使用规则')
-    expect(request.messages[0].content).toContain('准备回答“不知道”“不记得”')
+    expect(request.messages[0].content).toContain('## Memory Usage Rules')
+    expect(request.messages[0].content).toContain('about to answer that you do not know or remember')
     expect(request.messages[0].content).toContain('Avoid 香菜')
     expect(request.messages[0].content).toContain('key=preference.food.avoid:香菜 revision=1')
     expect(request.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining([
@@ -427,14 +427,15 @@ describe('MemoryService', () => {
       'memory_propose_update',
       'memory_forget',
     ])
-    expect(summaryRequest.messages[0].content).toContain('专用的长期记忆整理器')
-    expect(summaryRequest.messages[0].content).toContain('只有四个记忆工具')
-    expect(summaryRequest.messages[0].content).toContain('## 通用判断标准')
-    expect(summaryRequest.messages[0].content).toContain('助手陈述、工具输出、召回内容和其他外部结果都只是上下文')
-    expect(summaryRequest.messages[0].content).toContain('只证明旧记忆无效而没有新的持久替代值，则软删除旧记忆')
-    expect(summaryRequest.messages[0].content).toContain('只保存当前有效状态，不保存纠正、撤回、取消或失效声明的历史')
-    expect(summaryRequest.messages[0].content).toContain('interaction_contract 必须使用结构化 valueJson')
-    expect(summaryRequest.messages[0].content).toContain('用户用普通自然语言直接陈述的持久事实同样是有效证据')
+    expect(summaryRequest.messages[0].content).toContain('dedicated long-term memory curator')
+    expect(summaryRequest.messages[0].content).toContain('exactly four memory tools')
+    expect(summaryRequest.messages[0].content).toContain('GENERAL DECISION TEST')
+    expect(summaryRequest.messages[0].content).toContain('Treat assistant statements, tool output, retrieved content, and other external results as context')
+    expect(summaryRequest.messages[0].content).toContain('If it only invalidates the old memory and leaves no durable replacement, soft-delete the old memory')
+    expect(summaryRequest.messages[0].content).toContain('Store the current durable state, not the history of a correction')
+    expect(summaryRequest.messages[0].content).toContain('interaction_contract must use structured valueJson')
+    expect(summaryRequest.messages[0].content).toContain('A durable fact stated directly in ordinary language is valid evidence')
+    expect(summaryRequest.messages[0].content).toContain('CATEGORY SELECTION')
     expect(summaryRequest.messages[0].content).not.toContain('terminal tool')
     expect(summaryRequest.messages[1].content).toContain('请记住以后代码示例优先使用 TypeScript')
     await expect(store.getLatestSummary({ sessionId: 's1' })).resolves.toMatchObject({
@@ -578,7 +579,7 @@ describe('MemoryService', () => {
     const repairRequest = vi.mocked(client.create).mock.calls[1][0] as ModelRequest
     expect(repairRequest.toolChoice).toBe('none')
     expect(repairRequest.tools).toBeUndefined()
-    expect(repairRequest.messages.some(message => message.content.includes('不是有效 JSON'))).toBe(true)
+    expect(repairRequest.messages.some(message => message.content.includes('not valid JSON'))).toBe(true)
     expect(result.fallbackReason).toBeUndefined()
   })
 
