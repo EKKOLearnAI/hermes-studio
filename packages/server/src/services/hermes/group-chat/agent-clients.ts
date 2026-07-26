@@ -354,8 +354,15 @@ class AgentClient {
         if (binding?.runtime === 'coding_agent') {
             const hadPendingReply = this.codingAgentReplyCancels.has(sessionId)
             this.markSessionInterrupted(sessionId)
-            this.codingAgentReplyCancels.get(sessionId)?.()
+            const runId = codingAgentRunManager.runIdForSession(sessionId) || 'interrupted'
+            const workspaceRunChange = codingAgentRunManager.completeWorkspaceDiffForSession(sessionId)
             const stopped = await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false, graceMs: 15_000 })
+            if (!stopped && codingAgentRunManager.runIdForSession(sessionId)) return false
+            this.codingAgentReplyCancels.get(sessionId)?.()
+            await this.persistCodingAgentWorkspaceDiff(roomId, sessionId, {
+                run_id: runId,
+                workspace_run_change: workspaceRunChange,
+            }, 'aborted', null, String(this.storage?.getRoom?.(roomId)?.workspace || '').trim())
             try {
                 this.stopTyping(roomId)
                 this.emitContextStatus(roomId, 'ready', undefined, sessionId)
@@ -1032,7 +1039,10 @@ class AgentClient {
             this.emitMessageStreamStart(roomId, messageId, sessionId)
 
             const canonicalMessages = this.storage?.getMessagesForContext?.(roomId, { throughMessageId: msg.messageId }) || []
-            contextRevision = canonicalMessages.length
+            contextRevision = canonicalMessages.reduce(
+                (latest: number, entry: { timestamp?: number }) => Math.max(latest, Number(entry.timestamp || 0)),
+                Number(binding.lastSeenRoomSeq || 0),
+            )
             if (this.contextEngine && this.storage) {
                 const roomInfo = this.storage.getRoom(roomId)
                 const roomMembers: Array<{ userId: string; name: string; description: string }> = this.storage.getRoomMembers(roomId) || []
@@ -1150,7 +1160,8 @@ class AgentClient {
             }
             let runId = codingAgentRunManager.runIdForSession(sessionId)
             if (runId && !codingAgentRunManager.isSessionLaunchCompatible(sessionId, launch)) {
-                codingAgentRunManager.stop(sessionId, { reportClosed: false })
+                const stopped = await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false, graceMs: 15_000 })
+                if (!stopped) throw new Error('Previous coding-agent run did not stop cleanly')
                 runId = undefined
             }
             if (!runId) {
@@ -1202,7 +1213,7 @@ class AgentClient {
         sessionId: string,
         payload: any,
         status: 'completed' | 'failed' | 'aborted',
-        parentMessageId: string,
+        parentMessageId: string | null,
         workspace: string,
     ): Promise<void> {
         const draft = payload?.workspace_run_change

@@ -16,4 +16,5 @@ impact: Group Chat can persist independent Hermes, Codex, and Claude Code partic
 - Waits for Coding Agent termination before participant deletion and honors the requested 15-second graceful-stop window before force kill.
 - Keeps approval ownership runtime-specific: Hermes participants continue to use Hermes Bridge approvals, while Group Chat Codex/Claude runs use unattended restricted modes (`workspace-write`/no privilege escalation) and are never routed through the Hermes approval responder.
 - Adds participant Add/Edit UI, full locale coverage, generated OpenAPI request schemas, migration tests, runtime tests, client-store tests, and mention identity tests.
+- Follow-up hardening uses a monotonic timestamp cursor across pruning, waits for incompatible runs to stop, persists aborted workspace evidence, isolates Group Chat from inherited external MCP/plugins, and clears stale approval waiters.
 - Does not introduce Room modes and does not modify Workflow behavior.

@@ -4596,32 +4596,98 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "agents": {
+                  "name": {
                     "type": "string"
-                  },
-                  "compression": {
-                    "type": "number"
                   },
                   "inviteCode": {
                     "type": "string"
                   },
-                  "memberDescription": {
-                    "type": "string"
-                  },
-                  "memberName": {
-                    "type": "string"
-                  },
-                  "name": {
-                    "type": "string"
-                  },
                   "workspace": {
                     "type": "string"
+                  },
+                  "compression": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "agents": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "profile": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "invited": {
+                          "type": "boolean"
+                        },
+                        "runtime": {
+                          "type": "string",
+                          "enum": [
+                            "hermes",
+                            "coding_agent"
+                          ]
+                        },
+                        "codingAgentId": {
+                          "type": "string",
+                          "enum": [
+                            "",
+                            "claude-code",
+                            "codex"
+                          ]
+                        },
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "scoped"
+                          ]
+                        },
+                        "provider": {
+                          "type": "string"
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "apiMode": {
+                          "type": "string",
+                          "enum": [
+                            "",
+                            "chat_completions",
+                            "codex_responses",
+                            "anthropic_messages"
+                          ]
+                        },
+                        "reasoningEffort": {
+                          "type": "string",
+                          "enum": [
+                            "",
+                            "default",
+                            "none",
+                            "minimal",
+                            "low",
+                            "medium",
+                            "high",
+                            "xhigh",
+                            "max"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "profile"
+                      ],
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "required": [
-                  "inviteCode",
                   "name"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -4842,8 +4908,7 @@
                   "mode": {
                     "type": "string",
                     "enum": [
-                      "scoped",
-                      "global"
+                      "scoped"
                     ]
                   },
                   "provider": {
@@ -4978,8 +5043,7 @@
                   "mode": {
                     "type": "string",
                     "enum": [
-                      "scoped",
-                      "global"
+                      "scoped"
                     ]
                   },
                   "provider": {

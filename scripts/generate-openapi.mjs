@@ -257,24 +257,50 @@ function isInternalProxyRoute(path) {
 }
 
 function groupChatParticipantRequestBody(path, method) {
+  const roomCollectionPath = '/api/hermes/group-chat/rooms'
   const collectionPath = '/api/hermes/group-chat/rooms/:roomId/agents'
   const itemPath = '/api/hermes/group-chat/rooms/:roomId/agents/:agentId'
-  if (!((path === collectionPath && method === 'post') || (path === itemPath && method === 'patch'))) return null
-
-  const isCreate = method === 'post'
-  const properties = {
+  const participantProperties = {
     profile: { type: 'string' },
     name: { type: 'string' },
     description: { type: 'string' },
     invited: { type: 'boolean' },
     runtime: { type: 'string', enum: ['hermes', 'coding_agent'] },
     codingAgentId: { type: 'string', enum: ['', 'claude-code', 'codex'] },
-    mode: { type: 'string', enum: ['scoped', 'global'] },
+    mode: { type: 'string', enum: ['scoped'] },
     provider: { type: 'string' },
     model: { type: 'string' },
     apiMode: { type: 'string', enum: ['', 'chat_completions', 'codex_responses', 'anthropic_messages'] },
     reasoningEffort: { type: 'string', enum: ['', 'default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
   }
+  if (path === roomCollectionPath && method === 'post') {
+    return {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              inviteCode: { type: 'string' },
+              workspace: { type: 'string' },
+              compression: { type: 'object', additionalProperties: true },
+              agents: {
+                type: 'array',
+                items: { type: 'object', properties: participantProperties, required: ['profile'], additionalProperties: false },
+              },
+            },
+            required: ['name'],
+            additionalProperties: false,
+          },
+        },
+      },
+    }
+  }
+  if (!((path === collectionPath && method === 'post') || (path === itemPath && method === 'patch'))) return null
+
+  const isCreate = method === 'post'
+  const properties = { ...participantProperties }
   if (!isCreate) {
     delete properties.profile
     delete properties.invited

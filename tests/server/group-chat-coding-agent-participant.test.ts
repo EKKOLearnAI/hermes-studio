@@ -11,6 +11,7 @@ const { runtimeListeners, managerMock, startCodingAgentRunMock, sendCodingAgentR
     isSessionLaunchCompatible: vi.fn(() => false),
     stop: vi.fn(() => true),
     stopAndWait: vi.fn(async () => true),
+    completeWorkspaceDiffForSession: vi.fn(() => null),
   }
   const startCodingAgentRunMock = vi.fn(async (_id: string, input: any) => ({
     agentSessionId: 'runner-1',
@@ -85,7 +86,7 @@ describe('Group Chat coding-agent participant runtime', () => {
       getRoom: vi.fn(() => ({ id: 'room-1', workspace: '/workspace/project' })),
       getRoomAgentByAgentId: vi.fn(() => participant),
       getRoomMembers: vi.fn(() => []),
-      getMessagesForContext: vi.fn(() => [{ id: 'human-message-1', timestamp: 1 }]),
+      getMessagesForContext: vi.fn(() => [{ id: 'human-message-1', timestamp: 1_790_000_000 }]),
       updateRoomTotalTokens,
       updateRoomAgentContinuity,
       saveWorkspaceDiffMessageForRun,
@@ -159,7 +160,7 @@ describe('Group Chat coding-agent participant runtime', () => {
       roomId: 'room-1', sessionId: participant.sessionId, runId: 'runner-1', status: 'completed',
     }))
     expect(updateRoomAgentContinuity).toHaveBeenCalledWith('room-1', participant.agentId, {
-      lastSeenRoomSeq: 1,
+      lastSeenRoomSeq: 1_790_000_000,
       lastSuccessfulRunId: 'runner-1',
     })
   })
@@ -314,9 +315,13 @@ describe('Group Chat coding-agent participant runtime', () => {
       invited: 1,
     }
     const clients = new AgentClients()
+    const saveWorkspaceDiffMessageForRun = vi.fn()
+    managerMock.runIdForSession.mockReturnValue('run-aborted' as any)
+    managerMock.completeWorkspaceDiffForSession.mockReturnValue({ run_id: 'run-aborted', files: [] } as any)
     clients.setStorage({
-      getRoom: vi.fn(() => ({ id: 'room-1', workspace: '' })),
+      getRoom: vi.fn(() => ({ id: 'room-1', workspace: '/workspace/project' })),
       getRoomAgentByAgentId: vi.fn(() => participant),
+      saveWorkspaceDiffMessageForRun,
     })
     const client = await clients.createAgent({ ...participant, backgroundDelegationEnabled: false } as any)
 
@@ -326,5 +331,8 @@ describe('Group Chat coding-agent participant runtime', () => {
       reportClosed: false,
       graceMs: 15_000,
     })
+    expect(saveWorkspaceDiffMessageForRun).toHaveBeenCalledWith(expect.objectContaining({
+      roomId: 'room-1', sessionId: participant.sessionId, runId: 'run-aborted', status: 'aborted',
+    }))
   })
 })

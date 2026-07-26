@@ -499,6 +499,11 @@ export class CodingAgentRunManager {
     return run && !run.exited ? run.id : undefined
   }
 
+  completeWorkspaceDiffForSession(sessionId: string) {
+    const run = this.getBySession(sessionId)
+    return run ? this.completeWorkspaceRunDiff(run) : null
+  }
+
   subscribe(sessionId: string, listener: CodingAgentRunEventListener): () => void {
     const key = String(sessionId || '').trim()
     if (!key) throw new Error('sessionId is required')
@@ -522,6 +527,7 @@ export class CodingAgentRunManager {
     model?: string
     reasoningEffort?: string
     apiMode?: ApiMode
+    runtimeContext?: 'group_chat'
   }): boolean {
     const run = this.getBySession(sessionId)
     if (!run || run.exited) return false

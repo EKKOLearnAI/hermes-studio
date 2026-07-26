@@ -1699,7 +1699,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const claudeApiKey = proxyTarget?.token || apiKey
     const modelName = displayNameForModel(model)
     const globalSettingsPath = getLiveConfigFileDefinition(tool.id, 'settings')?.absolutePath
-    const inheritedSettings = inheritClaudeSettings(globalSettingsPath ? await safeReadFile(globalSettingsPath) : '')
+    const inheritedSettings = input.runtimeContext === 'group_chat'
+      ? {}
+      : inheritClaudeSettings(globalSettingsPath ? await safeReadFile(globalSettingsPath) : '')
     const groupChatSafetySettings = input.runtimeContext === 'group_chat'
       ? {
           permissions: {
@@ -1738,7 +1740,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const existingMcpPath = getScopedConfigFileDefinition(tool.id, 'mcp', scope)?.absolutePath
     const globalMcpConfig = globalMcpPath ? await safeReadFile(globalMcpPath) : ''
     const existingMcpConfig = existingMcpPath ? await safeReadFile(existingMcpPath) : ''
-    await writeScopedFile('mcp', claudeMcpConfigJson(scope.profile, globalMcpConfig, existingMcpConfig))
+    await writeScopedFile('mcp', input.runtimeContext === 'group_chat'
+      ? claudeMcpConfigJson(scope.profile)
+      : claudeMcpConfigJson(scope.profile, globalMcpConfig, existingMcpConfig))
     await writeScopedFile('prompt', hermesPromptDocument())
 
     const settingsPath = join(rootDir, 'settings.json')
@@ -1796,8 +1800,12 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       '',
       codexMcpConfigToml(
         scope.profile,
-        await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || ''),
-        await safeReadFile(getScopedConfigFileDefinition(tool.id, 'config', scope)?.absolutePath || ''),
+        ...(input.runtimeContext === 'group_chat'
+          ? []
+          : [
+              await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || ''),
+              await safeReadFile(getScopedConfigFileDefinition(tool.id, 'config', scope)?.absolutePath || ''),
+            ]),
       ),
     ].join('\n')
     const catalog = buildCodexModelCatalog({
