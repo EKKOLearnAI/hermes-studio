@@ -99,6 +99,23 @@ describe('group chat REST route baseline', () => {
     await expect(res.json()).resolves.toMatchObject({ error: '`all` is reserved for @all mentions' })
   })
 
+  it('rejects incomplete scoped coding-agent launch tuples before creating a room', async () => {
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Incomplete Room',
+        inviteCode: 'INCOMPLETE1',
+        agents: [{ profile: 'default', name: 'Incomplete Codex', runtime: 'coding_agent', codingAgentId: 'codex' }],
+      }),
+    })
+
+    expect(res.status).toBe(400)
+    await expect(res.json()).resolves.toEqual({ error: 'provider, model, and apiMode are required for coding_agent participants' })
+    expect(storage.saveRoom).not.toHaveBeenCalled()
+    expect(agentClients.createAgent).not.toHaveBeenCalled()
+  })
+
   it('creates a room, persists successful agents, and reports agent connection failures', async () => {
     const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
       method: 'POST',
@@ -218,7 +235,15 @@ describe('group chat REST route baseline', () => {
     const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile: 'default', name: ' reviewer ', runtime: 'coding_agent', codingAgentId: 'codex' }),
+      body: JSON.stringify({
+        profile: 'default',
+        name: ' reviewer ',
+        runtime: 'coding_agent',
+        codingAgentId: 'codex',
+        provider: 'openai',
+        model: 'gpt-5-codex',
+        apiMode: 'codex_responses',
+      }),
     })
 
     expect(res.status).toBe(409)
@@ -244,6 +269,14 @@ describe('group chat REST route baseline', () => {
     })
     expect(unsupportedAgent.status).toBe(400)
     await expect(unsupportedAgent.json()).resolves.toEqual({ error: 'codingAgentId must be claude-code or codex' })
+
+    const incompleteAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile: 'default', name: 'Incomplete Codex', runtime: 'coding_agent', codingAgentId: 'codex' }),
+    })
+    expect(incompleteAgent.status).toBe(400)
+    await expect(incompleteAgent.json()).resolves.toEqual({ error: 'provider, model, and apiMode are required for coding_agent participants' })
 
     const globalAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
       method: 'POST',
@@ -299,6 +332,7 @@ describe('group chat REST route baseline', () => {
       model: 'gpt-5',
       apiMode: 'codex_responses',
       reasoningEffort: 'high',
+      avatar: JSON.stringify({ type: 'asset', assetUrl: '/coding-agents/codex-openai.png' }),
     })
     expect(agentClients.updateAgentIdentity).toHaveBeenCalledWith(
       'room-1',

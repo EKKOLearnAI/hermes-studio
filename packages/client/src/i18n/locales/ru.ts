@@ -2231,6 +2231,7 @@ export default {
     participantModel: 'Модель',
     participantApiMode: 'Режим API',
     participantReasoningEffort: 'Уровень рассуждений',
+    participantAvatar: 'Аватар',
     participantReasoningEffortNextRun: 'Уровень рассуждений (со следующего запуска)',
     editParticipant: 'Изменить участника',
     sessionGeneration: 'поколение сессии {generation}',

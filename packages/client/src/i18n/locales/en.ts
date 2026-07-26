@@ -2575,6 +2575,7 @@ export default {
     participantModel: 'Model',
     participantApiMode: 'API mode',
     participantReasoningEffort: 'Reasoning effort',
+    participantAvatar: 'Avatar',
     participantReasoningEffortNextRun: 'Reasoning effort (next run)',
     editParticipant: 'Edit participant',
     sessionGeneration: 'generation {generation}',

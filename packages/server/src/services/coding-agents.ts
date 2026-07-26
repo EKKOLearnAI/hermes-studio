@@ -1663,7 +1663,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   const baseUrl = String(input.baseUrl || '').trim()
   const preset = PROVIDER_PRESETS.find(item => item.value === provider)
   const apiMode = normalizeLaunchApiMode(input.apiMode, preset?.api_mode || 'chat_completions')
-  const reasoningEffort = String(input.reasoningEffort || '').trim()
+  const requestedReasoningEffort = String(input.reasoningEffort || '').trim()
+  const reasoningEffort = requestedReasoningEffort === 'default' ? '' : requestedReasoningEffort
   const rootDir = getScopedConfigRoot(tool.id, scope)
   const workspaceDir = resolveLaunchWorkspaceRoot(scope, input.workspace)
   await mkdir(rootDir, { recursive: true })

@@ -1,6 +1,7 @@
 import { io } from 'socket.io-client'
 import { request, getApiKey } from '../client'
 import { fetchAuthenticatedBlob, saveBlob } from './binary-content'
+import type { ProfileAvatar } from './profiles'
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -32,10 +33,11 @@ export interface RoomAgentBindingInput {
     model?: string
     apiMode?: string
     reasoningEffort?: string
+    avatar?: ProfileAvatar | null
 }
 
 export type RoomAgentUpdateInput = Pick<RoomAgentBindingInput,
-    'name' | 'description' | 'mode' | 'provider' | 'model' | 'apiMode' | 'reasoningEffort'>
+    'name' | 'description' | 'mode' | 'provider' | 'model' | 'apiMode' | 'reasoningEffort' | 'avatar'>
 
 export interface RoomAgent {
     id: string
@@ -54,6 +56,7 @@ export interface RoomAgent {
     model: string
     apiMode: string
     reasoningEffort: string
+    avatar: ProfileAvatar | null
 }
 
 export interface AgentAddResult {

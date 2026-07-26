@@ -281,6 +281,54 @@ describe('coding agent terminal output sanitizer', () => {
 })
 
 describe('coding agent run state', () => {
+  it('publishes Claude print result errors as failed runs instead of silent completions', async () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const agentSessionId = `agent-session-claude-result-error-${suffix}`
+    const chatSessionId = `chat-session-claude-result-error-${suffix}`
+    const events: Array<{ event: string; payload: any }> = []
+    ;(manager as any).refreshCodingAgentUsage = async () => {}
+    ;(manager as any).markChatRunCompleted = () => {}
+
+    manager.start({
+      agentSessionId,
+      agentId: 'claude-code',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'test-model',
+      sessionId: chatSessionId,
+      command: 'claude',
+      args: [],
+      shellCommand: 'claude',
+      workspaceDir: process.cwd(),
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+    })
+    const run = (manager as any).runs.get(agentSessionId)
+    run.activeEventToken = 'turn-claude-error'
+    run.turnFenceInitialized = true
+    manager.subscribe(chatSessionId, (event, payload) => events.push({ event, payload }))
+
+    ;(manager as any).handleClaudePrintLine(run, JSON.stringify({
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      result: '',
+      errors: ['Sandbox required but unavailable: bubblewrap (bwrap) not installed, socat not installed'],
+    }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(events).toContainEqual(expect.objectContaining({
+      event: 'run.failed',
+      payload: expect.objectContaining({
+        error: expect.stringContaining('Sandbox required but unavailable'),
+      }),
+    }))
+    expect(events).not.toContainEqual(expect.objectContaining({ event: 'run.completed' }))
+    manager.shutdown()
+  })
+
   it('stores structured display input separately from the CLI prompt', () => {
     const manager = new CodingAgentRunManager()
     const addUserMessage = vi.fn()

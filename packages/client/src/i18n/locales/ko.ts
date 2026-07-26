@@ -655,6 +655,7 @@ export default {
     participantModel: '모델',
     participantApiMode: 'API 모드',
     participantReasoningEffort: '추론 강도',
+    participantAvatar: '아바타',
     participantReasoningEffortNextRun: '추론 강도(다음 실행부터 적용)',
     editParticipant: '참가자 편집',
     sessionGeneration: '세션 세대 {generation}',

@@ -7,10 +7,12 @@ USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    bubblewrap \
     curl \
     ffmpeg \
     make \
     g++ \
+    socat \
     && rm -rf /var/lib/apt/lists/*
 
 RUN ARCH=$(dpkg --print-architecture) \
