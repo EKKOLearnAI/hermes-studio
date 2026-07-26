@@ -106,6 +106,63 @@ describe('Group Chat member/agent identity sync', () => {
     }))
   })
 
+  it('normalizes inherited reasoning and persists a runtime-specific participant avatar', async () => {
+    const addRoomAgent = vi.fn((roomId: string, agentId: string, profile: string, name: string, description: string, invited: number, binding: any) => ({
+      id: 'row-1', roomId, agentId, profile, name, description, invited, ...binding,
+    }))
+    const chatServer = {
+      getStorage: () => ({
+        getRoomAgents: vi.fn(() => []),
+        addRoomAgent,
+        removeRoomAgent: vi.fn(),
+      }),
+      agentClients: {
+        createAgent: vi.fn(async ({ agentId }: any) => ({ agentId })),
+        addAgentToRoom: vi.fn(async () => {}),
+        removeAgentFromRoom: vi.fn(),
+      },
+    }
+    setGroupChatServer(chatServer as any)
+
+    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/agents', 'POST')
+    const ctx: any = {
+      params: { roomId: 'room-1' },
+      request: {
+        body: {
+          profile: 'default',
+          name: 'Codex',
+          runtime: 'coding_agent',
+          codingAgentId: 'codex',
+          provider: 'openai',
+          model: 'gpt-test',
+          apiMode: 'codex_responses',
+          reasoningEffort: 'default',
+        },
+      },
+      status: 200,
+      body: undefined,
+    }
+    await handler(ctx, async () => {})
+
+    expect(addRoomAgent).toHaveBeenCalledWith(
+      'room-1',
+      expect.any(String),
+      'default',
+      'Codex',
+      '',
+      0,
+      expect.objectContaining({
+        reasoningEffort: '',
+        avatar: expect.stringContaining('/coding-agents/codex-openai.png'),
+      }),
+    )
+    expect(ctx.body.agent.reasoningEffort).toBe('')
+    expect(ctx.body.agent.avatar).toEqual({
+      type: 'asset',
+      assetUrl: '/coding-agents/codex-openai.png',
+    })
+  })
+
   it('does not persist an agent when the runtime client cannot connect', async () => {
     const addRoomAgent = vi.fn()
     const chatServer = {

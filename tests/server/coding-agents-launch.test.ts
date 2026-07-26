@@ -52,6 +52,12 @@ function makeProxyContext(routeKey: string, token: string, body: any): any {
 }
 
 describe('coding agent launch preparation', () => {
+  it('installs the fail-closed Claude Group Chat sandbox dependencies in the native runtime image', () => {
+    const dockerfile = readFileSync('Dockerfile', 'utf-8')
+    expect(dockerfile).toMatch(/\bbubblewrap\b/)
+    expect(dockerfile).toMatch(/\bsocat\b/)
+  })
+
   it('launches Claude Code with the global config when requested', async () => {
     const home = makeHome()
 
@@ -163,6 +169,25 @@ describe('coding agent launch preparation', () => {
       allowUnsandboxedCommands: false,
       autoAllowBashIfSandboxed: true,
     })
+  })
+
+  it('omits the UI default reasoning sentinel from scoped Codex configuration', async () => {
+    const home = makeHome()
+    const result = await prepareCodingAgentLaunch('codex', {
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'openai',
+      model: 'gpt-test',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'test-key',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'default',
+    })
+
+    const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
+    expect(result.reasoningEffort).toBe('')
+    expect(result.args).not.toContainEqual(expect.stringContaining('model_reasoning_effort'))
+    expect(config).not.toContain('model_reasoning_effort')
   })
 
   it('uses a selected workspace directory when launching a coding agent', async () => {

@@ -98,7 +98,7 @@ const memberAvatar = computed(() => {
 // 当前消息要显示的头像(profile / member / fallback)
 const currentAvatar = computed(() => {
     if (isAgent.value) {
-        return avatarProfile.value?.avatar ?? null
+        return agentInfo.value?.avatar || avatarProfile.value?.avatar || null
     }
     return memberAvatar.value
 })

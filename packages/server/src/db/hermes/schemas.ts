@@ -607,6 +607,7 @@ export const GC_ROOM_AGENTS_SCHEMA: Record<string, string> = {
   model: "TEXT NOT NULL DEFAULT ''",
   apiMode: "TEXT NOT NULL DEFAULT ''",
   reasoningEffort: "TEXT NOT NULL DEFAULT ''",
+  avatar: "TEXT NOT NULL DEFAULT ''",
   lastSeenRoomSeq: 'INTEGER NOT NULL DEFAULT 0',
   lastSuccessfulRunId: "TEXT NOT NULL DEFAULT ''",
   checkpoint: "TEXT NOT NULL DEFAULT ''",
@@ -779,6 +780,24 @@ function resetLegacyTimestampGroupAgentCursors(
       `WHERE room.${quoteIdentifier('id')} = agent.${quoteIdentifier('roomId')}` +
     `), 0)`
   )
+}
+
+function backfillGroupAgentAvatars(
+  db: NonNullable<ReturnType<typeof getDb>>,
+): void {
+  if (!tableExists(db, GC_ROOM_AGENTS_TABLE) || !tableHasColumn(db, GC_ROOM_AGENTS_TABLE, 'avatar')) return
+  const hermes = JSON.stringify({ type: 'asset', assetUrl: '/coding-agents/hermes.png' })
+  const codex = JSON.stringify({ type: 'asset', assetUrl: '/coding-agents/codex-openai.png' })
+  const claude = JSON.stringify({ type: 'asset', assetUrl: '/coding-agents/claude-code.svg' })
+  db.prepare(
+    `UPDATE ${quoteIdentifier(GC_ROOM_AGENTS_TABLE)}
+     SET avatar = CASE
+       WHEN runtime = 'coding_agent' AND codingAgentId = 'codex' THEN ?
+       WHEN runtime = 'coding_agent' AND codingAgentId = 'claude-code' THEN ?
+       ELSE ?
+     END
+     WHERE avatar IS NULL OR TRIM(avatar) = ''`,
+  ).run(codex, claude, hermes)
 }
 
 function indexExists(
@@ -1226,6 +1245,7 @@ export function initAllHermesTables(): void {
       }
     })
     resetLegacyTimestampGroupAgentCursors(db)
+    backfillGroupAgentAvatars(db)
 
     syncTable(GC_ROOM_MEMBERS_TABLE, GC_ROOM_MEMBERS_SCHEMA, {
       indexes: {

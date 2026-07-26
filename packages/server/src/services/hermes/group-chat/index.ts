@@ -87,6 +87,7 @@ interface RoomAgent {
     model: string
     apiMode: string
     reasoningEffort: string
+    avatar: string
     lastSeenRoomSeq: number
     lastSuccessfulRunId: string
     checkpoint: string
@@ -107,6 +108,7 @@ export interface RoomAgentBindingInput {
     model?: string
     apiMode?: string
     reasoningEffort?: string
+    avatar?: string
     lastSeenRoomSeq?: number
     lastSuccessfulRunId?: string
     checkpoint?: string
@@ -740,7 +742,7 @@ class ChatStorage {
 
     getRoomAgents(roomId: string): RoomAgent[] {
         return (this.db()?.prepare(
-            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds FROM gc_room_agents WHERE roomId = ?'
+            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds FROM gc_room_agents WHERE roomId = ?'
         ).all(roomId) || []) as unknown as RoomAgent[]
     }
 
@@ -777,13 +779,14 @@ class ChatStorage {
             model: binding.model || '',
             apiMode: binding.apiMode || '',
             reasoningEffort: binding.reasoningEffort || '',
+            avatar: binding.avatar || '',
             lastSeenRoomSeq: binding.lastSeenRoomSeq || 0,
             lastSuccessfulRunId: binding.lastSuccessfulRunId || '',
             checkpoint: binding.checkpoint || '',
             checkpointSourceMessageIds: binding.checkpointSourceMessageIds || '[]',
         }
         this.db()?.prepare(
-            'INSERT INTO gc_room_agents (id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO gc_room_agents (id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         ).run(
             participant.id,
             participant.roomId,
@@ -801,6 +804,7 @@ class ChatStorage {
             participant.model,
             participant.apiMode,
             participant.reasoningEffort,
+            participant.avatar,
             participant.lastSeenRoomSeq,
             participant.lastSuccessfulRunId,
             participant.checkpoint,
@@ -811,20 +815,20 @@ class ChatStorage {
 
     getRoomAgent(roomId: string, agentRef: string): RoomAgent | null {
         return (this.db()?.prepare(
-            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds FROM gc_room_agents WHERE roomId = ? AND (id = ? OR agentId = ?)'
+            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds FROM gc_room_agents WHERE roomId = ? AND (id = ? OR agentId = ?)'
         ).get(roomId, agentRef, agentRef) as any) ?? null
     }
 
     getRoomAgentByAgentId(roomId: string, agentId: string): RoomAgent | null {
         return (this.db()?.prepare(
-            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds FROM gc_room_agents WHERE roomId = ? AND agentId = ?'
+            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds FROM gc_room_agents WHERE roomId = ? AND agentId = ?'
         ).get(roomId, agentId) as any) ?? null
     }
 
-    updateRoomAgent(roomId: string, agentRef: string, patch: Pick<RoomAgent, 'name' | 'description' | 'mode' | 'provider' | 'model' | 'apiMode' | 'reasoningEffort'>): RoomAgent | null {
+    updateRoomAgent(roomId: string, agentRef: string, patch: Pick<RoomAgent, 'name' | 'description' | 'mode' | 'provider' | 'model' | 'apiMode' | 'reasoningEffort' | 'avatar'>): RoomAgent | null {
         this.db()?.prepare(
             `UPDATE gc_room_agents
-             SET name = ?, description = ?, mode = ?, provider = ?, model = ?, apiMode = ?, reasoningEffort = ?
+             SET name = ?, description = ?, mode = ?, provider = ?, model = ?, apiMode = ?, reasoningEffort = ?, avatar = ?
              WHERE roomId = ? AND (id = ? OR agentId = ?)`
         ).run(
             patch.name,
@@ -834,6 +838,7 @@ class ChatStorage {
             patch.model,
             patch.apiMode,
             patch.reasoningEffort,
+            patch.avatar,
             roomId,
             agentRef,
             agentRef,

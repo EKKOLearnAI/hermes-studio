@@ -1240,6 +1240,30 @@ export class CodingAgentRunManager {
 
     if (event.type === 'result') {
       if (run.printCompleted) return
+      if (event.is_error === true || String(event.subtype || '').startsWith('error')) {
+        const errors = Array.isArray(event.errors)
+          ? event.errors.map((item: unknown) => String(item || '').trim()).filter(Boolean)
+          : []
+        const error = errors.join('; ')
+          || String(event.error || event.result || event.subtype || 'Claude Code run failed')
+        run.printCompleted = true
+        this.handleClaudePrintResponseEvent(run, {
+          type: 'response.failed',
+          data: {
+            type: 'response.failed',
+            response: {
+              id: run.printResponseId,
+              object: 'response',
+              status: 'failed',
+              model: run.launch.model,
+              error: { message: error },
+              output: [],
+              usage: event.usage,
+            },
+          },
+        })
+        return
+      }
       const resultText = String(event.result || '')
       if (resultText && !run.printTextStarted) {
         this.ensureClaudePrintText(run)

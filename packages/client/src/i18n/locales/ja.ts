@@ -668,6 +668,7 @@ export default {
     participantModel: 'モデル',
     participantApiMode: 'API モード',
     participantReasoningEffort: '推論強度',
+    participantAvatar: 'アバター',
     participantReasoningEffortNextRun: '推論強度（次回の実行から適用）',
     editParticipant: '参加者を編集',
     sessionGeneration: 'セッション世代 {generation}',

@@ -51,10 +51,63 @@ type AgentInput = {
     model?: string
     apiMode?: string
     reasoningEffort?: string
+    avatar?: unknown
 }
 
 const PARTICIPANT_REASONING_EFFORTS = new Set(['', 'default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 const PARTICIPANT_API_MODES = new Set(['', 'chat_completions', 'codex_responses', 'anthropic_messages'])
+const PARTICIPANT_AVATAR_ASSETS = new Set([
+    '/coding-agents/hermes.png',
+    '/coding-agents/codex-openai.png',
+    '/coding-agents/claude-code.svg',
+])
+const MAX_PARTICIPANT_AVATAR_LENGTH = 1_500_000
+
+function defaultParticipantAvatar(runtime: ParticipantRuntime, codingAgentId: ParticipantCodingAgentId): string {
+    const assetUrl = runtime === 'coding_agent'
+        ? (codingAgentId === 'claude-code' ? '/coding-agents/claude-code.svg' : '/coding-agents/codex-openai.png')
+        : '/coding-agents/hermes.png'
+    return JSON.stringify({ type: 'asset', assetUrl })
+}
+
+function normalizeParticipantAvatar(value: unknown, runtime: ParticipantRuntime, codingAgentId: ParticipantCodingAgentId): string {
+    if (value == null || value === '') return defaultParticipantAvatar(runtime, codingAgentId)
+    let avatar: any = value
+    if (typeof avatar === 'string') {
+        try { avatar = JSON.parse(avatar) } catch {
+            throw Object.assign(new Error('avatar is invalid'), { status: 400 })
+        }
+    }
+    if (!avatar || typeof avatar !== 'object') {
+        throw Object.assign(new Error('avatar is invalid'), { status: 400 })
+    }
+    if (avatar.type === 'asset' && PARTICIPANT_AVATAR_ASSETS.has(String(avatar.assetUrl || ''))) {
+        return JSON.stringify({ type: 'asset', assetUrl: String(avatar.assetUrl) })
+    }
+    if (avatar.type === 'generated') {
+        const seed = String(avatar.seed || '').trim().slice(0, 200)
+        if (!seed) throw Object.assign(new Error('generated avatar seed is required'), { status: 400 })
+        return JSON.stringify({ type: 'generated', seed })
+    }
+    if (avatar.type === 'image') {
+        const dataUrl = String(avatar.dataUrl || '')
+        if (!/^data:image\/(?:png|jpeg|webp);base64,[a-zA-Z0-9+/=]+$/.test(dataUrl) || dataUrl.length > MAX_PARTICIPANT_AVATAR_LENGTH) {
+            throw Object.assign(new Error('image avatar is invalid or too large'), { status: 400 })
+        }
+        return JSON.stringify({ type: 'image', dataUrl })
+    }
+    throw Object.assign(new Error('avatar is invalid'), { status: 400 })
+}
+
+function publicParticipantAvatar(value: unknown): Record<string, string> | null {
+    if (!value) return null
+    try {
+        const avatar = typeof value === 'string' ? JSON.parse(value) : value
+        return avatar && typeof avatar === 'object' ? avatar : null
+    } catch {
+        return null
+    }
+}
 
 function serializeRoomAgent(agent: any) {
     if (!agent) return agent
@@ -65,7 +118,7 @@ function serializeRoomAgent(agent: any) {
         checkpointSourceMessageIds: _checkpointSourceMessageIds,
         ...publicAgent
     } = agent
-    return publicAgent
+    return { ...publicAgent, avatar: publicParticipantAvatar(publicAgent.avatar) }
 }
 
 function normalizeAgentInput(input: AgentInput): AgentInput {
@@ -94,7 +147,13 @@ function normalizeAgentInput(input: AgentInput): AgentInput {
     if (!PARTICIPANT_API_MODES.has(apiMode)) {
         throw Object.assign(new Error('apiMode is invalid'), { status: 400 })
     }
-    const reasoningEffort = String(input.reasoningEffort || '').trim()
+    const provider = String(input.provider || '').trim()
+    const model = String(input.model || '').trim()
+    if (runtime === 'coding_agent' && (!provider || !model || !apiMode)) {
+        throw Object.assign(new Error('provider, model, and apiMode are required for coding_agent participants'), { status: 400 })
+    }
+    const requestedReasoningEffort = String(input.reasoningEffort || '').trim()
+    const reasoningEffort = requestedReasoningEffort === 'default' ? '' : requestedReasoningEffort
     if (!PARTICIPANT_REASONING_EFFORTS.has(reasoningEffort)) {
         throw Object.assign(new Error('reasoningEffort is invalid'), { status: 400 })
     }
@@ -106,10 +165,11 @@ function normalizeAgentInput(input: AgentInput): AgentInput {
         runtime,
         codingAgentId,
         mode,
-        provider: String(input.provider || '').trim(),
-        model: String(input.model || '').trim(),
+        provider,
+        model,
         apiMode,
         reasoningEffort,
+        avatar: normalizeParticipantAvatar(input.avatar, runtime, codingAgentId),
     }
 }
 
@@ -205,6 +265,7 @@ async function connectAndPersistRoomAgent(server: GroupChatServer, roomId: strin
             model: normalized.model,
             apiMode: normalized.apiMode,
             reasoningEffort: normalized.reasoningEffort,
+            avatar: normalized.avatar as string,
         })
         await server.agentClients.addAgentToRoom(roomId, client)
         return persisted
@@ -372,6 +433,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
                 model: sourceAgent.model,
                 apiMode: sourceAgent.apiMode,
                 reasoningEffort: sourceAgent.reasoningEffort,
+                avatar: sourceAgent.avatar,
             })
             addedAgents.push(agent)
             agentResults.push({ profile: sourceAgent.profile, ok: true, agent })
@@ -642,6 +704,7 @@ groupChatRoutes.patch('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', as
             model: requested.model === undefined ? existing.model : requested.model,
             apiMode: requested.apiMode === undefined ? existing.apiMode : requested.apiMode,
             reasoningEffort: requested.reasoningEffort === undefined ? existing.reasoningEffort : requested.reasoningEffort,
+            avatar: requested.avatar === undefined ? existing.avatar : requested.avatar,
         })
     } catch (err: any) {
         ctx.status = Number(err?.status || 400)
@@ -657,6 +720,7 @@ groupChatRoutes.patch('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', as
         model: normalized.model || '',
         apiMode: normalized.apiMode || '',
         reasoningEffort: normalized.reasoningEffort || '',
+        avatar: normalized.avatar as string,
     })
     if (agent) {
         chatServer.agentClients.updateAgentIdentity(roomId, agent.agentId, agent.name, agent.description)

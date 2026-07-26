@@ -14,6 +14,8 @@ import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import SettingsCircuitBadge from '@/components/layout/SettingsCircuitBadge.vue'
 import WorkflowModelSelector from '@/components/hermes/workflow/WorkflowModelSelector.vue'
+import { inferCodingAgentApiMode, normalizeCodingAgentApiMode } from '@/api/coding-agents'
+import type { ProfileAvatar as ParticipantAvatar } from '@/api/hermes/profiles'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
 import type { RoomAgent, RoomInfo } from '@/api/hermes/group-chat'
@@ -21,6 +23,7 @@ import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
 import { OPEN_DESKTOP_BROWSER_PANEL_EVENT } from '@/utils/desktop-browser'
+import { canScopedCodingAgentUseProvider } from '@/utils/codingAgentProviders'
 
 const FilesPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/FilesPanel.vue')).default)
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)
@@ -66,6 +69,9 @@ const participantProvider = ref('')
 const participantModel = ref('')
 const participantApiMode = ref('')
 const participantReasoningEffort = ref('default')
+const participantAvatar = ref<ParticipantAvatar | null>(null)
+const participantAvatarCustomized = ref(false)
+const participantAvatarInputRef = ref<HTMLInputElement | null>(null)
 const cloneSourceRoomId = ref<string | null>(null)
 const cloneRoomName = ref('')
 const cloneInviteCode = ref('')
@@ -99,9 +105,6 @@ const participantRuntimeOptions = computed(() => [
     { label: 'Codex', value: 'codex' },
     { label: 'Claude Code', value: 'claude-code' },
 ])
-const participantModeOptions = computed(() => [
-    { label: t('codingAgents.launchModeScoped'), value: 'scoped' },
-])
 const participantApiModeOptions = computed(() => [
     { label: t('codingAgents.protocolOpenAiChat'), value: 'chat_completions' },
     { label: t('codingAgents.protocolOpenAiResponses'), value: 'codex_responses' },
@@ -109,15 +112,60 @@ const participantApiModeOptions = computed(() => [
 ])
 const participantReasoningOptions = computed(() => ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
     .map(value => ({ label: t(`chat.reasoningEffort.options.${value}`), value })))
-const participantModelGroups = computed(() => (
-    appStore.profileModelGroups.find(entry => entry.profile === selectedProfile.value)?.groups || appStore.modelGroups
+const participantModelGroups = computed(() => {
+    const groups = appStore.profileModelGroups.find(entry => entry.profile === selectedProfile.value)?.groups || appStore.modelGroups
+    const codingAgentId = participantCodingAgentId.value
+    if (participantRuntime.value !== 'coding_agent' || !codingAgentId) return groups
+    return groups.filter(group => canScopedCodingAgentUseProvider(codingAgentId, group.provider))
+})
+const selectedProfileDefaults = computed(() => (
+    appStore.profileModelGroups.find(entry => entry.profile === selectedProfile.value)
 ))
+const participantConfigurationValid = computed(() => {
+    if (participantRuntime.value !== 'coding_agent' || participantMode.value === 'global') return true
+    return !!participantCodingAgentId.value
+        && !!participantProvider.value
+        && !!participantModel.value
+        && !!participantApiMode.value
+        && canScopedCodingAgentUseProvider(participantCodingAgentId.value, participantProvider.value)
+})
+const participantCanSubmit = computed(() => !!selectedProfile.value && participantConfigurationValid.value)
+
+function defaultParticipantAvatar(value = participantRuntimeValue()): ParticipantAvatar {
+    const assetUrl = value === 'codex'
+        ? '/coding-agents/codex-openai.png'
+        : value === 'claude-code'
+            ? '/coding-agents/claude-code.svg'
+            : '/coding-agents/hermes.png'
+    return { type: 'asset', assetUrl }
+}
+
+function applySelectedProfileDefaults() {
+    const profileDefaults = selectedProfileDefaults.value
+    if (!profileDefaults) return
+    const defaultGroup = participantModelGroups.value.find(group => group.provider === profileDefaults.default_provider)
+    const providerGroup = defaultGroup || participantModelGroups.value[0]
+    participantProvider.value = providerGroup?.provider || ''
+    participantModel.value = defaultGroup?.models.includes(profileDefaults.default || '')
+        ? profileDefaults.default || ''
+        : providerGroup?.models[0] || ''
+    const fallbackApiMode = inferCodingAgentApiMode(providerGroup?.provider, providerGroup?.base_url)
+    participantApiMode.value = normalizeCodingAgentApiMode(providerGroup?.api_mode, fallbackApiMode)
+}
+
+function setParticipantProfile(value: string | null) {
+    selectedProfile.value = value
+    applySelectedProfileDefaults()
+}
 
 function setParticipantRuntime(value: string) {
     participantRuntime.value = value === 'hermes' ? 'hermes' : 'coding_agent'
     participantCodingAgentId.value = value === 'codex' || value === 'claude-code' ? value : ''
-    if (value === 'codex' && !participantApiMode.value) participantApiMode.value = 'codex_responses'
-    if (value === 'claude-code' && !participantApiMode.value) participantApiMode.value = 'anthropic_messages'
+    applySelectedProfileDefaults()
+    if (!agentName.value.trim() || ['Hermes', 'Codex', 'Claude Code'].includes(agentName.value.trim())) {
+        agentName.value = value === 'codex' ? 'Codex' : value === 'claude-code' ? 'Claude Code' : 'Hermes'
+    }
+    if (!participantAvatarCustomized.value) participantAvatar.value = defaultParticipantAvatar(value)
 }
 
 function participantRuntimeValue(): string {
@@ -127,15 +175,17 @@ function participantRuntimeValue(): string {
 function handleParticipantModelSelect(selection: { provider: string; model: string; apiMode?: string }) {
     participantProvider.value = selection.provider
     participantModel.value = selection.model
-    if (selection.apiMode === 'chat_completions' || selection.apiMode === 'codex_responses' || selection.apiMode === 'anthropic_messages') {
-        participantApiMode.value = selection.apiMode
-    }
+    const providerGroup = participantModelGroups.value.find(group => group.provider === selection.provider)
+    participantApiMode.value = normalizeCodingAgentApiMode(
+        selection.apiMode,
+        inferCodingAgentApiMode(providerGroup?.provider, providerGroup?.base_url),
+    )
 }
 
 function resetParticipantForm() {
     editingAgentId.value = ''
-    selectedProfile.value = null
-    agentName.value = ''
+    selectedProfile.value = profilesStore.activeProfileName || profilesStore.profiles[0]?.name || null
+    agentName.value = 'Hermes'
     agentDescription.value = ''
     participantRuntime.value = 'hermes'
     participantCodingAgentId.value = ''
@@ -144,6 +194,46 @@ function resetParticipantForm() {
     participantModel.value = ''
     participantApiMode.value = ''
     participantReasoningEffort.value = 'default'
+    participantAvatar.value = defaultParticipantAvatar('hermes')
+    participantAvatarCustomized.value = false
+    applySelectedProfileDefaults()
+}
+
+function randomizeParticipantAvatar() {
+    participantAvatar.value = { type: 'generated', seed: `participant-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}` }
+    participantAvatarCustomized.value = true
+}
+
+function resetParticipantAvatar() {
+    participantAvatar.value = defaultParticipantAvatar()
+    participantAvatarCustomized.value = false
+}
+
+function triggerParticipantAvatarUpload() {
+    participantAvatarInputRef.value?.click()
+}
+
+async function handleParticipantAvatarFileChange(event: Event) {
+    const input = event.target as HTMLInputElement
+    const file = input.files?.[0]
+    input.value = ''
+    if (!file) return
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+        message.warning(t('profiles.avatar.invalidType'))
+        return
+    }
+    if (file.size > 1024 * 1024) {
+        message.warning(t('profiles.avatar.tooLarge'))
+        return
+    }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result || ''))
+        reader.onerror = () => reject(reader.error || new Error('Failed to read file'))
+        reader.readAsDataURL(file)
+    })
+    participantAvatar.value = { type: 'image', dataUrl }
+    participantAvatarCustomized.value = true
 }
 
 function profileAvatarFor(profileName?: string) {
@@ -573,6 +663,8 @@ function handleEditAgent(agent: RoomAgent) {
     participantModel.value = agent.model
     participantApiMode.value = agent.apiMode
     participantReasoningEffort.value = agent.reasoningEffort || 'default'
+    participantAvatar.value = agent.avatar || defaultParticipantAvatar(participantRuntimeValue())
+    participantAvatarCustomized.value = !!agent.avatar
     showEditAgentModal.value = true
 }
 
@@ -640,10 +732,11 @@ async function confirmAddAgent() {
             runtime: participantRuntime.value,
             codingAgentId: participantCodingAgentId.value,
             mode: participantMode.value,
-            provider: participantMode.value === 'scoped' ? participantProvider.value : '',
-            model: participantMode.value === 'scoped' ? participantModel.value : '',
+            provider: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantProvider.value : '',
+            model: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantModel.value : '',
             apiMode: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantApiMode.value : '',
-            reasoningEffort: participantMode.value === 'scoped' ? participantReasoningEffort.value : '',
+            reasoningEffort: participantMode.value === 'scoped' ? (participantReasoningEffort.value === 'default' ? '' : participantReasoningEffort.value) : '',
+            avatar: participantAvatar.value,
         })
         showAddAgentModal.value = false
         resetParticipantForm()
@@ -664,10 +757,11 @@ async function confirmEditAgent() {
             name: agentName.value.trim(),
             description: agentDescription.value.trim(),
             mode: participantMode.value,
-            provider: participantMode.value === 'scoped' ? participantProvider.value : '',
-            model: participantMode.value === 'scoped' ? participantModel.value : '',
+            provider: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantProvider.value : '',
+            model: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantModel.value : '',
             apiMode: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantApiMode.value : '',
-            reasoningEffort: participantMode.value === 'scoped' ? participantReasoningEffort.value : '',
+            reasoningEffort: participantMode.value === 'scoped' ? (participantReasoningEffort.value === 'default' ? '' : participantReasoningEffort.value) : '',
+            avatar: participantAvatar.value,
         })
         showEditAgentModal.value = false
         resetParticipantForm()
@@ -934,7 +1028,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                     class="avatar-stack-item"
                                     :style="{ zIndex: store.agents.length - index }"
                                 >
-                                    <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="profileAvatarFor(agent.profile)" :size="24" />
+                                    <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="agent.avatar || profileAvatarFor(agent.profile)" :size="24" />
                                 </span>
                                 <span v-if="store.agents.length > 4" class="avatar-stack-more">+{{ store.agents.length - 4 }}</span>
                             </button>
@@ -949,7 +1043,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             </div>
                             <div class="agent-popover-title">{{ t('groupChat.agents') }} ({{ store.agents.length }})</div>
                             <div v-for="agent in store.agents" :key="agent.id" class="agent-popover-item">
-                                <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="profileAvatarFor(agent.profile)" :size="28" />
+                                <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="agent.avatar || profileAvatarFor(agent.profile)" :size="28" />
                                 <div class="agent-popover-info">
                                     <span class="agent-popover-name">{{ agent.name }}</span>
                                     <span class="agent-popover-profile">{{ participantRuntimeLabel(agent) }} · {{ agent.profile }} · {{ t('groupChat.sessionGeneration', { generation: agent.sessionGeneration }) }}</span>
@@ -1192,10 +1286,11 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     </div>
                     <div class="form-group">
                         <NSelect
-                            v-model:value="selectedProfile"
+                            :value="selectedProfile"
                             :options="profileOptions"
                             :placeholder="t('groupChat.selectProfile')"
                             filterable
+                            @update:value="setParticipantProfile"
                         />
                     </div>
                     <div class="form-group">
@@ -1214,11 +1309,19 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             :placeholder="t('groupChat.agentDescPlaceholder')"
                         />
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">{{ t('groupChat.participantMode') }}</label>
-                        <NSelect v-model:value="participantMode" :options="participantModeOptions" />
+                    <div class="form-group participant-avatar-field">
+                        <label class="form-label">{{ t('groupChat.participantAvatar') }}</label>
+                        <div class="participant-avatar-editor">
+                            <ProfileAvatar :name="agentName || participantRuntimeValue()" :avatar="participantAvatar" :size="52" />
+                            <input ref="participantAvatarInputRef" class="participant-avatar-file-input" type="file" accept="image/png,image/jpeg,image/webp" @change="handleParticipantAvatarFileChange">
+                            <NSpace size="small" wrap>
+                                <NButton size="small" @click="triggerParticipantAvatarUpload">{{ t('profiles.avatar.upload') }}</NButton>
+                                <NButton size="small" @click="randomizeParticipantAvatar">{{ t('profiles.avatar.random') }}</NButton>
+                                <NButton size="small" @click="resetParticipantAvatar">{{ t('profiles.avatar.reset') }}</NButton>
+                            </NSpace>
+                        </div>
                     </div>
-                    <div v-if="participantMode === 'scoped'" class="form-group">
+                    <div v-if="participantRuntime === 'coding_agent' && participantMode === 'scoped'" class="form-group">
                         <label class="form-label">{{ t('groupChat.participantModel') }}</label>
                         <WorkflowModelSelector
                             :provider="participantProvider"
@@ -1238,7 +1341,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     <div class="modal-actions">
                         <NSpace justify="end">
                             <NButton @click="showAddAgentModal = false">{{ t('common.cancel') }}</NButton>
-                            <NButton type="primary" :disabled="!selectedProfile" @click="confirmAddAgent">{{ t('common.add') }}</NButton>
+                            <NButton type="primary" :disabled="!participantCanSubmit" @click="confirmAddAgent">{{ t('common.add') }}</NButton>
                         </NSpace>
                     </div>
                 </div>
@@ -1258,11 +1361,19 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         <label class="form-label">{{ t('groupChat.agentDesc') }}</label>
                         <NInput v-model:value="agentDescription" type="textarea" :rows="2" />
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">{{ t('groupChat.participantMode') }}</label>
-                        <NSelect v-model:value="participantMode" :options="participantModeOptions" />
+                    <div class="form-group participant-avatar-field">
+                        <label class="form-label">{{ t('groupChat.participantAvatar') }}</label>
+                        <div class="participant-avatar-editor">
+                            <ProfileAvatar :name="agentName || participantRuntimeValue()" :avatar="participantAvatar" :size="52" />
+                            <input ref="participantAvatarInputRef" class="participant-avatar-file-input" type="file" accept="image/png,image/jpeg,image/webp" @change="handleParticipantAvatarFileChange">
+                            <NSpace size="small" wrap>
+                                <NButton size="small" @click="triggerParticipantAvatarUpload">{{ t('profiles.avatar.upload') }}</NButton>
+                                <NButton size="small" @click="randomizeParticipantAvatar">{{ t('profiles.avatar.random') }}</NButton>
+                                <NButton size="small" @click="resetParticipantAvatar">{{ t('profiles.avatar.reset') }}</NButton>
+                            </NSpace>
+                        </div>
                     </div>
-                    <div v-if="participantMode === 'scoped'" class="form-group">
+                    <div v-if="participantRuntime === 'coding_agent' && participantMode === 'scoped'" class="form-group">
                         <label class="form-label">{{ t('groupChat.participantModel') }}</label>
                         <WorkflowModelSelector
                             :provider="participantProvider"
@@ -1282,7 +1393,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     <div class="modal-actions">
                         <NSpace justify="end">
                             <NButton @click="showEditAgentModal = false">{{ t('common.cancel') }}</NButton>
-                            <NButton type="primary" :disabled="!agentName.trim()" @click="confirmEditAgent">{{ t('common.save') }}</NButton>
+                            <NButton type="primary" :disabled="!agentName.trim() || !participantCanSubmit" @click="confirmEditAgent">{{ t('common.save') }}</NButton>
                         </NSpace>
                     </div>
                 </div>
@@ -2452,11 +2563,14 @@ export default defineComponent({ components: { CreateRoomForm } })
 .modal-backdrop {
     position: fixed;
     inset: 0;
+    padding: 16px;
+    box-sizing: border-box;
     background: rgba(0, 0, 0, 0.4);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 1000;
+    overflow-y: auto;
 }
 
 .modal {
@@ -2465,6 +2579,9 @@ export default defineComponent({ components: { CreateRoomForm } })
     padding: 24px;
     width: 400px;
     max-width: 90vw;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    box-sizing: border-box;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
 
     h3 {
@@ -2500,6 +2617,17 @@ export default defineComponent({ components: { CreateRoomForm } })
     font-weight: 500;
     color: $text-secondary;
     margin-bottom: 6px;
+}
+
+.participant-avatar-editor {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+
+.participant-avatar-file-input {
+    display: none;
 }
 
 .code-row {

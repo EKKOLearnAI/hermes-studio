@@ -2636,6 +2636,7 @@ export default {
     participantModel: '模型',
     participantApiMode: 'API 模式',
     participantReasoningEffort: '推理强度',
+    participantAvatar: '头像',
     participantReasoningEffortNextRun: '推理强度（下次运行生效）',
     editParticipant: '编辑参与者',
     sessionGeneration: '第 {generation} 代会话',

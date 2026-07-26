@@ -23,9 +23,9 @@ const style = computed(() => ({
 <template>
   <span class="profile-avatar-view" :style="style">
     <img
-      v-if="avatar?.type === 'image' && avatar.dataUrl"
+      v-if="(avatar?.type === 'image' && avatar.dataUrl) || (avatar?.type === 'asset' && avatar.assetUrl)"
       class="profile-avatar-image"
-      :src="avatar.dataUrl"
+      :src="avatar.type === 'asset' ? avatar.assetUrl : avatar.dataUrl"
       alt=""
       draggable="false"
     >
