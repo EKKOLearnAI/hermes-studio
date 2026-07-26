@@ -1,0 +1,23 @@
+#!/bin/sh
+
+zero_sha=0000000000000000000000000000000000000000
+
+while read local_ref local_sha remote_ref remote_sha
+do
+  case "$remote_ref" in
+    refs/heads/main|refs/heads/master)
+      echo "Push rejected: direct pushes to ${remote_ref#refs/heads/} are not allowed." >&2
+      exit 1
+      ;;
+  esac
+
+  if [ "$local_sha" != "$zero_sha" ] &&
+     [ "$remote_sha" != "$zero_sha" ] &&
+     ! git merge-base --is-ancestor "$remote_sha" "$local_sha"
+  then
+    echo "Push rejected: force-pushing or rewriting remote branch history is not allowed." >&2
+    exit 1
+  fi
+done
+
+exit 0

@@ -1,0 +1,2 @@
+.githooks/* text eol=lf
+scripts/*.mjs text eol=lf

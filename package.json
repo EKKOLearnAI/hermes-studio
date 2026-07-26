@@ -41,6 +41,8 @@
     "dev:server": "nodemon",
     "build": "npm run openapi:generate && vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs",
     "harness:check": "node scripts/harness-check.mjs",
+    "agent:git:start": "node scripts/agent-git-check.mjs start",
+    "agent:git:finish": "node scripts/agent-git-check.mjs finish",
     "prepare": "[ -d dist ] || npm run build",
     "preview": "NODE_ENV=production vite preview",
     "test": "vitest run",
