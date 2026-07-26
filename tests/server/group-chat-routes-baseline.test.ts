@@ -116,6 +116,71 @@ describe('group chat REST route baseline', () => {
     expect(agentClients.createAgent).not.toHaveBeenCalled()
   })
 
+  it('rejects OAuth/subscription providers for scoped coding-agent participants before persistence', async () => {
+    const forbiddenParticipant = {
+      profile: 'default',
+      name: 'OAuth Codex',
+      runtime: 'coding_agent',
+      codingAgentId: 'codex',
+      mode: 'scoped',
+      provider: 'openai-codex',
+      model: 'gpt-5-codex',
+      apiMode: 'codex_responses',
+    }
+
+    const createRes = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Forbidden Room', inviteCode: 'FORBIDDEN1', agents: [forbiddenParticipant] }),
+    })
+    expect(createRes.status).toBe(400)
+    await expect(createRes.json()).resolves.toMatchObject({ error: expect.stringContaining('does not support OAuth/subscription providers') })
+    expect(storage.saveRoom).not.toHaveBeenCalled()
+    expect(storage.addRoomAgent).not.toHaveBeenCalled()
+    expect(agentClients.createAgent).not.toHaveBeenCalled()
+
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+    const addRes = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(forbiddenParticipant),
+    })
+    expect(addRes.status).toBe(400)
+    await expect(addRes.json()).resolves.toMatchObject({ error: expect.stringContaining('does not support OAuth/subscription providers') })
+    expect(storage.addRoomAgent).not.toHaveBeenCalled()
+    expect(agentClients.createAgent).not.toHaveBeenCalled()
+  })
+
+  it('rejects cloning legacy scoped participants with forbidden providers before persisting a new room', async () => {
+    storage.rooms.set('room-source', { id: 'room-source', name: 'Source', inviteCode: 'SOURCE', sessionSeed: '0' })
+    storage.agents.set('room-source', [{
+      id: 'row-agent',
+      agentId: 'agent-1',
+      profile: 'default',
+      name: 'OAuth Codex',
+      runtime: 'coding_agent',
+      codingAgentId: 'codex',
+      mode: 'scoped',
+      provider: 'openai-codex',
+      model: 'gpt-5-codex',
+      apiMode: 'codex_responses',
+      sessionId: 'legacy-session',
+    }])
+    storage.saveRoom.mockClear()
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-source/clone`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Rejected Clone', inviteCode: 'CLONE-BAD' }),
+    })
+
+    expect(res.status).toBe(400)
+    await expect(res.json()).resolves.toMatchObject({ error: expect.stringContaining('does not support OAuth/subscription providers') })
+    expect(storage.saveRoom).not.toHaveBeenCalled()
+    expect(storage.addRoomAgent).not.toHaveBeenCalled()
+    expect(agentClients.createAgent).not.toHaveBeenCalled()
+  })
+
   it('creates a room, persists successful agents, and reports agent connection failures', async () => {
     const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
       method: 'POST',
