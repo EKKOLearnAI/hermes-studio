@@ -119,7 +119,7 @@ describe('Hermes schema initialization', () => {
   })
 
   it('migrates only Group Chat-owned coding-agent sessions without hiding ordinary gc_-prefixed chats', async () => {
-    const { GC_SESSION_PROFILES_TABLE, initAllHermesTables, SESSIONS_TABLE } =
+    const { GC_ROOM_AGENTS_TABLE, GC_SESSION_PROFILES_TABLE, initAllHermesTables, SESSIONS_TABLE } =
       await import('../../packages/server/src/db/hermes/schemas')
 
     expect(() => initAllHermesTables()).not.toThrow()
@@ -132,10 +132,12 @@ describe('Hermes schema initialization', () => {
     insert.run('gC_mixed-claude', 'default', 'coding_agent', 'claude', 1, 2)
     insert.run('ordinary-codex-chat', 'default', 'coding_agent', 'codex', 1, 1)
     insert.run('gc_user-selected-id', 'default', 'coding_agent', 'codex', 1, 6)
+    db.prepare(
+      `INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, runtime, codingAgentId, sessionId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('binding-1', 'room-1', 'codex-1', 'default', 'Codex', 'coding_agent', 'codex', 'gc_room-1_codex-1_0')
     const markGroupChatOwned = db.prepare(
       `INSERT INTO "${GC_SESSION_PROFILES_TABLE}" (session_id, room_id, agent_id, profile_name, created_at) VALUES (?, ?, ?, ?, ?)`,
     )
-    markGroupChatOwned.run('gc_room-1_codex-1_0', 'room-1', 'codex-1', 'default', 1)
     markGroupChatOwned.run('gc_deleted-room_claude-1_2', 'deleted-room', 'claude-1', 'default', 1)
 
     expect(() => initAllHermesTables()).not.toThrow()

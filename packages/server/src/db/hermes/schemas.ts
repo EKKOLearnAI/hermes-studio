@@ -1103,17 +1103,24 @@ function migrateLegacyGroupChatCodingAgentSessions(
 ): void {
   if (!tableExists(db, SESSIONS_TABLE)) return
   if (!tableExists(db, GC_SESSION_PROFILES_TABLE)) return
-  // Migrate only sessions with durable Group Chat ownership. Session IDs are
-  // caller-controlled for ordinary Coding Agent runs, so a gc_ prefix alone
-  // is not sufficient evidence that a session belongs to Group Chat.
+  // Migrate only sessions with durable or currently persisted Group Chat ownership.
+  // Session IDs are caller-controlled for ordinary Coding Agent runs, so a gc_
+  // prefix alone is not sufficient evidence that a session belongs to Group Chat.
   db.prepare(
     `UPDATE ${quoteIdentifier(SESSIONS_TABLE)} ` +
     `SET source = 'group_chat' ` +
     `WHERE source = 'coding_agent' ` +
     `AND agent IN ('codex', 'claude') ` +
-    `AND EXISTS (` +
-      `SELECT 1 FROM ${quoteIdentifier(GC_SESSION_PROFILES_TABLE)} ownership ` +
-      `WHERE ownership.session_id = ${quoteIdentifier(SESSIONS_TABLE)}.id` +
+    `AND (` +
+      `EXISTS (` +
+        `SELECT 1 FROM ${quoteIdentifier(GC_SESSION_PROFILES_TABLE)} ownership ` +
+        `WHERE ownership.session_id = ${quoteIdentifier(SESSIONS_TABLE)}.id` +
+      `) OR EXISTS (` +
+        `SELECT 1 FROM ${quoteIdentifier(GC_ROOM_AGENTS_TABLE)} participant ` +
+        `WHERE participant.sessionId = ${quoteIdentifier(SESSIONS_TABLE)}.id ` +
+        `AND participant.runtime = 'coding_agent' ` +
+        `AND participant.codingAgentId IN ('codex', 'claude')` +
+      `)` +
     `)`,
   ).run()
 }
