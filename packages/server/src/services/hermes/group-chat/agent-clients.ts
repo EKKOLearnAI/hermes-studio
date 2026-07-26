@@ -364,7 +364,6 @@ class AgentClient {
         const binding = this.participantBinding(roomId)
         const sessionId = this.currentSessionId(roomId)
         if (binding?.runtime === 'coding_agent') {
-            const hadPendingReply = this.codingAgentReplyCancels.has(sessionId)
             this.markSessionInterrupted(sessionId)
             const runId = codingAgentRunManager.runIdForSession(sessionId) || 'interrupted'
             const workspaceRunChange = codingAgentRunManager.completeWorkspaceDiffForSession(sessionId)
@@ -381,7 +380,9 @@ class AgentClient {
             } catch (err: any) {
                 logger.warn(`[AgentClients] ${this.name}: failed to publish coding-agent interrupt state: ${err.message || err}`)
             }
-            return hadPendingReply || stopped
+            // stopAndWait() returns false when there was no managed run. That is
+            // already-idle success, not a reason to block participant/Room deletion.
+            return true
         }
         let result: Awaited<ReturnType<AgentBridgeClient['interrupt']>> | null = null
         try {

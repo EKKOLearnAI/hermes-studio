@@ -122,7 +122,10 @@ const selectedProfileDefaults = computed(() => (
     appStore.profileModelGroups.find(entry => entry.profile === selectedProfile.value)
 ))
 const participantConfigurationValid = computed(() => {
-    if (participantRuntime.value !== 'coding_agent' || participantMode.value === 'global') return true
+    if (participantMode.value === 'global') return true
+    if (participantRuntime.value === 'hermes') {
+        return !!participantProvider.value && !!participantModel.value
+    }
     return !!participantCodingAgentId.value
         && !!participantProvider.value
         && !!participantModel.value
@@ -727,8 +730,8 @@ async function confirmAddAgent() {
             runtime: participantRuntime.value,
             codingAgentId: participantCodingAgentId.value,
             mode: participantMode.value,
-            provider: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantProvider.value : '',
-            model: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantModel.value : '',
+            provider: participantMode.value === 'scoped' ? participantProvider.value : '',
+            model: participantMode.value === 'scoped' ? participantModel.value : '',
             apiMode: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantApiMode.value : '',
             reasoningEffort: participantMode.value === 'scoped' ? (participantReasoningEffort.value === 'default' ? '' : participantReasoningEffort.value) : '',
             avatar: participantAvatar.value,
@@ -752,8 +755,8 @@ async function confirmEditAgent() {
             name: agentName.value.trim(),
             description: agentDescription.value.trim(),
             mode: participantMode.value,
-            provider: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantProvider.value : '',
-            model: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantModel.value : '',
+            provider: participantMode.value === 'scoped' ? participantProvider.value : '',
+            model: participantMode.value === 'scoped' ? participantModel.value : '',
             apiMode: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantApiMode.value : '',
             reasoningEffort: participantMode.value === 'scoped' ? (participantReasoningEffort.value === 'default' ? '' : participantReasoningEffort.value) : '',
             avatar: participantAvatar.value,
@@ -1312,7 +1315,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             </NSpace>
                         </div>
                     </div>
-                    <div v-if="participantRuntime === 'coding_agent' && participantMode === 'scoped'" class="form-group">
+                    <div v-if="participantMode === 'scoped'" class="form-group">
                         <label class="form-label">{{ t('groupChat.participantModel') }}</label>
                         <WorkflowModelSelector
                             :provider="participantProvider"
@@ -1364,7 +1367,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             </NSpace>
                         </div>
                     </div>
-                    <div v-if="participantRuntime === 'coding_agent' && participantMode === 'scoped'" class="form-group">
+                    <div v-if="participantMode === 'scoped'" class="form-group">
                         <label class="form-label">{{ t('groupChat.participantModel') }}</label>
                         <WorkflowModelSelector
                             :provider="participantProvider"

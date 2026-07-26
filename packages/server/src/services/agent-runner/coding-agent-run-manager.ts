@@ -25,8 +25,8 @@ const CODING_AGENT_TOOL_OUTPUT_TAIL_CHARS = 8 * 1024
 const CODEX_REASONING_SUMMARY_ARGS = ['-c', 'model_reasoning_summary="auto"']
 const HERMES_MCP_SERVER_NAME = 'hermes-studio'
 const GROUP_CHAT_CODEX_SAFETY_ARGS = [
-  '--sandbox',
-  'workspace-write',
+  '-c',
+  'sandbox_mode="workspace-write"',
   '-c',
   'approval_policy="never"',
 ]
@@ -485,6 +485,18 @@ export function groupChatCodexExecSafetyArgs(runtimeContext: CodingAgentRunLaunc
   return runtimeContext === 'group_chat'
     ? [...GROUP_CHAT_CODEX_SAFETY_ARGS]
     : ['--dangerously-bypass-approvals-and-sandbox']
+}
+
+export function codexExecTurnArgs(
+  commonArgs: string[],
+  workspaceDir: string,
+  input: string,
+  nativeSessionId?: string,
+  resumeReady = false,
+): string[] {
+  return nativeSessionId && resumeReady
+    ? ['exec', 'resume', ...commonArgs, nativeSessionId, input]
+    : ['exec', ...commonArgs, '--cd', workspaceDir, input]
 }
 
 export function sanitizeCodingAgentTerminalOutput(value: string): string {
@@ -1591,9 +1603,13 @@ export class CodingAgentRunManager {
       '--skip-git-repo-check',
       ...groupChatCodexExecSafetyArgs(run.launch.runtimeContext),
     ]
-    const args = run.launch.agentNativeSessionId && run.nativeResumeReady
-      ? ['exec', 'resume', ...commonArgs, run.launch.agentNativeSessionId, input]
-      : ['exec', ...commonArgs, '--cd', run.launch.workspaceDir, input]
+    const args = codexExecTurnArgs(
+      commonArgs,
+      run.launch.workspaceDir,
+      input,
+      run.launch.agentNativeSessionId,
+      run.nativeResumeReady,
+    )
 
     const child = spawnCodingAgentChild(run.launch.command, args, {
       cwd: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
