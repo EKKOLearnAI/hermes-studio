@@ -1911,7 +1911,7 @@ export default {
       maxTurns: 'Max Turns',
       maxTurnsHint: 'Maximum interaction rounds per conversation',
       gatewayTimeout: 'Gateway Timeout',
-      gatewayTimeoutHint: 'Request timeout in seconds',
+      gatewayTimeoutHint: 'Request inactivity timeout in seconds; 0 means unlimited',
       restartDrainTimeout: 'Restart Drain Timeout',
       restartDrainTimeoutHint: 'Drain timeout before restart in seconds',
       toolEnforcement: 'Tool Enforcement',

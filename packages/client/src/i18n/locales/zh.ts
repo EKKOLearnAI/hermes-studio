@@ -1903,7 +1903,7 @@ export default {
       maxTurns: '最大轮次',
       maxTurnsHint: '单次对话最大交互轮数',
       gatewayTimeout: '网关超时',
-      gatewayTimeoutHint: '单次请求超时时间（秒）',
+      gatewayTimeoutHint: '单次请求无活动超时时间（秒），0 表示无限制',
       restartDrainTimeout: '重启排空超时',
       restartDrainTimeoutHint: '重启前排空请求的超时时间（秒）',
       toolEnforcement: '工具执行策略',

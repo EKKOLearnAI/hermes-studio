@@ -50,7 +50,7 @@ function debouncedSave(key: string, value: any) {
     <SettingRow :label="t('settings.agent.gatewayTimeout')" :hint="t('settings.agent.gatewayTimeoutHint')">
       <NInputNumber
         :value="settingsStore.agent.gateway_timeout"
-        :min="60" :max="7200" :step="60"
+        :min="0" :max="7200" :step="60"
         size="small" class="input-sm"
         @update:value="v => v != null && debouncedSave('gateway_timeout', v)"
       />
