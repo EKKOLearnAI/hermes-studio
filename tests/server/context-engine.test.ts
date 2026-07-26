@@ -219,7 +219,7 @@ describe('ContextEngine.buildContext', () => {
             upstream: 'http://localhost:8642',
             apiKey: null,
             currentMessage: messages[messages.length - 1],
-            participantCursor: 4,
+            participantCursor: messages[3].timestamp,
         })
 
         expect(mockFetcher.getMessagesForContext).toHaveBeenCalledWith('room-1', { throughMessageId: 'msg-5' })

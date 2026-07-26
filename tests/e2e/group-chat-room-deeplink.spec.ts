@@ -9,6 +9,15 @@ const baseRooms = [
   { id: 'room-readonly', name: 'Read Only Room', inviteCode: null, canManage: false, workspace: '/tmp/readonly', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 0 },
 ]
 
+const mixedRuntimeParticipants = [
+  { id: 'row-hermes-a', roomId: 'room-alpha', agentId: 'participant-hermes-a', profile: 'default', name: 'Hermes A', description: 'planner', invited: 1, runtime: 'hermes', codingAgentId: '', sessionId: 'gc_room-alpha_participant-hermes-a_0', sessionGeneration: 0, mode: 'scoped', provider: 'test-provider', model: 'test-model', apiMode: '', reasoningEffort: 'medium' },
+  { id: 'row-hermes-b', roomId: 'room-alpha', agentId: 'participant-hermes-b', profile: 'default', name: 'Hermes B', description: 'reviewer', invited: 1, runtime: 'hermes', codingAgentId: '', sessionId: 'gc_room-alpha_participant-hermes-b_0', sessionGeneration: 0, mode: 'scoped', provider: 'test-provider', model: 'test-model', apiMode: '', reasoningEffort: 'high' },
+  { id: 'row-codex-a', roomId: 'room-alpha', agentId: 'participant-codex-a', profile: 'default', name: 'Codex A', description: 'builder', invited: 1, runtime: 'coding_agent', codingAgentId: 'codex', sessionId: 'gc_room-alpha_participant-codex-a_0', sessionGeneration: 0, mode: 'scoped', provider: 'test-provider', model: 'test-model', apiMode: 'codex_responses', reasoningEffort: 'high' },
+  { id: 'row-codex-b', roomId: 'room-alpha', agentId: 'participant-codex-b', profile: 'default', name: 'Codex B', description: 'tester', invited: 1, runtime: 'coding_agent', codingAgentId: 'codex', sessionId: 'gc_room-alpha_participant-codex-b_0', sessionGeneration: 0, mode: 'scoped', provider: 'test-provider', model: 'test-model', apiMode: 'codex_responses', reasoningEffort: 'medium' },
+  { id: 'row-claude-a', roomId: 'room-alpha', agentId: 'participant-claude-a', profile: 'default', name: 'Claude A', description: 'architect', invited: 1, runtime: 'coding_agent', codingAgentId: 'claude-code', sessionId: 'gc_room-alpha_participant-claude-a_0', sessionGeneration: 0, mode: 'scoped', provider: 'test-provider', model: 'test-model', apiMode: 'anthropic_messages', reasoningEffort: 'high' },
+  { id: 'row-claude-b', roomId: 'room-alpha', agentId: 'participant-claude-b', profile: 'default', name: 'Claude B', description: 'auditor', invited: 1, runtime: 'coding_agent', codingAgentId: 'claude-code', sessionId: 'gc_room-alpha_participant-claude-b_0', sessionGeneration: 0, mode: 'scoped', provider: 'test-provider', model: 'test-model', apiMode: 'anthropic_messages', reasoningEffort: 'medium' },
+]
+
 const groupWorkspaceDiff = {
   kind: 'workspace_diff',
   version: 1,
@@ -87,6 +96,12 @@ async function mockGroupChatApi(page: Page) {
     }
     if (pathname === '/api/hermes/group-chat/rooms') return json({ rooms })
 
+    const participantListMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/agents$/)
+    if (participantListMatch && request.method() === 'GET') {
+      const roomId = decodeURIComponent(participantListMatch[1])
+      return json({ agents: roomId === 'room-alpha' ? mixedRuntimeParticipants : [] })
+    }
+
     const inviteCodeMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/invite-code$/)
     if (inviteCodeMatch && request.method() === 'PUT') {
       const roomId = decodeURIComponent(inviteCodeMatch[1])
@@ -122,7 +137,7 @@ async function mockGroupChatApi(page: Page) {
       const roomId = decodeURIComponent(detailMatch[1])
       const room = rooms.find(r => r.id === roomId)
       return room
-        ? json({ room, messages: messagesByRoom[roomId] || [], agents: agentsByRoom[roomId] || [], members: [{ id: 'member-1', userId: 'user-1', name: 'User One', description: '', joinedAt: 1_790_000_000 }] })
+        ? json({ room, messages: messagesByRoom[roomId] || [], agents: roomId === 'room-alpha' ? mixedRuntimeParticipants : [], members: [{ id: 'member-1', userId: 'user-1', name: 'User One', description: '', joinedAt: 1_790_000_000 }] })
         : json({ error: 'Room not found' }, 404)
     }
 
@@ -157,7 +172,8 @@ function makeSocket(url, options) {
       state.emitted.push({ event, payload })
       if (event === 'join' && typeof ack === 'function') {
         const roomId = payload && payload.roomId
-        setTimeout(() => ack({ roomId, roomName: roomId, members: [], messages: roomMessages[roomId] || [], agents: roomAgents[roomId] || [], rooms: [], typingUsers: [], contextStatuses: [] }), 0)
+        const agents = roomId === 'room-alpha' ? ${JSON.stringify(mixedRuntimeParticipants)} : []
+        setTimeout(() => ack({ roomId, roomName: roomId, members: [], messages: roomMessages[roomId] || [], agents, rooms: [], typingUsers: [], contextStatuses: [] }), 0)
       }
       if (event === 'message' && typeof ack === 'function') {
         setTimeout(() => ack({ id: payload && payload.id }), 0)
@@ -223,6 +239,19 @@ test.describe('group chat room deep links', () => {
     await expect(page.locator('.room-title-text', { hasText: 'Beta Room' })).toBeVisible()
     await expect(page.getByText('Beta room message')).toBeVisible()
     await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-beta$/)
+  })
+
+  test('renders two Hermes, two Codex, and two Claude Code participants with stable generations', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+
+    await page.locator('.avatar-stack-inner').first().click()
+    const popover = page.locator('.agent-popover')
+    for (const name of ['Hermes A', 'Hermes B', 'Codex A', 'Codex B', 'Claude A', 'Claude B']) {
+      await expect(popover.getByText(name, { exact: true })).toBeVisible()
+    }
+    await expect(popover.getByText(/Hermes · default · generation 0/)).toHaveCount(2)
+    await expect(popover.getByText(/Codex · default · generation 0/)).toHaveCount(2)
+    await expect(popover.getByText(/Claude Code · default · generation 0/)).toHaveCount(2)
   })
 
   test('previewable room files open in the group workspace panel instead of downloading', async ({ page }) => {

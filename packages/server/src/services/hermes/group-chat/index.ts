@@ -1171,6 +1171,18 @@ export class GroupChatServer {
         return this.fencedRoomAgentSessions?.get(roomId)?.has(sessionId) === true
     }
 
+    private clearPendingApprovalsForRoom(roomId: string, agentId?: string): void {
+        if (!(this.pendingApprovals instanceof Map)) return
+        for (const [approvalId, pending] of this.pendingApprovals) {
+            if (pending.roomId === roomId && (!agentId || pending.agentId === agentId)) {
+                this.pendingApprovals.delete(approvalId)
+                this.emitToRoomManagers(roomId, 'approval.resolved', {
+                    event: 'approval.resolved', roomId, agentName: pending.agentName, approval_id: approvalId, choice: 'deny',
+                })
+            }
+        }
+    }
+
     async clearRoomRuntimeState(roomId: string): Promise<void> {
         const roomTyping = this.typingState.get(roomId)
         if (roomTyping) {
@@ -1178,6 +1190,7 @@ export class GroupChatServer {
             this.typingState.delete(roomId)
         }
         this.contextStatusState.delete(roomId)
+        this.clearPendingApprovalsForRoom(roomId)
         const releaseSessionFence = this.fenceCurrentRoomAgentSessions(roomId)
         try {
             await this.agentClients.interruptRoom(roomId)
@@ -1197,6 +1210,7 @@ export class GroupChatServer {
             this.typingState.delete(roomId)
         }
         this.contextStatusState.delete(roomId)
+        this.clearPendingApprovalsForRoom(roomId)
         const releaseSessionFence = this.fenceCurrentRoomAgentSessions(roomId)
         try {
             await this.agentClients.interruptRoom(roomId)
@@ -1771,6 +1785,7 @@ export class GroupChatServer {
             const participantId = participant?.agentId || agentRef
             const participantName = participant?.name || data.agentName || agentRef
             await this.agentClients.interruptAgent(roomId, participantId)
+            this.clearPendingApprovalsForRoom(roomId, participantId)
             this.nsp.to(roomId).emit('context_status', { roomId, agentId: participantId, agentName: participantName, status: 'ready' })
             ack?.({ ok: true })
         } catch (err: any) {

@@ -80,7 +80,9 @@ export class ContextEngine {
             throughMessageId: input.currentMessage.id,
         })
         const cursor = Math.max(0, Math.floor(Number(input.participantCursor || 0)))
-        const messages = cursor > 0 ? allMessages.slice(Math.min(cursor, allMessages.length)) : allMessages
+        const messages = cursor > 0
+            ? allMessages.filter(message => Number((message as any).timestamp || 0) > cursor)
+            : allMessages
         const total = messages.length
 
         logger.debug({

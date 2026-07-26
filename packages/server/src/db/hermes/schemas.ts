@@ -584,6 +584,7 @@ export const GC_MESSAGES_SCHEMA: Record<string, string> = {
   reasoning: 'TEXT',
   reasoning_details: 'TEXT',
   reasoning_content: 'TEXT',
+  roomSeq: 'INTEGER NOT NULL DEFAULT 0',
 }
 
 export const GC_ROOM_AGENTS_TABLE = 'gc_room_agents'

@@ -38,9 +38,16 @@ describe('api docs controller', () => {
     expect(participantCollectionSchema.properties).toMatchObject({
       runtime: { type: 'string', enum: ['hermes', 'coding_agent'] },
       codingAgentId: { type: 'string', enum: ['', 'claude-code', 'codex'] },
-      mode: { type: 'string', enum: ['scoped', 'global'] },
+      mode: { type: 'string', enum: ['scoped'] },
       apiMode: { type: 'string', enum: ['', 'chat_completions', 'codex_responses', 'anthropic_messages'] },
     })
+    const roomCreateSchema = ctx.body.paths['/api/hermes/group-chat/rooms']
+      .post.requestBody.content['application/json'].schema
+    expect(roomCreateSchema.properties.agents).toMatchObject({
+      type: 'array',
+      items: { type: 'object', required: ['profile'] },
+    })
+    expect(roomCreateSchema.properties.agents.items.properties.runtime.enum).toEqual(['hermes', 'coding_agent'])
 
     const participantPatchSchema = ctx.body.paths['/api/hermes/group-chat/rooms/{roomId}/agents/{agentId}']
       .patch.requestBody.content['application/json'].schema
