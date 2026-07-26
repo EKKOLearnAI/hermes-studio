@@ -94,6 +94,34 @@ describe('ekko-agent runtime', () => {
     expect(events).toEqual(['run.started', 'model.started', 'context.estimated', 'model.message', 'run.completed'])
   })
 
+  it('estimates provider-visible context without starting a model run', async () => {
+    const tools = new AgentToolRegistry()
+    tools.register({
+      definition: {
+        name: 'estimate_only',
+        description: 'Included in context estimates',
+        parameters: { type: 'object' },
+      },
+      async execute() {
+        return { ok: true, content: 'unused' }
+      },
+    })
+    const client = modelClient(() => ({ content: 'must not run' }))
+    const runtime = new AgentRuntime({ modelClient: client, tools })
+
+    const estimate = await runtime.estimateContext({
+      messages: ['hello'],
+      metadata: { session_id: 'estimate-session' },
+    })
+
+    expect(estimate.messageCount).toBe(2)
+    expect(estimate.toolCount).toBe(1)
+    expect(estimate.systemPromptTokens).toBeGreaterThan(0)
+    expect(estimate.messageTokens).toBeGreaterThan(0)
+    expect(client.create).not.toHaveBeenCalled()
+    expect(client.stream).not.toHaveBeenCalled()
+  })
+
   it('emits one model usage event for each completed non-streaming model call', async () => {
     const client = modelClient(() => ({
       content: 'hello',

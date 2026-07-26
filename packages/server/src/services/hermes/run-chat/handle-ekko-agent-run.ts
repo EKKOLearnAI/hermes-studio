@@ -18,12 +18,13 @@ import { getGlobalEkkoAgent } from '../../ekko-agent/manager'
 import { resolveEkkoMcpServers } from '../../ekko-agent/mcp'
 import { resolveEkkoAuthorizedProviderCredentials } from '../../ekko-agent/auth-providers'
 import { createSession, addMessage, getSession, updateSession, updateSessionStats } from '../../../db/hermes/session-store'
+import type { ChatMessage } from '../../../lib/context-compressor'
 import { logger } from '../../logger'
 import { recordSessionUsage } from '../../usage-recorder'
 import { getProfileDir } from '../hermes-profile'
 import { observeRunChatPetEvent } from '../pet-state-socket'
 import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview } from './content-blocks'
-import { getOrCreateSession } from './compression'
+import { buildCompressedHistory, getOrCreateSession } from './compression'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { estimateUsageTokensFromMessages } from './usage'
 import type { ChatCodingAgentId, ContentBlock, SessionState } from './types'
@@ -173,7 +174,7 @@ async function toUserAgentContent(value: unknown): Promise<Pick<AgentMessage, 'c
   }
 }
 
-async function toAgentMessages(messages: SessionState['messages']): Promise<AgentMessage[]> {
+async function toAgentMessages(messages: Array<ChatMessage | SessionState['messages'][number]>): Promise<AgentMessage[]> {
   const toolCallIds = new Set<string>()
   const result: AgentMessage[] = []
 
@@ -204,7 +205,7 @@ async function toAgentMessages(messages: SessionState['messages']): Promise<Agen
       const agentMessage: AgentMessage = {
         role: 'assistant',
         content: contentBlocksToString(message.content as any),
-        reasoning: message.reasoning || message.reasoning_content || undefined,
+        reasoning: ('reasoning' in message ? message.reasoning : undefined) || message.reasoning_content || undefined,
         toolCalls,
       }
       if (agentMessage.content.trim() || (agentMessage.reasoning?.trim().length ?? 0) > 0 || toolCalls?.length) {
@@ -222,7 +223,9 @@ async function toAgentMessages(messages: SessionState['messages']): Promise<Agen
         role: 'tool',
         content,
         toolCallId,
-        name: message.tool_name || undefined,
+        name: ('tool_name' in message ? message.tool_name : undefined) ||
+          ('name' in message ? message.name : undefined) ||
+          undefined,
       })
       toolCallIds.delete(toolCallId)
     }
@@ -614,6 +617,9 @@ export async function handleEkkoAgentRun(
   })
   const agent = getGlobalEkkoAgent(join(getProfileDir(profile), 'skills'))
   const memoryUsageBatchId = randomUUID()
+  const currentInputTokens = estimateUsageTokensFromMessages([
+    { role: 'user', content: inputText },
+  ]).inputTokens
 
   let assistantText = ''
   let assistantReasoning = ''
@@ -724,13 +730,67 @@ export async function handleEkkoAgentRun(
   try {
     logger.info('[chat-run-socket] starting ekko-agent run for session %s', sessionId)
     const authenticatedUserId = socket.data?.user?.id == null ? undefined : String(socket.data.user.id)
+    const toolContext = {
+      cwd: workspace,
+      workspaceRoot: workspace,
+      workspaceId: workspace,
+      userId: authenticatedUserId,
+      sessionId,
+      profileId: profile,
+      browserSessionId: sessionId,
+      mcpServers,
+      timeoutMs: 120_000,
+      signal: abortController.signal,
+    }
+    const metadata = {
+      session_id: sessionId,
+      workspace_id: workspace,
+      user_id: authenticatedUserId,
+      profile,
+    }
+    let fixedContextEstimate: Promise<number> | undefined
+    const compressedHistory = await buildCompressedHistory(
+      sessionId,
+      profile,
+      baseUrl,
+      apiKey,
+      emit,
+      sessionMap,
+      {
+        model: modelConfig.model,
+        provider: modelConfig.provider,
+        allowHermesFallback: false,
+      },
+      async (_messages, localMessageTokens) => {
+        fixedContextEstimate ||= agent.estimateContext({
+          modelClient,
+          model: modelConfig.model,
+          modelDefaults: { model: modelConfig.model },
+          messages: [],
+          signal: abortController.signal,
+          memoryEnabled: false,
+          toolContext,
+          metadata,
+        }).then(estimate => estimate.contextTokens)
+        return (await fixedContextEstimate) + localMessageTokens
+      },
+      currentInputTokens,
+      shouldPersistUserMessage && data.display_role !== 'command',
+    )
+    const currentMessage: AgentMessage = {
+      role: 'user',
+      ...await toUserAgentContent(data.input),
+    }
     const result = await agent.run({
       modelClient,
       model: modelConfig.model,
       modelDefaults: {
         model: modelConfig.model,
       },
-      messages: await toAgentMessages(state.messages),
+      messages: [
+        ...await toAgentMessages(compressedHistory),
+        currentMessage,
+      ],
       signal: abortController.signal,
       onEvent: handleRuntimeEvent,
       onMemoryUsage: event => {
@@ -749,24 +809,8 @@ export async function handleEkkoAgentRun(
           isEstimated: false,
         })
       },
-      toolContext: {
-        cwd: workspace,
-        workspaceRoot: workspace,
-        workspaceId: workspace,
-        userId: authenticatedUserId,
-        sessionId,
-        profileId: profile,
-        browserSessionId: sessionId,
-        mcpServers,
-        timeoutMs: 120_000,
-        signal: abortController.signal,
-      },
-      metadata: {
-        session_id: sessionId,
-        workspace_id: workspace,
-        user_id: authenticatedUserId,
-        profile,
-      },
+      toolContext,
+      metadata,
     })
     assistantText = result.output.content || assistantText
     const outputUsage = result.output.usage

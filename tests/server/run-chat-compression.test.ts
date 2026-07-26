@@ -156,6 +156,38 @@ describe('run chat compression trigger', () => {
     ])
   })
 
+  it('keeps the latest stored user when the current input is not persisted', async () => {
+    getSessionDetailMock.mockReturnValue({
+      messages: [
+        {
+          id: 1,
+          session_id: 'session-1',
+          role: 'user',
+          content: 'latest persisted user',
+          timestamp: 1,
+        },
+      ],
+    })
+
+    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const history = await buildCompressedHistory(
+      'session-1',
+      'default',
+      'http://upstream',
+      undefined,
+      vi.fn(),
+      new Map(),
+      {},
+      undefined,
+      0,
+      false,
+    )
+
+    expect(history).toEqual([
+      { role: 'user', content: 'latest persisted user' },
+    ])
+  })
+
   it('builds a cursor snapshot run from protected head and post-cursor rows without a full-history read', async () => {
     const rows = [
       { id: 1, session_id: 'session-1', role: 'user', content: 'protected head', timestamp: 1 },
@@ -400,7 +432,55 @@ describe('run chat compression trigger', () => {
       'http://upstream',
       undefined,
       'session-1',
-      expect.objectContaining({ profile: 'default' }),
+      expect.objectContaining({
+        profile: 'default',
+        allowHermesFallback: true,
+      }),
+    )
+  })
+
+  it('passes an Ekko-only summarizer policy through the shared compressor', async () => {
+    compressorCompressMock.mockResolvedValue({
+      messages: [{ role: 'user', content: 'compressed' }],
+      meta: {
+        compressed: true,
+        llmCompressed: true,
+        totalMessages: 5,
+        summaryTokenEstimate: 1,
+        verbatimCount: 0,
+        compressedStartIndex: 0,
+      },
+    })
+    const state = { messages: [], isWorking: true, events: [], queue: [] }
+    const sessionMap = new Map([['session-1', state as any]])
+    const { compressHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+
+    await compressHistory(
+      Array.from({ length: 5 }, (_, index) => ({
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        content: `message ${index}`,
+      })),
+      null,
+      'session-1',
+      'http://upstream',
+      undefined,
+      state as any,
+      160_000,
+      vi.fn(),
+      sessionMap,
+      { model: 'session-model', provider: 'session-provider', allowHermesFallback: false },
+    )
+
+    expect(compressorCompressMock).toHaveBeenCalledWith(
+      expect.any(Array),
+      'http://upstream',
+      undefined,
+      'session-1',
+      expect.objectContaining({
+        model: 'session-model',
+        provider: 'session-provider',
+        allowHermesFallback: false,
+      }),
     )
   })
 

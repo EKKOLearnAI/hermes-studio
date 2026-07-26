@@ -2,8 +2,8 @@
  * Chat Context Compressor
  *
  * Compresses 1:1 chat conversation history before sending to upstream.
- * Uses the Hermes structured summary prompt with a clean Ekko runtime and
- * falls back to the Hermes Agent Bridge when Ekko summarization fails.
+ * Uses the Hermes structured summary prompt with a clean Ekko runtime and can
+ * optionally fall back to the Hermes Agent Bridge when the host allows it.
  *
  * Algorithm:
  * 1. If total tokens < trigger threshold → return as-is
@@ -26,7 +26,6 @@ import {
   AgentRuntime,
   createModelClient,
   resolveModelProviderConfigs,
-  type ModelClient,
 } from '../../../../ekko-agent/src'
 import {
   getCompressionSnapshot,
@@ -97,6 +96,7 @@ export interface SummarizerOptions {
   apiMode?: string | null
   historyRevision?: number
   workerKey?: string
+  allowHermesFallback?: boolean
 }
 
 type SummarizerConversationMessage = {
@@ -533,6 +533,17 @@ export async function callSummarizer(
       profile,
     })
   } catch (err) {
+    if (options.allowHermesFallback === false) {
+      logger.warn(
+        {
+          err,
+          cause: err instanceof Error ? err.cause : undefined,
+        },
+        '[context-compressor] clean Ekko summarizer failed; Hermes fallback disabled for profile %s',
+        profile,
+      )
+      throw err
+    }
     logger.warn(err, '[context-compressor] clean Ekko summarizer failed; falling back to Hermes for profile %s', profile)
     return callHermesSummarizer(convHistory, timeoutMs, {
       ...options,
@@ -568,15 +579,11 @@ async function callEkkoSummarizer(
     timeoutMs,
   })
   const providerClient = createModelClient(providerConfig)
-  const modelClient: ModelClient = {
-    provider: providerClient.provider,
-    requestStyle: providerClient.requestStyle,
-    capabilities: { ...providerClient.capabilities, streaming: false },
-    create: request => providerClient.create(request),
-    stream: request => providerClient.stream(request),
-  }
   const runtime = new AgentRuntime({
-    modelClient,
+    // Preserve the provider's streaming capability. Long summary requests can
+    // otherwise sit idle until the complete response is ready and be severed
+    // by an upstream gateway before our own timeout is reached.
+    modelClient: providerClient,
     toolsEnabled: false,
     skillsEnabled: false,
     systemPrompt: EKKO_SUMMARIZER_SYSTEM_PROMPT,

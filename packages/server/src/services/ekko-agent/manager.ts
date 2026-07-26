@@ -5,6 +5,7 @@ import {
   SqliteMemoryStore,
   type AgentRuntimeRunInput,
   type AgentRuntimeRunResult,
+  type AgentRuntimeContextEstimate,
 } from '../../../../ekko-agent/src'
 import { resolve } from 'node:path'
 import { config } from '../../config'
@@ -33,6 +34,10 @@ export class GlobalEkkoAgent {
     this.lastUsedAt = Date.now()
     this.runCount += 1
     return this.runtimeInstance().run(input)
+  }
+
+  async estimateContext(input: AgentRuntimeRunInput): Promise<AgentRuntimeContextEstimate> {
+    return this.runtimeInstance().estimateContext(input)
   }
 
   close(): void {

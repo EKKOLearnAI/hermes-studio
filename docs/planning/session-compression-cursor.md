@@ -142,12 +142,14 @@ runtime has tools, MCP, skills, and memory disabled, allows one model step, and
 does not retry a failed model request. It receives only the summary prompt and
 the fixed instruction to generate the checkpoint.
 
-If that Ekko call fails or returns no usable summary, compression immediately
-falls back to the previous Hermes `chat` run through Agent Bridge. The fallback
-uses a temporary `compress_*` session ID, receives the same summary prompt as
+For Hermes Agent conversations, an Ekko failure or unusable summary falls back
+to the previous Hermes `chat` run through Agent Bridge. The fallback uses a
+temporary `compress_*` session ID, receives the same summary prompt as
 conversation history, uses the dedicated
 `<profile>:compression:<source-session-id>` worker key, waits for the result,
-and destroys the temporary compression session afterward.
+and destroys the temporary compression session afterward. Ekko Agent
+conversations disable that fallback: an Ekko summarization failure stays in the
+shared compressor's normal failure path and never starts Hermes Agent.
 
 The first compression therefore sends the complete selected historical range
 to a summarizer model. Incremental compression sends the previous summary and

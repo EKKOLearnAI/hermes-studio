@@ -88,6 +88,21 @@ export class AgentRuntime {
     await this.tools.refreshTools(context)
   }
 
+  /**
+   * Estimate the provider-visible context without starting a model run.
+   *
+   * Hosts that own conversation compaction can use this to account for Ekko's
+   * system prompt, tools, and provider context while keeping compaction itself
+   * outside the runtime.
+   */
+  async estimateContext(input: AgentRuntimeRunInput): Promise<AgentRuntimeContextEstimate> {
+    await this.refreshTools(this.runToolContext(input))
+    const modelClient = this.modelClientFor(input)
+    const messages = this.prepareMessages(input)
+    const request = this.modelRequest(input, messages, modelClient, this.contextKeyFor(input))
+    return estimateModelRequestContext(request)
+  }
+
   async run(input: AgentRuntimeRunInput): Promise<AgentRuntimeRunResult> {
     await this.refreshTools(this.runToolContext(input))
 

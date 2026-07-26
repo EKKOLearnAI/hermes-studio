@@ -38,6 +38,20 @@ describe('GlobalEkkoAgent', () => {
     expect(secondClient.create).toHaveBeenCalledTimes(1)
   })
 
+  it('estimates context without incrementing the completed run count', async () => {
+    const agent = new GlobalEkkoAgent({ memory: false })
+    const client = modelClient('unused')
+
+    const estimate = await agent.estimateContext({
+      messages: ['estimate this'],
+      modelClient: client,
+    })
+
+    expect(estimate.contextTokens).toBeGreaterThan(0)
+    expect(agent.runCount).toBe(0)
+    expect(client.create).not.toHaveBeenCalled()
+  })
+
   it('passes per-run model defaults, metadata, and tool context', async () => {
     const agent = new GlobalEkkoAgent({ memory: false })
     const client = modelClient('ok')

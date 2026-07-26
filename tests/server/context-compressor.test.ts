@@ -113,6 +113,9 @@ describe('ChatContextCompressor', () => {
 
     expect(result).toBe('ekko summary')
     expect(ekkoRuntimeOptionsMock).toHaveBeenCalledWith(expect.objectContaining({
+      modelClient: expect.objectContaining({
+        capabilities: expect.objectContaining({ streaming: true }),
+      }),
       toolsEnabled: false,
       skillsEnabled: false,
       maxSteps: 1,
@@ -134,7 +137,7 @@ describe('ChatContextCompressor', () => {
     expect(bridgeDestroyMock).not.toHaveBeenCalled()
   })
 
-  it('falls back to the existing Hermes summarizer after the first Ekko failure', async () => {
+  it('falls back to the existing Hermes summarizer when the caller allows it', async () => {
     const { callSummarizer } = await import('../../packages/server/src/lib/context-compressor')
     ekkoRuntimeRunMock.mockRejectedValueOnce(new Error('provider unavailable'))
     bridgeRequestMock.mockResolvedValue({
@@ -160,12 +163,30 @@ describe('ChatContextCompressor', () => {
     expect(result).toBe('hermes fallback summary')
     expect(ekkoRuntimeRunMock).toHaveBeenCalledTimes(1)
     expect(bridgeRequestMock).toHaveBeenCalledTimes(1)
-    expect(bridgeRequestMock).toHaveBeenCalledWith(expect.objectContaining({
-      action: 'chat',
-      worker_key: 'default:compression:session-1',
-      model: 'summary-model',
-      provider: 'openrouter',
-    }), expect.any(Object))
+  })
+
+  it('does not fall back to Hermes when the caller disables it', async () => {
+    const { callSummarizer } = await import('../../packages/server/src/lib/context-compressor')
+    ekkoRuntimeRunMock.mockRejectedValueOnce(new Error('provider unavailable'))
+
+    await expect(callSummarizer(
+      '',
+      undefined,
+      'Summarize these turns.',
+      [],
+      12_000,
+      undefined,
+      {
+        profile: 'default',
+        model: 'summary-model',
+        provider: 'openrouter',
+        allowHermesFallback: false,
+      },
+    )).rejects.toThrow('provider unavailable')
+
+    expect(ekkoRuntimeRunMock).toHaveBeenCalledTimes(1)
+    expect(bridgeRequestMock).not.toHaveBeenCalled()
+    expect(bridgeDestroyMock).not.toHaveBeenCalled()
   })
 
   it('keeps full history when full summarization fails', async () => {

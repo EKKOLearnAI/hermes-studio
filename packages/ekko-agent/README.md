@@ -97,6 +97,12 @@ const result = await tools.execute('terminal_exec', {
 events together. The default `maxSteps` is `90`, matching Hermes' regular agent
 turn budget.
 
+When Ekko runs inside a host that owns conversation persistence, the host also
+owns context compression. `estimateContext()` exposes the provider-visible
+system, tool, message, and provider-context estimate needed for that external
+threshold decision without starting a model call. A standalone Ekko host can
+instead implement and own its internal compression lifecycle.
+
 In development, Ekko Agent stores its SQLite database at
 `packages/ekko-agent/sql-data/ekko-agent.db`. It uses the same single-file
 SQLite/DELETE journal layout as `packages/server/data/hermes-web-ui.db`, so the

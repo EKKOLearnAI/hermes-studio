@@ -9,9 +9,12 @@ const updateSessionMock = vi.hoisted(() => vi.fn())
 const updateSessionStatsMock = vi.hoisted(() => vi.fn())
 const resolveBridgeRunModelConfigMock = vi.hoisted(() => vi.fn())
 const agentRunMock = vi.hoisted(() => vi.fn())
+const agentEstimateContextMock = vi.hoisted(() => vi.fn(async () => ({ contextTokens: 5_000 })))
 const getGlobalEkkoAgentMock = vi.hoisted(() => vi.fn(() => ({
   run: agentRunMock,
+  estimateContext: agentEstimateContextMock,
 })))
+const buildCompressedHistoryMock = vi.hoisted(() => vi.fn())
 const recordSessionUsageMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
@@ -25,6 +28,14 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
 vi.mock('../../packages/server/src/services/hermes/run-chat/model-config', () => ({
   resolveBridgeRunModelConfig: resolveBridgeRunModelConfigMock,
 }))
+
+vi.mock('../../packages/server/src/services/hermes/run-chat/compression', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../packages/server/src/services/hermes/run-chat/compression')>()
+  return {
+    ...actual,
+    buildCompressedHistory: buildCompressedHistoryMock,
+  }
+})
 
 vi.mock('../../packages/server/src/services/ekko-agent/manager', () => ({
   getGlobalEkkoAgent: getGlobalEkkoAgentMock,
@@ -100,6 +111,25 @@ function makeHarness() {
 describe('ekko-agent context usage events', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    agentEstimateContextMock.mockResolvedValue({ contextTokens: 5_000 })
+    buildCompressedHistoryMock.mockImplementation(async (
+      sessionId: string,
+      _profile: string,
+      _upstream: string,
+      _apiKey: string | undefined,
+      _emit: unknown,
+      sessionMap: Map<string, any>,
+      _modelContext: unknown,
+      _contextEstimator: unknown,
+      _currentInputTokens: number,
+      excludeLastUser: boolean,
+    ) => {
+      const messages = (sessionMap.get(sessionId)?.messages || [])
+        .filter((message: any) => ['user', 'assistant', 'tool'].includes(message.role))
+      if (!excludeLastUser) return messages
+      const latestUserIndex = messages.findLastIndex((message: any) => message.role === 'user')
+      return latestUserIndex < 0 ? messages : messages.slice(0, latestUserIndex)
+    })
     getSessionMock.mockReturnValue({
       id: 'session-1',
       profile: 'default',
@@ -315,6 +345,73 @@ describe('ekko-agent context usage events', () => {
     const storedUserMessage = addMessageMock.mock.calls.find(call => call[0]?.role === 'user')?.[0]
     expect(storedUserMessage?.content).toContain(imagePath)
     expect(storedUserMessage?.content).not.toContain(expectedBase64)
+  })
+
+  it('uses externally compressed history and Ekko fixed-context estimates', async () => {
+    buildCompressedHistoryMock.mockImplementationOnce(async (
+      _sessionId: string,
+      _profile: string,
+      _upstream: string,
+      _apiKey: string | undefined,
+      _emit: unknown,
+      _sessionMap: Map<string, any>,
+      _modelContext: unknown,
+      contextEstimator: (_messages: unknown[], messageTokens: number) => Promise<number>,
+    ) => {
+      expect(await contextEstimator([], 123)).toBe(5_123)
+      return [{
+        role: 'user',
+        content: '[CONTEXT COMPACTION — REFERENCE ONLY]\n\nsummary',
+      }]
+    })
+    agentRunMock.mockResolvedValueOnce({
+      runId: 'run-1',
+      output: { role: 'assistant', content: 'continued', usage: { inputTokens: 3, outputTokens: 2 } },
+      steps: [],
+      messages: [],
+      events: [],
+      contextEstimate: { contextTokens: 6_000 },
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'continue from the checkpoint',
+      coding_agent_id: 'ekko-agent',
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(agentEstimateContextMock).toHaveBeenCalledWith(expect.objectContaining({
+      messages: [],
+      memoryEnabled: false,
+      model: 'ekko-test-model',
+    }))
+    expect(agentRunMock.mock.calls[0][0].messages).toEqual([
+      {
+        role: 'user',
+        content: '[CONTEXT COMPACTION — REFERENCE ONLY]\n\nsummary',
+      },
+      {
+        role: 'user',
+        content: 'continue from the checkpoint',
+      },
+    ])
+    expect(buildCompressedHistoryMock).toHaveBeenCalledWith(
+      'session-1',
+      'default',
+      '',
+      undefined,
+      expect.any(Function),
+      sessionMap,
+      {
+        model: 'ekko-test-model',
+        provider: 'test-provider',
+        allowHermesFallback: false,
+      },
+      expect.any(Function),
+      expect.any(Number),
+      true,
+    )
   })
 
   it('includes paired tool results in Ekko history for follow-up turns', async () => {
