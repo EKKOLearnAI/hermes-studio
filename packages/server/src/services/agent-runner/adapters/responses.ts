@@ -7,8 +7,8 @@ export interface ResponsesAdapterTarget {
 const HERMES_STUDIO_NAMESPACE = 'mcp__hermes_studio'
 const TOOL_SEARCH_NAME = 'tool_search'
 const RESPONSES_TOOL_OUTPUT_FORWARD_LIMIT = 32 * 1024
-const RESPONSES_TOOL_OUTPUT_HEAD_CHARS = 24 * 1024
-const RESPONSES_TOOL_OUTPUT_TAIL_CHARS = 7 * 1024
+const RESPONSES_TOOL_OUTPUT_HEAD_BYTES = 24 * 1024
+const RESPONSES_TOOL_OUTPUT_TAIL_BYTES = 7 * 1024
 
 const HERMES_STUDIO_MCP_TOOLS = [
   {
@@ -306,15 +306,57 @@ function responseInputItems(body: any): any[] {
   return Array.isArray(body?.input) ? body.input : []
 }
 
+function utf8ByteLength(text: string): number {
+  return Buffer.byteLength(text, 'utf8')
+}
+
+function utf8Head(text: string, maxBytes: number): string {
+  if (maxBytes <= 0) return ''
+  let bytes = 0
+  let end = 0
+  for (const char of text) {
+    const nextBytes = utf8ByteLength(char)
+    if (bytes + nextBytes > maxBytes) break
+    bytes += nextBytes
+    end += char.length
+  }
+  return text.slice(0, end)
+}
+
+function utf8Tail(text: string, maxBytes: number): string {
+  if (maxBytes <= 0) return ''
+  let bytes = 0
+  let start = text.length
+  while (start > 0) {
+    let nextStart = start - 1
+    const code = text.charCodeAt(nextStart)
+    if (code >= 0xDC00 && code <= 0xDFFF && nextStart > 0) {
+      const prev = text.charCodeAt(nextStart - 1)
+      if (prev >= 0xD800 && prev <= 0xDBFF) nextStart -= 1
+    }
+    const char = text.slice(nextStart, start)
+    const nextBytes = utf8ByteLength(char)
+    if (bytes + nextBytes > maxBytes) break
+    bytes += nextBytes
+    start = nextStart
+  }
+  return text.slice(start)
+}
+
 function truncateResponsesToolOutputText(output: string): string {
-  if (output.length <= RESPONSES_TOOL_OUTPUT_FORWARD_LIMIT) return output
-  const head = output.slice(0, RESPONSES_TOOL_OUTPUT_HEAD_CHARS)
-  const tail = output.slice(-RESPONSES_TOOL_OUTPUT_TAIL_CHARS)
-  const omitted = output.length - head.length - tail.length
+  const originalBytes = utf8ByteLength(output)
+  if (originalBytes <= RESPONSES_TOOL_OUTPUT_FORWARD_LIMIT) return output
+  const marker = `[Hermes Web UI: coding-agent tool output truncated before provider request; original_chars=${output.length}; original_bytes=${originalBytes}]`
+  const markerOverhead = utf8ByteLength(marker) + 4
+  const contentBudget = Math.max(0, RESPONSES_TOOL_OUTPUT_FORWARD_LIMIT - markerOverhead)
+  const tailBytes = Math.min(RESPONSES_TOOL_OUTPUT_TAIL_BYTES, Math.floor(contentBudget / 4))
+  const headBytes = Math.min(RESPONSES_TOOL_OUTPUT_HEAD_BYTES, Math.max(0, contentBudget - tailBytes))
+  const head = utf8Head(output, headBytes)
+  const tail = utf8Tail(output, tailBytes)
   return [
     head,
     '',
-    `[Hermes Web UI: coding-agent tool output truncated before provider request; original_chars=${output.length}; omitted_chars=${omitted}]`,
+    marker,
     '',
     tail,
   ].join('\n')
