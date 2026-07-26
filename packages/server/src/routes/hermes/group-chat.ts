@@ -8,6 +8,7 @@ import {
     groupChatUserProfiles as userProfiles,
 } from '../../services/hermes/group-chat/access'
 import { setGroupChatRuntimeServer } from '../../services/hermes/group-chat/runtime'
+import { assertScopedCodingAgentProviderAllowed } from '../../services/coding-agent-provider-policy'
 import * as ctrl from '../../controllers/hermes/group-chat-workspace'
 
 export const groupChatRoutes = new Router()
@@ -151,6 +152,9 @@ function normalizeAgentInput(input: AgentInput): AgentInput {
     const model = String(input.model || '').trim()
     if (runtime === 'coding_agent' && (!provider || !model || !apiMode)) {
         throw Object.assign(new Error('provider, model, and apiMode are required for coding_agent participants'), { status: 400 })
+    }
+    if (runtime === 'coding_agent') {
+        assertScopedCodingAgentProviderAllowed(mode, provider)
     }
     const requestedReasoningEffort = String(input.reasoningEffort || '').trim()
     const reasoningEffort = requestedReasoningEffort === 'default' ? '' : requestedReasoningEffort
@@ -407,6 +411,27 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
     }
 
     const { name, inviteCode } = ctx.request.body as { name?: string; inviteCode?: string }
+    let clonedAgents: AgentInput[]
+    try {
+        clonedAgents = storage.getRoomAgents(sourceRoom.id).map((sourceAgent: any) => normalizeAgentInput({
+            profile: sourceAgent.profile,
+            name: sourceAgent.name,
+            description: sourceAgent.description,
+            invited: sourceAgent.invited,
+            runtime: sourceAgent.runtime,
+            codingAgentId: sourceAgent.codingAgentId,
+            mode: sourceAgent.mode,
+            provider: sourceAgent.provider,
+            model: sourceAgent.model,
+            apiMode: sourceAgent.apiMode,
+            reasoningEffort: sourceAgent.reasoningEffort,
+            avatar: sourceAgent.avatar,
+        }))
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 400)
+        ctx.body = { error: err?.message || 'Invalid participant configuration' }
+        return
+    }
     const roomId = generateId()
     const code = inviteCode?.trim() || generateInviteCode()
     storage.saveRoom(roomId, name?.trim() || `${sourceRoom.name} Copy`, code, {
@@ -419,7 +444,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
 
     const addedAgents = []
     const agentResults = []
-    for (const sourceAgent of storage.getRoomAgents(sourceRoom.id)) {
+    for (const sourceAgent of clonedAgents) {
         try {
             const agent = await connectAndPersistRoomAgent(chatServer, roomId, {
                 profile: sourceAgent.profile,
