@@ -42,7 +42,7 @@ function debouncedSave(key: string, value: any) {
     <SettingRow :label="t('settings.agent.maxTurns')" :hint="t('settings.agent.maxTurnsHint')">
       <NInputNumber
         :value="settingsStore.agent.max_turns"
-        :min="1" :max="200" :step="5"
+        :min="1" :step="5"
         size="small" class="input-sm"
         @update:value="v => v != null && debouncedSave('max_turns', v)"
       />
