@@ -1,6 +1,6 @@
 ---
 date: 2026-07-26
-pr: pending
+pr: 2223
 feature: Session-scoped YOLO chat command
 impact: Hermes chat sessions can toggle dangerous-command approval bypass with `/yolo`, including when it is the first message before an Agent session exists.
 ---
