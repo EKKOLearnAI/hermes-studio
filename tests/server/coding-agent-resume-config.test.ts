@@ -331,6 +331,41 @@ describe('coding agent resumed session config', () => {
     expect(startRunMock).not.toHaveBeenCalled()
   })
 
+  it('persists Group Chat coding-agent runs with a hidden group_chat session source', async () => {
+    makeHome()
+    getSessionMock.mockReturnValue({
+      id: 'gc-room-1-codex-0',
+      profile: 'default',
+      source: 'coding_agent',
+      agent: 'codex',
+      agent_session_id: 'agent-session-1',
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      api_mode: 'chat_completions',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({})
+    safeReadFileMock.mockResolvedValue('DEEPSEEK_API_KEY=sk-test\nDEEPSEEK_BASE_URL=https://api.deepseek.com/v1\n')
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await startCodingAgentRun('codex', {
+      sessionId: 'gc-room-1-codex-0',
+      runtimeContext: 'group_chat',
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      apiMode: 'chat_completions',
+    })
+
+    expect(startRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'gc-room-1-codex-0',
+      sessionSource: 'group_chat',
+      runtimeContext: 'group_chat',
+    }))
+    expect(updateSessionMock).toHaveBeenCalledWith('gc-room-1-codex-0', expect.objectContaining({
+      source: 'group_chat',
+      agent: 'codex',
+    }))
+  })
+
   it('fails clearly instead of launching Claude without scoped credentials', async () => {
     makeHome()
     getSessionMock.mockReturnValue({

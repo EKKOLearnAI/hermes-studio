@@ -150,7 +150,7 @@ function requestedSessionSources(source?: string): string[] {
 }
 
 function isHermesHistorySessionSource(source?: string | null): boolean {
-  return source !== 'global_agent' && source !== 'workflow'
+  return source !== 'global_agent' && source !== 'workflow' && source !== 'group_chat'
 }
 
 function sessionLastActive(session: any): number {
@@ -196,6 +196,7 @@ function mergeHermesHistorySessions(
 
   return filterPendingDeletedSessions(filterByAllowedProfiles(ctx, [...historySessionsById.values()]).filter(session =>
     (!source || session.source === source) &&
+    session.source !== 'group_chat' &&
     (isHermesHistorySessionSource(session.source) || (isArchivedSession(session) && session.source !== 'global_agent')),
   ))
 }
@@ -384,6 +385,7 @@ export async function listConversations(ctx: any) {
 
   const profile = explicitProfileFilter(ctx)
   const sessions = localListSessions(profile, source, limit && limit > 0 ? limit : 200)
+    .filter(session => isVisibleWebUiSessionSource(session.source))
   const summaries: ConversationSummary[] = sessions.map(s => ({
     id: s.id,
     profile: s.profile || null,

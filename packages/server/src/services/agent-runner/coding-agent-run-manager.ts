@@ -81,7 +81,7 @@ export interface CodingAgentRunLaunch {
   workspaceDir: string
   env?: NodeJS.ProcessEnv
   state?: SessionState
-  sessionSource?: 'global_agent' | 'workflow'
+  sessionSource?: 'global_agent' | 'workflow' | 'group_chat'
   runtimeContext?: 'group_chat'
   reasoningEffort?: string
 }
@@ -977,7 +977,9 @@ export class CodingAgentRunManager {
       ? 'global_agent'
       : run.launch.sessionSource === 'workflow'
         ? 'workflow'
-        : 'coding_agent'
+        : run.launch.sessionSource === 'group_chat'
+          ? 'group_chat'
+          : 'coding_agent'
     createSession({
       id: run.launch.sessionId,
       profile: run.launch.profile,

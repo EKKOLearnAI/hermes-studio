@@ -1112,6 +1112,22 @@ function cleanupHistoricalZeroLineWorkspaceDiffs(
   }
 }
 
+function migrateLegacyGroupChatCodingAgentSessions(
+  db: NonNullable<ReturnType<typeof getDb>>,
+): void {
+  if (!tableExists(db, SESSIONS_TABLE)) return
+  // Group Chat owns the gc_ session namespace. Match the reserved prefix so
+  // rotated generations and sessions from rooms deleted before this migration
+  // are hidden too, while ordinary coding-agent chats remain untouched.
+  db.prepare(
+    `UPDATE ${quoteIdentifier(SESSIONS_TABLE)} ` +
+    `SET source = 'group_chat' ` +
+    `WHERE source = 'coding_agent' ` +
+    `AND agent IN ('codex', 'claude') ` +
+    `AND id LIKE 'gc\\_%' ESCAPE '\\'`,
+  ).run()
+}
+
 // ============================================================================
 // Unified Initializer
 // ============================================================================
@@ -1244,6 +1260,7 @@ export function initAllHermesTables(): void {
         idx_gc_room_agents_profile: 'CREATE INDEX idx_gc_room_agents_profile ON gc_room_agents(profile)',
       }
     })
+    migrateLegacyGroupChatCodingAgentSessions(db)
     resetLegacyTimestampGroupAgentCursors(db)
     backfillGroupAgentAvatars(db)
 

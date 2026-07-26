@@ -22,7 +22,7 @@ import {
 import { mapCodingAgentResponseEvent } from '../../packages/server/src/services/agent-runner/coding-agent-event-mapper'
 import { applyResponseStreamEvent } from '../../packages/server/src/services/hermes/run-chat/response-stream'
 import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
-import { addMessage, getSession, getSessionDetail, listSessions } from '../../packages/server/src/db/hermes/session-store'
+import { addMessage, deleteSession, getSession, getSessionDetail, listSessions } from '../../packages/server/src/db/hermes/session-store'
 import { getRecordedUsageTotals, getUsage } from '../../packages/server/src/db/hermes/usage-store'
 
 describe('agent runner endpoint resolver', () => {
@@ -281,6 +281,40 @@ describe('coding agent terminal output sanitizer', () => {
 })
 
 describe('coding agent run state', () => {
+  it('creates Group Chat coding-agent sessions with a hidden group_chat source', () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const sessionId = `gc_room-1_codex-${Date.now()}_0`
+
+    try {
+      manager.start({
+        agentSessionId: `agent-${sessionId}`,
+        agentId: 'codex',
+        mode: 'scoped',
+        profile: 'default',
+        provider: 'test-provider',
+        model: 'test-model',
+        sessionId,
+        command: 'codex',
+        args: [],
+        shellCommand: 'codex',
+        workspaceDir: process.cwd(),
+        sessionSource: 'group_chat',
+        runtimeContext: 'group_chat',
+        state: { messages: [], isWorking: false, events: [], queue: [] },
+      })
+
+      expect(getSession(sessionId)).toMatchObject({
+        id: sessionId,
+        source: 'group_chat',
+        agent: 'codex',
+      })
+    } finally {
+      manager.shutdown()
+      deleteSession(sessionId)
+    }
+  })
+
   it('publishes Claude print result errors as failed runs instead of silent completions', async () => {
     initAllHermesTables()
     const manager = new CodingAgentRunManager()
