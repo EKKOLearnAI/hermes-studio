@@ -126,19 +126,31 @@ describe('Hermes schema initialization', () => {
     const insert = db.prepare(
       `INSERT INTO "${SESSIONS_TABLE}" (id, profile, source, agent, started_at, last_active) VALUES (?, ?, ?, ?, ?, ?)`,
     )
-    insert.run('gc_room-1_codex-1_0', 'default', 'coding_agent', 'codex', 1, 3)
-    insert.run('gc_deleted-room_claude-1_2', 'default', 'coding_agent', 'claude', 1, 2)
+    insert.run('gc_room-1_codex-1_0', 'default', 'coding_agent', 'codex', 1, 5)
+    insert.run('gc_deleted-room_claude-1_2', 'default', 'coding_agent', 'claude', 1, 4)
+    insert.run('GC_ordinary-codex', 'default', 'coding_agent', 'codex', 1, 3)
+    insert.run('gC_mixed-claude', 'default', 'coding_agent', 'claude', 1, 2)
     insert.run('ordinary-codex-chat', 'default', 'coding_agent', 'codex', 1, 1)
 
     expect(() => initAllHermesTables()).not.toThrow()
     expect(db.prepare(`SELECT id, source FROM "${SESSIONS_TABLE}" ORDER BY id`).all()).toEqual([
+      { id: 'GC_ordinary-codex', source: 'coding_agent' },
+      { id: 'gC_mixed-claude', source: 'coding_agent' },
       { id: 'gc_deleted-room_claude-1_2', source: 'group_chat' },
       { id: 'gc_room-1_codex-1_0', source: 'group_chat' },
       { id: 'ordinary-codex-chat', source: 'coding_agent' },
     ])
     const { listSessions } = await import('../../packages/server/src/db/hermes/session-store')
-    expect(listSessions('default', undefined, 1).map(session => session.id)).toEqual(['ordinary-codex-chat'])
-    expect(listSessions('default', 'coding_agent', 1).map(session => session.id)).toEqual(['ordinary-codex-chat'])
+    expect(listSessions('default', undefined, 3).map(session => session.id)).toEqual([
+      'GC_ordinary-codex',
+      'gC_mixed-claude',
+      'ordinary-codex-chat',
+    ])
+    expect(listSessions('default', 'coding_agent', 3).map(session => session.id)).toEqual([
+      'GC_ordinary-codex',
+      'gC_mixed-claude',
+      'ordinary-codex-chat',
+    ])
     expect(listSessions('default', 'group_chat', 10).map(session => session.id)).toEqual([
       'gc_room-1_codex-1_0',
       'gc_deleted-room_claude-1_2',
