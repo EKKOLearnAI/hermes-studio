@@ -1110,7 +1110,7 @@ function migrateLegacyGroupChatCodingAgentSessions(
     `SET source = 'group_chat' ` +
     `WHERE source = 'coding_agent' ` +
     `AND agent IN ('codex', 'claude') ` +
-    `AND id LIKE 'gc\\_%' ESCAPE '\\'`,
+    `AND id GLOB 'gc_*'`,
   ).run()
 }
 
