@@ -39,13 +39,13 @@ describe('GroupChatPanel mixed-runtime participant UI contract', () => {
     expect(panelSource).toContain("groupChat.participantReasoningEffortNextRun")
   })
 
-  it('hides the redundant model selector for Hermes and keeps it for scoped coding agents', () => {
-    expect(panelSource).toContain("v-if=\"participantRuntime === 'coding_agent' && participantMode === 'scoped'\"")
+  it('allows a scoped model override for Hermes and coding-agent participants', () => {
+    expect(panelSource).toContain("v-if=\"participantMode === 'scoped'\"")
     const addAgentForm = panelSource.slice(
       panelSource.indexOf('v-if="showAddAgentModal"'),
       panelSource.indexOf('v-if="showEditAgentModal"'),
     )
-    expect(addAgentForm).toMatch(/participantRuntime === 'coding_agent' && participantMode === 'scoped'[\s\S]*groupChat\.participantModel/)
+    expect(addAgentForm).toMatch(/participantMode === 'scoped'[\s\S]*groupChat\.participantModel/)
   })
 
   it('filters coding-agent models to compatible providers and requires a complete scoped launch tuple', () => {
@@ -54,16 +54,19 @@ describe('GroupChatPanel mixed-runtime participant UI contract', () => {
     expect(panelSource).toContain(':disabled="!participantCanSubmit"')
   })
 
-  it('does not persist redundant Hermes model overrides', () => {
-    expect(panelSource).toContain("provider: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantProvider.value : ''")
-    expect(panelSource).toContain("model: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantModel.value : ''")
+  it('persists scoped Hermes model overrides while keeping Hermes API mode internal', () => {
+    expect(panelSource).toContain("provider: participantMode.value === 'scoped' ? participantProvider.value : ''")
+    expect(panelSource).toContain("model: participantMode.value === 'scoped' ? participantModel.value : ''")
+    expect(panelSource).toContain("apiMode: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantApiMode.value : ''")
+    expect(panelSource).toContain("if (participantRuntime.value === 'hermes')")
+    expect(panelSource).toContain("return !!participantProvider.value && !!participantModel.value")
   })
 
   it('hides scoped provider settings in global mode and never exposes Hermes API mode', () => {
     expect(panelSource).toContain("v-if=\"participantMode === 'scoped'\"")
     expect(panelSource).toContain("v-if=\"participantRuntime === 'coding_agent' && participantMode === 'scoped'\"")
     expect(panelSource).toContain("apiMode: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantApiMode.value : ''")
-    expect(panelSource).toContain("provider: participantRuntime.value === 'coding_agent' && participantMode.value === 'scoped' ? participantProvider.value : ''")
+    expect(panelSource).toContain("provider: participantMode.value === 'scoped' ? participantProvider.value : ''")
   })
 
   it('keeps every custom modal reachable inside a short viewport', () => {

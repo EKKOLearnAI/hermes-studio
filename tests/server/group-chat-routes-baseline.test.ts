@@ -269,7 +269,14 @@ describe('group chat REST route baseline', () => {
     const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile: 'default', name: 'Agent B', runtime: 'hermes', reasoningEffort: 'high' }),
+      body: JSON.stringify({
+        profile: 'default',
+        name: 'Agent B',
+        runtime: 'hermes',
+        provider: 'provider-a',
+        model: 'model-a',
+        reasoningEffort: 'high',
+      }),
     })
 
     expect(res.status).toBe(200)
@@ -278,6 +285,8 @@ describe('group chat REST route baseline', () => {
       profile: 'default',
       name: 'Agent B',
       runtime: 'hermes',
+      provider: 'provider-a',
+      model: 'model-a',
       reasoningEffort: 'high',
       sessionGeneration: 0,
     })

@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import {
   CodingAgentRunManager,
+  codexExecTurnArgs,
   groupChatClaudePrintArgs,
   groupChatCodexExecSafetyArgs,
 } from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
@@ -9,8 +10,8 @@ import {
 describe('CodingAgentRunManager external event subscriptions', () => {
   it('uses explicit unattended safe-mode flags for group-chat coding agents', () => {
     expect(groupChatCodexExecSafetyArgs('group_chat')).toEqual([
-      '--sandbox',
-      'workspace-write',
+      '-c',
+      'sandbox_mode="workspace-write"',
       '-c',
       'approval_policy="never"',
     ])
@@ -30,6 +31,22 @@ describe('CodingAgentRunManager external event subscriptions', () => {
       'claude-test',
     ])
     expect(args).not.toContain('--dangerously-skip-permissions')
+  })
+
+  it('uses resume-compatible sandbox configuration on both initial and resumed Codex turns', () => {
+    const commonArgs = ['--json', ...groupChatCodexExecSafetyArgs('group_chat')]
+    const initial = codexExecTurnArgs(commonArgs, '/tmp/workspace', 'first')
+    const resumed = codexExecTurnArgs(commonArgs, '/tmp/workspace', 'second', 'native-session', true)
+
+    expect(initial).toEqual([
+      'exec', '--json', '-c', 'sandbox_mode="workspace-write"', '-c', 'approval_policy="never"',
+      '--cd', '/tmp/workspace', 'first',
+    ])
+    expect(resumed).toEqual([
+      'exec', 'resume', '--json', '-c', 'sandbox_mode="workspace-write"', '-c', 'approval_policy="never"',
+      'native-session', 'second',
+    ])
+    expect(resumed).not.toContain('--sandbox')
   })
 
   it('publishes normalized events only to listeners for the matching session', () => {
