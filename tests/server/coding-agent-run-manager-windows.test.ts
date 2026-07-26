@@ -45,6 +45,16 @@ vi.mock('child_process', () => ({
   }),
 }))
 
+vi.mock('../../packages/server/src/db/hermes/session-store', async () => {
+  const actual = await vi.importActual<typeof import('../../packages/server/src/db/hermes/session-store')>(
+    '../../packages/server/src/db/hermes/session-store',
+  )
+  return {
+    ...actual,
+    updateSessionStats: vi.fn(),
+  }
+})
+
 import { CodingAgentRunManager } from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')

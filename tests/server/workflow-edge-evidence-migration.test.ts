@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { claimTestHermesDbOwnership } from './db-test-helpers'
 
 let db: import('node:sqlite').DatabaseSync | null = null
 
@@ -13,6 +14,7 @@ describe('workflow edge evidence schema migration', () => {
   it('recreates canonical indexes on the replacement table after archiving a legacy table', async () => {
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
+    await claimTestHermesDbOwnership(db)
     db.exec(`
       CREATE TABLE workflow_run_edge_evaluations (
         id TEXT PRIMARY KEY,

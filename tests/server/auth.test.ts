@@ -23,6 +23,7 @@ async function loadAuth(overrides: Partial<FsMocks> & { home?: string } = {}) {
     mocks: { readFile, writeFile, mkdir },
     appHome: join(home, '.hermes-web-ui'),
     tokenFile: join(home, '.hermes-web-ui', '.token'),
+    localIdentitySecretFile: join(home, '.hermes-web-ui', '.group-chat-local-identity-secret'),
   }
 }
 
@@ -99,6 +100,44 @@ describe('Auth Service', () => {
         tokenFile,
         expect.stringMatching(/^[a-f0-9]{64}\n$/),
         expectedWriteOptions,
+      )
+    })
+  })
+
+  describe('getGroupChatLocalIdentitySecret', () => {
+    it('uses a dedicated 256-bit secret rather than the API bearer token', async () => {
+      process.env.AUTH_TOKEN = 'public-api-bearer'
+      process.env.GROUP_CHAT_LOCAL_IDENTITY_SECRET = 'a'.repeat(64)
+      const { getToken, getGroupChatLocalIdentitySecret, mocks } = await loadAuth()
+
+      await expect(getToken()).resolves.toBe('public-api-bearer')
+      await expect(getGroupChatLocalIdentitySecret()).resolves.toBe('a'.repeat(64))
+      expect(mocks.readFile).not.toHaveBeenCalled()
+    })
+
+    it('rejects weak configured signing secrets', async () => {
+      process.env.GROUP_CHAT_LOCAL_IDENTITY_SECRET = 'weak'
+      const { getGroupChatLocalIdentitySecret } = await loadAuth()
+
+      await expect(getGroupChatLocalIdentitySecret()).rejects.toThrow(/exactly 32 bytes/)
+    })
+
+    it('creates the durable private secret exclusively with owner-only permissions', async () => {
+      const missing = Object.assign(new Error('missing'), { code: 'ENOENT' })
+      const readFile = vi.fn().mockRejectedValue(missing)
+      const writeFile = vi.fn()
+      const mkdir = vi.fn()
+      const { getGroupChatLocalIdentitySecret, appHome, localIdentitySecretFile } = await loadAuth({ readFile, writeFile, mkdir })
+
+      await expect(getGroupChatLocalIdentitySecret()).resolves.toMatch(/^[a-f0-9]{64}$/)
+      expect(mkdir).toHaveBeenCalledWith(appHome, { recursive: true })
+      const expectedOptions = process.platform === 'win32'
+        ? { flag: 'wx' }
+        : { flag: 'wx', mode: 0o600 }
+      expect(writeFile).toHaveBeenCalledWith(
+        localIdentitySecretFile,
+        expect.stringMatching(/^[a-f0-9]{64}\n$/),
+        expectedOptions,
       )
     })
   })

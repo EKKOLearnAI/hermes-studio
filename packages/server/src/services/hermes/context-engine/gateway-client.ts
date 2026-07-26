@@ -1,4 +1,4 @@
-import type { StoredMessage, GatewayCaller } from './types'
+import type { StoredMessage, GatewayCaller, GatewaySessionLease } from './types'
 import {
     buildSummarizationSystemPrompt,
     buildFullSummaryPrompt,
@@ -25,30 +25,35 @@ export class GatewaySummarizer implements GatewayCaller {
         messages: StoredMessage[],
         roomId: string,
         profile: string,
-        previousSummary?: string,
+        previousSummary: string | undefined,
+        sessionRegistrar: () => GatewaySessionLease,
     ): Promise<{ summary: string; sessionId: string }> {
-        const history: Array<{ role: string; content: string }> = messages.map(m => ({
-            role: 'user',
-            content: summarizeMessageForPrompt(m),
-        }))
-
-        if (previousSummary) {
-            history.unshift(
-                { role: 'user', content: `[Previous summary]\n${previousSummary}` },
-                { role: 'assistant', content: 'Understood, I will update the summary.' },
-            )
-        }
-
-        const userPrompt = previousSummary
-            ? buildIncrementalUpdatePrompt()
-            : buildFullSummaryPrompt()
-
-        const bridge = new AgentBridgeClient({ timeoutMs: this.timeoutMs + 15_000 })
-        const sessionId = `gc_compress_${roomId}_${profile}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-            .replace(/[^a-zA-Z0-9_-]/g, '_')
-            .slice(0, 160)
-
+        const registeredSession = sessionRegistrar()
         try {
+            if (!/^gc_h_[0-9a-f]{32}$/.test(registeredSession.sessionId)) {
+                throw new Error('Registered group chat summary session ID is invalid')
+            }
+            assertGatewaySessionLeaseCurrent(registeredSession)
+
+            const history: Array<{ role: string; content: string }> = messages.map(m => ({
+                role: 'user',
+                content: summarizeMessageForPrompt(m),
+            }))
+
+            if (previousSummary) {
+                history.unshift(
+                    { role: 'user', content: `[Previous summary]\n${previousSummary}` },
+                    { role: 'assistant', content: 'Understood, I will update the summary.' },
+                )
+            }
+
+            const userPrompt = previousSummary
+                ? buildIncrementalUpdatePrompt()
+                : buildFullSummaryPrompt()
+
+            const bridge = new AgentBridgeClient({ timeoutMs: this.timeoutMs + 15_000 })
+            const sessionId = registeredSession.sessionId
+            assertGatewaySessionLeaseCurrent(registeredSession)
             const result = await bridge.request<AgentBridgeRunResult>({
                 action: 'chat',
                 session_id: sessionId,
@@ -60,6 +65,7 @@ export class GatewaySummarizer implements GatewayCaller {
                 wait: true,
                 timeout: Math.ceil(this.timeoutMs / 1000),
             }, { timeoutMs: this.timeoutMs + 15_000 })
+            assertGatewaySessionLeaseCurrent(registeredSession)
 
             if (result.status === 'error') {
                 throw new Error(result.error || 'Summarization bridge run failed')
@@ -72,9 +78,23 @@ export class GatewaySummarizer implements GatewayCaller {
             logger.debug(`[GatewaySummarizer] Bridge compression completed for room ${roomId} (profile=${profile})`)
             return { summary: output, sessionId }
         } finally {
-            await bridge.destroy(sessionId, profile).catch(() => undefined)
+            try {
+                registeredSession.release()
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : 'unknown error'
+                logger.warn(`[GatewaySummarizer] Failed to activate durable cleanup for registered summary session: ${message}`)
+            }
         }
     }
+}
+
+function assertGatewaySessionLeaseCurrent(lease: GatewaySessionLease): void {
+    try {
+        if (lease.authorizationGuard()) return
+    } catch {
+        // Guard/storage failures are authorization failures.
+    }
+    throw new Error('Group chat summary session authorization changed')
 }
 
 function summarizeMessageForPrompt(message: StoredMessage): string {

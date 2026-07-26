@@ -25,6 +25,7 @@ import {
 import { removeAllUserThemeAssets } from '../services/user-theme'
 import { getUserTheme, toUserThemePayload } from '../db/hermes/user-theme-store'
 import { issueUserJwt } from '../middleware/user-auth'
+import { getGroupChatRuntimeServer } from '../services/hermes/group-chat/runtime'
 import { listProfileNamesFromDisk } from '../services/hermes/hermes-profile'
 import { startOutboundRelayClient, stopOutboundRelayClient } from '../services/global-agent/outbound-relay-client'
 import { getLanEndpointKind } from '../services/lan-discovery'
@@ -617,7 +618,7 @@ export async function updateManagedUser(ctx: Context) {
     }
   }
 
-  updateUser({
+  const updated = updateUser({
     userId: user.id,
     username,
     password: password || undefined,
@@ -626,6 +627,9 @@ export async function updateManagedUser(ctx: Context) {
     profiles: nextRole === 'super_admin' ? [] : profiles,
     defaultProfile: body.defaultProfile,
   })
+  if (updated?.status === 'disabled') {
+    getGroupChatRuntimeServer()?.revokeAuthenticatedUser(user.id)
+  }
   ctx.body = { user: findUserById(user.id), users: listUsers() }
 }
 
@@ -653,7 +657,7 @@ export async function deleteManagedUser(ctx: Context) {
     return
   }
 
-  await removeAllUserThemeAssets(user.id)
+  getGroupChatRuntimeServer()?.revokeAuthenticatedUser(user.id)
   deleteUser(user.id)
   ctx.body = { success: true, users: listUsers() }
 }

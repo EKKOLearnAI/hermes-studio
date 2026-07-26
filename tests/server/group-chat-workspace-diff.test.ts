@@ -4,15 +4,21 @@ import { createServer, type Server as HttpServer } from 'http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { claimTestHermesDbOwnership } from './db-test-helpers'
 
 const dbState = vi.hoisted(() => ({
   db: null as DatabaseSync | null,
 }))
 
-vi.mock('../../packages/server/src/db/index', () => ({
-  getDb: () => dbState.db,
-  isSqliteAvailable: () => Boolean(dbState.db),
-}))
+vi.mock('../../packages/server/src/db/index', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../packages/server/src/db/index')>()
+  return {
+    ...actual,
+    getDb: () => dbState.db,
+    getStoragePath: () => ':memory:',
+    isSqliteAvailable: () => Boolean(dbState.db),
+  }
+})
 
 vi.mock('socket.io-client', () => ({
   io: vi.fn(() => ({
@@ -40,6 +46,7 @@ describe('group chat workspace diff persistence', () => {
     workspace = join(root, 'workspace')
     mkdirSync(workspace)
     dbState.db = new DatabaseSync(':memory:')
+    await claimTestHermesDbOwnership(dbState.db)
     const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
     initAllHermesTables()
     httpServer = createServer()

@@ -26,6 +26,16 @@ vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getProfileDir: (profile: string) => `/tmp/hermes-profile/${profile}`,
 }))
 
+vi.doMock('../../packages/server/src/services/hermes/model-context', async () => {
+  const actual = await vi.importActual<typeof import('../../packages/server/src/services/hermes/model-context')>(
+    '../../packages/server/src/services/hermes/model-context',
+  )
+  return {
+    ...actual,
+    getModelContextLength: vi.fn(() => null),
+  }
+})
+
 vi.doMock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
   codingAgentRunManager: {
     start: startRunMock,

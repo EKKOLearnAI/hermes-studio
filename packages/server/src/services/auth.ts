@@ -6,9 +6,17 @@ import { config } from '../config'
 
 const APP_HOME = config.appHome
 const TOKEN_FILE = join(APP_HOME, '.token')
+const GROUP_CHAT_LOCAL_IDENTITY_SECRET_FILE = join(APP_HOME, '.group-chat-local-identity-secret')
 
 function generateToken(): string {
   return randomBytes(32).toString('hex')
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && error.code === code
 }
 
 /**
@@ -26,13 +34,55 @@ export async function getToken(): Promise<string> {
     const token = generateToken()
     await mkdir(APP_HOME, { recursive: true })
     // Only set mode on Unix systems (Windows ignores this)
-    const options: any = {}
+    const options: { mode?: number } = {}
     if (process.platform !== 'win32') {
       options.mode = 0o600
     }
     await writeFile(TOKEN_FILE, token + '\n', options)
     return token
   }
+}
+
+let groupChatLocalIdentitySecretPromise: Promise<string> | null = null
+
+async function readOrCreateGroupChatLocalIdentitySecret(): Promise<string> {
+  if (process.env.GROUP_CHAT_LOCAL_IDENTITY_SECRET) {
+    const configured = process.env.GROUP_CHAT_LOCAL_IDENTITY_SECRET
+    if (!/^[0-9a-f]{64}$/i.test(configured)) {
+      throw new Error('GROUP_CHAT_LOCAL_IDENTITY_SECRET must be exactly 32 bytes encoded as 64 hex characters')
+    }
+    return configured
+  }
+  try {
+    const secret = (await readFile(GROUP_CHAT_LOCAL_IDENTITY_SECRET_FILE, 'utf-8')).trim()
+    if (!/^[0-9a-f]{64}$/i.test(secret)) {
+      throw new Error(`Invalid group chat local identity secret at ${GROUP_CHAT_LOCAL_IDENTITY_SECRET_FILE}`)
+    }
+    return secret
+  } catch (error: unknown) {
+    if (!hasErrorCode(error, 'ENOENT')) throw error
+  }
+
+  const secret = generateToken()
+  await mkdir(APP_HOME, { recursive: true })
+  const options: { flag: 'wx'; mode?: number } = { flag: 'wx' }
+  if (process.platform !== 'win32') options.mode = 0o600
+  try {
+    await writeFile(GROUP_CHAT_LOCAL_IDENTITY_SECRET_FILE, secret + '\n', options)
+    return secret
+  } catch (error: unknown) {
+    if (!hasErrorCode(error, 'EEXIST')) throw error
+    const existing = (await readFile(GROUP_CHAT_LOCAL_IDENTITY_SECRET_FILE, 'utf-8')).trim()
+    if (!/^[0-9a-f]{64}$/i.test(existing)) {
+      throw new Error(`Invalid group chat local identity secret at ${GROUP_CHAT_LOCAL_IDENTITY_SECRET_FILE}`)
+    }
+    return existing
+  }
+}
+
+export function getGroupChatLocalIdentitySecret(): Promise<string> {
+  groupChatLocalIdentitySecretPromise ??= readOrCreateGroupChatLocalIdentitySecret()
+  return groupChatLocalIdentitySecretPromise
 }
 
 /**

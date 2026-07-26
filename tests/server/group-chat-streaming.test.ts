@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   connectGroupChatClient,
+  currentRoomAgentSessionId,
   createTestGroupChatServer,
   emitAck,
   once,
 } from './group-chat-test-helpers'
-import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupBridgeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { GROUP_CHAT_AGENT_SOCKET_SECRET } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 
 describe('group chat streaming baseline', () => {
@@ -37,12 +38,7 @@ describe('group chat streaming baseline', () => {
     await emitAck(alice, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
     await emitAck(bob, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
     await emitAck(worker, 'join', { roomId: 'room-1' })
-    const agentSessionId = groupBridgeSessionId(
-      'room-1',
-      'default',
-      'Worker',
-      String(groupServer.getStorage().getRoom('room-1')?.sessionSeed || '0'),
-    )
+    const agentSessionId = currentRoomAgentSessionId(groupServer, 'room-1', 'agent-worker', 'default', 'Worker')
     return { alice, bob, worker, agentSessionId }
   }
 
@@ -70,6 +66,35 @@ describe('group chat streaming baseline', () => {
     const streamEnd = once<any>(bob, 'message_stream_end')
     worker.emit('message_stream_end', { roomId: 'room-1', id: 'stream-1', agentSessionId })
     expect(await streamEnd).toEqual({ roomId: 'room-1', id: 'stream-1' })
+  })
+
+  it('evicts actors whose read grant is revoked before emitting confidential room output', async () => {
+    const { alice, bob, worker, agentSessionId } = await joinPair()
+    const localSubjectId = (groupServer as any).socketLocalSubjectIdMap.get(bob.id) as string
+    const actor = groupServer.getStorage().findActiveActorByLocalSubjectId('room-1', localSubjectId)
+    expect(actor).not.toBeNull()
+    if (!actor) throw new Error('missing local actor')
+    harness.db.prepare('DELETE FROM gc_room_actor_capabilities WHERE actorId = ?').run(actor.id)
+
+    const authorizedDelta = once<any>(alice, 'message_stream_delta')
+    const revokedDelta = once<any>(bob, 'message_stream_delta', 150)
+    worker.emit('message_stream_delta', {
+      roomId: 'room-1',
+      id: 'stream-after-revocation',
+      delta: 'private output',
+      agentSessionId,
+    })
+
+    await expect(authorizedDelta).resolves.toEqual({
+      roomId: 'room-1',
+      id: 'stream-after-revocation',
+      delta: 'private output',
+    })
+    await expect(revokedDelta).rejects.toThrow('timeout waiting for message_stream_delta')
+    await expect(emitAck<any>(bob, 'message', {
+      roomId: 'room-1',
+      content: 'still here?',
+    })).resolves.toEqual({ error: 'Not in room' })
   })
 
   it('ignores stream events emitted by human sockets', async () => {

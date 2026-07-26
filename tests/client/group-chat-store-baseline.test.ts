@@ -9,6 +9,7 @@ const groupChatApiMock = vi.hoisted(() => {
   const socket: any = {
     connected: true,
     id: 'socket-1',
+    auth: { localIdentityVerified: true, localCredential: 'signed-test-credential' },
     on: vi.fn((event: string, cb: Function) => {
       const existing = handlers.get(event) || []
       existing.push(cb)
@@ -36,6 +37,7 @@ const groupChatApiMock = vi.hoisted(() => {
       if (event === 'message' && ack) ack({ id: data?.id })
       return socket
     }),
+    connect: vi.fn(() => socket),
     disconnect: vi.fn(),
   }
   return {
@@ -146,9 +148,11 @@ describe('group chat store baseline lifecycle', () => {
     clientApiMock.getApiKey.mockReturnValue('test-token')
     clientApiMock.getActiveProfileName.mockReturnValue('research')
     clientApiMock.getStoredUsername.mockReturnValue(null)
+    authApiMock.fetchCurrentUser.mockReset()
     authApiMock.fetchCurrentUser.mockRejectedValue(new Error('not signed in'))
     fetchMock.mockReset()
     groupChatApiMock.socket.connected = true
+    groupChatApiMock.socket.auth = { localIdentityVerified: true, localCredential: 'signed-test-credential' }
     groupChatApiMock.socket.on.mockClear()
     groupChatApiMock.socket.once.mockClear()
     groupChatApiMock.socket.off.mockClear()
@@ -159,6 +163,7 @@ describe('group chat store baseline lifecycle', () => {
       return groupChatApiMock.socket
     })
     groupChatApiMock.socket.disconnect.mockClear()
+    groupChatApiMock.socket.connect.mockClear()
   })
 
   it('adds and updates full participant bindings while preserving stable identity', async () => {
@@ -220,6 +225,115 @@ describe('group chat store baseline lifecycle', () => {
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('message', expect.any(Function))
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('approval.requested', expect.any(Function))
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('room_cleared', expect.any(Function))
+    expect(groupChatApiMock.socket.connect).toHaveBeenCalledOnce()
+  })
+
+  it('coalesces concurrent connection setup before protected REST discovery', async () => {
+    let resolveCurrentUser!: (user: { id: number; username: string; avatar: string }) => void
+    const currentUser = new Promise<{ id: number; username: string; avatar: string }>((resolve) => {
+      resolveCurrentUser = resolve
+    })
+    authApiMock.fetchCurrentUser.mockReturnValue(currentUser)
+    groupChatApiMock.listRooms.mockResolvedValue({ rooms: [room] })
+    const store = await loadStore()
+
+    const connecting = store.connect()
+    const loadingRooms = store.loadRooms()
+    resolveCurrentUser({ id: 42, username: 'alice', avatar: '' })
+    await Promise.all([connecting, loadingRooms])
+
+    expect(authApiMock.fetchCurrentUser).toHaveBeenCalledOnce()
+    expect(groupChatApiMock.connectGroupChat).toHaveBeenCalledOnce()
+    expect(groupChatApiMock.listRooms).toHaveBeenCalledOnce()
+    expect(store.rooms).toEqual([room])
+  })
+
+  it('cancels in-flight connection setup when disconnected before identity lookup resolves', async () => {
+    let resolveCurrentUser!: (user: { id: number; username: string; avatar: string }) => void
+    authApiMock.fetchCurrentUser.mockReturnValue(new Promise((resolve) => {
+      resolveCurrentUser = resolve
+    }))
+    const store = await loadStore()
+
+    const connecting = store.connect()
+    await vi.waitFor(() => expect(authApiMock.fetchCurrentUser).toHaveBeenCalledOnce())
+    store.disconnect()
+    resolveCurrentUser({ id: 42, username: 'alice', avatar: '' })
+    await connecting
+
+    expect(groupChatApiMock.connectGroupChat).not.toHaveBeenCalled()
+    expect(groupChatApiMock.socket.connect).not.toHaveBeenCalled()
+    expect(groupChatApiMock.disconnectGroupChat).toHaveBeenCalledOnce()
+    expect(store.connected).toBe(false)
+  })
+
+  it('cancels a disconnected socket waiter before a reconnect succeeds', async () => {
+    const store = await loadStore()
+    groupChatApiMock.socket.connected = false
+    groupChatApiMock.getSocket.mockImplementation((options?: { requireConnected?: boolean }) => (
+      groupChatApiMock.socket.connected || options?.requireConnected === false ? groupChatApiMock.socket : null
+    ))
+    groupChatApiMock.joinRoomByCode.mockResolvedValue({ room })
+
+    const waitingOnOldSocket = store.joinByCode('ROOM1')
+    await vi.waitFor(() => {
+      expect(groupChatApiMock.handlers.get('connect')).toHaveLength(2)
+      expect(groupChatApiMock.handlers.get('connect_error')).toHaveLength(2)
+      expect(groupChatApiMock.handlers.get('disconnect')).toHaveLength(2)
+    })
+    store.disconnect()
+    await expect(waitingOnOldSocket).rejects.toThrow('Group chat socket connection cancelled')
+    expect(groupChatApiMock.handlers.get('connect')).toHaveLength(1)
+    expect(groupChatApiMock.handlers.get('connect_error')).toHaveLength(1)
+    expect(groupChatApiMock.handlers.get('disconnect')).toHaveLength(1)
+
+    groupChatApiMock.socket.connected = true
+    groupChatApiMock.socket.auth = { localIdentityVerified: true, localCredential: 'signed-reconnected-credential' }
+    await expect(store.joinByCode('ROOM1')).resolves.toEqual(room)
+    expect(groupChatApiMock.joinRoomByCode).toHaveBeenCalledOnce()
+    expect(store.currentRoomId).toBe('room-1')
+  })
+
+  it('cancels a local identity waiter before a reconnect succeeds', async () => {
+    const store = await loadStore()
+    groupChatApiMock.socket.connected = true
+    groupChatApiMock.socket.auth = {}
+    groupChatApiMock.joinRoomByCode.mockResolvedValue({ room })
+
+    const waitingOnLocalIdentity = store.joinByCode('ROOM1')
+    await vi.waitFor(() => {
+      expect(groupChatApiMock.handlers.get('local_identity')).toHaveLength(2)
+      expect(groupChatApiMock.handlers.get('disconnect')).toHaveLength(2)
+    })
+
+    store.disconnect()
+    await expect(waitingOnLocalIdentity).rejects.toThrow('Group chat connection setup was cancelled')
+    expect(groupChatApiMock.handlers.get('local_identity')).toHaveLength(1)
+    expect(groupChatApiMock.handlers.get('disconnect')).toHaveLength(1)
+
+    groupChatApiMock.socket.connected = true
+    groupChatApiMock.socket.auth = { localIdentityVerified: true, localCredential: 'signed-reconnected-credential' }
+    await expect(store.joinByCode('ROOM1')).resolves.toEqual(room)
+    expect(groupChatApiMock.joinRoomByCode).toHaveBeenCalledOnce()
+  })
+
+  it('persists the server-issued local credential and routing id for reconnect handshakes', async () => {
+    const store = await loadStore()
+    await store.connect()
+    const authoritativeUserId = `local-user:${'b'.repeat(64)}`
+
+    emitSocket('local_identity', {
+      localCredential: 'signed-local-credential',
+      userId: authoritativeUserId,
+    })
+
+    expect(store.userId).toBe(authoritativeUserId)
+    expect(localStorage.getItem('gc_user_id')).toBe(authoritativeUserId)
+    expect(localStorage.getItem('gc_local_credential')).toBe('signed-local-credential')
+    expect(groupChatApiMock.socket.auth).toEqual(expect.objectContaining({
+      userId: authoritativeUserId,
+      localCredential: 'signed-local-credential',
+    }))
   })
 
   it('joins a room from REST detail and realtime ack state', async () => {
@@ -329,16 +443,17 @@ describe('group chat store baseline lifecycle', () => {
     const order: string[] = []
 
     groupChatApiMock.socket.connected = false
+    groupChatApiMock.socket.auth = { localCredential: 'v1.stale.signature' }
     groupChatApiMock.getSocket.mockImplementation((options?: { requireConnected?: boolean }) => (
       groupChatApiMock.socket.connected || options?.requireConnected === false ? groupChatApiMock.socket : null
     ))
-    groupChatApiMock.socket.once.mockImplementation((event: string, cb: Function) => {
-      if (event === 'connect') {
-        setTimeout(() => {
-          groupChatApiMock.socket.connected = true
-          cb()
-        }, 0)
-      }
+    groupChatApiMock.socket.connect.mockImplementationOnce(() => {
+      setTimeout(() => {
+        groupChatApiMock.socket.connected = true
+        emitSocket('connect', undefined)
+        order.push('identity')
+        emitSocket('local_identity', { localCredential: 'v1.local-subject.signature' })
+      }, 0)
       return groupChatApiMock.socket
     })
     groupChatApiMock.socket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
@@ -348,7 +463,11 @@ describe('group chat store baseline lifecycle', () => {
       }
       return groupChatApiMock.socket
     })
-    groupChatApiMock.joinRoomByCode.mockResolvedValue({ room })
+    groupChatApiMock.joinRoomByCode.mockImplementation(async () => {
+      order.push('lookup')
+      return { room }
+    })
+    localStorage.setItem('gc_local_credential', 'v1.stale.signature')
     groupChatApiMock.getRoomDetail.mockImplementation(async () => {
       order.push('detail')
       return { room, messages: [], agents: [], members: [member], total: 0, hasMore: false }
@@ -358,8 +477,37 @@ describe('group chat store baseline lifecycle', () => {
 
     expect(groupChatApiMock.connectGroupChat).toHaveBeenCalled()
     expect(groupChatApiMock.getRoomDetail).toHaveBeenCalledWith('room-1')
-    expect(order).toEqual(['invite-join', 'detail', 'detail-join'])
+    expect(order).toEqual(['identity', 'lookup', 'invite-join', 'detail', 'detail-join'])
+    expect(localStorage.getItem('gc_local_credential')).toBe('v1.local-subject.signature')
     expect(store.currentRoomId).toBe('room-1')
+  })
+
+  it('uses the authenticated subject for invite lookup without waiting for a local identity', async () => {
+    authApiMock.fetchCurrentUser.mockResolvedValue({ id: 42, username: 'alice', avatar: '' })
+    groupChatApiMock.joinRoomByCode.mockResolvedValue({ room })
+    const store = await loadStore()
+
+    await store.connect()
+    await store.joinByCode('ROOM1')
+
+    expect(groupChatApiMock.joinRoomByCode).toHaveBeenCalledWith('ROOM1')
+    expect(groupChatApiMock.socket.once).not.toHaveBeenCalledWith('local_identity', expect.any(Function))
+  })
+
+  it('restores invite identity readiness from an already connected socket', async () => {
+    groupChatApiMock.socket.connected = true
+    groupChatApiMock.socket.auth = {
+      localCredential: 'v1.connected.signature',
+      localIdentityVerified: true,
+    }
+    groupChatApiMock.joinRoomByCode.mockResolvedValue({ room })
+    localStorage.setItem('gc_local_credential', 'v1.stale.signature')
+    const store = await loadStore()
+
+    await store.joinByCode('ROOM1')
+
+    expect(localStorage.getItem('gc_local_credential')).toBe('v1.connected.signature')
+    expect(groupChatApiMock.joinRoomByCode).toHaveBeenCalledWith('ROOM1')
   })
 
   it('sends text-only messages through the room socket', async () => {

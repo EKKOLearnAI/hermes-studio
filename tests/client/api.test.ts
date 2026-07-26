@@ -17,6 +17,7 @@ import { downloadFile, getDownloadUrl } from '../../packages/client/src/api/herm
 import { uploadFiles } from '../../packages/client/src/api/hermes/files'
 import { importSkill } from '../../packages/client/src/api/hermes/skills'
 import { archiveSession, batchDeleteSessions, exportSession, fetchHermesSessionGroups, fetchHermesSessionPage, importHermesSession, unarchiveSession } from '../../packages/client/src/api/hermes/sessions'
+import { createRoom as createGroupChatRoom } from '../../packages/client/src/api/hermes/group-chat'
 import router from '@/router'
 
 function fakeJwt(payload: Record<string, unknown>) {
@@ -75,6 +76,21 @@ describe('API Client', () => {
       expect(mockFetch).toHaveBeenCalledOnce()
       const [, options] = mockFetch.mock.calls[0]
       expect(options.headers.Authorization).toBe('Bearer secret-key')
+    })
+
+    it('emits one valid JSON content type for Group Chat room creation', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ room: { id: 'room-1' }, agents: [] }),
+      })
+
+      await createGroupChatRoom({ name: 'Room 1', inviteCode: '' })
+
+      expect(mockFetch).toHaveBeenCalledOnce()
+      const [, options] = mockFetch.mock.calls[0]
+      expect(new Headers(options.headers).get('content-type')).toBe('application/json')
+      expect(JSON.parse(options.body)).toMatchObject({ name: 'Room 1', inviteCode: '' })
     })
 
     it('adds the active profile header, including default', async () => {

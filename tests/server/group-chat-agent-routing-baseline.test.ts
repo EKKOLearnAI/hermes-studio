@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   connectGroupChatClient,
+  currentRoomAgentSessionId,
   createTestGroupChatServer,
   emitAck,
+  seedAuthenticatedUser,
 } from './group-chat-test-helpers'
 import { GROUP_CHAT_AGENT_SOCKET_SECRET } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { authenticateUserToken, isAuthEnabled } from '../../packages/server/src/middleware/user-auth'
@@ -39,7 +41,11 @@ describe('group chat durable handoff routing baseline', () => {
     return { human, agent }
   }
 
-  it('persists an authorized human mention as a pending durable handoff', async () => {
+  function currentAgentSessionId() {
+    return currentRoomAgentSessionId(groupServer, 'room-1', 'agent-worker', 'default', 'Worker')
+  }
+
+  it('routes human messages through mention processing', async () => {
     const { human } = await joinHumanAndAgent()
     await emitAck(human, 'message', { roomId: 'room-1', id: 'human-msg-1', content: '@Worker hello' })
 
@@ -57,6 +63,7 @@ describe('group chat durable handoff routing baseline', () => {
       if (token === 'read-only-token') return { id: 2, username: 'bob', role: 'admin', profiles: [] } as any
       return null
     })
+    seedAuthenticatedUser(harness.db, { id: 2, username: 'bob' })
     const human = await connectGroupChatClient(port, 'ignored-user', 'Bob', { token: 'read-only-token' })
     const agent = await connectGroupChatClient(port, 'agent-worker', 'Worker', {
       source: 'agent', agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,

@@ -199,15 +199,18 @@ export function toAuthenticatedUser(user: Pick<UserRecord, 'id' | 'username' | '
   return authenticated
 }
 
+export function loadActiveAuthenticatedUser(userId: number | string): AuthenticatedUser | null {
+  const user = findUserById(userId)
+  if (!user || user.status !== 'active') return null
+  return toAuthenticatedUser(user)
+}
+
 export async function authenticateUserToken(token: string): Promise<AuthenticatedUser | null> {
   const secret = await getJwtSecret()
 
   const payload = token ? verifyUserJwt(token, secret) : null
   if (!payload) return null
-
-  const user = findUserById(payload.sub)
-  if (!user || user.status !== 'active') return null
-  return toAuthenticatedUser(user)
+  return loadActiveAuthenticatedUser(payload.sub)
 }
 
 export async function isAuthEnabled(): Promise<boolean> {
@@ -234,14 +237,14 @@ export async function requireUserJwt(ctx: Context, next: Next): Promise<void> {
     return
   }
 
-  const user = findUserById(payload.sub)
-  if (!user || user.status !== 'active') {
+  const user = loadActiveAuthenticatedUser(payload.sub)
+  if (!user) {
     ctx.status = 403
     ctx.body = { error: 'User is disabled or does not exist' }
     return
   }
 
-  ctx.state.user = toAuthenticatedUser(user)
+  ctx.state.user = user
   touchUserLogin(user.id)
   await next()
 }

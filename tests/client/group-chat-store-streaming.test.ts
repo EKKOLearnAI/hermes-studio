@@ -8,16 +8,25 @@ const groupChatApiMock = vi.hoisted(() => {
   const socket: any = {
     connected: true,
     id: 'socket-1',
+    auth: { localIdentityVerified: true, localCredential: 'signed-test-credential' },
     on: vi.fn((event: string, cb: Function) => {
       const existing = handlers.get(event) || []
       existing.push(cb)
       handlers.set(event, existing)
       return socket
     }),
+    once: vi.fn((event: string, cb: Function) => {
+      if (event === 'local_identity') {
+        queueMicrotask(() => cb({ localCredential: 'signed-test-credential' }))
+      }
+      return socket
+    }),
+    off: vi.fn(() => socket),
     emit: vi.fn((event: string, _data?: unknown, ack?: Function) => {
       if (event === 'join' && ack) ack({ members: [], agents: [], typingUsers: [], contextStatuses: [] })
       return socket
     }),
+    connect: vi.fn(() => socket),
     disconnect: vi.fn(),
   }
   return {
@@ -90,7 +99,7 @@ async function createJoinedStore(initialMessages: ChatMessage[] = []) {
   })
   const { useGroupChatStore } = await import('@/stores/hermes/group-chat')
   const store = useGroupChatStore()
-  store.connect()
+  await store.connect()
   await store.joinRoom('room-1')
   groupChatApiMock.getRoomDetail.mockClear()
   return store

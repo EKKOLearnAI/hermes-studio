@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client'
-import { createHash, randomBytes } from 'crypto'
+import { createHmac, randomBytes } from 'crypto'
 import { getToken } from '../../../services/auth'
 import { logger } from '../../../services/logger'
 import { countTokens } from '../../../lib/context-compressor'
@@ -19,9 +19,12 @@ import {
     startWorkspaceRunCheckpoint,
 } from '../run-chat/workspace-diff-tracker'
 import type { ContentBlock } from '../run-chat/types'
-import type { StoredMessage } from '../context-engine/types'
+import { ContextAuthorizationChangedError } from '../context-engine/compressor'
+import type { GatewaySessionLease, StoredMessage } from '../context-engine/types'
+import { SessionDeleter } from '../session-deleter'
 import { buildProjectedGroupChatHistory, isWorkspaceDiffToolMessage, projectGroupChatMessage } from './context-projection'
 import { sliceGroupMessagesForSnapshotTail } from './group-message-ordering'
+import type { GroupActorRevisions } from './identity/types'
 import {
     isAllAgentsMentioned,
     resolveMentionTargets,
@@ -92,6 +95,7 @@ export function mentionMessageToStoredContextMessage(roomId: string, msg: Mentio
 }
 
 type GroupEstimateMessage = { role: 'user' | 'assistant'; content: string }
+const SUMMARY_SESSION_CRASH_CLEANUP_MS = 10 * 60 * 1000
 export type GroupModelContext = { model: string; provider: string }
 export type GroupCompressionInput = {
     triggerTokens: number
@@ -129,30 +133,20 @@ interface BridgeContextCache {
     provider?: string
 }
 
-type PersistedParticipantBinding = {
-    agentId: string
-    profile: string
-    name: string
-    description: string
-    runtime?: 'hermes' | 'coding_agent'
-    codingAgentId?: '' | 'claude-code' | 'codex'
-    sessionId?: string
-    sessionGeneration?: number
-    mode?: 'scoped' | 'global'
-    provider?: string
-    model?: string
-    apiMode?: string
-    reasoningEffort?: string
-    lastSeenRoomSeq?: number
-    lastSuccessfulRunId?: string
-    checkpoint?: string
-    checkpointSourceMessageIds?: string
-    checkpointFromRoomSeq?: number
-    checkpointThroughRoomSeq?: number
+type GroupBridgeSessionRevisions = Partial<GroupActorRevisions>
+
+type GroupBridgeSessionIdentity = GroupBridgeSessionRevisions & {
+    sessionSeed: string
 }
 
-const GROUP_CODING_AGENT_RUN_TIMEOUT_MS = 30 * 60 * 1000
-const GROUP_CODING_AGENT_INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000
+function revisionNumber(value: unknown): number {
+    const numeric = Number(value)
+    return Number.isFinite(numeric) && numeric >= 0 ? Math.floor(numeric) : 0
+}
+
+function sessionActorIdentity(agentId: string, profile: string, name: string): string {
+    return agentId ? `agent:${agentId}` : `agent:${profile}:${name}`
+}
 
 export async function resolveGroupAgentModelContext(profile: string): Promise<GroupModelContext> {
     return resolveBridgeRunModelConfig({ profile })
@@ -252,7 +246,7 @@ class AgentClient {
     private workspaceDiffBroadcaster: WorkspaceDiffBroadcaster | null = null
 
     constructor(config: AgentConfig, handlers: AgentEventHandler = {}) {
-        this.agentId = config.agentId || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+        this.agentId = config.agentId || `gca_${randomBytes(16).toString('hex')}`
         this.profile = config.profile
         this._name = config.name
         this._description = config.description
@@ -300,6 +294,107 @@ class AgentClient {
 
     setWorkspaceDiffBroadcaster(broadcaster: WorkspaceDiffBroadcaster | null): void {
         this.workspaceDiffBroadcaster = broadcaster
+    }
+
+    private currentRoomSessionIdentity(roomId: string, room = this.storage?.getRoom?.(roomId)): GroupBridgeSessionIdentity {
+        const sessionSeed = String(room?.sessionSeed || '')
+        if (!room || !/^[0-9a-f]{32}$/i.test(sessionSeed)) {
+            throw new Error(`Group chat room ${roomId} is missing a cryptographic session seed`)
+        }
+        const actor = typeof this.storage?.findActiveActorByAgentIdentity === 'function'
+            ? this.storage.findActiveActorByAgentIdentity(roomId, this.agentId)
+            : null
+        return {
+            sessionSeed,
+            actorId: actor?.id || null,
+            roomAuthorizationRevision: room.authorizationRevision,
+            actorAuthorizationRevision: actor?.authorizationRevision,
+            actorContextRevision: actor?.contextRevision,
+        }
+    }
+
+    private registerCurrentRoomSession(
+        roomId: string,
+        sessionId: string,
+        identity: GroupBridgeSessionIdentity,
+        requireRunCapabilities: boolean,
+        cleanupAfterMs?: number,
+    ): void {
+        const register = this.storage?.registerSessionProfileForActiveAgent
+        if (typeof register !== 'function') {
+            throw new Error('Group chat storage cannot durably register Bridge sessions')
+        }
+        const registered = register.call(this.storage, {
+            sessionId,
+            roomId,
+            agentId: this.agentId,
+            profileName: this.profile,
+            agentName: this.name,
+            sessionSeed: identity.sessionSeed,
+            roomAuthorizationRevision: revisionNumber(identity.roomAuthorizationRevision),
+            actorId: identity.actorId || '',
+            actorAuthorizationRevision: revisionNumber(identity.actorAuthorizationRevision),
+            actorContextRevision: revisionNumber(identity.actorContextRevision),
+            requireRunCapabilities,
+            cleanupAfterMs,
+        })
+        if (!registered) {
+            throw new Error(`Group chat room ${roomId} changed before Bridge session registration`)
+        }
+    }
+
+    canCreateSummarySession(roomId: string): boolean {
+        try {
+            const identity = this.currentRoomSessionIdentity(roomId)
+            if (!identity.actorId || typeof this.storage?.getActorCapabilities !== 'function') return false
+            const capabilities = new Set(this.storage.getActorCapabilities(identity.actorId))
+            return capabilities.has('room.read') && capabilities.has('room.write')
+        } catch {
+            return false
+        }
+    }
+
+    createSummarySessionLease(roomId: string): GatewaySessionLease {
+        const enqueueCleanup = this.storage?.enqueuePendingSessionDelete
+        if (typeof enqueueCleanup !== 'function') {
+            throw new Error('Group chat storage cannot durably clean up Bridge sessions')
+        }
+        const identity = this.currentRoomSessionIdentity(roomId)
+        const authoritySessionId = groupBridgeSessionId(
+            roomId,
+            this.profile,
+            this.name,
+            identity.sessionSeed,
+            identity,
+        )
+        const sessionId = groupBridgeSummarySessionId(
+            roomId,
+            this.profile,
+            this.name,
+            identity.sessionSeed,
+            identity,
+        )
+        this.registerCurrentRoomSession(
+            roomId,
+            sessionId,
+            identity,
+            true,
+            SUMMARY_SESSION_CRASH_CLEANUP_MS,
+        )
+        let released = false
+        return {
+            sessionId,
+            authorizationGuard: () => this.roomSessionIsCurrent(roomId, authoritySessionId),
+            release: () => {
+                if (released) return
+                released = true
+                enqueueCleanup.call(this.storage, sessionId, this.profile)
+                void SessionDeleter.getInstance().drain(this.profile).catch((err: unknown) => {
+                    const message = err instanceof Error ? err.message : 'unknown error'
+                    logger.warn(`[AgentClients] failed to drain registered summary session cleanup: ${message}`)
+                })
+            },
+        }
     }
 
     async connect(port?: number): Promise<void> {
@@ -405,29 +500,9 @@ class AgentClient {
     }
 
     async interrupt(roomId: string): Promise<boolean> {
-        const binding = this.participantBinding(roomId)
-        const sessionId = this.currentSessionId(roomId)
-        if (binding?.runtime === 'coding_agent') {
-            this.markSessionInterrupted(sessionId)
-            const runId = codingAgentRunManager.runIdForSession(sessionId) || 'interrupted'
-            const workspaceRunChange = codingAgentRunManager.completeWorkspaceDiffForSession(sessionId)
-            const stopped = await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false, graceMs: 15_000 })
-            if (!stopped && codingAgentRunManager.runIdForSession(sessionId)) return false
-            this.codingAgentReplyCancels.get(sessionId)?.()
-            await this.persistCodingAgentWorkspaceDiff(roomId, sessionId, {
-                run_id: runId,
-                workspace_run_change: workspaceRunChange,
-            }, 'aborted', null, String(this.storage?.getRoom?.(roomId)?.workspace || '').trim())
-            try {
-                this.stopTyping(roomId)
-                this.emitContextStatus(roomId, 'ready', undefined, sessionId)
-            } catch (err: any) {
-                logger.warn(`[AgentClients] ${this.name}: failed to publish coding-agent interrupt state: ${err.message || err}`)
-            }
-            // stopAndWait() returns false when there was no managed run. That is
-            // already-idle success, not a reason to block participant/Room deletion.
-            return true
-        }
+        const sessionIdentity = this.currentRoomSessionIdentity(roomId)
+        const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionIdentity.sessionSeed, sessionIdentity)
+        this.registerCurrentRoomSession(roomId, sessionId, sessionIdentity, false)
         let result: Awaited<ReturnType<AgentBridgeClient['interrupt']>> | null = null
         try {
             result = await new AgentBridgeClient().interrupt(sessionId, 'Interrupted by group chat user', this.profile)
@@ -540,6 +615,7 @@ class AgentClient {
         modelContext: GroupModelContext,
         phase: string,
     ): Promise<number | undefined> {
+        if (!this.roomSessionIsCurrent(roomId, sessionId)) return undefined
         const cachedTokens = this.estimateWithCachedBridgeContext(sessionId, history, instructions, modelContext)
         if (cachedTokens != null) {
             logger.info({
@@ -627,19 +703,13 @@ class AgentClient {
     }
 
     private roomSessionIsCurrent(roomId: string, sessionId: string): boolean {
-        return this.currentSessionId(roomId) === sessionId
-    }
-
-    private participantBinding(roomId: string): PersistedParticipantBinding | null {
-        return this.storage?.getRoomAgentByAgentId?.(roomId, this.agentId) || null
-    }
-
-    private currentSessionId(roomId: string): string {
-        const binding = this.participantBinding(roomId)
-        const persisted = String(binding?.sessionId || '').trim()
-        if (persisted) return persisted
-        const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
-        return groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed)
+        const room = this.storage?.getRoom?.(roomId)
+        if (!room) return false
+        const sessionIdentity = this.currentRoomSessionIdentity(roomId, room)
+        if (!sessionIdentity.actorId || typeof this.storage?.getActorCapabilities !== 'function') return false
+        const capabilities = new Set(this.storage.getActorCapabilities(sessionIdentity.actorId))
+        if (!capabilities.has('room.read') || !capabilities.has('room.write')) return false
+        return groupBridgeSessionId(roomId, this.profile, this.name, sessionIdentity.sessionSeed, sessionIdentity) === sessionId
     }
 
     private markWorkspaceDiffAborted(roomId: string): WorkspaceDiffRunState[] {
@@ -713,12 +783,7 @@ class AgentClient {
         msg: MentionMessage,
         onStatus?: (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => void,
     ): Promise<void> {
-        if (this.participantBinding(roomId)?.runtime === 'coding_agent') {
-            await this.replyToCodingAgentMention(roomId, msg, onStatus)
-            return
-        }
-        logger.debug(`[AgentClients] ${this.name} mentioned by ${msg.senderName}: "${msg.content.slice(0, 50)}"`)
-        const runMessageId = groupMessageId(roomId, this.profile, this.name, msg.handoffJobId)
+        const runMessageId = groupMessageId(roomId, this.profile, this.name)
         let partIndex = 0
         let streamMessageId = groupMessagePartId(runMessageId, partIndex)
         let currentContent = ''
@@ -732,14 +797,15 @@ class AgentClient {
         let staleStartedRunStopped = false
         let stopStaleStartedRun: ((reason?: string) => Promise<void>) | null = null
         try {
-            // Notify room that agent is typing
-            this.startTyping(roomId)
-
             // Build compressed context if context engine is available
             let conversationHistory: Array<{ role: string; content: string }> = []
             let instructions: string | undefined
             const bridge = new AgentBridgeClient()
-            const sessionId = this.currentSessionId(roomId)
+            const sessionIdentity = this.currentRoomSessionIdentity(roomId)
+            const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionIdentity.sessionSeed, sessionIdentity)
+            this.registerCurrentRoomSession(roomId, sessionId, sessionIdentity, true)
+            logger.debug(`[AgentClients] ${this.name} mentioned by ${msg.senderName}: "${msg.content.slice(0, 50)}"`)
+            this.startTyping(roomId)
             const replyInterruptVersion = this.interruptVersion(sessionId)
             const reportStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
                 onStatus?.(status, { ...extra, agentSessionId: sessionId })
@@ -782,26 +848,11 @@ class AgentClient {
                 }
                 reportStatus('ready')
             }
-            const participantSnapshot = { ...(this.participantBinding(roomId) || {}) }
-            const profileModelContext = await resolveGroupAgentModelContext(this.profile)
-            const modelContext = {
-                model: String(participantSnapshot.model || profileModelContext.model || '').trim(),
-                provider: String(participantSnapshot.provider || profileModelContext.provider || '').trim(),
+            const modelContext = await resolveGroupAgentModelContext(this.profile)
+            if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+                await stopStaleStartedRun('Interrupted because group chat run authority changed')
+                return
             }
-            const routedPrefix = isAllAgentsMentioned(msg.content)
-                ? `群聊系统：这条消息通过 @all 提及所有 agent，你是其中之一，请直接回复。`
-                : `群聊系统：这条消息已经提及你（${this.name}），请直接回复；即使消息同时提及其他成员，也不要因此输出空回复。`
-            const rawInput = msg.input || msg.content
-            const input = isContentBlockArray(rawInput)
-                ? rawInput.map((block) => {
-                    if (block.type !== 'text') return block
-                    const text = stripMentionRoutingTokens(String(block.text || msg.content), this.name)
-                    return { ...block, text: `${routedPrefix}\n\n原始消息：${text || msg.content}` }
-                })
-                : `${routedPrefix}\n\n原始消息：${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
-            const directInputTokenEstimate = countTokens(isContentBlockArray(input)
-                ? input.map(block => block.type === 'text' ? String(block.text || '') : `[${block.type}]`).join('\n')
-                : input)
 
             if (this.contextEngine && this.storage) {
                 try {
@@ -835,8 +886,8 @@ class AgentClient {
                         upstream: '',
                         apiKey: null,
                         currentMessage: mentionMessageToStoredContextMessage(roomId, msg),
-                        excludeCurrentMessageFromHistory: true,
-                        directInputTokenEstimate,
+                        authorizationGuard: () => this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion),
+                        summarySessionRegistrar: () => this.createSummarySessionLease(roomId),
                         compression,
                         profile: this.profile,
                         onProgress: (event: { status: 'compressing'; messageCount: number; tokenCount: number }) => {
@@ -869,9 +920,15 @@ class AgentClient {
                     }
                     logger.debug(`[AgentClients] ${this.name}: context built — historyLen=${conversationHistory.length}, meta=%j`, ctx.meta)
                     reportStatus('replying')
-                } catch (err: any) {
-                    logger.warn(`[AgentClients] ${this.name}: context engine failed: ${err.message}`)
-                    throw err
+                } catch (err: unknown) {
+                    if (err instanceof ContextAuthorizationChangedError) {
+                        await stopStaleStartedRun('Interrupted because group chat context authority changed')
+                        return
+                    }
+                    const message = err instanceof Error ? err.message : String(err)
+                    logger.warn(`[AgentClients] ${this.name}: context engine failed: ${message}`)
+                    reportStatus('replying')
+                    // Degrade: continue without context
                 }
             }
 
@@ -1063,8 +1120,6 @@ class AgentClient {
             this.stopTyping(roomId)
             if (activeSessionId) {
                 onStatus?.('ready', { agentSessionId: activeSessionId })
-            } else {
-                onStatus?.('ready')
             }
         }
     }
@@ -1627,17 +1682,62 @@ class AgentClient {
     }
 }
 
-export function groupBridgeSessionId(roomId: string, profile: string, name: string, sessionSeed: string): string {
-    const rawKey = `gc_${roomId}_${profile}_${name}_${sessionSeed || '0'}`
-    const safePrefix = rawKey.replace(/[^a-zA-Z0-9_-]/g, '_')
-    const keyHash = createHash('sha256').update(rawKey).digest('hex').slice(0, 16)
-    const suffix = `_h_${keyHash}`
-    return `${safePrefix.slice(0, Math.max(0, 120 - suffix.length))}${suffix}`
+function groupBridgeHmacSessionId(sessionSeed: string, values: unknown[]): string {
+    if (!/^[0-9a-f]{32}$/i.test(sessionSeed)) {
+        throw new Error('Group chat Bridge session IDs require a cryptographic room seed')
+    }
+    const hmac = createHmac('sha256', Buffer.from(sessionSeed, 'hex'))
+    for (const value of values) {
+        const bytes = Buffer.from(String(value ?? ''), 'utf8')
+        const length = Buffer.allocUnsafe(4)
+        length.writeUInt32BE(bytes.length)
+        hmac.update(length)
+        hmac.update(bytes)
+    }
+    return `gc_h_${hmac.digest('hex').slice(0, 32)}`
 }
 
-function groupMessageId(roomId: string, profile: string, name: string, handoffJobId?: string): string {
-    if (handoffJobId) return `gcmsg_handoff_${safeId(handoffJobId)}`
-    const raw = `gcmsg_${safeId(roomId)}_${safeId(profile)}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+export function groupBridgeSessionId(
+    roomId: string,
+    profile: string,
+    name: string,
+    sessionSeed: string,
+    revisions: GroupBridgeSessionRevisions = {},
+): string {
+    return groupBridgeHmacSessionId(sessionSeed, [
+        'group-chat-bridge-session-v2',
+        roomId,
+        profile,
+        name,
+        revisions.actorId || '',
+        revisionNumber(revisions.roomAuthorizationRevision),
+        revisionNumber(revisions.actorAuthorizationRevision),
+        revisionNumber(revisions.actorContextRevision),
+    ])
+}
+
+export function groupBridgeSummarySessionId(
+    roomId: string,
+    profile: string,
+    name: string,
+    sessionSeed: string,
+    revisions: GroupBridgeSessionRevisions = {},
+): string {
+    return groupBridgeHmacSessionId(sessionSeed, [
+        'group-chat-bridge-summary-session-v1',
+        roomId,
+        profile,
+        name,
+        revisions.actorId || '',
+        revisionNumber(revisions.roomAuthorizationRevision),
+        revisionNumber(revisions.actorAuthorizationRevision),
+        revisionNumber(revisions.actorContextRevision),
+        randomBytes(16).toString('hex'),
+    ])
+}
+
+function groupMessageId(roomId: string, profile: string, name: string): string {
+    const raw = `gcmsg_${safeId(roomId)}_${safeId(profile)}_${randomBytes(16).toString('hex')}`
     return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 160)
 }
 
@@ -1771,11 +1871,16 @@ export class AgentClients {
         return this.rooms.get(roomId)?.get(agentId)
     }
 
-    updateAgentIdentity(roomId: string, agentId: string, name: string, description: string): boolean {
-        const client = this.getAgent(roomId, agentId)
-        if (!client) return false
-        client.updateIdentity(name, description)
-        return true
+    getSummarySessionContext(roomId: string): {
+        profile: string
+        sessionRegistrar: () => GatewaySessionLease
+    } | null {
+        const agent = this.getAgents(roomId).find(candidate => candidate.canCreateSummarySession(roomId))
+        if (!agent) return null
+        return {
+            profile: agent.profile,
+            sessionRegistrar: () => agent.createSummarySessionLease(roomId),
+        }
     }
 
     /**

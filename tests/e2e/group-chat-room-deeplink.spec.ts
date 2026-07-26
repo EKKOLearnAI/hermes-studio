@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 import { authenticate, TEST_MODEL_GROUP } from './fixtures'
 
-type DesktopPlatform = 'darwin' | 'win32'
+const LOCAL_CREDENTIAL = 'e2e-server-issued-local-credential'
 
 const baseRooms = [
   { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', canManage: true, workspace: '/tmp/alpha', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, maxAgentMentionDepth: 4 as number | null, handoffMode: 'mentions' as 'mentions' | 'fixed', handoffOrderJson: '[]', handoffOrder: [] as string[], totalTokens: 123 },
@@ -82,11 +82,18 @@ async function mockGroupChatApi(page: Page) {
     const { pathname } = url
 
     if (!(pathname === '/health' || pathname.startsWith('/api/'))) {
-      await route.continue()
+      await route.fallback()
       return
     }
 
     const json = (body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
+
+    if (pathname.startsWith('/api/hermes/group-chat/')) {
+      const localCredential = request.headers()['x-group-chat-local-credential']
+      if (localCredential !== LOCAL_CREDENTIAL) {
+        return json({ error: 'Group chat local identity required' }, 401)
+      }
+    }
 
     if (pathname === '/health') return json({ status: 'ok' })
     if (pathname === '/api/auth/status') return json({ hasPasswordLogin: false, username: null })
@@ -184,11 +191,18 @@ async function mockGroupChatSocket(page: Page) {
       body: `
 const state = window.__PW_GROUP_SOCKET__ || (window.__PW_GROUP_SOCKET__ = { sockets: [], emitted: [] })
 const roomMessages = ${JSON.stringify(messagesByRoom)}
-const roomAgents = ${JSON.stringify(agentsByRoom)}
+const roomNames = ${JSON.stringify(Object.fromEntries(baseRooms.map(room => [room.id, room.name])))}
+const localCredential = ${JSON.stringify(LOCAL_CREDENTIAL)}
+const localUserId = ${JSON.stringify(`local-user:${'c'.repeat(64)}`)}
 function makeSocket(url, options) {
   const listeners = new Map()
+  const dispatch = (event, payload) => {
+    for (const handler of listeners.get(event) || []) handler(payload)
+  }
   const socket = {
-    connected: true,
+    connected: false,
+    id: 'pw-group-socket-' + (state.sockets.length + 1),
+    auth: { ...(options && options.auth) },
     url,
     options,
     on(event, handler) {
@@ -197,16 +211,40 @@ function makeSocket(url, options) {
       listeners.set(event, handlers)
       return this
     },
+    once(event, handler) {
+      const wrapped = (payload) => {
+        this.off(event, wrapped)
+        handler(payload)
+      }
+      return this.on(event, wrapped)
+    },
+    off(event, handler) {
+      if (!listeners.has(event)) return this
+      if (!handler) {
+        listeners.delete(event)
+        return this
+      }
+      listeners.set(event, (listeners.get(event) || []).filter(candidate => candidate !== handler))
+      return this
+    },
     emit(event, payload, ack) {
       state.emitted.push({ event, payload })
       if (event === 'join' && typeof ack === 'function') {
         const roomId = payload && payload.roomId
-        const agents = roomId === 'room-alpha' ? ${JSON.stringify(mixedRuntimeParticipants)} : []
-        setTimeout(() => ack({ roomId, roomName: roomId, members: [], messages: roomMessages[roomId] || [], agents, rooms: [], typingUsers: [], contextStatuses: [] }), 0)
+        setTimeout(() => ack({ roomId, roomName: roomNames[roomId] || roomId, currentUserId: localUserId, members: [{ id: 'member-local', userId: localUserId, name: 'User One', description: '', joinedAt: 1_790_000_000 }], messages: roomMessages[roomId] || [], agents: [], rooms: [], typingUsers: [], contextStatuses: [] }), 0)
       }
       if (event === 'message' && typeof ack === 'function') {
         setTimeout(() => ack({ id: payload && payload.id }), 0)
       }
+      return this
+    },
+    connect() {
+      if (this.connected) return this
+      setTimeout(() => {
+        this.connected = true
+        dispatch('connect')
+        setTimeout(() => dispatch('local_identity', { localCredential, userId: localUserId }), 0)
+      }, 0)
       return this
     },
     removeAllListeners() {
@@ -215,10 +253,11 @@ function makeSocket(url, options) {
     },
     disconnect() {
       this.connected = false
+      dispatch('disconnect', 'client disconnect')
       return this
     },
     __trigger(event, payload) {
-      for (const handler of listeners.get(event) || []) handler(payload)
+      dispatch(event, payload)
     },
   }
   state.sockets.push(socket)
@@ -254,6 +293,7 @@ async function setup(page: Page, path: string, platform?: DesktopPlatform) {
   await mockGroupChatSocket(page)
   const api = await mockGroupChatApi(page)
   await page.goto(path)
+  await expect(page.getByText('Alpha Room', { exact: true }).first()).toBeVisible({ timeout: 15_000 })
   return api
 }
 

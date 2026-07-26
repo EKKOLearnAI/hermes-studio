@@ -1,3 +1,4 @@
+import { claimTestHermesDbOwnership } from './db-test-helpers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../packages/server/src/services/hermes/voice-config-sync', () => ({
@@ -91,6 +92,7 @@ describe('tts synthesize controller', () => {
   it('saves TTS settings when the legacy provider table has no unique index', async () => {
     const { DatabaseSync } = await import('node:sqlite')
     const db = new DatabaseSync(':memory:')
+    await claimTestHermesDbOwnership(db)
     vi.doMock('../../packages/server/src/db/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
@@ -165,6 +167,7 @@ describe('tts synthesize controller', () => {
   it('deletes a stored TTS provider row and falls back to Edge when it was active', async () => {
     const { DatabaseSync } = await import('node:sqlite')
     const db = new DatabaseSync(':memory:')
+    await claimTestHermesDbOwnership(db)
     vi.doMock('../../packages/server/src/db/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
@@ -211,6 +214,7 @@ describe('tts synthesize controller', () => {
   it('rejects deleting the built-in Edge TTS provider', async () => {
     const { DatabaseSync } = await import('node:sqlite')
     const db = new DatabaseSync(':memory:')
+    await claimTestHermesDbOwnership(db)
     vi.doMock('../../packages/server/src/db/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
@@ -239,6 +243,7 @@ describe('tts synthesize controller', () => {
   it('preserves numeric Edge TTS rate and pitch settings on save', async () => {
     const { DatabaseSync } = await import('node:sqlite')
     const db = new DatabaseSync(':memory:')
+    await claimTestHermesDbOwnership(db)
     vi.doMock('../../packages/server/src/db/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
@@ -297,6 +302,7 @@ describe('tts synthesize controller', () => {
   it('repairs preexisting profile TTS tables before saving settings', async () => {
     const { DatabaseSync } = await import('node:sqlite')
     const db = new DatabaseSync(':memory:')
+    await claimTestHermesDbOwnership(db)
     vi.doMock('../../packages/server/src/db/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',

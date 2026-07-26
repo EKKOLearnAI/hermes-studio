@@ -1,7 +1,22 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
+
+const refreshedAuth = vi.hoisted(() => ({ active: true }))
+
+vi.mock('../../packages/server/src/middleware/user-auth', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../packages/server/src/middleware/user-auth')>()
+  return {
+    ...actual,
+    loadActiveAuthenticatedUser: vi.fn((id: number | string) => refreshedAuth.active
+      ? Number(id) === 1
+        ? { id: 1, username: 'root', role: 'super_admin', profiles: [] }
+        : { id: Number(id), username: 'reader', role: 'admin', profiles: [] }
+      : null),
+  }
+})
+
 import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
 
 function routeHandler(path: string, method: string) {
@@ -10,13 +25,13 @@ function routeHandler(path: string, method: string) {
   return layer.stack[0]
 }
 
-function createContext(path = '') {
+function createContext(path = ''): any {
   const headers: Record<string, string> = {}
   return {
     params: { roomId: 'room-1' },
     query: path ? { path } : {},
     request: { body: {} },
-    state: { user: { role: 'super_admin' } },
+    state: { user: { id: 1, username: 'root', role: 'super_admin', profiles: [] } },
     status: 200,
     body: undefined as unknown,
     headers,
@@ -33,6 +48,7 @@ describe('group chat workspace file routes', () => {
   let storage: any
 
   beforeEach(async () => {
+    refreshedAuth.active = true
     root = await mkdtemp(join(tmpdir(), 'hermes-group-files-'))
     workspace = join(root, 'room-workspace')
     await mkdir(workspace)
@@ -91,13 +107,48 @@ describe('group chat workspace file routes', () => {
     expect(ctx.headers['Cache-Control']).toContain('no-store')
   })
 
-  it('does not expose workspace files to room members without management access', async () => {
+  it('blocks a workspace write when the requester is disabled after path resolution starts', async () => {
+    const target = join(workspace, 'protected.txt')
+    await writeFile(target, 'original')
+    const write = routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace-file/write', 'PUT')
+    const ctx = createContext()
+    ctx.request.body = { path: 'protected.txt', content: 'revoked write' }
+
+    const operation = write(ctx)
+    refreshedAuth.active = false
+    await operation
+
+    expect(ctx.status).toBe(404)
+    expect(ctx.body).toMatchObject({ error: 'Room not found', code: 'not_found' })
+    await expect(readFile(target, 'utf-8')).resolves.toBe('original')
+  })
+
+  it('blocks a workspace write when the configured workspace changes during path resolution', async () => {
+    const originalWorkspace = workspace
+    const replacementWorkspace = join(root, 'replacement')
+    await mkdir(replacementWorkspace)
+    const target = join(originalWorkspace, 'protected.txt')
+    await writeFile(target, 'original')
+    const ctx = createContext()
+    ctx.request.body = { path: 'protected.txt', content: 'changed' }
+
+    const write = routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace-file/write', 'PUT')
+    const operation = write(ctx)
+    room.workspace = replacementWorkspace
+    await operation
+
+    expect(ctx.status).toBe(403)
+    expect(ctx.body).toEqual({ error: 'Workspace authorization changed', code: 'permission_denied' })
+    expect(await readFile(target, 'utf8')).toBe('original')
+  })
+
+  it('returns the missing-room shape for workspace file reads without room access', async () => {
     await writeFile(join(workspace, 'private.txt'), 'secret')
     const read = routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace-file/read', 'GET')
     const ctx = createContext('private.txt')
     ctx.state.user = { role: 'admin', id: 2, profiles: [] }
     await read(ctx)
-    expect(ctx.status).toBe(403)
-    expect(ctx.body).toMatchObject({ code: 'permission_denied' })
+    expect(ctx.status).toBe(404)
+    expect(ctx.body).toMatchObject({ error: 'Room not found', code: 'not_found' })
   })
 })

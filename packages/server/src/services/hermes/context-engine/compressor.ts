@@ -5,6 +5,7 @@ import type {
     BuildContextInput,
     MessageFetcher,
     GatewayCaller,
+    GatewaySessionLease,
     SessionCleaner,
 } from './types'
 import { DEFAULT_COMPRESSION_CONFIG } from './types'
@@ -13,6 +14,13 @@ import { buildAgentInstructions, buildSummarizationSystemPrompt } from './prompt
 import { logger } from '../../../services/logger'
 import { buildProjectedGroupChatHistory, projectGroupChatMessage } from '../group-chat/context-projection'
 import { sliceGroupMessagesForSnapshotTail } from '../group-chat/group-message-ordering'
+
+export class ContextAuthorizationChangedError extends Error {
+    constructor() {
+        super('Group chat context authorization changed')
+        this.name = 'ContextAuthorizationChangedError'
+    }
+}
 
 export class ContextEngine {
     private config: CompressionConfig
@@ -37,6 +45,37 @@ export class ContextEngine {
 
     private sessionCleaner?: SessionCleaner
 
+    private assertGuard(guard: () => boolean): void {
+        try {
+            if (guard()) return
+        } catch {
+            // Storage/guard failures are authorization failures.
+        }
+        throw new ContextAuthorizationChangedError()
+    }
+
+    private assertAuthorization(input: BuildContextInput): void {
+        this.assertGuard(input.authorizationGuard)
+    }
+
+    private cleanupSummarySession(roomId: string, sessionId: string | null): void {
+        if (!sessionId) return
+        try {
+            this.sessionCleaner?.(sessionId)
+        } catch {
+            logger.warn({ roomId }, '[ContextEngine] failed to schedule summary session cleanup')
+        }
+    }
+
+    private assertAuthorizationAfterExternal(input: BuildContextInput, sessionId: string | null): void {
+        try {
+            this.assertAuthorization(input)
+        } catch (error: unknown) {
+            this.cleanupSummarySession(input.roomId, sessionId)
+            throw error
+        }
+    }
+
     setUpstream(upstream: string, apiKey: string | null): void {
         this._upstream = upstream
         this._apiKey = apiKey
@@ -57,24 +96,28 @@ export class ContextEngine {
      *    b. Under threshold → return all verbatim
      *    c. Over threshold → full compress, save snapshot, return
      */
-    async buildContext(input: BuildContextInput): Promise<CompressedContext> {
-        // Serialize compression per room to prevent concurrent snapshot overwrites
-        const existing = this._compressLocks.get(input.roomId)
-        if (existing) {
-            await existing
-        }
-        let resolveLock!: () => void
-        const lock = new Promise<void>(r => { resolveLock = r })
-        this._compressLocks.set(input.roomId, lock)
+    private async runWithCompressionLock<T>(roomId: string, operationFactory: () => Promise<T>): Promise<T> {
+        // Publish an always-resolving tail before awaiting the operation so later callers
+        // chain behind this caller instead of waking together from the same predecessor.
+        const previous = this._compressLocks.get(roomId) || Promise.resolve()
+        const operation = previous.then(operationFactory)
+        const lock = operation.then(() => undefined, () => undefined)
+        this._compressLocks.set(roomId, lock)
         try {
-            return await this._buildContextImpl(input)
+            return await operation
         } finally {
-            resolveLock()
-            this._compressLocks.delete(input.roomId)
+            if (this._compressLocks.get(roomId) === lock) {
+                this._compressLocks.delete(roomId)
+            }
         }
     }
 
+    async buildContext(input: BuildContextInput): Promise<CompressedContext> {
+        return this.runWithCompressionLock(input.roomId, () => this._buildContextImpl(input))
+    }
+
     private async _buildContextImpl(input: BuildContextInput): Promise<CompressedContext> {
+        this.assertAuthorization(input)
         const config = { ...this.config, ...input.compression }
         const cursor = Math.max(0, Math.floor(Number(input.participantCursor || 0)))
         const usesParticipantSequence = input.participantCursor != null
@@ -163,53 +206,17 @@ export class ContextEngine {
             const directInputTokens = Math.max(0, Math.floor(Number(input.directInputTokenEstimate) || 0))
             try {
                 const estimate = await input.contextTokenEstimator?.(history, instructions)
+                this.assertAuthorization(input)
                 if (typeof estimate === 'number' && Number.isFinite(estimate) && estimate > 0) {
                     return Math.floor(estimate) + directInputTokens
                 }
-            } catch (err: any) {
-                logger.warn(`[ContextEngine] full context estimate failed room=${input.roomId}, agent=${input.agentName}: ${err.message}`)
+            } catch (err: unknown) {
+                this.assertAuthorization(input)
+                const message = err instanceof Error ? err.message : 'unknown error'
+                logger.warn(`[ContextEngine] full context estimate failed room=${input.roomId}, agent=${input.agentName}: ${message}`)
             }
-            return messageTokenEstimate + directInputTokens
-        }
-
-        const fitCompressedHistory = async (
-            summary: string,
-            candidateTail: StoredMessage[],
-        ): Promise<{
-            history: Array<{ role: 'user' | 'assistant'; content: string }>
-            retainedTail: StoredMessage[]
-            contextTokens: number
-        }> => {
-            const retainedTail = [...candidateTail]
-            let history = this.buildHistory(summary, retainedTail, input.agentId, input.agentSocketId, input.agentName)
-            let historyTokens = this.estimateTokens(history)
-            let contextTokens = await estimateFullContextTokens(history, historyTokens)
-
-            while (
-                (historyTokens > config.maxHistoryTokens || contextTokens > config.triggerTokens) &&
-                retainedTail.length > 1
-            ) {
-                const sequencedIndexes = retainedTail
-                    .map((message, index) => ({ index, roomSeq: Math.max(0, Number(message.roomSeq || 0)) }))
-                    .filter(item => item.roomSeq > 0)
-                const dropIndex = sequencedIndexes.length
-                    ? sequencedIndexes.reduce((oldest, item) => item.roomSeq < oldest.roomSeq ? item : oldest).index
-                    : 0
-                retainedTail.splice(dropIndex, 1)
-                history = this.buildHistory(summary, retainedTail, input.agentId, input.agentSocketId, input.agentName)
-                historyTokens = this.estimateTokens(history)
-                contextTokens = await estimateFullContextTokens(history, historyTokens)
-            }
-
-            if (historyTokens > config.maxHistoryTokens || contextTokens > config.triggerTokens) {
-                throw new Error(
-                    `Compressed context is still too large for group chat agent ${input.agentName}: ` +
-                    `history uses ~${historyTokens}/${config.maxHistoryTokens} tokens and full context uses ` +
-                    `~${contextTokens}/${config.triggerTokens} tokens after preserving the newest message.`,
-                )
-            }
-
-            return { history, retainedTail, contextTokens }
+            this.assertAuthorization(input)
+            return messageTokenEstimate
         }
 
         const logThresholdCheck = (path: string, messageTokens: number, fullTokens: number): void => {
@@ -316,6 +323,7 @@ export class ContextEngine {
                 decision: 'incremental_compress',
             }, '[ContextEngine] compression started')
             meta.compressed = true
+            this.assertAuthorization(input)
             input.onProgress?.({
                 status: 'compressing',
                 path: 'snapshot',
@@ -323,6 +331,7 @@ export class ContextEngine {
                 tokenCount: totalTokens,
             })
 
+            this.assertAuthorization(input)
             const t0 = Date.now()
             const result = await this.summarize(
                 input.roomId,
@@ -331,19 +340,20 @@ export class ContextEngine {
                 input.apiKey,
                 input.profile || 'default',
                 snapshot.summary,
+                input.authorizationGuard,
+                input.summarySessionRegistrar,
             )
+            this.assertAuthorizationAfterExternal(input, result.sessionId)
+            this.cleanupSummarySession(input.roomId, result.sessionId)
             const elapsed = Date.now() - t0
 
             if (result.summary) {
-                const fitted = await fitCompressedHistory(result.summary, this.latestSequenceTail(newMessages, config.tailMessageCount))
-                const summaryAnchor = this.latestSequenceMessage(newMessages)
-
+                const lastMsg = newMessages[newMessages.length - 1]
                 meta.summaryTokenEstimate = this.countTokens(result.summary)
-                meta.contextTokenEstimate = fitted.contextTokens
-                meta.verbatimCount = fitted.retainedTail.length
-                if (!usesParticipantSequence) {
-                    this.messageFetcher.saveContextSnapshot(input.roomId, result.summary, summaryAnchor.id, summaryAnchor.timestamp, Number(summaryAnchor.roomSeq || 0))
-                }
+                const history = this.buildHistory(result.summary, newMessages, input.agentId, input.agentSocketId, input.agentName)
+                meta.contextTokenEstimate = await estimateFullContextTokens(history, this.estimateTokens(history))
+                this.assertAuthorization(input)
+                this.messageFetcher.saveContextSnapshot(input.roomId, result.summary, lastMsg.id, lastMsg.timestamp)
                 logger.info({
                     roomId: input.roomId,
                     agentName: input.agentName,
@@ -355,9 +365,8 @@ export class ContextEngine {
                     savedLastMessageId: summaryAnchor.id,
                     elapsedMs: elapsed,
                 }, '[ContextEngine] compression completed')
-                this.logHistory('Path A (after incremental compress)', fitted.history)
-                if (result.sessionId) this.sessionCleaner?.(result.sessionId)
-                return { conversationHistory: fitted.history, instructions, meta }
+                this.logHistory('Path A (after incremental compress)', history)
+                return { conversationHistory: history, instructions, meta }
             }
 
             // Compression failed — degrade
@@ -434,6 +443,7 @@ export class ContextEngine {
             decision: 'full_compress',
         }, '[ContextEngine] compression started')
         meta.compressed = true
+        this.assertAuthorization(input)
         input.onProgress?.({
             status: 'compressing',
             path: 'full',
@@ -441,6 +451,7 @@ export class ContextEngine {
             tokenCount: totalTokens,
         })
 
+        this.assertAuthorization(input)
         const t0 = Date.now()
         const result = await this.summarize(
             input.roomId,
@@ -448,22 +459,26 @@ export class ContextEngine {
             input.upstream,
             input.apiKey,
             input.profile || 'default',
+            undefined,
+            input.authorizationGuard,
+            input.summarySessionRegistrar,
         )
+        this.assertAuthorizationAfterExternal(input, result.sessionId)
+        this.cleanupSummarySession(input.roomId, result.sessionId)
         const elapsed = Date.now() - t0
 
         if (result.summary) {
-            // The summary covers every message through the trigger. Recent tail messages are
-            // repeated verbatim only for this turn and do not move the persisted coverage boundary.
-            const candidateTail = this.latestSequenceTail(messages, config.tailMessageCount)
-            const fitted = await fitCompressedHistory(result.summary, candidateTail)
-            const summaryAnchor = this.latestSequenceMessage(messages)
+            // Keep recent tail messages verbatim, compress the rest
+            const { tailMessageCount } = config
+            const toCompress = messages.length > tailMessageCount ? messages.slice(0, -tailMessageCount) : messages
+            const tail = messages.length > tailMessageCount ? messages.slice(-tailMessageCount) : []
+            const lastCompressedMsg = toCompress[toCompress.length - 1]
 
             meta.summaryTokenEstimate = this.countTokens(result.summary)
-            meta.contextTokenEstimate = fitted.contextTokens
-            meta.verbatimCount = fitted.retainedTail.length
-            if (!usesParticipantSequence) {
-                this.messageFetcher.saveContextSnapshot(input.roomId, result.summary, summaryAnchor.id, summaryAnchor.timestamp, Number(summaryAnchor.roomSeq || 0))
-            }
+            const history = this.buildHistory(result.summary, tail, input.agentId, input.agentSocketId, input.agentName)
+            meta.contextTokenEstimate = await estimateFullContextTokens(history, this.estimateTokens(history))
+            this.assertAuthorization(input)
+            this.messageFetcher.saveContextSnapshot(input.roomId, result.summary, lastCompressedMsg.id, lastCompressedMsg.timestamp)
             logger.info({
                 roomId: input.roomId,
                 agentName: input.agentName,
@@ -476,9 +491,8 @@ export class ContextEngine {
                 savedLastMessageId: summaryAnchor.id,
                 elapsedMs: elapsed,
             }, '[ContextEngine] compression completed')
-            this.logHistory('Path B (after full compress)', fitted.history)
-            if (result.sessionId) this.sessionCleaner?.(result.sessionId)
-            return { conversationHistory: fitted.history, instructions, meta }
+            this.logHistory('Path B (after full compress)', history)
+            return { conversationHistory: history, instructions, meta }
         }
 
         // Compression failed — degrade
@@ -548,33 +562,72 @@ export class ContextEngine {
      * Force compress all messages in a room (full compression).
      * Used when user manually triggers compression.
      */
-    async forceCompress(roomId: string, profile?: string): Promise<string> {
-        const allMessages = this.messageFetcher.getMessagesForContext(roomId)
-        if (allMessages.length === 0) return ''
+    async forceCompress(
+        roomId: string,
+        profile: string,
+        summarySessionRegistrar: () => GatewaySessionLease,
+    ): Promise<string> {
+        return this.runWithCompressionLock(roomId, () => this._forceCompressImpl(
+            roomId,
+            profile,
+            summarySessionRegistrar,
+        ))
+    }
 
-        const config = { ...this.config }
-        logger.debug(`[ContextEngine] forceCompress room=${roomId}, messages=${allMessages.length}`)
+    private async _forceCompressImpl(
+        roomId: string,
+        profile: string,
+        summarySessionRegistrar: () => GatewaySessionLease,
+    ): Promise<string> {
+        const summarySession = summarySessionRegistrar()
+        let handedOff = false
+        try {
+            this.assertGuard(summarySession.authorizationGuard)
+            const allMessages = this.messageFetcher.getMessagesForContext(roomId)
+            if (allMessages.length === 0) return ''
 
-        const t0 = Date.now()
-        const result = await this.summarize(roomId, allMessages, this._upstream, this._apiKey, profile || 'default')
-        const elapsed = Date.now() - t0
+            const config = { ...this.config }
+            logger.debug(`[ContextEngine] forceCompress room=${roomId}, messages=${allMessages.length}`)
 
-        if (result.summary) {
-            const summaryAnchor = this.latestSequenceMessage(allMessages)
-
-            this.messageFetcher.saveContextSnapshot(
+            const t0 = Date.now()
+            const result = await this.summarize(
                 roomId,
-                result.summary,
-                summaryAnchor.id,
-                summaryAnchor.timestamp,
-                Number(summaryAnchor.roomSeq || 0),
+                allMessages,
+                this._upstream,
+                this._apiKey,
+                profile,
+                undefined,
+                summarySession.authorizationGuard,
+                () => {
+                    handedOff = true
+                    return summarySession
+                },
             )
-            logger.debug(`[ContextEngine] forceCompress DONE in ${elapsed}ms`)
-            if (result.sessionId) this.sessionCleaner?.(result.sessionId)
-            return result.summary
-        }
+            this.assertGuard(summarySession.authorizationGuard)
+            const elapsed = Date.now() - t0
 
-        throw new Error('Compression failed')
+            if (result.summary) {
+                const { tailMessageCount } = config
+                const toCompress = allMessages.length > tailMessageCount ? allMessages.slice(0, -tailMessageCount) : allMessages
+                const lastCompressedMsg = toCompress[toCompress.length - 1]
+
+                this.assertGuard(summarySession.authorizationGuard)
+                this.messageFetcher.saveContextSnapshot(roomId, result.summary, lastCompressedMsg.id, lastCompressedMsg.timestamp)
+                logger.debug(`[ContextEngine] forceCompress DONE in ${elapsed}ms`)
+                return result.summary
+            }
+
+            throw new Error('Compression failed')
+        } finally {
+            if (!handedOff) {
+                try {
+                    summarySession.release()
+                } catch (err: unknown) {
+                    const message = err instanceof Error ? err.message : 'unknown error'
+                    logger.warn(`[ContextEngine] failed to release unused forced-compression session: ${message}`)
+                }
+            }
+        }
     }
 
     // ─── Private ─────────────────────────────────────────────
@@ -623,9 +676,11 @@ export class ContextEngine {
         roomId: string,
         messages: StoredMessage[],
         upstream: string,
-        apiKey: string | null,
+        apiKey: BuildContextInput['apiKey'],
         profile: string,
-        previousSummary?: string,
+        previousSummary: string | undefined,
+        authorizationGuard: (() => boolean) | null,
+        sessionRegistrar: () => GatewaySessionLease,
     ): Promise<{ summary: string | null; sessionId: string | null }> {
         if (messages.length === 0 && !previousSummary) return { summary: null, sessionId: null }
 
@@ -638,13 +693,22 @@ export class ContextEngine {
                 roomId,
                 profile,
                 previousSummary,
+                sessionRegistrar,
             )
             return { summary: result.summary, sessionId: result.sessionId }
-        } catch (err: any) {
-            logger.warn(`[ContextEngine] Summarization failed for room ${roomId}: ${err.message}`)
+        } catch (err: unknown) {
+            if (authorizationGuard) {
+                let current = false
+                try {
+                    current = authorizationGuard()
+                } catch {
+                    current = false
+                }
+                if (!current) throw new ContextAuthorizationChangedError()
+            }
+            const message = err instanceof Error ? err.message : 'unknown error'
+            logger.warn(`[ContextEngine] Summarization failed for room ${roomId}: ${message}`)
             return { summary: null, sessionId: null }
-        } finally {
-            // Session cleanup handled here if sessionCleaner is provided
         }
     }
 
