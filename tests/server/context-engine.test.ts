@@ -260,6 +260,70 @@ describe('ContextEngine.buildContext', () => {
         expect(result.conversationHistory.map(message => message.content).join('\n')).not.toContain('already delivered')
     })
 
+    it('ignores a Room snapshot newer than a participant trigger', async () => {
+        const messages = makeMessages(5)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
+        mockFetcher.getContextSnapshot = vi.fn().mockReturnValue({
+            roomId: 'room-1',
+            summary: 'FUTURE SUMMARY THROUGH SEQ 10',
+            lastMessageId: 'msg-9',
+            lastMessageTimestamp: 10_000,
+            updatedAt: Date.now(),
+        })
+
+        const result = await engine.buildContext({
+            roomId: 'room-1',
+            agentId: 'agent-1',
+            agentName: 'Claude',
+            agentDescription: 'Helper',
+            agentSocketId: 'agent-socket',
+            roomName: 'general',
+            memberNames: ['Alice'],
+            members: [{ userId: 'u1', name: 'Alice', description: '' }],
+            upstream: 'http://localhost:8642',
+            apiKey: 'test-key',
+            currentMessage: messages[4],
+            participantCursor: 0,
+        })
+
+        const history = result.conversationHistory.map(message => message.content).join('\n')
+        expect(history).toContain('Message 0')
+        expect(history).toContain('Message 4')
+        expect(history).not.toContain('FUTURE SUMMARY THROUGH SEQ 10')
+        expect(result.meta.hadSnapshot).toBe(false)
+    })
+
+    it('does not overwrite the shared Room snapshot from a participant sequence window', async () => {
+        const messages = makeMessages(20)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
+        mockFetcher.getContextSnapshot = vi.fn().mockReturnValue({
+            roomId: 'room-1',
+            summary: 'FUTURE SUMMARY THROUGH SEQ 30',
+            lastMessageId: 'msg-29',
+            lastMessageTimestamp: 30_000,
+            updatedAt: Date.now(),
+        })
+
+        const result = await engine.buildContext({
+            roomId: 'room-1',
+            agentId: 'agent-1',
+            agentName: 'Claude',
+            agentDescription: 'Helper',
+            agentSocketId: 'agent-socket',
+            roomName: 'general',
+            memberNames: [],
+            members: [],
+            upstream: 'http://localhost:8642',
+            apiKey: 'test-key',
+            currentMessage: messages[19],
+            participantCursor: 0,
+            compression: { triggerTokens: 10 },
+        })
+
+        expect(result.meta.compressed).toBe(true)
+        expect(mockFetcher.saveContextSnapshot).not.toHaveBeenCalled()
+    })
+
     it('records full context token estimates without compressing when under threshold', async () => {
         const messages = makeMessages(3)
         mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
