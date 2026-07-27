@@ -7,6 +7,7 @@ import { AgentBridgeClient, type AgentBridgeContextEstimate, type AgentBridgeMes
 import { convertContentBlocksForAgent, isContentBlockArray } from '../run-chat/content-blocks'
 import { resolveBridgeRunModelConfig } from '../run-chat/model-config'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
+import { getModelContextLength } from '../model-context'
 import {
     sendCodingAgentRunInput,
     startCodingAgentRun,
@@ -87,6 +88,12 @@ export function mentionMessageToStoredContextMessage(roomId: string, msg: Mentio
 
 type GroupEstimateMessage = { role: 'user' | 'assistant'; content: string }
 export type GroupModelContext = { model: string; provider: string }
+export type GroupCompressionInput = {
+    triggerTokens: number
+    maxHistoryTokens: number
+    tailMessageCount: number
+}
+
 type WorkspaceDiffTerminalStatus = 'completed' | 'failed' | 'aborted'
 type WorkspaceDiffBroadcaster = (roomId: string, message: MessageData & Record<string, unknown>, totalTokens: number) => void
 
@@ -133,6 +140,10 @@ type PersistedParticipantBinding = {
     reasoningEffort?: string
     lastSeenRoomSeq?: number
     lastSuccessfulRunId?: string
+    checkpoint?: string
+    checkpointSourceMessageIds?: string
+    checkpointFromRoomSeq?: number
+    checkpointThroughRoomSeq?: number
 }
 
 const GROUP_CODING_AGENT_RUN_TIMEOUT_MS = 30 * 60 * 1000
@@ -140,6 +151,25 @@ const GROUP_CODING_AGENT_INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000
 
 export async function resolveGroupAgentModelContext(profile: string): Promise<GroupModelContext> {
     return resolveBridgeRunModelConfig({ profile })
+}
+
+const GROUP_CONTEXT_TRIGGER_RATIO = 0.6
+const GROUP_CONTEXT_TARGET_RATIO = 0.5
+const GROUP_SINGLE_MESSAGE_RATIO = 0.25
+
+export function effectiveGroupCompressionConfig(
+    roomConfig: GroupCompressionInput,
+    modelContextLength: number,
+): GroupCompressionInput {
+    const modelWindow = Math.max(1, Math.floor(Number(modelContextLength) || 0))
+    const modelTrigger = Math.max(1, Math.floor(modelWindow * GROUP_CONTEXT_TRIGGER_RATIO))
+    const triggerTokens = Math.max(1, Math.min(Math.floor(roomConfig.triggerTokens), modelTrigger))
+    const targetTokens = Math.max(1, Math.floor(triggerTokens * GROUP_CONTEXT_TARGET_RATIO))
+    return {
+        triggerTokens,
+        maxHistoryTokens: Math.max(1, Math.min(Math.floor(roomConfig.maxHistoryTokens), targetTokens)),
+        tailMessageCount: Math.max(1, Math.floor(roomConfig.tailMessageCount)),
+    }
 }
 
 export function estimateGroupHistoryMessageTokens(history: Array<{ content?: unknown }>): number {
@@ -239,6 +269,15 @@ class AgentClient {
 
     get description(): string {
         return this._description
+    }
+
+    modelContextLengthForRoom(roomId: string): number {
+        const binding = this.storage?.getRoomAgentByAgentId?.(roomId, this.agentId)
+        return getModelContextLength({
+            profile: this.profile,
+            model: String(binding?.model || '').trim(),
+            provider: String(binding?.provider || '').trim(),
+        })
     }
 
     updateIdentity(name: string, description: string): void {
@@ -744,6 +783,20 @@ class AgentClient {
                 model: String(participantSnapshot.model || profileModelContext.model || '').trim(),
                 provider: String(participantSnapshot.provider || profileModelContext.provider || '').trim(),
             }
+            const routedPrefix = isAllAgentsMentioned(msg.content)
+                ? `群聊系统：这条消息通过 @all 提及所有 agent，你是其中之一，请直接回复。`
+                : `群聊系统：这条消息已经提及你（${this.name}），请直接回复；即使消息同时提及其他成员，也不要因此输出空回复。`
+            const rawInput = msg.input || msg.content
+            const input = isContentBlockArray(rawInput)
+                ? rawInput.map((block) => {
+                    if (block.type !== 'text') return block
+                    const text = stripMentionRoutingTokens(String(block.text || msg.content), this.name)
+                    return { ...block, text: `${routedPrefix}\n\n原始消息：${text || msg.content}` }
+                })
+                : `${routedPrefix}\n\n原始消息：${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
+            const directInputTokenEstimate = countTokens(isContentBlockArray(input)
+                ? input.map(block => block.type === 'text' ? String(block.text || '') : `[${block.type}]`).join('\n')
+                : input)
 
             if (this.contextEngine && this.storage) {
                 try {
@@ -755,11 +808,15 @@ class AgentClient {
 
                     // Get room compression config
                     const roomInfo = this.storage.getRoom(roomId)
-                    const compression = roomInfo ? {
+                    const compression = roomInfo ? effectiveGroupCompressionConfig({
                         triggerTokens: roomInfo.triggerTokens,
                         maxHistoryTokens: roomInfo.maxHistoryTokens,
                         tailMessageCount: roomInfo.tailMessageCount,
-                    } : undefined
+                    }, getModelContextLength({
+                        profile: this.profile,
+                        model: modelContext.model,
+                        provider: modelContext.provider,
+                    })) : undefined
 
                     const ctx = await this.contextEngine.buildContext({
                         roomId,
@@ -773,6 +830,8 @@ class AgentClient {
                         upstream: '',
                         apiKey: null,
                         currentMessage: mentionMessageToStoredContextMessage(roomId, msg),
+                        excludeCurrentMessageFromHistory: true,
+                        directInputTokenEstimate,
                         compression,
                         profile: this.profile,
                         onProgress: (event: { status: 'compressing'; messageCount: number; tokenCount: number }) => {
@@ -807,25 +866,13 @@ class AgentClient {
                     reportStatus('replying')
                 } catch (err: any) {
                     logger.warn(`[AgentClients] ${this.name}: context engine failed: ${err.message}`)
-                    reportStatus('replying')
-                    // Degrade: continue without context
+                    throw err
                 }
             }
 
             // Keep routing explicit while removing only the mention tokens that
             // selected this agent. This avoids making @all look like an
             // instruction for the model to fan out another routing cycle.
-            const routedPrefix = isAllAgentsMentioned(msg.content)
-                ? `群聊系统：这条消息通过 @all 提及所有 agent，你是其中之一，请直接回复。`
-                : `群聊系统：这条消息已经提及你（${this.name}），请直接回复；即使消息同时提及其他成员，也不要因此输出空回复。`
-            const rawInput = msg.input || msg.content
-            const input = isContentBlockArray(rawInput)
-                ? rawInput.map((block) => {
-                    if (block.type !== 'text') return block
-                    const text = stripMentionRoutingTokens(String(block.text || msg.content), this.name)
-                    return { ...block, text: `${routedPrefix}\n\n原始消息：${text || msg.content}` }
-                })
-                : `${routedPrefix}\n\n原始消息：${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
             const runPrompt = 'When calling Hermes Web UI endpoints from tools or skills, include the current Hermes profile as the X-Hermes-Profile header if the endpoint supports profile-scoped behavior.'
             instructions = instructions ? `${runPrompt}\n${instructions}` : runPrompt
             const bridgeInput: AgentBridgeMessage = isContentBlockArray(input)
@@ -1083,6 +1130,25 @@ class AgentClient {
             if (this.contextEngine && this.storage) {
                 const roomInfo = this.storage.getRoom(roomId)
                 const roomMembers: Array<{ userId: string; name: string; description: string }> = this.storage.getRoomMembers(roomId) || []
+                const compression = roomInfo ? effectiveGroupCompressionConfig({
+                    triggerTokens: roomInfo.triggerTokens,
+                    maxHistoryTokens: roomInfo.maxHistoryTokens,
+                    tailMessageCount: roomInfo.tailMessageCount,
+                }, getModelContextLength({
+                    profile: this.profile,
+                    model: binding.model,
+                    provider: binding.provider,
+                })) : undefined
+                const participantCheckpoint = binding.checkpoint &&
+                    Number(binding.checkpointFromRoomSeq || 0) === participantCursor + 1 &&
+                    Number(binding.checkpointThroughRoomSeq || 0) >= Number(binding.checkpointFromRoomSeq || 0) &&
+                    Number(binding.checkpointThroughRoomSeq || 0) < triggerRoomSeq
+                    ? {
+                        summary: String(binding.checkpoint),
+                        fromRoomSeq: Number(binding.checkpointFromRoomSeq),
+                        throughRoomSeq: Number(binding.checkpointThroughRoomSeq),
+                    }
+                    : undefined
                 const context = await this.contextEngine.buildContext({
                     roomId,
                     agentId: this.agentId,
@@ -1095,13 +1161,12 @@ class AgentClient {
                     upstream: '',
                     apiKey: null,
                     currentMessage: triggerMessage,
-                    compression: roomInfo ? {
-                        triggerTokens: roomInfo.triggerTokens,
-                        maxHistoryTokens: roomInfo.maxHistoryTokens,
-                        tailMessageCount: roomInfo.tailMessageCount,
-                    } : undefined,
+                    excludeCurrentMessageFromHistory: true,
+                    directInputTokenEstimate: countTokens(stripMentionRoutingTokens(msg.content, this.name) || msg.content),
+                    compression,
                     profile: this.profile,
                     participantCursor: Number(binding.lastSeenRoomSeq || 0),
+                    participantCheckpoint,
                     onProgress: (event: { messageCount: number; tokenCount: number }) => {
                         onStatus?.('compressing', { agentSessionId: sessionId, messageCount: event.messageCount, totalTokens: event.tokenCount })
                     },
@@ -1307,7 +1372,9 @@ class AgentClient {
         const messages: StoredMessage[] = this.storage?.getMessagesForContext?.(roomId) || []
         const snapshot = this.storage?.getContextSnapshot?.(roomId)
         if (snapshot?.summary) {
-            const tail = sliceGroupMessagesForSnapshotTail(messages, snapshot.lastMessageId).messages
+            const tail = Number(snapshot.lastRoomSeq || 0) > 0
+                ? messages.filter(message => Number(message.roomSeq || 0) > Number(snapshot.lastRoomSeq || 0))
+                : sliceGroupMessagesForSnapshotTail(messages, snapshot.lastMessageId).messages
             return buildProjectedGroupChatHistory(snapshot.summary, tail, { agentId: this.agentId, socketId: this.socket?.id, name: this.name })
         }
         return messages
@@ -1827,6 +1894,32 @@ export class AgentClients {
         })
     }
 
+
+    /**
+     * Validate a single Room message against the smallest actually mentioned participant window.
+     * Non-text attachment payloads are represented by their compact text reference before this call.
+     */
+    validateMessageInput(roomId: string, content: string, senderId: string): { ok: true } | { ok: false; error: string } {
+        const agents = this.getAgents(roomId)
+        const mentioned = resolveMentionTargets(agents, content, senderId)
+        const targets = mentioned.length > 0 ? mentioned : agents
+        if (targets.length === 0) return { ok: true }
+
+        let strictest: { name: string; maxTokens: number } | null = null
+        for (const agent of targets) {
+            const modelWindow = agent.modelContextLengthForRoom(roomId)
+            const maxTokens = Math.max(1, Math.floor(modelWindow * GROUP_CONTEXT_TRIGGER_RATIO * GROUP_SINGLE_MESSAGE_RATIO))
+            if (!strictest || maxTokens < strictest.maxTokens) strictest = { name: agent.name, maxTokens }
+        }
+        const tokens = countTokens(content)
+        if (strictest && tokens > strictest.maxTokens) {
+            return {
+                ok: false,
+                error: `Message exceeds the safe input limit for @${strictest.name} (${strictest.maxTokens} tokens). Upload a file or split the message.`,
+            }
+        }
+        return { ok: true }
+    }
 
     /**
      * Server-side: parse @mentions and forward to matching agents directly.

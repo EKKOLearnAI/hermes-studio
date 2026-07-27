@@ -276,6 +276,8 @@ describe('Hermes schema initialization', () => {
         'lastSuccessfulRunId',
         'checkpoint',
         'checkpointSourceMessageIds',
+        'checkpointFromRoomSeq',
+        'checkpointThroughRoomSeq',
       ].includes(name))
       .map(([name, definition]) => `"${name}" ${definition}`)
       .join(', ')
@@ -301,6 +303,8 @@ describe('Hermes schema initialization', () => {
       lastSuccessfulRunId: '',
       checkpoint: '',
       checkpointSourceMessageIds: '[]',
+      checkpointFromRoomSeq: 0,
+      checkpointThroughRoomSeq: 0,
     })
   })
 

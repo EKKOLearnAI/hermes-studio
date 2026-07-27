@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { runtimeListeners, managerMock, startCodingAgentRunMock, sendCodingAgentRunInputMock, stopCodingAgentRunMock, socket } = vi.hoisted(() => {
+const { runtimeListeners, managerMock, getModelContextLengthMock, startCodingAgentRunMock, sendCodingAgentRunInputMock, stopCodingAgentRunMock, socket } = vi.hoisted(() => {
   const runtimeListeners = new Map<string, (event: string, payload: any) => void>()
+  const getModelContextLengthMock = vi.fn(() => 256_000)
   const managerMock = {
     subscribe: vi.fn((sessionId: string, listener: (event: string, payload: any) => void, _eventToken?: string) => {
       runtimeListeners.set(sessionId, listener)
@@ -34,7 +35,7 @@ const { runtimeListeners, managerMock, startCodingAgentRunMock, sendCodingAgentR
     }),
     disconnect: vi.fn(),
   }
-  return { runtimeListeners, managerMock, startCodingAgentRunMock, sendCodingAgentRunInputMock, stopCodingAgentRunMock, socket }
+  return { runtimeListeners, managerMock, getModelContextLengthMock, startCodingAgentRunMock, sendCodingAgentRunInputMock, stopCodingAgentRunMock, socket }
 })
 
 vi.mock('socket.io-client', () => ({ io: vi.fn(() => socket) }))
@@ -45,6 +46,9 @@ vi.mock('../../packages/server/src/services/coding-agents', () => ({
   sendCodingAgentRunInput: sendCodingAgentRunInputMock,
   stopCodingAgentRun: stopCodingAgentRunMock,
 }))
+vi.mock('../../packages/server/src/services/hermes/model-context', () => ({
+  getModelContextLength: getModelContextLengthMock,
+}))
 vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
   AgentBridgeClient: class {
     async chat() { throw new Error('Hermes bridge must not run for a coding-agent participant') }
@@ -52,6 +56,25 @@ vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
 }))
 
 import { AgentClients, participantContextRevision } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+
+describe('group chat single-message budgets', () => {
+  it('uses the smallest actually mentioned participant model window for @all', () => {
+    const clients = new AgentClients() as any
+    const small = {
+      agentId: 'small', name: 'Small', modelContextLengthForRoom: vi.fn(() => 64_000),
+    }
+    const large = {
+      agentId: 'large', name: 'Large', modelContextLengthForRoom: vi.fn(() => 256_000),
+    }
+    clients.rooms.set('room-1', new Map([['small', small], ['large', large]]))
+
+    expect(clients.validateMessageInput('room-1', `@all ${'x'.repeat(40_000)}`, 'human')).toEqual({
+      ok: false,
+      error: 'Message exceeds the safe input limit for @Small (9600 tokens). Upload a file or split the message.',
+    })
+    expect(clients.validateMessageInput('room-1', '@Large hello', 'human')).toEqual({ ok: true })
+  })
+})
 
 describe('Group Chat coding-agent participant runtime', () => {
   it('never regresses a persisted participant Room cursor', () => {
@@ -64,6 +87,7 @@ describe('Group Chat coding-agent participant runtime', () => {
     runtimeListeners.clear()
     managerMock.runIdForSession.mockReturnValue(undefined)
     managerMock.isSessionLaunchCompatible.mockReturnValue(false)
+    getModelContextLengthMock.mockReturnValue(256_000)
   })
 
   it.each([
@@ -265,11 +289,17 @@ describe('Group Chat coding-agent participant runtime', () => {
   })
 
   it('projects canonical Room context into a coding-agent turn with participant attribution', async () => {
+    getModelContextLengthMock.mockReturnValue(64_000)
     const participant = {
       agentId: 'participant-codex', profile: 'default', name: 'Codex A', description: 'implementation agent',
       runtime: 'coding_agent', codingAgentId: 'codex', sessionId: 'gc-room-1-participant-codex-0',
       sessionGeneration: 0, mode: 'scoped', provider: 'openai', model: 'gpt-5-codex',
       apiMode: 'codex_responses', reasoningEffort: 'high', invited: 1,
+      lastSeenRoomSeq: 20,
+      checkpoint: 'Summary for Room messages 21 through 24',
+      checkpointSourceMessageIds: '["message-21","message-24"]',
+      checkpointFromRoomSeq: 21,
+      checkpointThroughRoomSeq: 24,
     }
     const contextEngine = {
       buildContext: vi.fn(async () => ({
@@ -284,10 +314,21 @@ describe('Group Chat coding-agent participant runtime', () => {
     }
     const clients = new AgentClients()
     clients.setStorage({
-      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Product Room', workspace: '' })),
+      getRoom: vi.fn(() => ({
+        id: 'room-1', name: 'Product Room', workspace: '',
+        triggerTokens: 100_000, maxHistoryTokens: 32_000, tailMessageCount: 10,
+      })),
       getRoomAgentByAgentId: vi.fn(() => participant),
       getRoomMembers: vi.fn(() => [{ userId: 'alice', name: 'Alice', description: 'owner' }]),
-      getMessagesForContext: vi.fn(() => []),
+      getMessage: vi.fn(() => ({
+        id: 'human-message-2', roomId: 'room-1', senderId: 'alice', senderName: 'Alice',
+        content: '@Codex A continue', timestamp: 2, roomSeq: 27, role: 'user',
+      })),
+      getMessagesForContext: vi.fn(() => [
+        { id: 'message-25', roomSeq: 25, timestamp: 1 },
+        { id: 'message-26', roomSeq: 26, timestamp: 1 },
+        { id: 'human-message-2', roomSeq: 27, timestamp: 2 },
+      ]),
     })
     clients.setContextEngine(contextEngine)
     const client = await clients.createAgent({ ...participant, backgroundDelegationEnabled: false } as any)
@@ -301,8 +342,28 @@ describe('Group Chat coding-agent participant runtime', () => {
       runtimeContext: 'group_chat',
     }))
     expect(contextEngine.buildContext).toHaveBeenCalledWith(expect.objectContaining({
-      roomId: 'room-1', agentId: participant.agentId, currentMessage: expect.objectContaining({ id: 'human-message-2' }),
+      roomId: 'room-1',
+      agentId: participant.agentId,
+      currentMessage: expect.objectContaining({ id: 'human-message-2' }),
+      excludeCurrentMessageFromHistory: true,
+      directInputTokenEstimate: expect.any(Number),
+      compression: {
+        triggerTokens: 38_400,
+        maxHistoryTokens: 19_200,
+        tailMessageCount: 10,
+      },
+      participantCursor: 20,
+      participantCheckpoint: {
+        summary: 'Summary for Room messages 21 through 24',
+        fromRoomSeq: 21,
+        throughRoomSeq: 24,
+      },
     }))
+    expect(getModelContextLengthMock).toHaveBeenCalledWith({
+      profile: 'default',
+      provider: 'openai',
+      model: 'gpt-5-codex',
+    })
     expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith(
       participant.sessionId,
       expect.stringContaining('continue'),

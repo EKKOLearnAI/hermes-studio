@@ -1035,6 +1035,39 @@ describe('Group Chat member/agent identity sync', () => {
     expect(ctx.body).toEqual({ rooms: [expect.objectContaining({ id: 'room-1', inviteCode: null, canManage: true })] })
   })
 
+  it('rejects an oversized human message before persistence or mention routing', () => {
+    const server = Object.create(GroupChatServer.prototype) as any
+    const saveMessageAndRefreshRoom = vi.fn()
+    const processMentions = vi.fn()
+    server.rooms = new Map([['room-1', {
+      hasOnlineMember: vi.fn(() => true),
+      getOnlineMemberBySocketId: vi.fn(() => ({ userId: 'human-1', name: 'Human', source: 'human' })),
+    }]])
+    server.socketUserMap = new Map([['human-socket', 'human-1']])
+    server.socketRequestedSourceMap = new Map([['human-socket', 'human']])
+    server.userInfoMap = new Map([['human-1', { name: 'Human', description: '' }]])
+    server.agentClients = {
+      validateMessageInput: vi.fn(() => ({
+        ok: false,
+        error: 'Message exceeds the safe input limit for @Worker (9600 tokens). Upload a file or split the message.',
+      })),
+      processMentions,
+    }
+    server.storage = { saveMessageAndRefreshRoom }
+    server.nsp = { to: vi.fn(() => ({ emit: vi.fn() })) }
+    const ack = vi.fn()
+
+    server.handleMessage({ id: 'human-socket' }, {
+      roomId: 'room-1', content: `@Worker ${'x'.repeat(50_000)}`, role: 'user',
+    }, ack)
+
+    expect(ack).toHaveBeenCalledWith({
+      error: 'Message exceeds the safe input limit for @Worker (9600 tokens). Upload a file or split the message.',
+    })
+    expect(saveMessageAndRefreshRoom).not.toHaveBeenCalled()
+    expect(processMentions).not.toHaveBeenCalled()
+  })
+
   it('routes @mentions from users and bounded agent replies', () => {
     const server = Object.create(GroupChatServer.prototype) as any
     const emit = vi.fn()

@@ -205,6 +205,25 @@ describe('ContextEngine.buildContext', () => {
         expect(mockSummarize).not.toHaveBeenCalled()
     })
 
+    it('sends the triggering message only as direct input and includes it in the hard budget estimate', async () => {
+        const messages = makeMessages(3)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
+        const contextTokenEstimator = vi.fn().mockResolvedValue(10)
+
+        const result = await engine.buildContext({
+            roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude', agentDescription: 'Helper',
+            agentSocketId: 'agent-socket', roomName: 'general', memberNames: [], members: [],
+            upstream: '', apiKey: null, currentMessage: messages[2],
+            excludeCurrentMessageFromHistory: true,
+            directInputTokenEstimate: 7,
+            contextTokenEstimator,
+        })
+
+        expect(result.meta.totalMessages).toBe(2)
+        expect(result.meta.contextTokenEstimate).toBe(17)
+        expect(result.conversationHistory.map(message => message.content).join('\n')).not.toContain('Message 2')
+    })
+
     it('projects only canonical events after a persisted participant cursor', async () => {
         const messages = makeMessages(6)
         mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
@@ -317,7 +336,7 @@ describe('ContextEngine.buildContext', () => {
             apiKey: 'test-key',
             currentMessage: messages[19],
             participantCursor: 0,
-            compression: { triggerTokens: 10 },
+            compression: { triggerTokens: 100 },
         })
 
         expect(result.meta.compressed).toBe(true)
@@ -360,6 +379,7 @@ describe('ContextEngine.buildContext', () => {
     it('uses full context token estimates to trigger group compression', async () => {
         const messages = makeMessages(20)
         mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
+        const contextTokenEstimator = vi.fn().mockResolvedValueOnce(200).mockResolvedValue(80)
         const onProgress = vi.fn()
 
         const result = await engine.buildContext({
@@ -374,19 +394,20 @@ describe('ContextEngine.buildContext', () => {
             upstream: 'http://localhost:8642',
             apiKey: null,
             currentMessage: messages[messages.length - 1],
-            contextTokenEstimator: vi.fn().mockResolvedValue(120_000),
+            compression: { triggerTokens: 100 },
+            contextTokenEstimator,
             onProgress,
         })
 
         expect(result.meta.compressed).toBe(true)
-        expect(result.meta.contextTokenEstimate).toBe(120_000)
+        expect(result.meta.contextTokenEstimate).toBe(80)
         expect(mockSummarize).toHaveBeenCalledTimes(1)
         expect(mockFetcher.saveContextSnapshot).toHaveBeenCalledTimes(1)
         expect(onProgress).toHaveBeenCalledWith({
             status: 'compressing',
             path: 'full',
             messageCount: 20,
-            tokenCount: 120_000,
+            tokenCount: 200,
         })
     })
 
@@ -459,7 +480,7 @@ describe('ContextEngine.buildContext', () => {
             upstream: 'http://localhost:8642',
             apiKey: null,
             currentMessage: messages[messages.length - 1],
-            compression: { triggerTokens: 10 }, // Force compression with tiny threshold
+            compression: { triggerTokens: 100 }, // Force compression with tiny threshold
         })
 
         expect(result.meta.totalMessages).toBe(20)
@@ -477,7 +498,7 @@ describe('ContextEngine.buildContext', () => {
             agentDescription: '', agentSocketId: 'agent-socket', roomName: 'general',
             memberNames: [], members: [], upstream: 'http://localhost:8642', apiKey: null,
             currentMessage: messages[messages.length - 1],
-            compression: { triggerTokens: 10 },
+            compression: { triggerTokens: 100 },
         })
 
         // Verify snapshot was saved
@@ -516,7 +537,7 @@ describe('ContextEngine.buildContext', () => {
             agentDescription: '', agentSocketId: 'agent-socket', roomName: 'general',
             memberNames: [], members: [], upstream: 'http://localhost:8642', apiKey: null,
             currentMessage: messages[messages.length - 1],
-            compression: { triggerTokens: 10 },
+            compression: { triggerTokens: 100 },
         })
 
         // Simulate that the snapshot now exists in storage
@@ -540,9 +561,9 @@ describe('ContextEngine.buildContext', () => {
         // Insert a new message
         const middleInsert = makeMessage({
             id: 'msg-new', roomId: 'room-1', senderId: 'user-99',
-            senderName: 'NewUser', content: 'New middle message', timestamp: 12000,
+            senderName: 'NewUser', content: 'New middle message '.repeat(40), timestamp: messages[messages.length - 1].timestamp + 1,
         })
-        const updatedMessages = [...messages.slice(0, 9), middleInsert, ...messages.slice(9)]
+        const updatedMessages = [...messages, middleInsert]
         mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(updatedMessages)
 
         const onProgress = vi.fn()
@@ -552,7 +573,8 @@ describe('ContextEngine.buildContext', () => {
             agentDescription: '', agentSocketId: 'agent-socket', roomName: 'general',
             memberNames: [], members: [], upstream: 'http://localhost:8642', apiKey: null,
             currentMessage: updatedMessages[updatedMessages.length - 1],
-            compression: { triggerTokens: 10 },
+            compression: { triggerTokens: 100 },
+            contextTokenEstimator: vi.fn().mockResolvedValueOnce(120).mockResolvedValue(80),
             onProgress,
         })
 
@@ -577,7 +599,7 @@ describe('ContextEngine.buildContext', () => {
             agentDescription: '', agentSocketId: 'agent-socket', roomName: 'general',
             memberNames: [], members: [], upstream: 'http://localhost:8642', apiKey: null,
             currentMessage: messages[messages.length - 1],
-            compression: { triggerTokens: 10 },
+            compression: { triggerTokens: 100 },
         })
 
         // Should not throw, and should still return history
