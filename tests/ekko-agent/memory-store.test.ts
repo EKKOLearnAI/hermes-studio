@@ -13,7 +13,7 @@ let store: SqliteMemoryStore
 
 beforeEach(async () => {
   webUiHome = await mkdtemp(join(tmpdir(), 'ekko-memory-store-'))
-  store = new SqliteMemoryStore(new EkkoDatabaseManager({ webUiHome }))
+  store = new SqliteMemoryStore(new EkkoDatabaseManager({ baseDirectory: webUiHome }))
 })
 
 afterEach(async () => {

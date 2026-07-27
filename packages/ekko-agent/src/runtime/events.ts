@@ -7,6 +7,9 @@ import type { MemoryContextDiagnostics } from '../memory/types'
 export type AgentRuntimeEvent =
   | { type: 'run.started'; runId: string; maxSteps: number }
   | { type: 'memory.retrieved'; runId: string; diagnostics: MemoryContextDiagnostics; memoryIds: string[] }
+  | { type: 'skill.review.started'; runId: string; reviewId: string }
+  | { type: 'skill.review.completed'; runId: string; reviewId: string; mutations: number }
+  | { type: 'skill.review.failed'; runId: string; reviewId: string; error: string }
   | { type: 'model.started'; runId: string; step: number }
   | { type: 'context.estimated'; runId: string; step: number; estimate: AgentRuntimeContextEstimate }
   | { type: 'model.retry'; runId: string; step: number; retry: number; maxRetries: number; error: string }

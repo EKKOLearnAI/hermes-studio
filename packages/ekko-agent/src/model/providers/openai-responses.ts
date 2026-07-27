@@ -30,7 +30,6 @@ interface OpenAIResponsesPayload {
   tool_choice?: 'auto' | 'none' | 'required'
   stream?: boolean
   metadata?: Record<string, unknown>
-  previous_response_id?: string
   store: false
 }
 
@@ -201,24 +200,27 @@ export class OpenAIResponsesModelClient implements ModelClient {
 
 export function toOpenAIResponsesPayload(config: ModelProviderConfig, request: ModelRequest): OpenAIResponsesPayload {
   const systemMessages = request.messages.filter(message => message.role === 'system')
+  const replayableToolCallIds = new Set(
+    request.messages.flatMap(message => message.role === 'assistant'
+      ? (message.toolCalls ?? [])
+          .filter(toolCall => toolCall.id && toolCall.name.trim())
+          .map(toolCall => toolCall.id)
+      : []),
+  )
   const supportsMetadata = config.id !== 'xai-oauth' && config.id !== 'openai-codex'
-  const supportsPreviousResponse = config.id !== 'xai-oauth' && config.id !== 'openai-codex'
   const supportsSamplingControls = config.id !== 'openai-codex'
   return {
     model: request.model ?? config.defaultModel,
     instructions: systemMessages.map(message => message.content).join('\n\n') || undefined,
     input: request.messages
       .filter(message => message.role !== 'system')
-      .flatMap(toOpenAIResponseInput),
+      .flatMap(message => toOpenAIResponseInput(message, replayableToolCallIds)),
     ...(supportsSamplingControls && request.temperature !== undefined ? { temperature: request.temperature } : {}),
     ...(supportsSamplingControls && request.maxTokens !== undefined ? { max_output_tokens: request.maxTokens } : {}),
     tools: request.tools?.map(toOpenAIResponseTool),
     tool_choice: request.toolChoice,
     stream: request.stream,
     ...(supportsMetadata && request.metadata ? { metadata: request.metadata } : {}),
-    previous_response_id: supportsPreviousResponse
-      ? openAIResponsesContext(request.context)?.responseId
-      : undefined,
     store: false,
   }
 }
@@ -242,12 +244,6 @@ export function normalizeOpenAIResponsesResponse(response: OpenAIResponsesRespon
   }
 }
 
-function openAIResponsesContext(context: unknown): { responseId?: string } | undefined {
-  if (!context || typeof context !== 'object') return undefined
-  const responseId = (context as { responseId?: unknown }).responseId
-  return typeof responseId === 'string' && responseId ? { responseId } : undefined
-}
-
 function normalizeReasoning(response: OpenAIResponsesResponse): string | undefined {
   if (typeof response.reasoning === 'string' && response.reasoning) return response.reasoning
   if (typeof response.reasoning_text === 'string' && response.reasoning_text) return response.reasoning_text
@@ -261,9 +257,12 @@ function normalizeReasoning(response: OpenAIResponsesResponse): string | undefin
   return reasoning || undefined
 }
 
-function toOpenAIResponseInput(message: AgentMessage): OpenAIResponseInputItem[] {
+function toOpenAIResponseInput(
+  message: AgentMessage,
+  replayableToolCallIds: ReadonlySet<string>,
+): OpenAIResponseInputItem[] {
   if (message.role === 'tool') {
-    if (!message.toolCallId) return []
+    if (!message.toolCallId || !replayableToolCallIds.has(message.toolCallId)) return []
     const items: OpenAIResponseInputItem[] = [{
       type: 'function_call_output',
       call_id: message.toolCallId,
@@ -285,6 +284,7 @@ function toOpenAIResponseInput(message: AgentMessage): OpenAIResponseInputItem[]
     const items: OpenAIResponseInputItem[] = []
     if (message.content) items.push({ role: 'assistant', content: message.content })
     for (const toolCall of message.toolCalls ?? []) {
+      if (!toolCall.id || !toolCall.name.trim()) continue
       items.push({
         type: 'function_call',
         call_id: toolCall.id,

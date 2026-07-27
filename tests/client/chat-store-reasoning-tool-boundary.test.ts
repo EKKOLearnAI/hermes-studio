@@ -550,6 +550,33 @@ describe('chat store reasoning/tool boundaries', () => {
     expect(body.reasoning_effort).toBeUndefined()
   })
 
+  it('sends the hidden API mode when starting a scoped Ekko Agent run', async () => {
+    const store = useChatStore()
+    const session = makeSession()
+    session.source = 'coding_agent'
+    session.agent = 'ekko-agent'
+    session.codingAgentId = 'ekko-agent'
+    session.codingAgentMode = 'scoped'
+    session.provider = 'custom:fun-codex'
+    session.model = 'gpt-5.5'
+    session.baseUrl = 'https://api.apikey.fun/v1'
+    session.apiMode = 'codex_responses'
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    await store.sendMessage('check the weather')
+
+    expect(chatApi.startRunViaSocket.mock.calls[0][0]).toEqual(expect.objectContaining({
+      source: 'coding_agent',
+      coding_agent_id: 'ekko-agent',
+      mode: 'scoped',
+      provider: 'custom:fun-codex',
+      model: 'gpt-5.5',
+      apiMode: 'codex_responses',
+    }))
+  })
+
   it('clears stale coding-agent runtime credentials when switching providers', async () => {
     const store = useChatStore()
     const session = makeSession()

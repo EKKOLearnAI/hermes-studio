@@ -6,6 +6,7 @@ import type { AgentToolContext, AgentToolResult } from '../tools/types'
 import type { AgentRuntimeEvent } from './events'
 import type { MemoryContext } from '../memory/types'
 import type { MemoryService } from '../memory/service'
+import type { SkillReviewUsageEvent } from '../skills/review'
 
 export interface AgentRuntimeContextEstimate {
   contextTokens: number
@@ -26,8 +27,10 @@ export interface AgentRuntimeOptions {
   /** Disable every skill source, including constructor and per-run skills. */
   skillsEnabled?: boolean
   skills?: AgentSkill[]
-  /** Fixed directory used by this agent instance for skill_list and skill_view. */
+  /** Fixed directory used by this agent instance for skill discovery and management. */
   skillDirectory?: string
+  /** Trigger a background skill review after this many tool calls in one session. Set to 0 to disable. */
+  skillReviewEveryToolCalls?: number
   systemPrompt?: string
   runtimeInstructions?: string[]
   maxSteps?: number
@@ -65,6 +68,7 @@ export interface AgentRuntimeRunInput {
     model?: string
     callIndex: number
   }) => void
+  onSkillReviewUsage?: (input: SkillReviewUsageEvent) => void
   onEvent?: (event: AgentRuntimeEvent) => void
 }
 

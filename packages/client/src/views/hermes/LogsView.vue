@@ -69,6 +69,7 @@ async function loadLogs() {
     const data = await fetchLogs(selectedLog.value, {
       lines: lineCount.value,
       level: levelFilter.value || undefined,
+      text: selectedLog.value === 'ekko-agent' ? searchQuery.value || undefined : undefined,
     })
     entries.value = data.filter((e): e is LogEntry => e !== null)
   } catch (e: any) {
@@ -114,6 +115,7 @@ onMounted(async () => {
           v-model="searchQuery"
           class="search-input"
           :placeholder="t('logs.searchPlaceholder')"
+          @keyup.enter="loadLogs"
         />
         <NButton size="small" :loading="loading" @click="loadLogs">{{ t('logs.refresh') }}</NButton>
       </div>

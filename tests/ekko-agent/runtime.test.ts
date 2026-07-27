@@ -1,4 +1,5 @@
-import { rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
@@ -535,14 +536,132 @@ describe('ekko-agent runtime', () => {
   })
 
   it('injects the skill discovery constraint when both skill tools are available', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ekko-runtime-skills-'))
+    const skillDirectory = join(root, 'skills')
     const client = modelClient((request) => {
-      expect(request.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining(['skill_list', 'skill_view']))
+      expect(request.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining(['skill_list', 'skill_view', 'skill_manage']))
       expect(request.messages[0].content).toContain('## Skill Discovery')
       expect(request.messages[0].content).toContain('call skill_list before proceeding')
+      expect(request.messages[0].content).toContain('## Skill Evolution')
       return { content: 'ok' }
     })
 
-    await new AgentRuntime({ modelClient: client }).run({ messages: ['hi'] })
+    try {
+      await new AgentRuntime({ modelClient: client, skillDirectory }).run({ messages: ['hi'] })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reviews a tool-heavy turn in the background with only skill tools', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ekko-skill-review-'))
+    const skillDirectory = join(root, 'skills')
+    const workspaceRoot = join(root, 'workspace')
+    await mkdir(workspaceRoot, { recursive: true })
+    await writeFile(join(workspaceRoot, 'input.txt'), 'reusable evidence')
+    let mainCalls = 0
+    let reviewCalls = 0
+    const reviewRequests: ModelRequest[] = []
+    const usageEvents: unknown[] = []
+    const eventTypes: string[] = []
+    const client: ModelClient = {
+      provider: 'test',
+      requestStyle: 'custom-runtime',
+      capabilities: {
+        streaming: false,
+        tools: true,
+        vision: false,
+        jsonMode: false,
+        systemPrompt: true,
+      },
+      create: vi.fn(async (request: ModelRequest) => {
+        if (request.metadata?.purpose === 'ekko-skill-review') {
+          reviewRequests.push(request)
+          reviewCalls += 1
+          if (reviewCalls === 1) {
+            return {
+              content: '',
+              toolCalls: [{ id: 'review-list', name: 'skill_list', arguments: {} }],
+              finishReason: 'tool_calls',
+            }
+          }
+          if (reviewCalls === 2) {
+            return {
+              content: '',
+              toolCalls: [{
+                id: 'review-create',
+                name: 'skill_manage',
+                arguments: {
+                  action: 'create',
+                  name: 'reusable-verification',
+                  content: [
+                    '---',
+                    'name: reusable-verification',
+                    'description: Verify recurring changes consistently.',
+                    '---',
+                    '# Reusable Verification',
+                    '## Procedure',
+                    'Run the focused check and verify its output.',
+                    '',
+                  ].join('\n'),
+                },
+              }],
+              finishReason: 'tool_calls',
+              usage: { inputTokens: 20, outputTokens: 5 },
+            }
+          }
+          return { content: 'Done.', usage: { inputTokens: 12, outputTokens: 2 } }
+        }
+        mainCalls += 1
+        return mainCalls === 1
+          ? {
+              content: '',
+              toolCalls: [{ id: 'main-read', name: 'read_file', arguments: { path: 'input.txt' } }],
+              finishReason: 'tool_calls',
+            }
+          : { content: 'Main answer.' }
+      }),
+      stream: vi.fn(),
+    }
+    const runtime = new AgentRuntime({
+      modelClient: client,
+      skillDirectory,
+      skillReviewEveryToolCalls: 1,
+      toolDelayMs: 0,
+    })
+
+    try {
+      const result = await runtime.run({
+        messages: ['Use the input and finish the task.'],
+        metadata: { session_id: 'review-session' },
+        toolContext: { workspaceRoot },
+        onSkillReviewUsage: event => {
+          usageEvents.push(event)
+          throw new Error('observer failure')
+        },
+        onEvent: event => eventTypes.push(event.type),
+      })
+      expect(result.output.content).toBe('Main answer.')
+
+      await runtime.drainSkillReviews()
+
+      expect(reviewRequests[0].tools?.map(tool => tool.name).sort()).toEqual([
+        'skill_list',
+        'skill_manage',
+        'skill_view',
+      ])
+      expect(reviewRequests[0].messages[0].content).toContain('background procedural-learning reviewer')
+      expect(reviewRequests[0].messages[1].content).toContain('reusable evidence')
+      await expect(readFile(
+        join(skillDirectory, 'reusable-verification', 'SKILL.md'),
+        'utf8',
+      )).resolves.toContain('Run the focused check')
+      expect(usageEvents).toHaveLength(2)
+      expect(eventTypes.indexOf('run.completed')).toBeLessThan(eventTypes.indexOf('skill.review.started'))
+      expect(eventTypes).toContain('skill.review.completed')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('disables constructor and per-run skills without disabling regular tools', async () => {
@@ -681,11 +800,14 @@ describe('ekko-agent runtime', () => {
     const prompt = buildSystemPrompt({
       basePrompt: 'Base',
       skillDiscoveryEnabled: true,
+      skillManagementEnabled: true,
     })
 
     expect(prompt).toContain('## Skill Discovery')
     expect(prompt).toContain('call skill_list before proceeding')
     expect(prompt).toContain('call skill_view with its exact name')
+    expect(prompt).toContain('## Skill Evolution')
+    expect(prompt).toContain('Prefer a small patch over a full edit.')
     expect(prompt).not.toContain('## Skills')
   })
 
@@ -696,5 +818,14 @@ describe('ekko-agent runtime', () => {
     expect(prompt).toContain('![description](/absolute/path/image.png)')
     expect(prompt).toContain('![description](<C:/absolute/path/image.png>)')
     expect(prompt).toContain('Do not use relative paths or `file://` URLs.')
+  })
+
+  it('buildSystemPrompt requires dependency preflight before tool execution', () => {
+    const prompt = buildSystemPrompt({ basePrompt: 'Base' })
+
+    expect(prompt).toContain('## Tool Execution')
+    expect(prompt).toContain('prerequisites named by a Skill as requirements, not proof that they are installed')
+    expect(prompt).toContain('perform a lightweight availability check')
+    expect(prompt).toContain('prefer a compatible installed or built-in alternative')
   })
 })

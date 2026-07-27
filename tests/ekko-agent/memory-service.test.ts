@@ -23,7 +23,7 @@ let service: MemoryService
 
 beforeEach(async () => {
   webUiHome = await mkdtemp(join(tmpdir(), 'ekko-memory-service-'))
-  store = new SqliteMemoryStore(new EkkoDatabaseManager({ webUiHome }))
+  store = new SqliteMemoryStore(new EkkoDatabaseManager({ baseDirectory: webUiHome }))
   service = new MemoryService({ store, reviewEveryUserMessages: 1 })
 })
 

@@ -20,11 +20,16 @@ import type { MemoryContext, MemoryRuntimeIdentity } from '../memory/types'
 import type { MemoryCaptureMessage } from '../memory/service'
 import { ModelMemoryExtractor } from '../memory/extraction'
 import { createMemoryTools } from '../memory/tools'
+import {
+  DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL,
+  SkillReviewService,
+} from '../skills/review'
 
 export const DEFAULT_AGENT_MAX_STEPS = 90
 export const DEFAULT_AGENT_MODEL_MAX_RETRIES = 3
 export const DEFAULT_AGENT_MAX_CONSECUTIVE_TOOL_FAILURES = 6
 export const DEFAULT_AGENT_TOOL_DELAY_MS = 1000
+const MAX_TRACKED_SKILL_REVIEW_CONTEXTS = 1_024
 
 interface ModelResponseResult {
   response: ModelResponse
@@ -47,6 +52,9 @@ export class AgentRuntime {
   private readonly toolDelayMs: number
   private readonly defaultContextKey?: string
   private readonly memory?: AgentRuntimeOptions['memory']
+  private readonly skillReview?: SkillReviewService
+  private readonly skillReviewEveryToolCalls: number
+  private readonly skillToolCallCounts = new Map<string, number>()
   private readonly modelContexts = new Map<string, unknown>()
 
   constructor(options: AgentRuntimeOptions) {
@@ -67,6 +75,13 @@ export class AgentRuntime {
     this.toolDelayMs = options.toolDelayMs ?? DEFAULT_AGENT_TOOL_DELAY_MS
     this.defaultContextKey = options.contextKey
     this.memory = options.memory
+    this.skillReviewEveryToolCalls = Math.max(
+      0,
+      Math.floor(options.skillReviewEveryToolCalls ?? DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL),
+    )
+    this.skillReview = this.toolsEnabled && this.skillsEnabled && options.skillDirectory
+      ? new SkillReviewService({ skillDirectory: options.skillDirectory })
+      : undefined
     this.registerSkillTools(this.skills)
     if (this.toolsEnabled && this.memory) this.tools.registerMany(createMemoryTools(this.memory))
   }
@@ -86,6 +101,10 @@ export class AgentRuntime {
   async refreshTools(context?: AgentToolContext): Promise<void> {
     if (!this.toolsEnabled) return
     await this.tools.refreshTools(context)
+  }
+
+  async drainSkillReviews(): Promise<void> {
+    await this.skillReview?.drain()
   }
 
   /**
@@ -125,7 +144,11 @@ export class AgentRuntime {
     const memoryIdentity = this.memoryIdentityFor(input)
     const memoryPreparation = await this.prepareMemory(input, memoryIdentity)
     const memoryContext = memoryPreparation?.context
-    const executionToolContext = this.runToolContext(input, memoryPreparation?.sourceMessageIds)
+    const executionToolContext: AgentToolContext = {
+      ...(this.runToolContext(input, memoryPreparation?.sourceMessageIds) || {}),
+      runId,
+      skillMutationSource: 'foreground',
+    }
     if (memoryContext) {
       emit({
         type: 'memory.retrieved',
@@ -178,6 +201,7 @@ export class AgentRuntime {
           const context = contextKey ? this.modelContexts.get(contextKey) : assistantMessage.context
           emit({ type: 'run.completed', runId, output, steps: step, context, contextEstimate })
           this.completeMemory(memoryIdentity, messages, input)
+          this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
           return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
         }
 
@@ -195,6 +219,7 @@ export class AgentRuntime {
           messages.push(createToolResultMessage(toolCall.id, result.content, toolCall.name, result.contentParts))
           steps.push({ type: 'tool', step, toolCallId: toolCall.id, toolName: toolCall.name, result })
           consecutiveToolFailures = result.ok ? 0 : consecutiveToolFailures + 1
+          this.recordSkillToolCall(contextKey, toolCall.name)
           if (maxConsecutiveToolFailures > 0 && consecutiveToolFailures >= maxConsecutiveToolFailures) {
             emit({ type: 'run.tool_failure_limit', runId, failures: consecutiveToolFailures })
             output = {
@@ -205,6 +230,7 @@ export class AgentRuntime {
             const context = contextKey ? this.modelContexts.get(contextKey) : undefined
             emit({ type: 'run.completed', runId, output, steps: step, context, contextEstimate })
             this.completeMemory(memoryIdentity, messages, input)
+            this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
             return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
           }
           await delay(toolDelayMs, input.signal)
@@ -220,6 +246,7 @@ export class AgentRuntime {
       const context = contextKey ? this.modelContexts.get(contextKey) : undefined
       emit({ type: 'run.completed', runId, output, steps: maxSteps, context, contextEstimate })
       this.completeMemory(memoryIdentity, messages, input)
+      this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
       return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -319,6 +346,7 @@ export class AgentRuntime {
       skillDiscoveryEnabled: this.toolsEnabled &&
         !!this.tools.get('skill_list') &&
         !!this.tools.get('skill_view'),
+      skillManagementEnabled: this.toolsEnabled && !!this.tools.get('skill_manage'),
       context: {
         provider: modelClient.provider,
         model: input.model ?? input.modelDefaults?.model ?? this.modelDefaults?.model,
@@ -388,6 +416,56 @@ export class AgentRuntime {
         onUsage: input.onMemoryUsage,
       }),
     )
+  }
+
+  private recordSkillToolCall(contextKey: string | undefined, toolName: string): void {
+    if (!this.skillReview || this.skillReviewEveryToolCalls <= 0) return
+    const key = contextKey || '__default__'
+    if (toolName === 'skill_manage') {
+      this.skillToolCallCounts.delete(key)
+      return
+    }
+    const count = (this.skillToolCallCounts.get(key) || 0) + 1
+    this.skillToolCallCounts.delete(key)
+    this.skillToolCallCounts.set(key, count)
+    if (this.skillToolCallCounts.size > MAX_TRACKED_SKILL_REVIEW_CONTEXTS) {
+      const oldestKey = this.skillToolCallCounts.keys().next().value
+      if (oldestKey) this.skillToolCallCounts.delete(oldestKey)
+    }
+  }
+
+  private completeSkillReview(
+    runId: string,
+    contextKey: string | undefined,
+    messages: AgentMessage[],
+    input: AgentRuntimeRunInput,
+    emit?: (event: AgentRuntimeEvent) => void,
+  ): void {
+    if (
+      !this.skillReview ||
+      this.skillReviewEveryToolCalls <= 0 ||
+      !this.tools.get('skill_manage')
+    ) {
+      return
+    }
+    const key = contextKey || '__default__'
+    if ((this.skillToolCallCounts.get(key) || 0) < this.skillReviewEveryToolCalls) return
+    this.skillToolCallCounts.delete(key)
+    const modelClient = this.modelClientFor(input)
+    this.skillReview.schedule({
+      modelClient,
+      model: input.model ?? input.modelDefaults?.model ?? this.modelDefaults?.model,
+      messages: messages.map(message => ({ ...message })),
+      onUsage: input.onSkillReviewUsage,
+      onStarted: reviewId => emit?.({ type: 'skill.review.started', runId, reviewId }),
+      onCompleted: (reviewId, mutations) => emit?.({
+        type: 'skill.review.completed',
+        runId,
+        reviewId,
+        mutations,
+      }),
+      onFailed: (reviewId, error) => emit?.({ type: 'skill.review.failed', runId, reviewId, error }),
+    })
   }
 
   private modelRequest(

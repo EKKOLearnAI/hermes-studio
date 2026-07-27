@@ -819,18 +819,19 @@ export function addMessages(msgs: Array<{
   reasoning?: string | null
   reasoning_details?: string | null
   reasoning_content?: string | null
-}>): void {
-  if (!isSqliteAvailable() || msgs.length === 0) return
+}>): number[] {
+  if (!isSqliteAvailable() || msgs.length === 0) return []
   const db = getDb()!
   const insert = db.prepare(
     `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, display_role, display_content, tool_call_id, tool_calls, tool_name, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
+  const ids: number[] = []
   db.exec('BEGIN')
   try {
     for (const msg of msgs) {
       const toolCallsJson = msg.tool_calls ? JSON.stringify(msg.tool_calls) : null
-      insert.run(
+      const result = insert.run(
         msg.session_id, msg.role, normalizeMessageContentForStorageRole(msg.role, msg.content),
         msg.display_role ?? null, msg.display_content ?? null,
         msg.tool_call_id ?? null, toolCallsJson, msg.tool_name ?? null,
@@ -839,8 +840,10 @@ export function addMessages(msgs: Array<{
         msg.reasoning ?? null, msg.reasoning_details ?? null,
         msg.reasoning_content ?? null,
       )
+      ids.push(Number(result.lastInsertRowid))
     }
     db.exec('COMMIT')
+    return ids
   } catch (e) {
     db.exec('ROLLBACK')
     throw e

@@ -1,20 +1,25 @@
 import {
   AgentRuntime,
   EkkoDatabaseManager,
+  EkkoDirectoryManager,
+  EkkoFileLogger,
   MemoryService,
   SqliteMemoryStore,
   type AgentRuntimeRunInput,
   type AgentRuntimeRunResult,
   type AgentRuntimeContextEstimate,
+  type EkkoLogEntry,
+  type EkkoLogQuery,
+  type EkkoLogRecord,
 } from '../../../../ekko-agent/src'
-import { resolve } from 'node:path'
 import { config } from '../../config'
+import { getHermesBaseDir } from '../hermes/hermes-profile'
 import { logger } from '../logger'
 
 export interface GlobalEkkoAgentOptions {
-  webUiHome?: string
+  baseDirectory?: string
+  profile?: string
   memory?: MemoryService | false
-  skillDirectory?: string
 }
 
 export class GlobalEkkoAgent {
@@ -22,12 +27,37 @@ export class GlobalEkkoAgent {
   lastUsedAt = this.createdAt
   runCount = 0
   private readonly options: GlobalEkkoAgentOptions
+  private readonly directories: EkkoDirectoryManager
+  private readonly skillDirectory: string
+  private readonly logDirectory: string
+  private readonly fileLogger: EkkoFileLogger
   private runtime?: AgentRuntime
   private memory?: MemoryService
   private memoryDatabasePath?: string
 
   constructor(options: GlobalEkkoAgentOptions = {}) {
     this.options = options
+    this.directories = new EkkoDirectoryManager(options.baseDirectory)
+    this.directories.initialize({ hermesRootDirectory: getHermesBaseDir() })
+    this.skillDirectory = this.directories.profileSkillsDirectory(options.profile)
+    this.logDirectory = this.directories.profileLogsDirectory(options.profile)
+    this.fileLogger = new EkkoFileLogger({ directory: this.logDirectory })
+    this.writeLog({
+      category: 'system',
+      event: 'agent.initialized',
+      data: {
+        dataDirectory: this.directories.rootDirectory,
+        skillDirectory: this.skillDirectory,
+        logDirectory: this.logDirectory,
+      },
+    })
+    if (this.directories.lastSkillImport) {
+      this.writeLog({
+        category: 'skill',
+        event: 'skill.hermes_profiles_imported',
+        data: this.directories.lastSkillImport,
+      })
+    }
   }
 
   async run(input: AgentRuntimeRunInput): Promise<AgentRuntimeRunResult> {
@@ -40,7 +70,23 @@ export class GlobalEkkoAgent {
     return this.runtimeInstance().estimateContext(input)
   }
 
+  writeLog(entry: Omit<EkkoLogEntry, 'profile'>): boolean {
+    return this.fileLogger.write({
+      ...entry,
+      profile: this.options.profile || 'default',
+    })
+  }
+
+  queryLogs(query: EkkoLogQuery = {}): EkkoLogRecord[] {
+    return this.fileLogger.query(query)
+  }
+
   close(): void {
+    this.writeLog({
+      category: 'system',
+      event: 'agent.closed',
+      data: { runCount: this.runCount },
+    })
     this.memory?.close()
     this.memory = undefined
     this.runtime = undefined
@@ -53,34 +99,67 @@ export class GlobalEkkoAgent {
       runCount: this.runCount,
       memoryEnabled: this.memory?.isEnabled ?? false,
       memoryDatabasePath: this.memoryDatabasePath,
-      skillDirectory: this.options.skillDirectory,
+      dataDirectory: this.directories.rootDirectory,
+      skillDirectory: this.skillDirectory,
+      logDirectory: this.logDirectory,
+      logFilePath: this.fileLogger.filePath,
+      profile: this.options.profile || 'default',
     }
   }
 
   private runtimeInstance(): AgentRuntime {
     if (this.runtime) return this.runtime
     if (this.options.memory === false) {
-      this.runtime = new AgentRuntime({ skillDirectory: this.options.skillDirectory })
+      this.runtime = new AgentRuntime({ skillDirectory: this.skillDirectory })
+      this.writeLog({
+        category: 'memory',
+        event: 'memory.disabled',
+      })
+      this.writeLog({
+        category: 'system',
+        event: 'runtime.initialized',
+        data: { memoryEnabled: false },
+      })
       return this.runtime
     }
     if (this.options.memory) {
       this.memory = this.options.memory
+      this.writeLog({
+        category: 'memory',
+        event: 'memory.attached',
+      })
     } else {
       try {
-        const database = new EkkoDatabaseManager({ webUiHome: this.options.webUiHome })
+        const database = new EkkoDatabaseManager({ databasePath: this.directories.databasePath })
         // Opening the store recreates the current schema after an explicit memory reset.
         const store = new SqliteMemoryStore(database)
         this.memoryDatabasePath = store.databasePath
         this.memory = new MemoryService({ store })
+        this.writeLog({
+          category: 'memory',
+          event: 'memory.initialized',
+          data: { databasePath: this.memoryDatabasePath },
+        })
       } catch (error) {
         const warning = error instanceof Error ? error.message : String(error)
         logger.warn({ err: error }, '[ekko-agent] memory database initialization failed; memory is disabled')
         this.memory = new MemoryService({ enabled: false, warning })
+        this.writeLog({
+          category: 'memory',
+          event: 'memory.initialization_failed',
+          level: 'error',
+          data: { error },
+        })
       }
     }
     this.runtime = new AgentRuntime({
       memory: this.memory,
-      skillDirectory: this.options.skillDirectory,
+      skillDirectory: this.skillDirectory,
+    })
+    this.writeLog({
+      category: 'system',
+      event: 'runtime.initialized',
+      data: { memoryEnabled: this.memory?.isEnabled ?? false },
     })
     return this.runtime
   }
@@ -98,15 +177,15 @@ export function createGlobalEkkoAgent(
 
 const globalEkkoAgents = new Map<string, GlobalEkkoAgent>()
 
-export function getGlobalEkkoAgent(skillDirectory?: string): GlobalEkkoAgent {
-  const normalizedDirectory = skillDirectory ? resolve(skillDirectory) : ''
-  let agent = globalEkkoAgents.get(normalizedDirectory)
+export function getGlobalEkkoAgent(profile = 'default'): GlobalEkkoAgent {
+  const normalizedProfile = String(profile || '').trim() || 'default'
+  let agent = globalEkkoAgents.get(normalizedProfile)
   if (!agent) {
     agent = createGlobalEkkoAgent({
-      webUiHome: config.appHome,
-      skillDirectory: normalizedDirectory || undefined,
+      baseDirectory: config.appHome,
+      profile: normalizedProfile,
     })
-    globalEkkoAgents.set(normalizedDirectory, agent)
+    globalEkkoAgents.set(normalizedProfile, agent)
   }
   return agent
 }

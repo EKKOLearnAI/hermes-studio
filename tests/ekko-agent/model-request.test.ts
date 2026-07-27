@@ -508,7 +508,7 @@ describe('ekko-agent model requests', () => {
     }).requestStyle).toBe('custom-runtime')
   })
 
-  it('converts internal requests to OpenAI Responses payloads', () => {
+  it('converts internal requests to self-contained OpenAI Responses payloads', () => {
     const payload = toOpenAIResponsesPayload({
       id: 'openai',
       type: 'openai',
@@ -529,10 +529,10 @@ describe('ekko-agent model requests', () => {
       instructions: 'Be direct.',
       input: [{ role: 'user', content: 'Search docs.' }],
       max_output_tokens: 500,
-      previous_response_id: 'resp_previous',
       tools: [{ type: 'function', name: 'search' }],
       store: false,
     })
+    expect(payload).not.toHaveProperty('previous_response_id')
   })
 
   it('replays Responses tool calls and results with native input item types', () => {
@@ -576,6 +576,40 @@ describe('ekko-agent model requests', () => {
         call_id: 'call_weather',
         output: 'Sunny, 30°C',
       },
+    ])
+  })
+
+  it('omits invalid empty-name tool history from Responses replay', () => {
+    const payload = toOpenAIResponsesPayload({
+      id: 'custom:fun-codex',
+      type: 'openai-compatible',
+      requestStyle: 'openai-responses',
+      defaultModel: 'gpt-5.5',
+    }, {
+      messages: [
+        { role: 'user', content: 'Check the weather.' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{
+            id: 'call_invalid',
+            name: '',
+            arguments: { url: 'https://example.com' },
+          }],
+        },
+        {
+          role: 'tool',
+          toolCallId: 'call_invalid',
+          name: '',
+          content: 'Unknown tool: ',
+        },
+        { role: 'user', content: 'Try again.' },
+      ],
+    })
+
+    expect(payload.input).toEqual([
+      { role: 'user', content: 'Check the weather.' },
+      { role: 'user', content: 'Try again.' },
     ])
   })
 

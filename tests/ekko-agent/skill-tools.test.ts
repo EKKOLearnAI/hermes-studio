@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { SkillListTool, SkillViewTool } from '../../packages/ekko-agent/src'
+import { SkillListTool, SkillViewTool, createDefaultToolRegistry } from '../../packages/ekko-agent/src'
 
 let root = ''
 let skillDirectory = ''
@@ -28,6 +28,7 @@ afterEach(async () => {
 
 describe('ekko-agent skill tools', () => {
   it('returns empty successful results when the agent has no configured skill directory', async () => {
+    expect(createDefaultToolRegistry().get('skill_manage')).toBeUndefined()
     const listResult = await new SkillListTool().execute({})
     expect(listResult.ok).toBe(true)
     expect(JSON.parse(listResult.content)).toMatchObject({
@@ -51,29 +52,53 @@ describe('ekko-agent skill tools', () => {
     const payload = JSON.parse(result.content)
 
     expect(payload.skills).toEqual([
-      { name: 'local-only', description: 'Use local guidance.' },
-      { name: 'release-notes', description: 'Write polished release summaries.' },
+      { name: 'local-only', description: 'Use local guidance.', managedByEkko: false },
+      { name: 'release-notes', description: 'Write polished release summaries.', managedByEkko: false },
     ])
     expect(payload.total).toBe(2)
   })
 
-  it('searches skill names and descriptions and applies the result limit', async () => {
-    const result = await new SkillListTool(skillDirectory).execute({ query: 'write', limit: 1 })
+  it('searches skill names and descriptions without exposing a result limit', async () => {
+    const tool = new SkillListTool(skillDirectory)
+    const result = await tool.execute({ query: 'write' })
     const payload = JSON.parse(result.content)
 
+    expect(tool.definition.parameters.properties).not.toHaveProperty('limit')
     expect(payload.query).toBe('write')
     expect(payload.count).toBe(1)
     expect(payload.skills).toEqual([
-      { name: 'release-notes', description: 'Write polished release summaries.' },
+      { name: 'release-notes', description: 'Write polished release summaries.', managedByEkko: false },
     ])
   })
 
-  it('loads an exact skill with the usage-compatible skill_view prefix', async () => {
-    const result = await new SkillViewTool(skillDirectory).execute({ name: 'release-notes' })
+  it('returns every discovered skill when the directory contains more than the old default limit', async () => {
+    await Promise.all(Array.from({ length: 55 }, async (_, index) => {
+      const name = `bulk-skill-${String(index).padStart(2, '0')}`
+      const directory = join(skillDirectory, name)
+      await mkdir(directory, { recursive: true })
+      await writeFile(join(directory, 'SKILL.md'), `# ${name}\nBulk skill ${index}.\n`)
+    }))
 
-    expect(result.ok).toBe(true)
-    expect(result.content).toContain('[skill_view] name=release-notes')
-    expect(result.content).toContain('Local instructions.')
+    const result = await new SkillListTool(skillDirectory).execute({})
+    const payload = JSON.parse(result.content)
+
+    expect(payload.count).toBe(57)
+    expect(payload.total).toBe(57)
+    expect(payload.skills).toHaveLength(57)
+  })
+
+  it('loads the main skill file when filePath is omitted, empty, or an explicit SKILL.md alias', async () => {
+    const tool = new SkillViewTool(skillDirectory)
+    for (const filePath of [undefined, '', 'SKILL.md', './SKILL.md', '.\\SKILL.md']) {
+      const result = await tool.execute({
+        name: 'release-notes',
+        ...(filePath === undefined ? {} : { filePath }),
+      })
+
+      expect(result.ok).toBe(true)
+      expect(result.content).toMatch(/^\[skill_view\] name=release-notes \(\d+ chars\) file=SKILL\.md/)
+      expect(result.content).toContain('Local instructions.')
+    }
   })
 
   it('does not resolve path-like skill names outside the configured directory', async () => {
@@ -90,5 +115,223 @@ describe('ekko-agent skill tools', () => {
     const result = await new SkillListTool(skillDirectory).execute({})
 
     expect(result.ok).toBe(true)
+  })
+
+  it('creates and patches an Ekko-managed skill with a recoverable backup', async () => {
+    const tools = createDefaultToolRegistry({ skillDirectory })
+    expect(tools.get('skill_manage')).toBeDefined()
+    const runContext = { runId: 'skill-run', skillMutationSource: 'foreground' as const }
+    const content = [
+      '---',
+      'name: durable-debugging',
+      'description: Preserve reusable debugging procedures.',
+      '---',
+      '# Durable Debugging',
+      '## Procedure',
+      'Run the focused test.',
+      '',
+    ].join('\n')
+
+    await expect(tools.execute('skill_manage', {
+      action: 'create',
+      name: 'durable-debugging',
+      content,
+      category: 'engineering',
+    }, runContext)).resolves.toMatchObject({ ok: true })
+
+    const view = await tools.execute('skill_view', { name: 'durable-debugging' }, runContext)
+    expect(view).toMatchObject({
+      ok: true,
+      data: {
+        managedByEkko: true,
+      },
+    })
+
+    const patch = await tools.execute('skill_manage', {
+      action: 'patch',
+      name: 'durable-debugging',
+      oldString: 'Run the focused test.',
+      newString: 'Run the focused test, then verify the regression.',
+    }, runContext)
+
+    expect(patch).toMatchObject({ ok: true })
+    await expect(readFile(
+      join(skillDirectory, 'engineering', 'durable-debugging', 'SKILL.md'),
+      'utf8',
+    )).resolves.toContain('then verify the regression')
+    expect(await readdir(join(skillDirectory, '.ekko-backups'))).toHaveLength(1)
+
+    const secondPatchWithoutReview = await tools.execute('skill_manage', {
+      action: 'patch',
+      name: 'durable-debugging',
+      oldString: 'then verify the regression',
+      newString: 'then verify every regression',
+    }, runContext)
+    expect(secondPatchWithoutReview).toMatchObject({ ok: false })
+    expect(secondPatchWithoutReview.content).toContain('skill_view')
+  })
+
+  it('requires a fresh same-run skill_view before overwriting existing content', async () => {
+    const tools = createDefaultToolRegistry({ skillDirectory })
+    const runContext = { runId: 'stale-run', skillMutationSource: 'foreground' as const }
+    const skillPath = join(skillDirectory, 'writing', 'release-notes', 'SKILL.md')
+
+    const unread = await tools.execute('skill_manage', {
+      action: 'patch',
+      name: 'release-notes',
+      oldString: 'Local instructions.',
+      newString: 'Updated instructions.',
+    }, runContext)
+    expect(unread).toMatchObject({ ok: false })
+    expect(unread.content).toContain('skill_view')
+
+    await tools.execute('skill_view', { name: 'release-notes' }, runContext)
+    await writeFile(skillPath, `${await readFile(skillPath, 'utf8')}\nConcurrent change.\n`)
+    const stale = await tools.execute('skill_manage', {
+      action: 'patch',
+      name: 'release-notes',
+      oldString: 'Local instructions.',
+      newString: 'Updated instructions.',
+    }, runContext)
+    expect(stale).toMatchObject({ ok: false })
+    expect(stale.content).toContain('changed after skill_view')
+  })
+
+  it('keeps background review away from manually-authored skills', async () => {
+    const tools = createDefaultToolRegistry({ skillDirectory })
+    const reviewContext = { runId: 'review-run', skillMutationSource: 'background-review' as const }
+
+    await tools.execute('skill_view', { name: 'release-notes' }, reviewContext)
+    const result = await tools.execute('skill_manage', {
+      action: 'patch',
+      name: 'release-notes',
+      oldString: 'Local instructions.',
+      newString: 'Background rewrite.',
+    }, reviewContext)
+
+    expect(result).toMatchObject({ ok: false })
+    expect(result.content).toContain('protected skill')
+  })
+
+  it('manages allowed support files with the same read-before-write guard', async () => {
+    const tools = createDefaultToolRegistry({ skillDirectory })
+    const runContext = { runId: 'support-run', skillMutationSource: 'foreground' as const }
+    await tools.execute('skill_manage', {
+      action: 'create',
+      name: 'support-files',
+      content: [
+        '---',
+        'name: support-files',
+        'description: Keep reusable supporting material.',
+        '---',
+        '# Support Files',
+        'Read references/checklist.md.',
+        '',
+      ].join('\n'),
+    }, runContext)
+
+    await expect(tools.execute('skill_manage', {
+      action: 'write_file',
+      name: 'support-files',
+      filePath: 'references/checklist.md',
+      fileContent: 'Run the focused test.',
+    }, runContext)).resolves.toMatchObject({ ok: true })
+
+    const viewed = await tools.execute('skill_view', {
+      name: 'support-files',
+      filePath: 'references/checklist.md',
+    }, runContext)
+    expect(viewed.content).toMatch(/^\[skill_view\] name=support-files \(\d+ chars\) file=references\/checklist\.md/)
+
+    await expect(tools.execute('skill_manage', {
+      action: 'patch',
+      name: 'support-files',
+      filePath: 'references/checklist.md',
+      oldString: 'focused test',
+      newString: 'focused test and inspect its output',
+    }, runContext)).resolves.toMatchObject({ ok: true })
+
+    const unreadRemoval = await tools.execute('skill_manage', {
+      action: 'remove_file',
+      name: 'support-files',
+      filePath: 'references/checklist.md',
+    }, runContext)
+    expect(unreadRemoval).toMatchObject({ ok: false })
+
+    await tools.execute('skill_view', {
+      name: 'support-files',
+      filePath: 'references/checklist.md',
+    }, runContext)
+    await expect(tools.execute('skill_manage', {
+      action: 'remove_file',
+      name: 'support-files',
+      filePath: 'references/checklist.md',
+    }, runContext)).resolves.toMatchObject({ ok: true })
+    await expect(readFile(
+      join(skillDirectory, 'support-files', 'references', 'checklist.md'),
+      'utf8',
+    )).rejects.toThrow()
+  })
+
+  it('restricts support files and archives confirmed deletes instead of erasing them', async () => {
+    const tools = createDefaultToolRegistry({ skillDirectory })
+    const runContext = { runId: 'archive-run', skillMutationSource: 'foreground' as const }
+    const content = [
+      '---',
+      'name: safe-skill',
+      'description: Keep reusable safe procedures.',
+      '---',
+      '# Safe Skill',
+      '## Procedure',
+      'Verify the result.',
+      '',
+    ].join('\n')
+    await tools.execute('skill_manage', {
+      action: 'create',
+      name: 'safe-skill',
+      content,
+    }, runContext)
+
+    const escaped = await tools.execute('skill_manage', {
+      action: 'write_file',
+      name: 'safe-skill',
+      filePath: '../outside.md',
+      fileContent: 'outside',
+    }, runContext)
+    expect(escaped).toMatchObject({ ok: false })
+
+    await tools.execute('skill_view', { name: 'safe-skill' }, runContext)
+    const unconfirmed = await tools.execute('skill_manage', {
+      action: 'delete',
+      name: 'safe-skill',
+    }, runContext)
+    expect(unconfirmed).toMatchObject({ ok: false })
+    expect(unconfirmed.content).toContain('confirmed=true')
+
+    const archived = await tools.execute('skill_manage', {
+      action: 'delete',
+      name: 'safe-skill',
+      confirmed: true,
+    }, runContext)
+    expect(archived).toMatchObject({
+      ok: true,
+      data: {
+        archived: true,
+      },
+    })
+    await expect(readFile(join(skillDirectory, 'safe-skill', 'SKILL.md'), 'utf8')).rejects.toThrow()
+    expect(await readdir(join(skillDirectory, '.ekko-archive'))).toHaveLength(1)
+  })
+
+  it('does not discover a skill through a symlink that escapes the configured root', async () => {
+    const outside = join(root, 'outside-skill')
+    await mkdir(outside)
+    await writeFile(join(outside, 'SKILL.md'), '# Outside\nMust stay hidden.\n')
+    await symlink(outside, join(skillDirectory, 'escaped-skill'))
+
+    const result = await new SkillListTool(skillDirectory).execute({})
+    const payload = JSON.parse(result.content)
+
+    expect(payload.skills.map((skill: { name: string }) => skill.name)).not.toContain('outside-skill')
   })
 })

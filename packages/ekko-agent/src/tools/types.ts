@@ -1,6 +1,7 @@
 import type { AgentToolDefinition } from '../model/types'
 
 export interface AgentToolContext {
+  runId?: string
   cwd?: string
   workspaceRoot?: string
   workspaceId?: string
@@ -12,6 +13,7 @@ export interface AgentToolContext {
   mcpServers?: Record<string, unknown>
   timeoutMs?: number
   signal?: AbortSignal
+  skillMutationSource?: 'foreground' | 'background-review'
 }
 
 export interface AgentToolResult {

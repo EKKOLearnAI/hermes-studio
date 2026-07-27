@@ -115,8 +115,8 @@ transcript；外部获取的短期结果不会进入滚动摘要。模型失败�
 
 ## 数据库
 
-开发环境使用 `packages/ekko-agent/sql-data/ekko-agent.db`，其他环境使用
-`HERMES_WEB_UI_HOME/ekko/ekko.db`。服务端 canonical key 与 revision 模型采用 memory schema version 3；升级时直接删除
+Ekko 只接收一个可选的基目录，未传时使用用户主目录。数据库统一位于
+`<baseDirectory>/.ekko/ekko.db`。服务端 canonical key 与 revision 模型采用 memory schema version 3；升级时直接删除
 旧记忆表并重建，不迁移旧 scope 数据。
 
 数据库包含：

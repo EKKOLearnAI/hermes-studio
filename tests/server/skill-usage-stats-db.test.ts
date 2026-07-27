@@ -88,7 +88,7 @@ describe('Hermes skill usage analytics DB aggregation', () => {
       sessionId: 'recent-chat',
       timestamp: now - 45,
       toolName: 'skill_view',
-      content: '[skill_view] name=hermes-agent (64,764 chars)',
+      content: '[skill_view] name=hermes-agent (64,764 chars) file=SKILL.md',
     })
     insertToolResult(db, {
       sessionId: 'recent-chat',
