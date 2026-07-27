@@ -80,7 +80,7 @@ describe('coding agent resumed session config', () => {
     safeReadFileMock.mockResolvedValue('')
 
     const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
-    await startCodingAgentRun('claude-code', { sessionId: 'session-1' })
+    const result = await startCodingAgentRun('claude-code', { sessionId: 'session-1' })
 
     expect(startRunMock).toHaveBeenCalledWith(expect.objectContaining({
       agentSessionId: 'agent-session-1',
@@ -92,7 +92,7 @@ describe('coding agent resumed session config', () => {
     expect(launch.env.ANTHROPIC_API_KEY).toMatch(/^hwui_/)
     expect(launch.env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN')
     expect(launch.env.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/claude-code-proxy\/.+$/)
-    const settings = JSON.parse(readFileSync(join(home, 'coding-agent', 'model', 'default', 'custom_corp-claude', 'claude-code', 'settings.json'), 'utf-8'))
+    const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
     expect(settings.env.ANTHROPIC_API_KEY).toBe(launch.env.ANTHROPIC_API_KEY)
   })
 
@@ -128,7 +128,7 @@ describe('coding agent resumed session config', () => {
     const launch = startRunMock.mock.calls[0][0]
     expect(launch.env.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/claude-code-proxy\/.+$/)
     expect(Buffer.from(launch.env.ANTHROPIC_BASE_URL.split('/').pop() || '', 'base64url').toString('utf8')).toContain('anthropic_messages')
-    const settings = JSON.parse(readFileSync(join(home, 'coding-agent', 'model', 'default', 'custom_glm-coding-plan', 'claude-code', 'settings.json'), 'utf-8'))
+    const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
     expect(settings.env.ANTHROPIC_API_KEY).toMatch(/^hwui_/)
   })
 
@@ -170,7 +170,7 @@ describe('coding agent resumed session config', () => {
   })
 
   it('ignores a stale builtin base URL when the requested provider changed', async () => {
-    const home = makeHome()
+    makeHome()
     getSessionMock.mockReturnValue({
       id: 'session-1',
       profile: 'default',
@@ -184,7 +184,7 @@ describe('coding agent resumed session config', () => {
     safeReadFileMock.mockResolvedValue('DEEPSEEK_API_KEY=sk-deepseek\n')
 
     const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
-    await startCodingAgentRun('codex', {
+    const result = await startCodingAgentRun('codex', {
       sessionId: 'session-1',
       provider: 'deepseek',
       model: 'deepseek-v4-pro',
@@ -193,7 +193,7 @@ describe('coding agent resumed session config', () => {
       apiMode: 'chat_completions',
     })
 
-    const config = readFileSync(join(home, 'coding-agent', 'model', 'default', 'deepseek', 'codex', 'config.toml'), 'utf-8')
+    const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
     const routeKey = config.match(/\/api\/codex-proxy\/([^/]+)\/v1/)?.[1] || ''
     const routeParts = JSON.parse(Buffer.from(routeKey, 'base64url').toString('utf8'))
     expect(routeParts).toEqual(expect.arrayContaining([
@@ -280,7 +280,7 @@ describe('coding agent resumed session config', () => {
 
 
   it('prefers a stored coding-agent API mode when resuming without an explicit mode', async () => {
-    const home = makeHome()
+    makeHome()
     getSessionMock.mockReturnValue({
       id: 'session-1',
       profile: 'default',
@@ -295,7 +295,7 @@ describe('coding agent resumed session config', () => {
     safeReadFileMock.mockResolvedValue('')
 
     const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
-    await startCodingAgentRun('codex', {
+    const result = await startCodingAgentRun('codex', {
       sessionId: 'session-1',
       baseUrl: 'https://api.apikey.fun/v1',
       apiKey: 'sk-test',
@@ -303,7 +303,7 @@ describe('coding agent resumed session config', () => {
 
     const launch = startRunMock.mock.calls[0][0]
     expect(launch.apiMode).toBe('chat_completions')
-    const config = readFileSync(join(home, 'coding-agent', 'model', 'default', 'fun-codex', 'codex', 'config.toml'), 'utf-8')
+    const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
     const routeKey = config.match(/\/api\/codex-proxy\/([^/]+)\/v1/)?.[1] || ''
     expect(Buffer.from(routeKey, 'base64url').toString('utf8')).toContain('chat_completions')
     expect(updateSessionMock).toHaveBeenCalledWith('session-1', expect.objectContaining({

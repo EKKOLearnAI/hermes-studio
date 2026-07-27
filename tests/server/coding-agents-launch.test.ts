@@ -764,7 +764,7 @@ describe('coding agent launch preparation', () => {
     expect(config).toContain(`base_url = "http://127.0.0.1:8648/api/codex-proxy/`)
     expect(config).toMatch(/experimental_bearer_token = "hwui_[^"]+"/)
     expect(config).not.toContain('base_url = "https://api.openai.com/v1"')
-    expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'openai-api', 'codex'))
+    expect(dirname(dirname(result.rootDir))).toBe(join(home, 'coding-agent', 'model', 'default', 'openai-api', 'codex'))
   })
 
   it('points Codex Anthropic Messages providers at the local Responses proxy', async () => {
@@ -1451,6 +1451,40 @@ describe('coding agent launch preparation', () => {
 
     expect(first.routeKey).not.toBe(second.routeKey)
     expect(first.token).not.toBe(second.token)
+  })
+
+  it('keeps hidden session runtime configs separate for the same agent, provider, and model', async () => {
+    makeHome()
+    const common = {
+      profile: 'default',
+      provider: 'same-provider',
+      model: 'same-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-upstream',
+      apiMode: 'codex_responses' as const,
+      isolateSettings: true,
+    }
+    const first = await prepareCodingAgentLaunch('claude-code', {
+      ...common,
+      sessionId: 'chat-one',
+      agentSessionId: 'agent-one',
+    })
+    const second = await prepareCodingAgentLaunch('claude-code', {
+      ...common,
+      sessionId: 'chat-two',
+      agentSessionId: 'agent-two',
+    })
+
+    expect(first.rootDir).not.toBe(second.rootDir)
+    const firstSettings = JSON.parse(readFileSync(join(first.rootDir, 'settings.json'), 'utf-8'))
+    const secondSettings = JSON.parse(readFileSync(join(second.rootDir, 'settings.json'), 'utf-8'))
+    const decodeTarget = (baseUrl: string) => JSON.parse(Buffer.from(
+      new URL(baseUrl).pathname.split('/').filter(Boolean).at(-1) || '',
+      'base64url',
+    ).toString('utf-8'))
+
+    expect(decodeTarget(firstSettings.env.ANTHROPIC_BASE_URL).slice(-2)).toEqual(['agent-one', 'chat-one'])
+    expect(decodeTarget(secondSettings.env.ANTHROPIC_BASE_URL).slice(-2)).toEqual(['agent-two', 'chat-two'])
   })
 
   it('keeps Codex proxy routes separate for the same model with different upstream URLs', () => {

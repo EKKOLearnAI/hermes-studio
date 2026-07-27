@@ -667,7 +667,10 @@ export class CodingAgentRunManager {
     const responseEvent = this.normalizeCodexChatTextEvent(run, event)
     if (!responseEvent) return
     const storageSafeResponseEvent = truncateCodingAgentToolOutputEvent(responseEvent)
-    if (run.launch.agentId === 'claude-code' && run.currentChild && !run.acceptingPrintEvent && !isProxyToolEvent(event)) return
+    if (run.launch.agentId === 'claude-code' && !run.acceptingPrintEvent) {
+      if (run.terminalEventHandled) return
+      if (run.currentChild && !isProxyToolEvent(event)) return
+    }
     if (storageSafeResponseEvent.type === 'response.created') {
       if (run.responseStartEmitted) return
       run.responseStartEmitted = true

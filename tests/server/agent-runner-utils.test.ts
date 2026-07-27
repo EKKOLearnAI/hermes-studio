@@ -407,6 +407,41 @@ describe('coding agent run state', () => {
     manager.shutdown()
   })
 
+  it('ignores late Claude proxy events after a print turn completed', () => {
+    const manager = new CodingAgentRunManager()
+    const state: any = { messages: [], isWorking: false, events: [], queue: [] }
+    const emitted = vi.fn()
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).emitToChat = emitted
+
+    manager.start({
+      agentSessionId: 'agent-session-completed',
+      agentId: 'claude-code',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'test-model',
+      sessionId: 'chat-session-completed',
+      command: 'claude',
+      args: [],
+      shellCommand: 'claude',
+      workspaceDir: process.cwd(),
+      state,
+    })
+    const run = (manager as any).runs.get('agent-session-completed')
+    run.terminalEventHandled = true
+    state.isWorking = false
+
+    manager.handleResponseEvent('agent-session-completed', {
+      type: 'response.output_text.delta',
+      data: { delta: 'belongs to another session' },
+    })
+
+    expect(state.isWorking).toBe(false)
+    expect(state.messages).toEqual([])
+    expect(emitted).not.toHaveBeenCalled()
+    manager.shutdown()
+  })
+
   it('clears shared chat session run state when a print turn completes', async () => {
     initAllHermesTables()
     const manager = new CodingAgentRunManager()
