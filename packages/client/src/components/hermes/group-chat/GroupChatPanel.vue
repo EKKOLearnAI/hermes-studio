@@ -2,7 +2,7 @@
 import { ref, computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber, NDropdown, NModal, type DropdownOption } from 'naive-ui'
+import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber, NCheckbox, NDropdown, NModal, type DropdownOption } from 'naive-ui'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
@@ -55,6 +55,8 @@ const userProfileName = ref('')
 const userProfileDescription = ref('')
 const isSavingUserProfile = ref(false)
 const compressionConfig = ref({ triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10 })
+const maxAgentMentionDepth = ref(4)
+const unlimitedAgentMentionDepth = ref(false)
 const isCompressing = ref(false)
 const inviteCodeDraft = ref('')
 const isSavingInviteCode = ref(false)
@@ -835,6 +837,10 @@ function handleOpenRoomSettings() {
             maxHistoryTokens: room.maxHistoryTokens ?? 32000,
             tailMessageCount: room.tailMessageCount ?? 10,
         }
+        unlimitedAgentMentionDepth.value = room.maxAgentMentionDepth === null
+        maxAgentMentionDepth.value = Number.isSafeInteger(room.maxAgentMentionDepth) && Number(room.maxAgentMentionDepth) > 0
+            ? Number(room.maxAgentMentionDepth)
+            : 4
     }
     showCompressionModal.value = true
 }
@@ -857,12 +863,20 @@ async function handleSaveInviteCode() {
 async function handleSaveCompressionConfig() {
     if (!store.currentRoomId) return
     if (!currentRoomCanManage.value) return
+    const finiteDepth = Number(maxAgentMentionDepth.value)
+    if (!unlimitedAgentMentionDepth.value && (!Number.isSafeInteger(finiteDepth) || finiteDepth <= 0)) {
+        message.error(t('groupChat.invalidAutomaticHandoffLimit'))
+        return
+    }
     try {
-        const res = await updateRoomConfig(store.currentRoomId, { ...compressionConfig.value })
+        const res = await updateRoomConfig(store.currentRoomId, {
+            ...compressionConfig.value,
+            maxAgentMentionDepth: unlimitedAgentMentionDepth.value ? null : finiteDepth,
+        })
         const idx = store.rooms.findIndex(r => r.id === store.currentRoomId)
         if (idx >= 0 && res.room) store.rooms[idx] = res.room
         showCompressionModal.value = false
-        message.success(t('groupChat.compressionSaved'))
+        message.success(t('groupChat.roomSettingsSaved'))
     } catch {
         message.error(t('common.saveFailed'))
     }
@@ -1522,6 +1536,24 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         </div>
                     </section>
                     <section class="settings-section">
+                        <h4>{{ t('groupChat.automaticHandoffSettings') }}</h4>
+                        <div class="form-group">
+                            <label class="form-label">{{ t('groupChat.maxAutomaticHandoffs') }}</label>
+                            <NInputNumber
+                                v-model:value="maxAgentMentionDepth"
+                                :min="1"
+                                :step="1"
+                                :precision="0"
+                                :disabled="unlimitedAgentMentionDepth"
+                                style="width: 100%"
+                            />
+                            <NCheckbox v-model:checked="unlimitedAgentMentionDepth" style="margin-top: 10px">
+                                {{ t('groupChat.unlimitedAutomaticHandoffs') }}
+                            </NCheckbox>
+                            <p class="form-hint">{{ t('groupChat.maxAutomaticHandoffsDesc') }}</p>
+                        </div>
+                    </section>
+                    <section class="settings-section">
                         <h4>{{ t('groupChat.compressionSettings') }}</h4>
                         <div class="form-group">
                             <label class="form-label">{{ t('groupChat.triggerTokens') }}</label>
@@ -1552,7 +1584,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     <div class="modal-actions">
                         <NSpace justify="end">
                             <NButton @click="showCompressionModal = false">{{ t('common.cancel') }}</NButton>
-                            <NButton type="primary" @click="handleSaveCompressionConfig">{{ t('groupChat.saveCompression') }}</NButton>
+                            <NButton type="primary" @click="handleSaveCompressionConfig">{{ t('groupChat.saveRoomSettings') }}</NButton>
                         </NSpace>
                     </div>
                 </div>

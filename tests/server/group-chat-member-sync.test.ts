@@ -1118,7 +1118,11 @@ describe('Group Chat member/agent identity sync', () => {
     }))
 
     server.agentClients.processMentions.mockClear()
-    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all too deep', role: 'assistant', mentionDepth: 4, agentSessionId }, vi.fn())
+    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all fourth handoff', role: 'assistant', mentionDepth: 4, agentSessionId }, vi.fn())
+    expect(server.agentClients.processMentions).toHaveBeenCalledTimes(1)
+
+    server.agentClients.processMentions.mockClear()
+    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all too deep', role: 'assistant', mentionDepth: 5, agentSessionId }, vi.fn())
     expect(server.agentClients.processMentions).not.toHaveBeenCalled()
   })
 

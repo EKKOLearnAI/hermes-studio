@@ -126,6 +126,7 @@ interface RoomInfo {
     triggerTokens: number
     maxHistoryTokens: number
     tailMessageCount: number
+    maxAgentMentionDepth: number | null
     totalTokens: number
     sessionSeed: string
     messageSeq: number
@@ -216,10 +217,11 @@ function normalizeMentionDepth(depth: unknown): number {
     return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
 }
 
-function maxAgentMentionDepth(): number {
-    const value = Number(process.env.HERMES_GROUP_CHAT_MAX_AGENT_MENTION_DEPTH)
-    if (!Number.isFinite(value) || value <= 0) return 4
-    return Math.min(10, Math.floor(value))
+export function allowsAgentMentionRelay(mentionDepth: unknown, maxDepth: unknown): boolean {
+    if (maxDepth === null) return true
+    const value = Number(maxDepth)
+    const limit = Number.isFinite(value) && value > 0 ? Math.floor(value) : 4
+    return normalizeMentionDepth(mentionDepth) <= limit
 }
 
 class ChatStorage {
@@ -352,15 +354,15 @@ class ChatStorage {
     // ─── Rooms ────────────────────────────────────────────────
 
     getRoom(roomId: string): RoomInfo | undefined {
-        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, messageSeq, contextStartRoomSeq, prunedThroughRoomSeq, workspace, ownerAuthUserId FROM gc_rooms WHERE id = ?').get(roomId) as any
+        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, maxAgentMentionDepth, totalTokens, sessionSeed, messageSeq, contextStartRoomSeq, prunedThroughRoomSeq, workspace, ownerAuthUserId FROM gc_rooms WHERE id = ?').get(roomId) as any
     }
 
     getRoomByInviteCode(code: string): RoomInfo | undefined {
-        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, messageSeq, contextStartRoomSeq, prunedThroughRoomSeq, workspace, ownerAuthUserId FROM gc_rooms WHERE inviteCode = ?').get(code) as any
+        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, maxAgentMentionDepth, totalTokens, sessionSeed, messageSeq, contextStartRoomSeq, prunedThroughRoomSeq, workspace, ownerAuthUserId FROM gc_rooms WHERE inviteCode = ?').get(code) as any
     }
 
     getAllRooms(): RoomInfo[] {
-        return (this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, messageSeq, contextStartRoomSeq, prunedThroughRoomSeq, workspace, ownerAuthUserId FROM gc_rooms ORDER BY id').all() || []) as any[]
+        return (this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, maxAgentMentionDepth, totalTokens, sessionSeed, messageSeq, contextStartRoomSeq, prunedThroughRoomSeq, workspace, ownerAuthUserId FROM gc_rooms ORDER BY id').all() || []) as any[]
     }
 
     getRoomsForProfiles(profiles: string[]): RoomInfo[] {
@@ -368,7 +370,7 @@ class ChatStorage {
         if (!uniqueProfiles.length) return []
         const placeholders = uniqueProfiles.map(() => '?').join(', ')
         return (this.db()?.prepare(
-            `SELECT DISTINCT r.id, r.name, r.inviteCode, r.triggerTokens, r.maxHistoryTokens, r.tailMessageCount, r.totalTokens, r.sessionSeed, r.messageSeq, r.contextStartRoomSeq, r.prunedThroughRoomSeq, r.workspace, r.ownerAuthUserId
+            `SELECT DISTINCT r.id, r.name, r.inviteCode, r.triggerTokens, r.maxHistoryTokens, r.tailMessageCount, r.maxAgentMentionDepth, r.totalTokens, r.sessionSeed, r.messageSeq, r.contextStartRoomSeq, r.prunedThroughRoomSeq, r.workspace, r.ownerAuthUserId
              FROM gc_rooms r
              INNER JOIN gc_room_agents a ON a.roomId = r.id
              WHERE a.profile IN (${placeholders})
@@ -379,7 +381,7 @@ class ChatStorage {
     getRoomsForAuthUser(authUserId: number): RoomInfo[] {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return []
         return (this.db()?.prepare(
-            `SELECT DISTINCT r.id, r.name, r.inviteCode, r.triggerTokens, r.maxHistoryTokens, r.tailMessageCount, r.totalTokens, r.sessionSeed, r.messageSeq, r.contextStartRoomSeq, r.prunedThroughRoomSeq, r.workspace, r.ownerAuthUserId
+            `SELECT DISTINCT r.id, r.name, r.inviteCode, r.triggerTokens, r.maxHistoryTokens, r.tailMessageCount, r.maxAgentMentionDepth, r.totalTokens, r.sessionSeed, r.messageSeq, r.contextStartRoomSeq, r.prunedThroughRoomSeq, r.workspace, r.ownerAuthUserId
              FROM gc_rooms r
              INNER JOIN gc_room_members m ON m.roomId = r.id
              WHERE m.authUserId = ?
@@ -390,19 +392,22 @@ class ChatStorage {
     getOwnedRoomsForAuthUser(authUserId: number): RoomInfo[] {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return []
         return (this.db()?.prepare(
-            `SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, messageSeq, contextStartRoomSeq, prunedThroughRoomSeq, workspace, ownerAuthUserId
+            `SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, maxAgentMentionDepth, totalTokens, sessionSeed, messageSeq, contextStartRoomSeq, prunedThroughRoomSeq, workspace, ownerAuthUserId
              FROM gc_rooms
              WHERE ownerAuthUserId = ?
              ORDER BY id`
         ).all(authUserId) || []) as any[]
     }
 
-    saveRoom(id: string, name: string, inviteCode?: string, config?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number; workspace?: string; ownerAuthUserId?: number | null }): void {
+    saveRoom(id: string, name: string, inviteCode?: string, config?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number; maxAgentMentionDepth?: number | null; workspace?: string; ownerAuthUserId?: number | null }): void {
         const rawOwnerAuthUserId = Number(config?.ownerAuthUserId ?? 0)
         const ownerAuthUserId = Number.isFinite(rawOwnerAuthUserId) && rawOwnerAuthUserId > 0 ? Math.floor(rawOwnerAuthUserId) : null
+        const maxAgentMentionDepth = Object.prototype.hasOwnProperty.call(config || {}, 'maxAgentMentionDepth')
+            ? config?.maxAgentMentionDepth ?? null
+            : 4
         this.db()?.prepare(
-            'INSERT OR IGNORE INTO gc_rooms (id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, workspace, ownerAuthUserId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        ).run(id, name, inviteCode || null, config?.triggerTokens ?? 100000, config?.maxHistoryTokens ?? 32000, config?.tailMessageCount ?? 10, config?.workspace || '', ownerAuthUserId)
+            'INSERT OR IGNORE INTO gc_rooms (id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, maxAgentMentionDepth, workspace, ownerAuthUserId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).run(id, name, inviteCode || null, config?.triggerTokens ?? 100000, config?.maxHistoryTokens ?? 32000, config?.tailMessageCount ?? 10, maxAgentMentionDepth, config?.workspace || '', ownerAuthUserId)
     }
 
     setRoomOwnerAuthUserId(roomId: string, authUserId: number): void {
@@ -410,12 +415,13 @@ class ChatStorage {
         this.db()?.prepare('UPDATE gc_rooms SET ownerAuthUserId = ? WHERE id = ?').run(authUserId, roomId)
     }
 
-    updateRoomConfig(roomId: string, config: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): void {
+    updateRoomConfig(roomId: string, config: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number; maxAgentMentionDepth?: number | null }): void {
         const sets: string[] = []
         const vals: any[] = []
         if (config.triggerTokens !== undefined) { sets.push('triggerTokens = ?'); vals.push(config.triggerTokens) }
         if (config.maxHistoryTokens !== undefined) { sets.push('maxHistoryTokens = ?'); vals.push(config.maxHistoryTokens) }
         if (config.tailMessageCount !== undefined) { sets.push('tailMessageCount = ?'); vals.push(config.tailMessageCount) }
+        if (config.maxAgentMentionDepth !== undefined) { sets.push('maxAgentMentionDepth = ?'); vals.push(config.maxAgentMentionDepth) }
         if (sets.length === 0) return
         vals.push(roomId)
         this.db()?.prepare(`UPDATE gc_rooms SET ${sets.join(', ')} WHERE id = ?`).run(...vals)
@@ -1973,13 +1979,14 @@ export class GroupChatServer {
 
         const mentionDepth = normalizeMentionDepth(data.mentionDepth)
         const isAgentReply = savedMsg.role === 'assistant' && member?.source === 'agent'
+        const maxAgentMentionDepth = this.storage.getRoom(roomId)?.maxAgentMentionDepth
         const shouldRouteMentions = (savedMsg.role === 'user' && this.canSocketManageRoom(socket, roomId)) ||
-            (isAgentReply && mentionDepth < maxAgentMentionDepth())
+            (isAgentReply && allowsAgentMentionRelay(mentionDepth, maxAgentMentionDepth))
 
         if (shouldRouteMentions) {
             // Server-side @mention routing — parse mentions and invoke agents directly.
-            // Agent replies are allowed to mention other agents, but mentionDepth
-            // bounds chained agent-to-agent handoffs so one prompt cannot loop forever.
+            // Agent replies may mention other agents. The Room setting limits the
+            // automatic relay count unless the owner explicitly selects Unlimited.
             this.agentClients.processMentions(roomId, {
                 messageId: savedMsg.id,
                 content: routedText,

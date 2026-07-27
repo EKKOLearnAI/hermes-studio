@@ -2360,6 +2360,13 @@ export default {
   // 更新履歴
   groupChat: {
     roomSettings: 'ルーム設定',
+    automaticHandoffSettings: '自動ハンドオフ設定',
+    maxAutomaticHandoffs: '最大自動ハンドオフ回数',
+    unlimitedAutomaticHandoffs: '無制限',
+    maxAutomaticHandoffsDesc: '1つのユーザーメッセージから始まる Agent 間の @メンション自動ハンドオフ回数を制限します。@all の並列配信は変わりません。',
+    roomSettingsSaved: 'ルーム設定を保存しました',
+    invalidAutomaticHandoffLimit: '正の整数を入力するか、「無制限」を有効にしてください',
+    saveRoomSettings: '設定を保存',
     inviteCodeSettings: '招待コード設定',
     inviteCodePlaceholder: '新しい招待コードを入力',
     generateInviteCode: '招待コードを生成',

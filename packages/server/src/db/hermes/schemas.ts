@@ -561,6 +561,7 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   triggerTokens: 'INTEGER NOT NULL DEFAULT 100000',
   maxHistoryTokens: 'INTEGER NOT NULL DEFAULT 32000',
   tailMessageCount: 'INTEGER NOT NULL DEFAULT 10',
+  maxAgentMentionDepth: 'INTEGER DEFAULT 4',
   totalTokens: 'INTEGER NOT NULL DEFAULT 0',
   sessionSeed: "TEXT NOT NULL DEFAULT '0'",
   messageSeq: 'INTEGER NOT NULL DEFAULT 0',

@@ -2360,6 +2360,13 @@ export default {
   // 변경 이력
   groupChat: {
     roomSettings: '방 설정',
+    automaticHandoffSettings: '자동 핸드오프 설정',
+    maxAutomaticHandoffs: '최대 자동 핸드오프 횟수',
+    unlimitedAutomaticHandoffs: '무제한',
+    maxAutomaticHandoffsDesc: '한 사용자 메시지에서 시작된 Agent 간 @멘션 자동 핸드오프 횟수를 제한합니다. @all 병렬 브로드캐스트는 변경되지 않습니다.',
+    roomSettingsSaved: '방 설정이 저장되었습니다',
+    invalidAutomaticHandoffLimit: '양의 정수를 입력하거나 무제한을 활성화하세요',
+    saveRoomSettings: '설정 저장',
     inviteCodeSettings: '초대 코드 설정',
     inviteCodePlaceholder: '새 초대 코드 입력',
     generateInviteCode: '초대 코드 생성',

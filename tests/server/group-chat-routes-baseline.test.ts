@@ -51,6 +51,7 @@ describe('group chat REST route baseline', () => {
       removeRoomMembersForAgent: vi.fn(),
       removeRoomAgent: vi.fn((roomId, ref) => storage.agents.set(roomId, (storage.agents.get(roomId) || []).filter((a: any) => a.id !== ref && a.agentId !== ref))),
       clearRoomContext: vi.fn((roomId) => { const room = storage.rooms.get(roomId); if (room) Object.assign(room, { totalTokens: 0, sessionSeed: 'rotated' }) }),
+      updateRoomConfig: vi.fn((roomId, config) => { const room = storage.rooms.get(roomId); if (room) Object.assign(room, config) }),
       deleteRoom: vi.fn((roomId) => storage.rooms.delete(roomId)),
     }
     agentClients = {
@@ -76,6 +77,56 @@ describe('group chat REST route baseline', () => {
   afterEach(() => {
     httpServer.close()
     setGroupChatServer(null as any)
+  })
+
+  it('accepts a positive integer or null for the room automatic handoff limit', async () => {
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1', maxAgentMentionDepth: 4 })
+
+    const finite = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maxAgentMentionDepth: 12 }),
+    })
+    expect(finite.status).toBe(200)
+    await expect(finite.json()).resolves.toMatchObject({ room: { maxAgentMentionDepth: 12 } })
+
+    const unlimited = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maxAgentMentionDepth: null }),
+    })
+    expect(unlimited.status).toBe(200)
+    await expect(unlimited.json()).resolves.toMatchObject({ room: { maxAgentMentionDepth: null } })
+  })
+
+  it.each([0, -1, 1.5, '8'])('rejects invalid room automatic handoff limit %j', async (maxAgentMentionDepth) => {
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1', maxAgentMentionDepth: 4 })
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maxAgentMentionDepth }),
+    })
+
+    expect(res.status).toBe(400)
+    await expect(res.json()).resolves.toEqual({ error: 'maxAgentMentionDepth must be a positive integer or null' })
+    expect(storage.updateRoomConfig).not.toHaveBeenCalled()
+  })
+
+  it('keeps legacy rooms at the default four automatic handoffs when cloned', async () => {
+    storage.rooms.set('room-legacy', { id: 'room-legacy', name: 'Legacy', inviteCode: 'LEGACY', sessionSeed: '0' })
+    storage.agents.set('room-legacy', [])
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-legacy/clone`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Legacy Copy', inviteCode: 'LEGACYCOPY' }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(storage.saveRoom).toHaveBeenCalledWith(expect.any(String), 'Legacy Copy', 'LEGACYCOPY', expect.objectContaining({
+      maxAgentMentionDepth: 4,
+    }))
   })
 
   it('requires name and inviteCode when creating a room', async () => {

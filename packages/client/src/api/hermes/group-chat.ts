@@ -13,6 +13,7 @@ export interface RoomInfo {
     triggerTokens?: number
     maxHistoryTokens?: number
     tailMessageCount?: number
+    maxAgentMentionDepth?: number | null
     totalTokens?: number
     workspace: string
 }
@@ -298,7 +299,7 @@ export async function clearRoomContext(roomId: string): Promise<{ success: boole
     })
 }
 
-export async function updateRoomConfig(roomId: string, config: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): Promise<{ room: RoomInfo }> {
+export async function updateRoomConfig(roomId: string, config: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number; maxAgentMentionDepth?: number | null }): Promise<{ room: RoomInfo }> {
     return request(`/api/hermes/group-chat/rooms/${roomId}/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },

@@ -79,7 +79,7 @@ describe('group chat agent routing baseline', () => {
     expect(processMentions).not.toHaveBeenCalled()
   })
 
-  it('routes agent replies below the default mention-depth guard', async () => {
+  it('routes agent replies through the fourth automatic handoff by default', async () => {
     const { agent } = await joinHumanAndAgent()
     const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
 
@@ -88,18 +88,18 @@ describe('group chat agent routing baseline', () => {
       id: 'agent-msg-1',
       content: '@Worker chain handoff',
       role: 'assistant',
-      mentionDepth: 3,
+      mentionDepth: 4,
       agentSessionId: currentAgentSessionId(),
     })
 
     expect(processMentions).toHaveBeenCalledWith('room-1', expect.objectContaining({
       messageId: 'agent-msg-1',
       role: 'assistant',
-      mentionDepth: 3,
+      mentionDepth: 4,
     }))
   })
 
-  it('does not route agent replies at the default mention-depth guard', async () => {
+  it('does not route agent replies after the default four automatic handoffs', async () => {
     const { agent } = await joinHumanAndAgent()
     const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
 
@@ -108,10 +108,47 @@ describe('group chat agent routing baseline', () => {
       id: 'agent-msg-2',
       content: '@Worker stop looping',
       role: 'assistant',
-      mentionDepth: 4,
+      mentionDepth: 5,
       agentSessionId: currentAgentSessionId(),
     })
 
     expect(processMentions).not.toHaveBeenCalled()
+  })
+
+  it('uses the room-specific automatic handoff limit', async () => {
+    groupServer.getStorage().updateRoomConfig('room-1', { maxAgentMentionDepth: 2 })
+    const { agent } = await joinHumanAndAgent()
+    const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
+
+    await emitAck(agent, 'message', {
+      roomId: 'room-1',
+      id: 'agent-msg-custom',
+      content: '@Worker custom guard',
+      role: 'assistant',
+      mentionDepth: 3,
+      agentSessionId: currentAgentSessionId(),
+    })
+
+    expect(processMentions).not.toHaveBeenCalled()
+  })
+
+  it('routes agent replies without a depth guard when the room is unlimited', async () => {
+    groupServer.getStorage().updateRoomConfig('room-1', { maxAgentMentionDepth: null })
+    const { agent } = await joinHumanAndAgent()
+    const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
+
+    await emitAck(agent, 'message', {
+      roomId: 'room-1',
+      id: 'agent-msg-unlimited',
+      content: '@Worker unlimited handoff',
+      role: 'assistant',
+      mentionDepth: 10_000,
+      agentSessionId: currentAgentSessionId(),
+    })
+
+    expect(processMentions).toHaveBeenCalledWith('room-1', expect.objectContaining({
+      messageId: 'agent-msg-unlimited',
+      mentionDepth: 10_000,
+    }))
   })
 })
