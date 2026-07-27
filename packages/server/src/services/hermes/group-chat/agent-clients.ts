@@ -60,6 +60,11 @@ type MentionMessage = {
     role?: string
     input?: string | ContentBlock[]
     mentionDepth?: number
+    handoffJobId?: string
+    handoffLeaseToken?: string
+    handoffChainId?: string
+    handoffKind?: 'mention' | 'fixed' | 'fanout'
+    targetSessionId?: string
 }
 
 export function participantContextRevision(
@@ -713,7 +718,7 @@ class AgentClient {
             return
         }
         logger.debug(`[AgentClients] ${this.name} mentioned by ${msg.senderName}: "${msg.content.slice(0, 50)}"`)
-        const runMessageId = groupMessageId(roomId, this.profile, this.name)
+        const runMessageId = groupMessageId(roomId, this.profile, this.name, msg.handoffJobId)
         let partIndex = 0
         let streamMessageId = groupMessagePartId(runMessageId, partIndex)
         let currentContent = ''
@@ -936,6 +941,11 @@ class AgentClient {
                         await this.sendMessage(roomId, currentContent, streamMessageId, {
                             role: 'assistant',
                             mentionDepth: nextMentionDepth(msg),
+                            handoffChainId: msg.handoffChainId || '',
+                            handoffDepth: nextMentionDepth(msg),
+                            sourceHandoffJobId: msg.handoffJobId || '',
+                            sourceHandoffLeaseToken: msg.handoffLeaseToken || '',
+                            handoffFinal: false,
                             reasoning: reasoningContent || null,
                             reasoning_content: reasoningContent || null,
                         }, sessionId)
@@ -992,6 +1002,11 @@ class AgentClient {
                 await this.sendMessage(roomId, currentContent, streamMessageId, {
                     role: 'assistant',
                     mentionDepth: nextMentionDepth(msg),
+                    handoffChainId: msg.handoffChainId || '',
+                    handoffDepth: nextMentionDepth(msg),
+                    sourceHandoffJobId: msg.handoffJobId || '',
+                    sourceHandoffLeaseToken: msg.handoffLeaseToken || '',
+                    handoffFinal: true,
                     reasoning: reasoningContent || null,
                     reasoning_content: reasoningContent || null,
                 }, sessionId)
@@ -1050,7 +1065,7 @@ class AgentClient {
         const sessionId = this.currentSessionId(roomId)
         const replyInterruptVersion = this.interruptVersion(sessionId)
         const roomWorkspace = String(this.storage?.getRoom?.(roomId)?.workspace || '').trim()
-        const messageId = groupMessagePartId(groupMessageId(roomId, this.profile, this.name), 0)
+        const messageId = groupMessagePartId(groupMessageId(roomId, this.profile, this.name, msg.handoffJobId), 0)
         let output = ''
         let reasoning = ''
         let settled = false
@@ -1219,6 +1234,11 @@ class AgentClient {
                         await this.sendMessage(roomId, output, messageId, {
                             role: 'assistant',
                             mentionDepth: nextMentionDepth(msg),
+                            handoffChainId: msg.handoffChainId || '',
+                            handoffDepth: nextMentionDepth(msg),
+                            sourceHandoffJobId: msg.handoffJobId || '',
+                            sourceHandoffLeaseToken: msg.handoffLeaseToken || '',
+                            handoffFinal: true,
                             reasoning: reasoning || null,
                             reasoning_content: reasoning || null,
                         }, sessionId)
@@ -1389,6 +1409,11 @@ class AgentClient {
         await this.sendMessage(roomId, content, messageId, {
             role: 'assistant',
             mentionDepth: nextMentionDepth(sourceMsg),
+            handoffChainId: sourceMsg.handoffChainId || '',
+            handoffDepth: nextMentionDepth(sourceMsg),
+            sourceHandoffJobId: sourceMsg.handoffJobId || '',
+            sourceHandoffLeaseToken: sourceMsg.handoffLeaseToken || '',
+            handoffFinal: true,
             finish_reason: 'error',
             reasoning: reasoningContent || null,
             reasoning_content: reasoningContent || null,
@@ -1579,7 +1604,8 @@ export function groupBridgeSessionId(roomId: string, profile: string, name: stri
     return `${safePrefix.slice(0, Math.max(0, 120 - suffix.length))}${suffix}`
 }
 
-function groupMessageId(roomId: string, profile: string, name: string): string {
+function groupMessageId(roomId: string, profile: string, name: string, handoffJobId?: string): string {
+    if (handoffJobId) return `gcmsg_handoff_${safeId(handoffJobId)}`
     const raw = `gcmsg_${safeId(roomId)}_${safeId(profile)}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 160)
 }
@@ -1916,6 +1942,41 @@ export class AgentClients {
         }
     }
 
+    async processHandoffJob(job: {
+        id: string
+        roomId: string
+        chainId: string
+        targetAgentId: string
+        targetSessionId: string
+        depth: number
+        kind: 'mention' | 'fixed' | 'fanout'
+        leaseToken: string
+    }, source: MentionMessage): Promise<void> {
+        const agent = this.getAgents(job.roomId).find(candidate => candidate.agentId === job.targetAgentId)
+        if (!agent) {
+            const err = new Error(`Handoff target ${job.targetAgentId} is not connected`) as Error & { safeRetry?: boolean }
+            err.safeRetry = true
+            throw err
+        }
+        const binding = this._storage?.getRoomAgentByAgentId?.(job.roomId, job.targetAgentId)
+        if (!binding || String(binding.sessionId || '') !== job.targetSessionId) {
+            throw new Error(`Handoff target session changed for ${job.targetAgentId}`)
+        }
+        await this._processAgentMention(job.roomId, agent, {
+            ...source,
+            mentionDepth: job.depth,
+            handoffJobId: job.id,
+            handoffLeaseToken: job.leaseToken,
+            handoffChainId: job.chainId,
+            handoffKind: job.kind,
+            targetSessionId: job.targetSessionId,
+        })
+        const completed = this._storage?.getHandoffJob?.(job.id)
+        if (!completed || !['completed', 'failed'].includes(completed.status)) {
+            throw new Error(`Handoff ${job.id} ended without a durable final response`)
+        }
+    }
+
     /**
      * Process a single agent mention with status reporting and queue drain.
      */
@@ -1926,11 +1987,21 @@ export class AgentClients {
     ): Promise<void> {
         const agentKey = this.agentQueueKey(roomId, agent)
         if (this._pausedRooms.has(roomId)) {
+            if (msg.handoffJobId) {
+                const err = new Error(`Room ${roomId} is paused`) as Error & { retryWithoutAttempt?: boolean }
+                err.retryWithoutAttempt = true
+                throw err
+            }
             this.queueMention(agentKey, agent, msg)
             logger.debug(`[AgentClients] room ${roomId} is interrupting, queued mention for agent ${agent.name}`)
             return
         }
         if (this._processingRooms.has(agentKey)) {
+            if (msg.handoffJobId) {
+                const err = new Error(`Agent ${agent.name} is already processing`) as Error & { retryWithoutAttempt?: boolean }
+                err.retryWithoutAttempt = true
+                throw err
+            }
             this.queueMention(agentKey, agent, msg)
             logger.debug(`[AgentClients] agent ${agent.name} is processing, queued mention in room ${roomId}`)
             return

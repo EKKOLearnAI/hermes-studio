@@ -548,6 +548,8 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   maxHistoryTokens: 'INTEGER NOT NULL DEFAULT 32000',
   tailMessageCount: 'INTEGER NOT NULL DEFAULT 10',
   maxAgentMentionDepth: 'INTEGER DEFAULT 4',
+  handoffMode: "TEXT NOT NULL DEFAULT 'mentions'",
+  handoffOrderJson: "TEXT NOT NULL DEFAULT '[]'",
   totalTokens: 'INTEGER NOT NULL DEFAULT 0',
   sessionSeed: "TEXT NOT NULL DEFAULT '0'",
   messageSeq: 'INTEGER NOT NULL DEFAULT 0',
@@ -575,6 +577,38 @@ export const GC_MESSAGES_SCHEMA: Record<string, string> = {
   reasoning_details: 'TEXT',
   reasoning_content: 'TEXT',
   roomSeq: 'INTEGER NOT NULL DEFAULT 0',
+  handoffChainId: "TEXT NOT NULL DEFAULT ''",
+  handoffDepth: 'INTEGER NOT NULL DEFAULT 0',
+  sourceHandoffJobId: "TEXT NOT NULL DEFAULT ''",
+}
+
+export const GC_HANDOFF_JOBS_TABLE = 'gc_handoff_jobs'
+
+export const GC_HANDOFF_JOBS_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  roomId: 'TEXT NOT NULL',
+  chainId: 'TEXT NOT NULL',
+  sourceMessageId: 'TEXT NOT NULL',
+  targetAgentId: 'TEXT NOT NULL',
+  targetSessionId: 'TEXT NOT NULL',
+  depth: 'INTEGER NOT NULL DEFAULT 0',
+  kind: "TEXT NOT NULL DEFAULT 'mention'",
+  status: "TEXT NOT NULL DEFAULT 'pending'",
+  attemptCount: 'INTEGER NOT NULL DEFAULT 0',
+  availableAt: 'INTEGER NOT NULL DEFAULT 0',
+  leaseOwner: "TEXT NOT NULL DEFAULT ''",
+  leaseToken: "TEXT NOT NULL DEFAULT ''",
+  leaseExpiresAt: 'INTEGER NOT NULL DEFAULT 0',
+  lastError: "TEXT NOT NULL DEFAULT ''",
+  createdAt: 'INTEGER NOT NULL',
+  updatedAt: 'INTEGER NOT NULL',
+  completedAt: 'INTEGER NOT NULL DEFAULT 0',
+}
+
+export const GC_HANDOFF_JOBS_INDEXES = {
+  uniq_gc_handoff_source_target: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_gc_handoff_source_target ON gc_handoff_jobs(sourceMessageId, targetAgentId)',
+  idx_gc_handoff_dispatch: 'CREATE INDEX IF NOT EXISTS idx_gc_handoff_dispatch ON gc_handoff_jobs(status, availableAt, leaseExpiresAt, createdAt)',
+  idx_gc_handoff_room: 'CREATE INDEX IF NOT EXISTS idx_gc_handoff_room ON gc_handoff_jobs(roomId, createdAt)',
 }
 
 export const GC_ROOM_AGENTS_TABLE = 'gc_room_agents'
@@ -1320,6 +1354,9 @@ export function initAllHermesTables(): void {
     // Group chat - basic tables
     syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)
     syncTable(GC_MESSAGES_TABLE, GC_MESSAGES_SCHEMA)
+    syncTable(GC_HANDOFF_JOBS_TABLE, GC_HANDOFF_JOBS_SCHEMA, {
+      indexes: GC_HANDOFF_JOBS_INDEXES,
+    })
     backfillGroupMessageRoomSequences(db)
     syncTable(GC_CONTEXT_SNAPSHOTS_TABLE, GC_CONTEXT_SNAPSHOTS_SCHEMA)
     backfillGroupRoomContextWatermarks(db)

@@ -2,9 +2,9 @@ import { expect, test, type Page, type Route } from '@playwright/test'
 import { authenticate, TEST_MODEL_GROUP } from './fixtures'
 
 const baseRooms = [
-  { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', canManage: true, workspace: '/tmp/alpha', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, maxAgentMentionDepth: 4 as number | null, totalTokens: 123 },
-  { id: 'room-beta', name: 'Beta Room', inviteCode: 'BETA22', canManage: true, workspace: '/tmp/beta', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, maxAgentMentionDepth: 4 as number | null, totalTokens: 456 },
-  { id: 'room-readonly', name: 'Read Only Room', inviteCode: null, canManage: false, workspace: '/tmp/readonly', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, maxAgentMentionDepth: 4 as number | null, totalTokens: 0 },
+  { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', canManage: true, workspace: '/tmp/alpha', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, maxAgentMentionDepth: 4 as number | null, handoffMode: 'mentions' as 'mentions' | 'fixed', handoffOrderJson: '[]', handoffOrder: [] as string[], totalTokens: 123 },
+  { id: 'room-beta', name: 'Beta Room', inviteCode: 'BETA22', canManage: true, workspace: '/tmp/beta', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, maxAgentMentionDepth: 4 as number | null, handoffMode: 'mentions' as 'mentions' | 'fixed', handoffOrderJson: '[]', handoffOrder: [] as string[], totalTokens: 456 },
+  { id: 'room-readonly', name: 'Read Only Room', inviteCode: null, canManage: false, workspace: '/tmp/readonly', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, maxAgentMentionDepth: 4 as number | null, handoffMode: 'mentions' as 'mentions' | 'fixed', handoffOrderJson: '[]', handoffOrder: [] as string[], totalTokens: 0 },
 ]
 
 const mixedRuntimeParticipants = [
@@ -52,6 +52,12 @@ async function mockGroupChatApi(page: Page) {
   const rooms = baseRooms.map(room => ({ ...room }))
   const inviteCodeUpdates: Array<{ roomId: string, body: unknown }> = []
   const roomConfigUpdates: Array<{ roomId: string, body: Record<string, unknown> }> = []
+  const handoffJobs = [{
+    id: 'job-failed-1', roomId: 'room-alpha', chainId: 'chain-1', sourceMessageId: 'alpha-msg',
+    targetAgentId: 'participant-codex-a', targetSessionId: 'gc_room-alpha_participant-codex-a_0',
+    depth: 1, kind: 'fixed', status: 'failed', attemptCount: 1,
+    lastError: 'runner unavailable', createdAt: 1, updatedAt: 2, completedAt: 2,
+  }]
 
   await page.route('**/*', async (route: Route) => {
     const request = route.request()
@@ -102,11 +108,22 @@ async function mockGroupChatApi(page: Page) {
     if (roomConfigMatch && request.method() === 'PUT') {
       const roomId = decodeURIComponent(roomConfigMatch[1])
       const body = JSON.parse(request.postData() || '{}') as Record<string, unknown>
-      roomConfigUpdates.push({ roomId, body })
+      roomConfigUpdates.push({ roomId, body: { ...body } })
       const room = rooms.find(r => r.id === roomId)
       if (!room || !room.canManage) return json({ error: 'Forbidden' }, 403)
+      if (Array.isArray(body.handoffOrder)) {
+        room.handoffOrder = body.handoffOrder.map(String)
+        room.handoffOrderJson = JSON.stringify(body.handoffOrder)
+        delete body.handoffOrder
+      }
       Object.assign(room, body)
       return json({ room })
+    }
+
+    const handoffsMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/handoffs$/)
+    if (handoffsMatch && request.method() === 'GET') {
+      const roomId = decodeURIComponent(handoffsMatch[1])
+      return json({ jobs: roomId === 'room-alpha' ? handoffJobs : [] })
     }
 
     const workspaceListMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/workspace-files\/list$/)
@@ -305,7 +322,7 @@ test.describe('group chat room deep links', () => {
 
     const modal = page.locator('.room-settings-modal')
     const handoffSection = modal.locator('.settings-section', { hasText: 'Automatic Handoffs' })
-    const handoffInput = handoffSection.locator('input').first()
+    const handoffInput = handoffSection.locator('.n-input-number input')
     const unlimited = handoffSection.getByRole('checkbox', { name: 'Unlimited' })
     const saveSettings = modal.getByRole('button', { name: 'Save settings' })
 
@@ -319,9 +336,9 @@ test.describe('group chat room deep links', () => {
 
     await settingsButton.click()
     const reopenedHandoffSection = page.locator('.room-settings-modal .settings-section', { hasText: 'Automatic Handoffs' })
-    await expect(reopenedHandoffSection.locator('input').first()).toHaveValue('12')
+    await expect(reopenedHandoffSection.locator('.n-input-number input')).toHaveValue('12')
     await reopenedHandoffSection.getByRole('checkbox', { name: 'Unlimited' }).check()
-    await expect(reopenedHandoffSection.locator('input').first()).toBeDisabled()
+    await expect(reopenedHandoffSection.locator('.n-input-number input')).toBeDisabled()
     const unlimitedResponse = page.waitForResponse(response => response.request().method() === 'PUT' && response.url().endsWith('/api/hermes/group-chat/rooms/room-alpha/config'))
     await page.locator('.room-settings-modal').getByRole('button', { name: 'Save settings' }).click()
     await expect((await unlimitedResponse).status()).toBe(200)
@@ -330,7 +347,50 @@ test.describe('group chat room deep links', () => {
     await settingsButton.click()
     const unlimitedSection = page.locator('.room-settings-modal .settings-section', { hasText: 'Automatic Handoffs' })
     await expect(unlimitedSection.getByRole('checkbox', { name: 'Unlimited' })).toBeChecked()
-    await expect(unlimitedSection.locator('input').first()).toBeDisabled()
+    await expect(unlimitedSection.locator('.n-input-number input')).toBeDisabled()
+  })
+
+  test('room settings persist fixed participant order and show durable failures', async ({ page }) => {
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    await expect(page.locator('.handoff-status-row--failed')).toContainText('Handoff failed')
+    await expect(page.locator('.handoff-status-row--failed')).toContainText('Codex A')
+    await expect(page.locator('.handoff-status-row--failed')).toContainText('runner unavailable')
+
+    const settingsButton = page.locator('.chat-header .header-info .compression-settings-button')
+    await settingsButton.click()
+    const modal = page.locator('.room-settings-modal')
+    const section = modal.locator('.settings-section', { hasText: 'Automatic Handoffs' })
+    await section.getByText('Mentions from Agent output', { exact: true }).click()
+    await page.getByText('Fixed participant order', { exact: true }).click()
+
+    const participantSelect = section.locator('.n-select').nth(1)
+    await participantSelect.click()
+    await page.getByText('Hermes A', { exact: true }).click()
+    await participantSelect.click()
+    await page.getByText('Codex A', { exact: true }).click()
+    await participantSelect.click()
+    await page.keyboard.press('Escape')
+
+    const orderRows = section.locator('.handoff-order-item')
+    await expect(orderRows).toHaveCount(2)
+    await expect(orderRows.nth(0)).toContainText('Hermes A')
+    await expect(orderRows.nth(1)).toContainText('Codex A')
+    await orderRows.nth(1).getByRole('button', { name: 'Move up' }).click()
+    await expect(orderRows.nth(0)).toContainText('Codex A')
+
+    const response = page.waitForResponse(res => res.request().method() === 'PUT' && res.url().endsWith('/api/hermes/group-chat/rooms/room-alpha/config'))
+    await modal.getByRole('button', { name: 'Save settings' }).click()
+    await expect((await response).status()).toBe(200)
+    expect(api.roomConfigUpdates.at(-1)?.body).toMatchObject({
+      handoffMode: 'fixed',
+      handoffOrder: ['participant-codex-a', 'participant-hermes-a'],
+    })
+
+    await settingsButton.click()
+    const reopened = page.locator('.room-settings-modal .settings-section', { hasText: 'Automatic Handoffs' })
+    await expect(reopened.getByText('Fixed participant order', { exact: true })).toBeVisible()
+    await expect(reopened.locator('.handoff-order-item').nth(0)).toContainText('Codex A')
+    await expect(reopened.locator('.handoff-order-item').nth(1)).toContainText('Hermes A')
   })
 
   test('read-only room members cannot open room settings', async ({ page }) => {

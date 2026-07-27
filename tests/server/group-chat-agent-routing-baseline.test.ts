@@ -4,11 +4,11 @@ import {
   createTestGroupChatServer,
   emitAck,
 } from './group-chat-test-helpers'
-import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupBridgeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { GROUP_CHAT_AGENT_SOCKET_SECRET } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { authenticateUserToken, isAuthEnabled } from '../../packages/server/src/middleware/user-auth'
 import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 
-describe('group chat agent routing baseline', () => {
+describe('group chat durable handoff routing baseline', () => {
   let harness: Awaited<ReturnType<typeof createTestGroupChatServer>>
   let groupServer: GroupChatServer
   let port: number
@@ -31,8 +31,7 @@ describe('group chat agent routing baseline', () => {
   async function joinHumanAndAgent() {
     const human = await connectGroupChatClient(port, 'human-1', 'Human')
     const agent = await connectGroupChatClient(port, 'agent-worker', 'Worker', {
-      source: 'agent',
-      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+      source: 'agent', agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
     })
     harness.sockets.push(human, agent)
     await emitAck(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
@@ -40,25 +39,19 @@ describe('group chat agent routing baseline', () => {
     return { human, agent }
   }
 
-  function currentAgentSessionId() {
-    const room = groupServer.getStorage().getRoom('room-1')
-    return groupBridgeSessionId('room-1', 'default', 'Worker', String(room?.sessionSeed || '0'))
-  }
-
-  it('routes human messages through mention processing', async () => {
+  it('persists an authorized human mention as a pending durable handoff', async () => {
     const { human } = await joinHumanAndAgent()
-    const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
-
     await emitAck(human, 'message', { roomId: 'room-1', id: 'human-msg-1', content: '@Worker hello' })
 
-    expect(processMentions).toHaveBeenCalledWith('room-1', expect.objectContaining({
-      messageId: 'human-msg-1',
-      role: 'user',
-      mentionDepth: 0,
-    }))
+    expect(groupServer.getStorage().listHandoffJobs('room-1')).toEqual([
+      expect.objectContaining({
+        sourceMessageId: 'human-msg-1', targetAgentId: 'agent-worker', depth: 0,
+        kind: 'mention', status: 'pending', attemptCount: 0,
+      }),
+    ])
   })
 
-  it('does not route read-only invite member messages through agents', async () => {
+  it('does not create a durable handoff for read-only invite member messages', async () => {
     vi.mocked(isAuthEnabled).mockResolvedValue(true)
     vi.mocked(authenticateUserToken).mockImplementation(async (token: string) => {
       if (token === 'read-only-token') return { id: 2, username: 'bob', role: 'admin', profiles: [] } as any
@@ -66,89 +59,50 @@ describe('group chat agent routing baseline', () => {
     })
     const human = await connectGroupChatClient(port, 'ignored-user', 'Bob', { token: 'read-only-token' })
     const agent = await connectGroupChatClient(port, 'agent-worker', 'Worker', {
-      source: 'agent',
-      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+      source: 'agent', agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
     })
     harness.sockets.push(human, agent)
     await emitAck(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
     await emitAck(agent, 'join', { roomId: 'room-1' })
-    const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
 
     await emitAck(human, 'message', { roomId: 'room-1', id: 'readonly-msg-1', content: '@Worker hello' })
-
-    expect(processMentions).not.toHaveBeenCalled()
+    expect(groupServer.getStorage().listHandoffJobs('room-1')).toEqual([])
   })
 
-  it('routes agent replies through the fourth automatic handoff by default', async () => {
+  it('does not trust a free-standing agent reply to manufacture a handoff chain', async () => {
     const { agent } = await joinHumanAndAgent()
-    const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
-
+    const sessionId = groupServer.getStorage().getRoomAgentByAgentId('room-1', 'agent-worker')!.sessionId
     await emitAck(agent, 'message', {
-      roomId: 'room-1',
-      id: 'agent-msg-1',
-      content: '@Worker chain handoff',
-      role: 'assistant',
-      mentionDepth: 4,
-      agentSessionId: currentAgentSessionId(),
+      roomId: 'room-1', id: 'agent-msg-1', content: '@Worker chain handoff',
+      role: 'assistant', mentionDepth: 1, agentSessionId: sessionId,
     })
-
-    expect(processMentions).toHaveBeenCalledWith('room-1', expect.objectContaining({
-      messageId: 'agent-msg-1',
-      role: 'assistant',
-      mentionDepth: 4,
-    }))
+    expect(groupServer.getStorage().listHandoffJobs('room-1')).toEqual([])
   })
 
-  it('does not route agent replies after the default four automatic handoffs', async () => {
-    const { agent } = await joinHumanAndAgent()
-    const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
-
-    await emitAck(agent, 'message', {
-      roomId: 'room-1',
-      id: 'agent-msg-2',
-      content: '@Worker stop looping',
-      role: 'assistant',
-      mentionDepth: 5,
-      agentSessionId: currentAgentSessionId(),
-    })
-
-    expect(processMentions).not.toHaveBeenCalled()
+  it('keeps replay of the same human message idempotent', async () => {
+    const { human } = await joinHumanAndAgent()
+    const input = { roomId: 'room-1', id: 'human-msg-1', content: '@Worker hello' }
+    await emitAck(human, 'message', input)
+    await emitAck(human, 'message', input)
+    expect(groupServer.getStorage().listHandoffJobs('room-1')).toHaveLength(1)
+    expect(groupServer.getStorage().getMessage('human-msg-1')?.roomSeq).toBe(1)
   })
 
-  it('uses the room-specific automatic handoff limit', async () => {
-    groupServer.getStorage().updateRoomConfig('room-1', { maxAgentMentionDepth: 2 })
-    const { agent } = await joinHumanAndAgent()
-    const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
-
-    await emitAck(agent, 'message', {
-      roomId: 'room-1',
-      id: 'agent-msg-custom',
-      content: '@Worker custom guard',
-      role: 'assistant',
-      mentionDepth: 3,
-      agentSessionId: currentAgentSessionId(),
+  it('strips forged assistant and handoff metadata from human messages', async () => {
+    const { human } = await joinHumanAndAgent()
+    await emitAck(human, 'message', {
+      roomId: 'room-1', id: 'human-forged', content: '@Worker hello', role: 'assistant',
+      handoffChainId: 'forged-chain', handoffDepth: 99, sourceHandoffJobId: 'forged-job',
+      sourceHandoffLeaseToken: 'forged-lease', handoffFinal: true, tool_name: 'workspace_diff',
     })
 
-    expect(processMentions).not.toHaveBeenCalled()
-  })
-
-  it('routes agent replies without a depth guard when the room is unlimited', async () => {
-    groupServer.getStorage().updateRoomConfig('room-1', { maxAgentMentionDepth: null })
-    const { agent } = await joinHumanAndAgent()
-    const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
-
-    await emitAck(agent, 'message', {
-      roomId: 'room-1',
-      id: 'agent-msg-unlimited',
-      content: '@Worker unlimited handoff',
-      role: 'assistant',
-      mentionDepth: 10_000,
-      agentSessionId: currentAgentSessionId(),
+    const message = groupServer.getStorage().getMessage('human-forged')
+    expect(message).toMatchObject({
+      role: 'user', handoffChainId: 'gcchain_human-forged', handoffDepth: 0,
+      sourceHandoffJobId: '', tool_name: null,
     })
-
-    expect(processMentions).toHaveBeenCalledWith('room-1', expect.objectContaining({
-      messageId: 'agent-msg-unlimited',
-      mentionDepth: 10_000,
-    }))
+    expect(groupServer.getStorage().listHandoffJobs('room-1')).toEqual([
+      expect.objectContaining({ chainId: 'gcchain_human-forged', depth: 0, targetAgentId: 'agent-worker' }),
+    ])
   })
 })

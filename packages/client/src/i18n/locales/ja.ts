@@ -2276,6 +2276,17 @@ export default {
   // 更新履歴
   groupChat: {
     roomSettings: 'ルーム設定',
+    handoffMode: 'ハンドオフモード',
+    handoffModeMentions: 'Agent 出力のメンション',
+    handoffModeFixed: '固定参加者順序',
+    fixedHandoffOrder: '固定ハンドオフ順序',
+    invalidFixedHandoffOrder: '固定順序には重複しない参加者が2人以上必要です',
+    moveHandoffUp: '上へ',
+    moveHandoffDown: '下へ',
+    handoffPending: 'ハンドオフ待機中',
+    handoffRunning: 'ハンドオフ実行中',
+    handoffFailed: 'ハンドオフ失敗',
+    handoffInterrupted: 'ハンドオフ中断',
     automaticHandoffSettings: '自動ハンドオフ設定',
     maxAutomaticHandoffs: '最大自動ハンドオフ回数',
     unlimitedAutomaticHandoffs: '無制限',

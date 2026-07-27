@@ -6,7 +6,7 @@ import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NI
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
-import { updateRoomConfig, forceCompress } from '@/api/hermes/group-chat'
+import { updateRoomConfig, forceCompress, listHandoffs } from '@/api/hermes/group-chat'
 import GroupMessageList from './GroupMessageList.vue'
 import GroupChatInput from './GroupChatInput.vue'
 import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
@@ -18,7 +18,7 @@ import { inferCodingAgentApiMode, normalizeCodingAgentApiMode } from '@/api/codi
 import type { ProfileAvatar as ParticipantAvatar } from '@/api/hermes/profiles'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
-import type { RoomAgent, RoomInfo } from '@/api/hermes/group-chat'
+import type { RoomAgent, RoomInfo, GroupHandoffJob } from '@/api/hermes/group-chat'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
@@ -57,6 +57,10 @@ const isSavingUserProfile = ref(false)
 const compressionConfig = ref({ triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10 })
 const maxAgentMentionDepth = ref(4)
 const unlimitedAgentMentionDepth = ref(false)
+const handoffMode = ref<'mentions' | 'fixed'>('mentions')
+const handoffOrder = ref<string[]>([])
+const handoffJobs = ref<GroupHandoffJob[]>([])
+const handoffPollTimer = ref<ReturnType<typeof setInterval> | null>(null)
 const isCompressing = ref(false)
 const inviteCodeDraft = ref('')
 const isSavingInviteCode = ref(false)
@@ -257,6 +261,12 @@ function canManageRoom(room: Pick<RoomInfo, 'canManage'> | null | undefined): bo
     return room?.canManage === true
 }
 const currentRoomCanManage = computed(() => canManageRoom(currentRoom.value))
+const handoffModeOptions = computed(() => [
+    { label: t('groupChat.handoffModeMentions'), value: 'mentions' },
+    { label: t('groupChat.handoffModeFixed'), value: 'fixed' },
+])
+const handoffAgentOptions = computed(() => store.agents.map(agent => ({ label: agent.name, value: agent.agentId })))
+const visibleHandoffJobs = computed(() => handoffJobs.value.filter(job => ['pending', 'running', 'failed', 'interrupted'].includes(job.status)).slice(0, 8))
 const visibleApproval = computed(() => currentRoomCanManage.value ? store.activePendingApproval : null)
 const currentWorkspaceLabel = computed(() => workspaceBasename(currentRoom.value?.workspace || ''))
 const canUpdateInviteCode = computed(() => {
@@ -673,12 +683,49 @@ function participantRuntimeLabel(agent: RoomAgent): string {
     return agent.codingAgentId === 'claude-code' ? 'Claude Code' : 'Codex'
 }
 
+async function refreshHandoffs() {
+    if (!store.currentRoomId) {
+        handoffJobs.value = []
+        return
+    }
+    const roomId = store.currentRoomId
+    try {
+        const res = await listHandoffs(store.currentRoomId)
+        if (store.currentRoomId === roomId) handoffJobs.value = res.jobs
+    } catch {
+        // Room permissions or a transient reconnect may make one poll fail.
+    }
+}
+
+function handoffStatusLabel(status: GroupHandoffJob['status']): string {
+    const key = status === 'pending' ? 'handoffPending'
+        : status === 'running' ? 'handoffRunning'
+            : status === 'interrupted' ? 'handoffInterrupted'
+                : 'handoffFailed'
+    return t(`groupChat.${key}`)
+}
+
+function moveHandoffAgent(agentId: string, direction: -1 | 1) {
+    const index = handoffOrder.value.indexOf(agentId)
+    const target = index + direction
+    if (index < 0 || target < 0 || target >= handoffOrder.value.length) return
+    const next = [...handoffOrder.value]
+    ;[next[index], next[target]] = [next[target], next[index]]
+    handoffOrder.value = next
+}
+
+function handoffAgentName(agentId: string): string {
+    return store.agents.find(agent => agent.agentId === agentId)?.name || agentId
+}
+
 onMounted(() => {
     window.addEventListener('hermes:open-page-sidebar', openPageSidebar)
     window.addEventListener('hermes:preview-workspace-file', handleWorkspaceFilePreviewRequest)
     window.addEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
     window.addEventListener('resize', handleWorkspacePanelResize)
     handleWorkspacePanelResize()
+    void refreshHandoffs()
+    handoffPollTimer.value = setInterval(() => { void refreshHandoffs() }, 2_000)
     if (profilesStore.profiles.length === 0) {
         void profilesStore.fetchProfiles()
     }
@@ -689,6 +736,8 @@ onUnmounted(() => {
     window.removeEventListener('hermes:preview-workspace-file', handleWorkspaceFilePreviewRequest)
     window.removeEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
     window.removeEventListener('resize', handleWorkspacePanelResize)
+    if (handoffPollTimer.value) clearInterval(handoffPollTimer.value)
+    handoffPollTimer.value = null
     stopWorkspaceResize()
     if (showWorkspacePanel.value) closeWorkspacePanel()
     else toolPanelStore.closeWorkspaceDiff()
@@ -696,6 +745,8 @@ onUnmounted(() => {
 
 watch(() => store.currentRoomId, (roomId, previousRoomId) => {
     if (roomId !== previousRoomId && (filesStore.previewFile || toolPanelStore.workspaceDiff || showWorkspacePanel.value)) closeWorkspacePanel()
+    handoffJobs.value = []
+    void refreshHandoffs()
 })
 
 watch(() => filesStore.previewFile, previewFile => {
@@ -836,6 +887,13 @@ function handleOpenRoomSettings() {
         maxAgentMentionDepth.value = Number.isSafeInteger(room.maxAgentMentionDepth) && Number(room.maxAgentMentionDepth) > 0
             ? Number(room.maxAgentMentionDepth)
             : 4
+        handoffMode.value = room.handoffMode === 'fixed' ? 'fixed' : 'mentions'
+        const storedOrder = Array.isArray(room.handoffOrder) ? room.handoffOrder.map(String) : []
+        const allowed = new Set(store.agents.map(agent => agent.agentId))
+        handoffOrder.value = storedOrder.filter((id, index) => allowed.has(id) && storedOrder.indexOf(id) === index)
+        if (handoffMode.value === 'fixed' && handoffOrder.value.length < 2) {
+            handoffOrder.value = store.agents.map(agent => agent.agentId)
+        }
     }
     showCompressionModal.value = true
 }
@@ -863,10 +921,16 @@ async function handleSaveCompressionConfig() {
         message.error(t('groupChat.invalidAutomaticHandoffLimit'))
         return
     }
+    if (handoffMode.value === 'fixed' && (handoffOrder.value.length < 2 || new Set(handoffOrder.value).size !== handoffOrder.value.length)) {
+        message.error(t('groupChat.invalidFixedHandoffOrder'))
+        return
+    }
     try {
         const res = await updateRoomConfig(store.currentRoomId, {
             ...compressionConfig.value,
             maxAgentMentionDepth: unlimitedAgentMentionDepth.value ? null : finiteDepth,
+            handoffMode: handoffMode.value,
+            handoffOrder: handoffOrder.value,
         })
         const idx = store.rooms.findIndex(r => r.id === store.currentRoomId)
         if (idx >= 0 && res.room) store.rooms[idx] = res.room
@@ -1122,6 +1186,19 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
             >
                 <div class="group-chat-surface">
                     <div class="group-message-shell">
+                        <div v-if="visibleHandoffJobs.length" class="handoff-status-panel" role="status" aria-live="polite">
+                            <div
+                                v-for="job in visibleHandoffJobs"
+                                :key="job.id"
+                                class="handoff-status-row"
+                                :class="`handoff-status-row--${job.status}`"
+                                :title="job.lastError || handoffStatusLabel(job.status)"
+                            >
+                                <span>{{ handoffStatusLabel(job.status) }}</span>
+                                <span>→ {{ handoffAgentName(job.targetAgentId) }}</span>
+                                <span v-if="job.lastError" class="handoff-status-error">{{ job.lastError }}</span>
+                            </div>
+                        </div>
                         <GroupMessageList />
                         <Transition name="approval-float">
                             <div v-if="visibleApproval" class="approval-float-panel">
@@ -1529,6 +1606,27 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     <section class="settings-section">
                         <h4>{{ t('groupChat.automaticHandoffSettings') }}</h4>
                         <div class="form-group">
+                            <label class="form-label">{{ t('groupChat.handoffMode') }}</label>
+                            <NSelect v-model:value="handoffMode" :options="handoffModeOptions" />
+                        </div>
+                        <div v-if="handoffMode === 'fixed'" class="form-group">
+                            <label class="form-label">{{ t('groupChat.fixedHandoffOrder') }}</label>
+                            <NSelect
+                                v-model:value="handoffOrder"
+                                multiple
+                                :options="handoffAgentOptions"
+                            />
+                            <div class="handoff-order-list">
+                                <div v-for="(agentId, index) in handoffOrder" :key="agentId" class="handoff-order-item">
+                                    <span>{{ index + 1 }}. {{ handoffAgentName(agentId) }}</span>
+                                    <NSpace :size="4">
+                                        <NButton size="tiny" :disabled="index === 0" :aria-label="t('groupChat.moveHandoffUp')" @click="moveHandoffAgent(agentId, -1)">↑</NButton>
+                                        <NButton size="tiny" :disabled="index === handoffOrder.length - 1" :aria-label="t('groupChat.moveHandoffDown')" @click="moveHandoffAgent(agentId, 1)">↓</NButton>
+                                    </NSpace>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-group">
                             <label class="form-label">{{ t('groupChat.maxAutomaticHandoffs') }}</label>
                             <NInputNumber
                                 v-model:value="maxAgentMentionDepth"
@@ -1614,6 +1712,63 @@ export default defineComponent({ components: { CreateRoomForm } })
     flex: 1;
     min-height: 0;
     display: flex;
+}
+
+.handoff-status-panel {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5;
+    width: min(720px, calc(100% - 32px));
+    display: grid;
+    gap: 6px;
+    pointer-events: none;
+}
+
+.handoff-status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 7px 10px;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    border-radius: 8px;
+    background: rgba(24, 24, 27, 0.94);
+    color: $text-secondary;
+    font-size: 12px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.24);
+
+    &--failed,
+    &--interrupted {
+        border-color: rgba(239, 68, 68, 0.48);
+        color: #fecaca;
+        pointer-events: auto;
+    }
+}
+
+.handoff-status-error {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #fca5a5;
+}
+
+.handoff-order-list {
+    display: grid;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.handoff-order-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 8px;
+    border: 1px solid $border-color;
+    border-radius: 6px;
+    color: $text-secondary;
 }
 
 @media (max-width: $breakpoint-mobile) {
