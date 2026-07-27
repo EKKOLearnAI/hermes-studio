@@ -66,9 +66,6 @@ describe('app relay controller', () => {
         pairingExpiresAt: 12345,
         expiresAt: 12345,
       },
-      appAuth: {
-        baseUrl: 'http://127.0.0.1:8077',
-      },
     })
   })
 

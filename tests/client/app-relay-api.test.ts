@@ -14,9 +14,6 @@ describe('App Relay API', () => {
         pairingCode: 'ABCD2345',
         pairingExpiresAt: 12345,
       },
-      appAuth: {
-        baseUrl: 'http://127.0.0.1:8077',
-      },
     })
   })
 
@@ -36,12 +33,4 @@ describe('App Relay API', () => {
     ])
   })
 
-  it('returns the fixed account-service bootstrap URL from the local server', async () => {
-    const { fetchAppRelayBootstrap } = await import('@/api/hermes/app-relay')
-
-    await expect(fetchAppRelayBootstrap()).resolves.toMatchObject({
-      appAuthBaseUrl: 'http://127.0.0.1:8077',
-      relay: { machineId: 'hwui_machine' },
-    })
-  })
 })

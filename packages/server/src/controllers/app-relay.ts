@@ -11,12 +11,7 @@ import { getDeviceIdentity, getPublicSystemInfo } from '../services/system-info'
 const APP_RELAY_CONNECTION_ID = 'app-relay'
 
 function appRelayResponse(relay: Record<string, unknown>) {
-  return {
-    relay,
-    appAuth: {
-      baseUrl: config.appRelay.url,
-    },
-  }
+  return { relay }
 }
 
 export async function getAppRelayStatusController(ctx: Context) {

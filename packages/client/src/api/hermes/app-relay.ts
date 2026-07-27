@@ -10,26 +10,10 @@ export interface AppRelayStatus {
 
 interface AppRelayResponse {
   relay: AppRelayStatus
-  appAuth?: {
-    baseUrl?: string
-  }
-}
-
-export interface AppRelayBootstrap {
-  relay: AppRelayStatus
-  appAuthBaseUrl: string
-}
-
-export async function fetchAppRelayBootstrap(): Promise<AppRelayBootstrap> {
-  const response = await request<AppRelayResponse>('/api/app-relay/status')
-  return {
-    relay: response.relay,
-    appAuthBaseUrl: String(response.appAuth?.baseUrl || ''),
-  }
 }
 
 export async function fetchAppRelayStatus(): Promise<AppRelayStatus> {
-  return (await fetchAppRelayBootstrap()).relay
+  return (await request<AppRelayResponse>('/api/app-relay/status')).relay
 }
 
 export async function connectAppRelay(): Promise<AppRelayStatus> {
