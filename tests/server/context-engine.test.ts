@@ -484,6 +484,85 @@ describe('ContextEngine.buildContext', () => {
         expect(gatewayCaller.summarize).not.toHaveBeenCalled()
     })
 
+    it('denies retention summarization before reading its bounded private range when the lease is stale', async () => {
+        const release = vi.fn()
+        const loadMessages = vi.fn(() => makeMessages(3))
+        const gatewayCaller: GatewayCaller = { summarize: vi.fn() }
+        const guardedEngine = new ContextEngine({ messageFetcher: mockFetcher, gatewayCaller })
+
+        await expect(guardedEngine.summarizeParticipantRange(
+            'room-1',
+            'default',
+            loadMessages,
+            undefined,
+            () => ({
+                sessionId: `gc_h_${'a'.repeat(32)}`,
+                authorizationGuard: () => false,
+                release,
+            }),
+        )).rejects.toBeInstanceOf(ContextAuthorizationChangedError)
+
+        expect(loadMessages).not.toHaveBeenCalled()
+        expect(gatewayCaller.summarize).not.toHaveBeenCalled()
+        expect(release).toHaveBeenCalledOnce()
+    })
+
+    it('rejects a retention summary and releases its lease when authority changes in flight', async () => {
+        let authorized = true
+        const release = vi.fn()
+        const messages = makeMessages(3).map((message, index) => ({ ...message, roomSeq: index + 1 }))
+        const loadMessages = vi.fn(() => messages)
+        const gatewayCaller: GatewayCaller = {
+            summarize: vi.fn(async (...args: Parameters<GatewayCaller['summarize']>) => {
+                const lease = args[7]()
+                try {
+                    authorized = false
+                    return { summary: 'must not checkpoint', sessionId: lease.sessionId }
+                } finally {
+                    lease.release()
+                }
+            }),
+        }
+        const guardedEngine = new ContextEngine({ messageFetcher: mockFetcher, gatewayCaller })
+
+        await expect(guardedEngine.summarizeParticipantRange(
+            'room-1',
+            'default',
+            loadMessages,
+            undefined,
+            () => ({
+                sessionId: `gc_h_${'b'.repeat(32)}`,
+                authorizationGuard: () => authorized,
+                release,
+            }),
+        )).rejects.toBeInstanceOf(ContextAuthorizationChangedError)
+
+        expect(loadMessages).toHaveBeenCalledOnce()
+        expect(gatewayCaller.summarize).toHaveBeenCalledOnce()
+        expect(release).toHaveBeenCalledOnce()
+    })
+
+    it('returns the previous retention checkpoint without external work for an empty authorized range', async () => {
+        const release = vi.fn()
+        const gatewayCaller: GatewayCaller = { summarize: vi.fn() }
+        const guardedEngine = new ContextEngine({ messageFetcher: mockFetcher, gatewayCaller })
+
+        await expect(guardedEngine.summarizeParticipantRange(
+            'room-1',
+            'default',
+            () => [],
+            'existing checkpoint',
+            () => ({
+                sessionId: `gc_h_${'c'.repeat(32)}`,
+                authorizationGuard: () => true,
+                release,
+            }),
+        )).resolves.toBe('existing checkpoint')
+
+        expect(gatewayCaller.summarize).not.toHaveBeenCalled()
+        expect(release).toHaveBeenCalledOnce()
+    })
+
     it('returns all messages as history when under threshold', async () => {
         const messages = makeMessages(10) // 10 messages, under trigger threshold
         mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)

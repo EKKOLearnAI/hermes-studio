@@ -124,6 +124,25 @@ describe('group chat approval and context baseline', () => {
     })
   })
 
+  it('rejects an approval event whose durable handoff lease is not current', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    let requested = 0
+    human.on('approval.requested', () => { requested += 1 })
+
+    agent.emit('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      sourceHandoffJobId: 'missing-job',
+      sourceHandoffLeaseToken: 'stale-lease',
+      approval_id: 'approval-stale-job',
+      command: 'touch file',
+    })
+    await wait()
+
+    expect(requested).toBe(0)
+  })
+
   it('delivers approval requested and resolved once to every authorized socket for one persisted subject', async () => {
     const { agent, human, agentSessionId } = await joinPair()
     const identity = await once<{ localCredential: string }>(human, 'local_identity')

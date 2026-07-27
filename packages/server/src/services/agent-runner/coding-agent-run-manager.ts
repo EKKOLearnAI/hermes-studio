@@ -1107,7 +1107,7 @@ export class CodingAgentRunManager {
           ? ['--resume', run.launch.agentNativeSessionId]
           : ['--session-id', run.launch.agentNativeSessionId])
       : []
-    const promptArgument = hasArg(run.launch.args, '--append-system-prompt-file')
+    const promptArgument = hasArg(run.launch.args, '--append-system-prompt-file') && run.launch.runtimeContext !== 'group_chat'
       ? ''
       : normalizeCliPromptArgument(systemPrompt)
     const streamInput = images.length > 0 ? buildClaudeStreamJsonInput(input, images) : ''
@@ -1596,7 +1596,9 @@ export class CodingAgentRunManager {
       },
     })
 
-    const promptArgument = run.launch.mode === 'scoped' ? '' : normalizeCliPromptArgument(systemPrompt)
+    const promptArgument = run.launch.mode === 'scoped' && run.launch.runtimeContext !== 'group_chat'
+      ? ''
+      : normalizeCliPromptArgument(systemPrompt)
     const commonArgs = [
       '--json',
       ...CODEX_REASONING_SUMMARY_ARGS,

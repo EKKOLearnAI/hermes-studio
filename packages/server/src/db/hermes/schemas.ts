@@ -567,6 +567,9 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   handoffOrderJson: "TEXT NOT NULL DEFAULT '[]'",
   totalTokens: 'INTEGER NOT NULL DEFAULT 0',
   sessionSeed: 'TEXT NOT NULL',
+  messageSeq: 'INTEGER NOT NULL DEFAULT 0',
+  contextStartRoomSeq: 'INTEGER NOT NULL DEFAULT 1',
+  prunedThroughRoomSeq: 'INTEGER NOT NULL DEFAULT 0',
   workspace: "TEXT NOT NULL DEFAULT ''",
   ownerAuthUserId: 'INTEGER',
   authorizationRevision: 'INTEGER NOT NULL DEFAULT 0',
@@ -602,8 +605,20 @@ export const GC_HANDOFF_JOBS_SCHEMA: Record<string, string> = {
   roomId: 'TEXT NOT NULL',
   chainId: 'TEXT NOT NULL',
   sourceMessageId: 'TEXT NOT NULL',
+  initiatorActorId: "TEXT NOT NULL DEFAULT ''",
+  initiatorActorAuthorizationRevision: 'INTEGER NOT NULL DEFAULT 0',
+  initiatorActorContextRevision: 'INTEGER NOT NULL DEFAULT 0',
+  sourceActorId: "TEXT NOT NULL DEFAULT ''",
+  sourceActorAuthorizationRevision: 'INTEGER NOT NULL DEFAULT 0',
+  sourceActorContextRevision: 'INTEGER NOT NULL DEFAULT 0',
+  targetActorId: "TEXT NOT NULL DEFAULT ''",
+  targetActorAuthorizationRevision: 'INTEGER NOT NULL DEFAULT 0',
+  targetActorContextRevision: 'INTEGER NOT NULL DEFAULT 0',
+  roomAuthorizationRevision: 'INTEGER NOT NULL DEFAULT 0',
+  authorizationReaderEpoch: 'INTEGER NOT NULL DEFAULT 0',
   targetAgentId: 'TEXT NOT NULL',
   targetSessionId: 'TEXT NOT NULL',
+  targetSessionGeneration: 'INTEGER NOT NULL DEFAULT 0',
   depth: 'INTEGER NOT NULL DEFAULT 0',
   kind: "TEXT NOT NULL DEFAULT 'mention'",
   status: "TEXT NOT NULL DEFAULT 'pending'",
@@ -622,6 +637,7 @@ export const GC_HANDOFF_JOBS_INDEXES = {
   uniq_gc_handoff_source_target: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_gc_handoff_source_target ON gc_handoff_jobs(sourceMessageId, targetAgentId)',
   idx_gc_handoff_dispatch: 'CREATE INDEX IF NOT EXISTS idx_gc_handoff_dispatch ON gc_handoff_jobs(status, availableAt, leaseExpiresAt, createdAt)',
   idx_gc_handoff_room: 'CREATE INDEX IF NOT EXISTS idx_gc_handoff_room ON gc_handoff_jobs(roomId, createdAt)',
+  idx_gc_handoff_authority: 'CREATE INDEX IF NOT EXISTS idx_gc_handoff_authority ON gc_handoff_jobs(roomId, roomAuthorizationRevision, status)',
 }
 
 export const GC_ROOM_AGENTS_TABLE = 'gc_room_agents'
@@ -634,6 +650,22 @@ export const GC_ROOM_AGENTS_SCHEMA: Record<string, string> = {
   name: 'TEXT NOT NULL',
   description: "TEXT NOT NULL DEFAULT ''",
   invited: 'INTEGER NOT NULL DEFAULT 0',
+  runtime: "TEXT NOT NULL DEFAULT 'hermes'",
+  codingAgentId: "TEXT NOT NULL DEFAULT ''",
+  sessionId: "TEXT NOT NULL DEFAULT ''",
+  sessionGeneration: 'INTEGER NOT NULL DEFAULT 0',
+  mode: "TEXT NOT NULL DEFAULT 'scoped'",
+  provider: "TEXT NOT NULL DEFAULT ''",
+  model: "TEXT NOT NULL DEFAULT ''",
+  apiMode: "TEXT NOT NULL DEFAULT ''",
+  reasoningEffort: "TEXT NOT NULL DEFAULT ''",
+  avatar: "TEXT NOT NULL DEFAULT ''",
+  lastSeenRoomSeq: 'INTEGER NOT NULL DEFAULT 0',
+  lastSuccessfulRunId: "TEXT NOT NULL DEFAULT ''",
+  checkpoint: "TEXT NOT NULL DEFAULT ''",
+  checkpointSourceMessageIds: "TEXT NOT NULL DEFAULT '[]'",
+  checkpointFromRoomSeq: 'INTEGER NOT NULL DEFAULT 0',
+  checkpointThroughRoomSeq: 'INTEGER NOT NULL DEFAULT 0',
   createdAt: 'INTEGER NOT NULL DEFAULT 0',
 }
 
@@ -1400,7 +1432,12 @@ export function initAllHermesTables(): void {
     const runGroupChatInitialization = () => {
       syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)
       syncTable(GC_MESSAGES_TABLE, GC_MESSAGES_SCHEMA)
+      syncTable(GC_HANDOFF_JOBS_TABLE, GC_HANDOFF_JOBS_SCHEMA, {
+        indexes: GC_HANDOFF_JOBS_INDEXES,
+      })
+      backfillGroupMessageRoomSequences(db)
       syncTable(GC_CONTEXT_SNAPSHOTS_TABLE, GC_CONTEXT_SNAPSHOTS_SCHEMA)
+      backfillGroupRoomContextWatermarks(db)
       syncTable(GC_PENDING_SESSION_DELETES_TABLE, GC_PENDING_SESSION_DELETES_SCHEMA)
       syncTable(GC_SESSION_PROFILES_TABLE, GC_SESSION_PROFILES_SCHEMA)
       syncTable(GC_ROOM_AGENTS_TABLE, GC_ROOM_AGENTS_SCHEMA, {
@@ -1408,6 +1445,9 @@ export function initAllHermesTables(): void {
           idx_gc_room_agents_profile: 'CREATE INDEX idx_gc_room_agents_profile ON gc_room_agents(profile)',
         },
       })
+      migrateLegacyGroupChatCodingAgentSessions(db)
+      resetLegacyTimestampGroupAgentCursors(db)
+      backfillGroupAgentAvatars(db)
       syncTable(GC_ROOM_MEMBERS_TABLE, GC_ROOM_MEMBERS_SCHEMA, {
         indexes: {
           idx_gc_room_members_user: 'CREATE INDEX idx_gc_room_members_user ON gc_room_members(userId)',

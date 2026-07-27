@@ -322,6 +322,11 @@ describe('group chat agent workspace bridge runs', () => {
         contextRevision: 0,
       })),
       getActorCapabilities: vi.fn(() => ['room.read', 'room.write']),
+      getRoomAgentByAgentId: vi.fn(() => ({
+        id: 'row-agent-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: 'Worker',
+        runtime: 'hermes', sessionId: 'participant-session-1', sessionGeneration: 0,
+      })),
+      isHandoffExecutionCurrent: vi.fn(() => true),
       registerSessionProfileForActiveAgent: vi.fn(() => {
         order.push('mapping')
         return true
@@ -504,6 +509,47 @@ describe('group chat agent workspace bridge runs', () => {
     expect(bridgeMock.chat).not.toHaveBeenCalled()
   })
 
+  it('interrupts an in-flight durable Bridge job when its source authority is revoked', async () => {
+    const client = await createClient('')
+    let current = true
+    client.__testStorage.isHandoffExecutionCurrent.mockImplementation(() => current)
+    bridgeMock.interrupt.mockResolvedValueOnce({ ok: true, synced: false })
+    bridgeMock.streamOutput.mockImplementationOnce(async function* (runId: string) {
+      current = false
+      yield {
+        ok: true,
+        run_id: runId,
+        session_id: await workerSessionId(),
+        status: 'complete',
+        delta: 'must not publish',
+        cursor: 1,
+        output: 'must not publish',
+        done: true,
+        events: [{ event: 'tool.started', tool_call_id: 'late-tool', tool_name: 'terminal' }],
+        event_cursor: 1,
+      }
+    })
+
+    await client.replyToMention('room-1', {
+      messageId: 'source-message-1', content: '@Worker private prompt', senderName: 'Alice', senderId: 'user-1', timestamp: 1,
+      handoffJobId: 'job-1', handoffLeaseToken: 'lease-1', handoffChainId: 'chain-1',
+      handoffKind: 'mention', targetSessionId: 'participant-session-1',
+    })
+
+    const runtimeSessionId = await workerSessionId()
+    expect(client.__testStorage.isHandoffExecutionCurrent).toHaveBeenCalledWith(
+      'job-1', 'lease-1', 'agent-1', 'participant-session-1',
+    )
+    expect(bridgeMock.interrupt).toHaveBeenCalledWith(
+      runtimeSessionId,
+      'Interrupted because group chat room state changed',
+      'default',
+    )
+    expect(bridgeMock.destroy).toHaveBeenCalledWith(runtimeSessionId, 'default')
+    expect(mockSocket.emit).not.toHaveBeenCalledWith('message_stream_delta', expect.objectContaining({ delta: 'must not publish' }))
+    expect(mockSocket.emit).not.toHaveBeenCalledWith('message', expect.objectContaining({ tool_calls: expect.anything() }), expect.any(Function))
+  })
+
   it('interrupts an in-flight Bridge run before relaying output when run grants disappear', async () => {
     const client = await createClient('')
     bridgeMock.interrupt.mockResolvedValueOnce({ ok: true, synced: false })
@@ -667,7 +713,11 @@ describe('group chat agent workspace bridge runs', () => {
     const client = await createClient('/tmp/workspace')
     const sessionId = await workerSessionId()
     const runId = '0123456789abcdef0123456789abcdef'
-    const state = client.beginWorkspaceDiffIfNeeded({ roomId: 'room-1', sessionId, runId, workspace: '/tmp/workspace' })
+    const state = client.beginWorkspaceDiffIfNeeded({
+      roomId: 'room-1', sessionId, runId, workspace: '/tmp/workspace',
+      sourceHandoffJobId: 'job-workspace-1', sourceHandoffLeaseToken: 'lease-workspace-1',
+      targetAgentId: 'agent-1', targetSessionId: 'participant-session-1',
+    })
     const saveWorkspaceDiffMessageForRun = client.__testStorage.saveWorkspaceDiffMessageForRun
     saveWorkspaceDiffMessageForRun.mockReturnValue({ message: { id: 'diff-1', roomId: 'room-1' }, totalTokens: 0 })
     ;(trackerMock.completeWorkspaceRunCheckpointDraft as any).mockReturnValueOnce(workspaceDraft(runId, sessionId))
@@ -682,6 +732,8 @@ describe('group chat agent workspace bridge runs', () => {
       runId,
       status: 'aborted',
       parentMessageId: null,
+      sourceHandoffJobId: 'job-workspace-1',
+      sourceHandoffLeaseToken: 'lease-workspace-1',
     })
 
     await client.finalizeWorkspaceDiffOnce(state, 'failed', 'late-message-id')
@@ -767,11 +819,23 @@ describe('group chat agent workspace bridge runs', () => {
   it('drops late assistant output after clear-context rotates the room session generation', async () => {
     bridgeMock.interrupt.mockResolvedValueOnce({ ok: true, synced: false })
     const client = await createClient('/tmp/workspace')
-    client.__testStorage.getRoom
-      .mockReturnValueOnce({ sessionSeed: '11111111111111111111111111111111', workspace: '/tmp/workspace' })
-      .mockReturnValueOnce({ sessionSeed: '11111111111111111111111111111111', workspace: '/tmp/workspace' })
-      .mockReturnValueOnce({ sessionSeed: '11111111111111111111111111111111', workspace: '/tmp/workspace' })
-      .mockReturnValue({ sessionSeed: '22222222222222222222222222222222', workspace: '/tmp/workspace' })
+    let sessionSeed = '11111111111111111111111111111111'
+    client.__testStorage.getRoom.mockImplementation(() => ({ sessionSeed, workspace: '/tmp/workspace', authorizationRevision: 0 }))
+    bridgeMock.streamOutput.mockImplementationOnce(async function* (runId: string) {
+      sessionSeed = '22222222222222222222222222222222'
+      yield {
+        ok: true,
+        run_id: runId,
+        session_id: 'session-1',
+        status: 'complete',
+        delta: 'late',
+        cursor: 1,
+        output: 'late',
+        done: true,
+        events: [],
+        event_cursor: 0,
+      }
+    })
 
     await client.replyToMention('room-1', {
       content: '@Worker hi',
@@ -790,7 +854,10 @@ describe('group chat agent workspace bridge runs', () => {
     expect(client.__testStorage.saveWorkspaceDiffMessageForRun).not.toHaveBeenCalled()
     expect(mockSocket.emit).not.toHaveBeenCalledWith('message_stream_end', expect.objectContaining({ roomId: 'room-1' }))
     expect(mockSocket.emit).not.toHaveBeenCalledWith('message', expect.objectContaining({ role: 'assistant' }), expect.any(Function))
-    expect(trackerMock.discardWorkspaceRunCheckpoint).not.toHaveBeenCalled()
+    expect(trackerMock.discardWorkspaceRunCheckpoint).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'bridge-run-id',
+      sessionId,
+    }))
     expect(client.workspaceDiffRuns.size).toBe(0)
   })
 

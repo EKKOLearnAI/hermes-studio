@@ -43,7 +43,7 @@ export function buildMentionOptions(agents: MentionAgent[], query: string): Ment
         const agentName = agent.name || ''
         if (isReservedMentionName(agentName)) continue
         if (!agentName.toLowerCase().includes(normalizedQuery)) continue
-        const participantId = String(agent.agentId || agent.id || agentName)
+        const participantId = String(agent.agentId || agentName)
         options.push({
             key: `agent:${participantId}`,
             type: 'agent',

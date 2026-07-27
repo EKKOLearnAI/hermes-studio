@@ -89,9 +89,13 @@ describe('coding agent Windows process launch', () => {
       model: 'claude-test',
       sessionId: 'chat-session-1',
       command: 'C:\\Users\\Administrator\\AppData\\Roaming\\npm\\claude.cmd',
-      args: ['--settings', 'C:\\Users\\Administrator\\.hermes-web-ui\\settings.json'],
+      args: [
+        '--settings', 'C:\\Users\\Administrator\\.hermes-web-ui\\settings.json',
+        '--append-system-prompt-file', 'C:\\Users\\Administrator\\.hermes-web-ui\\SOUL.md',
+      ],
       shellCommand: 'claude',
       workspaceDir: process.cwd(),
+      runtimeContext: 'group_chat',
       state: { messages: [], isWorking: false, events: [], queue: [] },
     })
 
@@ -105,6 +109,7 @@ describe('coding agent Windows process launch', () => {
     expect(testState.spawnCalls[0].args[3]).toContain('^"--settings^"')
     expect(testState.spawnCalls[0].args[3]).toContain('^"--append-system-prompt^"')
     expect(testState.spawnCalls[0].args[3]).toContain('^"system^ prompt^ /^ second^ line^"')
+    expect(testState.spawnCalls[0].args[3]).toContain('^"--append-system-prompt-file^"')
     expect(testState.spawnCalls[0].args[3]).not.toContain('\n')
     expect(testState.spawnCalls[0].args[3]).not.toContain('\r')
     expect(testState.spawnCalls[0].args[3]).toContain('^"test^"')
@@ -139,6 +144,7 @@ describe('coding agent Windows process launch', () => {
       args: ['--model', 'gpt-test'],
       shellCommand: 'codex',
       workspaceDir: process.cwd(),
+      runtimeContext: 'group_chat',
       state: { messages: [], isWorking: false, events: [], queue: [] },
     })
 
@@ -152,8 +158,8 @@ describe('coding agent Windows process launch', () => {
     expect(testState.spawnCalls[0].args[3]).toContain('^"exec^"')
     expect(testState.spawnCalls[0].args[3]).toContain('^"-c^"')
     expect(testState.spawnCalls[0].args[3]).toContain('model_reasoning_summary=\\^"auto\\^"')
-    expect(testState.spawnCalls[0].args[3]).not.toContain('developer_instructions=')
-    expect(testState.spawnCalls[0].args[3]).not.toContain('system^ prompt^ /^ second^ line')
+    expect(testState.spawnCalls[0].args[3]).toContain('developer_instructions=')
+    expect(testState.spawnCalls[0].args[3]).toContain('system^ prompt^ /^ second^ line')
     expect(testState.spawnCalls[0].args[3]).not.toContain('\n')
     expect(testState.spawnCalls[0].args[3]).not.toContain('\r')
     expect(testState.spawnCalls[0].args[3]).toContain('^"--model^"')

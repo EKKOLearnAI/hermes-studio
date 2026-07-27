@@ -131,6 +131,7 @@ describe('Group Chat member/agent identity sync', () => {
       }),
       agentClients: {
         createAgent: vi.fn(async () => ({ agentId: 'runtime-agent' })),
+        interruptRoom: vi.fn(async () => true),
         addAgentToRoom: vi.fn(async () => { calls.push('join-room') }),
       },
     }
@@ -155,61 +156,55 @@ describe('Group Chat member/agent identity sync', () => {
     }))
   })
 
-  it('normalizes inherited reasoning and persists a runtime-specific participant avatar', async () => {
-    const addRoomAgent = vi.fn((roomId: string, agentId: string, profile: string, name: string, description: string, invited: number, binding: any) => ({
-      id: 'row-1', roomId, agentId, profile, name, description, invited, ...binding,
+  it('allows multiple stable participants from one profile but rejects a duplicate display name case-insensitively', async () => {
+    const existing = [{
+      id: 'row-existing', roomId: 'room-1', agentId: 'agent-existing',
+      profile: 'default', name: 'Reviewer', description: '', invited: 0,
+    }]
+    const addRoomAgent = vi.fn((roomId: string, agentId: string, profile: string, name: string, description: string, invited: number) => ({
+      id: `row-${agentId}`, roomId, agentId, profile, name, description, invited,
     }))
     const chatServer = {
       getStorage: () => ({
-        getRoomAgents: vi.fn(() => []),
+        getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room 1' })),
+        getRoomAgents: vi.fn(() => existing),
         addRoomAgent,
-        removeRoomAgent: vi.fn(),
+        removeAgentActorWithRetention: vi.fn(),
       }),
       agentClients: {
-        createAgent: vi.fn(async ({ agentId }: any) => ({ agentId })),
-        addAgentToRoom: vi.fn(async () => {}),
+        createAgent: vi.fn(async (input: any) => ({ ...input, disconnect: vi.fn() })),
+        interruptRoom: vi.fn(async () => true),
+        addAgentToRoom: vi.fn(async () => undefined),
         removeAgentFromRoom: vi.fn(),
       },
     }
     setGroupChatServer(chatServer as any)
-
     const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/agents', 'POST')
-    const ctx: any = {
+
+    const sameProfile: any = {
       params: { roomId: 'room-1' },
-      request: {
-        body: {
-          profile: 'default',
-          name: 'Codex',
-          runtime: 'coding_agent',
-          codingAgentId: 'codex',
-          provider: 'openai',
-          model: 'gpt-test',
-          apiMode: 'codex_responses',
-          reasoningEffort: 'default',
-        },
-      },
+      request: { body: { profile: 'default', name: 'Builder' } },
       status: 200,
       body: undefined,
     }
-    await handler(ctx, async () => {})
-
+    await handler(sameProfile, async () => {})
+    expect(sameProfile.status).toBe(200)
     expect(addRoomAgent).toHaveBeenCalledWith(
-      'room-1',
-      expect.any(String),
-      'default',
-      'Codex',
-      '',
-      0,
-      expect.objectContaining({
-        reasoningEffort: '',
-        avatar: expect.stringContaining('/coding-agents/codex-openai.png'),
-      }),
+      'room-1', expect.any(String), 'default', 'Builder', '', 0,
+      expect.objectContaining({ runtime: 'hermes', sessionGeneration: 0 }),
     )
-    expect(ctx.body.agent.reasoningEffort).toBe('')
-    expect(ctx.body.agent.avatar).toEqual({
-      type: 'asset',
-      assetUrl: '/coding-agents/codex-openai.png',
-    })
+
+    addRoomAgent.mockClear()
+    const duplicateName: any = {
+      params: { roomId: 'room-1' },
+      request: { body: { profile: 'another-profile', name: 'reviewer' } },
+      status: 200,
+      body: undefined,
+    }
+    await handler(duplicateName, async () => {})
+    expect(duplicateName.status).toBe(409)
+    expect(duplicateName.body).toMatchObject({ error: 'Agent display name already in room' })
+    expect(addRoomAgent).not.toHaveBeenCalled()
   })
 
   it('does not persist an agent when the runtime client cannot connect', async () => {
@@ -301,6 +296,7 @@ describe('Group Chat member/agent identity sync', () => {
       }),
       agentClients: {
         createAgent: vi.fn(async () => runtimeClient),
+        interruptRoom: vi.fn(async () => true),
         addAgentToRoom: vi.fn(async () => {
           throw new Error('join failed')
         }),
@@ -324,7 +320,10 @@ describe('Group Chat member/agent identity sync', () => {
       profile: 'default',
       reason: 'join failed',
     })
-    expect(addRoomAgent).toHaveBeenCalledWith('room-1', expect.any(String), 'default', 'Worker', '', 0)
+    expect(addRoomAgent).toHaveBeenCalledWith(
+      'room-1', expect.any(String), 'default', 'Worker', '', 0,
+      expect.objectContaining({ runtime: 'hermes', sessionGeneration: 0 }),
+    )
     expect(removeAgentActorWithRetention).toHaveBeenCalledWith('room-1', 'row-1')
     expect(chatServer.agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'agent-stable-1')
   })
@@ -358,7 +357,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     const chatServer = {
       getStorage: () => storage,
-      agentClients: { removeAgentFromRoom: vi.fn() },
+      agentClients: { interruptRoom: vi.fn(async () => true), removeAgentFromRoom: vi.fn() },
       cleanupRemovedAgentRuntime: vi.fn(async (retained: typeof removal) => {
         chatServer.agentClients.removeAgentFromRoom(retained.agent.roomId, retained.agent.agentId)
       }),
@@ -454,13 +453,16 @@ describe('Group Chat member/agent identity sync', () => {
       in: vi.fn(() => ({ socketsLeave })),
       to: vi.fn(() => ({ emit: vi.fn() })),
     }
-    server.storage = { saveMessageAndRefreshRoom }
+    server.storage = {
+      fenceRoomHandoffJobs: vi.fn(() => { calls.push('fence'); return 1 }),
+      saveMessageAndRefreshRoom,
+    }
 
     await server.deleteRoomRuntimeState('room-1', () => {})
     const ack = vi.fn()
     server.handleMessage({ id: 'socket-1' }, { roomId: 'room-1', content: 'late', role: 'user' }, ack)
 
-    expect(calls).toEqual(['interrupt', 'disconnect', 'sockets-leave'])
+    expect(calls).toEqual(['fence', 'interrupt', 'disconnect', 'sockets-leave'])
     expect(server.rooms.has('room-1')).toBe(false)
     expect(server.agentClients.disconnectRoom).toHaveBeenCalledWith('room-1')
     expect(server.nsp.in).toHaveBeenCalledWith('room-1')
@@ -1346,7 +1348,7 @@ describe('Group Chat member/agent identity sync', () => {
       ['human-1', { name: 'Human', description: '' }],
       ['agent-1', { name: '丫鬟', description: '' }],
     ])
-    server.agentClients = { processMentions: vi.fn(async () => undefined) }
+    server.agentClients = { validateMessageInput: vi.fn(() => ({ ok: true })) }
     const agentSessionId = groupBridgeSessionId(
       'room-1',
       'default',
@@ -1381,38 +1383,34 @@ describe('Group Chat member/agent identity sync', () => {
       })),
       getActorCapabilities: vi.fn(() => ['room.read', 'room.write', 'agent.invoke']),
       getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: '丫鬟' })),
-      saveMessageAndRefreshRoom: vi.fn((msg: any) => ({ message: msg, totalTokens: 123 })),
+      getRoomAgents: vi.fn(() => [{ id: 'row-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: '丫鬟', sessionId: agentSessionId }]),
+      getHandoffJob: vi.fn(() => null),
+      saveMessageAndRefreshRoom: vi.fn((msg: any, options: any) => ({ message: msg, totalTokens: 123, handoffJobs: options?.handoffs || [] })),
     }
     server.nsp = { to: vi.fn(() => ({ emit })) }
     server.scheduleHandoffDispatch = vi.fn()
 
     server.handleMessage({ id: 'human-socket' }, { roomId: 'room-1', content: '@all hi', role: 'user' }, vi.fn())
+    expect(server.storage.saveMessageAndRefreshRoom).toHaveBeenLastCalledWith(
+      expect.objectContaining({ content: '@all hi', senderId: 'human-1', handoffDepth: 0 }),
+      expect.objectContaining({
+        handoffs: [expect.objectContaining({ targetAgentId: 'agent-1', depth: 0, kind: 'fanout' })],
+        authority: { initiatorActorId: 'actor-human-1', sourceActorId: 'actor-human-1' },
+      }),
+    )
 
-    server.agentClients.processMentions.mockClear()
+    server.storage.saveMessageAndRefreshRoom.mockClear()
     server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all agent says hi', role: 'assistant', mentionDepth: 1, agentSessionId }, vi.fn())
-    expect(server.agentClients.processMentions).toHaveBeenCalledTimes(1)
-    expect(server.agentClients.processMentions).toHaveBeenLastCalledWith('room-1', expect.objectContaining({
-      content: '@all agent says hi',
-      senderId: 'agent-1',
-      mentionDepth: 1,
-    }))
+    expect(server.storage.saveMessageAndRefreshRoom).toHaveBeenLastCalledWith(
+      expect.objectContaining({ content: '@all agent says hi', senderId: 'agent-1', handoffDepth: 1 }),
+      expect.objectContaining({ handoffs: [] }),
+    )
 
-    server.agentClients.processMentions.mockClear()
+    server.storage.saveMessageAndRefreshRoom.mockClear()
     server.storage.getActorCapabilities.mockReturnValue(['room.read', 'room.write'])
-    server.handleMessage({ id: 'agent-socket' }, {
-      roomId: 'room-1',
-      content: '@all no invoke authority',
-      role: 'assistant',
-      mentionDepth: 1,
-      agentSessionId,
-    }, vi.fn())
-    expect(server.agentClients.processMentions).not.toHaveBeenCalled()
-
-    server.agentClients.processMentions.mockClear()
-    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all too deep', role: 'assistant', mentionDepth: 4, agentSessionId }, vi.fn())
-    expect(server.agentClients.processMentions).not.toHaveBeenCalled()
-    expect(server.storage.saveMessageAndRefreshRoom).toHaveBeenCalledWith(
-      expect.objectContaining({ content: '@all hi' }),
+    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all agent says stop', role: 'assistant', mentionDepth: 4, agentSessionId }, vi.fn())
+    expect(server.storage.saveMessageAndRefreshRoom).toHaveBeenLastCalledWith(
+      expect.objectContaining({ content: '@all agent says stop', handoffDepth: 4 }),
       expect.objectContaining({ handoffs: [] }),
     )
   })

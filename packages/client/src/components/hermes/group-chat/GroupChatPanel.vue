@@ -269,6 +269,12 @@ function canApproveRoom(room: Pick<RoomInfo, 'canApprove'> | null | undefined): 
 }
 const currentRoomCanManage = computed(() => canManageRoom(currentRoom.value))
 const currentRoomCanApprove = computed(() => canApproveRoom(currentRoom.value))
+const handoffModeOptions = computed(() => [
+    { label: t('groupChat.handoffModeMentions'), value: 'mentions' },
+    { label: t('groupChat.handoffModeFixed'), value: 'fixed' },
+])
+const handoffAgentOptions = computed(() => store.agents.map(agent => ({ label: agent.name, value: agent.agentId })))
+const visibleHandoffJobs = computed(() => handoffJobs.value.filter(job => ['pending', 'running', 'failed', 'interrupted', 'authorization_revoked'].includes(job.status)).slice(0, 8))
 const visibleApproval = computed(() => currentRoomCanApprove.value ? store.activePendingApproval : null)
 const currentWorkspaceLabel = computed(() => workspaceBasename(currentRoom.value?.workspace || ''))
 const canUpdateInviteCode = computed(() => {
@@ -1185,7 +1191,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                 </span>
                                 <span
                                     v-for="(agent, index) in store.agents.slice(-4)"
-                                    :key="agent.id"
+                                    :key="agent.agentId"
                                     class="avatar-stack-item"
                                     :style="{ zIndex: store.agents.length - index }"
                                 >
@@ -1203,11 +1209,11 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                 </div>
                             </div>
                             <div class="agent-popover-title">{{ t('groupChat.agents') }} ({{ store.agents.length }})</div>
-                            <div v-for="agent in store.agents" :key="agent.id" class="agent-popover-item">
+                            <div v-for="agent in store.agents" :key="agent.agentId" class="agent-popover-item">
                                 <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="agent.avatar || profileAvatarFor(agent.profile)" :size="28" />
                                 <div class="agent-popover-info">
                                     <span class="agent-popover-name">{{ agent.name }}</span>
-                                    <span class="agent-popover-profile">{{ participantRuntimeLabel(agent) }} · {{ agent.profile }} · {{ t('groupChat.sessionGeneration', { generation: agent.sessionGeneration }) }}</span>
+                                    <span class="agent-popover-profile">{{ participantRuntimeLabel(agent) }} · {{ agent.profile }}</span>
                                 </div>
                                 <button v-if="currentRoomCanManage" class="agent-popover-remove" :title="t('common.edit')" @click="handleEditAgent(agent)">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>

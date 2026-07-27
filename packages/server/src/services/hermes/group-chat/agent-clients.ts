@@ -30,6 +30,8 @@ import {
     resolveMentionTargets,
     stripMentionRoutingTokens,
 } from './mention-routing'
+import { buildCodingAgentGroupHandoffEnvelope } from './handoff-envelope'
+export { buildCodingAgentGroupHandoffEnvelope }
 
 export const GROUP_CHAT_AGENT_SOCKET_SECRET = randomBytes(32).toString('hex')
 
@@ -41,6 +43,16 @@ interface AgentConfig {
     name: string
     description: string
     invited: number
+    runtime?: 'hermes' | 'coding_agent'
+    codingAgentId?: '' | 'claude-code' | 'codex'
+    sessionId?: string
+    sessionGeneration?: number
+    mode?: 'scoped' | 'global'
+    provider?: string
+    model?: string
+    apiMode?: string
+    reasoningEffort?: string
+    avatar?: string
     /** Group-chat Hermes agents must never detach delegate_task work. */
     backgroundDelegationEnabled: false
 }
@@ -116,6 +128,10 @@ interface WorkspaceDiffRunState {
     sessionId: string
     runId: string
     workspace: string
+    sourceHandoffJobId?: string
+    sourceHandoffLeaseToken?: string
+    targetAgentId?: string
+    targetSessionId?: string
     abortRequested: boolean
     finalized: boolean
 }
@@ -132,6 +148,31 @@ interface BridgeContextCache {
     model?: string
     provider?: string
 }
+
+type PersistedParticipantBinding = {
+    agentId: string
+    profile: string
+    name: string
+    description: string
+    runtime?: 'hermes' | 'coding_agent'
+    codingAgentId?: '' | 'claude-code' | 'codex'
+    sessionId?: string
+    sessionGeneration?: number
+    mode?: 'scoped' | 'global'
+    provider?: string
+    model?: string
+    apiMode?: string
+    reasoningEffort?: string
+    lastSeenRoomSeq?: number
+    lastSuccessfulRunId?: string
+    checkpoint?: string
+    checkpointSourceMessageIds?: string
+    checkpointFromRoomSeq?: number
+    checkpointThroughRoomSeq?: number
+}
+
+const GROUP_CODING_AGENT_RUN_TIMEOUT_MS = 30 * 60 * 1000
+const GROUP_CODING_AGENT_INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000
 
 type GroupBridgeSessionRevisions = Partial<GroupActorRevisions>
 
@@ -484,9 +525,14 @@ class AgentClient {
         this.socket!.emit('stop_typing', { roomId })
     }
 
-    emitContextStatus(roomId: string, status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>, agentSessionId?: string): void {
+    emitContextStatus(roomId: string, status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>, agentSessionId?: string, execution?: Pick<MentionMessage, 'handoffJobId' | 'handoffLeaseToken'>): void {
         this.ensureConnected()
-        this.socket!.emit('context_status', { roomId, agentName: this.name, status, ...extra, ...(agentSessionId ? { agentSessionId } : {}) })
+        this.socket!.emit('context_status', {
+            roomId, agentName: this.name, status, ...extra,
+            ...(agentSessionId ? { agentSessionId } : {}),
+            ...(execution?.handoffJobId ? { sourceHandoffJobId: execution.handoffJobId } : {}),
+            ...(execution?.handoffLeaseToken ? { sourceHandoffLeaseToken: execution.handoffLeaseToken } : {}),
+        })
     }
 
     emitApprovalRequested(roomId: string, payload: Record<string, unknown>): void {
@@ -500,8 +546,28 @@ class AgentClient {
     }
 
     async interrupt(roomId: string): Promise<boolean> {
+        const binding = this.participantBinding(roomId)
+        const sessionId = this.currentSessionId(roomId)
+        if (binding?.runtime === 'coding_agent') {
+            this.markSessionInterrupted(sessionId)
+            const runId = codingAgentRunManager.runIdForSession(sessionId) || 'interrupted'
+            const workspaceRunChange = codingAgentRunManager.completeWorkspaceDiffForSession(sessionId)
+            const stopped = await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false, graceMs: 15_000 })
+            if (!stopped && codingAgentRunManager.runIdForSession(sessionId)) return false
+            this.codingAgentReplyCancels.get(sessionId)?.()
+            await this.persistCodingAgentWorkspaceDiff(roomId, sessionId, {
+                run_id: runId,
+                workspace_run_change: workspaceRunChange,
+            }, 'aborted', null, String(this.storage?.getRoom?.(roomId)?.workspace || '').trim())
+            try {
+                this.stopTyping(roomId)
+                this.emitContextStatus(roomId, 'ready', undefined, sessionId)
+            } catch (err: any) {
+                logger.warn(`[AgentClients] ${this.name}: failed to publish coding-agent interrupt state: ${err.message || err}`)
+            }
+            return true
+        }
         const sessionIdentity = this.currentRoomSessionIdentity(roomId)
-        const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionIdentity.sessionSeed, sessionIdentity)
         this.registerCurrentRoomSession(roomId, sessionId, sessionIdentity, false)
         let result: Awaited<ReturnType<AgentBridgeClient['interrupt']>> | null = null
         try {
@@ -533,7 +599,7 @@ class AgentClient {
         return true
     }
 
-    emitMessageStreamStart(roomId: string, messageId: string, agentSessionId?: string): void {
+    emitMessageStreamStart(roomId: string, messageId: string, agentSessionId?: string, execution?: Pick<MentionMessage, 'handoffJobId' | 'handoffLeaseToken'>): void {
         this.ensureConnected()
         this.socket!.emit('message_stream_start', {
             roomId,
@@ -542,24 +608,41 @@ class AgentClient {
             senderName: this.name,
             timestamp: Date.now(),
             ...(agentSessionId ? { agentSessionId } : {}),
+            ...(execution?.handoffJobId ? { sourceHandoffJobId: execution.handoffJobId } : {}),
+            ...(execution?.handoffLeaseToken ? { sourceHandoffLeaseToken: execution.handoffLeaseToken } : {}),
         })
     }
 
-    emitMessageStreamDelta(roomId: string, messageId: string, delta: string, agentSessionId?: string): void {
+    emitMessageStreamDelta(roomId: string, messageId: string, delta: string, agentSessionId?: string, execution?: Pick<MentionMessage, 'handoffJobId' | 'handoffLeaseToken'>): void {
         if (!delta) return
         this.ensureConnected()
-        this.socket!.emit('message_stream_delta', { roomId, id: messageId, delta, ...(agentSessionId ? { agentSessionId } : {}) })
+        this.socket!.emit('message_stream_delta', {
+            roomId, id: messageId, delta,
+            ...(agentSessionId ? { agentSessionId } : {}),
+            ...(execution?.handoffJobId ? { sourceHandoffJobId: execution.handoffJobId } : {}),
+            ...(execution?.handoffLeaseToken ? { sourceHandoffLeaseToken: execution.handoffLeaseToken } : {}),
+        })
     }
 
-    emitMessageReasoningDelta(roomId: string, messageId: string, delta: string, agentSessionId?: string): void {
+    emitMessageReasoningDelta(roomId: string, messageId: string, delta: string, agentSessionId?: string, execution?: Pick<MentionMessage, 'handoffJobId' | 'handoffLeaseToken'>): void {
         if (!delta) return
         this.ensureConnected()
-        this.socket!.emit('message_reasoning_delta', { roomId, id: messageId, delta, ...(agentSessionId ? { agentSessionId } : {}) })
+        this.socket!.emit('message_reasoning_delta', {
+            roomId, id: messageId, delta,
+            ...(agentSessionId ? { agentSessionId } : {}),
+            ...(execution?.handoffJobId ? { sourceHandoffJobId: execution.handoffJobId } : {}),
+            ...(execution?.handoffLeaseToken ? { sourceHandoffLeaseToken: execution.handoffLeaseToken } : {}),
+        })
     }
 
-    emitMessageStreamEnd(roomId: string, messageId: string, agentSessionId?: string): void {
+    emitMessageStreamEnd(roomId: string, messageId: string, agentSessionId?: string, execution?: Pick<MentionMessage, 'handoffJobId' | 'handoffLeaseToken'>): void {
         this.ensureConnected()
-        this.socket!.emit('message_stream_end', { roomId, id: messageId, ...(agentSessionId ? { agentSessionId } : {}) })
+        this.socket!.emit('message_stream_end', {
+            roomId, id: messageId,
+            ...(agentSessionId ? { agentSessionId } : {}),
+            ...(execution?.handoffJobId ? { sourceHandoffJobId: execution.handoffJobId } : {}),
+            ...(execution?.handoffLeaseToken ? { sourceHandoffLeaseToken: execution.handoffLeaseToken } : {}),
+        })
     }
 
     getJoinedRooms(): string[] {
@@ -672,7 +755,16 @@ class AgentClient {
         return `${roomId}\u0000${sessionId}\u0000${runId}`
     }
 
-    private beginWorkspaceDiffIfNeeded(args: { roomId: string; sessionId: string; runId: string; workspace: string }): WorkspaceDiffRunState | null {
+    private beginWorkspaceDiffIfNeeded(args: {
+        roomId: string
+        sessionId: string
+        runId: string
+        workspace: string
+        sourceHandoffJobId?: string
+        sourceHandoffLeaseToken?: string
+        targetAgentId?: string
+        targetSessionId?: string
+    }): WorkspaceDiffRunState | null {
         if (!args.workspace) return null
         startWorkspaceRunCheckpoint({
             sessionId: args.sessionId,
@@ -702,6 +794,26 @@ class AgentClient {
         return this.roomSessionIsCurrent(roomId, sessionId) && this.interruptVersion(sessionId) === interruptVersion
     }
 
+    private handoffExecutionIsCurrent(roomId: string, runtimeSessionId: string, interruptVersion: number, msg: MentionMessage): boolean {
+        if (!this.replySessionIsCurrent(roomId, runtimeSessionId, interruptVersion)) return false
+        if (!msg.handoffJobId) return true
+        const binding = this.participantBinding(roomId)
+        if (!msg.handoffLeaseToken || !msg.targetSessionId || binding?.sessionId !== msg.targetSessionId) return false
+        const validate = this.storage?.isHandoffExecutionCurrent
+        if (typeof validate !== 'function') return false
+        try {
+            return validate.call(
+                this.storage,
+                msg.handoffJobId,
+                msg.handoffLeaseToken,
+                this.agentId,
+                msg.targetSessionId,
+            ) === true
+        } catch {
+            return false
+        }
+    }
+
     private roomSessionIsCurrent(roomId: string, sessionId: string): boolean {
         const room = this.storage?.getRoom?.(roomId)
         if (!room) return false
@@ -709,7 +821,21 @@ class AgentClient {
         if (!sessionIdentity.actorId || typeof this.storage?.getActorCapabilities !== 'function') return false
         const capabilities = new Set(this.storage.getActorCapabilities(sessionIdentity.actorId))
         if (!capabilities.has('room.read') || !capabilities.has('room.write')) return false
+        const binding = this.participantBinding(roomId)
+        if (binding?.runtime === 'coding_agent') return String(binding.sessionId || '') === sessionId
         return groupBridgeSessionId(roomId, this.profile, this.name, sessionIdentity.sessionSeed, sessionIdentity) === sessionId
+    }
+
+    private participantBinding(roomId: string): PersistedParticipantBinding | null {
+        return this.storage?.getRoomAgentByAgentId?.(roomId, this.agentId) || null
+    }
+
+    private currentSessionId(roomId: string): string {
+        const binding = this.participantBinding(roomId)
+        const persisted = String(binding?.sessionId || '').trim()
+        if (binding?.runtime === 'coding_agent' && persisted) return persisted
+        const sessionIdentity = this.currentRoomSessionIdentity(roomId)
+        return groupBridgeSessionId(roomId, this.profile, this.name, sessionIdentity.sessionSeed, sessionIdentity)
     }
 
     private markWorkspaceDiffAborted(roomId: string): WorkspaceDiffRunState[] {
@@ -732,7 +858,17 @@ class AgentClient {
         const key = this.workspaceDiffKey(state.roomId, state.sessionId, state.runId)
         const current = this.workspaceDiffRuns.get(key)
         if (!current || current.finalized) return
-        if (!this.roomSessionIsCurrent(current.roomId, current.sessionId)) {
+        const durableCurrent = () => {
+            if (!current.sourceHandoffJobId && !current.sourceHandoffLeaseToken) return true
+            if (!current.sourceHandoffJobId || !current.sourceHandoffLeaseToken || !current.targetAgentId || !current.targetSessionId) return false
+            return this.storage?.isHandoffExecutionCurrent?.(
+                current.sourceHandoffJobId,
+                current.sourceHandoffLeaseToken,
+                current.targetAgentId,
+                current.targetSessionId,
+            ) === true
+        }
+        if (!this.roomSessionIsCurrent(current.roomId, current.sessionId) || !durableCurrent()) {
             this.discardWorkspaceDiffRun(current)
             return
         }
@@ -751,6 +887,10 @@ class AgentClient {
             return
         }
         if (!draft) return
+        if (!durableCurrent()) {
+            this.discardWorkspaceDiffRun(current)
+            return
+        }
         try {
             const saved = this.storage?.saveWorkspaceDiffMessageForRun?.({
                 roomId: current.roomId,
@@ -762,6 +902,8 @@ class AgentClient {
                 workspace: current.workspace,
                 draft,
                 parentMessageId,
+                sourceHandoffJobId: current.sourceHandoffJobId || '',
+                sourceHandoffLeaseToken: current.sourceHandoffLeaseToken || '',
             })
             if (saved?.message) {
                 this.workspaceDiffBroadcaster?.(current.roomId, saved.message, saved.totalTokens)
@@ -783,7 +925,12 @@ class AgentClient {
         msg: MentionMessage,
         onStatus?: (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => void,
     ): Promise<void> {
-        const runMessageId = groupMessageId(roomId, this.profile, this.name)
+        if (this.participantBinding(roomId)?.runtime === 'coding_agent') {
+            await this.replyToCodingAgentMention(roomId, msg, onStatus)
+            return
+        }
+        logger.debug(`[AgentClients] ${this.name} mentioned by ${msg.senderName}: "${msg.content.slice(0, 50)}"`)
+        const runMessageId = groupMessageId(roomId, this.profile, this.name, msg.handoffJobId)
         let partIndex = 0
         let streamMessageId = groupMessagePartId(runMessageId, partIndex)
         let currentContent = ''
@@ -803,10 +950,12 @@ class AgentClient {
             const bridge = new AgentBridgeClient()
             const sessionIdentity = this.currentRoomSessionIdentity(roomId)
             const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionIdentity.sessionSeed, sessionIdentity)
+            const replyInterruptVersion = this.interruptVersion(sessionId)
+            const executionIsCurrent = () => this.handoffExecutionIsCurrent(roomId, sessionId, replyInterruptVersion, msg)
+            if (!executionIsCurrent()) return
             this.registerCurrentRoomSession(roomId, sessionId, sessionIdentity, true)
             logger.debug(`[AgentClients] ${this.name} mentioned by ${msg.senderName}: "${msg.content.slice(0, 50)}"`)
             this.startTyping(roomId)
-            const replyInterruptVersion = this.interruptVersion(sessionId)
             const reportStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
                 onStatus?.(status, { ...extra, agentSessionId: sessionId })
             }
@@ -831,13 +980,9 @@ class AgentClient {
                             logger.warn(`[AgentClients] ${this.name}: failed to destroy stale bridge session: ${err.message || err}`)
                         }
                     }
-                    if (streamStarted) {
-                        try {
-                            this.emitMessageStreamEnd(roomId, streamMessageId, sessionId)
-                        } catch (err: any) {
-                            logger.warn(`[AgentClients] ${this.name}: failed to end stale stream: ${err.message || err}`)
-                        }
-                    }
+                    // Do not publish a terminal stream callback after the durable
+                    // execution fence changes. The stale UI stream is owned by the
+                    // revoked lease and all of its callbacks are suppressed.
                 }
                 this.discardWorkspaceDiffRun(workspaceRunState)
                 workspaceRunState = null
@@ -848,8 +993,27 @@ class AgentClient {
                 }
                 reportStatus('ready')
             }
-            const modelContext = await resolveGroupAgentModelContext(this.profile)
-            if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+            const participantSnapshot = { ...(this.participantBinding(roomId) || {}) }
+            const profileModelContext = await resolveGroupAgentModelContext(this.profile)
+            const modelContext = {
+                model: String(participantSnapshot.model || profileModelContext.model || '').trim(),
+                provider: String(participantSnapshot.provider || profileModelContext.provider || '').trim(),
+            }
+            const routedPrefix = isAllAgentsMentioned(msg.content)
+                ? `群聊系统：这条消息通过 @all 提及所有 agent，你是其中之一，请直接回复。`
+                : `群聊系统：这条消息已经提及你（${this.name}），请直接回复；即使消息同时提及其他成员，也不要因此输出空回复。`
+            const rawInput = msg.input || msg.content
+            const input = isContentBlockArray(rawInput)
+                ? rawInput.map((block) => {
+                    if (block.type !== 'text') return block
+                    const text = stripMentionRoutingTokens(String(block.text || msg.content), this.name)
+                    return { ...block, text: `${routedPrefix}\n\n原始消息：${text || msg.content}` }
+                })
+                : `${routedPrefix}\n\n原始消息：${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
+            const directInputTokenEstimate = countTokens(isContentBlockArray(input)
+                ? input.map(block => block.type === 'text' ? String(block.text || '') : `[${block.type}]`).join('\n')
+                : input)
+            if (!executionIsCurrent()) {
                 await stopStaleStartedRun('Interrupted because group chat run authority changed')
                 return
             }
@@ -886,7 +1050,9 @@ class AgentClient {
                         upstream: '',
                         apiKey: null,
                         currentMessage: mentionMessageToStoredContextMessage(roomId, msg),
-                        authorizationGuard: () => this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion),
+                        excludeCurrentMessageFromHistory: true,
+                        directInputTokenEstimate,
+                        authorizationGuard: () => executionIsCurrent(),
                         summarySessionRegistrar: () => this.createSummarySessionLease(roomId),
                         compression,
                         profile: this.profile,
@@ -908,7 +1074,7 @@ class AgentClient {
                             )
                         },
                     })
-                    if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+                    if (!executionIsCurrent()) {
                         await stopStaleStartedRun?.()
                         return
                     }
@@ -940,7 +1106,7 @@ class AgentClient {
             const bridgeInput: AgentBridgeMessage = isContentBlockArray(input)
                 ? await convertContentBlocksForAgent(input)
                 : input
-            if (!this.storage?.getRoom?.(roomId) || !this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+            if (!this.storage?.getRoom?.(roomId) || !executionIsCurrent()) {
                 await stopStaleStartedRun?.()
                 return
             }
@@ -966,7 +1132,7 @@ class AgentClient {
                 },
             )
             bridgeStarted = true
-            if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+            if (!executionIsCurrent()) {
                 await stopStaleStartedRun?.()
                 return
             }
@@ -976,41 +1142,26 @@ class AgentClient {
                     sessionId,
                     runId: started.run_id,
                     workspace: roomWorkspace,
+                    sourceHandoffJobId: msg.handoffJobId || '',
+                    sourceHandoffLeaseToken: msg.handoffLeaseToken || '',
+                    targetAgentId: this.agentId,
+                    targetSessionId: msg.targetSessionId || '',
                 })
             }
 
-            this.emitMessageStreamStart(roomId, streamMessageId, sessionId)
+            this.emitMessageStreamStart(roomId, streamMessageId, sessionId, msg)
             streamStarted = true
             for await (const chunk of bridge.streamOutput(started.run_id, { timeoutMs: 120000 })) {
-                if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+                if (!executionIsCurrent()) {
                     await stopStaleStartedRun?.()
                     return
                 }
                 lastChunk = chunk
-                reasoningContent = await this.recordBridgeEvents(
-                    roomId,
-                    sessionId,
-                    replyInterruptVersion,
-                    instructions,
-                    modelContext,
-                    chunk,
-                    reasoningContent,
-                    () => streamMessageId,
-                    async (toolReasoning) => {
-                        const toolBaseId = streamMessageId
-                        if (currentContent.trim()) {
-                            if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
-                                await stopStaleStartedRun?.()
-                                currentContent = ''
-                                return toolBaseId
-                            }
-                            await this.sendMessage(roomId, currentContent, streamMessageId, {
-                                role: 'assistant',
-                                mentionDepth: nextMentionDepth(msg),
-                                reasoning: toolReasoning || null,
-                                reasoning_content: toolReasoning || null,
-                            }, sessionId)
-                            flushedAssistantParts.add(streamMessageId)
+                reasoningContent += await this.recordBridgeEvents(roomId, sessionId, replyInterruptVersion, instructions, modelContext, chunk, () => streamMessageId, async () => {
+                    const toolBaseId = streamMessageId
+                    if (currentContent.trim()) {
+                        if (!executionIsCurrent()) {
+                            await stopStaleStartedRun?.()
                             currentContent = ''
                         }
                         await this.sendMessage(roomId, currentContent, streamMessageId, {
@@ -1027,33 +1178,33 @@ class AgentClient {
                         flushedAssistantParts.add(streamMessageId)
                         currentContent = ''
                     }
-                    this.emitMessageStreamEnd(roomId, toolBaseId, sessionId)
+                    this.emitMessageStreamEnd(roomId, toolBaseId, sessionId, msg)
                     partIndex += 1
                     streamMessageId = groupMessagePartId(runMessageId, partIndex)
-                    this.emitMessageStreamStart(roomId, streamMessageId, sessionId)
+                    this.emitMessageStreamStart(roomId, streamMessageId, sessionId, msg)
                     streamStarted = true
                     return toolBaseId
-                })
-                if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+                }, msg)
+                if (!executionIsCurrent()) {
                     await stopStaleStartedRun?.()
                     return
                 }
                 if (chunk.delta) {
                     currentContent += chunk.delta
                     totalContent += chunk.delta
-                    this.emitMessageStreamDelta(roomId, streamMessageId, chunk.delta, sessionId)
+                    this.emitMessageStreamDelta(roomId, streamMessageId, chunk.delta, sessionId, msg)
                 }
             }
 
             if (lastChunk?.status === 'error') {
                 logger.error(`[AgentClients] ${this.name}: bridge response failed: ${lastChunk.error || 'unknown error'}`)
-                if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+                if (!executionIsCurrent()) {
                     await stopStaleStartedRun?.()
                     return
                 }
                 await this.sendAgentErrorMessage(roomId, streamMessageId, lastChunk.error || 'Run failed', msg, reasoningContent, sessionId)
                 await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'failed', streamStarted ? streamMessageId : null)
-                this.emitMessageStreamEnd(roomId, streamMessageId, sessionId)
+                this.emitMessageStreamEnd(roomId, streamMessageId, sessionId, msg)
                 this.stopTyping(roomId)
                 reportStatus('ready')
                 return
@@ -1063,13 +1214,13 @@ class AgentClient {
                 currentContent = extractBridgeFinalText(lastChunk)
                 totalContent = currentContent
             }
-            if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+            if (!executionIsCurrent()) {
                 await stopStaleStartedRun?.()
                 return
             }
             logger.debug(`[AgentClients] ${this.name}: bridge response completed, content length=${totalContent.length}`)
             if (currentContent) {
-                if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+                if (!executionIsCurrent()) {
                     await stopStaleStartedRun?.()
                     return
                 }
@@ -1085,24 +1236,23 @@ class AgentClient {
                     reasoning: reasoningContent || null,
                     reasoning_content: reasoningContent || null,
                 }, sessionId)
-                this.emitMessageStreamEnd(roomId, streamMessageId, sessionId)
+                this.emitMessageStreamEnd(roomId, streamMessageId, sessionId, msg)
                 await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'completed', streamMessageId)
-                await this.refreshRoomFullContextEstimate(roomId, sessionId, bridge, instructions, modelContext)
                 reportStatus('ready')
                 return
             }
             logger.warn(`[AgentClients] ${this.name}: bridge response completed without content`)
-            if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+            if (!executionIsCurrent()) {
                 await stopStaleStartedRun?.()
                 return
             }
-            this.emitMessageStreamEnd(roomId, streamMessageId, sessionId)
+            this.emitMessageStreamEnd(roomId, streamMessageId, sessionId, msg)
             await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'completed', streamStarted ? streamMessageId : null)
             this.stopTyping(roomId)
             reportStatus('ready')
         } catch (err: any) {
             logger.error(`[AgentClients] ${this.name}: error handling message: ${err.message}`)
-            if (activeSessionId && !this.replySessionIsCurrent(roomId, activeSessionId, activeReplyInterruptVersion)) {
+            if (activeSessionId && !this.handoffExecutionIsCurrent(roomId, activeSessionId, activeReplyInterruptVersion, msg)) {
                 await stopStaleStartedRun?.()
                 return
             }
@@ -1113,7 +1263,7 @@ class AgentClient {
             }
             try {
                 await this.sendAgentErrorMessage(roomId, streamMessageId, err, msg, reasoningContent, activeSessionId || undefined)
-                if (streamStarted) this.emitMessageStreamEnd(roomId, streamMessageId, activeSessionId || undefined)
+                if (streamStarted) this.emitMessageStreamEnd(roomId, streamMessageId, activeSessionId || undefined, msg)
             } catch (sendErr: any) {
                 logger.warn(`[AgentClients] ${this.name}: failed to send error message: ${sendErr.message}`)
             }
@@ -1137,6 +1287,7 @@ class AgentClient {
 
         const sessionId = this.currentSessionId(roomId)
         const replyInterruptVersion = this.interruptVersion(sessionId)
+        const executionIsCurrent = () => this.handoffExecutionIsCurrent(roomId, sessionId, replyInterruptVersion, msg)
         const roomWorkspace = String(this.storage?.getRoom?.(roomId)?.workspace || '').trim()
         const messageId = groupMessagePartId(groupMessageId(roomId, this.profile, this.name, msg.handoffJobId), 0)
         let output = ''
@@ -1147,7 +1298,6 @@ class AgentClient {
         let unsubscribe = () => {}
         let resolveRun: () => void = () => {}
         let roomContextInstructions = ''
-        let contextRevision = 0
         const eventToken = `${sessionId}:${messageId}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`
 
         const runDone = new Promise<void>((resolve) => { resolveRun = resolve })
@@ -1169,7 +1319,7 @@ class AgentClient {
             await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false, graceMs: 15_000 })
             if (this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
                 await this.sendAgentErrorMessage(roomId, messageId, reason, msg, reasoning, sessionId)
-                this.emitMessageStreamEnd(roomId, messageId, sessionId)
+                this.emitMessageStreamEnd(roomId, messageId, sessionId, msg)
             }
             this.stopTyping(roomId)
             reportStatus('ready')
@@ -1183,9 +1333,13 @@ class AgentClient {
         }
 
         try {
+            if (!executionIsCurrent()) {
+                cleanup()
+                return
+            }
             this.startTyping(roomId)
             reportStatus('replying')
-            this.emitMessageStreamStart(roomId, messageId, sessionId)
+            this.emitMessageStreamStart(roomId, messageId, sessionId, msg)
 
             const participantCursor = Math.max(0, Math.floor(Number(binding.lastSeenRoomSeq || 0)))
             const canResolveStoredTrigger = typeof this.storage?.getMessage === 'function'
@@ -1198,13 +1352,6 @@ class AgentClient {
             if (canResolveStoredTrigger && triggerRoomSeq <= 0) {
                 throw new Error('The triggering Room message has no persisted sequence; refusing to advance Coding Agent continuity')
             }
-            const canonicalMessages = this.storage?.getMessagesForContext?.(roomId, triggerRoomSeq > 0
-                ? {
-                    throughRoomSeq: triggerRoomSeq,
-                    ...(participantCursor > 0 ? { afterRoomSeq: participantCursor } : {}),
-                }
-                : { throughMessageId: msg.messageId }) || []
-            contextRevision = participantContextRevision(participantCursor, triggerRoomSeq, canonicalMessages)
             if (this.contextEngine && this.storage) {
                 const roomInfo = this.storage.getRoom(roomId)
                 const roomMembers: Array<{ userId: string; name: string; description: string }> = this.storage.getRoomMembers(roomId) || []
@@ -1241,6 +1388,8 @@ class AgentClient {
                     currentMessage: triggerMessage,
                     excludeCurrentMessageFromHistory: true,
                     directInputTokenEstimate: countTokens(stripMentionRoutingTokens(msg.content, this.name) || msg.content),
+                    authorizationGuard: () => executionIsCurrent(),
+                    summarySessionRegistrar: () => this.createSummarySessionLease(roomId),
                     compression,
                     profile: this.profile,
                     participantCursor: Number(binding.lastSeenRoomSeq || 0),
@@ -1257,37 +1406,56 @@ class AgentClient {
                 ].filter(Boolean).join('\n\n')
             }
 
-            if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) return
+            if (!executionIsCurrent()) {
+                cleanup()
+                return
+            }
 
             unsubscribe = codingAgentRunManager.subscribe(sessionId, (event, payload) => {
-                if (settled || !this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) return
+                if (settled) return
+                if (!executionIsCurrent()) {
+                    void codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false, graceMs: 15_000 })
+                        .finally(cleanup)
+                    return
+                }
                 armInactivityTimer()
                 if (event === 'message.delta') {
                     const delta = String(payload?.delta || '')
                     if (!delta) return
                     output += delta
-                    this.emitMessageStreamDelta(roomId, messageId, delta, sessionId)
+                    this.emitMessageStreamDelta(roomId, messageId, delta, sessionId, msg)
                     return
                 }
                 if (event === 'reasoning.delta' || event === 'thinking.delta') {
                     const delta = String(payload?.delta || payload?.text || '')
                     if (!delta) return
                     reasoning += delta
-                    this.emitMessageReasoningDelta(roomId, messageId, delta, sessionId)
+                    this.emitMessageReasoningDelta(roomId, messageId, delta, sessionId, msg)
                     return
                 }
                 if (event === 'tool.started') {
-                    this.recordToolStarted(roomId, sessionId, payload || {}, messageId)
+                    this.recordToolStarted(roomId, sessionId, payload || {}, messageId, msg)
                     return
                 }
                 if (event === 'tool.completed' || event === 'tool.failed') {
-                    this.recordToolCompleted(roomId, sessionId, payload || {})
+                    this.recordToolCompleted(roomId, sessionId, payload || {}, msg)
                     return
                 }
                 if (event === 'usage.updated') {
                     const totalTokens = Number(payload?.contextTokens ?? ((payload?.inputTokens || 0) + (payload?.outputTokens || 0)))
                     if (Number.isFinite(totalTokens) && totalTokens >= 0) {
-                        this.storage?.updateRoomTotalTokens?.(roomId, Math.floor(totalTokens))
+                        if (msg.handoffJobId) {
+                            this.storage?.updateRoomTotalTokensForHandoff?.({
+                                roomId,
+                                totalTokens: Math.floor(totalTokens),
+                                sourceHandoffJobId: msg.handoffJobId,
+                                sourceHandoffLeaseToken: msg.handoffLeaseToken || '',
+                                targetAgentId: this.agentId,
+                                targetSessionId: msg.targetSessionId || '',
+                            })
+                        } else {
+                            this.storage?.updateRoomTotalTokens?.(roomId, Math.floor(totalTokens))
+                        }
                         reportStatus('replying')
                     }
                     return
@@ -1297,13 +1465,27 @@ class AgentClient {
                     const finalOutput = String(payload?.output || '').trim()
                     if (!output && finalOutput) {
                         output = finalOutput
-                        this.emitMessageStreamDelta(roomId, messageId, finalOutput, sessionId)
+                        this.emitMessageStreamDelta(roomId, messageId, finalOutput, sessionId, msg)
                     }
                     if (event === 'run.failed') {
-                        await this.persistCodingAgentWorkspaceDiff(roomId, sessionId, payload, 'failed', messageId, roomWorkspace)
+                        await this.persistCodingAgentWorkspaceDiff(roomId, sessionId, payload, 'failed', messageId, roomWorkspace, msg)
+                        if (!executionIsCurrent()) {
+                            await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false, graceMs: 15_000 })
+                            cleanup()
+                            return
+                        }
                         await this.sendAgentErrorMessage(roomId, messageId, payload?.error || 'Coding agent run failed', msg, reasoning, sessionId)
                     } else if (output) {
                         this.stopTyping(roomId)
+                        // Persist the workspace side effect while the durable job lease is
+                        // still live. The final Room message terminalizes the job, so doing
+                        // this afterwards would either bypass the job fence or be rejected.
+                        await this.persistCodingAgentWorkspaceDiff(roomId, sessionId, payload, 'completed', messageId, roomWorkspace, msg)
+                        if (!executionIsCurrent()) {
+                            await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false, graceMs: 15_000 })
+                            cleanup()
+                            return
+                        }
                         await this.sendMessage(roomId, output, messageId, {
                             role: 'assistant',
                             mentionDepth: nextMentionDepth(msg),
@@ -1315,17 +1497,10 @@ class AgentClient {
                             reasoning: reasoning || null,
                             reasoning_content: reasoning || null,
                         }, sessionId)
-                        await this.persistCodingAgentWorkspaceDiff(roomId, sessionId, payload, 'completed', messageId, roomWorkspace)
                     } else {
-                        await this.persistCodingAgentWorkspaceDiff(roomId, sessionId, payload, 'completed', messageId, roomWorkspace)
+                        await this.persistCodingAgentWorkspaceDiff(roomId, sessionId, payload, 'completed', messageId, roomWorkspace, msg)
                     }
-                    if (event === 'run.completed' && this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
-                        this.storage?.updateRoomAgentContinuity?.(roomId, this.agentId, {
-                            lastSeenRoomSeq: contextRevision,
-                            lastSuccessfulRunId: String(payload?.run_id || codingAgentRunManager.runIdForSession(sessionId) || ''),
-                        })
-                    }
-                    this.emitMessageStreamEnd(roomId, messageId, sessionId)
+                    this.emitMessageStreamEnd(roomId, messageId, sessionId, msg)
                     this.stopTyping(roomId)
                     reportStatus('ready')
                     cleanup()
@@ -1361,17 +1536,31 @@ class AgentClient {
                     workspace: roomWorkspace || null,
                     runtimeContext: 'group_chat',
                 })
-                if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+                if (!executionIsCurrent()) {
                     await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false, graceMs: 15_000 })
                     return
                 }
             }
 
-            if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) return
-            const routedInput = stripMentionRoutingTokens(msg.content, this.name) || msg.content
+            if (!executionIsCurrent()) {
+                cleanup()
+                return
+            }
+            const room = this.storage?.getRoom?.(roomId)
+            const routedContent = stripMentionRoutingTokens(msg.content, this.name) || msg.content
+            const routedInput = buildCodingAgentGroupHandoffEnvelope({
+                roomId,
+                roomName: String(room?.name || roomId),
+                targetName: this.name,
+                targetDescription: this.description,
+                senderName: msg.senderName,
+                senderRole: msg.role === 'assistant' ? 'assistant' : 'user',
+                handoffKind: msg.handoffKind || (isAllAgentsMentioned(msg.content) ? 'fanout' : 'mention'),
+                content: routedContent,
+            })
             const systemPrompt = [
                 getSystemPrompt(undefined, { source: 'coding_agent' }),
-                `You are ${this.name}, a participant in Group Chat room ${roomId}. Reply to the triggering message for the shared room.`,
+                `You are ${this.name}, a participant in Group Chat room ${roomId}. Your Room role is: ${this.description || '(no additional role description)'}. Reply to the triggering message for the shared room.`,
                 roomContextInstructions,
             ].filter(Boolean).join('\n\n')
             sendCodingAgentRunInput(sessionId, routedInput, systemPrompt, [], undefined, eventToken)
@@ -1382,9 +1571,9 @@ class AgentClient {
             await runDone
         } catch (err: any) {
             if (!settled) {
-                if (this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+                if (executionIsCurrent()) {
                     await this.sendAgentErrorMessage(roomId, messageId, err, msg, reasoning, sessionId)
-                    this.emitMessageStreamEnd(roomId, messageId, sessionId)
+                    this.emitMessageStreamEnd(roomId, messageId, sessionId, msg)
                 }
                 this.stopTyping(roomId)
                 reportStatus('ready')
@@ -1400,10 +1589,20 @@ class AgentClient {
         status: 'completed' | 'failed' | 'aborted',
         parentMessageId: string | null,
         workspace: string,
+        sourceMsg?: MentionMessage,
     ): Promise<void> {
         const draft = payload?.workspace_run_change
         if (!draft || !workspace || !this.storage?.saveWorkspaceDiffMessageForRun) return
         if (!this.roomSessionIsCurrent(roomId, sessionId)) return
+        if (sourceMsg?.handoffJobId) {
+            if (!sourceMsg.handoffLeaseToken || !sourceMsg.targetSessionId ||
+                this.storage?.isHandoffExecutionCurrent?.(
+                    sourceMsg.handoffJobId,
+                    sourceMsg.handoffLeaseToken,
+                    this.agentId,
+                    sourceMsg.targetSessionId,
+                ) !== true) return
+        }
         try {
             const saved = this.storage.saveWorkspaceDiffMessageForRun({
                 roomId,
@@ -1415,39 +1614,12 @@ class AgentClient {
                 workspace,
                 draft,
                 parentMessageId,
+                sourceHandoffJobId: sourceMsg?.handoffJobId || '',
+                sourceHandoffLeaseToken: sourceMsg?.handoffLeaseToken || '',
             })
             if (saved?.message) this.workspaceDiffBroadcaster?.(roomId, saved.message, saved.totalTokens)
         } catch (err) {
             logger.warn({ err, roomId, sessionId }, '[GroupChat] failed to persist coding-agent workspace diff')
-        }
-    }
-
-    private async refreshRoomFullContextEstimate(
-        roomId: string,
-        sessionId: string,
-        bridge: AgentBridgeClient,
-        instructions?: string,
-        modelContext: GroupModelContext = { model: '', provider: '' },
-    ): Promise<void> {
-        if (!this.storage?.getMessagesForContext) return
-        try {
-            const history = this.buildRoomEstimateHistory(roomId)
-            const cachedTokens = await this.estimateGroupContextTokens(
-                roomId,
-                sessionId,
-                bridge,
-                history,
-                instructions,
-                modelContext,
-                'final',
-            )
-            if (cachedTokens == null || cachedTokens <= 0) return
-            if (!this.roomSessionIsCurrent(roomId, sessionId)) return
-            const rounded = Math.floor(cachedTokens)
-            this.storage.updateRoomTotalTokens?.(roomId, rounded)
-            this.emitContextStatus(roomId, 'replying', { totalTokens: rounded }, sessionId)
-        } catch (err: any) {
-            logger.warn(`[GroupChat] failed to refresh final context estimate room=${roomId} agent=${this.name}: ${err.message}`)
         }
     }
 
@@ -1502,7 +1674,8 @@ class AgentClient {
         chunk: AgentBridgeOutput,
         initialReasoning: string,
         getCurrentMessageId: () => string,
-        beforeToolStarted: (reasoning: string) => Promise<string>,
+        beforeToolStarted: () => Promise<string>,
+        execution?: MentionMessage,
     ): Promise<string> {
         let reasoning = initialReasoning
         for (const ev of chunk.events || []) {
@@ -1514,15 +1687,16 @@ class AgentClient {
                 const toolReasoning = reasoning
                 const toolBaseId = await beforeToolStarted(toolReasoning)
                 if (!this.replySessionIsCurrent(roomId, sessionId, interruptVersion)) return reasoning
-                this.recordToolStarted(roomId, sessionId, ev as Record<string, unknown>, toolBaseId, toolReasoning)
-                reasoning = ''
+                this.recordToolStarted(roomId, sessionId, ev as Record<string, unknown>, toolBaseId, execution)
             } else if (eventType === 'tool.completed') {
                 if (!this.replySessionIsCurrent(roomId, sessionId, interruptVersion)) return reasoning
-                this.recordToolCompleted(roomId, sessionId, ev as Record<string, unknown>)
+                this.recordToolCompleted(roomId, sessionId, ev as Record<string, unknown>, execution)
             } else if (eventType === 'approval.requested') {
                 this.emitApprovalRequested(roomId, {
                     event: 'approval.requested',
                     agentSessionId: sessionId,
+                    sourceHandoffJobId: execution?.handoffJobId || '',
+                    sourceHandoffLeaseToken: execution?.handoffLeaseToken || '',
                     approval_id: (ev as any).approval_id,
                     command: (ev as any).command,
                     description: (ev as any).description,
@@ -1533,6 +1707,8 @@ class AgentClient {
                 this.emitApprovalResolved(roomId, {
                     event: 'approval.resolved',
                     agentSessionId: sessionId,
+                    sourceHandoffJobId: execution?.handoffJobId || '',
+                    sourceHandoffLeaseToken: execution?.handoffLeaseToken || '',
                     approval_id: (ev as any).approval_id,
                     choice: (ev as any).choice,
                 })
@@ -1540,20 +1716,14 @@ class AgentClient {
                 const text = groupBridgeReasoningDeltaFromEvent(ev as Record<string, unknown>)
                 if (text) {
                     reasoning += text
-                    this.emitMessageReasoningDelta(roomId, getCurrentMessageId(), text, sessionId)
+                    this.emitMessageReasoningDelta(roomId, getCurrentMessageId(), text, sessionId, execution)
                 }
             }
         }
         return reasoning
     }
 
-    private recordToolStarted(
-        roomId: string,
-        sessionId: string,
-        ev: Record<string, unknown>,
-        runMessageId: string,
-        reasoning = '',
-    ): void {
+    private recordToolStarted(roomId: string, sessionId: string, ev: Record<string, unknown>, runMessageId: string, execution?: MentionMessage): void {
         const toolName = String(ev.tool_name || ev.tool || ev.name || '')
         const toolCallId = groupToolCallId(ev.tool_call_id, toolName, this.nextToolIndex(roomId, toolName))
         this.trackPendingToolCall(roomId, toolName, toolCallId)
@@ -1589,10 +1759,12 @@ class AgentClient {
             reasoning: reasoning || null,
             reasoning_content: reasoning || null,
             timestamp,
+            sourceHandoffJobId: execution?.handoffJobId || '',
+            sourceHandoffLeaseToken: execution?.handoffLeaseToken || '',
         }, sessionId).catch((err: any) => logger.warn(`[AgentClients] failed to record tool call: ${err.message}`))
     }
 
-    private recordToolCompleted(roomId: string, sessionId: string, ev: Record<string, unknown>): void {
+    private recordToolCompleted(roomId: string, sessionId: string, ev: Record<string, unknown>, execution?: MentionMessage): void {
         const toolName = String(ev.tool_name || ev.tool || ev.name || '')
         const rawId = String(ev.tool_call_id || '').trim()
         const toolCallId = rawId || this.takePendingToolCall(roomId, toolName) || groupToolCallId(null, toolName, this.nextToolIndex(roomId, toolName))
@@ -1616,6 +1788,8 @@ class AgentClient {
             tool_call_id: toolCallId,
             tool_name: toolName || null,
             timestamp,
+            sourceHandoffJobId: execution?.handoffJobId || '',
+            sourceHandoffLeaseToken: execution?.handoffLeaseToken || '',
         }, sessionId).catch((err: any) => logger.warn(`[AgentClients] failed to record tool result: ${err.message}`))
     }
 
@@ -1736,7 +1910,8 @@ export function groupBridgeSummarySessionId(
     ])
 }
 
-function groupMessageId(roomId: string, profile: string, name: string): string {
+function groupMessageId(roomId: string, profile: string, name: string, handoffJobId?: string): string {
+    if (handoffJobId) return `gcmsg_handoff_${safeId(handoffJobId)}`
     const raw = `gcmsg_${safeId(roomId)}_${safeId(profile)}_${randomBytes(16).toString('hex')}`
     return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 160)
 }
@@ -1871,11 +2046,21 @@ export class AgentClients {
         return this.rooms.get(roomId)?.get(agentId)
     }
 
-    getSummarySessionContext(roomId: string): {
+    updateAgentIdentity(roomId: string, agentId: string, name: string, description: string): boolean {
+        const client = this.getAgent(roomId, agentId)
+        if (!client) return false
+        client.updateIdentity(name, description)
+        return true
+    }
+
+    getSummarySessionContext(roomId: string, agentId?: string): {
         profile: string
         sessionRegistrar: () => GatewaySessionLease
     } | null {
-        const agent = this.getAgents(roomId).find(candidate => candidate.canCreateSummarySession(roomId))
+        const candidates = agentId
+            ? [this.getAgent(roomId, agentId)].filter((agent): agent is AgentClient => Boolean(agent))
+            : this.getAgents(roomId)
+        const agent = candidates.find(candidate => candidate.canCreateSummarySession(roomId))
         if (!agent) return null
         return {
             profile: agent.profile,
@@ -2145,7 +2330,7 @@ export class AgentClients {
 
         this._processingRooms.add(agentKey)
         const onStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
-            agent.emitContextStatus(roomId, status, extra)
+            agent.emitContextStatus(roomId, status, extra, undefined, msg)
             logger.debug(`[AgentClients] room ${roomId} agent ${agent.name} status: ${status}`)
         }
 

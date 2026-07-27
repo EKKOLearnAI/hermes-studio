@@ -1144,7 +1144,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     async function updateAgentInRoom(roomId: string, agentId: string, data: RoomAgentUpdateInput) {
         try {
             const res = await updateAgent(roomId, agentId, data)
-            const index = agents.value.findIndex(agent => agent.id === agentId || agent.agentId === agentId)
+            const index = agents.value.findIndex(agent => agent.agentId === agentId)
             if (index >= 0) agents.value[index] = res.agent
             else agents.value.push(res.agent)
             agents.value = [...agents.value]
@@ -1159,7 +1159,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         try {
             await ensureRestSubject()
             const res = await removeAgent(roomId, agentId)
-            agents.value = res.agents ?? agents.value.filter(a => a.id !== agentId && a.agentId !== agentId)
+            agents.value = res.agents ?? agents.value.filter(a => a.agentId !== agentId)
             if (res.members) members.value = res.members
         } catch (err: any) {
             error.value = err.message

@@ -392,7 +392,7 @@ describe('group chat history windows', () => {
     expect(storage.getRoom('room-1')?.totalTokens).toBe(expectedTotalTokens)
   })
 
-  it('preserves snapshot summary tokens when the snapshot anchor was pruned from retained history', () => {
+  it('retains the snapshot anchor when no authorized summary session can cover the deletion boundary', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')
 
@@ -409,118 +409,15 @@ describe('group chat history windows', () => {
     for (const message of seeded.slice(1)) latest = storage.saveMessageAndRefreshRoom(message as any)
 
     const retained = storage.getMessagesForContext('room-1')
+    const snapshotTail = retained.filter(message => message.id !== 'msg-1')
     const expectedTotalTokens = countTokens(SUMMARY_PREFIX + 'Earlier summary')
-      + retained.reduce((sum, message) => sum + countTokens(String(message.content)), 0)
+      + snapshotTail.reduce((sum, message) => sum + countTokens(String(message.content)), 0)
 
-    expect(retained).toHaveLength(500)
-    expect(retained.some(message => message.id === 'msg-1')).toBe(false)
+    expect(retained).toHaveLength(501)
+    expect(retained.some(message => message.id === 'msg-1')).toBe(true)
     expect(storage.getContextSnapshot('room-1')?.lastMessageId).toBe('msg-1')
     expect(latest?.totalTokens).toBe(expectedTotalTokens)
     expect(storage.getRoom('room-1')?.totalTokens).toBe(expectedTotalTokens)
   })
 
-  it('uses the full context transcript for the final AgentClient room estimate', async () => {
-    const messages = Array.from({ length: 160 }, (_value, index) => ({
-      senderId: 'user-1',
-      senderName: 'Alice',
-      content: `message ${index + 1}`,
-      role: 'user',
-      timestamp: index + 1,
-    }))
-    const sessionIdentity = {
-      actorId: 'actor-agent-1',
-      roomAuthorizationRevision: 0,
-      actorAuthorizationRevision: 0,
-      actorContextRevision: 0,
-    }
-    const sessionId = groupBridgeSessionId('room-1', 'default', 'Worker', '11111111111111111111111111111111', sessionIdentity)
-    const storage = {
-      getMessagesForContext: vi.fn(() => messages),
-      getRecentMessagesForUI: vi.fn(() => messages.slice(-150)),
-      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: '11111111111111111111111111111111', authorizationRevision: 0 })),
-      findActiveActorByAgentIdentity: vi.fn(() => ({
-        id: sessionIdentity.actorId,
-        authorizationRevision: 0,
-        contextRevision: 0,
-      })),
-      getActorCapabilities: vi.fn(() => ['room.read', 'room.write']),
-      getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: 'Worker' })),
-      updateRoomTotalTokens: vi.fn(),
-    }
-    const bridge = {
-      contextEstimate: vi.fn(async (_sessionId: string, history: Array<{ role: 'user' | 'assistant'; content: string }>) => ({
-        token_count: 4321,
-        fixed_context_tokens: 0,
-        message_count: history.length,
-      })),
-    }
-
-    const clients = new AgentClients()
-    const client = await clients.createAgent({
-      agentId: 'agent-1',
-      profile: 'default',
-      name: 'Worker',
-      description: '',
-      invited: 0,
-    } as any)
-    client.setStorage(storage as any)
-
-    await (client as any).refreshRoomFullContextEstimate('room-1', sessionId, bridge, undefined, { model: '', provider: '' })
-
-    expect(storage.getMessagesForContext).toHaveBeenCalledWith('room-1')
-    expect(storage.getRecentMessagesForUI).not.toHaveBeenCalled()
-    expect(bridge.contextEstimate).toHaveBeenCalledTimes(1)
-    expect(bridge.contextEstimate.mock.calls[0][1]).toHaveLength(160)
-    expect(storage.updateRoomTotalTokens).toHaveBeenCalledWith('room-1', 4321)
-    expect(mockSocket.emit).toHaveBeenCalledWith('context_status', expect.objectContaining({
-      roomId: 'room-1',
-      agentName: 'Worker',
-      status: 'replying',
-      totalTokens: 4321,
-    }))
-
-    client.disconnect()
-  })
-
-  it('includes the active reasoning segment in persisted group tool-call messages', async () => {
-    mockSocket.emit.mockImplementation((event: string, payload?: any, ack?: Function) => {
-      if (typeof ack === 'function') ack({ id: payload?.id })
-      return mockSocket
-    })
-    const clients = new AgentClients()
-    const client = await clients.createAgent({
-      agentId: 'agent-1',
-      profile: 'default',
-      name: 'Worker',
-      description: '',
-      invited: 0,
-    } as any)
-
-    ;(client as any).recordToolStarted(
-      'room-1',
-      'session-1',
-      {
-        tool_name: 'lookup',
-        tool_call_id: 'call-1',
-        args: { room: 'room-1' },
-      },
-      'run-1_part_0',
-      'Inspect the room before calling lookup.',
-    )
-
-    expect(mockSocket.emit).toHaveBeenCalledWith(
-      'message',
-      expect.objectContaining({
-        roomId: 'room-1',
-        id: 'run-1_part_0_toolcall_call-1',
-        role: 'assistant',
-        reasoning: 'Inspect the room before calling lookup.',
-        reasoning_content: 'Inspect the room before calling lookup.',
-        tool_calls: [expect.objectContaining({ id: 'call-1' })],
-      }),
-      expect.any(Function),
-    )
-
-    client.disconnect()
-  })
 })

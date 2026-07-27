@@ -92,7 +92,8 @@ describe('Hermes schema initialization', () => {
       .map(([name, definition]) => `"${name}" ${definition}`)
       .join(', ')
     db.exec(`CREATE TABLE "${GC_ROOMS_TABLE}" (${legacyColumns})`)
-    db.prepare(`INSERT INTO "${GC_ROOMS_TABLE}" (id, name) VALUES (?, ?)`).run('legacy-room', 'Legacy Room')
+    db.prepare(`INSERT INTO "${GC_ROOMS_TABLE}" (id, name, sessionSeed) VALUES (?, ?, ?)`)
+      .run('legacy-room', 'Legacy Room', '11111111111111111111111111111111')
 
     expect(() => initAllHermesTables()).not.toThrow()
 
@@ -248,8 +249,8 @@ describe('Hermes schema initialization', () => {
       .join(', ')
     db.exec(`CREATE TABLE "${GC_ROOMS_TABLE}" (${roomColumns})`)
     db.prepare(
-      `INSERT INTO "${GC_ROOMS_TABLE}" (id, name, messageSeq) VALUES (?, ?, ?)`,
-    ).run('room-1', 'Room 1', 50)
+      `INSERT INTO "${GC_ROOMS_TABLE}" (id, name, messageSeq, sessionSeed) VALUES (?, ?, ?, ?)`,
+    ).run('room-1', 'Room 1', 50, '11111111111111111111111111111111')
 
     const legacyAgentColumns = Object.entries(GC_ROOM_AGENTS_SCHEMA)
       .map(([name, definition]) => `"${name}" ${definition}`)
@@ -281,8 +282,16 @@ describe('Hermes schema initialization', () => {
     const {
       GC_ROOM_AGENTS_SCHEMA,
       GC_ROOM_AGENTS_TABLE,
+      GC_ROOMS_SCHEMA,
+      GC_ROOMS_TABLE,
       initAllHermesTables,
     } = await import('../../packages/server/src/db/hermes/schemas')
+    const roomColumns = Object.entries(GC_ROOMS_SCHEMA)
+      .map(([name, definition]) => `"${name}" ${definition}`)
+      .join(', ')
+    db.exec(`CREATE TABLE "${GC_ROOMS_TABLE}" (${roomColumns})`)
+    db.prepare(`INSERT INTO "${GC_ROOMS_TABLE}" (id, name, sessionSeed) VALUES (?, ?, ?)`)
+      .run('room-1', 'Room 1', '11111111111111111111111111111111')
     const legacyColumns = Object.entries(GC_ROOM_AGENTS_SCHEMA)
       .filter(([name]) => ![
         'runtime',

@@ -27,6 +27,7 @@ vi.mock('naive-ui', async (importOriginal) => {
   return {
     ...actual,
     useMessage: () => messageApi,
+    useDialog: () => ({ warning: vi.fn(), error: vi.fn(), success: vi.fn(), info: vi.fn() }),
   }
 })
 

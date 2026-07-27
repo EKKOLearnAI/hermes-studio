@@ -97,6 +97,36 @@ describe('group chat streaming baseline', () => {
     })).resolves.toEqual({ error: 'Not in room' })
   })
 
+  it('drops durable stream callbacks after source authority is revoked without a revision bump', async () => {
+    const { alice, bob, worker, agentSessionId } = await joinPair()
+    await emitAck(alice, 'message', { roomId: 'room-1', id: 'durable-trigger-1', content: '@Worker run' })
+    const pending = groupServer.getStorage().listHandoffJobs('room-1')[0]
+    expect(pending).toMatchObject({ targetAgentId: 'agent-worker', status: 'pending' })
+    const running = groupServer.getStorage().claimHandoffJobs('test-dispatcher', Date.now(), 1, 60_000)[0]
+
+    const authorizedDelta = once<any>(bob, 'message_stream_delta')
+    worker.emit('message_stream_delta', {
+      roomId: 'room-1', id: 'durable-stream-1', delta: 'authorized', agentSessionId,
+      sourceHandoffJobId: running.id, sourceHandoffLeaseToken: running.leaseToken,
+    })
+    await expect(authorizedDelta).resolves.toEqual({ roomId: 'room-1', id: 'durable-stream-1', delta: 'authorized' })
+
+    harness.db.prepare(
+      "UPDATE gc_room_actor_capabilities SET active = 0 WHERE actorId = ? AND capability = 'agent.invoke'",
+    ).run(running.sourceActorId)
+    ;(bob as any).__bufferedEvents__?.delete('message_stream_delta')
+    const lateDelta = once<any>(bob, 'message_stream_delta', 150)
+    worker.emit('message_stream_delta', {
+      roomId: 'room-1', id: 'durable-stream-1', delta: 'must-not-publish', agentSessionId,
+      sourceHandoffJobId: running.id, sourceHandoffLeaseToken: running.leaseToken,
+    })
+
+    await expect(lateDelta).rejects.toThrow('timeout waiting for message_stream_delta')
+    expect(groupServer.getStorage().getHandoffJob(running.id)).toMatchObject({
+      status: 'authorization_revoked', leaseOwner: '', leaseToken: '',
+    })
+  })
+
   it('ignores stream events emitted by human sockets', async () => {
     const { alice, bob } = await joinPair()
     const unexpectedStart = once<any>(bob, 'message_stream_start', 100)

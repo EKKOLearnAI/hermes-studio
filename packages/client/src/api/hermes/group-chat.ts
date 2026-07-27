@@ -45,7 +45,6 @@ export type RoomAgentUpdateInput = Pick<RoomAgentBindingInput,
     'name' | 'description' | 'mode' | 'provider' | 'model' | 'apiMode' | 'reasoningEffort' | 'avatar'>
 
 export interface RoomAgent {
-    id: string
     roomId: string
     agentId: string
     profile: string
@@ -54,8 +53,6 @@ export interface RoomAgent {
     invited: number
     runtime: ParticipantRuntime
     codingAgentId: ParticipantCodingAgentId
-    sessionId: string
-    sessionGeneration: number
     mode: ParticipantMode
     provider: string
     model: string
@@ -108,7 +105,7 @@ export interface GroupHandoffJob {
     targetAgentId: string
     depth: number
     kind: 'mention' | 'fixed' | 'fanout'
-    status: 'pending' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled'
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled' | 'authorization_revoked'
     attemptCount: number
     lastError: string
     createdAt: number
@@ -303,12 +300,7 @@ export async function updateInviteCode(roomId: string, inviteCode: string): Prom
     })
 }
 
-export async function addAgent(roomId: string, data: {
-    profile: string
-    name?: string
-    description?: string
-    invited?: boolean
-}): Promise<{ agent: RoomAgent }> {
+export async function addAgent(roomId: string, data: RoomAgentBindingInput): Promise<{ agent: RoomAgent }> {
     return groupChatRequest(`/api/hermes/group-chat/rooms/${roomId}/agents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -317,7 +309,7 @@ export async function addAgent(roomId: string, data: {
 }
 
 export async function updateAgent(roomId: string, agentId: string, data: RoomAgentUpdateInput): Promise<{ agent: RoomAgent }> {
-    return request(`/api/hermes/group-chat/rooms/${roomId}/agents/${agentId}`, {
+    return groupChatRequest(`/api/hermes/group-chat/rooms/${roomId}/agents/${agentId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -352,7 +344,14 @@ export async function clearRoomContext(roomId: string): Promise<{ success: boole
     })
 }
 
-export async function updateRoomConfig(roomId: string, config: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): Promise<{ room: RoomInfo }> {
+export async function updateRoomConfig(roomId: string, config: {
+    triggerTokens?: number
+    maxHistoryTokens?: number
+    tailMessageCount?: number
+    maxAgentMentionDepth?: number | null
+    handoffMode?: 'mentions' | 'fixed'
+    handoffOrder?: string[]
+}): Promise<{ room: RoomInfo }> {
     return groupChatRequest(`/api/hermes/group-chat/rooms/${roomId}/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -361,7 +360,7 @@ export async function updateRoomConfig(roomId: string, config: { triggerTokens?:
 }
 
 export async function listHandoffs(roomId: string, limit = 100): Promise<{ jobs: GroupHandoffJob[] }> {
-    return request(`/api/hermes/group-chat/rooms/${roomId}/handoffs?limit=${limit}`)
+    return groupChatRequest(`/api/hermes/group-chat/rooms/${encodeURIComponent(roomId)}/handoffs?limit=${Math.max(1, Math.min(500, Math.floor(limit)))}`)
 }
 
 export async function updateRoomWorkspace(roomId: string, workspace: string): Promise<{ room: RoomInfo }> {

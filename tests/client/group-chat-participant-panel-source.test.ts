@@ -11,7 +11,6 @@ const participantLocaleKeys = [
   'participantReasoningEffortNextRun',
   'participantAvatar',
   'editParticipant',
-  'sessionGeneration',
 ]
 const roomHandoffLocaleKeys = [
   'automaticHandoffSettings',

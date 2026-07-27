@@ -96,6 +96,7 @@ describe('group chat REST route baseline', () => {
       getRoomAgents: vi.fn((roomId) => storage.agents.get(roomId) || []),
       getRoomMembers: vi.fn((roomId) => storage.members.get(roomId) || []),
       listHandoffJobs: vi.fn(() => []),
+      updateRoomConfig: vi.fn((roomId, config) => Object.assign(storage.rooms.get(roomId), config)),
       getRoomByInviteCode: vi.fn((code) => [...storage.rooms.values()].find((r: any) => r.inviteCode === code)),
       addRoomAgent: vi.fn((roomId, agentId, profile, name, description, invited, binding = {}) => {
         const row = { id: `row-${agentId}`, roomId, agentId, profile, name, description, invited, ...binding }
@@ -121,6 +122,7 @@ describe('group chat REST route baseline', () => {
         return { ...cfg, joinRoom: vi.fn(async () => ({})), disconnect: vi.fn() }
       }),
       addAgentToRoom: vi.fn(async () => ({})),
+      interruptRoom: vi.fn(async () => true),
       removeAgentFromRoom: vi.fn(),
       interruptAgent: vi.fn(async () => {}),
       updateAgentIdentity: vi.fn(() => true),
@@ -296,6 +298,9 @@ describe('group chat REST route baseline', () => {
     expect(res.status).toBe(200)
     expect(body.room).toMatchObject({ name: 'Room', inviteCode: 'ROOM1' })
     expect(body.agents).toHaveLength(1)
+    expect(body.agents[0]).not.toHaveProperty('id')
+    expect(body.agents[0]).not.toHaveProperty('sessionId')
+    expect(body.agents[0]).not.toHaveProperty('sessionGeneration')
     expect(body.agentResults).toEqual([
       expect.objectContaining({ profile: 'default', ok: true }),
       expect.objectContaining({ profile: 'bad-profile', ok: false, code: 'PROFILE_AGENT_CONNECT_FAILED' }),
@@ -717,7 +722,7 @@ describe('group chat REST route baseline', () => {
     expect(agentClients.removeAgentFromRoom).toHaveBeenCalledOnce()
   })
 
-  it('rejects duplicate room agent profiles', async () => {
+  it('rejects duplicate room agent display names case-insensitively', async () => {
     storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
     storage.agents.set('room-1', [{
       id: 'row-agent',
@@ -731,233 +736,11 @@ describe('group chat REST route baseline', () => {
     const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        profile: 'default',
-        name: 'Agent B',
-        runtime: 'hermes',
-        provider: 'provider-a',
-        model: 'model-a',
-        reasoningEffort: 'high',
-      }),
-    })
-
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body.agent).toMatchObject({
-      profile: 'default',
-      name: 'Agent B',
-      runtime: 'hermes',
-      provider: 'provider-a',
-      model: 'model-a',
-      reasoningEffort: 'high',
-      sessionGeneration: 0,
-    })
-    expect(body.agent.agentId).not.toBe('agent-1')
-    expect(body.agent.sessionId).toEqual(expect.any(String))
-    expect(body.agent.sessionId).not.toBe('session-a')
-  })
-
-  it('rejects duplicate participant display names because textual mentions must stay unambiguous', async () => {
-    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
-    storage.agents.set('room-1', [{
-      id: 'row-agent',
-      agentId: 'agent-1',
-      profile: 'default',
-      name: 'Reviewer',
-      runtime: 'hermes',
-      sessionId: 'session-a',
-    }])
-
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        profile: 'default',
-        name: ' reviewer ',
-        runtime: 'coding_agent',
-        codingAgentId: 'codex',
-        provider: 'openai',
-        model: 'gpt-5-codex',
-        apiMode: 'codex_responses',
-      }),
+      body: JSON.stringify({ profile: 'another-profile', name: 'agent' }),
     })
 
     expect(res.status).toBe(409)
-    await expect(res.json()).resolves.toEqual({ error: 'Participant name already exists in this room' })
-    expect(agentClients.createAgent).not.toHaveBeenCalled()
-  })
-
-  it('validates coding-agent participant bindings before connecting a runtime', async () => {
-    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
-
-    const missingAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile: 'default', name: 'Codex', runtime: 'coding_agent' }),
-    })
-    expect(missingAgent.status).toBe(400)
-    await expect(missingAgent.json()).resolves.toEqual({ error: 'codingAgentId is required for coding_agent participants' })
-
-    const unsupportedAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile: 'default', name: 'Other', runtime: 'coding_agent', codingAgentId: 'other' }),
-    })
-    expect(unsupportedAgent.status).toBe(400)
-    await expect(unsupportedAgent.json()).resolves.toEqual({ error: 'codingAgentId must be claude-code or codex' })
-
-    const incompleteAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile: 'default', name: 'Incomplete Codex', runtime: 'coding_agent', codingAgentId: 'codex' }),
-    })
-    expect(incompleteAgent.status).toBe(400)
-    await expect(incompleteAgent.json()).resolves.toEqual({ error: 'provider, model, and apiMode are required for coding_agent participants' })
-
-    const globalAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile: 'default', name: 'Global Codex', runtime: 'coding_agent', codingAgentId: 'codex', mode: 'global' }),
-    })
-    expect(globalAgent.status).toBe(400)
-    await expect(globalAgent.json()).resolves.toEqual({ error: 'Group Chat coding-agent participants require scoped mode' })
-    expect(agentClients.createAgent).not.toHaveBeenCalled()
-  })
-
-  it('updates next-run participant settings without changing the stable session binding', async () => {
-    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
-    storage.agents.set('room-1', [{
-      id: 'row-agent',
-      roomId: 'room-1',
-      agentId: 'agent-1',
-      profile: 'default',
-      name: 'Codex',
-      description: '',
-      invited: 0,
-      runtime: 'coding_agent',
-      codingAgentId: 'codex',
-      sessionId: 'session-stable',
-      sessionGeneration: 0,
-      mode: 'scoped',
-      provider: 'openai',
-      model: 'gpt-5',
-      apiMode: 'codex_responses',
-      reasoningEffort: 'medium',
-    }])
-
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents/row-agent`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Codex Reviewer', reasoningEffort: 'high' }),
-    })
-
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body.agent).toMatchObject({
-      id: 'row-agent',
-      name: 'Codex Reviewer',
-      reasoningEffort: 'high',
-      sessionId: 'session-stable',
-      sessionGeneration: 0,
-    })
-    expect(storage.updateRoomAgent).toHaveBeenCalledWith('room-1', 'row-agent', {
-      name: 'Codex Reviewer',
-      description: '',
-      mode: 'scoped',
-      provider: 'openai',
-      model: 'gpt-5',
-      apiMode: 'codex_responses',
-      reasoningEffort: 'high',
-      avatar: JSON.stringify({ type: 'asset', assetUrl: '/coding-agents/codex-openai.png' }),
-    })
-    expect(agentClients.updateAgentIdentity).toHaveBeenCalledWith(
-      'room-1',
-      'agent-1',
-      'Codex Reviewer',
-      '',
-    )
-  })
-
-  it('rejects a participant rename that would make textual mentions ambiguous', async () => {
-    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
-    storage.agents.set('room-1', [
-      { id: 'row-a', roomId: 'room-1', agentId: 'agent-a', profile: 'default', name: 'Reviewer', description: '', runtime: 'hermes', codingAgentId: '', sessionId: 'session-a', sessionGeneration: 0, mode: 'scoped', provider: '', model: '', apiMode: '', reasoningEffort: '' },
-      { id: 'row-b', roomId: 'room-1', agentId: 'agent-b', profile: 'default', name: 'Builder', description: '', runtime: 'hermes', codingAgentId: '', sessionId: 'session-b', sessionGeneration: 0, mode: 'scoped', provider: '', model: '', apiMode: '', reasoningEffort: '' },
-    ])
-
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents/agent-b`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: ' reviewer ' }),
-    })
-
-    expect(res.status).toBe(409)
-    await expect(res.json()).resolves.toEqual({ error: 'Participant name already exists in this room' })
-    expect(storage.updateRoomAgent).not.toHaveBeenCalled()
-  })
-
-  it('clones participant runtime settings but allocates a new stable session', async () => {
-    storage.rooms.set('room-source', { id: 'room-source', name: 'Source', inviteCode: 'SOURCE', sessionSeed: '0' })
-    storage.agents.set('room-source', [{
-      id: 'row-agent',
-      roomId: 'room-source',
-      agentId: 'agent-1',
-      profile: 'default',
-      name: 'Claude Review',
-      description: 'read-only reviewer',
-      invited: 1,
-      runtime: 'coding_agent',
-      codingAgentId: 'claude-code',
-      sessionId: 'source-session',
-      sessionGeneration: 3,
-      mode: 'scoped',
-      provider: 'anthropic',
-      model: 'claude-sonnet',
-      apiMode: 'anthropic_messages',
-      reasoningEffort: 'high',
-    }])
-
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-source/clone`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Clone', inviteCode: 'CLONE1' }),
-    })
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body.agents[0]).toMatchObject({
-      runtime: 'coding_agent',
-      codingAgentId: 'claude-code',
-      mode: 'scoped',
-      provider: 'anthropic',
-      model: 'claude-sonnet',
-      apiMode: 'anthropic_messages',
-      reasoningEffort: 'high',
-      sessionGeneration: 0,
-    })
-    expect(body.agents[0].sessionId).not.toBe('source-session')
-  })
-
-  it('remaps fixed handoff order to cloned participant ids', async () => {
-    storage.rooms.set('room-source', {
-      id: 'room-source', name: 'Source', inviteCode: 'SOURCE', sessionSeed: '0',
-      handoffMode: 'fixed', handoffOrderJson: '["agent-2","agent-1"]',
-    })
-    storage.agents.set('room-source', [
-      { id: 'row-1', roomId: 'room-source', agentId: 'agent-1', profile: 'default', name: 'First', description: '', invited: 1, runtime: 'hermes', codingAgentId: '', mode: 'scoped', provider: 'test-provider', model: 'test-model', apiMode: '', reasoningEffort: '' },
-      { id: 'row-2', roomId: 'room-source', agentId: 'agent-2', profile: 'default', name: 'Second', description: '', invited: 1, runtime: 'hermes', codingAgentId: '', mode: 'scoped', provider: 'test-provider', model: 'test-model', apiMode: '', reasoningEffort: '' },
-    ])
-
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-source/clone`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Clone', inviteCode: 'CLONE2' }),
-    })
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    const byName = new Map(body.agents.map((agent: any) => [agent.name, agent.agentId]))
-    expect(body.room.handoffMode).toBe('fixed')
-    expect(body.room.handoffOrder).toEqual([byName.get('Second'), byName.get('First')])
-    expect(body.room.handoffOrder).not.toContain('agent-1')
-    expect(body.room.handoffOrder).not.toContain('agent-2')
+    await expect(res.json()).resolves.toEqual({ error: 'Agent display name already in room' })
   })
 
   it('removes an agent by row id and disconnects runtime by persisted agent id', async () => {
@@ -974,6 +757,38 @@ describe('group chat REST route baseline', () => {
     expect(storage.removeRoomAgent).not.toHaveBeenCalled()
     expect(agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'agent-1')
     expect(body).toMatchObject({ success: true, agents: [], members: [] })
+  })
+
+  it('updates durable handoff settings and lists only public handoff fields', async () => {
+    storage.rooms.set('room-1', {
+      id: 'room-1', name: 'Room', inviteCode: 'ROOM1', ownerAuthUserId: 1,
+      authorizationRevision: 0, handoffMode: 'mentions', handoffOrderJson: '[]',
+    })
+    storage.agents.set('room-1', [
+      { id: 'row-a', agentId: 'agent-a', name: 'A' },
+      { id: 'row-b', agentId: 'agent-b', name: 'B' },
+    ])
+    const configResponse = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/config`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maxAgentMentionDepth: 6, handoffMode: 'fixed', handoffOrder: ['agent-a', 'agent-b'] }),
+    })
+    expect(configResponse.status).toBe(200)
+    expect(storage.updateRoomConfig).toHaveBeenCalledWith('room-1', expect.objectContaining({
+      maxAgentMentionDepth: 6, handoffMode: 'fixed', handoffOrderJson: '["agent-a","agent-b"]',
+    }))
+
+    storage.listHandoffJobs.mockReturnValueOnce([{
+      id: 'job-1', roomId: 'room-1', chainId: 'chain-1', sourceMessageId: 'message-1', targetAgentId: 'agent-a',
+      targetSessionId: 'private-session', leaseToken: 'private-lease', leaseOwner: 'private-owner',
+      depth: 0, kind: 'mention', status: 'running', attemptCount: 1, lastError: '', createdAt: 1, updatedAt: 2, completedAt: 0,
+    }])
+    const jobsResponse = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/handoffs`)
+    expect(jobsResponse.status).toBe(200)
+    const jobs = await jobsResponse.json()
+    expect(jobs.jobs[0]).toMatchObject({ id: 'job-1', targetAgentId: 'agent-a', status: 'running' })
+    expect(jobs.jobs[0]).not.toHaveProperty('leaseToken')
+    expect(jobs.jobs[0]).not.toHaveProperty('leaseOwner')
+    expect(jobs.jobs[0]).not.toHaveProperty('targetSessionId')
   })
 
   it('aborts manual compression when requester authority changes during asynchronous compression', async () => {

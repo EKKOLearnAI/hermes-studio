@@ -574,6 +574,86 @@ export class ContextEngine {
         ))
     }
 
+    async summarizeParticipantRange(
+        roomId: string,
+        profile: string,
+        loadMessages: () => StoredMessage[],
+        previousSummary: string | undefined,
+        summarySessionRegistrar: () => GatewaySessionLease,
+    ): Promise<string | null> {
+        return this.runWithCompressionLock(roomId, () => this._summarizeParticipantRangeImpl(
+            roomId,
+            profile,
+            loadMessages,
+            previousSummary,
+            summarySessionRegistrar,
+        ))
+    }
+
+    private async _summarizeParticipantRangeImpl(
+        roomId: string,
+        profile: string,
+        loadMessages: () => StoredMessage[],
+        previousSummary: string | undefined,
+        summarySessionRegistrar: () => GatewaySessionLease,
+    ): Promise<string | null> {
+        const summarySession = summarySessionRegistrar()
+        try {
+            this.assertGuard(summarySession.authorizationGuard)
+            const messages = loadMessages()
+            this.assertGuard(summarySession.authorizationGuard)
+            if (messages.length === 0) return previousSummary || null
+
+            const chunks: StoredMessage[][] = []
+            let chunk: StoredMessage[] = []
+            let chunkTokens = 0
+            const maxChunkTokens = Math.max(1, this.config.maxHistoryTokens)
+            for (const message of messages) {
+                const messageTokens = Math.max(1, this.estimateTokensFromMessages([message]))
+                if (chunk.length > 0 && chunkTokens + messageTokens > maxChunkTokens) {
+                    chunks.push(chunk)
+                    chunk = []
+                    chunkTokens = 0
+                }
+                chunk.push(message)
+                chunkTokens += messageTokens
+            }
+            if (chunk.length > 0) chunks.push(chunk)
+
+            let summary = previousSummary
+            for (const messageChunk of chunks) {
+                this.assertGuard(summarySession.authorizationGuard)
+                const result = await this.summarize(
+                    roomId,
+                    messageChunk,
+                    this._upstream,
+                    this._apiKey,
+                    profile,
+                    summary,
+                    summarySession.authorizationGuard,
+                    () => ({
+                        sessionId: summarySession.sessionId,
+                        authorizationGuard: summarySession.authorizationGuard,
+                        // The range operation owns the durable lease across every chunk.
+                        release: () => undefined,
+                    }),
+                )
+                this.assertGuard(summarySession.authorizationGuard)
+                if (!result.summary) return null
+                summary = result.summary
+            }
+            this.assertGuard(summarySession.authorizationGuard)
+            return summary || null
+        } finally {
+            try {
+                summarySession.release()
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : 'unknown error'
+                logger.warn(`[ContextEngine] failed to release retention-summary session: ${message}`)
+            }
+        }
+    }
+
     private async _forceCompressImpl(
         roomId: string,
         profile: string,
