@@ -642,6 +642,12 @@ export const GC_HANDOFF_JOBS_INDEXES = {
 
 export const GC_ROOM_AGENTS_TABLE = 'gc_room_agents'
 
+export const GC_ROOM_AGENTS_INDEXES = {
+  idx_gc_room_agents_profile: 'CREATE INDEX IF NOT EXISTS idx_gc_room_agents_profile ON gc_room_agents(profile)',
+  uniq_gc_room_agents_identity: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_gc_room_agents_identity ON gc_room_agents(roomId, agentId)',
+  uniq_gc_room_agents_mention_name: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_gc_room_agents_mention_name ON gc_room_agents(roomId, name COLLATE NOCASE)',
+}
+
 export const GC_ROOM_AGENTS_SCHEMA: Record<string, string> = {
   id: 'TEXT PRIMARY KEY',
   roomId: 'TEXT NOT NULL',
@@ -1441,10 +1447,12 @@ export function initAllHermesTables(): void {
       syncTable(GC_PENDING_SESSION_DELETES_TABLE, GC_PENDING_SESSION_DELETES_SCHEMA)
       syncTable(GC_SESSION_PROFILES_TABLE, GC_SESSION_PROFILES_SCHEMA)
       syncTable(GC_ROOM_AGENTS_TABLE, GC_ROOM_AGENTS_SCHEMA, {
-        indexes: {
-          idx_gc_room_agents_profile: 'CREATE INDEX idx_gc_room_agents_profile ON gc_room_agents(profile)',
-        },
+        indexes: GC_ROOM_AGENTS_INDEXES,
       })
+      // syncTable only creates indexes for a newly created table. Existing
+      // installations must gain the same stable-identity constraints during
+      // upgrade; duplicate legacy rows make this fail closed and roll back.
+      createIndexes(db, GC_ROOM_AGENTS_INDEXES)
       migrateLegacyGroupChatCodingAgentSessions(db)
       resetLegacyTimestampGroupAgentCursors(db)
       backfillGroupAgentAvatars(db)

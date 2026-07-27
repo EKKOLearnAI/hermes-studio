@@ -1139,6 +1139,16 @@ export class ChatStorage {
         ).all(roomId, Math.max(1, Math.min(500, Math.floor(limit)))) || []) as any[]).map(row => this.mapHandoffJob(row))
     }
 
+    hasRunningHandoffForTarget(roomId: string, targetAgentId: string, targetSessionId: string): boolean {
+        if (!roomId || !targetAgentId || !targetSessionId) return false
+        const row = this.db()?.prepare(
+            `SELECT 1 FROM gc_handoff_jobs
+             WHERE roomId = ? AND targetAgentId = ? AND targetSessionId = ? AND status = 'running'
+             LIMIT 1`,
+        ).get(roomId, targetAgentId, targetSessionId)
+        return Boolean(row)
+    }
+
     private handoffJobId(sourceMessageId: string, targetAgentId: string): string {
         return `gch_${createHash('sha256').update(`${sourceMessageId}\0${targetAgentId}`).digest('hex').slice(0, 32)}`
     }
@@ -3711,11 +3721,14 @@ export class GroupChatServer {
         if (!this.socketAccessPolicy(socket, roomId).canWrite) return null
         const jobId = typeof execution?.sourceHandoffJobId === 'string' ? execution.sourceHandoffJobId.trim() : ''
         const leaseToken = typeof execution?.sourceHandoffLeaseToken === 'string' ? execution.sourceHandoffLeaseToken.trim() : ''
+        const participant = this.storage.getRoomAgentByAgentId(roomId, joined.member.userId)
+        if (!participant) return null
         if (jobId || leaseToken) {
-            if (!jobId || !leaseToken || typeof agentSessionId !== 'string') return null
-            const participant = this.storage.getRoomAgentByAgentId(roomId, joined.member.userId)
-            if (!participant?.sessionId) return null
+            if (!jobId || !leaseToken || typeof agentSessionId !== 'string' || !participant.sessionId) return null
             if (!this.storage.isHandoffExecutionCurrent(jobId, leaseToken, joined.member.userId, participant.sessionId)) return null
+        } else {
+            const currentTargetSessionId = String(participant.sessionId || agentSessionId || '').trim()
+            if (!currentTargetSessionId || this.storage.hasRunningHandoffForTarget(roomId, joined.member.userId, currentTargetSessionId)) return null
         }
         return joined.member
     }

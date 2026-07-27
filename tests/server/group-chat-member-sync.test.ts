@@ -532,6 +532,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: '22222222222222222222222222222222', authorizationRevision: 0 })),
       getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-stable-1', profile: 'default', name: 'Worker' })),
+      hasRunningHandoffForTarget: vi.fn(() => false),
       findActiveActorByAgentIdentity: vi.fn(() => agentActor),
       getActorCapabilities,
       getRoomsForProfiles: vi.fn(() => []),

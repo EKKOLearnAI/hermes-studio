@@ -143,6 +143,26 @@ describe('group chat approval and context baseline', () => {
     expect(requested).toBe(0)
   })
 
+  it('rejects an approval event that omits provenance while its durable handoff is running', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    await emitAck(human, 'message', { roomId: 'room-1', id: 'approval-durable-trigger', content: '@Agent run' })
+    const running = groupServer.getStorage().claimHandoffJobs('test-dispatcher', Date.now(), 1, 60_000)[0]
+    expect(running).toMatchObject({ targetAgentId: 'agent-1', status: 'running' })
+
+    let requested = 0
+    human.on('approval.requested', () => { requested += 1 })
+    agent.emit('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      approval_id: 'approval-missing-provenance',
+      command: 'touch file',
+    })
+    await wait()
+
+    expect(requested).toBe(0)
+  })
+
   it('delivers approval requested and resolved once to every authorized socket for one persisted subject', async () => {
     const { agent, human, agentSessionId } = await joinPair()
     const identity = await once<{ localCredential: string }>(human, 'local_identity')

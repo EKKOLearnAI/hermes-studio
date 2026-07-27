@@ -127,6 +127,21 @@ describe('group chat streaming baseline', () => {
     })
   })
 
+  it('rejects a durable stream callback that omits its job lease provenance', async () => {
+    const { alice, bob, worker, agentSessionId } = await joinPair()
+    await emitAck(alice, 'message', { roomId: 'room-1', id: 'durable-trigger-omission', content: '@Worker run' })
+    const running = groupServer.getStorage().claimHandoffJobs('test-dispatcher', Date.now(), 1, 60_000)[0]
+    expect(running).toMatchObject({ targetAgentId: 'agent-worker', status: 'running' })
+
+    const omittedDelta = once<any>(bob, 'message_stream_delta', 150)
+    worker.emit('message_stream_delta', {
+      roomId: 'room-1', id: 'durable-stream-omission', delta: 'must-not-publish', agentSessionId,
+    })
+
+    await expect(omittedDelta).rejects.toThrow('timeout waiting for message_stream_delta')
+    expect(groupServer.getStorage().getHandoffJob(running.id)).toMatchObject({ status: 'running' })
+  })
+
   it('ignores stream events emitted by human sockets', async () => {
     const { alice, bob } = await joinPair()
     const unexpectedStart = once<any>(bob, 'message_stream_start', 100)

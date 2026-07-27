@@ -84,6 +84,30 @@ describe('durable group-chat handoff outbox', () => {
     })
   })
 
+  it('enforces stable agent identity and case-insensitive mention-name uniqueness in SQLite', () => {
+    const storage = new ChatStorage()
+    storage.init()
+    storage.saveRoom('room-unique', 'Room', 'ROOM1')
+    storage.addRoomAgent('room-unique', 'agent-a', 'default', 'Worker', '', 0)
+
+    const db = dbMock.current!
+    const columns = [
+      'id', 'roomId', 'agentId', 'profile', 'name', 'description', 'invited', 'runtime',
+      'codingAgentId', 'sessionId', 'sessionGeneration', 'mode', 'provider', 'model',
+      'apiMode', 'reasoningEffort', 'avatar', 'lastSeenRoomSeq', 'lastSuccessfulRunId',
+      'checkpoint', 'checkpointSourceMessageIds', 'checkpointFromRoomSeq',
+      'checkpointThroughRoomSeq', 'createdAt',
+    ]
+    const insertSql = `INSERT INTO gc_room_agents (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`
+    const values = (id: string, agentId: string, name: string) => [
+      id, 'room-unique', agentId, 'default', name, '', 0, 'hermes', '',
+      `session-${id}`, 0, 'scoped', '', '', '', '', '', 0, '', '', '[]', 0, 0, Date.now(),
+    ]
+
+    expect(() => db.prepare(insertSql).run(...values('duplicate-id', 'agent-a', 'Other'))).toThrow()
+    expect(() => db.prepare(insertSql).run(...values('duplicate-name', 'agent-b', 'worker'))).toThrow()
+  })
+
   it('persists a message and all fan-out jobs atomically without duplicating jobs on replay', () => {
     const storage = new ChatStorage()
     storage.init()

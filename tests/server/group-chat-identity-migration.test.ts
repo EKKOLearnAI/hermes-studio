@@ -144,6 +144,13 @@ describe('group chat identity migration', () => {
 
     initAllHermesTables()
 
+    const agentIndexes = (db.prepare("PRAGMA index_list('gc_room_agents')").all() as Array<{ name: string; unique: number }>)
+      .filter((index) => index.unique === 1)
+      .map((index) => index.name)
+    expect(agentIndexes).toEqual(expect.arrayContaining([
+      'uniq_gc_room_agents_identity',
+      'uniq_gc_room_agents_mention_name',
+    ]))
     expect(db.prepare(
       `SELECT actorType, authUserId, name, description, avatar
        FROM gc_room_actors
@@ -193,7 +200,7 @@ describe('group chat identity migration', () => {
     ])
   })
 
-  it('reconciles duplicate authenticated and agent identities by canonical timestamps instead of insertion rowid', async () => {
+  it('rejects duplicate legacy participant identities and rolls back the upgrade', async () => {
     db = new DatabaseSync(':memory:')
     createLegacyGroupChatTables(db)
     db.exec(`
@@ -214,35 +221,10 @@ describe('group chat identity migration', () => {
     await claimTestOwnership(db)
     const { initAllHermesTables } = await loadSchemasWithDb(db)
 
-    initAllHermesTables()
-
-    expect(db.prepare(
-      `SELECT COUNT(*) AS count
-       FROM gc_room_actors
-       WHERE roomId = ? AND agentId = ?`
-    ).get('room-1', 'agent-dup')).toEqual({ count: 1 })
-    expect(db.prepare(
-      `SELECT name, description
-       FROM gc_room_actors
-       WHERE roomId = ? AND agentId = ?`
-    ).get('room-1', 'agent-dup')).toEqual({
-      name: 'Worker Old',
-      description: 'first',
-    })
-    expect(db.prepare(
-      `SELECT COUNT(*) AS count
-       FROM gc_room_actors
-       WHERE roomId = ? AND authUserId = ?`
-    ).get('room-1', 7)).toEqual({ count: 1 })
-    expect(db.prepare(
-      `SELECT name, description, avatar
-       FROM gc_room_actors
-       WHERE roomId = ? AND authUserId = ?`
-    ).get('room-1', 7)).toEqual({
-      name: 'Alice Old',
-      description: 'first',
-      avatar: 'avatar-old',
-    })
+    expect(() => initAllHermesTables()).toThrow(/unique constraint failed/i)
+    expect(hasTable(db, 'gc_schema_state')).toBe(false)
+    expect(hasTable(db, 'gc_room_actors')).toBe(false)
+    expect(db.prepare('SELECT COUNT(*) AS count FROM gc_room_agents').get()).toEqual({ count: 2 })
   })
 
   it('repeats idempotently once groupChatIdentityV1 is recorded', async () => {
