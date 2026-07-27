@@ -1565,6 +1565,15 @@ export class ChatStorage {
                 db.exec('ROLLBACK')
                 return null
             }
+            const durableOwner = db.prepare(
+                `SELECT id FROM gc_handoff_jobs
+                 WHERE roomId = ? AND targetAgentId = ? AND targetSessionId = ? AND status = 'running'
+                 LIMIT 1`,
+            ).get(args.roomId, args.senderId, args.sessionId) as { id?: string } | undefined
+            if (durableOwner?.id && (!args.sourceHandoffJobId || !args.sourceHandoffLeaseToken)) {
+                db.exec('ROLLBACK')
+                return null
+            }
             if (args.sourceHandoffJobId || args.sourceHandoffLeaseToken) {
                 if (!args.sourceHandoffJobId || !args.sourceHandoffLeaseToken) {
                     db.exec('ROLLBACK')

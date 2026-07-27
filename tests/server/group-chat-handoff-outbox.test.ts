@@ -528,6 +528,36 @@ describe('durable group-chat handoff outbox', () => {
     expect(storage.getRoom('room-1')?.totalTokens).toBe(tokensBeforeRejectedUsage)
   })
 
+  it('rejects workspace evidence when a running durable handoff omits provenance', () => {
+    const storage = new ChatStorage()
+    storage.init()
+    storage.saveRoom('room-1', 'Room', 'ROOM1')
+    const sourceActor = createAuthorizedSource(storage, 'room-1')
+    const target = storage.addRoomAgent('room-1', 'agent-a', 'default', 'A', '', 0, { sessionId: 'session-a' })
+    storage.saveMessageAndRefreshRoom({
+      id: 'workspace-omission-input', roomId: 'room-1', senderId: 'human-1', senderName: 'Human',
+      content: '@A hello', timestamp: 100, role: 'user',
+    }, {
+      handoffs: [{ chainId: 'workspace-omission-chain', targetAgentId: target.agentId, targetSessionId: target.sessionId, depth: 0, kind: 'mention' }],
+      authority: { initiatorActorId: sourceActor.id, sourceActorId: sourceActor.id },
+    })
+    const running = storage.claimHandoffJobs('process-1', 1_000, 1, 5_000)[0]
+    expect(running).toMatchObject({ targetAgentId: target.agentId, targetSessionId: target.sessionId, status: 'running' })
+
+    expect(storage.saveWorkspaceDiffMessageForRun({
+      roomId: 'room-1', senderId: target.agentId, senderName: 'A', sessionId: target.sessionId,
+      runId: 'workspace-omitted-run', status: 'completed', workspace: '/workspace/project',
+      draft: {
+        change_id: 'workspace-omitted-change', session_id: target.sessionId, run_id: 'workspace-omitted-run',
+        source: 'run', workspace: '/workspace/project', started_at: 1, finished_at: 2,
+        files_changed: 0, additions: 0, deletions: 0, total_patch_bytes: 0, files: [],
+      },
+    } as any)).toBeNull()
+    expect(dbMock.current!.prepare("SELECT COUNT(*) AS total FROM gc_messages WHERE tool_name = 'workspace_diff'").get()).toEqual({ total: 0 })
+    expect(dbMock.current!.prepare('SELECT COUNT(*) AS total FROM workspace_run_changes').get()).toEqual({ total: 0 })
+    expect(storage.getHandoffJob(running.id)).toMatchObject({ status: 'running', leaseToken: running.leaseToken })
+  })
+
   it('claims at most one FIFO job per room target while allowing different targets in parallel', () => {
     const storage = new ChatStorage()
     storage.init()
