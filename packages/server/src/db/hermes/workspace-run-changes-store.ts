@@ -286,17 +286,17 @@ export function deleteWorkspaceRunChangesForSession(sessionId: string): void {
   }
 }
 
-export function deleteWorkspaceRunChangesForRoom(db: any, roomId: string, beforeTimestamp?: number): void {
+export function deleteWorkspaceRunChangesForRoom(db: any, roomId: string, throughRoomSeq?: number): void {
   const room = String(roomId || '').trim()
   if (!room) return
-  const rows = beforeTimestamp == null
+  const rows = throughRoomSeq == null
     ? db.prepare(`SELECT change_id FROM ${WORKSPACE_RUN_CHANGES_TABLE} WHERE room_id = ?`).all(room)
     : db.prepare(
       `SELECT c.change_id
        FROM ${WORKSPACE_RUN_CHANGES_TABLE} c
        INNER JOIN gc_messages m ON m.id = c.message_id AND m.roomId = c.room_id
-       WHERE c.room_id = ? AND m.timestamp < ?`,
-    ).all(room, beforeTimestamp)
+       WHERE c.room_id = ? AND m.roomSeq > 0 AND m.roomSeq <= ?`,
+    ).all(room, throughRoomSeq)
   const ids = rows.map((row: any) => String(row.change_id || '').trim()).filter(Boolean)
   if (!ids.length) return
   const placeholders = ids.map(() => '?').join(',')

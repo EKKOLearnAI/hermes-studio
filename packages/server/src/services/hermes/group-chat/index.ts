@@ -92,6 +92,8 @@ interface RoomAgent {
     lastSuccessfulRunId: string
     checkpoint: string
     checkpointSourceMessageIds: string
+    checkpointFromRoomSeq: number
+    checkpointThroughRoomSeq: number
 }
 
 export function participantSessionId(roomId: string, agentId: string, generation = 0): string {
@@ -113,6 +115,8 @@ export interface RoomAgentBindingInput {
     lastSuccessfulRunId?: string
     checkpoint?: string
     checkpointSourceMessageIds?: string
+    checkpointFromRoomSeq?: number
+    checkpointThroughRoomSeq?: number
 }
 
 interface RoomInfo {
@@ -124,6 +128,9 @@ interface RoomInfo {
     tailMessageCount: number
     totalTokens: number
     sessionSeed: string
+    messageSeq: number
+    contextStartRoomSeq: number
+    prunedThroughRoomSeq: number
     workspace: string
     ownerAuthUserId: number | null
 }
@@ -216,7 +223,18 @@ function maxAgentMentionDepth(): number {
 }
 
 class ChatStorage {
+    private retentionBlockedHandler: ((roomId: string, blockedAgentIds: string[], throughRoomSeq: number) => void) | null = null
     private db() { return getDb() }
+
+    setRetentionBlockedHandler(handler: ((roomId: string, blockedAgentIds: string[], throughRoomSeq: number) => void) | null): void {
+        this.retentionBlockedHandler = handler
+    }
+
+    private notifyRetentionBlocked(roomId: string, result: { blockedAgentIds: string[]; throughRoomSeq: number }): void {
+        if (!result.blockedAgentIds.length || result.throughRoomSeq <= 0 || !this.retentionBlockedHandler) return
+        const handler = this.retentionBlockedHandler
+        queueMicrotask(() => handler(roomId, result.blockedAgentIds, result.throughRoomSeq))
+    }
 
     private mapStoredMessageRow(row: any): ChatMessage {
         return {
@@ -334,15 +352,15 @@ class ChatStorage {
     // ─── Rooms ────────────────────────────────────────────────
 
     getRoom(roomId: string): RoomInfo | undefined {
-        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, workspace, ownerAuthUserId FROM gc_rooms WHERE id = ?').get(roomId) as any
+        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, messageSeq, contextStartRoomSeq, prunedThroughRoomSeq, workspace, ownerAuthUserId FROM gc_rooms WHERE id = ?').get(roomId) as any
     }
 
     getRoomByInviteCode(code: string): RoomInfo | undefined {
-        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, workspace, ownerAuthUserId FROM gc_rooms WHERE inviteCode = ?').get(code) as any
+        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, messageSeq, contextStartRoomSeq, prunedThroughRoomSeq, workspace, ownerAuthUserId FROM gc_rooms WHERE inviteCode = ?').get(code) as any
     }
 
     getAllRooms(): RoomInfo[] {
-        return (this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, workspace, ownerAuthUserId FROM gc_rooms ORDER BY id').all() || []) as any[]
+        return (this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, messageSeq, contextStartRoomSeq, prunedThroughRoomSeq, workspace, ownerAuthUserId FROM gc_rooms ORDER BY id').all() || []) as any[]
     }
 
     getRoomsForProfiles(profiles: string[]): RoomInfo[] {
@@ -350,7 +368,7 @@ class ChatStorage {
         if (!uniqueProfiles.length) return []
         const placeholders = uniqueProfiles.map(() => '?').join(', ')
         return (this.db()?.prepare(
-            `SELECT DISTINCT r.id, r.name, r.inviteCode, r.triggerTokens, r.maxHistoryTokens, r.tailMessageCount, r.totalTokens, r.sessionSeed, r.workspace, r.ownerAuthUserId
+            `SELECT DISTINCT r.id, r.name, r.inviteCode, r.triggerTokens, r.maxHistoryTokens, r.tailMessageCount, r.totalTokens, r.sessionSeed, r.messageSeq, r.contextStartRoomSeq, r.prunedThroughRoomSeq, r.workspace, r.ownerAuthUserId
              FROM gc_rooms r
              INNER JOIN gc_room_agents a ON a.roomId = r.id
              WHERE a.profile IN (${placeholders})
@@ -361,7 +379,7 @@ class ChatStorage {
     getRoomsForAuthUser(authUserId: number): RoomInfo[] {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return []
         return (this.db()?.prepare(
-            `SELECT DISTINCT r.id, r.name, r.inviteCode, r.triggerTokens, r.maxHistoryTokens, r.tailMessageCount, r.totalTokens, r.sessionSeed, r.workspace, r.ownerAuthUserId
+            `SELECT DISTINCT r.id, r.name, r.inviteCode, r.triggerTokens, r.maxHistoryTokens, r.tailMessageCount, r.totalTokens, r.sessionSeed, r.messageSeq, r.contextStartRoomSeq, r.prunedThroughRoomSeq, r.workspace, r.ownerAuthUserId
              FROM gc_rooms r
              INNER JOIN gc_room_members m ON m.roomId = r.id
              WHERE m.authUserId = ?
@@ -372,7 +390,7 @@ class ChatStorage {
     getOwnedRoomsForAuthUser(authUserId: number): RoomInfo[] {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return []
         return (this.db()?.prepare(
-            `SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, workspace, ownerAuthUserId
+            `SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, messageSeq, contextStartRoomSeq, prunedThroughRoomSeq, workspace, ownerAuthUserId
              FROM gc_rooms
              WHERE ownerAuthUserId = ?
              ORDER BY id`
@@ -473,7 +491,12 @@ class ChatStorage {
         const snapshot = this.getContextSnapshot(roomId)
         if (snapshot) {
             const snapshotTail = messages.length
-                ? sliceGroupMessagesForSnapshotTail(messages, snapshot.lastMessageId)
+                ? (Number(snapshot.lastRoomSeq || 0) > 0
+                    ? {
+                        messages: messages.filter(message => Number(message.roomSeq || 0) > Number(snapshot.lastRoomSeq || 0)),
+                        snapshotCursorFound: true,
+                    }
+                    : sliceGroupMessagesForSnapshotTail(messages, snapshot.lastMessageId))
                 : { messages: [], snapshotCursorFound: true }
             const newUsage = this.estimateUsageTokensFromMessages(snapshotTail.messages)
             // Missing cursor usually means pruneMessages() removed the anchor row while leaving
@@ -646,7 +669,8 @@ class ChatStorage {
                 tool_name: 'workspace_diff',
             }
             this.upsertMessage(message)
-            this.pruneMessages(args.roomId)
+            const retention = this.pruneMessages(args.roomId)
+            this.notifyRetentionBlocked(args.roomId, retention)
             const messages = this.getMessagesForContext(args.roomId)
             const totalTokens = this.estimateRoomTotalTokens(args.roomId, messages)
             this.updateRoomTotalTokens(args.roomId, totalTokens)
@@ -675,7 +699,8 @@ class ChatStorage {
                 : msg
             const message = existing && options.preserveExistingTimestamp ? { ...safeMsg, timestamp: existing.timestamp } : safeMsg
             this.upsertMessage(message)
-            this.pruneMessages(msg.roomId)
+            const retention = this.pruneMessages(msg.roomId)
+            this.notifyRetentionBlocked(msg.roomId, retention)
             const messages = this.getMessagesForContext(msg.roomId)
             const totalTokens = this.estimateRoomTotalTokens(msg.roomId, messages)
             this.updateRoomTotalTokens(msg.roomId, totalTokens)
@@ -687,10 +712,10 @@ class ChatStorage {
         }
     }
 
-    private deleteWorkspaceDiffChanges(roomId: string, beforeTimestamp?: number): void {
+    private deleteWorkspaceDiffChanges(roomId: string, throughRoomSeq?: number): void {
         const db = this.db()
         if (!db) return
-        deleteWorkspaceRunChangesForRoom(db, roomId, beforeTimestamp)
+        deleteWorkspaceRunChangesForRoom(db, roomId, throughRoomSeq)
     }
 
     private withImmediateTransaction(db: any, fn: () => void): void {
@@ -711,56 +736,134 @@ class ChatStorage {
     clearRoomContext(roomId: string): void {
         const db = this.db()
         if (!db) return
+        const contextBaseline = Math.max(0, Math.floor(Number(this.getRoom(roomId)?.messageSeq) || 0))
         this.withImmediateTransaction(db, () => {
             this.deleteWorkspaceDiffChanges(roomId)
             db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
-            db.prepare('UPDATE gc_rooms SET totalTokens = 0, sessionSeed = ? WHERE id = ?').run(`${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, roomId)
-            this.rotateParticipantSessions(roomId)
+            db.prepare(
+                'UPDATE gc_rooms SET totalTokens = 0, sessionSeed = ?, contextStartRoomSeq = messageSeq + 1, prunedThroughRoomSeq = 0 WHERE id = ?'
+            ).run(`${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, roomId)
+            this.rotateParticipantSessions(roomId, contextBaseline)
         })
     }
 
-    pruneMessages(roomId: string, keep = 500): void {
+    pruneMessages(roomId: string, keep = 500): { pruned: number; blockedAgentIds: string[]; throughRoomSeq: number } {
         const db = this.db()
-        if (!db) return
-        const count = (db.prepare('SELECT COUNT(*) as c FROM gc_messages WHERE roomId = ?').get(roomId) as any)?.c
-        if (count > keep) {
-            const cutoff = db.prepare(
-                'SELECT timestamp FROM gc_messages WHERE roomId = ? ORDER BY timestamp DESC LIMIT 1 OFFSET ?'
-            ).get(roomId, keep - 1) as any
-            if (cutoff) {
-                this.withImmediateTransaction(db, () => {
-                    this.deleteWorkspaceDiffChanges(roomId, cutoff.timestamp)
-                    const result = db.prepare('DELETE FROM gc_messages WHERE roomId = ? AND timestamp < ?').run(roomId, cutoff.timestamp)
-                    logger.info(`[GroupChat] pruned ${result.changes} messages from room ${roomId} (had ${count}, keeping ${keep})`)
+        if (!db) return { pruned: 0, blockedAgentIds: [], throughRoomSeq: 0 }
+        const normalizedKeep = Math.max(1, Math.floor(Number(keep) || 0))
+        const count = Number((db.prepare('SELECT COUNT(*) as c FROM gc_messages WHERE roomId = ?').get(roomId) as any)?.c || 0)
+        if (count <= normalizedKeep) return { pruned: 0, blockedAgentIds: [], throughRoomSeq: 0 }
+
+        const boundary = db.prepare(
+            `SELECT roomSeq, timestamp
+             FROM gc_messages
+             WHERE roomId = ? AND roomSeq > 0
+             ORDER BY roomSeq DESC
+             LIMIT 1 OFFSET ?`
+        ).get(roomId, normalizedKeep - 1) as { roomSeq: number; timestamp: number } | undefined
+        if (!boundary?.roomSeq) return { pruned: 0, blockedAgentIds: [], throughRoomSeq: 0 }
+        const throughRoomSeq = Math.max(0, Math.floor(Number(boundary.roomSeq) || 0) - 1)
+        if (throughRoomSeq <= 0) return { pruned: 0, blockedAgentIds: [], throughRoomSeq: 0 }
+        const semanticBoundary = db.prepare(
+            `SELECT COALESCE(MAX(roomSeq), 0) AS roomSeq
+             FROM gc_messages
+             WHERE roomId = ? AND roomSeq > 0 AND roomSeq <= ?
+               AND COALESCE(tool_name, '') <> 'workspace_diff'`
+        ).get(roomId, throughRoomSeq) as { roomSeq: number } | undefined
+        const coverageRoomSeq = Math.max(0, Math.floor(Number(semanticBoundary?.roomSeq) || 0))
+
+        const sharedSnapshot = this.getContextSnapshot(roomId)
+        const sharedSnapshotCovered = coverageRoomSeq <= 0 || Boolean(
+            sharedSnapshot?.summary &&
+            Math.max(0, Math.floor(Number(sharedSnapshot.lastRoomSeq) || 0)) >= coverageRoomSeq,
+        )
+        const blockedAgentIds = [
+            ...(sharedSnapshotCovered ? [] : ['__room_snapshot__']),
+            ...this.getRoomAgents(roomId)
+                .filter(agent => agent.runtime === 'coding_agent')
+                .filter((agent) => {
+                    const lastSeen = Math.max(0, Math.floor(Number(agent.lastSeenRoomSeq) || 0))
+                    if (lastSeen >= coverageRoomSeq) return false
+                    const checkpointFrom = Math.max(0, Math.floor(Number(agent.checkpointFromRoomSeq) || 0))
+                    const checkpointThrough = Math.max(0, Math.floor(Number(agent.checkpointThroughRoomSeq) || 0))
+                    return !agent.checkpoint || checkpointFrom > lastSeen + 1 || checkpointThrough < coverageRoomSeq
                 })
-            }
+                .map(agent => agent.agentId),
+        ]
+        if (blockedAgentIds.length > 0) {
+            logger.info({ roomId, count, keep: normalizedKeep, throughRoomSeq, coverageRoomSeq, blockedAgentIds }, '[GroupChat] retention prune blocked pending participant checkpoints')
+            return { pruned: 0, blockedAgentIds, throughRoomSeq: coverageRoomSeq }
         }
+
+        let pruned = 0
+        this.withImmediateTransaction(db, () => {
+            this.deleteWorkspaceDiffChanges(roomId, throughRoomSeq)
+            const result = db.prepare(
+                'DELETE FROM gc_messages WHERE roomId = ? AND roomSeq > 0 AND roomSeq <= ?'
+            ).run(roomId, throughRoomSeq)
+            pruned = Number(result.changes || 0)
+            db.prepare(
+                'UPDATE gc_rooms SET prunedThroughRoomSeq = MAX(prunedThroughRoomSeq, ?) WHERE id = ?'
+            ).run(throughRoomSeq, roomId)
+            const retainedMessages = this.getMessagesForContext(roomId)
+            this.updateRoomTotalTokens(roomId, this.estimateRoomTotalTokens(roomId, retainedMessages))
+            logger.info(`[GroupChat] pruned ${pruned} messages from room ${roomId} (had ${count}, keeping ${normalizedKeep})`)
+        })
+        return { pruned, blockedAgentIds: [], throughRoomSeq }
     }
 
     // ─── Room Agents ──────────────────────────────────────────
 
     getRoomAgents(roomId: string): RoomAgent[] {
         return (this.db()?.prepare(
-            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds FROM gc_room_agents WHERE roomId = ?'
+            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds, checkpointFromRoomSeq, checkpointThroughRoomSeq FROM gc_room_agents WHERE roomId = ?'
         ).all(roomId) || []) as unknown as RoomAgent[]
     }
 
-    private rotateParticipantSessions(roomId: string): void {
+    private rotateParticipantSessions(roomId: string, contextBaseline = 0): void {
         const db = this.db()
         if (!db) return
+        const normalizedBaseline = Math.max(0, Math.floor(Number(contextBaseline) || 0))
         for (const agent of this.getRoomAgents(roomId)) {
             const generation = Math.max(0, Number(agent.sessionGeneration) || 0) + 1
             db.prepare(
                 `UPDATE gc_room_agents
-                 SET sessionId = ?, sessionGeneration = ?, lastSeenRoomSeq = 0,
-                     lastSuccessfulRunId = '', checkpoint = '', checkpointSourceMessageIds = '[]'
+                 SET sessionId = ?, sessionGeneration = ?, lastSeenRoomSeq = ?,
+                     lastSuccessfulRunId = '', checkpoint = '', checkpointSourceMessageIds = '[]',
+                     checkpointFromRoomSeq = 0, checkpointThroughRoomSeq = 0
                  WHERE roomId = ? AND id = ?`
-            ).run(participantSessionId(roomId, agent.agentId, generation), generation, roomId, agent.id)
+            ).run(participantSessionId(roomId, agent.agentId, generation), generation, normalizedBaseline, roomId, agent.id)
         }
     }
 
     addRoomAgent(roomId: string, agentId: string, profile: string, name: string, description: string, invited: number, binding: RoomAgentBindingInput = {}): RoomAgent {
+        const room = this.getRoom(roomId)
+        if (!room) throw new Error('Room not found')
+        const runtime = binding.runtime || 'hermes'
+        const contextStartRoomSeq = Math.max(1, Math.floor(Number(room.contextStartRoomSeq) || 1))
+        const contextBaseline = contextStartRoomSeq - 1
+        const prunedThroughRoomSeq = Math.max(0, Math.floor(Number(room.prunedThroughRoomSeq) || 0))
+        let onboardingCheckpoint = String(binding.checkpoint || '')
+        let onboardingSourceMessageIds = String(binding.checkpointSourceMessageIds || '[]')
+        let onboardingFromRoomSeq = Math.max(0, Math.floor(Number(binding.checkpointFromRoomSeq) || 0))
+        let onboardingThroughRoomSeq = Math.max(0, Math.floor(Number(binding.checkpointThroughRoomSeq) || 0))
+        if (runtime === 'coding_agent' && !onboardingCheckpoint && prunedThroughRoomSeq >= contextStartRoomSeq) {
+            const snapshot = this.getContextSnapshot(roomId)
+            const snapshotThroughRoomSeq = Math.max(0, Math.floor(Number(snapshot?.lastRoomSeq) || 0))
+            const roomMessageSeq = Math.max(0, Math.floor(Number(room.messageSeq) || 0))
+            if (
+                !snapshot?.summary ||
+                snapshotThroughRoomSeq < prunedThroughRoomSeq ||
+                snapshotThroughRoomSeq > roomMessageSeq
+            ) {
+                throw new Error('Cannot add Coding Agent because the pruned Room history has no verifiable onboarding context')
+            }
+            onboardingCheckpoint = snapshot.summary
+            onboardingSourceMessageIds = JSON.stringify([snapshot.lastMessageId].filter(Boolean))
+            onboardingFromRoomSeq = contextStartRoomSeq
+            onboardingThroughRoomSeq = snapshotThroughRoomSeq
+        }
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
         const participant: RoomAgent = {
             id,
@@ -770,7 +873,7 @@ class ChatStorage {
             name,
             description,
             invited,
-            runtime: binding.runtime || 'hermes',
+            runtime,
             codingAgentId: binding.codingAgentId || '',
             sessionId: binding.sessionId || '',
             sessionGeneration: binding.sessionGeneration || 0,
@@ -780,13 +883,15 @@ class ChatStorage {
             apiMode: binding.apiMode || '',
             reasoningEffort: binding.reasoningEffort || '',
             avatar: binding.avatar || '',
-            lastSeenRoomSeq: binding.lastSeenRoomSeq || 0,
+            lastSeenRoomSeq: binding.lastSeenRoomSeq ?? contextBaseline,
             lastSuccessfulRunId: binding.lastSuccessfulRunId || '',
-            checkpoint: binding.checkpoint || '',
-            checkpointSourceMessageIds: binding.checkpointSourceMessageIds || '[]',
+            checkpoint: onboardingCheckpoint,
+            checkpointSourceMessageIds: onboardingSourceMessageIds,
+            checkpointFromRoomSeq: onboardingFromRoomSeq,
+            checkpointThroughRoomSeq: onboardingThroughRoomSeq,
         }
         this.db()?.prepare(
-            'INSERT INTO gc_room_agents (id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO gc_room_agents (id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds, checkpointFromRoomSeq, checkpointThroughRoomSeq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         ).run(
             participant.id,
             participant.roomId,
@@ -809,19 +914,21 @@ class ChatStorage {
             participant.lastSuccessfulRunId,
             participant.checkpoint,
             participant.checkpointSourceMessageIds,
+            participant.checkpointFromRoomSeq,
+            participant.checkpointThroughRoomSeq,
         )
         return participant
     }
 
     getRoomAgent(roomId: string, agentRef: string): RoomAgent | null {
         return (this.db()?.prepare(
-            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds FROM gc_room_agents WHERE roomId = ? AND (id = ? OR agentId = ?)'
+            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds, checkpointFromRoomSeq, checkpointThroughRoomSeq FROM gc_room_agents WHERE roomId = ? AND (id = ? OR agentId = ?)'
         ).get(roomId, agentRef, agentRef) as any) ?? null
     }
 
     getRoomAgentByAgentId(roomId: string, agentId: string): RoomAgent | null {
         return (this.db()?.prepare(
-            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds FROM gc_room_agents WHERE roomId = ? AND agentId = ?'
+            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds, checkpointFromRoomSeq, checkpointThroughRoomSeq FROM gc_room_agents WHERE roomId = ? AND agentId = ?'
         ).get(roomId, agentId) as any) ?? null
     }
 
@@ -846,20 +953,81 @@ class ChatStorage {
         return this.getRoomAgent(roomId, agentRef)
     }
 
+    saveParticipantCheckpointIfCurrent(args: {
+        roomId: string
+        agentId: string
+        expectedSessionSeed: string
+        expectedLastSeenRoomSeq: number
+        expectedSessionGeneration: number
+        summary: string
+        sourceMessageIds: string[]
+        fromRoomSeq: number
+        throughRoomSeq: number
+    }): boolean {
+        const result = this.db()?.prepare(
+            `UPDATE gc_room_agents
+             SET checkpoint = ?, checkpointSourceMessageIds = ?, checkpointFromRoomSeq = ?, checkpointThroughRoomSeq = ?
+             WHERE roomId = ? AND agentId = ? AND runtime = 'coding_agent'
+               AND lastSeenRoomSeq = ? AND sessionGeneration = ?
+               AND EXISTS (SELECT 1 FROM gc_rooms r WHERE r.id = gc_room_agents.roomId AND r.sessionSeed = ?)`
+        ).run(
+            args.summary,
+            JSON.stringify(args.sourceMessageIds),
+            Math.max(0, Math.floor(Number(args.fromRoomSeq) || 0)),
+            Math.max(0, Math.floor(Number(args.throughRoomSeq) || 0)),
+            args.roomId,
+            args.agentId,
+            Math.max(0, Math.floor(Number(args.expectedLastSeenRoomSeq) || 0)),
+            Math.max(0, Math.floor(Number(args.expectedSessionGeneration) || 0)),
+            args.expectedSessionSeed,
+        )
+        return Number(result?.changes || 0) === 1
+    }
+
     updateRoomAgentContinuity(
         roomId: string,
         agentId: string,
-        patch: { lastSeenRoomSeq: number; lastSuccessfulRunId: string; checkpoint?: string; checkpointSourceMessageIds?: string },
+        patch: {
+            lastSeenRoomSeq: number
+            lastSuccessfulRunId: string
+            checkpoint?: string
+            checkpointSourceMessageIds?: string
+            checkpointFromRoomSeq?: number
+            checkpointThroughRoomSeq?: number
+        },
     ): RoomAgent | null {
+        const lastSeenRoomSeq = Math.max(0, Math.floor(Number(patch.lastSeenRoomSeq) || 0))
         this.db()?.prepare(
             `UPDATE gc_room_agents
-             SET lastSeenRoomSeq = ?, lastSuccessfulRunId = ?, checkpoint = ?, checkpointSourceMessageIds = ?
+             SET lastSeenRoomSeq = ?, lastSuccessfulRunId = ?,
+                 checkpoint = CASE
+                   WHEN ? IS NOT NULL THEN ?
+                   WHEN ? >= checkpointThroughRoomSeq THEN ''
+                   ELSE checkpoint
+                 END,
+                 checkpointSourceMessageIds = CASE
+                   WHEN ? IS NOT NULL THEN ?
+                   WHEN ? >= checkpointThroughRoomSeq THEN '[]'
+                   ELSE checkpointSourceMessageIds
+                 END,
+                 checkpointFromRoomSeq = CASE
+                   WHEN ? IS NOT NULL THEN ?
+                   WHEN ? >= checkpointThroughRoomSeq THEN 0
+                   ELSE checkpointFromRoomSeq
+                 END,
+                 checkpointThroughRoomSeq = CASE
+                   WHEN ? IS NOT NULL THEN ?
+                   WHEN ? >= checkpointThroughRoomSeq THEN 0
+                   ELSE checkpointThroughRoomSeq
+                 END
              WHERE roomId = ? AND agentId = ?`
         ).run(
-            Math.max(0, Math.floor(Number(patch.lastSeenRoomSeq) || 0)),
+            lastSeenRoomSeq,
             patch.lastSuccessfulRunId,
-            patch.checkpoint || '',
-            patch.checkpointSourceMessageIds || '[]',
+            patch.checkpoint ?? null, patch.checkpoint ?? '', lastSeenRoomSeq,
+            patch.checkpointSourceMessageIds ?? null, patch.checkpointSourceMessageIds ?? '[]', lastSeenRoomSeq,
+            patch.checkpointFromRoomSeq ?? null, Math.max(0, Math.floor(Number(patch.checkpointFromRoomSeq) || 0)), lastSeenRoomSeq,
+            patch.checkpointThroughRoomSeq ?? null, Math.max(0, Math.floor(Number(patch.checkpointThroughRoomSeq) || 0)), lastSeenRoomSeq,
             roomId,
             agentId,
         )
@@ -872,16 +1040,54 @@ class ChatStorage {
 
     // ─── Context Snapshots ──────────────────────────────────
 
-    getContextSnapshot(roomId: string): { roomId: string; summary: string; lastMessageId: string; lastMessageTimestamp: number; updatedAt: number } | null {
+    getContextSnapshot(roomId: string): { roomId: string; summary: string; lastMessageId: string; lastMessageTimestamp: number; lastRoomSeq: number; updatedAt: number } | null {
         return (this.db()?.prepare(
-            'SELECT roomId, summary, lastMessageId, lastMessageTimestamp, updatedAt FROM gc_context_snapshots WHERE roomId = ?'
+            'SELECT roomId, summary, lastMessageId, lastMessageTimestamp, lastRoomSeq, updatedAt FROM gc_context_snapshots WHERE roomId = ?'
         ).get(roomId) as any) ?? null
     }
 
-    saveContextSnapshot(roomId: string, summary: string, lastMessageId: string, lastMessageTimestamp: number): void {
+    saveContextSnapshot(roomId: string, summary: string, lastMessageId: string, lastMessageTimestamp: number, lastRoomSeq = 0): void {
         this.db()?.prepare(
-            'INSERT INTO gc_context_snapshots (roomId, summary, lastMessageId, lastMessageTimestamp, updatedAt) VALUES (?, ?, ?, ?, ?) ON CONFLICT(roomId) DO UPDATE SET summary = excluded.summary, lastMessageId = excluded.lastMessageId, lastMessageTimestamp = excluded.lastMessageTimestamp, updatedAt = excluded.updatedAt'
-        ).run(roomId, summary, lastMessageId, lastMessageTimestamp, Date.now())
+            `INSERT INTO gc_context_snapshots (roomId, summary, lastMessageId, lastMessageTimestamp, lastRoomSeq, updatedAt)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(roomId) DO UPDATE SET
+               summary = excluded.summary,
+               lastMessageId = excluded.lastMessageId,
+               lastMessageTimestamp = excluded.lastMessageTimestamp,
+               lastRoomSeq = excluded.lastRoomSeq,
+               updatedAt = excluded.updatedAt`
+        ).run(roomId, summary, lastMessageId, lastMessageTimestamp, Math.max(0, Math.floor(Number(lastRoomSeq) || 0)), Date.now())
+    }
+
+    saveContextSnapshotIfCurrent(args: {
+        roomId: string
+        expectedSessionSeed: string
+        expectedLastRoomSeq: number
+        summary: string
+        lastMessageId: string
+        lastMessageTimestamp: number
+        lastRoomSeq: number
+    }): boolean {
+        const db = this.db()
+        if (!db) return false
+        let saved = false
+        this.withImmediateTransaction(db, () => {
+            const room = db.prepare('SELECT sessionSeed FROM gc_rooms WHERE id = ?').get(args.roomId) as { sessionSeed: string } | undefined
+            if (!room || String(room.sessionSeed || '') !== args.expectedSessionSeed) return
+            const current = db.prepare(
+                'SELECT lastRoomSeq FROM gc_context_snapshots WHERE roomId = ?'
+            ).get(args.roomId) as { lastRoomSeq: number } | undefined
+            if (Math.max(0, Number(current?.lastRoomSeq || 0)) !== Math.max(0, Number(args.expectedLastRoomSeq || 0))) return
+            this.saveContextSnapshot(
+                args.roomId,
+                args.summary,
+                args.lastMessageId,
+                args.lastMessageTimestamp,
+                args.lastRoomSeq,
+            )
+            saved = true
+        })
+        return saved
     }
 
     deleteContextSnapshot(roomId: string): void {
@@ -1091,6 +1297,10 @@ export class GroupChatServer {
     private pendingApprovals = new Map<string, { roomId: string; agentId: string; agentName: string; sessionId: string }>()
     /** roomId -> blocked Bridge session ids from room-level interrupts/rotations. */
     private fencedRoomAgentSessions = new Map<string, Set<string>>()
+    /** One retention checkpoint build at a time per Room. */
+    private retentionCheckpointTasks = new Map<string, Promise<void>>()
+    /** Latest retention request observed while the Room task is already running. */
+    private retentionCheckpointPending = new Map<string, { blockedAgentIds: Set<string>; throughRoomSeq: number }>()
 
     constructor(httpServers: HttpServer | HttpServer[]) {
         this.storage = new ChatStorage()
@@ -1142,6 +1352,9 @@ export class GroupChatServer {
         })
         this.agentClients.setContextEngine(contextEngine)
         this.agentClients.setStorage(this.storage)
+        this.storage.setRetentionBlockedHandler((roomId, blockedAgentIds, throughRoomSeq) => {
+            this.scheduleRetentionCheckpoints(roomId, blockedAgentIds, throughRoomSeq)
+        })
         this.agentClients.setWorkspaceDiffBroadcaster((roomId, msg, totalTokens) => {
             this.nsp.to(roomId).emit('message', msg)
             this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens })
@@ -1207,6 +1420,124 @@ export class GroupChatServer {
                     event: 'approval.resolved', roomId, agentName: pending.agentName, approval_id: approvalId, choice: 'deny',
                 })
             }
+        }
+    }
+
+    private scheduleRetentionCheckpoints(roomId: string, blockedAgentIds: string[], throughRoomSeq: number): void {
+        if (this.retentionCheckpointTasks.has(roomId)) {
+            const pending = this.retentionCheckpointPending.get(roomId) || { blockedAgentIds: new Set<string>(), throughRoomSeq: 0 }
+            for (const agentId of blockedAgentIds) pending.blockedAgentIds.add(agentId)
+            pending.throughRoomSeq = Math.max(pending.throughRoomSeq, throughRoomSeq)
+            this.retentionCheckpointPending.set(roomId, pending)
+            return
+        }
+        const task = this.buildRetentionCheckpoints(roomId, blockedAgentIds, throughRoomSeq)
+            .catch((err: any) => {
+                logger.warn({ roomId, throughRoomSeq, err: err?.message || String(err) }, '[GroupChat] retention checkpoint build failed; original messages retained')
+            })
+            .finally(() => {
+                if (this.retentionCheckpointTasks.get(roomId) === task) this.retentionCheckpointTasks.delete(roomId)
+                const pending = this.retentionCheckpointPending.get(roomId)
+                this.retentionCheckpointPending.delete(roomId)
+                if (pending?.blockedAgentIds.size) {
+                    this.scheduleRetentionCheckpoints(roomId, [...pending.blockedAgentIds], pending.throughRoomSeq)
+                }
+            })
+        this.retentionCheckpointTasks.set(roomId, task)
+    }
+
+    private async buildRetentionCheckpoints(roomId: string, blockedAgentIds: string[], throughRoomSeq: number): Promise<void> {
+        const contextEngine = this._contextEngine
+        const room = this.storage.getRoom(roomId)
+        if (!room || throughRoomSeq <= 0 || !contextEngine) return
+        const expectedSessionSeed = String(room.sessionSeed || '')
+        if (blockedAgentIds.includes('__room_snapshot__')) {
+            const currentSnapshot = this.storage.getContextSnapshot(roomId)
+            const expectedLastRoomSeq = Math.max(0, Math.floor(Number(currentSnapshot?.lastRoomSeq) || 0))
+            const messages = this.storage.getMessagesForContext(roomId, {
+                ...(expectedLastRoomSeq > 0 ? { afterRoomSeq: expectedLastRoomSeq } : {}),
+                throughRoomSeq,
+            })
+            if (messages.length === 0) return
+            const profile = this.storage.getRoomAgents(roomId)[0]?.profile || 'default'
+            const summary = await contextEngine.summarizeParticipantRange(
+                roomId,
+                profile,
+                messages,
+                currentSnapshot?.summary || undefined,
+            )
+            if (!summary) return
+            const summaryAnchor = [...messages]
+                .sort((left, right) => Number(left.roomSeq || 0) - Number(right.roomSeq || 0))
+                .at(-1)
+            if (!summaryAnchor || Number(summaryAnchor.roomSeq || 0) < throughRoomSeq) return
+            this.storage.saveContextSnapshotIfCurrent({
+                roomId,
+                expectedSessionSeed,
+                expectedLastRoomSeq,
+                summary,
+                lastMessageId: summaryAnchor.id,
+                lastMessageTimestamp: summaryAnchor.timestamp,
+                lastRoomSeq: Number(summaryAnchor.roomSeq || 0),
+            })
+        }
+        const participants = blockedAgentIds
+            .filter(agentId => agentId !== '__room_snapshot__')
+            .map(agentId => this.storage.getRoomAgentByAgentId(roomId, agentId))
+            .filter((agent): agent is RoomAgent => Boolean(agent && agent.runtime === 'coding_agent'))
+
+        for (const participant of participants) {
+            const expectedLastSeenRoomSeq = Math.max(0, Math.floor(Number(participant.lastSeenRoomSeq) || 0))
+            const expectedSessionGeneration = Math.max(0, Math.floor(Number(participant.sessionGeneration) || 0))
+            const existingFrom = Math.max(0, Math.floor(Number(participant.checkpointFromRoomSeq) || 0))
+            const existingThrough = Math.max(0, Math.floor(Number(participant.checkpointThroughRoomSeq) || 0))
+            const hasContinuousCheckpoint = Boolean(
+                participant.checkpoint &&
+                existingFrom === expectedLastSeenRoomSeq + 1 &&
+                existingThrough >= existingFrom,
+            )
+            const afterRoomSeq = hasContinuousCheckpoint ? existingThrough : expectedLastSeenRoomSeq
+            const messages = this.storage.getMessagesForContext(roomId, {
+                afterRoomSeq,
+                throughRoomSeq,
+            })
+            if (messages.length === 0 && existingThrough < throughRoomSeq) {
+                logger.warn({ roomId, agentId: participant.agentId, afterRoomSeq, throughRoomSeq }, '[GroupChat] cannot checkpoint missing participant history; original messages retained')
+                continue
+            }
+            const summary = await contextEngine.summarizeParticipantRange(
+                roomId,
+                participant.profile,
+                messages,
+                hasContinuousCheckpoint ? participant.checkpoint : undefined,
+            )
+            if (!summary) continue
+            const parsedSourceIds = parseJsonArray(participant.checkpointSourceMessageIds)
+            const sourceMessageIds = messages.length
+                ? [messages[0].id, messages[messages.length - 1].id]
+                : parsedSourceIds?.map(String).slice(0, 2) || []
+            const saved = this.storage.saveParticipantCheckpointIfCurrent({
+                roomId,
+                agentId: participant.agentId,
+                expectedSessionSeed,
+                expectedLastSeenRoomSeq,
+                expectedSessionGeneration,
+                summary,
+                sourceMessageIds,
+                fromRoomSeq: expectedLastSeenRoomSeq + 1,
+                throughRoomSeq,
+            })
+            if (!saved) {
+                logger.info({ roomId, agentId: participant.agentId, throughRoomSeq }, '[GroupChat] discarded stale retention checkpoint')
+            }
+        }
+
+        // This remains fail-closed: pruneMessages re-checks every participant checkpoint
+        // against the same durable sequence boundary before deleting any original row.
+        const retention = this.storage.pruneMessages(roomId)
+        if (retention.pruned > 0) {
+            const totalTokens = Number(this.storage.getRoom(roomId)?.totalTokens || 0)
+            this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens })
         }
     }
 
@@ -1605,6 +1936,15 @@ export class GroupChatServer {
         const userId = member?.userId || socketId
         const userName = member?.name || `User-${socketId.slice(0, 6)}`
         const role = normalizeMessageRole(data.role)
+        const routedText = contentToText(data.content)
+
+        if (data.tool_name !== 'workspace_diff') {
+            const validation = this.agentClients.validateMessageInput?.(roomId, routedText, userId) || { ok: true as const }
+            if (!validation.ok) {
+                ack?.({ error: validation.error })
+                return
+            }
+        }
 
         const msg: ChatMessage = {
             id: this.normalizeClientMessageId(data.id) || this.generateId(),
@@ -1642,7 +1982,7 @@ export class GroupChatServer {
             // bounds chained agent-to-agent handoffs so one prompt cannot loop forever.
             this.agentClients.processMentions(roomId, {
                 messageId: savedMsg.id,
-                content: contentToText(savedMsg.content),
+                content: routedText,
                 input: Array.isArray(data.content) ? data.content : undefined,
                 senderName: savedMsg.senderName,
                 senderId: savedMsg.senderId,

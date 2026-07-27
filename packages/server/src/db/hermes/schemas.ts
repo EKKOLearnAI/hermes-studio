@@ -550,6 +550,8 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   totalTokens: 'INTEGER NOT NULL DEFAULT 0',
   sessionSeed: "TEXT NOT NULL DEFAULT '0'",
   messageSeq: 'INTEGER NOT NULL DEFAULT 0',
+  contextStartRoomSeq: 'INTEGER NOT NULL DEFAULT 1',
+  prunedThroughRoomSeq: 'INTEGER NOT NULL DEFAULT 0',
   workspace: "TEXT NOT NULL DEFAULT ''",
   ownerAuthUserId: 'INTEGER',
 }
@@ -598,6 +600,8 @@ export const GC_ROOM_AGENTS_SCHEMA: Record<string, string> = {
   lastSuccessfulRunId: "TEXT NOT NULL DEFAULT ''",
   checkpoint: "TEXT NOT NULL DEFAULT ''",
   checkpointSourceMessageIds: "TEXT NOT NULL DEFAULT '[]'",
+  checkpointFromRoomSeq: 'INTEGER NOT NULL DEFAULT 0',
+  checkpointThroughRoomSeq: 'INTEGER NOT NULL DEFAULT 0',
 }
 
 export const GC_CONTEXT_SNAPSHOTS_TABLE = 'gc_context_snapshots'
@@ -607,6 +611,7 @@ export const GC_CONTEXT_SNAPSHOTS_SCHEMA: Record<string, string> = {
   summary: 'TEXT NOT NULL DEFAULT \'\'',
   lastMessageId: 'TEXT NOT NULL',
   lastMessageTimestamp: 'INTEGER NOT NULL',
+  lastRoomSeq: 'INTEGER NOT NULL DEFAULT 0',
   updatedAt: 'INTEGER NOT NULL',
 }
 
@@ -745,6 +750,75 @@ function backfillGroupMessageRoomSequences(
          `WHERE message.${quoteIdentifier('roomId')} = room.${quoteIdentifier('id')})` +
       `)`
     )
+  }
+}
+
+function backfillGroupRoomContextWatermarks(
+  db: NonNullable<ReturnType<typeof getDb>>,
+): void {
+  if (
+    !tableExists(db, GC_ROOMS_TABLE) ||
+    !tableExists(db, GC_MESSAGES_TABLE) ||
+    !tableHasColumn(db, GC_ROOMS_TABLE, 'messageSeq') ||
+    !tableHasColumn(db, GC_ROOMS_TABLE, 'contextStartRoomSeq') ||
+    !tableHasColumn(db, GC_ROOMS_TABLE, 'prunedThroughRoomSeq') ||
+    !tableHasColumn(db, GC_MESSAGES_TABLE, 'roomSeq')
+  ) return
+
+  const hasSnapshots = tableExists(db, GC_CONTEXT_SNAPSHOTS_TABLE) &&
+    tableHasColumn(db, GC_CONTEXT_SNAPSHOTS_TABLE, 'lastRoomSeq')
+  const rooms = db.prepare(
+    `SELECT id, messageSeq, contextStartRoomSeq, prunedThroughRoomSeq FROM ${quoteIdentifier(GC_ROOMS_TABLE)}`
+  ).all() as Array<{
+    id: string
+    messageSeq: number
+    contextStartRoomSeq: number
+    prunedThroughRoomSeq: number
+  }>
+
+  for (const room of rooms) {
+    if (Number(room.contextStartRoomSeq || 0) !== 1 || Number(room.prunedThroughRoomSeq || 0) !== 0) continue
+    const bounds = db.prepare(
+      `SELECT COALESCE(MIN(roomSeq), 0) AS minRoomSeq, COALESCE(MAX(roomSeq), 0) AS maxRoomSeq
+       FROM ${quoteIdentifier(GC_MESSAGES_TABLE)}
+       WHERE roomId = ? AND roomSeq > 0`
+    ).get(room.id) as { minRoomSeq: number; maxRoomSeq: number }
+    const minRoomSeq = Math.max(0, Math.floor(Number(bounds?.minRoomSeq) || 0))
+    const messageSeq = Math.max(0, Math.floor(Number(room.messageSeq) || 0))
+
+    if (minRoomSeq <= 0) {
+      if (messageSeq > 0) {
+        db.prepare(
+          `UPDATE ${quoteIdentifier(GC_ROOMS_TABLE)}
+           SET contextStartRoomSeq = messageSeq + 1, prunedThroughRoomSeq = 0
+           WHERE id = ?`
+        ).run(room.id)
+      }
+      continue
+    }
+    if (minRoomSeq <= 1) continue
+
+    const snapshotThrough = hasSnapshots
+      ? Math.max(0, Math.floor(Number((db.prepare(
+          `SELECT lastRoomSeq FROM ${quoteIdentifier(GC_CONTEXT_SNAPSHOTS_TABLE)} WHERE roomId = ?`
+        ).get(room.id) as { lastRoomSeq?: number } | undefined)?.lastRoomSeq) || 0))
+      : 0
+    if (snapshotThrough >= minRoomSeq - 1 && snapshotThrough <= messageSeq) {
+      db.prepare(
+        `UPDATE ${quoteIdentifier(GC_ROOMS_TABLE)}
+         SET contextStartRoomSeq = 1, prunedThroughRoomSeq = ?
+         WHERE id = ?`
+      ).run(minRoomSeq - 1, room.id)
+    } else {
+      // Legacy clear operations removed both messages and snapshots. When retained rows
+      // restart above sequence 1 without summary coverage, treat that minimum as the
+      // authoritative post-clear context baseline instead of fabricating missing history.
+      db.prepare(
+        `UPDATE ${quoteIdentifier(GC_ROOMS_TABLE)}
+         SET contextStartRoomSeq = ?, prunedThroughRoomSeq = 0
+         WHERE id = ?`
+      ).run(minRoomSeq, room.id)
+    }
   }
 }
 
@@ -1247,6 +1321,7 @@ export function initAllHermesTables(): void {
     syncTable(GC_MESSAGES_TABLE, GC_MESSAGES_SCHEMA)
     backfillGroupMessageRoomSequences(db)
     syncTable(GC_CONTEXT_SNAPSHOTS_TABLE, GC_CONTEXT_SNAPSHOTS_SCHEMA)
+    backfillGroupRoomContextWatermarks(db)
     syncTable(GC_PENDING_SESSION_DELETES_TABLE, GC_PENDING_SESSION_DELETES_SCHEMA)
     syncTable(GC_SESSION_PROFILES_TABLE, GC_SESSION_PROFILES_SCHEMA)
 

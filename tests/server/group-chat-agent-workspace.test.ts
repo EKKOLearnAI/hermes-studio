@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const order = vi.hoisted(() => [] as string[])
+const getModelContextLengthMock = vi.hoisted(() => vi.fn(() => 256_000))
 
 const mockSocket = vi.hoisted(() => ({
   id: 'agent-socket-1',
@@ -53,6 +54,9 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
   readConfigYamlForProfile: vi.fn(async () => ({ model: { default: 'model-a', provider: 'provider-a' } })),
 }))
 vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({ updateUsage: vi.fn() }))
+vi.mock('../../packages/server/src/services/hermes/model-context', () => ({
+  getModelContextLength: getModelContextLengthMock,
+}))
 vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
   AgentBridgeClient: vi.fn(() => bridgeMock),
 }))
@@ -83,6 +87,7 @@ describe('group chat agent workspace bridge runs', () => {
       }
     })
     bridgeMock.interrupt.mockResolvedValue(undefined)
+    getModelContextLengthMock.mockReturnValue(256_000)
   })
 
   function workspaceDraft(runId: string, sessionId = 'session-1') {
@@ -273,7 +278,10 @@ describe('group chat agent workspace bridge runs', () => {
       backgroundDelegationEnabled: false,
     } as any)
     const storage = {
-      getRoom: vi.fn(() => ({ sessionSeed: 'seed-1', workspace })),
+      getRoom: vi.fn(() => ({
+        sessionSeed: 'seed-1', workspace,
+        triggerTokens: 100_000, maxHistoryTokens: 32_000, tailMessageCount: 10,
+      })),
       saveWorkspaceDiffMessageForRun: vi.fn(),
       updateRoomTotalTokens: vi.fn(),
       getMessagesForContext: vi.fn(() => []),
@@ -287,6 +295,7 @@ describe('group chat agent workspace bridge runs', () => {
   }
 
   it('snapshots Hermes participant model and reasoning before launch', async () => {
+    getModelContextLengthMock.mockReturnValue(64_000)
     let releaseContext!: () => void
     const client = await createClient('')
     const binding = {
@@ -295,12 +304,11 @@ describe('group chat agent workspace bridge runs', () => {
     }
     client.__testStorage.getRoomAgentByAgentId = vi.fn(() => binding)
     client.__testStorage.getRoomMembers = vi.fn(() => [])
-    client.setContextEngine({
-      buildContext: vi.fn(async () => {
-        await new Promise<void>(resolve => { releaseContext = resolve })
-        return { conversationHistory: [], instructions: 'ctx', meta: {} }
-      }),
+    const buildContext = vi.fn(async () => {
+      await new Promise<void>(resolve => { releaseContext = resolve })
+      return { conversationHistory: [], instructions: 'ctx', meta: {} }
     })
+    client.setContextEngine({ buildContext })
 
     const reply = client.replyToMention('room-1', {
       content: '@Worker hi', senderName: 'Alice', senderId: 'user-1', timestamp: 1,
@@ -312,9 +320,36 @@ describe('group chat agent workspace bridge runs', () => {
     releaseContext()
     await reply
 
+    expect(buildContext).toHaveBeenCalledWith(expect.objectContaining({
+      compression: {
+        triggerTokens: 38_400,
+        maxHistoryTokens: 19_200,
+        tailMessageCount: 10,
+      },
+    }))
+    expect(getModelContextLengthMock).toHaveBeenCalledWith({
+      profile: 'default', provider: 'provider-old', model: 'model-old',
+    })
     expect((bridgeMock.chat.mock.calls[0] as any)?.[5]).toMatchObject({
       model: 'model-old', provider: 'provider-old', reasoning_effort: 'medium',
     })
+  })
+
+  it('fails closed without launching Hermes when participant context cannot be built', async () => {
+    const client = await createClient('')
+    client.__testStorage.getRoomAgentByAgentId = vi.fn(() => ({
+      agentId: 'agent-1', profile: 'default', name: 'Worker', runtime: 'hermes',
+    }))
+    client.__testStorage.getRoomMembers = vi.fn(() => [])
+    client.setContextEngine({
+      buildContext: vi.fn().mockRejectedValue(new Error('Context window is too small')),
+    })
+
+    await client.replyToMention('room-1', {
+      content: '@Worker hi', senderName: 'Alice', senderId: 'user-1', timestamp: 1,
+    })
+
+    expect(bridgeMock.chat).not.toHaveBeenCalled()
   })
 
   it('omits workspace when the room has no workspace', async () => {

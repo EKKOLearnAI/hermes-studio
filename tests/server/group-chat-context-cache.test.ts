@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { countTokens } from '../../packages/server/src/lib/context-compressor'
 import {
+  effectiveGroupCompressionConfig,
   estimateGroupHistoryMessageTokens,
   groupBridgeReasoningDeltaFromEvent,
   groupContextTokensWithFixedOverhead,
@@ -52,6 +53,32 @@ function makeEngine(fetcher: MessageFetcher, summarize = vi.fn()): { engine: Con
     summarize,
   }
 }
+
+describe('group chat participant context budgets', () => {
+  it('clamps a Room threshold to 60 percent of a small participant model window', () => {
+    expect(effectiveGroupCompressionConfig({
+      triggerTokens: 100_000,
+      maxHistoryTokens: 32_000,
+      tailMessageCount: 10,
+    }, 64_000)).toEqual({
+      triggerTokens: 38_400,
+      maxHistoryTokens: 19_200,
+      tailMessageCount: 10,
+    })
+  })
+
+  it('preserves the default 100k Room threshold for the existing unknown-model 256k fallback', () => {
+    expect(effectiveGroupCompressionConfig({
+      triggerTokens: 100_000,
+      maxHistoryTokens: 32_000,
+      tailMessageCount: 10,
+    }, 256_000)).toEqual({
+      triggerTokens: 100_000,
+      maxHistoryTokens: 32_000,
+      tailMessageCount: 10,
+    })
+  })
+})
 
 describe('group chat fixed context cache helpers', () => {
   it('adds cached fixed context to group chat message tokens', () => {
@@ -201,6 +228,43 @@ describe('group chat context cursors', () => {
     expect(summarize).not.toHaveBeenCalled()
   })
 
+  it('uses a sequence-bounded participant checkpoint before retained verbatim messages', async () => {
+    const messages = [
+      makeMessage({ id: 'm25', roomSeq: 25, timestamp: 25, content: 'retained 25' }),
+      makeMessage({ id: 'm26', roomSeq: 26, timestamp: 26, content: 'retained 26' }),
+      makeMessage({ id: 'm27', roomSeq: 27, timestamp: 27, content: 'trigger 27' }),
+      makeMessage({ id: 'future', roomSeq: 28, timestamp: 28, content: 'future must not leak' }),
+    ]
+    const fetcher = makeFetcher(messages)
+    const { engine, summarize } = makeEngine(fetcher)
+
+    const result = await engine.buildContext({
+      roomId: 'room-1', agentId: 'agent-1', agentName: 'Worker', agentDescription: '',
+      agentSocketId: 'agent-socket', roomName: 'general', memberNames: [], members: [],
+      upstream: '', apiKey: null, currentMessage: messages[2], participantCursor: 20,
+      participantCheckpoint: {
+        summary: 'Summary of Room messages 21 through 24',
+        fromRoomSeq: 21,
+        throughRoomSeq: 24,
+      },
+    })
+
+    expect(fetcher.getMessagesForContext).toHaveBeenCalledWith('room-1', {
+      afterRoomSeq: 24,
+      throughRoomSeq: 27,
+    })
+    expect(result.conversationHistory.map(message => message.content)).toEqual([
+      '[Previous conversation summary]\nSummary of Room messages 21 through 24',
+      'I have reviewed the conversation history and understand the context.',
+      '[Alice]: retained 25',
+      '[Alice]: retained 26',
+      '[Alice]: trigger 27',
+    ])
+    expect(result.conversationHistory.some(message => message.content.includes('future must not leak'))).toBe(false)
+    expect(summarize).not.toHaveBeenCalled()
+    expect(fetcher.saveContextSnapshot).not.toHaveBeenCalled()
+  })
+
   it('preserves snapshot summaries when the snapshot anchor was pruned from retained history', async () => {
     const messages = sortGroupMessagesCanonical([
       makeMessage({ id: 'm2', content: 'second', timestamp: 1_000 }),
@@ -241,6 +305,97 @@ describe('group chat context cursors', () => {
   })
 })
 
+
+describe('group chat post-compression budget fitting', () => {
+  it('trims the oldest compressed tail before saving the fitted snapshot boundary', async () => {
+    const messages = Array.from({ length: 6 }, (_value, index) => makeMessage({
+      id: `m${index + 1}`,
+      roomSeq: index + 1,
+      timestamp: index + 1,
+      content: `message-${index + 1}-${'x'.repeat(72)}`,
+    }))
+    const fetcher = makeFetcher(messages)
+    const summarize = vi.fn().mockResolvedValue({ summary: 'Compact summary', sessionId: 'summary-session' })
+    const engine = new ContextEngine({
+      config: { triggerTokens: 100, maxHistoryTokens: 80, tailMessageCount: 3, charsPerToken: 4, summarizationTimeoutMs: 30_000 },
+      messageFetcher: fetcher,
+      gatewayCaller: { summarize },
+    })
+
+    const result = await engine.buildContext({
+      roomId: 'room-1',
+      agentId: 'agent-1',
+      agentName: 'Worker',
+      agentDescription: '',
+      agentSocketId: 'agent-socket',
+      roomName: 'general',
+      memberNames: ['Alice'],
+      members: [{ userId: 'user-1', name: 'Alice', description: '' }],
+      upstream: '',
+      apiKey: null,
+      currentMessage: messages[messages.length - 1],
+      contextTokenEstimator: vi.fn(async history => history.length > 3 ? 101 : 90),
+    })
+
+    expect(result.meta.contextTokenEstimate).toBeLessThanOrEqual(100)
+    expect(result.conversationHistory.some(message => message.content.includes('message-4'))).toBe(false)
+    expect(result.conversationHistory.some(message => message.content.includes('message-5'))).toBe(false)
+    expect(result.conversationHistory.some(message => message.content.includes('message-6'))).toBe(true)
+    expect(fetcher.saveContextSnapshot).toHaveBeenCalledWith('room-1', 'Compact summary', 'm6', 6, 6)
+  })
+
+  it('anchors a compressed snapshot at the highest Room sequence despite reversed clocks', async () => {
+    const messages = [
+      makeMessage({ id: 'seq-1', roomSeq: 1, timestamp: 100, content: 'later clock '.repeat(10) }),
+      makeMessage({ id: 'seq-2', roomSeq: 2, timestamp: 1, content: 'earlier clock '.repeat(10) }),
+    ]
+    const fetcher = makeFetcher(messages)
+    const engine = new ContextEngine({
+      config: { triggerTokens: 10, maxHistoryTokens: 100, tailMessageCount: 1, charsPerToken: 4, summarizationTimeoutMs: 30_000 },
+      messageFetcher: fetcher,
+      gatewayCaller: {
+        summarize: vi.fn().mockResolvedValue({ summary: 'Summary through sequence 2', sessionId: 'summary-session' }),
+      },
+    })
+
+    await engine.buildContext({
+      roomId: 'room-1', agentId: 'agent-1', agentName: 'Worker', agentDescription: '',
+      agentSocketId: 'agent-socket', roomName: 'general', memberNames: [], members: [],
+      upstream: '', apiKey: null, currentMessage: messages[1],
+      contextTokenEstimator: vi.fn().mockResolvedValueOnce(100).mockResolvedValue(8),
+    })
+
+    expect(fetcher.saveContextSnapshot).toHaveBeenCalledWith(
+      'room-1', 'Summary through sequence 2', 'seq-2', 1, 2,
+    )
+  })
+
+  it('refuses an oversized compressed result without advancing the snapshot', async () => {
+    const messages = Array.from({ length: 4 }, (_value, index) => makeMessage({
+      id: `m${index + 1}`,
+      roomSeq: index + 1,
+      timestamp: index + 1,
+      content: `message-${index + 1}-${'x'.repeat(40)}`,
+    }))
+    const fetcher = makeFetcher(messages)
+    const engine = new ContextEngine({
+      config: { triggerTokens: 60, maxHistoryTokens: 30, tailMessageCount: 2, charsPerToken: 4, summarizationTimeoutMs: 30_000 },
+      messageFetcher: fetcher,
+      gatewayCaller: {
+        summarize: vi.fn().mockResolvedValue({ summary: 'Oversized summary '.repeat(20), sessionId: 'summary-session' }),
+      },
+    })
+
+    await expect(engine.buildContext({
+      roomId: 'room-1', agentId: 'agent-1', agentName: 'Worker', agentDescription: '',
+      agentSocketId: 'agent-socket', roomName: 'general', memberNames: [], members: [],
+      upstream: '', apiKey: null, currentMessage: messages[messages.length - 1],
+      contextTokenEstimator: vi.fn().mockResolvedValueOnce(100).mockResolvedValue(500),
+    })).rejects.toThrow('Compressed context is still too large')
+
+    expect(fetcher.saveContextSnapshot).not.toHaveBeenCalled()
+  })
+})
 
 describe('group chat fallback trimming', () => {
   it('drops oldest verbatim turns first when full compression falls back to trimming', async () => {
