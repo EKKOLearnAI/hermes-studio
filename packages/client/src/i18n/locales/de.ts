@@ -1019,6 +1019,7 @@ export default {
     resumeSpeech: 'Fortsetzen',
     stopSpeech: 'Stoppen',
     speechNotSupported: 'Sprachwiedergabe in diesem Browser nicht unterstützt',
+    tokenUsage: '{input} rein · {output} raus',
     searchEnterHint: 'Enter zum Öffnen · Esc zum Schließen',
     searchHint: 'Cmd/Ctrl+K',
     searchScope: 'Suchbereich: nur lokale Web-UI-Sitzungsdatenbank; schreibgeschützte Hermes-Verlaufssitzungen sind nicht enthalten.',

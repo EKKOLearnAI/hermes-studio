@@ -1126,6 +1126,7 @@ export default {
     resumeSpeech: 'Resume',
     stopSpeech: 'Stop',
     speechNotSupported: 'Voice playback not supported in this browser',
+    tokenUsage: '{input} in · {output} out',
   },
 
   workflow: {
