@@ -1081,7 +1081,22 @@ class AgentClient {
                     conversationHistory = ctx.conversationHistory
                     instructions = ctx.instructions
                     if (typeof ctx.meta.contextTokenEstimate === 'number' && Number.isFinite(ctx.meta.contextTokenEstimate)) {
-                        this.storage.updateRoomTotalTokens?.(roomId, ctx.meta.contextTokenEstimate)
+                        if (msg.handoffJobId) {
+                            const updated = this.storage.updateRoomTotalTokensForHandoff?.({
+                                roomId,
+                                totalTokens: ctx.meta.contextTokenEstimate,
+                                sourceHandoffJobId: msg.handoffJobId,
+                                sourceHandoffLeaseToken: msg.handoffLeaseToken || '',
+                                targetAgentId: this.agentId,
+                                targetSessionId: msg.targetSessionId || '',
+                            }) === true
+                            if (!updated) {
+                                await stopStaleStartedRun?.('Interrupted because group chat token authority changed')
+                                return
+                            }
+                        } else {
+                            this.storage.updateRoomTotalTokens?.(roomId, ctx.meta.contextTokenEstimate)
+                        }
                         reportStatus('replying', { totalTokens: ctx.meta.contextTokenEstimate })
                     }
                     logger.debug(`[AgentClients] ${this.name}: context built — historyLen=${conversationHistory.length}, meta=%j`, ctx.meta)
@@ -1202,8 +1217,12 @@ class AgentClient {
                     await stopStaleStartedRun?.()
                     return
                 }
-                await this.sendAgentErrorMessage(roomId, streamMessageId, lastChunk.error || 'Run failed', msg, reasoningContent, sessionId)
                 await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'failed', streamStarted ? streamMessageId : null)
+                if (!executionIsCurrent()) {
+                    await stopStaleStartedRun?.()
+                    return
+                }
+                await this.sendAgentErrorMessage(roomId, streamMessageId, lastChunk.error || 'Run failed', msg, reasoningContent, sessionId)
                 this.emitMessageStreamEnd(roomId, streamMessageId, sessionId, msg)
                 this.stopTyping(roomId)
                 reportStatus('ready')
@@ -1225,6 +1244,11 @@ class AgentClient {
                     return
                 }
                 this.stopTyping(roomId)
+                await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'completed', streamMessageId)
+                if (!executionIsCurrent()) {
+                    await stopStaleStartedRun?.()
+                    return
+                }
                 await this.sendMessage(roomId, currentContent, streamMessageId, {
                     role: 'assistant',
                     mentionDepth: nextMentionDepth(msg),
@@ -1237,7 +1261,6 @@ class AgentClient {
                     reasoning_content: reasoningContent || null,
                 }, sessionId)
                 this.emitMessageStreamEnd(roomId, streamMessageId, sessionId, msg)
-                await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'completed', streamMessageId)
                 reportStatus('ready')
                 return
             }

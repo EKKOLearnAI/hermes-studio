@@ -334,6 +334,7 @@ describe('group chat agent workspace bridge runs', () => {
       enqueuePendingSessionDelete: vi.fn(),
       saveWorkspaceDiffMessageForRun: vi.fn(),
       updateRoomTotalTokens: vi.fn(),
+      updateRoomTotalTokensForHandoff: vi.fn(() => true),
       getMessagesForContext: vi.fn(() => []),
       getContextSnapshot: vi.fn(() => null),
     }
@@ -343,6 +344,54 @@ describe('group chat agent workspace bridge runs', () => {
     ;(client as any).__testClients = clients
     return client as any
   }
+
+  it('atomically persists durable Hermes context tokens with job authority', async () => {
+    const client = await createClient('')
+    client.__testStorage.getRoomMembers = vi.fn(() => [])
+    client.setContextEngine({
+      buildContext: vi.fn(async () => ({
+        conversationHistory: [],
+        instructions: '',
+        meta: { contextTokenEstimate: 321 },
+      })),
+    })
+
+    await client.replyToMention('room-1', {
+      content: '@Worker hi', senderName: 'Alice', senderId: 'user-1', timestamp: 1,
+      handoffJobId: 'job-token-1', handoffLeaseToken: 'lease-token-1',
+      targetSessionId: 'participant-session-1',
+    })
+
+    expect(client.__testStorage.updateRoomTotalTokensForHandoff).toHaveBeenCalledWith({
+      roomId: 'room-1', totalTokens: 321,
+      sourceHandoffJobId: 'job-token-1', sourceHandoffLeaseToken: 'lease-token-1',
+      targetAgentId: 'agent-1', targetSessionId: 'participant-session-1',
+    })
+    expect(client.__testStorage.updateRoomTotalTokens).not.toHaveBeenCalled()
+  })
+
+  it('persists durable Hermes workspace evidence before the final message clears its lease', async () => {
+    const client = await createClient('/tmp/workspace')
+    const events: string[] = []
+    trackerMock.completeWorkspaceRunCheckpointDraft.mockReturnValueOnce(workspaceDraft('bridge-run-id', await workerSessionId()))
+    client.__testStorage.saveWorkspaceDiffMessageForRun.mockImplementation(() => {
+      events.push('workspace')
+      return { message: { id: 'diff-1', roomId: 'room-1' }, totalTokens: 0 }
+    })
+    mockSocket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
+      if (event === 'message' && data?.handoffFinal) events.push('final')
+      if (event === 'message' && ack) ack({ id: data?.id || 'msg-id' })
+      return mockSocket
+    })
+
+    await client.replyToMention('room-1', {
+      content: '@Worker hi', senderName: 'Alice', senderId: 'user-1', timestamp: 1,
+      handoffJobId: 'job-workspace-final', handoffLeaseToken: 'lease-workspace-final',
+      targetSessionId: 'participant-session-1',
+    })
+
+    expect(events).toEqual(['workspace', 'final'])
+  })
 
   it('durably registers the Bridge session before starting the external run', async () => {
     const client = await createClient('')
