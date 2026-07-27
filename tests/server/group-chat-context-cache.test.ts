@@ -139,6 +139,8 @@ describe('group chat context cursors', () => {
       members: [{ userId: 'user-1', name: 'Alice', description: '' }],
       upstream: '',
       apiKey: null,
+      authorizationGuard: () => true,
+      summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
       currentMessage: messages[1],
     })
 
@@ -176,6 +178,8 @@ describe('group chat context cursors', () => {
       members: [{ userId: 'user-1', name: 'Alice', description: '' }],
       upstream: '',
       apiKey: null,
+      authorizationGuard: () => true,
+      summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
       currentMessage: messages[2],
     })
 
@@ -213,6 +217,8 @@ describe('group chat context cursors', () => {
       members: [{ userId: 'user-1', name: 'Alice', description: '' }],
       upstream: '',
       apiKey: null,
+      authorizationGuard: () => true,
+      summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
       currentMessage: messages[1],
     })
 
@@ -256,6 +262,8 @@ describe('group chat fallback trimming', () => {
       members: [{ userId: 'user-1', name: 'Alice', description: '' }],
       upstream: '',
       apiKey: null,
+      authorizationGuard: () => true,
+      summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
       currentMessage: messages[messages.length - 1],
       contextTokenEstimator: vi.fn().mockResolvedValue(999),
     })
@@ -299,6 +307,8 @@ describe('group chat fallback trimming', () => {
       members: [{ userId: 'user-1', name: 'Alice', description: '' }],
       upstream: '',
       apiKey: null,
+      authorizationGuard: () => true,
+      summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
       currentMessage: messages[messages.length - 1],
       contextTokenEstimator: vi.fn().mockResolvedValue(999),
     })
@@ -336,6 +346,8 @@ describe('group chat fallback trimming', () => {
       members: [{ userId: 'user-1', name: 'Alice', description: '' }],
       upstream: '',
       apiKey: null,
+      authorizationGuard: () => true,
+      summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
       currentMessage: messages[messages.length - 1],
       contextTokenEstimator: vi.fn().mockResolvedValue(999),
     })
@@ -376,6 +388,8 @@ describe('group chat fallback trimming', () => {
       members: [{ userId: 'user-1', name: 'Alice', description: '' }],
       upstream: '',
       apiKey: null,
+      authorizationGuard: () => true,
+      summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
       currentMessage: messages[messages.length - 1],
       contextTokenEstimator: vi.fn().mockResolvedValue(999),
     })

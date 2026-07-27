@@ -84,15 +84,22 @@ export interface MessageFetcher {
     deleteContextSnapshot(roomId: string): void
 }
 
+export interface GatewaySessionLease {
+    sessionId: string
+    authorizationGuard: () => boolean
+    release: () => void
+}
+
 export interface GatewayCaller {
     summarize(
         upstream: string,
-        apiKey: string | null,
+        apiKey: BuildContextInput['apiKey'],
         systemPrompt: string,
         messages: StoredMessage[],
         roomId: string,
         profile: string,
-        previousSummary?: string,
+        previousSummary: string | undefined,
+        sessionRegistrar: () => GatewaySessionLease,
     ): Promise<{ summary: string; sessionId: string }>
 }
 
@@ -125,6 +132,10 @@ export interface BuildContextInput {
     upstream: string
     apiKey: string | null
     currentMessage: StoredMessage
+    /** Must remain true before private context reads, logs, persistence, or external summarization. */
+    authorizationGuard: () => boolean
+    /** Atomically registers an opaque, cleanup-leased Bridge session before summarization. */
+    summarySessionRegistrar: () => GatewaySessionLease
     compression?: Partial<CompressionConfig>
     profile?: string
     contextTokenEstimator?: (

@@ -4,6 +4,7 @@ import { execFileSync } from 'child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { claimTestHermesDbOwnership } from './db-test-helpers'
 
 const state = vi.hoisted(() => ({
   db: null as DatabaseSync | null,
@@ -38,6 +39,7 @@ describe('workspace diff tracker', () => {
     root = mkdtempSync(join(tmpdir(), 'hermes-workspace-diff-'))
     state.appHome = join(root, 'home')
     state.db = new DatabaseSync(join(root, 'diffs.db'))
+    await claimTestHermesDbOwnership(state.db)
     const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
     initAllHermesTables()
 

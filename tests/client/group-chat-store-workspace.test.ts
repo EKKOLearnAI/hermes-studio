@@ -2,10 +2,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
+const workspaceSocket = vi.hoisted(() => {
+  const socket: any = {
+    id: 'socket-1',
+    connected: true,
+    auth: { localIdentityVerified: true, localCredential: 'signed-test-credential' },
+    io: { on: vi.fn() },
+    on: vi.fn(() => socket),
+    once: vi.fn(() => socket),
+    off: vi.fn(() => socket),
+    emit: vi.fn(() => socket),
+    connect: vi.fn(() => socket),
+    disconnect: vi.fn(),
+  }
+  return socket
+})
+
 const groupChatApiMock = vi.hoisted(() => ({
-  connectGroupChat: vi.fn(),
+  connectGroupChat: vi.fn(() => workspaceSocket),
   disconnectGroupChat: vi.fn(),
-  getSocket: vi.fn(() => null),
+  getSocket: vi.fn(() => workspaceSocket),
   getStoredUserId: vi.fn(() => 'user-1'),
   getStoredUserName: vi.fn(() => 'tester'),
   createRoom: vi.fn(),
@@ -101,8 +117,8 @@ describe('group chat store workspace', () => {
 
     await store.setRoomInviteCode('room-1', ' NEW456 ')
 
-    expect(groupChatApiMock.updateInviteCode).toHaveBeenCalledWith('room-1', 'NEW456')
-    expect(store.rooms[0].inviteCode).toBe('NEW456')
+    expect(groupChatApiMock.updateInviteCode).toHaveBeenCalledWith('room-1', ' NEW456 ')
+    expect(store.rooms[0].inviteCode).toBe(' NEW456 ')
   })
 
   it('does not mutate local invite code when the API rejects', async () => {

@@ -1,6 +1,10 @@
 import { basename, resolve as pathResolve } from 'path'
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'fs/promises'
-import { canManageGroupChatRoom } from '../../services/hermes/group-chat/access'
+import {
+    loadActiveAuthenticatedUser,
+    type AuthenticatedUser,
+} from '../../middleware/user-auth'
+import { canManageGroupChatRoom, canReadGroupChatRoom } from '../../services/hermes/group-chat/access'
 import { getGroupChatRuntimeServer } from '../../services/hermes/group-chat/runtime'
 import {
     groupWorkspaceRelativePath,
@@ -10,14 +14,57 @@ import { isSensitivePath, MAX_DOWNLOAD_SIZE, MAX_EDIT_SIZE } from '../../service
 import { buildFileContentHeaders, getFilePreviewDescriptor } from '../../services/hermes/file-preview'
 import { defaultHermesWorkspace } from '../../services/hermes/run-chat/workspace'
 
-function managedRoom(ctx: any): { room: any; storage: ReturnType<NonNullable<ReturnType<typeof getGroupChatRuntimeServer>>['getStorage']> } {
+type GroupChatWorkspaceStorage = ReturnType<NonNullable<ReturnType<typeof getGroupChatRuntimeServer>>['getStorage']>
+
+type ManagedRoom = {
+    room: NonNullable<ReturnType<GroupChatWorkspaceStorage['getRoom']>>
+    storage: GroupChatWorkspaceStorage
+}
+
+type ManagedRoomContext = {
+    params: { roomId: string }
+    state?: {
+        user?: AuthenticatedUser
+        groupChatLocalSubjectId?: string
+    }
+}
+
+function authorizedWorkspaceRoots({ room, storage }: ManagedRoom): string[] {
+    return [
+        String(room.workspace || '').trim(),
+        ...storage.getRoomAgents(room.id).map(agent => defaultHermesWorkspace(String(agent.profile || 'default'))),
+    ].filter((root, index, all) => root && all.indexOf(root) === index)
+}
+
+function managedRoom(ctx: ManagedRoomContext, expectedWorkspaceRoot?: string): ManagedRoom {
     const server = getGroupChatRuntimeServer()
     if (!server) throw Object.assign(new Error('Group chat not initialized'), { status: 503, code: 'group_chat_unavailable' })
     const storage = server.getStorage()
     const room = storage.getRoom(ctx.params.roomId)
     if (!room) throw Object.assign(new Error('Room not found'), { status: 404, code: 'not_found' })
-    if (!canManageGroupChatRoom(storage, room.id, ctx.state?.user)) {
+    const state = ctx.state || {}
+    if (state.user) {
+        const userId = Number(state.user.id)
+        const currentUser = Number.isInteger(userId) && userId > 0
+            ? loadActiveAuthenticatedUser(userId)
+            : null
+        if (currentUser) state.user = currentUser
+        else {
+            delete state.user
+            delete state.groupChatLocalSubjectId
+        }
+    }
+    const localSubjectId = typeof state.groupChatLocalSubjectId === 'string'
+        ? state.groupChatLocalSubjectId
+        : null
+    if (!canManageGroupChatRoom(storage, room.id, state.user, localSubjectId)) {
+        if (!canReadGroupChatRoom(storage, room.id, state.user, localSubjectId)) {
+            throw Object.assign(new Error('Room not found'), { status: 404, code: 'not_found' })
+        }
         throw Object.assign(new Error('Access denied'), { status: 403, code: 'permission_denied' })
+    }
+    if (expectedWorkspaceRoot && !authorizedWorkspaceRoots({ room, storage }).includes(expectedWorkspaceRoot)) {
+        throw Object.assign(new Error('Workspace authorization changed'), { status: 403, code: 'permission_denied' })
     }
     return { room, storage }
 }
@@ -43,11 +90,8 @@ async function resolveRoomPreviewPath(ctx: any, path: unknown) {
     const isAbsolute = rawPath.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(rawPath)
     if (!isAbsolute) return resolveRoomPath(ctx, path)
 
-    const { room, storage } = managedRoom(ctx)
-    const roots = [
-        String(room.workspace || '').trim(),
-        ...storage.getRoomAgents(room.id).map(agent => defaultHermesWorkspace(String(agent.profile || 'default'))),
-    ].filter((root, index, all) => root && all.indexOf(root) === index)
+    const managed = managedRoom(ctx)
+    const roots = authorizedWorkspaceRoots(managed)
     for (const root of roots) {
         try {
             return await resolveGroupWorkspacePath(root, rawPath, { allowAbsolute: true })
@@ -61,9 +105,12 @@ async function resolveRoomPreviewPath(ctx: any, path: unknown) {
 export async function listWorkspaceFiles(ctx: any): Promise<void> {
     try {
         const { relativePath, fullPath, workspace } = await resolveRoomPath(ctx, ctx.query.path, { allowEmpty: true })
+        managedRoom(ctx, workspace)
         const info = await stat(fullPath)
+        managedRoom(ctx, workspace)
         if (!info.isDirectory()) throw Object.assign(new Error('Not a directory'), { status: 400, code: 'not_a_directory' })
         const dirEntries = await readdir(fullPath, { withFileTypes: true })
+        managedRoom(ctx, workspace)
         const entries = await Promise.all(dirEntries.map(async entry => {
             const entryFullPath = pathResolve(fullPath, entry.name)
             const entryStat = await stat(entryFullPath)
@@ -76,6 +123,7 @@ export async function listWorkspaceFiles(ctx: any): Promise<void> {
                 modTime: entryStat.mtime.toISOString(),
             }
         }))
+        managedRoom(ctx, workspace)
         entries.sort((a, b) => a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1)
         ctx.body = { entries, path: relativePath, absolutePath: fullPath }
     } catch (error) {
@@ -85,11 +133,14 @@ export async function listWorkspaceFiles(ctx: any): Promise<void> {
 
 export async function readWorkspaceFile(ctx: any): Promise<void> {
     try {
-        const { relativePath, fullPath } = await resolveRoomPath(ctx, ctx.query.path)
+        const { relativePath, fullPath, workspace } = await resolveRoomPath(ctx, ctx.query.path)
+        managedRoom(ctx, workspace)
         const info = await stat(fullPath)
+        managedRoom(ctx, workspace)
         if (!info.isFile()) throw Object.assign(new Error('Not a file'), { status: 400, code: 'not_a_file' })
         if (info.size > MAX_EDIT_SIZE) throw Object.assign(new Error('File too large to edit'), { status: 413, code: 'file_too_large' })
         const data = await readFile(fullPath)
+        managedRoom(ctx, workspace)
         ctx.body = { content: data.toString('utf-8'), path: relativePath, size: data.length }
     } catch (error) {
         handleWorkspaceError(ctx, error)
@@ -98,8 +149,10 @@ export async function readWorkspaceFile(ctx: any): Promise<void> {
 
 export async function readWorkspaceFileContent(ctx: any): Promise<void> {
     try {
-        const { relativePath, fullPath } = await resolveRoomPreviewPath(ctx, ctx.query.path)
+        const { relativePath, fullPath, workspace } = await resolveRoomPreviewPath(ctx, ctx.query.path)
+        managedRoom(ctx, workspace)
         const info = await stat(fullPath)
+        managedRoom(ctx, workspace)
         if (!info.isFile()) throw Object.assign(new Error('Not a file'), { status: 400, code: 'not_a_file' })
 
         const download = String(ctx.query?.download || '') === '1'
@@ -113,6 +166,7 @@ export async function readWorkspaceFileContent(ctx: any): Promise<void> {
             throw Object.assign(new Error(download ? 'File too large to download' : 'File too large to preview'), { status: 413, code: 'file_too_large' })
         }
         const data = await readFile(fullPath)
+        managedRoom(ctx, workspace)
         if (data.length > maxBytes) {
             throw Object.assign(new Error(download ? 'File too large to download' : 'File too large to preview'), { status: 413, code: 'file_too_large' })
         }
@@ -132,11 +186,13 @@ export async function readWorkspaceFileContent(ctx: any): Promise<void> {
 export async function writeWorkspaceFile(ctx: any): Promise<void> {
     try {
         const body = ctx.request.body as { path?: unknown; content?: unknown }
-        const { relativePath, fullPath } = await resolveRoomPath(ctx, body?.path)
+        const { relativePath, fullPath, workspace } = await resolveRoomPath(ctx, body?.path)
+        managedRoom(ctx, workspace)
         if (isSensitivePath(relativePath)) throw Object.assign(new Error('Cannot modify sensitive file'), { status: 403, code: 'permission_denied' })
         const data = Buffer.from(typeof body?.content === 'string' ? body.content : '', 'utf-8')
         if (data.length > MAX_EDIT_SIZE) throw Object.assign(new Error('Content too large'), { status: 413, code: 'file_too_large' })
         await writeFile(fullPath, data)
+        managedRoom(ctx, workspace)
         ctx.body = { ok: true, path: relativePath }
     } catch (error) {
         handleWorkspaceError(ctx, error)
@@ -145,8 +201,10 @@ export async function writeWorkspaceFile(ctx: any): Promise<void> {
 
 export async function mkdirWorkspaceFile(ctx: any): Promise<void> {
     try {
-        const { fullPath } = await resolveRoomPath(ctx, (ctx.request.body as { path?: unknown })?.path)
+        const { fullPath, workspace } = await resolveRoomPath(ctx, (ctx.request.body as { path?: unknown })?.path)
+        managedRoom(ctx, workspace)
         await mkdir(fullPath, { recursive: true })
+        managedRoom(ctx, workspace)
         ctx.body = { ok: true }
     } catch (error) {
         handleWorkspaceError(ctx, error)
@@ -156,10 +214,13 @@ export async function mkdirWorkspaceFile(ctx: any): Promise<void> {
 export async function deleteWorkspaceFile(ctx: any): Promise<void> {
     try {
         const body = ctx.request.body as { path?: unknown; recursive?: unknown }
-        const { relativePath, fullPath } = await resolveRoomPath(ctx, body?.path)
+        const { relativePath, fullPath, workspace } = await resolveRoomPath(ctx, body?.path)
+        managedRoom(ctx, workspace)
         if (isSensitivePath(relativePath)) throw Object.assign(new Error('Cannot delete sensitive file'), { status: 403, code: 'permission_denied' })
         const info = await stat(fullPath)
+        managedRoom(ctx, workspace)
         await rm(fullPath, info.isDirectory() ? { recursive: Boolean(body?.recursive), force: false } : undefined)
+        managedRoom(ctx, workspace)
         ctx.body = { ok: true }
     } catch (error) {
         handleWorkspaceError(ctx, error)
@@ -170,11 +231,17 @@ export async function renameWorkspaceFile(ctx: any): Promise<void> {
     try {
         const body = ctx.request.body as { oldPath?: unknown; newPath?: unknown }
         const oldTarget = await resolveRoomPath(ctx, body?.oldPath)
+        managedRoom(ctx, oldTarget.workspace)
         const newTarget = await resolveRoomPath(ctx, body?.newPath)
+        managedRoom(ctx, newTarget.workspace)
         if (isSensitivePath(oldTarget.relativePath) || isSensitivePath(newTarget.relativePath)) {
             throw Object.assign(new Error('Cannot rename sensitive file'), { status: 403, code: 'permission_denied' })
         }
+        managedRoom(ctx, oldTarget.workspace)
+        managedRoom(ctx, newTarget.workspace)
         await rename(oldTarget.fullPath, newTarget.fullPath)
+        managedRoom(ctx, oldTarget.workspace)
+        managedRoom(ctx, newTarget.workspace)
         ctx.body = { ok: true }
     } catch (error) {
         handleWorkspaceError(ctx, error)
@@ -185,11 +252,17 @@ export async function copyWorkspaceFile(ctx: any): Promise<void> {
     try {
         const body = ctx.request.body as { srcPath?: unknown; destPath?: unknown }
         const source = await resolveRoomPath(ctx, body?.srcPath)
+        managedRoom(ctx, source.workspace)
         const destination = await resolveRoomPath(ctx, body?.destPath)
+        managedRoom(ctx, destination.workspace)
         if (isSensitivePath(destination.relativePath)) throw Object.assign(new Error('Cannot overwrite sensitive file'), { status: 403, code: 'permission_denied' })
         const info = await stat(source.fullPath)
+        managedRoom(ctx, source.workspace)
+        managedRoom(ctx, destination.workspace)
         if (!info.isFile()) throw Object.assign(new Error('Not a file'), { status: 400, code: 'not_a_file' })
         await copyFile(source.fullPath, destination.fullPath)
+        managedRoom(ctx, source.workspace)
+        managedRoom(ctx, destination.workspace)
         ctx.body = { ok: true }
     } catch (error) {
         handleWorkspaceError(ctx, error)

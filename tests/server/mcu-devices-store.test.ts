@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { claimTestHermesDbOwnership } from './db-test-helpers'
 
 describe('MCU devices store', () => {
   let db: any = null
@@ -7,6 +8,7 @@ describe('MCU devices store', () => {
     vi.resetModules()
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
+    await claimTestHermesDbOwnership(db)
     vi.doMock('../../packages/server/src/db/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',

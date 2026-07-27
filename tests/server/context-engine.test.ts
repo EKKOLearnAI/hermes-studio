@@ -6,8 +6,8 @@ import {
     buildFullSummaryPrompt,
     buildIncrementalUpdatePrompt,
 } from '../../packages/server/src/services/hermes/context-engine/prompt'
-import { ContextEngine } from '../../packages/server/src/services/hermes/context-engine/compressor'
-import type { StoredMessage, MessageFetcher, GatewayCaller } from '../../packages/server/src/services/hermes/context-engine/types'
+import { ContextAuthorizationChangedError, ContextEngine } from '../../packages/server/src/services/hermes/context-engine/compressor'
+import type { BuildContextInput, StoredMessage, MessageFetcher, GatewayCaller } from '../../packages/server/src/services/hermes/context-engine/types'
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -32,6 +32,29 @@ function makeMessages(count: number, roomId = 'room-1', startTimestamp = 1000): 
         content: `Message ${i} with some content`,
         timestamp: startTimestamp + i * 1000,
     }))
+}
+
+function makeBuildInput(
+    messages: StoredMessage[],
+    authorizationGuard: () => boolean,
+    overrides: Partial<BuildContextInput> = {},
+): BuildContextInput {
+    return {
+        roomId: 'room-1',
+        agentId: 'agent-1',
+        agentName: 'Claude',
+        agentDescription: 'Helper',
+        agentSocketId: 'agent-socket',
+        roomName: 'general',
+        memberNames: ['Alice'],
+        members: [{ userId: 'u1', name: 'Alice', description: '' }],
+        upstream: '',
+        apiKey: null,
+        currentMessage: messages[messages.length - 1] || makeMessage(),
+        authorizationGuard,
+        summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
+        ...overrides,
+    }
 }
 
 // ─── SummaryCache ─────────────────────────────────────────────
@@ -177,6 +200,288 @@ describe('ContextEngine.buildContext', () => {
         })
     })
 
+    it('denies before reading private messages when authorization is already stale', async () => {
+        const messages = makeMessages(3)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
+
+        await expect(engine.buildContext(makeBuildInput(messages, () => false)))
+            .rejects.toBeInstanceOf(ContextAuthorizationChangedError)
+
+        expect(mockFetcher.getMessagesForContext).not.toHaveBeenCalled()
+        expect(mockSummarize).not.toHaveBeenCalled()
+    })
+
+    it('rechecks authorization after waiting for an existing room compression lock', async () => {
+        const messages = makeMessages(5)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
+        let releaseSummary!: (value: { summary: string; sessionId: string }) => void
+        const summarize = vi.fn(() => new Promise<{ summary: string; sessionId: string }>((resolve) => {
+            releaseSummary = resolve
+        }))
+        const guardedEngine = new ContextEngine({
+            config: { maxHistoryTokens: 4000, tailMessageCount: 2, triggerTokens: 1, charsPerToken: 4, summarizationTimeoutMs: 30_000 },
+            messageFetcher: mockFetcher,
+            gatewayCaller: { summarize },
+        })
+        let secondAuthorized = true
+
+        const first = guardedEngine.buildContext(makeBuildInput(messages, () => true))
+        await vi.waitFor(() => expect(summarize).toHaveBeenCalledOnce())
+        const second = guardedEngine.buildContext(makeBuildInput(messages, () => secondAuthorized))
+        const secondExpectation = expect(second).rejects.toBeInstanceOf(ContextAuthorizationChangedError)
+        secondAuthorized = false
+        releaseSummary({ summary: 'first summary', sessionId: 'summary-first' })
+
+        await expect(first).resolves.toBeDefined()
+        await secondExpectation
+        expect(mockFetcher.getMessagesForContext).toHaveBeenCalledTimes(1)
+        expect(summarize).toHaveBeenCalledTimes(1)
+    })
+
+    it('serializes three same-room compression callers without a waiter stampede', async () => {
+        const messages = makeMessages(5)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
+        const pending: Array<() => void> = []
+        let active = 0
+        let maxActive = 0
+        const summarize = vi.fn(async (...args: Parameters<GatewayCaller['summarize']>) => {
+            const registrar = args[7]
+            const lease = registrar()
+            active += 1
+            maxActive = Math.max(maxActive, active)
+            try {
+                await new Promise<void>(resolve => pending.push(resolve))
+                return { summary: `summary-${summarize.mock.calls.length}`, sessionId: lease.sessionId }
+            } finally {
+                active -= 1
+                lease.release()
+            }
+        })
+        const guardedEngine = new ContextEngine({
+            config: { maxHistoryTokens: 4000, tailMessageCount: 2, triggerTokens: 1, charsPerToken: 4, summarizationTimeoutMs: 30_000 },
+            messageFetcher: mockFetcher,
+            gatewayCaller: { summarize },
+        })
+
+        const first = guardedEngine.buildContext(makeBuildInput(messages, () => true))
+        await vi.waitFor(() => expect(summarize).toHaveBeenCalledTimes(1))
+        const second = guardedEngine.buildContext(makeBuildInput(messages, () => true))
+        const third = guardedEngine.buildContext(makeBuildInput(messages, () => true))
+        await new Promise(resolve => setTimeout(resolve, 0))
+        expect(summarize).toHaveBeenCalledTimes(1)
+
+        pending.shift()?.()
+        await vi.waitFor(() => expect(summarize).toHaveBeenCalledTimes(2))
+        expect(maxActive).toBe(1)
+        pending.shift()?.()
+        await vi.waitFor(() => expect(summarize).toHaveBeenCalledTimes(3))
+        expect(maxActive).toBe(1)
+        pending.shift()?.()
+
+        await expect(Promise.all([first, second, third])).resolves.toHaveLength(3)
+        expect(maxActive).toBe(1)
+    })
+
+    it('serializes forced compression behind an in-flight automatic compression', async () => {
+        const messages = makeMessages(5)
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
+        let releaseFirst: (() => void) | undefined
+        let callCount = 0
+        const summarize = vi.fn(async (...args: Parameters<GatewayCaller['summarize']>) => {
+            const lease = args[7]()
+            callCount += 1
+            try {
+                if (callCount === 1) {
+                    await new Promise<void>(resolve => { releaseFirst = resolve })
+                }
+                return { summary: `summary-${callCount}`, sessionId: lease.sessionId }
+            } finally {
+                lease.release()
+            }
+        })
+        const guardedEngine = new ContextEngine({
+            config: { maxHistoryTokens: 4000, tailMessageCount: 2, triggerTokens: 1, charsPerToken: 4, summarizationTimeoutMs: 30_000 },
+            messageFetcher: mockFetcher,
+            gatewayCaller: { summarize },
+        })
+        const forceRegistrar = vi.fn(() => ({
+            sessionId: `gc_h_${'b'.repeat(32)}`,
+            authorizationGuard: () => true,
+            release: vi.fn(),
+        }))
+
+        const automatic = guardedEngine.buildContext(makeBuildInput(messages, () => true))
+        await vi.waitFor(() => expect(summarize).toHaveBeenCalledOnce())
+        const forced = guardedEngine.forceCompress('room-1', 'default', forceRegistrar)
+        await new Promise(resolve => setTimeout(resolve, 0))
+        expect(forceRegistrar).not.toHaveBeenCalled()
+        expect(mockFetcher.getMessagesForContext).toHaveBeenCalledTimes(1)
+
+        releaseFirst?.()
+        await expect(automatic).resolves.toBeDefined()
+        await expect(forced).resolves.toBe('summary-2')
+        expect(forceRegistrar).toHaveBeenCalledOnce()
+        expect(mockFetcher.getMessagesForContext).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not fall back to heuristic compression when authorization disappears during token estimation', async () => {
+        const messages = makeMessages(20)
+        let authorized = true
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
+        const contextTokenEstimator = vi.fn(async () => {
+            authorized = false
+            return undefined
+        })
+
+        await expect(engine.buildContext(makeBuildInput(messages, () => authorized, { contextTokenEstimator })))
+            .rejects.toBeInstanceOf(ContextAuthorizationChangedError)
+
+        expect(mockSummarize).not.toHaveBeenCalled()
+        expect(mockFetcher.saveContextSnapshot).not.toHaveBeenCalled()
+    })
+
+    it('rechecks after progress callbacks before sending private messages to the summarizer', async () => {
+        const messages = makeMessages(20)
+        let authorized = true
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
+
+        await expect(engine.buildContext(makeBuildInput(messages, () => authorized, {
+            contextTokenEstimator: vi.fn().mockResolvedValue(120_000),
+            onProgress: () => { authorized = false },
+        }))).rejects.toBeInstanceOf(ContextAuthorizationChangedError)
+
+        expect(mockSummarize).not.toHaveBeenCalled()
+        expect(mockFetcher.saveContextSnapshot).not.toHaveBeenCalled()
+    })
+
+    it('cleans the external summary session and skips snapshot persistence when authority changes in flight', async () => {
+        const messages = makeMessages(5)
+        let authorized = true
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
+        const sessionCleaner = vi.fn()
+        const summarize = vi.fn(async () => {
+            authorized = false
+            return { summary: 'must not persist', sessionId: 'summary-revoked' }
+        })
+        const guardedEngine = new ContextEngine({
+            config: { maxHistoryTokens: 4000, tailMessageCount: 2, triggerTokens: 1, charsPerToken: 4, summarizationTimeoutMs: 30_000 },
+            messageFetcher: mockFetcher,
+            gatewayCaller: { summarize },
+            sessionCleaner,
+        })
+
+        await expect(guardedEngine.buildContext(makeBuildInput(messages, () => authorized)))
+            .rejects.toBeInstanceOf(ContextAuthorizationChangedError)
+
+        expect(summarize).toHaveBeenCalledOnce()
+        expect(sessionCleaner).toHaveBeenCalledWith('summary-revoked')
+        expect(mockFetcher.saveContextSnapshot).not.toHaveBeenCalled()
+    })
+
+    it('does not persist a summary when authority changes during the post-summary estimate', async () => {
+        const messages = makeMessages(5)
+        let authorized = true
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
+        const contextTokenEstimator = vi.fn()
+            .mockResolvedValueOnce(120_000)
+            .mockImplementationOnce(async () => {
+                authorized = false
+                return 100
+            })
+        const guardedEngine = new ContextEngine({
+            config: { maxHistoryTokens: 4000, tailMessageCount: 2, triggerTokens: 1, charsPerToken: 4, summarizationTimeoutMs: 30_000 },
+            messageFetcher: mockFetcher,
+            gatewayCaller: mockGatewayCaller,
+        })
+
+        await expect(guardedEngine.buildContext(makeBuildInput(messages, () => authorized, { contextTokenEstimator })))
+            .rejects.toBeInstanceOf(ContextAuthorizationChangedError)
+
+        expect(mockSummarize).toHaveBeenCalledOnce()
+        expect(contextTokenEstimator).toHaveBeenCalledTimes(2)
+        expect(mockFetcher.saveContextSnapshot).not.toHaveBeenCalled()
+    })
+
+    it('registers a forced-compression lease before reading private room history', async () => {
+        const messages = makeMessages(5)
+        const order: string[] = []
+        const release = vi.fn(() => order.push('release'))
+        mockFetcher.getMessagesForContext = vi.fn(() => {
+            order.push('read')
+            return messages
+        })
+        const gatewayCaller: GatewayCaller = {
+            summarize: vi.fn(async (_upstream, _key, _prompt, _messages, _room, _profile, _previous, registrar) => {
+                const lease = registrar()
+                order.push('request')
+                try {
+                    return { summary: 'forced summary', sessionId: lease.sessionId }
+                } finally {
+                    lease.release()
+                }
+            }),
+        }
+        const guardedEngine = new ContextEngine({
+            config: { maxHistoryTokens: 4000, tailMessageCount: 2, triggerTokens: 1, charsPerToken: 4, summarizationTimeoutMs: 30_000 },
+            messageFetcher: mockFetcher,
+            gatewayCaller,
+        })
+
+        const result = await guardedEngine.forceCompress('room-1', 'default', () => {
+            order.push('register')
+            return { sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release }
+        })
+
+        expect(result).toBe('forced summary')
+        expect(order).toEqual(['register', 'read', 'request', 'release'])
+        expect(release).toHaveBeenCalledOnce()
+        expect(mockFetcher.saveContextSnapshot).toHaveBeenCalledOnce()
+    })
+
+    it('aborts forced compression when its exact lease changes during summarization', async () => {
+        const messages = makeMessages(5)
+        let authorized = true
+        const release = vi.fn()
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
+        const gatewayCaller: GatewayCaller = {
+            summarize: vi.fn(async (...args: Parameters<GatewayCaller['summarize']>) => {
+                const lease = args[7]()
+                try {
+                    authorized = false
+                    return { summary: 'must not persist', sessionId: lease.sessionId }
+                } finally {
+                    lease.release()
+                }
+            }),
+        }
+        const guardedEngine = new ContextEngine({ messageFetcher: mockFetcher, gatewayCaller })
+
+        await expect(guardedEngine.forceCompress('room-1', 'default', () => ({
+            sessionId: `gc_h_${'a'.repeat(32)}`,
+            authorizationGuard: () => authorized,
+            release,
+        }))).rejects.toBeInstanceOf(ContextAuthorizationChangedError)
+
+        expect(release).toHaveBeenCalledOnce()
+        expect(mockFetcher.saveContextSnapshot).not.toHaveBeenCalled()
+    })
+
+    it('releases a forced-compression lease when the room has no messages', async () => {
+        const release = vi.fn()
+        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue([])
+        const gatewayCaller: GatewayCaller = { summarize: vi.fn() }
+        const guardedEngine = new ContextEngine({ messageFetcher: mockFetcher, gatewayCaller })
+
+        await expect(guardedEngine.forceCompress('room-1', 'default', () => ({
+            sessionId: `gc_h_${'a'.repeat(32)}`,
+            authorizationGuard: () => true,
+            release,
+        }))).resolves.toBe('')
+
+        expect(release).toHaveBeenCalledOnce()
+        expect(gatewayCaller.summarize).not.toHaveBeenCalled()
+    })
+
     it('returns all messages as history when under threshold', async () => {
         const messages = makeMessages(10) // 10 messages, under trigger threshold
         mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
@@ -192,6 +497,8 @@ describe('ContextEngine.buildContext', () => {
             members: [{ userId: 'u1', name: 'Alice', description: '' }],
             upstream: 'http://localhost:8642',
             apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
         })
 
@@ -220,6 +527,8 @@ describe('ContextEngine.buildContext', () => {
             members: [{ userId: 'u1', name: 'Alice', description: '' }],
             upstream: 'http://localhost:8642',
             apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
             contextTokenEstimator,
             onProgress,
@@ -252,6 +561,8 @@ describe('ContextEngine.buildContext', () => {
             members: [],
             upstream: 'http://localhost:8642',
             apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
             contextTokenEstimator: vi.fn().mockResolvedValue(120_000),
             onProgress,
@@ -284,6 +595,8 @@ describe('ContextEngine.buildContext', () => {
             members: [],
             upstream: 'http://localhost:8642',
             apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
             contextTokenEstimator: vi.fn().mockResolvedValue(120_000),
         })).rejects.toThrow('Context window is too small')
@@ -314,6 +627,8 @@ describe('ContextEngine.buildContext', () => {
             members: [],
             upstream: 'http://localhost:8642',
             apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
             contextTokenEstimator: vi.fn().mockResolvedValue(120_000),
         })).rejects.toThrow('Context window is too small')
@@ -337,6 +652,8 @@ describe('ContextEngine.buildContext', () => {
             members: [],
             upstream: 'http://localhost:8642',
             apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
             compression: { triggerTokens: 10 }, // Force compression with tiny threshold
         })
@@ -355,6 +672,8 @@ describe('ContextEngine.buildContext', () => {
             roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude',
             agentDescription: '', agentSocketId: 'agent-socket', roomName: 'general',
             memberNames: [], members: [], upstream: 'http://localhost:8642', apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
             compression: { triggerTokens: 10 },
         })
@@ -377,6 +696,8 @@ describe('ContextEngine.buildContext', () => {
             roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude',
             agentDescription: '', agentSocketId: 'agent-socket', roomName: 'general',
             memberNames: [], members: [], upstream: 'http://localhost:8642', apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
         })
 
@@ -394,6 +715,8 @@ describe('ContextEngine.buildContext', () => {
             roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude',
             agentDescription: '', agentSocketId: 'agent-socket', roomName: 'general',
             memberNames: [], members: [], upstream: 'http://localhost:8642', apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
             compression: { triggerTokens: 10 },
         })
@@ -430,6 +753,8 @@ describe('ContextEngine.buildContext', () => {
             roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude',
             agentDescription: '', agentSocketId: 'agent-socket', roomName: 'general',
             memberNames: [], members: [], upstream: 'http://localhost:8642', apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: updatedMessages[updatedMessages.length - 1],
             compression: { triggerTokens: 10 },
             onProgress,
@@ -455,6 +780,8 @@ describe('ContextEngine.buildContext', () => {
             roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude',
             agentDescription: '', agentSocketId: 'agent-socket', roomName: 'general',
             memberNames: [], members: [], upstream: 'http://localhost:8642', apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
             compression: { triggerTokens: 10 },
         })
@@ -485,6 +812,8 @@ describe('ContextEngine.buildContext', () => {
             roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude',
             agentDescription: '', agentSocketId: 'agent-socket', roomName: 'general',
             memberNames: [], members: [], upstream: 'http://localhost:8642', apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
         })
 
@@ -508,6 +837,8 @@ describe('ContextEngine.buildContext', () => {
             roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude',
             agentDescription: '', agentSocketId: 'agent-socket', roomName: 'general',
             memberNames: [], members: [], upstream: 'http://localhost:8642', apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
         })
 
@@ -530,6 +861,8 @@ describe('ContextEngine.buildContext', () => {
             roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude',
             agentDescription: '', agentSocketId: 'agent-socket', roomName: 'general',
             memberNames: [], members: [], upstream: 'http://localhost:8642', apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
         })
 
@@ -550,6 +883,8 @@ describe('ContextEngine.buildContext', () => {
                 { userId: 'u2', name: 'Bob', description: 'designer' },
             ],
             upstream: 'http://localhost:8642', apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[0],
         })
 
@@ -577,6 +912,8 @@ describe('ContextEngine.buildContext', () => {
             roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude',
             agentDescription: '', agentSocketId: 'agent-socket', roomName: 'general',
             memberNames: [], members: [], upstream: 'http://localhost:8642', apiKey: null,
+            authorizationGuard: () => true,
+            summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
         })
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { claimTestHermesDbOwnership } from './db-test-helpers'
 
 describe('session category store', () => {
   let db: any = null
@@ -12,6 +13,7 @@ describe('session category store', () => {
       getStoragePath: () => ':memory:',
       isSqliteAvailable: () => true,
     }))
+    await claimTestHermesDbOwnership(db)
     const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
     initAllHermesTables()
   })

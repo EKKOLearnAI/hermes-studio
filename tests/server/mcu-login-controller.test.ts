@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { claimTestHermesDbOwnership } from './db-test-helpers'
 
 const { startOutboundRelayClientMock, stopOutboundRelayClientMock } = vi.hoisted(() => ({
   startOutboundRelayClientMock: vi.fn(),
@@ -22,6 +23,7 @@ describe('MCU login controller', () => {
 
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
+    await claimTestHermesDbOwnership(db)
     vi.doMock('../../packages/server/src/db/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',

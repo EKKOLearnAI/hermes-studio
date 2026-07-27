@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { createServer, type Server as HttpServer } from 'http'
+import { claimTestHermesDbOwnership } from './db-test-helpers'
 
 const dbMock = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
@@ -24,9 +25,14 @@ const { mockIo, mockSocket } = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../packages/server/src/db/index', () => ({
-  getDb: () => dbMock.current,
-}))
+vi.mock('../../packages/server/src/db/index', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../packages/server/src/db/index')>()
+  return {
+    ...actual,
+    getDb: () => dbMock.current,
+    getStoragePath: () => ':memory:',
+  }
+})
 
 vi.mock('socket.io-client', () => ({
   io: mockIo,
@@ -81,9 +87,11 @@ describe('group chat history windows', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     dbMock.current = makeDb()
-    initAllHermesTables()
-    httpServer = createServer()
-    groupServer = new GroupChatServer(httpServer)
+    return claimTestHermesDbOwnership(dbMock.current).then(() => {
+      initAllHermesTables()
+      httpServer = createServer()
+      groupServer = new GroupChatServer(httpServer)
+    })
   })
 
   afterEach(() => {
@@ -199,11 +207,23 @@ describe('group chat history windows', () => {
       role: 'user',
       timestamp: index + 1,
     }))
-    const sessionId = groupBridgeSessionId('room-1', 'default', 'Worker', 'seed-1')
+    const sessionIdentity = {
+      actorId: 'actor-agent-1',
+      roomAuthorizationRevision: 0,
+      actorAuthorizationRevision: 0,
+      actorContextRevision: 0,
+    }
+    const sessionId = groupBridgeSessionId('room-1', 'default', 'Worker', '11111111111111111111111111111111', sessionIdentity)
     const storage = {
       getMessagesForContext: vi.fn(() => messages),
       getRecentMessagesForUI: vi.fn(() => messages.slice(-150)),
-      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: 'seed-1' })),
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: '11111111111111111111111111111111', authorizationRevision: 0 })),
+      findActiveActorByAgentIdentity: vi.fn(() => ({
+        id: sessionIdentity.actorId,
+        authorizationRevision: 0,
+        contextRevision: 0,
+      })),
+      getActorCapabilities: vi.fn(() => ['room.read', 'room.write']),
       getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: 'Worker' })),
       updateRoomTotalTokens: vi.fn(),
     }

@@ -179,6 +179,7 @@ class AgentPool:
         self._lock = threading.RLock()
         self._db = SessionDbHolder()
         self._approval_requests: dict[str, queue.Queue[str]] = {}
+        self._approval_allowed_choices: dict[str, frozenset[str]] = {}
         self._gateway_approval_requests: dict[str, str] = {}
         self._gateway_approval_pattern_keys: dict[str, list[str]] = {}
         self._compression_requests: dict[str, queue.Queue[dict[str, Any]]] = {}
@@ -1187,9 +1188,10 @@ class AgentPool:
         def callback(command: str, description: str, *, allow_permanent: bool = True) -> str:
             approval_id = uuid.uuid4().hex
             response_queue: queue.Queue[str] = queue.Queue(maxsize=1)
+            choices = ["once", "session", "always", "deny"] if allow_permanent else ["once", "session", "deny"]
             with self._lock:
                 self._approval_requests[approval_id] = response_queue
-            choices = ["once", "session", "always", "deny"] if allow_permanent else ["once", "session", "deny"]
+                self._approval_allowed_choices[approval_id] = frozenset(choices)
             self._append_event(session_id, {
                 "event": "approval.requested",
                 "approval_id": approval_id,
@@ -1206,6 +1208,7 @@ class AgentPool:
             finally:
                 with self._lock:
                     self._approval_requests.pop(approval_id, None)
+                    self._approval_allowed_choices.pop(approval_id, None)
             self._append_event(session_id, {
                 "event": "approval.resolved",
                 "approval_id": approval_id,
@@ -1287,6 +1290,7 @@ class AgentPool:
             with self._lock:
                 self._gateway_approval_requests[approval_id] = session_id
                 self._gateway_approval_pattern_keys[approval_id] = pattern_keys
+                self._approval_allowed_choices[approval_id] = frozenset(choices)
             self._append_event(session_id, {
                 "event": "approval.requested",
                 "approval_id": approval_id,
@@ -1820,10 +1824,14 @@ class AgentPool:
             cleaned = "deny"
         with self._lock:
             response_queue = self._approval_requests.get(approval_id)
+            allowed_choices = self._approval_allowed_choices.get(approval_id)
+        if allowed_choices is not None and cleaned not in allowed_choices:
+            cleaned = "deny"
         if response_queue is None:
             with self._lock:
                 gateway_session_id = self._gateway_approval_requests.pop(approval_id, None)
                 pattern_keys = self._gateway_approval_pattern_keys.pop(approval_id, [])
+                self._approval_allowed_choices.pop(approval_id, None)
             if gateway_session_id is None:
                 return {"approval_id": approval_id, "resolved": False, "choice": cleaned}
             try:

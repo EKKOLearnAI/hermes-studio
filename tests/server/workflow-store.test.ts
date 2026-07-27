@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { existsSync, mkdtempSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { claimTestHermesDbOwnership } from './db-test-helpers'
 
 const state = vi.hoisted(() => ({
   db: null as DatabaseSync | null,
@@ -31,6 +32,7 @@ describe('workflow store', () => {
     root = mkdtempSync(join(tmpdir(), 'hermes-workflow-store-'))
     state.appHome = join(root, 'home')
     state.db = new DatabaseSync(join(root, 'workflow.db'))
+    await claimTestHermesDbOwnership(state.db)
     const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
     initAllHermesTables()
   })

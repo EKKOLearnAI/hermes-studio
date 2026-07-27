@@ -1,6 +1,7 @@
 import { createHash, generateKeyPairSync, sign } from 'crypto'
 import { createServer, type Server } from 'http'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { claimTestHermesDbOwnership } from './db-test-helpers'
 import type { LanDeviceInfo } from '../../packages/server/src/services/lan-discovery'
 
 const keyPair = generateKeyPairSync('ed25519', {
@@ -37,6 +38,7 @@ describe('devices controller', () => {
     vi.resetModules()
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
+    await claimTestHermesDbOwnership(db)
     vi.doMock('../../packages/server/src/db/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',

@@ -25,6 +25,7 @@ import {
     removeAgent,
     cloneRoom as cloneRoomApi,
     deleteRoom as deleteRoomApi,
+    leaveRoom as leaveRoomApi,
     clearRoomContext,
     updateInviteCode as updateInviteCodeApi,
     updateRoomWorkspace as updateRoomWorkspaceApi,
@@ -160,7 +161,99 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const hasReachedMessageDisplayLimit = computed(() =>
         hasMoreBefore.value && loadedMessageCount.value >= GROUP_CHAT_MAX_DISPLAY_MESSAGES,
     )
-const currentUserAvatar = ref('')
+    const currentUserAvatar = ref('')
+    let usesAuthenticatedInviteSubject = false
+    let localIdentityReady: Promise<void> | null = null
+    let resolveLocalIdentityReady: (() => void) | null = null
+    let currentLocalCredential = ''
+    let connectionSetup: Promise<void> | null = null
+    let connectionGeneration = 0
+    const realtimeSocketWaiterCancels = new Set<() => void>()
+
+    function resetLocalIdentityReadiness(authenticated: boolean): void {
+        usesAuthenticatedInviteSubject = authenticated
+        currentLocalCredential = ''
+        resolveLocalIdentityReady = null
+        localIdentityReady = authenticated
+            ? Promise.resolve()
+            : new Promise<void>((resolve) => {
+                resolveLocalIdentityReady = resolve
+            })
+    }
+
+    function acceptServerUserId(value: unknown): void {
+        const serverUserId = typeof value === 'string' ? value.trim() : ''
+        if (!serverUserId) return
+        userId.value = serverUserId
+        localStorage.setItem('gc_user_id', serverUserId)
+    }
+
+    function acceptLocalIdentity(data: { localCredential?: string; userId?: string }): void {
+        const localCredential = typeof data?.localCredential === 'string' ? data.localCredential : ''
+        if (!localCredential) return
+        currentLocalCredential = localCredential
+        localStorage.setItem('gc_local_credential', localCredential)
+        acceptServerUserId(data.userId)
+        resolveLocalIdentityReady?.()
+        resolveLocalIdentityReady = null
+    }
+
+    async function waitForInviteAttemptSubject(socket: GroupChatSocket, generation: number): Promise<void> {
+        if (generation !== connectionGeneration) {
+            throw new Error('Group chat connection setup was cancelled')
+        }
+        if (usesAuthenticatedInviteSubject) return
+        if (!localIdentityReady) throw new Error('Group chat local identity is not initialized')
+        if (currentLocalCredential) {
+            localStorage.setItem('gc_local_credential', currentLocalCredential)
+            return
+        }
+
+        await new Promise<void>((resolve, reject) => {
+            let settled = false
+            let timeout: ReturnType<typeof setTimeout> | null = null
+            const cleanup = () => {
+                if (timeout) clearTimeout(timeout)
+                timeout = null
+                socket.off?.('local_identity', onLocalIdentity)
+                socket.off?.('disconnect', onDisconnect)
+                realtimeSocketWaiterCancels.delete(cancel)
+            }
+            const finish = (callback: () => void) => {
+                if (settled) return
+                settled = true
+                cleanup()
+                callback()
+            }
+            const cancel = () => finish(() => reject(new Error('Group chat connection setup was cancelled')))
+            const onDisconnect = () => cancel()
+            const onLocalIdentity = (data: { localCredential?: string; userId?: string }) => {
+                if (generation !== connectionGeneration) {
+                    cancel()
+                    return
+                }
+                acceptLocalIdentity(data)
+                if (currentLocalCredential) finish(resolve)
+            }
+
+            realtimeSocketWaiterCancels.add(cancel)
+            socket.on('local_identity', onLocalIdentity)
+            socket.on('disconnect', onDisconnect)
+            timeout = setTimeout(
+                () => finish(() => reject(new Error('Group chat local identity timed out'))),
+                30000,
+            )
+            if (generation !== connectionGeneration) cancel()
+        })
+
+        if (generation !== connectionGeneration) {
+            throw new Error('Group chat connection setup was cancelled')
+        }
+        if (!currentLocalCredential) {
+            throw new Error('Group chat local identity is unavailable')
+        }
+        localStorage.setItem('gc_local_credential', currentLocalCredential)
+    }
 
     function resetMessagePaging() {
         totalMessages.value = 0
@@ -248,6 +341,7 @@ const currentUserAvatar = ref('')
     }
 
     function applyRealtimeJoinState(res: any, options: { syncMessages?: boolean } = {}) {
+        acceptServerUserId(res.currentUserId)
         members.value = res.members || []
         if (res.agents) agents.value = res.agents
         if (res.roomName) roomName.value = res.roomName
@@ -290,15 +384,18 @@ const currentUserAvatar = ref('')
         }
     }
 
-    async function waitForRealtimeSocket(socket: GroupChatSocket): Promise<void> {
+    async function waitForRealtimeSocket(socket: GroupChatSocket, generation: number): Promise<void> {
+        if (generation !== connectionGeneration) throw new Error('Group chat socket connection cancelled')
         if (socket.connected) return
         await new Promise<void>((resolve, reject) => {
             let settled = false
             let timeout: ReturnType<typeof setTimeout> | null = null
             const cleanup = () => {
                 if (timeout) clearTimeout(timeout)
+                realtimeSocketWaiterCancels.delete(cancel)
                 socket.off?.('connect', onConnect)
                 socket.off?.('connect_error', onError)
+                socket.off?.('disconnect', onDisconnect)
             }
             const finish = (fn: () => void) => {
                 if (settled) return
@@ -306,24 +403,44 @@ const currentUserAvatar = ref('')
                 cleanup()
                 fn()
             }
-            const onConnect = () => finish(resolve)
+            const cancel = () => finish(() => reject(new Error('Group chat socket connection cancelled')))
+            const onConnect = () => {
+                if (generation !== connectionGeneration) {
+                    cancel()
+                    return
+                }
+                finish(resolve)
+            }
             const onError = (err: Error) => finish(() => reject(err))
+            const onDisconnect = () => cancel()
             timeout = setTimeout(() => finish(() => reject(new Error('Group chat socket connection timed out'))), 30000)
-            socket.once('connect', onConnect)
-            socket.once('connect_error', onError)
+            realtimeSocketWaiterCancels.add(cancel)
+            socket.on('connect', onConnect)
+            socket.on('connect_error', onError)
+            socket.on('disconnect', onDisconnect)
+            if (generation !== connectionGeneration) cancel()
         })
     }
 
     async function ensureRealtimeSocket(): Promise<GroupChatSocket> {
+        const generation = connectionGeneration
         let socket = getSocket()
-        if (socket) return socket
+        if (socket && localIdentityReady) return socket
         await connect()
+        if (generation !== connectionGeneration) throw new Error('Group chat socket connection cancelled')
         socket = getSocket({ requireConnected: false })
         if (!socket) throw new Error('Group chat socket not connected')
-        await waitForRealtimeSocket(socket)
+        await waitForRealtimeSocket(socket, generation)
+        if (generation !== connectionGeneration) throw new Error('Group chat socket connection cancelled')
         const connectedSocket = getSocket()
         if (!connectedSocket) throw new Error('Group chat socket not connected')
         return connectedSocket
+    }
+
+    async function ensureRestSubject(): Promise<void> {
+        const generation = connectionGeneration
+        const socket = await ensureRealtimeSocket()
+        await waitForInviteAttemptSubject(socket, generation)
     }
 
     async function joinRealtimeRoom(roomId: string, options: { syncMessages?: boolean; inviteCode?: string } = {}) {
@@ -374,24 +491,51 @@ const currentUserAvatar = ref('')
     })
 
     // ─── Connection ────────────────────────────────────────
-    async function connect() {
-        let authUserId: number | undefined
+    async function setupConnection(generation: number) {
+        let authenticatedUser: Awaited<ReturnType<typeof fetchCurrentUser>> | null = null
         const connectionName = getStoredGroupUserName()
         try {
-            const user = await fetchCurrentUser()
-            authUserId = user.id
-            userId.value = authenticatedGroupUserId(user.id)
-            if (!connectionName) userName.value = user.username
-            currentUserAvatar.value = user.avatar || ''
+            authenticatedUser = await fetchCurrentUser()
         } catch { /* non-critical: avatar fallback handles missing id */ }
+        if (generation !== connectionGeneration) return
+
+        const authUserId = authenticatedUser?.id
+        if (authenticatedUser) {
+            userId.value = authenticatedGroupUserId(authenticatedUser.id)
+            if (!connectionName) userName.value = authenticatedUser.username
+            currentUserAvatar.value = authenticatedUser.avatar || ''
+        }
+        const authenticatedInviteSubject = typeof authUserId === 'number' && authUserId > 0
         const socket = connectGroupChat({
             userId: userId.value,
             userName: connectionName || undefined,
             authUserId,
         })
+        if (generation !== connectionGeneration) {
+            socket.disconnect()
+            disconnectGroupChat()
+            return
+        }
+        resetLocalIdentityReadiness(authenticatedInviteSubject)
+        if (!authenticatedInviteSubject && socket.connected) {
+            const currentAuth = typeof socket.auth === 'object' && socket.auth
+                ? socket.auth as Record<string, unknown>
+                : {}
+            acceptLocalIdentity({
+                localCredential: currentAuth.localIdentityVerified === true
+                    && typeof currentAuth.localCredential === 'string'
+                    ? currentAuth.localCredential
+                    : undefined,
+                userId: currentAuth.localIdentityVerified === true
+                    && typeof currentAuth.userId === 'string'
+                    ? currentAuth.userId
+                    : undefined,
+            })
+        }
         console.log('[GroupChat] connecting...', { userId: userId.value, userName: userName.value })
 
         socket.on('connect', () => {
+            if (!usesAuthenticatedInviteSubject) resetLocalIdentityReadiness(false)
             console.log('[GroupChat] connected, socket id:', socket.id)
             connected.value = true
             error.value = null
@@ -412,6 +556,19 @@ const currentUserAvatar = ref('')
             console.error('[GroupChat] connect_error:', err.message)
             error.value = err.message
             connected.value = false
+        })
+
+        socket.on('local_identity', (data: { localCredential?: string; userId?: string }) => {
+            acceptLocalIdentity(data)
+            const localCredential = currentLocalCredential
+            if (!localCredential) return
+            const currentAuth = typeof socket.auth === 'object' && socket.auth ? socket.auth as Record<string, unknown> : {}
+            socket.auth = {
+                ...currentAuth,
+                userId: userId.value,
+                localCredential,
+                localIdentityVerified: true,
+            }
         })
 
         socket.on('message', (msg: ChatMessage) => {
@@ -619,10 +776,36 @@ const currentUserAvatar = ref('')
                 pendingApprovals.value.clear()
             }
         })
+
+        socket.connect()
+    }
+
+    async function connect(): Promise<void> {
+        if (connectionSetup) {
+            await connectionSetup
+            return
+        }
+        if (getSocket({ requireConnected: false }) && localIdentityReady) return
+
+        const generation = connectionGeneration
+        const setup = setupConnection(generation)
+        connectionSetup = setup
+        try {
+            await setup
+        } finally {
+            if (connectionSetup === setup) connectionSetup = null
+        }
     }
 
     function disconnect() {
+        connectionGeneration += 1
+        connectionSetup = null
+        for (const cancel of Array.from(realtimeSocketWaiterCancels)) cancel()
         disconnectGroupChat()
+        usesAuthenticatedInviteSubject = false
+        localIdentityReady = null
+        resolveLocalIdentityReady = null
+        currentLocalCredential = ''
         connected.value = false
         currentRoomId.value = null
         messages.value = []
@@ -673,6 +856,7 @@ const currentUserAvatar = ref('')
         error.value = null
 
         try {
+            await ensureRestSubject()
             const res = await getRoomDetail(roomId)
             upsertRoom(res.room)
             currentRoomId.value = res.room.id
@@ -763,6 +947,7 @@ const currentUserAvatar = ref('')
 
     async function loadRooms() {
         try {
+            await ensureRestSubject()
             const res = await listRooms()
             rooms.value = res.rooms
         } catch (err: any) {
@@ -779,6 +964,7 @@ const currentUserAvatar = ref('')
         memberProfile?: { name: string; description?: string },
     ) {
         try {
+            await ensureRestSubject()
             const res = await createRoom({
                 name,
                 inviteCode,
@@ -798,9 +984,11 @@ const currentUserAvatar = ref('')
 
     async function joinByCode(code: string) {
         try {
+            const generation = connectionGeneration
+            const socket = await ensureRealtimeSocket()
+            await waitForInviteAttemptSubject(socket, generation)
             const res = await joinRoomByCode(code)
             upsertRoom(res.room)
-            await ensureRealtimeSocket()
             currentRoomId.value = res.room.id
             roomName.value = res.room.name
             await joinRealtimeRoom(res.room.id, { syncMessages: true, inviteCode: code })
@@ -814,7 +1002,32 @@ const currentUserAvatar = ref('')
 
     async function deleteRoom(roomId: string) {
         try {
+            await ensureRestSubject()
             await deleteRoomApi(roomId)
+            rooms.value = rooms.value.filter(r => r.id !== roomId)
+            clearMessageReference(roomId)
+            if (currentRoomId.value === roomId) {
+                currentRoomId.value = null
+                messages.value = []
+                resetMessagePaging()
+                members.value = []
+                agents.value = []
+                roomName.value = ''
+            }
+        } catch (err: any) {
+            error.value = err.message
+            throw err
+        }
+    }
+
+    async function leaveRoom(roomId: string) {
+        try {
+            await ensureRestSubject()
+            const res = await leaveRoomApi(roomId)
+            if (res.left === false) {
+                await loadRooms()
+                return
+            }
             rooms.value = rooms.value.filter(r => r.id !== roomId)
             clearMessageReference(roomId)
             if (currentRoomId.value === roomId) {
@@ -833,6 +1046,7 @@ const currentUserAvatar = ref('')
 
     async function cloneRoom(roomId: string, data?: { name?: string; inviteCode?: string }) {
         try {
+            await ensureRestSubject()
             const res = await cloneRoomApi(roomId, data)
             upsertRoom(res.room)
             return res
@@ -846,6 +1060,7 @@ const currentUserAvatar = ref('')
         if (!currentRoomId.value) return
         const roomId = currentRoomId.value
         try {
+            await ensureRestSubject()
             const res = await clearRoomContext(roomId)
             messages.value = []
             clearMessageReference(roomId)
@@ -863,6 +1078,7 @@ const currentUserAvatar = ref('')
 
     async function setRoomWorkspace(roomId: string, workspace: string) {
         try {
+            await ensureRestSubject()
             const res = await updateRoomWorkspaceApi(roomId, workspace)
             if (res.room) {
                 upsertRoom(res.room)
@@ -876,8 +1092,8 @@ const currentUserAvatar = ref('')
     }
 
     async function setRoomInviteCode(roomId: string, inviteCode: string) {
-        const nextCode = inviteCode.trim()
-        if (!nextCode) throw new Error('inviteCode is required')
+        const nextCode = inviteCode
+        if (!nextCode.trim()) throw new Error('inviteCode is required')
         try {
             await updateInviteCodeApi(roomId, nextCode)
             const room = rooms.value.find(r => r.id === roomId)
@@ -895,6 +1111,7 @@ const currentUserAvatar = ref('')
     // ─── Agent Actions ─────────────────────────────────────
     async function loadAgents(roomId: string) {
         try {
+            await ensureRestSubject()
             const res = await listAgents(roomId)
             agents.value = res.agents
         } catch { /* ignore */ }
@@ -902,6 +1119,7 @@ const currentUserAvatar = ref('')
 
     async function addAgentToRoom(roomId: string, data: { profile: string; name?: string; description?: string; invited?: boolean }) {
         try {
+            await ensureRestSubject()
             const res = await addAgent(roomId, data)
             agents.value.push(res.agent)
             return res.agent
@@ -913,6 +1131,7 @@ const currentUserAvatar = ref('')
 
     async function removeAgentFromRoom(roomId: string, agentId: string) {
         try {
+            await ensureRestSubject()
             const res = await removeAgent(roomId, agentId)
             agents.value = res.agents ?? agents.value.filter(a => a.id !== agentId && a.agentId !== agentId)
             if (res.members) members.value = res.members
@@ -1018,6 +1237,7 @@ const currentUserAvatar = ref('')
         createNewRoom,
         joinByCode,
         deleteRoom,
+        leaveRoom,
         cloneRoom,
         clearCurrentRoomContext,
         setRoomWorkspace,

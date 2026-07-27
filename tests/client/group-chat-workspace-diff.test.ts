@@ -12,6 +12,7 @@ const groupChatApiMock = vi.hoisted(() => {
   const socket: any = {
     id: 'socket-1',
     connected: true,
+    auth: { localIdentityVerified: true, localCredential: 'signed-test-credential' },
     on: vi.fn(() => socket),
     once: vi.fn(() => socket),
     off: vi.fn(() => socket),
@@ -29,6 +30,7 @@ const groupChatApiMock = vi.hoisted(() => {
       }
       return socket
     }),
+    connect: vi.fn(() => socket),
   }
   return {
     socket,

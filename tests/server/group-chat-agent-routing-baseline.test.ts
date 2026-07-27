@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   connectGroupChatClient,
+  currentRoomAgentSessionId,
   createTestGroupChatServer,
   emitAck,
+  seedAuthenticatedUser,
 } from './group-chat-test-helpers'
-import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupBridgeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { GROUP_CHAT_AGENT_SOCKET_SECRET } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { authenticateUserToken, isAuthEnabled } from '../../packages/server/src/middleware/user-auth'
 import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 
@@ -41,8 +43,7 @@ describe('group chat agent routing baseline', () => {
   }
 
   function currentAgentSessionId() {
-    const room = groupServer.getStorage().getRoom('room-1')
-    return groupBridgeSessionId('room-1', 'default', 'Worker', String(room?.sessionSeed || '0'))
+    return currentRoomAgentSessionId(groupServer, 'room-1', 'agent-worker', 'default', 'Worker')
   }
 
   it('routes human messages through mention processing', async () => {
@@ -64,6 +65,7 @@ describe('group chat agent routing baseline', () => {
       if (token === 'read-only-token') return { id: 2, username: 'bob', role: 'admin', profiles: [] } as any
       return null
     })
+    seedAuthenticatedUser(harness.db, { id: 2, username: 'bob' })
     const human = await connectGroupChatClient(port, 'ignored-user', 'Bob', { token: 'read-only-token' })
     const agent = await connectGroupChatClient(port, 'agent-worker', 'Worker', {
       source: 'agent',

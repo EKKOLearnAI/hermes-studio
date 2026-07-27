@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { NInput, NButton, NSpace, NInputNumber, NCollapse, NCollapseItem } from 'naive-ui'
 import { getStoredUsername } from '@/api/client'
 import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
+import { generateGroupChatInviteCode, groupChatInviteCodeForCreate } from '@/utils/group-chat-invite'
 
 type InputLikeInstance = {
     focus: () => void
@@ -29,17 +30,12 @@ const compression = ref({
 })
 
 function generateCode(): string {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-    let code = ''
-    for (let i = 0; i < 6; i++) {
-        code += chars[Math.floor(Math.random() * chars.length)]
-    }
-    return code
+    return generateGroupChatInviteCode()
 }
 
 function handleCreate() {
     const name = roomName.value.trim()
-    const code = inviteCode.value.trim() || generateCode()
+    const code = groupChatInviteCodeForCreate(inviteCode.value)
     const user = userName.value.trim()
     if (!name || !user) return
     emit('submit', name, code, user, description.value.trim(), { ...compression.value }, workspace.value || '')
