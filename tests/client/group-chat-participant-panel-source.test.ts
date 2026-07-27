@@ -13,6 +13,15 @@ const participantLocaleKeys = [
   'editParticipant',
   'sessionGeneration',
 ]
+const roomHandoffLocaleKeys = [
+  'automaticHandoffSettings',
+  'maxAutomaticHandoffs',
+  'unlimitedAutomaticHandoffs',
+  'maxAutomaticHandoffsDesc',
+  'roomSettingsSaved',
+  'invalidAutomaticHandoffLimit',
+  'saveRoomSettings',
+]
 
 describe('GroupChatPanel mixed-runtime participant UI contract', () => {
   it('uses localized labels for participant controls in every shipped locale', () => {
@@ -24,6 +33,7 @@ describe('GroupChatPanel mixed-runtime participant UI contract', () => {
     for (const file of localeFiles) {
       const source = readFileSync(`packages/client/src/i18n/locales/${file}`, 'utf8')
       for (const key of participantLocaleKeys) expect(source).toContain(`${key}:`)
+      for (const key of roomHandoffLocaleKeys) expect(source).toContain(`${key}:`)
     }
   })
 

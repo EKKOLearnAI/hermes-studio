@@ -438,6 +438,11 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
         triggerTokens: sourceRoom.triggerTokens,
         maxHistoryTokens: sourceRoom.maxHistoryTokens,
         tailMessageCount: sourceRoom.tailMessageCount,
+        maxAgentMentionDepth: sourceRoom.maxAgentMentionDepth === null
+            ? null
+            : (Number.isSafeInteger(sourceRoom.maxAgentMentionDepth) && sourceRoom.maxAgentMentionDepth > 0
+                ? sourceRoom.maxAgentMentionDepth
+                : 4),
         workspace: sourceRoom.workspace || '',
     })
     persistRoomCreator(storage, roomId, ctx.state?.user)
@@ -867,10 +872,18 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
     }
 
     const roomId = ctx.params.roomId
-    const { triggerTokens, maxHistoryTokens, tailMessageCount } = ctx.request.body as {
+    const { triggerTokens, maxHistoryTokens, tailMessageCount, maxAgentMentionDepth } = ctx.request.body as {
         triggerTokens?: number
         maxHistoryTokens?: number
         tailMessageCount?: number
+        maxAgentMentionDepth?: number | null
+    }
+    if (Object.prototype.hasOwnProperty.call(ctx.request.body || {}, 'maxAgentMentionDepth') &&
+        maxAgentMentionDepth !== null &&
+        (typeof maxAgentMentionDepth !== 'number' || !Number.isSafeInteger(maxAgentMentionDepth) || maxAgentMentionDepth <= 0)) {
+        ctx.status = 400
+        ctx.body = { error: 'maxAgentMentionDepth must be a positive integer or null' }
+        return
     }
 
     const storage = chatServer.getStorage()
@@ -885,7 +898,7 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
         ctx.body = { error: 'Access denied' }
         return
     }
-    storage.updateRoomConfig(roomId, { triggerTokens, maxHistoryTokens, tailMessageCount })
+    storage.updateRoomConfig(roomId, { triggerTokens, maxHistoryTokens, tailMessageCount, maxAgentMentionDepth })
     ctx.body = { room: serializeRoom(storage.getRoom(roomId), true) }
 })
 

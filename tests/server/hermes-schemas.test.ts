@@ -75,6 +75,27 @@ describe('Hermes schema initialization', () => {
     expect(mcuDeviceCols.some(c => c.name === 'device_code')).toBe(true)
     expect(mcuDeviceCols.some(c => c.name === 'is_official')).toBe(true)
     expect(mcuDeviceCols.some(c => c.name === 'created_at')).toBe(true)
+
+    const groupRoomCols = db.prepare(`PRAGMA table_info("${GC_ROOMS_TABLE}")`).all() as Array<{ name: string; dflt_value: string | null; notnull: number }>
+    expect(groupRoomCols).toContainEqual(expect.objectContaining({
+      name: 'maxAgentMentionDepth', dflt_value: '4', notnull: 0,
+    }))
+  })
+
+  it('adds the automatic handoff column to legacy group rooms without changing their default', async () => {
+    const { GC_ROOMS_SCHEMA, GC_ROOMS_TABLE, initAllHermesTables } =
+      await import('../../packages/server/src/db/hermes/schemas')
+    const legacyColumns = Object.entries(GC_ROOMS_SCHEMA)
+      .filter(([name]) => name !== 'maxAgentMentionDepth')
+      .map(([name, definition]) => `"${name}" ${definition}`)
+      .join(', ')
+    db.exec(`CREATE TABLE "${GC_ROOMS_TABLE}" (${legacyColumns})`)
+    db.prepare(`INSERT INTO "${GC_ROOMS_TABLE}" (id, name) VALUES (?, ?)`).run('legacy-room', 'Legacy Room')
+
+    expect(() => initAllHermesTables()).not.toThrow()
+
+    const row = db.prepare(`SELECT maxAgentMentionDepth FROM "${GC_ROOMS_TABLE}" WHERE id = ?`).get('legacy-room') as any
+    expect(row.maxAgentMentionDepth).toBe(4)
   })
 
   it('preserves existing data when adding safe schema columns', async () => {

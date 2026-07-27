@@ -57,4 +57,20 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('@click="handleSaveInviteCode"')
     expect(source).toContain(":title=\"t('groupChat.roomSettings')\"")
   })
+
+  it('wires a room-level automatic handoff limit with an explicit unlimited mode', () => {
+    const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const apiSource = readFileSync('packages/client/src/api/hermes/group-chat.ts', 'utf8')
+
+    expect(apiSource).toContain('maxAgentMentionDepth?: number | null')
+    expect(source).toContain('const maxAgentMentionDepth = ref(4)')
+    expect(source).toContain('const unlimitedAgentMentionDepth = ref(false)')
+    expect(source).toContain('room.maxAgentMentionDepth === null')
+    expect(source).toContain("v-model:value=\"maxAgentMentionDepth\"")
+    expect(source).toContain(":disabled=\"unlimitedAgentMentionDepth\"")
+    expect(source).toContain("v-model:checked=\"unlimitedAgentMentionDepth\"")
+    expect(source).toContain("maxAgentMentionDepth: unlimitedAgentMentionDepth.value ? null : finiteDepth")
+    expect(source).toContain("t('groupChat.automaticHandoffSettings')")
+    expect(source).toContain("t('groupChat.unlimitedAutomaticHandoffs')")
+  })
 })

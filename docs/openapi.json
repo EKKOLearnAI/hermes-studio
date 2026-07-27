@@ -5289,6 +5289,10 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "maxAgentMentionDepth": {
+                    "nullable": true,
+                    "type": "number"
+                  },
                   "maxHistoryTokens": {
                     "type": "number"
                   },
