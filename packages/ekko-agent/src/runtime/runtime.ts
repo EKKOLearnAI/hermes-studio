@@ -480,6 +480,8 @@ export class AgentRuntime {
       model: input.model ?? modelDefaults?.model,
       temperature: input.temperature ?? modelDefaults?.temperature,
       maxTokens: input.maxTokens ?? modelDefaults?.maxTokens,
+      reasoningEffort: input.reasoningEffort ?? modelDefaults?.reasoningEffort,
+      reasoningSummary: input.reasoningSummary ?? modelDefaults?.reasoningSummary,
       metadata: input.metadata ?? modelDefaults?.metadata,
       messages,
       signal: input.signal,

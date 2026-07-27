@@ -52,12 +52,25 @@ export interface ModelUsage {
   reasoningTokens?: number
 }
 
+export type ModelReasoningEffort =
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
+
+export type ModelReasoningSummary = 'auto' | 'concise' | 'detailed'
+
 export interface ModelRequest {
   model?: string
   messages: AgentMessage[]
   signal?: AbortSignal
   temperature?: number
   maxTokens?: number
+  reasoningEffort?: ModelReasoningEffort
+  reasoningSummary?: ModelReasoningSummary
   tools?: AgentToolDefinition[]
   toolChoice?: 'auto' | 'none' | 'required'
   stream?: boolean

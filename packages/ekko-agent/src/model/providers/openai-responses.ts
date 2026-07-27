@@ -21,6 +21,10 @@ interface OpenAIResponsesPayload {
   input: OpenAIResponseInputItem[]
   temperature?: number
   max_output_tokens?: number
+  reasoning?: {
+    effort?: NonNullable<ModelRequest['reasoningEffort']>
+    summary?: NonNullable<ModelRequest['reasoningSummary']>
+  }
   tools?: Array<{
     type: 'function'
     name: string
@@ -217,6 +221,14 @@ export function toOpenAIResponsesPayload(config: ModelProviderConfig, request: M
       .flatMap(message => toOpenAIResponseInput(message, replayableToolCallIds)),
     ...(supportsSamplingControls && request.temperature !== undefined ? { temperature: request.temperature } : {}),
     ...(supportsSamplingControls && request.maxTokens !== undefined ? { max_output_tokens: request.maxTokens } : {}),
+    ...(request.reasoningEffort || request.reasoningSummary
+      ? {
+          reasoning: {
+            ...(request.reasoningEffort ? { effort: request.reasoningEffort } : {}),
+            ...(request.reasoningSummary ? { summary: request.reasoningSummary } : {}),
+          },
+        }
+      : {}),
     tools: request.tools?.map(toOpenAIResponseTool),
     tool_choice: request.toolChoice,
     stream: request.stream,

@@ -95,6 +95,23 @@ describe('ekko-agent runtime', () => {
     expect(events).toEqual(['run.started', 'model.started', 'context.estimated', 'model.message', 'run.completed'])
   })
 
+  it('forwards reasoning controls to model requests', async () => {
+    const client = modelClient(request => {
+      expect(request).toMatchObject({
+        reasoningEffort: 'high',
+        reasoningSummary: 'auto',
+      })
+      return { content: 'done' }
+    })
+    const runtime = new AgentRuntime({ modelClient: client, tools: new AgentToolRegistry() })
+
+    await runtime.run({
+      messages: ['hi'],
+      reasoningEffort: 'high',
+      reasoningSummary: 'auto',
+    })
+  })
+
   it('estimates provider-visible context without starting a model run', async () => {
     const tools = new AgentToolRegistry()
     tools.register({

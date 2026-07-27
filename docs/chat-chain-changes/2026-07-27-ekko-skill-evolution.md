@@ -43,6 +43,9 @@ provider configuration before falling back to provider and base-URL inference.
 Responses requests replay the complete local conversation and keep
 `store: false`; they do not also send `previous_response_id`, which avoids
 invalid second-turn chaining and accidental fallback to another wire protocol.
+Ekko also forwards the chat's reasoning-effort override and explicitly requests
+an automatic reasoning summary for Responses providers, allowing the existing
+reasoning stream and message UI to show supported models' reasoning summaries.
 
 Every 10 cumulative non-management tool calls in a session, Ekko schedules a
 separate conservative skill-review run. The reviewer receives a bounded

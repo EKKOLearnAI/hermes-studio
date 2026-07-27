@@ -56,6 +56,8 @@ export interface AgentRuntimeRunInput {
   model?: string
   temperature?: number
   maxTokens?: number
+  reasoningEffort?: ModelRequest['reasoningEffort']
+  reasoningSummary?: ModelRequest['reasoningSummary']
   metadata?: Record<string, unknown>
   modelClient?: ModelClient
   modelDefaults?: Omit<ModelRequest, 'messages' | 'tools' | 'stream'>

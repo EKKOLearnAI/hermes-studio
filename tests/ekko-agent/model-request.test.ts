@@ -222,6 +222,49 @@ describe('ekko-agent model requests', () => {
     }))
   })
 
+  it('requests and streams Responses reasoning summaries', async () => {
+    const encoder = new TextEncoder()
+    const fetchMock = vi.fn(async (_input: string | URL, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        reasoning: {
+          effort: 'high',
+          summary: 'auto',
+        },
+      })
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('event: response.reasoning_summary_text.delta\ndata: {"type":"response.reasoning_summary_text.delta","delta":"Checked the constraints."}\n\n'))
+          controller.enqueue(encoder.encode('event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"Done"}\n\n'))
+          controller.enqueue(encoder.encode('event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_reasoning","status":"completed","output":[]}}\n\n'))
+          controller.close()
+        },
+      }), { status: 200 })
+    })
+    const client = createModelClient({
+      id: 'custom:responses',
+      type: 'openai-compatible',
+      requestStyle: 'openai-responses',
+      apiKey: 'token',
+      defaultModel: 'reasoning-model',
+    }, { fetch: fetchMock })
+
+    const events = []
+    for await (const event of client.stream({
+      messages: [{ role: 'user', content: 'Solve it' }],
+      reasoningEffort: 'high',
+      reasoningSummary: 'auto',
+    })) events.push(event)
+
+    expect(events).toContainEqual({ type: 'reasoning-delta', text: 'Checked the constraints.' })
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'done',
+      response: expect.objectContaining({
+        content: 'Done',
+        reasoning: 'Checked the constraints.',
+      }),
+    }))
+  })
+
   it('keeps non-Codex Responses create requests non-streaming', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       output_text: 'xAI',
@@ -521,6 +564,8 @@ describe('ekko-agent model requests', () => {
       ],
       tools: [{ name: 'search', parameters: { type: 'object' } }],
       maxTokens: 500,
+      reasoningEffort: 'medium',
+      reasoningSummary: 'auto',
       context: { responseId: 'resp_previous' },
     })
 
@@ -529,6 +574,7 @@ describe('ekko-agent model requests', () => {
       instructions: 'Be direct.',
       input: [{ role: 'user', content: 'Search docs.' }],
       max_output_tokens: 500,
+      reasoning: { effort: 'medium', summary: 'auto' },
       tools: [{ type: 'function', name: 'search' }],
       store: false,
     })

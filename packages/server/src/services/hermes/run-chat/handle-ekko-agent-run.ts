@@ -14,6 +14,7 @@ import {
   type EkkoLogCategory,
   type EkkoLogLevel,
   type ModelProviderConfig,
+  type ModelReasoningEffort,
   type ModelRequest,
   type ModelResponse,
 } from '../../../../../ekko-agent/src'
@@ -58,11 +59,19 @@ export interface EkkoAgentRunSocketData {
   mcp_servers?: Record<string, unknown>
   peerExcludeSocketId?: string
   queue_id?: string
+  reasoning_effort?: string
   onEvent?: (event: string, payload: any) => void
 }
 
 function isEkkoAgentId(data: EkkoAgentRunSocketData): boolean {
   return data.coding_agent_id === 'ekko-agent' || data.agent_id === 'ekko-agent'
+}
+
+function normalizeReasoningEffort(value: unknown): ModelReasoningEffort | undefined {
+  const effort = String(value || '').trim()
+  return ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(effort)
+    ? effort as ModelReasoningEffort
+    : undefined
 }
 
 function parseJsonRecord(value: unknown): Record<string, unknown> | null {
@@ -529,6 +538,7 @@ export async function handleEkkoAgentRun(
   const baseUrl = runtimeConfig.baseUrl || ''
   const apiMode = runtimeConfig.apiMode
   const apiKey = runtimeConfig.apiKey
+  const reasoningEffort = normalizeReasoningEffort(data.reasoning_effort)
   const workspace = data.workspace || storedSession?.workspace || getProfileDir(profile)
   const shouldEmitWorkspaceUpdate = Boolean(workspace && !storedSession?.workspace)
   if (storedSession && !storedSession.workspace) updateSession(sessionId, { workspace })
@@ -890,6 +900,8 @@ export async function handleEkkoAgentRun(
     inputChars: inputText.length,
     currentInputTokens,
     queueId: data.queue_id,
+    reasoningEffort,
+    reasoningSummary: 'auto',
   })
   const handleRuntimeEvent = (event: AgentRuntimeEvent) => {
     if ('runId' in event) runId = event.runId
@@ -1067,8 +1079,12 @@ export async function handleEkkoAgentRun(
     const result = await agent.run({
       modelClient,
       model: modelConfig.model,
+      reasoningEffort,
+      reasoningSummary: 'auto',
       modelDefaults: {
         model: modelConfig.model,
+        reasoningEffort,
+        reasoningSummary: 'auto',
       },
       messages: [
         ...await toAgentMessages(compressedHistory),

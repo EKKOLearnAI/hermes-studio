@@ -162,6 +162,35 @@ describe('ekko-agent context usage events', () => {
     })
   })
 
+  it('forwards the selected reasoning effort and requests an automatic summary', async () => {
+    agentRunMock.mockResolvedValueOnce({
+      runId: 'run-1',
+      output: { role: 'assistant', content: 'done' },
+      steps: [],
+      messages: [],
+      events: [],
+      contextEstimate: { contextTokens: 5_000 },
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'think carefully',
+      coding_agent_id: 'ekko-agent',
+      reasoning_effort: 'high',
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(agentRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      reasoningEffort: 'high',
+      reasoningSummary: 'auto',
+      modelDefaults: expect.objectContaining({
+        reasoningEffort: 'high',
+        reasoningSummary: 'auto',
+      }),
+    }))
+  })
+
   it('does not publish step context estimates as formal usage updates', async () => {
     agentRunMock.mockImplementationOnce(async (input: any) => {
       input.onEvent({ type: 'run.started', runId: 'run-1', maxSteps: 3 })
