@@ -2702,7 +2702,7 @@ export default {
     automaticHandoffSettings: '自动接力设置',
     maxAutomaticHandoffs: '最大自动接力次数',
     unlimitedAutomaticHandoffs: '无限制',
-    maxAutomaticHandoffsDesc: '限制一条用户消息触发后，Agent 之间通过 @成员 自动接力的次数；不改变 @all 的并行广播语义。',
+    maxAutomaticHandoffsDesc: "限制一条用户消息触发后，Agent 之间通过 {'@'}成员 自动接力的次数；不改变 {'@'}all 的并行广播语义。",
     roomSettingsSaved: '房间设置已保存',
     invalidAutomaticHandoffLimit: '请输入正整数，或勾选“无限制”',
     saveRoomSettings: '保存设置',
