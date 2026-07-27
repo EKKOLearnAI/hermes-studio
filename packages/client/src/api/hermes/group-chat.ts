@@ -14,6 +14,8 @@ export interface RoomInfo {
     maxHistoryTokens?: number
     tailMessageCount?: number
     maxAgentMentionDepth?: number | null
+    handoffMode?: 'mentions' | 'fixed'
+    handoffOrder?: string[]
     totalTokens?: number
     workspace: string
 }
@@ -94,6 +96,22 @@ export interface ChatMessage {
     workspaceChanges?: GroupWorkspaceDiffPayload[]
     firstSeenAt?: number
     attachments?: Array<{ id: string; name: string; type: string; size: number; url: string }>
+}
+
+export interface GroupHandoffJob {
+    id: string
+    roomId: string
+    chainId: string
+    sourceMessageId: string
+    targetAgentId: string
+    depth: number
+    kind: 'mention' | 'fixed' | 'fanout'
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled'
+    attemptCount: number
+    lastError: string
+    createdAt: number
+    updatedAt: number
+    completedAt: number
 }
 
 export interface GroupWorkspaceDiffFile {
@@ -299,12 +317,23 @@ export async function clearRoomContext(roomId: string): Promise<{ success: boole
     })
 }
 
-export async function updateRoomConfig(roomId: string, config: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number; maxAgentMentionDepth?: number | null }): Promise<{ room: RoomInfo }> {
+export async function updateRoomConfig(roomId: string, config: {
+    triggerTokens?: number
+    maxHistoryTokens?: number
+    tailMessageCount?: number
+    maxAgentMentionDepth?: number | null
+    handoffMode?: 'mentions' | 'fixed'
+    handoffOrder?: string[]
+}): Promise<{ room: RoomInfo }> {
     return request(`/api/hermes/group-chat/rooms/${roomId}/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
     })
+}
+
+export async function listHandoffs(roomId: string, limit = 100): Promise<{ jobs: GroupHandoffJob[] }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/handoffs?limit=${limit}`)
 }
 
 export async function updateRoomWorkspace(roomId: string, workspace: string): Promise<{ room: RoomInfo }> {

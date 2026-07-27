@@ -1068,62 +1068,33 @@ describe('Group Chat member/agent identity sync', () => {
     expect(processMentions).not.toHaveBeenCalled()
   })
 
-  it('routes @mentions from users and bounded agent replies', () => {
+  it('does not use the legacy in-memory mention path for persisted messages', () => {
     const server = Object.create(GroupChatServer.prototype) as any
     const emit = vi.fn()
-    server.rooms = new Map([
-      ['room-1', {
-        hasOnlineMember: vi.fn(() => true),
-        getOnlineMemberBySocketId: vi.fn((socketId: string) => socketId === 'agent-socket'
-          ? { userId: 'agent-1', name: '丫鬟', source: 'agent' }
-          : { userId: 'human-1', name: 'Human', source: 'human' }),
-      }],
-    ])
-    server.socketUserMap = new Map([
-      ['human-socket', 'human-1'],
-      ['agent-socket', 'agent-1'],
-    ])
-    server.socketRequestedSourceMap = new Map([
-      ['human-socket', 'human'],
-      ['agent-socket', 'agent'],
-    ])
-    server.userInfoMap = new Map([
-      ['human-1', { name: 'Human', description: '' }],
-      ['agent-1', { name: '丫鬟', description: '' }],
-    ])
+    server.rooms = new Map([['room-1', {
+      hasOnlineMember: vi.fn(() => true),
+      getOnlineMemberBySocketId: vi.fn(() => ({ userId: 'human-1', name: 'Human', source: 'human' })),
+    }]])
+    server.socketUserMap = new Map([['human-socket', 'human-1']])
+    server.socketRequestedSourceMap = new Map([['human-socket', 'human']])
+    server.userInfoMap = new Map([['human-1', { name: 'Human', description: '' }]])
     server.agentClients = { processMentions: vi.fn(async () => undefined) }
-    const agentSessionId = groupBridgeSessionId('room-1', 'default', '丫鬟', 'seed-1')
     server.storage = {
-      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: 'seed-1' })),
-      getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: '丫鬟' })),
-      saveMessageAndRefreshRoom: vi.fn((msg: any) => ({ message: msg, totalTokens: 123 })),
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 })),
+      getRoomAgents: vi.fn(() => []),
+      getHandoffJob: vi.fn(() => null),
+      saveMessageAndRefreshRoom: vi.fn((msg: any) => ({ message: msg, totalTokens: 123, handoffJobs: [] })),
     }
     server.nsp = { to: vi.fn(() => ({ emit })) }
+    server.scheduleHandoffDispatch = vi.fn()
 
     server.handleMessage({ id: 'human-socket' }, { roomId: 'room-1', content: '@all hi', role: 'user' }, vi.fn())
-    expect(server.agentClients.processMentions).toHaveBeenCalledTimes(1)
-    expect(server.agentClients.processMentions).toHaveBeenLastCalledWith('room-1', expect.objectContaining({
-      content: '@all hi',
-      senderId: 'human-1',
-      mentionDepth: 0,
-    }))
 
-    server.agentClients.processMentions.mockClear()
-    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all agent says hi', role: 'assistant', mentionDepth: 1, agentSessionId }, vi.fn())
-    expect(server.agentClients.processMentions).toHaveBeenCalledTimes(1)
-    expect(server.agentClients.processMentions).toHaveBeenLastCalledWith('room-1', expect.objectContaining({
-      content: '@all agent says hi',
-      senderId: 'agent-1',
-      mentionDepth: 1,
-    }))
-
-    server.agentClients.processMentions.mockClear()
-    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all fourth handoff', role: 'assistant', mentionDepth: 4, agentSessionId }, vi.fn())
-    expect(server.agentClients.processMentions).toHaveBeenCalledTimes(1)
-
-    server.agentClients.processMentions.mockClear()
-    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all too deep', role: 'assistant', mentionDepth: 5, agentSessionId }, vi.fn())
     expect(server.agentClients.processMentions).not.toHaveBeenCalled()
+    expect(server.storage.saveMessageAndRefreshRoom).toHaveBeenCalledWith(
+      expect.objectContaining({ content: '@all hi' }),
+      expect.objectContaining({ handoffs: [] }),
+    )
   })
 
   it('preserves per-room member name on rejoin when global userInfoMap has a different name', () => {

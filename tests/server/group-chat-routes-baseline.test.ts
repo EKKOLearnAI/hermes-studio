@@ -33,6 +33,7 @@ describe('group chat REST route baseline', () => {
       getMessageCount: vi.fn((roomId) => (storage.messages.get(roomId) || []).length),
       getRoomAgents: vi.fn((roomId) => storage.agents.get(roomId) || []),
       getRoomMembers: vi.fn((roomId) => storage.members.get(roomId) || []),
+      listHandoffJobs: vi.fn(() => []),
       getRoomByInviteCode: vi.fn((code) => [...storage.rooms.values()].find((r: any) => r.inviteCode === code)),
       addRoomAgent: vi.fn((roomId, agentId, profile, name, description, invited, binding = {}) => {
         const row = { id: `row-${agentId}`, roomId, agentId, profile, name, description, invited, ...binding }
@@ -97,6 +98,47 @@ describe('group chat REST route baseline', () => {
     })
     expect(unlimited.status).toBe(200)
     await expect(unlimited.json()).resolves.toMatchObject({ room: { maxAgentMentionDepth: null } })
+  })
+
+  it('accepts fixed handoff mode only with a unique order of current participant agent ids', async () => {
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1', handoffMode: 'mentions', handoffOrderJson: '[]' })
+    storage.agents.set('room-1', [
+      { id: 'row-a', agentId: 'agent-a', name: 'A' },
+      { id: 'row-b', agentId: 'agent-b', name: 'B' },
+    ])
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/config`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ handoffMode: 'fixed', handoffOrder: ['agent-a', 'agent-b'] }),
+    })
+    expect(res.status).toBe(200)
+    expect(storage.updateRoomConfig).toHaveBeenCalledWith('room-1', expect.objectContaining({
+      handoffMode: 'fixed', handoffOrderJson: '["agent-a","agent-b"]',
+    }))
+  })
+
+  it.each([
+    ['unknown mode', { handoffMode: 'workflow' }],
+    ['one participant', { handoffMode: 'fixed', handoffOrder: ['agent-a'] }],
+    ['duplicate participant', { handoffMode: 'fixed', handoffOrder: ['agent-a', 'agent-a'] }],
+    ['unknown participant', { handoffMode: 'fixed', handoffOrder: ['agent-a', 'missing'] }],
+  ])('rejects invalid fixed handoff configuration: %s', async (_label, payload) => {
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1', handoffMode: 'mentions', handoffOrderJson: '[]' })
+    storage.agents.set('room-1', [
+      { id: 'row-a', agentId: 'agent-a', name: 'A' },
+      { id: 'row-b', agentId: 'agent-b', name: 'B' },
+    ])
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/config`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('returns durable handoff status only to room readers', async () => {
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+    storage.listHandoffJobs.mockReturnValue([{ id: 'job-1', status: 'failed', lastError: 'runner unavailable' }])
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/handoffs`)
+    expect(res.status).toBe(200)
+    await expect(res.json()).resolves.toEqual({ jobs: [{ id: 'job-1', status: 'failed', lastError: 'runner unavailable' }] })
   })
 
   it.each([0, -1, 1.5, '8'])('rejects invalid room automatic handoff limit %j', async (maxAgentMentionDepth) => {
@@ -524,6 +566,29 @@ describe('group chat REST route baseline', () => {
       sessionGeneration: 0,
     })
     expect(body.agents[0].sessionId).not.toBe('source-session')
+  })
+
+  it('remaps fixed handoff order to cloned participant ids', async () => {
+    storage.rooms.set('room-source', {
+      id: 'room-source', name: 'Source', inviteCode: 'SOURCE', sessionSeed: '0',
+      handoffMode: 'fixed', handoffOrderJson: '["agent-2","agent-1"]',
+    })
+    storage.agents.set('room-source', [
+      { id: 'row-1', roomId: 'room-source', agentId: 'agent-1', profile: 'default', name: 'First', description: '', invited: 1, runtime: 'hermes', codingAgentId: '', mode: 'scoped', provider: 'test-provider', model: 'test-model', apiMode: '', reasoningEffort: '' },
+      { id: 'row-2', roomId: 'room-source', agentId: 'agent-2', profile: 'default', name: 'Second', description: '', invited: 1, runtime: 'hermes', codingAgentId: '', mode: 'scoped', provider: 'test-provider', model: 'test-model', apiMode: '', reasoningEffort: '' },
+    ])
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-source/clone`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Clone', inviteCode: 'CLONE2' }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    const byName = new Map(body.agents.map((agent: any) => [agent.name, agent.agentId]))
+    expect(body.room.handoffMode).toBe('fixed')
+    expect(body.room.handoffOrder).toEqual([byName.get('Second'), byName.get('First')])
+    expect(body.room.handoffOrder).not.toContain('agent-1')
+    expect(body.room.handoffOrder).not.toContain('agent-2')
   })
 
   it('removes an agent by row id and disconnects runtime by persisted agent id', async () => {

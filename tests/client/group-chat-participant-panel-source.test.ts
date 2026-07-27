@@ -21,6 +21,14 @@ const roomHandoffLocaleKeys = [
   'roomSettingsSaved',
   'invalidAutomaticHandoffLimit',
   'saveRoomSettings',
+  'handoffMode',
+  'handoffModeMentions',
+  'handoffModeFixed',
+  'fixedHandoffOrder',
+  'handoffPending',
+  'handoffRunning',
+  'handoffFailed',
+  'handoffInterrupted',
 ]
 
 describe('GroupChatPanel mixed-runtime participant UI contract', () => {
@@ -124,5 +132,20 @@ describe('GroupChatPanel mixed-runtime participant UI contract', () => {
     expect(panelSource).toContain('handleRemoveAgent(agent.agentId)')
     expect(panelSource).not.toContain('handleInterruptAgent(agent.name)')
     expect(panelSource).not.toContain('handleRemoveAgent(agent.name)')
+  })
+
+  it('configures fixed participant order and surfaces durable handoff status', () => {
+    const apiSource = readFileSync('packages/client/src/api/hermes/group-chat.ts', 'utf8')
+    expect(apiSource).toContain("handoffMode?: 'mentions' | 'fixed'")
+    expect(apiSource).toContain('handoffOrder?: string[]')
+    expect(apiSource).toContain('export interface GroupHandoffJob')
+    expect(apiSource).toContain('export async function listHandoffs')
+    expect(panelSource).toContain("const handoffMode = ref<'mentions' | 'fixed'>('mentions')")
+    expect(panelSource).toContain('const handoffOrder = ref<string[]>([])')
+    expect(panelSource).toContain('v-model:value="handoffMode"')
+    expect(panelSource).toContain('v-model:value="handoffOrder"')
+    expect(panelSource).toContain('handoffMode: handoffMode.value')
+    expect(panelSource).toContain('handoffOrder: handoffOrder.value')
+    expect(panelSource).toContain('listHandoffs(store.currentRoomId)')
   })
 })

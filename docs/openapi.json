@@ -5293,6 +5293,15 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "handoffMode": {
+                    "type": "string"
+                  },
+                  "handoffOrder": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
                   "maxAgentMentionDepth": {
                     "nullable": true,
                     "type": "number"
@@ -5311,6 +5320,50 @@
             }
           }
         }
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/handoffs": {
+      "get": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Get handoffs",
+        "description": "GET /api/hermes/group-chat/rooms/:roomId/handoffs",
+        "operationId": "getHandoffs",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
       }
     },
     "/api/hermes/group-chat/rooms/{roomId}/invite-code": {

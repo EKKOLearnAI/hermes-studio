@@ -196,8 +196,13 @@ function agentConnectFailureBody(profile: string, err: any) {
 
 function serializeRoom(room: any, includeManageFields: boolean) {
     if (!room) return room
-    const { ownerAuthUserId: _ownerAuthUserId, ...rest } = room
-    const serialized = { ...rest, canManage: includeManageFields }
+    const { ownerAuthUserId: _ownerAuthUserId, handoffOrderJson: _handoffOrderJson, ...rest } = room
+    let handoffOrder: string[] = []
+    try {
+        const parsed = JSON.parse(String(room.handoffOrderJson || '[]'))
+        if (Array.isArray(parsed)) handoffOrder = parsed.map(String)
+    } catch { /* malformed storage is exposed as an empty safe order */ }
+    const serialized = { ...rest, handoffOrder: includeManageFields ? handoffOrder : [], canManage: includeManageFields }
     if (Object.prototype.hasOwnProperty.call(room, 'inviteCode')) {
         serialized.inviteCode = includeManageFields ? room.inviteCode ?? null : null
     }
@@ -411,9 +416,10 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
     }
 
     const { name, inviteCode } = ctx.request.body as { name?: string; inviteCode?: string }
+    const sourceAgentRows = storage.getRoomAgents(sourceRoom.id)
     let clonedAgents: AgentInput[]
     try {
-        clonedAgents = storage.getRoomAgents(sourceRoom.id).map((sourceAgent: any) => normalizeAgentInput({
+        clonedAgents = sourceAgentRows.map((sourceAgent: any) => normalizeAgentInput({
             profile: sourceAgent.profile,
             name: sourceAgent.name,
             description: sourceAgent.description,
@@ -448,8 +454,9 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
     persistRoomCreator(storage, roomId, ctx.state?.user)
 
     const addedAgents = []
+    const sourceToClonedAgentId = new Map<string, string>()
     const agentResults = []
-    for (const sourceAgent of clonedAgents) {
+    for (const [sourceIndex, sourceAgent] of clonedAgents.entries()) {
         try {
             const agent = await connectAndPersistRoomAgent(chatServer, roomId, {
                 profile: sourceAgent.profile,
@@ -466,10 +473,24 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
                 avatar: sourceAgent.avatar,
             })
             addedAgents.push(agent)
+            const sourceAgentId = String(sourceAgentRows[sourceIndex]?.agentId || '')
+            if (sourceAgentId) sourceToClonedAgentId.set(sourceAgentId, String(agent.agentId))
             agentResults.push({ profile: sourceAgent.profile, ok: true, agent })
         } catch (err: any) {
             console.error(`[GroupChat] Failed to connect cloned agent ${sourceAgent.profile} to room ${roomId}: ${sanitizeAgentConnectReason(err.message)}`)
             agentResults.push({ ok: false, ...agentConnectFailureBody(sourceAgent.profile, err) })
+        }
+    }
+
+    if (sourceRoom.handoffMode === 'fixed') {
+        let sourceOrder: string[] = []
+        try {
+            const parsed = JSON.parse(String(sourceRoom.handoffOrderJson || '[]'))
+            if (Array.isArray(parsed)) sourceOrder = parsed.map(String)
+        } catch { /* malformed source config falls back to mentions */ }
+        const mapped = sourceOrder.map(agentId => sourceToClonedAgentId.get(agentId) || '').filter(Boolean)
+        if (mapped.length >= 2 && mapped.length === sourceOrder.length && new Set(mapped).size === mapped.length) {
+            storage.updateRoomConfig(roomId, { handoffMode: 'fixed', handoffOrderJson: JSON.stringify(mapped) })
         }
     }
 
@@ -510,6 +531,43 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
     const agents = storage.getRoomAgents(ctx.params.roomId).map(serializeRoomAgent)
     const members = storage.getRoomMembers(ctx.params.roomId)
     ctx.body = { room: serializeRoom(room, canManage), messages, agents, members, total, offset, limit, hasMore: offset + messages.length < total }
+})
+
+groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/handoffs', async (ctx) => {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return
+    }
+    const storage = chatServer.getStorage()
+    const room = storage.getRoom(ctx.params.roomId)
+    if (!room) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return
+    }
+    if (!canReadRoom(storage, room.id, ctx.state?.user)) {
+        ctx.status = 403
+        ctx.body = { error: 'Access denied' }
+        return
+    }
+    const limit = Math.max(1, Math.min(500, parseInt(String(ctx.query.limit || '100'), 10) || 100))
+    const jobs = storage.listHandoffJobs(room.id, limit).map((job: any) => ({
+        id: job.id,
+        roomId: job.roomId,
+        chainId: job.chainId,
+        sourceMessageId: job.sourceMessageId,
+        targetAgentId: job.targetAgentId,
+        depth: job.depth,
+        kind: job.kind,
+        status: job.status,
+        attemptCount: job.attemptCount,
+        lastError: job.lastError ? sanitizeAgentConnectReason(job.lastError) : '',
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+        completedAt: job.completedAt,
+    }))
+    ctx.body = { jobs }
 })
 
 groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/workspace-files/list', ctrl.listWorkspaceFiles)
@@ -872,11 +930,13 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
     }
 
     const roomId = ctx.params.roomId
-    const { triggerTokens, maxHistoryTokens, tailMessageCount, maxAgentMentionDepth } = ctx.request.body as {
+    const { triggerTokens, maxHistoryTokens, tailMessageCount, maxAgentMentionDepth, handoffMode, handoffOrder } = ctx.request.body as {
         triggerTokens?: number
         maxHistoryTokens?: number
         tailMessageCount?: number
         maxAgentMentionDepth?: number | null
+        handoffMode?: 'mentions' | 'fixed'
+        handoffOrder?: string[]
     }
     if (Object.prototype.hasOwnProperty.call(ctx.request.body || {}, 'maxAgentMentionDepth') &&
         maxAgentMentionDepth !== null &&
@@ -898,7 +958,38 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
         ctx.body = { error: 'Access denied' }
         return
     }
-    storage.updateRoomConfig(roomId, { triggerTokens, maxHistoryTokens, tailMessageCount, maxAgentMentionDepth })
+    const requestedMode = handoffMode === undefined ? String(room.handoffMode || 'mentions') : handoffMode
+    if (requestedMode !== 'mentions' && requestedMode !== 'fixed') {
+        ctx.status = 400
+        ctx.body = { error: 'handoffMode must be mentions or fixed' }
+        return
+    }
+    let handoffOrderJson: string | undefined
+    if (requestedMode === 'fixed') {
+        const order = handoffOrder === undefined
+            ? (() => { try { return JSON.parse(String(room.handoffOrderJson || '[]')) } catch { return [] } })()
+            : handoffOrder
+        const agents = storage.getRoomAgents(roomId)
+        const allowed = new Set(agents.map(agent => String(agent.agentId)))
+        if (!Array.isArray(order) || order.length < 2 || order.some(id => typeof id !== 'string' || !allowed.has(id)) || new Set(order).size !== order.length) {
+            ctx.status = 400
+            ctx.body = { error: 'fixed handoffOrder must contain at least two unique current participant agent ids' }
+            return
+        }
+        handoffOrderJson = JSON.stringify(order)
+    } else if (handoffOrder !== undefined) {
+        if (!Array.isArray(handoffOrder)) {
+            ctx.status = 400
+            ctx.body = { error: 'handoffOrder must be an array' }
+            return
+        }
+        handoffOrderJson = JSON.stringify(handoffOrder)
+    }
+    storage.updateRoomConfig(roomId, {
+        triggerTokens, maxHistoryTokens, tailMessageCount, maxAgentMentionDepth,
+        handoffMode: handoffMode === undefined ? undefined : requestedMode,
+        handoffOrderJson,
+    })
     ctx.body = { room: serializeRoom(storage.getRoom(roomId), true) }
 })
 

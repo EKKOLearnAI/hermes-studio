@@ -89,6 +89,7 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
       // Stop accepting/routing chat work before stopping the bridge. This lets
       // ChatRunSocket release any claimed background completion back to Hermes
       // while the broker is still reachable.
+      groupChatServer?.stopHandoffDispatcher?.()
       if (chatRunServer) {
         await chatRunServer.close()
         logger.info('ChatRunSocket closed')
