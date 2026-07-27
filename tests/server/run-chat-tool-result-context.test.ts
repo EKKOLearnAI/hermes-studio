@@ -28,6 +28,7 @@ describe('Bridge tool result context projection', () => {
   })
 
   it('keeps the complete result in memory and persistence while context is bounded', async () => {
+    addMessageMock.mockReturnValue(77)
     const completeToolResult = `HEAD-${'x'.repeat(70_000)}-TAIL`
     const state: any = {
       messages: [],
@@ -54,6 +55,7 @@ describe('Bridge tool result context projection', () => {
     )
 
     expect(completed.output).toBe(completeToolResult)
+    expect(completed.messageId).toBe(77)
     expect(state.messages[0].content).toBe(completeToolResult)
     expect(addMessageMock).toHaveBeenCalledWith(expect.objectContaining({
       role: 'tool',

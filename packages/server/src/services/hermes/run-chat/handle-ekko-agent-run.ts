@@ -21,7 +21,15 @@ import {
 import { getGlobalEkkoAgent } from '../../ekko-agent/manager'
 import { resolveEkkoMcpServers } from '../../ekko-agent/mcp'
 import { resolveEkkoProviderRuntimeConfig } from '../../ekko-agent/provider-runtime'
-import { createSession, addMessage, addMessages, getSession, updateSession, updateSessionStats } from '../../../db/hermes/session-store'
+import {
+  createSession,
+  addMessage,
+  addMessages,
+  getSession,
+  updateMessageDisplayContent,
+  updateSession,
+  updateSessionStats,
+} from '../../../db/hermes/session-store'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { logger } from '../../logger'
 import { recordSessionUsage } from '../../usage-recorder'
@@ -31,7 +39,7 @@ import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPrev
 import { buildCompressedHistory, getOrCreateSession } from './compression'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { estimateUsageTokensFromMessages } from './usage'
-import type { ChatCodingAgentId, ContentBlock, SessionState } from './types'
+import type { ChatCodingAgentId, ContentBlock, QueuedRun, SessionState } from './types'
 
 export interface EkkoAgentRunSocketData {
   input: string | ContentBlock[]
@@ -60,6 +68,8 @@ export interface EkkoAgentRunSocketData {
   peerExcludeSocketId?: string
   queue_id?: string
   reasoning_effort?: string
+  background_delegation_id?: string
+  autonomous?: boolean
   onEvent?: (event: string, payload: any) => void
 }
 
@@ -81,6 +91,12 @@ function resolveReasoningEffort(value: unknown): ModelReasoningEffort {
 function parseJsonRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   return value as Record<string, unknown>
+}
+
+function ekkoBackgroundPendingCount(state: SessionState): number {
+  return Object.values(state.backgroundTasks || {}).filter(task =>
+    task.runtime === 'ekko' && task.status === 'running',
+  ).length
 }
 
 function parseToolArguments(raw: unknown): { arguments: Record<string, unknown>; rawArguments?: string } {
@@ -664,10 +680,99 @@ export async function handleEkkoAgentRun(
   let usageOutput = 0
   let usageCallIndex = 0
   let contextEstimate: any
+  let parentUsagePersisted = false
   const modelStepStartedAt = new Map<number, number>()
   const pendingToolGroups = new Map<string, PendingToolGroup>()
   const toolCallGroupKeys = new Map<string, string>()
   const persistedToolCallIds = new Set<string>()
+  const streamedSubagentOutput = new Map<string, string>()
+  const scheduledBackgroundContinuations = new Set<string>()
+  const pendingBackgroundDisplayContent = new Map<string, string>()
+  const appendSubagentOutput = (subagentId: string, text: string) => {
+    const previous = streamedSubagentOutput.get(subagentId) || ''
+    const next = text.startsWith(previous) ? text : `${previous}${text}`
+    const bounded = next.slice(-20_000)
+    streamedSubagentOutput.set(subagentId, bounded)
+    return bounded
+  }
+  const scheduleBackgroundContinuation = (
+    event: Extract<AgentRuntimeEvent, { type: 'subagent.complete' }>,
+  ) => {
+    if (
+      !event.background ||
+      event.status === 'interrupted' ||
+      scheduledBackgroundContinuations.has(event.subagentId)
+    ) return
+    scheduledBackgroundContinuations.add(event.subagentId)
+    const result = String(event.output || '').trim() || event.summary.trim() || event.outputTail.trim()
+    const continuationMessage = [
+      'A background subtask requested earlier has finished.',
+      `Subtask ID: ${event.subagentId}`,
+      `Goal: ${event.goal}`,
+      `Status: ${event.status}`,
+      'Use the result below to continue the original task and give the user the relevant final response.',
+      'Do not merely acknowledge receipt, do not repeat the result unnecessarily, and do not delegate the same work again.',
+      '',
+      'Background subtask result:',
+      result || '(No result was returned.)',
+    ].join('\n')
+    const queuedRun: QueuedRun = {
+      queue_id: `ekko_subagent_${event.subagentId}`,
+      input: continuationMessage,
+      displayInput: null,
+      storageMessage: continuationMessage,
+      model: modelConfig.model,
+      provider: modelConfig.provider,
+      profile,
+      workspace,
+      source: state.source,
+      codingAgentId: 'ekko-agent',
+      mode: data.mode,
+      baseUrl,
+      apiKey,
+      apiMode,
+      mcpServers,
+      reasoningEffort,
+      backgroundDelegationId: event.subagentId,
+      autonomous: true,
+    }
+    state.queue.push(queuedRun)
+    logger.info(
+      '[chat-run-socket] queued Ekko background subtask result %s for session %s (busy: %s)',
+      event.subagentId,
+      sessionId,
+      state.isWorking,
+    )
+    if (!state.isWorking) dequeueNextQueuedRun(socket, sessionId, profile)
+  }
+  const backgroundSubagentIdFromToolResult = (value: unknown): string | null => {
+    if (typeof value !== 'string' || !value.trim()) return null
+    try {
+      const parsed = parseJsonRecord(JSON.parse(value))
+      if (parsed?.mode !== 'background') return null
+      const subagentId = String(parsed.subagent_id || '').trim()
+      return subagentId || null
+    } catch {
+      return null
+    }
+  }
+  const persistBackgroundDisplayContent = (subagentId: string, displayContent: string) => {
+    pendingBackgroundDisplayContent.set(subagentId, displayContent)
+    const message = [...state.messages].reverse().find(item =>
+      item.role === 'tool' &&
+      item.tool_name === 'delegate_task' &&
+      backgroundSubagentIdFromToolResult(item.content) === subagentId,
+    )
+    if (!message) return
+    message.display_content = displayContent
+    try {
+      if (updateMessageDisplayContent(sessionId, message.id, displayContent)) {
+        pendingBackgroundDisplayContent.delete(subagentId)
+      }
+    } catch (err) {
+      logger.warn(err, '[chat-run-socket] failed to persist Ekko subagent display state for session %s', sessionId)
+    }
+  }
   const writeRunLog = (
     category: EkkoLogCategory,
     event: string,
@@ -719,10 +824,15 @@ export async function handleEkkoAgentRun(
       },
       ...toolCalls.map((toolCall) => {
         const completed = group.results.get(toolCall.id)!
+        const backgroundSubagentId = backgroundSubagentIdFromToolResult(completed.result.content)
+        const backgroundDisplayContent = backgroundSubagentId
+          ? pendingBackgroundDisplayContent.get(backgroundSubagentId)
+          : undefined
         return {
           session_id: sessionId,
           role: 'tool',
           content: completed.result.content,
+          display_content: backgroundDisplayContent,
           tool_call_id: toolCall.id,
           tool_name: completed.toolName || toolCall.name,
           timestamp,
@@ -741,6 +851,11 @@ export async function handleEkkoAgentRun(
       for (const toolCall of toolCalls) {
         persistedToolCallIds.add(toolCall.id)
         toolCallGroupKeys.delete(scopedToolCallId(group.runId, toolCall.id))
+        const completed = group.results.get(toolCall.id)!
+        const backgroundSubagentId = backgroundSubagentIdFromToolResult(completed.result.content)
+        if (backgroundSubagentId && pendingBackgroundDisplayContent.has(backgroundSubagentId)) {
+          pendingBackgroundDisplayContent.delete(backgroundSubagentId)
+        }
       }
       pendingToolGroups.delete(toolGroupKey(group.runId, group.step))
       writeRunLog('run', 'run.tool_group_persisted', {
@@ -870,6 +985,39 @@ export async function handleEkkoAgentRun(
       }, event.type === 'skill.review.failed' ? 'warn' : 'info', eventRunId)
       return
     }
+    if (
+      event.type === 'subagent.start' ||
+      event.type === 'subagent.text' ||
+      event.type === 'subagent.thinking' ||
+      event.type === 'subagent.tool' ||
+      event.type === 'subagent.complete'
+    ) {
+      writeRunLog('run', event.type, {
+        subagentId: event.subagentId,
+        ...('childRunId' in event ? { childRunId: event.childRunId } : {}),
+        goal: event.goal,
+        background: event.background,
+        ...('text' in event ? { textChars: event.text.length, textPreview: logPreview(event.text) } : {}),
+        ...('toolName' in event ? {
+          toolName: event.toolName,
+          arguments: event.arguments,
+          toolCount: event.toolCount,
+        } : {}),
+        ...('status' in event ? {
+          status: event.status,
+          summary: event.summary,
+          durationMs: event.durationMs,
+          toolCount: event.toolCount,
+          apiCalls: event.apiCalls,
+          inputTokens: event.inputTokens,
+          outputTokens: event.outputTokens,
+          cacheReadTokens: event.cacheReadTokens,
+          cacheWriteTokens: event.cacheWriteTokens,
+          reasoningTokens: event.reasoningTokens,
+        } : {}),
+      }, event.type === 'subagent.complete' && event.status !== 'completed' ? 'warn' : 'info', eventRunId)
+      return
+    }
     if (event.type === 'run.started') {
       writeRunLog('run', event.type, { maxSteps: event.maxSteps }, 'info', eventRunId)
       return
@@ -917,6 +1065,9 @@ export async function handleEkkoAgentRun(
         run_id: event.runId,
         model: modelConfig.model,
         provider: modelConfig.provider,
+        queue_id: data.queue_id,
+        autonomous: data.autonomous === true,
+        delegation_id: data.background_delegation_id,
       })
     } else if (event.type === 'context.estimated') {
       contextEstimate = event.estimate
@@ -1006,6 +1157,216 @@ export async function handleEkkoAgentRun(
         duration: Math.round(event.durationMs / 10) / 100,
         error: event.result.error,
       })
+    } else if (
+      event.type === 'subagent.start' ||
+      event.type === 'subagent.text' ||
+      event.type === 'subagent.thinking' ||
+      event.type === 'subagent.tool' ||
+      event.type === 'subagent.complete'
+    ) {
+      const timestamp = Date.now() / 1000
+      const currentStreamedOutput = event.type === 'subagent.text'
+        ? appendSubagentOutput(event.subagentId, event.text)
+        : undefined
+      const terminalStreamedOutput = event.type === 'subagent.complete'
+        ? streamedSubagentOutput.get(event.subagentId)?.trim()
+        : undefined
+      const terminalDeliveredSummary = event.type === 'subagent.complete'
+        ? event.status === 'completed' && terminalStreamedOutput
+          ? terminalStreamedOutput
+          : event.summary
+        : undefined
+      if (event.background) {
+        state.backgroundTasks = state.backgroundTasks || {}
+        const previous = state.backgroundTasks[event.subagentId] || {}
+        const snapshot: Record<string, unknown> = {
+          ...previous,
+          runtime: 'ekko',
+          subagent_id: event.subagentId,
+          goal: event.goal,
+          background: true,
+          last_event: event.type,
+          updated_at: timestamp,
+        }
+        if (event.type === 'subagent.start') {
+          Object.assign(snapshot, {
+            status: 'running',
+            model: event.model,
+            started_at: event.startedAt / 1000,
+          })
+        } else if (event.type === 'subagent.text') {
+          snapshot.status = 'running'
+          snapshot.output_tail = currentStreamedOutput!.slice(-4_000)
+          snapshot.preview = snapshot.output_tail
+        } else if (event.type === 'subagent.thinking') {
+          snapshot.status = 'running'
+          snapshot.preview = event.text
+        } else if (event.type === 'subagent.tool') {
+          Object.assign(snapshot, {
+            status: 'running',
+            last_tool: event.toolName,
+            arguments: event.arguments,
+            tool_count: event.toolCount,
+            preview: JSON.stringify(event.arguments || {}),
+          })
+        } else {
+          Object.assign(snapshot, {
+            status: event.status,
+            summary: event.summary,
+            output_tail: event.outputTail,
+            duration_seconds: event.durationMs / 1000,
+            tool_count: event.toolCount,
+            api_calls: event.apiCalls,
+            input_tokens: event.inputTokens,
+            output_tokens: event.outputTokens,
+            cache_read_tokens: event.cacheReadTokens,
+            cache_write_tokens: event.cacheWriteTokens,
+            reasoning_tokens: event.reasoningTokens,
+            completed_at: timestamp,
+          })
+        }
+        state.backgroundTasks[event.subagentId] = snapshot
+      }
+
+      if (event.type === 'subagent.complete') {
+        if (event.background) {
+          const snapshot = state.backgroundTasks?.[event.subagentId] || {}
+          persistBackgroundDisplayContent(event.subagentId, JSON.stringify({
+            runtime: 'ekko',
+            mode: 'background',
+            subagent_id: event.subagentId,
+            parent_run_id: event.runId,
+            child_run_id: event.childRunId,
+            task_index: 0,
+            task_count: 1,
+            goal: event.goal,
+            status: event.status,
+            summary: terminalDeliveredSummary,
+            output_tail: event.outputTail,
+            duration_seconds: event.durationMs / 1000,
+            tool_count: event.toolCount,
+            api_calls: event.apiCalls,
+            input_tokens: event.inputTokens,
+            output_tokens: event.outputTokens,
+            cache_read_tokens: event.cacheReadTokens,
+            cache_write_tokens: event.cacheWriteTokens,
+            reasoning_tokens: event.reasoningTokens,
+            started_at: snapshot.started_at,
+            completed_at: timestamp,
+          }))
+        }
+        usageInput += event.inputTokens
+        usageOutput += event.outputTokens
+        if (event.apiCalls > 0) {
+          recordSessionUsage({
+            sessionId,
+            runId: `${event.runId}:subagent:${event.subagentId}`,
+            source: 'ekko_agent',
+            agent: 'ekko_agent',
+            usageScope: 'model_call',
+            purpose: event.background ? 'ekko-background-subtask' : 'ekko-subtask',
+            apiCalls: event.apiCalls,
+            usage: {
+              inputTokens: event.inputTokens,
+              outputTokens: event.outputTokens,
+              cacheReadTokens: event.cacheReadTokens,
+              cacheWriteTokens: event.cacheWriteTokens,
+              reasoningTokens: event.reasoningTokens,
+            },
+            profile,
+            model: modelConfig.model,
+            provider: modelConfig.provider,
+            isEstimated: false,
+          })
+        }
+        if (parentUsagePersisted) {
+          state.inputTokens = (state.inputTokens || 0) + event.inputTokens
+          state.outputTokens = (state.outputTokens || 0) + event.outputTokens
+          updateSessionStats(sessionId)
+          emit('usage.updated', {
+            event: 'usage.updated',
+            run_id: event.runId,
+            input_tokens: state.inputTokens || 0,
+            output_tokens: state.outputTokens || 0,
+            total_tokens: (state.inputTokens || 0) + (state.outputTokens || 0),
+            contextTokens: state.contextTokens,
+            context_tokens: state.contextTokens,
+          })
+        }
+      }
+
+      if (event.type === 'subagent.start') {
+        emit(event.type, {
+          event: event.type,
+          run_id: event.runId,
+          parent_run_id: event.runId,
+          subagent_id: event.subagentId,
+          task_index: 0,
+          task_count: 1,
+          goal: event.goal,
+          background: event.background,
+          model: event.model,
+          timestamp: event.startedAt / 1000,
+        })
+      } else if (event.type === 'subagent.text' || event.type === 'subagent.thinking') {
+        emit(event.type, {
+          event: event.type,
+          run_id: event.runId,
+          parent_run_id: event.runId,
+          child_run_id: event.childRunId,
+          subagent_id: event.subagentId,
+          task_index: 0,
+          task_count: 1,
+          goal: event.goal,
+          background: event.background,
+          text: event.text,
+          timestamp,
+        })
+      } else if (event.type === 'subagent.tool') {
+        emit(event.type, {
+          event: event.type,
+          run_id: event.runId,
+          parent_run_id: event.runId,
+          child_run_id: event.childRunId,
+          subagent_id: event.subagentId,
+          task_index: 0,
+          task_count: 1,
+          goal: event.goal,
+          background: event.background,
+          tool: event.toolName,
+          name: event.toolName,
+          arguments: event.arguments,
+          preview: JSON.stringify(event.arguments || {}),
+          tool_count: event.toolCount,
+          timestamp,
+        })
+      } else {
+        emit(event.type, {
+          event: event.type,
+          run_id: event.runId,
+          parent_run_id: event.runId,
+          child_run_id: event.childRunId,
+          subagent_id: event.subagentId,
+          task_index: 0,
+          task_count: 1,
+          goal: event.goal,
+          background: event.background,
+          status: event.status,
+          summary: terminalDeliveredSummary,
+          output_tail: event.outputTail,
+          duration_seconds: event.durationMs / 1000,
+          tool_count: event.toolCount,
+          api_calls: event.apiCalls,
+          input_tokens: event.inputTokens,
+          output_tokens: event.outputTokens,
+          cache_read_tokens: event.cacheReadTokens,
+          cache_write_tokens: event.cacheWriteTokens,
+          reasoning_tokens: event.reasoningTokens,
+          timestamp,
+        })
+        streamedSubagentOutput.delete(event.subagentId)
+        scheduleBackgroundContinuation(event)
+      }
     } else if (
       event.type === 'skill.review.started' ||
       event.type === 'skill.review.completed' ||
@@ -1215,6 +1576,10 @@ export async function handleEkkoAgentRun(
         run_id: runId || result.runId,
         error,
         queue_remaining: state.queue.length,
+        background_pending: ekkoBackgroundPendingCount(state),
+        queue_id: data.queue_id,
+        autonomous: data.autonomous === true,
+        delegation_id: data.background_delegation_id,
       })
       return
     }
@@ -1249,6 +1614,7 @@ export async function handleEkkoAgentRun(
     }
     state.inputTokens = (state.inputTokens || 0) + usageInput
     state.outputTokens = (state.outputTokens || 0) + usageOutput
+    parentUsagePersisted = true
     if (contextEstimate?.contextTokens != null) state.contextTokens = contextEstimate.contextTokens
     updateSessionStats(sessionId)
     if (state.queue.length === 0) {
@@ -1284,6 +1650,10 @@ export async function handleEkkoAgentRun(
         total_tokens: usageInput + usageOutput,
       },
       queue_remaining: state.queue.length,
+      background_pending: ekkoBackgroundPendingCount(state),
+      queue_id: data.queue_id,
+      autonomous: data.autonomous === true,
+      delegation_id: data.background_delegation_id,
     })
     writeRunLog('run', 'run.persisted', {
       inputTokens: usageInput,
@@ -1317,6 +1687,10 @@ export async function handleEkkoAgentRun(
       run_id: runId,
       error,
       queue_remaining: state.queue.length,
+      background_pending: ekkoBackgroundPendingCount(state),
+      queue_id: data.queue_id,
+      autonomous: data.autonomous === true,
+      delegation_id: data.background_delegation_id,
     })
   } finally {
     writeRunLog('run', 'run.released', {

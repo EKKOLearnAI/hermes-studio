@@ -135,4 +135,35 @@ describe('loadSessionStateFromDb', () => {
     expect(state.outputTokens).toBe(2_000)
     expect(state.contextTokens).toBe(9_000)
   })
+
+  it('restores the persisted tool-result anchor for a Hermes background delegation', async () => {
+    getSessionDetailPaginatedMock.mockReturnValue({
+      messages: [{
+        id: 42,
+        role: 'tool',
+        content: JSON.stringify({
+          mode: 'background',
+          delegation_id: 'delegation-1',
+          goals: ['Inspect the task'],
+        }),
+        display_content: null,
+        tool_call_id: 'delegate-call-1',
+        tool_name: 'delegate_task',
+        timestamp: 100,
+      }],
+    })
+    const { loadSessionStateFromDb } = await import('../../packages/server/src/services/hermes/run-chat/load-state')
+
+    const state = await loadSessionStateFromDb('session-1', new Map())
+
+    expect(state.backgroundDelegations).toEqual({
+      'delegation-1': expect.objectContaining({
+        delegationId: 'delegation-1',
+        status: 'running',
+        messageId: 42,
+        toolCallId: 'delegate-call-1',
+        dispatchPayload: expect.objectContaining({ mode: 'background' }),
+      }),
+    })
+  })
 })

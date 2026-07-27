@@ -70,6 +70,14 @@ export class GlobalEkkoAgent {
     return this.runtimeInstance().estimateContext(input)
   }
 
+  hasBackgroundTasks(sessionId?: string): boolean {
+    return this.runtime?.hasBackgroundTasks(sessionId) ?? false
+  }
+
+  async abortBackgroundTasks(sessionId?: string): Promise<number> {
+    return this.runtime?.abortBackgroundTasks(sessionId) ?? 0
+  }
+
   writeLog(entry: Omit<EkkoLogEntry, 'profile'>): boolean {
     return this.fileLogger.write({
       ...entry,
@@ -87,6 +95,7 @@ export class GlobalEkkoAgent {
       event: 'agent.closed',
       data: { runCount: this.runCount },
     })
+    void this.runtime?.abortBackgroundTasks()
     this.memory?.close()
     this.memory = undefined
     this.runtime = undefined
@@ -188,4 +197,18 @@ export function getGlobalEkkoAgent(profile = 'default'): GlobalEkkoAgent {
     globalEkkoAgents.set(normalizedProfile, agent)
   }
   return agent
+}
+
+export function hasGlobalEkkoBackgroundTasks(sessionId: string): boolean {
+  for (const agent of globalEkkoAgents.values()) {
+    if (agent.hasBackgroundTasks(sessionId)) return true
+  }
+  return false
+}
+
+export async function abortGlobalEkkoBackgroundTasks(sessionId: string): Promise<number> {
+  const counts = await Promise.all(
+    [...globalEkkoAgents.values()].map(agent => agent.abortBackgroundTasks(sessionId)),
+  )
+  return counts.reduce((sum, count) => sum + count, 0)
 }

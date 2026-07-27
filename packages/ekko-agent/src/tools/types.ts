@@ -14,7 +14,19 @@ export interface AgentToolContext {
   timeoutMs?: number
   signal?: AbortSignal
   skillMutationSource?: 'foreground' | 'background-review'
+  delegationDepth?: number
+  delegateTask?: AgentTaskDelegate
 }
+
+export type AgentTaskMode = 'foreground' | 'background'
+
+export interface AgentTaskRequest {
+  goal: string
+  context?: string
+  mode: AgentTaskMode
+}
+
+export type AgentTaskDelegate = (request: AgentTaskRequest) => Promise<AgentToolResult>
 
 export interface AgentToolResult {
   ok: boolean

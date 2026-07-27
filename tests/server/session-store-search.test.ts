@@ -77,4 +77,35 @@ describe('session store search', () => {
       rank: 0,
     }))
   })
+
+  it('updates display-only message content without changing model context content', async () => {
+    const {
+      addMessage,
+      createSession,
+      getSessionDetail,
+      updateMessageDisplayContent,
+    } = await import('../../packages/server/src/db/hermes/session-store')
+    createSession({ id: 'subagent-display', profile: 'default', source: 'cli', title: 'Subagent display' })
+    const messageId = addMessage({
+      session_id: 'subagent-display',
+      role: 'tool',
+      content: '{"status":"running"}',
+      tool_call_id: 'delegate-call',
+      tool_name: 'delegate_task',
+      timestamp: 100,
+    })!
+
+    expect(updateMessageDisplayContent(
+      'subagent-display',
+      messageId,
+      '{"status":"completed"}',
+    )).toBe(true)
+    expect(getSessionDetail('subagent-display')?.messages).toEqual([
+      expect.objectContaining({
+        id: messageId,
+        content: '{"status":"running"}',
+        display_content: '{"status":"completed"}',
+      }),
+    ])
+  })
 })

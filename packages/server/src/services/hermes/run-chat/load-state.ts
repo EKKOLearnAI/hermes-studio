@@ -8,6 +8,37 @@ import { handleMessage } from './message-format'
 import { estimateUsageTokensFromMessages } from './usage'
 import type { ChatRunSource, SessionState } from './types'
 
+function restoreBackgroundDelegations(messages: any[]): SessionState['backgroundDelegations'] {
+  const delegations: NonNullable<SessionState['backgroundDelegations']> = {}
+  for (const message of messages) {
+    if (message.role !== 'tool' || message.tool_name !== 'delegate_task') continue
+    try {
+      const payload = JSON.parse(String(message.content || '')) as Record<string, unknown>
+      const delegationId = String(payload.delegation_id || '').trim()
+      if (payload.runtime === 'ekko' || payload.mode !== 'background' || !delegationId) continue
+      let status: 'running' | 'completed' | 'failed' | 'interrupted' = 'running'
+      if (message.display_content) {
+        const display = JSON.parse(String(message.display_content)) as Record<string, unknown>
+        const displayStatus = String(display.status || '').toLowerCase()
+        if (displayStatus === 'completed') status = 'completed'
+        else if (displayStatus === 'failed' || displayStatus === 'error') status = 'failed'
+        else if (displayStatus === 'interrupted' || displayStatus === 'cancelled') status = 'interrupted'
+      }
+      delegations[delegationId] = {
+        delegationId,
+        status,
+        updatedAt: Number(message.timestamp || 0) * 1000 || Date.now(),
+        toolCallId: String(message.tool_call_id || '').trim() || undefined,
+        messageId: message.id,
+        dispatchPayload: payload,
+      }
+    } catch {
+      // Non-JSON delegate results are not background dispatch records.
+    }
+  }
+  return delegations
+}
+
 export function resolveRunSource(source?: string, sessionId?: string): ChatRunSource {
   if (source === 'coding_agent' || source === 'global_agent' || source === 'workflow' || source === 'cli') return source
   if (sessionId) {
@@ -65,6 +96,7 @@ export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<strin
       outputTokens,
       contextTokens,
       queue: [],
+      backgroundDelegations: restoreBackgroundDelegations(messages),
     }
   } catch (err) {
     logger.warn(err, '[chat-run-socket] failed to load session %s from DB', sid)

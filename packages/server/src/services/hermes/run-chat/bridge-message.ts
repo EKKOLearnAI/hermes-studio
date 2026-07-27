@@ -133,7 +133,7 @@ export function recordBridgeToolCompleted(
   runMarker: string,
   toolName: string,
   ev: Record<string, unknown>,
-): { id: string; output: string; duration?: number } {
+): { id: string; output: string; duration?: number; messageId?: number | string } {
   state.bridgePendingTools = state.bridgePendingTools || []
   const rawId = ev.tool_call_id
   let idx = rawId
@@ -163,7 +163,7 @@ export function recordBridgeToolCompleted(
     Object.keys(ev).join(','),
   )
 
-  state.messages.push({
+  const message: SessionMessage = {
     id: state.messages.length + 1,
     session_id: sessionId,
     runMarker,
@@ -172,8 +172,8 @@ export function recordBridgeToolCompleted(
     tool_call_id: id,
     tool_name: toolName || pending?.name || null,
     timestamp,
-  })
-  addMessage({
+  }
+  const persistedId = addMessage({
     session_id: sessionId,
     role: 'tool',
     content: output,
@@ -181,12 +181,13 @@ export function recordBridgeToolCompleted(
     tool_name: toolName || pending?.name || null,
     timestamp,
   })
+  state.messages.push(message)
 
   const duration = pending?.startedAt
     ? Math.round((Date.now() - pending.startedAt) / 10) / 100
     : undefined
 
-  return { id, output, duration }
+  return { id, output, duration, messageId: persistedId ?? message.id }
 }
 
 export function recordBridgeMoaDisplayTool(

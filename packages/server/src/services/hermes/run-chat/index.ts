@@ -10,7 +10,7 @@
 import type { Server, Socket } from 'socket.io'
 import { logger } from '../../logger'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
-import { clearSessionMessages, getSession, getSessionMetadata, listSessions } from '../../../db/hermes/session-store'
+import { clearSessionMessages, getSession, getSessionMetadata, listSessions, updateMessageDisplayContent } from '../../../db/hermes/session-store'
 import { getSessionCategory } from '../../../db/hermes/session-category-store'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../hermes-profile'
 import {
@@ -40,6 +40,72 @@ function currentProfileFromSocket(socket: Socket): string {
     ? socket.handshake.query.profile.trim()
     : ''
   return socketProfile || getActiveProfileName() || 'default'
+}
+
+function persistHermesBackgroundResult(
+  sessionId: string,
+  state: SessionState,
+  delegationId: string,
+  event: Record<string, unknown>,
+) {
+  const delegation = state.backgroundDelegations?.[delegationId]
+  if (!delegation?.messageId) return
+  const dispatch = delegation.dispatchPayload || {}
+  const eventResults = Array.isArray(event.results)
+    ? event.results.filter(result => result && typeof result === 'object') as Array<Record<string, unknown>>
+    : [event]
+  const stateTasks = Object.values(state.backgroundTasks || {})
+    .filter(task => task.runtime !== 'ekko')
+  const dispatchGoals = Array.isArray(dispatch.goals)
+    ? dispatch.goals.map(value => String(value || '').trim())
+    : []
+  const tasks = eventResults.map((result, taskIndex) => {
+    const index = Number.isFinite(Number(result.task_index)) ? Number(result.task_index) : taskIndex
+    const goal = String(result.goal || dispatchGoals[index] || event.goal || dispatch.goal || '').trim()
+    const snapshot = stateTasks.find(task =>
+      Number(task.task_index ?? 0) === index
+      && (!goal || !String(task.goal || '').trim() || String(task.goal || '').trim() === goal),
+    ) || (eventResults.length === 1
+      ? stateTasks.find(task => !goal || String(task.goal || '').trim() === goal)
+      : undefined)
+    const summary = String(result.summary || snapshot?.summary || snapshot?.preview || '').trim()
+    return {
+      runtime: 'hermes',
+      mode: 'background',
+      delegation_id: delegationId,
+      subagent_id: String(snapshot?.subagent_id || result.subagent_id || `${delegationId}:${index}`),
+      task_index: index,
+      task_count: eventResults.length,
+      goal,
+      model: result.model || snapshot?.model || event.model,
+      status: String(result.status || snapshot?.status || event.status || 'completed'),
+      summary,
+      output: summary,
+      started_at: snapshot?.started_at || event.dispatched_at,
+      completed_at: snapshot?.completed_at || event.completed_at,
+      duration_seconds: result.duration_seconds || snapshot?.duration_seconds || event.duration_seconds || event.total_duration_seconds,
+      api_calls: result.api_calls || snapshot?.api_calls || event.api_calls,
+      input_tokens: result.input_tokens || snapshot?.input_tokens,
+      output_tokens: result.output_tokens || snapshot?.output_tokens,
+      cost_usd: result.cost_usd || snapshot?.cost_usd,
+    }
+  })
+  const displayPayload = tasks.length === 1
+    ? tasks[0]
+    : {
+        runtime: 'hermes',
+        mode: 'background',
+        delegation_id: delegationId,
+        status: String(event.status || 'completed'),
+        tasks,
+      }
+  const displayContent = JSON.stringify(displayPayload)
+  if (!updateMessageDisplayContent(sessionId, delegation.messageId, displayContent)) return
+  const message = state.messages.find(item =>
+    String(item.id) === String(delegation.messageId)
+    || (delegation.toolCallId && item.tool_call_id === delegation.toolCallId),
+  )
+  if (message) message.display_content = displayContent
 }
 
 function redactBridgeReadyError(error: string, endpoint?: string): string {
@@ -644,7 +710,15 @@ export class ChatRunSocket {
       return
     }
     state.backgroundDelegations = state.backgroundDelegations || {}
+    persistHermesBackgroundResult(
+      sessionId,
+      state,
+      delegationId,
+      notification.event || {},
+    )
+    const previousDelegation = state.backgroundDelegations[delegationId]
     state.backgroundDelegations[delegationId] = {
+      ...previousDelegation,
       delegationId,
       status: 'delivering',
       profile: notification.profile,
@@ -691,8 +765,10 @@ export class ChatRunSocket {
     if (this.backgroundRecoveryNeeded) return true
     if (Date.now() < this.backgroundActivityGraceUntil) return true
     for (const state of this.sessionMap.values()) {
-      if (this.backgroundPendingCount(state) > 0) return true
-      if (Object.values(state.backgroundTasks || {}).some(task => task.status === 'running')) return true
+      if (Object.values(state.backgroundDelegations || {})
+        .some(item => item.status === 'running' || item.status === 'delivering')) return true
+      if (Object.values(state.backgroundTasks || {})
+        .some(task => task.status === 'running' && task.runtime !== 'ekko')) return true
     }
     return false
   }

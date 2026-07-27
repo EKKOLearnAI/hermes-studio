@@ -1,5 +1,6 @@
 import type { AgentTool, AgentToolContext, AgentToolProvider, AgentToolResult } from './types'
 import { createBrowserTools } from './browser'
+import { createDelegationTools } from './delegation'
 import { createFileTools } from './files'
 import { createMcpToolProvider } from './mcp'
 import { createSkillTools } from './skills'
@@ -77,6 +78,7 @@ export function createDefaultToolRegistry(options: DefaultToolRegistryOptions = 
     ...createFileTools(),
     ...createTerminalTools(),
     ...createBrowserTools(),
+    ...createDelegationTools(),
     ...createSkillTools(options.skillDirectory),
   ]) {
     registry.register(tool)

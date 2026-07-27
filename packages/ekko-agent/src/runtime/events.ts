@@ -22,6 +22,30 @@ export type AgentRuntimeEvent =
   | { type: 'tool.started'; runId: string; step: number; toolCallId: string; toolName: string; arguments: Record<string, unknown> }
   | { type: 'tool.completed'; runId: string; step: number; toolCallId: string; toolName: string; result: AgentToolResult; durationMs: number }
   | { type: 'tool.failed'; runId: string; step: number; toolCallId: string; toolName: string; result: AgentToolResult; durationMs: number }
+  | { type: 'subagent.start'; runId: string; subagentId: string; goal: string; background: boolean; model?: string; startedAt: number }
+  | { type: 'subagent.text'; runId: string; childRunId?: string; subagentId: string; goal: string; background: boolean; text: string }
+  | { type: 'subagent.thinking'; runId: string; childRunId?: string; subagentId: string; goal: string; background: boolean; text: string }
+  | { type: 'subagent.tool'; runId: string; childRunId?: string; subagentId: string; goal: string; background: boolean; toolName: string; arguments: Record<string, unknown>; toolCount: number }
+  | {
+      type: 'subagent.complete'
+      runId: string
+      childRunId?: string
+      subagentId: string
+      goal: string
+      background: boolean
+      status: 'completed' | 'failed' | 'interrupted'
+      summary: string
+      output: string
+      outputTail: string
+      durationMs: number
+      toolCount: number
+      apiCalls: number
+      inputTokens: number
+      outputTokens: number
+      cacheReadTokens: number
+      cacheWriteTokens: number
+      reasoningTokens: number
+    }
   | { type: 'run.tool_failure_limit'; runId: string; failures: number }
   | { type: 'run.completed'; runId: string; output: AgentOutputMessage; steps: number; context?: unknown; contextEstimate?: AgentRuntimeContextEstimate }
   | { type: 'run.failed'; runId: string; error: string; steps: number }

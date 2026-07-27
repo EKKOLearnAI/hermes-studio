@@ -443,8 +443,13 @@ test('workflow canvas exposes orchestration editing and portability controls', a
   const canvasBox = await canvas.boundingBox()
   expect(handleBox).not.toBeNull()
   expect(canvasBox).not.toBeNull()
-  await page.mouse.move(handleBox!.x + handleBox!.width / 2, handleBox!.y + handleBox!.height / 2)
-  await page.mouse.down()
+  const handleX = handleBox!.x + handleBox!.width / 2
+  const handleY = handleBox!.y + handleBox!.height / 2
+  await sourceHandle.dispatchEvent('mousedown', {
+    button: 0,
+    clientX: handleX,
+    clientY: handleY,
+  })
   await page.mouse.move(canvasBox!.x + canvasBox!.width * .72, canvasBox!.y + canvasBox!.height * .82, { steps: 8 })
   await page.mouse.up()
   await expect(page.locator('.vue-flow__node')).toHaveCount(3)

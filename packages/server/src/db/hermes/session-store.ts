@@ -850,6 +850,21 @@ export function addMessages(msgs: Array<{
   }
 }
 
+export function updateMessageDisplayContent(
+  sessionId: string,
+  messageId: number | string,
+  displayContent: string | null,
+): boolean {
+  if (!isSqliteAvailable()) return false
+  const db = getDb()!
+  const result = db.prepare(
+    `UPDATE ${MESSAGES_TABLE}
+     SET display_content = ?
+     WHERE session_id = ? AND id = ?`,
+  ).run(displayContent, sessionId, messageId)
+  return result.changes > 0
+}
+
 export function getMessageCount(sessionId: string): number {
   if (!isSqliteAvailable()) return 0
   const db = getDb()!

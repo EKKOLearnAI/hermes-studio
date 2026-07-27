@@ -6,6 +6,7 @@ const getSessionMock = vi.hoisted(() => vi.fn())
 const createSessionMock = vi.hoisted(() => vi.fn())
 const addMessageMock = vi.hoisted(() => vi.fn())
 const addMessagesMock = vi.hoisted(() => vi.fn())
+const updateMessageDisplayContentMock = vi.hoisted(() => vi.fn(() => true))
 const updateSessionMock = vi.hoisted(() => vi.fn())
 const updateSessionStatsMock = vi.hoisted(() => vi.fn())
 const resolveBridgeRunModelConfigMock = vi.hoisted(() => vi.fn())
@@ -27,6 +28,7 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   createSession: createSessionMock,
   addMessage: addMessageMock,
   addMessages: addMessagesMock,
+  updateMessageDisplayContent: updateMessageDisplayContentMock,
   updateSession: updateSessionMock,
   updateSessionStats: updateSessionStatsMock,
 }))
@@ -419,6 +421,306 @@ describe('ekko-agent context usage events', () => {
       ended_at: expect.any(Number),
       end_reason: 'complete',
     }))
+  })
+
+  it('keeps Ekko background subtask state and accounts for late child usage', async () => {
+    let runtimeEvent: ((event: any) => void) | undefined
+    const dequeueNextQueuedRun = vi.fn(() => false)
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      runtimeEvent = input.onEvent
+      input.onEvent({ type: 'run.started', runId: 'run-parent', maxSteps: 3 })
+      input.onEvent({
+        type: 'subagent.start',
+        runId: 'run-parent',
+        subagentId: 'child-background',
+        goal: 'Run validation',
+        background: true,
+        model: 'ekko-test-model',
+        startedAt: 1_000,
+      })
+      return {
+        runId: 'run-parent',
+        output: {
+          role: 'assistant',
+          content: 'Validation is running.',
+          usage: { inputTokens: 3, outputTokens: 2 },
+        },
+        steps: [],
+        messages: [],
+        events: [],
+        contextEstimate: { contextTokens: 6_000 },
+      }
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, state, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'run checks in the background',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, dequeueNextQueuedRun)
+
+    expect(state.backgroundTasks['child-background']).toEqual(expect.objectContaining({
+      runtime: 'ekko',
+      subagent_id: 'child-background',
+      goal: 'Run validation',
+      status: 'running',
+      last_event: 'subagent.start',
+    }))
+    expect(state.inputTokens).toBe(13)
+    expect(state.outputTokens).toBe(7)
+    expect(events).toContainEqual(expect.objectContaining({
+      event: 'run.completed',
+      payload: expect.objectContaining({
+        run_id: 'run-parent',
+        background_pending: 1,
+      }),
+    }))
+
+    runtimeEvent?.({
+      type: 'subagent.text',
+      runId: 'run-parent',
+      childRunId: 'run-child',
+      subagentId: 'child-background',
+      goal: 'Run validation',
+      background: true,
+      text: 'All checks\n\n',
+    })
+    runtimeEvent?.({
+      type: 'subagent.text',
+      runId: 'run-parent',
+      childRunId: 'run-child',
+      subagentId: 'child-background',
+      goal: 'Run validation',
+      background: true,
+      text: 'passed.',
+    })
+    state.messages.push({
+      id: 77,
+      session_id: 'session-1',
+      role: 'tool',
+      content: JSON.stringify({
+        runtime: 'ekko',
+        mode: 'background',
+        subagent_id: 'child-background',
+        status: 'running',
+      }),
+      tool_call_id: 'delegate-call',
+      tool_name: 'delegate_task',
+      timestamp: 1,
+    })
+    runtimeEvent?.({
+      type: 'subagent.complete',
+      runId: 'run-parent',
+      childRunId: 'run-child',
+      subagentId: 'child-background',
+      goal: 'Run validation',
+      background: true,
+      status: 'completed',
+      summary: 'All checks passed.',
+      output: 'All checks\n\npassed.',
+      outputTail: 'All checks\n\npassed.',
+      durationMs: 2_500,
+      toolCount: 2,
+      apiCalls: 2,
+      inputTokens: 11,
+      outputTokens: 4,
+      cacheReadTokens: 3,
+      cacheWriteTokens: 2,
+      reasoningTokens: 1,
+    })
+
+    expect(state.backgroundTasks['child-background']).toEqual(expect.objectContaining({
+      runtime: 'ekko',
+      status: 'completed',
+      last_event: 'subagent.complete',
+      summary: 'All checks passed.',
+      api_calls: 2,
+      input_tokens: 11,
+      output_tokens: 4,
+      cache_read_tokens: 3,
+      cache_write_tokens: 2,
+      reasoning_tokens: 1,
+    }))
+    expect(state.inputTokens).toBe(24)
+    expect(state.outputTokens).toBe(11)
+    expect(updateMessageDisplayContentMock).toHaveBeenCalledWith(
+      'session-1',
+      77,
+      expect.stringContaining('"status":"completed"'),
+    )
+    expect(state.messages.find(message => message.id === 77)?.display_content)
+      .toContain('"runtime":"ekko"')
+    expect(dequeueNextQueuedRun).toHaveBeenCalledOnce()
+    expect(dequeueNextQueuedRun).toHaveBeenCalledWith(socket, 'session-1', 'default')
+    expect(state.queue).toHaveLength(1)
+    expect(state.queue[0]).toEqual(expect.objectContaining({
+      queue_id: 'ekko_subagent_child-background',
+      displayInput: null,
+      codingAgentId: 'ekko-agent',
+      autonomous: true,
+      backgroundDelegationId: 'child-background',
+    }))
+    expect(state.queue[0].input).toContain('All checks\n\npassed.')
+    expect(recordSessionUsageMock).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      runId: 'run-parent:subagent:child-background',
+      source: 'ekko_agent',
+      agent: 'ekko_agent',
+      usageScope: 'model_call',
+      purpose: 'ekko-background-subtask',
+      apiCalls: 2,
+      usage: {
+        inputTokens: 11,
+        outputTokens: 4,
+        cacheReadTokens: 3,
+        cacheWriteTokens: 2,
+        reasoningTokens: 1,
+      },
+      profile: 'default',
+      model: 'ekko-test-model',
+      provider: 'test-provider',
+      isEstimated: false,
+    })
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        event: 'subagent.start',
+        payload: expect.objectContaining({
+          subagent_id: 'child-background',
+          background: true,
+        }),
+      }),
+      expect.objectContaining({
+        event: 'subagent.complete',
+        payload: expect.objectContaining({
+          parent_run_id: 'run-parent',
+          child_run_id: 'run-child',
+          subagent_id: 'child-background',
+          status: 'completed',
+          summary: 'All checks\n\npassed.',
+        }),
+      }),
+      expect.objectContaining({
+        event: 'usage.updated',
+        payload: expect.objectContaining({
+          input_tokens: 24,
+          output_tokens: 11,
+          total_tokens: 35,
+        }),
+      }),
+    ]))
+  })
+
+  it('queues a completed background result without starting it while the parent run is busy', async () => {
+    const dequeueNextQueuedRun = vi.fn(() => false)
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'run.started', runId: 'run-parent', maxSteps: 3 })
+      input.onEvent({
+        type: 'subagent.start',
+        runId: 'run-parent',
+        subagentId: 'child-background',
+        goal: 'Run validation',
+        background: true,
+        startedAt: 1_000,
+      })
+      input.onEvent({
+        type: 'subagent.complete',
+        runId: 'run-parent',
+        childRunId: 'run-child',
+        subagentId: 'child-background',
+        goal: 'Run validation',
+        background: true,
+        status: 'completed',
+        summary: 'Validation passed.',
+        output: 'Validation passed.',
+        outputTail: 'Validation passed.',
+        durationMs: 500,
+        toolCount: 0,
+        apiCalls: 1,
+        inputTokens: 4,
+        outputTokens: 2,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+      })
+      expect(dequeueNextQueuedRun).not.toHaveBeenCalled()
+      return {
+        runId: 'run-parent',
+        output: {
+          role: 'assistant',
+          content: 'The background task is running.',
+          usage: { inputTokens: 3, outputTokens: 2 },
+        },
+        steps: [],
+        messages: [],
+        events: [],
+        contextEstimate: { contextTokens: 6_000 },
+      }
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, state } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'run checks in the background',
+      coding_agent_id: 'ekko-agent',
+    }, 'default', sessionMap, dequeueNextQueuedRun)
+
+    expect(state.queue).toHaveLength(1)
+    expect(dequeueNextQueuedRun).toHaveBeenCalledOnce()
+    expect(dequeueNextQueuedRun).toHaveBeenCalledWith(socket, 'session-1', 'default')
+  })
+
+  it('marks the parent continuation as an autonomous run for the completed child', async () => {
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'run.started', runId: 'run-autonomous', maxSteps: 3 })
+      return {
+        runId: 'run-autonomous',
+        output: {
+          role: 'assistant',
+          content: 'Validation passed.',
+          usage: { inputTokens: 3, outputTokens: 2 },
+        },
+        steps: [],
+        messages: [],
+        events: [],
+        contextEstimate: { contextTokens: 6_000 },
+      }
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'Background subtask result: Validation passed.',
+      display_input: null,
+      coding_agent_id: 'ekko-agent',
+      queue_id: 'ekko_subagent_child-background',
+      autonomous: true,
+      background_delegation_id: 'child-background',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false), true)
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        event: 'run.started',
+        payload: expect.objectContaining({
+          run_id: 'run-autonomous',
+          autonomous: true,
+          delegation_id: 'child-background',
+        }),
+      }),
+      expect.objectContaining({
+        event: 'run.completed',
+        payload: expect.objectContaining({
+          run_id: 'run-autonomous',
+          autonomous: true,
+          delegation_id: 'child-background',
+          background_pending: 0,
+        }),
+      }),
+    ]))
   })
 
   it('publishes the workspace when a new Ekko session is persisted', async () => {

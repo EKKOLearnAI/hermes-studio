@@ -55,7 +55,8 @@ test('browses, creates, and deletes profile-scoped skill bundles', async ({ page
   const securityOption = page.locator('.n-base-select-option:visible').filter({ hasText: /^security-review$/ })
   await expect(securityOption).toBeVisible()
   await securityOption.click({ force: true })
-  await page.keyboard.press('Escape')
+  await nameInput.click()
+  await expect(securityOption).toBeHidden()
   await creator.getByRole('button', { name: 'Create', exact: true }).click()
 
   await expect(input).toHaveValue('/bundles release-team ')

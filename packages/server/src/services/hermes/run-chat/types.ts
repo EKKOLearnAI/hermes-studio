@@ -67,6 +67,9 @@ export interface BackgroundDelegationState {
   status: 'running' | 'delivering' | 'completed' | 'failed' | 'interrupted'
   profile?: string
   updatedAt: number
+  toolCallId?: string
+  messageId?: number | string
+  dispatchPayload?: Record<string, unknown>
 }
 
 export interface SessionState {

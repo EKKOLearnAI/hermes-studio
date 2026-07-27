@@ -371,7 +371,22 @@ describe('chat store compression state', () => {
           content: JSON.stringify({ mode: 'background', delegation_id: 'delegation-1' }),
           tool_call_id: 'delegate-call-1',
           tool_name: 'delegate_task',
-          timestamp: Date.now() / 1000,
+          timestamp: 102,
+        }, {
+          id: 'parent-acknowledgement',
+          role: 'assistant',
+          content: 'The background task is running.',
+          timestamp: 103,
+        }, {
+          id: 'later-user-message',
+          role: 'user',
+          content: 'Continue with another question.',
+          timestamp: 200,
+        }, {
+          id: 'later-assistant-message',
+          role: 'assistant',
+          content: 'Here is the later answer.',
+          timestamp: 201,
         }],
         events: [],
         backgroundPending: 1,
@@ -383,6 +398,8 @@ describe('chat store compression state', () => {
           task_count: 1,
           goal: 'Inspect the task',
           preview: 'Recovered live output',
+          started_at: 101.5,
+          updated_at: 202,
         }],
       })
       return {} as any
@@ -396,6 +413,317 @@ describe('chat store compression state', () => {
     expect(delegateCards).toHaveLength(1)
     expect(delegateCards[0]?.toolCallId).toBe('subagent:child-1')
     expect(store.getSubagentStream('session-1', 'child-1')?.entries.some(entry => entry.text === 'Recovered live output')).toBe(true)
+    expect(store.messages.map(message => message.toolCallId || message.content)).toEqual([
+      'subagent:child-1',
+      'The background task is running.',
+      'Continue with another question.',
+      'Here is the later answer.',
+    ])
+  })
+
+  it('restores a completed Ekko background card at its original turn instead of the transcript tail', async () => {
+    chatApi.resumeSession.mockImplementationOnce((sessionId: string, onResumed: (data: any) => void) => {
+      onResumed({
+        session_id: sessionId,
+        isWorking: false,
+        messages: [{
+          id: 1,
+          role: 'user',
+          content: 'Start background work',
+          timestamp: 100,
+        }, {
+          id: 2,
+          role: 'assistant',
+          content: '',
+          timestamp: 101,
+          tool_calls: [{
+            id: 'delegate-call-1',
+            function: {
+              name: 'delegate_task',
+              arguments: JSON.stringify({ mode: 'background', goal: 'Inspect the task' }),
+            },
+          }],
+        }, {
+          id: 3,
+          role: 'tool',
+          content: JSON.stringify({
+            runtime: 'ekko',
+            mode: 'background',
+            subagent_id: 'child-1',
+            status: 'running',
+            goal: 'Inspect the task',
+          }),
+          display_content: JSON.stringify({
+            runtime: 'ekko',
+            mode: 'background',
+            subagent_id: 'child-1',
+            status: 'completed',
+            goal: 'Inspect the task',
+            summary: 'Inspection passed.',
+          }),
+          tool_call_id: 'delegate-call-1',
+          tool_name: 'delegate_task',
+          timestamp: 101,
+        }, {
+          id: 4,
+          role: 'assistant',
+          content: 'The task is running.',
+          timestamp: 102,
+        }, {
+          id: 5,
+          role: 'user',
+          content: 'Continue chatting',
+          timestamp: 103,
+        }, {
+          id: 6,
+          role: 'assistant',
+          content: 'Continued.',
+          timestamp: 104,
+        }],
+        events: [],
+        backgroundTasks: [],
+      })
+      return {} as any
+    })
+
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1')]
+    await store.switchSession('session-1')
+
+    expect(store.messages.map(message => message.toolCallId || message.content)).toEqual([
+      'Start background work',
+      'subagent:child-1',
+      'The task is running.',
+      'Continue chatting',
+      'Continued.',
+    ])
+    expect(store.messages[1]).toEqual(expect.objectContaining({
+      toolStatus: 'done',
+      toolPreview: expect.stringContaining('Inspection passed.'),
+    }))
+    expect(store.getSubagentStream('session-1', 'child-1')).toEqual(expect.objectContaining({
+      status: 'completed',
+      summary: 'Inspection passed.',
+    }))
+  })
+
+  it('restores a completed Ekko foreground subtask as a clickable child stream', async () => {
+    chatApi.resumeSession.mockImplementationOnce((sessionId: string, onResumed: (data: any) => void) => {
+      onResumed({
+        session_id: sessionId,
+        isWorking: false,
+        messages: [{
+          id: 1,
+          role: 'user',
+          content: 'Run a foreground subtask',
+          timestamp: 100,
+        }, {
+          id: 2,
+          role: 'assistant',
+          content: '',
+          timestamp: 101,
+          tool_calls: [{
+            id: 'delegate-call-1',
+            function: {
+              name: 'delegate_task',
+              arguments: JSON.stringify({ mode: 'foreground', goal: 'Inspect the foreground task' }),
+            },
+          }],
+        }, {
+          id: 3,
+          role: 'tool',
+          content: JSON.stringify({
+            runtime: 'ekko',
+            mode: 'foreground',
+            subagent_id: 'foreground-child',
+            status: 'completed',
+            summary: 'Inspection completed.',
+            output: 'Full foreground inspection result.',
+            duration_ms: 1250,
+          }),
+          tool_call_id: 'delegate-call-1',
+          tool_name: 'delegate_task',
+          timestamp: 101,
+        }, {
+          id: 4,
+          role: 'assistant',
+          content: 'Parent response.',
+          timestamp: 102,
+        }],
+        events: [],
+        backgroundTasks: [],
+      })
+      return {} as any
+    })
+
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1')]
+    await store.switchSession('session-1')
+
+    expect(store.messages.map(message => message.toolCallId || message.content)).toEqual([
+      'Run a foreground subtask',
+      'subagent:foreground-child',
+      'Parent response.',
+    ])
+    expect(store.messages[1]).toEqual(expect.objectContaining({
+      toolStatus: 'done',
+      toolPreview: expect.stringContaining('Full foreground inspection result.'),
+    }))
+    expect(store.getSubagentStream('session-1', 'foreground-child')).toEqual(expect.objectContaining({
+      status: 'completed',
+      goal: 'Inspect the foreground task',
+      durationSeconds: 1.25,
+    }))
+    expect(store.getSubagentStream('session-1', 'foreground-child')?.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'text', text: 'Full foreground inspection result.' }),
+      ]),
+    )
+  })
+
+  it('keeps only the clickable child card for a live Ekko foreground subtask', async () => {
+    const store = useChatStore()
+    store.sessions = [{
+      ...makeSession('session-1'),
+      agent: 'ekko-agent',
+      codingAgentId: 'ekko-agent',
+    }]
+    await store.switchSession('session-1')
+
+    handlers.onToolStarted({
+      event: 'tool.started',
+      session_id: 'session-1',
+      tool: 'delegate_task',
+      tool_call_id: 'delegate-call-1',
+      arguments: { mode: 'foreground', goal: 'Inspect live work' },
+    })
+    handlers.onSubagentEvent({
+      event: 'subagent.start',
+      session_id: 'session-1',
+      subagent_id: 'foreground-child',
+      goal: 'Inspect live work',
+      background: false,
+    })
+    handlers.onSubagentEvent({
+      event: 'subagent.complete',
+      session_id: 'session-1',
+      subagent_id: 'foreground-child',
+      goal: 'Inspect live work',
+      background: false,
+      status: 'completed',
+      summary: 'Live inspection completed.',
+    })
+    handlers.onToolCompleted({
+      event: 'tool.completed',
+      session_id: 'session-1',
+      tool: 'delegate_task',
+      tool_call_id: 'delegate-call-1',
+      output: {
+        runtime: 'ekko',
+        mode: 'foreground',
+        subagent_id: 'foreground-child',
+        status: 'completed',
+      },
+    })
+
+    expect(store.messages.filter(message => message.toolName === 'delegate_task')).toEqual([
+      expect.objectContaining({
+        toolCallId: 'subagent:foreground-child',
+        toolStatus: 'done',
+      }),
+    ])
+  })
+
+  it('keeps persisted Hermes background dispatch rows on the existing recovery path', async () => {
+    chatApi.resumeSession.mockImplementationOnce((sessionId: string, onResumed: (data: any) => void) => {
+      onResumed({
+        session_id: sessionId,
+        isWorking: false,
+        messages: [{
+          id: 1,
+          role: 'tool',
+          content: JSON.stringify({
+            mode: 'background',
+            subagent_id: 'hermes-child',
+            status: 'running',
+          }),
+          tool_call_id: 'delegate-call-1',
+          tool_name: 'delegate_task',
+          timestamp: 100,
+        }],
+        events: [],
+        backgroundTasks: [],
+      })
+      return {} as any
+    })
+
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1')]
+    await store.switchSession('session-1')
+
+    expect(store.messages.filter(message => message.toolCallId?.startsWith('subagent:'))).toHaveLength(0)
+    expect(store.messages).toEqual([
+      expect.objectContaining({
+        role: 'tool',
+        toolName: 'delegate_task',
+        toolCallId: expect.stringMatching(/^background-delegate:delegate-call-1:/),
+        toolStatus: 'done',
+      }),
+    ])
+  })
+
+  it('restores a persisted Hermes background result as a clickable child stream', async () => {
+    chatApi.resumeSession.mockImplementationOnce((sessionId: string, onResumed: (data: any) => void) => {
+      onResumed({
+        session_id: sessionId,
+        isWorking: false,
+        messages: [{
+          id: 1,
+          role: 'tool',
+          content: JSON.stringify({
+            mode: 'background',
+            delegation_id: 'delegation-1',
+            status: 'dispatched',
+          }),
+          display_content: JSON.stringify({
+            runtime: 'hermes',
+            mode: 'background',
+            delegation_id: 'delegation-1',
+            subagent_id: 'hermes-child',
+            status: 'completed',
+            task_index: 0,
+            task_count: 1,
+            goal: 'Inspect the task',
+            summary: 'Hermes inspection completed.',
+            output: 'Hermes inspection completed.',
+          }),
+          tool_call_id: 'delegate-call-1',
+          tool_name: 'delegate_task',
+          timestamp: 100,
+        }],
+        events: [],
+        backgroundTasks: [],
+      })
+      return {} as any
+    })
+
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1')]
+    await store.switchSession('session-1')
+
+    expect(store.messages).toEqual([
+      expect.objectContaining({
+        role: 'tool',
+        toolName: 'delegate_task',
+        toolCallId: 'subagent:hermes-child',
+        toolStatus: 'done',
+        toolPreview: expect.stringContaining('Hermes inspection completed.'),
+      }),
+    ])
+    expect(store.getSubagentStream('session-1', 'hermes-child')).toEqual(expect.objectContaining({
+      status: 'completed',
+      summary: 'Hermes inspection completed.',
+    }))
   })
 
   it('surfaces non-terminal reattach warnings replayed in a non-working resume payload', async () => {

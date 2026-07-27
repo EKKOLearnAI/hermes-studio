@@ -1721,6 +1721,16 @@ onBeforeUnmount(() => {
   max-width: 100%;
   box-sizing: border-box;
 
+  &.subagent-entry {
+    display: inline-flex;
+    width: fit-content;
+    max-width: min(560px, calc(100% - 8px));
+
+    .tool-preview {
+      flex-grow: 0;
+    }
+  }
+
   &.expandable {
     cursor: pointer;
 

@@ -55,13 +55,16 @@ function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function parseBackgroundDelegation(toolName: string, output: string): { delegationId: string; status: string } | null {
+function parseBackgroundDelegation(
+  toolName: string,
+  output: string,
+): { delegationId: string; status: string; payload: Record<string, unknown> } | null {
   if (toolName !== 'delegate_task') return null
   try {
     const payload = JSON.parse(output) as Record<string, unknown>
     const delegationId = stringValue(payload.delegation_id)
     if (!delegationId || payload.mode !== 'background') return null
-    return { delegationId, status: stringValue(payload.status) || 'dispatched' }
+    return { delegationId, status: stringValue(payload.status) || 'dispatched', payload }
   } catch {
     return null
   }
@@ -1225,6 +1228,9 @@ async function applyBridgeChunkAsync(
             status: 'running',
             profile,
             updatedAt: Date.now(),
+            toolCallId: completed.id,
+            messageId: completed.messageId,
+            dispatchPayload: backgroundDelegation.payload,
           }
         }
       }
@@ -1282,6 +1288,9 @@ async function applyBridgeChunkAsync(
         files_written: ev.files_written,
         output_tail: ev.output_tail,
         background_seq: ev.background_seq,
+        timestamp: ev.timestamp,
+        started_at: ev.started_at,
+        updated_at: ev.updated_at,
       }
       pushState(sessionMap, sessionId, evType, payload)
       emit(evType, payload)
