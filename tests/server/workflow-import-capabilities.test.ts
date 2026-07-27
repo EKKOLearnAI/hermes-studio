@@ -5,13 +5,22 @@ import { assertWorkflowImportCapabilities, workflowImportEnvironmentRevision } f
 const node = (data: Record<string, unknown>) => ({ id: 'agent', type: 'agent', data: { agent: 'hermes', ...data } })
 
 describe('workflow import capabilities', () => {
-  it('requires an exact configured provider, model, and api mode tuple', () => {
+  it('validates Hermes targets by provider and model while leaving api mode profile-owned', () => {
     const groups = [{ provider: 'custom:test', models: ['model-a'], api_mode: 'codex_responses' }]
     expect(() => assertWorkflowImportCapabilities([node({ provider: 'custom:test', model: 'model-a', apiMode: 'codex_responses' })], groups)).not.toThrow()
     expect(() => assertWorkflowImportCapabilities([node({ provider: 'custom:test', model: 'model-b', apiMode: 'codex_responses' })], groups)).toThrow('unavailable')
-    expect(() => assertWorkflowImportCapabilities([node({ provider: 'custom:test', model: 'model-a', apiMode: 'chat_completions' })], groups)).toThrow('unavailable')
-    expect(() => assertWorkflowImportCapabilities([node({ provider: 'custom:test', model: 'model-a', apiMode: 'chat_completions' })], [{ provider: 'custom:test', models: ['model-a'] }])).toThrow('unavailable')
+    expect(() => assertWorkflowImportCapabilities([node({ provider: 'custom:test', model: 'model-a', apiMode: 'chat_completions' })], groups)).not.toThrow()
+    expect(() => assertWorkflowImportCapabilities([node({ provider: 'custom:test', model: 'model-a', apiMode: 'codex_responses' })], [{ provider: 'custom:test', models: ['model-a'] }])).not.toThrow()
   })
+
+  it.each(['openai-codex', 'xai-oauth'])(
+    'accepts Hermes provider %s when its catalog omits api mode',
+    (provider) => {
+      expect(() => assertWorkflowImportCapabilities([
+        node({ provider, model: 'model-a', apiMode: 'codex_responses' }),
+      ], [{ provider, models: ['model-a'] }])).not.toThrow()
+    },
+  )
 
   it('accepts scoped Coding Agent protocol overrides for a configured provider and model', () => {
     const groups = [{ provider: 'custom:test', models: ['model-a'], api_mode: 'chat_completions' }]

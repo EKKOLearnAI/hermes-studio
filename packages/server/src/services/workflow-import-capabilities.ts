@@ -29,13 +29,15 @@ export function assertWorkflowImportCapabilities(nodes: unknown[], groups: Capab
     const apiMode = typeof data.apiMode === 'string' ? data.apiMode.trim() : ''
     if (!provider && !model && !apiMode) continue
     const exact = `${provider}\u0000${model}\u0000${apiMode}`
+    const providerModel = `${provider}\u0000${model}`
+    const hermesTargetAvailable = agent === 'hermes' && configuredProviderModels.has(providerModel)
     const scopedCodingAgent = agent === 'codex' || agent === 'claude-code'
     const scopedCodingAgentProviderBlocked = scopedCodingAgent && isScopedCodingAgentAuthProvider(provider)
     const codingAgentTargetAvailable = scopedCodingAgent
       && !scopedCodingAgentProviderBlocked
       && SCOPED_CODING_AGENT_API_MODES.has(apiMode)
-      && configuredProviderModels.has(`${provider}\u0000${model}`)
-    if (scopedCodingAgentProviderBlocked || (!configured.has(exact) && !codingAgentTargetAvailable)) {
+      && configuredProviderModels.has(providerModel)
+    if (scopedCodingAgentProviderBlocked || (!configured.has(exact) && !hermesTargetAvailable && !codingAgentTargetAvailable)) {
       throw Object.assign(new Error(`workflow node ${String(node.id || '?')} target capability is unavailable in profile`), { status: 409 })
     }
   }
