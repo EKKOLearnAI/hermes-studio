@@ -265,6 +265,45 @@ describe('ekko-agent model requests', () => {
     }))
   })
 
+  it('routes Responses commentary-phase messages through the reasoning channel', async () => {
+    const encoder = new TextEncoder()
+    const fetchMock = vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: response.output_item.added\ndata: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_commentary","type":"message","phase":"commentary","content":[]}}\n\n'))
+        controller.enqueue(encoder.encode('event: response.output_text.delta\ndata: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_commentary","delta":"**Loading model skill**"}\n\n'))
+        controller.enqueue(encoder.encode('event: response.output_item.done\ndata: {"type":"response.output_item.done","output_index":0,"item":{"id":"msg_commentary","type":"message","phase":"commentary","content":[{"type":"output_text","text":"**Loading model skill**"}]}}\n\n'))
+        controller.enqueue(encoder.encode('event: response.output_item.added\ndata: {"type":"response.output_item.added","output_index":1,"item":{"id":"msg_final","type":"message","phase":"final_answer","content":[]}}\n\n'))
+        controller.enqueue(encoder.encode('event: response.output_text.delta\ndata: {"type":"response.output_text.delta","output_index":1,"item_id":"msg_final","delta":"Ready."}\n\n'))
+        controller.enqueue(encoder.encode('event: response.output_item.done\ndata: {"type":"response.output_item.done","output_index":1,"item":{"id":"msg_final","type":"message","phase":"final_answer","content":[{"type":"output_text","text":"Ready."}]}}\n\n'))
+        controller.enqueue(encoder.encode('event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_commentary","status":"completed","output":[]}}\n\n'))
+        controller.close()
+      },
+    }), { status: 200 }))
+    const client = createModelClient({
+      id: 'custom:responses',
+      type: 'openai-compatible',
+      requestStyle: 'openai-responses',
+      apiKey: 'token',
+      defaultModel: 'reasoning-model',
+    }, { fetch: fetchMock })
+
+    const events = []
+    for await (const event of client.stream({
+      messages: [{ role: 'user', content: 'Use the model skill.' }],
+    })) events.push(event)
+
+    expect(events).toContainEqual({ type: 'reasoning-delta', text: '**Loading model skill**' })
+    expect(events).not.toContainEqual({ type: 'text-delta', text: '**Loading model skill**' })
+    expect(events).toContainEqual({ type: 'text-delta', text: 'Ready.' })
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'done',
+      response: expect.objectContaining({
+        content: 'Ready.',
+        reasoning: '**Loading model skill**',
+      }),
+    }))
+  })
+
   it('keeps non-Codex Responses create requests non-streaming', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       output_text: 'xAI',

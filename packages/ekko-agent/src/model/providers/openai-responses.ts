@@ -62,7 +62,9 @@ interface OpenAIResponsesResponse {
   model?: string
   output_text?: string
   output?: Array<{
+    id?: string
     type?: string
+    phase?: string
     content?: Array<{ type?: string; text?: string }>
     summary?: Array<{ type?: string; text?: string }>
     name?: string
@@ -137,6 +139,8 @@ export class OpenAIResponsesModelClient implements ModelClient {
     let streamedText = ''
     let streamedReasoning = ''
     const collectedOutputItems: NonNullable<OpenAIResponsesResponse['output']> = []
+    const messagePhasesById = new Map<string, string>()
+    const messagePhasesByIndex = new Map<number, string>()
     for await (const event of readServerSentEvents(response)) {
       if (event === '[DONE]') {
         yield { type: 'done' }
@@ -145,9 +149,18 @@ export class OpenAIResponsesModelClient implements ModelClient {
       const chunk = parseJson<Record<string, unknown>>(event)
       if (!chunk) continue
 
+      if (chunk.type === 'response.output_item.added' && isPlainRecord(chunk.item)) {
+        rememberMessagePhase(chunk.item, chunk, messagePhasesById, messagePhasesByIndex)
+      }
       if (chunk.type === 'response.output_text.delta' && typeof chunk.delta === 'string') {
-        streamedText += chunk.delta
-        yield { type: 'text-delta', text: chunk.delta }
+        const phase = messagePhaseForChunk(chunk, messagePhasesById, messagePhasesByIndex)
+        if (isReasoningMessagePhase(phase)) {
+          streamedReasoning += chunk.delta
+          yield { type: 'reasoning-delta', text: chunk.delta }
+        } else {
+          streamedText += chunk.delta
+          yield { type: 'text-delta', text: chunk.delta }
+        }
       }
       if (
         (chunk.type === 'response.reasoning.delta' ||
@@ -160,6 +173,7 @@ export class OpenAIResponsesModelClient implements ModelClient {
       }
       if (chunk.type === 'response.output_item.done' && isPlainRecord(chunk.item)) {
         const item = chunk.item
+        rememberMessagePhase(item, chunk, messagePhasesById, messagePhasesByIndex)
         collectedOutputItems.push(item as NonNullable<OpenAIResponsesResponse['output']>[number])
         if (item.type === 'function_call' && typeof item.name === 'string') {
           const id = typeof item.call_id === 'string'
@@ -243,10 +257,17 @@ export function normalizeOpenAIResponsesResponse(response: OpenAIResponsesRespon
     .map(item => normalizeToolCall(item.call_id ?? '', item.name ?? '', item.arguments ?? '{}'))
   const toolCalls = normalizedToolCalls?.length ? normalizedToolCalls : undefined
 
+  const messageItems = response.output?.filter(item => item.type === 'message') ?? []
+  const outputContent = messageItems
+    .filter(item => !isReasoningMessagePhase(item.phase))
+    .flatMap(item => item.content ?? [])
+    .map(part => part.text ?? '')
+    .join('')
+
   return {
     id: response.id,
     model: response.model,
-    content: response.output_text ?? response.output?.flatMap(item => item.content ?? []).map(part => part.text ?? '').join('') ?? '',
+    content: outputContent || (messageItems.length === 0 ? response.output_text ?? '' : ''),
     reasoning: normalizeReasoning(response),
     toolCalls,
     usage: response.usage ? normalizeUsage(response.usage) : undefined,
@@ -262,11 +283,46 @@ function normalizeReasoning(response: OpenAIResponsesResponse): string | undefin
   if (typeof response.reasoning_summary === 'string' && response.reasoning_summary) return response.reasoning_summary
 
   const reasoning = response.output
-    ?.filter(item => item.type === 'reasoning')
-    .flatMap(item => [...(item.content ?? []), ...(item.summary ?? [])])
+    ?.flatMap((item) => {
+      if (item.type === 'reasoning') return [...(item.content ?? []), ...(item.summary ?? [])]
+      if (item.type === 'message' && isReasoningMessagePhase(item.phase)) return item.content ?? []
+      return []
+    })
     .map(part => part.text ?? '')
-    .join('')
+    .filter(Boolean)
+    .join('\n')
   return reasoning || undefined
+}
+
+function rememberMessagePhase(
+  item: Record<string, unknown>,
+  chunk: Record<string, unknown>,
+  phasesById: Map<string, string>,
+  phasesByIndex: Map<number, string>,
+): void {
+  if (item.type !== 'message' || typeof item.phase !== 'string') return
+  if (typeof item.id === 'string') phasesById.set(item.id, item.phase)
+  if (typeof chunk.output_index === 'number') phasesByIndex.set(chunk.output_index, item.phase)
+}
+
+function messagePhaseForChunk(
+  chunk: Record<string, unknown>,
+  phasesById: ReadonlyMap<string, string>,
+  phasesByIndex: ReadonlyMap<number, string>,
+): string | undefined {
+  if (typeof chunk.phase === 'string') return chunk.phase
+  if (typeof chunk.item_id === 'string') {
+    const phase = phasesById.get(chunk.item_id)
+    if (phase) return phase
+  }
+  return typeof chunk.output_index === 'number'
+    ? phasesByIndex.get(chunk.output_index)
+    : undefined
+}
+
+function isReasoningMessagePhase(phase: unknown): boolean {
+  const normalized = typeof phase === 'string' ? phase.trim().toLowerCase() : ''
+  return normalized === 'commentary' || normalized === 'analysis'
 }
 
 function toOpenAIResponseInput(
