@@ -2280,7 +2280,7 @@ export default {
     automaticHandoffSettings: 'Автоматическая передача',
     maxAutomaticHandoffs: 'Максимум автоматических передач',
     unlimitedAutomaticHandoffs: 'Без ограничений',
-    maxAutomaticHandoffsDesc: 'Ограничивает передачи между Agent через @упоминания после одного сообщения пользователя. @all остаётся параллельной рассылкой.',
+    maxAutomaticHandoffsDesc: "Ограничивает передачи между Agent через {'@'}упоминания после одного сообщения пользователя. {'@'}all остаётся параллельной рассылкой.",
     roomSettingsSaved: 'Настройки комнаты сохранены',
     invalidAutomaticHandoffLimit: 'Введите положительное целое число или включите режим без ограничений',
     saveRoomSettings: 'Сохранить настройки',

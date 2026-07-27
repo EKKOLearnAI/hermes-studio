@@ -2624,7 +2624,7 @@ export default {
     automaticHandoffSettings: 'Automatic Handoffs',
     maxAutomaticHandoffs: 'Maximum automatic handoffs',
     unlimitedAutomaticHandoffs: 'Unlimited',
-    maxAutomaticHandoffsDesc: 'Limits Agent-to-Agent @mention handoffs triggered by one user message. Does not change @all parallel fan-out.',
+    maxAutomaticHandoffsDesc: "Limits Agent-to-Agent {'@'}mention handoffs triggered by one user message. Does not change {'@'}all parallel fan-out.",
     roomSettingsSaved: 'Room settings saved',
     invalidAutomaticHandoffLimit: 'Enter a positive integer or enable Unlimited',
     saveRoomSettings: 'Save settings',

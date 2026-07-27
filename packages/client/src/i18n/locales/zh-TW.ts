@@ -2584,7 +2584,7 @@ export default {
     automaticHandoffSettings: '自動接力設定',
     maxAutomaticHandoffs: '最大自動接力次數',
     unlimitedAutomaticHandoffs: '無限制',
-    maxAutomaticHandoffsDesc: '限制一則使用者訊息觸發後，Agent 之間透過 @成員 自動接力的次數；不改變 @all 的並行廣播語意。',
+    maxAutomaticHandoffsDesc: "限制一則使用者訊息觸發後，Agent 之間透過 {'@'}成員 自動接力的次數；不改變 {'@'}all 的並行廣播語意。",
     roomSettingsSaved: '房間設定已儲存',
     invalidAutomaticHandoffLimit: '請輸入正整數，或勾選「無限制」',
     saveRoomSettings: '儲存設定',

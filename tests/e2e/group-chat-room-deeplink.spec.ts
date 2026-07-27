@@ -2,9 +2,9 @@ import { expect, test, type Page, type Route } from '@playwright/test'
 import { authenticate, TEST_MODEL_GROUP } from './fixtures'
 
 const baseRooms = [
-  { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', canManage: true, workspace: '/tmp/alpha', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 123 },
-  { id: 'room-beta', name: 'Beta Room', inviteCode: 'BETA22', canManage: true, workspace: '/tmp/beta', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 456 },
-  { id: 'room-readonly', name: 'Read Only Room', inviteCode: null, canManage: false, workspace: '/tmp/readonly', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 0 },
+  { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', canManage: true, workspace: '/tmp/alpha', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, maxAgentMentionDepth: 4 as number | null, totalTokens: 123 },
+  { id: 'room-beta', name: 'Beta Room', inviteCode: 'BETA22', canManage: true, workspace: '/tmp/beta', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, maxAgentMentionDepth: 4 as number | null, totalTokens: 456 },
+  { id: 'room-readonly', name: 'Read Only Room', inviteCode: null, canManage: false, workspace: '/tmp/readonly', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, maxAgentMentionDepth: 4 as number | null, totalTokens: 0 },
 ]
 
 const mixedRuntimeParticipants = [
@@ -51,6 +51,7 @@ const messagesByRoom: Record<string, unknown[]> = {
 async function mockGroupChatApi(page: Page) {
   const rooms = baseRooms.map(room => ({ ...room }))
   const inviteCodeUpdates: Array<{ roomId: string, body: unknown }> = []
+  const roomConfigUpdates: Array<{ roomId: string, body: Record<string, unknown> }> = []
 
   await page.route('**/*', async (route: Route) => {
     const request = route.request()
@@ -97,6 +98,17 @@ async function mockGroupChatApi(page: Page) {
       return json({ success: true })
     }
 
+    const roomConfigMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/config$/)
+    if (roomConfigMatch && request.method() === 'PUT') {
+      const roomId = decodeURIComponent(roomConfigMatch[1])
+      const body = JSON.parse(request.postData() || '{}') as Record<string, unknown>
+      roomConfigUpdates.push({ roomId, body })
+      const room = rooms.find(r => r.id === roomId)
+      if (!room || !room.canManage) return json({ error: 'Forbidden' }, 403)
+      Object.assign(room, body)
+      return json({ room })
+    }
+
     const workspaceListMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/workspace-files\/list$/)
     if (workspaceListMatch) {
       return json({
@@ -127,7 +139,7 @@ async function mockGroupChatApi(page: Page) {
     return json({ error: `Unexpected mocked route: ${request.method()} ${pathname}` }, 404)
   })
 
-  return { inviteCodeUpdates }
+  return { inviteCodeUpdates, roomConfigUpdates }
 }
 
 async function mockGroupChatSocket(page: Page) {
@@ -284,6 +296,41 @@ test.describe('group chat room deep links', () => {
     await modal.getByRole('button', { name: 'Cancel' }).click()
     await settingsButton.click()
     await expect(modal.getByPlaceholder('Enter a new invite code')).toHaveValue('NEW456')
+  })
+
+  test('room settings persist custom and unlimited automatic handoff limits', async ({ page }) => {
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    const settingsButton = page.locator('.chat-header .header-info .compression-settings-button')
+    await settingsButton.click()
+
+    const modal = page.locator('.room-settings-modal')
+    const handoffSection = modal.locator('.settings-section', { hasText: 'Automatic Handoffs' })
+    const handoffInput = handoffSection.locator('input').first()
+    const unlimited = handoffSection.getByRole('checkbox', { name: 'Unlimited' })
+    const saveSettings = modal.getByRole('button', { name: 'Save settings' })
+
+    await expect(handoffInput).toHaveValue('4')
+    await expect(unlimited).not.toBeChecked()
+    await handoffInput.fill('12')
+    const finiteResponse = page.waitForResponse(response => response.request().method() === 'PUT' && response.url().endsWith('/api/hermes/group-chat/rooms/room-alpha/config'))
+    await saveSettings.click()
+    await expect((await finiteResponse).status()).toBe(200)
+    expect(api.roomConfigUpdates.at(-1)?.body.maxAgentMentionDepth).toBe(12)
+
+    await settingsButton.click()
+    const reopenedHandoffSection = page.locator('.room-settings-modal .settings-section', { hasText: 'Automatic Handoffs' })
+    await expect(reopenedHandoffSection.locator('input').first()).toHaveValue('12')
+    await reopenedHandoffSection.getByRole('checkbox', { name: 'Unlimited' }).check()
+    await expect(reopenedHandoffSection.locator('input').first()).toBeDisabled()
+    const unlimitedResponse = page.waitForResponse(response => response.request().method() === 'PUT' && response.url().endsWith('/api/hermes/group-chat/rooms/room-alpha/config'))
+    await page.locator('.room-settings-modal').getByRole('button', { name: 'Save settings' }).click()
+    await expect((await unlimitedResponse).status()).toBe(200)
+    expect(api.roomConfigUpdates.at(-1)?.body.maxAgentMentionDepth).toBeNull()
+
+    await settingsButton.click()
+    const unlimitedSection = page.locator('.room-settings-modal .settings-section', { hasText: 'Automatic Handoffs' })
+    await expect(unlimitedSection.getByRole('checkbox', { name: 'Unlimited' })).toBeChecked()
+    await expect(unlimitedSection.locator('input').first()).toBeDisabled()
   })
 
   test('read-only room members cannot open room settings', async ({ page }) => {
