@@ -78,6 +78,27 @@ describe('group chat durable handoff routing baseline', () => {
     expect(groupServer.getStorage().listHandoffJobs('room-1')).toEqual([])
   })
 
+  it('rejects an agent message that omits provenance while its durable handoff is running', async () => {
+    const { human, agent } = await joinHumanAndAgent()
+    await emitAck(human, 'message', { roomId: 'room-1', id: 'durable-msg-trigger', content: '@Worker hello' })
+    const running = groupServer.getStorage().claimHandoffJobs('test-dispatcher', Date.now(), 1, 60_000)[0]
+    expect(running).toMatchObject({ targetAgentId: 'agent-worker', status: 'running' })
+
+    const response = await emitAck<any>(agent, 'message', {
+      roomId: 'room-1',
+      id: 'omitted-durable-agent-message',
+      content: 'must not publish',
+      role: 'assistant',
+      agentSessionId: currentAgentSessionId(),
+    })
+
+    expect(response).toEqual(expect.objectContaining({ error: expect.stringMatching(/provenance|handoff|lease/i) }))
+    expect(groupServer.getStorage().getMessage('omitted-durable-agent-message')).toBeNull()
+    expect(groupServer.getStorage().getHandoffJob(running.id)).toMatchObject({
+      status: 'running', leaseToken: running.leaseToken,
+    })
+  })
+
   it('does not route an agent reply without a live durable source job', async () => {
     const { agent } = await joinHumanAndAgent()
 

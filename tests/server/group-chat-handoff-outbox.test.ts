@@ -439,6 +439,30 @@ describe('durable group-chat handoff outbox', () => {
     expect(storage.getHandoffJob(running.id)).toMatchObject({ status: 'running', leaseToken: running.leaseToken })
   })
 
+  it('rejects a durable assistant message that omits its job lease provenance', () => {
+    const storage = new ChatStorage()
+    storage.init()
+    storage.saveRoom('room-1', 'Room', 'ROOM1')
+    const sourceActor = createAuthorizedSource(storage, 'room-1')
+    const target = storage.addRoomAgent('room-1', 'agent-a', 'default', 'A', '', 0, { sessionId: 'session-a' })
+    storage.saveMessageAndRefreshRoom({
+      id: 'omitted-provenance-trigger', roomId: 'room-1', senderId: 'human-1', senderName: 'Human',
+      content: '@A hello', timestamp: 100, role: 'user',
+    }, authorizedHandoffs(storage, 'room-1', [{ chainId: 'omission-chain', targetAgentId: target.agentId, targetSessionId: target.sessionId, depth: 0, kind: 'mention' }]))
+    const running = storage.claimHandoffJobs('process-1', 1_000, 1, 5_000)[0]
+    expect(running).toMatchObject({ targetAgentId: target.agentId, targetSessionId: target.sessionId, status: 'running' })
+
+    expect(() => storage.saveMessageAndRefreshRoom({
+      id: 'omitted-provenance-message', roomId: 'room-1', senderId: target.agentId, senderName: 'A',
+      content: 'must not publish', timestamp: 200, role: 'assistant',
+      agentSessionId: target.sessionId,
+    })).toThrow(/provenance|handoff|lease/i)
+
+    expect(storage.getMessage('omitted-provenance-message')).toBeNull()
+    expect(storage.getHandoffJob(running.id)).toMatchObject({ status: 'running', leaseToken: running.leaseToken })
+    expect(sourceActor.id).toBeTruthy()
+  })
+
   it('rejects and fences a partial assistant message when durable authority is revoked', () => {
     const storage = new ChatStorage()
     storage.init()

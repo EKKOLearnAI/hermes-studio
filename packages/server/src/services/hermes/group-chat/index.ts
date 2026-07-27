@@ -1706,6 +1706,20 @@ export class ChatStorage {
             const message = safeMsg
             let effectiveAuthority = options.authority
             let sourceJobRow: any | null = null
+            const isAgentRunTrace = message.role === 'assistant'
+                || message.role === 'tool'
+                || Array.isArray(message.tool_calls)
+                || Boolean(message.tool_call_id)
+            if (isAgentRunTrace && !message.sourceHandoffJobId) {
+                const durableOwner = db.prepare(
+                    `SELECT id FROM gc_handoff_jobs
+                     WHERE roomId = ? AND targetAgentId = ? AND targetSessionId = ? AND status = 'running'
+                     LIMIT 1`,
+                ).get(message.roomId, message.senderId, String(message.agentSessionId || '')) as { id?: string } | undefined
+                if (durableOwner?.id) {
+                    throw new Error(`Handoff provenance required for running job ${durableOwner.id}`)
+                }
+            }
             if (message.sourceHandoffJobId) {
                 sourceJobRow = db.prepare('SELECT * FROM gc_handoff_jobs WHERE id = ?').get(message.sourceHandoffJobId) as any
                 if (
@@ -4039,7 +4053,9 @@ export class GroupChatServer {
             sourceHandoffJobId: isAgentMessage ? String(data.sourceHandoffJobId || '') : '',
             sourceHandoffLeaseToken: isAgentMessage ? String(data.sourceHandoffLeaseToken || '') : '',
             handoffFinal: isAgentMessage && data.handoffFinal === true,
-            agentSessionId: isAgentMessage ? String(data.agentSessionId || '') : '',
+            agentSessionId: isAgentMessage
+                ? String(this.storage.getRoomAgentByAgentId(roomId, userId)?.sessionId || '')
+                : '',
         }
 
         const roomInfo = this.storage.getRoom(roomId)
