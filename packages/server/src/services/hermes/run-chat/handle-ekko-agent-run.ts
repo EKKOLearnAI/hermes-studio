@@ -74,6 +74,10 @@ function normalizeReasoningEffort(value: unknown): ModelReasoningEffort | undefi
     : undefined
 }
 
+function resolveReasoningEffort(value: unknown): ModelReasoningEffort {
+  return normalizeReasoningEffort(value) ?? 'medium'
+}
+
 function parseJsonRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   return value as Record<string, unknown>
@@ -538,7 +542,7 @@ export async function handleEkkoAgentRun(
   const baseUrl = runtimeConfig.baseUrl || ''
   const apiMode = runtimeConfig.apiMode
   const apiKey = runtimeConfig.apiKey
-  const reasoningEffort = normalizeReasoningEffort(data.reasoning_effort)
+  const reasoningEffort = resolveReasoningEffort(data.reasoning_effort)
   const workspace = data.workspace || storedSession?.workspace || getProfileDir(profile)
   const shouldEmitWorkspaceUpdate = Boolean(workspace && !storedSession?.workspace)
   if (storedSession && !storedSession.workspace) updateSession(sessionId, { workspace })

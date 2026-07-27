@@ -52,7 +52,20 @@ describe('Ekko MCP multimodal results', () => {
     expect(openai.messages).toHaveLength(2)
     expect(JSON.stringify(openai.messages[1])).toContain('data:image/png;base64,aGVsbG8=')
 
-    const responses = toOpenAIResponsesPayload(config, { messages: [toolImage] })
+    const responses = toOpenAIResponsesPayload(config, {
+      messages: [
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{
+            id: 'call-1',
+            name: 'browser_screenshot',
+            arguments: {},
+          }],
+        },
+        toolImage,
+      ],
+    })
     expect(JSON.stringify(responses.input)).toContain('input_image')
 
     const anthropic = toAnthropicMessagesPayload({ ...config, type: 'anthropic' }, { messages: [toolImage] })
