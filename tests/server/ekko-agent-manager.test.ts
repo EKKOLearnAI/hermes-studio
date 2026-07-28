@@ -20,6 +20,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   await rm(baseDirectory, { recursive: true, force: true })
 })
 
@@ -163,8 +164,9 @@ describe('GlobalEkkoAgent', () => {
     }
   })
 
-  it('initializes Ekko directories without creating a disabled production memory database', async () => {
-    const agent = createGlobalEkkoAgent({ baseDirectory }, { NODE_ENV: 'production' })
+  it('initializes persistent Ekko memory in production', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    const agent = createGlobalEkkoAgent({ baseDirectory })
     try {
       const result = await agent.run({
         messages: ['hello'],
@@ -174,8 +176,8 @@ describe('GlobalEkkoAgent', () => {
 
       expect(result.output.content).toBe('ok')
       expect(agent.status()).toMatchObject({
-        memoryEnabled: false,
-        memoryDatabasePath: undefined,
+        memoryEnabled: true,
+        memoryDatabasePath: join(baseDirectory, '.ekko', 'ekko.db'),
         dataDirectory: join(baseDirectory, '.ekko'),
         skillDirectory: join(baseDirectory, '.ekko', 'skills', 'default'),
         logDirectory: join(baseDirectory, '.ekko', 'logs', 'default'),
@@ -183,7 +185,7 @@ describe('GlobalEkkoAgent', () => {
       })
       expect(existsSync(join(baseDirectory, '.ekko', 'skills'))).toBe(true)
       expect(existsSync(join(baseDirectory, '.ekko', 'logs', 'default', 'ekko-agent.jsonl'))).toBe(true)
-      expect(existsSync(join(baseDirectory, '.ekko', 'ekko.db'))).toBe(false)
+      expect(existsSync(join(baseDirectory, '.ekko', 'ekko.db'))).toBe(true)
     } finally {
       agent.close()
     }

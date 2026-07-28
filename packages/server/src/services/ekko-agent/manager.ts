@@ -176,12 +176,8 @@ export class GlobalEkkoAgent {
 
 export function createGlobalEkkoAgent(
   options: GlobalEkkoAgentOptions = {},
-  env: Record<string, string | undefined> = process.env,
 ): GlobalEkkoAgent {
-  return new GlobalEkkoAgent({
-    ...options,
-    memory: env.NODE_ENV === 'production' ? false : options.memory,
-  })
+  return new GlobalEkkoAgent(options)
 }
 
 const globalEkkoAgents = new Map<string, GlobalEkkoAgent>()
