@@ -2331,6 +2331,7 @@ jobTriggered: 'Job declenche',
   },
 
   changelog: {
+    new_0_6_35_1: 'La mémoire persistante d’Ekko Agent est désormais activée en production, avec un stockage SQLite isolé par profil, un budget de rappel automatique de 4 000 tokens, une recherche de pertinence améliorée dans toute la mémoire et un traitement plus sûr des requêtes aux modèles (#2246)',
     new_0_6_34_1: 'Cette version couvre les 21 PR fusionnées après la 0.6.33 : thèmes par utilisateur, améliorations d’Ekko et des Coding Agents, desktop et navigateur, automatisation et fiabilité',
     new_0_6_34_2: 'Chaque compte peut personnaliser la taille et la couleur du texte, la couleur d’accent et le fond du workspace avec des surfaces translucides cohérentes ; les fenêtres Windows et les réglages du navigateur suivent le thème, et les commandes navigateur d’Ekko démarrent correctement sous Windows (#2242, #2243, #2244)',
     new_0_6_34_3: 'Ekko est disponible en production avec découverte des Skills à la demande et entrée multimodale ; l’évolution protégée des Skills, les logs isolés par Profile, la persistance du protocole et les résumés de raisonnement Responses améliorent sa sécurité et ses capacités (#2215, #2236)',

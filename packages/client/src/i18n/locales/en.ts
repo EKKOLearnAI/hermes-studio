@@ -2790,6 +2790,7 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_35_1: 'Ekko Agent persistent memory is now enabled in production, with profile-scoped SQLite storage, a 4,000-token automatic recall budget, improved full-store relevance search, and safer model request handling (#2246)',
     new_0_6_34_1: 'This release covers all 21 PRs merged after 0.6.33, spanning per-user themes, Ekko and Coding Agent upgrades, desktop and browser improvements, automation, and reliability fixes',
     new_0_6_34_2: 'Users can customize font size, text and accent colors, and workspace backgrounds with account-scoped persistence and consistent translucent surfaces; Windows chrome and Browser settings follow the theme, and Ekko browser commands now launch correctly on Windows (#2242, #2243, #2244)',
     new_0_6_34_3: 'Ekko is available in production with on-demand skill discovery and multimodal input, while guarded skill evolution, profile-scoped logs, protocol persistence, and Responses reasoning summaries make it safer and more capable (#2215, #2236)',
