@@ -1,6 +1,6 @@
 ---
 date: 2026-07-28
-pr: pending
+pr: 2246
 feature: Ekko production memory
 impact: Production Web UI-hosted Ekko sessions now retrieve and maintain the same profile-scoped SQLite memory used outside production.
 ---

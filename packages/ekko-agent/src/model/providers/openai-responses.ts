@@ -33,7 +33,6 @@ interface OpenAIResponsesPayload {
   }>
   tool_choice?: 'auto' | 'none' | 'required'
   stream?: boolean
-  metadata?: Record<string, unknown>
   store: false
 }
 
@@ -225,7 +224,6 @@ export function toOpenAIResponsesPayload(config: ModelProviderConfig, request: M
           .map(toolCall => toolCall.id)
       : []),
   )
-  const supportsMetadata = config.id !== 'xai-oauth' && config.id !== 'openai-codex'
   const supportsSamplingControls = config.id !== 'openai-codex'
   return {
     model: request.model ?? config.defaultModel,
@@ -246,7 +244,6 @@ export function toOpenAIResponsesPayload(config: ModelProviderConfig, request: M
     tools: request.tools?.map(toOpenAIResponseTool),
     tool_choice: request.toolChoice,
     stream: request.stream,
-    ...(supportsMetadata && request.metadata ? { metadata: request.metadata } : {}),
     store: false,
   }
 }

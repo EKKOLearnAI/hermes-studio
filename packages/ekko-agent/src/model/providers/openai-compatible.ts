@@ -74,7 +74,6 @@ interface OpenAIChatPayload {
   stream_options?: {
     include_usage: boolean
   }
-  metadata?: Record<string, unknown>
   vl_high_resolution_images?: true
 }
 
@@ -259,7 +258,6 @@ export function toOpenAIChatPayload(config: ModelProviderConfig, request: ModelR
     tool_choice: request.toolChoice,
     stream: request.stream,
     stream_options: request.stream ? { include_usage: true } : undefined,
-    metadata: request.metadata,
     vl_high_resolution_images: isQwenOAuth ? true : undefined,
   }
 }

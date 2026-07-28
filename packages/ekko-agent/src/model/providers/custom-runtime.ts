@@ -38,7 +38,7 @@ export class CustomRuntimeModelClient implements ModelClient {
       this.config,
       this.fetchImpl,
       customRuntimeUrl(this.config),
-      { ...request, model: request.model ?? this.config.defaultModel, stream: false },
+      { ...request, metadata: undefined, model: request.model ?? this.config.defaultModel, stream: false },
       undefined,
       request.signal,
     )
@@ -49,7 +49,7 @@ export class CustomRuntimeModelClient implements ModelClient {
       this.config,
       this.fetchImpl,
       customRuntimeUrl(this.config),
-      { ...request, model: request.model ?? this.config.defaultModel, stream: true },
+      { ...request, metadata: undefined, model: request.model ?? this.config.defaultModel, stream: true },
       undefined,
       request.signal,
     )

@@ -467,6 +467,7 @@ describe('ekko-agent model requests', () => {
       ],
       temperature: 0.2,
       maxTokens: 1024,
+      metadata: { session_id: 'session-1', profile: 'default' },
     })
 
     expect(payload).toMatchObject({
@@ -487,6 +488,7 @@ describe('ekko-agent model requests', () => {
         },
       ],
     })
+    expect(payload).not.toHaveProperty('metadata')
   })
 
   it('normalizes OpenAI-compatible responses into the internal shape', () => {
@@ -605,6 +607,7 @@ describe('ekko-agent model requests', () => {
       maxTokens: 500,
       reasoningEffort: 'medium',
       reasoningSummary: 'auto',
+      metadata: { session_id: 'session-1', profile: 'default' },
       context: { responseId: 'resp_previous' },
     })
 
@@ -617,7 +620,27 @@ describe('ekko-agent model requests', () => {
       tools: [{ type: 'function', name: 'search' }],
       store: false,
     })
+    expect(payload).not.toHaveProperty('metadata')
     expect(payload).not.toHaveProperty('previous_response_id')
+  })
+
+  it('omits internal metadata from custom runtime HTTP requests', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ content: 'OK' })))
+    const client = createModelClient({
+      id: 'runtime',
+      type: 'custom',
+      requestStyle: 'custom-runtime',
+      baseUrl: 'http://127.0.0.1:11434',
+      defaultModel: 'runtime-agent',
+    }, { fetch: fetchMock })
+
+    await client.create({
+      messages: [{ role: 'user', content: 'Hello' }],
+      metadata: { session_id: 'session-1', profile: 'default' },
+    })
+
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+    expect(requestBody).not.toHaveProperty('metadata')
   })
 
   it('replays Responses tool calls and results with native input item types', () => {

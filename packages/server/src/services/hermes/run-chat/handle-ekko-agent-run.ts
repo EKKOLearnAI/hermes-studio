@@ -1,6 +1,5 @@
 import type { Server, Socket } from 'socket.io'
 import { createHash, randomUUID } from 'crypto'
-import { inspect } from 'util'
 import {
   createModelClient,
   resolveModelProviderConfigs,
@@ -297,65 +296,6 @@ function headerSecretDebugInfo(value: unknown): string {
     : apiKeyDebugInfo(raw)
 }
 
-function consolePayload(value: unknown): string {
-  return inspect(value, {
-    depth: null,
-    colors: false,
-    maxArrayLength: null,
-    maxStringLength: null,
-    breakLength: 120,
-    compact: false,
-  })
-}
-
-function modelRequestDebugInfo(request: ModelRequest): ModelRequest {
-  return {
-    ...request,
-    messages: request.messages.map(message => ({
-      ...message,
-      contentParts: message.contentParts?.map(part => part.type === 'image'
-        ? {
-            ...part,
-            data: `[base64 omitted length=${part.data.length}]`,
-          }
-        : part),
-    })),
-  }
-}
-
-function errorPayload(err: unknown): unknown {
-  if (!(err instanceof Error)) return err
-  const withDetails = err as Error & {
-    provider?: string
-    statusCode?: number
-    retryable?: boolean
-    details?: unknown
-  }
-  return {
-    name: err.name,
-    message: err.message,
-    provider: withDetails.provider,
-    statusCode: withDetails.statusCode,
-    retryable: withDetails.retryable,
-    details: withDetails.details,
-    stack: err.stack,
-  }
-}
-
-function shouldUsePlainChatRequest(config: ModelProviderConfig): boolean {
-  const provider = String(config.id || '').toLowerCase()
-  const baseUrl = String(config.baseUrl || '').toLowerCase()
-  return provider.includes('glm') || baseUrl.includes('bigmodel.cn')
-}
-
-function requestForProvider(request: ModelRequest, config: ModelProviderConfig): ModelRequest {
-  if (!shouldUsePlainChatRequest(config)) return request
-  return {
-    ...request,
-    metadata: undefined,
-  }
-}
-
 function shouldFallbackProtocol(err: unknown): boolean {
   const statusCode = (err as { statusCode?: number } | null)?.statusCode
   return statusCode === 400 || statusCode === 404 || statusCode === 405 || statusCode === 415 || statusCode === 422
@@ -379,10 +319,9 @@ interface PendingToolGroup {
   results: Map<string, { toolName: string; result: AgentToolResult }>
 }
 
-function createConsoleModelClient(
+function createProviderModelClient(
   client: ModelClient,
   context: {
-    sessionId: string
     providerConfig: ModelProviderConfig
     fallback?: {
       client: ModelClient
@@ -396,108 +335,30 @@ function createConsoleModelClient(
     requestStyle: client.requestStyle,
     capabilities: client.capabilities,
     async create(request: ModelRequest): Promise<ModelResponse> {
-      const providerRequest = requestForProvider(request, context.providerConfig)
-      console.log('[ekko-agent] model request', consolePayload({
-        session_id: context.sessionId,
-        provider_config: redactProviderConfig(context.providerConfig),
-        request: modelRequestDebugInfo(providerRequest),
-      }))
       try {
-        const response = await client.create(providerRequest)
-        console.log('[ekko-agent] model request success', consolePayload({
-          session_id: context.sessionId,
-          provider: client.provider,
-          request_style: client.requestStyle,
-          response,
-        }))
-        return response
+        return await client.create(request)
       } catch (err) {
-        console.error('[ekko-agent] model request failed', consolePayload({
-          session_id: context.sessionId,
-          provider: client.provider,
-          request_style: client.requestStyle,
-          error: errorPayload(err),
-        }))
         if (context.fallback && context.fallback.providerConfig.requestStyle !== context.providerConfig.requestStyle && shouldFallbackProtocol(err)) {
-          const fallbackRequest = requestForProvider(request, context.fallback.providerConfig)
-          console.warn('[ekko-agent] model request protocol fallback', consolePayload({
-            session_id: context.sessionId,
-            from_request_style: context.providerConfig.requestStyle,
-            to_request_style: context.fallback.providerConfig.requestStyle,
-            provider_config: redactProviderConfig(context.fallback.providerConfig),
-            request: modelRequestDebugInfo(fallbackRequest),
-          }))
           try {
-            const response = await context.fallback.client.create(fallbackRequest)
-            console.log('[ekko-agent] model request fallback success', consolePayload({
-              session_id: context.sessionId,
-              provider: context.fallback.client.provider,
-              request_style: context.fallback.client.requestStyle,
-              response,
-            }))
-            return response
-          } catch (fallbackErr) {
-            console.error('[ekko-agent] model request fallback failed', consolePayload({
-              session_id: context.sessionId,
-              provider: context.fallback.client.provider,
-              request_style: context.fallback.client.requestStyle,
-              error: errorPayload(fallbackErr),
-            }))
-          }
+            return await context.fallback.client.create(request)
+          } catch {}
         }
         throw err
       }
     },
     async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
-      const providerRequest = requestForProvider(request, context.providerConfig)
-      console.log('[ekko-agent] model stream request', consolePayload({
-        session_id: context.sessionId,
-        provider_config: redactProviderConfig(context.providerConfig),
-        request: modelRequestDebugInfo(providerRequest),
-      }))
       try {
-        for await (const event of client.stream(providerRequest)) {
+        for await (const event of client.stream(request)) {
           yield event
         }
-        console.log('[ekko-agent] model stream success', consolePayload({
-          session_id: context.sessionId,
-          provider: client.provider,
-          request_style: client.requestStyle,
-        }))
       } catch (err) {
-        console.error('[ekko-agent] model stream failed', consolePayload({
-          session_id: context.sessionId,
-          provider: client.provider,
-          request_style: client.requestStyle,
-          error: errorPayload(err),
-        }))
         if (context.fallback && context.fallback.providerConfig.requestStyle !== context.providerConfig.requestStyle && shouldFallbackProtocol(err)) {
-          const fallbackRequest = requestForProvider(request, context.fallback.providerConfig)
-          console.warn('[ekko-agent] model stream protocol fallback', consolePayload({
-            session_id: context.sessionId,
-            from_request_style: context.providerConfig.requestStyle,
-            to_request_style: context.fallback.providerConfig.requestStyle,
-            provider_config: redactProviderConfig(context.fallback.providerConfig),
-            request: modelRequestDebugInfo(fallbackRequest),
-          }))
           try {
-            for await (const event of context.fallback.client.stream(fallbackRequest)) {
+            for await (const event of context.fallback.client.stream(request)) {
               yield event
             }
-            console.log('[ekko-agent] model stream fallback success', consolePayload({
-              session_id: context.sessionId,
-              provider: context.fallback.client.provider,
-              request_style: context.fallback.client.requestStyle,
-            }))
             return
-          } catch (fallbackErr) {
-            console.error('[ekko-agent] model stream fallback failed', consolePayload({
-              session_id: context.sessionId,
-              provider: context.fallback.client.provider,
-              request_style: context.fallback.client.requestStyle,
-              error: errorPayload(fallbackErr),
-            }))
-          }
+          } catch {}
         }
         throw err
       }
@@ -655,8 +516,7 @@ export async function handleEkkoAgentRun(
     timeoutMs: 120_000,
   })
   const mcpServers = resolveEkkoMcpServers(profile, data.mcpServers || data.mcp_servers)
-  const modelClient = createConsoleModelClient(createModelClient(providerConfig), {
-    sessionId,
+  const modelClient = createProviderModelClient(createModelClient(providerConfig), {
     providerConfig,
     fallback: fallbackProviderConfig
       ? {
