@@ -14,6 +14,7 @@ import {
 } from '../../packages/ekko-agent/src/index'
 
 const mockedSpawn = vi.mocked(spawn)
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -21,7 +22,9 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
   delete process.env.AGENT_BROWSER_BIN
+  delete process.env.ComSpec
   delete process.env.OPENAI_API_KEY
 })
 
@@ -85,6 +88,36 @@ describe('ekko-agent browser tools', () => {
       ['--session', hashedSession('session:123'), '--json', 'snapshot', '-c'],
       expect.objectContaining({ shell: false }),
     )
+  })
+
+  it('runs the Windows agent-browser .cmd shim through cmd.exe', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    process.env.ComSpec = 'C:\\Windows\\System32\\cmd.exe'
+    process.env.AGENT_BROWSER_BIN = 'C:\\Program Files\\Hermes Studio\\agent-browser.cmd'
+    mockBrowserSpawn({ success: true, data: { url: 'https://www.baidu.com/', title: 'Baidu' } })
+    mockBrowserSpawn({ success: true, data: { snapshot: 'link "News" [ref=@e1]', refs: { '@e1': {} } } })
+
+    const tool = createBrowserTools().find(item => item.definition.name === 'browser_navigate')
+    const result = await tool?.execute(
+      { url: 'https://www.baidu.com/?from=hermes&mode=agent' },
+      { sessionId: 'windows-browser', cwd: 'C:\\workspace' },
+    )
+
+    expect(result).toMatchObject({ ok: true })
+    expect(mockedSpawn).toHaveBeenCalledTimes(2)
+    for (const [command, args, options] of mockedSpawn.mock.calls) {
+      expect(command).toBe('C:\\Windows\\System32\\cmd.exe')
+      expect(args?.slice(0, 3)).toEqual(['/d', '/s', '/c'])
+      expect(args?.[3]).toContain('agent-browser.cmd')
+      expect(options).toEqual(expect.objectContaining({
+        cwd: 'C:\\workspace',
+        shell: false,
+        windowsHide: true,
+        windowsVerbatimArguments: true,
+      }))
+    }
+    expect(mockedSpawn.mock.calls[0]?.[1]?.[3]).toContain('https://www.baidu.com/')
+    expect(mockedSpawn.mock.calls[0]?.[1]?.[3]).toContain('^&mode=agent')
   })
 
   it('passes a sanitized browser environment to the CLI', async () => {

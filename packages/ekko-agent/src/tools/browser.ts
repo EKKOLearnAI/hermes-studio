@@ -10,6 +10,10 @@ type BrowserCommand = {
   args: string[]
 }
 
+type BrowserCommandExecution = BrowserCommand & {
+  windowsVerbatimArguments?: true
+}
+
 interface BrowserToolInput extends Record<string, unknown> {
   url?: string
   ref?: string
@@ -401,11 +405,13 @@ async function runBrowserCommand(
     const stderrPath = path.join(socketDir, `_stderr_${browserCommand}_${Date.now()}`)
     const stdoutFd = openSync(stdoutPath, 'w', 0o600)
     const stderrFd = openSync(stderrPath, 'w', 0o600)
-    const child = spawn(resolved.command, args, {
+    const execution = browserCommandExecution(resolved, args)
+    const child = spawn(execution.command, execution.args, {
       cwd,
       env,
       shell: false,
       windowsHide: true,
+      ...(execution.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
       stdio: ['ignore', stdoutFd, stderrFd],
     })
     closeSync(stdoutFd)
@@ -524,6 +530,51 @@ function resolveAgentBrowser(): BrowserCommand | null {
   if (fromPath) return { command: fromPath, args: [] }
 
   return null
+}
+
+const CMD_META_CHARS = /([()\][%!^"`<>&|;, *?])/g
+
+function browserCommandExecution(resolved: BrowserCommand, args: string[]): BrowserCommandExecution {
+  const command = process.platform === 'win32'
+    ? normalizeWindowsCommandPath(resolved.command)
+    : resolved.command
+  if (process.platform !== 'win32' || !windowsCommandNeedsShell(command)) {
+    return { command, args }
+  }
+
+  const shellCommand = [
+    escapeWindowsCmdCommand(command),
+    ...args.map(escapeWindowsCmdArgument),
+  ].join(' ')
+  return {
+    command: process.env.ComSpec || process.env.COMSPEC || process.env.comspec || 'cmd.exe',
+    args: ['/d', '/s', '/c', `"${shellCommand}"`],
+    windowsVerbatimArguments: true,
+  }
+}
+
+function normalizeWindowsCommandPath(command: string): string {
+  const trimmed = command.trim()
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1)
+  }
+  return trimmed
+}
+
+function windowsCommandNeedsShell(command: string): boolean {
+  const extension = path.extname(normalizeWindowsCommandPath(command)).toLowerCase()
+  return extension === '.cmd' || extension === '.bat'
+}
+
+function escapeWindowsCmdCommand(value: string): string {
+  return normalizeWindowsCommandPath(value).replace(CMD_META_CHARS, '^$1')
+}
+
+function escapeWindowsCmdArgument(value: string): string {
+  let escaped = String(value)
+  escaped = escaped.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"')
+  escaped = escaped.replace(/(?=(\\+?)?)\1$/, '$1$1')
+  return `"${escaped}"`.replace(CMD_META_CHARS, '^$1')
 }
 
 function browserEnv(socketDir: string): NodeJS.ProcessEnv {
