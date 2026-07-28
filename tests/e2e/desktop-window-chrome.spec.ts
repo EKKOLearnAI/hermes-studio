@@ -184,6 +184,7 @@ test('matches Windows controls to the header glass over custom backgrounds', asy
   })
   const api = await mockHermesApi(page, {
     theme: {
+      accentColor: '#3366ff',
       background: {
         name: 'theme-background.png',
         mime: 'image/png',
@@ -202,6 +203,8 @@ test('matches Windows controls to the header glass over custom backgrounds', asy
   await expect(header).not.toContainText('Browser Settings')
   await expect(page.locator('.app-main--card')).toHaveCSS('background-color', 'rgba(26, 26, 26, 0.72)')
   await expect(page.locator('.settings-card')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  await expect(page.locator('.profile-card.active')).toHaveCSS('border-color', 'rgba(51, 102, 255, 0.55)')
+  await expect(page.locator('.profile-card.active .active-badge')).toHaveCSS('color', 'rgb(51, 102, 255)')
   await expect(controls).toHaveCSS('background-color', 'rgba(26, 26, 26, 0.72)')
   await expect(controls).toHaveCSS('backdrop-filter', 'blur(8px) saturate(1.1)')
   expect(api.unexpectedRequests).toEqual([])

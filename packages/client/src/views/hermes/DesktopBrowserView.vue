@@ -397,10 +397,10 @@ onUnmounted(() => {
 .profiles-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 14px; }
 .profile-card { min-width: 0; display: flex; flex-direction: column; padding: 16px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-card); transition: border-color .16s ease, box-shadow .16s ease; }
 .profile-card:hover { border-color: rgba(var(--accent-primary-rgb), .3); }
-.profile-card.active { border-color: rgba(var(--success-rgb), .55); box-shadow: inset 0 0 0 1px rgba(var(--success-rgb), .1); }
+.profile-card.active { border-color: rgba(var(--accent-primary-rgb), .55); box-shadow: inset 0 0 0 1px rgba(var(--accent-primary-rgb), .1); }
 .profile-card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .profile-card-header h3 { min-width: 0; margin: 0; overflow: hidden; color: var(--text-primary); font-size: 15px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.active-badge { flex: none; padding: 2px 8px; border-radius: 10px; background: rgba(var(--success-rgb), .12); color: var(--success); font-size: 11px; font-weight: 500; }
+.active-badge { flex: none; padding: 2px 8px; border-radius: 10px; background: rgba(var(--accent-primary-rgb), .12); color: var(--accent-primary); font-size: 11px; font-weight: 500; }
 .profile-card-body { flex: 1; display: grid; gap: 12px; }
 .profile-info-row { min-width: 0; display: grid; gap: 4px; }
 .profile-info-row > span { color: var(--text-muted); font-size: 12px; }

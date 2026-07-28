@@ -87,6 +87,8 @@ describe('desktop browser chat panel gate', () => {
     expect(settingsPage).toContain('class="header-actions"')
     expect(settingsPage).not.toContain("t('browser.settings')")
     expect(settingsPage).not.toContain('.page-header { min-height: 72px;')
+    expect(settingsPage).toContain('.profile-card.active { border-color: rgba(var(--accent-primary-rgb), .55);')
+    expect(settingsPage).toContain('color: var(--accent-primary);')
     expect(settingsPage).toContain('class="profiles-grid"')
     expect(settingsPage).toContain('class="profile-card"')
     expect(settingsPage).toContain('v-for="profile in state.profiles"')
