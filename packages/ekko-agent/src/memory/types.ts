@@ -134,6 +134,8 @@ export interface MemoryContextDiagnostics {
   warnings: string[]
   retrievedNodeCount: number
   omittedNodeCount: number
+  tokenBudget?: number
+  usedTokens?: number
 }
 
 export interface MemoryContext {

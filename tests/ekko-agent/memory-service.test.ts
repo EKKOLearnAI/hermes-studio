@@ -116,6 +116,105 @@ describe('MemoryService', () => {
     ]))
   })
 
+  it('uses a 4000-token budget instead of a fixed automatic card count', async () => {
+    for (let index = 0; index < 60; index += 1) {
+      await store.upsertNode(memoryNode(`budget-${index}`, {
+        type: 'constraint',
+        key: `constraint.hard:budget_${index}`,
+        title: `Budget preference ${index}`,
+        content: `Preference ${index}: ${'compact detail '.repeat(80)}`,
+        updatedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+      }))
+    }
+
+    const context = await service.retrieve(
+      { sessionId: 's1', profileId: 'default' },
+      'unrelated current request',
+    )
+
+    expect(context.relevantNodes.length).toBeGreaterThan(12)
+    expect(context.relevantNodes.length).toBeLessThan(60)
+    expect(context.diagnostics).toMatchObject({
+      tokenBudget: 4000,
+      retrievedNodeCount: context.relevantNodes.length,
+    })
+    expect(context.diagnostics.usedTokens).toBeLessThanOrEqual(4000)
+    expect(context.diagnostics.omittedNodeCount).toBe(60 - context.relevantNodes.length)
+  })
+
+  it('finds relevant old facts outside the former importance-based candidate window', async () => {
+    await store.upsertNode(memoryNode('needle', {
+      type: 'fact',
+      key: 'custom.fact:needle',
+      title: 'Archived deployment codename',
+      content: 'The archived deployment codename is needle-orchid.',
+      importance: 0.01,
+      confidence: 0.4,
+      updatedAt: '2020-01-01T00:00:00.000Z',
+    }))
+    for (let index = 0; index < 180; index += 1) {
+      await store.upsertNode(memoryNode(`noise-${index}`, {
+        type: 'fact',
+        key: `custom.fact:noise_${index}`,
+        title: `Recent unrelated fact ${index}`,
+        content: `Recent unrelated content ${index}`,
+        importance: 1,
+        confidence: 1,
+        updatedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+      }))
+    }
+
+    const context = await service.retrieve(
+      { sessionId: 's1', profileId: 'default' },
+      'needle-orchid',
+    )
+
+    expect(context.relevantNodes.map(node => node.id)).toContain('needle')
+  })
+
+  it('recalls ordinary preferences only when they match the current request', async () => {
+    await service.proposeUpdate({
+      operation: 'create',
+      kind: 'general_preference',
+      itemKey: 'interface_theme',
+      reason: 'explicit',
+      explicitUserIntent: true,
+      identity: { sessionId: 's1', profileId: 'default' },
+      node: {
+        valueJson: 'dark interface',
+        title: 'Interface theme',
+        content: 'The user prefers a dark interface.',
+      },
+    })
+
+    const unrelated = await service.retrieve(
+      { sessionId: 's1', profileId: 'default' },
+      'Plan a weekend trip',
+    )
+    const related = await service.retrieve(
+      { sessionId: 's1', profileId: 'default' },
+      'Configure the dark interface',
+    )
+
+    expect(unrelated.relevantNodes).toHaveLength(0)
+    expect(related.relevantNodes.map(node => node.key)).toContain('preference.general:interface_theme')
+  })
+
+  it('clamps direct memory searches to 50 results at runtime', async () => {
+    for (let index = 0; index < 60; index += 1) {
+      await store.upsertNode(memoryNode(`search-${index}`, {
+        key: `preference.general:search_${index}`,
+      }))
+    }
+
+    const identity = { sessionId: 's1', profileId: 'default' }
+    const defaultResult = await service.search(identity, {})
+    const result = await service.search(identity, { limit: 999 })
+
+    expect([...defaultResult.exact, ...defaultResult.relevant]).toHaveLength(12)
+    expect([...result.exact, ...result.relevant]).toHaveLength(50)
+  })
+
   it('keeps independent multi-value preferences and isolates profiles', async () => {
     for (const value of ['香菜', '芹菜']) {
       await service.proposeUpdate({

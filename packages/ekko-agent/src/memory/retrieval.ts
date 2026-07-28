@@ -54,11 +54,15 @@ export function relevanceScore(node: MemoryNode, queryText: string): number {
   const tags = node.tags.join(' ').toLowerCase()
   const entities = node.entities.join(' ').toLowerCase()
   const category = node.categoryPath.join('/').toLowerCase()
+  const key = node.key.toLowerCase()
+  const value = node.valueJson === undefined ? '' : String(JSON.stringify(node.valueJson) ?? '').toLowerCase()
   let score = 0
   for (const token of tokens) {
     if (title.includes(token)) score += 5
     if (entities.includes(token)) score += 4
+    if (key.includes(token)) score += 4
     if (tags.includes(token)) score += 3
+    if (value.includes(token)) score += 3
     if (category.includes(token)) score += 2
     if (content.includes(token)) score += 2
   }

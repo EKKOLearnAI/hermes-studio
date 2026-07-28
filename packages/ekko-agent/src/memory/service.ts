@@ -1,5 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { buildMemoryContextPrompt } from './context'
+import {
+  buildMemoryContextPrompt,
+  DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET,
+  selectMemoryNodesByTokenBudget,
+} from './context'
 import { RuleBasedMemoryExtractor } from './extraction'
 import { resolveMemoryQuery } from './retrieval'
 import { canonicalizeMemoryDraft, memoryKindForCanonicalKey, normalizeMemoryNode } from './schema'
@@ -23,12 +27,25 @@ import type {
   MemorySummary,
 } from './types'
 
+const MEMORY_CANDIDATE_LIMIT = 500
+const MAX_MEMORY_SEARCH_RESULTS = 50
+const ALWAYS_RECALLED_MEMORY_KINDS: NonNullable<MemoryQuery['kinds']> = [
+  'interaction_contract',
+  'language_preference',
+  'accessibility_need',
+  'communication_preference',
+  'hard_constraint',
+]
+
 export interface MemoryServiceOptions {
   store?: MemoryStore
   extractor?: MemoryExtractor
   enabled?: boolean
   warning?: string
   recentMessageLimit?: number
+  automaticRecallTokenBudget?: number
+  searchResultLimit?: number
+  /** @deprecated Use searchResultLimit. Automatic recall now uses automaticRecallTokenBudget. */
   nodeLimit?: number
   reviewEveryUserMessages?: number
   /** @deprecated Use reviewEveryUserMessages. */
@@ -48,7 +65,8 @@ export class MemoryService {
   private readonly extractor: MemoryExtractor
   private readonly enabled: boolean
   private readonly recentMessageLimit: number
-  private readonly nodeLimit: number
+  private readonly automaticRecallTokenBudget: number
+  private readonly searchResultLimit: number
   private readonly reviewEveryUserMessages: number
   private readonly warnings = new Set<string>()
   private extractionQueue: Promise<void> = Promise.resolve()
@@ -58,7 +76,11 @@ export class MemoryService {
     this.extractor = options.extractor ?? new RuleBasedMemoryExtractor()
     this.enabled = options.enabled ?? Boolean(options.store)
     this.recentMessageLimit = options.recentMessageLimit ?? 6
-    this.nodeLimit = options.nodeLimit ?? 12
+    this.automaticRecallTokenBudget = positiveInteger(
+      options.automaticRecallTokenBudget,
+      DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET,
+    )
+    this.searchResultLimit = memorySearchLimit(options.searchResultLimit ?? options.nodeLimit, 12)
     this.reviewEveryUserMessages = Math.max(
       1,
       Math.floor(options.reviewEveryUserMessages ?? options.summaryEveryMessages ?? 1),
@@ -108,23 +130,55 @@ export class MemoryService {
     if (!this.isEnabled || !this.store) return this.disabledContext()
     try {
       const baseQuery = memoryQuery(identity, overrides)
-      const [latestSummary, recentMessages, relevantCandidates] = await Promise.all([
+      const recallQueryText = queryText || overrides.queryText
+      const hasExactQuery = Boolean(overrides.key || overrides.kinds?.length || overrides.valueJson !== undefined)
+      const contextualKinds = automaticRecallKinds(recallQueryText)
+      const exactCandidatesPromise = hasExactQuery
+        ? this.store.queryNodes({ ...baseQuery, queryText: undefined, limit: MEMORY_CANDIDATE_LIMIT })
+        : Promise.all([
+            this.store.queryNodes({
+              ...baseQuery,
+              queryText: undefined,
+              kinds: ALWAYS_RECALLED_MEMORY_KINDS,
+              limit: MEMORY_CANDIDATE_LIMIT,
+            }),
+            this.store.queryNodes({
+              ...baseQuery,
+              queryText: undefined,
+              types: ['correction'],
+              limit: MEMORY_CANDIDATE_LIMIT,
+            }),
+            contextualKinds.length
+              ? this.store.queryNodes({
+                  ...baseQuery,
+                  queryText: undefined,
+                  kinds: contextualKinds,
+                  limit: MEMORY_CANDIDATE_LIMIT,
+                })
+              : Promise.resolve([]),
+          ]).then(groups => uniqueMemoryNodes(groups.flat()))
+      const [latestSummary, recentMessages, relevantCandidates, exactCandidates] = await Promise.all([
         this.store.getLatestSummary({ sessionId: identity.sessionId }),
         this.store.listRecentMessages({ sessionId: identity.sessionId, limit: this.recentMessageLimit }),
-        this.store.queryNodes({ ...baseQuery, limit: 100 }),
+        this.store.queryNodes({
+          ...baseQuery,
+          queryText: recallQueryText,
+          limit: MEMORY_CANDIDATE_LIMIT,
+        }),
+        exactCandidatesPromise,
       ])
-      const exactCandidates = overrides.key || overrides.kinds?.length || overrides.valueJson !== undefined
-        ? await this.store.queryNodes({ ...baseQuery, queryText: undefined, limit: 100 })
-        : []
       const result = resolveMemoryQuery(
         exactCandidates,
         relevantCandidates,
-        queryText || overrides.queryText,
-        overrides.limit ?? this.nodeLimit,
+        recallQueryText,
+        overrides.limit === undefined ? Number.MAX_SAFE_INTEGER : positiveInteger(overrides.limit, 1),
         new Date(),
-        { includeAlwaysApplicable: true },
       )
-      const nodes = [...result.exact, ...result.relevant]
+      const selection = selectMemoryNodesByTokenBudget(
+        [...result.exact, ...result.relevant],
+        this.automaticRecallTokenBudget,
+      )
+      const nodes = selection.nodes
       return {
         latestSummary,
         recentMessages,
@@ -138,7 +192,9 @@ export class MemoryService {
           storeStatus: this.warnings.size ? 'degraded' : 'ok',
           warnings: [...this.warnings],
           retrievedNodeCount: nodes.length,
-          omittedNodeCount: result.omitted.length,
+          omittedNodeCount: result.omitted.length + selection.omittedNodeIds.length,
+          tokenBudget: this.automaticRecallTokenBudget,
+          usedTokens: selection.usedTokens,
         },
       }
     } catch (error) {
@@ -150,9 +206,14 @@ export class MemoryService {
   async search(identity: MemoryRuntimeIdentity, query: MemoryQuery): Promise<MemoryQueryResult> {
     if (!this.isEnabled || !this.store) return { exact: [], relevant: [], omitted: [] }
     const scoped = memoryQuery(identity, query)
-    const candidates = await this.store.queryNodes({ ...scoped, queryText: undefined, limit: 150 })
-    const exactCandidates = query.key || query.kinds?.length || query.valueJson !== undefined ? candidates : []
-    return resolveMemoryQuery(exactCandidates, candidates, query.queryText, query.limit ?? this.nodeLimit)
+    const limit = memorySearchLimit(query.limit, this.searchResultLimit)
+    const [relevantCandidates, exactCandidates] = await Promise.all([
+      this.store.queryNodes({ ...scoped, limit: MEMORY_CANDIDATE_LIMIT }),
+      query.key || query.kinds?.length || query.valueJson !== undefined
+        ? this.store.queryNodes({ ...scoped, queryText: undefined, limit: MEMORY_CANDIDATE_LIMIT })
+        : Promise.resolve([]),
+    ])
+    return resolveMemoryQuery(exactCandidates, relevantCandidates, query.queryText, limit)
   }
 
   async get(id: string, identity?: Partial<MemoryRuntimeIdentity>): Promise<MemoryNode | undefined> {
@@ -510,6 +571,56 @@ function memoryQuery(identity: Partial<MemoryRuntimeIdentity> | undefined, overr
     profileId: identity?.profileId || 'default',
   }
 }
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback
+  return Math.max(1, Math.floor(Number(value)))
+}
+
+function memorySearchLimit(value: number | undefined, fallback: number): number {
+  return Math.min(positiveInteger(value, fallback), MAX_MEMORY_SEARCH_RESULTS)
+}
+
+function automaticRecallKinds(queryText: string | undefined): NonNullable<MemoryQuery['kinds']> {
+  const text = String(queryText || '').normalize('NFKC').toLowerCase()
+  if (!text) return []
+  const kinds = new Set<NonNullable<MemoryQuery['kinds']>[number]>()
+  for (const rule of AUTOMATIC_RECALL_KIND_RULES) {
+    if (rule.pattern.test(text)) {
+      for (const kind of rule.kinds) kinds.add(kind)
+    }
+  }
+  return [...kinds]
+}
+
+function uniqueMemoryNodes(nodes: MemoryNode[]): MemoryNode[] {
+  const seen = new Set<string>()
+  return nodes.filter(node => {
+    if (seen.has(node.id)) return false
+    seen.add(node.id)
+    return true
+  })
+}
+
+const AUTOMATIC_RECALL_KIND_RULES: Array<{
+  kinds: NonNullable<MemoryQuery['kinds']>
+  pattern: RegExp
+}> = [
+  { kinds: ['profile_name'], pattern: /\bname\b|姓名|名字|叫什么|称呼/ },
+  { kinds: ['home_location'], pattern: /\bhome\b|\blocation\b|\bcity\b|\bwhere (?:do|does) .{0,40}\blive\b|常住|住在|家住|城市|所在地/ },
+  { kinds: ['occupation'], pattern: /\bjob\b|\boccupation\b|\bcareer\b|\bemployer\b|职业|上班|任职|工作单位|我的工作/ },
+  { kinds: ['timezone_preference'], pattern: /\btimezone\b|\btime zone\b|时区|当地时间/ },
+  { kinds: ['general_preference'], pattern: /\bprefer(?:ence|s|red)?\b|\bmy preferences?\b|偏好|喜欢|习惯用/ },
+  { kinds: ['workflow_preference'], pattern: /\bworkflow\b|\bprocess\b|工作流|流程|协作方式/ },
+  { kinds: ['tool_preference'], pattern: /\btool(?:ing|s)?\b|\beditor\b|\bide\b|工具|编辑器/ },
+  { kinds: ['personal_relationship'], pattern: /\brelationship\b|\bfamily\b|\bfriend\b|家人|家庭|朋友|关系/ },
+  { kinds: ['habit_routine'], pattern: /\bhabit\b|\broutine\b|\bdaily\b|\bweekly\b|习惯|日常|每天|每周/ },
+  { kinds: ['environment_fact'], pattern: /\benvironment\b|\bdevice\b|\bmachine\b|\bos\b|环境|设备|电脑|系统/ },
+  { kinds: ['project_context'], pattern: /\bproject\b|\brepository\b|\brepo\b|\bcodebase\b|项目|代码库|仓库/ },
+  { kinds: ['long_term_goal'], pattern: /\bgoal\b|\blong[- ]term\b|长期目标|目标|规划/ },
+  { kinds: ['durable_decision'], pattern: /\bdecision\b|\bdecide(?:d)?\b|决定|决策|选定/ },
+  { kinds: ['food_avoidance'], pattern: /\bfood\b|\beat\b|\bdish\b|\bcook\b|\bmenu\b|\brestaurant\b|\ballerg(?:y|ic)\b|吃|菜|餐|食物|忌口|过敏|做饭|烹饪/ },
+]
 
 function deterministicMessageId(sessionId: string, occurrence: number, message: MemoryCaptureMessage): string {
   return createHash('sha256')

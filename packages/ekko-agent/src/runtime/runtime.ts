@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { getEncoding } from 'js-tiktoken'
 import {
   createSystemMessage,
   createToolResultMessage,
@@ -7,6 +6,7 @@ import {
   modelResponseToAgentMessage,
   normalizeAgentMessages,
 } from '../model/messages'
+import { countTextTokens } from '../model/tokens'
 import type { AgentOutputMessage } from '../model/messages'
 import type { AgentMessage, AgentToolCall, ModelRequest, ModelResponse } from '../model/types'
 import type { AgentSkill } from '../skills/types'
@@ -892,12 +892,12 @@ function estimateModelRequestContext(request: ModelRequest): AgentRuntimeContext
   const systemMessages = request.messages.filter(message => message.role === 'system')
   const nonSystemMessages = request.messages.filter(message => message.role !== 'system')
   const systemPrompt = systemMessages.map(message => message.content || '').join('\n\n')
-  const systemPromptTokens = countTokensLocal(systemPrompt)
+  const systemPromptTokens = countTextTokens(systemPrompt)
   const messageTokens = nonSystemMessages.reduce((sum, message) => {
-    return sum + countTokensLocal(message.content || '') + countTokensLocal(JSON.stringify(message.toolCalls || ''))
+    return sum + countTextTokens(message.content || '') + countTextTokens(JSON.stringify(message.toolCalls || ''))
   }, 0)
-  const toolTokens = countTokensLocal(JSON.stringify(request.tools || []))
-  const modelContextTokens = request.context == null ? 0 : countTokensLocal(JSON.stringify(request.context))
+  const toolTokens = countTextTokens(JSON.stringify(request.tools || []))
+  const modelContextTokens = request.context == null ? 0 : countTextTokens(JSON.stringify(request.context))
 
   return {
     contextTokens: systemPromptTokens + messageTokens + toolTokens + modelContextTokens,
@@ -909,48 +909,6 @@ function estimateModelRequestContext(request: ModelRequest): AgentRuntimeContext
     toolCount: request.tools?.length || 0,
     systemPromptChars: systemPrompt.length,
   }
-}
-
-function countTokensLocal(text: string): number {
-  if (!text) return 0
-  if (hasPathologicalRun(text)) return heuristicTokens(text)
-  try {
-    return getEncoder().encode(text).length
-  } catch {
-    return heuristicTokens(text)
-  }
-}
-
-let cachedEncoder: ReturnType<typeof getEncoding> | null = null
-
-function getEncoder(): ReturnType<typeof getEncoding> {
-  if (!cachedEncoder) cachedEncoder = getEncoding('cl100k_base')
-  return cachedEncoder
-}
-
-function heuristicTokens(text: string): number {
-  const cjk = (text.match(/[\u2e80-\u9fff\uac00-\ud7af\u3000-\u303f\uff00-\uffef]/g) || []).length
-  const other = text.length - cjk
-  return Math.ceil(cjk * 1.5 + other / 4)
-}
-
-function hasPathologicalRun(text: string): boolean {
-  const maxRun = 20_000
-  let run = 0
-  for (let i = 0; i < text.length; i += 1) {
-    const code = text.charCodeAt(i)
-    const isLetterOrDigit =
-      (code >= 48 && code <= 57) ||
-      (code >= 65 && code <= 90) ||
-      (code >= 97 && code <= 122)
-    if (isLetterOrDigit) {
-      run += 1
-      if (run > maxRun) return true
-    } else {
-      run = 0
-    }
-  }
-  return false
 }
 
 function toMemoryCaptureMessage(message: AgentMessage): MemoryCaptureMessage {
