@@ -1616,6 +1616,16 @@ export class ChatStorage {
                     return null
                 }
             }
+            const existingWorkspaceEvidence = db.prepare(
+                `SELECT 1 FROM gc_messages WHERE id = ?
+                 UNION ALL
+                 SELECT 1 FROM workspace_run_changes WHERE room_id = ? AND message_id = ?
+                 LIMIT 1`,
+            ).get(messageId, args.roomId, messageId)
+            if (existingWorkspaceEvidence) {
+                db.exec('ROLLBACK')
+                return null
+            }
             const workspaceLabel = basename(args.workspace) || 'workspace'
             const redactedDraft: SaveWorkspaceRunChangeInput = {
                 ...args.draft,

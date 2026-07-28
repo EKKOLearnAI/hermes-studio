@@ -587,6 +587,57 @@ describe('durable group-chat handoff outbox', () => {
     expect(storage.getHandoffJob(running.id)).toMatchObject({ status: 'running', leaseToken: running.leaseToken })
   })
 
+  it('rejects a current durable lease reusing an existing workspace run id', () => {
+    const storage = new ChatStorage()
+    storage.init()
+    storage.saveRoom('room-1', 'Room', 'ROOM1')
+    const target = storage.addRoomAgent('room-1', 'agent-a', 'default', 'A', '', 0, { sessionId: 'session-a' })
+    const runId = 'workspace-reused-run'
+    const original = storage.saveWorkspaceDiffMessageForRun({
+      roomId: 'room-1', senderId: target.agentId, senderName: 'A', sessionId: target.sessionId,
+      runId, status: 'completed', workspace: '/workspace/project',
+      draft: {
+        change_id: 'original-workspace-change', session_id: target.sessionId, run_id: runId,
+        source: 'run', workspace: '/workspace/project', started_at: 1, finished_at: 2,
+        files_changed: 0, additions: 0, deletions: 0, total_patch_bytes: 0, files: [],
+      },
+    } as any)
+    expect(original).not.toBeNull()
+    const originalMessage = storage.getMessage(original!.message.id)
+    const originalChange = dbMock.current!.prepare(
+      'SELECT change_id, message_id FROM workspace_run_changes WHERE room_id = ? AND message_id = ?',
+    ).get('room-1', original!.message.id)
+
+    const sourceActor = createAuthorizedSource(storage, 'room-1')
+    storage.saveMessageAndRefreshRoom({
+      id: 'workspace-reuse-input', roomId: 'room-1', senderId: 'human-1', senderName: 'Human',
+      content: '@A hello', timestamp: 100, role: 'user',
+    }, {
+      handoffs: [{ chainId: 'workspace-reuse-chain', targetAgentId: target.agentId, targetSessionId: target.sessionId, depth: 0, kind: 'mention' }],
+      authority: { initiatorActorId: sourceActor.id, sourceActorId: sourceActor.id },
+    })
+    const running = storage.claimHandoffJobs('process-1', 1_000, 1, 5_000)[0]
+    expect(running).toMatchObject({ targetAgentId: target.agentId, targetSessionId: target.sessionId, status: 'running' })
+
+    const overwritten = storage.saveWorkspaceDiffMessageForRun({
+      roomId: 'room-1', senderId: target.agentId, senderName: 'A', sessionId: target.sessionId,
+      runId, status: 'completed', workspace: '/workspace/project',
+      sourceHandoffJobId: running.id, sourceHandoffLeaseToken: running.leaseToken,
+      draft: {
+        change_id: 'forged-current-workspace-change', session_id: target.sessionId, run_id: runId,
+        source: 'run', workspace: '/workspace/project', started_at: 3, finished_at: 4,
+        files_changed: 0, additions: 0, deletions: 0, total_patch_bytes: 0, files: [],
+      },
+    } as any)
+
+    expect(overwritten).toBeNull()
+    expect(storage.getMessage(original!.message.id)).toEqual(originalMessage)
+    expect(dbMock.current!.prepare(
+      'SELECT change_id, message_id FROM workspace_run_changes WHERE room_id = ? AND message_id = ?',
+    ).get('room-1', original!.message.id)).toEqual(originalChange)
+    expect(storage.getHandoffJob(running.id)).toMatchObject({ status: 'running', leaseToken: running.leaseToken })
+  })
+
   it('claims at most one FIFO job per room target while allowing different targets in parallel', () => {
     const storage = new ChatStorage()
     storage.init()
