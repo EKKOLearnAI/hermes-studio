@@ -638,6 +638,82 @@ describe('durable group-chat handoff outbox', () => {
     expect(storage.getHandoffJob(running.id)).toMatchObject({ status: 'running', leaseToken: running.leaseToken })
   })
 
+  it('rejects a current durable lease reusing an existing workspace change id', () => {
+    const storage = new ChatStorage()
+    storage.init()
+    storage.saveRoom('room-1', 'Room', 'ROOM1')
+    const target = storage.addRoomAgent('room-1', 'agent-a', 'default', 'A', '', 0, { sessionId: 'session-a' })
+    const changeId = 'workspace-reused-change'
+    const original = storage.saveWorkspaceDiffMessageForRun({
+      roomId: 'room-1', senderId: target.agentId, senderName: 'A', sessionId: target.sessionId,
+      runId: 'workspace-original-run', status: 'completed', workspace: '/workspace/project',
+      draft: {
+        change_id: changeId, session_id: target.sessionId, run_id: 'workspace-original-run',
+        source: 'run', workspace: '/workspace/project', started_at: 1, finished_at: 2,
+        files_changed: 1, additions: 1, deletions: 0, total_patch_bytes: 10,
+        files: [{ path: 'original.txt', change_type: 'added', additions: 1, deletions: 0, patch: 'original', patch_bytes: 10 }],
+      },
+    } as any)
+    expect(original).not.toBeNull()
+    const originalMessage = storage.getMessage(original!.message.id)
+    const originalChange = dbMock.current!.prepare(
+      'SELECT * FROM workspace_run_changes WHERE room_id = ? AND change_id = ?',
+    ).get('room-1', changeId)
+    const originalFiles = dbMock.current!.prepare(
+      'SELECT path, patch FROM workspace_run_change_files WHERE change_id = ? ORDER BY path',
+    ).all(changeId)
+    const roomTokensBefore = storage.getRoom('room-1')?.totalTokens
+    const maxRoomSeqBefore = dbMock.current!.prepare(
+      'SELECT MAX(roomSeq) AS maxRoomSeq FROM gc_messages WHERE roomId = ?',
+    ).get('room-1')
+
+    const sourceActor = createAuthorizedSource(storage, 'room-1')
+    storage.saveMessageAndRefreshRoom({
+      id: 'workspace-change-reuse-input', roomId: 'room-1', senderId: 'human-1', senderName: 'Human',
+      content: '@A hello', timestamp: 100, role: 'user',
+    }, {
+      handoffs: [{ chainId: 'workspace-change-reuse-chain', targetAgentId: target.agentId, targetSessionId: target.sessionId, depth: 0, kind: 'mention' }],
+      authority: { initiatorActorId: sourceActor.id, sourceActorId: sourceActor.id },
+    })
+    const running = storage.claimHandoffJobs('process-1', 1_000, 1, 5_000)[0]
+    expect(running).toMatchObject({ targetAgentId: target.agentId, targetSessionId: target.sessionId, status: 'running' })
+    const roomTokensAfterHandoff = storage.getRoom('room-1')?.totalTokens
+    const maxRoomSeqAfterHandoff = dbMock.current!.prepare(
+      'SELECT MAX(roomSeq) AS maxRoomSeq FROM gc_messages WHERE roomId = ?',
+    ).get('room-1')
+    expect((maxRoomSeqAfterHandoff as any).maxRoomSeq).toBeGreaterThan((maxRoomSeqBefore as any).maxRoomSeq)
+    expect(roomTokensAfterHandoff).toBeGreaterThanOrEqual(roomTokensBefore || 0)
+
+    const overwritten = storage.saveWorkspaceDiffMessageForRun({
+      roomId: 'room-1', senderId: target.agentId, senderName: 'A', sessionId: target.sessionId,
+      runId: 'workspace-forged-run', status: 'completed', workspace: '/workspace/project',
+      sourceHandoffJobId: running.id, sourceHandoffLeaseToken: running.leaseToken,
+      draft: {
+        change_id: changeId, session_id: target.sessionId, run_id: 'workspace-forged-run',
+        source: 'run', workspace: '/workspace/project', started_at: 3, finished_at: 4,
+        files_changed: 1, additions: 0, deletions: 1, total_patch_bytes: 9,
+        files: [{ path: 'forged.txt', change_type: 'deleted', additions: 0, deletions: 1, patch: 'forged', patch_bytes: 9 }],
+      },
+    } as any)
+
+    expect(overwritten).toBeNull()
+    expect(storage.getMessage(original!.message.id)).toEqual(originalMessage)
+    expect(dbMock.current!.prepare(
+      'SELECT * FROM workspace_run_changes WHERE room_id = ? AND change_id = ?',
+    ).get('room-1', changeId)).toEqual(originalChange)
+    expect(dbMock.current!.prepare(
+      'SELECT path, patch FROM workspace_run_change_files WHERE change_id = ? ORDER BY path',
+    ).all(changeId)).toEqual(originalFiles)
+    expect(dbMock.current!.prepare(
+      'SELECT COUNT(*) AS total FROM gc_messages WHERE tool_call_id = ?',
+    ).get('workspace_diff:workspace-forged-run')).toEqual({ total: 0 })
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(roomTokensAfterHandoff)
+    expect(dbMock.current!.prepare(
+      'SELECT MAX(roomSeq) AS maxRoomSeq FROM gc_messages WHERE roomId = ?',
+    ).get('room-1')).toEqual(maxRoomSeqAfterHandoff)
+    expect(storage.getHandoffJob(running.id)).toMatchObject({ status: 'running', leaseToken: running.leaseToken })
+  })
+
   it('claims at most one FIFO job per room target while allowing different targets in parallel', () => {
     const storage = new ChatStorage()
     storage.init()

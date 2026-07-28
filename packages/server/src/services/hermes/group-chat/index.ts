@@ -1620,8 +1620,10 @@ export class ChatStorage {
                 `SELECT 1 FROM gc_messages WHERE id = ?
                  UNION ALL
                  SELECT 1 FROM workspace_run_changes WHERE room_id = ? AND message_id = ?
+                 UNION ALL
+                 SELECT 1 FROM workspace_run_changes WHERE change_id = ?
                  LIMIT 1`,
-            ).get(messageId, args.roomId, messageId)
+            ).get(messageId, args.roomId, messageId, args.draft.change_id)
             if (existingWorkspaceEvidence) {
                 db.exec('ROLLBACK')
                 return null
