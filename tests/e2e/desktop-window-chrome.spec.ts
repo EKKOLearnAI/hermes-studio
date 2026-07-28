@@ -176,6 +176,31 @@ test('places Windows controls in a dedicated bar above main content', async ({ p
   ).__PW_DESKTOP_WINDOW__?.actions)).toEqual(['toggle-maximize'])
 })
 
+test('matches Windows controls to the header glass over custom backgrounds', async ({ page }) => {
+  await installDesktopBridge(page, 'win32')
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await page.addInitScript(() => {
+    window.localStorage.setItem('hermes_brightness', 'dark')
+  })
+  const api = await mockHermesApi(page, {
+    theme: {
+      background: {
+        name: 'theme-background.png',
+        mime: 'image/png',
+        updatedAt: 101,
+      },
+    },
+  })
+
+  await page.goto('/#/hermes/theme')
+
+  const controls = page.locator('.desktop-titlebar')
+  await expect(page.locator('.app-shell')).toHaveClass(/app-shell--custom-background/)
+  await expect(controls).toHaveCSS('background-color', 'rgba(26, 26, 26, 0.72)')
+  await expect(controls).toHaveCSS('backdrop-filter', 'blur(8px) saturate(1.1)')
+  expect(api.unexpectedRequests).toEqual([])
+})
+
 test('reserves the macOS traffic-light area inside the primary sidebar', async ({ page }) => {
   await openDesktopJobs(page, 'darwin')
 

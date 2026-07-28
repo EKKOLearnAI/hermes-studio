@@ -269,6 +269,7 @@ useKeyboard()
     backdrop-filter: none;
   }
 
+  :deep(.desktop-titlebar),
   :deep(.chat-panel > .chat-main > .chat-header),
   :deep(.group-chat-panel > .chat-main > .chat-header) {
     background-color: rgba(var(--bg-main-surface-rgb), 0.72);
