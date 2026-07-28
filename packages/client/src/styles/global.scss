@@ -103,7 +103,7 @@ body {
   font-family: $font-ui;
   background-color: $bg-primary;
   color: $text-primary;
-  font-size: 14px;
+  font-size: var(--font-size-base);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -144,6 +144,20 @@ body {
 .hermes-desktop-windows #app {
   background: transparent !important;
   background-color: transparent !important;
+}
+
+// Naive UI menus are teleported to body, so they need a document-level
+// background-image state instead of relying on the app shell selector.
+html.theme-has-custom-background {
+  .n-base-select-menu,
+  .n-dropdown-menu,
+  .n-cascader-menu,
+  .slash-command-dropdown,
+  .mention-dropdown {
+    background-color: rgba(var(--bg-main-surface-rgb), 0.72) !important;
+    -webkit-backdrop-filter: blur(8px) saturate(110%);
+    backdrop-filter: blur(8px) saturate(110%);
+  }
 }
 
 // Teleported overlays must remain clickable above Electron drag regions.

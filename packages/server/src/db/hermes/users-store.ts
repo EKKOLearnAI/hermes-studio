@@ -1,6 +1,6 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'crypto'
 import { getDb } from '../index'
-import { USER_PROFILES_TABLE, USERS_TABLE } from './schemas'
+import { USER_PROFILES_TABLE, USER_THEMES_TABLE, USERS_TABLE } from './schemas'
 
 export type UserRole = 'super_admin' | 'admin'
 export type UserStatus = 'active' | 'disabled'
@@ -265,6 +265,7 @@ export function deleteUser(userId: UserId): boolean {
   db.exec('BEGIN')
   try {
     db.prepare(`DELETE FROM ${USER_PROFILES_TABLE} WHERE user_id = ?`).run(id)
+    db.prepare(`DELETE FROM ${USER_THEMES_TABLE} WHERE user_id = ?`).run(id)
     const result = db.prepare(`DELETE FROM ${USERS_TABLE} WHERE id = ?`).run(id)
     db.exec('COMMIT')
     return result.changes > 0

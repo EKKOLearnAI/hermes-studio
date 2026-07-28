@@ -377,6 +377,20 @@ export const USER_PROFILES_INDEXES = {
   idx_user_profiles_default: 'CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profiles_default ON user_profiles(user_id) WHERE is_default = 1',
 }
 
+export const USER_THEMES_TABLE = 'user_themes'
+
+export const USER_THEMES_SCHEMA: Record<string, string> = {
+  user_id: 'INTEGER PRIMARY KEY',
+  font_size: 'INTEGER NOT NULL DEFAULT 14',
+  text_color: 'TEXT',
+  accent_color: 'TEXT',
+  background_filename: 'TEXT',
+  background_original_name: 'TEXT',
+  background_mime: 'TEXT',
+  created_at: 'INTEGER NOT NULL',
+  updated_at: 'INTEGER NOT NULL',
+}
+
 // ============================================================================
 // LAN Devices
 // ============================================================================
@@ -1092,6 +1106,7 @@ export function initAllHermesTables(): void {
       primaryKey: 'user_id, profile_name',
       indexes: USER_PROFILES_INDEXES,
     })
+    syncTable(USER_THEMES_TABLE, USER_THEMES_SCHEMA)
 
     // LAN devices and link request status
     syncTable(DEVICES_TABLE, DEVICES_SCHEMA, {

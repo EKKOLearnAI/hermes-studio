@@ -1,4 +1,5 @@
 import { request } from './client'
+import type { UserThemeSettings } from './theme'
 
 export interface AuthStatus {
   hasPasswordLogin: boolean
@@ -11,7 +12,13 @@ export async function fetchAuthStatus(): Promise<AuthStatus> {
   return res.json()
 }
 
-export async function loginWithPassword(username: string, password: string): Promise<string> {
+export interface LoginResponse {
+  token: string
+  userId: number
+  theme: UserThemeSettings
+}
+
+export async function loginWithPassword(username: string, password: string): Promise<LoginResponse> {
   const res = await fetch('/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -24,7 +31,7 @@ export async function loginWithPassword(username: string, password: string): Pro
     throw err
   }
   const data = await res.json()
-  return data.token
+  return data as LoginResponse
 }
 
 export interface CurrentUser {

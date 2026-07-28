@@ -33,6 +33,18 @@ interface MockSkillBundlePayload {
   skills: string[]
 }
 
+interface MockThemePayload {
+  fontSize: number
+  textColor: string | null
+  accentColor: string | null
+  background: {
+    name: string
+    mime: string | null
+    updatedAt: number
+  } | null
+  updatedAt: number
+}
+
 interface MockHermesApiOptions {
   tokenValidationStatus?: number
   initialProfileName?: 'default' | 'research'
@@ -54,6 +66,7 @@ interface MockHermesApiOptions {
     models: string[]
     [key: string]: unknown
   }>
+  theme?: Partial<MockThemePayload>
 }
 
 export const TEST_MODEL_GROUP = {
@@ -140,6 +153,14 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
   const sessionCategories = [...(options.sessionCategories ?? [])]
   const skillBundles = [...(options.bundles ?? [])]
   let channelCredentialsPresent = options.channelCredentials ?? false
+  let theme: MockThemePayload = {
+    fontSize: 14,
+    textColor: null,
+    accentColor: null,
+    background: null,
+    updatedAt: 0,
+    ...options.theme,
+  }
   let providerEditor = {
     id: 'test-provider',
     label: 'Test Provider',
@@ -187,7 +208,42 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
         await route.fulfill(jsonResponse({ error: 'Invalid username or password' }, tokenValidationStatus))
         return
       }
-      await route.fulfill(jsonResponse({ token: TEST_ACCESS_KEY }))
+      await route.fulfill(jsonResponse({
+        token: TEST_ACCESS_KEY,
+        userId: 1,
+        theme,
+      }))
+      return
+    }
+
+    if (pathname === '/api/theme/background') {
+      if (request.method() === 'GET' && theme.background) {
+        await route.fulfill({
+          status: 200,
+          contentType: theme.background.mime || 'image/png',
+          body: Buffer.from(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2V9sAAAAASUVORK5CYII=',
+            'base64',
+          ),
+        })
+        return
+      }
+      await route.fulfill(jsonResponse({ error: 'Theme background not found' }, 404))
+      return
+    }
+
+    if (pathname === '/api/theme') {
+      if (request.method() === 'GET') {
+        await route.fulfill(jsonResponse(theme))
+        return
+      }
+      if (request.method() === 'PUT') {
+        const patch = JSON.parse(request.postData() || '{}') as Partial<MockThemePayload>
+        theme = { ...theme, ...patch, updatedAt: Date.now() }
+        await route.fulfill(jsonResponse(theme))
+        return
+      }
+      await route.fulfill(jsonResponse({ error: 'Method not allowed' }, 405))
       return
     }
 
@@ -496,6 +552,15 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (pathname === '/api/hermes/petdex/manifest') {
+      await route.fulfill(jsonResponse({
+        generatedAt: '2026-07-28T00:00:00.000Z',
+        total: 0,
+        pets: [],
+      }))
+      return
+    }
+
     if (pathname === '/api/hermes/profiles') {
       await route.fulfill(jsonResponse({
         profiles: [
@@ -582,6 +647,36 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
 
     if (pathname === '/api/hermes/jobs') {
       await route.fulfill(jsonResponse({ jobs: [sampleJob] }))
+      return
+    }
+
+    if (pathname === '/api/coding-agents' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse({ tools: [] }))
+      return
+    }
+
+    if (
+      request.method() === 'GET' &&
+      /^\/api\/coding-agents\/(?:claude-code|codex)\/config-files\/[^/]+$/.test(pathname)
+    ) {
+      const key = pathname.split('/').at(-1) || 'config'
+      await route.fulfill(jsonResponse({
+        key,
+        path: key,
+        absolutePath: `/tmp/${key}`,
+        language: 'text',
+        content: '',
+        exists: false,
+        size: 0,
+        profile: 'research',
+        provider: '',
+        rootDir: '/tmp',
+      }))
+      return
+    }
+
+    if (pathname === '/api/hermes/group-chat/rooms' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse({ rooms: [] }))
       return
     }
 

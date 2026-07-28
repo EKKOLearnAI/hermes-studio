@@ -5,15 +5,21 @@
 // ─── CSS Custom Properties ─────────────────────────────────────
 
 :root {
+  --font-size-base: 14px;
+
   // Backgrounds
   --bg-primary: #fafafa;
+  --bg-primary-rgb: 250, 250, 250;
   --bg-secondary: #f0f0f0;
   --bg-sidebar: #f5f5f5;
   --bg-card: #ffffff;
+  --bg-card-rgb: 255, 255, 255;
   --bg-card-hover: #fafafa;
   --bg-input: #ffffff;
   --bg-sidebar-surface: var(--bg-card);
+  --bg-sidebar-surface-rgb: var(--bg-card-rgb);
   --bg-main-surface: var(--bg-card);
+  --bg-main-surface-rgb: var(--bg-card-rgb);
 
   // Borders
   --border-color: #e0e0e0;
@@ -28,6 +34,10 @@
   --text-primary: #1a1a1a;
   --text-secondary: #666666;
   --text-muted: #999999;
+  --input-placeholder-color: var(--text-muted);
+  --input-border-color: rgba(var(--accent-primary-rgb), 0.18);
+  --input-border-hover-color: rgba(var(--accent-primary-rgb), 0.32);
+  --input-border-focus-color: var(--accent-primary);
 
   // Status
   --success: #2e7d32;
@@ -51,6 +61,7 @@
   --accent-primary-rgb: 51, 51, 51;
   --accent-hover-rgb: 26, 26, 26;
   --text-primary-rgb: 26, 26, 26;
+  --text-secondary-rgb: 102, 102, 102;
   --text-muted-rgb: 153, 153, 153;
   --success-rgb: 46, 125, 50;
   --error-rgb: 198, 40, 40;
@@ -61,13 +72,17 @@
 .dark {
   // Backgrounds
   --bg-primary: #1a1a1a;
+  --bg-primary-rgb: 26, 26, 26;
   --bg-secondary: #252525;
   --bg-sidebar: #202020;
   --bg-card: #2a2a2a;
+  --bg-card-rgb: 42, 42, 42;
   --bg-card-hover: #333333;
   --bg-input: #2a2a2a;
   --bg-sidebar-surface: var(--bg-primary);
+  --bg-sidebar-surface-rgb: var(--bg-primary-rgb);
   --bg-main-surface: var(--bg-primary);
+  --bg-main-surface-rgb: var(--bg-primary-rgb);
 
   // Borders
   --border-color: #3a3a3a;
@@ -105,6 +120,7 @@
   --accent-primary-rgb: 224, 224, 224;
   --accent-hover-rgb: 245, 245, 245;
   --text-primary-rgb: 224, 224, 224;
+  --text-secondary-rgb: 160, 160, 160;
   --text-muted-rgb: 136, 136, 136;
   --success-rgb: 102, 187, 106;
   --error-rgb: 239, 83, 80;

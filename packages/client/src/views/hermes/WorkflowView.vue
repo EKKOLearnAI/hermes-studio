@@ -3792,7 +3792,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
 
   &.active .workflow-list-name,
   &.selected .workflow-list-name {
-    color: var(--accent-primary);
+    color: var(--text-primary);
   }
 }
 

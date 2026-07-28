@@ -22,6 +22,8 @@ import {
   type UserRecord,
   type UserStatus,
 } from '../db/hermes/users-store'
+import { removeAllUserThemeAssets } from '../services/user-theme'
+import { getUserTheme, toUserThemePayload } from '../db/hermes/user-theme-store'
 import { issueUserJwt } from '../middleware/user-auth'
 import { listProfileNamesFromDisk } from '../services/hermes/hermes-profile'
 import { startOutboundRelayClient, stopOutboundRelayClient } from '../services/global-agent/outbound-relay-client'
@@ -218,7 +220,11 @@ export async function login(ctx: Context) {
 
   const result = await passwordLogin(ctx, username, password)
   if (!result.ok) return
-  ctx.body = { token: result.token }
+  ctx.body = {
+    token: result.token,
+    userId: result.user.id,
+    theme: toUserThemePayload(getUserTheme(result.user.id)),
+  }
 }
 
 function normalizeRelayUrl(input: string): string | null {
@@ -647,6 +653,7 @@ export async function deleteManagedUser(ctx: Context) {
     return
   }
 
+  await removeAllUserThemeAssets(user.id)
   deleteUser(user.id)
   ctx.body = { success: true, users: listUsers() }
 }

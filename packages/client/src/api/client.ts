@@ -83,6 +83,21 @@ export function getStoredUsername(): string | null {
   }
 }
 
+export function getStoredUserId(): number | null {
+  const token = getApiKey()
+  const payload = token.split('.')[1]
+  if (!payload) return null
+  try {
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
+    const data = JSON.parse(atob(padded)) as { sub?: unknown }
+    const userId = Number(data.sub)
+    return Number.isInteger(userId) && userId > 0 ? userId : null
+  } catch {
+    return null
+  }
+}
+
 export function getActiveProfileName(): string | null {
   return localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY)
 }
@@ -102,9 +117,11 @@ function shouldAttachProfileHeader(path: string, options: RequestInit): boolean 
     const url = new URL(path, 'http://hermes.local')
     if (url.searchParams.has('profile')) return false
     if (url.pathname.startsWith('/api/hermes/profiles')) return false
+    if (url.pathname.startsWith('/api/theme')) return false
     if (isProfileWideSessionCollection(url.pathname)) return false
   } catch {
     if (path.startsWith('/api/hermes/profiles')) return false
+    if (path.startsWith('/api/theme')) return false
     if (isProfileWideSessionCollection(path.split('?')[0] || path)) return false
   }
   return !bodyHasProfileSelector(options.body)

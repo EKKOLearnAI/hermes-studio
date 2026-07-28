@@ -1335,7 +1335,7 @@ onBeforeUnmount(() => {
 
 .message-bubble {
   padding: 10px 14px;
-  font-size: 14px;
+  font-size: var(--font-size-base);
   line-height: 1.65;
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -1387,6 +1387,14 @@ onBeforeUnmount(() => {
       0 0 20px rgba(255, 107, 107, 0.2);
     animation: rainbow-glow 4s linear infinite;
   }
+}
+
+:global(html.theme-has-custom-background .message.user .message-bubble:not(.system):not(.command):not(.agent-error)),
+:global(html.theme-has-custom-background .message.assistant .message-bubble:not(.system):not(.command):not(.agent-error)) {
+  background-color: rgba(var(--bg-main-surface-rgb), 0.78);
+  border: 1px solid rgba(var(--text-primary-rgb), 0.18);
+  -webkit-backdrop-filter: blur(8px) saturate(110%);
+  backdrop-filter: blur(8px) saturate(110%);
 }
 
 .command-result {
@@ -1633,6 +1641,7 @@ onBeforeUnmount(() => {
   gap: 6px;
   margin-top: 4px;
   padding: 0 4px;
+  color: $text-muted;
   opacity: 0;
   transition: opacity 0.15s ease;
 
@@ -1657,7 +1666,7 @@ onBeforeUnmount(() => {
   height: 24px;
   border: none;
   background: transparent;
-  color: $text-muted;
+  color: inherit;
   cursor: pointer;
   border-radius: $radius-sm;
   padding: 0;
@@ -1668,14 +1677,6 @@ onBeforeUnmount(() => {
     background: rgba(0, 0, 0, 0.06);
   }
 
-  .dark & {
-    color: #999999;
-
-    &:hover {
-      color: #cccccc;
-      background: rgba(255, 255, 255, 0.1);
-    }
-  }
 }
 
 .speech-bubble-btn {
@@ -1701,12 +1702,8 @@ onBeforeUnmount(() => {
 
 .message-time {
   font-size: 11px;
-  color: $text-muted;
+  color: inherit;
   user-select: none;
-
-  .dark & {
-    color: #999999;
-  }
 }
 
 .tool-line {

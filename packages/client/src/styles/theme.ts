@@ -1,4 +1,8 @@
 import type { GlobalThemeOverrides } from 'naive-ui'
+import {
+  resolveThemeCustomization,
+  type ThemeCustomization,
+} from './theme-customization'
 
 export const lightThemeOverrides: GlobalThemeOverrides = {
   common: {
@@ -156,21 +160,99 @@ export const darkThemeOverrides: GlobalThemeOverrides = {
   },
   Switch: {
     railColor: '#3a3a3a',
-    railColorActive: '#66bb6a',
+    railColorActive: '#e0e0e0',
     loadingColor: '#e0e0e0',
     opacityDisabled: 0.4,
   },
 }
 
-export function getThemeOverrides(isDark: boolean, isComic?: boolean): GlobalThemeOverrides {
+export function getThemeOverrides(
+  isDark: boolean,
+  isComic?: boolean,
+  customization?: ThemeCustomization,
+): GlobalThemeOverrides {
   const base = isDark ? darkThemeOverrides : lightThemeOverrides
-  if (!isComic) return base
+  if (!isComic && !customization) return base
   const comicFont = "'Comic Neue', 'ZCOOL KuaiLe', 'Zen Maru Gothic', 'Gaegu', cursive, sans-serif"
+  const custom = customization ? resolveThemeCustomization(customization, isDark) : null
+  const common = {
+    ...base.common!,
+    ...(isComic ? { fontFamily: comicFont } : {}),
+    ...(custom ? {
+      fontSize: `${custom.fontSize}px`,
+      fontSizeMedium: `${custom.fontSize}px`,
+    } : {}),
+    ...(custom?.textPrimary ? {
+      textColorBase: custom.textPrimary,
+      textColor1: custom.textPrimary,
+      textColor2: custom.textSecondary,
+      textColor3: custom.textMuted,
+    } : {}),
+    ...(custom?.accentPrimary ? {
+      primaryColor: custom.accentPrimary,
+      primaryColorHover: custom.accentHover,
+      primaryColorPressed: custom.accentHover,
+      primaryColorSuppl: custom.accentPrimary,
+    } : {}),
+  }
+  const input = custom?.textPrimary || custom?.accentPrimary
+    ? {
+        ...base.Input,
+        ...(custom?.textPrimary ? {
+          textColor: custom.textPrimary,
+          placeholderColor: custom.textMuted,
+          caretColor: custom.textPrimary,
+        } : {}),
+        ...(custom?.accentPrimary && custom.accentPrimaryRgb ? {
+          border: `1px solid rgba(${custom.accentPrimaryRgb}, 0.18)`,
+          borderHover: `1px solid rgba(${custom.accentPrimaryRgb}, 0.32)`,
+          borderFocus: `1px solid ${custom.accentPrimary}`,
+          groupLabelBorder: `1px solid rgba(${custom.accentPrimaryRgb}, 0.18)`,
+        } : {}),
+      }
+    : null
+  const internalSelection = custom?.textPrimary || custom?.accentPrimary
+    ? {
+        ...base.InternalSelection,
+        ...(custom?.textPrimary ? {
+          textColor: custom.textPrimary,
+          placeholderColor: custom.textMuted,
+          placeholderColorDisabled: custom.textMuted,
+          caretColor: custom.textPrimary,
+        } : {}),
+        ...(custom?.accentPrimary && custom.accentPrimaryRgb ? {
+          border: `1px solid rgba(${custom.accentPrimaryRgb}, 0.18)`,
+          borderHover: `1px solid rgba(${custom.accentPrimaryRgb}, 0.32)`,
+          borderActive: `1px solid ${custom.accentPrimary}`,
+          borderFocus: `1px solid ${custom.accentPrimary}`,
+          boxShadowActive: `0 0 0 2px rgba(${custom.accentPrimaryRgb}, 0.2)`,
+          boxShadowFocus: `0 0 0 2px rgba(${custom.accentPrimaryRgb}, 0.2)`,
+          loadingColor: custom.accentPrimary,
+        } : {}),
+      }
+    : null
+
   return {
     ...base,
-    common: {
-      ...base.common!,
-      fontFamily: comicFont,
-    },
+    common,
+    ...(input ? { Input: input } : {}),
+    ...(internalSelection ? { InternalSelection: internalSelection } : {}),
+    ...(custom?.accentPrimary ? {
+      Button: {
+        ...base.Button,
+        textColorPrimary: custom.textOnAccent,
+        colorPrimary: custom.accentPrimary,
+        colorHoverPrimary: custom.accentHover,
+        colorPressedPrimary: custom.accentHover,
+      },
+      Switch: {
+        ...base.Switch,
+        railColorActive: custom.accentPrimary,
+        loadingColor: custom.accentPrimary,
+        boxShadowFocus: custom.accentPrimaryRgb
+          ? `0 0 0 2px rgba(${custom.accentPrimaryRgb}, 0.3)`
+          : base.Switch?.boxShadowFocus,
+      },
+    } : {}),
   }
 }

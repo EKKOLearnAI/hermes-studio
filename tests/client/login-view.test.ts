@@ -9,6 +9,7 @@ const mockSetApiKey = vi.hoisted(() => vi.fn())
 const mockClearApiKey = vi.hoisted(() => vi.fn())
 const mockHasApiKey = vi.hoisted(() => vi.fn())
 const mockIsDesktopShell = vi.hoisted(() => vi.fn())
+const mockActivateUserTheme = vi.hoisted(() => vi.fn())
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({
@@ -35,6 +36,12 @@ vi.mock('@/api/auth', () => ({
 
 vi.mock('@/utils/desktop-bridge', () => ({
   isDesktopShell: mockIsDesktopShell,
+}))
+
+vi.mock('@/composables/useTheme', () => ({
+  useTheme: () => ({
+    activateUserTheme: mockActivateUserTheme,
+  }),
 }))
 
 import LoginView from '@/views/LoginView.vue'
@@ -68,7 +75,14 @@ describe('LoginView password login', () => {
   })
 
   it('logs in with username and password', async () => {
-    mockLoginWithPassword.mockResolvedValue('jwt-token')
+    const theme = {
+      fontSize: 16,
+      textColor: '#202020',
+      accentColor: '#3366ff',
+      background: null,
+      updatedAt: 42,
+    }
+    mockLoginWithPassword.mockResolvedValue({ token: 'jwt-token', userId: 7, theme })
     const wrapper = mount(LoginView)
 
     const inputs = wrapper.findAll('input.login-input')
@@ -78,6 +92,7 @@ describe('LoginView password login', () => {
 
     expect(mockLoginWithPassword).toHaveBeenCalledWith('admin', '123456')
     expect(mockSetApiKey).toHaveBeenCalledWith('jwt-token')
+    expect(mockActivateUserTheme).toHaveBeenCalledWith(7, theme)
     expect(mockReplace).toHaveBeenCalledWith('/hermes/chat')
   })
 

@@ -1628,6 +1628,10 @@ export default defineComponent({ components: { CreateRoomForm } })
         background-color: rgba(var(--accent-primary-rgb), 0.12);
     }
 
+    &.active .room-name {
+        color: $text-primary;
+    }
+
     .room-icon {
         color: $text-muted;
         flex-shrink: 0;

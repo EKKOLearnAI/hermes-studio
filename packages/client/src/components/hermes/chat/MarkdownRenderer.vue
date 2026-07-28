@@ -508,7 +508,7 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
 @use '@/styles/variables' as *;
 
 .markdown-body {
-  font-size: 14px;
+  font-size: var(--font-size-base);
   line-height: 1.65;
   width: 100%;
   min-width: 0;

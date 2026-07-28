@@ -113,7 +113,7 @@ function handleEditConfig() {
         <ProfileAvatar :name="profile.name" :avatar="profile.avatar" :size="28" />
         <h3 class="profile-name">{{ profile.name }}</h3>
       </div>
-      <NTag v-if="profile.active" size="tiny" type="success" :bordered="false">
+      <NTag v-if="profile.active" size="tiny" type="primary" :bordered="false">
         {{ t('profiles.active') }}
       </NTag>
     </div>
@@ -209,7 +209,7 @@ function handleEditConfig() {
   }
 
   &.active {
-    border-color: rgba(var(--success-rgb), 0.4);
+    border-color: rgba(var(--accent-primary-rgb), 0.4);
   }
 }
 

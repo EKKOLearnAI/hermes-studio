@@ -84,6 +84,7 @@ const tagMappings = {
   'routes/auth.ts': { name: 'Auth', description: 'Authentication management' },
   'routes/devices.ts': { name: 'Devices', description: 'Device pairing and LAN peer operations' },
   'routes/coding-agents.ts': { name: 'Coding Agents', description: 'Coding agent installation, config, and runs' },
+  'routes/theme.ts': { name: 'Theme', description: 'Per-user appearance settings and background image' },
   'routes/api-docs.ts': { name: 'API Docs', description: 'OpenAPI route catalog' },
 }
 

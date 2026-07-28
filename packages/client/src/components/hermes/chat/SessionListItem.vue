@@ -242,7 +242,7 @@ onUnmounted(() => {
 }
 
 .session-item.active .session-item-title {
-  color: var(--accent-primary);
+  color: var(--text-primary);
 }
 
 .session-item.missing-models {

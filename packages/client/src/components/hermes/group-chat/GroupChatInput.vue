@@ -834,7 +834,7 @@ function isImage(type: string): boolean {
     width: 100%;
     min-height: 150px;
     background-color: $bg-card;
-    border: 1px solid $border-color;
+    border: 1px solid var(--input-border-color);
     border-radius: 18px;
     padding: 14px 12px 9px;
     position: relative;
@@ -842,8 +842,12 @@ function isImage(type: string): boolean {
     transition: border-color $transition-fast, box-shadow $transition-fast;
 
     &:focus-within {
-        border-color: rgba(var(--text-primary-rgb), 0.22);
+        border-color: var(--input-border-focus-color);
         box-shadow: 0 10px 32px rgba(0, 0, 0, 0.11);
+    }
+
+    &:hover:not(:focus-within) {
+        border-color: var(--input-border-hover-color);
     }
 
     &.drag-over {
@@ -894,7 +898,8 @@ function isImage(type: string): boolean {
     }
 
     &::placeholder {
-        color: $text-muted;
+        color: var(--input-placeholder-color);
+        opacity: 1;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
