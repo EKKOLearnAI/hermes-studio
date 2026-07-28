@@ -5,6 +5,7 @@ const managerMock = vi.hoisted(() => ({
   isSessionLaunchCompatible: vi.fn(),
   isSessionProcessing: vi.fn(),
   stop: vi.fn(),
+  stopAndWait: vi.fn(),
 }))
 const startCodingAgentRunMock = vi.hoisted(() => vi.fn())
 const sendCodingAgentRunInputMock = vi.hoisted(() => vi.fn())
@@ -44,6 +45,7 @@ describe('handleCodingAgentRun', () => {
     vi.clearAllMocks()
     getSessionMock.mockReturnValue(null)
     managerMock.isSessionProcessing.mockReturnValue(false)
+    managerMock.stopAndWait.mockResolvedValue(true)
     writeModelRunProfileTokenMock.mockResolvedValue(undefined)
     getSystemPromptMock.mockReturnValue('system prompt')
   })
@@ -81,7 +83,10 @@ describe('handleCodingAgentRun', () => {
       provider: undefined,
       model: undefined,
     })
-    expect(managerMock.stop).toHaveBeenCalledWith('session-1', { reportClosed: false })
+    expect(managerMock.stopAndWait).toHaveBeenCalledWith('session-1', {
+      reportClosed: false,
+      graceMs: 15_000,
+    })
     expect(startCodingAgentRunMock).toHaveBeenCalledWith('codex', expect.objectContaining({
       sessionId: 'session-1',
       mode: 'global',
@@ -130,7 +135,10 @@ describe('handleCodingAgentRun', () => {
       provider: 'deepseek',
       model: 'deepseek-v4-pro',
     })
-    expect(managerMock.stop).toHaveBeenCalledWith('session-1', { reportClosed: false })
+    expect(managerMock.stopAndWait).toHaveBeenCalledWith('session-1', {
+      reportClosed: false,
+      graceMs: 15_000,
+    })
     expect(startCodingAgentRunMock).toHaveBeenCalledWith('codex', expect.objectContaining({
       sessionId: 'session-1',
       mode: 'scoped',

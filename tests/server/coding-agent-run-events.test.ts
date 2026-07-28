@@ -20,6 +20,12 @@ describe('CodingAgentRunManager external event subscriptions', () => {
     ])
 
     const args = groupChatClaudePrintArgs('group_chat', [
+      '--settings',
+      '/tmp/settings.json',
+      '--mcp-config',
+      '/tmp/mcp.json',
+      '--append-system-prompt-file',
+      '/tmp/hermes-rules.md',
       '--dangerously-skip-permissions',
       '--model',
       'claude-test',
@@ -27,10 +33,71 @@ describe('CodingAgentRunManager external event subscriptions', () => {
     expect(args).toEqual([
       '--permission-mode',
       'dontAsk',
+      '--settings',
+      '/tmp/settings.json',
+      '--mcp-config',
+      '/tmp/mcp.json',
       '--model',
       'claude-test',
     ])
     expect(args).not.toContain('--dangerously-skip-permissions')
+    expect(args).not.toContain('--append-system-prompt-file')
+    expect(args).not.toContain('/tmp/hermes-rules.md')
+
+    const ordinaryArgs = [
+      '--settings',
+      '/tmp/settings.json',
+      '--append-system-prompt-file',
+      '/tmp/hermes-rules.md',
+    ]
+    expect(groupChatClaudePrintArgs(undefined, ordinaryArgs)).toEqual(ordinaryArgs)
+  })
+
+  it('does not reuse a coding-agent run across ordinary and Group Chat runtime contexts', () => {
+    const manager = new CodingAgentRunManager()
+    const sessionId = 'shared-claude-session'
+    const ordinaryRun: any = {
+      id: 'ordinary-claude-run',
+      launch: {
+        agentId: 'claude-code',
+        agentSessionId: 'ordinary-claude-run',
+        agentNativeSessionId: 'native-ordinary',
+        sessionId,
+        mode: 'scoped',
+        provider: 'provider',
+        model: 'claude-test',
+        apiMode: 'anthropic_messages',
+        reasoningEffort: '',
+        runtimeContext: undefined,
+      },
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+      startedAt: Date.now(),
+      lastActiveAt: Date.now(),
+      exited: false,
+    }
+    ;(manager as any).runs.set(ordinaryRun.id, ordinaryRun)
+    ;(manager as any).sessionIndex.set(sessionId, ordinaryRun.id)
+    ;(manager as any).managedMcpConfigIsCurrent = vi.fn(() => true)
+
+    const common = {
+      agentId: 'claude-code',
+      mode: 'scoped' as const,
+      provider: 'provider',
+      model: 'claude-test',
+      apiMode: 'anthropic_messages' as const,
+      reasoningEffort: '',
+    }
+    expect(manager.isSessionLaunchCompatible(sessionId, common)).toBe(true)
+    expect(manager.isSessionLaunchCompatible(sessionId, { ...common, agentSessionId: 'stale-run' })).toBe(false)
+    expect(manager.isSessionLaunchCompatible(sessionId, { ...common, agentSessionId: 'ordinary-claude-run' })).toBe(true)
+    expect(manager.isSessionLaunchCompatible(sessionId, { ...common, agentNativeSessionId: 'stale-native' })).toBe(false)
+    expect(manager.isSessionLaunchCompatible(sessionId, { ...common, agentNativeSessionId: 'native-ordinary' })).toBe(true)
+    expect(manager.isSessionLaunchCompatible(sessionId, { ...common, runtimeContext: 'group_chat' })).toBe(false)
+
+    ordinaryRun.launch.runtimeContext = 'group_chat'
+    expect(manager.isSessionLaunchCompatible(sessionId, { ...common, runtimeContext: 'group_chat' })).toBe(true)
+    expect(manager.isSessionLaunchCompatible(sessionId, common)).toBe(false)
+    manager.shutdown()
   })
 
   it('uses resume-compatible sandbox configuration on both initial and resumed Codex turns', () => {

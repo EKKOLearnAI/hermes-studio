@@ -3,7 +3,7 @@ import bodyParser from '@koa/bodyparser'
 import { createServer, type Server as HttpServer } from 'http'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const interruptMock = vi.fn(async () => ({ ok: true }))
+const interruptMock = vi.fn(async () => ({ ok: true, synced: true }))
 const destroyMock = vi.fn(async () => ({ ok: true }))
 
 vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
@@ -38,7 +38,7 @@ describe('group chat actor retention', () => {
 
   beforeEach(async () => {
     interruptMock.mockReset()
-    interruptMock.mockResolvedValue({ ok: true })
+    interruptMock.mockResolvedValue({ ok: true, synced: true })
     destroyMock.mockReset()
     destroyMock.mockResolvedValue({ ok: true })
     harness = await createTestGroupChatServer()
@@ -334,7 +334,7 @@ describe('group chat actor retention', () => {
     })
   })
 
-  it('keeps authority revoked and the durable outbox pending when runtime cleanup fails', async () => {
+  it('preserves participant authority and identity when runtime cleanup fails', async () => {
     interruptMock.mockRejectedValueOnce(new Error('bridge unavailable'))
     destroyMock.mockRejectedValueOnce(new Error('bridge destroy unavailable'))
 
@@ -350,23 +350,23 @@ describe('group chat actor retention', () => {
       method: 'DELETE',
     })
 
-    expect(response.status).toBe(200)
+    expect(response.status).toBe(409)
     expect(harness.db.prepare(
       `SELECT active, agentId, tombstonedAt FROM gc_room_actors WHERE id = ?`
     ).get(actor.id)).toEqual({
-      active: 0,
-      agentId: null,
-      tombstonedAt: expect.any(Number),
+      active: 1,
+      agentId: 'agent-1',
+      tombstonedAt: null,
     })
+    expect(storage.getActorCapabilities(actor.id)).toEqual(expect.arrayContaining([
+      'room.read', 'room.write', 'room.type', 'agent.invoke',
+    ]))
+    expect(storage.getRoomAgent('room-1', agent.id)).toMatchObject({ agentId: 'agent-1' })
     expect(harness.db.prepare(
       `SELECT session_id, profile_name, status FROM gc_pending_session_deletes WHERE session_id = ?`
-    ).get('session-1')).toEqual({
-      session_id: 'session-1',
-      profile_name: 'default',
-      status: 'pending',
-    })
-    expect(interruptMock).toHaveBeenCalledWith('session-1', 'Interrupted by group chat user', 'default')
-    expect(destroyMock).toHaveBeenCalledWith('session-1', 'default')
+    ).get('session-1')).toBeUndefined()
+    expect(interruptMock).toHaveBeenCalledWith(agent.sessionId, 'Interrupted by group chat user', 'default')
+    expect(destroyMock).not.toHaveBeenCalled()
   })
 
   it('creates a new actor incarnation when the same agent identity is re-added after deletion', async () => {

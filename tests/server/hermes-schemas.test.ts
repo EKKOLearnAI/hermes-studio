@@ -192,14 +192,22 @@ describe('Hermes schema initialization', () => {
       `INSERT INTO "${SESSIONS_TABLE}" (id, profile, source, agent, started_at, last_active) VALUES (?, ?, ?, ?, ?, ?)`,
     )
     insert.run('gc_room-1_codex-1_0', 'default', 'coding_agent', 'codex', 1, 5)
+    insert.run('gc_room-1_claude-1_0', 'default', 'coding_agent', 'claude', 1, 5)
     insert.run('gc_deleted-room_claude-1_2', 'default', 'coding_agent', 'claude', 1, 4)
     insert.run('GC_ordinary-codex', 'default', 'coding_agent', 'codex', 1, 3)
     insert.run('gC_mixed-claude', 'default', 'coding_agent', 'claude', 1, 2)
     insert.run('ordinary-codex-chat', 'default', 'coding_agent', 'codex', 1, 1)
     insert.run('gc_user-selected-id', 'default', 'coding_agent', 'codex', 1, 6)
+    insert.run('gc_mismatched-agent', 'default', 'coding_agent', 'claude', 1, 7)
     db.prepare(
       `INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, runtime, codingAgentId, sessionId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run('binding-1', 'room-1', 'codex-1', 'default', 'Codex', 'coding_agent', 'codex', 'gc_room-1_codex-1_0')
+    db.prepare(
+      `INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, runtime, codingAgentId, sessionId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('binding-2', 'room-1', 'claude-1', 'default', 'Claude', 'coding_agent', 'claude-code', 'gc_room-1_claude-1_0')
+    db.prepare(
+      `INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, runtime, codingAgentId, sessionId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('binding-mismatch', 'room-1', 'mismatch-1', 'default', 'Mismatch', 'coding_agent', 'codex', 'gc_mismatched-agent')
     const markGroupChatOwned = db.prepare(
       `INSERT INTO "${GC_SESSION_PROFILES_TABLE}" (session_id, room_id, agent_id, profile_name, created_at) VALUES (?, ?, ?, ?, ?)`,
     )
@@ -209,27 +217,67 @@ describe('Hermes schema initialization', () => {
     expect(db.prepare(`SELECT id, source FROM "${SESSIONS_TABLE}" ORDER BY id`).all()).toEqual([
       { id: 'GC_ordinary-codex', source: 'coding_agent' },
       { id: 'gC_mixed-claude', source: 'coding_agent' },
-      { id: 'gc_deleted-room_claude-1_2', source: 'group_chat' },
+      { id: 'gc_deleted-room_claude-1_2', source: 'coding_agent' },
+      { id: 'gc_mismatched-agent', source: 'coding_agent' },
+      { id: 'gc_room-1_claude-1_0', source: 'group_chat' },
       { id: 'gc_room-1_codex-1_0', source: 'group_chat' },
       { id: 'gc_user-selected-id', source: 'coding_agent' },
       { id: 'ordinary-codex-chat', source: 'coding_agent' },
     ])
     const { listSessions } = await import('../../packages/server/src/db/hermes/session-store')
     expect(listSessions('default', undefined, 4).map(session => session.id)).toEqual([
+      'gc_mismatched-agent',
       'gc_user-selected-id',
+      'gc_deleted-room_claude-1_2',
       'GC_ordinary-codex',
-      'gC_mixed-claude',
-      'ordinary-codex-chat',
     ])
     expect(listSessions('default', 'coding_agent', 4).map(session => session.id)).toEqual([
+      'gc_mismatched-agent',
       'gc_user-selected-id',
+      'gc_deleted-room_claude-1_2',
       'GC_ordinary-codex',
-      'gC_mixed-claude',
-      'ordinary-codex-chat',
     ])
     expect(listSessions('default', 'group_chat', 10).map(session => session.id)).toEqual([
       'gc_room-1_codex-1_0',
-      'gc_deleted-room_claude-1_2',
+      'gc_room-1_claude-1_0',
+    ])
+  })
+
+  it('does not reclassify Coding Agent sessions from stale or mismatched ownership tuples', async () => {
+    const { GC_ROOM_AGENTS_TABLE, GC_SESSION_PROFILES_TABLE, initAllHermesTables, SESSIONS_TABLE } =
+      await import('../../packages/server/src/db/hermes/schemas')
+
+    expect(() => initAllHermesTables()).not.toThrow()
+    const insertSession = db.prepare(
+      `INSERT INTO "${SESSIONS_TABLE}" (id, profile, source, agent, started_at, last_active) VALUES (?, ?, 'coding_agent', ?, 1, 1)`,
+    )
+    insertSession.run('gc-stale-owner', 'personal', 'claude')
+    insertSession.run('gc-profile-collision', 'ordinary-profile', 'codex')
+    insertSession.run('gc-runtime-collision', 'ordinary-profile', 'codex')
+    insertSession.run('gc-agent-collision', 'ordinary-profile', 'codex')
+    db.prepare(
+      `INSERT INTO "${GC_SESSION_PROFILES_TABLE}" (session_id, room_id, agent_id, profile_name, created_at) VALUES (?, ?, ?, ?, ?)`,
+    ).run('gc-stale-owner', 'deleted-room', 'legacy-agent', 'different-profile', 1)
+    const insertParticipant = db.prepare(
+      `INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, runtime, codingAgentId, sessionId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    insertParticipant.run('profile-binding', 'room-1', 'profile-agent', 'group-profile', 'Profile', 'coding_agent', 'codex', 'gc-profile-collision')
+    insertParticipant.run('runtime-binding', 'room-1', 'runtime-agent', 'ordinary-profile', 'Runtime', 'hermes', 'codex', 'gc-runtime-collision')
+    insertParticipant.run('agent-binding', 'room-1', 'agent-agent', 'ordinary-profile', 'Agent', 'coding_agent', 'claude-code', 'gc-agent-collision')
+
+    expect(() => initAllHermesTables()).not.toThrow()
+    expect(db.prepare(
+      `SELECT id, source FROM "${SESSIONS_TABLE}" WHERE id IN (?, ?, ?, ?) ORDER BY id`,
+    ).all(
+      'gc-stale-owner',
+      'gc-profile-collision',
+      'gc-runtime-collision',
+      'gc-agent-collision',
+    )).toEqual([
+      { id: 'gc-agent-collision', source: 'coding_agent' },
+      { id: 'gc-profile-collision', source: 'coding_agent' },
+      { id: 'gc-runtime-collision', source: 'coding_agent' },
+      { id: 'gc-stale-owner', source: 'coding_agent' },
     ])
   })
 

@@ -1904,7 +1904,6 @@ export async function startCodingAgentRun(
       : input.sessionSource === 'workflow'
         ? 'workflow'
         : 'coding_agent'
-  const existingAgentSessionId = existingSession?.agent_session_id || ''
   const resolvedInput = await resolveStoredProviderLaunchInput(input, existingSession)
   const requestedMode = resolvedInput.mode === 'global' ? 'global' : 'scoped'
   const requestedProvider = String(resolvedInput.provider || '').trim().toLowerCase()
@@ -1914,16 +1913,26 @@ export async function startCodingAgentRun(
     ;(err as any).status = 400
     throw err
   }
-  const agentSessionId = resolvedInput.agentSessionId || existingAgentSessionId || makeAgentSessionId()
+  // A Studio Session ID must not bridge native/runtime identities across trust
+  // contexts. In particular, Group Chat carries Room-owned system instructions
+  // and isolation settings that must never resume an ordinary Coding Agent
+  // conversation (or vice versa), even when provider/model settings match.
+  const sourceCompatible = !existingSession || String(existingSession.source || '').trim() === sessionSource
+  const agentSessionId = sourceCompatible
+    ? resolvedInput.agentSessionId || existingSession?.agent_session_id || makeAgentSessionId()
+    : makeAgentSessionId()
   const canResumeNativeSession = existingSession
-    ? storedCodingAgentMode(existingSession) === requestedMode &&
+    ? sourceCompatible &&
+      storedCodingAgentMode(existingSession) === requestedMode &&
       (existingSession.agent === (id === 'codex' ? 'codex' : 'claude') || !existingSession.agent) &&
       String(existingSession.provider || '').trim() === String(resolvedInput.provider || '').trim() &&
       String(existingSession.model || '').trim() === String(resolvedInput.model || '').trim() &&
       (!String(existingSession.api_mode || '').trim() || String(existingSession.api_mode || '').trim() === String(resolvedInput.apiMode || '').trim())
     : false
   const existingNativeSessionId = canResumeNativeSession ? existingSession?.agent_native_session_id || '' : ''
-  const agentNativeSessionId = resolvedInput.agentNativeSessionId || existingNativeSessionId || (id === 'claude-code' ? randomUUID() : '')
+  const agentNativeSessionId = sourceCompatible
+    ? resolvedInput.agentNativeSessionId || existingNativeSessionId || (id === 'claude-code' ? randomUUID() : '')
+    : id === 'claude-code' ? randomUUID() : ''
   const launch = await prepareCodingAgentLaunch(id, {
     ...resolvedInput,
     sessionId,
@@ -1940,6 +1949,26 @@ export async function startCodingAgentRun(
     ? await resolveCommandForExecution(launch.command, runtimeEnv)
     : launch.command
   const persistedProvider = String(resolvedInput.provider || launch.provider || '').trim() || launch.provider
+  const activeRunId = codingAgentRunManager.runIdForSession(sessionId)
+  if (activeRunId && !codingAgentRunManager.isSessionLaunchCompatible(sessionId, {
+    agentId: launch.agentId,
+    agentSessionId,
+    agentNativeSessionId,
+    mode: launch.mode,
+    provider: persistedProvider,
+    model: launch.model,
+    apiMode: launch.apiMode,
+    reasoningEffort: launch.reasoningEffort,
+    runtimeContext: input.runtimeContext,
+  })) {
+    const stopped = await codingAgentRunManager.stopAndWait(sessionId, {
+      reportClosed: false,
+      graceMs: 15_000,
+    })
+    if (!stopped || codingAgentRunManager.runIdForSession(sessionId)) {
+      throw new Error('Previous coding-agent run did not stop cleanly')
+    }
+  }
   const started = codingAgentRunManager.start({
     agentSessionId,
     agentId: launch.agentId,

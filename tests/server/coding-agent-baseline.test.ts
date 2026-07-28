@@ -5,6 +5,7 @@ const managerMock = vi.hoisted(() => ({
   isSessionLaunchCompatible: vi.fn(),
   isSessionProcessing: vi.fn(),
   stop: vi.fn(),
+  stopAndWait: vi.fn(),
 }))
 const startCodingAgentRunMock = vi.hoisted(() => vi.fn())
 const sendCodingAgentRunInputMock = vi.hoisted(() => vi.fn())
@@ -53,6 +54,7 @@ describe('coding-agent dispatch baseline', () => {
     managerMock.runIdForSession.mockReturnValue(undefined)
     managerMock.isSessionLaunchCompatible.mockReturnValue(true)
     managerMock.isSessionProcessing.mockReturnValue(false)
+    managerMock.stopAndWait.mockResolvedValue(true)
     startCodingAgentRunMock.mockResolvedValue({ agentSessionId: 'agent-session-1' })
     sendCodingAgentRunInputMock.mockResolvedValue({ runId: 'agent-session-1' })
     writeModelRunProfileTokenMock.mockResolvedValue(undefined)
@@ -145,5 +147,47 @@ describe('coding-agent dispatch baseline', () => {
       error: 'session_id is required for coding agent runs',
     })
     expect(startCodingAgentRunMock).not.toHaveBeenCalled()
+  })
+
+  it('waits for an incompatible Group Chat runtime to stop before launching ordinary chat', async () => {
+    const { handleCodingAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-coding-agent-run')
+    let releaseStop!: (stopped: boolean) => void
+    managerMock.runIdForSession.mockReturnValue('group-chat-run')
+    managerMock.isSessionLaunchCompatible.mockReturnValue(false)
+    managerMock.stopAndWait.mockReturnValue(new Promise<boolean>((resolve) => { releaseStop = resolve }))
+
+    const pending = handleCodingAgentRun({} as any, socket() as any, {
+      session_id: 'session-1',
+      input: 'ordinary request',
+      coding_agent_id: 'claude-code',
+    }, 'default', new Map([['session-1', state()]]) as any)
+
+    await Promise.resolve()
+    expect(managerMock.stopAndWait).toHaveBeenCalledWith('session-1', {
+      reportClosed: false,
+      graceMs: 15_000,
+    })
+    expect(startCodingAgentRunMock).not.toHaveBeenCalled()
+
+    releaseStop(true)
+    await pending
+    expect(startCodingAgentRunMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails closed when an incompatible Group Chat runtime cannot be stopped', async () => {
+    const { handleCodingAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-coding-agent-run')
+    managerMock.runIdForSession.mockReturnValue('group-chat-run')
+    managerMock.isSessionLaunchCompatible.mockReturnValue(false)
+    managerMock.stopAndWait.mockResolvedValue(false)
+
+    await expect(handleCodingAgentRun({} as any, socket() as any, {
+      session_id: 'session-1',
+      input: 'ordinary request',
+      coding_agent_id: 'claude-code',
+    }, 'default', new Map([['session-1', state()]]) as any))
+      .rejects.toThrow('Previous coding-agent run did not stop cleanly')
+
+    expect(startCodingAgentRunMock).not.toHaveBeenCalled()
+    expect(sendCodingAgentRunInputMock).not.toHaveBeenCalled()
   })
 })

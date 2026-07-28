@@ -75,7 +75,11 @@ export async function handleCodingAgentRun(
     apiMode: launchApiMode,
     reasoningEffort: data.reasoning_effort,
   })) {
-    codingAgentRunManager.stop(sessionId, { reportClosed: false })
+    const stopped = await codingAgentRunManager.stopAndWait(sessionId, {
+      reportClosed: false,
+      graceMs: 15_000,
+    })
+    if (!stopped) throw new Error('Previous coding-agent run did not stop cleanly')
     runId = undefined
   }
   if (!runId) {

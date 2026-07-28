@@ -559,7 +559,7 @@ describe('group chat approval and context baseline', () => {
     let resolveInterrupt!: () => void
     const interruptGate = new Promise<void>((resolve) => { resolveInterrupt = resolve })
     const agentClients = (groupServer as any).agentClients
-    const interruptRoom = vi.spyOn(agentClients, 'interruptRoom').mockReturnValue(interruptGate)
+    const interruptPersistedRoom = vi.spyOn(agentClients, 'interruptPersistedRoom').mockReturnValue(interruptGate)
     const resetRoomContext = vi.spyOn(agentClients, 'resetRoomContext')
     const typingTimer = setTimeout(() => {}, 60_000)
     ;(groupServer as any).typingState.set('room-1', new Map([['human-1', { userName: 'Human', timer: typingTimer }]]))
@@ -582,7 +582,7 @@ describe('group chat approval and context baseline', () => {
       const clearing = groupServer.clearRoomRuntimeState('room-1', () => {
         if (!authorized) throw new Error('authorization revoked')
       })
-      await vi.waitFor(() => expect(interruptRoom).toHaveBeenCalledWith('room-1'))
+      await vi.waitFor(() => expect(interruptPersistedRoom).toHaveBeenCalledWith('room-1'))
       authorized = false
       resolveInterrupt()
 
@@ -598,8 +598,92 @@ describe('group chat approval and context baseline', () => {
       ;(groupServer as any).typingState.delete('room-1')
       ;(groupServer as any).contextStatusState.delete('room-1')
       ;(groupServer as any).pendingApprovals.delete('approval-preserved')
-      interruptRoom.mockRestore()
+      interruptPersistedRoom.mockRestore()
       resetRoomContext.mockRestore()
+    }
+  })
+
+  it('stops persisted unconnected Coding Agent runtimes before disconnecting room state', async () => {
+    groupServer.getStorage().addRoomAgent('room-1', 'participant-codex', 'default', 'Codex', '', 0, {
+      runtime: 'coding_agent',
+      codingAgentId: 'codex',
+      sessionId: 'session-stale',
+      mode: 'scoped',
+    })
+    const agentClients = (groupServer as any).agentClients
+    const interruptHandoffTarget = vi.spyOn(agentClients, 'interruptHandoffTarget').mockResolvedValue(undefined)
+    const disconnectRoom = vi.spyOn(agentClients, 'disconnectRoom')
+
+    try {
+      const finalize = await groupServer.deleteRoomRuntimeState('room-1', () => {})
+      finalize(true)
+
+      expect(interruptHandoffTarget).toHaveBeenCalledWith('room-1', 'participant-codex', 'session-stale')
+      expect(disconnectRoom).toHaveBeenCalledWith('room-1')
+    } finally {
+      interruptHandoffTarget.mockRestore()
+      disconnectRoom.mockRestore()
+    }
+  })
+
+  it('rejects participant binding drift between runtime synchronization and the deletion transaction', async () => {
+    const storage = groupServer.getStorage()
+    storage.addRoomAgent('room-1', 'participant-codex', 'default', 'Codex', '', 0, {
+      runtime: 'coding_agent', codingAgentId: 'codex', sessionId: 'session-before-stop', mode: 'scoped',
+    })
+    const deletionGuard = storage.captureRoomDeletionGuard('room-1')
+    let resolveInterrupt!: () => void
+    const interruptGate = new Promise<void>((resolve) => { resolveInterrupt = resolve })
+    const agentClients = (groupServer as any).agentClients
+    const interruptHandoffTarget = vi.spyOn(agentClients, 'interruptHandoffTarget').mockReturnValue(interruptGate)
+    let finalize: ((committed: boolean) => void) | undefined
+
+    try {
+      const deleting = groupServer.deleteRoomRuntimeState('room-1', () => {})
+      await vi.waitFor(() => expect(interruptHandoffTarget).toHaveBeenCalledWith(
+        'room-1', 'participant-codex', 'session-before-stop',
+      ))
+      storage.addRoomAgent('room-1', 'participant-claude', 'default', 'Claude', '', 0, {
+        runtime: 'coding_agent', codingAgentId: 'claude-code', sessionId: 'session-added-during-stop', mode: 'scoped',
+      })
+      resolveInterrupt()
+      finalize = await deleting
+
+      expect((agentClients as any)._pausedRooms.has('room-1')).toBe(true)
+      expect(() => storage.deleteRoom('room-1', deletionGuard)).toThrow(/runtime identity changed/i)
+      expect(storage.getRoom('room-1')).toMatchObject({ id: 'room-1' })
+      expect(storage.getRoomAgentByAgentId('room-1', 'participant-claude')).toMatchObject({
+        sessionId: 'session-added-during-stop',
+      })
+    } finally {
+      finalize?.(false)
+      expect((agentClients as any)._pausedRooms.has('room-1')).toBe(false)
+      interruptHandoffTarget.mockRestore()
+    }
+  })
+
+  it('fails closed before disconnecting room state when a persisted Runtime cannot synchronize', async () => {
+    groupServer.getStorage().addRoomAgent('room-1', 'participant-claude', 'default', 'Claude', '', 0, {
+      runtime: 'coding_agent',
+      codingAgentId: 'claude-code',
+      sessionId: 'session-live',
+      mode: 'scoped',
+    })
+    const agentClients = (groupServer as any).agentClients
+    const interruptHandoffTarget = vi.spyOn(agentClients, 'interruptHandoffTarget')
+      .mockRejectedValue(new Error('runtime interrupt did not synchronize'))
+    const disconnectRoom = vi.spyOn(agentClients, 'disconnectRoom')
+
+    try {
+      await expect(groupServer.deleteRoomRuntimeState('room-1', () => {}))
+        .rejects.toThrow(/synchronized|interrupt/i)
+      expect(interruptHandoffTarget).toHaveBeenCalledWith('room-1', 'participant-claude', 'session-live')
+      expect(disconnectRoom).not.toHaveBeenCalled()
+      expect(groupServer.getStorage().getRoom('room-1')).toMatchObject({ id: 'room-1' })
+      expect((groupServer as any).fencedRoomAgentSessions?.has('room-1')).not.toBe(true)
+    } finally {
+      interruptHandoffTarget.mockRestore()
+      disconnectRoom.mockRestore()
     }
   })
 
@@ -608,7 +692,7 @@ describe('group chat approval and context baseline', () => {
     let resolveInterrupt!: () => void
     const interruptGate = new Promise<void>((resolve) => { resolveInterrupt = resolve })
     const agentClients = (groupServer as any).agentClients
-    const interruptRoom = vi.spyOn(agentClients, 'interruptRoom').mockReturnValue(interruptGate)
+    const interruptPersistedRoom = vi.spyOn(agentClients, 'interruptPersistedRoom').mockReturnValue(interruptGate)
     const disconnectRoom = vi.spyOn(agentClients, 'disconnectRoom')
     ;(groupServer as any).contextStatusState.set('room-1', new Map([['Agent', { agentName: 'Agent', status: 'replying' }]]))
     let authorized = true
@@ -617,7 +701,7 @@ describe('group chat approval and context baseline', () => {
       const deleting = groupServer.deleteRoomRuntimeState('room-1', () => {
         if (!authorized) throw new Error('authorization revoked')
       })
-      await vi.waitFor(() => expect(interruptRoom).toHaveBeenCalledWith('room-1'))
+      await vi.waitFor(() => expect(interruptPersistedRoom).toHaveBeenCalledWith('room-1'))
       authorized = false
       resolveInterrupt()
 
@@ -628,19 +712,24 @@ describe('group chat approval and context baseline', () => {
       expect((groupServer as any).fencedRoomAgentSessions?.has('room-1')).not.toBe(true)
     } finally {
       ;(groupServer as any).contextStatusState.delete('room-1')
-      interruptRoom.mockRestore()
+      interruptPersistedRoom.mockRestore()
       disconnectRoom.mockRestore()
     }
   })
 
   it('emits room_cleared and room_updated when runtime state is cleared', async () => {
     const { human } = await joinPair()
+    const interrupt = vi.spyOn(AgentBridgeClient.prototype, 'interrupt').mockResolvedValue({ synced: true } as any)
     const cleared = once<any>(human, 'room_cleared')
     const updated = once<any>(human, 'room_updated')
 
-    void groupServer.clearRoomRuntimeState('room-1', () => {})
+    try {
+      void groupServer.clearRoomRuntimeState('room-1', () => {}).then(finalize => finalize(true))
 
-    expect(await cleared).toEqual({ roomId: 'room-1', totalTokens: 0 })
-    expect(await updated).toEqual({ roomId: 'room-1', totalTokens: 0 })
+      expect(await cleared).toEqual({ roomId: 'room-1', totalTokens: 0 })
+      expect(await updated).toEqual({ roomId: 'room-1', totalTokens: 0 })
+    } finally {
+      interrupt.mockRestore()
+    }
   })
 })

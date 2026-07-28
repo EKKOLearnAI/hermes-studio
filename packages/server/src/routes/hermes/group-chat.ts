@@ -178,6 +178,39 @@ function sanitizeAgentConnectReason(reason?: string): string {
         .slice(0, 240)
 }
 
+function keepRuntimeMutationAlive(
+    storage: GroupChatStorage,
+    fence: { token: string; roomId: string; actorId: string },
+): {
+    assertCurrent: () => void
+    stop: () => void
+} {
+    let failure: Error | null = null
+    let stopped = false
+    const renew = () => {
+        if (stopped || failure) return
+        try {
+            if (!storage.renewRuntimeMutation(fence.token, fence.roomId, fence.actorId)) {
+                failure = new Error('Group Chat runtime mutation fence expired or changed')
+            }
+        } catch (err) {
+            failure = err instanceof Error ? err : new Error(String(err || 'Runtime mutation fence renewal failed'))
+        }
+    }
+    const timer = setInterval(renew, 60_000)
+    timer.unref?.()
+    return {
+        assertCurrent: () => {
+            if (failure) throw Object.assign(failure, { status: 409 })
+        },
+        stop: () => {
+            if (stopped) return
+            stopped = true
+            clearInterval(timer)
+        },
+    }
+}
+
 function agentConnectFailureBody(profile: string, err: any) {
     return {
         code: 'PROFILE_AGENT_CONNECT_FAILED',
@@ -1201,13 +1234,68 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', a
         return
     }
 
-    const removal = storage.removeAgentActorWithRetention(roomId, requestedAgentId)
+    const deletionGuard = storage.captureParticipantDeletionGuard(roomId, requestedAgentId)
+    let fence: ReturnType<typeof storage.beginParticipantRuntimeMutation>
     try {
-        await chatServer.agentClients.interruptRoom(roomId)
-        await chatServer.cleanupRemovedAgentRuntime(removal)
+        fence = storage.beginParticipantRuntimeMutation(roomId, agent.agentId, 'Participant is being deleted')
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 409)
+        ctx.body = { error: err?.message || 'Another participant runtime mutation is already in progress' }
+        return
+    }
+    deletionGuard.runtimeMutationToken = fence.token
+    deletionGuard.runtimeMutationActorId = fence.actorId
+    const fenceHeartbeat = keepRuntimeMutationAlive(storage, fence)
+    const releaseAdmissionPause = chatServer.agentClients.pauseRoom(roomId)
+    const targets = new Map<string, string>()
+    targets.set(agent.agentId, String(agent.sessionId || '').trim())
+    for (const target of fence.affectedTargets) {
+        targets.set(String(target.targetAgentId || ''), String(target.targetSessionId || '').trim())
+    }
+    try {
+        for (const [targetAgentId, targetSessionId] of targets) {
+            if (!targetAgentId || !targetSessionId) {
+                throw new Error('Participant runtime identity is incomplete')
+            }
+            await chatServer.agentClients.interruptHandoffTarget(roomId, targetAgentId, targetSessionId)
+            fenceHeartbeat.assertCurrent()
+        }
+    } catch (err: unknown) {
+        releaseAdmissionPause()
+        fenceHeartbeat.stop()
+        storage.releaseRuntimeMutation(fence.token, fence.roomId, fence.actorId)
+        const reason = err instanceof Error ? err.message : String(err || '')
+        ctx.status = 409
+        ctx.body = { error: sanitizeAgentConnectReason(reason || 'Participant interrupt did not complete') }
+        return
+    }
+    if (!requireManageRoom(ctx, storage, roomId)) {
+        releaseAdmissionPause()
+        fenceHeartbeat.stop()
+        storage.releaseRuntimeMutation(fence.token, fence.roomId, fence.actorId)
+        return
+    }
+    let removal: ReturnType<typeof storage.removeAgentActorWithRetention>
+    try {
+        fenceHeartbeat.assertCurrent()
+        removal = storage.removeAgentActorWithRetention(roomId, requestedAgentId, deletionGuard)
+        fenceHeartbeat.stop()
+    } catch (err: any) {
+        releaseAdmissionPause()
+        fenceHeartbeat.stop()
+        storage.releaseRuntimeMutation(fence.token, fence.roomId, fence.actorId)
+        ctx.status = Number(err?.status || 409)
+        ctx.body = { error: err?.message || 'Participant runtime identity changed during synchronized deletion' }
+        return
+    }
+    const committedRemoval = removal!
+    try {
+        await chatServer.cleanupRemovedAgentRuntime(committedRemoval)
     } catch (err: unknown) {
         const reason = err instanceof Error ? err.message : String(err || '')
         console.error(`[GroupChat] Failed runtime cleanup for agent ${agent.agentId} in room ${roomId}: ${sanitizeAgentConnectReason(reason)}`)
+    } finally {
+        releaseAdmissionPause()
     }
     if (!requireManageRoom(ctx, storage, roomId)) return
     ctx.body = {
@@ -1263,20 +1351,51 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
     if (!requireManageRoom(ctx, storage, roomId)) {
         return
     }
-    // Interrupt active bridge runs, then evict sockets and disconnect agents before deleting persisted data.
+    const deletionGuard = storage.captureRoomDeletionGuard(roomId)
+    let fence: ReturnType<typeof storage.beginRoomRuntimeMutation>
     try {
-        await chatServer.deleteRoomRuntimeState(roomId, () => {
+        fence = storage.beginRoomRuntimeMutation(roomId, 'Room is being deleted')
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 409)
+        ctx.body = { error: err?.message || 'Another Room runtime mutation is already in progress' }
+        return
+    }
+    deletionGuard.runtimeMutationToken = fence.token
+    const fenceHeartbeat = keepRuntimeMutationAlive(storage, fence)
+    let finalizeRuntimeDeletion: ((committed: boolean) => void) | null = null
+    let committed = false
+    // Stop all persisted runtimes while retaining their session fence through the SQLite CAS delete.
+    try {
+        finalizeRuntimeDeletion = await chatServer.deleteRoomRuntimeState(roomId, () => {
+            fenceHeartbeat.assertCurrent()
             assertCurrentRoomManager(ctx, storage, roomId)
         })
+        fenceHeartbeat.assertCurrent()
     } catch (err: any) {
+        fenceHeartbeat.stop()
+        storage.releaseRuntimeMutation(fence.token, fence.roomId, fence.actorId)
         if (isRequestAuthorizationChanged(err)) return
         ctx.status = Number(err?.status || 409)
         ctx.body = { error: err?.message || 'Room interrupt did not complete' }
         return
     }
-    if (!requireManageRoom(ctx, storage, roomId)) return
-    // Delete all data
-    storage.deleteRoom(roomId)
+    try {
+        if (!requireManageRoom(ctx, storage, roomId)) return
+        // Delete only if the exact stopped participant set is still authoritative.
+        storage.deleteRoom(roomId, deletionGuard)
+        committed = true
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 409)
+        ctx.body = { error: err?.message || 'Room runtime identity changed during synchronized deletion' }
+        return
+    } finally {
+        try {
+            finalizeRuntimeDeletion?.(committed)
+        } finally {
+            fenceHeartbeat.stop()
+            if (!committed) storage.releaseRuntimeMutation(fence.token, fence.roomId, fence.actorId)
+        }
+    }
     ctx.body = { success: true }
 })
 
@@ -1294,19 +1413,51 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clear-context', async
     if (!access) {
         return
     }
+    const deletionGuard = storage.captureRoomDeletionGuard(roomId)
+    let fence: ReturnType<typeof storage.beginRoomRuntimeMutation>
     try {
-        await chatServer.clearRoomRuntimeState(roomId, () => {
+        fence = storage.beginRoomRuntimeMutation(roomId, 'Room context is being cleared')
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 409)
+        ctx.body = { error: err?.message || 'Another Room runtime mutation is already in progress' }
+        return
+    }
+    deletionGuard.runtimeMutationToken = fence.token
+    const fenceHeartbeat = keepRuntimeMutationAlive(storage, fence)
+    let finalizeRuntimeClear: ((committed: boolean) => void) | null = null
+    let committed = false
+    try {
+        finalizeRuntimeClear = await chatServer.clearRoomRuntimeState(roomId, () => {
+            fenceHeartbeat.assertCurrent()
             assertCurrentRoomManager(ctx, storage, roomId)
         })
+        fenceHeartbeat.assertCurrent()
     } catch (err: any) {
+        fenceHeartbeat.stop()
+        storage.releaseRuntimeMutation(fence.token, fence.roomId, fence.actorId)
         if (isRequestAuthorizationChanged(err)) return
         ctx.status = Number(err?.status || 409)
         ctx.body = { error: err?.message || 'Room interrupt did not complete' }
         return
     }
-    const finalAccess = requireManageRoom(ctx, storage, roomId)
-    if (!finalAccess) return
-    storage.clearRoomContext(roomId)
+    let finalAccess: RoomAccess | null = null
+    try {
+        finalAccess = requireManageRoom(ctx, storage, roomId)
+        if (!finalAccess) return
+        storage.clearRoomContext(roomId, deletionGuard)
+        committed = true
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 409)
+        ctx.body = { error: err?.message || 'Room runtime identity changed during synchronized context rotation' }
+        return
+    } finally {
+        try {
+            finalizeRuntimeClear?.(committed)
+        } finally {
+            fenceHeartbeat.stop()
+            storage.releaseRuntimeMutation(fence.token, fence.roomId, fence.actorId)
+        }
+    }
     ctx.body = { success: true, room: serializeRoom(storage.getRoom(roomId), finalAccess) }
 })
 

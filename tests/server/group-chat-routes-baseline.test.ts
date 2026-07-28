@@ -20,6 +20,7 @@ vi.mock('../../packages/server/src/middleware/user-auth', async importOriginal =
 })
 
 import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
+import { AgentClients } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 
 function listen(server: HttpServer): Promise<string> {
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => {
@@ -46,6 +47,7 @@ describe('group chat REST route baseline', () => {
   let agentClients: any
   let clearRoomRuntimeState: ReturnType<typeof vi.fn>
   let deleteRoomRuntimeState: ReturnType<typeof vi.fn>
+  let cleanupRemovedAgentRuntime: ReturnType<typeof vi.fn>
   let forceCompress: ReturnType<typeof vi.fn>
   let authenticated: boolean
 
@@ -94,8 +96,33 @@ describe('group chat REST route baseline', () => {
       getRecentMessagesForUI: vi.fn((roomId, limit = 150, offset = 0) => (storage.messages.get(roomId) || []).slice(offset, offset + limit)),
       getMessageCount: vi.fn((roomId) => (storage.messages.get(roomId) || []).length),
       getRoomAgents: vi.fn((roomId) => storage.agents.get(roomId) || []),
+      captureRoomDeletionGuard: vi.fn((roomId) => ({
+        roomId,
+        roomAuthorizationRevision: Number(storage.rooms.get(roomId)?.authorizationRevision || 0),
+        participants: (storage.agents.get(roomId) || []).map((participant: any) => ({ ...participant })),
+      })),
+      captureParticipantDeletionGuard: vi.fn((roomId, ref) => {
+        const participant = (storage.agents.get(roomId) || []).find((candidate: any) => candidate.id === ref || candidate.agentId === ref)
+        return {
+          roomId,
+          roomAuthorizationRevision: Number(storage.rooms.get(roomId)?.authorizationRevision || 0),
+          participants: (storage.agents.get(roomId) || []).map((participant: any) => ({ ...participant })),
+          participantId: participant?.id || '',
+          actorAuthorizationRevision: null,
+        }
+      }),
       getRoomMembers: vi.fn((roomId) => storage.members.get(roomId) || []),
       listHandoffJobs: vi.fn(() => []),
+      beginParticipantRuntimeMutation: vi.fn((_roomId, targetAgentId) => ({
+        token: `participant-fence-${targetAgentId}`,
+        roomId: _roomId,
+        actorId: `actor-${targetAgentId}`,
+        affectedTargets: [{ targetAgentId, targetSessionId: `session-${targetAgentId}` }],
+      })),
+      beginRoomRuntimeMutation: vi.fn((roomId) => ({ token: `room-fence-${roomId}`, roomId, actorId: '' })),
+      renewRuntimeMutation: vi.fn(() => true),
+      releaseRuntimeMutation: vi.fn(() => true),
+      cancelHandoffJobs: vi.fn(),
       updateRoomConfig: vi.fn((roomId, config) => Object.assign(storage.rooms.get(roomId), config)),
       getRoomByInviteCode: vi.fn((code) => [...storage.rooms.values()].find((r: any) => r.inviteCode === code)),
       addRoomAgent: vi.fn((roomId, agentId, profile, name, description, invited, binding = {}) => {
@@ -104,17 +131,33 @@ describe('group chat REST route baseline', () => {
         return row
       }),
       getRoomAgent: vi.fn((roomId, ref) => (storage.agents.get(roomId) || []).find((a: any) => a.id === ref || a.agentId === ref) || null),
-      removeAgentActorWithRetention: vi.fn((roomId, ref) => {
+      removeAgentActorWithRetention: vi.fn((roomId, ref, guard) => {
         const agent = (storage.agents.get(roomId) || []).find((candidate: any) => candidate.id === ref || candidate.agentId === ref) || null
         if (!agent) return null
+        if (guard) {
+          const captured = guard.participants.find((candidate: any) => candidate.id === guard.participantId)
+          if (!captured || JSON.stringify(agent) !== JSON.stringify(captured)) {
+            throw Object.assign(new Error('Participant runtime identity changed during synchronized deletion'), { status: 409 })
+          }
+        }
         storage.agents.set(roomId, (storage.agents.get(roomId) || []).filter((candidate: any) => candidate.id !== ref && candidate.agentId !== ref))
         return { agent, actorId: null, sessionProfiles: [] }
       }),
       removeRoomMembersForAgent: vi.fn(),
       removeRoomAgent: vi.fn((roomId, ref) => storage.agents.set(roomId, (storage.agents.get(roomId) || []).filter((a: any) => a.id !== ref && a.agentId !== ref))),
-      clearRoomContext: vi.fn((roomId) => { const room = storage.rooms.get(roomId); if (room) Object.assign(room, { totalTokens: 0, sessionSeed: 'rotated' }) }),
-      updateRoomConfig: vi.fn((roomId, config) => { const room = storage.rooms.get(roomId); if (room) Object.assign(room, config) }),
-      deleteRoom: vi.fn((roomId) => storage.rooms.delete(roomId)),
+      clearRoomContext: vi.fn((roomId, guard) => {
+        if (guard && JSON.stringify(storage.agents.get(roomId) || []) !== JSON.stringify(guard.participants)) {
+          throw Object.assign(new Error('Room runtime identity changed during synchronized context rotation'), { status: 409 })
+        }
+        const room = storage.rooms.get(roomId)
+        if (room) Object.assign(room, { totalTokens: 0, sessionSeed: 'rotated' })
+      }),
+      deleteRoom: vi.fn((roomId, guard) => {
+        if (guard && JSON.stringify(storage.agents.get(roomId) || []) !== JSON.stringify(guard.participants)) {
+          throw Object.assign(new Error('Room runtime identity changed during synchronized deletion'), { status: 409 })
+        }
+        storage.rooms.delete(roomId)
+      }),
     }
     agentClients = {
       createAgent: vi.fn(async (cfg: any) => {
@@ -123,6 +166,10 @@ describe('group chat REST route baseline', () => {
       }),
       addAgentToRoom: vi.fn(async () => ({})),
       interruptRoom: vi.fn(async () => true),
+      pauseRoom: vi.fn(() => vi.fn()),
+      interruptAgent: vi.fn(async () => true),
+      interruptHandoffTarget: vi.fn(async (roomId, agentId) => agentClients.interruptAgent(roomId, agentId)),
+      getAgent: vi.fn((roomId, agentId) => (storage.agents.get(roomId) || []).find((agent: any) => agent.agentId === agentId)),
       removeAgentFromRoom: vi.fn(),
       interruptAgent: vi.fn(async () => {}),
       updateAgentIdentity: vi.fn(() => true),
@@ -136,10 +183,10 @@ describe('group chat REST route baseline', () => {
         }),
       })),
     }
-    clearRoomRuntimeState = vi.fn()
-    deleteRoomRuntimeState = vi.fn()
+    clearRoomRuntimeState = vi.fn(async () => vi.fn())
+    deleteRoomRuntimeState = vi.fn(async () => vi.fn())
     forceCompress = vi.fn(async () => ({ summary: 'summary' }))
-    const cleanupRemovedAgentRuntime = vi.fn(async (removal: any) => {
+    cleanupRemovedAgentRuntime = vi.fn(async (removal: any) => {
       if (removal?.agent) agentClients.removeAgentFromRoom(removal.agent.roomId, removal.agent.agentId)
     })
     const resolveLocalCredentialSubject = vi.fn(async (credential: unknown) => credential === 'signed-local' ? 'local:11111111111111111111111111111111' : null)
@@ -744,7 +791,7 @@ describe('group chat REST route baseline', () => {
   })
 
   it('removes an agent by row id and disconnects runtime by persisted agent id', async () => {
-    const agent = { id: 'row-agent', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: 'Agent' }
+    const agent = { id: 'row-agent', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: 'Agent', sessionId: 'session-agent-1' }
     storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
     storage.agents.set('room-1', [agent])
 
@@ -752,11 +799,271 @@ describe('group chat REST route baseline', () => {
     const body = await res.json()
 
     expect(res.status).toBe(200)
-    expect(storage.removeAgentActorWithRetention).toHaveBeenCalledWith('room-1', 'row-agent')
+    expect(storage.beginParticipantRuntimeMutation).toHaveBeenCalledWith('room-1', 'agent-1', 'Participant is being deleted')
+    expect(storage.beginParticipantRuntimeMutation.mock.invocationCallOrder[0]).toBeLessThan(
+      agentClients.pauseRoom.mock.invocationCallOrder[0],
+    )
+    expect(agentClients.pauseRoom).toHaveBeenCalledWith('room-1')
+    expect(agentClients.pauseRoom.mock.invocationCallOrder[0]).toBeLessThan(
+      agentClients.interruptHandoffTarget.mock.invocationCallOrder[0],
+    )
+    expect(agentClients.interruptHandoffTarget).toHaveBeenCalledWith('room-1', 'agent-1', 'session-agent-1')
+    expect(agentClients.interruptRoom).not.toHaveBeenCalled()
+    expect(agentClients.interruptHandoffTarget.mock.invocationCallOrder[0]).toBeLessThan(
+      storage.removeAgentActorWithRetention.mock.invocationCallOrder[0],
+    )
+    expect(storage.removeAgentActorWithRetention).toHaveBeenCalledWith('room-1', 'row-agent', expect.objectContaining({ participantId: 'row-agent' }))
     expect(storage.removeRoomMembersForAgent).not.toHaveBeenCalled()
     expect(storage.removeRoomAgent).not.toHaveBeenCalled()
     expect(agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'agent-1')
+    const releasePause = agentClients.pauseRoom.mock.results[0]?.value
+    expect(releasePause).toHaveBeenCalledOnce()
+    expect(storage.removeAgentActorWithRetention.mock.invocationCallOrder[0]).toBeLessThan(
+      releasePause.mock.invocationCallOrder[0],
+    )
     expect(body).toMatchObject({ success: true, agents: [], members: [] })
+  })
+
+  it('keeps local admission paused through committed runtime cleanup', async () => {
+    const agent = {
+      id: 'row-agent-cleanup-pause', roomId: 'room-1', agentId: 'agent-cleanup-pause',
+      profile: 'default', name: 'Agent', sessionId: 'session-cleanup-pause',
+    }
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+    storage.agents.set('room-1', [agent])
+    const cleanup = deferred<void>()
+    cleanupRemovedAgentRuntime.mockReturnValueOnce(cleanup.promise)
+
+    const pending = fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents/${agent.id}`, { method: 'DELETE' })
+    await vi.waitFor(() => expect(storage.removeAgentActorWithRetention).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(cleanupRemovedAgentRuntime).toHaveBeenCalledOnce())
+    const releasePause = agentClients.pauseRoom.mock.results.at(-1)?.value
+    expect(releasePause).not.toHaveBeenCalled()
+
+    cleanup.resolve()
+    const response = await pending
+
+    expect(response.status).toBe(200)
+    expect(releasePause).toHaveBeenCalledOnce()
+  })
+
+  it('fences and synchronizes a running successor before deleting its source participant', async () => {
+    const source = { id: 'row-source', roomId: 'room-1', agentId: 'agent-source', profile: 'default', name: 'Source', sessionId: 'source-session' }
+    const successor = { id: 'row-successor', roomId: 'room-1', agentId: 'agent-successor', profile: 'default', name: 'Successor', sessionId: 'successor-session' }
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+    storage.agents.set('room-1', [source, successor])
+    storage.beginParticipantRuntimeMutation.mockReturnValueOnce({
+      token: 'participant-fence-source',
+      fencedJobs: 1,
+      affectedTargets: [
+        { targetAgentId: source.agentId, targetSessionId: 'source-session' },
+        { targetAgentId: successor.agentId, targetSessionId: 'successor-session' },
+      ],
+    })
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents/row-source`, { method: 'DELETE' })
+
+    expect(res.status).toBe(200)
+    expect(storage.beginParticipantRuntimeMutation).toHaveBeenCalledWith(
+      'room-1',
+      source.agentId,
+      'Participant is being deleted',
+    )
+    expect(agentClients.interruptHandoffTarget).toHaveBeenCalledWith('room-1', source.agentId, 'source-session')
+    expect(agentClients.interruptHandoffTarget).toHaveBeenCalledWith('room-1', successor.agentId, 'successor-session')
+    expect(agentClients.interruptHandoffTarget).toHaveBeenCalledTimes(2)
+    expect(Math.max(...agentClients.interruptHandoffTarget.mock.invocationCallOrder)).toBeLessThan(
+      storage.removeAgentActorWithRetention.mock.invocationCallOrder[0],
+    )
+    expect(agentClients.interruptRoom).not.toHaveBeenCalled()
+  })
+
+  it('fails participant deletion closed when its runtime mutation fence cannot be renewed during a long stop', async () => {
+    vi.useFakeTimers()
+    try {
+      const source = {
+        id: 'row-source-fence-expiry', roomId: 'room-1', agentId: 'agent-source-fence-expiry',
+        profile: 'default', name: 'Source', sessionId: 'source-session-fence-expiry',
+      }
+      storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+      storage.agents.set('room-1', [source])
+      const interrupt = deferred<void>()
+      storage.beginParticipantRuntimeMutation.mockReturnValueOnce({
+        token: 'participant-fence-expiry',
+        roomId: 'room-1',
+        actorId: `actor-${source.agentId}`,
+        affectedTargets: [{ targetAgentId: source.agentId, targetSessionId: source.sessionId }],
+      })
+      storage.renewRuntimeMutation.mockReturnValueOnce(false)
+      agentClients.interruptHandoffTarget.mockReturnValueOnce(interrupt.promise)
+
+      const pending = fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents/${source.id}`, { method: 'DELETE' })
+      await vi.waitFor(() => expect(agentClients.interruptHandoffTarget).toHaveBeenCalledOnce())
+      await vi.advanceTimersByTimeAsync(60_000)
+      interrupt.resolve()
+      const response = await pending
+
+      expect(response.status).toBe(409)
+      await expect(response.json()).resolves.toMatchObject({ error: expect.stringMatching(/fence expired|fence.*changed/i) })
+      expect(storage.renewRuntimeMutation).toHaveBeenCalledWith(
+        'participant-fence-expiry', 'room-1', `actor-${source.agentId}`,
+      )
+      expect(storage.removeAgentActorWithRetention).not.toHaveBeenCalled()
+      expect(storage.getRoomAgents('room-1')).toEqual([source])
+      expect(storage.releaseRuntimeMutation).toHaveBeenCalledWith(
+        'participant-fence-expiry', 'room-1', `actor-${source.agentId}`,
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps renewing the exact participant fence throughout a stop longer than its original TTL', async () => {
+    vi.useFakeTimers()
+    try {
+      const source = {
+        id: 'row-source-long-stop', roomId: 'room-1', agentId: 'agent-source-long-stop',
+        profile: 'default', name: 'Source', sessionId: 'source-session-long-stop',
+      }
+      storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+      storage.agents.set('room-1', [source])
+      const interrupt = deferred<void>()
+      storage.beginParticipantRuntimeMutation.mockReturnValueOnce({
+        token: 'participant-fence-long-stop', roomId: 'room-1', actorId: `actor-${source.agentId}`,
+        affectedTargets: [{ targetAgentId: source.agentId, targetSessionId: source.sessionId }],
+      })
+      agentClients.interruptHandoffTarget.mockReturnValueOnce(interrupt.promise)
+
+      const pending = fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents/${source.id}`, { method: 'DELETE' })
+      await vi.waitFor(() => expect(agentClients.interruptHandoffTarget).toHaveBeenCalledOnce())
+      await vi.advanceTimersByTimeAsync(6 * 60_000)
+      expect(storage.renewRuntimeMutation).toHaveBeenCalledTimes(6)
+      for (const call of storage.renewRuntimeMutation.mock.calls) {
+        expect(call).toEqual(['participant-fence-long-stop', 'room-1', `actor-${source.agentId}`])
+      }
+
+      interrupt.resolve()
+      const response = await pending
+      expect(response.status).toBe(200)
+      expect(storage.removeAgentActorWithRetention).toHaveBeenCalledOnce()
+      expect(storage.releaseRuntimeMutation).not.toHaveBeenCalledWith('participant-fence-long-stop')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rejects a competing claimed handoff while participant deletion is waiting for runtime synchronization', async () => {
+    const source = {
+      id: 'row-source-admission-race', roomId: 'room-1', agentId: 'agent-source-admission-race',
+      profile: 'default', name: 'Source', sessionId: 'source-session-admission-race',
+    }
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+    storage.agents.set('room-1', [source])
+    const interrupt = deferred<void>()
+    storage.beginParticipantRuntimeMutation.mockReturnValueOnce({
+      token: 'participant-fence-admission-race', roomId: 'room-1', actorId: `actor-${source.agentId}`,
+      affectedTargets: [{ targetAgentId: source.agentId, targetSessionId: source.sessionId }],
+    })
+    const runtimeClients = new AgentClients() as any
+    const replyToMention = vi.fn(async () => {})
+    const runtimeParticipant = {
+      ...source,
+      replyToMention,
+      emitContextStatus: vi.fn(),
+      setStorage: vi.fn(),
+    }
+    runtimeClients.rooms.set('room-1', new Map([[source.agentId, runtimeParticipant]]))
+    runtimeClients.setStorage({
+      getRoomAgentByAgentId: vi.fn(() => source),
+      getHandoffJob: vi.fn(() => ({ id: 'job-admission-race', status: 'completed' })),
+    })
+    agentClients.pauseRoom.mockImplementation((roomId: string) => {
+      const releasePause = runtimeClients.pauseRoom(roomId)
+      return vi.fn(releasePause)
+    })
+    agentClients.interruptHandoffTarget.mockReturnValueOnce(interrupt.promise)
+
+    const pending = fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents/${source.id}`, { method: 'DELETE' })
+    await vi.waitFor(() => expect(agentClients.interruptHandoffTarget).toHaveBeenCalledOnce())
+    const releasePause = agentClients.pauseRoom.mock.results.at(-1)?.value
+    expect(releasePause).not.toHaveBeenCalled()
+
+    const competingClaim = runtimeClients.processHandoffJob({
+      id: 'job-admission-race', roomId: 'room-1', chainId: 'chain-admission-race',
+      targetAgentId: source.agentId, targetSessionId: source.sessionId,
+      depth: 0, kind: 'mention', leaseToken: 'lease-admission-race',
+    }, {
+      messageId: 'source-admission-race', content: '@Source run', senderName: 'Customer',
+      senderId: 'human-1', timestamp: 1, role: 'user',
+    })
+    await expect(competingClaim).rejects.toMatchObject({ retryWithoutAttempt: true })
+    expect(replyToMention).not.toHaveBeenCalled()
+    expect(storage.removeAgentActorWithRetention).not.toHaveBeenCalled()
+
+    interrupt.resolve()
+    const response = await pending
+
+    expect(response.status).toBe(200)
+    expect(storage.removeAgentActorWithRetention).toHaveBeenCalledOnce()
+    expect(releasePause).toHaveBeenCalledOnce()
+  })
+
+  it('returns conflict without deleting participant state when an affected runtime cannot synchronize', async () => {
+    const source = { id: 'row-source-fail', roomId: 'room-1', agentId: 'agent-source-fail', profile: 'default', name: 'Source', sessionId: 'source-session-fail' }
+    const successor = { id: 'row-successor-fail', roomId: 'room-1', agentId: 'agent-successor-fail', profile: 'default', name: 'Successor', sessionId: 'successor-session-fail' }
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+    storage.agents.set('room-1', [source, successor])
+    storage.beginParticipantRuntimeMutation.mockReturnValueOnce({
+      token: 'participant-fence-source',
+      roomId: 'room-1',
+      actorId: `actor-${source.agentId}`,
+      fencedJobs: 1,
+      affectedTargets: [{ targetAgentId: successor.agentId, targetSessionId: successor.sessionId }],
+    })
+    agentClients.interruptHandoffTarget.mockRejectedValueOnce(new Error('runtime still active'))
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents/${source.id}`, { method: 'DELETE' })
+
+    expect(res.status).toBe(409)
+    await expect(res.json()).resolves.toEqual({ error: 'runtime still active' })
+    expect(storage.removeAgentActorWithRetention).not.toHaveBeenCalled()
+    expect(storage.getRoomAgents('room-1')).toEqual([source, successor])
+    expect(storage.releaseRuntimeMutation).toHaveBeenCalledWith(
+      'participant-fence-source', 'room-1', `actor-${source.agentId}`,
+    )
+    expect(agentClients.pauseRoom.mock.results.at(-1)?.value).toHaveBeenCalledOnce()
+  })
+
+  it('returns conflict without deleting a participant whose runtime binding rotates after synchronization starts', async () => {
+    const source = { id: 'row-source-race', roomId: 'room-1', agentId: 'agent-source-race', profile: 'default', name: 'Source', sessionId: 'source-session-old' }
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+    storage.agents.set('room-1', [source])
+    const interrupt = deferred<void>()
+    storage.beginParticipantRuntimeMutation.mockReturnValueOnce({
+      token: 'participant-fence-source-race',
+      roomId: 'room-1',
+      actorId: `actor-${source.agentId}`,
+      fencedJobs: 0,
+      affectedTargets: [{ targetAgentId: source.agentId, targetSessionId: source.sessionId }],
+    })
+    agentClients.interruptHandoffTarget.mockReturnValueOnce(interrupt.promise)
+
+    const pending = fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents/${source.id}`, { method: 'DELETE' })
+    await vi.waitFor(() => expect(agentClients.interruptHandoffTarget).toHaveBeenCalledWith(
+      'room-1', source.agentId, 'source-session-old',
+    ))
+    source.sessionId = 'source-session-new'
+    interrupt.resolve()
+    const response = await pending
+
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toMatchObject({ error: expect.stringMatching(/runtime identity changed/i) })
+    expect(storage.getRoomAgents('room-1')).toEqual([source])
+    expect(agentClients.removeAgentFromRoom).not.toHaveBeenCalled()
+    expect(storage.releaseRuntimeMutation).toHaveBeenCalledWith(
+      'participant-fence-source-race', 'room-1', `actor-${source.agentId}`,
+    )
+    expect(agentClients.pauseRoom.mock.results.at(-1)?.value).toHaveBeenCalledOnce()
   })
 
   it('updates durable handoff settings and lists only public handoff fields', async () => {
@@ -830,6 +1137,40 @@ describe('group chat REST route baseline', () => {
     await expect(response.json()).resolves.toEqual({ error: 'Room not found' })
     expect(storage.deleteRoom).not.toHaveBeenCalled()
     expect(storage.rooms.has('room-1')).toBe(true)
+    expect(storage.releaseRuntimeMutation).toHaveBeenCalledWith('room-fence-room-1', 'room-1', '')
+  })
+
+  it('does not delete a Room when its participant set changes after runtime synchronization starts', async () => {
+    const first = { id: 'row-first', agentId: 'agent-first', profile: 'default', name: 'First', sessionId: 'session-first' }
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1', ownerAuthUserId: 1 })
+    storage.agents.set('room-1', [first])
+    const runtimeCleanup = deferred<void>()
+    const releaseFence = vi.fn()
+    const disconnectRuntime = vi.fn()
+    const finalizeRuntime = vi.fn((committed: boolean) => {
+      if (committed) disconnectRuntime()
+      releaseFence()
+    })
+    deleteRoomRuntimeState.mockImplementationOnce(async () => {
+      await runtimeCleanup.promise
+      return finalizeRuntime
+    })
+
+    const pendingResponse = fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1`, { method: 'DELETE' })
+    await vi.waitFor(() => expect(deleteRoomRuntimeState).toHaveBeenCalledOnce())
+    storage.agents.set('room-1', [first, {
+      id: 'row-late', agentId: 'agent-late', profile: 'default', name: 'Late', sessionId: 'session-late',
+    }])
+    runtimeCleanup.resolve()
+    const response = await pendingResponse
+
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toMatchObject({ error: expect.stringMatching(/runtime identity changed/i) })
+    expect(storage.rooms.has('room-1')).toBe(true)
+    expect(finalizeRuntime).toHaveBeenCalledWith(false)
+    expect(releaseFence).toHaveBeenCalledOnce()
+    expect(disconnectRuntime).not.toHaveBeenCalled()
+    expect(storage.releaseRuntimeMutation).toHaveBeenCalledWith('room-fence-room-1', 'room-1', '')
   })
 
   it('does not clear persisted context when management authority is revoked during runtime cleanup', async () => {
@@ -851,6 +1192,39 @@ describe('group chat REST route baseline', () => {
     await expect(response.json()).resolves.toEqual({ error: 'Room not found' })
     expect(storage.clearRoomContext).not.toHaveBeenCalled()
     expect(storage.rooms.get('room-1').totalTokens).toBe(99)
+    expect(storage.releaseRuntimeMutation).toHaveBeenCalledWith('room-fence-room-1', 'room-1', '')
+  })
+
+  it('does not rotate Room context when its participant set changes after runtime synchronization starts', async () => {
+    const first = { id: 'row-clear-first', agentId: 'agent-clear-first', profile: 'default', name: 'First', sessionId: 'session-clear-first' }
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1', totalTokens: 99, ownerAuthUserId: 1 })
+    storage.agents.set('room-1', [first])
+    const runtimeCleanup = deferred<void>()
+    const releaseFence = vi.fn()
+    const resetRuntime = vi.fn()
+    const finalizeRuntime = vi.fn((committed: boolean) => {
+      if (committed) resetRuntime()
+      releaseFence()
+    })
+    clearRoomRuntimeState.mockImplementationOnce(async () => {
+      await runtimeCleanup.promise
+      return finalizeRuntime
+    })
+
+    const pendingResponse = fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/clear-context`, { method: 'POST' })
+    await vi.waitFor(() => expect(clearRoomRuntimeState).toHaveBeenCalledOnce())
+    storage.agents.set('room-1', [first, {
+      id: 'row-clear-late', agentId: 'agent-clear-late', profile: 'default', name: 'Late', sessionId: 'session-clear-late',
+    }])
+    runtimeCleanup.resolve()
+    const response = await pendingResponse
+
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toMatchObject({ error: expect.stringMatching(/runtime identity changed/i) })
+    expect(storage.rooms.get('room-1').totalTokens).toBe(99)
+    expect(finalizeRuntime).toHaveBeenCalledWith(false)
+    expect(releaseFence).toHaveBeenCalledOnce()
+    expect(resetRuntime).not.toHaveBeenCalled()
   })
 
   it('clears room context and runtime state while returning the updated room', async () => {
@@ -860,9 +1234,114 @@ describe('group chat REST route baseline', () => {
     const body = await res.json()
 
     expect(res.status).toBe(200)
-    expect(storage.clearRoomContext).toHaveBeenCalledWith('room-1')
+    expect(storage.clearRoomContext).toHaveBeenCalledWith(
+      'room-1', expect.objectContaining({ roomId: 'room-1', participants: [] }),
+    )
     expect(clearRoomRuntimeState).toHaveBeenCalledWith('room-1', expect.any(Function))
     expect(body).toMatchObject({ success: true, room: { id: 'room-1', totalTokens: 0 } })
     expect(body.room).not.toHaveProperty('sessionSeed')
+  })
+
+  it('stops the Room deletion fence heartbeat even when the committed runtime finalizer throws', async () => {
+    vi.useFakeTimers()
+    try {
+      storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+      const finalizeRuntime = vi.fn(() => {
+        throw new Error('disconnect finalizer failed')
+      })
+      deleteRoomRuntimeState.mockResolvedValueOnce(finalizeRuntime)
+
+      const pending = fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1`, { method: 'DELETE' })
+      await vi.waitFor(() => expect(finalizeRuntime).toHaveBeenCalledWith(true))
+      const response = await pending
+      expect(response.status).toBe(500)
+
+      await vi.advanceTimersByTimeAsync(2 * 60_000)
+      expect(storage.renewRuntimeMutation).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops and releases the clear-context fence even when the committed runtime finalizer throws', async () => {
+    vi.useFakeTimers()
+    try {
+      storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1', totalTokens: 99 })
+      const finalizeRuntime = vi.fn(() => {
+        throw new Error('reset finalizer failed')
+      })
+      clearRoomRuntimeState.mockResolvedValueOnce(finalizeRuntime)
+
+      const pending = fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/clear-context`, { method: 'POST' })
+      await vi.waitFor(() => expect(finalizeRuntime).toHaveBeenCalledWith(true))
+      const response = await pending
+      expect(response.status).toBe(500)
+
+      expect(storage.releaseRuntimeMutation).toHaveBeenCalledWith('room-fence-room-1', 'room-1', '')
+      await vi.advanceTimersByTimeAsync(2 * 60_000)
+      expect(storage.renewRuntimeMutation).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops and releases the Room deletion fence when an abort finalizer throws', async () => {
+    vi.useFakeTimers()
+    try {
+      const first = { id: 'row-abort-delete', agentId: 'agent-abort-delete', profile: 'default', name: 'First', sessionId: 'session-abort-delete' }
+      storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+      storage.agents.set('room-1', [first])
+      const finalizeRuntime = vi.fn(() => {
+        throw new Error('abort disconnect finalizer failed')
+      })
+      deleteRoomRuntimeState.mockImplementationOnce(async () => {
+        storage.agents.set('room-1', [first, {
+          id: 'row-abort-delete-late', agentId: 'agent-abort-delete-late', profile: 'default',
+          name: 'Late', sessionId: 'session-abort-delete-late',
+        }])
+        return finalizeRuntime
+      })
+
+      const response = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1`, { method: 'DELETE' })
+      expect(response.status).toBe(500)
+      expect(finalizeRuntime).toHaveBeenCalledWith(false)
+      expect(storage.rooms.has('room-1')).toBe(true)
+      expect(storage.releaseRuntimeMutation).toHaveBeenCalledWith('room-fence-room-1', 'room-1', '')
+
+      await vi.advanceTimersByTimeAsync(2 * 60_000)
+      expect(storage.renewRuntimeMutation).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops and releases the clear-context fence when an abort finalizer throws', async () => {
+    vi.useFakeTimers()
+    try {
+      const first = { id: 'row-abort-clear', agentId: 'agent-abort-clear', profile: 'default', name: 'First', sessionId: 'session-abort-clear' }
+      storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1', totalTokens: 99 })
+      storage.agents.set('room-1', [first])
+      const finalizeRuntime = vi.fn(() => {
+        throw new Error('abort reset finalizer failed')
+      })
+      clearRoomRuntimeState.mockImplementationOnce(async () => {
+        storage.agents.set('room-1', [first, {
+          id: 'row-abort-clear-late', agentId: 'agent-abort-clear-late', profile: 'default',
+          name: 'Late', sessionId: 'session-abort-clear-late',
+        }])
+        return finalizeRuntime
+      })
+
+      const response = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/clear-context`, { method: 'POST' })
+      expect(response.status).toBe(500)
+      expect(finalizeRuntime).toHaveBeenCalledWith(false)
+      expect(storage.rooms.get('room-1').totalTokens).toBe(99)
+      expect(storage.releaseRuntimeMutation).toHaveBeenCalledWith('room-fence-room-1', 'room-1', '')
+
+      await vi.advanceTimersByTimeAsync(2 * 60_000)
+      expect(storage.renewRuntimeMutation).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

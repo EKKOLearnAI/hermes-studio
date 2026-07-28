@@ -8,6 +8,9 @@ const updateSessionMock = vi.fn()
 const readConfigYamlForProfileMock = vi.fn()
 const safeReadFileMock = vi.fn()
 const startRunMock = vi.fn()
+const runIdForSessionMock = vi.fn()
+const isSessionLaunchCompatibleMock = vi.fn()
+const stopAndWaitMock = vi.fn()
 
 vi.doMock('../../packages/server/src/db/hermes/session-store', () => ({
   getSession: getSessionMock,
@@ -39,6 +42,9 @@ vi.doMock('../../packages/server/src/services/hermes/model-context', async () =>
 vi.doMock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
   codingAgentRunManager: {
     start: startRunMock,
+    runIdForSession: runIdForSessionMock,
+    isSessionLaunchCompatible: isSessionLaunchCompatibleMock,
+    stopAndWait: stopAndWaitMock,
   },
 }))
 
@@ -59,7 +65,13 @@ describe('coding agent resumed session config', () => {
     readConfigYamlForProfileMock.mockReset()
     safeReadFileMock.mockReset()
     startRunMock.mockReset()
+    runIdForSessionMock.mockReset()
+    isSessionLaunchCompatibleMock.mockReset()
+    stopAndWaitMock.mockReset()
     startRunMock.mockReturnValue({ runId: 'agent-session-1', pid: 0 })
+    runIdForSessionMock.mockReturnValue(undefined)
+    isSessionLaunchCompatibleMock.mockReturnValue(false)
+    stopAndWaitMock.mockResolvedValue(true)
   })
 
   afterEach(() => {
@@ -245,6 +257,163 @@ describe('coding agent resumed session config', () => {
       agentNativeSessionId: '11111111-1111-4111-8111-111111111111',
       nativeResume: true,
     }))
+  })
+
+  it('does not reuse ordinary Claude identities when the same Session enters Group Chat', async () => {
+    makeHome()
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'coding_agent',
+      agent: 'claude',
+      agent_session_id: 'ordinary-agent-session',
+      agent_native_session_id: '11111111-1111-4111-8111-111111111111',
+      provider: 'custom:corp-claude',
+      model: 'claude-sonnet-test',
+      api_mode: 'anthropic_messages',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({
+      custom_providers: [{
+        name: 'corp-claude',
+        base_url: 'https://provider.example/anthropic',
+        api_key: 'sk-upstream',
+        model: 'claude-sonnet-test',
+        api_mode: 'anthropic_messages',
+      }],
+    })
+    safeReadFileMock.mockResolvedValue('')
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await startCodingAgentRun('claude-code', {
+      sessionId: 'session-1',
+      runtimeContext: 'group_chat',
+    })
+
+    const launch = startRunMock.mock.calls[0][0]
+    expect(launch.agentSessionId).not.toBe('ordinary-agent-session')
+    expect(launch.agentNativeSessionId).not.toBe('11111111-1111-4111-8111-111111111111')
+    expect(launch.agentNativeSessionId).toMatch(/^[0-9a-f-]{36}$/)
+    expect(launch.nativeResume).toBe(false)
+  })
+
+  it('does not reuse Group Chat Claude identities when the same Session enters ordinary chat', async () => {
+    makeHome()
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'group_chat',
+      agent: 'claude',
+      agent_session_id: 'group-chat-agent-session',
+      agent_native_session_id: '22222222-2222-4222-8222-222222222222',
+      provider: 'custom:corp-claude',
+      model: 'claude-sonnet-test',
+      api_mode: 'anthropic_messages',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({
+      custom_providers: [{
+        name: 'corp-claude',
+        base_url: 'https://provider.example/anthropic',
+        api_key: 'sk-upstream',
+        model: 'claude-sonnet-test',
+        api_mode: 'anthropic_messages',
+      }],
+    })
+    safeReadFileMock.mockResolvedValue('')
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await startCodingAgentRun('claude-code', { sessionId: 'session-1' })
+
+    const launch = startRunMock.mock.calls[0][0]
+    expect(launch.agentSessionId).not.toBe('group-chat-agent-session')
+    expect(launch.agentNativeSessionId).not.toBe('22222222-2222-4222-8222-222222222222')
+    expect(launch.agentNativeSessionId).toMatch(/^[0-9a-f-]{36}$/)
+    expect(launch.nativeResume).toBe(false)
+  })
+
+  it('stops an incompatible live Group Chat Runtime before starting ordinary chat with replacement identities', async () => {
+    makeHome()
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'group_chat',
+      agent: 'claude',
+      agent_session_id: 'group-chat-agent-session',
+      agent_native_session_id: '22222222-2222-4222-8222-222222222222',
+      provider: 'custom:corp-claude',
+      model: 'claude-sonnet-test',
+      api_mode: 'anthropic_messages',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({
+      custom_providers: [{
+        name: 'corp-claude',
+        base_url: 'https://provider.example/anthropic',
+        api_key: 'sk-upstream',
+        model: 'claude-sonnet-test',
+        api_mode: 'anthropic_messages',
+      }],
+    })
+    safeReadFileMock.mockResolvedValue('')
+    runIdForSessionMock.mockReturnValue('group-chat-agent-session')
+    isSessionLaunchCompatibleMock.mockReturnValue(false)
+    const order: string[] = []
+    stopAndWaitMock.mockImplementation(async () => {
+      order.push('stop')
+      runIdForSessionMock.mockReturnValue(undefined)
+      return true
+    })
+    startRunMock.mockImplementation(() => {
+      order.push('start')
+      return { runId: 'ordinary-agent-session', pid: 0 }
+    })
+    updateSessionMock.mockImplementation(() => order.push('persist'))
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await startCodingAgentRun('claude-code', { sessionId: 'session-1' })
+
+    expect(stopAndWaitMock).toHaveBeenCalledWith('session-1', {
+      reportClosed: false,
+      graceMs: 15_000,
+    })
+    expect(order).toEqual(['stop', 'start', 'persist'])
+    const launch = startRunMock.mock.calls[0][0]
+    expect(launch.runtimeContext).toBeUndefined()
+    expect(launch.agentSessionId).not.toBe('group-chat-agent-session')
+    expect(launch.agentNativeSessionId).not.toBe('22222222-2222-4222-8222-222222222222')
+  })
+
+  it('fails closed without starting or persisting when an incompatible live Runtime does not stop', async () => {
+    makeHome()
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'group_chat',
+      agent: 'claude',
+      agent_session_id: 'group-chat-agent-session',
+      agent_native_session_id: '22222222-2222-4222-8222-222222222222',
+      provider: 'custom:corp-claude',
+      model: 'claude-sonnet-test',
+      api_mode: 'anthropic_messages',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({
+      custom_providers: [{
+        name: 'corp-claude',
+        base_url: 'https://provider.example/anthropic',
+        api_key: 'sk-upstream',
+        model: 'claude-sonnet-test',
+        api_mode: 'anthropic_messages',
+      }],
+    })
+    safeReadFileMock.mockResolvedValue('')
+    runIdForSessionMock.mockReturnValue('group-chat-agent-session')
+    isSessionLaunchCompatibleMock.mockReturnValue(false)
+    stopAndWaitMock.mockResolvedValue(false)
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await expect(startCodingAgentRun('claude-code', { sessionId: 'session-1' }))
+      .rejects.toThrow('Previous coding-agent run did not stop cleanly')
+
+    expect(startRunMock).not.toHaveBeenCalled()
+    expect(updateSessionMock).not.toHaveBeenCalled()
   })
 
   it('does not resume a stored scoped Codex native session when launching global mode', async () => {

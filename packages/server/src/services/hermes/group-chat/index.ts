@@ -6,6 +6,14 @@ import { basename } from 'path'
 import { createHash, randomBytes } from 'crypto'
 import { logger } from '../../../services/logger'
 import { getDb } from '../../../db'
+import {
+    COMPRESSION_SNAPSHOT_TABLE,
+    MESSAGES_TABLE,
+    SESSIONS_TABLE,
+    WORKSPACE_RUN_CHANGE_FILES_TABLE,
+    WORKSPACE_RUN_CHANGES_TABLE,
+    GC_RUNTIME_FENCES_TABLE,
+} from '../../../db/hermes/schemas'
 import { normalizeMessageContentForStorage, normalizeMessageContentForStorageRole } from '../../../db/hermes/message-content'
 import { AgentClients, GROUP_CHAT_AGENT_SOCKET_SECRET, groupBridgeSessionId } from './agent-clients'
 import { ContextEngine } from '../context-engine/compressor'
@@ -358,6 +366,36 @@ interface RemovedAgentRetention {
     sessionProfiles: GroupChatSessionProfile[]
 }
 
+interface ParticipantRuntimeIdentity {
+    id: string
+    agentId: string
+    profile: string
+    name: string
+    description: string
+    runtime: RoomAgent['runtime']
+    codingAgentId: RoomAgent['codingAgentId']
+    sessionId: string
+    sessionGeneration: number
+    mode: RoomAgent['mode']
+    provider: string
+    model: string
+    apiMode: string
+    reasoningEffort: string
+}
+
+export interface RoomDeletionGuard {
+    roomId: string
+    roomAuthorizationRevision: number
+    participants: ParticipantRuntimeIdentity[]
+    runtimeMutationToken?: string
+}
+
+export interface ParticipantDeletionGuard extends RoomDeletionGuard {
+    participantId: string
+    actorAuthorizationRevision: number | null
+    runtimeMutationActorId?: string
+}
+
 interface HumanRoomAdmissionArgs {
     roomId: string
     userId: string
@@ -543,6 +581,63 @@ export function planGroupHandoffs(args: {
 export class ChatStorage {
     private retentionBlockedHandler: ((roomId: string, blockedAgentIds: string[], throughRoomSeq: number) => void) | null = null
     private db() { return getDb() }
+
+    private participantRuntimeIdentity(agent: RoomAgent): ParticipantRuntimeIdentity {
+        return {
+            id: agent.id,
+            agentId: agent.agentId,
+            profile: agent.profile,
+            name: agent.name,
+            description: agent.description,
+            runtime: agent.runtime,
+            codingAgentId: agent.codingAgentId,
+            sessionId: agent.sessionId,
+            sessionGeneration: Number(agent.sessionGeneration || 0),
+            mode: agent.mode,
+            provider: agent.provider,
+            model: agent.model,
+            apiMode: agent.apiMode,
+            reasoningEffort: agent.reasoningEffort,
+        }
+    }
+
+    private roomParticipantRuntimeIdentities(roomId: string): ParticipantRuntimeIdentity[] {
+        return this.getRoomAgents(roomId)
+            .map(agent => this.participantRuntimeIdentity(agent))
+            .sort((left, right) => left.id.localeCompare(right.id))
+    }
+
+    captureRoomDeletionGuard(roomId: string): RoomDeletionGuard {
+        const room = this.getRoom(roomId)
+        if (!room) throw new Error('Room not found')
+        return {
+            roomId,
+            roomAuthorizationRevision: Number(room.authorizationRevision || 0),
+            participants: this.roomParticipantRuntimeIdentities(roomId),
+        }
+    }
+
+    captureParticipantDeletionGuard(roomId: string, agentRef: string): ParticipantDeletionGuard {
+        const roomGuard = this.captureRoomDeletionGuard(roomId)
+        const participant = this.getRoomAgent(roomId, agentRef)
+        if (!participant) throw new Error('Participant not found')
+        const actor = this.findActiveActorByAgentIdentity(roomId, participant.agentId)
+        return {
+            ...roomGuard,
+            participantId: participant.id,
+            actorAuthorizationRevision: actor ? Number(actor.authorizationRevision || 0) : null,
+        }
+    }
+
+    private assertRoomDeletionGuard(guard: RoomDeletionGuard): void {
+        const room = this.getRoom(guard.roomId)
+        const currentParticipants = this.roomParticipantRuntimeIdentities(guard.roomId)
+        if (!room
+            || Number(room.authorizationRevision || 0) !== guard.roomAuthorizationRevision
+            || JSON.stringify(currentParticipants) !== JSON.stringify(guard.participants)) {
+            throw Object.assign(new Error('Room runtime identity changed during synchronized deletion'), { status: 409 })
+        }
+    }
 
     setRetentionBlockedHandler(handler: ((roomId: string, blockedAgentIds: string[], throughRoomSeq: number) => void) | null): void {
         this.retentionBlockedHandler = handler
@@ -1142,6 +1237,25 @@ export class ChatStorage {
         return row ? this.mapHandoffJob(row) : null
     }
 
+    getHandoffChainRootMessage(roomId: string, chainId: string): ChatMessage | null {
+        const room = String(roomId || '').trim()
+        const chain = String(chainId || '').trim()
+        if (!room || !chain) return null
+        const row = this.db()?.prepare(
+            `SELECT m.roomSeq, m.id, m.roomId, m.senderId, m.senderName, m.content, m.timestamp,
+                    m.role, m.tool_call_id, m.tool_calls, m.tool_name, m.finish_reason,
+                    m.reasoning, m.reasoning_details, m.reasoning_content,
+                    m.handoffChainId, m.handoffDepth, m.sourceHandoffJobId
+             FROM gc_handoff_jobs j
+             INNER JOIN gc_messages m ON m.id = j.sourceMessageId AND m.roomId = j.roomId
+             WHERE j.roomId = ? AND j.chainId = ? AND j.depth = 0 AND j.kind = 'fixed'
+               AND m.role = 'user' AND m.handoffChainId = j.chainId AND m.handoffDepth = 0
+             ORDER BY j.createdAt ASC, j.id ASC
+             LIMIT 1`,
+        ).get(room, chain) as any
+        return row ? this.mapStoredMessageRow(row) : null
+    }
+
     listHandoffJobs(roomId: string, limit = 100): GroupHandoffJob[] {
         return ((this.db()?.prepare(
             'SELECT * FROM gc_handoff_jobs WHERE roomId = ? ORDER BY createdAt DESC, id DESC LIMIT ?'
@@ -1181,6 +1295,116 @@ export class ChatStorage {
         if (missing.length) {
             throw new Error(`Handoff authorization denied: actor ${actor.id} lacks ${missing.join(', ')}`)
         }
+    }
+
+    private runtimeMutationFenceReason(db: DatabaseSync, row: {
+        roomId: string
+        initiatorActorId?: string
+        sourceActorId?: string
+        targetActorId?: string
+    }): string | null {
+        const actors = [row.initiatorActorId, row.sourceActorId, row.targetActorId]
+            .map(value => String(value || ''))
+            .filter(Boolean)
+        const actorClause = actors.length ? ` OR actorId IN (${actors.map(() => '?').join(', ')})` : ''
+        const fence = db.prepare(
+            `SELECT reason FROM ${GC_RUNTIME_FENCES_TABLE}
+             WHERE roomId = ? AND expiresAt > ? AND (actorId = ''${actorClause})
+             ORDER BY CASE WHEN actorId = '' THEN 0 ELSE 1 END, createdAt ASC LIMIT 1`,
+        ).get(row.roomId, Date.now(), ...actors) as { reason?: string } | undefined
+        return fence ? String(fence.reason || 'Group chat runtime mutation is in progress') : null
+    }
+
+    beginRoomRuntimeMutation(roomId: string, reason: string): { token: string; roomId: string; actorId: string } {
+        const db = this.db()
+        if (!db || !roomId) throw new Error('Room runtime mutation requires a Room identity')
+        const token = randomBytes(24).toString('hex')
+        const now = Date.now()
+        return this.withImmediateTransaction(db, () => {
+            if (!db.prepare('SELECT 1 FROM gc_rooms WHERE id = ?').get(roomId)) throw new Error(`Room ${roomId} is missing`)
+            db.prepare(`DELETE FROM ${GC_RUNTIME_FENCES_TABLE} WHERE expiresAt <= ?`).run(now)
+            if (db.prepare(`SELECT 1 FROM ${GC_RUNTIME_FENCES_TABLE} WHERE roomId = ? LIMIT 1`).get(roomId)) {
+                throw Object.assign(new Error('Another Room runtime mutation is already in progress'), { status: 409 })
+            }
+            db.prepare(
+                `INSERT INTO ${GC_RUNTIME_FENCES_TABLE} (token, roomId, actorId, kind, reason, createdAt, expiresAt)
+                 VALUES (?, ?, '', 'room', ?, ?, ?)`,
+            ).run(token, roomId, reason.slice(0, 2000), now, now + 5 * 60_000)
+            db.prepare(
+                `UPDATE gc_handoff_jobs SET status = 'cancelled', leaseOwner = '', leaseToken = '', leaseExpiresAt = 0,
+                 lastError = ?, updatedAt = ?, completedAt = ?
+                 WHERE roomId = ? AND status IN ('pending', 'running')`,
+            ).run(reason.slice(0, 2000), now, now, roomId)
+            return { token, roomId, actorId: '' }
+        })
+    }
+
+    beginParticipantRuntimeMutation(
+        roomId: string, agentId: string, reason: string,
+    ): { token: string; roomId: string; actorId: string; affectedTargets: Array<{ targetAgentId: string; targetSessionId: string }> } {
+        const db = this.db()
+        if (!db || !roomId || !agentId) throw new Error('Participant runtime mutation requires Room and participant identities')
+        const token = randomBytes(24).toString('hex')
+        const now = Date.now()
+        return this.withImmediateTransaction(db, () => {
+            const actor = readActiveActorByAgentIdentity(db, roomId, agentId)
+            if (!actor) throw new Error(`Participant ${agentId} is missing or inactive`)
+            db.prepare(`DELETE FROM ${GC_RUNTIME_FENCES_TABLE} WHERE expiresAt <= ?`).run(now)
+            if (db.prepare(
+                `SELECT 1 FROM ${GC_RUNTIME_FENCES_TABLE} WHERE roomId = ? LIMIT 1`,
+            ).get(roomId)) {
+                throw Object.assign(new Error('Another Room runtime mutation is already in progress'), { status: 409 })
+            }
+            db.prepare(
+                `INSERT INTO ${GC_RUNTIME_FENCES_TABLE} (token, roomId, actorId, kind, reason, createdAt, expiresAt)
+                 VALUES (?, ?, ?, 'participant', ?, ?, ?)`,
+            ).run(token, roomId, actor.id, reason.slice(0, 2000), now, now + 5 * 60_000)
+            const syncReason = `${reason.slice(0, 1960)} [runtime-sync]`
+            const affectedTargets = db.prepare(
+                `SELECT DISTINCT targetAgentId, targetSessionId FROM gc_handoff_jobs
+                 WHERE roomId = ?
+                   AND (status = 'running' OR (status = 'cancelled' AND lastError = ?))
+                   AND (initiatorActorId = ? OR sourceActorId = ? OR targetActorId = ? OR targetAgentId = ?)`,
+            ).all(roomId, syncReason, actor.id, actor.id, actor.id, agentId) as Array<{ targetAgentId: string; targetSessionId: string }>
+            db.prepare(
+                `UPDATE gc_handoff_jobs SET status = 'cancelled', leaseOwner = '', leaseToken = '', leaseExpiresAt = 0,
+                 lastError = CASE WHEN status = 'running' THEN ? ELSE ? END, updatedAt = ?, completedAt = ?
+                 WHERE roomId = ? AND status IN ('pending', 'running')
+                   AND (initiatorActorId = ? OR sourceActorId = ? OR targetActorId = ? OR targetAgentId = ?)`,
+            ).run(syncReason, reason.slice(0, 2000), now, now, roomId, actor.id, actor.id, actor.id, agentId)
+            return {
+                token, roomId, actorId: actor.id,
+                affectedTargets: affectedTargets.map(target => ({
+                    targetAgentId: String(target.targetAgentId || ''), targetSessionId: String(target.targetSessionId || ''),
+                })).filter(target => target.targetAgentId && target.targetSessionId),
+            }
+        })
+    }
+
+    renewRuntimeMutation(
+        token: string, roomId: string, actorId: string, now = Date.now(), leaseMs = 5 * 60_000,
+    ): boolean {
+        if (
+            !token || !roomId || typeof actorId !== 'string'
+            || !Number.isFinite(now) || !Number.isFinite(leaseMs) || leaseMs <= 0
+        ) return false
+        const result = this.db()?.prepare(
+            `UPDATE ${GC_RUNTIME_FENCES_TABLE} SET expiresAt = ?
+             WHERE token = ? AND roomId = ? AND actorId = ?
+               AND kind = CASE WHEN actorId = '' THEN 'room' ELSE 'participant' END
+               AND expiresAt > ?`,
+        ).run(now + Math.max(1, Math.floor(leaseMs)), token, roomId, actorId, now)
+        return Number(result?.changes || 0) === 1
+    }
+
+    releaseRuntimeMutation(token: string, roomId: string, actorId: string): boolean {
+        if (!token || !roomId || typeof actorId !== 'string') return false
+        const result = this.db()?.prepare(
+            `DELETE FROM ${GC_RUNTIME_FENCES_TABLE}
+             WHERE token = ? AND roomId = ? AND actorId = ?
+               AND kind = CASE WHEN actorId = '' THEN 'room' ELSE 'participant' END`,
+        ).run(token, roomId, actorId)
+        return Number(result?.changes || 0) === 1
     }
 
     private upsertHandoffJobs(
@@ -1227,6 +1451,13 @@ export class ChatStorage {
             }
             const targetActor = readActiveActorByAgentIdentity(db, roomId, plan.targetAgentId)
             if (!targetActor) throw new Error(`Handoff target actor ${plan.targetAgentId} is missing or inactive`)
+            const fenceReason = this.runtimeMutationFenceReason(db, {
+                roomId,
+                initiatorActorId: initiatorActor.id,
+                sourceActorId: sourceActor.id,
+                targetActorId: targetActor.id,
+            })
+            if (fenceReason) throw new Error(`Handoff rejected while runtime mutation is in progress: ${fenceReason}`)
             this.requireHandoffCapabilities(db, targetActor, ['room.read', 'room.write'])
             insert.run(
                 this.handoffJobId(sourceMessageId, plan.targetAgentId), roomId, plan.chainId, sourceMessageId,
@@ -1256,6 +1487,8 @@ export class ChatStorage {
 
     private validateHandoffJobAuthority(db: DatabaseSync, row: any): { valid: true } | { valid: false; reason: string } {
         const deny = (reason: string) => ({ valid: false as const, reason })
+        const fenceReason = this.runtimeMutationFenceReason(db, row)
+        if (fenceReason) return deny(`Runtime mutation fence is active: ${fenceReason}`)
         if (Number(row.authorizationReaderEpoch) !== GROUP_CHAT_IDENTITY_READER_EPOCH) {
             return deny('Unsupported or missing authorization reader epoch')
         }
@@ -1784,6 +2017,18 @@ export class ChatStorage {
                 ) {
                     throw new Error(`Handoff publication rejected for ${message.sourceHandoffJobId}`)
                 }
+                const expectedChainId = String(sourceJobRow.chainId || '')
+                const expectedSuccessorDepth = normalizeMentionDepth(sourceJobRow.depth) + 1
+                if (
+                    String(message.handoffChainId || '') !== expectedChainId
+                    || normalizeMentionDepth(message.handoffDepth) !== expectedSuccessorDepth
+                    || (options.handoffs || []).some(plan => (
+                        String(plan.chainId || '') !== expectedChainId
+                        || normalizeMentionDepth(plan.depth) !== expectedSuccessorDepth
+                    ))
+                ) {
+                    throw new Error(`Handoff chain/depth provenance rejected for ${message.sourceHandoffJobId}`)
+                }
                 const authority = this.validateHandoffJobAuthority(db, sourceJobRow)
                 if (!authority.valid) {
                     const fenced = db.prepare(
@@ -1892,11 +2137,27 @@ export class ChatStorage {
         }
     }
 
-    clearRoomContext(roomId: string): void {
+    clearRoomContext(roomId: string, guard?: RoomDeletionGuard): void {
         const db = this.db()
         if (!db) return
-        const contextBaseline = Math.max(0, Math.floor(Number(this.getRoom(roomId)?.messageSeq) || 0))
         this.withImmediateTransaction(db, () => {
+            if (guard) {
+                if (guard.roomId !== roomId) {
+                    throw Object.assign(new Error('Room runtime identity changed during synchronized context rotation'), { status: 409 })
+                }
+                try {
+                    this.assertRoomDeletionGuard(guard)
+                } catch {
+                    throw Object.assign(new Error('Room runtime identity changed during synchronized context rotation'), { status: 409 })
+                }
+                if (!guard.runtimeMutationToken || !db.prepare(
+                    `SELECT 1 FROM ${GC_RUNTIME_FENCES_TABLE}
+                     WHERE token = ? AND roomId = ? AND actorId = '' AND kind = 'room' AND expiresAt > ?`,
+                ).get(guard.runtimeMutationToken, roomId, Date.now())) {
+                    throw Object.assign(new Error('Room runtime mutation fence changed during synchronized context rotation'), { status: 409 })
+                }
+            }
+            const contextBaseline = Math.max(0, Math.floor(Number(this.getRoom(roomId)?.messageSeq) || 0))
             this.deleteWorkspaceDiffChanges(roomId)
             db.prepare('DELETE FROM gc_handoff_jobs WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
@@ -1925,11 +2186,31 @@ export class ChatStorage {
         if (!boundary?.roomSeq) return { pruned: 0, blockedAgentIds: [], throughRoomSeq: 0 }
         let throughRoomSeq = Math.max(0, Math.floor(Number(boundary.roomSeq) || 0) - 1)
         const activeHandoff = db.prepare(
-            `SELECT MIN(message.roomSeq) AS minRoomSeq
-             FROM gc_handoff_jobs AS job
-             JOIN gc_messages AS message ON message.id = job.sourceMessageId AND message.roomId = job.roomId
-             WHERE job.roomId = ? AND job.status IN ('pending', 'running')`
-        ).get(roomId) as { minRoomSeq?: number | null } | undefined
+            `SELECT MIN(roomSeq) AS minRoomSeq
+             FROM (
+               SELECT message.roomSeq AS roomSeq
+               FROM gc_handoff_jobs AS job
+               JOIN gc_messages AS message ON message.id = job.sourceMessageId AND message.roomId = job.roomId
+               WHERE job.roomId = ? AND job.status IN ('pending', 'running')
+               UNION ALL
+               SELECT rootMessage.roomSeq AS roomSeq
+               FROM gc_handoff_jobs AS activeJob
+               JOIN gc_handoff_jobs AS rootJob
+                 ON rootJob.roomId = activeJob.roomId
+                AND rootJob.chainId = activeJob.chainId
+                AND rootJob.depth = 0
+                AND rootJob.kind = 'fixed'
+               JOIN gc_messages AS rootMessage
+                 ON rootMessage.id = rootJob.sourceMessageId
+                AND rootMessage.roomId = rootJob.roomId
+                AND rootMessage.role = 'user'
+                AND rootMessage.handoffChainId = rootJob.chainId
+                AND rootMessage.handoffDepth = 0
+               WHERE activeJob.roomId = ?
+                 AND activeJob.status IN ('pending', 'running')
+                 AND activeJob.kind = 'fixed'
+             )`
+        ).get(roomId, roomId) as { minRoomSeq?: number | null } | undefined
         const activeHandoffRoomSeq = Math.max(0, Math.floor(Number(activeHandoff?.minRoomSeq) || 0))
         if (activeHandoffRoomSeq > 0) throughRoomSeq = Math.min(throughRoomSeq, activeHandoffRoomSeq - 1)
         if (throughRoomSeq <= 0) return { pruned: 0, blockedAgentIds: [], throughRoomSeq: 0 }
@@ -1996,6 +2277,16 @@ export class ChatStorage {
         ).all(roomId) || []) as unknown as RoomAgent[]
     }
 
+    hasOtherParticipantSessionReference(sessionId: string, roomId: string, agentId: string): boolean {
+        const normalizedSessionId = String(sessionId || '').trim()
+        if (!normalizedSessionId) return false
+        return Boolean(this.db()?.prepare(
+            `SELECT 1 FROM gc_room_agents
+             WHERE sessionId = ? AND NOT (roomId = ? AND agentId = ?)
+             LIMIT 1`,
+        ).get(normalizedSessionId, roomId, agentId))
+    }
+
     private rotateParticipantSessions(roomId: string, contextBaseline = 0): void {
         const db = this.db()
         if (!db) return
@@ -2003,6 +2294,7 @@ export class ChatStorage {
         const now = Date.now()
         for (const agent of this.getRoomAgents(roomId)) {
             const generation = Math.max(0, Number(agent.sessionGeneration) || 0) + 1
+            this.deleteOwnedCodingAgentSessionInTransaction(db, agent, { roomId, agentId: agent.agentId })
             db.prepare(
                 `UPDATE gc_handoff_jobs SET status = 'cancelled', leaseOwner = '', leaseToken = '', leaseExpiresAt = 0,
                  lastError = 'Target participant session was rotated', updatedAt = ?, completedAt = ?
@@ -2289,10 +2581,75 @@ export class ChatStorage {
         this.db()?.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
     }
 
-    deleteRoom(roomId: string): void {
+    private deleteOwnedCodingAgentSessionInTransaction(
+        db: DatabaseSync,
+        participant: Pick<RoomAgent, 'runtime' | 'codingAgentId' | 'sessionId' | 'profile'>,
+        deletingScope: { roomId: string; agentId?: string },
+    ): boolean {
+        if (participant.runtime !== 'coding_agent' || !participant.sessionId) return false
+        const expectedAgent = participant.codingAgentId === 'claude-code'
+            ? 'claude'
+            : participant.codingAgentId === 'codex'
+                ? 'codex'
+                : ''
+        if (!expectedAgent) return false
+        const survivingReference = deletingScope.agentId
+            ? db.prepare(
+                `SELECT 1 FROM gc_room_agents
+                 WHERE sessionId = ? AND NOT (roomId = ? AND agentId = ?)
+                 LIMIT 1`,
+            ).get(participant.sessionId, deletingScope.roomId, deletingScope.agentId)
+            : db.prepare(
+                `SELECT 1 FROM gc_room_agents
+                 WHERE sessionId = ? AND roomId <> ?
+                 LIMIT 1`,
+            ).get(participant.sessionId, deletingScope.roomId)
+        if (survivingReference) return false
+        const owned = db.prepare(
+            `SELECT 1 FROM ${SESSIONS_TABLE}
+             WHERE id = ? AND source = 'group_chat' AND profile = ? AND agent = ?
+             LIMIT 1`,
+        ).get(participant.sessionId, participant.profile, expectedAgent)
+        if (!owned) return false
+        db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGE_FILES_TABLE} WHERE session_id = ?`).run(participant.sessionId)
+        db.prepare(`DELETE FROM ${WORKSPACE_RUN_CHANGES_TABLE} WHERE session_id = ?`).run(participant.sessionId)
+        db.prepare(`DELETE FROM ${COMPRESSION_SNAPSHOT_TABLE} WHERE session_id = ?`).run(participant.sessionId)
+        db.prepare(`DELETE FROM ${MESSAGES_TABLE} WHERE session_id = ?`).run(participant.sessionId)
+        const deleted = Number(db.prepare(
+            `DELETE FROM ${SESSIONS_TABLE}
+             WHERE id = ? AND source = 'group_chat' AND profile = ? AND agent = ?`,
+        ).run(
+            participant.sessionId,
+            participant.profile,
+            expectedAgent,
+        ).changes || 0)
+        if (deleted !== 1) throw new Error(`Owned Group Chat Coding Agent Session ${participant.sessionId} changed during deletion`)
+        return true
+    }
+
+    deleteRoom(roomId: string, guard?: RoomDeletionGuard): void {
         const db = this.db()
         if (!db) return
         this.withImmediateTransaction(db, () => {
+            if (guard) {
+                if (guard.roomId !== roomId) {
+                    throw Object.assign(new Error('Room runtime identity changed during synchronized deletion'), { status: 409 })
+                }
+                this.assertRoomDeletionGuard(guard)
+                if (!guard.runtimeMutationToken || !db.prepare(
+                    `SELECT 1 FROM ${GC_RUNTIME_FENCES_TABLE}
+                     WHERE token = ? AND roomId = ? AND actorId = '' AND kind = 'room' AND expiresAt > ?`,
+                ).get(guard.runtimeMutationToken, roomId, Date.now())) {
+                    throw Object.assign(new Error('Room runtime mutation fence changed during synchronized deletion'), { status: 409 })
+                }
+            }
+            const participants = db.prepare(
+                `SELECT runtime, codingAgentId, sessionId, profile
+                 FROM gc_room_agents WHERE roomId = ? AND runtime = 'coding_agent'`,
+            ).all(roomId) as Array<Pick<RoomAgent, 'runtime' | 'codingAgentId' | 'sessionId' | 'profile'>>
+            for (const participant of participants) {
+                this.deleteOwnedCodingAgentSessionInTransaction(db, participant, { roomId })
+            }
             const sessions = db.prepare(
                 'SELECT session_id, profile_name FROM gc_session_profiles WHERE room_id = ?'
             ).all(roomId) as Array<{ session_id: string; profile_name: string }>
@@ -2308,6 +2665,7 @@ export class ChatStorage {
             db.prepare('DELETE FROM gc_room_agents WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_room_members WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
+            db.prepare(`DELETE FROM ${GC_RUNTIME_FENCES_TABLE} WHERE roomId = ?`).run(roomId)
             db.prepare('DELETE FROM gc_rooms WHERE id = ?').run(roomId)
         })
     }
@@ -2673,7 +3031,7 @@ export class ChatStorage {
         return persistSystemActor(db, { roomId, systemKey })
     }
 
-    removeAgentActorWithRetention(roomId: string, agentRef: string): RemovedAgentRetention | null {
+    removeAgentActorWithRetention(roomId: string, agentRef: string, guard?: ParticipantDeletionGuard): RemovedAgentRetention | null {
         const db = this.db()
         if (!db) {
             const agent = this.getRoomAgent(roomId, agentRef)
@@ -2687,16 +3045,54 @@ export class ChatStorage {
         }
         let removed: RemovedAgentRetention | null = null
         this.withImmediateTransaction(db, () => {
+            if (guard) {
+                if (guard.roomId !== roomId) {
+                    throw Object.assign(new Error('Participant runtime identity changed during synchronized deletion'), { status: 409 })
+                }
+                try {
+                    this.assertRoomDeletionGuard(guard)
+                } catch {
+                    throw Object.assign(new Error('Participant runtime identity changed during synchronized deletion'), { status: 409 })
+                }
+                if (!guard.runtimeMutationToken || !db.prepare(
+                    `SELECT 1 FROM ${GC_RUNTIME_FENCES_TABLE}
+                     WHERE token = ? AND roomId = ? AND actorId = ? AND kind = 'participant' AND expiresAt > ?`,
+                ).get(guard.runtimeMutationToken, roomId, String(guard.runtimeMutationActorId || ''), Date.now())) {
+                    throw Object.assign(new Error('Participant runtime mutation fence changed during synchronized deletion'), { status: 409 })
+                }
+            }
             const agent = this.getRoomAgent(roomId, agentRef)
             if (!agent) return
+            if (guard) {
+                const actor = this.findActiveActorByAgentIdentity(roomId, agent.agentId)
+                if (agent.id !== guard.participantId
+                    || actor?.id !== guard.runtimeMutationActorId
+                    || (actor ? Number(actor.authorizationRevision || 0) : null) !== guard.actorAuthorizationRevision) {
+                    throw Object.assign(new Error('Participant runtime identity changed during synchronized deletion'), { status: 409 })
+                }
+            }
             const sessionProfiles = this.getSessionProfilesForRoomAgent(roomId, agent.agentId)
             const actor = deactivatePersistedAgentActorWithRetention(db, roomId, agent.agentId)
             for (const session of sessionProfiles) {
                 this.enqueuePendingSessionDelete(session.session_id, session.profile_name)
             }
+            this.deleteOwnedCodingAgentSessionInTransaction(db, agent, { roomId, agentId: agent.agentId })
             db.prepare('DELETE FROM gc_session_profiles WHERE room_id = ? AND agent_id = ?').run(roomId, agent.agentId)
             this.removeRoomMembersForAgent(roomId, agent)
             this.removeRoomAgent(roomId, agentRef)
+            if (guard?.runtimeMutationToken) {
+                const consumedFence = db.prepare(
+                    `DELETE FROM ${GC_RUNTIME_FENCES_TABLE}
+                     WHERE token = ? AND roomId = ? AND actorId = ? AND kind = 'participant'`,
+                ).run(
+                    guard.runtimeMutationToken,
+                    roomId,
+                    String(guard.runtimeMutationActorId || ''),
+                )
+                if (consumedFence.changes !== 1) {
+                    throw Object.assign(new Error('Participant runtime mutation fence changed during synchronized deletion'), { status: 409 })
+                }
+            }
             this.incrementRoomAuthorizationRevision(roomId)
             removed = {
                 agent,
@@ -3263,30 +3659,50 @@ export class GroupChatServer {
         }
     }
 
-    async clearRoomRuntimeState(roomId: string, assertAuthorized: () => void): Promise<void> {
+    async clearRoomRuntimeState(roomId: string, assertAuthorized: () => void): Promise<(committed: boolean) => void> {
         this.storage.fenceRoomHandoffJobs(roomId, 'Room context is being cleared')
         const releaseSessionFence = this.fenceCurrentRoomAgentSessions(roomId)
+        let releaseRoomPause: (() => void) | undefined
         try {
-            await this.agentClients.interruptRoom(roomId)
+            releaseRoomPause = await this.agentClients.interruptPersistedRoom(roomId)
             assertAuthorized()
         } catch (err) {
-            releaseSessionFence()
+            try {
+                releaseRoomPause?.()
+            } finally {
+                releaseSessionFence()
+            }
             throw err
         }
-        const roomTyping = this.typingState.get(roomId)
-        if (roomTyping) {
-            for (const entry of roomTyping.values()) clearTimeout(entry.timer)
-            this.typingState.delete(roomId)
+        let finalized = false
+        return (committed: boolean) => {
+            if (finalized) return
+            finalized = true
+            try {
+                if (!committed) return
+                const roomTyping = this.typingState.get(roomId)
+                if (roomTyping) {
+                    for (const entry of roomTyping.values()) clearTimeout(entry.timer)
+                    this.typingState.delete(roomId)
+                }
+                this.contextStatusState.delete(roomId)
+                this.clearPendingApprovals(roomId)
+                this.agentClients.resetRoomContext(roomId)
+                this.emitToRoomReaders(roomId, 'room_cleared', { roomId, totalTokens: 0 })
+                this.emitToRoomReaders(roomId, 'room_updated', { roomId, totalTokens: 0 })
+            } finally {
+                try {
+                    releaseRoomPause?.()
+                } finally {
+                    releaseSessionFence()
+                }
+            }
         }
-        this.contextStatusState.delete(roomId)
-        this.clearPendingApprovals(roomId)
-        this.agentClients.resetRoomContext(roomId)
-        this.emitToRoomReaders(roomId, 'room_cleared', { roomId, totalTokens: 0 })
-        this.emitToRoomReaders(roomId, 'room_updated', { roomId, totalTokens: 0 })
     }
 
     async cleanupRemovedAgentRuntime(removal: RemovedAgentRetention | null): Promise<void> {
         if (!removal) return
+        this.agentClients.removeAgentFromRoom(removal.agent.roomId, removal.agent.agentId)
         this.clearPendingApprovals(removal.agent.roomId, removal.agent.agentId)
         const bridge = new AgentBridgeClient()
         for (const session of removal.sessionProfiles) {
@@ -3305,30 +3721,47 @@ export class GroupChatServer {
                 }
             }
         }
-        this.agentClients.removeAgentFromRoom(removal.agent.roomId, removal.agent.agentId)
     }
 
-    async deleteRoomRuntimeState(roomId: string, assertAuthorized: () => void): Promise<void> {
+    async deleteRoomRuntimeState(roomId: string, assertAuthorized: () => void): Promise<(committed: boolean) => void> {
         this.storage.fenceRoomHandoffJobs(roomId, 'Room is being deleted')
         const releaseSessionFence = this.fenceCurrentRoomAgentSessions(roomId)
+        let releaseRoomPause: (() => void) | undefined
         try {
-            await this.agentClients.interruptRoom(roomId)
+            releaseRoomPause = await this.agentClients.interruptPersistedRoom(roomId)
             assertAuthorized()
         } catch (err) {
-            releaseSessionFence()
+            try {
+                releaseRoomPause?.()
+            } finally {
+                releaseSessionFence()
+            }
             throw err
         }
-        const roomTyping = this.typingState.get(roomId)
-        if (roomTyping) {
-            for (const entry of roomTyping.values()) clearTimeout(entry.timer)
-            this.typingState.delete(roomId)
+        let finalized = false
+        return (committed: boolean) => {
+            if (finalized) return
+            finalized = true
+            try {
+                if (!committed) return
+                const roomTyping = this.typingState.get(roomId)
+                if (roomTyping) {
+                    for (const entry of roomTyping.values()) clearTimeout(entry.timer)
+                    this.typingState.delete(roomId)
+                }
+                this.contextStatusState.delete(roomId)
+                this.clearPendingApprovals(roomId)
+                this.agentClients.disconnectRoom(roomId)
+                this.rooms.delete(roomId)
+                this.nsp.in(roomId).socketsLeave(roomId)
+            } finally {
+                try {
+                    releaseRoomPause?.()
+                } finally {
+                    releaseSessionFence()
+                }
+            }
         }
-        this.contextStatusState.delete(roomId)
-        this.clearPendingApprovals(roomId)
-        this.agentClients.disconnectRoom(roomId)
-        this.rooms.delete(roomId)
-        this.nsp.in(roomId).socketsLeave(roomId)
-        this.fencedRoomAgentSessions?.delete(roomId)
     }
 
     // ─── Restore Agents ─────────────────────────────────────────
@@ -3375,6 +3808,16 @@ export class GroupChatServer {
                     const source = this.storage.getMessage(job.sourceMessageId)
                     if (!source) {
                         this.storage.markHandoffJobFailed(job.id, job.leaseToken, 'Source message is no longer available', 0, 1)
+                        return
+                    }
+                    if (!this.storage.isHandoffExecutionCurrent(
+                        job.id, job.leaseToken, job.targetAgentId, job.targetSessionId,
+                    )) {
+                        // Admission and claim both fence destructive lifecycle mutations, but a
+                        // mutation may begin after claim while the dispatcher is loading source
+                        // context. Re-check the durable lease/authority immediately before any
+                        // Runtime call. The storage transaction terminalizes a fenced job, so it
+                        // must not be rescheduled or marked failed here.
                         return
                     }
                     let leaseLost = false

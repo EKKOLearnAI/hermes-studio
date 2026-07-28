@@ -642,6 +642,23 @@ export const GC_HANDOFF_JOBS_INDEXES = {
   idx_gc_handoff_authority: 'CREATE INDEX IF NOT EXISTS idx_gc_handoff_authority ON gc_handoff_jobs(roomId, roomAuthorizationRevision, status)',
 }
 
+export const GC_RUNTIME_FENCES_TABLE = 'gc_runtime_fences'
+
+export const GC_RUNTIME_FENCES_SCHEMA: Record<string, string> = {
+  token: 'TEXT PRIMARY KEY',
+  roomId: 'TEXT NOT NULL',
+  actorId: "TEXT NOT NULL DEFAULT ''",
+  kind: "TEXT NOT NULL DEFAULT 'room'",
+  reason: "TEXT NOT NULL DEFAULT ''",
+  createdAt: 'INTEGER NOT NULL',
+  expiresAt: 'INTEGER NOT NULL DEFAULT 0',
+}
+
+export const GC_RUNTIME_FENCES_INDEXES = {
+  uniq_gc_runtime_fence_scope: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_gc_runtime_fence_scope ON gc_runtime_fences(roomId, actorId)',
+  idx_gc_runtime_fence_room: 'CREATE INDEX IF NOT EXISTS idx_gc_runtime_fence_room ON gc_runtime_fences(roomId)',
+}
+
 export const GC_ROOM_AGENTS_TABLE = 'gc_room_agents'
 
 export const GC_ROOM_AGENTS_INDEXES = {
@@ -1292,8 +1309,11 @@ function migrateLegacyGroupChatCodingAgentSessions(
   db: NonNullable<ReturnType<typeof getDb>>,
 ): void {
   if (!tableExists(db, SESSIONS_TABLE)) return
-  if (!tableExists(db, GC_SESSION_PROFILES_TABLE)) return
-  // Migrate only sessions with durable or currently persisted Group Chat ownership.
+  if (!tableExists(db, GC_ROOM_AGENTS_TABLE)) return
+  // Migrate only sessions with a complete currently persisted Group Chat
+  // participant ownership tuple. Legacy gc_session_profiles rows do not record
+  // runtime or Coding Agent identity, so they are insufficient fail-closed
+  // evidence even when their session/profile values happen to match.
   // Session IDs are caller-controlled for ordinary Coding Agent runs, so a gc_
   // prefix alone is not sufficient evidence that a session belongs to Group Chat.
   db.prepare(
@@ -1301,17 +1321,16 @@ function migrateLegacyGroupChatCodingAgentSessions(
     `SET source = 'group_chat' ` +
     `WHERE source = 'coding_agent' ` +
     `AND agent IN ('codex', 'claude') ` +
-    `AND (` +
-      `EXISTS (` +
-        `SELECT 1 FROM ${quoteIdentifier(GC_SESSION_PROFILES_TABLE)} ownership ` +
-        `WHERE ownership.session_id = ${quoteIdentifier(SESSIONS_TABLE)}.id` +
-      `) OR EXISTS (` +
+    `AND EXISTS (` +
         `SELECT 1 FROM ${quoteIdentifier(GC_ROOM_AGENTS_TABLE)} participant ` +
         `WHERE participant.sessionId = ${quoteIdentifier(SESSIONS_TABLE)}.id ` +
         `AND participant.runtime = 'coding_agent' ` +
-        `AND participant.codingAgentId IN ('codex', 'claude')` +
-      `)` +
-    `)`,
+        `AND participant.profile = ${quoteIdentifier(SESSIONS_TABLE)}.profile ` +
+        `AND (` +
+          `(participant.codingAgentId = 'codex' AND ${quoteIdentifier(SESSIONS_TABLE)}.agent = 'codex') ` +
+          `OR (participant.codingAgentId = 'claude-code' AND ${quoteIdentifier(SESSIONS_TABLE)}.agent = 'claude')` +
+        `)` +
+      `)`,
   ).run()
 }
 
@@ -1442,6 +1461,9 @@ export function initAllHermesTables(): void {
       syncTable(GC_MESSAGES_TABLE, GC_MESSAGES_SCHEMA)
       syncTable(GC_HANDOFF_JOBS_TABLE, GC_HANDOFF_JOBS_SCHEMA, {
         indexes: GC_HANDOFF_JOBS_INDEXES,
+      })
+      syncTable(GC_RUNTIME_FENCES_TABLE, GC_RUNTIME_FENCES_SCHEMA, {
+        indexes: GC_RUNTIME_FENCES_INDEXES,
       })
       backfillGroupMessageRoomSequences(db)
       syncTable(GC_CONTEXT_SNAPSHOTS_TABLE, GC_CONTEXT_SNAPSHOTS_SCHEMA)

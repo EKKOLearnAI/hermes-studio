@@ -56,6 +56,34 @@ describe('Group Chat member/agent identity sync', () => {
     socketHandlers.clear()
   })
 
+  it('keeps overlapping local admission pauses active until every lease is released', () => {
+    const clients = new AgentClients()
+    const releaseFirst = clients.pauseRoom('room-1')
+    const releaseSecond = clients.pauseRoom('room-1')
+
+    expect((clients as any)._pausedRooms.get('room-1')).toBe(2)
+    releaseFirst()
+    releaseFirst()
+    expect((clients as any)._pausedRooms.get('room-1')).toBe(1)
+    releaseSecond()
+    expect((clients as any)._pausedRooms.has('room-1')).toBe(false)
+  })
+
+  it('drops queued mentions when a participant is removed so a reused agent id cannot replay stale work', () => {
+    const clients = new AgentClients()
+    const staleAgent = { agentId: 'agent-stable-1', disconnect: vi.fn() }
+    ;(clients as any).rooms.set('room-1', new Map([[staleAgent.agentId, staleAgent]]))
+    ;(clients as any)._mentionQueue.set('room-1:agent-stable-1', [{
+      agent: staleAgent,
+      msg: { id: 'stale-message', content: 'stale' },
+    }])
+
+    clients.removeAgentFromRoom('room-1', staleAgent.agentId)
+
+    expect((clients as any)._mentionQueue.has('room-1:agent-stable-1')).toBe(false)
+    expect(staleAgent.disconnect).toHaveBeenCalledOnce()
+  })
+
   it('does not promote runtime members when canonical actor lookups are unavailable', () => {
     for (const subject of [
       { source: 'agent', userId: 'agent-1', localSubjectId: null },
@@ -346,18 +374,31 @@ describe('Group Chat member/agent identity sync', () => {
   })
 
   it('removes the runtime agent by persisted agentId and returns synchronized room state', async () => {
-    const agentsBefore = [{ id: 'row-1', roomId: 'room-1', agentId: 'agent-stable-1', profile: 'default', name: 'Worker', description: '', invited: 0 }]
+    const agentsBefore = [{ id: 'row-1', roomId: 'room-1', agentId: 'agent-stable-1', profile: 'default', name: 'Worker', description: '', invited: 0, sessionId: 'session-stable-1' }]
     const removal = { agent: agentsBefore[0], actorId: 'actor-1', sessionProfiles: [] }
     const storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room 1' })),
       getRoomAgent: vi.fn(() => agentsBefore[0]),
       getRoomAgents: vi.fn(() => []),
+      captureParticipantDeletionGuard: vi.fn(() => ({
+        roomId: 'room-1', roomAuthorizationRevision: 0, participants: agentsBefore,
+        participantId: 'row-1', actorAuthorizationRevision: null,
+      })),
+      beginParticipantRuntimeMutation: vi.fn(() => ({
+        token: 'participant-fence-token',
+        affectedTargets: [{ targetAgentId: 'agent-stable-1', targetSessionId: 'session-stable-1' }],
+      })),
+      releaseRuntimeMutation: vi.fn(() => true),
       removeAgentActorWithRetention: vi.fn(() => removal),
       getRoomMembers: vi.fn(() => [{ id: 'member-1', userId: 'human-1', name: 'Han', description: '', joinedAt: 1 }]),
     }
     const chatServer = {
       getStorage: () => storage,
-      agentClients: { interruptRoom: vi.fn(async () => true), removeAgentFromRoom: vi.fn() },
+      agentClients: {
+        pauseRoom: vi.fn(() => vi.fn()),
+        interruptHandoffTarget: vi.fn(async () => true),
+        removeAgentFromRoom: vi.fn(),
+      },
       cleanupRemovedAgentRuntime: vi.fn(async (retained: typeof removal) => {
         chatServer.agentClients.removeAgentFromRoom(retained.agent.roomId, retained.agent.agentId)
       }),
@@ -372,7 +413,12 @@ describe('Group Chat member/agent identity sync', () => {
     }
     await handler(ctx, async () => {})
 
-    expect(storage.removeAgentActorWithRetention).toHaveBeenCalledWith('room-1', 'row-1')
+    expect(storage.beginParticipantRuntimeMutation).toHaveBeenCalledWith('room-1', 'agent-stable-1', 'Participant is being deleted')
+    expect(chatServer.agentClients.pauseRoom).toHaveBeenCalledWith('room-1')
+    expect(chatServer.agentClients.interruptHandoffTarget).toHaveBeenCalledWith('room-1', 'agent-stable-1', 'session-stable-1')
+    expect(storage.removeAgentActorWithRetention).toHaveBeenCalledWith(
+      'room-1', 'row-1', expect.objectContaining({ participantId: 'row-1' }),
+    )
     expect(chatServer.cleanupRemovedAgentRuntime).toHaveBeenCalledWith(removal)
     expect(chatServer.agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'agent-stable-1')
     expect(ctx.body).toEqual({
@@ -386,6 +432,9 @@ describe('Group Chat member/agent identity sync', () => {
     const calls: string[] = []
     const storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room 1', ownerAuthUserId: 7 })),
+      captureRoomDeletionGuard: vi.fn(() => ({ roomId: 'room-1', roomAuthorizationRevision: 0, participants: [] })),
+      beginRoomRuntimeMutation: vi.fn(() => ({ token: 'room-fence-token' })),
+      releaseRuntimeMutation: vi.fn(() => true),
       deleteRoom: vi.fn(() => { calls.push('storage-delete') }),
     }
     const chatServer = {
@@ -393,6 +442,7 @@ describe('Group Chat member/agent identity sync', () => {
       deleteRoomRuntimeState: vi.fn(async (_roomId: string, assertAuthorized: () => void) => {
         assertAuthorized()
         calls.push('runtime-delete')
+        return vi.fn()
       }),
     }
     setGroupChatServer(chatServer as any)
@@ -414,6 +464,9 @@ describe('Group Chat member/agent identity sync', () => {
   it('does not delete persisted room data when runtime interrupt does not complete', async () => {
     const storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room 1', ownerAuthUserId: 7 })),
+      captureRoomDeletionGuard: vi.fn(() => ({ roomId: 'room-1', roomAuthorizationRevision: 0, participants: [] })),
+      beginRoomRuntimeMutation: vi.fn(() => ({ token: 'room-fence-token' })),
+      releaseRuntimeMutation: vi.fn(() => true),
       deleteRoom: vi.fn(),
     }
     const chatServer = {
@@ -446,7 +499,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.contextStatusState = new Map([['room-1', new Map([['Worker', { agentName: 'Worker', status: 'replying' }]])]])
     server.pendingApprovals = new Map()
     server.agentClients = {
-      interruptRoom: vi.fn(async () => { calls.push('interrupt') }),
+      interruptPersistedRoom: vi.fn(async () => { calls.push('interrupt') }),
       disconnectRoom: vi.fn(() => { calls.push('disconnect') }),
     }
     server.nsp = {
@@ -458,7 +511,8 @@ describe('Group Chat member/agent identity sync', () => {
       saveMessageAndRefreshRoom,
     }
 
-    await server.deleteRoomRuntimeState('room-1', () => {})
+    const finalize = await server.deleteRoomRuntimeState('room-1', () => {})
+    finalize(true)
     const ack = vi.fn()
     server.handleMessage({ id: 'socket-1' }, { roomId: 'room-1', content: 'late', role: 'user' }, ack)
 
@@ -749,6 +803,9 @@ describe('Group Chat member/agent identity sync', () => {
     const room = { id: 'room-1', name: 'Room 1', inviteCode: 'invite', ownerAuthUserId: 7, workspace: '/tmp/workspace' }
     const storage = {
       getRoom: vi.fn(() => room),
+      captureRoomDeletionGuard: vi.fn(() => ({ roomId: 'room-1', roomAuthorizationRevision: 0, participants: [] })),
+      beginRoomRuntimeMutation: vi.fn(() => ({ token: 'room-fence-token' })),
+      releaseRuntimeMutation: vi.fn(() => true),
       clearRoomContext: vi.fn(() => { calls.push('storage-clear') }),
     }
     const chatServer = {
@@ -756,6 +813,7 @@ describe('Group Chat member/agent identity sync', () => {
       clearRoomRuntimeState: vi.fn(async (_roomId: string, assertAuthorized: () => void) => {
         assertAuthorized()
         calls.push('runtime-clear')
+        return vi.fn()
       }),
     }
     setGroupChatServer(chatServer as any)
@@ -774,10 +832,116 @@ describe('Group Chat member/agent identity sync', () => {
     expect(ctx.body).toEqual({ success: true, room: expect.objectContaining({ id: 'room-1', workspace: '/tmp/workspace' }) })
   })
 
+  it('interrupts persisted participants before clearing context even when no AgentClient is connected', async () => {
+    const calls: string[] = []
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.storage = {
+      fenceRoomHandoffJobs: vi.fn(() => { calls.push('fence'); return 1 }),
+      getRoom: vi.fn(() => ({ id: 'room-1', sessionSeed: '11111111111111111111111111111111' })),
+      getRoomAgents: vi.fn(() => ([{
+        id: 'row-codex', roomId: 'room-1', agentId: 'agent-codex', profile: 'default', name: 'Codex',
+        runtime: 'coding_agent', sessionId: 'gc-room-1-agent-codex-0',
+      }])),
+    }
+    server.fencedRoomAgentSessions = new Map()
+    server.agentClients = {
+      interruptPersistedRoom: vi.fn(async () => { calls.push('interrupt-persisted') }),
+      interruptRoom: vi.fn(async () => { calls.push('interrupt-connected-only') }),
+      resetRoomContext: vi.fn(() => { calls.push('reset') }),
+    }
+    server.typingState = new Map()
+    server.contextStatusState = new Map()
+    server.pendingApprovals = new Map()
+    server.emitToRoomReaders = vi.fn()
+
+    const finalize = await server.clearRoomRuntimeState('room-1', () => { calls.push('auth-reread') })
+    finalize(true)
+
+    expect(calls).toEqual(['fence', 'interrupt-persisted', 'auth-reread', 'reset'])
+    expect(server.agentClients.interruptRoom).not.toHaveBeenCalled()
+    expect(server.fencedRoomAgentSessions.get('room-1')).toBeUndefined()
+  })
+
+  it('keeps the room paused from persisted-runtime synchronization through deletion finalization', async () => {
+    let resolveInterrupt!: () => void
+    const interruptGate = new Promise<void>((resolve) => { resolveInterrupt = resolve })
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.storage = {
+      fenceRoomHandoffJobs: vi.fn(() => 1),
+      getRoomAgents: vi.fn(() => ([{
+        id: 'row-codex', roomId: 'room-1', agentId: 'agent-codex', profile: 'default', name: 'Codex',
+        runtime: 'coding_agent', sessionId: 'gc-room-1-agent-codex-0',
+      }])),
+    }
+    server.fencedRoomAgentSessions = new Map()
+    server.agentClients = new AgentClients()
+    server.agentClients.setStorage(server.storage)
+    vi.spyOn(server.agentClients, 'interruptHandoffTarget').mockReturnValue(interruptGate)
+    server.typingState = new Map()
+    server.contextStatusState = new Map()
+    server.pendingApprovals = new Map()
+    server.rooms = new Map()
+    server.nsp = { in: vi.fn(() => ({ socketsLeave: vi.fn() })) }
+
+    const deleting = server.deleteRoomRuntimeState('room-1', () => {})
+    await vi.waitFor(() => expect((server.agentClients as any)._pausedRooms.has('room-1')).toBe(true))
+    resolveInterrupt()
+    const finalize = await deleting
+
+    expect((server.agentClients as any)._pausedRooms.has('room-1')).toBe(true)
+    finalize(false)
+    expect((server.agentClients as any)._pausedRooms.has('room-1')).toBe(false)
+  })
+
+  it.each([
+    ['clear', 'clearRoomRuntimeState'],
+    ['delete', 'deleteRoomRuntimeState'],
+  ] as const)('releases the session fence when the %s Room pause finalizer throws', async (_label, method) => {
+    const releaseSessionFence = vi.fn()
+    const releaseRoomPause = vi.fn(() => { throw new Error('pause release failed') })
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.storage = { fenceRoomHandoffJobs: vi.fn(() => 1) }
+    server.fenceCurrentRoomAgentSessions = vi.fn(() => releaseSessionFence)
+    server.agentClients = {
+      interruptPersistedRoom: vi.fn(async () => releaseRoomPause),
+      resetRoomContext: vi.fn(),
+      disconnectRoom: vi.fn(),
+    }
+    server.typingState = new Map()
+    server.contextStatusState = new Map()
+    server.pendingApprovals = new Map()
+    server.rooms = new Map()
+    server.emitToRoomReaders = vi.fn()
+    server.nsp = { in: vi.fn(() => ({ socketsLeave: vi.fn() })) }
+
+    const finalize = await server[method]('room-1', () => {})
+    expect(() => finalize(false)).toThrow('pause release failed')
+    expect(releaseSessionFence).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['clear', 'clearRoomRuntimeState'],
+    ['delete', 'deleteRoomRuntimeState'],
+  ] as const)('releases the session fence when %s authorization fails and Room pause release throws', async (_label, method) => {
+    const releaseSessionFence = vi.fn()
+    const releaseRoomPause = vi.fn(() => { throw new Error('pause release failed') })
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.storage = { fenceRoomHandoffJobs: vi.fn(() => 1) }
+    server.fenceCurrentRoomAgentSessions = vi.fn(() => releaseSessionFence)
+    server.agentClients = { interruptPersistedRoom: vi.fn(async () => releaseRoomPause) }
+
+    await expect(server[method]('room-1', () => { throw new Error('authorization failed') }))
+      .rejects.toThrow('pause release failed')
+    expect(releaseSessionFence).toHaveBeenCalledOnce()
+  })
+
   it('does not clear persisted context when runtime interrupt does not complete', async () => {
     const room = { id: 'room-1', name: 'Room 1', inviteCode: 'invite', ownerAuthUserId: 7, workspace: '/tmp/workspace' }
     const storage = {
       getRoom: vi.fn(() => room),
+      captureRoomDeletionGuard: vi.fn(() => ({ roomId: 'room-1', roomAuthorizationRevision: 0, participants: [] })),
+      beginRoomRuntimeMutation: vi.fn(() => ({ token: 'room-fence-token' })),
+      releaseRuntimeMutation: vi.fn(() => true),
       clearRoomContext: vi.fn(),
     }
     const chatServer = {

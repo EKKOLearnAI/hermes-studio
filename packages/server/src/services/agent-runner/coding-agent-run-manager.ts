@@ -472,12 +472,16 @@ function stripCliFlagWithValue(args: string[], flag: string): string[] {
 
 export function groupChatClaudePrintArgs(runtimeContext: CodingAgentRunLaunch['runtimeContext'], args: string[]): string[] {
   if (runtimeContext !== 'group_chat') return args
-  return [
-    ...GROUP_CHAT_CLAUDE_PERMISSION_ARGS,
-    ...stripCliFlagWithValue(
+  const safeArgs = stripCliFlagWithValue(
+    stripCliFlagWithValue(
       args.filter(arg => arg !== '--dangerously-skip-permissions' && arg !== '--allow-dangerously-skip-permissions'),
       '--permission-mode',
     ),
+    '--append-system-prompt-file',
+  )
+  return [
+    ...GROUP_CHAT_CLAUDE_PERMISSION_ARGS,
+    ...safeArgs,
   ]
 }
 
@@ -572,6 +576,8 @@ export class CodingAgentRunManager {
 
   isSessionLaunchCompatible(sessionId: string, launch: {
     agentId: string
+    agentSessionId?: string
+    agentNativeSessionId?: string
     mode?: 'scoped' | 'global'
     provider?: string
     model?: string
@@ -583,7 +589,10 @@ export class CodingAgentRunManager {
     if (!run || run.exited) return false
     const mode = launch.mode === 'global' ? 'global' : 'scoped'
     if (run.launch.agentId !== launch.agentId) return false
+    if (launch.agentSessionId && run.launch.agentSessionId !== launch.agentSessionId) return false
+    if (launch.agentNativeSessionId !== undefined && String(run.launch.agentNativeSessionId || '') !== String(launch.agentNativeSessionId || '')) return false
     if (run.launch.mode !== mode) return false
+    if (run.launch.runtimeContext !== launch.runtimeContext) return false
     if (mode === 'scoped') {
       const provider = String(launch.provider || '').trim()
       const model = String(launch.model || '').trim()
