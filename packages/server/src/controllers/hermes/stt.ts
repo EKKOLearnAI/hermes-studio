@@ -20,6 +20,7 @@ import { config } from '../../config'
 import { SttProviderConfigError, transcribeWithProvider } from '../../services/hermes/stt-providers'
 import { SttNoSpeechDetectedError } from '../../services/hermes/stt-providers/types'
 import { logger } from '../../services/logger'
+import { syncSttProviderToHermesConfig } from '../../services/hermes/voice-config-sync'
 import { getActiveGlobalAgentServer } from '../../services/global-agent/server'
 import { MCU_TTS_SAMPLE_RATE, mcuPromptText, mcuPromptUrl } from '../../services/hermes/mcu-prompts'
 
@@ -345,6 +346,15 @@ export async function saveSettings(ctx: Context) {
     const activeProvider = body?.activeProvider === undefined
       ? saveActiveSttProvider(profile, storedProvider)
       : saveActiveSttProvider(profile, assertActiveSttProvider(String(body.activeProvider)))
+
+    // Mirror the provider into the Hermes Agent profile config so gateway
+    // platforms (Telegram, Discord, ...) transcribe with the same provider.
+    const settingsBody = body?.settings as Record<string, unknown> | undefined
+    const secretsBody = body?.secrets as Record<string, unknown> | undefined
+    await syncSttProviderToHermesConfig(profile, {
+      baseUrl: settingsBody?.baseUrl,
+      apiKey: secretsBody?.apiKey,
+    })
 
     ctx.body = { setting, activeProvider }
   } catch (error) {
