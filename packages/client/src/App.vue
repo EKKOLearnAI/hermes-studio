@@ -302,6 +302,10 @@ useKeyboard()
     backdrop-filter: blur(8px) saturate(110%);
   }
 
+  :deep(.browser-settings-page > .settings-card) {
+    background-color: transparent;
+  }
+
 }
 
 .app-shell.desktop-platform-darwin,

@@ -177,7 +177,7 @@ test('places Windows controls in a dedicated bar above main content', async ({ p
 })
 
 test('matches Windows controls to the header glass over custom backgrounds', async ({ page }) => {
-  await installDesktopBridge(page, 'win32')
+  await installDesktopBridge(page, 'win32', true)
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   await page.addInitScript(() => {
     window.localStorage.setItem('hermes_brightness', 'dark')
@@ -192,10 +192,16 @@ test('matches Windows controls to the header glass over custom backgrounds', asy
     },
   })
 
-  await page.goto('/#/hermes/theme')
+  await page.goto('/#/hermes/browser')
 
   const controls = page.locator('.desktop-titlebar')
+  const header = page.locator('.page-header')
   await expect(page.locator('.app-shell')).toHaveClass(/app-shell--custom-background/)
+  await expect(page.getByRole('heading', { name: 'Browser' })).toBeVisible()
+  await expect(header).toHaveCSS('min-height', '64px')
+  await expect(header).not.toContainText('Browser Settings')
+  await expect(page.locator('.app-main--card')).toHaveCSS('background-color', 'rgba(26, 26, 26, 0.72)')
+  await expect(page.locator('.settings-card')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
   await expect(controls).toHaveCSS('background-color', 'rgba(26, 26, 26, 0.72)')
   await expect(controls).toHaveCSS('backdrop-filter', 'blur(8px) saturate(1.1)')
   expect(api.unexpectedRequests).toEqual([])

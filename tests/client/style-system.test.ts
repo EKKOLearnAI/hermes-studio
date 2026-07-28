@@ -146,6 +146,9 @@ describe('client style system', () => {
     expect(customBackgroundStyles).toMatch(
       /:deep\(\.chat-input-area \.input-wrapper\)\s*\{[\s\S]*background-color: rgba\(var\(--bg-main-surface-rgb\), 0\.72\);[\s\S]*backdrop-filter: blur\(8px\) saturate\(110%\);/,
     )
+    expect(customBackgroundStyles).toMatch(
+      /:deep\(\.browser-settings-page > \.settings-card\)\s*\{\s*background-color: transparent;/,
+    )
     expect(groupMessageItem).toMatch(
       /:global\(html\.theme-has-custom-background \.group-message \.msg-content:not\(\.agent-error\)\),[\s\S]*background-color: rgba\(var\(--bg-main-surface-rgb\), 0\.78\);[\s\S]*border: 1px solid rgba\(var\(--text-primary-rgb\), 0\.18\);[\s\S]*backdrop-filter: blur\(8px\) saturate\(110%\);/,
     )

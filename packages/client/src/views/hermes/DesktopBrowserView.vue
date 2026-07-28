@@ -246,16 +246,15 @@ onUnmounted(() => {
     <div v-if="!bridge" class="unavailable">{{ t('browser.desktopOnly') }}</div>
     <template v-else>
       <header class="page-header">
-        <div>
-          <h2>{{ t('browser.title') }}</h2>
-          <span>{{ t('browser.settings') }}</span>
+        <h2 class="header-title">{{ t('browser.title') }}</h2>
+        <div class="header-actions">
+          <NButton type="primary" size="small" :disabled="busy" @click="openCreateProfile">
+            <template #icon>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </template>
+            {{ t('browser.addProfile') }}
+          </NButton>
         </div>
-        <NButton type="primary" size="small" :disabled="busy" @click="openCreateProfile">
-          <template #icon>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          </template>
-          {{ t('browser.addProfile') }}
-        </NButton>
       </header>
 
       <div v-if="loadError" class="unavailable">{{ loadError }}</div>
@@ -393,8 +392,6 @@ onUnmounted(() => {
 
 <style scoped lang="scss">
 .browser-settings-page { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; color: var(--text-color); }
-.page-header { min-height: 72px; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--border-color); }
-.page-header > div { display: grid; gap: 3px; }.page-header h2 { margin: 0; font-size: 20px; }.page-header span { color: var(--text-color-3); font-size: 12px; }
 .settings-card { flex: 1; min-height: 0; overflow: auto; padding: 4px 12px 20px; }
 .settings-card :deep(.n-card__content) { max-width: 1120px; width: 100%; margin: 0 auto; }
 .profiles-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 14px; }
@@ -424,5 +421,5 @@ onUnmounted(() => {
 .download-record-heading { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .download-record-heading strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .download-record progress { width: 100%; height: 6px; accent-color: var(--primary-color, #3b82f6); }
-@media (max-width: 640px) { .page-header { align-items: center; }.page-header > div span { display: none; }.profiles-grid { grid-template-columns: 1fr; }.form-actions { flex-wrap: wrap; } }
+@media (max-width: 640px) { .profiles-grid { grid-template-columns: 1fr; }.form-actions { flex-wrap: wrap; } }
 </style>
