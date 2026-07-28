@@ -287,6 +287,37 @@ describe('group chat durable handoff routing baseline', () => {
     expect(groupServer.getStorage().getHandoffJob(running.id)).toMatchObject({ status: 'completed', leaseToken: '' })
   })
 
+  it('rejects upgrading a persisted non-final message into a terminal replay after the job failed', async () => {
+    const { human, agent } = await joinHumanAndAgent()
+    await emitAck(human, 'message', { roomId: 'room-1', id: 'failed-upgrade-trigger', content: '@Worker answer' })
+    const running = groupServer.getStorage().claimHandoffJobs('test-dispatcher', Date.now(), 1, 60_000)[0]
+    const intermediate = {
+      roomId: 'room-1',
+      id: 'failed-upgrade-intermediate',
+      content: 'partial answer',
+      timestamp: 654321,
+      role: 'assistant',
+      handoffChainId: running.chainId,
+      handoffDepth: 0,
+      sourceHandoffJobId: running.id,
+      sourceHandoffLeaseToken: running.leaseToken,
+      handoffFinal: false,
+      agentSessionId: currentAgentSessionId(),
+    }
+
+    expect(await emitAck<any>(agent, 'message', intermediate)).toEqual({ id: intermediate.id })
+    expect(groupServer.getStorage().markHandoffJobFailed(
+      running.id, running.leaseToken, 'terminal runtime failure', 0, 1,
+    )).toBe(true)
+
+    const forgedFinal = await emitAck<any>(agent, 'message', { ...intermediate, handoffFinal: true })
+
+    expect(forgedFinal).toEqual(expect.objectContaining({
+      error: expect.stringMatching(/handoff|terminal|replay|publication/i),
+    }))
+    expect(groupServer.getStorage().getHandoffJob(running.id)).toMatchObject({ status: 'failed', leaseToken: '' })
+  })
+
   it('does not route an agent reply without a live durable source job', async () => {
     const { agent } = await joinHumanAndAgent()
 

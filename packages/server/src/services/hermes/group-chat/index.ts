@@ -555,7 +555,11 @@ export class ChatStorage {
     }
 
     private mapStoredMessageRow(row: any): ChatMessage {
-        const { sourceHandoffLeaseHash: _sourceHandoffLeaseHash, ...publicRow } = row
+        const {
+            sourceHandoffLeaseHash: _sourceHandoffLeaseHash,
+            sourceHandoffFinal: _sourceHandoffFinal,
+            ...publicRow
+        } = row
         return {
             ...publicRow,
             tool_calls: parseJsonArray(row.tool_calls),
@@ -1517,8 +1521,8 @@ export class ChatStorage {
                 roomSeq = Number(allocated.messageSeq)
             }
             db.prepare(
-                `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content, handoffChainId, handoffDepth, sourceHandoffJobId, sourceHandoffLeaseHash, roomSeq)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content, handoffChainId, handoffDepth, sourceHandoffJobId, sourceHandoffLeaseHash, sourceHandoffFinal, roomSeq)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
                 + ` ON CONFLICT(id) DO UPDATE SET
                     roomId = excluded.roomId,
                     senderId = excluded.senderId,
@@ -1537,6 +1541,7 @@ export class ChatStorage {
                     handoffDepth = excluded.handoffDepth,
                     sourceHandoffJobId = excluded.sourceHandoffJobId,
                     sourceHandoffLeaseHash = excluded.sourceHandoffLeaseHash,
+                    sourceHandoffFinal = excluded.sourceHandoffFinal,
                     roomSeq = excluded.roomSeq`
             ).run(
                 msg.id, msg.roomId, msg.senderId, msg.senderName, messageContentForStorage(msg.role, msg.content), msg.timestamp,
@@ -1552,6 +1557,7 @@ export class ChatStorage {
                 normalizeMentionDepth(msg.handoffDepth),
                 msg.sourceHandoffJobId || '',
                 handoffLeaseHash(msg.sourceHandoffLeaseToken),
+                msg.handoffFinal === true ? 1 : 0,
                 roomSeq,
             )
         })
@@ -1590,6 +1596,7 @@ export class ChatStorage {
                 if (
                     !job
                     || job.status !== 'running'
+                    || job.roomId !== args.roomId
                     || job.leaseToken !== args.sourceHandoffLeaseToken
                     || job.targetAgentId !== args.senderId
                     || job.targetSessionId !== args.sessionId
@@ -1692,9 +1699,13 @@ export class ChatStorage {
             let effectiveAuthority = options.authority
             let sourceJobRow: any | null = null
             const existing = this.getMessage(msg.id)
-            const existingLeaseHash = existing
-                ? String((db.prepare('SELECT sourceHandoffLeaseHash FROM gc_messages WHERE id = ?').get(msg.id) as { sourceHandoffLeaseHash?: string } | undefined)?.sourceHandoffLeaseHash || '')
-                : ''
+            const existingDurableState = existing
+                ? db.prepare('SELECT sourceHandoffLeaseHash, sourceHandoffFinal FROM gc_messages WHERE id = ?').get(msg.id) as {
+                    sourceHandoffLeaseHash?: string
+                    sourceHandoffFinal?: number
+                } | undefined
+                : undefined
+            const existingLeaseHash = String(existingDurableState?.sourceHandoffLeaseHash || '')
             const sameRoutedMessage = Boolean(existing) &&
                 existing!.roomId === msg.roomId &&
                 existing!.senderId === msg.senderId &&
@@ -1714,7 +1725,8 @@ export class ChatStorage {
                 String(existing!.finish_reason || '') === String(msg.finish_reason || '') &&
                 String(existing!.reasoning || '') === String(msg.reasoning || '') &&
                 String(existing!.reasoning_details || '') === String(msg.reasoning_details || '') &&
-                String(existing!.reasoning_content || '') === String(msg.reasoning_content || '')
+                String(existing!.reasoning_content || '') === String(msg.reasoning_content || '') &&
+                Boolean(existingDurableState?.sourceHandoffFinal) === (msg.handoffFinal === true)
             const durableOwner = db.prepare(
                 `SELECT id FROM gc_handoff_jobs
                  WHERE roomId = ? AND targetAgentId = ? AND targetSessionId = ? AND status = 'running'
@@ -1737,6 +1749,7 @@ export class ChatStorage {
                     ).get(message.sourceHandoffJobId) as { id?: string } | undefined
                     const terminalReplay = sourceJobRow
                         && ['completed', 'failed'].includes(String(sourceJobRow.status))
+                        && sourceJobRow.roomId === message.roomId
                         && message.handoffFinal === true
                         && terminalMessage?.id === message.id
                         && sourceJobRow.targetAgentId === message.senderId
@@ -1752,7 +1765,8 @@ export class ChatStorage {
                     return { message: existing!, totalTokens, handoffJobs, replayed: true }
                 }
                 if (
-                    sourceJobRow.leaseToken !== String(message.sourceHandoffLeaseToken || '')
+                    sourceJobRow.roomId !== message.roomId
+                    || sourceJobRow.leaseToken !== String(message.sourceHandoffLeaseToken || '')
                     || sourceJobRow.targetAgentId !== message.senderId
                     || sourceJobRow.targetSessionId !== String(message.agentSessionId || '')
                 ) {

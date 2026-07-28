@@ -86,6 +86,9 @@ describe('Hermes schema initialization', () => {
     expect(groupMessageCols).toContainEqual(expect.objectContaining({
       name: 'sourceHandoffLeaseHash', dflt_value: "''", notnull: 1,
     }))
+    expect(groupMessageCols).toContainEqual(expect.objectContaining({
+      name: 'sourceHandoffFinal', dflt_value: '0', notnull: 1,
+    }))
   })
 
   it('adds the durable lease hash to legacy group messages without exposing a guessed value', async () => {
@@ -103,6 +106,23 @@ describe('Hermes schema initialization', () => {
 
     const row = db.prepare(`SELECT sourceHandoffLeaseHash FROM "${GC_MESSAGES_TABLE}" WHERE id = ?`).get('legacy-message') as any
     expect(row.sourceHandoffLeaseHash).toBe('')
+  })
+
+  it('adds the durable final marker to legacy group messages as non-final', async () => {
+    const { GC_MESSAGES_SCHEMA, GC_MESSAGES_TABLE, initAllHermesTables } =
+      await import('../../packages/server/src/db/hermes/schemas')
+    const legacyColumns = Object.entries(GC_MESSAGES_SCHEMA)
+      .filter(([name]) => name !== 'sourceHandoffFinal')
+      .map(([name, definition]) => `"${name}" ${definition}`)
+      .join(', ')
+    db.exec(`CREATE TABLE "${GC_MESSAGES_TABLE}" (${legacyColumns})`)
+    db.prepare(`INSERT INTO "${GC_MESSAGES_TABLE}" (id, roomId, senderId, senderName, content, timestamp) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run('legacy-message', 'room-1', 'agent-1', 'Agent', 'legacy', 1)
+
+    expect(() => initAllHermesTables()).not.toThrow()
+
+    const row = db.prepare(`SELECT sourceHandoffFinal FROM "${GC_MESSAGES_TABLE}" WHERE id = ?`).get('legacy-message') as any
+    expect(row.sourceHandoffFinal).toBe(0)
   })
 
   it('adds the automatic handoff column to legacy group rooms without changing their default', async () => {
