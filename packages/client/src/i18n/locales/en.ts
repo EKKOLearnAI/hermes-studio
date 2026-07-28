@@ -2790,6 +2790,15 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_34_1: 'This release covers all 21 PRs merged after 0.6.33, spanning per-user themes, Ekko and Coding Agent upgrades, desktop and browser improvements, automation, and reliability fixes',
+    new_0_6_34_2: 'Users can customize font size, text and accent colors, and workspace backgrounds with account-scoped persistence and consistent translucent surfaces; Windows chrome and Browser settings follow the theme, and Ekko browser commands now launch correctly on Windows (#2242, #2243, #2244)',
+    new_0_6_34_3: 'Ekko is available in production with on-demand skill discovery and multimodal input, while guarded skill evolution, profile-scoped logs, protocol persistence, and Responses reasoning summaries make it safer and more capable (#2215, #2236)',
+    new_0_6_34_4: 'Ekko memory adds deterministic structured kinds for preferences, relationships, habits, goals, and more; long conversations now use the shared snapshot-aware context compression lifecycle (#2229, #2230)',
+    new_0_6_34_5: 'Coding Agent runs preserve image inputs across Codex, Claude Code, and scoped provider protocols, truncate oversized Responses tool outputs, and isolate runtime configuration and late events by session (#2222, #2232, #2238)',
+    new_0_6_34_6: 'Hermes Workflow capability checks no longer reject valid targets without API-mode metadata, Kanban matches Hermes Agent 0.19 task semantics and previews, and Cron Run Now starts safely in the background with stricter creation validation (#2239, #2216, #2228)',
+    new_0_6_34_7: 'Desktop adds focused standalone chat windows, allows browser automation in password, payment, and file inputs, and preserves each human member name and description independently per Group Chat room (#2209, #2210, #2212)',
+    new_0_6_34_8: 'Session-scoped /yolo toggles approval bypass, Agent maximum turns no longer has a 200-turn UI cap, Markdown preserves straight ASCII quotes, and the pt-BR catalog restores missing diacritics (#2223, #2225, #2234, #2221)',
+    new_0_6_34_9: 'ESP32-C3 devices gain configurable connected standby that lowers idle power while preserving Wi-Fi, login, profile, and Socket.IO state, with immediate wake controls and persistent timeout settings (#2218)',
     new_0_6_33_1: 'This release covers all 16 PRs merged after 0.6.32, spanning the desktop Agent Browser, Workflow run evidence and deadlines, file and chat interactions, Provider model refresh, and reliability fixes',
     new_0_6_33_2: 'Desktop adds a visible multi-tab Agent Browser with isolated Profiles, proxy, storage, and download controls, encrypted persistent cookies, guarded Agent actions, and lazy MCP tool discovery (#2177, #2182)',
     new_0_6_33_3: 'Single and Group Chat links and authenticated HTML previews open in the embedded browser; permission spacing, cross-platform navigation icons, and Windows sidebar/title-bar alignment are also refined (#2191, #2194, #2198)',
