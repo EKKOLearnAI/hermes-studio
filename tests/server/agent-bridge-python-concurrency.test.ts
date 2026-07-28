@@ -626,6 +626,62 @@ assert polled["sessions"][0]["events"][-1]["status"] == "interrupted"
 `)
   })
 
+  it('keeps idle sessions alive while durable background delegations are active', () => {
+    runPython(String.raw`
+${harness}
+
+async_module = types.ModuleType("tools.async_delegation")
+async_module.list_async_delegations = lambda: [
+    {
+        "delegation_id": "deleg-running",
+        "status": "running",
+        "parent_session_id": "session-running",
+    },
+    {
+        "delegation_id": "deleg-finalizing",
+        "status": "finalizing",
+        "origin_ui_session_id": "session-finalizing",
+    },
+]
+async_module.interrupt_for_session = lambda **kwargs: 0
+sys.modules["tools.async_delegation"] = async_module
+
+server = bridge.BridgeServer("tcp://127.0.0.1:1")
+server.GC_INTERVAL_SECONDS = 0
+old = time.time() - server.IDLE_TIMEOUT_SECONDS - 1
+for session_id in ("session-running", "session-finalizing", "session-idle"):
+    session = bridge.AgentSession(session_id=session_id, agent=object())
+    session.last_used_at = old
+    server.pool._sessions[session_id] = session
+
+server._gc_idle_sessions()
+
+assert set(server.pool._sessions) == {"session-running", "session-finalizing"}
+`)
+  })
+
+  it('falls back to worker task state when checking idle background work', () => {
+    runPython(String.raw`
+${harness}
+
+async_module = types.ModuleType("tools.async_delegation")
+async_module.list_async_delegations = lambda: (_ for _ in ()).throw(RuntimeError("registry unavailable"))
+async_module.interrupt_for_session = lambda **kwargs: 0
+sys.modules["tools.async_delegation"] = async_module
+
+server = bridge.BridgeServer("tcp://127.0.0.1:1")
+server.GC_INTERVAL_SECONDS = 0
+session = bridge.AgentSession(session_id="session-1", agent=object())
+session.last_used_at = time.time() - server.IDLE_TIMEOUT_SECONDS - 1
+session.background_tasks["child-1"] = {"status": "running"}
+server.pool._sessions[session.session_id] = session
+
+server._gc_idle_sessions()
+
+assert "session-1" in server.pool._sessions
+`)
+  })
+
   it('hot-switches a loaded idle session model without recreating the session', () => {
     runPython(String.raw`
 ${harness}

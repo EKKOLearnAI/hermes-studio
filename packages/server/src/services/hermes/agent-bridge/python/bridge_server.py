@@ -648,6 +648,8 @@ class BridgeServer:
                 if not s.running and now - s.last_used_at > self.IDLE_TIMEOUT_SECONDS
             ]
         for sid in idle_ids:
+            if self.pool.has_active_background_for_session(sid):
+                continue
             self.pool.destroy(sid)
 
     def serve_forever(self) -> None:

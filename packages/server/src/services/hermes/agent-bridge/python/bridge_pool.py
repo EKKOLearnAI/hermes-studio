@@ -1731,6 +1731,33 @@ class AgentPool:
         except Exception:
             return []
 
+    def has_active_background_for_session(self, session_id: str) -> bool:
+        """Return whether a session still owns running background work."""
+        try:
+            from tools.async_delegation import list_async_delegations
+
+            for record in list_async_delegations():
+                if str(record.get("status") or "").lower() not in {"running", "finalizing"}:
+                    continue
+                if any(
+                    str(record.get(key) or "") == session_id
+                    for key in ("session_key", "origin_ui_session_id", "parent_session_id")
+                ):
+                    return True
+            return False
+        except Exception:
+            # The durable registry is authoritative when available. Fall back
+            # to worker telemetry so a transient registry failure cannot let
+            # idle GC interrupt a task the worker still sees as active.
+            with self._lock:
+                session = self._sessions.get(session_id)
+                if session is None:
+                    return False
+                return any(
+                    str(task.get("status") or "").lower() in {"running", "finalizing"}
+                    for task in session.background_tasks.values()
+                )
+
     @staticmethod
     def _interrupt_background_for_session(session_id: str, reason: str) -> int:
         try:
