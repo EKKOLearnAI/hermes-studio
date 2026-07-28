@@ -48,8 +48,11 @@ describe('group chat durable handoff routing baseline', () => {
   it('durably routes human messages through the handoff outbox', async () => {
     const { human } = await joinHumanAndAgent()
 
-    await emitAck(human, 'message', { roomId: 'room-1', id: 'human-msg-1', content: '@Worker hello' })
+    const first = await emitAck<any>(human, 'message', { roomId: 'room-1', id: 'human-msg-1', content: '@Worker hello' })
+    const replay = await emitAck<any>(human, 'message', { roomId: 'room-1', id: 'human-msg-1', content: '@Worker hello' })
 
+    expect(first).toEqual({ id: 'human-msg-1' })
+    expect(replay).toEqual({ id: 'human-msg-1' })
     expect(groupServer.getStorage().listHandoffJobs('room-1')).toContainEqual(expect.objectContaining({
       sourceMessageId: 'human-msg-1',
       targetAgentId: 'agent-worker',
@@ -97,6 +100,191 @@ describe('group chat durable handoff routing baseline', () => {
     expect(groupServer.getStorage().getHandoffJob(running.id)).toMatchObject({
       status: 'running', leaseToken: running.leaseToken,
     })
+  })
+
+  it('rejects a command message that omits provenance while its durable handoff is running', async () => {
+    const { human, agent } = await joinHumanAndAgent()
+    await emitAck(human, 'message', { roomId: 'room-1', id: 'durable-command-trigger', content: '@Worker run' })
+    const running = groupServer.getStorage().claimHandoffJobs('test-dispatcher', Date.now(), 1, 60_000)[0]
+    const beforeRoom = groupServer.getStorage().getRoom('room-1')
+
+    const response = await emitAck<any>(agent, 'message', {
+      roomId: 'room-1',
+      id: 'omitted-durable-command-message',
+      content: 'must not execute',
+      role: 'command',
+      agentSessionId: currentAgentSessionId(),
+    })
+
+    expect(response).toEqual(expect.objectContaining({ error: expect.stringMatching(/provenance|handoff|lease/i) }))
+    expect(groupServer.getStorage().getMessage('omitted-durable-command-message')).toBeNull()
+    expect(groupServer.getStorage().getRoom('room-1')).toMatchObject({
+      messageSeq: beforeRoom?.messageSeq,
+      totalTokens: beforeRoom?.totalTokens,
+    })
+    expect(groupServer.getStorage().getHandoffJob(running.id)).toMatchObject({
+      status: 'running', leaseToken: running.leaseToken,
+    })
+  })
+
+  it('rejects replay of an existing workspace message id when durable provenance is omitted', async () => {
+    const { human, agent } = await joinHumanAndAgent()
+    const agentSessionId = currentAgentSessionId()
+    const runId = 'prior-workspace-run'
+    const prior = groupServer.getStorage().saveWorkspaceDiffMessageForRun({
+      roomId: 'room-1',
+      senderId: 'agent-worker',
+      senderName: 'Worker',
+      sessionId: agentSessionId,
+      runId,
+      status: 'completed',
+      workspace: '/workspace/project',
+      draft: {
+        change_id: 'prior-workspace-change',
+        session_id: agentSessionId,
+        run_id: runId,
+        source: 'run',
+        workspace: '/workspace/project',
+        started_at: 1,
+        finished_at: 2,
+        files_changed: 0,
+        additions: 0,
+        deletions: 0,
+        total_patch_bytes: 0,
+        files: [],
+      },
+    })
+    expect(prior?.message.id).toBe('gcmsg_workspace_diff_room-1_prior-workspace-run')
+
+    await emitAck(human, 'message', { roomId: 'room-1', id: 'durable-workspace-replay-trigger', content: '@Worker run' })
+    const running = groupServer.getStorage().claimHandoffJobs('test-dispatcher', Date.now(), 1, 60_000)[0]
+    const beforeRoom = groupServer.getStorage().getRoom('room-1')
+
+    const response = await emitAck<any>(agent, 'message', {
+      roomId: 'room-1',
+      id: prior!.message.id,
+      content: prior!.message.content,
+      role: 'tool',
+      tool_name: 'workspace_diff',
+      agentSessionId,
+    })
+
+    expect(response).toEqual(expect.objectContaining({ error: expect.stringMatching(/provenance|handoff|lease/i) }))
+    expect(groupServer.getStorage().getRoom('room-1')).toMatchObject({
+      messageSeq: beforeRoom?.messageSeq,
+      totalTokens: beforeRoom?.totalTokens,
+    })
+    expect(groupServer.getStorage().getHandoffJob(running.id)).toMatchObject({
+      status: 'running', leaseToken: running.leaseToken,
+    })
+
+    const forgedCurrentProvenance = await emitAck<any>(agent, 'message', {
+      roomId: 'room-1',
+      id: prior!.message.id,
+      content: prior!.message.content,
+      timestamp: prior!.message.timestamp,
+      role: 'tool',
+      tool_name: 'workspace_diff',
+      agentSessionId,
+      sourceHandoffJobId: running.id,
+      sourceHandoffLeaseToken: running.leaseToken,
+    })
+    expect(forgedCurrentProvenance).toEqual(expect.objectContaining({
+      error: expect.stringMatching(/conflict|provenance|handoff|lease/i),
+    }))
+    expect(groupServer.getStorage().getHandoffJob(running.id)).toMatchObject({
+      status: 'running', leaseToken: running.leaseToken,
+    })
+  })
+
+  it('accepts a command message bound to its live durable provenance', async () => {
+    const { human, agent } = await joinHumanAndAgent()
+    await emitAck(human, 'message', { roomId: 'room-1', id: 'durable-bound-command-trigger', content: '@Worker run' })
+    const running = groupServer.getStorage().claimHandoffJobs('test-dispatcher', Date.now(), 1, 60_000)[0]
+
+    const accepted = await emitAck<any>(agent, 'message', {
+      roomId: 'room-1',
+      id: 'provenance-bound-command-message',
+      content: 'authorized command trace',
+      role: 'command',
+      agentSessionId: currentAgentSessionId(),
+      sourceHandoffJobId: running.id,
+      sourceHandoffLeaseToken: running.leaseToken,
+    })
+    expect(accepted).toEqual({ id: 'provenance-bound-command-message' })
+    expect(groupServer.getStorage().getMessage('provenance-bound-command-message')).toMatchObject({
+      role: 'command',
+      sourceHandoffJobId: running.id,
+    })
+    expect(groupServer.getStorage().getMessage('provenance-bound-command-message')).not.toHaveProperty('sourceHandoffLeaseHash')
+    expect(groupServer.getStorage().getMessage('provenance-bound-command-message')).not.toHaveProperty('sourceHandoffLeaseToken')
+    const storedLease = harness.db.prepare('SELECT sourceHandoffLeaseHash FROM gc_messages WHERE id = ?')
+      .get('provenance-bound-command-message') as { sourceHandoffLeaseHash: string }
+    expect(storedLease.sourceHandoffLeaseHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(storedLease.sourceHandoffLeaseHash).not.toBe(running.leaseToken)
+    expect(groupServer.getStorage().getHandoffJob(running.id)).toMatchObject({
+      status: 'running', leaseToken: running.leaseToken,
+    })
+  })
+
+  it('accepts an identical terminal final retry through the real socket after the durable job completed', async () => {
+    groupServer.getStorage().addRoomAgent('room-1', 'agent-reviewer', 'default', 'Reviewer', '', 1)
+    harness.db.prepare(
+      "UPDATE gc_rooms SET handoffMode = 'fixed', handoffOrderJson = ? WHERE id = ?",
+    ).run(JSON.stringify(['agent-worker', 'agent-reviewer']), 'room-1')
+    const { human, agent } = await joinHumanAndAgent()
+    await emitAck(human, 'message', { roomId: 'room-1', id: 'terminal-retry-trigger', content: '@Worker answer' })
+    const running = groupServer.getStorage().claimHandoffJobs('test-dispatcher', Date.now(), 1, 60_000)[0]
+    const payload = {
+      roomId: 'room-1',
+      id: 'terminal-retry-final',
+      content: 'final answer',
+      timestamp: 123456,
+      role: 'assistant',
+      handoffChainId: running.chainId,
+      handoffDepth: 1,
+      sourceHandoffJobId: running.id,
+      sourceHandoffLeaseToken: running.leaseToken,
+      handoffFinal: true,
+      agentSessionId: currentAgentSessionId(),
+    }
+    const intermediate = {
+      ...payload,
+      id: 'terminal-retry-intermediate',
+      content: 'intermediate answer',
+      handoffFinal: false,
+    }
+
+    const emitToRoomReaders = vi.spyOn(groupServer as any, 'emitToRoomReaders')
+    expect(await emitAck<any>(agent, 'message', intermediate)).toEqual({ id: intermediate.id })
+    const first = await emitAck<any>(agent, 'message', payload)
+    const messageBroadcastsAfterFirst = emitToRoomReaders.mock.calls.filter(([, event]) => event === 'message').length
+    const roomUpdatesAfterFirst = emitToRoomReaders.mock.calls.filter(([, event]) => event === 'room_updated').length
+    const replay = await emitAck<any>(agent, 'message', payload)
+    const mismatchedLease = await emitAck<any>(agent, 'message', {
+      ...payload,
+      sourceHandoffLeaseToken: `${payload.sourceHandoffLeaseToken}-forged`,
+    })
+    const mismatchedTimestamp = await emitAck<any>(agent, 'message', { ...payload, timestamp: payload.timestamp + 1 })
+    const forgedIntermediateFinal = await emitAck<any>(agent, 'message', {
+      ...intermediate,
+      handoffFinal: true,
+    })
+
+    expect(first).toEqual({ id: payload.id })
+    expect(replay).toEqual({ id: payload.id })
+    expect(mismatchedLease).toEqual(expect.objectContaining({
+      error: expect.stringMatching(/handoff|lease|terminal|replay|publication/i),
+    }))
+    expect(mismatchedTimestamp).toEqual(expect.objectContaining({
+      error: expect.stringMatching(/handoff|terminal|replay|publication/i),
+    }))
+    expect(emitToRoomReaders.mock.calls.filter(([, event]) => event === 'message')).toHaveLength(messageBroadcastsAfterFirst)
+    expect(emitToRoomReaders.mock.calls.filter(([, event]) => event === 'room_updated')).toHaveLength(roomUpdatesAfterFirst)
+    expect(forgedIntermediateFinal).toEqual(expect.objectContaining({
+      error: expect.stringMatching(/handoff|terminal|replay|publication/i),
+    }))
+    expect(groupServer.getStorage().getHandoffJob(running.id)).toMatchObject({ status: 'completed', leaseToken: '' })
   })
 
   it('does not route an agent reply without a live durable source job', async () => {

@@ -380,6 +380,35 @@ describe('durable group-chat handoff outbox', () => {
     expect(saved.handoffJobs).toHaveLength(1)
     expect(storage.getHandoffJob(source.id)).toMatchObject({ status: 'completed', completedAt: 200 })
     expect(saved.handoffJobs[0]).toMatchObject({ targetAgentId: b.agentId, depth: 1, kind: 'fixed', status: 'pending' })
+
+    const replay = storage.saveMessageAndRefreshRoom({
+      id: 'assistant-message-1', roomId: 'room-1', senderId: a.agentId, senderName: 'A',
+      content: 'answer without any mention', timestamp: 200, role: 'assistant',
+      handoffChainId: source.chainId, handoffDepth: 1, sourceHandoffJobId: source.id,
+      sourceHandoffLeaseToken: source.leaseToken, agentSessionId: a.sessionId, handoffFinal: true,
+    }, {
+      handoffs: [{ chainId: source.chainId, targetAgentId: b.agentId, targetSessionId: b.sessionId, depth: 1, kind: 'fixed' }],
+      authority: { initiatorActorId: source.initiatorActorId, sourceActorId: source.targetActorId },
+    })
+    expect(replay.message.id).toBe(saved.message.id)
+    expect(replay.handoffJobs).toEqual(saved.handoffJobs)
+    expect(storage.getHandoffJob(source.id)).toMatchObject({ status: 'completed', completedAt: 200 })
+
+    storage.saveMessageAndRefreshRoom({
+      id: 'next-human-message', roomId: 'room-1', senderId: 'human-1', senderName: 'Human',
+      content: '@A next', timestamp: 300, role: 'user',
+    }, authorizedHandoffs(storage, 'room-1', [{
+      chainId: 'next-chain', targetAgentId: a.agentId, targetSessionId: a.sessionId, depth: 0, kind: 'mention',
+    }]))
+    const nextRunning = storage.claimHandoffJobs('process-1', 400, 10, 5_000)
+      .find(job => job.targetAgentId === a.agentId)!
+    expect(nextRunning).toMatchObject({ targetAgentId: a.agentId, status: 'running' })
+    expect(() => storage.saveMessageAndRefreshRoom({
+      id: 'assistant-message-1', roomId: 'room-1', senderId: a.agentId, senderName: 'A',
+      content: 'answer without any mention', timestamp: 200, role: 'assistant',
+      handoffChainId: source.chainId, handoffDepth: 1, sourceHandoffJobId: source.id,
+      sourceHandoffLeaseToken: source.leaseToken, agentSessionId: a.sessionId, handoffFinal: true,
+    })).toThrow(/running job|handoff publication/i)
   })
 
   it('rejects final publication and next jobs when authority is revoked after launch', () => {

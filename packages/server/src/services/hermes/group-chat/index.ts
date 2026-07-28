@@ -82,6 +82,10 @@ function messageContentForStorage(role: string | undefined, content: string): st
     return normalizeMessageContentForStorageRole(role, content)
 }
 
+function handoffLeaseHash(token: string | undefined): string {
+    return token ? createHash('sha256').update(token).digest('hex') : ''
+}
+
 function contentToText(content: unknown): string {
     if (typeof content === 'string') {
         const trimmed = content.trim()
@@ -551,8 +555,9 @@ export class ChatStorage {
     }
 
     private mapStoredMessageRow(row: any): ChatMessage {
+        const { sourceHandoffLeaseHash: _sourceHandoffLeaseHash, ...publicRow } = row
         return {
-            ...row,
+            ...publicRow,
             tool_calls: parseJsonArray(row.tool_calls),
         }
     }
@@ -1512,8 +1517,8 @@ export class ChatStorage {
                 roomSeq = Number(allocated.messageSeq)
             }
             db.prepare(
-                `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content, handoffChainId, handoffDepth, sourceHandoffJobId, roomSeq)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content, handoffChainId, handoffDepth, sourceHandoffJobId, sourceHandoffLeaseHash, roomSeq)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
                 + ` ON CONFLICT(id) DO UPDATE SET
                     roomId = excluded.roomId,
                     senderId = excluded.senderId,
@@ -1531,6 +1536,7 @@ export class ChatStorage {
                     handoffChainId = excluded.handoffChainId,
                     handoffDepth = excluded.handoffDepth,
                     sourceHandoffJobId = excluded.sourceHandoffJobId,
+                    sourceHandoffLeaseHash = excluded.sourceHandoffLeaseHash,
                     roomSeq = excluded.roomSeq`
             ).run(
                 msg.id, msg.roomId, msg.senderId, msg.senderName, messageContentForStorage(msg.role, msg.content), msg.timestamp,
@@ -1545,6 +1551,7 @@ export class ChatStorage {
                 msg.handoffChainId || '',
                 normalizeMentionDepth(msg.handoffDepth),
                 msg.sourceHandoffJobId || '',
+                handoffLeaseHash(msg.sourceHandoffLeaseToken),
                 roomSeq,
             )
         })
@@ -1673,68 +1680,79 @@ export class ChatStorage {
     saveMessageAndRefreshRoom(
         msg: ChatMessage,
         options: { handoffs?: GroupHandoffPlan[]; authority?: GroupHandoffAuthorityInput } = {},
-    ): { message: ChatMessage; totalTokens: number; handoffJobs: GroupHandoffJob[] } {
+    ): { message: ChatMessage; totalTokens: number; handoffJobs: GroupHandoffJob[]; replayed?: boolean } {
         const db = this.db()
         if (!db) return { message: msg, totalTokens: 0, handoffJobs: [] }
         db.exec('BEGIN IMMEDIATE')
         try {
-            const existing = this.getMessage(msg.id)
-            if (existing?.tool_name === 'workspace_diff') {
-                const messages = this.getMessagesForContext(existing.roomId)
-                const totalTokens = this.estimateRoomTotalTokens(existing.roomId, messages)
-                db.exec('COMMIT')
-                return { message: existing, totalTokens, handoffJobs: [] }
-            }
-            if (existing) {
-                const linkedHandoffCount = Number((db.prepare(
-                    'SELECT COUNT(*) AS total FROM gc_handoff_jobs WHERE sourceMessageId = ? OR id = ?'
-                ).get(existing.id, existing.sourceHandoffJobId || '') as { total?: number } | undefined)?.total || 0)
-                const protectedByHandoff = linkedHandoffCount > 0 || Boolean(existing.sourceHandoffJobId)
-                if (protectedByHandoff) {
-                    const incomingContent = messageContentForStorage(msg.role, contentToStorageString(msg.content))
-                    const sameMessage = existing.roomId === msg.roomId &&
-                        existing.senderId === msg.senderId &&
-                        existing.senderName === msg.senderName &&
-                        existing.role === (msg.role || 'user') &&
-                        existing.content === incomingContent &&
-                        String(existing.tool_name || '') === String(msg.tool_name || '') &&
-                        String(existing.handoffChainId || '') === String(msg.handoffChainId || '') &&
-                        normalizeMentionDepth(existing.handoffDepth) === normalizeMentionDepth(msg.handoffDepth) &&
-                        String(existing.sourceHandoffJobId || '') === String(msg.sourceHandoffJobId || '')
-                    if (!sameMessage) throw new Error(`Group message id conflict for ${msg.id}`)
-                    const messages = this.getMessagesForContext(existing.roomId)
-                    const totalTokens = this.estimateRoomTotalTokens(existing.roomId, messages)
-                    const handoffJobs = this.listHandoffJobs(existing.roomId, 500).filter(job => job.sourceMessageId === existing.id)
-                    db.exec('COMMIT')
-                    return { message: existing, totalTokens, handoffJobs }
-                }
-            }
             const safeMsg = msg.tool_name === 'workspace_diff'
                 ? { ...msg, role: 'user', tool_call_id: null, tool_calls: null, tool_name: null }
                 : msg
             const message = safeMsg
             let effectiveAuthority = options.authority
             let sourceJobRow: any | null = null
-            const isAgentRunTrace = message.role === 'assistant'
-                || message.role === 'tool'
-                || Array.isArray(message.tool_calls)
-                || Boolean(message.tool_call_id)
-            if (isAgentRunTrace && !message.sourceHandoffJobId) {
-                const durableOwner = db.prepare(
-                    `SELECT id FROM gc_handoff_jobs
-                     WHERE roomId = ? AND targetAgentId = ? AND targetSessionId = ? AND status = 'running'
-                     LIMIT 1`,
-                ).get(message.roomId, message.senderId, String(message.agentSessionId || '')) as { id?: string } | undefined
-                if (durableOwner?.id) {
-                    throw new Error(`Handoff provenance required for running job ${durableOwner.id}`)
-                }
+            const existing = this.getMessage(msg.id)
+            const existingLeaseHash = existing
+                ? String((db.prepare('SELECT sourceHandoffLeaseHash FROM gc_messages WHERE id = ?').get(msg.id) as { sourceHandoffLeaseHash?: string } | undefined)?.sourceHandoffLeaseHash || '')
+                : ''
+            const sameRoutedMessage = Boolean(existing) &&
+                existing!.roomId === msg.roomId &&
+                existing!.senderId === msg.senderId &&
+                existing!.senderName === msg.senderName &&
+                existing!.role === (msg.role || 'user') &&
+                existing!.content === messageContentForStorage(msg.role, contentToStorageString(msg.content)) &&
+                String(existing!.tool_name || '') === String(msg.tool_name || '') &&
+                String(existing!.handoffChainId || '') === String(msg.handoffChainId || '') &&
+                normalizeMentionDepth(existing!.handoffDepth) === normalizeMentionDepth(msg.handoffDepth) &&
+                String(existing!.sourceHandoffJobId || '') === String(msg.sourceHandoffJobId || '')
+            const sameDurableReplay = sameRoutedMessage &&
+                existing!.timestamp === msg.timestamp &&
+                existingLeaseHash !== '' &&
+                existingLeaseHash === handoffLeaseHash(msg.sourceHandoffLeaseToken) &&
+                String(existing!.tool_call_id || '') === String(msg.tool_call_id || '') &&
+                JSON.stringify(existing!.tool_calls || null) === JSON.stringify(msg.tool_calls || null) &&
+                String(existing!.finish_reason || '') === String(msg.finish_reason || '') &&
+                String(existing!.reasoning || '') === String(msg.reasoning || '') &&
+                String(existing!.reasoning_details || '') === String(msg.reasoning_details || '') &&
+                String(existing!.reasoning_content || '') === String(msg.reasoning_content || '')
+            const durableOwner = db.prepare(
+                `SELECT id FROM gc_handoff_jobs
+                 WHERE roomId = ? AND targetAgentId = ? AND targetSessionId = ? AND status = 'running'
+                 LIMIT 1`,
+            ).get(message.roomId, message.senderId, String(message.agentSessionId || '')) as { id?: string } | undefined
+            if (durableOwner?.id && !message.sourceHandoffJobId) {
+                throw new Error(`Handoff provenance required for running job ${durableOwner.id}`)
+            }
+            if (durableOwner?.id && durableOwner.id !== message.sourceHandoffJobId) {
+                throw new Error(`Handoff publication rejected outside running job ${durableOwner.id}`)
             }
             if (message.sourceHandoffJobId) {
                 sourceJobRow = db.prepare('SELECT * FROM gc_handoff_jobs WHERE id = ?').get(message.sourceHandoffJobId) as any
+                if (sourceJobRow?.status !== 'running') {
+                    const terminalMessage = db.prepare(
+                        `SELECT id FROM gc_messages
+                         WHERE sourceHandoffJobId = ?
+                         ORDER BY roomSeq DESC
+                         LIMIT 1`,
+                    ).get(message.sourceHandoffJobId) as { id?: string } | undefined
+                    const terminalReplay = sourceJobRow
+                        && ['completed', 'failed'].includes(String(sourceJobRow.status))
+                        && message.handoffFinal === true
+                        && terminalMessage?.id === message.id
+                        && sourceJobRow.targetAgentId === message.senderId
+                        && sourceJobRow.targetSessionId === String(message.agentSessionId || '')
+                        && sameDurableReplay
+                    if (!terminalReplay) {
+                        throw new Error(`Handoff publication rejected for ${message.sourceHandoffJobId}`)
+                    }
+                    const messages = this.getMessagesForContext(existing!.roomId)
+                    const totalTokens = this.estimateRoomTotalTokens(existing!.roomId, messages)
+                    const handoffJobs = this.listHandoffJobs(existing!.roomId, 500).filter(job => job.sourceMessageId === existing!.id)
+                    db.exec('COMMIT')
+                    return { message: existing!, totalTokens, handoffJobs, replayed: true }
+                }
                 if (
-                    !sourceJobRow
-                    || sourceJobRow.status !== 'running'
-                    || sourceJobRow.leaseToken !== String(message.sourceHandoffLeaseToken || '')
+                    sourceJobRow.leaseToken !== String(message.sourceHandoffLeaseToken || '')
                     || sourceJobRow.targetAgentId !== message.senderId
                     || sourceJobRow.targetSessionId !== String(message.agentSessionId || '')
                 ) {
@@ -1762,6 +1780,29 @@ export class ChatStorage {
                         initiatorActorId: String(sourceJobRow.initiatorActorId),
                         sourceActorId: String(sourceJobRow.targetActorId),
                     }
+                }
+            }
+            if (existing?.tool_name === 'workspace_diff') {
+                if (durableOwner?.id && !sameDurableReplay) {
+                    throw new Error(`Group message id conflict for ${msg.id}`)
+                }
+                const messages = this.getMessagesForContext(existing.roomId)
+                const totalTokens = this.estimateRoomTotalTokens(existing.roomId, messages)
+                db.exec('COMMIT')
+                return { message: existing, totalTokens, handoffJobs: [] }
+            }
+            if (existing) {
+                const linkedHandoffCount = Number((db.prepare(
+                    'SELECT COUNT(*) AS total FROM gc_handoff_jobs WHERE sourceMessageId = ? OR id = ?'
+                ).get(existing.id, existing.sourceHandoffJobId || '') as { total?: number } | undefined)?.total || 0)
+                const protectedByHandoff = linkedHandoffCount > 0 || Boolean(existing.sourceHandoffJobId)
+                if (protectedByHandoff) {
+                    if (!sameRoutedMessage) throw new Error(`Group message id conflict for ${msg.id}`)
+                    const messages = this.getMessagesForContext(existing.roomId)
+                    const totalTokens = this.estimateRoomTotalTokens(existing.roomId, messages)
+                    const handoffJobs = this.listHandoffJobs(existing.roomId, 500).filter(job => job.sourceMessageId === existing.id)
+                    db.exec('COMMIT')
+                    return { message: existing, totalTokens, handoffJobs }
                 }
             }
             this.upsertMessage(message)
@@ -4090,18 +4131,25 @@ export class GroupChatServer {
                     sourceActorId: access.actorId,
                 }
             } else {
+                const terminalReplayCandidate = Boolean(
+                    sourceHandoffJob
+                    && ['completed', 'failed'].includes(sourceHandoffJob.status)
+                    && this.storage.getMessage(msg.id),
+                )
                 if (
                     !sourceHandoffJob
-                    || sourceHandoffJob.status !== 'running'
                     || sourceHandoffJob.targetAgentId !== msg.senderId
                     || sourceHandoffJob.targetSessionId !== msg.agentSessionId
+                    || (sourceHandoffJob.status !== 'running' && !terminalReplayCandidate)
                 ) {
                     ack?.({ error: 'Stale room session' })
                     return
                 }
-                handoffAuthority = {
-                    initiatorActorId: sourceHandoffJob.initiatorActorId,
-                    sourceActorId: sourceHandoffJob.targetActorId,
+                if (sourceHandoffJob.status === 'running') {
+                    handoffAuthority = {
+                        initiatorActorId: sourceHandoffJob.initiatorActorId,
+                        sourceActorId: sourceHandoffJob.targetActorId,
+                    }
                 }
             }
         }
@@ -4116,6 +4164,10 @@ export class GroupChatServer {
         const savedMsg = saved.message
         const totalTokens = saved.totalTokens
 
+        if (saved.replayed) {
+            ack?.({ id: savedMsg.id })
+            return
+        }
         this.emitToRoomReaders(roomId, 'message', savedMsg)
         this.emitToRoomReaders(roomId, 'room_updated', { roomId, totalTokens })
         ack?.({ id: savedMsg.id })

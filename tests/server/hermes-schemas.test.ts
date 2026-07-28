@@ -24,7 +24,7 @@ describe('Hermes schema initialization', () => {
   })
 
   it('initializes all tables with correct schemas', async () => {
-    const { initAllHermesTables, USAGE_TABLE, SESSIONS_TABLE, SESSION_CATEGORIES_TABLE, MESSAGES_TABLE, GC_ROOMS_TABLE, USERS_TABLE, USER_PROFILES_TABLE, DEVICES_TABLE, MCU_DEVICES_TABLE } =
+    const { initAllHermesTables, USAGE_TABLE, SESSIONS_TABLE, SESSION_CATEGORIES_TABLE, MESSAGES_TABLE, GC_ROOMS_TABLE, GC_MESSAGES_TABLE, USERS_TABLE, USER_PROFILES_TABLE, DEVICES_TABLE, MCU_DEVICES_TABLE } =
       await import('../../packages/server/src/db/hermes/schemas')
 
     expect(() => initAllHermesTables()).not.toThrow()
@@ -82,6 +82,27 @@ describe('Hermes schema initialization', () => {
     expect(groupRoomCols).toContainEqual(expect.objectContaining({
       name: 'maxAgentMentionDepth', dflt_value: '4', notnull: 0,
     }))
+    const groupMessageCols = db.prepare(`PRAGMA table_info("${GC_MESSAGES_TABLE}")`).all() as Array<{ name: string; dflt_value: string | null; notnull: number }>
+    expect(groupMessageCols).toContainEqual(expect.objectContaining({
+      name: 'sourceHandoffLeaseHash', dflt_value: "''", notnull: 1,
+    }))
+  })
+
+  it('adds the durable lease hash to legacy group messages without exposing a guessed value', async () => {
+    const { GC_MESSAGES_SCHEMA, GC_MESSAGES_TABLE, initAllHermesTables } =
+      await import('../../packages/server/src/db/hermes/schemas')
+    const legacyColumns = Object.entries(GC_MESSAGES_SCHEMA)
+      .filter(([name]) => name !== 'sourceHandoffLeaseHash')
+      .map(([name, definition]) => `"${name}" ${definition}`)
+      .join(', ')
+    db.exec(`CREATE TABLE "${GC_MESSAGES_TABLE}" (${legacyColumns})`)
+    db.prepare(`INSERT INTO "${GC_MESSAGES_TABLE}" (id, roomId, senderId, senderName, content, timestamp) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run('legacy-message', 'room-1', 'agent-1', 'Agent', 'legacy', 1)
+
+    expect(() => initAllHermesTables()).not.toThrow()
+
+    const row = db.prepare(`SELECT sourceHandoffLeaseHash FROM "${GC_MESSAGES_TABLE}" WHERE id = ?`).get('legacy-message') as any
+    expect(row.sourceHandoffLeaseHash).toBe('')
   })
 
   it('adds the automatic handoff column to legacy group rooms without changing their default', async () => {
