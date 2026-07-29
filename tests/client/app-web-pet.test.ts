@@ -29,6 +29,7 @@ vi.mock('vue-router', async (importOriginal) => {
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
     t: (key: string, params?: Record<string, unknown>) => params?.version ? `${key}:${params.version}` : key,
+    locale: { value: 'en' },
   }),
 }))
 

@@ -10,6 +10,7 @@ import { useSessionSearch } from '@/composables/useSessionSearch'
 import { useAppStore } from '@/stores/hermes/app'
 import AuthEventListener from '@/components/auth/AuthEventListener.vue'
 import { desktopBridge } from '@/utils/desktop-bridge'
+import { naiveRtlFor } from '@/constants/naiveRtl'
 
 const AppSidebar = defineAsyncComponent(async () => (await import('@/components/layout/AppSidebar.vue')).default)
 const DesktopTitleBar = defineAsyncComponent(async () => (await import('@/components/layout/DesktopTitleBar.vue')).default)
@@ -25,7 +26,8 @@ const {
   hasBackgroundImage,
   syncThemeFromServer,
 } = useTheme()
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const naiveRtl = computed(() => naiveRtlFor(locale.value))
 const appStore = useAppStore()
 const route = useRoute()
 const { sessionSearchOpen } = useSessionSearch()
@@ -107,7 +109,7 @@ useKeyboard()
 </script>
 
 <template>
-  <NConfigProvider :theme="naiveTheme" :theme-overrides="themeOverrides">
+  <NConfigProvider :theme="naiveTheme" :theme-overrides="themeOverrides" :rtl="naiveRtl">
     <NMessageProvider>
       <AuthEventListener />
       <NDialogProvider>
