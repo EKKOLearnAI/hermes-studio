@@ -7,16 +7,20 @@ import { useSettingsStore } from '@/stores/hermes/settings'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import { extractClipboardFiles } from '@/utils/clipboard-files'
 import { buildMentionOptions, type MentionOption } from './mention-options'
+import { applyMentionSelection, reconcileMentionEdit, type DraftMention } from './mention-entities'
+import type { GroupChatMention } from '@/api/hermes/group-chat'
 import type { Attachment } from '@/stores/hermes/chat'
 import { clampChatInputHeight, isMobileChatInputViewport } from '@/utils/chat-input-height'
 
 const { t } = useI18n()
-const emit = defineEmits<{ send: [content: string, attachments?: Attachment[]] }>()
+const emit = defineEmits<{ send: [content: string, attachments?: Attachment[], mentions?: GroupChatMention[]] }>()
 const store = useGroupChatStore()
 const settingsStore = useSettingsStore()
 const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
 
 const inputText = ref('')
+const previousInputText = ref('')
+const draftMentions = ref<DraftMention[]>([])
 const textareaRef = ref<HTMLTextAreaElement>()
 const dropdownRef = ref<HTMLDivElement>()
 const fileInputRef = ref<HTMLInputElement>()
@@ -267,19 +271,21 @@ function updateMentionState() {
     mentionActive.value = filteredMentionOptions.value.length > 0
 }
 
-function selectMention(name: string) {
+function selectMention(option: MentionOption) {
     const el = textareaRef.value
     if (!el || mentionStartIndex.value === -1) return
-
-    const before = inputText.value.slice(0, mentionStartIndex.value)
-    const after = inputText.value.slice(el.selectionStart)
-    inputText.value = `${before}@${name} ${after}`
+    const selection = option.type === 'all'
+        ? { type: 'all' as const, name: option.name }
+        : { type: 'agent' as const, participantId: option.participantId, name: option.name }
+    const applied = applyMentionSelection(inputText.value, draftMentions.value, mentionStartIndex.value, el.selectionStart, selection)
+    inputText.value = applied.text
+    previousInputText.value = applied.text
+    draftMentions.value = applied.mentions
     mentionActive.value = false
 
     nextTick(() => {
         if (el) {
-            const newPos = before.length + name.length + 2
-            el.setSelectionRange(newPos, newPos)
+            el.setSelectionRange(applied.cursor, applied.cursor)
             el.focus()
             autoSizeTextarea(el)
         }
@@ -305,7 +311,7 @@ function handleKeydown(e: KeyboardEvent) {
         }
         if (e.key === 'Enter' || e.key === 'Tab') {
             e.preventDefault()
-            selectMention(filteredMentionOptions.value[activeIndex.value].name)
+            selectMention(filteredMentionOptions.value[activeIndex.value])
             return
         }
         if (e.key === 'Escape') {
@@ -325,14 +331,19 @@ function handleSend() {
     const content = inputText.value.trim()
     if (!content && attachments.value.length === 0) return
 
-    emit('send', content, attachments.value.length > 0 ? attachments.value : undefined)
+    const mentions = reconcileMentionEdit(inputText.value, draftMentions.value, content)
+    emit('send', content, attachments.value.length > 0 ? attachments.value : undefined, mentions)
     inputText.value = ''
+    previousInputText.value = ''
+    draftMentions.value = []
     attachments.value = []
     mentionActive.value = false
     // 发送后重置到自定义高度（不清除拖拽状态）
 }
 
 function handleInput(e: Event) {
+    draftMentions.value = reconcileMentionEdit(previousInputText.value, draftMentions.value, inputText.value)
+    previousInputText.value = inputText.value
     store.emitTyping()
     if (!isComposing.value) {
         updateMentionState()
@@ -345,7 +356,7 @@ function handleInput(e: Event) {
 }
 
 function handleMentionClick(option: MentionOption) {
-    selectMention(option.name)
+    selectMention(option)
 }
 
 function handleMentionHover(index: number) {

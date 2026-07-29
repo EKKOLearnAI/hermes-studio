@@ -567,6 +567,20 @@ describe('durable group-chat handoff outbox', () => {
     expect(() => db.prepare(insertSql).run(...values('duplicate-name', 'agent-b', 'worker'))).toThrow()
   })
 
+  it('fails closed when persisted structured mention metadata is malformed', () => {
+    const storage = new ChatStorage()
+    storage.init()
+    storage.saveRoom('room-corrupt-mentions', 'Room', 'ROOM1')
+    storage.addMessage({
+      id: 'message-corrupt-mentions', roomId: 'room-corrupt-mentions', senderId: 'human', senderName: 'Human',
+      content: '@Worker', timestamp: 1, role: 'user', mentions: [],
+    } as any)
+    dbMock.current!.prepare('UPDATE gc_messages SET mentionsJson = ? WHERE id = ?')
+      .run('[{"type":"participant"}]', 'message-corrupt-mentions')
+
+    expect(() => storage.getMessage('message-corrupt-mentions')).toThrow(/corrupt structured mention metadata/i)
+  })
+
   it('persists a message and all fan-out jobs atomically without duplicating jobs on replay', () => {
     const storage = new ChatStorage()
     storage.init()
@@ -830,22 +844,33 @@ describe('durable group-chat handoff outbox', () => {
     expect(dbMock.current!.prepare('SELECT COUNT(*) AS total FROM gc_handoff_jobs').get()).toEqual({ total: 0 })
   })
 
-  it('rejects reuse of a routed message id with different content', () => {
+  it('rejects reuse of a routed message id with different content or structured targets', () => {
     const storage = new ChatStorage()
     storage.init()
     storage.saveRoom('room-1', 'Room', 'ROOM1')
     const a = storage.addRoomAgent('room-1', 'agent-a', 'default', 'A', '', 0, { sessionId: 'session-a' })
+    const b = storage.addRoomAgent('room-1', 'agent-b', 'default', 'B', '', 0, { sessionId: 'session-b' })
     const plan = [{ chainId: 'chain-1', targetAgentId: a.agentId, targetSessionId: a.sessionId, depth: 0, kind: 'mention' as const }]
     storage.saveMessageAndRefreshRoom({
       id: 'human-message-1', roomId: 'room-1', senderId: 'human-1', senderName: 'Human',
       content: '@A original', timestamp: 100, role: 'user',
+      mentions: [{ type: 'participant', participantId: a.agentId, displayName: 'A', start: 0, length: 2 }],
     }, authorizedHandoffs(storage, 'room-1', plan))
 
     expect(() => storage.saveMessageAndRefreshRoom({
       id: 'human-message-1', roomId: 'room-1', senderId: 'human-1', senderName: 'Human',
       content: '@A changed', timestamp: 101, role: 'user',
+      mentions: [{ type: 'participant', participantId: a.agentId, displayName: 'A', start: 0, length: 2 }],
     }, authorizedHandoffs(storage, 'room-1', plan))).toThrow(/message id conflict/i)
-    expect(storage.getMessage('human-message-1')?.content).toBe('@A original')
+    expect(() => storage.saveMessageAndRefreshRoom({
+      id: 'human-message-1', roomId: 'room-1', senderId: 'human-1', senderName: 'Human',
+      content: '@A original', timestamp: 100, role: 'user',
+      mentions: [{ type: 'participant', participantId: b.agentId, displayName: 'A', start: 0, length: 2 }],
+    }, authorizedHandoffs(storage, 'room-1', plan))).toThrow(/message id conflict/i)
+    expect(storage.getMessage('human-message-1')).toMatchObject({
+      content: '@A original',
+      mentions: [{ type: 'participant', participantId: a.agentId }],
+    })
   })
 
   it('rolls back the message when a handoff target violates the durable contract', () => {
@@ -1738,6 +1763,53 @@ describe('fixed-order group-chat handoff planning', () => {
     { agentId: 'b', id: 'row-b', name: 'Codex', sessionId: 'session-b' },
     { agentId: 'c', id: 'row-c', name: 'Claude Code', sessionId: 'session-c' },
   ] as any[]
+
+  it('routes structured mentions by stable participant identity instead of display text', () => {
+    const sameNameAgents = [
+      { ...agents[0], id: 'row-a', agentId: 'participant-a', sessionId: 'session-a', name: 'Worker' },
+      { ...agents[1], id: 'row-b', agentId: 'participant-b', sessionId: 'session-b', name: 'Worker' },
+    ] as any[]
+
+    expect(planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents: sameNameAgents,
+      source: {
+        id: 'human-structured-1', senderId: 'human', content: '@Former Name please continue', role: 'user',
+        mentions: [{
+          type: 'participant', participantId: 'participant-b', displayName: 'Former Name', start: 0, length: 12,
+        }],
+      },
+    } as any)).toEqual([expect.objectContaining({
+      targetAgentId: 'participant-b', targetSessionId: 'session-b', kind: 'mention',
+    })])
+  })
+
+  it('does not parse mention-shaped text when a structured client explicitly sent no mentions', () => {
+    expect(planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents,
+      source: { id: 'human-structured-empty', senderId: 'human', content: '@A plain text', role: 'user', mentions: [] },
+    } as any)).toEqual([])
+  })
+
+  it('keeps the text parser only as a fallback for messages without structured mention metadata', () => {
+    expect(planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents,
+      source: { id: 'human-legacy', senderId: 'human', content: '@Codex legacy text', role: 'user' },
+    })).toEqual([expect.objectContaining({ targetAgentId: 'b', kind: 'mention' })])
+  })
+
+  it('fails closed when structured mention metadata names a participant outside the Room', () => {
+    expect(() => planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents,
+      source: {
+        id: 'human-forged', senderId: 'human', content: '@A forged', role: 'user',
+        mentions: [{ type: 'participant', participantId: 'other-room-agent', displayName: 'A', start: 0, length: 2 }],
+      },
+    } as any)).toThrow(/structured mention participant/i)
+  })
 
   it('uses the configured successor even when the model omitted the mention', () => {
     expect(planGroupHandoffs({

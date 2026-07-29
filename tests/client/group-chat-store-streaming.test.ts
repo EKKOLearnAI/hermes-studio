@@ -506,6 +506,48 @@ describe('group chat store streaming merge', () => {
     expect(store.userName).toBe('Alice Display')
   })
 
+  it('sends structured mention identities in the realtime payload', async () => {
+    const store = await createJoinedStore()
+    groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: unknown, ack?: Function) => {
+      if (event === 'message' && ack) ack({ id: 'msg-server' })
+      return groupChatApiMock.socket
+    })
+    groupChatApiMock.socket.emit.mockClear()
+
+    await store.sendMessage('@Worker continue', undefined, [{
+      type: 'participant', participantId: 'participant-worker', displayName: 'Worker', start: 0, length: 7,
+    }])
+
+    expect(groupChatApiMock.socket.emit).toHaveBeenCalledWith(
+      'message',
+      expect.objectContaining({
+        content: '@Worker continue',
+        mentions: [{ type: 'participant', participantId: 'participant-worker', displayName: 'Worker', start: 0, length: 7 }],
+      }),
+      expect.any(Function),
+    )
+  })
+
+  it('offsets structured mention ranges after a quoted Room reference', async () => {
+    const store = await createJoinedStore()
+    store.setMessageReference('room-1', {
+      id: 'quoted-1', role: 'assistant', sender: 'Reviewer', content: 'Please continue with @Worker',
+    })
+    groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: unknown, ack?: Function) => {
+      if (event === 'message' && ack) ack({ id: 'msg-server' })
+      return groupChatApiMock.socket
+    })
+    groupChatApiMock.socket.emit.mockClear()
+
+    await store.sendMessage('@Worker continue', undefined, [{
+      type: 'participant', participantId: 'participant-worker', displayName: 'Worker', start: 0, length: 7,
+    }])
+
+    const call = groupChatApiMock.socket.emit.mock.calls.find(call => call[0] === 'message')!
+    const payload = call[1]
+    expect(payload.mentions[0].start).toBe(payload.content.lastIndexOf('@Worker'))
+  })
+
   it('adds auth and active profile headers to group chat uploads', async () => {
     const store = await createJoinedStore()
     fetchMock.mockResolvedValue({

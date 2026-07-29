@@ -27,12 +27,20 @@ export function isReservedMentionName(name: string): boolean {
     return name.trim().toLowerCase() === ALL_AGENTS_MENTION
 }
 
+function isMentionBoundary(char: string | undefined): boolean {
+    return char === undefined
+        || /\s/u.test(char)
+        || BEFORE_BOUNDARY.has(char)
+        || AFTER_BOUNDARY.has(char)
+        || /[\p{P}\p{S}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(char)
+}
+
 function isBeforeBoundary(char: string | undefined): boolean {
-    return char === undefined || /\s/.test(char) || BEFORE_BOUNDARY.has(char)
+    return isMentionBoundary(char)
 }
 
 function isAfterBoundary(char: string | undefined): boolean {
-    return char === undefined || /\s/.test(char) || AFTER_BOUNDARY.has(char)
+    return isMentionBoundary(char)
 }
 
 function findMentionRanges(content: string, mentionName: string): MentionRange[] {

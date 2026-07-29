@@ -2339,9 +2339,13 @@ export class AgentClients {
      * Validate a single Room message against the smallest actually mentioned participant window.
      * Non-text attachment payloads are represented by their compact text reference before this call.
      */
-    validateMessageInput(roomId: string, content: string, senderId: string): { ok: true } | { ok: false; error: string } {
+    validateMessageInput(roomId: string, content: string, senderId: string, structuredTargetIds?: string[]): { ok: true } | { ok: false; error: string } {
         const agents = this.getAgents(roomId)
-        const mentioned = resolveMentionTargets(agents, content, senderId)
+        const mentioned = structuredTargetIds === undefined
+            ? resolveMentionTargets(agents, content, senderId)
+            : structuredTargetIds
+                .map(agentId => agents.find(agent => agent.agentId === agentId))
+                .filter((agent): agent is AgentClient => Boolean(agent))
         const targets = mentioned.length > 0 ? mentioned : agents
         if (targets.length === 0) return { ok: true }
 

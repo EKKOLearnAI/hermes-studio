@@ -598,6 +598,7 @@ export const GC_MESSAGES_SCHEMA: Record<string, string> = {
   sourceHandoffJobId: "TEXT NOT NULL DEFAULT ''",
   sourceHandoffLeaseHash: "TEXT NOT NULL DEFAULT ''",
   sourceHandoffFinal: 'INTEGER NOT NULL DEFAULT 0',
+  mentionsJson: 'TEXT',
 }
 
 export const GC_HANDOFF_JOBS_TABLE = 'gc_handoff_jobs'

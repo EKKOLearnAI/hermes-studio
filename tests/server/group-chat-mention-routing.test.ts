@@ -38,6 +38,21 @@ describe('group chat mention routing', () => {
     expect(isAgentMentioned('mailto@Alice.example', 'Alice')).toBe(false)
   })
 
+  it('keeps legacy text fallback compatible with CJK prose and Unicode punctuation on either side', () => {
+    const chineseAgents: TestAgent[] = [
+      { name: 'Hermes', agentId: 'agent-hermes' },
+      { name: 'Codex', agentId: 'agent-codex' },
+      { name: 'Claude Code', agentId: 'agent-claude' },
+    ]
+    const content = '我们来玩成语接龙，@Hermes—先开始，回答后然后是@Codex ，回答后然后是「@Claude Code」，回答后然后是@Hermes一共10轮'
+
+    expect(resolveMentionTargets(chineseAgents, content, 'human-admin').map(agent => agent.name)).toEqual([
+      'Hermes',
+      'Codex',
+      'Claude Code',
+    ])
+  })
+
   it('routes @all to every room agent except the sender identity', () => {
     expect(resolveMentionTargets(agents, '@all summarize the options', 'socket-alice').map(a => a.name)).toEqual(['Bob', 'Regex.Bot'])
   })

@@ -19,7 +19,7 @@ import type { ProfileAvatar as ParticipantAvatar } from '@/api/hermes/profiles'
 import { copyToClipboard } from '@/utils/clipboard'
 import { generateGroupChatInviteCode, groupChatInviteCodeForClone } from '@/utils/group-chat-invite'
 import type { Attachment } from '@/stores/hermes/chat'
-import type { RoomAgent, RoomInfo, GroupHandoffJob } from '@/api/hermes/group-chat'
+import type { RoomAgent, RoomInfo, GroupHandoffJob, GroupChatMention } from '@/api/hermes/group-chat'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
@@ -699,9 +699,9 @@ async function handleSelectRoom(roomId: string) {
     }
 }
 
-async function handleSendMessage(content: string, attachments?: Attachment[]) {
+async function handleSendMessage(content: string, attachments?: Attachment[], mentions?: GroupChatMention[]) {
     try {
-        await store.sendMessage(content, attachments)
+        await store.sendMessage(content, attachments, mentions)
     } catch (err: any) {
         message.error(err.message)
     }

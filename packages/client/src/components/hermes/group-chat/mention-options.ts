@@ -1,11 +1,6 @@
-export type MentionOption = {
-    key: string
-    type: 'all' | 'agent'
-    name: string
-    label: string
-    description: string
-    participantId?: string
-}
+export type MentionOption =
+    | { key: string; type: 'all'; name: string; label: string; description: string }
+    | { key: string; type: 'agent'; name: string; label: string; description: string; participantId: string }
 
 type MentionAgent = {
     id?: string
@@ -43,7 +38,8 @@ export function buildMentionOptions(agents: MentionAgent[], query: string): Ment
         const agentName = agent.name || ''
         if (isReservedMentionName(agentName)) continue
         if (!agentName.toLowerCase().includes(normalizedQuery)) continue
-        const participantId = String(agent.agentId || agentName)
+        const participantId = String(agent.agentId || '').trim()
+        if (!participantId) continue
         options.push({
             key: `agent:${participantId}`,
             type: 'agent',

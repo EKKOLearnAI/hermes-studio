@@ -56,6 +56,80 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────
 
+export type GroupChatMention =
+    | { type: 'participant'; participantId: string; displayName?: string; start?: number; length?: number }
+    | { type: 'all'; displayName?: string; start?: number; length?: number }
+
+const MAX_STRUCTURED_MENTIONS = 100
+
+function normalizeStructuredMentionShape(value: unknown): GroupChatMention[] | undefined {
+    if (value === undefined) return undefined
+    if (!Array.isArray(value) || value.length > MAX_STRUCTURED_MENTIONS) {
+        throw new Error('Invalid structured mention metadata')
+    }
+    let hasAll = false
+    const normalized = value.map((raw): GroupChatMention => {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            throw new Error('Invalid structured mention metadata')
+        }
+        const mention = raw as Record<string, unknown>
+        const type = mention.type
+        const displayName = mention.displayName === undefined ? undefined : String(mention.displayName)
+        if (displayName !== undefined && displayName.length > 256) {
+            throw new Error('Invalid structured mention display name')
+        }
+        const start = mention.start === undefined ? undefined : Number(mention.start)
+        const length = mention.length === undefined ? undefined : Number(mention.length)
+        if ((start !== undefined && (!Number.isSafeInteger(start) || start < 0))
+            || (length !== undefined && (!Number.isSafeInteger(length) || length < 0))) {
+            throw new Error('Invalid structured mention range')
+        }
+        if (type === 'all') {
+            hasAll = true
+            return { type: 'all', ...(displayName === undefined ? {} : { displayName }), ...(start === undefined ? {} : { start }), ...(length === undefined ? {} : { length }) }
+        }
+        if (type !== 'participant' || typeof mention.participantId !== 'string') {
+            throw new Error('Invalid structured mention participant')
+        }
+        const participantId = mention.participantId.trim()
+        if (!participantId) throw new Error('Invalid structured mention participant')
+        return { type: 'participant', participantId, ...(displayName === undefined ? {} : { displayName }), ...(start === undefined ? {} : { start }), ...(length === undefined ? {} : { length }) }
+    })
+    if (hasAll && normalized.length !== 1) {
+        throw new Error('Structured mention all cannot be combined with participant targets')
+    }
+    return normalized
+}
+
+function normalizeStructuredMentions(
+    value: unknown,
+    agents: RoomAgent[],
+    senderId: string,
+    content: string,
+): GroupChatMention[] | undefined {
+    const normalized = normalizeStructuredMentionShape(value)
+    if (normalized === undefined) return undefined
+    const allowed = new Set(agents.map(agent => agent.agentId))
+    const seen = new Set<string>()
+    for (const mention of normalized) {
+        const hasDisplayRange = mention.displayName !== undefined || mention.start !== undefined || mention.length !== undefined
+        if (hasDisplayRange) {
+            if (mention.displayName === undefined || mention.start === undefined || mention.length === undefined
+                || mention.length !== `@${mention.displayName}`.length
+                || content.slice(mention.start, mention.start + mention.length) !== `@${mention.displayName}`) {
+                throw new Error('Invalid structured mention range')
+            }
+        }
+        if (mention.type !== 'participant') continue
+        if (mention.participantId === senderId || !allowed.has(mention.participantId)) {
+            throw new Error('Structured mention participant is not an eligible Room participant')
+        }
+        if (seen.has(mention.participantId)) throw new Error('Duplicate structured mention participant')
+        seen.add(mention.participantId)
+    }
+    return normalized
+}
+
 interface ChatMessage {
     id: string
     roomId: string
@@ -79,6 +153,7 @@ interface ChatMessage {
     sourceHandoffJobId?: string
     sourceHandoffLeaseToken?: string
     handoffFinal?: boolean
+    mentions?: GroupChatMention[]
 }
 
 function contentToStorageString(content: unknown): string {
@@ -548,7 +623,39 @@ export function planGroupHandoffs(args: {
     if (!chainId) return []
     const depth = normalizeMentionDepth(args.source.handoffDepth ?? args.source.mentionDepth)
     const role = args.source.role === 'assistant' ? 'assistant' : 'user'
-    const allMentioned = isAllAgentsMentioned(String(args.source.content || ''))
+    const structuredMentions = args.source.mentions
+    const hasStructuredMentions = structuredMentions !== undefined
+    let structuredTargets: RoomAgent[] | null = null
+    let structuredAll = false
+    if (hasStructuredMentions) {
+        if (!Array.isArray(structuredMentions)) {
+            throw new Error('Invalid structured mention metadata')
+        }
+        structuredAll = structuredMentions.some(mention => mention?.type === 'all')
+        if (structuredAll && structuredMentions.length !== 1) {
+            throw new Error('Structured mention all cannot be combined with participant targets')
+        }
+        const byAgentId = new Map(args.agents.map(agent => [agent.agentId, agent]))
+        const seen = new Set<string>()
+        structuredTargets = structuredAll
+            ? args.agents.filter(agent => agent.agentId !== args.source.senderId)
+            : structuredMentions.map(mention => {
+                if (!mention || mention.type !== 'participant' || typeof mention.participantId !== 'string' || !mention.participantId.trim()) {
+                    throw new Error('Invalid structured mention participant')
+                }
+                const participantId = mention.participantId.trim()
+                const agent = byAgentId.get(participantId)
+                if (!agent || participantId === args.source.senderId) {
+                    throw new Error('Structured mention participant is not an eligible Room participant')
+                }
+                if (seen.has(participantId)) return null
+                seen.add(participantId)
+                return agent
+            }).filter((agent): agent is RoomAgent => Boolean(agent))
+    }
+    const allMentioned = hasStructuredMentions
+        ? structuredAll
+        : isAllAgentsMentioned(String(args.source.content || ''))
     if (role === 'user' && allMentioned) {
         return args.agents
             .filter(agent => agent.agentId !== args.source.senderId)
@@ -560,7 +667,8 @@ export function planGroupHandoffs(args: {
 
     if (args.room.handoffMode === 'fixed') {
         if (role === 'user') {
-            const mentioned = resolveMentionTargets(args.agents, String(args.source.content || ''), String(args.source.senderId || ''))
+            const mentioned = structuredTargets
+                ?? resolveMentionTargets(args.agents, String(args.source.content || ''), String(args.source.senderId || ''))
             const kind: GroupHandoffKind = mentioned.length === 1 ? 'fixed' : 'fanout'
             return mentioned.map(agent => ({
                 chainId, targetAgentId: agent.agentId, targetSessionId: agent.sessionId, depth: 0, kind,
@@ -574,7 +682,8 @@ export function planGroupHandoffs(args: {
         return [{ chainId, targetAgentId: target.agentId, targetSessionId: target.sessionId, depth, kind: 'fixed' }]
     }
 
-    return resolveMentionTargets(args.agents, String(args.source.content || ''), String(args.source.senderId || ''))
+    return (structuredTargets
+        ?? resolveMentionTargets(args.agents, String(args.source.content || ''), String(args.source.senderId || '')))
         .map(agent => ({ chainId, targetAgentId: agent.agentId, targetSessionId: agent.sessionId, depth, kind: 'mention' as const }))
 }
 
@@ -655,9 +764,25 @@ export class ChatStorage {
             sourceHandoffFinal: _sourceHandoffFinal,
             ...publicRow
         } = row
+        let mentions: GroupChatMention[] | undefined
+        if (row.mentionsJson !== null && row.mentionsJson !== undefined) {
+            let parsed: unknown
+            try {
+                parsed = JSON.parse(String(row.mentionsJson))
+            } catch {
+                throw new Error(`Corrupt structured mention metadata for group message ${String(row.id || '')}`)
+            }
+            try {
+                mentions = normalizeStructuredMentionShape(parsed)
+            } catch {
+                throw new Error(`Corrupt structured mention metadata for group message ${String(row.id || '')}`)
+            }
+        }
+        delete publicRow.mentionsJson
         return {
             ...publicRow,
             tool_calls: parseJsonArray(row.tool_calls),
+            ...(mentions === undefined ? {} : { mentions }),
         }
     }
 
@@ -1168,14 +1293,14 @@ export class ChatStorage {
 
     getRecentMessagesForUI(roomId: string, limit = 150, offset = 0): ChatMessage[] {
         const rows = (this.db()?.prepare(
-            'SELECT roomSeq, id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content, handoffChainId, handoffDepth, sourceHandoffJobId FROM gc_messages WHERE roomId = ?'
+            'SELECT roomSeq, id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content, handoffChainId, handoffDepth, sourceHandoffJobId, mentionsJson FROM gc_messages WHERE roomId = ?'
         ).all(roomId) || []) as any[]
         return paginateRecentGroupMessagesCanonical(rows.map(row => this.mapStoredMessageRow(row)), { limit, offset })
     }
 
     getMessagesForContext(roomId: string, cutoff?: GroupMessageCursorCutoff): ChatMessage[] {
         const rows = (this.db()?.prepare(
-            `SELECT roomSeq, id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content, handoffChainId, handoffDepth, sourceHandoffJobId
+            `SELECT roomSeq, id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content, handoffChainId, handoffDepth, sourceHandoffJobId, mentionsJson
              FROM gc_messages
              WHERE roomId = ? AND COALESCE(tool_name, '') <> 'workspace_diff'`
         ).all(roomId) || []) as any[]
@@ -1191,7 +1316,7 @@ export class ChatStorage {
 
     getMessage(messageId: string): ChatMessage | null {
         const row = this.db()?.prepare(
-            'SELECT roomSeq, id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content, handoffChainId, handoffDepth, sourceHandoffJobId FROM gc_messages WHERE id = ?'
+            'SELECT roomSeq, id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content, handoffChainId, handoffDepth, sourceHandoffJobId, mentionsJson FROM gc_messages WHERE id = ?'
         ).get(messageId) as any
         if (!row) return null
         return this.mapStoredMessageRow(row)
@@ -1245,7 +1370,7 @@ export class ChatStorage {
             `SELECT m.roomSeq, m.id, m.roomId, m.senderId, m.senderName, m.content, m.timestamp,
                     m.role, m.tool_call_id, m.tool_calls, m.tool_name, m.finish_reason,
                     m.reasoning, m.reasoning_details, m.reasoning_content,
-                    m.handoffChainId, m.handoffDepth, m.sourceHandoffJobId
+                    m.handoffChainId, m.handoffDepth, m.sourceHandoffJobId, m.mentionsJson
              FROM gc_handoff_jobs j
              INNER JOIN gc_messages m ON m.id = j.sourceMessageId AND m.roomId = j.roomId
              WHERE j.roomId = ? AND j.chainId = ? AND j.depth = 0 AND j.kind = 'fixed'
@@ -1737,6 +1862,7 @@ export class ChatStorage {
         const db = this.db()
         if (!db) return
         const toolCallsJson = msg.tool_calls ? JSON.stringify(msg.tool_calls) : null
+        const mentionsJson = msg.mentions === undefined ? null : JSON.stringify(msg.mentions)
         this.withImmediateTransaction(db, () => {
             const existing = db.prepare('SELECT roomId, roomSeq FROM gc_messages WHERE id = ?').get(msg.id) as { roomId: string; roomSeq: number } | undefined
             let roomSeq = existing?.roomId === msg.roomId ? Number(existing.roomSeq || 0) : 0
@@ -1754,8 +1880,8 @@ export class ChatStorage {
                 roomSeq = Number(allocated.messageSeq)
             }
             db.prepare(
-                `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content, handoffChainId, handoffDepth, sourceHandoffJobId, sourceHandoffLeaseHash, sourceHandoffFinal, roomSeq)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content, handoffChainId, handoffDepth, sourceHandoffJobId, sourceHandoffLeaseHash, sourceHandoffFinal, mentionsJson, roomSeq)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
                 + ` ON CONFLICT(id) DO UPDATE SET
                     roomId = excluded.roomId,
                     senderId = excluded.senderId,
@@ -1775,6 +1901,7 @@ export class ChatStorage {
                     sourceHandoffJobId = excluded.sourceHandoffJobId,
                     sourceHandoffLeaseHash = excluded.sourceHandoffLeaseHash,
                     sourceHandoffFinal = excluded.sourceHandoffFinal,
+                    mentionsJson = excluded.mentionsJson,
                     roomSeq = excluded.roomSeq`
             ).run(
                 msg.id, msg.roomId, msg.senderId, msg.senderName, messageContentForStorage(msg.role, msg.content), msg.timestamp,
@@ -1791,6 +1918,7 @@ export class ChatStorage {
                 msg.sourceHandoffJobId || '',
                 handoffLeaseHash(msg.sourceHandoffLeaseToken),
                 msg.handoffFinal === true ? 1 : 0,
+                mentionsJson,
                 roomSeq,
             )
         })
@@ -1961,6 +2089,7 @@ export class ChatStorage {
                 String(existing!.handoffChainId || '') === String(msg.handoffChainId || '') &&
                 normalizeMentionDepth(existing!.handoffDepth) === normalizeMentionDepth(msg.handoffDepth) &&
                 String(existing!.sourceHandoffJobId || '') === String(msg.sourceHandoffJobId || '')
+                && JSON.stringify(existing!.mentions) === JSON.stringify(msg.mentions)
             const sameDurableReplay = sameRoutedMessage &&
                 existing!.timestamp === msg.timestamp &&
                 existingLeaseHash !== '' &&
@@ -4541,9 +4670,25 @@ export class GroupChatServer {
         const userName = member?.name || `User-${socketId.slice(0, 6)}`
         const role = member?.source === 'agent' ? normalizeMessageRole(data.role) : 'user'
         const routedText = contentToText(data.content)
+        const roomAgents = this.storage.getRoomAgents(roomId)
+        let mentions: GroupChatMention[] | undefined
+        try {
+            if (member?.source === 'agent' && data.mentions !== undefined) {
+                throw new Error('Structured mentions are only accepted from human clients')
+            }
+            mentions = normalizeStructuredMentions(data.mentions, roomAgents, userId, routedText)
+        } catch (err: any) {
+            ack?.({ error: err?.message || 'Invalid structured mention metadata' })
+            return
+        }
 
         if (member?.source !== 'agent' || data.tool_name !== 'workspace_diff') {
-            const validation = this.agentClients.validateMessageInput?.(roomId, routedText, userId) || { ok: true as const }
+            const structuredTargetIds = mentions === undefined
+                ? undefined
+                : mentions.some(mention => mention.type === 'all')
+                    ? roomAgents.filter(agent => agent.agentId !== userId).map(agent => agent.agentId)
+                    : mentions.filter((mention): mention is Extract<GroupChatMention, { type: 'participant' }> => mention.type === 'participant').map(mention => mention.participantId)
+            const validation = this.agentClients.validateMessageInput?.(roomId, routedText, userId, structuredTargetIds) || { ok: true as const }
             if (!validation.ok) {
                 ack?.({ error: validation.error })
                 return
@@ -4575,6 +4720,7 @@ export class GroupChatServer {
             agentSessionId: isAgentMessage
                 ? String(this.storage.getRoomAgentByAgentId(roomId, userId)?.sessionId || '')
                 : '',
+            ...(mentions === undefined ? {} : { mentions }),
         }
 
         const roomInfo = this.storage.getRoom(roomId)
@@ -4583,7 +4729,7 @@ export class GroupChatServer {
         const handoffs = shouldPlanHandoffs && roomInfo
             ? planGroupHandoffs({
                 room: roomInfo,
-                agents: this.storage.getRoomAgents(roomId),
+                agents: roomAgents,
                 source: msg,
                 sourceJobKind: sourceHandoffJob?.kind,
             })

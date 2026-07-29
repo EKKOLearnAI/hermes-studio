@@ -61,6 +61,10 @@ export interface RoomAgent {
     avatar: ProfileAvatar | null
 }
 
+export type GroupChatMention =
+    | { type: 'participant'; participantId: string; displayName: string; start: number; length: number }
+    | { type: 'all'; displayName: string; start: number; length: number }
+
 export interface AgentAddResult {
     profile: string
     ok: boolean
@@ -95,6 +99,7 @@ export interface ChatMessage {
     workspaceChanges?: GroupWorkspaceDiffPayload[]
     firstSeenAt?: number
     attachments?: Array<{ id: string; name: string; type: string; size: number; url: string }>
+    mentions?: GroupChatMention[]
 }
 
 export interface GroupHandoffJob {

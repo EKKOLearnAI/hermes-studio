@@ -68,6 +68,56 @@ describe('group chat streaming baseline', () => {
     expect(await streamEnd).toEqual({ roomId: 'room-1', id: 'stream-1' })
   })
 
+  it('routes and persists a human structured mention by stable participant identity', async () => {
+    const { alice } = await joinPair()
+
+    const ack = await emitAck<any>(alice, 'message', {
+      roomId: 'room-1',
+      id: 'structured-message-1',
+      content: '@Former Name continue',
+      mentions: [{
+        type: 'participant', participantId: 'agent-worker', displayName: 'Former Name', start: 0, length: 12,
+      }],
+    })
+
+    expect(ack).toEqual({ id: 'structured-message-1' })
+    expect(groupServer.getStorage().getMessage('structured-message-1')).toMatchObject({
+      mentions: [{ type: 'participant', participantId: 'agent-worker' }],
+    })
+    expect(groupServer.getStorage().listHandoffJobs('room-1')).toEqual([
+      expect.objectContaining({ sourceMessageId: 'structured-message-1', targetAgentId: 'agent-worker', kind: 'mention' }),
+    ])
+  })
+
+  it('rejects an unknown structured mention atomically before persistence', async () => {
+    const { alice } = await joinPair()
+
+    const ack = await emitAck<any>(alice, 'message', {
+      roomId: 'room-1',
+      id: 'structured-message-forged',
+      content: '@Worker forged',
+      mentions: [{ type: 'participant', participantId: 'other-room-agent', displayName: 'Worker', start: 0, length: 7 }],
+    })
+
+    expect(ack).toEqual({ error: expect.stringMatching(/structured mention participant/i) })
+    expect(groupServer.getStorage().getMessage('structured-message-forged')).toBeNull()
+    expect(groupServer.getStorage().listHandoffJobs('room-1')).toEqual([])
+  })
+
+  it('rejects forged structured mention display ranges before persistence', async () => {
+    const { alice } = await joinPair()
+
+    const ack = await emitAck<any>(alice, 'message', {
+      roomId: 'room-1',
+      id: 'structured-message-forged-range',
+      content: 'ordinary text',
+      mentions: [{ type: 'participant', participantId: 'agent-worker', displayName: 'Worker', start: 0, length: 7 }],
+    })
+
+    expect(ack).toEqual({ error: expect.stringMatching(/structured mention range/i) })
+    expect(groupServer.getStorage().getMessage('structured-message-forged-range')).toBeNull()
+  })
+
   it('evicts actors whose read grant is revoked before emitting confidential room output', async () => {
     const { alice, bob, worker, agentSessionId } = await joinPair()
     const localSubjectId = (groupServer as any).socketLocalSubjectIdMap.get(bob.id) as string

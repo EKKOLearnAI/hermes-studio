@@ -381,6 +381,12 @@ describe('group chat single-message budgets', () => {
       error: 'Message exceeds the safe input limit for @Small (9600 tokens). Upload a file or split the message.',
     })
     expect(clients.validateMessageInput('room-1', '@Large hello', 'human')).toEqual({ ok: true })
+    expect(clients.validateMessageInput(
+      'room-1',
+      `@Small ${'x'.repeat(40_000)}`,
+      'human',
+      ['large'],
+    )).toEqual({ ok: true })
   })
 })
 

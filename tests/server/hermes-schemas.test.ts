@@ -89,6 +89,26 @@ describe('Hermes schema initialization', () => {
     expect(groupMessageCols).toContainEqual(expect.objectContaining({
       name: 'sourceHandoffFinal', dflt_value: '0', notnull: 1,
     }))
+    expect(groupMessageCols).toContainEqual(expect.objectContaining({
+      name: 'mentionsJson', dflt_value: null, notnull: 0,
+    }))
+  })
+
+  it('adds nullable structured mentions to legacy group messages without disabling text fallback', async () => {
+    const { GC_MESSAGES_SCHEMA, GC_MESSAGES_TABLE, initAllHermesTables } =
+      await import('../../packages/server/src/db/hermes/schemas')
+    const legacyColumns = Object.entries(GC_MESSAGES_SCHEMA)
+      .filter(([name]) => name !== 'mentionsJson')
+      .map(([name, definition]) => `"${name}" ${definition}`)
+      .join(', ')
+    db.exec(`CREATE TABLE "${GC_MESSAGES_TABLE}" (${legacyColumns})`)
+    db.prepare(`INSERT INTO "${GC_MESSAGES_TABLE}" (id, roomId, senderId, senderName, content, timestamp) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run('legacy-mention-message', 'room-1', 'human-1', 'Human', '@Agent legacy', 1)
+
+    expect(() => initAllHermesTables()).not.toThrow()
+
+    const row = db.prepare(`SELECT mentionsJson FROM "${GC_MESSAGES_TABLE}" WHERE id = ?`).get('legacy-mention-message') as any
+    expect(row.mentionsJson).toBeNull()
   })
 
   it('adds the durable lease hash to legacy group messages without exposing a guessed value', async () => {
