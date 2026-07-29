@@ -3,6 +3,14 @@ import { resolve } from 'path'
 import { describe, expect, it } from 'vitest'
 
 describe('Windows desktop main window', () => {
+  it('keeps the main window just above the mobile breakpoint', () => {
+    const source = readFileSync(resolve('packages/desktop/src/main/index.ts'), 'utf8')
+    const createWindowBody = source.match(/async function createWindow\(\): Promise<void> \{([\s\S]*?)\n\}/)?.[1] || ''
+
+    expect(createWindowBody).toContain('minWidth: 769')
+    expect(createWindowBody).toContain('minHeight: 600')
+  })
+
   it('keeps the main BrowserWindow opaque to avoid transparent compositor black screens', () => {
     const source = readFileSync(resolve('packages/desktop/src/main/index.ts'), 'utf8')
     const createWindowBody = source.match(/async function createWindow\(\): Promise<void> \{([\s\S]*?)\n\}/)?.[1] || ''

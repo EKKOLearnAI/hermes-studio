@@ -465,7 +465,7 @@ async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
-    minWidth: 960,
+    minWidth: 769,
     minHeight: 600,
     title: 'Hermes Studio',
     backgroundColor: '#1a1a1a',
