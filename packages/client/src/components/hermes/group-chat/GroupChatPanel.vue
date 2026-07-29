@@ -804,7 +804,11 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     <!-- Stacked avatars (user + agents) -->
                     <NPopover v-if="store.agents.length" trigger="click" placement="bottom-end" :width="220">
                         <template #trigger>
-                            <div class="avatar-stack-inner">
+                            <button
+                                type="button"
+                                class="avatar-stack-inner avatar-stack-trigger"
+                                :aria-label="`${t('groupChat.agents')} (${store.agents.length})`"
+                            >
                                 <!-- User avatar first -->
                                 <span class="avatar-stack-item" :style="{ zIndex: store.agents.length + 1 }">
                                     <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :avatar="userMemberAvatar" :size="24" />
@@ -818,7 +822,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                     <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="profileAvatarFor(agent.profile)" :size="24" />
                                 </span>
                                 <span v-if="store.agents.length > 4" class="avatar-stack-more">+{{ store.agents.length - 4 }}</span>
-                            </div>
+                            </button>
                         </template>
                         <div class="agent-popover">
                             <div class="agent-popover-item" style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--n-border-color, #efeff5);">
@@ -2079,6 +2083,15 @@ export default defineComponent({ components: { CreateRoomForm } })
 .avatar-stack-inner {
     display: flex;
     align-items: center;
+}
+
+.avatar-stack-trigger {
+    padding: 0;
+    border: 0;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+    -webkit-app-region: no-drag;
 }
 
 .avatar-stack-item {

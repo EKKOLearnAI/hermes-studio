@@ -1,6 +1,8 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 import { authenticate, TEST_MODEL_GROUP } from './fixtures'
 
+type DesktopPlatform = 'darwin' | 'win32'
+
 const baseRooms = [
   { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', canManage: true, workspace: '/tmp/alpha', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 123 },
   { id: 'room-beta', name: 'Beta Room', inviteCode: 'BETA22', canManage: true, workspace: '/tmp/beta', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 456 },
@@ -36,6 +38,20 @@ const messagesByRoom: Record<string, unknown[]> = {
   ],
   'room-beta': [
     { id: 'beta-msg', roomId: 'room-beta', senderId: 'user-1', senderName: 'Bob', content: 'Beta room message', timestamp: 1_790_000_100, role: 'user' },
+  ],
+}
+
+const agentsByRoom: Record<string, unknown[]> = {
+  'room-alpha': [
+    {
+      id: 'agent-row-1',
+      roomId: 'room-alpha',
+      agentId: 'agent-1',
+      profile: 'default',
+      name: 'Worker',
+      description: 'Group agent',
+      invited: 1,
+    },
   ],
 }
 
@@ -105,7 +121,7 @@ async function mockGroupChatApi(page: Page) {
       const roomId = decodeURIComponent(detailMatch[1])
       const room = rooms.find(r => r.id === roomId)
       return room
-        ? json({ room, messages: messagesByRoom[roomId] || [], agents: [], members: [{ id: 'member-1', userId: 'user-1', name: 'User One', description: '', joinedAt: 1_790_000_000 }] })
+        ? json({ room, messages: messagesByRoom[roomId] || [], agents: agentsByRoom[roomId] || [], members: [{ id: 'member-1', userId: 'user-1', name: 'User One', description: '', joinedAt: 1_790_000_000 }] })
         : json({ error: 'Room not found' }, 404)
     }
 
@@ -123,6 +139,7 @@ async function mockGroupChatSocket(page: Page) {
       body: `
 const state = window.__PW_GROUP_SOCKET__ || (window.__PW_GROUP_SOCKET__ = { sockets: [], emitted: [] })
 const roomMessages = ${JSON.stringify(messagesByRoom)}
+const roomAgents = ${JSON.stringify(agentsByRoom)}
 function makeSocket(url, options) {
   const listeners = new Map()
   const socket = {
@@ -139,7 +156,7 @@ function makeSocket(url, options) {
       state.emitted.push({ event, payload })
       if (event === 'join' && typeof ack === 'function') {
         const roomId = payload && payload.roomId
-        setTimeout(() => ack({ roomId, roomName: roomId, members: [], messages: roomMessages[roomId] || [], agents: [], rooms: [], typingUsers: [], contextStatuses: [] }), 0)
+        setTimeout(() => ack({ roomId, roomName: roomId, members: [], messages: roomMessages[roomId] || [], agents: roomAgents[roomId] || [], rooms: [], typingUsers: [], contextStatuses: [] }), 0)
       }
       if (event === 'message' && typeof ack === 'function') {
         setTimeout(() => ack({ id: payload && payload.id }), 0)
@@ -171,7 +188,22 @@ export default { io }
   })
 }
 
-async function setup(page: Page, path: string) {
+async function installDesktopBridge(page: Page, platform: DesktopPlatform) {
+  await page.addInitScript((desktopPlatform) => {
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: {
+        isDesktop: true,
+        platform: desktopPlatform,
+        getWindowState: async () => ({ isMaximized: false }),
+        windowControl: async () => ({ isMaximized: false }),
+      },
+    })
+  }, platform)
+}
+
+async function setup(page: Page, path: string, platform?: DesktopPlatform) {
+  if (platform) await installDesktopBridge(page, platform)
   await authenticate(page)
   await mockGroupChatSocket(page)
   const api = await mockGroupChatApi(page)
@@ -221,6 +253,21 @@ test.describe('group chat room deep links', () => {
     await workspaceButton.click()
     await expect(page.locator('.group-workspace-panel')).toHaveCount(0)
   })
+
+  for (const platform of ['darwin', 'win32'] as const) {
+    test(`opens the Agent list from the ${platform} desktop drag header`, async ({ page }) => {
+      await setup(page, '/#/hermes/group-chat/room/room-alpha', platform)
+
+      const trigger = page.getByRole('button', { name: 'Agents (1)' })
+      await expect(trigger).toBeVisible()
+      await expect(trigger).toHaveCSS('-webkit-app-region', 'no-drag')
+      await trigger.click()
+
+      const popover = page.locator('.n-popover .agent-popover')
+      await expect(popover).toBeVisible()
+      await expect(popover.locator('.agent-popover-name', { hasText: 'Worker' })).toBeVisible()
+    })
+  }
 
   test('room settings rotate invite codes only after the update API succeeds', async ({ page }) => {
     const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
