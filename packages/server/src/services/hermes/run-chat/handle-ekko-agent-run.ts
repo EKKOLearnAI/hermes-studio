@@ -39,6 +39,7 @@ import { buildCompressedHistory, getOrCreateSession } from './compression'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { estimateUsageTokensFromMessages } from './usage'
 import type { ChatCodingAgentId, ContentBlock, QueuedRun, SessionState } from './types'
+import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from './workspace-diff-tracker'
 
 export interface EkkoAgentRunSocketData {
   input: string | ContentBlock[]
@@ -535,7 +536,10 @@ export async function handleEkkoAgentRun(
 
   let assistantText = ''
   let assistantReasoning = ''
+  let assistantMessageId: string | null = null
   let runId = ''
+  let workspaceDiffRunId = ''
+  let workspaceDiffCompleted = false
   let usageInput = 0
   let usageOutput = 0
   let usageCallIndex = 0
@@ -548,6 +552,42 @@ export async function handleEkkoAgentRun(
   const streamedSubagentOutput = new Map<string, string>()
   const scheduledBackgroundContinuations = new Set<string>()
   const pendingBackgroundDisplayContent = new Map<string, string>()
+  const startWorkspaceRunDiff = (eventRunId: string) => {
+    if (workspaceDiffRunId) return
+    workspaceDiffRunId = eventRunId
+    try {
+      startWorkspaceRunCheckpoint({
+        sessionId,
+        runId: eventRunId,
+        workspace,
+      })
+    } catch (err) {
+      logger.warn({ err, sessionId, runId: eventRunId }, '[workspace-diff] failed to start ekko-agent run checkpoint')
+    }
+  }
+  const completeWorkspaceRunDiff = () => {
+    if (workspaceDiffCompleted || !workspaceDiffRunId) return null
+    workspaceDiffCompleted = true
+    try {
+      const change = completeWorkspaceRunCheckpoint({
+        sessionId,
+        runId: workspaceDiffRunId,
+        workspace,
+        assistantMessageId,
+      })
+      if (!change) return null
+      emit('workspace.diff.completed', {
+        event: 'workspace.diff.completed',
+        run_id: workspaceDiffRunId,
+        change_id: change.change_id,
+        change,
+      })
+      return change
+    } catch (err) {
+      logger.warn({ err, sessionId, runId: workspaceDiffRunId }, '[workspace-diff] failed to complete ekko-agent run checkpoint')
+      return null
+    }
+  }
   const appendSubagentOutput = (subagentId: string, text: string) => {
     const previous = streamedSubagentOutput.get(subagentId) || ''
     const next = text.startsWith(previous) ? text : `${previous}${text}`
@@ -702,6 +742,7 @@ export async function handleEkkoAgentRun(
     ]
     try {
       const ids = addMessages(rows)
+      if (ids[0] != null) assistantMessageId = String(ids[0])
       rows.forEach((row, index) => {
         state.messages.push({
           id: ids[index] || state.messages.length + 1,
@@ -919,6 +960,7 @@ export async function handleEkkoAgentRun(
     if ('runId' in event) runId = event.runId
     logRuntimeEvent(event)
     if (event.type === 'run.started') {
+      startWorkspaceRunDiff(event.runId)
       state.runId = event.runId
       emit('run.started', {
         event: 'run.started',
@@ -1376,6 +1418,7 @@ export async function handleEkkoAgentRun(
           reasoning: step.message.reasoning || null,
           reasoning_content: step.message.reasoning || null,
         })
+        if (assistantId != null) assistantMessageId = String(assistantId)
         state.messages.push({
           id: assistantId || state.messages.length + 1,
           session_id: sessionId,
@@ -1440,6 +1483,7 @@ export async function handleEkkoAgentRun(
         queue_id: data.queue_id,
         autonomous: data.autonomous === true,
         delegation_id: data.background_delegation_id,
+        workspace_run_change: completeWorkspaceRunDiff(),
       })
       return
     }
@@ -1453,6 +1497,7 @@ export async function handleEkkoAgentRun(
         reasoning: assistantReasoning || null,
         reasoning_content: assistantReasoning || null,
       })
+      if (assistantId != null) assistantMessageId = String(assistantId)
       state.messages.push({
         id: assistantId || state.messages.length + 1,
         session_id: sessionId,
@@ -1496,6 +1541,7 @@ export async function handleEkkoAgentRun(
       contextTokens: contextEstimate?.contextTokens ?? state.contextTokens,
       context_tokens: contextEstimate?.contextTokens ?? state.contextTokens,
     })
+    const workspaceRunChange = completeWorkspaceRunDiff()
     emit('run.completed', {
       event: 'run.completed',
       run_id: runId || result.runId,
@@ -1514,6 +1560,7 @@ export async function handleEkkoAgentRun(
       queue_id: data.queue_id,
       autonomous: data.autonomous === true,
       delegation_id: data.background_delegation_id,
+      workspace_run_change: workspaceRunChange,
     })
     writeRunLog('run', 'run.persisted', {
       inputTokens: usageInput,
@@ -1527,6 +1574,7 @@ export async function handleEkkoAgentRun(
         error: err instanceof Error ? err.message : String(err),
       }, 'warn')
       logger.info('[chat-run-socket] ekko-agent run aborted for session %s', sessionId)
+      completeWorkspaceRunDiff()
       return
     }
     const error = err instanceof Error ? err.message : String(err)
@@ -1551,6 +1599,7 @@ export async function handleEkkoAgentRun(
       queue_id: data.queue_id,
       autonomous: data.autonomous === true,
       delegation_id: data.background_delegation_id,
+      workspace_run_change: completeWorkspaceRunDiff(),
     })
   } finally {
     writeRunLog('run', 'run.released', {

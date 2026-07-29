@@ -22,6 +22,8 @@ const getGlobalEkkoAgentMock = vi.hoisted(() => vi.fn(() => ({
 })))
 const buildCompressedHistoryMock = vi.hoisted(() => vi.fn())
 const recordSessionUsageMock = vi.hoisted(() => vi.fn())
+const startWorkspaceRunCheckpointMock = vi.hoisted(() => vi.fn())
+const completeWorkspaceRunCheckpointMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   getSession: getSessionMock,
@@ -86,6 +88,11 @@ vi.mock('../../packages/server/src/services/logger', () => ({
 
 vi.mock('../../packages/server/src/services/usage-recorder', () => ({
   recordSessionUsage: recordSessionUsageMock,
+}))
+
+vi.mock('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker', () => ({
+  startWorkspaceRunCheckpoint: startWorkspaceRunCheckpointMock,
+  completeWorkspaceRunCheckpoint: completeWorkspaceRunCheckpointMock,
 }))
 
 function makeHarness() {
@@ -162,7 +169,154 @@ describe('ekko-agent context usage events', () => {
         apiMode: 'chat_completions',
       },
     })
+    completeWorkspaceRunCheckpointMock.mockReturnValue(null)
   })
+
+  it('attaches a completed workspace diff to the persisted Ekko assistant message', async () => {
+    const change = {
+      change_id: 'change-1',
+      session_id: 'session-1',
+      run_id: 'run-1',
+      assistant_message_id: '202',
+      files_changed: 1,
+      additions: 2,
+      deletions: 0,
+      files: [],
+    }
+    addMessageMock
+      .mockReturnValueOnce(101)
+      .mockReturnValueOnce(202)
+    completeWorkspaceRunCheckpointMock.mockReturnValueOnce(change)
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'run.started', runId: 'run-1', maxSteps: 3 })
+      return {
+        runId: 'run-1',
+        output: { role: 'assistant', content: 'done' },
+        steps: [],
+        messages: [],
+        events: [],
+        contextEstimate: { contextTokens: 5_000 },
+      }
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'edit the file',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(startWorkspaceRunCheckpointMock).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      runId: 'run-1',
+      workspace: '/tmp/workspace',
+    })
+    expect(completeWorkspaceRunCheckpointMock).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      runId: 'run-1',
+      workspace: '/tmp/workspace',
+      assistantMessageId: '202',
+    })
+    expect(events).toContainEqual({
+      event: 'workspace.diff.completed',
+      payload: expect.objectContaining({
+        event: 'workspace.diff.completed',
+        run_id: 'run-1',
+        change_id: 'change-1',
+        change,
+      }),
+    })
+    expect(events).toContainEqual({
+      event: 'run.completed',
+      payload: expect.objectContaining({
+        run_id: 'run-1',
+        workspace_run_change: change,
+      }),
+    })
+    expect(events.findIndex(item => item.event === 'workspace.diff.completed'))
+      .toBeLessThan(events.findIndex(item => item.event === 'run.completed'))
+  }, 15_000)
+
+  it('completes an Ekko workspace diff on run failure without inventing an assistant id', async () => {
+    const change = {
+      change_id: 'change-failed',
+      session_id: 'session-1',
+      run_id: 'run-failed',
+      assistant_message_id: '',
+      files_changed: 1,
+      additions: 1,
+      deletions: 0,
+      files: [],
+    }
+    completeWorkspaceRunCheckpointMock.mockReturnValueOnce(change)
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'run.started', runId: 'run-failed', maxSteps: 3 })
+      throw new Error('provider failed')
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'edit then fail',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(completeWorkspaceRunCheckpointMock).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session-1',
+      runId: 'run-failed',
+      assistantMessageId: null,
+    }))
+    expect(events).toContainEqual({
+      event: 'run.failed',
+      payload: expect.objectContaining({
+        run_id: 'run-failed',
+        workspace_run_change: change,
+      }),
+    })
+  }, 15_000)
+
+  it('completes and publishes an Ekko workspace diff when the run is aborted', async () => {
+    const change = {
+      change_id: 'change-aborted',
+      session_id: 'session-1',
+      run_id: 'run-aborted',
+      assistant_message_id: '',
+      files_changed: 1,
+      additions: 1,
+      deletions: 0,
+      files: [],
+    }
+    completeWorkspaceRunCheckpointMock.mockReturnValueOnce(change)
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'run.started', runId: 'run-aborted', maxSteps: 3 })
+      const error = new Error('Run aborted.')
+      error.name = 'AbortError'
+      throw error
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'edit until stopped',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(completeWorkspaceRunCheckpointMock).toHaveBeenCalledTimes(1)
+    expect(events).toContainEqual({
+      event: 'workspace.diff.completed',
+      payload: expect.objectContaining({
+        run_id: 'run-aborted',
+        change,
+      }),
+    })
+    expect(events.some(item => item.event === 'run.completed' || item.event === 'run.failed')).toBe(false)
+  }, 15_000)
 
   it('forwards the selected reasoning effort and requests an automatic summary', async () => {
     agentRunMock.mockResolvedValueOnce({

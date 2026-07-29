@@ -15,3 +15,9 @@ attaches workspace changes to tool messages. Group chat continues to persist
 the visible projection; an exact `parent_message_id` match moves the payload
 under the Assistant response, while missing or not-yet-loaded parents keep it
 hidden until a later projection can resolve the association.
+
+The built-in Ekko Agent now uses the same workspace checkpoint lifecycle as
+the Codex and Claude Code agents. It starts tracking from the runtime's
+`run.started` ID, persists changes on completion, failure, or abort, and binds
+successful changes to the exact persisted Assistant message ID before emitting
+the realtime and terminal run payloads.
