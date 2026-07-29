@@ -5,12 +5,14 @@
 
 <p align="center">
   A desktop app, local runtime, and web console for <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>.<br/>
-  Chat with agents, manage models and profiles, connect platform channels,<br/>
-  automate jobs, inspect files, run coding agents, and keep everything local.
+  Chat with agents, build visual workflows, manage models and profiles,<br/>
+  browse the web, run coding agents, and keep everything local.
 </p>
 
 <p align="center">
   <a href="https://github.com/EKKOLearnAI/hermes-studio/releases/latest">Download Hermes Studio Desktop</a>
+  ·
+  <a href="https://hermes-studio.ai/#/docs/getting-started">Documentation</a>
   ·
   <code>npm install -g hermes-web-ui && hermes-web-ui start</code>
 </p>
@@ -29,10 +31,10 @@
 
 | Area | What Hermes Studio does |
 | --- | --- |
-| Agent chat | Runs Hermes Agent conversations with streaming responses, tool traces, file upload/download, and persistent local sessions. |
+| Agent chat | Runs Hermes Agent conversations with streaming responses, tool traces, generated-file previews, persistent local sessions, and standalone desktop chat windows. |
 | Local control plane | Manages profiles, providers, models, credentials, memory, skills, plugins, logs, and runtime settings from one dashboard. |
-| Automation | Configures platform channels, cron jobs, Kanban tasks, group-chat rooms, and MCP servers around the same Hermes profiles. |
-| Workspace tools | Provides a file browser, web terminal, voice input/output, coding-agent runners, device discovery, and performance views. |
+| Automation | Builds executable visual workflows and configures platform channels, cron jobs, Kanban tasks, group-chat rooms, and MCP servers around the same Hermes profiles. |
+| Workspace tools | Provides a file browser, web terminal, Desktop Agent Browser, voice input/output, coding-agent runners, device discovery, Journey graph, and performance views. |
 | Distribution | Ships as a desktop app for Windows/macOS/Linux, an npm CLI package, and a Docker image. |
 
 ## Features
@@ -47,15 +49,17 @@
 - Sessions sorted by latest message time
 - Markdown rendering with syntax highlighting and code copy
 - Tool call detail expansion (arguments / result)
-- Profile-scoped file uploads
+- Profile-scoped file uploads, clipboard image/file paste, and workspace attachments
 - File download support — download uploaded files and agent-generated files by resolved path across local, Docker, SSH, and Singularity backends
+- Inline previews for generated HTML, PDF, DOCX, PPTX, XLSX, CSV, images, Markdown, and source files
 - Session search — Ctrl+K search across the Web UI local session database; read-only Hermes history sessions are not included
+- Session categories, message references, compression progress, and durable background delegation results
 - Profile-aware model selector — discovers models available to the signed-in account through authorized Hermes profiles
 - Per-session model display badge and context token usage
 
 ### Platform Channels
 
-Unified configuration for **8 platforms** in one page:
+Unified configuration for **10 platforms** in one page:
 
 | Platform      | Features                                                               |
 | ------------- | ---------------------------------------------------------------------- |
@@ -65,6 +69,8 @@ Unified configuration for **8 platforms** in one page:
 | WhatsApp      | Enable/disable, mention control, mention patterns                      |
 | Matrix        | Access token, homeserver, auto-thread, DM mention threads              |
 | Feishu (Lark) | App ID / Secret, mention control                                       |
+| DingTalk      | Client ID / Secret, mention control                                    |
+| QQBot         | App ID / Secret, mention control                                       |
 | WeChat        | QR code login (scan in browser, auto-save credentials)                 |
 | WeCom         | Bot ID / Secret                                                        |
 
@@ -92,14 +98,23 @@ Unified configuration for **8 platforms** in one page:
 - Task creation, updates, and status movement from the dashboard
 - Shared with the same local Web UI state and authentication model
 
+### Visual Workflows
+
+- Vue Flow canvas for Hermes, Codex, and Claude Code nodes with file/image attachments
+- Directed edges, structured conditions, success/failure routes, loops, and approval gates
+- Import/export for portable workflow definitions and profile-aware workspaces
+- Run budgets, deadlines, stop/rerun controls, and persisted execution history
+- Frozen run snapshots, node conversations, edge decisions, and evidence playback on the canvas
+
 ### Model Management
 
 - Auto-discover models from credential pool (`~/.hermes/auth.json`)
 - Fetch available models from each provider endpoint (`/v1/models`)
-- Add, update, and delete providers (preset & custom OpenAI-compatible)
-- OpenAI Codex & Nous Portal OAuth login
+- Add, update, and delete providers (preset and custom OpenAI-compatible)
+- OAuth/device flows for OpenAI Codex, Nous Portal, xAI, Claude, and GitHub Copilot
 - Provider URL auto-detection for non-v1 API versions (e.g. `/v4`)
-- Provider-level model grouping with default model switching
+- Provider-level model grouping, visible-model controls, aliases, refresh, and default switching
+- Separate STT and TTS provider catalogs under Models
 
 ### Multi-Profile
 
@@ -115,7 +130,7 @@ Unified configuration for **8 platforms** in one page:
 - Upload, download, rename, copy, move, and delete files
 - Store uploaded files under the selected/requested Hermes profile while keeping downloads path-based for agent-generated artifacts outside the upload directory
 - Create directories
-- View file content with syntax highlighting
+- Preview and edit supported files with syntax highlighting, then attach workspace files back to a chat
 
 ### Group Chat
 
@@ -130,15 +145,29 @@ Unified configuration for **8 platforms** in one page:
 
 ### Coding Agents
 
-- Launch and monitor local coding-agent sessions from the web dashboard
-- Dedicated proxy routes for Codex and Claude Code integrations
-- Stores agent output and reasoning metadata for later inspection
+- Install, configure, launch, and monitor Claude Code and Codex from the dashboard
+- Built-in coding-agent terminal, session history, workspace selection, images, and file diffs
+- Dedicated proxy routes and API modes for provider/model compatibility
+- Standalone desktop chat windows and persisted output/reasoning metadata
+
+### Desktop Agent Browser
+
+- Desktop-only multi-tab browser that agents can navigate through the managed MCP server
+- Isolated browser profiles, per-tab control leases, proxy settings, downloads, cookies, and permissions
+- Accessibility snapshots, screenshots, console logs, and page annotations for agent-assisted browsing
 
 ### Skills & Memory
 
 - Browse and search installed skills
 - View skill details and attached files
-- User notes and profile management
+- Install and manage Skill Bundles with profile-aware usage statistics
+- User notes, persistent Ekko Agent memory, and profile-scoped memory management
+- Interactive Journey graph for skill/memory relationships, category filtering, detail inspection, and playback
+
+### Theme Customization
+
+- Light/dark mode, interface style, base font size, text color, and active color
+- Per-account background images and live preview across the workspace
 
 ### Logs
 
@@ -149,7 +178,7 @@ Unified configuration for **8 platforms** in one page:
 ### Admin & Runtime Management
 
 - Device and LAN peer views for local-network discovery and peer tooling
-- MCP manager for the managed `hermes-studio` MCP server and profile injection
+- MCP manager for the managed `hermes-studio` server, profile injection, and `api` / `browser` / `devices` / `use` toolsets
 - Runtime version and version-preview tooling for testing newer builds in isolation
 - Performance monitor views for super administrators
 
@@ -187,17 +216,14 @@ hermes-web-ui reset-default-login
 
 ### Voice / TTS / STT
 
-- Read assistant replies aloud from chat and group-chat messages.
-- Providers: browser Web Speech, built-in Edge TTS, OpenAI-compatible `/audio/speech`, custom OpenAI-compatible TTS endpoints, and MiMo.
-- MiMo supports preset voices, voice design prompts, and voice clone reference audio (`.mp3`/`.wav`, max 10 MB) with selectable auth header mode (`Authorization`, `api-key`, or both).
-- Edge/OpenAI-compatible/custom/MiMo playback uses the Web UI backend's unified `/api/hermes/tts/synthesize` endpoint, so stop/pause state is shared and in-flight fetches are aborted when possible.
-- Provider API keys and MiMo clone reference audio are saved in server-side TTS settings, with only masked secret status shown back to the browser.
-- Save provider settings in Settings → Voice before using OpenAI/custom/MiMo playback. Message playback sends text and non-secret playback options; the backend reads the stored per-user secret when synthesizing.
-- Turn-based voice input is available from the chat input mic control: start/stop a voice turn, transcribe it, stage the transcript in the current input box for editing, then send it with the normal Send button.
-- Voice input / STT can use browser speech recognition when available or a server-backed provider configured in Settings → Voice.
-- Starting a new voice turn while assistant audio is playing stops playback first. This barge-in boundary does not implicitly cancel an active agent run; stopping a run remains an explicit action.
+- Manage voice providers under Models → STT and Models → TTS; existing Settings → Voice links redirect there.
+- TTS adapters: Edge, OpenAI-compatible, MiMo, Doubao, ElevenLabs, Gemini, xAI, Mistral, MiniMax, and DeepInfra.
+- STT adapters: Browser, OpenAI-compatible, Doubao, Groq, Mistral, xAI, ElevenLabs, and DeepInfra.
+- Use editable turn-based voice input from the chat mic, or open the full-screen real-time voice stage for a continuous voice-focused experience.
+- Provider keys and MiMo voice-clone audio stay server-side; the browser receives only masked secret status.
+- Starting a new voice turn stops current assistant playback first, but does not implicitly cancel an active agent run.
 - For supported settings, security notes, and current non-goals, see [`docs/voice-dialogue.md`](./docs/voice-dialogue.md).
-- Limitation: external TTS providers may continue processing a request after the browser/server aborts; custom/OpenAI-compatible and MiMo base URLs must be public `http`/`https` endpoints and cannot target localhost/private networks.
+- The real-time stage does not claim simultaneous full-duplex listen/speak; telephony and always-on wake-word listening remain out of scope.
 
 ### Web Terminal
 
@@ -242,10 +268,12 @@ desktop app, bundled Hermes Agent CLI, and bundled Web UI CLI do not conflict:
 | `hermes-studio cli ...` | Run the bundled Hermes Agent CLI |
 | `hermes-studio web ...` | Run the bundled `hermes-web-ui` command |
 | `hermes-studio -h` | Show wrapper help |
-| `hermes-studio-mcp` | Run the managed Web UI MCP bridge |
+| `hermes-studio-mcp [api\|browser\|devices\|use]` | Run one managed Web UI MCP toolset |
 
 Use `hermes-studio cli -h` for Hermes Agent CLI help and
-`hermes-studio web -h` for Web UI CLI help.
+`hermes-studio web -h` for Web UI CLI help. `hermes-studio-mcp` defaults to the
+`api` toolset; choose `browser`, `devices`, or `use` to keep the exposed MCP
+surface focused on the current task.
 
 Desktop auto-updates read the latest feed from
 `https://download.ekkolearnai.com/latest` first. If that endpoint is
@@ -354,17 +382,20 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 
 ### CLI Commands
 
-| Command                           | Description                        |
-| --------------------------------- | ---------------------------------- |
-| `hermes-web-ui start`             | Start in background (daemon mode)  |
-| `hermes-web-ui start --port 9000` | Start on custom port               |
-| `hermes-web-ui stop`              | Stop background process            |
-| `hermes-web-ui restart`           | Restart background process; stops the bridge by default |
-| `hermes-web-ui status`            | Check if running                   |
-| `hermes-web-ui update`            | Update to latest version & restart |
-| `hermes-web-ui upgrade`           | Alias for `update`                 |
-| `hermes-web-ui -v`                | Show version number                |
-| `hermes-web-ui -h`                | Show help message                  |
+| Command | Description |
+| --- | --- |
+| `hermes-web-ui start [port]` | Start in background; accepts a positional port or `--port <port>` |
+| `hermes-web-ui client [port]` | Start for a remote client with gateway autostart disabled and permissive CORS |
+| `hermes-web-ui restart [port]` | Restart; stops the bridge by default |
+| `hermes-web-ui stop` | Stop the background process |
+| `hermes-web-ui status` | Check if running |
+| `hermes-web-ui clear-login-locks [--restart]` | Clear persisted login locks, optionally restart |
+| `hermes-web-ui reset-default-login` | Create or reset the default administrator login |
+| `hermes-web-ui update` / `upgrade` | Update to the latest version and restart |
+| `hermes-web-ui version` / `-v` | Show the version |
+| `hermes-web-ui -h` | Show help |
+
+Add `--no-open` to `start` or `client` when no browser should open.
 
 `restart`, `update`, and `upgrade` stop the Agent Bridge broker by default so restarted or updated servers do not reuse stale Python bridge processes. Set `HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN=0` before restarting only when you explicitly want to keep the bridge broker and running bridge sessions alive.
 
@@ -376,7 +407,7 @@ On startup the BFF server automatically:
 
 - Initializes Web UI data directories, local databases, and bundled skills
 - Starts the Hermes agent bridge used by `/chat-run`
-- Opens browser on successful startup
+- Opens a browser on successful startup unless `--no-open` is set
 
 ---
 

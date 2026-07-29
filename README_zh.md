@@ -5,12 +5,14 @@
 
 <p align="center">
   面向 <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> 的桌面应用、本地运行时和 Web 控制台。<br/>
-  聊天、模型与 Profile 管理、平台渠道接入、任务自动化、<br/>
-  文件查看、Coding Agent 和本地运行环境都在一个界面中完成。
+  Agent 对话、可视化工作流、模型与 Profile 管理、网页浏览、<br/>
+  Coding Agent 和本地运行环境都在一个界面中完成。
 </p>
 
 <p align="center">
   <a href="https://github.com/EKKOLearnAI/hermes-studio/releases/latest">下载 Hermes Studio 桌面版</a>
+  ·
+  <a href="https://hermes-studio.ai/#/docs/getting-started">使用文档</a>
   ·
   <code>npm install -g hermes-web-ui && hermes-web-ui start</code>
 </p>
@@ -37,10 +39,10 @@
 
 | 模块 | Hermes Studio 能做什么 |
 |---|---|
-| Agent 聊天 | 运行 Hermes Agent 对话，支持流式回复、工具调用轨迹、文件上传下载和本地持久化会话。 |
+| Agent 聊天 | 运行 Hermes Agent 对话，支持流式回复、工具调用轨迹、生成文件预览、本地持久化会话和桌面独立聊天窗口。 |
 | 本地控制台 | 在一个仪表盘中管理 Profile、Provider、模型、凭证、记忆、技能、插件、日志和运行时设置。 |
-| 自动化 | 围绕同一套 Hermes Profile 配置平台渠道、Cron 任务、Kanban 任务、群聊房间和 MCP Server。 |
-| 工作区工具 | 提供文件浏览器、Web 终端、语音输入输出、Coding Agent、设备发现和性能视图。 |
+| 自动化 | 构建可执行的可视化工作流，并围绕同一套 Hermes Profile 配置平台渠道、Cron 任务、Kanban 任务、群聊房间和 MCP Server。 |
+| 工作区工具 | 提供文件浏览器、Web 终端、桌面 Agent 浏览器、语音输入输出、Coding Agent、设备发现、学习轨迹和性能视图。 |
 | 分发形态 | 支持 Windows/macOS/Linux 桌面应用、npm CLI 包和 Docker 镜像。 |
 
 ## 功能特性
@@ -55,15 +57,17 @@
 - 按最新消息时间排序会话列表
 - Markdown 渲染，支持语法高亮和代码复制
 - 工具调用详情展开（参数 / 结果）
-- 按 Profile 隔离的文件上传
+- 按 Profile 隔离的文件上传、剪贴板图片/文件粘贴和工作区附件
 - 文件下载支持 — 按解析后的路径下载用户上传文件和 Agent 生成文件，兼容 local、Docker、SSH、Singularity 等多种 terminal backend
+- 可直接预览 Agent 生成的 HTML、PDF、DOCX、PPTX、XLSX、CSV、图片、Markdown 和源码文件
 - 会话搜索 — Ctrl+K 搜索 Web UI 本地会话库；不包含只读 Hermes 历史会话
+- 会话分类、消息引用、压缩进度和可持久恢复的后台委派结果
 - 按账号授权 Profile 汇总模型选择器 — 只展示当前账号可访问的 Hermes Profile 中可用的模型
 - 每个会话显示模型标签和上下文 Token 用量
 
 ### 平台渠道
 
-在一个页面统一配置 **8 个平台**：
+在一个页面统一配置 **10 个平台**：
 
 | 平台 | 功能 |
 |---|---|
@@ -73,6 +77,8 @@
 | WhatsApp | 启用/禁用、提及控制、提及模式 |
 | Matrix | Access Token、Homeserver、自动线程、私信提及线程 |
 | 飞书 | App ID / Secret、提及控制 |
+| 钉钉 | Client ID / Secret、提及控制 |
+| QQBot | App ID / Secret、提及控制 |
 | 微信 | 扫码登录（浏览器扫码，自动保存凭证） |
 | 企业微信 | Bot ID / Secret |
 
@@ -100,14 +106,23 @@
 - 可在仪表盘中创建任务、更新任务并移动状态
 - 复用 Web UI 本地状态和认证体系
 
+### 可视化工作流
+
+- 基于 Vue Flow 的画布，支持 Hermes、Codex 和 Claude Code 节点以及文件/图片附件
+- 支持有向连线、结构化条件、成功/失败路由、循环和审批门
+- 工作流定义可导入/导出，并支持按 Profile 管理工作区
+- 支持运行预算、截止时间、停止、重跑和持久化执行历史
+- 可在画布回放冻结的运行快照、节点对话、路径选择和执行证据
+
 ### 模型管理
 
 - 从凭证池自动发现模型（`~/.hermes/auth.json`）
 - 从每个 Provider 端点获取可用模型（`/v1/models`）
-- 添加、更新、删除 Provider（预设 & 自定义 OpenAI 兼容）
-- OpenAI Codex 和 Nous Portal OAuth 登录
+- 添加、更新、删除 Provider（预设和自定义 OpenAI 兼容）
+- 支持 OpenAI Codex、Nous Portal、xAI、Claude 和 GitHub Copilot 的 OAuth/设备授权
 - Provider URL 自动检测，支持非 v1 API 版本（如 `/v4`）
-- Provider 级别模型分组，支持切换默认模型
+- Provider 级模型分组、可见模型控制、别名、刷新和默认模型切换
+- 在模型页分别管理 STT 与 TTS Provider
 
 ### 多配置文件
 
@@ -123,7 +138,7 @@
 - 上传、下载、重命名、复制、移动和删除文件
 - 上传文件保存到当前选择/请求的 Hermes Profile 目录下；下载按真实路径解析，支持下载上传目录外的 Agent 产物
 - 创建目录
-- 查看文件内容，支持语法高亮
+- 预览和编辑支持的文件并提供语法高亮，还可把工作区文件附加回聊天
 
 ### 群聊
 
@@ -138,15 +153,29 @@
 
 ### Coding Agents
 
-- 在 Web 仪表盘中启动和监控本地 Coding Agent 会话
-- 为 Codex 和 Claude Code 集成提供独立代理路由
-- 持久化 Agent 输出和 reasoning 元数据，便于后续查看
+- 在仪表盘中安装、配置、启动和监控 Claude Code 与 Codex
+- 内置 Coding Agent 终端、会话历史、工作区选择、图片输入和文件 Diff
+- 提供独立代理路由和 API 模式，适配不同 Provider/模型
+- 支持桌面独立聊天窗口，并持久化输出和 reasoning 元数据
+
+### 桌面 Agent 浏览器
+
+- 桌面端多标签浏览器，Agent 可通过托管 MCP Server 进行导航和交互
+- 支持隔离浏览器 Profile、标签控制租约、代理、下载、Cookie 和权限管理
+- 支持可访问性快照、截图、控制台日志和页面标注
 
 ### 技能与记忆
 
 - 浏览和搜索已安装的技能
 - 查看技能详情和附件
-- 用户笔记和档案管理
+- 安装和管理 Skill Bundles，并查看按 Profile 统计的技能用量
+- 用户笔记、Ekko Agent 持久记忆和按 Profile 管理的记忆
+- 学习轨迹关系图，支持技能/记忆关系、分类筛选、详情查看和播放
+
+### 主题自定义
+
+- 支持明暗模式、界面风格、基础字号、文字颜色和选中颜色
+- 支持按账号保存背景图片，并在整个工作区实时预览
 
 ### 日志
 
@@ -157,7 +186,7 @@
 ### 管理与运行时
 
 - 设备和局域网 Peer 页面，用于本地网络发现和 Peer 工具能力
-- MCP 管理器，用于托管的 `hermes-studio` MCP Server 和 Profile 自动注入
+- MCP 管理器，用于托管的 `hermes-studio` Server、Profile 自动注入和 `api` / `browser` / `devices` / `use` 工具集
 - Runtime Version 和 Version Preview 工具，用于隔离测试新版本
 - 面向超级管理员的性能监控视图
 
@@ -195,17 +224,14 @@ hermes-web-ui reset-default-login
 
 ### 语音 / TTS / STT
 
-- 可在聊天和群聊消息中朗读 Assistant 回复。
-- Provider 支持：浏览器 Web Speech、内置 Edge TTS、OpenAI 兼容 `/audio/speech`、自定义 OpenAI 兼容 TTS 端点、MiMo。
-- MiMo 支持预置音色、音色设计提示词、音色复刻参考音频（`.mp3`/`.wav`，最大 10 MB），并可选择鉴权请求头模式（`Authorization`、`api-key` 或两者同时发送）。
-- Edge / OpenAI 兼容 / 自定义 / MiMo 播放统一走 Web UI 后端 `/api/hermes/tts/synthesize`，停止/暂停状态一致，并会在可行时中断进行中的 fetch。
-- Provider API Key 和 MiMo 复刻参考音频保存在服务端 TTS 设置中，浏览器只显示脱敏后的 secret 状态。
-- 使用 OpenAI / 自定义 / MiMo 播放前，先在 Settings → Voice 保存 provider 设置。消息播放只发送文本和非敏感播放参数，后端合成时读取当前用户保存的私钥。
-- 聊天输入框支持回合制语音输入：通过麦克风按钮开始/停止一轮录音，转写结果会先填入当前输入框，用户可以编辑后再用普通发送按钮发送。
-- 语音输入 / STT 可在支持时使用浏览器语音识别，也可使用在 Settings → Voice 中配置的服务端 provider。
-- 当 Assistant 音频正在播放时，开始新的语音输入会先停止播放。这个 barge-in 只打断音频，不会隐式取消正在运行的 Agent；停止 run 仍然需要显式操作。
+- 在模型 → STT 和模型 → TTS 中管理语音 Provider；旧的设置 → 语音入口会跳转到这里。
+- TTS 适配器：Edge、OpenAI 兼容、MiMo、豆包、ElevenLabs、Gemini、xAI、Mistral、MiniMax、DeepInfra。
+- STT 适配器：浏览器、OpenAI 兼容、豆包、Groq、Mistral、xAI、ElevenLabs、DeepInfra。
+- 可在聊天输入框使用可编辑的回合制语音输入，也可打开全屏实时语音舞台进入连续的语音交互体验。
+- Provider Key 和 MiMo 音色复刻音频保存在服务端，浏览器只接收脱敏后的 Secret 状态。
+- 开始新的语音输入会先停止 Assistant 播放，但不会隐式取消正在执行的 Agent Run。
 - 支持的设置项、安全边界和当前非目标范围见 [`docs/voice-dialogue.md`](./docs/voice-dialogue.md)。
-- 限制：浏览器/服务端中断后，外部 TTS Provider 仍可能继续处理请求；自定义 / OpenAI 兼容 / MiMo base URL 必须是公网 `http`/`https` 端点，不能指向 localhost 或私网。
+- 实时语音舞台不代表同时听说的全双工通话；电话接入和常驻唤醒词监听仍不在当前范围。
 
 ### Web 终端
 
@@ -249,10 +275,11 @@ hermes-web-ui reset-default-login
 | `hermes-studio cli ...` | 运行内置 Hermes Agent CLI |
 | `hermes-studio web ...` | 运行内置 `hermes-web-ui` 命令 |
 | `hermes-studio -h` | 显示 wrapper 帮助 |
-| `hermes-studio-mcp` | 运行受管 Web UI MCP bridge |
+| `hermes-studio-mcp [api\|browser\|devices\|use]` | 运行指定的受管 Web UI MCP 工具集 |
 
 使用 `hermes-studio cli -h` 查看 Hermes Agent CLI 帮助，使用
-`hermes-studio web -h` 查看 Web UI CLI 帮助。
+`hermes-studio web -h` 查看 Web UI CLI 帮助。`hermes-studio-mcp` 默认暴露
+`api` 工具集；按任务选择 `browser`、`devices` 或 `use`，可以缩小 MCP 暴露面。
 
 桌面自动更新会优先读取 `https://download.ekkolearnai.com/latest`。
 如果该端点不可用，更新器会回退到
@@ -359,15 +386,18 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 
 | 命令 | 说明 |
 |---|---|
-| `hermes-web-ui start` | 后台启动（守护进程模式） |
-| `hermes-web-ui start --port 9000` | 自定义端口启动 |
+| `hermes-web-ui start [port]` | 后台启动；支持位置端口或 `--port <port>` |
+| `hermes-web-ui client [port]` | 为远程客户端启动，关闭 Gateway 自动启动并允许跨域 |
+| `hermes-web-ui restart [port]` | 重启；默认会关闭 Bridge Broker |
 | `hermes-web-ui stop` | 停止后台进程 |
-| `hermes-web-ui restart` | 重启后台进程；默认会关闭 bridge broker |
 | `hermes-web-ui status` | 查看运行状态 |
-| `hermes-web-ui update` | 更新到最新版本并重启 |
-| `hermes-web-ui upgrade` | `update` 的别名 |
-| `hermes-web-ui -v` | 显示版本号 |
+| `hermes-web-ui clear-login-locks [--restart]` | 清理持久登录锁，可选择重启 |
+| `hermes-web-ui reset-default-login` | 创建或重置默认管理员登录 |
+| `hermes-web-ui update` / `upgrade` | 更新到最新版本并重启 |
+| `hermes-web-ui version` / `-v` | 显示版本号 |
 | `hermes-web-ui -h` | 显示帮助信息 |
+
+如不希望自动打开浏览器，可在 `start` 或 `client` 后添加 `--no-open`。
 
 `restart`、`update` 和 `upgrade` 默认会停止 Agent Bridge broker，避免重启或更新后的服务复用旧 Python bridge 进程。只有明确希望保留 broker 和正在运行的 bridge session 时，才在重启前设置 `HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN=0`。
 
@@ -379,7 +409,7 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 
 - 初始化 Web UI 数据目录、本地数据库和内置技能
 - 启动 `/chat-run` 使用的 Hermes agent bridge
-- 启动成功后自动打开浏览器
+- 启动成功后自动打开浏览器；设置 `--no-open` 时跳过
 
 ---
 
