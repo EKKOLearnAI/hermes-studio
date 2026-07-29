@@ -1327,14 +1327,14 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
 
   &.system {
-    border-left: 3px solid $warning;
+    border-inline-start: 3px solid $warning;
     border-radius: $radius-sm;
     max-width: 80%;
     background-color: rgba(var(--warning-rgb), 0.06);
   }
 
   &.command {
-    border-left: none;
+    border-inline-start: none;
     border: 1px solid rgba(var(--accent-primary-rgb), 0.12);
     background-color: rgba(var(--accent-primary-rgb), 0.04);
     color: $text-secondary;
@@ -1607,7 +1607,7 @@ onBeforeUnmount(() => {
   .thinking-body {
     margin-top: 6px;
     padding: 6px 10px;
-    border-left: 2px solid $border-light;
+    border-inline-start: 2px solid $border-light;
     font-size: 13px;
     opacity: 0.85;
     font-style: italic;
@@ -1766,14 +1766,14 @@ onBeforeUnmount(() => {
   padding: 0 4px;
   border-radius: 3px;
   line-height: 14px;
-  margin-left: 4px;
+  margin-inline-start: 4px;
 }
 
 .tool-details {
-  margin-left: 16px;
+  margin-inline-start: 16px;
   margin-top: 2px;
-  border-left: 2px solid $border-light;
-  padding-left: 10px;
+  border-inline-start: 2px solid $border-light;
+  padding-inline-start: 10px;
 }
 
 .tool-detail-section {
@@ -1834,7 +1834,7 @@ onBeforeUnmount(() => {
   width: 2px;
   height: 1em;
   background-color: $text-muted;
-  margin-left: 2px;
+  margin-inline-start: 2px;
   vertical-align: text-bottom;
   animation: blink 0.8s infinite;
 }
@@ -1912,13 +1912,13 @@ onBeforeUnmount(() => {
   }
 
   :global(.tool-change-drawer-header) {
-    padding-left: 12px !important;
-    padding-right: 12px !important;
+    padding-inline-start: 12px !important;
+    padding-inline-end: 12px !important;
   }
 
   :global(.tool-change-drawer-body-content) {
-    padding-left: 8px !important;
-    padding-right: 8px !important;
+    padding-inline-start: 8px !important;
+    padding-inline-end: 8px !important;
   }
 }
 </style>

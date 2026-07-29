@@ -1102,7 +1102,7 @@ defineExpose({
   font-weight: 600;
 
   strong {
-    margin-left: auto;
+    margin-inline-start: auto;
     min-width: 20px;
     height: 20px;
     display: inline-flex;
@@ -1661,7 +1661,7 @@ defineExpose({
 .tool-call-error-icon {
   color: #ff4d4f;
   flex-shrink: 0;
-  margin-left: 6px;
+  margin-inline-start: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1671,14 +1671,14 @@ defineExpose({
   font-size: 10px;
   color: $text-muted;
   font-family: $font-code;
-  margin-left: 4px;
+  margin-inline-start: 4px;
   flex-shrink: 0;
 }
 
 .tool-call-success-icon {
   color: #52c41a;
   flex-shrink: 0;
-  margin-left: 6px;
+  margin-inline-start: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
