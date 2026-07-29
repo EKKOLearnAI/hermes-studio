@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('../../packages/server/src/services/hermes/voice-config-sync', () => ({
+  syncVoiceConfigToHermesProfile: vi.fn(async () => ({ stt: 'synced', tts: 'unchanged' })),
+}))
+
 describe('stt settings controller', () => {
   let db: any = null
 
@@ -296,6 +300,7 @@ describe('stt routes', () => {
     const missingProfileAudio = vi.fn(async (ctx: any) => { ctx.body = { route: 'missingProfileAudio' } })
     const mcuVoiceTurn = vi.fn(async (ctx: any) => { ctx.body = { route: 'mcuVoiceTurn' } })
     const transcribe = vi.fn(async (ctx: any) => { ctx.body = { route: 'transcribe' } })
+    const transcribeVoiceProxy = vi.fn(async (ctx: any) => { ctx.body = { route: 'transcribeVoiceProxy' } })
 
     vi.doMock('../../packages/server/src/controllers/hermes/stt', () => ({
       listSettings,
@@ -308,6 +313,7 @@ describe('stt routes', () => {
       missingProfileAudio,
       mcuVoiceTurn,
       transcribe,
+      transcribeVoiceProxy,
     }))
 
     const { sttProtectedRoutes } = await import('../../packages/server/src/routes/hermes/stt')
@@ -315,6 +321,7 @@ describe('stt routes', () => {
 
     expect(protectedPaths).toEqual(expect.arrayContaining([
       '/api/hermes/stt/settings',
+      '/api/hermes/voice/proxy/:profile/v1/audio/transcriptions',
       '/api/hermes/stt/profile-status',
       '/api/hermes/stt/profile-status/missing-audio',
       '/api/hermes/mcu/voice-turn',

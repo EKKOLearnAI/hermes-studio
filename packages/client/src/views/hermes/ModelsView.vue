@@ -7,6 +7,7 @@ import AuxiliaryModelsPanel from '@/components/hermes/models/AuxiliaryModelsPane
 import CombinationModelsPanel from '@/components/hermes/models/CombinationModelsPanel.vue'
 import ProvidersPanel from '@/components/hermes/models/ProvidersPanel.vue'
 import ProviderFormModal from '@/components/hermes/models/ProviderFormModal.vue'
+import VoiceSettings from '@/components/hermes/settings/VoiceSettings.vue'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { checkCopilotToken } from '@/api/hermes/copilot-auth'
@@ -18,7 +19,25 @@ const message = useMessage()
 const route = useRoute()
 const router = useRouter()
 const showModal = ref(false)
-const activeTab = ref<'general' | 'auxiliary' | 'combination'>('general')
+type ModelsTab = 'general' | 'auxiliary' | 'combination' | 'stt' | 'tts'
+
+const MODELS_TABS = new Set<ModelsTab>(['general', 'auxiliary', 'combination', 'stt', 'tts'])
+const activeTab = ref<ModelsTab>('general')
+
+function normalizeTab(value: unknown): ModelsTab {
+  const tab = typeof value === 'string' ? value : ''
+  return MODELS_TABS.has(tab as ModelsTab) ? tab as ModelsTab : 'general'
+}
+
+function handleTabUpdate(tab: ModelsTab) {
+  activeTab.value = normalizeTab(tab)
+  void router.replace({
+    query: {
+      ...route.query,
+      tab: activeTab.value === 'general' ? undefined : activeTab.value,
+    },
+  })
+}
 
 async function loadProvidersForProfile() {
   if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
@@ -44,7 +63,13 @@ watch(() => route.query.addProvider, (addProvider) => {
   showModal.value = true
   const query = { ...route.query }
   delete query.addProvider
+  delete query.tab
   void router.replace({ query })
+}, { immediate: true })
+
+watch(() => route.query.tab, (tab) => {
+  if (route.query.addProvider === '1') return
+  activeTab.value = normalizeTab(tab)
 }, { immediate: true })
 
 function handleModalClose() {
@@ -104,7 +129,7 @@ async function handleRefreshModelCache() {
     </header>
 
     <div class="models-content">
-      <NTabs v-model:value="activeTab" type="line" animated>
+      <NTabs v-model:value="activeTab" type="line" animated @update:value="handleTabUpdate">
         <NTabPane name="general" :tab="t('models.generalTitle')">
           <NSpin :show="modelsStore.loading && modelsStore.providers.length === 0">
             <ProvidersPanel />
@@ -115,6 +140,12 @@ async function handleRefreshModelCache() {
         </NTabPane>
         <NTabPane name="combination" :tab="t('models.combinationTitle')">
           <CombinationModelsPanel />
+        </NTabPane>
+        <NTabPane name="stt" :tab="t('settings.voice.sttProvidersTitle')">
+          <VoiceSettings :key="`stt-${profilesStore.activeProfileName || 'default'}`" kind="stt" />
+        </NTabPane>
+        <NTabPane name="tts" :tab="t('settings.voice.ttsProvidersTitle')">
+          <VoiceSettings :key="`tts-${profilesStore.activeProfileName || 'default'}`" kind="tts" />
         </NTabPane>
       </NTabs>
     </div>

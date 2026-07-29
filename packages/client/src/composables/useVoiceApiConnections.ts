@@ -25,19 +25,36 @@ import { VOICE_API_PRESETS } from '@/constants/voiceApiPresets'
 import type { VoiceApiConnection, VoiceApiKind, VoiceApiProvider, VoiceApiSavePayload } from '@/types/voice-api'
 
 function isStoredSttProvider(provider: VoiceApiProvider): provider is StoredSttProvider {
-  return provider === 'openai' || provider === 'custom' || provider === 'doubao'
+  return provider === 'openai' ||
+    provider === 'custom' ||
+    provider === 'doubao' ||
+    provider === 'groq' ||
+    provider === 'mistral' ||
+    provider === 'xai' ||
+    provider === 'elevenlabs' ||
+    provider === 'deepinfra'
 }
 
 function isStoredTtsProvider(provider: VoiceApiProvider): provider is StoredTtsProvider {
-  return provider === 'edge' || provider === 'openai' || provider === 'custom' || provider === 'mimo' || provider === 'doubao'
+  return provider === 'edge' ||
+    provider === 'openai' ||
+    provider === 'custom' ||
+    provider === 'mimo' ||
+    provider === 'doubao' ||
+    provider === 'elevenlabs' ||
+    provider === 'gemini' ||
+    provider === 'xai' ||
+    provider === 'mistral' ||
+    provider === 'minimax' ||
+    provider === 'deepinfra'
 }
 
 function isSttProvider(provider: VoiceApiProvider): provider is SttProvider {
-  return provider === 'browser' || provider === 'openai' || provider === 'custom' || provider === 'doubao'
+  return provider === 'browser' || isStoredSttProvider(provider)
 }
 
 function isTtsProvider(provider: VoiceApiProvider): provider is StoredTtsProvider {
-  return provider === 'edge' || provider === 'openai' || provider === 'custom' || provider === 'mimo' || provider === 'doubao'
+  return isStoredTtsProvider(provider)
 }
 
 function stringSetting(settings: object, key: string): string {
@@ -146,7 +163,11 @@ export function useVoiceApiConnections() {
   }
 
   function makeSttConnection(provider: StoredSttProvider, settings: SttStoredSettings, hasSecret: boolean): VoiceApiConnection {
-    const preset = VOICE_API_PRESETS.find(pr => pr.kind === 'stt' && pr.provider === provider && (pr.baseUrl === settings.baseUrl || !pr.baseUrl))
+    const preset = VOICE_API_PRESETS.find(pr =>
+      pr.kind === 'stt' &&
+      (pr.provider === provider || (provider === 'custom' && !!pr.baseUrl && pr.baseUrl === settings.baseUrl)) &&
+      (pr.baseUrl === settings.baseUrl || !pr.baseUrl),
+    )
     return {
       id: `stt-${provider}`,
       kind: 'stt',

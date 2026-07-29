@@ -15,6 +15,13 @@ export interface TtsStoredSettings {
   voiceDesignDesc?: string
   voiceCloneFormat?: string
   stylePrompt?: string
+  language?: string
+  sampleRate?: string
+  bitRate?: string
+  speed?: string
+  volume?: string
+  emotion?: string
+  groupId?: string
 }
 
 export interface TtsStoredSecretsInput {
@@ -39,7 +46,19 @@ export interface FetchTtsSettingsResponse {
 }
 
 function normalizeActiveProvider(value: unknown): StoredTtsProvider | null {
-  return value === 'edge' || value === 'openai' || value === 'custom' || value === 'mimo' || value === 'doubao' ? value : null
+  return value === 'edge' ||
+    value === 'openai' ||
+    value === 'custom' ||
+    value === 'mimo' ||
+    value === 'doubao' ||
+    value === 'elevenlabs' ||
+    value === 'gemini' ||
+    value === 'xai' ||
+    value === 'mistral' ||
+    value === 'minimax' ||
+    value === 'deepinfra'
+    ? value
+    : null
 }
 
 function normalizeProviders(body: unknown): FetchTtsSettingsResponse {

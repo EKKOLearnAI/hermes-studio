@@ -4,6 +4,7 @@ import * as ctrl from '../../controllers/hermes/stt'
 export const sttProtectedRoutes = new Router()
 
 sttProtectedRoutes.get('/api/hermes/stt/settings', ctrl.listSettings)
+sttProtectedRoutes.post('/api/hermes/voice/proxy/:profile/v1/audio/transcriptions', ctrl.transcribeVoiceProxy)
 sttProtectedRoutes.get('/api/hermes/stt/profile-status', ctrl.profileStatus)
 sttProtectedRoutes.get('/api/hermes/stt/profile-status/missing-audio', ctrl.missingProfileAudio)
 sttProtectedRoutes.post('/api/hermes/mcu/voice-turn', ctrl.mcuVoiceTurn)

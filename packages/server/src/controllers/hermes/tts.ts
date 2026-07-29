@@ -19,6 +19,8 @@ import {
   saveTtsProviderSetting,
   TtsSettingsValidationError,
 } from '../../db/hermes/tts-settings-store'
+import { syncVoiceConfigToHermesProfile } from '../../services/hermes/voice-config-sync'
+import { listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
 
 function currentUserId(ctx: Context): number | null {
   const rawUserId = ctx.state?.user?.id
@@ -40,6 +42,11 @@ function requestedProfile(ctx: Context): string {
   const queryProfile = typeof ctx.query?.profile === 'string' ? ctx.query.profile : ''
   const headerProfile = ctx.get?.('x-hermes-profile') || ''
   return (ctx.state?.profile?.name || queryProfile || headerProfile || 'default').trim() || 'default'
+}
+
+function requestedVoiceProxyProfile(ctx: Context): string | null {
+  const profile = String(ctx.params?.profile || '').trim()
+  return profile && listProfileNamesFromDisk().includes(profile) ? profile : null
 }
 
 function handleSettingsError(ctx: Context, error: unknown): boolean {
@@ -130,6 +137,7 @@ export async function saveSettings(ctx: Context) {
       ? saveActiveTtsProvider(profile, storedProvider)
       : saveActiveTtsProvider(profile, assertActiveTtsProvider(String(body.activeProvider)))
 
+    await syncVoiceConfigToHermesProfile(profile)
     ctx.body = { setting, activeProvider }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
@@ -146,6 +154,7 @@ export async function saveActiveProvider(ctx: Context) {
   try {
     const profile = requestedProfile(ctx)
     const activeProvider = saveActiveTtsProvider(profile, assertActiveTtsProvider(String(body?.provider || '')))
+    await syncVoiceConfigToHermesProfile(profile)
     ctx.body = { activeProvider }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
@@ -187,6 +196,7 @@ export async function deleteSecret(ctx: Context) {
     const profile = requestedProfile(ctx)
     const storedProvider = assertStoredTtsProvider(provider)
     const setting = clearStoredTtsSecret(profile, storedProvider, secretName)
+    await syncVoiceConfigToHermesProfile(profile)
     ctx.body = { success: true, setting }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
@@ -213,6 +223,7 @@ export async function deleteProvider(ctx: Context) {
     const activeProvider = currentActiveProvider === storedProvider
       ? saveActiveTtsProvider(profile, 'edge')
       : currentActiveProvider
+    await syncVoiceConfigToHermesProfile(profile)
     ctx.body = { success: true, deleted, activeProvider }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
@@ -498,6 +509,83 @@ export async function synthesize(ctx: Context) {
       detail: sanitizeTtsError(error),
     }
   }
+}
+
+async function synthesizeVoiceProxyText(ctx: Context, text: string) {
+  const profile = requestedVoiceProxyProfile(ctx)
+  if (!profile) {
+    ctx.status = 404
+    ctx.body = { error: 'unknown Hermes profile' }
+    return
+  }
+
+  const normalizedText = text.trim()
+  if (!normalizedText) {
+    ctx.status = 400
+    ctx.body = { error: 'text is required' }
+    return
+  }
+  if (normalizedText.length > 5000) {
+    ctx.status = 400
+    ctx.body = { error: 'text is too long (max 5000 characters)' }
+    return
+  }
+
+  const providerName = getActiveTtsProvider(profile) || 'edge'
+  const stored = getTtsProviderSetting(profile, providerName, { includeSecrets: true })
+  const options = {
+    ...(stored?.settings || {}),
+    ...(stored?.secrets || {}),
+    // Hermes' command provider writes to an .mp3 output path.
+    format: 'mp3',
+  }
+  const provider = getTtsProvider(providerName)
+  if (!provider) {
+    ctx.status = 400
+    ctx.body = { error: 'unknown Web UI TTS provider' }
+    return
+  }
+
+  const controller = createRequestAbortController(ctx)
+  try {
+    const result = await provider.synthesize(
+      { text: normalizedText, signal: controller.signal },
+      options,
+    )
+    ctx.set('Content-Type', result.contentType)
+    ctx.set('Content-Length', String(result.audio.length))
+    ctx.set('X-TTS-Engine', 'hermes-studio')
+    ctx.body = result.audio
+  } catch (error) {
+    if (isAbortError(error)) {
+      ctx.status = 499
+      ctx.body = { error: 'TTS request aborted' }
+      return
+    }
+    ctx.status = statusForTtsError(error)
+    ctx.body = {
+      error: 'Hermes Studio TTS failed',
+      detail: sanitizeTtsError(error),
+    }
+  }
+}
+
+/**
+ * Command-provider endpoint used by Hermes Agent's `hermes-studio` provider.
+ * The server token is accepted only for loopback requests by user-auth.
+ */
+export async function synthesizeVoiceProxy(ctx: Context) {
+  const body = ctx.request.body
+  await synthesizeVoiceProxyText(ctx, typeof body === 'string' ? body : '')
+}
+
+/**
+ * OpenAI-compatible companion endpoint for clients that can call HTTP
+ * providers directly instead of Hermes' command-provider bridge.
+ */
+export async function synthesizeVoiceProxyOpenAi(ctx: Context) {
+  const body = ctx.request.body as { input?: unknown } | undefined
+  await synthesizeVoiceProxyText(ctx, typeof body?.input === 'string' ? body.input : '')
 }
 
 function statusForTtsError(error: unknown): number {

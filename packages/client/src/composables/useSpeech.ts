@@ -12,14 +12,14 @@ export interface SpeechOptions {
 }
 
 export interface OpenaiTtsOptions {
-  baseUrl: string
+  baseUrl?: string
   apiKey?: string
   model?: string
   voice?: string
   rate?: string   // Edge TTS rate format, e.g. "+20%"
   pitch?: string  // Edge TTS pitch format, e.g. "-8Hz"
   stylePrompt?: string
-  provider?: 'edge' | 'openai' | 'custom' | 'doubao'
+  provider?: Exclude<TtsProviderId, 'mimo'>
 }
 
 export interface MimoTtsOptions {
@@ -326,7 +326,7 @@ export function useSpeech() {
     if (opts.provider) {
       return opts.provider
     }
-    if (opts.baseUrl.startsWith('/api/tts/proxy')) {
+    if (opts.baseUrl?.startsWith('/api/tts/proxy')) {
       return 'edge'
     }
     if (opts.model) {

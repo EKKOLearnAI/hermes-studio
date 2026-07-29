@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { createMcuSpeechSegmenter } from '@/api/hermes/mcu-interaction'
 import { transcribeSpeech } from '@/api/hermes/stt'
 import { fetchSttSettings, type SttProviderSettingsResponse } from '@/api/hermes/stt-settings'
-import { synthesizeSpeech } from '@/api/hermes/tts'
+import { isServerTtsProvider, synthesizeSpeech } from '@/api/hermes/tts'
 import { useBrowserSpeechRecognition } from '@/composables/useBrowserSpeechRecognition'
 import { useMicRecorder } from '@/composables/useMicRecorder'
 import { usePcmStreamRecorder } from '@/composables/usePcmStreamRecorder'
@@ -319,6 +319,13 @@ function currentSynthesisRequest(text: string, signal: AbortSignal) {
         voice: voiceSettings.doubaoVoice.value,
         stylePrompt: voiceSettings.doubaoStylePrompt.value || undefined,
       },
+    })
+  }
+  if (isServerTtsProvider(voiceSettings.provider.value)) {
+    return synthesizeSpeech({
+      provider: voiceSettings.provider.value,
+      text,
+      signal,
     })
   }
   return null

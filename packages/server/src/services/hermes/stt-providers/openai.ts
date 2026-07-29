@@ -7,12 +7,30 @@ export class SttProviderConfigError extends Error {}
 
 export const DEFAULT_OPENAI_STT_URL = 'https://api.openai.com/v1/audio/transcriptions'
 export const DEFAULT_MODEL = 'gpt-4o-transcribe'
+const DEFAULT_PROVIDER_CONFIG: Partial<Record<StoredSttProvider, { baseUrl: string; model: string }>> = {
+  groq: {
+    baseUrl: 'https://api.groq.com/openai/v1',
+    model: 'whisper-large-v3-turbo',
+  },
+  mistral: {
+    baseUrl: 'https://api.mistral.ai/v1',
+    model: 'voxtral-mini-latest',
+  },
+  deepinfra: {
+    baseUrl: 'https://api.deepinfra.com/v1/openai',
+    model: 'openai/whisper-large-v3',
+  },
+}
 
 const MAX_ERROR_DETAIL_LENGTH = 200
 const MAX_PROMPT_LENGTH = 1000
 
 function getProviderLabel(provider: StoredSttProvider): string {
-  return provider === 'custom' ? 'Custom STT' : 'OpenAI STT'
+  if (provider === 'custom') return 'Custom STT'
+  if (provider === 'deepinfra') return 'DeepInfra STT'
+  if (provider === 'groq') return 'Groq STT'
+  if (provider === 'mistral') return 'Mistral STT'
+  return 'OpenAI STT'
 }
 
 function buildTranscriptionsUrl(baseUrl: string, providerLabel: string): string {
@@ -35,15 +53,22 @@ function buildTranscriptionsUrl(baseUrl: string, providerLabel: string): string 
 }
 
 function resolveBaseUrl(input: SttTranscribeInput): string {
+  const configuredBaseUrl = String(input.settings.baseUrl || '').trim()
   if (input.provider === 'custom') {
-    const baseUrl = String(input.settings.baseUrl || '').trim()
+    const baseUrl = configuredBaseUrl
     if (!baseUrl) {
       throw new SttProviderConfigError('Custom STT baseUrl is required')
     }
     return buildTranscriptionsUrl(baseUrl, getProviderLabel(input.provider))
   }
 
-  return DEFAULT_OPENAI_STT_URL
+  if (configuredBaseUrl) {
+    return buildTranscriptionsUrl(configuredBaseUrl, getProviderLabel(input.provider))
+  }
+  const providerDefault = DEFAULT_PROVIDER_CONFIG[input.provider]
+  return providerDefault
+    ? buildTranscriptionsUrl(providerDefault.baseUrl, getProviderLabel(input.provider))
+    : DEFAULT_OPENAI_STT_URL
 }
 
 function requireApiKey(input: SttTranscribeInput): string {
@@ -77,7 +102,7 @@ export async function transcribeOpenAiCompatible(input: SttTranscribeInput): Pro
   }
 
   const baseUrl = resolveBaseUrl(input)
-  const model = trimOptional(input.settings.model) || DEFAULT_MODEL
+  const model = trimOptional(input.settings.model) || DEFAULT_PROVIDER_CONFIG[input.provider]?.model || DEFAULT_MODEL
   const language = trimOptional(input.settings.language)
   const prompt = trimOptional(input.settings.prompt)?.slice(0, MAX_PROMPT_LENGTH)
 
@@ -108,7 +133,7 @@ export async function transcribeOpenAiCompatible(input: SttTranscribeInput): Pro
   if (language) {
     form.append('language', language)
   }
-  if (prompt) {
+  if (prompt && input.provider !== 'mistral') {
     form.append('prompt', prompt)
   }
 

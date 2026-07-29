@@ -12605,6 +12605,142 @@
         ]
       }
     },
+    "/api/hermes/voice/proxy/{profile}/v1/audio/speech": {
+      "post": {
+        "tags": [
+          "TTS"
+        ],
+        "summary": "Create speech",
+        "description": "POST /api/hermes/voice/proxy/:profile/v1/audio/speech",
+        "operationId": "synthesizeVoiceProxyOpenAi",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/voice/proxy/{profile}/v1/audio/transcriptions": {
+      "post": {
+        "tags": [
+          "STT"
+        ],
+        "summary": "Create transcriptions",
+        "description": "POST /api/hermes/voice/proxy/:profile/v1/audio/transcriptions",
+        "operationId": "transcribeVoiceProxy",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/voice/proxy/{profile}/v1/tts": {
+      "post": {
+        "tags": [
+          "TTS"
+        ],
+        "summary": "Create tts",
+        "description": "POST /api/hermes/voice/proxy/:profile/v1/tts",
+        "operationId": "synthesizeVoiceProxy",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/weixin/qrcode": {
       "get": {
         "tags": [

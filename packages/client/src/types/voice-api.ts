@@ -16,6 +16,8 @@ export interface VoiceApiPreset {
   descriptionKey?: string
   baseUrl?: string
   defaultModel?: string
+  defaultVoice?: string
+  compatibility?: VoiceApiProviderCompatibility
   isBuiltin?: boolean
   isSecretRequired?: boolean
   capabilities?: {
@@ -26,6 +28,16 @@ export interface VoiceApiPreset {
     stylePrompt?: boolean
     voiceDesign?: boolean
     voiceClone?: boolean
+    language?: boolean
+    speed?: boolean
+    sampleRate?: boolean
+    bitRate?: boolean
+    groupId?: boolean
+    volume?: boolean
+    emotion?: boolean
+    diarize?: boolean
+    format?: boolean
+    tagAudioEvents?: boolean
   }
 }
 

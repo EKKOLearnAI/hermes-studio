@@ -208,6 +208,10 @@ const sttAudioTranscodeOptions = computed(() => [
   { label: t('settings.voice.sttAudioTranscodeNone'), value: 'none' },
   { label: t('settings.voice.sttAudioTranscodeFfmpeg'), value: 'ffmpeg' },
 ])
+const booleanOptions = computed(() => [
+  { label: t('settings.voice.optionDisabled'), value: 'false' },
+  { label: t('settings.voice.optionEnabled'), value: 'true' },
+])
 
 function handleDoubaoVoiceUpdate(value: string) {
   setField('voice', value)
@@ -346,6 +350,37 @@ function handleDoubaoVoiceUpdate(value: string) {
           </NFormItem>
         </template>
 
+        <NFormItem
+          v-if="connection.kind === 'tts' && capabilities.language"
+          :label="t('settings.voice.sttLanguage')"
+        >
+          <NInput :value="stringField('language')" @update:value="value => setField('language', value)" />
+        </NFormItem>
+
+        <NFormItem v-if="capabilities.speed" :label="t('settings.voice.providerSpeed')">
+          <NInput :value="stringField('speed')" @update:value="value => setField('speed', value)" />
+        </NFormItem>
+
+        <NFormItem v-if="capabilities.sampleRate" :label="t('settings.voice.providerSampleRate')">
+          <NInput :value="stringField('sampleRate')" @update:value="value => setField('sampleRate', value)" />
+        </NFormItem>
+
+        <NFormItem v-if="capabilities.bitRate" :label="t('settings.voice.providerBitRate')">
+          <NInput :value="stringField('bitRate')" @update:value="value => setField('bitRate', value)" />
+        </NFormItem>
+
+        <NFormItem v-if="capabilities.groupId" :label="t('settings.voice.providerGroupId')">
+          <NInput :value="stringField('groupId')" @update:value="value => setField('groupId', value)" />
+        </NFormItem>
+
+        <NFormItem v-if="capabilities.volume" :label="t('settings.voice.providerVolume')">
+          <NInput :value="stringField('volume')" @update:value="value => setField('volume', value)" />
+        </NFormItem>
+
+        <NFormItem v-if="capabilities.emotion" :label="t('settings.voice.providerEmotion')">
+          <NInput :value="stringField('emotion')" @update:value="value => setField('emotion', value)" />
+        </NFormItem>
+
         <template v-if="connection.kind === 'stt' && connection.provider !== 'browser'">
           <NFormItem :label="t('settings.voice.sttAudioTranscode')">
             <NSelect
@@ -359,6 +394,27 @@ function handleDoubaoVoiceUpdate(value: string) {
           </NFormItem>
           <NFormItem :label="t('settings.voice.sttPrompt')">
             <NInput :value="stringField('prompt')" type="textarea" :rows="2" @update:value="value => setField('prompt', value)" />
+          </NFormItem>
+          <NFormItem v-if="capabilities.diarize" :label="t('settings.voice.providerDiarize')">
+            <NSelect
+              :value="stringField('diarize') || 'false'"
+              :options="booleanOptions"
+              @update:value="value => setField('diarize', value)"
+            />
+          </NFormItem>
+          <NFormItem v-if="capabilities.format" :label="t('settings.voice.providerFormatText')">
+            <NSelect
+              :value="stringField('format') || 'true'"
+              :options="booleanOptions"
+              @update:value="value => setField('format', value)"
+            />
+          </NFormItem>
+          <NFormItem v-if="capabilities.tagAudioEvents" :label="t('settings.voice.providerTagAudioEvents')">
+            <NSelect
+              :value="stringField('tagAudioEvents') || 'false'"
+              :options="booleanOptions"
+              @update:value="value => setField('tagAudioEvents', value)"
+            />
           </NFormItem>
         </template>
       </NForm>

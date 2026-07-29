@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
+vi.mock('../../packages/server/src/services/hermes/voice-config-sync', () => ({
+  syncVoiceConfigToHermesProfile: vi.fn(async () => ({ stt: 'synced', tts: 'unchanged' })),
+}))
 
 function jsonResponse(body: unknown, init: { status?: number; statusText?: string } = {}) {
   return {

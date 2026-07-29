@@ -1,7 +1,19 @@
 import { ref, watch } from 'vue'
 import { DOUBAO_TTS_2_RESOURCE_ID, DOUBAO_TTS_DEFAULT_VOICE } from '@/constants/doubaoTtsVoices'
 
-export type TtsProvider = 'webspeech' | 'openai' | 'custom' | 'edge' | 'mimo' | 'doubao'
+export type TtsProvider =
+  | 'webspeech'
+  | 'openai'
+  | 'custom'
+  | 'edge'
+  | 'mimo'
+  | 'doubao'
+  | 'elevenlabs'
+  | 'gemini'
+  | 'xai'
+  | 'mistral'
+  | 'minimax'
+  | 'deepinfra'
 export type MimoAuthMode = 'api-key' | 'bearer' | 'both'
 
 export interface VoiceSettingsData {

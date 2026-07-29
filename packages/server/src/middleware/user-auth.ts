@@ -104,7 +104,8 @@ const SERVER_TOKEN_EXACT_PATHS = new Set([
 ])
 
 function allowsServerTokenPath(path: string): boolean {
-  return SERVER_TOKEN_EXACT_PATHS.has(path)
+  return SERVER_TOKEN_EXACT_PATHS.has(path) ||
+    path.startsWith('/api/hermes/voice/proxy/')
 }
 
 function isLoopbackRequest(ctx: Context): boolean {

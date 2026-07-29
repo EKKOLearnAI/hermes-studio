@@ -5,10 +5,28 @@ import {
 } from './schemas'
 import { normalizeSafeTtsBaseUrl } from '../../services/hermes/tts-providers/url-safety'
 
-export type StoredSttProvider = 'openai' | 'custom' | 'doubao'
+export type StoredSttProvider =
+  | 'openai'
+  | 'custom'
+  | 'doubao'
+  | 'groq'
+  | 'mistral'
+  | 'xai'
+  | 'elevenlabs'
+  | 'deepinfra'
 export type ActiveSttProvider = 'browser' | StoredSttProvider
 
-const SETTINGS_KEYS = ['baseUrl', 'baseUrlPresets', 'model', 'language', 'prompt', 'audioTranscode'] as const
+const SETTINGS_KEYS = [
+  'baseUrl',
+  'baseUrlPresets',
+  'model',
+  'language',
+  'prompt',
+  'audioTranscode',
+  'diarize',
+  'format',
+  'tagAudioEvents',
+] as const
 const SECRET_KEYS = ['apiKey'] as const
 
 type SttSettingKey = (typeof SETTINGS_KEYS)[number]
@@ -31,13 +49,27 @@ export class SttSettingsValidationError extends Error {}
 const STORED_MARKER = '[stored]'
 const MAX_PROMPT_LENGTH = 1000
 const MAX_BASE_URL_PRESETS = 20
-const PROVIDERS: StoredSttProvider[] = ['openai', 'custom', 'doubao']
+const PROVIDERS: StoredSttProvider[] = [
+  'openai',
+  'custom',
+  'doubao',
+  'groq',
+  'mistral',
+  'xai',
+  'elevenlabs',
+  'deepinfra',
+]
 const ACTIVE_PROVIDERS: ActiveSttProvider[] = ['browser', ...PROVIDERS]
 const PROVIDER_SQL_PLACEHOLDERS = PROVIDERS.map(() => '?').join(', ')
 const PROVIDER_LABELS: Record<StoredSttProvider, string> = {
   openai: 'OpenAI STT',
   custom: 'Custom STT',
   doubao: 'Doubao STT',
+  groq: 'Groq STT',
+  mistral: 'Mistral STT',
+  xai: 'xAI STT',
+  elevenlabs: 'ElevenLabs STT',
+  deepinfra: 'DeepInfra STT',
 }
 type StoredRow = {
   profile: string

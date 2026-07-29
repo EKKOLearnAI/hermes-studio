@@ -1,5 +1,6 @@
 import { transcribeDoubaoFile } from './doubao'
 import { transcribeOpenAiCompatible } from './openai'
+import { transcribeElevenLabs, transcribeXai } from './hermes-cloud'
 import type { SttTranscribeInput, SttTranscribeResult } from './types'
 
 export * from './doubao'
@@ -10,7 +11,14 @@ export async function transcribeWithProvider(input: SttTranscribeInput): Promise
   switch (input.provider) {
     case 'openai':
     case 'custom':
+    case 'groq':
+    case 'mistral':
+    case 'deepinfra':
       return transcribeOpenAiCompatible(input)
+    case 'xai':
+      return transcribeXai(input)
+    case 'elevenlabs':
+      return transcribeElevenLabs(input)
     case 'doubao':
       return transcribeDoubaoFile(input)
     default:

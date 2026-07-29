@@ -5,7 +5,18 @@ import {
 } from './schemas'
 import { normalizeSafeTtsBaseUrl } from '../../services/hermes/tts-providers/url-safety'
 
-export type StoredTtsProvider = 'openai' | 'custom' | 'edge' | 'mimo' | 'doubao'
+export type StoredTtsProvider =
+  | 'openai'
+  | 'custom'
+  | 'edge'
+  | 'mimo'
+  | 'doubao'
+  | 'elevenlabs'
+  | 'gemini'
+  | 'xai'
+  | 'mistral'
+  | 'minimax'
+  | 'deepinfra'
 export type ActiveTtsProvider = StoredTtsProvider
 
 const SETTINGS_KEYS = [
@@ -20,6 +31,13 @@ const SETTINGS_KEYS = [
   'voiceDesignDesc',
   'voiceCloneFormat',
   'stylePrompt',
+  'language',
+  'sampleRate',
+  'bitRate',
+  'speed',
+  'volume',
+  'emotion',
+  'groupId',
 ] as const
 const SECRET_KEYS = ['apiKey'] as const
 
@@ -43,7 +61,19 @@ export class TtsSettingsValidationError extends Error {}
 const STORED_MARKER = '[stored]'
 const MAX_TEXT_SETTING_LENGTH = 2000
 const MAX_BASE_URL_PRESETS = 20
-const PROVIDERS: StoredTtsProvider[] = ['custom', 'doubao', 'edge', 'mimo', 'openai']
+const PROVIDERS: StoredTtsProvider[] = [
+  'custom',
+  'deepinfra',
+  'doubao',
+  'edge',
+  'elevenlabs',
+  'gemini',
+  'mimo',
+  'minimax',
+  'mistral',
+  'openai',
+  'xai',
+]
 const ACTIVE_PROVIDERS: ActiveTtsProvider[] = PROVIDERS
 const PROVIDER_SQL_PLACEHOLDERS = PROVIDERS.map(() => '?').join(', ')
 const PROVIDER_LABELS: Record<StoredTtsProvider, string> = {
@@ -52,6 +82,12 @@ const PROVIDER_LABELS: Record<StoredTtsProvider, string> = {
   edge: 'Edge TTS',
   mimo: 'MiMo TTS',
   doubao: 'Doubao TTS',
+  elevenlabs: 'ElevenLabs TTS',
+  gemini: 'Gemini TTS',
+  xai: 'xAI TTS',
+  mistral: 'Mistral TTS',
+  minimax: 'MiniMax TTS',
+  deepinfra: 'DeepInfra TTS',
 }
 
 type StoredRow = {

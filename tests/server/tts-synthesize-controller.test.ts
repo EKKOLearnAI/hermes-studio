@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('../../packages/server/src/services/hermes/voice-config-sync', () => ({
+  syncVoiceConfigToHermesProfile: vi.fn(async () => ({ stt: 'unchanged', tts: 'synced' })),
+}))
+
 function createMockCtx(body: Record<string, any> = {}) {
   const headers: Record<string, string> = {}
   let requestAbortHandler: (() => void) | undefined
@@ -883,6 +887,8 @@ describe('tts routes', () => {
     const deleteSecret = vi.fn(async (ctx: any) => { ctx.body = { route: 'deleteSecret' } })
     const probeProvider = vi.fn(async (ctx: any) => { ctx.body = { route: 'probeProvider' } })
     const mcuAudio = vi.fn(async (ctx: any) => { ctx.body = { route: 'mcuAudio' } })
+    const synthesizeVoiceProxy = vi.fn(async (ctx: any) => { ctx.body = { route: 'synthesizeVoiceProxy' } })
+    const synthesizeVoiceProxyOpenAi = vi.fn(async (ctx: any) => { ctx.body = { route: 'synthesizeVoiceProxyOpenAi' } })
 
     vi.doMock('../../packages/server/src/controllers/hermes/tts', () => ({
       generate,
@@ -896,6 +902,8 @@ describe('tts routes', () => {
       deleteBaseUrlPreset,
       deleteSecret,
       probeProvider,
+      synthesizeVoiceProxy,
+      synthesizeVoiceProxyOpenAi,
     }))
 
     const { ttsRoutes, ttsProtectedRoutes } = await import('../../packages/server/src/routes/hermes/tts')
@@ -910,6 +918,8 @@ describe('tts routes', () => {
     expect(paths).not.toContain('/api/hermes/tts/synthesize')
     expect(protectedPaths).toEqual(expect.arrayContaining([
       '/api/hermes/tts/settings',
+      '/api/hermes/voice/proxy/:profile/v1/tts',
+      '/api/hermes/voice/proxy/:profile/v1/audio/speech',
       '/api/hermes/tts/settings/active',
       '/api/hermes/tts/settings/:provider',
       '/api/hermes/tts/settings/:provider',

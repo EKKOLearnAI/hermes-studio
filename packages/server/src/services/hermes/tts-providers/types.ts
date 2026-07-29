@@ -1,4 +1,15 @@
-export type TtsProviderId = 'edge' | 'openai' | 'custom' | 'mimo' | 'doubao'
+export type TtsProviderId =
+  | 'edge'
+  | 'openai'
+  | 'custom'
+  | 'mimo'
+  | 'doubao'
+  | 'elevenlabs'
+  | 'gemini'
+  | 'xai'
+  | 'mistral'
+  | 'minimax'
+  | 'deepinfra'
 
 export interface TtsSynthesisRequest {
   text: string
@@ -19,7 +30,7 @@ export interface TtsProvider<TOptions extends object = Record<string, unknown>> 
 }
 
 export interface OpenaiTtsProviderOptions {
-  baseUrl: string
+  baseUrl?: string
   apiKey?: string
   model?: string
   voice?: string
@@ -28,6 +39,22 @@ export interface OpenaiTtsProviderOptions {
   format?: string
   sampleRate?: number
   sample_rate?: number
+}
+
+export interface CloudTtsProviderOptions {
+  baseUrl?: string
+  apiKey?: string
+  model?: string
+  voice?: string
+  language?: string
+  sampleRate?: string | number
+  bitRate?: string | number
+  speed?: string | number
+  volume?: string | number
+  pitch?: string | number
+  emotion?: string
+  groupId?: string
+  format?: string
 }
 
 export type MimoAuthMode = 'api-key' | 'bearer' | 'both'

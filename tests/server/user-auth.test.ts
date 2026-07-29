@@ -192,7 +192,9 @@ describe('user auth tables and middleware', () => {
   it.each([
     '/api/hermes/media/apikey-image-generate',
     '/api/hermes/media/grok-image-to-video',
-  ])('still allows server token for local media agent endpoint %s', async (path) => {
+    '/api/hermes/voice/proxy/default/v1/tts',
+    '/api/hermes/voice/proxy/work/v1/audio/transcriptions',
+  ])('allows server token for an approved loopback agent endpoint %s', async (path) => {
     vi.stubEnv('AUTH_TOKEN', 'server-token')
     const { auth } = await initUsers()
     const ctx = {
@@ -217,6 +219,8 @@ describe('user auth tables and middleware', () => {
   it.each([
     '/api/hermes/media/apikey-image-generate',
     '/api/hermes/media/grok-image-to-video',
+    '/api/hermes/voice/proxy/default/v1/tts',
+    '/api/hermes/voice/proxy/work/v1/audio/transcriptions',
     '/api/devices',
     '/api/devices/scan',
     '/api/devices/device-1/connect',

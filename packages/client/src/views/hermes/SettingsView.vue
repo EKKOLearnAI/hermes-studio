@@ -19,7 +19,6 @@ import PrivacySettings from "@/components/hermes/settings/PrivacySettings.vue";
 import ModelSettings from "@/components/hermes/settings/ModelSettings.vue";
 import AccountSettings from "@/components/hermes/settings/AccountSettings.vue";
 import UserManagementSettings from "@/components/hermes/settings/UserManagementSettings.vue";
-import VoiceSettings from "@/components/hermes/settings/VoiceSettings.vue";
 import { isStoredSuperAdmin } from "@/api/client";
 import { useProfilesStore } from "@/stores/hermes/profiles";
 
@@ -42,7 +41,6 @@ const validTabs = computed(() => new Set([
   "session",
   "privacy",
   "models",
-  "voice",
 ]));
 
 function normalizeTab(value: unknown): string {
@@ -61,6 +59,16 @@ function handleTabUpdate(tab: string) {
 }
 
 watch(() => route.query.tab, (tab) => {
+  if (tab === "voice") {
+    void router.replace({
+      name: "hermes.models",
+      query: {
+        ...route.query,
+        tab: "tts",
+      },
+    });
+    return;
+  }
   activeTab.value = normalizeTab(tab);
 }, { immediate: true });
 
@@ -119,9 +127,6 @@ onMounted(() => {
           </NTabPane>
           <NTabPane name="models" :tab="t('settings.tabs.models')">
             <ModelSettings />
-          </NTabPane>
-          <NTabPane name="voice" :tab="t('settings.tabs.voice')">
-            <VoiceSettings />
           </NTabPane>
         </NTabs>
       </NSpin>

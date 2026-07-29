@@ -187,6 +187,12 @@ function backendTranscribeOptions(): {
     }
   }
 
+  if (sttSettings.provider.value !== 'browser') {
+    return {
+      provider: sttSettings.provider.value,
+    }
+  }
+
   return {
     provider: 'openai',
     language: sttSettings.openaiLanguage.value.trim() || undefined,

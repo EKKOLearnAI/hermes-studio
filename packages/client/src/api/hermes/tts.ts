@@ -7,7 +7,36 @@ export interface TtsOptions {
   pitch?: string  // Edge TTS pitch format: "+NNHz" or "-NNHz"
 }
 
-export type TtsProviderId = 'edge' | 'openai' | 'custom' | 'mimo' | 'doubao'
+export type TtsProviderId =
+  | 'edge'
+  | 'openai'
+  | 'custom'
+  | 'mimo'
+  | 'doubao'
+  | 'elevenlabs'
+  | 'gemini'
+  | 'xai'
+  | 'mistral'
+  | 'minimax'
+  | 'deepinfra'
+
+const TTS_PROVIDER_IDS = new Set<TtsProviderId>([
+  'edge',
+  'openai',
+  'custom',
+  'mimo',
+  'doubao',
+  'elevenlabs',
+  'gemini',
+  'xai',
+  'mistral',
+  'minimax',
+  'deepinfra',
+])
+
+export function isServerTtsProvider(value: unknown): value is TtsProviderId {
+  return typeof value === 'string' && TTS_PROVIDER_IDS.has(value as TtsProviderId)
+}
 
 export interface SynthesizeSpeechRequest {
   provider: TtsProviderId

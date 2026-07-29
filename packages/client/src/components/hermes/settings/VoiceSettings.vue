@@ -5,12 +5,14 @@ import { useI18n } from 'vue-i18n'
 import { useSpeech, type MimoTtsOptions, type OpenaiTtsOptions } from '@/composables/useSpeech'
 import { usePcmStreamRecorder } from '@/composables/usePcmStreamRecorder'
 import { transcribeSpeech } from '@/api/hermes/stt'
+import { isServerTtsProvider } from '@/api/hermes/tts'
 import { useVoiceApiConnections } from '@/composables/useVoiceApiConnections'
 import { useVoiceSettings } from '@/composables/useVoiceSettings'
 import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
 import VoiceApiCard, { type VoiceApiCardTestState } from './voice/VoiceApiCard.vue'
 import VoiceApiFormModal from './voice/VoiceApiFormModal.vue'
 import VoiceApiConfigurator from './voice/VoiceApiConfigurator.vue'
+import HermesVoiceConfigSummary from './voice/HermesVoiceConfigSummary.vue'
 import type { VoiceApiConnection, VoiceApiKind, VoiceApiProvider, VoiceApiSavePayload } from '@/types/voice-api'
 import type { StoredSttProvider } from '@/api/hermes/stt-settings'
 
@@ -19,6 +21,12 @@ interface VoiceApiFormSavedPayload extends VoiceApiSavePayload {
     provider: VoiceApiProvider
   }
 }
+
+const props = withDefaults(defineProps<{
+  kind?: VoiceApiKind | 'all'
+}>(), {
+  kind: 'all',
+})
 
 const { t } = useI18n()
 const message = useMessage()
@@ -33,9 +41,20 @@ const showConfigurator = ref(false)
 const editingConnection = ref<VoiceApiConnection | null>(null)
 const sttRecorder = usePcmStreamRecorder({ voiceActivityThreshold: 0.02 })
 const cardTestStates = ref<Record<string, VoiceApiCardTestState>>({})
+const hermesConfigRevision = ref(0)
 
 const activeTtsDescription = computed(() => voiceApi.activeTtsConnection.value?.label || t('settings.voice.noneSelected'))
 const activeSttDescription = computed(() => voiceApi.activeSttConnection.value?.label || t('settings.voice.noneSelected'))
+const showTts = computed(() => props.kind !== 'stt')
+const showStt = computed(() => props.kind !== 'tts')
+const ttsStudioAvailable = computed(() => {
+  const connection = voiceApi.activeTtsConnection.value
+  return !!connection && (connection.isBuiltin || connection.hasSecret)
+})
+const sttStudioAvailable = computed(() => {
+  const connection = voiceApi.activeSttConnection.value
+  return !!connection && connection.provider !== 'browser' && connection.hasSecret
+})
 
 onMounted(async () => {
   await voiceApi.refresh()
@@ -73,6 +92,7 @@ async function handleAddSaved(data: VoiceApiFormSavedPayload) {
       settings: data.settings,
       secrets: data.secrets,
     })
+    hermesConfigRevision.value += 1
     showAddModal.value = false
     message.success(t('settings.voice.ttsSaved'))
   } catch (err) {
@@ -88,6 +108,7 @@ function openConfigurator(conn: VoiceApiConnection) {
 async function handleConfigSave(conn: VoiceApiConnection, payload: VoiceApiSavePayload) {
   try {
     await voiceApi.saveConnection(conn.kind, conn.provider, payload)
+    hermesConfigRevision.value += 1
     showConfigurator.value = false
     message.success(t('settings.voice.ttsSaved'))
   } catch (err) {
@@ -98,6 +119,7 @@ async function handleConfigSave(conn: VoiceApiConnection, payload: VoiceApiSaveP
 async function handleRemove(conn: VoiceApiConnection) {
   try {
     await voiceApi.deleteSecret(conn.kind, conn.provider)
+    hermesConfigRevision.value += 1
     setCardTestState(conn.id, 'idle')
     message.success(t('settings.voice.ttsCleared'))
   } catch (err) {
@@ -107,14 +129,23 @@ async function handleRemove(conn: VoiceApiConnection) {
 
 async function handleSetActive(conn: VoiceApiConnection) {
   await voiceApi.setActiveConnection(conn.kind, conn.id)
+  hermesConfigRevision.value += 1
 }
 
 async function handleActiveTtsUpdate(id: string) {
   await voiceApi.setActiveConnection('tts', id)
+  hermesConfigRevision.value += 1
 }
 
 async function handleActiveSttUpdate(id: string) {
   await voiceApi.setActiveConnection('stt', id)
+  hermesConfigRevision.value += 1
+}
+
+async function handleActivateStudio(kind: VoiceApiKind) {
+  const id = kind === 'tts' ? voiceApi.activeTtsId.value : voiceApi.activeSttId.value
+  await voiceApi.setActiveConnection(kind, id)
+  hermesConfigRevision.value += 1
 }
 
 function ttsOptionsFor(connection: VoiceApiConnection): Record<string, unknown> {
@@ -128,7 +159,7 @@ function ttsOptionsFor(connection: VoiceApiConnection): Record<string, unknown> 
 
 function openaiOptionsFor(connection: VoiceApiConnection): OpenaiTtsOptions {
   const options = ttsOptionsFor(connection)
-  const provider = connection.provider === 'edge' || connection.provider === 'openai' || connection.provider === 'custom' || connection.provider === 'doubao'
+  const provider = connection.provider !== 'mimo' && isServerTtsProvider(connection.provider)
     ? connection.provider
     : undefined
   const edgeRate = Number(options.rate)
@@ -183,7 +214,7 @@ async function handleTtsTest(connection: VoiceApiConnection) {
   try {
     if (connection.provider === 'mimo') {
       await speech.mimoPlay(connection.id, text, mimoOptionsFor(connection))
-    } else if (connection.provider === 'edge' || connection.provider === 'openai' || connection.provider === 'custom' || connection.provider === 'doubao') {
+    } else if (isServerTtsProvider(connection.provider)) {
       await speech.openaiPlay(connection.id, text, openaiOptionsFor(connection))
     }
     setCardTestState(connection.id, 'success', t('settings.voice.testSuccess'))
@@ -244,7 +275,13 @@ async function handleCardTest(connection: VoiceApiConnection) {
 
 <template>
   <div class="voice-settings">
-    <section class="settings-section voice-provider-section" aria-labelledby="tts-providers-title">
+    <section v-if="showTts" class="settings-section voice-provider-section" aria-labelledby="tts-providers-title">
+      <HermesVoiceConfigSummary
+        :key="`tts-${hermesConfigRevision}`"
+        kind="tts"
+        :studio-available="ttsStudioAvailable"
+        @activate-studio="handleActivateStudio('tts')"
+      />
       <header class="section-header">
         <div class="section-copy">
           <h4 id="tts-providers-title" class="section-title">{{ t('settings.voice.ttsProvidersTitle') }}</h4>
@@ -292,7 +329,13 @@ async function handleCardTest(connection: VoiceApiConnection) {
       </div>
     </section>
 
-    <section class="settings-section voice-provider-section" aria-labelledby="stt-providers-title">
+    <section v-if="showStt" class="settings-section voice-provider-section" aria-labelledby="stt-providers-title">
+      <HermesVoiceConfigSummary
+        :key="`stt-${hermesConfigRevision}`"
+        kind="stt"
+        :studio-available="sttStudioAvailable"
+        @activate-studio="handleActivateStudio('stt')"
+      />
       <header class="section-header">
         <div class="section-copy">
           <h4 id="stt-providers-title" class="section-title">{{ t('settings.voice.sttProvidersTitle') }}</h4>

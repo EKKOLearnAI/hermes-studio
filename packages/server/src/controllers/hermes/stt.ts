@@ -22,6 +22,8 @@ import { SttNoSpeechDetectedError } from '../../services/hermes/stt-providers/ty
 import { logger } from '../../services/logger'
 import { getActiveGlobalAgentServer } from '../../services/global-agent/server'
 import { MCU_TTS_SAMPLE_RATE, mcuPromptText, mcuPromptUrl } from '../../services/hermes/mcu-prompts'
+import { syncVoiceConfigToHermesProfile } from '../../services/hermes/voice-config-sync'
+import { listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
 
 const MAX_STT_UPLOAD_SIZE = 50 * 1024 * 1024
 const MCU_STT_TIMEOUT_MS = 120_000
@@ -55,6 +57,11 @@ function requestedProfile(ctx: Context): string {
   const queryProfile = typeof ctx.query?.profile === 'string' ? ctx.query.profile : ''
   const headerProfile = ctx.get?.('x-hermes-profile') || ''
   return (ctx.state?.profile?.name || queryProfile || headerProfile || 'default').trim() || 'default'
+}
+
+function requestedVoiceProxyProfile(ctx: Context): string | null {
+  const profile = String(ctx.params?.profile || '').trim()
+  return profile && listProfileNamesFromDisk().includes(profile) ? profile : null
 }
 
 function bearerToken(ctx: Context): string {
@@ -346,6 +353,7 @@ export async function saveSettings(ctx: Context) {
       ? saveActiveSttProvider(profile, storedProvider)
       : saveActiveSttProvider(profile, assertActiveSttProvider(String(body.activeProvider)))
 
+    await syncVoiceConfigToHermesProfile(profile)
     ctx.body = { setting, activeProvider }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
@@ -387,6 +395,7 @@ export async function deleteSecret(ctx: Context) {
     const profile = requestedProfile(ctx)
     const storedProvider = assertStoredSttProvider(provider)
     const setting = clearStoredSttSecret(profile, storedProvider, secretName)
+    await syncVoiceConfigToHermesProfile(profile)
     ctx.body = { success: true, setting }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
@@ -408,6 +417,7 @@ export async function deleteProvider(ctx: Context) {
     const activeProvider = currentActiveProvider === storedProvider
       ? saveActiveSttProvider(profile, 'browser')
       : currentActiveProvider
+    await syncVoiceConfigToHermesProfile(profile)
     ctx.body = { success: true, deleted, activeProvider }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
@@ -424,6 +434,7 @@ export async function saveActiveProvider(ctx: Context) {
   try {
     const profile = requestedProfile(ctx)
     const activeProvider = saveActiveSttProvider(profile, assertActiveSttProvider(String(body?.provider || '')))
+    await syncVoiceConfigToHermesProfile(profile)
     ctx.body = { activeProvider }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
@@ -510,6 +521,85 @@ export async function transcribe(ctx: Context) {
     ctx.status = 502
     const detail = error instanceof Error ? error.message : ''
     ctx.body = { error: detail ? `STT transcription failed: ${detail}` : 'STT transcription failed' }
+  }
+}
+
+/**
+ * OpenAI-compatible STT endpoint used by the Hermes `hermes-studio` command
+ * provider. The profile is encoded in the URL written to that profile's
+ * config.yaml, so no process-global profile inference is needed.
+ */
+export async function transcribeVoiceProxy(ctx: Context) {
+  const profile = requestedVoiceProxyProfile(ctx)
+  if (!profile) {
+    ctx.status = 404
+    ctx.body = { error: 'unknown Hermes profile' }
+    return
+  }
+
+  const parsed = await readMultipartBody(ctx)
+  if ('error' in parsed) {
+    ctx.status = parsed.status
+    ctx.body = { error: parsed.error }
+    return
+  }
+
+  const audio = parsed.files.find(part => part.fieldName === 'file' || part.fieldName === 'audio')
+  if (!audio) {
+    ctx.status = 400
+    ctx.body = { error: 'file is required' }
+    return
+  }
+
+  const activeProvider = getActiveSttProvider(profile)
+  if (!activeProvider || activeProvider === 'browser' || !isStoredSttProvider(activeProvider)) {
+    ctx.status = 409
+    ctx.body = { error: 'no server-backed Web UI STT provider is active' }
+    return
+  }
+
+  const setting = getSttProviderSetting(profile, activeProvider, { includeSecrets: true })
+  if (!setting?.secrets.apiKey) {
+    ctx.status = 409
+    ctx.body = { error: 'the active Web UI STT provider is not configured' }
+    return
+  }
+
+  const controller = createRequestAbortController(ctx)
+  try {
+    const result = await transcribeWithProvider({
+      provider: activeProvider,
+      audio: audio.data,
+      fileName: audio.filename || 'audio',
+      mimeType: audio.contentType || 'application/octet-stream',
+      settings: setting.settings,
+      secrets: setting.secrets,
+      signal: controller.signal,
+    })
+    if (parsed.fields.response_format === 'text') {
+      ctx.set('Content-Type', 'text/plain; charset=utf-8')
+      ctx.body = result.text
+    } else {
+      ctx.body = { text: result.text }
+    }
+  } catch (error) {
+    if (isAbortError(error)) {
+      ctx.status = 499
+      ctx.body = { error: 'STT request aborted' }
+      return
+    }
+    if (error instanceof SttProviderConfigError) {
+      ctx.status = 400
+      ctx.body = { error: error.message }
+      return
+    }
+    if (error instanceof SttNoSpeechDetectedError) {
+      ctx.status = 400
+      ctx.body = { error: error.message, code: 'no_speech_detected' }
+      return
+    }
+    ctx.status = 502
+    ctx.body = { error: error instanceof Error ? error.message : 'Hermes Studio transcription failed' }
   }
 }
 

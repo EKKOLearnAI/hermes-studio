@@ -31,6 +31,7 @@ import { speedToEdgeRate, hzToEdgePitch } from "@/utils/ttsHelpers";
 import { formatChatTimestamp } from "@/utils/chat-timestamp";
 import { openSubagentStream, subagentIdFromToolCall } from "@/utils/hermes/subagent-stream";
 import type { WorkspaceRunChangeSummary } from "@/api/hermes/sessions";
+import { isServerTtsProvider } from "@/api/hermes/tts";
 
 const MarkdownRenderer = defineAsyncComponent(async () => (await import("./MarkdownRenderer.vue")).default);
 
@@ -668,13 +669,13 @@ const canPlaySpeech = computed(() => {
   if (props.message.role !== 'assistant') return false
   if (!copyableContent.value) return false
   // OpenAI / Custom / Edge / MiMo / Doubao 不依赖浏览器 Web Speech API
-  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge' || voiceSettings.provider.value === 'mimo' || voiceSettings.provider.value === 'doubao') return true
+  if (isServerTtsProvider(voiceSettings.provider.value)) return true
   return speech.isSupported
 })
 
 const isPlayingThisMessage = computed(() => {
   // OpenAI / Custom / Edge / MiMo / Doubao 模式
-  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge' || voiceSettings.provider.value === 'mimo' || voiceSettings.provider.value === 'doubao') {
+  if (isServerTtsProvider(voiceSettings.provider.value)) {
     return speech.currentCustomMessageId.value === props.message.id && speech.isCustomPlaying.value
   }
   return speech.currentMessageId.value === props.message.id && speech.isPlaying.value
@@ -682,7 +683,7 @@ const isPlayingThisMessage = computed(() => {
 
 const isPausedThisMessage = computed(() => {
   // OpenAI / Custom / Edge / MiMo / Doubao 模式
-  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge' || voiceSettings.provider.value === 'mimo' || voiceSettings.provider.value === 'doubao') {
+  if (isServerTtsProvider(voiceSettings.provider.value)) {
     return speech.currentCustomMessageId.value === props.message.id && speech.isCustomPaused.value
   }
   return speech.currentMessageId.value === props.message.id && speech.isPaused.value
@@ -769,6 +770,13 @@ function handleSpeechToggle() {
     return
   }
 
+  if (isServerTtsProvider(voiceSettings.provider.value)) {
+    speech.openaiToggle(props.message.id, content, {
+      provider: voiceSettings.provider.value,
+    })
+    return
+  }
+
   // Web Speech API 模式
   if (voiceSettings.provider.value === 'webspeech') {
     speech.toggleBrowser(props.message.id, content, {
@@ -839,6 +847,10 @@ onMounted(() => {
           model: voiceSettings.doubaoModel.value,
           voice: voiceSettings.doubaoVoice.value,
           stylePrompt: voiceSettings.doubaoStylePrompt.value || undefined,
+        }).catch(handleAutoplayTtsError)
+      } else if (isServerTtsProvider(voiceSettings.provider.value)) {
+        void speech.openaiPlay(props.message.id, content, {
+          provider: voiceSettings.provider.value,
         }).catch(handleAutoplayTtsError)
       } else if (voiceSettings.provider.value === 'webspeech') {
         const text = speech.extractReadableText(content)

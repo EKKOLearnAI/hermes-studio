@@ -24,6 +24,7 @@ import { isPreviewableFile } from '@/utils/hermes/file-preview'
 import ToolChangeCard from '@/components/hermes/chat/ToolChangeCard.vue'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
+import { isServerTtsProvider } from '@/api/hermes/tts'
 
 const MarkdownRenderer = defineAsyncComponent(async () => (await import('../chat/MarkdownRenderer.vue')).default)
 
@@ -265,17 +266,17 @@ function openWorkspaceDiffFile(file: GroupWorkspaceDiffFile): void {
 const canPlaySpeech = computed(() => {
     if (props.message.role !== 'assistant') return false
     if (!assistantBody.value.trim()) return false
-    if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge' || voiceSettings.provider.value === 'mimo') return true
+    if (isServerTtsProvider(voiceSettings.provider.value)) return true
     return speech.isSupported
 })
 const isPlayingThisMessage = computed(() => {
-    if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge' || voiceSettings.provider.value === 'mimo') {
+    if (isServerTtsProvider(voiceSettings.provider.value)) {
         return speech.currentCustomMessageId.value === props.message.id && speech.isCustomPlaying.value
     }
     return speech.currentMessageId.value === props.message.id && speech.isPlaying.value
 })
 const isPausedThisMessage = computed(() => {
-    if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge' || voiceSettings.provider.value === 'mimo') {
+    if (isServerTtsProvider(voiceSettings.provider.value)) {
         return speech.currentCustomMessageId.value === props.message.id && speech.isCustomPaused.value
     }
     return speech.currentMessageId.value === props.message.id && speech.isPaused.value
@@ -499,6 +500,14 @@ function playSpeech(content: string, autoplay = false) {
             model: voiceSettings.doubaoModel.value,
             voice: voiceSettings.doubaoVoice.value,
             stylePrompt: voiceSettings.doubaoStylePrompt.value || undefined,
+        }
+        if (autoplay) void speech.openaiPlay(props.message.id, content, options).catch(handleAutoplayTtsError)
+        else speech.openaiToggle(props.message.id, content, options)
+        return
+    }
+    if (isServerTtsProvider(voiceSettings.provider.value)) {
+        const options = {
+            provider: voiceSettings.provider.value,
         }
         if (autoplay) void speech.openaiPlay(props.message.id, content, options).catch(handleAutoplayTtsError)
         else speech.openaiToggle(props.message.id, content, options)

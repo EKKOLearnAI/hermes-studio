@@ -1,7 +1,6 @@
 import Koa from 'koa'
 import type { Context } from 'koa'
 import cors from '@koa/cors'
-import bodyParser from '@koa/bodyparser'
 import serve from 'koa-static'
 import send from 'koa-send'
 import os from 'os'
@@ -35,6 +34,7 @@ import { getStaticCacheControl, SPA_ENTRY_CACHE_CONTROL } from './middleware/sta
 import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
 import { createCorsOriginResolver, securityHeaders } from './security'
 import type { ShutdownHandler } from './services/shutdown'
+import { createRequestBodyParser } from './middleware/request-body-parser'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -293,13 +293,7 @@ export async function bootstrap() {
   app.use(cors({ origin: createCorsOriginResolver(config.corsOrigins) }))
   // Raise body limits above the default 1mb: profile avatars and MiMo voice-clone
   // reference audio are posted as base64 data URLs before reaching handlers.
-  app.use(bodyParser({
-    encoding: 'utf-8',
-    jsonLimit: '20mb',
-    formLimit: '20mb',
-    textLimit: '20mb',
-    parsedMethods: ['POST', 'PUT', 'PATCH', 'DELETE'],
-  }))
+  app.use(createRequestBodyParser())
   console.log('[bootstrap] cors + bodyParser registered')
 
   registerDesktopShutdownRoute(app)

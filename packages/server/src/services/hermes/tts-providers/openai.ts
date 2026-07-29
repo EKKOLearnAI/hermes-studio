@@ -1,4 +1,4 @@
-import type { OpenaiTtsProvider } from './types'
+import type { OpenaiTtsProvider, TtsProviderId } from './types'
 import { cleanTtsText, clampTtsText } from './text'
 import { assertSafeTtsBaseUrl } from './url-safety'
 
@@ -22,11 +22,18 @@ function buildSpeechUrl(baseUrl: string): string {
   return `${url.origin}${pathname}/audio/speech${search}`
 }
 
-function createOpenaiCompatibleTtsProvider(id: 'openai' | 'custom', engine = id): OpenaiTtsProvider {
+export function createOpenaiCompatibleTtsProvider(
+  id: Extract<TtsProviderId, 'openai' | 'custom' | 'deepinfra'>,
+  options: { engine?: string; defaultBaseUrl?: string; defaultModel?: string; defaultVoice?: string } = {},
+): OpenaiTtsProvider {
   return {
     id,
     async synthesize(req, opts) {
-      const speechUrl = buildSpeechUrl(opts.baseUrl)
+      const baseUrl = String(opts.baseUrl || options.defaultBaseUrl || '').trim()
+      if (!baseUrl) {
+        throw new Error(`${id} TTS baseUrl is required`)
+      }
+      const speechUrl = buildSpeechUrl(baseUrl)
       const text = clampTtsText(cleanTtsText(req.text))
 
       if (!text) {
@@ -45,8 +52,8 @@ function createOpenaiCompatibleTtsProvider(id: 'openai' | 'custom', engine = id)
         method: 'POST',
         headers,
         body: JSON.stringify({
-          model: opts.model || 'tts-1',
-          voice: opts.voice || 'alloy',
+          model: opts.model || options.defaultModel || 'tts-1',
+          voice: opts.voice || options.defaultVoice || 'alloy',
           input: text,
           ...(opts.rate ? { rate: opts.rate } : {}),
           ...(opts.pitch ? { pitch: opts.pitch } : {}),
@@ -63,7 +70,7 @@ function createOpenaiCompatibleTtsProvider(id: 'openai' | 'custom', engine = id)
       return {
         audio: Buffer.from(await res.arrayBuffer()),
         contentType: res.headers.get('content-type') || 'audio/mpeg',
-        engine,
+        engine: options.engine || id,
         provider: id,
       }
     },
@@ -72,3 +79,7 @@ function createOpenaiCompatibleTtsProvider(id: 'openai' | 'custom', engine = id)
 
 export const openaiTtsProvider: OpenaiTtsProvider = createOpenaiCompatibleTtsProvider('openai')
 export const customTtsProvider: OpenaiTtsProvider = createOpenaiCompatibleTtsProvider('custom')
+export const deepinfraTtsProvider: OpenaiTtsProvider = createOpenaiCompatibleTtsProvider('deepinfra', {
+  defaultBaseUrl: 'https://api.deepinfra.com/v1/openai',
+  defaultVoice: 'default',
+})

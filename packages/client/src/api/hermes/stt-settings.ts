@@ -1,6 +1,15 @@
 import { request } from '../client'
 
-export type SttProvider = 'browser' | 'openai' | 'custom' | 'doubao'
+export type SttProvider =
+  | 'browser'
+  | 'openai'
+  | 'custom'
+  | 'doubao'
+  | 'groq'
+  | 'mistral'
+  | 'xai'
+  | 'elevenlabs'
+  | 'deepinfra'
 export type StoredSttProvider = Exclude<SttProvider, 'browser'>
 
 export interface SttStoredSettings {
@@ -10,6 +19,9 @@ export interface SttStoredSettings {
   language?: string
   prompt?: string
   audioTranscode?: 'none' | 'ffmpeg'
+  diarize?: string
+  format?: string
+  tagAudioEvents?: string
 }
 
 export interface SttStoredSecretsInput {
@@ -34,7 +46,17 @@ export interface FetchSttSettingsResponse {
 }
 
 function normalizeActiveProvider(value: unknown): SttProvider | null {
-  return value === 'browser' || value === 'openai' || value === 'custom' || value === 'doubao' ? value : null
+  return value === 'browser' ||
+    value === 'openai' ||
+    value === 'custom' ||
+    value === 'doubao' ||
+    value === 'groq' ||
+    value === 'mistral' ||
+    value === 'xai' ||
+    value === 'elevenlabs' ||
+    value === 'deepinfra'
+    ? value
+    : null
 }
 
 function normalizeProviders(body: unknown): FetchSttSettingsResponse {
