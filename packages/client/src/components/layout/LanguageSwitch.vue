@@ -16,6 +16,7 @@ const options = [
   { label: 'Deutsch', value: 'de' },
   { label: 'Português', value: 'pt' },
   { label: 'Русский', value: 'ru' },
+  { label: 'العربية', value: 'ar' },
 ]
 
 async function handleChange(val: string) {

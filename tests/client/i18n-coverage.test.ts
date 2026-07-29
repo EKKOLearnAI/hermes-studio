@@ -14,6 +14,7 @@ import es from '@/i18n/locales/es'
 import de from '@/i18n/locales/de'
 import pt from '@/i18n/locales/pt'
 import ru from '@/i18n/locales/ru'
+import ar from '@/i18n/locales/ar'
 import { createI18n } from 'vue-i18n'
 
 const SOURCE_ROOT = join(process.cwd(), 'packages/client/src')
@@ -31,6 +32,7 @@ const rawMessages: Record<string, Record<string, unknown>> = {
   de,
   pt,
   ru,
+  ar,
 }
 
 const messages: Record<string, Record<string, unknown>> = {}
