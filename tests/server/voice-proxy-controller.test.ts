@@ -20,6 +20,8 @@ beforeEach(async () => {
     getDb: () => db,
     getStoragePath: () => ':memory:',
   }))
+  const ownership = await import('../../packages/server/src/db/ownership')
+  ownership.claimHermesDatabaseOwnershipForTesting(db)
   const schemas = await import('../../packages/server/src/db/hermes/schemas')
   schemas.initAllHermesTables()
 })
