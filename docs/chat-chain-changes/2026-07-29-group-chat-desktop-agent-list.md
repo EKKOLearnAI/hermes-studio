@@ -1,6 +1,6 @@
 ---
 date: 2026-07-29
-pr: pending
+pr: 2259
 feature: Desktop Group Chat Agent list
 impact: Group Chat Agent avatars can open their Agent list from draggable macOS and Windows desktop headers.
 ---
