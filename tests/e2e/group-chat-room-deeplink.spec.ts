@@ -13,6 +13,7 @@ const groupWorkspaceDiff = {
   kind: 'workspace_diff',
   version: 1,
   room_id: 'room-alpha',
+  parent_message_id: 'alpha-file',
   workspace: '/tmp/alpha',
   files_changed: 1,
   additions: 1,

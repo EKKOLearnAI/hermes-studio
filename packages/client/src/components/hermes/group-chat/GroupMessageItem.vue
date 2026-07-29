@@ -209,22 +209,6 @@ const quotableContent = computed(() => {
 const toolExpanded = ref(false)
 const expandedWorkspaceChangeIds = ref(new Set<string>())
 const isToolMessage = computed(() => props.message.role === 'tool')
-const workspaceDiffPayload = computed(() => {
-    if ((props.message.toolName || props.message.tool_name) !== 'workspace_diff') return null
-    const raw = props.message.toolResult ?? props.message.content
-    if (!raw) return null
-    if (typeof raw === 'object' && (raw as any)?.kind === 'workspace_diff') return raw as any
-    if (typeof raw === 'string') {
-        try {
-            const parsed = JSON.parse(raw)
-            return parsed?.kind === 'workspace_diff' ? parsed : null
-        } catch {
-            return null
-        }
-    }
-    return null
-})
-const workspaceDiffFiles = computed(() => Array.isArray(workspaceDiffPayload.value?.files) ? workspaceDiffPayload.value.files : [])
 const assistantWorkspaceChanges = computed(() => props.message.workspaceChanges || [])
 const selectedWorkspaceDiffFileId = computed(() => toolPanelStore.workspaceDiff?.file.id ?? null)
 const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs))
@@ -260,9 +244,6 @@ function openWorkspaceDiffFileForPayload(file: GroupWorkspaceDiffFile, payload: 
     }, typeof file.patch === 'string' ? file.patch : null, payload.workspace || payload.workspace_root || '')
 }
 
-function openWorkspaceDiffFile(file: GroupWorkspaceDiffFile): void {
-    openWorkspaceDiffFileForPayload(file, workspaceDiffPayload.value)
-}
 const canPlaySpeech = computed(() => {
     if (props.message.role !== 'assistant') return false
     if (!assistantBody.value.trim()) return false
@@ -612,19 +593,7 @@ onBeforeUnmount(() => {
                 <span class="sender-name">{{ message.senderName }}</span>
                 <span v-if="isAgent && agentInfo?.description" class="agent-desc">{{ agentInfo.description }}</span>
             </div>
-            <div v-if="workspaceDiffPayload" class="tool-detail-section tool-change-standalone">
-                <ToolChangeCard
-                    :files="workspaceDiffFiles"
-                    :files-changed="workspaceDiffPayload.files_changed || 0"
-                    :additions="workspaceDiffPayload.additions || 0"
-                    :deletions="workspaceDiffPayload.deletions || 0"
-                    :expanded="toolExpanded"
-                    :selected-file-id="selectedWorkspaceDiffFileId"
-                    @toggle="toolExpanded = !toolExpanded"
-                    @select="openWorkspaceDiffFile"
-                />
-            </div>
-            <div v-else class="tool-line" :class="{ expandable: hasToolDetails }" @click="hasToolDetails && (toolExpanded = !toolExpanded)">
+            <div class="tool-line" :class="{ expandable: hasToolDetails }" @click="hasToolDetails && (toolExpanded = !toolExpanded)">
                 <svg
                     v-if="hasToolDetails"
                     width="10"
@@ -646,7 +615,7 @@ onBeforeUnmount(() => {
                 <span v-if="message.toolStatus === 'running'" class="tool-spinner"></span>
                 <span v-if="message.toolStatus === 'error'" class="tool-error-badge">{{ t('chat.error') }}</span>
             </div>
-            <div v-if="!workspaceDiffPayload && toolExpanded && hasToolDetails" class="tool-details" @click="handleToolDetailClick">
+            <div v-if="toolExpanded && hasToolDetails" class="tool-details" @click="handleToolDetailClick">
                 <div v-if="formattedToolArgs" class="tool-detail-section" data-copy-source="tool-args">
                     <div class="tool-detail-label">{{ t('chat.arguments') }}</div>
                     <div class="tool-detail-code-block" v-html="renderedToolArgs"></div>
@@ -917,13 +886,6 @@ onBeforeUnmount(() => {
     margin-top: 2px;
     border-left: 2px solid $border-light;
     padding-left: 10px;
-}
-
-.tool-change-standalone {
-    display: inline-block;
-    max-width: 100%;
-    min-width: 0;
-    width: fit-content;
 }
 
 .assistant-workspace-change {

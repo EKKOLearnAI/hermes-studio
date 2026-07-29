@@ -122,8 +122,8 @@ describe('chat workspace diff turn association', () => {
     const store = useChatStore()
     await store.loadSessions()
 
-    expect(store.activeSession?.messages.find(message => message.toolCallId === 'tool-change')?.toolChange)
-      .toBeUndefined()
+    expect(store.activeSession?.messages.find(message => message.toolCallId === 'tool-change')).toBeDefined()
+    expect(store.activeSession?.messages.some(message => message.id.startsWith('workspace-run-change:'))).toBe(false)
   })
 
   it('does not render a standalone fallback for legacy changes without an assistant message id', async () => {
@@ -139,6 +139,19 @@ describe('chat workspace diff turn association', () => {
     expect(legacy).toEqual([])
   })
 
+  it('does not render a standalone card when an attributed assistant is not loaded', async () => {
+    sessionApi.fetchWorkspaceRunChangesForSession.mockResolvedValue([
+      change('unresolved-change', 'missing-assistant'),
+    ])
+
+    const store = useChatStore()
+    await store.loadSessions()
+
+    expect(store.activeSession?.messages).toHaveLength(4)
+    expect(store.activeSession?.messages.some(message => message.id.startsWith('workspace-run-change:'))).toBe(false)
+    expect(store.activeSession?.messages.every(message => (message.workspaceChanges?.length || 0) === 0)).toBe(true)
+  })
+
   it('aligns a live assistant temporary id with the persisted attribution id', () => {
     const messages = [{
       id: 'temporary-assistant',
@@ -151,41 +164,42 @@ describe('chat workspace diff turn association', () => {
 
     expect(alignWorkspaceChangeAssistantMessage(messages, attributedChange, 'temporary-assistant')).toBe('42')
     expect(messages[0].id).toBe('42')
-    expect(attachWorkspaceChangesToExactTurns(messages, [attributedChange])).toEqual([])
+    attachWorkspaceChangesToExactTurns(messages, [attributedChange])
     expect(messages[0].workspaceChanges?.map(item => item.change_id)).toEqual(['change-live'])
   })
 
-  it('moves an unresolved explicit association from fallback to the assistant after pagination loads it', () => {
+  it('hides an unresolved explicit association until pagination loads its assistant', () => {
     const unresolved = change('change-page-1', '2')
     const messages = [
       { id: '4', role: 'assistant' as const, content: 'newer', timestamp: 4 },
     ]
 
-    expect(attachWorkspaceChangesToExactTurns(messages, [unresolved])).toEqual([unresolved])
+    attachWorkspaceChangesToExactTurns(messages, [unresolved])
+    expect(messages).toHaveLength(1)
+    expect(messages[0].workspaceChanges).toEqual([])
 
     messages.unshift({ id: '2', role: 'assistant', content: 'older', timestamp: 2 })
-    expect(attachWorkspaceChangesToExactTurns(messages, [unresolved])).toEqual([])
+    attachWorkspaceChangesToExactTurns(messages, [unresolved])
     expect(messages[0].workspaceChanges?.map(item => item.change_id)).toEqual(['change-page-1'])
   })
 
-  it('drops unattributed changes instead of returning them as standalone fallbacks', () => {
+  it('drops unattributed changes without creating standalone messages', () => {
     const messages = [
       { id: '4', role: 'assistant' as const, content: 'newer', timestamp: 4 },
     ]
 
-    expect(attachWorkspaceChangesToExactTurns(messages, [change('legacy-change')])).toEqual([])
+    attachWorkspaceChangesToExactTurns(messages, [change('legacy-change')])
+    expect(messages).toHaveLength(1)
     expect(messages[0].workspaceChanges).toEqual([])
   })
 
-  it('does not overwrite existing tool-message change metadata while recomputing turn associations', () => {
-    const existing = change('tool-change')
+  it('never attaches workspace changes to tool messages', () => {
     const messages = [{
-      id: 'tool-1', role: 'tool' as const, content: '', timestamp: 1, toolChange: existing,
+      id: 'tool-1', role: 'tool' as const, content: '', timestamp: 1,
     }]
 
-    attachWorkspaceChangesToExactTurns(messages, [change('turn-change', '42')])
+    attachWorkspaceChangesToExactTurns(messages, [change('turn-change', 'tool-1')])
 
-    expect(messages[0].toolChange).toBe(existing)
     expect(messages[0].workspaceChanges).toEqual([])
   })
 })

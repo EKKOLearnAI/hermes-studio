@@ -1078,8 +1078,7 @@ function attachWorkspaceDiffsToParentMessages(messages: ChatMessage[]): ChatMess
         const payload = groupWorkspaceDiffPayload(message.toolResult ?? message.content)
         const parentMessageId = String(payload?.parent_message_id || '').trim()
         const parent = parentMessageId ? assistantById.get(parentMessageId) : undefined
-        if (!payload || !parent) return true
-        parent.workspaceChanges!.push(payload)
+        if (payload && parent) parent.workspaceChanges!.push(payload)
         return false
     })
 }

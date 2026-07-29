@@ -594,9 +594,7 @@ const hasAttachments = computed(
 
 const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs));
 const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult, true));
-const toolChange = computed(() => props.message.toolChange || null);
 const workspaceChanges = computed(() => props.message.workspaceChanges || []);
-const hasToolChange = computed(() => (toolChange.value?.files?.length || 0) > 0);
 
 function isWorkspaceChangeExpanded(changeId: string): boolean {
   return expandedWorkspaceChangeIds.value.has(changeId);
@@ -610,7 +608,7 @@ function toggleWorkspaceChange(changeId: string): void {
 }
 
 const hasToolDetails = computed(
-  () => !!(toolArgsPayload.value.full || toolResultPayload.value.full || hasToolChange.value),
+  () => !!(toolArgsPayload.value.full || toolResultPayload.value.full),
 );
 const isSubagentTool = computed(() => subagentIdFromToolCall(props.message.toolCallId) !== null);
 const hasInlineToolDetails = computed(() => hasToolDetails.value && !isSubagentTool.value);
@@ -642,14 +640,6 @@ function handleToolLineClick() {
     return;
   }
   if (hasInlineToolDetails.value) toolExpanded.value = !toolExpanded.value;
-}
-
-async function openToolChangeFile(file: { id: string | number; path: string; additions: number; deletions: number }): Promise<void> {
-  const storedFile = toolChange.value?.files.find(candidate => String(candidate.id) === String(file.id));
-  if (!storedFile) return;
-  selectedToolChangeFileId.value = storedFile.id;
-  filesStore.closePreview();
-  await toolPanelStore.openWorkspaceDiff(storedFile, toolChange.value?.workspace || "");
 }
 
 async function openAssistantWorkspaceChangeFile(
@@ -882,12 +872,11 @@ onBeforeUnmount(() => {
 <template>
   <div
     class="message"
-    :class="[message.role, { highlight, 'tool-change-message': hasToolChange }]"
+    :class="[message.role, { highlight }]"
     :id="`message-${message.id}`"
   >
     <template v-if="message.role === 'tool'">
       <div
-        v-if="!hasToolChange"
         class="tool-line"
         :class="{ expandable: hasInlineToolDetails || isSubagentTool, 'subagent-entry': isSubagentTool }"
         :role="isSubagentTool ? 'button' : undefined"
@@ -938,23 +927,7 @@ onBeforeUnmount(() => {
           t("chat.error")
         }}</span>
       </div>
-      <div
-        v-if="hasToolChange"
-        class="tool-detail-section tool-change-standalone"
-        @click="handleToolDetailClick"
-      >
-        <ToolChangeCard
-          :files="toolChange?.files || []"
-          :files-changed="toolChange?.files_changed || 0"
-          :additions="toolChange?.additions || 0"
-          :deletions="toolChange?.deletions || 0"
-          :expanded="toolExpanded"
-          :selected-file-id="selectedToolChangeFileId"
-          @toggle="toolExpanded = !toolExpanded"
-          @select="openToolChangeFile"
-        />
-      </div>
-      <div v-else-if="!isSubagentTool && toolExpanded && hasToolDetails" class="tool-details" @click="handleToolDetailClick">
+      <div v-if="!isSubagentTool && toolExpanded && hasToolDetails" class="tool-details" @click="handleToolDetailClick">
         <div v-if="formattedToolArgs" class="tool-detail-section" data-copy-source="tool-args">
           <div class="tool-detail-label">{{ t("chat.arguments") }}</div>
           <div class="tool-detail-code-block" v-html="renderedToolArgs"></div>
@@ -1295,10 +1268,6 @@ onBeforeUnmount(() => {
 
   &.tool {
     align-items: flex-start;
-
-    &.tool-change-message {
-      max-width: 100%;
-    }
   }
 
   &.system {
@@ -1811,13 +1780,6 @@ onBeforeUnmount(() => {
   margin-bottom: 6px;
 }
 
-.tool-change-standalone {
-  display: inline-block;
-  max-width: 100%;
-  min-width: 0;
-  width: fit-content;
-}
-
 .tool-detail-label {
   font-size: 10px;
   font-weight: 600;
@@ -1947,11 +1909,6 @@ onBeforeUnmount(() => {
 
   .message.system .msg-body {
     max-width: 100%;
-  }
-
-  .tool-change-standalone {
-    min-width: 0;
-    width: fit-content;
   }
 
   :global(.tool-change-drawer-header) {

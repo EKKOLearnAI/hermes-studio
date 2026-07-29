@@ -126,7 +126,7 @@ describe('group chat workspace diff client rendering', () => {
     })
   })
 
-  it('maps persisted workspace_diff tool JSON to a structured tool result', async () => {
+  it('hides persisted workspace_diff messages without an assistant association', async () => {
     groupChatApiMock.getRoomDetail.mockResolvedValue({
       room: { id: 'room-1', name: 'Room 1', inviteCode: null, workspace: '/tmp/repo' },
       messages: [workspaceDiffMessage()],
@@ -138,11 +138,7 @@ describe('group chat workspace diff client rendering', () => {
 
     await store.joinRoom('room-1')
 
-    expect(store.sortedMessages[0]).toMatchObject({
-      role: 'tool',
-      toolName: 'workspace_diff',
-      toolResult: expect.objectContaining({ kind: 'workspace_diff', files_changed: 2 }),
-    })
+    expect(store.sortedMessages).toEqual([])
   })
 
   it('attaches persisted and realtime workspace diffs to their exact assistant message', async () => {
@@ -195,50 +191,34 @@ describe('group chat workspace diff client rendering', () => {
     })
 
     expect(wrapper.find('.tool-message').exists()).toBe(false)
-    expect(wrapper.find('.assistant-workspace-change').exists()).toBe(true)
+    expect(wrapper.find('.msg-content .assistant-workspace-change').exists()).toBe(true)
     expect(wrapper.text()).toContain('chat.changesThisTurn')
 
     await wrapper.find('.tool-change-card-header').trigger('click')
     expect(wrapper.find('.tool-change-file-row').text()).toContain('a.ts')
   })
 
-  it('renders a workspace diff card collapsed by default and expands it on demand', async () => {
-    const wrapper = mount(GroupMessageItem, {
-      props: {
-        message: {
-          ...workspaceDiffMessage(),
-          toolName: 'workspace_diff',
-          toolResult: payload,
-          toolStatus: 'done',
-        },
-        agents: [],
-        members: [],
-        currentUserId: 'user-1',
-      },
-      global: { stubs: { MarkdownRenderer: true, ProfileAvatar: true } },
-    })
+  it('hides realtime workspace diffs until their parent assistant arrives', async () => {
+    const { useGroupChatStore } = await import('@/stores/hermes/group-chat')
+    const store = useGroupChatStore()
+    store.currentRoomId = 'room-1'
+    store.messages = [workspaceDiffMessage({
+      content: JSON.stringify({ ...payload, parent_message_id: 'assistant-1' }),
+      timestamp: 2,
+    })]
 
-    expect(wrapper.find('.tool-change-card').exists()).toBe(true)
-    expect(wrapper.find('.tool-change-files').exists()).toBe(false)
-    expect(wrapper.find('.tool-change-card-header').attributes('aria-expanded')).toBe('false')
+    expect(store.sortedMessages).toEqual([])
 
-    await wrapper.find('.tool-change-card-header').trigger('click')
+    store.messages.push(assistantMessage())
 
-    expect(wrapper.find('.tool-change-card-header').attributes('aria-expanded')).toBe('true')
-    expect(wrapper.find('.tool-change-file-row').text()).toContain('a.ts')
-    expect(wrapper.find('.tool-line').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('"kind"')
-
-    await wrapper.find('.tool-change-file-row').trigger('click')
-    const { useToolPanelStore } = await import('@/stores/hermes/tool-panel')
-    expect(useToolPanelStore().workspaceDiff).toMatchObject({
-      patch: expect.stringContaining('+new'),
-      editable: false,
-      file: expect.objectContaining({ path: 'src/a.ts' }),
+    expect(store.sortedMessages).toHaveLength(1)
+    expect(store.sortedMessages[0]).toMatchObject({
+      id: 'assistant-1',
+      workspaceChanges: [expect.objectContaining({ change_id: 'change-1' })],
     })
   })
 
-  it('keeps workspace diff audit cards visible when generic tool traces are hidden', async () => {
+  it('never exposes workspace diff audit messages as independent tool traces', async () => {
     toolTraceVisibleState.value = false
     const { useGroupChatStore } = await import('@/stores/hermes/group-chat')
     const store = useGroupChatStore()
@@ -284,7 +264,7 @@ describe('group chat workspace diff client rendering', () => {
     })
 
     const messages = wrapper.getComponent({ name: 'VirtualMessageList' }).props('messages') as ChatMessage[]
-    expect(messages.map(message => message.id)).toEqual(['diff-1'])
+    expect(messages).toEqual([])
   })
 
   it('hands previewable group attachments to the shared file panel instead of downloading', async () => {
