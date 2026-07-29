@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import type { VoiceApiConnection, VoiceApiSavePayload } from '@/types/voice-api'
 import { VOICE_API_PRESETS } from '@/constants/voiceApiPresets'
 import { DOUBAO_TTS_2_RESOURCE_ID, DOUBAO_TTS_VOICE_OPTIONS, doubaoTtsResourceForVoice } from '@/constants/doubaoTtsVoices'
+import { EDGE_TTS_VOICE_OPTIONS } from '@/constants/edgeTtsVoices'
 import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
 import { useVoiceSettings } from '@/composables/useVoiceSettings'
 
@@ -155,16 +156,7 @@ async function handleSave() {
   }
 }
 
-const edgeVoiceOptions = [
-  { label: '晓晓 (zh-CN-XiaoxiaoNeural)', value: 'zh-CN-XiaoxiaoNeural' },
-  { label: '晓萱 (zh-CN-XiaoxuanNeural)', value: 'zh-CN-XiaoxuanNeural' },
-  { label: '云希 (zh-CN-YunxiNeural)', value: 'zh-CN-YunxiNeural' },
-  { label: '云健 (zh-CN-YunjianNeural)', value: 'zh-CN-YunjianNeural' },
-  { label: '云扬 (zh-CN-YunyangNeural)', value: 'zh-CN-YunyangNeural' },
-  { label: 'Jenny (en-US-JennyNeural)', value: 'en-US-JennyNeural' },
-  { label: 'Aria (en-US-AriaNeural)', value: 'en-US-AriaNeural' },
-  { label: 'Guy (en-US-GuyNeural)', value: 'en-US-GuyNeural' },
-]
+const edgeVoiceOptions = EDGE_TTS_VOICE_OPTIONS.map(option => ({ label: option.label, value: option.value }))
 
 const openaiVoiceOptions = [
   { label: 'Alloy', value: 'alloy' },
@@ -261,6 +253,7 @@ function handleDoubaoVoiceUpdate(value: string) {
             v-if="connection.provider === 'edge'"
             :value="stringField('voice')"
             :options="edgeVoiceOptions"
+            tag
             filterable
             @update:value="value => setField('voice', value)"
           />
