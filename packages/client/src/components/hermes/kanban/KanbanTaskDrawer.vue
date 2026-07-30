@@ -535,7 +535,7 @@ function handleNavigateTask(taskId: string) {
           <div v-if="detail.runs.length > 0" class="detail-section">
             <div class="section-title" style="cursor: pointer;" @click="searchTaskSessions">
               {{ t('kanban.detail.sessions') }}
-              <NSpin v-if="sessionLoading" :size="12" style="margin-left: 6px;" />
+              <NSpin v-if="sessionLoading" :size="12" style="margin-inline-start: 6px;" />
             </div>
             <div v-if="showSessions && sessionResults.length > 0" class="session-list">
               <div v-for="session in sessionResults" :key="session.id" class="session-item" @click="router.push({ name: 'hermes.chat', query: { session: session.id } })">
@@ -652,7 +652,7 @@ function handleNavigateTask(taskId: string) {
   color: $text-primary;
   background: $bg-secondary;
   cursor: pointer;
-  text-align: left;
+  text-align: start;
 
   &:hover {
     border-color: $accent-primary;
@@ -692,7 +692,7 @@ function handleNavigateTask(taskId: string) {
   font-family: $font-code;
   font-size: 11px;
   font-weight: 500;
-  margin-left: auto;
+  margin-inline-start: auto;
   text-transform: none;
 }
 
@@ -842,7 +842,7 @@ function handleNavigateTask(taskId: string) {
   }
 
   &:not(:last-child) {
-    margin-right: 4px;
+    margin-inline-end: 4px;
   }
 }
 
@@ -965,7 +965,7 @@ function handleNavigateTask(taskId: string) {
 .comment-time {
   font-size: 11px;
   color: $text-muted;
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 .run-summary,
@@ -996,7 +996,7 @@ function handleNavigateTask(taskId: string) {
 .event-time {
   font-size: 11px;
   color: $text-muted;
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 .session-list {

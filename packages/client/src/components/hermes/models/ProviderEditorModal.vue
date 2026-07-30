@@ -472,7 +472,7 @@ async function clearCredentialNow() {
   gap: 16px;
   max-height: calc(100vh - 220px);
   overflow-y: auto;
-  padding-right: 4px;
+  padding-inline-end: 4px;
 }
 
 .identity-note,

@@ -256,7 +256,7 @@ function handleCardClick(e: MouseEvent) {
 }
 
 .run-status {
-  margin-left: 6px;
+  margin-inline-start: 6px;
   font-size: 11px;
   font-weight: 500;
 

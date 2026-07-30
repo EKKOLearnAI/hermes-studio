@@ -563,7 +563,7 @@ watch(() => profilesStore.activeProfileName, () => {
 
 .default-badge {
   display: inline-flex;
-  margin-left: 6px;
+  margin-inline-start: 6px;
   border-radius: 999px;
   padding: 1px 6px;
   background: rgba(var(--accent-primary-rgb), 0.12);
@@ -732,7 +732,7 @@ watch(() => profilesStore.activeProfileName, () => {
 }
 
 .model-group-items {
-  padding-left: 8px;
+  padding-inline-start: 8px;
 }
 
 .model-item {
@@ -791,7 +791,7 @@ watch(() => profilesStore.activeProfileName, () => {
 .model-badge-custom {
   flex-shrink: 0;
   border-radius: 3px;
-  margin-right: 4px;
+  margin-inline-end: 4px;
   padding: 1px 5px;
   background: $accent-primary;
   color: #fff;
@@ -821,7 +821,7 @@ watch(() => profilesStore.activeProfileName, () => {
 .model-badge-preview {
   flex-shrink: 0;
   border-radius: 3px;
-  margin-right: 4px;
+  margin-inline-end: 4px;
   padding: 1px 5px;
   background: #d97706;
   color: #fff;
@@ -834,7 +834,7 @@ watch(() => profilesStore.activeProfileName, () => {
   flex-shrink: 0;
   border: 1px solid $border-color;
   border-radius: 3px;
-  margin-right: 4px;
+  margin-inline-end: 4px;
   padding: 0 5px;
   background: transparent;
   color: $text-muted;

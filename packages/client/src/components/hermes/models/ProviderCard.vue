@@ -641,7 +641,7 @@ async function handleRestoreModels() {
 .model-tag-button {
   border: 0;
   cursor: pointer;
-  text-align: left;
+  text-align: start;
 
   &:hover {
     background: rgba(var(--accent-primary-rgb), 0.16);
@@ -782,7 +782,7 @@ async function handleRestoreModels() {
 }
 
 .visibility-model-id {
-  margin-left: 6px;
+  margin-inline-start: 6px;
   color: $text-muted !important;
   font-size: 11px !important;
 }

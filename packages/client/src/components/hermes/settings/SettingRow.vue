@@ -34,7 +34,7 @@ defineProps<{
 
 .setting-info {
   flex: 1;
-  margin-right: 16px;
+  margin-inline-end: 16px;
 }
 
 .setting-label {
@@ -61,7 +61,7 @@ defineProps<{
   }
 
   .setting-info {
-    margin-right: 0;
+    margin-inline-end: 0;
   }
 
   .setting-control {
