@@ -160,7 +160,7 @@ function scrollToTarget(item: OutlineItem) {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background-color: $bg-card;
+  background-color: $bg-main-surface;
   border-left: 1px solid $border-color;
   width: 280px;
   flex-shrink: 0;

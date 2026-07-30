@@ -5,7 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { getApiKey, getBaseUrlValue } from "@/api/client";
-import { NButton, NPopconfirm, NTooltip, NSelect, useMessage } from "naive-ui";
+import { NButton, NPopconfirm, NTooltip, useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import type { ITheme } from "@xterm/xterm";
 
@@ -94,7 +94,6 @@ const activeSessionId = ref<string | null>(null);
 const selectedTheme = ref(localStorage.getItem(STORAGE_KEY_THEME) || "default");
 const connectionError = ref<string | null>(null);
 const isConnecting = ref(false);
-const showSidebar = ref(false);
 
 let ws: WebSocket | null = null;
 const termMap = new Map<string, { term: Terminal; fitAddon: FitAddon; opened: boolean }>();
@@ -113,19 +112,14 @@ const initialCommandTimers = new Set<ReturnType<typeof setTimeout>>();
 
 // ─── Computed ──────────────────────────────────────────────────
 
-const activeSession = computed(
-  () => sessions.value.find((s) => s.id === activeSessionId.value) || null,
-);
-
-const themeOptions = computed(() =>
-  Object.entries(TERMINAL_THEMES).map(([key, val]) => ({
-    label: val.label,
-    value: key,
-  })),
-);
-
 const terminalBg = computed(
   () => TERMINAL_THEMES[selectedTheme.value]?.theme.background ?? "#1a1a2e",
+);
+const selectedThemeLabel = computed(
+  () => TERMINAL_THEMES[selectedTheme.value]?.label ?? TERMINAL_THEMES.default.label,
+);
+const selectedThemeInitial = computed(
+  () => selectedThemeLabel.value.charAt(0).toUpperCase(),
 );
 
 // ─── WebSocket ──────────────────────────────────────────────────
@@ -318,11 +312,12 @@ function closeSession(id: string) {
     termMap.delete(id);
   }
   if (activeSessionId.value === id) {
-    activeSessionId.value = sessions.value.length > 0 ? sessions.value[0].id : null;
+    const nextSessionId = sessions.value[0]?.id ?? null;
+    activeSessionId.value = null;
     activeTerm = null;
     activeFitAddon = null;
-    if (activeSessionId.value) {
-      switchSession(activeSessionId.value);
+    if (nextSessionId) {
+      switchSession(nextSessionId);
     } else {
       unmountActiveTerminal();
       createSession();
@@ -426,11 +421,10 @@ function applyTheme(themeName: string) {
   }
 }
 
-// ─── Helpers ────────────────────────────────────────────────────
-
-function formatTime(ts: number) {
-  const d = new Date(ts);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function cycleTheme() {
+  const themeNames = Object.keys(TERMINAL_THEMES);
+  const currentIndex = themeNames.indexOf(selectedTheme.value);
+  applyTheme(themeNames[(currentIndex + 1 + themeNames.length) % themeNames.length]);
 }
 
 // ─── Lifecycle ──────────────────────────────────────────────────
@@ -461,122 +455,96 @@ onUnmounted(() => {
 
 <template>
   <div class="terminal-panel-drawer">
-    <div
-      v-if="showSidebar"
-      class="sidebar-overlay"
-      @click="showSidebar = false"
-    ></div>
-    <div
-      class="terminal-sidebar"
-      :class="{ 'mobile-visible': showSidebar }"
-    >
-      <div class="sidebar-header">
-        <span class="sidebar-title">{{ t("terminal.sessions") }}</span>
-        <NTooltip trigger="hover">
-          <template #trigger>
-            <NButton quaternary size="tiny" @click="createSession" circle>
-              <template #icon>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </template>
-            </NButton>
-          </template>
-          {{ t("terminal.newTab") }}
-        </NTooltip>
-      </div>
-      <div class="session-list">
-        <div v-if="connectionError" class="session-error">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-          <span>{{ connectionError }}</span>
-          <NButton size="tiny" @click="connect">{{ t("common.retry") }}</NButton>
-        </div>
-        <div v-else-if="sessions.length === 0" class="session-empty">
-          <template v-if="isConnecting">
-            {{ t("common.loading") }}
-          </template>
-          <template v-else>
-            {{ t("terminal.noSessions") }}
-          </template>
-        </div>
-        <button
-          v-for="s in sessions"
-          :key="s.id"
-          class="session-item"
-          :class="{ active: s.id === activeSessionId, exited: s.exited }"
-          @click="switchSession(s.id)"
+    <aside class="terminal-session-rail" :aria-label="t('terminal.sessions')">
+      <NTooltip trigger="hover" placement="right">
+        <template #trigger>
+          <button
+            class="terminal-rail-button terminal-theme-button"
+            type="button"
+            :aria-label="selectedThemeLabel"
+            @click="cycleTheme"
+          >
+            {{ selectedThemeInitial }}
+          </button>
+        </template>
+        {{ selectedThemeLabel }}
+      </NTooltip>
+
+      <div class="terminal-session-list">
+        <div
+          v-for="session in sessions"
+          :key="session.id"
+          class="terminal-session-slot"
+          :class="{
+            active: session.id === activeSessionId,
+            exited: session.exited,
+          }"
         >
-          <div class="session-item-content">
-            <span class="session-item-title">{{ s.title }}</span>
-            <span class="session-item-meta">
-              <span class="session-item-shell">{{ s.shell }}</span>
-              <span v-if="s.exited" class="session-item-status">{{
-                t("terminal.sessionExited")
-              }}</span>
-              <span v-else class="session-item-time">{{
-                formatTime(s.createdAt)
-              }}</span>
-            </span>
-          </div>
-          <NPopconfirm v-if="sessions.length > 1" @positive-click="closeSession(s.id)">
+          <NTooltip trigger="hover" placement="right">
             <template #trigger>
-              <button class="session-item-delete" @click.stop>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
+              <button
+                class="terminal-session-button"
+                type="button"
+                :aria-label="session.title"
+                :aria-pressed="session.id === activeSessionId"
+                @click="switchSession(session.id)"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <path d="m7 9 3 3-3 3M13 15h4" />
+                </svg>
+              </button>
+            </template>
+            {{ session.title }}
+          </NTooltip>
+          <NPopconfirm @positive-click="closeSession(session.id)">
+            <template #trigger>
+              <button
+                class="terminal-session-delete"
+                type="button"
+                :title="t('terminal.closeSession')"
+                :aria-label="`${t('terminal.closeSession')}: ${session.title}`"
+                @click.stop
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m7 7 10 10M17 7 7 17" />
                 </svg>
               </button>
             </template>
             {{ t("terminal.closeSession") }}
           </NPopconfirm>
-        </button>
+        </div>
       </div>
-    </div>
+
+      <NTooltip trigger="hover" placement="right">
+        <template #trigger>
+          <button
+            class="terminal-rail-button terminal-add-button"
+            type="button"
+            :aria-label="t('terminal.newTab')"
+            @click="createSession"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+        </template>
+        {{ t("terminal.newTab") }}
+      </NTooltip>
+    </aside>
 
     <div class="terminal-main">
-      <header class="terminal-header">
-        <span v-if="activeSession" class="header-session-title">{{
-          activeSession.title
-        }}</span>
-        <div class="header-actions">
-          <NButton
-            size="small"
-            @click="showSidebar = !showSidebar"
-            class="sidebar-toggle"
-          >
-            <template #icon>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <line x1="9" y1="3" x2="9" y2="21" />
-              </svg>
-            </template>
-            {{ t("terminal.sessions") }}
-          </NButton>
-          <NSelect
-            :value="selectedTheme"
-            :options="themeOptions"
-            size="small"
-            :consistent-menu-width="false"
-            class="theme-select"
-            @update:value="applyTheme"
-          />
-          <NButton size="small" @click="createSession">
-            <template #icon>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-            </template>
-            {{ t("terminal.newTab") }}
-          </NButton>
-        </div>
-      </header>
       <div class="terminal-container">
+        <div v-if="connectionError" class="terminal-state terminal-state-error">
+          <span>{{ connectionError }}</span>
+          <NButton size="tiny" @click="connect">{{ t("common.retry") }}</NButton>
+        </div>
+        <div
+          v-else-if="sessions.length === 0"
+          class="terminal-state"
+        >
+          {{ isConnecting ? t("common.loading") : t("terminal.noSessions") }}
+        </div>
         <div
           ref="terminalRef"
           class="terminal-xterm"
@@ -594,8 +562,6 @@ onUnmounted(() => {
 <style scoped lang="scss">
 @use "@/styles/variables" as *;
 
-$terminal-panel-header-height: 47px;
-
 .terminal-panel-drawer {
   display: flex;
   height: 100%;
@@ -606,251 +572,210 @@ $terminal-panel-header-height: 47px;
   overflow: hidden;
 }
 
-.sidebar-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 50;
+.terminal-session-rail {
+  width: 48px;
+  border-right: 1px solid $border-color;
+  background: $bg-sidebar-surface;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
 
-  @media (min-width: $breakpoint-mobile + 1) {
+.terminal-session-list {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
     display: none;
   }
 }
 
-.terminal-sidebar {
-  width: 180px;
-  border-right: 1px solid $border-color;
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-
-  @media (max-width: $breakpoint-mobile) {
-    position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    width: 80%;
-    max-width: 300px;
-    z-index: 51;
-    background: $bg-card;
-    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
-    transform: translateX(-100%);
-    transition: transform 0.3s ease;
-
-    &.mobile-visible {
-      transform: translateX(0);
-    }
-  }
-}
-
-.sidebar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: $terminal-panel-header-height;
-  padding: 12px;
-  flex-shrink: 0;
-  border-bottom: 1px solid $border-color;
-  box-sizing: border-box;
-}
-
-.sidebar-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: $text-muted;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.session-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-}
-
-.session-empty {
-  padding: 16px 8px;
-  font-size: 12px;
-  color: $text-muted;
-  text-align: center;
-}
-
-.session-error {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  padding: 20px 12px;
-  font-size: 12px;
-  color: $error;
-  text-align: center;
-
-  svg {
-    width: 32px;
-    height: 32px;
-    opacity: 0.8;
-  }
-
-  span {
-    flex: 1;
-  }
-}
-
-.session-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 6px 8px;
+.terminal-rail-button,
+.terminal-session-button,
+.terminal-session-delete {
   border: none;
-  background: none;
+  background: transparent;
   border-radius: $radius-sm;
   cursor: pointer;
-  text-align: left;
   color: $text-secondary;
-  transition: all $transition-fast;
-  margin-bottom: 2px;
+  display: grid;
+  place-items: center;
+  transition:
+    color $transition-fast,
+    background-color $transition-fast,
+    opacity $transition-fast;
+}
 
+.terminal-rail-button,
+.terminal-session-slot,
+.terminal-session-button {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+}
+
+.terminal-rail-button,
+.terminal-session-button {
   &:hover {
-    background: rgba(var(--accent-primary-rgb), 0.06);
     color: $text-primary;
-
-    .session-item-delete {
-      opacity: 1;
-    }
+    background: rgba(var(--accent-primary-rgb), 0.08);
   }
+}
+
+.terminal-theme-button {
+  flex-shrink: 0;
+  color: $text-primary;
+  background: rgba(var(--accent-primary-rgb), 0.08);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.terminal-add-button {
+  flex-shrink: 0;
+
+  svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+  }
+}
+
+.terminal-session-slot {
+  position: relative;
+  border-radius: $radius-sm;
 
   &.active {
-    background: rgba(var(--accent-primary-rgb), 0.1);
-    color: $text-primary;
-    font-weight: 500;
+    background: rgba(var(--accent-primary-rgb), 0.12);
+
+    &::before {
+      content: "";
+      position: absolute;
+      left: -6px;
+      top: 9px;
+      bottom: 9px;
+      width: 2px;
+      border-radius: 0 2px 2px 0;
+      background: var(--accent-primary);
+    }
   }
 
   &.exited {
     opacity: 0.5;
   }
+
+  &:hover .terminal-session-delete,
+  &:focus-within .terminal-session-delete {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
-.session-item-content {
-  flex: 1;
-  overflow: hidden;
+.terminal-session-button {
+  padding: 0;
+
+  svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
 }
 
-.session-item-title {
-  display: block;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.session-item-meta {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 2px;
-}
-
-.session-item-shell {
-  font-size: 9px;
-  color: $accent-primary;
-  background: rgba(var(--accent-primary-rgb), 0.08);
-  padding: 0 4px;
-  border-radius: 3px;
-  line-height: 14px;
-}
-
-.session-item-time,
-.session-item-status {
-  font-size: 10px;
+.terminal-session-delete {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid $border-color;
+  border-radius: 50%;
   color: $text-muted;
-}
+  background: $bg-card;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  opacity: 0;
+  pointer-events: none;
 
-.session-item-delete {
-  flex-shrink: 0;
-  opacity: 0.5;
-  padding: 2px;
-  border: none;
-  background: none;
-  color: $text-muted;
-  cursor: pointer;
-  border-radius: 3px;
-  transition: all $transition-fast;
+  svg {
+    width: 11px;
+    height: 11px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+  }
 
   &:hover {
     color: $error;
-    background: rgba(var(--error-rgb), 0.1);
+    border-color: rgba(var(--error-rgb), 0.35);
+    background: rgba(var(--error-rgb), 0.08);
   }
 }
 
 .terminal-main {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
-  flex-direction: column;
   overflow: hidden;
-  min-width: 0;
-}
-
-.terminal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  height: $terminal-panel-header-height;
-  padding: 9px 16px;
-  border-bottom: 1px solid $border-color;
-  flex-shrink: 0;
-  min-width: 0;
-  box-sizing: border-box;
-}
-
-.header-session-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: $text-primary;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  min-width: 0;
-}
-
-.theme-select {
-  width: 120px;
-}
-
-.sidebar-toggle {
-  @media (min-width: $breakpoint-mobile + 1) {
-    display: none;
-  }
 }
 
 .terminal-container {
+  position: relative;
   flex: 1;
-  margin: 8px;
+  margin: 0;
   overflow: hidden;
   min-height: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+.terminal-state {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: $text-muted;
+  font-size: 12px;
+  text-align: center;
+  background: $bg-card;
+}
+
+.terminal-state-error {
+  color: $error;
 }
 
 .terminal-xterm {
   flex: 1;
   min-height: 0;
   min-width: 0;
-  border-radius: $radius-md;
+  border-radius: 0;
   overflow: hidden;
-  border: 1px solid $border-color;
+  border: 0;
 
   :deep(.xterm) {
     height: 100%;
@@ -888,38 +813,7 @@ $terminal-panel-header-height: 47px;
     max-height: 100%;
   }
 
-  .terminal-main {
-    min-height: 0;
-    min-width: 0;
-  }
-
-  .terminal-header {
-    padding: 8px;
-    gap: 6px;
-  }
-
-  .header-session-title {
-    display: none;
-  }
-
-  .header-actions {
-    width: 100%;
-    justify-content: flex-end;
-    gap: 6px;
-  }
-
-  .theme-select {
-    width: 96px;
-  }
-
-  .terminal-container {
-    margin: 6px;
-    margin-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
-  }
-
   .terminal-xterm {
-    border-radius: $radius-sm;
-
     :deep(.xterm) {
       padding: 6px;
     }

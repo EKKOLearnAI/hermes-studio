@@ -185,6 +185,7 @@ onMounted(() => {
   min-height: 0;
   overflow: hidden;
   position: relative;
+  background: inherit;
 }
 
 .sidebar-overlay {
@@ -210,6 +211,7 @@ onMounted(() => {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
+  background: inherit;
 
   @media (max-width: $breakpoint-mobile) {
     position: fixed;
@@ -236,19 +238,25 @@ onMounted(() => {
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
+  background: inherit;
 }
 
 .main-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
+  gap: 6px;
+  padding: 5px 10px;
   border-bottom: 1px solid $border-color;
   flex-shrink: 0;
+  background: inherit;
+
+  :deep(.file-toolbar) {
+    padding: 0;
+  }
 
   @media (max-width: $breakpoint-mobile) {
     gap: 4px;
-    padding: 8px 8px;
+    padding: 4px 8px;
     flex-wrap: wrap;
   }
 }
@@ -293,5 +301,6 @@ onMounted(() => {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+  background: inherit;
 }
 </style>

@@ -2694,20 +2694,29 @@ async function handleSessionModelCustomSubmit() {
                     :class="{ active: activeToolPanel === 'files' }"
                     type="button"
                     role="tab"
+                    :title="t('drawer.files')"
+                    :aria-label="t('drawer.files')"
                     :aria-selected="activeToolPanel === 'files'"
                     @click="activeToolPanel = 'files'"
                   >
-                    {{ t("drawer.files") }}
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" />
+                    </svg>
                   </button>
                   <button
                     class="chat-tool-tab"
                     :class="{ active: activeToolPanel === 'terminal' }"
                     type="button"
                     role="tab"
+                    :title="t('drawer.terminal')"
+                    :aria-label="t('drawer.terminal')"
                     :aria-selected="activeToolPanel === 'terminal'"
                     @click="activeToolPanel = 'terminal'"
                   >
-                    {{ t("drawer.terminal") }}
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <rect x="3" y="4" width="18" height="16" rx="2" />
+                      <path d="m7 9 3 3-3 3M13 15h4" />
+                    </svg>
                   </button>
                   <button
                     v-if="desktopBrowserAvailable"
@@ -2715,10 +2724,17 @@ async function handleSessionModelCustomSubmit() {
                     :class="{ active: activeToolPanel === 'browser' }"
                     type="button"
                     role="tab"
+                    :title="t('browser.title')"
+                    :aria-label="t('browser.title')"
                     :aria-selected="activeToolPanel === 'browser'"
                     @click="activeToolPanel = 'browser'"
                   >
-                    {{ t("browser.title") }}
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <rect x="3" y="4" width="18" height="16" rx="2" />
+                      <path d="M3 9h18" />
+                      <circle cx="6.5" cy="6.5" r=".75" fill="currentColor" stroke="none" />
+                      <circle cx="9.5" cy="6.5" r=".75" fill="currentColor" stroke="none" />
+                    </svg>
                   </button>
                 </div>
                 <div class="chat-tool-content">
@@ -3587,7 +3603,7 @@ async function handleSessionModelCustomSubmit() {
 
 .chat-tool-panel-inner {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -3596,24 +3612,42 @@ async function handleSessionModelCustomSubmit() {
 
 .chat-tool-tabs {
   display: flex;
+  flex-direction: column;
   align-items: center;
   flex-shrink: 0;
-  gap: 6px;
-  padding: 8px 10px;
-  border-bottom: 1px solid $border-color;
+  order: 2;
+  width: 48px;
+  height: 100%;
+  gap: 4px;
+  padding: 8px 6px;
+  border-left: 1px solid $border-color;
+  background: $bg-sidebar-surface;
+  box-sizing: border-box;
 }
 
 .chat-tool-tab {
-  height: 30px;
-  padding: 0 12px;
+  position: relative;
+  width: 36px;
+  height: 36px;
+  padding: 0;
   border: none;
   border-radius: $radius-sm;
   background: transparent;
   color: $text-secondary;
   cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
+  display: grid;
+  place-items: center;
   transition: all $transition-fast;
+
+  svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
 
   &:hover {
     color: $text-primary;
@@ -3623,14 +3657,27 @@ async function handleSessionModelCustomSubmit() {
   &.active {
     color: var(--accent-primary);
     background: rgba(var(--accent-primary-rgb), 0.12);
+
+    &::after {
+      content: "";
+      position: absolute;
+      right: -6px;
+      top: 9px;
+      bottom: 9px;
+      width: 2px;
+      border-radius: 2px 0 0 2px;
+      background: var(--accent-primary);
+    }
   }
 }
 
 .chat-tool-content {
+  order: 1;
   flex: 1;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  background: $bg-main-surface;
 }
 
 .chat-tool-content > * {
