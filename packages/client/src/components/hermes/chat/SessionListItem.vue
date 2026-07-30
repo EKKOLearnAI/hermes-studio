@@ -143,7 +143,7 @@ onUnmounted(() => {
             </svg>
           </span>
           <span v-if="completedUnread" class="session-item-unread-dot" aria-hidden="true" />
-          <span class="session-item-title">
+          <span class="session-item-title" dir="auto">
             {{ session.title }}
           </span>
           <NTooltip v-if="profileModelsMissing" trigger="click" placement="top">
