@@ -3621,7 +3621,7 @@ async function handleSessionModelCustomSubmit() {
   height: 100%;
   gap: 4px;
   padding: 8px 6px;
-  border-left: 1px solid $border-color;
+  border-inline-start: 1px solid $border-color;
   background: $bg-sidebar-surface;
   box-sizing: border-box;
 }
