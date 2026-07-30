@@ -167,7 +167,7 @@ async function handleDownload(entry: FileEntry) {
 }
 
 .sort-indicator {
-  margin-left: 2px;
+  margin-inline-start: 2px;
   font-size: 11px;
 }
 
@@ -209,7 +209,7 @@ async function handleDownload(entry: FileEntry) {
 }
 
 .file-size {
-  text-align: right;
+  text-align: end;
   color: $text-secondary;
 }
 

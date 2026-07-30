@@ -206,7 +206,7 @@ onMounted(() => {
   width: 200px;
   min-width: 150px;
   max-width: 300px;
-  border-right: 1px solid $border-color;
+  border-inline-end: 1px solid $border-color;
   overflow-y: auto;
   flex-shrink: 0;
   display: flex;

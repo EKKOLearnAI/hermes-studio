@@ -161,7 +161,7 @@ function scrollToTarget(item: OutlineItem) {
   flex-direction: column;
   height: 100%;
   background-color: $bg-main-surface;
-  border-left: 1px solid $border-color;
+  border-inline-start: 1px solid $border-color;
   width: 280px;
   flex-shrink: 0;
 
@@ -237,15 +237,15 @@ function scrollToTarget(item: OutlineItem) {
 
 .outline-heading-item {
   &.level-1 {
-    padding-left: 0;
+    padding-inline-start: 0;
   }
 
   &.level-2 {
-    padding-left: 12px;
+    padding-inline-start: 12px;
   }
 
   &.level-3 {
-    padding-left: 24px;
+    padding-inline-start: 24px;
   }
 }
 

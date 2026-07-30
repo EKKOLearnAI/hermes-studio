@@ -1,47 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'fs'
-import { join } from 'path'
+import { readdirSync, readFileSync } from 'fs'
+import { join, relative } from 'path'
 
 const CLIENT_ROOT = join(process.cwd(), 'packages/client/src')
 
-// Spacing, borders and text alignment in these components must follow the
-// writing direction rather than a physical side. Guards against reintroducing
-// the physical variants as the conversion spreads through the app.
-const DIRECTION_AWARE_COMPONENTS = [
-  'components/hermes/chat/ChatInput.vue',
-  'components/hermes/chat/ChatPanel.vue',
-  'components/hermes/chat/MessageItem.vue',
-  'components/hermes/chat/MessageList.vue',
-  'components/hermes/group-chat/GroupChatInput.vue',
-  'components/hermes/group-chat/GroupChatPanel.vue',
-  'components/hermes/group-chat/GroupMessageItem.vue',
-  'components/hermes/jobs/JobCard.vue',
-  'components/hermes/kanban/KanbanTaskCard.vue',
-  'components/hermes/kanban/KanbanTaskDrawer.vue',
-  'components/hermes/models/CombinationModelsPanel.vue',
-  'components/hermes/models/ProviderCard.vue',
-  'components/hermes/models/ProviderEditorModal.vue',
-  'components/hermes/settings/SettingRow.vue',
-  'components/hermes/skills/SkillDetail.vue',
-  'components/hermes/skills/SkillList.vue',
-  'components/layout/AppSidebar.vue',
-  'components/layout/DesktopTitleBar.vue',
-  'components/layout/ModelSelector.vue',
-  'components/layout/SettingsCircuitBadge.vue',
-  'views/LoginView.vue',
-  'views/hermes/FilesView.vue',
-  'views/hermes/HistoryView.vue',
-  'views/hermes/JobsView.vue',
-  'views/hermes/JourneyView.vue',
-  'views/hermes/KanbanView.vue',
-  'views/hermes/LogsView.vue',
-  'views/hermes/PerformanceView.vue',
-  'views/hermes/PluginsView.vue',
-  'views/hermes/SkillsView.vue',
-  'views/hermes/TerminalView.vue',
-  'views/hermes/WorkflowView.vue',
-]
-
+// Spacing, borders and text alignment must follow the writing direction rather
+// than a physical side, otherwise a right-to-left locale keeps its gutters,
+// dividers and indentation on the wrong edge. Every client component now uses
+// the logical properties, so this walks the whole tree instead of a maintained
+// list and fails as soon as a physical declaration appears anywhere.
 const PHYSICAL_PATTERNS: Array<{ label: string, pattern: RegExp }> = [
   { label: 'margin-left', pattern: /\bmargin-left\b/g },
   { label: 'margin-right', pattern: /\bmargin-right\b/g },
@@ -53,15 +20,32 @@ const PHYSICAL_PATTERNS: Array<{ label: string, pattern: RegExp }> = [
   { label: 'text-align: right', pattern: /text-align:\s*right\b/g },
 ]
 
-describe('converted components use direction-aware CSS', () => {
+function collectComponents(dir: string, files: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) collectComponents(path, files)
+    else if (entry.name.endsWith('.vue')) files.push(path)
+  }
+  return files
+}
+
+describe('client components use direction-aware CSS', () => {
+  const components = collectComponents(CLIENT_ROOT)
+
+  it('scans the whole client component tree', () => {
+    expect(components.length).toBeGreaterThan(50)
+  })
+
   it('has no physical inline-axis spacing, borders or text alignment', () => {
     const offenders: string[] = []
 
-    for (const component of DIRECTION_AWARE_COMPONENTS) {
-      const source = readFileSync(join(CLIENT_ROOT, component), 'utf8')
+    for (const component of components) {
+      const source = readFileSync(component, 'utf8')
       for (const { label, pattern } of PHYSICAL_PATTERNS) {
         const matches = source.match(pattern)
-        if (matches) offenders.push(`${component}: ${label} × ${matches.length}`)
+        if (matches) {
+          offenders.push(`${relative(CLIENT_ROOT, component)}: ${label} × ${matches.length}`)
+        }
       }
     }
 
@@ -69,11 +53,16 @@ describe('converted components use direction-aware CSS', () => {
   })
 
   it('actually uses the logical replacements', () => {
-    const combined = DIRECTION_AWARE_COMPONENTS
-      .map(component => readFileSync(join(CLIENT_ROOT, component), 'utf8'))
-      .join('\n')
+    const combined = components.map(component => readFileSync(component, 'utf8')).join('\n')
 
-    for (const logical of ['margin-inline-start', 'padding-inline-start', 'border-inline-start']) {
+    for (const logical of [
+      'margin-inline-start',
+      'margin-inline-end',
+      'padding-inline-start',
+      'padding-inline-end',
+      'border-inline-start',
+      'text-align: start',
+    ]) {
       expect(combined, logical).toContain(logical)
     }
   })

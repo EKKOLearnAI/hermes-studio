@@ -125,7 +125,7 @@ const recentEventTypes = computed(() => props.events.slice(-5).map(event => even
 
 .voice-transcript-overlay__debug-list {
   margin: 0;
-  padding-left: 1rem;
+  padding-inline-start: 1rem;
 }
 
 @media (max-width: 640px) {

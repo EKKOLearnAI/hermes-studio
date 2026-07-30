@@ -286,13 +286,13 @@ function handleEditConfig() {
   font-size: 12px;
   color: $text-muted;
   flex-shrink: 0;
-  margin-right: 12px;
+  margin-inline-end: 12px;
 }
 
 .info-value {
   font-size: 12px;
   color: $text-secondary;
-  text-align: right;
+  text-align: end;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

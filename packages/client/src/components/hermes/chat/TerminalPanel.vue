@@ -574,7 +574,7 @@ onUnmounted(() => {
 
 .terminal-session-rail {
   width: 48px;
-  border-right: 1px solid $border-color;
+  border-inline-end: 1px solid $border-color;
   background: $bg-sidebar-surface;
   display: flex;
   flex-direction: column;
