@@ -112,7 +112,7 @@ describe('generated file preview formats', () => {
     expect(htmlPreviewSource).toMatch(/\.html-preview\s*\{[\s\S]*flex: 1;[\s\S]*height: 100%;[\s\S]*min-height: 0;/)
     expect(htmlPreviewSource).toMatch(/\.html-frame\s*\{[\s\S]*flex: 1;[\s\S]*height: 100%;[\s\S]*min-height: 0;/)
     expect(htmlPreviewSource).not.toContain('min-height: 420px')
-    expect(filePreviewSource).toMatch(/\.file-preview\s*\{[\s\S]*height: 100%;[\s\S]*min-height: 0;/)
+    expect(filePreviewSource).toMatch(/\.file-preview\s*\{[\s\S]*height: 100%;[\s\S]*width: 100%;[\s\S]*min-height: 0;/)
     expect(filePreviewSource).toMatch(/\.preview-content\s*\{[\s\S]*width: 100%;[\s\S]*height: 100%;[\s\S]*min-height: 0;/)
   })
 
