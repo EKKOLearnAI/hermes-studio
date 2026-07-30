@@ -25,6 +25,7 @@ import type {
   BrowserProfileCreateInput,
   BrowserProfileSwitchImpact,
   BrowserProfileUpdateInput,
+  BrowserReadTextOptions,
   BrowserSelection,
   BrowserSitePermission,
   DesktopBrowserDownload,
@@ -379,6 +380,11 @@ export class BrowserManager {
   async snapshot(tabId: string) {
     const record = this.requireTab(tabId)
     return this.automation.snapshot(tabId, record.view.webContents)
+  }
+
+  async readText(tabId: string, options: BrowserReadTextOptions) {
+    const record = this.requireTab(tabId)
+    return this.automation.readText(tabId, record.view.webContents, options)
   }
 
   async interact(tabId: string, action: BrowserInteractAction): Promise<DesktopBrowserTab> {

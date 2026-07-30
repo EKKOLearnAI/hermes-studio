@@ -8,15 +8,23 @@ const BLOCKED_HOSTS = new Set([
 ])
 const SENSITIVE_QUERY_KEY = /^(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|api[_-]?key|secret|password|authorization|auth|code|session)$/i
 
-export function redactBrowserText(input: unknown, limit = 500): string {
+function redactBrowserSecrets(input: unknown): string {
   return String(input ?? '')
     .replace(/\bAuthorization\s*([:=])\s*Bearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Authorization$1 Bearer [redacted]')
     .replace(/\b(access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|password|secret)\s*([:=])\s*([^\s&,;]+)/gi, '$1$2[redacted]')
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [redacted]')
     .replace(/\bAuthorization\s*([:=])\s*(?!Bearer\s+\[redacted\])(?:Basic\s+)?[^\s&,;]+/gi, 'Authorization$1[redacted]')
+}
+
+export function redactBrowserText(input: unknown, limit = 500): string {
+  return redactBrowserSecrets(input)
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, limit)
+}
+
+export function redactBrowserContent(input: unknown, limit: number): string {
+  return redactBrowserSecrets(input).slice(0, limit)
 }
 
 export function publicBrowserUrl(input: string): string {

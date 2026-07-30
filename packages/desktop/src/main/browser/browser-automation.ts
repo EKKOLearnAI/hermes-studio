@@ -2,11 +2,14 @@ import { randomUUID } from 'node:crypto'
 import type { WebContents } from 'electron'
 import type {
   BrowserInteractAction,
+  BrowserReadTextOptions,
+  BrowserReadTextResult,
   BrowserScreenshot,
   BrowserSnapshot,
   BrowserSnapshotNode,
 } from './browser-types'
-import { publicBrowserUrl, redactBrowserText } from './browser-url'
+import { MAX_BROWSER_TEXT_READ_LIMIT } from './browser-types'
+import { publicBrowserUrl, redactBrowserContent, redactBrowserText } from './browser-url'
 
 interface AxNode {
   nodeId?: string
@@ -28,6 +31,22 @@ const MAX_SNAPSHOT_NODES = 300
 const MAX_SNAPSHOT_TEXT = 24_000
 const MAX_SCREENSHOT_BYTES = 12 * 1024 * 1024
 const HIGH_RISK_ACTIVATION = /(?:\b(?:buy(?: now)?|purchase|checkout|place order|pay(?: now)?|delete|remove account|publish|post|send|transfer|withdraw|submit order|grant (?:access|permission)|allow access)\b|购买|下单|付款|支付|删除|注销|发布|发送|转账|提现|提交订单|購入|注文|支払|削除|公開|投稿|送信|振込|구매|주문|결제|삭제|게시|전송|송금)/i
+const CLICKABLE_ANCESTOR_SELECTOR = [
+  'button',
+  'a[href]',
+  'input:not([type="hidden"])',
+  'select',
+  'textarea',
+  'summary',
+  'label',
+  '[role="button"]',
+  '[role="link"]',
+  '[role="menuitem"]',
+  '[role="menuitemcheckbox"]',
+  '[role="menuitemradio"]',
+  '[onclick]',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',')
 
 function textValue(value: unknown, limit = 500): string {
   return redactBrowserText(value, limit)
@@ -105,6 +124,78 @@ export class BrowserAutomation {
     }
   }
 
+  async readText(tabId: string, contents: WebContents, options: BrowserReadTextOptions): Promise<BrowserReadTextResult> {
+    await this.ensureAttached(contents)
+    const target = this.resolveRef(tabId, options.snapshotId, options.ref)
+    const offset = Math.max(0, Math.floor(options.offset))
+    const limit = Math.max(1, Math.min(MAX_BROWSER_TEXT_READ_LIMIT, Math.floor(options.limit)))
+    const objectId = await this.resolveObject(contents, target.backendDOMNodeId)
+    try {
+      const response = await contents.debugger.sendCommand('Runtime.callFunctionOn', {
+        objectId,
+        returnByValue: true,
+        arguments: [
+          { value: options.mode },
+          { value: offset },
+          { value: limit },
+        ],
+        functionDeclaration: `function (mode, offset, limit) {
+          const node = this;
+          const element = node && node.nodeType === 3 ? node.parentElement : node;
+          let source = '';
+          if (mode === 'innerText' && element && typeof element.innerText === 'string') {
+            source = element.innerText;
+          } else if (node && typeof node.textContent === 'string') {
+            source = node.textContent;
+          } else if (element && typeof element.textContent === 'string') {
+            source = element.textContent;
+          }
+          const start = Math.min(offset, source.length);
+          const end = Math.min(source.length, start + limit);
+          return {
+            text: source.slice(start, end),
+            totalLength: source.length,
+            offset: start,
+            returnedLength: end - start,
+          };
+        }`,
+      }) as {
+        result?: { value?: { text?: unknown; totalLength?: unknown; offset?: unknown; returnedLength?: unknown } }
+        exceptionDetails?: unknown
+      }
+      const value = response.result?.value
+      if (
+        response.exceptionDetails
+        || !value
+        || typeof value.text !== 'string'
+        || typeof value.totalLength !== 'number'
+        || typeof value.offset !== 'number'
+        || typeof value.returnedLength !== 'number'
+      ) {
+        throw new Error('Unable to read browser element text')
+      }
+      const totalLength = Math.max(0, Math.floor(value.totalLength))
+      const resultOffset = Math.max(0, Math.min(totalLength, Math.floor(value.offset)))
+      const returnedLength = Math.max(0, Math.min(limit, Math.floor(value.returnedLength)))
+      const hasMore = resultOffset + returnedLength < totalLength
+      return {
+        tabId,
+        snapshotId: options.snapshotId,
+        ref: options.ref,
+        mode: options.mode,
+        offset: resultOffset,
+        limit,
+        text: redactBrowserContent(value.text, limit),
+        totalLength,
+        returnedLength,
+        hasMore,
+        ...(hasMore ? { nextOffset: resultOffset + returnedLength } : {}),
+      }
+    } finally {
+      await contents.debugger.sendCommand('Runtime.releaseObject', { objectId }).catch(() => undefined)
+    }
+  }
+
   async interact(tabId: string, contents: WebContents, action: BrowserInteractAction): Promise<void> {
     if (!action || !['click', 'type', 'press', 'scroll'].includes(action.action)) throw new Error('Invalid browser interaction action')
     await this.ensureAttached(contents)
@@ -119,12 +210,19 @@ export class BrowserAutomation {
             objectId,
             returnByValue: true,
             functionDeclaration: `function () {
-              const rect = this.getBoundingClientRect();
+              const node = this;
+              const element = node && node.nodeType === 3 ? node.parentElement : node;
+              if (!element || typeof element.getBoundingClientRect !== 'function') throw new Error('Browser node has no clickable element');
+              const target = typeof element.closest === 'function'
+                ? element.closest(${JSON.stringify(CLICKABLE_ANCESTOR_SELECTOR)}) || element
+                : element;
+              const rect = target.getBoundingClientRect();
               if (!rect || rect.width <= 0 || rect.height <= 0) throw new Error('Element is not visible');
-              this.scrollIntoView({ block: 'center', inline: 'center' });
-              const next = this.getBoundingClientRect();
+              target.scrollIntoView({ block: 'center', inline: 'center' });
+              const next = target.getBoundingClientRect();
               if (next.bottom <= 0 || next.right <= 0 || next.top >= innerHeight || next.left >= innerWidth) throw new Error('Element is outside the viewport');
-              this.click();
+              if (typeof target.click === 'function') target.click();
+              else target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
               return true;
             }`,
           }) as { result?: { value?: unknown }; exceptionDetails?: unknown }
@@ -181,7 +279,7 @@ export class BrowserAutomation {
   interactionRisk(tabId: string, action: BrowserInteractAction): { kind: 'high-risk-activation'; label: string } | null {
     if (action.action !== 'click' || typeof action.snapshot_id !== 'string' || typeof action.ref !== 'string') return null
     const target = this.resolveRef(tabId, action.snapshot_id, action.ref)
-    if (!['button', 'link', 'menuitem', 'menuitemcheckbox', 'menuitemradio'].includes(target.role.toLowerCase())) return null
+    if (!['button', 'link', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'statictext', 'text', 'inlinetextbox'].includes(target.role.toLowerCase())) return null
     const label = textValue(target.name, 160)
     return label && HIGH_RISK_ACTIVATION.test(label) ? { kind: 'high-risk-activation', label } : null
   }

@@ -74,6 +74,72 @@ describe('Desktop Browser Broker', () => {
     }
   })
 
+  it('validates and forwards bounded text reads for snapshot refs', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-browser-broker-read-text-'))
+    roots.push(root)
+    const tabs = [{ id: 'tab-1', agentControl: 'idle' }]
+    const manager = {
+      state: () => ({ tabs }),
+      readText: async (tabId: string, options: Record<string, unknown>) => ({
+        tabId,
+        ...options,
+        text: 'full text',
+        totalLength: 9,
+        returnedLength: 9,
+        hasMore: false,
+      }),
+      setAgentControl: (tabId: string, control: string) => { const tab = tabs.find(item => item.id === tabId); if (tab) tab.agentControl = control },
+      revokeAgentControl: (tabId: string) => { const tab = tabs.find(item => item.id === tabId); if (tab) tab.agentControl = 'idle' },
+      cancelAgentOperation: (tabId: string) => { const tab = tabs.find(item => item.id === tabId); if (tab) tab.agentControl = 'idle' },
+    } as unknown as BrowserManager
+    const broker = new BrowserBroker(manager, root)
+    const descriptor = await broker.start()
+
+    try {
+      const registration = await fetch(`${descriptor.endpoint}/session`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${descriptor.token}`, 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+      const client = await registration.json() as { client_id: string; session_token: string }
+      const invoke = (limit: number) => fetch(descriptor.endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${client.session_token}`,
+          'Content-Type': 'application/json',
+          'X-Hermes-Browser-Client': client.client_id,
+        },
+        body: JSON.stringify({
+          method: 'text.read',
+          params: {
+            tab_id: 'tab-1',
+            snapshot_id: 'snapshot-1',
+            ref: '@e1',
+            mode: 'textContent',
+            offset: 10,
+            limit,
+          },
+        }),
+      })
+
+      const response = await invoke(2_000)
+      expect(response.status).toBe(200)
+      expect((await response.json()).result).toMatchObject({
+        tabId: 'tab-1',
+        snapshotId: 'snapshot-1',
+        ref: '@e1',
+        mode: 'textContent',
+        offset: 10,
+        limit: 2_000,
+      })
+      const oversized = await invoke(20_001)
+      expect(oversized.status).toBe(400)
+      expect((await oversized.json()).error).toContain('limit must be an integer between 1 and 20000')
+    } finally {
+      await broker.stop()
+    }
+  })
+
   it('reclaims a tab lease when its registered MCP process has exited', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hermes-browser-broker-stale-client-'))
     roots.push(root)

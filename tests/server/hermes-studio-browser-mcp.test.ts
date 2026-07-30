@@ -98,6 +98,8 @@ describe('hermes-studio browser MCP toolset', () => {
         ? { tabId: 'tab-1', url: 'https://example.com/', title: 'Example', mediaType: 'image/png', data: 'AA==', width: 1, height: 1 }
         : body.method === 'snapshot'
           ? { tabId: 'tab-1', snapshotId: 'snapshot-1', text: '@e1 button name="Example"' }
+          : body.method === 'text.read'
+            ? { tabId: 'tab-1', snapshotId: 'snapshot-1', ref: '@e1', text: 'Complete text', totalLength: 13, returnedLength: 13, hasMore: false }
         : { tabs: [{ id: 'tab-1' }] }
       response.end(JSON.stringify({ operation_id: body.operation_id, result }))
     })
@@ -131,7 +133,7 @@ describe('hermes-studio browser MCP toolset', () => {
     })
     expect(JSON.parse(catalog.result.content[0].text)).toMatchObject({
       toolset: 'browser',
-      operation_count: 6,
+      operation_count: 7,
     })
     const described = await rpc(4, 'tools/call', {
       name: 'hermes_studio_browser_toolset',
@@ -148,13 +150,30 @@ describe('hermes-studio browser MCP toolset', () => {
       arguments: { action: 'call', tool: 'hermes_studio_browser_screenshot', arguments: { tab_id: 'tab-1' } },
     })
     expect(screenshot.result.content[1]).toEqual({ type: 'image', data: 'AA==', mimeType: 'image/png' })
-    expect(clients).toHaveLength(2)
+    const readText = await rpc(7, 'tools/call', {
+      name: 'hermes_studio_browser_toolset',
+      arguments: {
+        action: 'call',
+        tool: 'hermes_studio_browser_read_text',
+        arguments: { tab_id: 'tab-1', snapshot_id: 'snapshot-1', ref: '@e1', offset: 0, limit: 4000 },
+      },
+    })
+    expect(JSON.parse(readText.result.content[0].text)).toMatchObject({
+      result: {
+        snapshotId: 'snapshot-1',
+        ref: '@e1',
+        text: 'Complete text',
+        hasMore: false,
+      },
+    })
+    expect(clients).toHaveLength(3)
     expect(clients[0]).toBeTruthy()
     expect(clients[0]).toBe(clients[1])
+    expect(clients[1]).toBe(clients[2])
     expect(registeredPids).toEqual([child.pid])
 
     failScreenshot = true
-    const fallback = await rpc(7, 'tools/call', {
+    const fallback = await rpc(8, 'tools/call', {
       name: 'hermes_studio_browser_toolset',
       arguments: { action: 'call', tool: 'hermes_studio_browser_screenshot', arguments: { tab_id: 'tab-1' } },
     })
@@ -162,7 +181,7 @@ describe('hermes-studio browser MCP toolset', () => {
     expect(fallback.result.content[0].text).toContain('snapshot-1')
 
     await rm(join(brokerRoot, 'broker.json'))
-    const unavailable = await rpc(8, 'tools/list')
+    const unavailable = await rpc(9, 'tools/list')
     expect(unavailable.result.tools).toEqual([])
   })
 })

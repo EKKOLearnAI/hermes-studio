@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { BrowserProfileStore } from '../../packages/desktop/src/main/browser/browser-profile-store'
-import { isAllowedBrowserRequest, isAllowedBrowserSubresource, normalizeBrowserUrl, publicBrowserUrl, redactBrowserText } from '../../packages/desktop/src/main/browser/browser-url'
+import { isAllowedBrowserRequest, isAllowedBrowserSubresource, normalizeBrowserUrl, publicBrowserUrl, redactBrowserContent, redactBrowserText } from '../../packages/desktop/src/main/browser/browser-url'
 
 const roots: string[] = []
 
@@ -42,6 +42,7 @@ describe('desktop browser security primitives', () => {
     expect(isAllowedBrowserSubresource('file:///tmp/secret')).toBe(false)
     expect(publicBrowserUrl('https://example.com/callback?code=secret-code&view=ok#access_token=secret')).toBe('https://example.com/callback?code=%5Bredacted%5D&view=ok#[redacted]')
     expect(redactBrowserText('Authorization: Bearer very.secret.token')).toBe('Authorization: Bearer [redacted]')
+    expect(redactBrowserContent('first line\napi_key=secret-value\nlast line', 100)).toBe('first line\napi_key=[redacted]\nlast line')
   })
 
   it('applies profile storage and proxy changes before restored tabs load', async () => {

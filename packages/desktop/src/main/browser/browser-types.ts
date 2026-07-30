@@ -105,6 +105,33 @@ export interface BrowserSnapshot {
   text: string
 }
 
+export type BrowserTextMode = 'innerText' | 'textContent'
+
+export const DEFAULT_BROWSER_TEXT_READ_LIMIT = 4_000
+export const MAX_BROWSER_TEXT_READ_LIMIT = 20_000
+
+export interface BrowserReadTextOptions {
+  snapshotId: string
+  ref: string
+  mode: BrowserTextMode
+  offset: number
+  limit: number
+}
+
+export interface BrowserReadTextResult {
+  tabId: string
+  snapshotId: string
+  ref: string
+  mode: BrowserTextMode
+  offset: number
+  limit: number
+  text: string
+  totalLength: number
+  returnedLength: number
+  hasMore: boolean
+  nextOffset?: number
+}
+
 export interface BrowserScreenshot {
   tabId: string
   url: string

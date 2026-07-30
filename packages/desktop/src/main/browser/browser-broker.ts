@@ -3,7 +3,13 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { BrowserManager } from './browser-manager'
-import type { BrowserBrokerDescriptor, BrowserInteractAction } from './browser-types'
+import {
+  DEFAULT_BROWSER_TEXT_READ_LIMIT,
+  MAX_BROWSER_TEXT_READ_LIMIT,
+  type BrowserBrokerDescriptor,
+  type BrowserInteractAction,
+  type BrowserTextMode,
+} from './browser-types'
 import { publicBrowserUrl, redactBrowserText } from './browser-url'
 
 interface BrokerRequest {
@@ -37,6 +43,14 @@ function requiredString(value: unknown, name: string): string {
   const result = typeof value === 'string' ? value.trim() : ''
   if (!result || result.length > 4096) throw new Error(`${name} is required`)
   return result
+}
+
+function boundedInteger(value: unknown, name: string, fallback: number, minimum: number, maximum: number): number {
+  if (value === undefined) return fallback
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`)
+  }
+  return value
 }
 
 function safeEqual(left: string, right: string): boolean {
@@ -230,6 +244,17 @@ export class BrowserBroker {
         }
         case 'snapshot':
           return await this.manager.snapshot(requiredString(params.tab_id, 'tab_id'))
+        case 'text.read': {
+          const mode = params.mode === undefined ? 'innerText' : requiredString(params.mode, 'mode')
+          if (mode !== 'innerText' && mode !== 'textContent') throw new Error('mode must be innerText or textContent')
+          return await this.manager.readText(requiredString(params.tab_id, 'tab_id'), {
+            snapshotId: requiredString(params.snapshot_id, 'snapshot_id'),
+            ref: requiredString(params.ref, 'ref'),
+            mode: mode as BrowserTextMode,
+            offset: boundedInteger(params.offset, 'offset', 0, 0, Number.MAX_SAFE_INTEGER),
+            limit: boundedInteger(params.limit, 'limit', DEFAULT_BROWSER_TEXT_READ_LIMIT, 1, MAX_BROWSER_TEXT_READ_LIMIT),
+          })
+        }
         case 'interact': {
           const tab = await this.manager.interact(requiredString(params.tab_id, 'tab_id'), asObject(params.action) as unknown as BrowserInteractAction)
           return this.publicTab(tab)

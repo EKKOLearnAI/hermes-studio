@@ -877,8 +877,21 @@ const tools = [
   {
     name: 'hermes_studio_browser_snapshot',
     toolset: 'browser',
-    description: 'Return a bounded accessibility snapshot with stable element refs. Pass its snapshot_id to click or type; stale snapshots are rejected.',
+    description: 'Return a bounded accessibility snapshot with stable element refs. Pass its snapshot_id to read text, click, or type; stale snapshots are rejected.',
     inputSchema: browserInputSchema({ tab_id: { type: 'string' } }, ['tab_id']),
+  },
+  {
+    name: 'hermes_studio_browser_read_text',
+    toolset: 'browser',
+    description: 'Read a bounded page of rendered text from one ref in the latest accessibility snapshot. Use nextOffset while hasMore is true to continue long text safely.',
+    inputSchema: browserInputSchema({
+      tab_id: { type: 'string' },
+      snapshot_id: { type: 'string' },
+      ref: { type: 'string' },
+      mode: { type: 'string', enum: ['innerText', 'textContent'], description: 'Defaults to innerText. Text refs use their parent element for innerText.' },
+      offset: { type: 'number', minimum: 0, description: 'Zero-based source character offset. Defaults to 0.' },
+      limit: { type: 'number', minimum: 1, maximum: 20000, description: 'Maximum source characters to return. Defaults to 4000.' },
+    }, ['tab_id', 'snapshot_id', 'ref']),
   },
   {
     name: 'hermes_studio_browser_interact',
@@ -1752,6 +1765,15 @@ async function callTool(name, args = {}) {
     }
     case 'hermes_studio_browser_snapshot':
       return jsonText(await browserRequest('snapshot', { tab_id: args.tab_id }))
+    case 'hermes_studio_browser_read_text':
+      return jsonText(await browserRequest('text.read', {
+        tab_id: args.tab_id,
+        snapshot_id: args.snapshot_id,
+        ref: args.ref,
+        mode: args.mode,
+        offset: args.offset,
+        limit: args.limit,
+      }))
     case 'hermes_studio_browser_interact': {
       const action = { action: args.action }
       for (const key of ['ref', 'snapshot_id', 'text', 'key', 'direction', 'pixels']) {
