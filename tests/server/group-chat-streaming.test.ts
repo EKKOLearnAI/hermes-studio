@@ -68,6 +68,89 @@ describe('group chat streaming baseline', () => {
     expect(await streamEnd).toEqual({ roomId: 'room-1', id: 'stream-1' })
   })
 
+  it('publishes terminal UI state from the same fenced commit that completes a handoff', async () => {
+    const { alice, bob, worker, agentSessionId } = await joinPair()
+    harness.db.prepare(
+      'UPDATE gc_room_agents SET sessionId = ? WHERE roomId = ? AND agentId = ?',
+    ).run(agentSessionId, 'room-1', 'agent-worker')
+
+    const sourceAck = await emitAck<any>(alice, 'message', {
+      roomId: 'room-1',
+      id: 'terminal-source-1',
+      content: '@Worker finish this',
+      mentions: [{ type: 'participant', participantId: 'agent-worker', displayName: 'Worker', start: 0, length: 7 }],
+    })
+    expect(sourceAck).toEqual({ id: 'terminal-source-1' })
+
+    const [job] = groupServer.getStorage().claimHandoffJobs('test-dispatcher', Date.now(), 1, 60_000)
+    expect(job).toMatchObject({
+      sourceMessageId: 'terminal-source-1',
+      targetAgentId: 'agent-worker',
+      targetSessionId: agentSessionId,
+      status: 'running',
+    })
+
+    worker.emit('context_status', {
+      roomId: 'room-1',
+      agentName: 'Worker',
+      status: 'replying',
+      agentSessionId,
+      sourceHandoffJobId: job.id,
+      sourceHandoffLeaseToken: job.leaseToken,
+    })
+    await expect(once<any>(bob, 'context_status')).resolves.toMatchObject({
+      agentId: 'agent-worker',
+      status: 'replying',
+    })
+
+    const finalMessage = new Promise<any>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('timeout waiting for terminal message')), 2_000)
+      const onMessage = (payload: any) => {
+        if (payload?.id !== 'terminal-stream-1') return
+        clearTimeout(timer)
+        bob.off('message', onMessage)
+        resolve(payload)
+      }
+      bob.on('message', onMessage)
+    })
+    const streamEnd = once<any>(bob, 'message_stream_end')
+    const ready = new Promise<any>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('timeout waiting for ready context_status')), 2_000)
+      const onStatus = (payload: any) => {
+        if (payload?.agentId !== 'agent-worker' || payload?.status !== 'ready') return
+        clearTimeout(timer)
+        bob.off('context_status', onStatus)
+        resolve(payload)
+      }
+      bob.on('context_status', onStatus)
+    })
+    const finalAck = emitAck<any>(worker, 'message', {
+      roomId: 'room-1',
+      id: 'terminal-stream-1',
+      content: 'finished',
+      role: 'assistant',
+      finish_reason: 'stop',
+      handoffChainId: job.chainId,
+      handoffDepth: 1,
+      sourceHandoffJobId: job.id,
+      sourceHandoffLeaseToken: job.leaseToken,
+      handoffFinal: true,
+      agentSessionId,
+    })
+
+    await expect(finalAck).resolves.toEqual({ id: 'terminal-stream-1' })
+    await expect(finalMessage).resolves.toMatchObject({ id: 'terminal-stream-1', content: 'finished' })
+    await expect(streamEnd).resolves.toEqual({ roomId: 'room-1', id: 'terminal-stream-1' })
+    await expect(ready).resolves.toMatchObject({
+      roomId: 'room-1',
+      agentId: 'agent-worker',
+      agentName: 'Worker',
+      status: 'ready',
+    })
+    expect(groupServer.getStorage().getHandoffJob(job.id)).toMatchObject({ status: 'completed', leaseToken: '' })
+    expect((groupServer as any).contextStatusState.has('room-1')).toBe(false)
+  })
+
   it('routes and persists a human structured mention by stable participant identity', async () => {
     const { alice } = await joinPair()
 

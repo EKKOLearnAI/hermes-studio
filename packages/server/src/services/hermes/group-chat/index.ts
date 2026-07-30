@@ -4785,6 +4785,22 @@ export class GroupChatServer {
         }
         this.emitToRoomReaders(roomId, 'message', savedMsg)
         this.emitToRoomReaders(roomId, 'room_updated', { roomId, totalTokens })
+        if (isAgentMessage && savedMsg.handoffFinal && savedMsg.sourceHandoffJobId) {
+            // saveMessageAndRefreshRoom atomically commits the final message and consumes the
+            // exact running handoff lease. Publish terminal UI state from that accepted commit:
+            // later agent-originated terminal events still carry the now-consumed lease and must
+            // remain rejected by getCurrentAgentEventMember as stale callbacks.
+            this.emitToRoomReaders(roomId, 'message_stream_end', { roomId, id: savedMsg.id })
+            const roomStatuses = this.contextStatusState.get(roomId)
+            roomStatuses?.delete(userId)
+            if (roomStatuses?.size === 0) this.contextStatusState.delete(roomId)
+            this.emitToRoomReaders(roomId, 'context_status', {
+                roomId,
+                agentId: userId,
+                agentName: userName,
+                status: 'ready',
+            }, socket.id)
+        }
         ack?.({ id: savedMsg.id })
 
         if (saved.handoffJobs.length > 0) this.scheduleHandoffDispatch(0)
