@@ -571,7 +571,7 @@ function handleUpdateClick() {
   cursor: pointer;
   transition: all $transition-fast;
   width: 100%;
-  text-align: left;
+  text-align: start;
 
   &:hover {
     background-color: rgba(var(--accent-primary-rgb), 0.06);
@@ -586,7 +586,7 @@ function handleUpdateClick() {
   .beta-tag {
     font-size: 10px;
     color: $text-muted;
-    margin-left: 2px;
+    margin-inline-start: 2px;
   }
 }
 
@@ -630,7 +630,7 @@ function handleUpdateClick() {
 }
 
 .logout-username {
-  margin-left: auto;
+  margin-inline-start: auto;
   max-width: 96px;
   color: $text-muted;
   font-size: 12px;
@@ -652,7 +652,7 @@ function handleUpdateClick() {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  padding-left: 12px;
+  padding-inline-start: 12px;
   font-size: 12px;
   color: $text-secondary;
 
