@@ -366,7 +366,7 @@ function confirmDelete(category: string, skillName: string) {
     }
 
     &.sub {
-        padding-left: 22px;
+        padding-inline-start: 22px;
         font-size: 11px;
         text-transform: none;
         letter-spacing: 0;
@@ -391,7 +391,7 @@ function confirmDelete(category: string, skillName: string) {
     font-weight: 600;
     cursor: pointer;
     border-radius: $radius-sm;
-    text-align: left;
+    text-align: start;
 
     &:hover {
         background: rgba(245, 158, 11, 0.08);
@@ -412,11 +412,11 @@ function confirmDelete(category: string, skillName: string) {
     white-space: nowrap;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     direction: rtl;
-    text-align: left;
+    text-align: start;
 }
 
 .path-group-body {
-    padding-left: 4px;
+    padding-inline-start: 4px;
 }
 
 .category-arrow {
@@ -430,7 +430,7 @@ function confirmDelete(category: string, skillName: string) {
 
 .category-name {
     flex: 1;
-    text-align: left;
+    text-align: start;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -458,7 +458,7 @@ function confirmDelete(category: string, skillName: string) {
     background: none;
     color: $text-secondary;
     font-size: 13px;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
     border-radius: $radius-sm;
     transition: all $transition-fast;
@@ -482,7 +482,7 @@ function confirmDelete(category: string, skillName: string) {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    margin-right: 6px;
+    margin-inline-end: 6px;
     flex-shrink: 0;
     vertical-align: middle;
 }
@@ -519,7 +519,7 @@ function confirmDelete(category: string, skillName: string) {
 .modified-badge {
     font-size: 11px;
     color: $warning;
-    margin-left: 2px;
+    margin-inline-start: 2px;
     opacity: 0.7;
 }
 
@@ -544,7 +544,7 @@ function confirmDelete(category: string, skillName: string) {
 
 .skill-archived {
     opacity: 0.6;
-    padding-left: 28px;
+    padding-inline-start: 28px;
 }
 
 .skill-action-btn {

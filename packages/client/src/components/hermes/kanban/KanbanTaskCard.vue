@@ -69,7 +69,7 @@ const priorityText = computed(() => {
   --kanban-card-status-color: #64748b;
   background-color: $bg-card;
   border: 1px solid $border-color;
-  border-left: 3px solid var(--kanban-card-status-color);
+  border-inline-start: 3px solid var(--kanban-card-status-color);
   border-radius: $radius-md;
   padding: 12px;
   cursor: pointer;
@@ -120,7 +120,7 @@ const priorityText = computed(() => {
   gap: 5px;
   background: rgba(var(--accent-primary-rgb), 0.1);
   color: $accent-primary;
-  padding-left: 2px;
+  padding-inline-start: 2px;
 }
 
 .assignee-profile-avatar {
@@ -147,7 +147,7 @@ const priorityText = computed(() => {
 .meta-time {
   font-size: 11px;
   color: $text-muted;
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 .card-body-preview {
