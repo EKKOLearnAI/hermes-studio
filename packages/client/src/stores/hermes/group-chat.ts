@@ -923,10 +923,12 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         const mentionOffset = messageReference
             ? submittedContent.length - content.trim().length
             : 0
-        const submittedMentions = mentions?.map(mention => ({
-            ...mention,
-            start: mention.start + Math.max(0, mentionOffset),
-        }))
+        const submittedMentions = mentions?.length
+            ? mentions.map(mention => ({
+                ...mention,
+                start: mention.start + Math.max(0, mentionOffset),
+            }))
+            : undefined
         clearMessageReference(roomId)
         let finalContent: string | ContentBlock[] = submittedContent
         if (attachments?.length) {
@@ -950,7 +952,12 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         }
 
         return new Promise<void>((resolve, reject) => {
-            socket!.emit('message', { roomId, id: messageId, content: finalContent, mentions: submittedMentions }, (res: { id?: string; error?: string }) => {
+            socket!.emit('message', {
+                roomId,
+                id: messageId,
+                content: finalContent,
+                ...(submittedMentions ? { mentions: submittedMentions } : {}),
+            }, (res: { id?: string; error?: string }) => {
                 if (res.error) {
                     messages.value = messages.value.filter(m => m.id !== messageId)
                     reject(new Error(res.error))

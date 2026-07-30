@@ -528,6 +528,21 @@ describe('group chat store streaming merge', () => {
     )
   })
 
+  it('omits empty structured metadata so typed or pasted mention text uses legacy routing', async () => {
+    const store = await createJoinedStore()
+    groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: unknown, ack?: Function) => {
+      if (event === 'message' && ack) ack({ id: 'msg-server' })
+      return groupChatApiMock.socket
+    })
+    groupChatApiMock.socket.emit.mockClear()
+
+    await store.sendMessage('@Worker continue', undefined, [])
+
+    const call = groupChatApiMock.socket.emit.mock.calls.find(call => call[0] === 'message')!
+    expect(call[1]).toMatchObject({ content: '@Worker continue' })
+    expect(call[1]).not.toHaveProperty('mentions')
+  })
+
   it('offsets structured mention ranges after a quoted Room reference', async () => {
     const store = await createJoinedStore()
     store.setMessageReference('room-1', {

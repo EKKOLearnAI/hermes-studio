@@ -53,6 +53,7 @@ import {
     GroupChatInviteAttemptLimiter,
     groupChatInviteAttemptSubjectKey,
 } from './invite-attempt-limiter'
+import { serializeRoomAgent } from './participant-serialization'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -190,6 +191,27 @@ function contentToText(content: unknown): string {
         }).filter(Boolean).join('\n')
     }
     return content == null ? '' : String(content)
+}
+
+function contentToMentionText(content: unknown): string {
+    if (typeof content === 'string') {
+        const trimmed = content.trim()
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+            try {
+                return contentToMentionText(JSON.parse(trimmed))
+            } catch {
+                return content
+            }
+        }
+        return content
+    }
+    if (Array.isArray(content)) {
+        return content
+            .map((block: any) => block?.type === 'text' && typeof block.text === 'string' ? block.text : '')
+            .filter(Boolean)
+            .join('\n')
+    }
+    return ''
 }
 
 const APPROVAL_CHOICES = ['once', 'session', 'always', 'deny'] as const
@@ -4565,7 +4587,7 @@ export class GroupChatServer {
 
         // Load history from SQLite
         const messages = this.storage.getRecentMessagesForUI(roomId)
-        const agents = this.storage.getRoomAgents(roomId)
+        const agents = this.storage.getRoomAgents(roomId).map(serializeRoomAgent)
 
         ack?.({
             roomId,
@@ -4670,13 +4692,14 @@ export class GroupChatServer {
         const userName = member?.name || `User-${socketId.slice(0, 6)}`
         const role = member?.source === 'agent' ? normalizeMessageRole(data.role) : 'user'
         const routedText = contentToText(data.content)
+        const mentionText = contentToMentionText(data.content)
         const roomAgents = this.storage.getRoomAgents(roomId)
         let mentions: GroupChatMention[] | undefined
         try {
             if (member?.source === 'agent' && data.mentions !== undefined) {
                 throw new Error('Structured mentions are only accepted from human clients')
             }
-            mentions = normalizeStructuredMentions(data.mentions, roomAgents, userId, routedText)
+            mentions = normalizeStructuredMentions(data.mentions, roomAgents, userId, mentionText)
         } catch (err: any) {
             ack?.({ error: err?.message || 'Invalid structured mention metadata' })
             return
@@ -4688,7 +4711,7 @@ export class GroupChatServer {
                 : mentions.some(mention => mention.type === 'all')
                     ? roomAgents.filter(agent => agent.agentId !== userId).map(agent => agent.agentId)
                     : mentions.filter((mention): mention is Extract<GroupChatMention, { type: 'participant' }> => mention.type === 'participant').map(mention => mention.participantId)
-            const validation = this.agentClients.validateMessageInput?.(roomId, routedText, userId, structuredTargetIds) || { ok: true as const }
+            const validation = this.agentClients.validateMessageInput?.(roomId, routedText, userId, structuredTargetIds, mentionText) || { ok: true as const }
             if (!validation.ok) {
                 ack?.({ error: validation.error })
                 return
@@ -4730,7 +4753,7 @@ export class GroupChatServer {
             ? planGroupHandoffs({
                 room: roomInfo,
                 agents: roomAgents,
-                source: msg,
+                source: { ...msg, content: mentionText },
                 sourceJobKind: sourceHandoffJob?.kind,
             })
             : []

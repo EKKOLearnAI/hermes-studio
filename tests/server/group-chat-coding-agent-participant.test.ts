@@ -383,6 +383,33 @@ describe('group chat single-message budgets', () => {
     expect(clients.validateMessageInput('room-1', '@Large hello', 'human')).toEqual({ ok: true })
     expect(clients.validateMessageInput(
       'room-1',
+      `${'x'.repeat(40_000)}\n[File: @Large/report.txt]`,
+      'human',
+      undefined,
+      'x'.repeat(40_000),
+    )).toEqual({
+      ok: false,
+      error: 'Message exceeds the safe input limit for @Small (9600 tokens). Upload a file or split the message.',
+    })
+    expect(clients.validateMessageInput(
+      'room-1',
+      `@Large ${'x'.repeat(40_000)}\n[File: @Small/report.txt]`,
+      'human',
+      undefined,
+      `@Large ${'x'.repeat(40_000)}`,
+    )).toEqual({ ok: true })
+    expect(clients.validateMessageInput(
+      'room-1',
+      `@Large ${'x'.repeat(40_000)}`,
+      'human',
+      [],
+      `@Large ${'x'.repeat(40_000)}`,
+    )).toEqual({
+      ok: false,
+      error: 'Message exceeds the safe input limit for @Small (9600 tokens). Upload a file or split the message.',
+    })
+    expect(clients.validateMessageInput(
+      'room-1',
       `@Small ${'x'.repeat(40_000)}`,
       'human',
       ['large'],

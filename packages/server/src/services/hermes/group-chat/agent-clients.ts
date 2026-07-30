@@ -2337,12 +2337,19 @@ export class AgentClients {
 
     /**
      * Validate a single Room message against the smallest actually mentioned participant window.
-     * Non-text attachment payloads are represented by their compact text reference before this call.
+     * `content` is the complete rendered input used for token accounting. `mentionContent` is
+     * user-authored text only, so attachment names and paths cannot influence target selection.
      */
-    validateMessageInput(roomId: string, content: string, senderId: string, structuredTargetIds?: string[]): { ok: true } | { ok: false; error: string } {
+    validateMessageInput(
+        roomId: string,
+        content: string,
+        senderId: string,
+        structuredTargetIds?: string[],
+        mentionContent = content,
+    ): { ok: true } | { ok: false; error: string } {
         const agents = this.getAgents(roomId)
         const mentioned = structuredTargetIds === undefined
-            ? resolveMentionTargets(agents, content, senderId)
+            ? resolveMentionTargets(agents, mentionContent, senderId)
             : structuredTargetIds
                 .map(agentId => agents.find(agent => agent.agentId === agentId))
                 .filter((agent): agent is AgentClient => Boolean(agent))

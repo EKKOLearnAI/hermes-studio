@@ -172,6 +172,96 @@ describe('group chat streaming baseline', () => {
     ])
   })
 
+  it('routes typed or pasted mention text when structured metadata is omitted', async () => {
+    const { alice } = await joinPair()
+
+    const ack = await emitAck<any>(alice, 'message', {
+      roomId: 'room-1',
+      id: 'legacy-text-message-1',
+      content: '@Worker continue',
+    })
+
+    expect(ack).toEqual({ id: 'legacy-text-message-1' })
+    expect(groupServer.getStorage().getMessage('legacy-text-message-1')).not.toHaveProperty('mentions')
+    expect(groupServer.getStorage().listHandoffJobs('room-1')).toEqual([
+      expect.objectContaining({ sourceMessageId: 'legacy-text-message-1', targetAgentId: 'agent-worker', kind: 'mention' }),
+    ])
+  })
+
+  it('does not treat attachment metadata as a legacy mention command', async () => {
+    const { alice } = await joinPair()
+
+    const attachmentOnlyAck = await emitAck<any>(alice, 'message', {
+      roomId: 'room-1',
+      id: 'attachment-name-all-message',
+      content: [
+        { type: 'file', name: '@all', path: '/tmp/@all' },
+      ],
+    })
+    const textAndAttachmentAck = await emitAck<any>(alice, 'message', {
+      roomId: 'room-1',
+      id: 'attachment-name-participant-message',
+      content: [
+        { type: 'text', text: 'Please inspect the attached file.' },
+        { type: 'image', name: 'brief @Worker.png', path: '/tmp/brief @Worker.png' },
+      ],
+    })
+
+    expect(attachmentOnlyAck).toEqual({ id: 'attachment-name-all-message' })
+    expect(textAndAttachmentAck).toEqual({ id: 'attachment-name-participant-message' })
+    expect(groupServer.getStorage().listHandoffJobs('room-1')).toEqual([])
+  })
+
+  it('routes legacy mentions only from text blocks when attachments are present', async () => {
+    const { alice } = await joinPair()
+
+    const ack = await emitAck<any>(alice, 'message', {
+      roomId: 'room-1',
+      id: 'text-block-mention-message',
+      content: [
+        { type: 'text', text: '@Worker inspect the attached file.' },
+        { type: 'file', name: '@all', path: '/tmp/@all' },
+      ],
+    })
+
+    expect(ack).toEqual({ id: 'text-block-mention-message' })
+    expect(groupServer.getStorage().listHandoffJobs('room-1')).toEqual([
+      expect.objectContaining({ sourceMessageId: 'text-block-mention-message', targetAgentId: 'agent-worker', kind: 'mention' }),
+    ])
+  })
+
+  it('returns participant avatars as public objects in realtime join state', async () => {
+    const avatar = { type: 'asset', assetUrl: '/coding-agents/hermes.png' }
+    harness.db.prepare(
+      'UPDATE gc_room_agents SET avatar = ? WHERE roomId = ? AND agentId = ?',
+    ).run(JSON.stringify(avatar), 'room-1', 'agent-worker')
+    const alice = await connectGroupChatClient(port, 'avatar-user', 'Avatar User')
+    harness.sockets.push(alice)
+
+    const joined = await emitAck<any>(alice, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+
+    expect(joined.agents).toEqual([
+      {
+        roomId: 'room-1',
+        agentId: 'agent-worker',
+        profile: 'default',
+        name: 'Worker',
+        description: '',
+        invited: 0,
+        runtime: 'hermes',
+        codingAgentId: '',
+        mode: 'scoped',
+        provider: '',
+        model: '',
+        apiMode: '',
+        reasoningEffort: '',
+        avatar,
+      },
+    ])
+    expect(joined.agents[0]).not.toHaveProperty('sessionId')
+    expect(joined.agents[0]).not.toHaveProperty('checkpoint')
+  })
+
   it('rejects an unknown structured mention atomically before persistence', async () => {
     const { alice } = await joinPair()
 
