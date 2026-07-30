@@ -238,6 +238,8 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 0;
+  background: inherit;
 }
 
 .preview-header {
@@ -276,7 +278,10 @@ onBeforeUnmount(() => {
   padding: 16px;
   display: flex;
   justify-content: center;
+  width: 100%;
+  height: 100%;
   min-height: 0;
+  box-sizing: border-box;
 }
 
 .preview-error { width: min(680px, 100%); align-self: flex-start; }

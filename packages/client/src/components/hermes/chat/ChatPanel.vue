@@ -3608,6 +3608,7 @@ async function handleSessionModelCustomSubmit() {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  background: $bg-main-surface;
 }
 
 .chat-tool-tabs {

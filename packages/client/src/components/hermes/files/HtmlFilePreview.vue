@@ -69,9 +69,9 @@ async function handleSourceClick(event: MouseEvent): Promise<void> {
 </template>
 
 <style scoped lang="scss">
-.html-preview { display: flex; flex-direction: column; width: 100%; height: 100%; gap: 10px; }
+.html-preview { flex: 1; display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; gap: 10px; }
 .mode-switch { align-self: flex-start; }
-.html-frame { flex: 1; width: 100%; min-height: 420px; border: 1px solid var(--n-border-color); border-radius: 6px; background: white; scrollbar-width: none; }
+.html-frame { flex: 1; width: 100%; height: 100%; min-height: 0; border: 1px solid var(--n-border-color); border-radius: 6px; background: white; box-sizing: border-box; scrollbar-width: none; }
 .html-frame::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .source-view {
   flex: 1;

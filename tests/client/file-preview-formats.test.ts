@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'fs'
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import HtmlFilePreview from '@/components/hermes/files/HtmlFilePreview.vue'
@@ -102,6 +103,17 @@ describe('generated file preview formats', () => {
     await wrapper.findAll('button')[1].trigger('click')
     expect(wrapper.find('.source-view code.hljs').exists()).toBe(true)
     expect(wrapper.find('.source-view').html()).toContain('hljs-tag')
+  })
+
+  it('lets the HTML preview fill the available drawer height', () => {
+    const htmlPreviewSource = readFileSync('packages/client/src/components/hermes/files/HtmlFilePreview.vue', 'utf8')
+    const filePreviewSource = readFileSync('packages/client/src/components/hermes/files/FilePreview.vue', 'utf8')
+
+    expect(htmlPreviewSource).toMatch(/\.html-preview\s*\{[\s\S]*flex: 1;[\s\S]*height: 100%;[\s\S]*min-height: 0;/)
+    expect(htmlPreviewSource).toMatch(/\.html-frame\s*\{[\s\S]*flex: 1;[\s\S]*height: 100%;[\s\S]*min-height: 0;/)
+    expect(htmlPreviewSource).not.toContain('min-height: 420px')
+    expect(filePreviewSource).toMatch(/\.file-preview\s*\{[\s\S]*height: 100%;[\s\S]*min-height: 0;/)
+    expect(filePreviewSource).toMatch(/\.preview-content\s*\{[\s\S]*width: 100%;[\s\S]*height: 100%;[\s\S]*min-height: 0;/)
   })
 
   it('parses quoted CSV cells and enforces table and cell limits', () => {
