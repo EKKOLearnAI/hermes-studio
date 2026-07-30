@@ -93,6 +93,15 @@ html, body {
   overflow: hidden;
 }
 
+// Vueuc positions teleported followers with an absolute child whose horizontal
+// coordinates are measured from the viewport's left edge. In an RTL containing
+// block that child gets a right-edge static position first, shifting overlays by
+// one full viewport width. Keep only the positioning container LTR; Naive UI's
+// component-level RTL classes still control the menu/dialog contents.
+html[dir='rtl'] .v-binder-follower-container {
+  direction: ltr;
+}
+
 #app {
   height: 100%;
   width: 100%;
