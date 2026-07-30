@@ -381,7 +381,7 @@ onBeforeUnmount(() => {
   td {
     padding: 11px 14px;
     border-bottom: 1px solid $border-light;
-    text-align: left;
+    text-align: start;
     white-space: nowrap;
   }
 

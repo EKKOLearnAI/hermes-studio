@@ -204,7 +204,7 @@ function arrowIcon(field: 'time' | 'name'): string {
 }
 
 .sort-arrow {
-  margin-left: 4px;
+  margin-inline-start: 4px;
   font-size: 11px;
   line-height: 1;
 }

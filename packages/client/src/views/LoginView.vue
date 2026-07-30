@@ -193,7 +193,7 @@ async function handlePasswordLogin() {
 .login-error {
   font-size: 13px;
   color: $error;
-  text-align: left;
+  text-align: start;
 }
 
 .login-lock-hint {
@@ -204,7 +204,7 @@ async function handlePasswordLogin() {
   color: $text-secondary;
   font-size: 12px;
   line-height: 1.5;
-  text-align: left;
+  text-align: start;
 
   code {
     display: block;

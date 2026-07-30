@@ -343,7 +343,7 @@ watch(() => profilesStore.activeProfileName || 'default', () => {
   td {
     padding: 12px;
     border-bottom: 1px solid $border-color;
-    text-align: left;
+    text-align: start;
     vertical-align: top;
     font-size: 13px;
   }
