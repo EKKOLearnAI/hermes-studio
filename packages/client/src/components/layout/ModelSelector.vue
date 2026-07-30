@@ -246,25 +246,25 @@ async function handleRefresh() {
         <div v-if="filteredGroups.length === 0" class="model-empty">
           {{ searchQuery ? 'No results' : 'No models' }}
         </div>
-        <div class="model-custom">
-          <div class="model-custom-row">
-            <NSelect
-              v-model:value="customProvider"
-              :options="providerOptions"
-              size="small"
-              class="model-custom-provider"
-            />
-            <NInput
-              v-model:value="customInput"
-              :placeholder="t('models.customModelPlaceholder')"
-              size="small"
-              class="model-custom-input"
-              @keydown.enter="handleCustomSubmit"
-            />
-          </div>
-          <div class="model-custom-hint">
-            {{ t('models.customModelHint') }}
-          </div>
+      </div>
+      <div class="model-custom">
+        <div class="model-custom-row">
+          <NSelect
+            v-model:value="customProvider"
+            :options="providerOptions"
+            size="small"
+            class="model-custom-provider"
+          />
+          <NInput
+            v-model:value="customInput"
+            :placeholder="t('models.customModelPlaceholder')"
+            size="small"
+            class="model-custom-input"
+            @keydown.enter="handleCustomSubmit"
+          />
+        </div>
+        <div class="model-custom-hint">
+          {{ t('models.customModelHint') }}
         </div>
       </div>
     </NModal>

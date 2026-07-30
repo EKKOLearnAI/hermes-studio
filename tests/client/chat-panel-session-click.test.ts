@@ -47,6 +47,21 @@ describe('ChatPanel session clicks', () => {
     expect(source).not.toContain('if (isActiveSessionCodingAgent.value) return')
   })
 
+  it('keeps the custom session model provider below the scrollable model lists', () => {
+    const source = readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8')
+    const modalStart = source.indexOf('v-model:show="showSessionModelModal"')
+    const modalEnd = source.indexOf('</NModal>', modalStart)
+    const modal = source.slice(modalStart, modalEnd)
+    const standardList = modal.indexOf('<div v-if="sessionModelKind === \'model\'" class="session-model-list"')
+    const moaList = modal.indexOf('<div v-else class="session-model-list"', standardList)
+    const customFooter = modal.indexOf('<div v-if="sessionModelKind === \'model\'" class="session-model-custom"', moaList)
+
+    expect(standardList).toBeGreaterThanOrEqual(0)
+    expect(moaList).toBeGreaterThan(standardList)
+    expect(customFooter).toBeGreaterThan(moaList)
+    expect(modal.slice(standardList, moaList)).not.toContain('session-model-custom')
+  })
+
   it('uses codingAgentId to filter scoped agent models and requests an API mode for all scoped agents', () => {
     const source = readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8')
 

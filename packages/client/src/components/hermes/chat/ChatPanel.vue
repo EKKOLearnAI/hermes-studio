@@ -2212,28 +2212,6 @@ async function handleSessionModelCustomSubmit() {
         <div v-if="filteredSessionModelGroups.length === 0" class="session-model-empty">
           {{ sessionModelSearch ? 'No results' : 'No models' }}
         </div>
-        <div class="session-model-custom">
-          <div class="session-model-custom-row">
-            <NSelect
-              v-model:value="sessionModelCustomProvider"
-              :options="sessionModelProviderOptions"
-              :disabled="sessionModelSwitching"
-              size="small"
-              class="session-model-custom-provider"
-            />
-            <NInput
-              v-model:value="sessionModelCustomInput"
-              :placeholder="t('models.customModelPlaceholder')"
-              :disabled="sessionModelSwitching"
-              size="small"
-              class="session-model-custom-input"
-              @keydown.enter="handleSessionModelCustomSubmit"
-            />
-          </div>
-          <div class="session-model-custom-hint">
-            {{ t('models.customModelHint') }}
-          </div>
-        </div>
         </div>
         <div v-else class="session-model-list" :aria-busy="sessionModelSwitching">
           <div class="session-model-group-items session-moa-items">
@@ -2269,6 +2247,28 @@ async function handleSessionModelCustomSubmit() {
           </div>
           <div v-if="filteredSessionMoaModels.length === 0" class="session-model-empty">
             {{ t('chat.noMoaPresets') }}
+          </div>
+        </div>
+        <div v-if="sessionModelKind === 'model'" class="session-model-custom">
+          <div class="session-model-custom-row">
+            <NSelect
+              v-model:value="sessionModelCustomProvider"
+              :options="sessionModelProviderOptions"
+              :disabled="sessionModelSwitching"
+              size="small"
+              class="session-model-custom-provider"
+            />
+            <NInput
+              v-model:value="sessionModelCustomInput"
+              :placeholder="t('models.customModelPlaceholder')"
+              :disabled="sessionModelSwitching"
+              size="small"
+              class="session-model-custom-input"
+              @keydown.enter="handleSessionModelCustomSubmit"
+            />
+          </div>
+          <div class="session-model-custom-hint">
+            {{ t('models.customModelHint') }}
           </div>
         </div>
       </NSpin>
