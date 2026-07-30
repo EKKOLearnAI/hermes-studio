@@ -70,7 +70,10 @@ function outputIndicatesFailure(output: string): boolean {
 
 function handleApprovalResult(ctx: Context, output: string) {
   if (outputIndicatesFailure(output)) {
-    ctx.status = 422
+    // Return HTTP 200 with success:false so the frontend can inspect the
+    // output field for the specific failure reason. A non-2xx status would
+    // cause the client's request() helper to throw before the caller ever
+    // sees the response body.
     ctx.body = { success: false, output }
   } else {
     ctx.body = { success: true, output }

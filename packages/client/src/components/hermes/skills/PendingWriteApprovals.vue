@@ -21,6 +21,9 @@ const { t } = useI18n()
 const message = useMessage()
 const pendingWrites = ref<PendingWriteRecord[]>([])
 const pendingLoading = ref(false)
+// Per-button loading state: each action key (e.g. "skills:abc123:approve")
+// is tracked independently so clicking one button does not clear another's
+// loading/disabled state, preventing concurrent approval requests.
 const pendingActions = ref<Set<string>>(new Set())
 const expandedReviews = ref<Record<string, string>>({})
 const writeGateSupported = ref(true)
