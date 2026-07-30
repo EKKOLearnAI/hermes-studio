@@ -1285,7 +1285,7 @@ watch(sceneNodes, () => {
   align-items: center;
   gap: 14px;
   min-width: 0;
-  margin-right: auto;
+  margin-inline-end: auto;
   color: $text-secondary;
   font-size: 12px;
 }
@@ -1323,7 +1323,7 @@ watch(sceneNodes, () => {
   display: inline-block;
   border-top: 6px solid transparent;
   border-bottom: 6px solid transparent;
-  border-left: 10px solid currentcolor;
+  border-inline-start: 10px solid currentcolor;
 
   &.playing {
     width: 10px;

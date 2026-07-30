@@ -28,6 +28,18 @@ const DIRECTION_AWARE_COMPONENTS = [
   'components/layout/DesktopTitleBar.vue',
   'components/layout/ModelSelector.vue',
   'components/layout/SettingsCircuitBadge.vue',
+  'views/LoginView.vue',
+  'views/hermes/FilesView.vue',
+  'views/hermes/HistoryView.vue',
+  'views/hermes/JobsView.vue',
+  'views/hermes/JourneyView.vue',
+  'views/hermes/KanbanView.vue',
+  'views/hermes/LogsView.vue',
+  'views/hermes/PerformanceView.vue',
+  'views/hermes/PluginsView.vue',
+  'views/hermes/SkillsView.vue',
+  'views/hermes/TerminalView.vue',
+  'views/hermes/WorkflowView.vue',
 ]
 
 const PHYSICAL_PATTERNS: Array<{ label: string, pattern: RegExp }> = [

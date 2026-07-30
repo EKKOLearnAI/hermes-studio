@@ -748,7 +748,7 @@ onUnmounted(() => {
 
 .session-list {
   width: 220px;
-  border-right: 1px solid $border-color;
+  border-inline-end: 1px solid $border-color;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -759,7 +759,7 @@ onUnmounted(() => {
 
   &.collapsed {
     width: 0;
-    border-right: none;
+    border-inline-end: none;
     opacity: 0;
     pointer-events: none;
   }
@@ -826,7 +826,7 @@ onUnmounted(() => {
   background: none;
   border-radius: $radius-sm;
   cursor: pointer;
-  text-align: left;
+  text-align: start;
   color: $text-secondary;
   transition: all $transition-fast;
   margin-bottom: 2px;

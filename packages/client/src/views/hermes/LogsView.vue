@@ -225,19 +225,19 @@ onMounted(async () => {
   font-family: $font-code;
   font-size: 12px;
   line-height: 1.6;
-  border-left: 2px solid transparent;
+  border-inline-start: 2px solid transparent;
 
   &:hover {
     background-color: rgba(var(--accent-primary-rgb), 0.03);
   }
 
   &.level-error {
-    border-left-color: $error;
+    border-inline-start-color: $error;
     .log-message { color: $error; }
   }
 
   &.level-warning {
-    border-left-color: $warning;
+    border-inline-start-color: $warning;
     .log-message { color: $warning; }
   }
 }

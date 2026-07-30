@@ -235,7 +235,7 @@ watch(
   width: 240px;
   min-width: 180px;
   max-width: 400px;
-  border-right: 1px solid $border-color;
+  border-inline-end: 1px solid $border-color;
   overflow-y: auto;
   flex-shrink: 0;
 }
@@ -263,7 +263,7 @@ watch(
     width: 100%;
     max-width: none;
     height: 200px;
-    border-right: none;
+    border-inline-end: none;
     border-bottom: 1px solid $border-color;
   }
 }

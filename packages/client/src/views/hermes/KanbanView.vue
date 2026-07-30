@@ -430,7 +430,7 @@ async function handleDispatch() {
   border-radius: 16px;
   font-size: 12px;
   border: 1px solid $border-light;
-  border-left: 3px solid var(--kanban-status-color);
+  border-inline-start: 3px solid var(--kanban-status-color);
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -508,8 +508,8 @@ async function handleDispatch() {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  border-left: 2px solid var(--kanban-status-color);
-  padding-left: 10px;
+  border-inline-start: 2px solid var(--kanban-status-color);
+  padding-inline-start: 10px;
 }
 
 .column-empty {
