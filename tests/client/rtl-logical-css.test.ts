@@ -2,16 +2,20 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 
-const CHAT_ROOT = join(process.cwd(), 'packages/client/src/components/hermes/chat')
+const CLIENT_ROOT = join(process.cwd(), 'packages/client/src')
 
-// The chat surface is the most text-heavy part of the UI, so its spacing,
-// borders and text alignment must follow the writing direction rather than a
-// physical side. Guards against reintroducing the physical variants.
-const CHAT_COMPONENTS = [
-  'ChatInput.vue',
-  'ChatPanel.vue',
-  'MessageItem.vue',
-  'MessageList.vue',
+// Spacing, borders and text alignment in these components must follow the
+// writing direction rather than a physical side. Guards against reintroducing
+// the physical variants as the conversion spreads through the app.
+const DIRECTION_AWARE_COMPONENTS = [
+  'components/hermes/chat/ChatInput.vue',
+  'components/hermes/chat/ChatPanel.vue',
+  'components/hermes/chat/MessageItem.vue',
+  'components/hermes/chat/MessageList.vue',
+  'components/layout/AppSidebar.vue',
+  'components/layout/DesktopTitleBar.vue',
+  'components/layout/ModelSelector.vue',
+  'components/layout/SettingsCircuitBadge.vue',
 ]
 
 const PHYSICAL_PATTERNS: Array<{ label: string, pattern: RegExp }> = [
@@ -25,12 +29,12 @@ const PHYSICAL_PATTERNS: Array<{ label: string, pattern: RegExp }> = [
   { label: 'text-align: right', pattern: /text-align:\s*right\b/g },
 ]
 
-describe('chat surface uses direction-aware CSS', () => {
+describe('converted components use direction-aware CSS', () => {
   it('has no physical inline-axis spacing, borders or text alignment', () => {
     const offenders: string[] = []
 
-    for (const component of CHAT_COMPONENTS) {
-      const source = readFileSync(join(CHAT_ROOT, component), 'utf8')
+    for (const component of DIRECTION_AWARE_COMPONENTS) {
+      const source = readFileSync(join(CLIENT_ROOT, component), 'utf8')
       for (const { label, pattern } of PHYSICAL_PATTERNS) {
         const matches = source.match(pattern)
         if (matches) offenders.push(`${component}: ${label} × ${matches.length}`)
@@ -41,8 +45,8 @@ describe('chat surface uses direction-aware CSS', () => {
   })
 
   it('actually uses the logical replacements', () => {
-    const combined = CHAT_COMPONENTS
-      .map(component => readFileSync(join(CHAT_ROOT, component), 'utf8'))
+    const combined = DIRECTION_AWARE_COMPONENTS
+      .map(component => readFileSync(join(CLIENT_ROOT, component), 'utf8'))
       .join('\n')
 
     for (const logical of ['margin-inline-start', 'padding-inline-start', 'border-inline-start']) {

@@ -378,7 +378,7 @@ function confirmDeleteDevice(device: McuDevice) {
   border-radius: 8px;
   background: transparent;
   align-items: center;
-  margin-left: auto;
+  margin-inline-start: auto;
   color: inherit;
   cursor: pointer;
   transition:
