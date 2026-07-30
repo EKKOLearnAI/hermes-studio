@@ -530,7 +530,7 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
   }
 
   ul, ol {
-    padding-left: 20px;
+    padding-inline-start: 20px;
     margin: 4px 0 8px;
   }
 
@@ -690,7 +690,7 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
   blockquote {
     margin: 8px 0;
     padding: 4px 12px;
-    border-left: 3px solid $border-color;
+    border-inline-start: 3px solid $border-color;
     color: $text-secondary;
   }
 
@@ -717,7 +717,7 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     th, td {
       padding: 6px 12px;
       border: 1px solid $border-color;
-      text-align: left;
+      text-align: start;
       font-size: 13px;
     }
 

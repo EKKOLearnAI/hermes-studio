@@ -170,12 +170,12 @@ function cacheHitRate(m: { inputTokens: number; cacheTokens: number }): string {
   font-size: 12px;
   color: $text-muted;
   width: 86px;
-  text-align: right;
+  text-align: end;
   flex-shrink: 0;
 
   small {
     color: #f6ad55;
-    margin-left: 4px;
+    margin-inline-start: 4px;
     font-size: 10px;
   }
 }

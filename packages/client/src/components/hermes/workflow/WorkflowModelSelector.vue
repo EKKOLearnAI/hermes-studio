@@ -198,7 +198,7 @@ function handleSelect(group: AvailableModelGroup, model: string) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-align: left;
+  text-align: start;
 }
 
 .model-arrow {
@@ -258,7 +258,7 @@ function handleSelect(group: AvailableModelGroup, model: string) {
 }
 
 .model-group-items {
-  padding-left: 8px;
+  padding-inline-start: 8px;
 }
 
 .model-item {

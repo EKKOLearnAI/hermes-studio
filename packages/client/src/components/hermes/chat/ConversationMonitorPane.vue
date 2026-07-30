@@ -195,7 +195,7 @@ onUnmounted(() => {
 
 .conversation-monitor__sidebar {
   width: 260px;
-  border-right: 1px solid $border-color;
+  border-inline-end: 1px solid $border-color;
   overflow-y: auto;
   flex-shrink: 0;
   scrollbar-gutter: stable;
@@ -220,7 +220,7 @@ onUnmounted(() => {
   border-bottom: 1px solid rgba($border-color, 0.6);
   background: transparent;
   color: inherit;
-  text-align: left;
+  text-align: start;
   padding: 12px 14px;
   cursor: pointer;
 
@@ -319,7 +319,7 @@ onUnmounted(() => {
   .conversation-monitor__sidebar {
     width: 100%;
     max-height: 220px;
-    border-right: 0;
+    border-inline-end: 0;
     border-bottom: 1px solid $border-color;
     flex-shrink: 0;
   }

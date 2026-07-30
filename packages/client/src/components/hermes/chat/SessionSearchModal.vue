@@ -360,7 +360,7 @@ onUnmounted(() => {
   gap: 8px;
   max-height: min(60vh, 540px);
   overflow-y: auto;
-  padding-right: 2px;
+  padding-inline-end: 2px;
 }
 
 .result-item {
@@ -373,7 +373,7 @@ onUnmounted(() => {
   border-radius: $radius-md;
   background: $bg-card;
   color: $text-primary;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   transition: border-color $transition-fast, background-color $transition-fast, transform $transition-fast;
 

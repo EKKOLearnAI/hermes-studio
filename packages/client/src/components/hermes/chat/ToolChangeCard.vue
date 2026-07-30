@@ -148,7 +148,7 @@ function fileBadgeClass(path: string): string {
   justify-content: flex-start;
   min-width: 0;
   padding: 0;
-  text-align: left;
+  text-align: start;
   width: 100%;
 }
 
@@ -200,7 +200,7 @@ function fileBadgeClass(path: string): string {
   justify-content: space-between;
   min-width: 0;
   padding: 4px 0;
-  text-align: left;
+  text-align: start;
 
   &:hover,
   &.selected {

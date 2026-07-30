@@ -212,7 +212,7 @@ onUnmounted(() => {
   background: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  text-align: left;
+  text-align: start;
   text-decoration: none;
   color: var(--text-secondary);
   transition: all var(--transition-fast);

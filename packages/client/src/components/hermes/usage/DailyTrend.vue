@@ -268,14 +268,14 @@ const maxTokens = computed(() =>
 
   th,
   td {
-    text-align: right;
+    text-align: end;
     padding: 6px 8px;
     border-bottom: 1px solid $border-color;
   }
 
   th:first-child,
   td:first-child {
-    text-align: left;
+    text-align: start;
   }
 
   th {

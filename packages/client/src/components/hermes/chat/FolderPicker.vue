@@ -547,7 +547,7 @@ const flatNodes = computed<FlatNode[]>(() => {
   border: none;
   border-radius: 4px;
   padding: 0;
-  margin-left: 2px;
+  margin-inline-start: 2px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;

@@ -534,7 +534,7 @@ async function uploadImages(files: File[]) {
   gap: 8px;
   max-height: 180px;
   overflow-y: auto;
-  padding-right: 2px;
+  padding-inline-end: 2px;
 }
 
 .image-upload-input {
