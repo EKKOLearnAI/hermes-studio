@@ -1763,7 +1763,7 @@ export default defineComponent({ components: { CreateRoomForm } })
     position: relative;
 
     &--sidebar-collapsed {
-        margin-left: 10px;
+        margin-inline-start: 10px;
     }
 }
 
@@ -1801,7 +1801,7 @@ export default defineComponent({ components: { CreateRoomForm } })
     overflow: visible;
     display: flex;
     background: $bg-card;
-    border-left: 1px solid $border-color;
+    border-inline-start: 1px solid $border-color;
 }
 
 .group-workspace-resize-handle {
@@ -1889,7 +1889,7 @@ export default defineComponent({ components: { CreateRoomForm } })
     .group-workspace-panel-close {
         width: 30px;
         padding: 0;
-        margin-left: auto;
+        margin-inline-start: auto;
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -1952,7 +1952,7 @@ export default defineComponent({ components: { CreateRoomForm } })
         z-index: 70;
         width: 100% !important;
         min-width: 0;
-        border-left: none;
+        border-inline-start: none;
     }
 
     .group-workspace-resize-handle {
@@ -2006,7 +2006,7 @@ export default defineComponent({ components: { CreateRoomForm } })
     }
 
     .avatar-stack-item {
-        margin-left: -10px;
+        margin-inline-start: -10px;
     }
 
     .header-left {
@@ -2099,7 +2099,7 @@ export default defineComponent({ components: { CreateRoomForm } })
     height: 28px;
     border-radius: 50%;
     border: 2px solid $bg-card;
-    margin-left: -12px;
+    margin-inline-start: -12px;
     overflow: hidden;
     display: flex;
     align-items: center;
@@ -2108,7 +2108,7 @@ export default defineComponent({ components: { CreateRoomForm } })
     transition: transform $transition-fast;
 
     &:first-child {
-        margin-left: 0;
+        margin-inline-start: 0;
     }
 
     &:hover {
@@ -2122,7 +2122,7 @@ export default defineComponent({ components: { CreateRoomForm } })
     height: 28px;
     border-radius: 50%;
     border: 2px solid $bg-card;
-    margin-left: -12px;
+    margin-inline-start: -12px;
     display: flex;
     align-items: center;
     justify-content: center;

@@ -623,8 +623,8 @@ function isImage(type: string): boolean {
     display: flex;
     align-items: center;
     gap: 5px;
-    padding-left: 2px;
-    margin-left: 0;
+    padding-inline-start: 2px;
+    margin-inline-start: 0;
 
     .switch-label {
         display: flex;
@@ -644,7 +644,7 @@ function isImage(type: string): boolean {
     width: 24px;
     min-width: 24px;
     height: 22px;
-    margin-left: 0;
+    margin-inline-start: 0;
     padding: 0;
     background: transparent !important;
 

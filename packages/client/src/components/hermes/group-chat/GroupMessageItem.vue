@@ -878,14 +878,14 @@ onBeforeUnmount(() => {
     padding: 0 4px;
     border-radius: 3px;
     line-height: 14px;
-    margin-left: 4px;
+    margin-inline-start: 4px;
 }
 
 .tool-details {
-    margin-left: 16px;
+    margin-inline-start: 16px;
     margin-top: 2px;
-    border-left: 2px solid $border-light;
-    padding-left: 10px;
+    border-inline-start: 2px solid $border-light;
+    padding-inline-start: 10px;
 }
 
 .assistant-workspace-change {
@@ -1243,7 +1243,7 @@ onBeforeUnmount(() => {
     .thinking-body {
         margin-top: 6px;
         padding: 6px 10px;
-        border-left: 2px solid $border-light;
+        border-inline-start: 2px solid $border-light;
         font-size: 13px;
         opacity: 0.85;
         font-style: italic;
