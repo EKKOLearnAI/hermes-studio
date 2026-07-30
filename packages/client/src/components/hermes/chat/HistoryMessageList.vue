@@ -1,12 +1,7 @@
 <script lang="ts">
-type HistorySessionScrollSnapshot = {
-  scrollTop: number;
-  scrollHeight: number;
-  clientHeight: number;
-  wasNearBottom: boolean;
-}
+import type { MessageViewportScrollSnapshot } from "./message-scroll-position";
 
-const historySessionScrollPositions = new Map<string, HistorySessionScrollSnapshot>();
+const historySessionScrollPositions = new Map<string, MessageViewportScrollSnapshot>();
 </script>
 
 <script setup lang="ts">
@@ -17,20 +12,27 @@ import MessageItem from "./MessageItem.vue";
 import { useChatStore } from "@/stores/hermes/chat";
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
 import type { Session } from "@/stores/hermes/chat";
+import { messageScrollPositionKey, rememberMessageScrollPosition } from "./message-scroll-position";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   session?: Session | null; // Optional: use this session instead of chatStore.activeSession
   loadOlder?: (sessionId: string) => Promise<boolean>;
-}>();
+  scrollScope?: string;
+}>(), {
+  scrollScope: "history",
+});
 
 const chatStore = useChatStore();
 const { toolTraceVisible } = useToolTraceVisibility();
 const { t } = useI18n();
 const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null);
-const pendingInitialScrollSessionId = ref<string | null>(null);
+const pendingInitialScrollKey = ref<string | null>(null);
 const showScrollBottomButton = ref(false);
 const activeSession = computed(() => props.session || null);
-const listInstanceKey = computed(() => activeSession.value?.id ? `history-${activeSession.value.id}` : "history-empty");
+const activeSessionScrollKey = computed(() =>
+  messageScrollPositionKey(props.scrollScope, activeSession.value),
+);
+const listInstanceKey = computed(() => activeSessionScrollKey.value || "history-empty");
 
 const displayMessages = computed(() =>
   (activeSession.value?.messages || []).filter((m) => {
@@ -71,23 +73,23 @@ function handleScrollBottomClick() {
   scrollToBottom();
 }
 
-function saveSessionScrollPosition(sessionId: string | null | undefined) {
-  if (!sessionId) return;
+function saveSessionScrollPosition(scrollKey: string | null | undefined) {
+  if (!scrollKey) return;
   const snapshot = listRef.value?.captureViewportPosition() ?? null;
-  if (snapshot) historySessionScrollPositions.set(sessionId, snapshot);
+  if (snapshot) rememberMessageScrollPosition(historySessionScrollPositions, scrollKey, snapshot);
 }
 
-function applyInitialSessionScroll(sessionId: string) {
-  if (activeSession.value?.id !== sessionId) return;
+function applyInitialSessionScroll(scrollKey: string) {
+  if (activeSessionScrollKey.value !== scrollKey) return;
   if (chatStore.focusMessageId) {
-    pendingInitialScrollSessionId.value = null;
+    pendingInitialScrollKey.value = null;
     scrollToMessage(chatStore.focusMessageId);
     return;
   }
 
-  const snapshot = historySessionScrollPositions.get(sessionId);
+  const snapshot = historySessionScrollPositions.get(scrollKey);
   if (snapshot) {
-    pendingInitialScrollSessionId.value = null;
+    pendingInitialScrollKey.value = null;
     if (snapshot.wasNearBottom) {
       scrollToBottom();
     } else {
@@ -97,7 +99,7 @@ function applyInitialSessionScroll(sessionId: string) {
   }
 
   scrollToBottom();
-  if ((activeSession.value?.messages.length || 0) > 0) pendingInitialScrollSessionId.value = null;
+  if ((activeSession.value?.messages.length || 0) > 0) pendingInitialScrollKey.value = null;
 }
 
 async function handleTopReach() {
@@ -112,13 +114,13 @@ async function handleTopReach() {
 }
 
 watch(
-  () => activeSession.value?.id,
-  async (id, previousId) => {
-    saveSessionScrollPosition(previousId);
-    if (!id) return;
-    pendingInitialScrollSessionId.value = id;
+  activeSessionScrollKey,
+  async (scrollKey, previousScrollKey) => {
+    saveSessionScrollPosition(previousScrollKey);
+    if (!scrollKey) return;
+    pendingInitialScrollKey.value = scrollKey;
     await nextTick();
-    applyInitialSessionScroll(id);
+    applyInitialSessionScroll(scrollKey);
   },
   { immediate: true },
 );
@@ -135,7 +137,7 @@ watch(
 watch(
   () => (activeSession.value?.messages || [])[((activeSession.value?.messages || []).length - 1)]?.content,
   (content) => {
-    if (pendingInitialScrollSessionId.value === activeSession.value?.id) return;
+    if (pendingInitialScrollKey.value === activeSessionScrollKey.value) return;
     if (!content) return
     if (!isNearBottom()) return;
     scrollToBottom();
@@ -146,9 +148,9 @@ watch(
   () => (activeSession.value?.messages || []).length,
   (length) => {
     if (length === 0) return
-    const id = activeSession.value?.id
-    if (id && pendingInitialScrollSessionId.value === id) {
-      applyInitialSessionScroll(id);
+    const scrollKey = activeSessionScrollKey.value
+    if (scrollKey && pendingInitialScrollKey.value === scrollKey) {
+      applyInitialSessionScroll(scrollKey);
       return;
     }
     if (!isNearBottom()) return;
@@ -167,7 +169,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
-  saveSessionScrollPosition(activeSession.value?.id);
+  saveSessionScrollPosition(activeSessionScrollKey.value);
 });
 
 onMounted(() => {

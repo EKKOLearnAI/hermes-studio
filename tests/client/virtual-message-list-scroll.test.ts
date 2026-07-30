@@ -48,6 +48,20 @@ function setScrollerMetrics(el: HTMLElement, metrics: { scrollHeight: number; cl
   el.scrollTop = metrics.scrollTop
 }
 
+function elementRect(top: number, bottom: number): DOMRect {
+  return {
+    x: 0,
+    y: top,
+    top,
+    bottom,
+    left: 0,
+    right: 400,
+    width: 400,
+    height: bottom - top,
+    toJSON: () => ({}),
+  } as DOMRect
+}
+
 describe('VirtualMessageList scroll behavior', () => {
   let rafCallbacks: FrameRequestCallback[]
   let resizeCallbacks: ResizeObserverCallback[]
@@ -252,5 +266,113 @@ describe('VirtualMessageList scroll behavior', () => {
     }
 
     expect(scroller.element.scrollTop).toBe(1000)
+  })
+
+  it('captures the top visible message as the viewport anchor', async () => {
+    const wrapper = mount(VirtualMessageList, {
+      props: {
+        messages: [{ id: 'message-a' }, { id: 'message-b' }, { id: 'message-c' }],
+        virtualized: false,
+      },
+      slots: {
+        item: '<div>message</div>',
+      },
+    })
+    await nextTick()
+
+    const scroller = wrapper.find<HTMLElement>('.virtual-message-list')
+    const rows = wrapper.findAll<HTMLElement>('.virtual-row')
+    setScrollerMetrics(scroller.element, {
+      scrollHeight: 1200,
+      clientHeight: 400,
+      scrollTop: 300,
+    })
+    vi.spyOn(scroller.element, 'getBoundingClientRect').mockReturnValue(elementRect(100, 500))
+    vi.spyOn(rows[0].element, 'getBoundingClientRect').mockReturnValue(elementRect(40, 140))
+    vi.spyOn(rows[1].element, 'getBoundingClientRect').mockReturnValue(elementRect(140, 300))
+    vi.spyOn(rows[2].element, 'getBoundingClientRect').mockReturnValue(elementRect(300, 520))
+
+    expect((wrapper.vm as any).captureViewportPosition()).toMatchObject({
+      anchorMessageId: 'message-a',
+      anchorOffset: -60,
+      wasNearBottom: false,
+    })
+  })
+
+  it('restores a changed layout by aligning the saved message anchor', async () => {
+    const wrapper = mount(VirtualMessageList, {
+      props: {
+        messages: [{ id: 'message-before' }, { id: 'message-anchor' }, { id: 'message-after' }],
+        virtualized: false,
+      },
+      slots: {
+        item: '<div>message</div>',
+      },
+    })
+    await nextTick()
+
+    const scroller = wrapper.find<HTMLElement>('.virtual-message-list')
+    const anchorRow = wrapper.findAll<HTMLElement>('.virtual-row')[1]
+    setScrollerMetrics(scroller.element, {
+      scrollHeight: 2000,
+      clientHeight: 400,
+      scrollTop: 0,
+    })
+    vi.spyOn(scroller.element, 'getBoundingClientRect').mockReturnValue(elementRect(100, 500))
+    vi.spyOn(anchorRow.element, 'getBoundingClientRect').mockImplementation(() =>
+      elementRect(620 - scroller.element.scrollTop, 820 - scroller.element.scrollTop),
+    )
+
+    const restored = (wrapper.vm as any).restoreViewportPosition({
+      anchorMessageId: 'message-anchor',
+      anchorOffset: -24,
+      scrollTop: 320,
+      scrollHeight: 1200,
+      clientHeight: 400,
+      wasNearBottom: false,
+    })
+    expect(restored).toBe(true)
+    await nextTick()
+    while (rafCallbacks.length > 0) {
+      rafCallbacks.shift()?.(performance.now())
+    }
+
+    expect(scroller.element.scrollTop).toBe(544)
+  })
+
+  it('falls back to the bottom when the saved message anchor is missing', async () => {
+    const wrapper = mount(VirtualMessageList, {
+      props: {
+        messages: [{ id: 'message-current' }],
+        virtualized: false,
+      },
+      slots: {
+        item: '<div>message</div>',
+      },
+    })
+    await nextTick()
+
+    const scroller = wrapper.find<HTMLElement>('.virtual-message-list')
+    setScrollerMetrics(scroller.element, {
+      scrollHeight: 1000,
+      clientHeight: 400,
+      scrollTop: 100,
+    })
+
+    const restored = (wrapper.vm as any).restoreViewportPosition({
+      anchorMessageId: 'message-missing',
+      anchorOffset: 0,
+      scrollTop: 100,
+      scrollHeight: 900,
+      clientHeight: 400,
+      wasNearBottom: false,
+    })
+    expect(restored).toBe(false)
+    await nextTick()
+    while (rafCallbacks.length > 0) {
+      rafCallbacks.shift()?.(performance.now())
+    }
+
+    expect(scroller.element.scrollTop).toBe(600)
   })
 })

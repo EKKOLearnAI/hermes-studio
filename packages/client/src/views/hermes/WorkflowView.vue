@@ -3169,7 +3169,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
                   </NButton>
                 </div>
               </div>
-              <MessageList />
+              <MessageList scroll-scope="workflow" />
               <ChatInput />
             </template>
             <div v-else class="workflow-chat-loading">

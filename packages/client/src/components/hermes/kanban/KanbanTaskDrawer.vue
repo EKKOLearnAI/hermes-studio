@@ -616,7 +616,7 @@ function handleNavigateTask(taskId: string) {
   <!-- Session messages modal (click result summary) -->
   <NModal v-if="historySession" :show="showMessagesModal" preset="card" :title="detail?.task.title || ''" :style="{ width: '900px', maxWidth: 'calc(100vw - 48px)' }" @close="showMessagesModal = false">
     <div class="messages-modal-body">
-      <HistoryMessageList :session="historySession" />
+      <HistoryMessageList :session="historySession" scroll-scope="kanban" />
     </div>
   </NModal>
 

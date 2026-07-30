@@ -106,6 +106,8 @@ describe('MessageList session scroll position', () => {
     vi.clearAllMocks()
 
     const sessionASnapshot = {
+      anchorMessageId: 'scroll-session-a-message',
+      anchorOffset: -24,
       scrollTop: 320,
       scrollHeight: 1200,
       clientHeight: 500,
@@ -120,6 +122,8 @@ describe('MessageList session scroll position', () => {
 
     vi.clearAllMocks()
     mockCaptureViewportPosition.mockReturnValue({
+      anchorMessageId: 'scroll-session-b-message',
+      anchorOffset: 12,
       scrollTop: 40,
       scrollHeight: 1000,
       clientHeight: 500,

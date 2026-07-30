@@ -7,6 +7,7 @@ import {
   type ScrollToOptions,
 } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
+import type { MessageViewportScrollSnapshot } from "./message-scroll-position";
 
 type VirtualItem = {
   id: string | number;
@@ -24,13 +25,6 @@ type BottomScrollOptions = number | {
   frames?: number;
   keepAliveMs?: number;
 }
-type ViewportScrollSnapshot = {
-  scrollTop: number;
-  scrollHeight: number;
-  clientHeight: number;
-  wasNearBottom: boolean;
-}
-
 const props = withDefaults(defineProps<{
   messages: VirtualItem[];
   virtualized?: boolean;
@@ -372,10 +366,39 @@ function restoreScrollPosition(snapshot: { scrollTop: number; scrollHeight: numb
   });
 }
 
-function captureViewportPosition(): ViewportScrollSnapshot | null {
+function findViewportAnchor(el: HTMLElement): { messageId: string; offset: number } | null {
+  const scrollerRect = el.getBoundingClientRect();
+  const viewportBottom = scrollerRect.bottom || scrollerRect.top + el.clientHeight;
+  let candidate: { messageId: string; offset: number; top: number } | null = null;
+
+  for (const row of el.querySelectorAll<HTMLElement>(".virtual-row[data-virtual-index]")) {
+    const rowRect = row.getBoundingClientRect();
+    if (rowRect.bottom <= scrollerRect.top || rowRect.top >= viewportBottom) continue;
+    const index = Number(row.dataset.virtualIndex);
+    const message = Number.isInteger(index) ? props.messages[index] : null;
+    const messageId = row.dataset.messageId || (message ? messageKey(message) : "");
+    if (!messageId) continue;
+    if (!candidate || rowRect.top < candidate.top) {
+      candidate = {
+        messageId,
+        offset: rowRect.top - scrollerRect.top,
+        top: rowRect.top,
+      };
+    }
+  }
+
+  return candidate
+    ? { messageId: candidate.messageId, offset: candidate.offset }
+    : null;
+}
+
+function captureViewportPosition(): MessageViewportScrollSnapshot | null {
   const el = getScrollerElement();
   if (!el) return null;
+  const anchor = findViewportAnchor(el);
   return {
+    anchorMessageId: anchor?.messageId || null,
+    anchorOffset: anchor?.offset || 0,
     scrollTop: el.scrollTop,
     scrollHeight: el.scrollHeight,
     clientHeight: el.clientHeight,
@@ -383,11 +406,25 @@ function captureViewportPosition(): ViewportScrollSnapshot | null {
   };
 }
 
-function restoreViewportPosition(snapshot: ViewportScrollSnapshot | null, frames = 4) {
-  if (!snapshot) return;
+function restoreViewportPosition(snapshot: MessageViewportScrollSnapshot | null, frames = 4): boolean {
+  if (!snapshot) return false;
+  if (viewportRestoreFrame != null) {
+    cancelAnimationFrame(viewportRestoreFrame);
+    viewportRestoreFrame = null;
+  }
+  const anchorMessageId = snapshot.anchorMessageId;
+  const initialIndex = anchorMessageId
+    ? props.messages.findIndex(message => messageKey(message) === anchorMessageId)
+    : -1;
+  if (!anchorMessageId || initialIndex < 0) {
+    scrollToBottom();
+    return false;
+  }
+
   cancelBottomScroll();
+  cancelAnchorAlignment();
   userDetachedFromBottom = !snapshot.wasNearBottom;
-  if (viewportRestoreFrame != null) cancelAnimationFrame(viewportRestoreFrame);
+  const anchorOffset = Number.isFinite(snapshot.anchorOffset) ? snapshot.anchorOffset : 0;
 
   nextTick(() => {
     let remaining = frames;
@@ -397,12 +434,27 @@ function restoreViewportPosition(snapshot: ViewportScrollSnapshot | null, frames
         viewportRestoreFrame = null;
         return;
       }
-      const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
-      const nextScrollTop = Math.min(maxScrollTop, Math.max(0, snapshot.scrollTop));
-      markProgrammaticScroll();
-      if (props.virtualized) scrollerRef.value?.scrollToPosition(nextScrollTop);
-      el.scrollTop = nextScrollTop;
-      syncViewport();
+      const index = props.messages.findIndex(message => messageKey(message) === anchorMessageId);
+      if (index < 0) {
+        viewportRestoreFrame = null;
+        scrollToBottom();
+        return;
+      }
+
+      const row = findRowElement(index);
+      if (row) {
+        const scrollerRect = el.getBoundingClientRect();
+        const rowRect = row.getBoundingClientRect();
+        const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+        const delta = rowRect.top - scrollerRect.top - anchorOffset;
+        const nextScrollTop = Math.min(maxScrollTop, Math.max(0, el.scrollTop + delta));
+        markProgrammaticScroll();
+        if (props.virtualized) scrollerRef.value?.scrollToPosition(nextScrollTop);
+        el.scrollTop = nextScrollTop;
+        syncViewport();
+      } else {
+        scrollToItem(index, { align: "start", offset: -anchorOffset });
+      }
 
       remaining -= 1;
       if (remaining <= 0) {
@@ -413,6 +465,8 @@ function restoreViewportPosition(snapshot: ViewportScrollSnapshot | null, frames
     };
     viewportRestoreFrame = requestAnimationFrame(step);
   });
+
+  return true;
 }
 
 let resizeObserver: ResizeObserver | null = null;
@@ -487,6 +541,7 @@ defineExpose({
           :active="active"
           class="virtual-row"
           :data-virtual-index="index"
+          :data-message-id="messageKey(item)"
         >
           <slot v-if="active" name="item" :message="item" />
         </DynamicScrollerItem>
@@ -508,6 +563,7 @@ defineExpose({
           :key="messageKey(item)"
           class="virtual-row"
           :data-virtual-index="index"
+          :data-message-id="messageKey(item)"
         >
           <slot name="item" :message="item" />
         </div>

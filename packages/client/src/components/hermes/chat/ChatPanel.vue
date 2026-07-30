@@ -2650,6 +2650,7 @@ async function handleSessionModelCustomSubmit() {
             <MessageList
               ref="messageListRef"
               :approval-portal-to-body="showRealtimeVoice"
+              scroll-scope="chat"
             />
             <ChatInput
               ref="chatInputRef"

@@ -1037,6 +1037,7 @@ function handleBatchDeleteConfirm() {
             ref="historyMessageListRef"
             :session="historySession"
             :load-older="loadOlderHistoryMessages"
+            scroll-scope="history"
           />
         </div>
         <OutlinePanel

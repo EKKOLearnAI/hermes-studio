@@ -1,17 +1,12 @@
 <script lang="ts">
-type SessionScrollSnapshot = {
-  scrollTop: number;
-  scrollHeight: number;
-  clientHeight: number;
-  wasNearBottom: boolean;
-}
+import type { MessageViewportScrollSnapshot } from "./message-scroll-position";
 
 type BottomScrollOptions = number | {
   frames?: number;
   keepAliveMs?: number;
 }
 
-const sessionScrollPositions = new Map<string, SessionScrollSnapshot>();
+const sessionScrollPositions = new Map<string, MessageViewportScrollSnapshot>();
 </script>
 
 <script setup lang="ts">
@@ -24,18 +19,21 @@ import { LIVE_CHAT_MAX_LOADED_MESSAGES, parseMessageReference, useChatStore, typ
 import thinkingImage from "@/assets/thinking.gif";
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
 import { openSubagentStream, subagentIdFromToolCall } from "@/utils/hermes/subagent-stream";
+import { messageScrollPositionKey, rememberMessageScrollPosition } from "./message-scroll-position";
 
 const props = withDefaults(defineProps<{
   approvalPortalToBody?: boolean
+  scrollScope?: string
 }>(), {
   approvalPortalToBody: false,
+  scrollScope: "chat",
 })
 
 const chatStore = useChatStore();
 const { t } = useI18n();
 const { toolTraceVisible } = useToolTraceVisibility();
 const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null);
-const pendingInitialScrollSessionId = ref<string | null>(null);
+const pendingInitialScrollKey = ref<string | null>(null);
 const showScrollBottomButton = ref(false);
 const thinkingElapsedMs = ref(0);
 const initialBottomScrollOptions = { frames: 8, keepAliveMs: 1200 };
@@ -217,6 +215,18 @@ const virtualListPadding = computed(() => {
   return "20px";
 });
 
+const activeSessionScrollKey = computed(() => {
+  const sessionId = chatStore.activeSessionId;
+  if (!sessionId) return null;
+  const session = chatStore.activeSession?.id === sessionId
+    ? chatStore.activeSession
+    : chatStore.sessions.find(item => item.id === sessionId);
+  return messageScrollPositionKey(props.scrollScope, {
+    id: sessionId,
+    profile: session?.profile,
+  });
+});
+
 const showHistoryArchiveLink = computed(() => {
   const session = chatStore.activeSession;
   return !!session?.hasMoreBefore && (session.loadedMessageCount || 0) >= LIVE_CHAT_MAX_LOADED_MESSAGES;
@@ -305,23 +315,23 @@ function handleScrollBottomClick() {
   scrollToBottom({ frames: 4, keepAliveMs: 600 });
 }
 
-function saveSessionScrollPosition(sessionId: string | null | undefined) {
-  if (!sessionId) return;
+function saveSessionScrollPosition(scrollKey: string | null | undefined) {
+  if (!scrollKey) return;
   const snapshot = listRef.value?.captureViewportPosition() ?? null;
-  if (snapshot) sessionScrollPositions.set(sessionId, snapshot);
+  if (snapshot) rememberMessageScrollPosition(sessionScrollPositions, scrollKey, snapshot);
 }
 
-function applyInitialSessionScroll(sessionId: string) {
-  if (chatStore.activeSessionId !== sessionId) return;
+function applyInitialSessionScroll(scrollKey: string) {
+  if (activeSessionScrollKey.value !== scrollKey) return;
   if (chatStore.focusMessageId) {
-    pendingInitialScrollSessionId.value = null;
+    pendingInitialScrollKey.value = null;
     scrollToMessage(chatStore.focusMessageId);
     return;
   }
 
-  const snapshot = sessionScrollPositions.get(sessionId);
+  const snapshot = sessionScrollPositions.get(scrollKey);
   if (snapshot) {
-    pendingInitialScrollSessionId.value = null;
+    pendingInitialScrollKey.value = null;
     if (snapshot.wasNearBottom) {
       scrollToBottom(initialBottomScrollOptions);
     } else {
@@ -335,7 +345,7 @@ function applyInitialSessionScroll(sessionId: string) {
     const dividerId = forkDividerId(session.id);
     const hasDivider = displayMessagesWithForkDivider.value.some((message) => message.id === dividerId);
     if (hasDivider) {
-      pendingInitialScrollSessionId.value = null;
+      pendingInitialScrollKey.value = null;
       scrollToMessage(dividerId);
       return;
     }
@@ -344,7 +354,7 @@ function applyInitialSessionScroll(sessionId: string) {
 
   scrollToBottom(initialBottomScrollOptions);
   if (chatStore.messages.length > 0 && !chatStore.isLoadingMessages) {
-    pendingInitialScrollSessionId.value = null;
+    pendingInitialScrollKey.value = null;
   }
 }
 
@@ -360,22 +370,22 @@ async function handleTopReach() {
 }
 
 watch(
-  () => chatStore.activeSessionId,
-  async (id, previousId) => {
-    saveSessionScrollPosition(previousId);
-    if (!id) return;
-    pendingInitialScrollSessionId.value = id;
+  activeSessionScrollKey,
+  async (scrollKey, previousScrollKey) => {
+    saveSessionScrollPosition(previousScrollKey);
+    if (!scrollKey) return;
+    pendingInitialScrollKey.value = scrollKey;
     await nextTick();
-    applyInitialSessionScroll(id);
+    applyInitialSessionScroll(scrollKey);
   },
   { immediate: true },
 );
 
 watch(
-  () => [chatStore.activeSessionId, chatStore.messages.length] as const,
-  ([id, length]) => {
-    if (!id || pendingInitialScrollSessionId.value !== id || length === 0) return;
-    applyInitialSessionScroll(id);
+  () => [activeSessionScrollKey.value, chatStore.messages.length] as const,
+  ([scrollKey, length]) => {
+    if (!scrollKey || pendingInitialScrollKey.value !== scrollKey || length === 0) return;
+    applyInitialSessionScroll(scrollKey);
     void nextTick(updateScrollBottomButton);
   },
   { flush: "post" },
@@ -393,15 +403,15 @@ watch(
   () => chatStore.isLoadingMessages,
   async (isLoading, wasLoading) => {
     if (isLoading || !wasLoading) return;
-    const id = chatStore.activeSessionId;
-    if (!id || pendingInitialScrollSessionId.value !== id) return;
+    const scrollKey = activeSessionScrollKey.value;
+    if (!scrollKey || pendingInitialScrollKey.value !== scrollKey) return;
     if (chatStore.focusMessageId) {
-      pendingInitialScrollSessionId.value = null;
+      pendingInitialScrollKey.value = null;
       return;
     }
     await nextTick();
-    if (chatStore.activeSessionId !== id) return;
-    applyInitialSessionScroll(id);
+    if (activeSessionScrollKey.value !== scrollKey) return;
+    applyInitialSessionScroll(scrollKey);
   },
   { flush: "post" },
 );
@@ -444,7 +454,7 @@ watch(
 watch(
   () => chatStore.messages[chatStore.messages.length - 1]?.content,
   () => {
-    if (pendingInitialScrollSessionId.value === chatStore.activeSessionId) return;
+    if (pendingInitialScrollKey.value === activeSessionScrollKey.value) return;
     if (chatStore.focusMessageId) {
       scrollToMessage(chatStore.focusMessageId);
       return;
@@ -454,7 +464,7 @@ watch(
   },
 );
 watch(currentToolCalls, () => {
-  if (pendingInitialScrollSessionId.value === chatStore.activeSessionId) return;
+  if (pendingInitialScrollKey.value === activeSessionScrollKey.value) return;
   if (chatStore.focusMessageId) {
     scrollToMessage(chatStore.focusMessageId);
     return;
@@ -466,7 +476,7 @@ watch(currentToolCalls, () => {
 watch(
   () => queuedMessages.value.length,
   async (length, previousLength) => {
-    if (pendingInitialScrollSessionId.value === chatStore.activeSessionId) return;
+    if (pendingInitialScrollKey.value === activeSessionScrollKey.value) return;
     if (chatStore.focusMessageId) return;
     if (length <= previousLength) return;
     const wasNearBottom = shouldAutoFollowBottom(320);
@@ -478,7 +488,7 @@ watch(
 
 onBeforeUnmount(() => {
   stopThinkingTimer();
-  saveSessionScrollPosition(chatStore.activeSessionId);
+  saveSessionScrollPosition(activeSessionScrollKey.value);
 });
 
 onMounted(() => {
@@ -495,7 +505,7 @@ defineExpose({
 <template>
   <div class="message-list-shell">
     <VirtualMessageList
-      :key="chatStore.activeSessionId || 'chat-empty'"
+      :key="activeSessionScrollKey || 'chat-empty'"
       ref="listRef"
       :messages="displayMessagesWithForkDivider"
       :virtualized="false"
