@@ -363,7 +363,10 @@ test('embeds the desktop browser beside workspace and terminal', async ({ page }
 
   await page.locator('.header-tool-toggle').click()
   const toolPanel = page.locator('.chat-tool-panel')
-  await expect(toolPanel.locator('.chat-tool-tab')).toHaveText(['Workspace', 'Terminal', 'Browser'])
+  await expect(toolPanel.getByRole('tab')).toHaveCount(3)
+  await expect(toolPanel.getByRole('tab', { name: 'Workspace' })).toBeVisible()
+  await expect(toolPanel.getByRole('tab', { name: 'Terminal' })).toBeVisible()
+  await expect(toolPanel.getByRole('tab', { name: 'Browser' })).toBeVisible()
 
   await toolPanel.getByRole('tab', { name: 'Browser' }).click()
   await expect(toolPanel.locator('.browser-panel')).toBeVisible()
