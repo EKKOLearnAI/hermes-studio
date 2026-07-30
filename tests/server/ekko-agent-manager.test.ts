@@ -103,8 +103,12 @@ describe('GlobalEkkoAgent', () => {
     expect(request.model).toBe('test-model')
     expect(request.metadata).toEqual({ session_id: 'session-1' })
     expect(request.messages[0].content).toContain('## Image and File Output')
+    expect(request.messages[0].content).toContain(
+      `workspaceRoot: ${join(baseDirectory, '.ekko', 'workspace', 'default', 'session-1')}`,
+    )
     expect(request.messages[0].content).toContain('![description](/absolute/path/image.png)')
     expect(request.messages[0].content).toContain('![description](<C:/absolute/path/image.png>)')
+    expect(existsSync(join(baseDirectory, '.ekko', 'workspace', 'default', 'session-1'))).toBe(true)
   })
 
   it('binds skill tools to the directory provided when the agent is created', async () => {
@@ -181,9 +185,11 @@ describe('GlobalEkkoAgent', () => {
         dataDirectory: join(baseDirectory, '.ekko'),
         skillDirectory: join(baseDirectory, '.ekko', 'skills', 'default'),
         logDirectory: join(baseDirectory, '.ekko', 'logs', 'default'),
+        workspaceDirectory: join(baseDirectory, '.ekko', 'workspace', 'default'),
         logFilePath: join(baseDirectory, '.ekko', 'logs', 'default', 'ekko-agent.jsonl'),
       })
       expect(existsSync(join(baseDirectory, '.ekko', 'skills'))).toBe(true)
+      expect(existsSync(join(baseDirectory, '.ekko', 'workspace'))).toBe(true)
       expect(existsSync(join(baseDirectory, '.ekko', 'logs', 'default', 'ekko-agent.jsonl'))).toBe(true)
       expect(existsSync(join(baseDirectory, '.ekko', 'ekko.db'))).toBe(true)
     } finally {

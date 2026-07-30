@@ -30,6 +30,7 @@ export class GlobalEkkoAgent {
   private readonly directories: EkkoDirectoryManager
   private readonly skillDirectory: string
   private readonly logDirectory: string
+  private readonly workspaceDirectory: string
   private readonly fileLogger: EkkoFileLogger
   private runtime?: AgentRuntime
   private memory?: MemoryService
@@ -41,6 +42,7 @@ export class GlobalEkkoAgent {
     this.directories.initialize({ hermesRootDirectory: getHermesBaseDir() })
     this.skillDirectory = this.directories.profileSkillsDirectory(options.profile)
     this.logDirectory = this.directories.profileLogsDirectory(options.profile)
+    this.workspaceDirectory = this.directories.profileWorkspaceDirectory(options.profile)
     this.fileLogger = new EkkoFileLogger({ directory: this.logDirectory })
     this.writeLog({
       category: 'system',
@@ -49,6 +51,7 @@ export class GlobalEkkoAgent {
         dataDirectory: this.directories.rootDirectory,
         skillDirectory: this.skillDirectory,
         logDirectory: this.logDirectory,
+        workspaceDirectory: this.workspaceDirectory,
       },
     })
     if (this.directories.lastSkillImport) {
@@ -63,11 +66,15 @@ export class GlobalEkkoAgent {
   async run(input: AgentRuntimeRunInput): Promise<AgentRuntimeRunResult> {
     this.lastUsedAt = Date.now()
     this.runCount += 1
-    return this.runtimeInstance().run(input)
+    return this.runtimeInstance().run(this.withDefaultWorkspace(input))
   }
 
   async estimateContext(input: AgentRuntimeRunInput): Promise<AgentRuntimeContextEstimate> {
-    return this.runtimeInstance().estimateContext(input)
+    return this.runtimeInstance().estimateContext(this.withDefaultWorkspace(input))
+  }
+
+  sessionWorkspaceDirectory(sessionId: string): string {
+    return this.directories.sessionWorkspaceDirectory(this.options.profile || 'default', sessionId)
   }
 
   hasBackgroundTasks(sessionId?: string): boolean {
@@ -111,6 +118,7 @@ export class GlobalEkkoAgent {
       dataDirectory: this.directories.rootDirectory,
       skillDirectory: this.skillDirectory,
       logDirectory: this.logDirectory,
+      workspaceDirectory: this.workspaceDirectory,
       logFilePath: this.fileLogger.filePath,
       profile: this.options.profile || 'default',
     }
@@ -171,6 +179,25 @@ export class GlobalEkkoAgent {
       data: { memoryEnabled: this.memory?.isEnabled ?? false },
     })
     return this.runtime
+  }
+
+  private withDefaultWorkspace(input: AgentRuntimeRunInput): AgentRuntimeRunInput {
+    if (input.toolContext?.workspaceRoot || input.toolContext?.cwd) return input
+    const sessionId = (
+      input.toolContext?.sessionId ||
+      (typeof input.metadata?.session_id === 'string' ? input.metadata.session_id : '')
+    ).trim()
+    if (!sessionId) return input
+    const workspace = this.sessionWorkspaceDirectory(sessionId)
+    return {
+      ...input,
+      toolContext: {
+        ...input.toolContext,
+        cwd: workspace,
+        workspaceRoot: workspace,
+        workspaceId: input.toolContext?.workspaceId || workspace,
+      },
+    }
   }
 }
 

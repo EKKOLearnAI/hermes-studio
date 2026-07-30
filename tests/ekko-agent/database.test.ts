@@ -27,7 +27,7 @@ describe('EkkoDatabaseManager', () => {
     expect(new EkkoDirectoryManager().baseDirectory).toBe(homedir())
   })
 
-  it('initializes the Ekko root and only its skills feature directory', () => {
+  it('initializes the Ekko root with its skills and workspace directories', () => {
     const directories = new EkkoDirectoryManager(webUiHome)
     expect(existsSync(directories.rootDirectory)).toBe(false)
 
@@ -37,14 +37,21 @@ describe('EkkoDatabaseManager', () => {
       databasePath: join(webUiHome, '.ekko', 'ekko.db'),
       skillsDirectory: join(webUiHome, '.ekko', 'skills'),
       logsDirectory: join(webUiHome, '.ekko', 'logs'),
+      workspaceDirectory: join(webUiHome, '.ekko', 'workspace'),
     })
     expect(existsSync(directories.skillsDirectory)).toBe(true)
+    expect(existsSync(directories.workspaceDirectory)).toBe(true)
     expect(existsSync(directories.logsDirectory)).toBe(false)
     expect(existsSync(directories.databasePath)).toBe(false)
     expect(directories.profileSkillsDirectory('work')).toBe(join(webUiHome, '.ekko', 'skills', 'work'))
     expect(directories.profileLogsDirectory('work')).toBe(join(webUiHome, '.ekko', 'logs', 'work'))
+    expect(directories.profileWorkspaceDirectory('work')).toBe(join(webUiHome, '.ekko', 'workspace', 'work'))
+    expect(directories.sessionWorkspaceDirectory('work', 'session-1')).toBe(
+      join(webUiHome, '.ekko', 'workspace', 'work', 'session-1'),
+    )
     expect(existsSync(join(webUiHome, '.ekko', 'skills', 'work'))).toBe(true)
     expect(existsSync(join(webUiHome, '.ekko', 'logs', 'work'))).toBe(true)
+    expect(existsSync(join(webUiHome, '.ekko', 'workspace', 'work', 'session-1'))).toBe(true)
     expect(existsSync(join(webUiHome, '.ekko', 'skills', 'work', '.ekko-backups'))).toBe(false)
     expect(existsSync(join(webUiHome, '.ekko', 'skills', 'work', '.ekko-archive'))).toBe(false)
   })

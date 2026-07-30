@@ -15,10 +15,14 @@ const resolveModelProviderConfigsMock = vi.hoisted(() => vi.fn())
 const agentRunMock = vi.hoisted(() => vi.fn())
 const agentEstimateContextMock = vi.hoisted(() => vi.fn(async () => ({ contextTokens: 5_000 })))
 const agentWriteLogMock = vi.hoisted(() => vi.fn(() => true))
+const agentSessionWorkspaceDirectoryMock = vi.hoisted(() => (
+  vi.fn((sessionId: string) => `/tmp/ekko-workspace/default/${sessionId}`)
+))
 const getGlobalEkkoAgentMock = vi.hoisted(() => vi.fn(() => ({
   run: agentRunMock,
   estimateContext: agentEstimateContextMock,
   writeLog: agentWriteLogMock,
+  sessionWorkspaceDirectory: agentSessionWorkspaceDirectoryMock,
 })))
 const buildCompressedHistoryMock = vi.hoisted(() => vi.fn())
 const recordSessionUsageMock = vi.hoisted(() => vi.fn())
@@ -898,6 +902,7 @@ describe('ekko-agent context usage events', () => {
       onEvent: (event: string, payload: any) => events.push({ event, payload }),
     }, 'default', sessionMap, vi.fn(() => false))
 
+    expect(agentSessionWorkspaceDirectoryMock).not.toHaveBeenCalled()
     expect(createSessionMock).toHaveBeenCalledWith(expect.objectContaining({
       id: 'session-1',
       agent: 'ekko-agent',
@@ -910,6 +915,49 @@ describe('ekko-agent context usage events', () => {
         event: 'session.workspace.updated',
         session_id: 'session-1',
         workspace: '/tmp/new-workspace',
+      },
+    })
+  })
+
+  it('uses the profile-scoped Ekko session workspace by default', async () => {
+    getSessionMock.mockReturnValueOnce(null)
+    agentRunMock.mockResolvedValueOnce({
+      runId: 'run-1',
+      output: { role: 'assistant', content: 'done', usage: { inputTokens: 3, outputTokens: 2 } },
+      steps: [],
+      messages: [],
+      events: [],
+      contextEstimate: { contextTokens: 12_000 },
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'create a file',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    const workspace = '/tmp/ekko-workspace/default/session-1'
+    expect(agentSessionWorkspaceDirectoryMock).toHaveBeenCalledWith('session-1')
+    expect(createSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'session-1',
+      agent: 'ekko-agent',
+      workspace,
+    }))
+    expect(agentRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      toolContext: expect.objectContaining({
+        cwd: workspace,
+        workspaceRoot: workspace,
+      }),
+    }))
+    expect(events).toContainEqual({
+      event: 'session.workspace.updated',
+      payload: {
+        event: 'session.workspace.updated',
+        session_id: 'session-1',
+        workspace,
       },
     })
   })

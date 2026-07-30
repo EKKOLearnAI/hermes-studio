@@ -32,7 +32,6 @@ import {
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { logger } from '../../logger'
 import { recordSessionUsage } from '../../usage-recorder'
-import { getProfileDir } from '../hermes-profile'
 import { observeRunChatPetEvent } from '../pet-state-socket'
 import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview } from './content-blocks'
 import { buildCompressedHistory, getOrCreateSession } from './compression'
@@ -421,7 +420,8 @@ export async function handleEkkoAgentRun(
   const apiMode = runtimeConfig.apiMode
   const apiKey = runtimeConfig.apiKey
   const reasoningEffort = resolveReasoningEffort(data.reasoning_effort)
-  const workspace = data.workspace || storedSession?.workspace || getProfileDir(profile)
+  const agent = getGlobalEkkoAgent(profile)
+  const workspace = data.workspace || storedSession?.workspace || agent.sessionWorkspaceDirectory(sessionId)
   const shouldEmitWorkspaceUpdate = Boolean(workspace && !storedSession?.workspace)
   if (storedSession && !storedSession.workspace) updateSession(sessionId, { workspace })
   const displayInput = data.display_input === undefined ? data.input : data.display_input
@@ -526,7 +526,6 @@ export async function handleEkkoAgentRun(
         }
       : undefined,
   })
-  const agent = getGlobalEkkoAgent(profile)
   const memoryUsageBatchId = randomUUID()
   const skillReviewUsageBatchId = randomUUID()
   const turnId = randomUUID()

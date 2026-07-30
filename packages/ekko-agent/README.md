@@ -107,12 +107,14 @@ instead implement and own its internal compression lifecycle.
 
 Ekko owns one filesystem root through `EkkoDirectoryManager`. The manager takes
 one optional base directory (the user's home directory by default), creates
-`<base>/.ekko/skills`, and keeps the SQLite database at
+`<base>/.ekko/skills` and `<base>/.ekko/workspace`, and keeps the SQLite database at
 `<base>/.ekko/ekko.db`. A running profile uses
 `<base>/.ekko/skills/<profile>` for its skills and
-`<base>/.ekko/logs/<profile>` for its log. The server supplies its Web UI home
-as the base directory. For compatibility, the server supplies the Hermes root
-during initialization. If `.ekko/skills` does not exist yet, the manager imports
+`<base>/.ekko/logs/<profile>` for its log. Its default per-session workspace is
+`<base>/.ekko/workspace/<profile>/<session-id>`; an explicitly supplied
+`workspaceRoot` or `cwd` takes precedence. The server supplies its Web UI home as
+the base directory. For compatibility, the server supplies the Hermes root during
+initialization. If `.ekko/skills` does not exist yet, the manager imports
 the default profile from `<hermes>/skills` and every named profile from
 `<hermes>/profiles/<profile>/skills`. This is a one-time copy: once
 `.ekko/skills` exists, later startups do not resync or overwrite Ekko-owned
