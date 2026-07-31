@@ -186,7 +186,7 @@ const displayMessages = computed(() => {
   return messages
     .filter((m, index) => {
       if (m.role === "tool") {
-        return toolTraceVisible.value && !!m.toolName && !(isRunIndicatorActive.value && currentToolIds.has(m.id));
+        return toolTraceVisible.value && !!m.toolName && !(chatStore.isRunActive && currentToolIds.has(m.id));
       }
       if (
         m.role === "assistant" &&
