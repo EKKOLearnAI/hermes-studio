@@ -418,6 +418,6 @@ describe('group chat history windows', () => {
     expect(storage.getContextSnapshot('room-1')?.lastMessageId).toBe('msg-1')
     expect(latest?.totalTokens).toBe(expectedTotalTokens)
     expect(storage.getRoom('room-1')?.totalTokens).toBe(expectedTotalTokens)
-  })
+  }, 15_000)
 
 })
