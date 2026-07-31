@@ -74,6 +74,65 @@ test('sends a chat run and renders streamed Socket.IO response events', async ({
   expect(api.unexpectedRequests).toEqual([])
 })
 
+test('keeps live reasoning inside the assistant message bubble', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+  await sendChatMessage(page, 'Reason about the queue')
+  const { run } = await waitForRun(page)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', {
+      event: 'run.started',
+      session_id: sid,
+      run_id: 'run-reasoning',
+    })
+  }, run.session_id)
+
+  await expect(page.locator('.streaming-indicator .thinking-status')).toBeVisible()
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('reasoning.delta', {
+      event: 'reasoning.delta',
+      session_id: sid,
+      run_id: 'run-reasoning',
+      delta: 'Inspecting the pending work.',
+    })
+  }, run.session_id)
+
+  const thinkingBlock = page.locator('.message.assistant .thinking-block')
+  await expect(thinkingBlock).toContainText('Inspecting the pending work.')
+  await expect(page.locator('.streaming-indicator .thinking-status')).toBeVisible()
+  expect(await thinkingBlock.evaluate(node => Boolean(node.closest('.message-bubble')))).toBe(true)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('message.delta', {
+      event: 'message.delta',
+      session_id: sid,
+      run_id: 'run-reasoning',
+      delta: 'The queue is ready.',
+    })
+    socket.__trigger('run.completed', {
+      event: 'run.completed',
+      session_id: sid,
+      run_id: 'run-reasoning',
+      output: 'The queue is ready.',
+    })
+  }, run.session_id)
+
+  const assistantBubble = page.locator('.message.assistant .message-bubble').filter({ hasText: 'The queue is ready.' })
+  await expect(page.locator('.streaming-indicator .thinking-status')).toHaveCount(0)
+  await expect(assistantBubble.locator('.thinking-block')).toHaveCount(1)
+  await assistantBubble.locator('.thinking-header').click()
+  await expect(assistantBubble).toContainText('Inspecting the pending work.')
+  expect(api.unexpectedRequests).toEqual([])
+})
+
 test('shows one real subagent card and opens its live chat stream in the resizable preview panel', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   const api = await mockHermesApi(page)

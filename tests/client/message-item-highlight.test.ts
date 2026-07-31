@@ -106,7 +106,7 @@ describe('MessageItem tool details', () => {
     expect(chatStore.activeMessageReference?.content).toBe('Visible answer')
   })
 
-  it('renders highlighted code blocks for tool arguments and tool results', async () => {
+  it('renders reasoning, tool arguments, and tool results as three detail sections', async () => {
     const wrapper = mount(MessageItem, {
       props: {
         message: {
@@ -115,15 +115,34 @@ describe('MessageItem tool details', () => {
           content: '',
           timestamp: Date.now(),
           toolName: 'web_search',
+          reasoning: 'I should search for the current answer.',
           toolArgs: '{"query":"syntax highlighting"}',
           toolResult: '{"results":[{"title":"Done"}]}',
           toolStatus: 'done',
         } satisfies Message,
       },
+      global: {
+        stubs: {
+          MarkdownRenderer: {
+            props: ['content'],
+            template: '<div class="markdown-stub">{{ content }}</div>',
+          },
+        },
+      },
     })
 
     await wrapper.find('.tool-line').trigger('click')
 
+    const sections = wrapper.findAll('.tool-details .tool-detail-section')
+    expect(sections).toHaveLength(3)
+    expect(sections.map(section => section.find('.tool-detail-label').text())).toEqual([
+      'chat.thinkingLabel',
+      'chat.arguments',
+      'chat.result',
+    ])
+    expect(wrapper.get('.tool-detail-reasoning').text()).toContain(
+      'I should search for the current answer.',
+    )
     const blocks = wrapper.findAll('.tool-details .hljs-code-block')
     expect(blocks).toHaveLength(2)
     expect(blocks[0].find('.code-lang').text()).toBe('json')

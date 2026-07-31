@@ -1159,6 +1159,11 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
                 toolArgs: toolArgs !== undefined ? toolArgs : (placeholderIdx !== -1 ? result[placeholderIdx].toolArgs : undefined),
                 toolPreview: typeof preview === 'string' ? preview.slice(0, 100) || undefined : undefined,
                 toolResult,
+                reasoning: msg.reasoning?.trim()
+                    ? msg.reasoning
+                    : placeholderIdx !== -1
+                        ? result[placeholderIdx].reasoning
+                        : undefined,
                 toolStatus: 'done',
             }
             if (placeholderIdx !== -1) result[placeholderIdx] = merged

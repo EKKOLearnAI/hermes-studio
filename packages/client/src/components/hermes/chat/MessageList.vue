@@ -85,7 +85,7 @@ function stopThinkingTimer() {
   }
 }
 
-const isThinkingIndicatorVisible = computed(() => chatStore.isRunActive || !!chatStore.abortState);
+const isRunIndicatorActive = computed(() => chatStore.isRunActive || !!chatStore.abortState);
 const formattedThinkingElapsed = computed(() => formatElapsed(thinkingElapsedMs.value));
 
 const currentToolCalls = computed(() => {
@@ -146,10 +146,9 @@ const displayMessages = computed(() => {
     }
     if (
       m.role === "assistant" &&
-      m.isStreaming &&
+      !m.isStreaming &&
       !m.content?.trim() &&
-      !!m.reasoning?.trim() &&
-      currentToolCalls.value.length === 0
+      !!m.reasoning?.trim()
     ) {
       return false;
     }
@@ -433,7 +432,7 @@ watch(
 );
 
 watch(
-  isThinkingIndicatorVisible,
+  isRunIndicatorActive,
   (visible) => {
     stopThinkingTimer();
     if (!visible) {
@@ -561,7 +560,7 @@ defineExpose({
       </template>
       <template #after>
         <Transition name="fade">
-        <div v-if="isThinkingIndicatorVisible" class="streaming-indicator">
+        <div v-if="isRunIndicatorActive" class="streaming-indicator">
           <div class="thinking-status">
             <img
               :src="thinkingImage"

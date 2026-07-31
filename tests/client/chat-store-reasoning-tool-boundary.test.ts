@@ -84,7 +84,7 @@ describe('chat store reasoning/tool boundaries', () => {
     sessionsApi.setSessionModel.mockResolvedValue(true)
   })
 
-  it('merges reasoning across tool cycles without appending post-tool text before the tool', async () => {
+  it('keeps reasoning with the assistant segment that follows each tool boundary', async () => {
     const store = useChatStore()
     const session = makeSession()
     store.sessions = [session]
@@ -122,18 +122,137 @@ describe('chat store reasoning/tool boundaries', () => {
     expect(store.messages[1]).toEqual(expect.objectContaining({
       role: 'assistant',
       content: 'Before tool.',
-      reasoning: 'think before. think after. ',
+      reasoning: 'think before. ',
       isStreaming: false,
     }))
     expect(store.messages[2]).toEqual(expect.objectContaining({
       role: 'tool',
       toolStatus: 'done',
       toolResult: 'tool output',
+      reasoning: 'think before. ',
     }))
     expect(store.messages[3]).toEqual(expect.objectContaining({
       role: 'assistant',
       content: 'After tool.',
+      reasoning: 'think after. ',
       isStreaming: true,
+    }))
+
+    onEvent({ event: 'run.completed', session_id: 'session-1', output: 'After tool.' })
+
+    expect(store.messages.filter(message => message.role === 'assistant')).toEqual([
+      expect.objectContaining({
+        content: 'Before tool.',
+        reasoning: 'think before. ',
+        isStreaming: false,
+      }),
+      expect.objectContaining({
+        content: 'After tool.',
+        reasoning: 'think after. ',
+        isStreaming: false,
+      }),
+    ])
+  })
+
+  it('restores persisted tool-call reasoning on the expandable tool message', async () => {
+    const store = useChatStore()
+    const session = makeSession()
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+    sessionsApi.fetchSessionMessagesPage.mockResolvedValue({
+      session: { id: 'session-1', title: 'session' },
+      messages: [
+        {
+          id: 1,
+          role: 'assistant',
+          content: '',
+          reasoning: 'I should inspect the file before answering.',
+          tool_calls: [{
+            id: 'tool-1',
+            type: 'function',
+            function: {
+              name: 'read_file',
+              arguments: '{"path":"README.md"}',
+            },
+          }],
+          timestamp: 1,
+          finish_reason: 'tool_calls',
+        },
+        {
+          id: 2,
+          role: 'tool',
+          content: 'file contents',
+          tool_call_id: 'tool-1',
+          timestamp: 2,
+        },
+      ],
+      total: 2,
+      hasMore: false,
+    })
+
+    await store.refreshActiveSession()
+
+    expect(store.messages).toEqual([
+      expect.objectContaining({
+        role: 'tool',
+        toolName: 'read_file',
+        toolCallId: 'tool-1',
+        reasoning: 'I should inspect the file before answering.',
+        toolResult: 'file contents',
+      }),
+    ])
+  })
+
+  it('attaches completion output to post-tool reasoning when no body delta arrived', async () => {
+    const store = useChatStore()
+    const session = makeSession()
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    await store.sendMessage('inspect and summarize')
+
+    const onEvent = chatApi.startRunViaSocket.mock.calls[0][1] as (event: RunEvent) => void
+    onEvent({ event: 'run.started', session_id: 'session-1' })
+    onEvent({ event: 'reasoning.delta', session_id: 'session-1', delta: 'Before tool.' })
+    onEvent({
+      event: 'tool.started',
+      session_id: 'session-1',
+      tool_call_id: 'tool-1',
+      tool: 'read_file',
+      arguments: '{}',
+    } as RunEvent)
+    onEvent({
+      event: 'tool.completed',
+      session_id: 'session-1',
+      tool_call_id: 'tool-1',
+      output: 'tool output',
+    } as RunEvent)
+    onEvent({ event: 'reasoning.delta', session_id: 'session-1', delta: 'After tool.' })
+    onEvent({
+      event: 'run.completed',
+      session_id: 'session-1',
+      output: 'Final answer without a body delta.',
+    })
+
+    expect(store.messages.map(message => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'assistant',
+    ])
+    expect(store.messages[1]).toEqual(expect.objectContaining({
+      role: 'assistant',
+      content: '',
+      reasoning: 'Before tool.',
+      isStreaming: false,
+    }))
+    expect(store.messages[3]).toEqual(expect.objectContaining({
+      role: 'assistant',
+      content: 'Final answer without a body delta.',
+      reasoning: 'After tool.',
+      isStreaming: false,
     }))
   })
 

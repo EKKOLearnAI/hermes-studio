@@ -608,7 +608,11 @@ function toggleWorkspaceChange(changeId: string): void {
 }
 
 const hasToolDetails = computed(
-  () => !!(toolArgsPayload.value.full || toolResultPayload.value.full),
+  () => !!(
+    props.message.reasoning?.trim()
+    || toolArgsPayload.value.full
+    || toolResultPayload.value.full
+  ),
 );
 const isSubagentTool = computed(() => subagentIdFromToolCall(props.message.toolCallId) !== null);
 const hasInlineToolDetails = computed(() => hasToolDetails.value && !isSubagentTool.value);
@@ -928,6 +932,12 @@ onBeforeUnmount(() => {
         }}</span>
       </div>
       <div v-if="!isSubagentTool && toolExpanded && hasToolDetails" class="tool-details" @click="handleToolDetailClick">
+        <div v-if="message.reasoning?.trim()" class="tool-detail-section">
+          <div class="tool-detail-label">{{ t("chat.thinkingLabel") }}</div>
+          <div class="tool-detail-reasoning">
+            <MarkdownRenderer :content="message.reasoning" />
+          </div>
+        </div>
         <div v-if="formattedToolArgs" class="tool-detail-section" data-copy-source="tool-args">
           <div class="tool-detail-label">{{ t("chat.arguments") }}</div>
           <div class="tool-detail-code-block" v-html="renderedToolArgs"></div>
@@ -1811,6 +1821,25 @@ onBeforeUnmount(() => {
     overflow-y: visible;
     white-space: pre;
     word-break: normal;
+  }
+}
+
+.tool-detail-reasoning {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid $border-light;
+  border-radius: $radius-sm;
+  background: rgba(var(--text-primary-rgb), 0.035);
+  color: $text-secondary;
+  font-size: 12px;
+
+  :deep(.markdown-body > :first-child) {
+    margin-top: 0;
+  }
+
+  :deep(.markdown-body > :last-child) {
+    margin-bottom: 0;
   }
 }
 

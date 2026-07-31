@@ -270,6 +270,7 @@ describe('group chat store streaming merge', () => {
       assistantMessage({
         id: 'msg-tool-call',
         content: '',
+        reasoning: 'Check the room data before calling lookup.',
         tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'lookup', arguments: false } }],
       } as unknown as Partial<ChatMessage>),
       assistantMessage({
@@ -286,6 +287,7 @@ describe('group chat store streaming merge', () => {
       toolName: 'lookup',
       toolArgs: false,
       toolResult: { ok: true },
+      reasoning: 'Check the room data before calling lookup.',
       toolStatus: 'done',
     })
   })
