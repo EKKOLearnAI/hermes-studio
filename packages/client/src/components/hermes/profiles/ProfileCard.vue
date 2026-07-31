@@ -84,11 +84,13 @@ function handleDelete() {
 async function handleExport() {
   exporting.value = true
   try {
-    const ok = await profilesStore.exportProfile(props.profile.name)
-    if (ok) {
+    const res = await profilesStore.exportProfile(props.profile.name)
+    if (res.success) {
       message.success(t('profiles.exportSuccess'))
+    } else if (res.code === 'archive_timeout') {
+      message.error(t('profiles.exportTimeout'), { duration: 8000 })
     } else {
-      message.error(t('profiles.exportFailed'))
+      message.error(res.error || t('profiles.exportFailed'))
     }
   } finally {
     exporting.value = false

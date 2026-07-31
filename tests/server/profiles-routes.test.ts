@@ -38,6 +38,7 @@ vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
   setupReset: vi.fn(),
   exportProfile: vi.fn(),
   importProfile: vi.fn(),
+  ARCHIVE_TIMEOUT_CODE: 'archive_timeout',
 }))
 
 vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
@@ -174,6 +175,34 @@ describe('Profile Routes', () => {
       await hermesCli.renameProfile('old', 'new')
 
       expect(hermesCli.renameProfile).toHaveBeenCalledWith('old', 'new')
+    })
+  })
+
+  describe('profile export failures', () => {
+    it('answers a timed-out export with 504 and a code the UI can act on', async () => {
+      vi.mocked(hermesCli.exportProfile).mockRejectedValue(Object.assign(
+        new Error("Export of profile 'mohamed' timed out after 10 minutes — the archive is too large"),
+        { code: 'archive_timeout' },
+      ))
+      const { exportProfile } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const ctx: any = { params: { name: 'mohamed' }, status: 200, body: undefined, set: vi.fn(), res: { on: vi.fn() } }
+
+      await exportProfile(ctx)
+
+      expect(ctx.status).toBe(504)
+      expect(ctx.body.code).toBe('archive_timeout')
+      expect(ctx.body.error).toContain('timed out')
+    })
+
+    it('still answers a real export failure with 500', async () => {
+      vi.mocked(hermesCli.exportProfile).mockRejectedValue(new Error("Failed to export profile: profile 'ghost' not found"))
+      const { exportProfile } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const ctx: any = { params: { name: 'ghost' }, status: 200, body: undefined, set: vi.fn(), res: { on: vi.fn() } }
+
+      await exportProfile(ctx)
+
+      expect(ctx.status).toBe(500)
+      expect(ctx.body.code).toBeUndefined()
     })
   })
 

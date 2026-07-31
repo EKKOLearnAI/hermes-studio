@@ -1339,6 +1339,8 @@ export default {
     deleteFailed: 'プロファイルの削除に失敗しました',
     exportSuccess: 'プロファイルをエクスポートしました',
     exportFailed: 'プロファイルのエクスポートに失敗しました',
+    exportTimeout: 'エクスポートがタイムアウトしました。このプロファイルは大きすぎます。多くの場合、workspace 配下のキャッシュや仮想環境が原因です。',
+    importTimeout: 'インポートがタイムアウトしました。このアーカイブはブラウザから展開するには大きすぎます。サーバー側でインポートしてください。',
     importSuccess: 'プロファイルをインポートしました',
     importFailed: 'プロファイルのインポートに失敗しました',
     importSelectFile: 'アーカイブファイルを選択',

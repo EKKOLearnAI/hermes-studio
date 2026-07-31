@@ -792,8 +792,11 @@ export async function exportProfile(ctx: any) {
     ctx.body = createReadStream(outputPath)
     ctx.res.on('finish', () => { try { unlinkSync(outputPath) } catch { } })
   } catch (err: any) {
-    ctx.status = 500
-    ctx.body = { error: err.message }
+    // 超时和"导出真的失败了"是两回事，前端要能分开提示
+    const timedOut = err?.code === hermesCli.ARCHIVE_TIMEOUT_CODE
+    if (timedOut) try { unlinkSync(outputPath) } catch { }
+    ctx.status = timedOut ? 504 : 500
+    ctx.body = timedOut ? { error: err.message, code: err.code } : { error: err.message }
   }
 }
 
@@ -842,7 +845,8 @@ export async function importProfile(ctx: any) {
     ctx.body = { success: true, message: result.trim() }
   } catch (err: any) {
     try { unlinkSync(archivePath) } catch { }
-    ctx.status = 500
-    ctx.body = { error: err.message }
+    const timedOut = err?.code === hermesCli.ARCHIVE_TIMEOUT_CODE
+    ctx.status = timedOut ? 504 : 500
+    ctx.body = timedOut ? { error: err.message, code: err.code } : { error: err.message }
   }
 }

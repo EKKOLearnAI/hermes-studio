@@ -48,12 +48,14 @@ async function handleSave() {
       message.error(t('profiles.importFailed'))
       return
     }
-    const ok = await profilesStore.importProfile(file)
-    if (ok) {
+    const res = await profilesStore.importProfile(file)
+    if (res.success) {
       message.success(t('profiles.importSuccess'))
       emit('saved')
+    } else if (res.code === 'archive_timeout') {
+      message.error(t('profiles.importTimeout'), { duration: 8000 })
     } else {
-      message.error(t('profiles.importFailed'))
+      message.error(res.error || t('profiles.importFailed'))
     }
   } finally {
     loading.value = false

@@ -1773,6 +1773,8 @@ export default {
     deleteFailed: '删除配置失败',
     exportSuccess: '配置已导出',
     exportFailed: '导出配置失败',
+    exportTimeout: '导出超时。该配置体积过大，无法打包 —— 通常是 workspace 下的缓存和虚拟环境把它撑大的。',
+    importTimeout: '导入超时。该压缩包太大，无法通过浏览器解包 —— 请改在服务器上导入。',
     importSuccess: '配置已导入',
     importFailed: '导入配置失败',
     importSelectFile: '选择归档文件',
