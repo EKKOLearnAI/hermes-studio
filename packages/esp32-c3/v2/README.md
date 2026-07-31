@@ -42,6 +42,19 @@ After `pio run`, `npm run build` copies the firmware into
 Firmware v2 checks only the version-isolated v2 OTA manifest and cannot consume
 v1 updates.
 
+## Speak Subtitles
+
+During MCU speech playback, the OLED renders the active audio segment's text
+with the compressed WenQuanYi 12px GB2312 font. Long text is wrapped into
+three-line pages. Page timing follows elapsed playback time capped by queued
+PCM or ADPCM sample progress, so DMA prebuffering cannot advance the first page
+early. The playback progress bar is removed to make room for the third line.
+The subtitle is cleared or replaced only when that audio segment finishes, is
+interrupted, or the next segment starts. The complete audio-segment text is
+retained for paging rather than being shortened to the OLED status-preview
+length. Wrapped lines are prepared once before playback, and only the subtitle
+rows are sent over I²C when the page changes.
+
 ## Idle Power Saving
 
 After three minutes by default without a voice, audio, or status interaction,

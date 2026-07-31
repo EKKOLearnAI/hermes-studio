@@ -625,7 +625,12 @@ export class GlobalAgentServer {
       const segmentText = normalizeMcuSpeechText(text)
       if (!segmentText) return
       const segmentId = `${options.interactionId}-tts-${++segmentIndex}`
-      this.emitMcuEvent({ type: 'interaction.status', interactionId: options.interactionId, status: 'speaking' }, { clientId: options.clientId })
+      this.emitMcuEvent({
+        type: 'interaction.status',
+        interactionId: options.interactionId,
+        status: 'speaking',
+        text: segmentText,
+      }, { clientId: options.clientId })
       const controller = this.registerMcuTtsAbortController(options.interactionId)
       const audioResult: Promise<McuSpeechSynthesisResult> = this.synthesizeMcuSpeech(
         segmentText,
@@ -1535,7 +1540,7 @@ export class GlobalAgentServer {
       type: 'audio.enqueue',
       interactionId: options.interactionId,
       segmentId,
-      text: '',
+      text,
       url: result.audio.url,
       mimeType: result.audio.mimeType,
       channels: 1,

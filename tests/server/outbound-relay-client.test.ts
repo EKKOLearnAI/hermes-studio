@@ -648,6 +648,7 @@ describe('outbound relay client', () => {
       expect(remoteSocket.emit).toHaveBeenCalledWith('audio.enqueue', expect.objectContaining({
         interactionId: 'mcu-background-delegation-1',
         segmentId: 'mcu-background-delegation-1-tts-1',
+        text: '厦门明天晴，最高温度 30 度。',
         completionManagedByServer: true,
       }))
     })

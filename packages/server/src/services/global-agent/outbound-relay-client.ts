@@ -894,7 +894,12 @@ class McuSocketIoRelayClient {
         const segmentText = normalizeMcuSpeechText(text)
         if (!segmentText) return
         const segmentId = `${voice.interactionId}-tts-${++segmentIndex}`
-        this.sendJson({ type: 'interaction.status', interactionId: voice.interactionId, status: 'speaking' })
+        this.sendJson({
+          type: 'interaction.status',
+          interactionId: voice.interactionId,
+          status: 'speaking',
+          text: segmentText,
+        })
         const controller = this.registerTtsAbortController(voice.interactionId)
         const audioResult: Promise<McuSpeechSynthesisResult> = this.synthesizeMcuSpeech(
           segmentText,
@@ -1520,7 +1525,7 @@ class McuSocketIoRelayClient {
       type: 'audio.enqueue',
       interactionId,
       segmentId,
-      text: '',
+      text,
       url: result.audio.url,
       mimeType: result.audio.mimeType,
       channels: 1,

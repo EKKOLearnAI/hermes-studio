@@ -988,8 +988,14 @@ describe('GlobalAgentServer', () => {
     expect(agentSocket.emit).toHaveBeenCalledWith('audio.enqueue', expect.objectContaining({
       interactionId: 'voice-1',
       segmentId: 'voice-1-tts-1',
+      text: '好嘞，这就去查。',
       url: expect.stringMatching(/^\/api\/hermes\/mcu\/audio\/[a-f0-9-]+\.adpcm$/),
       completionManagedByServer: true,
+    }))
+    expect(agentSocket.emit).toHaveBeenCalledWith('interaction.status', expect.objectContaining({
+      interactionId: 'voice-1',
+      status: 'speaking',
+      text: '好嘞，这就去查。',
     }))
     localSocket.__handlers.get('tool.completed')?.({ tool: 'weather' })
     localSocket.__handlers.get('message.delta')?.({ delta: '结果如下：\n| 名称 | 值 |\n' })
@@ -1017,6 +1023,7 @@ describe('GlobalAgentServer', () => {
     expect(agentSocket.emit).toHaveBeenCalledWith('audio.enqueue', expect.objectContaining({
       interactionId: 'voice-1',
       segmentId: 'voice-1-tts-2',
+      text: '结果如下： 请确认。',
       url: expect.stringMatching(/^\/api\/hermes\/mcu\/audio\/[a-f0-9-]+\.adpcm$/),
       completionManagedByServer: true,
     }))
@@ -1124,6 +1131,7 @@ describe('GlobalAgentServer', () => {
     expect(agentSocket.emit).toHaveBeenCalledWith('audio.enqueue', expect.objectContaining({
       interactionId: 'mcu-background-delegation-1',
       segmentId: 'mcu-background-delegation-1-tts-1',
+      text: '厦门明天晴，最高温度 30 度。',
       completionManagedByServer: true,
     }))
     expect(localSocket.disconnect).toHaveBeenCalled()

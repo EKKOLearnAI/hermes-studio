@@ -7,8 +7,10 @@
 #include <WiFiClientSecure.h>
 #include <WiFiUdp.h>
 #include <Wire.h>
+#include <U8g2lib.h>
 #include <math.h>
 #include <memory>
+#include <vector>
 #include "driver/i2s.h"
 #include "esp_system.h"
 #include "esp_rom_sys.h"
@@ -93,6 +95,11 @@ constexpr uint8_t kDefaultOledAddr = 0x3C;
 constexpr uint8_t kAltOledAddr = 0x3D;
 constexpr int kOledWidth = 128;
 constexpr int kOledHeight = 64;
+constexpr size_t kOledBufferBytes = (kOledWidth * kOledHeight) / 8;
+constexpr int kMcuSubtitleMaxWidth = 124;
+constexpr uint8_t kMcuSubtitleLinesPerPage = 3;
+constexpr uint32_t kOledI2cClockHz = 400000;
+constexpr uint32_t kCodecI2cClockHz = 100000;
 constexpr uint32_t kOledRefreshIntervalMs = 160;
 constexpr uint32_t kOledSuccessReturnDelayMs = 2500;
 constexpr uint32_t kOledErrorReturnDelayMs = 6000;
@@ -167,6 +174,7 @@ WiFiClientSecure mcuWsSecureClient;
 WiFiClient *mcuWsClient = &mcuWsPlainClient;
 WiFiClient mcuAudioPlainClient;
 WiFiClientSecure mcuAudioSecureClient;
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C oledTextRenderer(U8G2_R0, U8X8_PIN_NONE);
 uint8_t mcuAdpcmInputBuffer[kMcuAdpcmReadChunkBytes];
 int16_t mcuAdpcmStereoBuffer[kMcuAdpcmOutputFrames * 2];
 bool wifiReady = false;
@@ -230,7 +238,10 @@ String mcuToolPreview;
 String mcuToolStatus;
 String lastAudioDetail = "not started";
 uint32_t lastAudioAtMs = 0;
-uint8_t oledBuffer[(kOledWidth * kOledHeight) / 8] = {};
+uint8_t *const oledBuffer = oledTextRenderer.getBufferPtr();
+std::vector<String> mcuSubtitleLines;
+uint16_t mcuSubtitleLineCount = 0;
+uint16_t mcuSubtitleRenderedPage = UINT16_MAX;
 int scannedNetworkCount = 0;
 String scannedSsids[kMaxScannedNetworks];
 int32_t scannedRssi[kMaxScannedNetworks] = {};
@@ -246,6 +257,7 @@ bool voiceRecordHeardSpeech = false;
 uint32_t mcuInteractionUpdatedAtMs = 0;
 uint32_t mcuAudioStartedAtMs = 0;
 uint32_t mcuAudioDurationMs = 0;
+uint32_t mcuAudioPlaybackProgressMs = 0;
 uint32_t nextMcuOtaCheckAtMs = kMcuOtaFirstCheckMs;
 uint32_t voiceRecordRms = 0;
 uint32_t voiceRecordPeak = 0;
@@ -475,7 +487,7 @@ bool oledData(const uint8_t *data, size_t len) {
 }
 
 void oledClearBuffer() {
-  memset(oledBuffer, 0, sizeof(oledBuffer));
+  memset(oledBuffer, 0, kOledBufferBytes);
 }
 
 void oledSetPixel(int x, int y, bool on = true) {
@@ -604,6 +616,100 @@ void oledDrawScrollingText(int y, String text, uint8_t scale = 1) {
   oledDrawText(width + gap - offset, y, text, scale);
 }
 
+size_t nextUtf8CharacterEnd(const String &text, size_t start) {
+  if (start >= text.length()) return text.length();
+  uint8_t lead = static_cast<uint8_t>(text[start]);
+  size_t bytes = 1;
+  if ((lead & 0xE0) == 0xC0) {
+    bytes = 2;
+  } else if ((lead & 0xF0) == 0xE0) {
+    bytes = 3;
+  } else if ((lead & 0xF8) == 0xF0) {
+    bytes = 4;
+  }
+  return min(start + bytes, text.length());
+}
+
+void clearMcuSubtitle() {
+  mcuSubtitleLines.clear();
+  mcuSubtitleLineCount = 0;
+  mcuSubtitleRenderedPage = UINT16_MAX;
+}
+
+void configureMcuSubtitleFont() {
+  oledTextRenderer.setFont(u8g2_font_wqy12_t_gb2312);
+  oledTextRenderer.setFontMode(1);
+  oledTextRenderer.setDrawColor(1);
+  oledTextRenderer.setFontPosTop();
+}
+
+void prepareMcuSubtitle(String text) {
+  clearMcuSubtitle();
+  text.replace("\r", " ");
+  text.replace("\n", " ");
+  text.trim();
+  if (text.length() == 0) return;
+
+  configureMcuSubtitleFont();
+  size_t offset = 0;
+  while (offset < text.length()) {
+    while (offset < text.length() && text[offset] == ' ') ++offset;
+    if (offset >= text.length()) break;
+
+    String line;
+    while (offset < text.length()) {
+      size_t end = nextUtf8CharacterEnd(text, offset);
+      String candidate = line + text.substring(offset, end);
+      if (line.length() > 0 &&
+          oledTextRenderer.getUTF8Width(candidate.c_str()) > kMcuSubtitleMaxWidth) {
+        break;
+      }
+      line = candidate;
+      offset = end;
+    }
+    line.trim();
+    if (line.length() > 0) {
+      mcuSubtitleLines.push_back(line);
+      if (mcuSubtitleLineCount < UINT16_MAX) ++mcuSubtitleLineCount;
+    }
+  }
+}
+
+uint16_t currentMcuSubtitlePage() {
+  if (mcuSubtitleLineCount == 0) return 0;
+  uint16_t pageCount =
+      (mcuSubtitleLineCount + kMcuSubtitleLinesPerPage - 1) / kMcuSubtitleLinesPerPage;
+  uint16_t page = 0;
+  if (pageCount > 1 && mcuAudioDurationMs > 0) {
+    uint32_t elapsed = millis() - mcuAudioStartedAtMs;
+    uint32_t progress = min(min(elapsed, mcuAudioPlaybackProgressMs), mcuAudioDurationMs);
+    page = min(static_cast<uint16_t>(
+                   (static_cast<uint64_t>(progress) * pageCount) / mcuAudioDurationMs),
+               static_cast<uint16_t>(pageCount - 1));
+  }
+  return page;
+}
+
+void drawMcuSubtitle() {
+  if (mcuSubtitleLineCount == 0) return;
+  configureMcuSubtitleFont();
+
+  uint16_t page = currentMcuSubtitlePage();
+  uint16_t firstLine = page * kMcuSubtitleLinesPerPage;
+  uint16_t remainingLines = mcuSubtitleLineCount - firstLine;
+  uint8_t visibleLines = remainingLines > kMcuSubtitleLinesPerPage
+      ? kMcuSubtitleLinesPerPage
+      : static_cast<uint8_t>(remainingLines);
+  int startY = visibleLines == 1 ? 29 : 21;
+  int lineSpacing = visibleLines == 3 ? 13 : 15;
+  for (uint8_t row = 0; row < visibleLines; ++row) {
+    const String &line = mcuSubtitleLines[firstLine + row];
+    int width = oledTextRenderer.getUTF8Width(line.c_str());
+    int x = max(2, (kOledWidth - width) / 2);
+    oledTextRenderer.drawUTF8(x, startY + row * lineSpacing, line.c_str());
+  }
+}
+
 uint8_t wifiBars() {
   if (!wifiReady || WiFi.status() != WL_CONNECTED) return 0;
   int rssi = WiFi.RSSI();
@@ -676,41 +782,50 @@ String interactionStatusLabel() {
 void drawInteractionFrame() {
   drawTopStatusBar();
 
+  bool showSubtitle = mcuAudioPlaying && mcuSubtitleLineCount > 0;
   String title = interactionStatusLabel();
-  oledDrawCenteredText(17, fitOledText(title, 12), 2);
+  if (showSubtitle) {
+    drawMcuSubtitle();
+  } else {
+    oledDrawCenteredText(17, fitOledText(title, 12), 2);
 
-  String detail = mcuInteractionText;
-  if (mcuInteractionStatus == F("tool")) {
-    detail = mcuToolName;
-    if (mcuToolStatus.length() > 0) {
-      detail += F(" ");
-      detail += mcuToolStatus;
+    String detail = mcuInteractionText;
+    if (mcuInteractionStatus == F("tool")) {
+      detail = mcuToolName;
+      if (mcuToolStatus.length() > 0) {
+        detail += F(" ");
+        detail += mcuToolStatus;
+      }
+    }
+    if (detail.length() > 20 || mcuInteractionStatus == F("failed")) {
+      oledDrawScrollingText(39, detail, 1);
+    } else {
+      oledDrawCenteredText(39, fitOledText(detail, 20), 1);
     }
   }
-  if (detail.length() > 20 || mcuInteractionStatus == F("failed")) {
-    oledDrawScrollingText(39, detail, 1);
-  } else {
-    oledDrawCenteredText(39, fitOledText(detail, 20), 1);
-  }
 
-  if (mcuAudioPlaying && mcuAudioDurationMs > 0) {
-    uint32_t elapsed = millis() - mcuAudioStartedAtMs;
-    uint8_t progress = clampUiValue((elapsed * 100UL) / mcuAudioDurationMs, 100);
-    oledDrawFrame(20, 52, 88, 4);
-    uint8_t filled = static_cast<uint8_t>((progress * 84) / 100);
-    if (filled > 0) oledDrawBox(22, 53, filled, 2);
-  } else {
+  if (!mcuAudioPlaying) {
     String queue = String(F("QUEUE ")) + mcuAudioCount;
     oledDrawCenteredText(55, queue, 1);
   }
 }
 
-bool oledFlush() {
-  for (uint8_t page = 0; page < 8; ++page) {
-    if (!oledCommand(0xB0 + page) || !oledCommand(0x00) || !oledCommand(0x10)) return false;
-    if (!oledData(oledBuffer + page * kOledWidth, kOledWidth)) return false;
+bool oledFlushPages(uint8_t firstPage, uint8_t lastPage) {
+  bool ok = true;
+  Wire.setClock(kOledI2cClockHz);
+  for (uint8_t page = firstPage; page <= lastPage; ++page) {
+    if (!oledCommand(0xB0 + page) || !oledCommand(0x00) || !oledCommand(0x10) ||
+        !oledData(oledBuffer + page * kOledWidth, kOledWidth)) {
+      ok = false;
+      break;
+    }
   }
-  return true;
+  Wire.setClock(kCodecI2cClockHz);
+  return ok;
+}
+
+bool oledFlush() {
+  return oledFlushPages(0, 7);
 }
 
 void drawOledFrame() {
@@ -742,6 +857,16 @@ void drawOledFrame() {
     status += oledHint;
   }
   oledDrawScrollingText(57, status, 1);
+}
+
+void refreshMcuSubtitlePage() {
+  if (!oledReady || idlePowerSaveActive || !mcuAudioPlaying || mcuSubtitleLineCount == 0) return;
+  uint16_t page = currentMcuSubtitlePage();
+  if (page == mcuSubtitleRenderedPage) return;
+  oledClearBuffer();
+  drawOledFrame();
+  oledReady = oledFlushPages(2, 7);
+  if (oledReady) mcuSubtitleRenderedPage = page;
 }
 
 void refreshOled(bool force = false) {
@@ -791,7 +916,7 @@ void tickOledStatusReturn() {
 
 void initOledDisplay() {
   Wire.begin(kPinI2cSda, kPinI2cScl);
-  Wire.setClock(100000);
+  Wire.setClock(kCodecI2cClockHz);
   delay(40);
   if (i2cProbe(kDefaultOledAddr)) {
     oledAddress = kDefaultOledAddr;
@@ -1046,7 +1171,11 @@ String compactDetail(String value) {
   value.replace("\r", " ");
   value.replace("\n", " ");
   value.trim();
-  if (value.length() > 180) value = value.substring(0, 180);
+  if (value.length() > 180) {
+    size_t end = 180;
+    while (end > 0 && (static_cast<uint8_t>(value[end]) & 0xC0) == 0x80) --end;
+    value = value.substring(0, end);
+  }
   return value;
 }
 
@@ -3346,6 +3475,25 @@ uint32_t mcuAudioDurationFor(const McuAudioSegment &segment) {
   return min(max(estimated, kMcuAudioDefaultDurationMs), kMcuAudioMaxDurationMs);
 }
 
+void setMcuAudioTimelineFromFrames(uint32_t frames, uint32_t sampleRate) {
+  if (frames == 0 || sampleRate == 0) return;
+  mcuAudioDurationMs = static_cast<uint32_t>(
+      (static_cast<uint64_t>(frames) * 1000ULL + sampleRate - 1) / sampleRate);
+  mcuAudioPlaybackProgressMs = 0;
+  mcuAudioStartedAtMs = millis();
+  oledDirty = true;
+}
+
+void updateMcuAudioPlaybackProgress(uint32_t stereoBytes, uint32_t sampleRate) {
+  if (sampleRate == 0) return;
+  uint32_t frames = stereoBytes / (2 * sizeof(int16_t));
+  mcuAudioPlaybackProgressMs = static_cast<uint32_t>(
+      (static_cast<uint64_t>(frames) * 1000ULL) / sampleRate);
+  if (mcuAudioDurationMs > 0) {
+    mcuAudioPlaybackProgressMs = min(mcuAudioPlaybackProgressMs, mcuAudioDurationMs);
+  }
+}
+
 size_t mcuAudioPrebufferTargetBytes(int contentLength, uint32_t sampleRate, uint8_t channels, size_t frameBytes) {
   if (sampleRate == 0 || channels == 0 || frameBytes == 0) return 0;
   size_t target = static_cast<size_t>((static_cast<uint64_t>(sampleRate) * channels * sizeof(int16_t) *
@@ -3429,6 +3577,9 @@ bool playPcmStereoStream(WiFiClient *stream, int contentLength, uint32_t sampleR
   size_t prebufferLength = 0;
   size_t prebufferOffset = 0;
   prebufferPcmStream(stream, &remaining, kAudioFrameBytes, 2, sampleRate, &prebuffer, &prebufferLength);
+  if (contentLength > 0) {
+    setMcuAudioTimelineFromFrames(contentLength / kAudioFrameBytes, sampleRate);
+  }
 
   while (prebufferOffset < prebufferLength || remaining != 0) {
     if (shouldInterruptAudioForVoice()) {
@@ -3458,6 +3609,7 @@ bool playPcmStereoStream(WiFiClient *stream, int contentLength, uint32_t sampleR
           return false;
         }
         delay(10);
+        refreshMcuSubtitlePage();
         yield();
         continue;
       }
@@ -3491,9 +3643,11 @@ bool playPcmStereoStream(WiFiClient *stream, int contentLength, uint32_t sampleR
       return false;
     }
     playedBytes += written;
+    updateMcuAudioPlaybackProgress(playedBytes, sampleRate);
 
     pendingBytes = bufferedBytes - alignedBytes;
     if (pendingBytes > 0) memmove(buffer, buffer + alignedBytes, pendingBytes);
+    refreshMcuSubtitlePage();
     yield();
   }
 
@@ -3511,6 +3665,7 @@ bool playPcmStereoStream(WiFiClient *stream, int contentLength, uint32_t sampleR
       return false;
     }
     playedBytes += written;
+    updateMcuAudioPlaybackProgress(playedBytes, sampleRate);
   }
 
   releaseMcuAudioPrebuffer(&prebuffer);
@@ -3551,6 +3706,9 @@ bool playPcmMonoStream(WiFiClient *stream, int contentLength, uint32_t sampleRat
   size_t prebufferLength = 0;
   size_t prebufferOffset = 0;
   prebufferPcmStream(stream, &remaining, kMonoFrameBytes, 1, sampleRate, &prebuffer, &prebufferLength);
+  if (contentLength > 0) {
+    setMcuAudioTimelineFromFrames(contentLength / kMonoFrameBytes, sampleRate);
+  }
 
   while (prebufferOffset < prebufferLength || remaining != 0) {
     if (shouldInterruptAudioForVoice()) {
@@ -3580,6 +3738,7 @@ bool playPcmMonoStream(WiFiClient *stream, int contentLength, uint32_t sampleRat
           return false;
         }
         delay(10);
+        refreshMcuSubtitlePage();
         yield();
         continue;
       }
@@ -3624,9 +3783,11 @@ bool playPcmMonoStream(WiFiClient *stream, int contentLength, uint32_t sampleRat
       return false;
     }
     playedBytes += written;
+    updateMcuAudioPlaybackProgress(playedBytes, sampleRate);
 
     pendingBytes = bufferedBytes - alignedBytes;
     if (pendingBytes > 0) memmove(input, input + alignedBytes, pendingBytes);
+    refreshMcuSubtitlePage();
     yield();
   }
 
@@ -3648,6 +3809,7 @@ bool playPcmMonoStream(WiFiClient *stream, int contentLength, uint32_t sampleRat
       return false;
     }
     playedBytes += written;
+    updateMcuAudioPlaybackProgress(playedBytes, sampleRate);
   }
 
   releaseMcuAudioPrebuffer(&prebuffer);
@@ -3782,7 +3944,7 @@ size_t encodeVoiceAdpcmChunk(const int16_t *samples,
   return encodedBytes;
 }
 
-bool flushAdpcmStereo(int16_t *stereo, size_t *frames, uint32_t *playedBytes) {
+bool flushAdpcmStereo(int16_t *stereo, size_t *frames, uint32_t *playedBytes, uint32_t sampleRate) {
   if (!stereo || !frames || !playedBytes || *frames == 0) return true;
   size_t bytesToWrite = *frames * 2 * sizeof(int16_t);
   size_t written = 0;
@@ -3793,19 +3955,22 @@ bool flushAdpcmStereo(int16_t *stereo, size_t *frames, uint32_t *playedBytes) {
     return false;
   }
   *playedBytes += written;
+  updateMcuAudioPlaybackProgress(*playedBytes, sampleRate);
   *frames = 0;
   mcuSocketLoop();
+  refreshMcuSubtitlePage();
   yield();
   return true;
 }
 
-bool pushAdpcmSample(int16_t sample, int16_t *stereo, size_t *frames, uint32_t *playedBytes) {
+bool pushAdpcmSample(int16_t sample, int16_t *stereo, size_t *frames, uint32_t *playedBytes,
+                     uint32_t sampleRate) {
   int16_t shaped = shapeOutputSample(sample);
   stereo[*frames * 2] = shaped;
   stereo[*frames * 2 + 1] = shaped;
   *frames += 1;
   if (*frames >= kMcuAdpcmOutputFrames) {
-    return flushAdpcmStereo(stereo, frames, playedBytes);
+    return flushAdpcmStereo(stereo, frames, playedBytes, sampleRate);
   }
   return true;
 }
@@ -3828,6 +3993,7 @@ bool readExactAudioBytes(WiFiClient *stream, uint8_t *buffer, size_t length, int
       }
       delay(10);
       mcuSocketLoop();
+      refreshMcuSubtitlePage();
       yield();
       continue;
     }
@@ -3868,6 +4034,9 @@ bool playAdpcmStream(WiFiClient *stream, int contentLength, uint32_t fallbackSam
   uint32_t sampleRate = readLe32(header + 8);
   if (sampleRate == 0) sampleRate = fallbackSampleRate > 0 ? fallbackSampleRate : kMcuAudioDefaultSampleRate;
   uint32_t sampleCount = readLe32(header + 12);
+  if (sampleCount > 0) {
+    setMcuAudioTimelineFromFrames(sampleCount, sampleRate);
+  }
   int predictor = static_cast<int16_t>(readLe16(header + 16));
   int index = header[18];
   if (index < 0) index = 0;
@@ -3891,7 +4060,7 @@ bool playAdpcmStream(WiFiClient *stream, int contentLength, uint32_t fallbackSam
   uint32_t idleStarted = millis();
 
   if (sampleCount > 0) {
-    if (!pushAdpcmSample(static_cast<int16_t>(predictor), stereo, &frames, &playedBytes)) {
+    if (!pushAdpcmSample(static_cast<int16_t>(predictor), stereo, &frames, &playedBytes, sampleRate)) {
       audioBusy = false;
       return false;
     }
@@ -3937,7 +4106,7 @@ bool playAdpcmStream(WiFiClient *stream, int contentLength, uint32_t fallbackSam
         if (sampleCount > 0 && decodedSamples >= sampleCount) break;
         uint8_t nibble = half == 0 ? (byte & 0x0f) : (byte >> 4);
         int16_t sample = decodeImaAdpcmNibble(nibble, &predictor, &index);
-        if (!pushAdpcmSample(sample, stereo, &frames, &playedBytes)) {
+        if (!pushAdpcmSample(sample, stereo, &frames, &playedBytes, sampleRate)) {
           audioBusy = false;
           return false;
         }
@@ -3947,7 +4116,7 @@ bool playAdpcmStream(WiFiClient *stream, int contentLength, uint32_t fallbackSam
     yield();
   }
 
-  if (!flushAdpcmStereo(stereo, &frames, &playedBytes)) {
+  if (!flushAdpcmStereo(stereo, &frames, &playedBytes, sampleRate)) {
     audioBusy = false;
     return false;
   }
@@ -4113,9 +4282,11 @@ void clearMcuAudioQueue() {
   mcuAudioHead = 0;
   mcuAudioCount = 0;
   mcuCurrentAudio = McuAudioSegment();
+  clearMcuSubtitle();
   mcuAudioPlaying = false;
   mcuAudioStartedAtMs = 0;
   mcuAudioDurationMs = 0;
+  mcuAudioPlaybackProgressMs = 0;
 }
 
 bool broadcastMcuInterrupt(const String &interactionId, const String &reason) {
@@ -4172,12 +4343,12 @@ void touchMcuInteraction(const String &interactionId) {
   oledDirty = true;
 }
 
-void markMcuAudioSpeaking(const String &interactionId) {
+void markMcuAudioSpeaking(const String &interactionId, const String &text) {
   if (shouldPreserveMcuToolStatus(interactionId)) {
     touchMcuInteraction(interactionId);
     return;
   }
-  markMcuInteraction(interactionId, F("speaking"), F(""));
+  markMcuInteraction(interactionId, F("speaking"), text);
 }
 
 void finishMcuAudio(bool interrupted) {
@@ -4194,9 +4365,11 @@ void finishMcuAudio(bool interrupted) {
   sendMcuSocketJson(json);
 
   mcuCurrentAudio = McuAudioSegment();
+  clearMcuSubtitle();
   mcuAudioPlaying = false;
   mcuAudioStartedAtMs = 0;
   mcuAudioDurationMs = 0;
+  mcuAudioPlaybackProgressMs = 0;
   oledDirty = true;
 }
 
@@ -4210,7 +4383,11 @@ void startNextMcuAudio() {
   mcuAudioPlaying = true;
   mcuAudioStartedAtMs = millis();
   mcuAudioDurationMs = mcuAudioDurationFor(mcuCurrentAudio);
-  markMcuAudioSpeaking(mcuCurrentAudio.interactionId);
+  mcuAudioPlaybackProgressMs = 0;
+  prepareMcuSubtitle(mcuCurrentAudio.text);
+  markMcuAudioSpeaking(mcuCurrentAudio.interactionId, mcuCurrentAudio.text);
+  refreshOled(true);
+  mcuSubtitleRenderedPage = currentMcuSubtitlePage();
 
   String json;
   json.reserve(260);
@@ -4266,7 +4443,6 @@ bool enqueueMcuAudio(const McuAudioSegment &segment) {
   int tail = (mcuAudioHead + mcuAudioCount) % kMaxMcuAudioQueue;
   mcuAudioQueue[tail] = segment;
   ++mcuAudioCount;
-  markMcuAudioSpeaking(segment.interactionId);
   startNextMcuAudio();
   return true;
 }
@@ -4390,7 +4566,7 @@ void handleMcuAudioEnqueue(uint8_t clientId, const String &message) {
   if (segment.interactionId.length() == 0) segment.interactionId = mcuInteractionId;
   segment.segmentId = jsonStringValue(message, F("segmentId"));
   if (segment.segmentId.length() == 0) segment.segmentId = String(F("seg-")) + millis();
-  segment.text = compactDetail(jsonStringValue(message, F("text")));
+  segment.text = jsonStringValue(message, F("text"));
   segment.url = jsonStringValue(message, F("url"));
   segment.mimeType = jsonStringValue(message, F("mimeType"));
   int channels = jsonIntValue(message, F("channels"));
@@ -5093,9 +5269,9 @@ void handleVoiceTurnResponse(const String &interactionId, const String &response
     McuAudioSegment segment;
     segment.interactionId = interactionId;
     segment.segmentId = String(F("voice-")) + millis();
-    segment.text = compactDetail(jsonStringValue(response, F("text")));
+    segment.text = jsonStringValue(response, F("text"));
     if (segment.text.length() == 0 && audioPayload.length() > 0) {
-      segment.text = compactDetail(jsonStringValue(audioPayload, F("text")));
+      segment.text = jsonStringValue(audioPayload, F("text"));
     }
     if (segment.text.length() == 0) segment.text = F("语音提示");
     segment.url = audioUrl;
