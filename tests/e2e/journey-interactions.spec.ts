@@ -139,10 +139,12 @@ async function expectJourneySurface(page: Page) {
   await expect(page.getByRole('heading', { name: 'Skills', exact: true })).toHaveCount(0)
   await expect(page.getByRole('tab', { name: /^Library$/ })).toHaveCount(0)
   await expect(page.getByRole('tab', { name: /^Journey$/ })).toHaveCount(0)
-  await expect(page.locator('.galaxy-canvas')).toBeVisible()
-  await expect(page.locator('.galaxy-hud')).toContainText(PROFILE_NAME)
-  await expect(page.locator('.node-kind-marker--skill.node-kind-marker--circle')).toBeVisible()
-  await expect(page.locator('.node-kind-marker--memory.node-kind-marker--diamond')).toBeVisible()
+  await expect(page.locator('.journey-graph-wrap')).toBeVisible()
+  await expect(page.locator('.journey-hud')).toContainText(PROFILE_NAME)
+  await expect(page.locator('.node-kind-marker--skill')).toBeVisible()
+  await expect(page.locator('.node-kind-marker--memory')).toBeVisible()
+  await expect(page.locator('.journey-node')).toHaveCount(journeyPayload.graph.nodes.length)
+  await expect(page.locator('.vue-flow__edge')).toHaveCount(journeyPayload.graph.edges.length)
   await expect(page.locator('aside.sidebar').getByRole('link', { name: /^Journey$/ })).toBeVisible()
 }
 
@@ -162,7 +164,7 @@ test('standalone Journey route renders under Monitoring and defers Skills-only A
   await expect(playButton).toBeVisible()
 
   await playButton.click()
-  await page.locator('.galaxy-canvas').focus()
+  await page.locator('.journey-graph-wrap').focus()
   await page.keyboard.press('Escape')
   await expect(playButton).toBeVisible()
 
@@ -180,13 +182,14 @@ test('category controls toggle multi-selection by default and nodes expose descr
   await expect(page.locator('.selection-mode')).toHaveCount(0)
   await expect(page.locator('[data-selection-mode]')).toHaveCount(0)
 
-  const canvas = page.locator('.galaxy-canvas')
+  const graph = page.locator('.journey-graph-wrap')
+  const pane = page.locator('.vue-flow__pane')
   const basicsBar = page.locator('.category-bar [data-category="basics"]')
   const basicsPill = page.locator('.category-legend [data-category="basics"]')
   const automationBar = page.locator('.category-bar [data-category="automation"]')
   const automationPill = page.locator('.category-legend [data-category="automation"]')
-  await expect(basicsBar).toHaveCSS('height', '24px')
-  expect((await basicsBar.boundingBox())!.width).toBeGreaterThanOrEqual(24)
+  await expect(basicsBar).toHaveCSS('height', '10px')
+  expect((await basicsBar.boundingBox())!.width).toBeGreaterThanOrEqual(10)
 
   await basicsBar.click()
   await automationPill.click()
@@ -195,7 +198,7 @@ test('category controls toggle multi-selection by default and nodes expose descr
   await expect(automationBar).toHaveAttribute('aria-pressed', 'true')
   await expect(automationPill).toHaveAttribute('aria-pressed', 'true')
 
-  const box = await canvas.boundingBox()
+  const box = await graph.boundingBox()
   expect(box).not.toBeNull()
   await page.mouse.move(box!.x + 20, box!.y + box!.height - 20)
   await page.mouse.down()
@@ -208,11 +211,11 @@ test('category controls toggle multi-selection by default and nodes expose descr
   await expect(basicsBar).toHaveAttribute('aria-pressed', 'false')
   await expect(automationPill).toHaveAttribute('aria-pressed', 'true')
 
-  await canvas.click({ position: { x: 8, y: Math.max(8, box!.height - 8) } })
+  await pane.click({ position: { x: 8, y: 8 } })
   await expect(automationPill).toHaveAttribute('aria-pressed', 'false')
   await expectRequestCount(api, '/api/hermes/skills', 0)
 
-  await canvas.focus()
+  await graph.focus()
   await page.keyboard.press('ArrowRight')
   const tooltip = page.getByRole('tooltip')
   await expect(tooltip).toContainText('Redacted memory note')
@@ -230,7 +233,7 @@ test('category controls toggle multi-selection by default and nodes expose descr
   await expectRequestCount(api, '/api/hermes/skills', 2)
   await expect(tooltip).toContainText('Keep prompts precise, scoped, and resistant to untrusted instructions.')
 
-  await canvas.focus()
+  await graph.focus()
   await page.keyboard.press('Enter')
   const drawer = page.locator('.journey-detail-drawer')
   await expect(drawer).toContainText('Keep prompts precise, scoped, and resistant to untrusted instructions.')
@@ -238,74 +241,76 @@ test('category controls toggle multi-selection by default and nodes expose descr
   expect(api.unexpectedRequests).toEqual([])
 })
 
-test('mobile standalone Journey keeps shape legend and default multi-selection usable', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 })
-  const api = await openPage(page, '/#/hermes/journey')
-  await expectJourneySurface(page)
-
-  await expect(page.locator('.sidebar-toggle')).toHaveCount(0)
-  await expect(page.getByTitle('Import')).toHaveCount(0)
-  await expect(page.getByTitle('External dirs')).toHaveCount(0)
-  await expect(page.getByTitle('Pending write approvals')).toHaveCount(0)
-
-  const basics = page.locator('.category-legend [data-category="basics"]')
-  const automation = page.locator('.category-legend [data-category="automation"]')
-  await basics.click()
-  await automation.click()
-  await expect(basics).toHaveAttribute('aria-pressed', 'true')
-  await expect(automation).toHaveAttribute('aria-pressed', 'true')
-
-  const canvas = page.locator('.galaxy-canvas')
-  const box = await canvas.boundingBox()
-  expect(box).not.toBeNull()
-  const cdp = await page.context().newCDPSession(page)
-  const touchPoint = (id: number, x: number, y: number) => ({
-    id,
-    x,
-    y,
-    radiusX: 2,
-    radiusY: 2,
-    force: 1,
+test.describe('mobile Journey interactions', () => {
+  test.use({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
   })
 
-  const panStart = touchPoint(1, box!.x + 45, box!.y + box!.height - 90)
-  const panEnd = touchPoint(1, panStart.x + 55, panStart.y - 12)
-  const beforePan = await canvas.screenshot()
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [panStart] })
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [panEnd] })
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-  await canvas.dispatchEvent('click', { clientX: panEnd.x, clientY: panEnd.y })
-  await page.waitForTimeout(50)
-  const afterPan = await canvas.screenshot()
-  expect(afterPan.equals(beforePan)).toBe(false)
-  await expect(basics).toHaveAttribute('aria-pressed', 'true')
-  await expect(automation).toHaveAttribute('aria-pressed', 'true')
+  test('standalone route keeps the relationship legend and default multi-selection usable', async ({ page }) => {
+    const api = await openPage(page, '/#/hermes/journey')
+    await expectJourneySurface(page)
 
-  const pinchLeft = touchPoint(1, box!.x + box!.width * 0.4, box!.y + box!.height * 0.58)
-  const pinchRight = touchPoint(2, box!.x + box!.width * 0.6, box!.y + box!.height * 0.58)
-  const pinchWide = touchPoint(2, box!.x + box!.width * 0.78, pinchRight.y)
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [pinchLeft, pinchRight] })
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [pinchLeft, pinchWide] })
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] })
-  await page.waitForTimeout(50)
-  const afterPinch = await canvas.screenshot()
-  expect(afterPinch.equals(afterPan)).toBe(false)
-  await expect(basics).toHaveAttribute('aria-pressed', 'true')
-  await expect(automation).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.sidebar-toggle')).toHaveCount(0)
+    await expect(page.getByTitle('Import')).toHaveCount(0)
+    await expect(page.getByTitle('External dirs')).toHaveCount(0)
+    await expect(page.getByTitle('Pending write approvals')).toHaveCount(0)
 
-  const recoveryStart = touchPoint(3, box!.x + 70, box!.y + box!.height - 120)
-  const recoveryEnd = touchPoint(3, recoveryStart.x - 35, recoveryStart.y - 20)
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [recoveryStart] })
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [recoveryEnd] })
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-  await canvas.dispatchEvent('click', { clientX: recoveryEnd.x, clientY: recoveryEnd.y })
-  await page.waitForTimeout(300)
-  const afterRecovery = await canvas.screenshot()
-  expect(afterRecovery.equals(afterPinch)).toBe(false)
-  await expect(basics).toHaveAttribute('aria-pressed', 'true')
-  await expect(automation).toHaveAttribute('aria-pressed', 'true')
-  await cdp.detach()
+    const basics = page.locator('.category-legend [data-category="basics"]')
+    const automation = page.locator('.category-legend [data-category="automation"]')
+    await basics.click()
+    await automation.click()
+    await expect(basics).toHaveAttribute('aria-pressed', 'true')
+    await expect(automation).toHaveAttribute('aria-pressed', 'true')
 
-  await expectRequestCount(api, '/api/hermes/skills', 0)
-  expect(api.unexpectedRequests).toEqual([])
+    const graph = page.locator('.journey-graph-wrap')
+    const transformPane = page.locator('.vue-flow__transformationpane')
+    const box = await graph.boundingBox()
+    expect(box).not.toBeNull()
+    const cdp = await page.context().newCDPSession(page)
+    const touchPoint = (id: number, x: number, y: number) => ({
+      id,
+      x,
+      y,
+      radiusX: 2,
+      radiusY: 2,
+      force: 1,
+    })
+
+    const panStart = touchPoint(1, box!.x + box!.width * 0.5, box!.y + box!.height - 90)
+    const panEnd = touchPoint(1, panStart.x + 55, panStart.y - 12)
+    const beforePan = await transformPane.getAttribute('style')
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [panStart] })
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [panEnd] })
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await expect.poll(() => transformPane.getAttribute('style')).not.toBe(beforePan)
+    const afterPan = await transformPane.getAttribute('style')
+    await expect(basics).toHaveAttribute('aria-pressed', 'true')
+    await expect(automation).toHaveAttribute('aria-pressed', 'true')
+
+    const pinchLeft = touchPoint(1, box!.x + box!.width * 0.4, box!.y + box!.height * 0.58)
+    const pinchRight = touchPoint(2, box!.x + box!.width * 0.6, box!.y + box!.height * 0.58)
+    const pinchWide = touchPoint(2, box!.x + box!.width * 0.78, pinchRight.y)
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [pinchLeft, pinchRight] })
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [pinchLeft, pinchWide] })
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] })
+    await expect.poll(() => transformPane.getAttribute('style')).not.toBe(afterPan)
+    const afterPinch = await transformPane.getAttribute('style')
+    await expect(basics).toHaveAttribute('aria-pressed', 'true')
+    await expect(automation).toHaveAttribute('aria-pressed', 'true')
+
+    const recoveryStart = touchPoint(3, box!.x + 70, box!.y + box!.height - 120)
+    const recoveryEnd = touchPoint(3, recoveryStart.x - 35, recoveryStart.y - 20)
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [recoveryStart] })
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [recoveryEnd] })
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await expect.poll(() => transformPane.getAttribute('style')).not.toBe(afterPinch)
+    await expect(basics).toHaveAttribute('aria-pressed', 'true')
+    await expect(automation).toHaveAttribute('aria-pressed', 'true')
+    await cdp.detach()
+
+    await expectRequestCount(api, '/api/hermes/skills', 0)
+    expect(api.unexpectedRequests).toEqual([])
+  })
 })
