@@ -126,7 +126,7 @@ export default {
     kanban: 'Канбан',
     workflow: 'Рабочий процесс',
     models: 'Модели',
-    profiles: 'Пользователи',
+    profiles: 'Профили',
     plugins: 'Плагины',
     petdex: 'Pets',
     skills: 'Навыки',

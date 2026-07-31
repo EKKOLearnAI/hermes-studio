@@ -200,7 +200,7 @@ export default {
     kanban: '看板',
     workflow: '工作流',
     models: '模型',
-    profiles: '用户',
+    profiles: '配置',
     plugins: '插件',
     mcp: 'MCP',
     petdex: '宠物',
