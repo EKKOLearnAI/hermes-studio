@@ -92,6 +92,8 @@ interface ManagedCodingAgentRun {
   startedAt: number
   exited: boolean
   currentChild?: ChildProcess
+  childSpawned?: boolean
+  childStartupTimer?: ReturnType<typeof setTimeout>
   currentChildKillTimer?: ReturnType<typeof setTimeout>
   currentChildStderr?: string
   printResponseId?: string
@@ -852,6 +854,7 @@ export class CodingAgentRunManager {
     const shouldReportClosed = options.reportClosed !== false && (run.state.isWorking || Boolean(run.currentChild && !run.currentChild.killed))
     if (run.idleTimer) clearTimeout(run.idleTimer)
     if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
+    if (run.childStartupTimer) clearTimeout(run.childStartupTimer)
     this.flushTerminalOutput(run)
     if (run.terminalFlushTimer) clearTimeout(run.terminalFlushTimer)
     this.runs.delete(run.id)
@@ -938,6 +941,30 @@ export class CodingAgentRunManager {
     })
     run.currentChild = child
 
+    // Real ChildProcess emits 'spawn'; test doubles may not implement EventEmitter.
+    if (typeof child.once === 'function') {
+      run.childSpawned = false
+      child.once('spawn', () => {
+        run.childSpawned = true
+        if (run.childStartupTimer) clearTimeout(run.childStartupTimer)
+        run.childStartupTimer = undefined
+      })
+      run.childStartupTimer = setTimeout(() => {
+        if (run.childSpawned || run.stoppedByUser || run.exited) return
+        this.handleClaudePrintResponseEvent(run, {
+          type: 'response.failed',
+          data: { type: 'response.failed', response: {
+            id: run.printResponseId, object: 'response', status: 'failed', model: run.launch.model,
+            error: { message: 'Claude Code process did not start' }, output: [],
+          } },
+        })
+        this.cleanupRun(run, { kill: true, reportClosed: false })
+      }, 5000)
+      run.childStartupTimer.unref?.()
+    } else {
+      run.childSpawned = true
+    }
+
     let stdoutBuffer = ''
     child.stdout?.on('data', (chunk: Buffer) => {
       this.touch(run)
@@ -963,6 +990,8 @@ export class CodingAgentRunManager {
     child.on('error', (err) => {
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
       run.currentChildKillTimer = undefined
+      if (run.childStartupTimer) clearTimeout(run.childStartupTimer)
+      run.childStartupTimer = undefined
       run.currentChild = undefined
       logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] claude print failed to start')
       this.handleClaudePrintResponseEvent(run, {
@@ -983,8 +1012,11 @@ export class CodingAgentRunManager {
 
     child.on('exit', (code) => {
       if (stdoutBuffer.trim()) this.handleClaudePrintLine(run, stdoutBuffer)
+      const childSpawned = run.childSpawned === true
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
       run.currentChildKillTimer = undefined
+      if (run.childStartupTimer) clearTimeout(run.childStartupTimer)
+      run.childStartupTimer = undefined
       run.currentChild = undefined
       logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] claude print exited')
       if (run.stoppedByUser) return
@@ -1010,6 +1042,7 @@ export class CodingAgentRunManager {
           },
         },
       })
+      if (!childSpawned) this.cleanupRun(run, { kill: false, reportClosed: false })
     })
   }
 
@@ -1390,6 +1423,30 @@ export class CodingAgentRunManager {
     })
     run.currentChild = child
 
+    // Real ChildProcess emits 'spawn'; test doubles may not implement EventEmitter.
+    if (typeof child.once === 'function') {
+      run.childSpawned = false
+      child.once('spawn', () => {
+        run.childSpawned = true
+        if (run.childStartupTimer) clearTimeout(run.childStartupTimer)
+        run.childStartupTimer = undefined
+      })
+      run.childStartupTimer = setTimeout(() => {
+        if (run.childSpawned || run.stoppedByUser || run.exited) return
+        this.handleClaudePrintResponseEvent(run, {
+          type: 'response.failed',
+          data: { type: 'response.failed', response: {
+            id: run.printResponseId, object: 'response', status: 'failed', model: run.launch.model,
+            error: { message: 'Codex process did not start' }, output: [],
+          } },
+        })
+        this.cleanupRun(run, { kill: true, reportClosed: false })
+      }, 5000)
+      run.childStartupTimer.unref?.()
+    } else {
+      run.childSpawned = true
+    }
+
     let stdoutBuffer = ''
     child.stdout?.on('data', (chunk: Buffer) => {
       this.touch(run)
@@ -1408,6 +1465,8 @@ export class CodingAgentRunManager {
     child.on('error', (err) => {
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
       run.currentChildKillTimer = undefined
+      if (run.childStartupTimer) clearTimeout(run.childStartupTimer)
+      run.childStartupTimer = undefined
       run.currentChild = undefined
       logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] codex exec failed to start')
       this.handleClaudePrintResponseEvent(run, {
@@ -1428,8 +1487,11 @@ export class CodingAgentRunManager {
 
     child.on('exit', (code) => {
       if (stdoutBuffer.trim()) this.handleCodexExecLine(run, stdoutBuffer)
+      const childSpawned = run.childSpawned === true
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
       run.currentChildKillTimer = undefined
+      if (run.childStartupTimer) clearTimeout(run.childStartupTimer)
+      run.childStartupTimer = undefined
       run.currentChild = undefined
       logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] codex exec exited')
       if (run.stoppedByUser) return
@@ -1455,6 +1517,7 @@ export class CodingAgentRunManager {
           },
         },
       })
+      if (!childSpawned) this.cleanupRun(run, { kill: false, reportClosed: false })
     })
   }
 
