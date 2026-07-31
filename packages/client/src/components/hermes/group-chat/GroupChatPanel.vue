@@ -75,7 +75,7 @@ const WORKSPACE_PANEL_MIN_WIDTH = 360
 const WORKSPACE_PANEL_DEFAULT_WIDTH = 560
 const WORKSPACE_PANEL_STORAGE_KEY = 'hermes.groupChat.workspacePanelWidth'
 const workspacePanelWidth = ref(loadWorkspacePanelWidth())
-const workspaceResizeStart = ref<{ x: number; width: number } | null>(null)
+const workspaceResizeStart = ref<{ x: number; width: number; deltaSign: 1 | -1 } | null>(null)
 const workspacePanelStyle = computed(() => ({
     width: workspacePanelMobile.value ? '100%' : `${workspacePanelWidth.value}px`,
 }))
@@ -162,7 +162,8 @@ function handleWorkspacePanelResize(): void {
 function handleWorkspaceResizeMove(event: PointerEvent): void {
     if (!workspaceResizeStart.value) return
     workspacePanelWidth.value = clampWorkspacePanelWidth(
-        workspaceResizeStart.value.width + workspaceResizeStart.value.x - event.clientX,
+        workspaceResizeStart.value.width
+            + (event.clientX - workspaceResizeStart.value.x) * workspaceResizeStart.value.deltaSign,
     )
 }
 
@@ -181,7 +182,11 @@ function stopWorkspaceResize(): void {
 function startWorkspaceResize(event: PointerEvent): void {
     if (workspacePanelMobile.value) return
     event.preventDefault()
-    workspaceResizeStart.value = { x: event.clientX, width: workspacePanelWidth.value }
+    workspaceResizeStart.value = {
+        x: event.clientX,
+        width: workspacePanelWidth.value,
+        deltaSign: document.documentElement.dir === 'rtl' ? 1 : -1,
+    }
     window.addEventListener('pointermove', handleWorkspaceResizeMove)
     window.addEventListener('pointerup', stopWorkspaceResize)
     document.body.style.userSelect = 'none'
@@ -1806,7 +1811,7 @@ export default defineComponent({ components: { CreateRoomForm } })
 
 .group-workspace-resize-handle {
     position: absolute;
-    left: -7px;
+    inset-inline-start: -7px;
     top: 0;
     bottom: 0;
     width: 14px;
@@ -1816,7 +1821,7 @@ export default defineComponent({ components: { CreateRoomForm } })
     &::after {
         content: '';
         position: absolute;
-        left: 6px;
+        inset-inline-start: 6px;
         top: 0;
         bottom: 0;
         width: 1px;
@@ -1828,7 +1833,7 @@ export default defineComponent({ components: { CreateRoomForm } })
     &::before {
         content: '';
         position: absolute;
-        left: 1px;
+        inset-inline-start: 1px;
         top: 50%;
         width: 12px;
         height: 38px;

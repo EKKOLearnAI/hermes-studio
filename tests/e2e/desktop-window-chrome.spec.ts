@@ -176,6 +176,27 @@ test('places Windows controls in a dedicated bar above main content', async ({ p
   ).__PW_DESKTOP_WINDOW__?.actions)).toEqual(['toggle-maximize'])
 })
 
+test('keeps Windows controls physically stable when the app language is RTL', async ({ page }) => {
+  await openDesktopJobs(page, 'win32')
+
+  const titleBar = page.locator('.desktop-titlebar')
+  const controls = titleBar.locator('.desktop-titlebar__controls')
+  const buttonPositions = async () => controls.locator('.desktop-window-btn').evaluateAll(buttons =>
+    buttons.map(button => Math.round(button.getBoundingClientRect().left)),
+  )
+  await expect(titleBar).toBeVisible()
+  await expect(controls.locator('.desktop-window-btn')).toHaveCount(3)
+  const ltrPositions = await buttonPositions()
+
+  await page.evaluate(() => document.documentElement.setAttribute('dir', 'rtl'))
+
+  await expect(titleBar).toHaveCSS('direction', 'ltr')
+  await expect.poll(buttonPositions).toEqual(ltrPositions)
+  await expect(controls).toHaveCSS('border-left-width', '1px')
+  await expect(controls).toHaveCSS('border-right-width', '0px')
+  await expect(controls).toHaveCSS('border-top-right-radius', '12px')
+})
+
 test('matches Windows controls to the header glass over custom backgrounds', async ({ page }) => {
   await installDesktopBridge(page, 'win32', true)
   await authenticate(page, TEST_ACCESS_KEY, 'research')
@@ -352,6 +373,89 @@ test('keeps Linux on native chrome and preserves its original sidebar spacing', 
   expect((await page.locator('aside.sidebar').boundingBox())?.y).toBe(10)
   await expect(page.locator('aside.sidebar')).toHaveCSS('padding-top', '8px')
   await expect.poll(() => topGutterDragRegion(page)).toEqual({ appRegion: 'none', height: 'auto' })
+})
+
+test('keeps the chat tool drawer unchanged in LTR and mirrors its resize seam in RTL', async ({ page }) => {
+  await installDesktopBridge(page, 'darwin', true)
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await mockChatSocket(page)
+  await mockHermesApi(page)
+  await page.goto('/#/hermes/chat')
+
+  await page.locator('.header-tool-toggle').click()
+  const wrapper = page.locator('.chat-content-wrapper')
+  const panel = page.locator('.chat-tool-panel')
+  const handle = page.locator('.chat-tool-resize-handle')
+  await expect(panel).toBeVisible()
+
+  const geometry = async () => {
+    const [wrapperBox, panelBox, handleBox] = await Promise.all([
+      wrapper.boundingBox(),
+      panel.boundingBox(),
+      handle.boundingBox(),
+    ])
+    if (!wrapperBox || !panelBox || !handleBox) throw new Error('drawer geometry unavailable')
+    return {
+      wrapperLeft: wrapperBox.x,
+      wrapperRight: wrapperBox.x + wrapperBox.width,
+      panelLeft: panelBox.x,
+      panelRight: panelBox.x + panelBox.width,
+      panelWidth: panelBox.width,
+      handleCenter: handleBox.x + handleBox.width / 2,
+      handleY: handleBox.y + handleBox.height / 2,
+    }
+  }
+
+  const ltr = await geometry()
+  expect(Math.abs(ltr.panelRight - ltr.wrapperRight)).toBeLessThanOrEqual(1)
+  expect(Math.abs(ltr.handleCenter - ltr.panelLeft)).toBeLessThanOrEqual(1)
+  await page.mouse.move(ltr.handleCenter, ltr.handleY)
+  await page.mouse.down()
+  await page.mouse.move(ltr.handleCenter + 32, ltr.handleY)
+  await page.mouse.up()
+  await expect.poll(async () => (await geometry()).panelWidth).toBeLessThan(ltr.panelWidth)
+
+  await page.evaluate(() => document.documentElement.setAttribute('dir', 'rtl'))
+  await expect.poll(async () => {
+    const current = await geometry()
+    return Math.abs(current.panelLeft - current.wrapperLeft) <= 1
+  }).toBe(true)
+  const rtlGeometry = await geometry()
+  expect(Math.abs(rtlGeometry.panelLeft - rtlGeometry.wrapperLeft)).toBeLessThanOrEqual(1)
+  expect(Math.abs(rtlGeometry.handleCenter - rtlGeometry.panelRight)).toBeLessThanOrEqual(1)
+  await page.mouse.move(rtlGeometry.handleCenter, rtlGeometry.handleY)
+  await page.mouse.down()
+  await page.mouse.move(rtlGeometry.handleCenter - 32, rtlGeometry.handleY)
+  await page.mouse.up()
+  await expect.poll(async () => (await geometry()).panelWidth).toBeLessThan(rtlGeometry.panelWidth)
+})
+
+test('opens the mobile file tree from the inline start edge in LTR and RTL', async ({ page }) => {
+  await page.setViewportSize({ width: 600, height: 800 })
+  await installDesktopBridge(page, 'darwin', true)
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await page.addInitScript(() => window.localStorage.setItem('hermes_locale', 'en'))
+  await mockChatSocket(page)
+  await mockHermesApi(page)
+  await page.goto('/#/hermes/chat')
+
+  await expect(page.locator('html')).toHaveAttribute('dir', 'ltr')
+  await page.locator('.header-tool-toggle').click()
+  const panel = page.locator('.chat-tool-panel')
+  const tree = panel.locator('.files-tree-panel')
+  await panel.locator('.sidebar-toggle').click()
+  await expect(tree).toHaveClass(/mobile-visible/)
+
+  await expect.poll(async () => {
+    const box = await tree.boundingBox()
+    return box ? Math.round(box.x) : null
+  }).toBe(0)
+
+  await page.evaluate(() => document.documentElement.setAttribute('dir', 'rtl'))
+  await expect.poll(async () => {
+    const box = await tree.boundingBox()
+    return box ? Math.round(box.x + box.width) : null
+  }).toBe(600)
 })
 
 test('embeds the desktop browser beside workspace and terminal', async ({ page }) => {

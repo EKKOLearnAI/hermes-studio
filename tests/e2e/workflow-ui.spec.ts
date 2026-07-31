@@ -565,6 +565,7 @@ test('workflow nodes connect from every side and create an automatic self loop',
 })
 
 test('workflow edge editor never exposes technical node ids when node titles are blank', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   const technicalNodeId = '11111111-1111-4111-8111-111111111111'
   const edgeId = 'blank-title-loop'
@@ -631,6 +632,44 @@ test('workflow edge editor never exposes technical node ids when node titles are
   const chatTitle = page.locator('.workflow-chat-title')
   await expect(chatTitle).toContainText('Unknown node')
   await expect(chatTitle).not.toContainText(technicalNodeId)
+
+  const workflowBody = page.locator('.workflow-body')
+  const chatPanel = page.locator('.workflow-chat-panel')
+  const resizeHandle = page.locator('.workflow-chat-resize-handle')
+  const geometry = async () => {
+    const [body, panel, handle] = await Promise.all([
+      workflowBody.boundingBox(),
+      chatPanel.boundingBox(),
+      resizeHandle.boundingBox(),
+    ])
+    expect(body).not.toBeNull()
+    expect(panel).not.toBeNull()
+    expect(handle).not.toBeNull()
+    return { body: body!, panel: panel!, handle: handle! }
+  }
+
+  const ltr = await geometry()
+  expect(Math.abs(ltr.panel.x - ltr.body.x)).toBeLessThanOrEqual(1)
+  expect(Math.abs(ltr.handle.x + ltr.handle.width / 2 - (ltr.panel.x + ltr.panel.width))).toBeLessThanOrEqual(1)
+  await page.mouse.move(ltr.handle.x + ltr.handle.width / 2, ltr.handle.y + ltr.handle.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(ltr.handle.x + ltr.handle.width / 2 - 32, ltr.handle.y + ltr.handle.height / 2)
+  await page.mouse.up()
+  await expect.poll(async () => (await chatPanel.boundingBox())!.width).toBeLessThan(ltr.panel.width - 20)
+
+  await page.locator('html').evaluate(element => element.setAttribute('dir', 'rtl'))
+  await expect.poll(async () => {
+    const { body, panel } = await geometry()
+    return Math.abs(panel.x + panel.width - (body.x + body.width)) <= 1
+  }).toBe(true)
+  const rtl = await geometry()
+  expect(Math.abs(rtl.handle.x + rtl.handle.width / 2 - rtl.panel.x)).toBeLessThanOrEqual(1)
+  await page.mouse.move(rtl.handle.x + rtl.handle.width / 2, rtl.handle.y + rtl.handle.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(rtl.handle.x + rtl.handle.width / 2 + 32, rtl.handle.y + rtl.handle.height / 2)
+  await page.mouse.up()
+  await expect.poll(async () => (await chatPanel.boundingBox())!.width).toBeLessThan(rtl.panel.width - 20)
+
   expect(api.unexpectedRequests).toEqual([])
 })
 

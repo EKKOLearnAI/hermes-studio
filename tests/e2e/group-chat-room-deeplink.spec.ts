@@ -237,6 +237,56 @@ test.describe('group chat room deep links', () => {
     await expect(panel.locator('.preview-filename')).toHaveText('package.json')
   })
 
+  test('keeps the workspace drawer seam and resize direction aligned in LTR and RTL', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    await page.locator('.markdown-file-card', { hasText: 'package.json' }).click()
+
+    const wrapper = page.locator('.group-chat-content-wrapper')
+    const panel = page.locator('.group-workspace-panel')
+    const handle = page.locator('.group-workspace-resize-handle')
+    await expect(panel).toBeVisible()
+
+    const geometry = async () => {
+      const [wrapperBox, panelBox, handleBox] = await Promise.all([
+        wrapper.boundingBox(),
+        panel.boundingBox(),
+        handle.boundingBox(),
+      ])
+      if (!wrapperBox || !panelBox || !handleBox) throw new Error('group drawer geometry unavailable')
+      return {
+        wrapperLeft: wrapperBox.x,
+        wrapperRight: wrapperBox.x + wrapperBox.width,
+        panelLeft: panelBox.x,
+        panelRight: panelBox.x + panelBox.width,
+        panelWidth: panelBox.width,
+        handleCenter: handleBox.x + handleBox.width / 2,
+        handleY: handleBox.y + handleBox.height / 2,
+      }
+    }
+
+    const ltr = await geometry()
+    expect(Math.abs(ltr.panelRight - ltr.wrapperRight)).toBeLessThanOrEqual(1)
+    expect(Math.abs(ltr.handleCenter - ltr.panelLeft)).toBeLessThanOrEqual(1)
+    await page.mouse.move(ltr.handleCenter, ltr.handleY)
+    await page.mouse.down()
+    await page.mouse.move(ltr.handleCenter + 32, ltr.handleY)
+    await page.mouse.up()
+    await expect.poll(async () => (await geometry()).panelWidth).toBeLessThan(ltr.panelWidth)
+
+    await page.evaluate(() => document.documentElement.setAttribute('dir', 'rtl'))
+    await expect.poll(async () => {
+      const current = await geometry()
+      return Math.abs(current.panelLeft - current.wrapperLeft) <= 1
+    }).toBe(true)
+    const rtl = await geometry()
+    expect(Math.abs(rtl.handleCenter - rtl.panelRight)).toBeLessThanOrEqual(1)
+    await page.mouse.move(rtl.handleCenter, rtl.handleY)
+    await page.mouse.down()
+    await page.mouse.move(rtl.handleCenter - 32, rtl.handleY)
+    await page.mouse.up()
+    await expect.poll(async () => (await geometry()).panelWidth).toBeLessThan(rtl.panelWidth)
+  })
+
   test('workspace control sits beside the upper-right settings control and toggles the group workspace panel', async ({ page }) => {
     await setup(page, '/#/hermes/group-chat/room/room-alpha')
 

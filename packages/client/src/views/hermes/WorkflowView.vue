@@ -351,7 +351,7 @@ const workflowChatPanelSessionId = ref<string | null>(null)
 const workflowChatPanelExecutionId = ref<string | null>(null)
 const workflowApprovalSubmitting = ref(false)
 const workflowChatPanelWidth = ref(loadWorkflowChatPanelWidth())
-const workflowChatResizeStart = ref<{ x: number; width: number } | null>(null)
+const workflowChatResizeStart = ref<{ x: number; width: number; deltaSign: 1 | -1 } | null>(null)
 const skillOptionsByKey = ref<Record<string, WorkflowSelectOption[]>>({})
 const skillOptionsLoadingByKey = ref<Record<string, boolean>>({})
 const skillOptionRequests = new Map<string, Promise<void>>()
@@ -868,7 +868,7 @@ function handleWorkflowChatPanelViewportResize() {
 function handleWorkflowChatResizeMove(event: PointerEvent) {
   const start = workflowChatResizeStart.value
   if (!start) return
-  const delta = event.clientX - start.x
+  const delta = (event.clientX - start.x) * start.deltaSign
   workflowChatPanelWidth.value = clampWorkflowChatPanelWidth(start.width + delta)
 }
 
@@ -890,6 +890,7 @@ function startWorkflowChatResize(event: PointerEvent) {
   workflowChatResizeStart.value = {
     x: event.clientX,
     width: workflowChatPanelWidth.value,
+    deltaSign: document.documentElement.dir === 'rtl' ? -1 : 1,
   }
   window.addEventListener('pointermove', handleWorkflowChatResizeMove)
   window.addEventListener('pointerup', stopWorkflowChatResize)
@@ -4279,7 +4280,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
 
 .workflow-chat-resize-handle {
   position: absolute;
-  right: -7px;
+  inset-inline-end: -7px;
   top: 0;
   bottom: 0;
   width: 14px;
@@ -4289,7 +4290,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
   &::after {
     content: "";
     position: absolute;
-    right: 6px;
+    inset-inline-end: 6px;
     top: 0;
     bottom: 0;
     width: 1px;
@@ -4303,7 +4304,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
   &::before {
     content: "";
     position: absolute;
-    right: 1px;
+    inset-inline-end: 1px;
     top: 50%;
     width: 12px;
     height: 38px;
@@ -4753,7 +4754,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
   .workflow-runs-panel {
     position: absolute;
     top: 0;
-    right: 0;
+    inset-inline-end: 0;
     bottom: 0;
     z-index: 70;
     width: min(340px, 88vw);
@@ -4762,6 +4763,10 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
     border-inline-start: 1px solid $border-color;
     box-shadow: -8px 0 24px rgba(0, 0, 0, 0.16);
     display: flex;
+
+    &:dir(rtl) {
+      box-shadow: 8px 0 24px rgba(0, 0, 0, 0.16);
+    }
   }
 
   .workflow-chat-panel {

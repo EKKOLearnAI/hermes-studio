@@ -92,6 +92,7 @@ onMounted(() => {
   height: 36px;
   display: flex;
   align-items: center;
+  direction: ltr;
   border: 0;
   border-radius: 12px;
   background: $bg-main-surface;
