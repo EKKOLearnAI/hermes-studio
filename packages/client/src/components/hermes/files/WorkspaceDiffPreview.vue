@@ -134,9 +134,12 @@ async function handleDiffClick(event: MouseEvent): Promise<void> {
 @use '@/styles/variables' as *;
 
 .workspace-diff-preview {
+  flex: 1;
   display: flex;
   flex-direction: column;
   height: 100%;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -186,6 +189,7 @@ async function handleDiffClick(event: MouseEvent): Promise<void> {
 
 .diff-preview-content {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
@@ -209,6 +213,8 @@ async function handleDiffClick(event: MouseEvent): Promise<void> {
 
 :deep(.file-editor) {
   height: 100%;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
 }
 

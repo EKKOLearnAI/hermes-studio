@@ -33,4 +33,12 @@ describe('ChatPanel tool drawer resizing support', () => {
 
     expect(source).toMatch(/\.outline-panel\s*\{[\s\S]*background-color: \$bg-main-surface;/)
   })
+
+  it('keeps workspace diffs and their editor stretched across the drawer', () => {
+    const source = readFileSync('packages/client/src/components/hermes/files/WorkspaceDiffPreview.vue', 'utf8')
+
+    expect(source).toMatch(/\.workspace-diff-preview\s*\{[\s\S]*flex: 1;[\s\S]*width: 100%;[\s\S]*min-width: 0;/)
+    expect(source).toMatch(/\.diff-preview-content\s*\{[\s\S]*min-width: 0;/)
+    expect(source).toMatch(/:deep\(\.file-editor\)\s*\{[\s\S]*width: 100%;[\s\S]*min-width: 0;/)
+  })
 })
