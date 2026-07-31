@@ -1,7 +1,8 @@
 import { execFile, spawn } from 'child_process'
 import type { ChildProcess, ExecFileOptions, SpawnOptions } from 'child_process'
-import { existsSync } from 'fs'
-import { basename, dirname, resolve } from 'path'
+import { constants, accessSync, existsSync } from 'fs'
+import { homedir } from 'os'
+import { basename, delimiter, dirname, join, resolve } from 'path'
 
 export interface HermesInvocation {
   command: string
@@ -13,8 +14,61 @@ export interface HermesExecResult {
   stderr: string
 }
 
+// Where the Hermes CLI installs itself when it is not on PATH.
+const CLI_FALLBACK_PATHS = [
+  ['.local', 'bin', 'hermes'],
+  ['.hermes', 'node', 'bin', 'hermes'],
+  ['.local', 'share', 'hermes', 'bin', 'hermes'],
+]
+
+function isExecutable(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function onSearchPath(name: string): boolean {
+  const search = process.env.PATH
+  if (!search) return false
+  return search
+    .split(delimiter)
+    .filter(Boolean)
+    .some(dir => isExecutable(join(dir, name)))
+}
+
+function installedCliPath(): string | null {
+  const home = homedir()
+  const candidates = [
+    ...CLI_FALLBACK_PATHS.map(parts => join(home, ...parts)),
+    '/usr/local/bin/hermes',
+    '/opt/homebrew/bin/hermes',
+  ]
+  return candidates.find(isExecutable) ?? null
+}
+
+let cachedBin: string | null = null
+
 export function resolveHermesBin(customBin?: string): string {
-  return customBin?.trim() || process.env.HERMES_BIN?.trim() || 'hermes'
+  const explicit = customBin?.trim() || process.env.HERMES_BIN?.trim()
+  if (explicit) return explicit
+  if (process.platform === 'win32') return 'hermes'
+  if (cachedBin) return cachedBin
+
+  // A `systemd --user` service inherits a minimal PATH that usually leaves out
+  // ~/.local/bin, which is exactly where the CLI installs itself. Falling back
+  // to the known install locations keeps every hermes call — logs, gateway,
+  // profiles — working after a reboot, instead of failing with ENOENT on a
+  // machine where `hermes` is plainly installed.
+  cachedBin = onSearchPath('hermes') ? 'hermes' : installedCliPath() ?? 'hermes'
+  return cachedBin
+}
+
+/** Test seam: the resolved path is cached for the life of the process. */
+export function resetHermesBinCache(): void {
+  cachedBin = null
 }
 
 function bundledCliPythonForWindows(hermesBin: string): string | null {

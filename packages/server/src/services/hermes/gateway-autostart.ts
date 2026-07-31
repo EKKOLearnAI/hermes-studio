@@ -8,7 +8,7 @@ import { logger } from '../logger'
 import { getHermesBaseDir, getProfileDir, listProfileNamesFromDisk } from './hermes-profile'
 import { retireManagedGatewayForProfile, startGatewayRunManaged } from './gateway-runner'
 import { parseGatewayStatusesFromProfileList } from './profile-list-parser'
-import { execHermesWithBin } from './hermes-process'
+import { execHermesWithBin, resolveHermesBin } from './hermes-process'
 
 const execFileAsync = promisify(execFile)
 const GATEWAY_RUNTIME_FILES = ['gateway.pid', 'gateway.lock', 'gateway_state.json'] as const
@@ -39,10 +39,6 @@ const HERMES_SUBCOMMAND_PROFILE_NAMES = new Set([
   'mcp', 'sessions', 'insights', 'version', 'update', 'uninstall',
   'profile', 'plugins', 'honcho', 'acp',
 ])
-
-function resolveHermesBin(): string {
-  return process.env.HERMES_BIN?.trim() || 'hermes'
-}
 
 function isReservedProfileName(profile: string): boolean {
   const normalized = String(profile || '').trim().toLowerCase()

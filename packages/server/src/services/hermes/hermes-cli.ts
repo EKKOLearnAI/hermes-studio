@@ -8,7 +8,7 @@ import { getActiveProfileDir, getActiveProfileName, getProfileDir, listProfileNa
 import { startGatewayRunManaged } from './gateway-runner'
 import { isGatewayRunningForProfile } from './gateway-autostart'
 import { parseProfileListRuntimeInfo, type ProfileListRuntimeInfo } from './profile-list-parser'
-import { execHermesWithBin, spawnHermesWithBin } from './hermes-process'
+import { execHermesWithBin, resolveHermesBin, spawnHermesWithBin } from './hermes-process'
 
 const execFileAsync = promisify(execFile)
 
@@ -17,14 +17,6 @@ const isDocker = existsSync('/.dockerenv')
 const isTermux = !!process.env.TERMUX_VERSION ||
   (process.env.PREFIX || '').includes('/com.termux/') ||
   existsSync('/data/data/com.termux/files/usr')
-
-/**
- * 解析 Hermes CLI 二进制路径
- * 优先使用环境变量 HERMES_BIN，否则使用 PATH 中的 'hermes' 命令
- */
-function resolveHermesBin(): string {
-  return process.env.HERMES_BIN?.trim() || 'hermes'
-}
 
 const HERMES_BIN = resolveHermesBin()
 
